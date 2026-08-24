@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createConnection, type Server } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -248,6 +248,57 @@ describeIf("forkserver kill/liveness protocol (stub python)", () => {
 		expect(server!.isDead).toBe(false);
 		expect(await handle.isAlive()).toBe(true);
 	}, 15_000);
+
+	it("survives a probe that wins the startup race and still becomes ready", async () => {
+		// The control socket is listen()ing before the Python child connects. A
+		// discovery probe landing in that window must not claim the control channel
+		// (only the `ready` handshake may) nor mark the still-starting forkserver
+		// dead. To make the race deterministic, a wrapper python delays before
+		// exec'ing the real interpreter, guaranteeing the probe connects first.
+		const delayedPython = join(tempDir, "delayed-python.sh");
+		writeFileSync(delayedPython, ["#!/bin/sh", "sleep 0.4", 'exec python3 "$@"', ""].join("\n"));
+		chmodSync(delayedPython, 0o755);
+
+		const racedServer = new ForkServer({ python: delayedPython });
+		try {
+			const internals = racedServer as unknown as { socketDir?: string };
+			let probeWonRace = false;
+			let probing = true;
+			const raceProbes = (async () => {
+				// Fire the probe the instant the socket file appears — before the
+				// delayed child can connect.
+				for (let i = 0; i < 5000 && probing; i++) {
+					const dir = internals.socketDir;
+					const socketPath = dir ? join(dir, "control.sock") : undefined;
+					if (socketPath && existsSync(socketPath)) {
+						await new Promise<void>((resolve) => {
+							const probe = createConnection(socketPath);
+							probe.once("connect", () => {
+								probeWonRace = true;
+								probe.end();
+							});
+							probe.once("close", () => resolve());
+							probe.once("error", () => resolve());
+						});
+						if (probeWonRace) return;
+					} else {
+						await new Promise((r) => setTimeout(r, 1));
+					}
+				}
+			})();
+
+			const handle = await racedServer.spawnKernel({ connectionPath: join(tempDir, "conn.json") });
+			leakedPids.push(handle.pid);
+			probing = false;
+			await raceProbes;
+
+			expect(probeWonRace).toBe(true);
+			expect(racedServer.isDead).toBe(false);
+			expect(await handle.isAlive()).toBe(true);
+		} finally {
+			racedServer.dispose();
+		}
+	}, 20_000);
 
 	describe("forkserver orphan journal", () => {
 		let journalPath = "";

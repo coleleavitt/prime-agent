@@ -1,1 +1,2 @@
 - Fixed `prime-agent status` terminating active IPython forkservers by excluding internal control sockets from daemon discovery and preserving the established forkserver connection ([#1696](https://github.com/PrimeIntellect-ai/prime-agent/pull/1696) by [@sirouk](https://github.com/sirouk)).
+- Hardened the forkserver-probe protection: anchor the forkserver-socket exclusion by real path (fixes a macOS symlinked-`tmpdir` fail-open) and only promote the control channel on the child's `ready` handshake, so a probe cannot hijack it during the startup race.

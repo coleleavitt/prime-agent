@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, readdirSync, readFileSync, rmSync, unlinkSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import chalk from "chalk";
@@ -897,8 +897,28 @@ export function isKernelForkServerSocketPath(socketPath: string): boolean {
 	return (
 		basename(normalized) === "control.sock" &&
 		basename(socketDirectory).startsWith("prime-agent-forkserver-") &&
-		resolve(dirname(socketDirectory)) === resolve(tmpdir())
+		sameRealDirectory(dirname(socketDirectory), tmpdir())
 	);
+}
+
+/**
+ * Compare two directories by their resolved real path, tolerating a symlinked or
+ * trailing-slash tmpdir. `resolve()` alone does not collapse symlinks, so on
+ * macOS a socket reported under `/private/tmp` while `tmpdir()` returns `/tmp`
+ * (or vice versa) would fail a plain string compare and leave the forkserver
+ * socket unfiltered — exactly the fail-open this guards against. `realpathSync`
+ * can throw if a path no longer exists; fall back to `resolve()` so a vanished
+ * directory degrades to the old behavior instead of crashing discovery.
+ */
+function sameRealDirectory(a: string, b: string): boolean {
+	const real = (p: string): string => {
+		try {
+			return realpathSync(p);
+		} catch {
+			return resolve(p);
+		}
+	};
+	return real(a) === real(b);
 }
 
 async function stopBackgroundService(

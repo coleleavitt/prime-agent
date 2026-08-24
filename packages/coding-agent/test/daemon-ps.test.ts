@@ -1,6 +1,7 @@
+import { mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { dirname, join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	type DaemonInfo,
 	evaluateShutdownQuietPeriod,
@@ -39,6 +40,63 @@ describe("forkserver socket classification", () => {
 		// Anchored to the temp dir, so a lookalike elsewhere stays discoverable.
 		const outsideTempDir = join(homedir(), "prime-agent-forkserver-abc123", "control.sock");
 		expect(isKernelForkServerSocketPath(outsideTempDir)).toBe(false);
+	});
+
+	// Regression: on macOS `tmpdir()` may be a symlink (e.g. /tmp -> /private/tmp),
+	// while `ss`/`lsof` report the realpath'd socket dir. A resolve()-only compare
+	// fails to collapse the symlink and leaves the forkserver socket unfiltered —
+	// a fail-open where `prime-agent status` still kills the kernel. The predicate
+	// must anchor by real path, not string identity.
+	describe("symlinked tmpdir (realpath anchoring)", () => {
+		let realTempRoot = "";
+		let symlinkedTempRoot = "";
+
+		beforeEach(() => {
+			realTempRoot = mkdtempSync(join(realpathSync(tmpdir()), "prime-agent-tmproot-"));
+			symlinkedTempRoot = `${realTempRoot}-link`;
+			try {
+				symlinkSync(realTempRoot, symlinkedTempRoot);
+			} catch {
+				symlinkedTempRoot = "";
+			}
+		});
+
+		afterEach(() => {
+			if (symlinkedTempRoot) {
+				try {
+					rmSync(symlinkedTempRoot, { force: true });
+				} catch {
+					// best effort
+				}
+			}
+			if (realTempRoot) {
+				rmSync(realTempRoot, { recursive: true, force: true });
+			}
+			realTempRoot = "";
+			symlinkedTempRoot = "";
+		});
+
+		it.runIf(process.platform !== "win32")(
+			"matches a forkserver socket reported under the tmpdir's real path",
+			() => {
+				if (!symlinkedTempRoot) return; // filesystem refused the symlink; skip
+				// The forkserver created its dir via the symlinked tmpdir, but discovery
+				// reports the realpath'd form. The predicate must still recognize it.
+				const forkDir = mkdtempSync(join(symlinkedTempRoot, "prime-agent-forkserver-"));
+				const realForkDir = realpathSync(forkDir);
+				const reportedSocket = join(realForkDir, "control.sock");
+				// Anchor the comparison against the symlinked tmpdir the process sees.
+				const savedTmp = process.env.TMPDIR;
+				process.env.TMPDIR = symlinkedTempRoot;
+				try {
+					expect(realpathSync(dirname(realForkDir))).toBe(realpathSync(symlinkedTempRoot));
+					expect(isKernelForkServerSocketPath(reportedSocket)).toBe(true);
+				} finally {
+					if (savedTmp === undefined) delete process.env.TMPDIR;
+					else process.env.TMPDIR = savedTmp;
+				}
+			},
+		);
 	});
 });
 

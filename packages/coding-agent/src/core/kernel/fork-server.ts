@@ -108,6 +108,9 @@ export class ForkServer {
 	private proc?: ChildProcess;
 	private server?: Server;
 	private conn?: Socket;
+	// Flipped once the child completes the `ready` handshake; from then on no other
+	// connection may claim the control channel.
+	private committed = false;
 	private socketDir?: string;
 	private readyPromise?: Promise<void>;
 	private failReady?: (err: Error) => void;
@@ -178,17 +181,54 @@ export class ForkServer {
 			};
 
 			server.on("connection", (socket) => {
-				// The Python forkserver owns the first connection for its lifetime. A
-				// discovery probe must not replace that control channel when it connects.
-				if (this.conn) {
+				// Once the real forkserver child has proven itself, every later
+				// connection (e.g. a discovery probe) is refused so it can't hijack
+				// the control channel.
+				if (this.committed) {
 					socket.destroy();
 					return;
 				}
-				this.conn = socket;
 				socket.setEncoding("utf8");
-				socket.on("data", (chunk: string) => this.onData(chunk));
-				socket.on("close", () => this.markDead());
-				socket.on("error", () => this.markDead());
+				// A connection is only provisional until it delivers the `ready`
+				// handshake, which is the child's first line. A probe that wins the
+				// connect race during startup merely connects and disconnects without
+				// ever sending it, so it can never be promoted to the control channel
+				// (nor does its close mark the still-starting forkserver dead).
+				let candidateBuffer = "";
+				const onCandidateClose = () => {
+					socket.removeListener("data", onCandidateData);
+					socket.removeListener("close", onCandidateClose);
+					socket.removeListener("error", onCandidateClose);
+				};
+				const onCandidateData = (chunk: string) => {
+					candidateBuffer += chunk;
+					const idx = candidateBuffer.indexOf("\n");
+					if (idx === -1) return;
+					// The child's first line is always `{"type":"ready"}`; anything
+					// else means this connection is not our child.
+					let msg: { type?: string };
+					try {
+						msg = JSON.parse(candidateBuffer.slice(0, idx));
+					} catch {
+						return;
+					}
+					if (msg?.type !== "ready") return;
+					// Proven: promote to the committed control channel and rewire to
+					// the permanent handlers.
+					this.committed = true;
+					this.conn = socket;
+					onCandidateClose();
+					socket.on("data", (chunk2: string) => this.onData(chunk2));
+					socket.on("close", () => this.markDead());
+					socket.on("error", () => this.markDead());
+					this.onReady();
+					// Replay anything the child sent after the `ready` line.
+					const remainder = candidateBuffer.slice(idx + 1);
+					if (remainder) this.onData(remainder);
+				};
+				socket.on("data", onCandidateData);
+				socket.on("close", onCandidateClose);
+				socket.on("error", onCandidateClose);
 			});
 
 			server.on("error", (err) => {
