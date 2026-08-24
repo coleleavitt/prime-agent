@@ -1,1 +1,1 @@
-- Fixed `prime-agent status` terminating active IPython forkservers by excluding internal control sockets from daemon discovery and preserving the established forkserver connection.
+- Fixed `prime-agent status` terminating active IPython forkservers by excluding internal control sockets from daemon discovery and preserving the established forkserver connection ([#1696](https://github.com/PrimeIntellect-ai/prime-agent/pull/1696) by [@sirouk](https://github.com/sirouk)).
