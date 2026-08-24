@@ -1,4 +1,4 @@
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -28,11 +28,17 @@ describe("worker socket classification", () => {
 	});
 });
 
+// Derived, not hardcoded: the temp dir is /tmp on Linux but per-user on macOS.
+const forkServerSocketPath = join(tmpdir(), "prime-agent-forkserver-probe", "control.sock");
+
 describe("forkserver socket classification", () => {
 	it.runIf(process.platform !== "win32")("recognizes only internal forkserver control sockets", () => {
-		expect(isKernelForkServerSocketPath(join(tmpdir(), "prime-agent-forkserver-abc123", "control.sock"))).toBe(true);
+		expect(isKernelForkServerSocketPath(forkServerSocketPath)).toBe(true);
 		expect(isKernelForkServerSocketPath(join(tmpdir(), "prime-agent-forkserver-abc123", "daemon.sock"))).toBe(false);
 		expect(isKernelForkServerSocketPath(join(tmpdir(), "custom", "control.sock"))).toBe(false);
+		// Anchored to the temp dir, so a lookalike elsewhere stays discoverable.
+		const outsideTempDir = join(homedir(), "prime-agent-forkserver-abc123", "control.sock");
+		expect(isKernelForkServerSocketPath(outsideTempDir)).toBe(false);
 	});
 });
 
@@ -41,7 +47,7 @@ describe("parseSsListeners", () => {
 		"Netid State  Recv-Q Send-Q Local Address:Port  Peer Address:Port",
 		'u_str LISTEN 0      511    /tmp/custom.sock 10147608 * 0 users:(("prime-agent",pid=1234,fd=22))',
 		'u_str LISTEN 0      511    /tmp/prime-agent-1000/daemon.sock 79453846 * 0 users:(("prime-agent",pid=5678,fd=24))',
-		'u_str LISTEN 0      511    /tmp/prime-agent-forkserver-probe/control.sock 79453847 * 0 users:(("prime-agent",pid=2468,fd=25))',
+		`u_str LISTEN 0      511    ${forkServerSocketPath} 79453847 * 0 users:(("prime-agent",pid=2468,fd=25))`,
 		'u_str LISTEN 0      4096   /run/dbus/system_bus_socket 123 * 0 users:(("dbus-daemon",pid=900,fd=3))',
 		'u_str ESTAB  0      0      /tmp/other.sock 456 * 0 users:(("prime-agent",pid=4321,fd=9))',
 		"",
@@ -74,7 +80,7 @@ describe("parseLsofListeners", () => {
 			"fu",
 			"n/tmp/a.sock",
 			"p2468",
-			"n/tmp/prime-agent-forkserver-probe/control.sock",
+			`n${forkServerSocketPath}`,
 			"p5678",
 			"n/tmp/b.sock",
 			"n0x0 (not a path)",
