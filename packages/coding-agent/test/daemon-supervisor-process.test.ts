@@ -1151,6 +1151,10 @@ describe("daemon supervisor resident workers", () => {
 		await waitForExit(supervisor);
 		children.delete(supervisor);
 		client.close();
+		expect(readDaemonLogs(agentDir)).toContain("Received SIGTERM; shutting down daemon supervisor");
+		for (const pid of pids) {
+			if (pid) expect(() => process.kill(pid, 0)).not.toThrow();
+		}
 
 		const replacementClient = await connectEventually(socketPath);
 		const adopted = await replacementClient.request({ type: "list" });

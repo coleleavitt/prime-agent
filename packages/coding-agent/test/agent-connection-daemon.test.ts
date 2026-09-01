@@ -772,13 +772,28 @@ describe("DaemonAgentConnection", () => {
 		});
 	});
 
-	it.each([true, false])("capability-gates owned-session recovery context: %s", async (supported) => {
+	it.each([true, false])("capability-gates resident-session recovery context: %s", async (supported) => {
+		const fakeClient = new FakeDaemonClient();
+		if (supported) fakeClient.serverCapabilities.add("resident_session_recovery_context");
+		const recoveryConfig = { cwd: "/tmp/fresh-resident" };
+		const connection = new DaemonAgentConnection(asDaemonClient(fakeClient), "active-resident", {
+			sessionRecoveryConfig: recoveryConfig,
+		});
+
+		await connection.attach();
+
+		const request = fakeClient.requests[0];
+		if (supported) expect(request).toMatchObject({ recoveryConfig });
+		else expect(request).not.toHaveProperty("recoveryConfig");
+	});
+
+	it.each([true, false])("keeps owned-session recovery on its existing capability: %s", async (supported) => {
 		const fakeClient = new FakeDaemonClient();
 		if (supported) fakeClient.serverCapabilities.add("owned_session_recovery_context");
 		const recoveryConfig = { cwd: "/tmp/fresh-owner" };
 		const connection = new DaemonAgentConnection(asDaemonClient(fakeClient), "active-owned", {
 			ownedSession: true,
-			ownedSessionRecoveryConfig: recoveryConfig,
+			sessionRecoveryConfig: recoveryConfig,
 		});
 
 		await connection.attach();

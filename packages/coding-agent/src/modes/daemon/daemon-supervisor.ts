@@ -674,6 +674,7 @@ export class DaemonSupervisor {
 	}
 
 	async start(): Promise<void> {
+		this.registerProcessHandlers();
 		try {
 			const agentDir = this.defaultSessionConfig.agentDir;
 			if (!agentDir) {
@@ -708,7 +709,6 @@ export class DaemonSupervisor {
 			this.ownsSocketPath = true;
 			restrictDaemonSocketPath(this.socketPath);
 
-			this.registerSignalHandlers();
 			const ownedSessionFiles = new Set(
 				[...this.workers.values()]
 					.flatMap((worker) => [worker.descriptor.sessionFile, worker.descriptor.createCommand.sessionPath])
@@ -1792,9 +1792,11 @@ export class DaemonSupervisor {
 				return success(command.id, command.type, summary ? this.publicSummary(worker, summary) : undefined);
 			}
 			case "restart":
+				this.log("Restart command received; relaunching daemon supervisor");
 				setImmediate(() => void this.shutdown(0, false, true, false, "update"));
 				return success(command.id, command.type);
 			case "shutdown":
+				this.log(`Shutdown command received; stopping daemon supervisor (force=${command.force === true})`);
 				setImmediate(() => void this.shutdown(0, true, false, command.force === true, "shutdown"));
 				return success(command.id, "shutdown");
 			case "prepare_update_restart": {
@@ -3109,7 +3111,7 @@ export class DaemonSupervisor {
 							`Cannot safely replace live session worker ${worker.descriptor.workerId} without a verified process identity`,
 						);
 					}
-					const recoveryCommand = worker.descriptor.ownerClientId ? worker.transientCreateCommand : undefined;
+					const recoveryCommand = worker.transientCreateCommand;
 					if (!recoveryCommand || !worker.launchEnv) {
 						await this.recoverUncertainWorkerOperations(worker, false);
 						worker.descriptor.lifecycle = "failed";
@@ -3671,41 +3673,43 @@ export class DaemonSupervisor {
 		client: DaemonSocketClient,
 		command: Extract<DaemonCommand, { type: "attach" }>,
 	): Promise<WorkerAttachData> {
-		const ownedWorker = [...this.workers.values()].find(
+		const descriptorWorker = [...this.workers.values()].find(
 			(worker) =>
-				worker.descriptor.ownerClientId !== undefined &&
-				(worker.descriptor.rootActiveSessionId === command.activeSessionId ||
-					worker.descriptor.rootSessionId === command.activeSessionId),
+				worker.descriptor.rootActiveSessionId === command.activeSessionId ||
+				worker.descriptor.rootSessionId === command.activeSessionId,
 		);
-		if (ownedWorker) {
-			if (ownedWorker.descriptor.ownerClientId !== this.protocolClientId(client)) {
+		if (descriptorWorker) {
+			if (
+				descriptorWorker.descriptor.ownerClientId !== undefined &&
+				descriptorWorker.descriptor.ownerClientId !== this.protocolClientId(client)
+			) {
 				throw new Error(`Unknown active session: ${command.activeSessionId}`);
 			}
-			this.assertTelemetryAttachAllowed(ownedWorker, command.telemetryDisabled);
-			ownedWorker.launchEnv = command.launchEnv ?? ownedWorker.launchEnv;
-			if (!ownedWorker.client || ownedWorker.descriptor.lifecycle !== "ready") {
+			this.assertTelemetryAttachAllowed(descriptorWorker, command.telemetryDisabled);
+			descriptorWorker.launchEnv = command.launchEnv ?? descriptorWorker.launchEnv;
+			if (!descriptorWorker.client || descriptorWorker.descriptor.lifecycle !== "ready") {
 				if (command.recoveryConfig) {
-					ownedWorker.transientCreateCommand = {
-						...ownedWorker.descriptor.createCommand,
+					descriptorWorker.transientCreateCommand = {
+						...descriptorWorker.descriptor.createCommand,
 						config: {
 							...command.recoveryConfig,
-							...(ownedWorker.descriptor.telemetryDisabled === true ? { telemetryDisabled: true } : {}),
+							...(descriptorWorker.descriptor.telemetryDisabled === true ? { telemetryDisabled: true } : {}),
 						},
 						env: command.env,
 						launchEnv: command.launchEnv,
-						lifecycle: "client_owned",
+						lifecycle: descriptorWorker.descriptor.ownerClientId ? "client_owned" : "resident",
 					};
 				}
-				if (!ownedWorker.launchEnv) {
-					throw new Error("Client-owned session recovery requires the owning client environment");
+				if (!descriptorWorker.launchEnv || !descriptorWorker.transientCreateCommand) {
+					throw new Error("Session recovery requires fresh client runtime context");
 				}
-				ownedWorker.intentionalStop = false;
-				ownedWorker.descriptor.stopRequestedAt = undefined;
-				ownedWorker.descriptor.archiveOnStop = undefined;
-				ownedWorker.descriptor.lifecycle = "recovering";
-				ownedWorker.descriptor.consecutiveFailures = 0;
-				this.persistWorker(ownedWorker);
-				await this.recoverWorker(ownedWorker);
+				descriptorWorker.intentionalStop = false;
+				descriptorWorker.descriptor.stopRequestedAt = undefined;
+				descriptorWorker.descriptor.archiveOnStop = undefined;
+				descriptorWorker.descriptor.lifecycle = "recovering";
+				descriptorWorker.descriptor.consecutiveFailures = 0;
+				this.persistWorker(descriptorWorker);
+				await this.recoverWorker(descriptorWorker);
 			}
 		}
 		const match = await this.findWorkerForClient(client, command.activeSessionId);
@@ -5317,19 +5321,48 @@ export class DaemonSupervisor {
 		return accepted;
 	}
 
-	private registerSignalHandlers(): void {
+	private registerProcessHandlers(): void {
 		const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
 		if (process.platform !== "win32") {
 			signals.push("SIGHUP");
 		}
 		for (const signal of signals) {
-			const handler = () => void this.shutdown(signal === "SIGINT" ? 130 : signal === "SIGHUP" ? 129 : 143, false);
+			const handler = () => {
+				this.log(`Received ${signal}; shutting down daemon supervisor`);
+				void this.shutdown(signal === "SIGINT" ? 130 : signal === "SIGHUP" ? 129 : 143, false);
+			};
 			process.on(signal, handler);
 			this.signalCleanupHandlers.push(() => process.off(signal, handler));
 		}
+		const uncaughtExceptionHandler = (error: Error) => {
+			this.logFatalError(`Uncaught exception in daemon supervisor: ${error.stack ?? error.message}`);
+			process.exit(1);
+		};
+		process.on("uncaughtException", uncaughtExceptionHandler);
+		this.signalCleanupHandlers.push(() => process.off("uncaughtException", uncaughtExceptionHandler));
+		const unhandledRejectionHandler = (reason: unknown) => {
+			this.logFatalError(
+				`Unhandled rejection in daemon supervisor: ${reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)}`,
+			);
+			process.exit(1);
+		};
+		process.on("unhandledRejection", unhandledRejectionHandler);
+		this.signalCleanupHandlers.push(() => process.off("unhandledRejection", unhandledRejectionHandler));
 		const exitHandler = () => this.cleanupSocket();
 		process.on("exit", exitHandler);
 		this.signalCleanupHandlers.push(() => process.off("exit", exitHandler));
+	}
+
+	private logFatalError(message: string): void {
+		try {
+			this.log(message);
+		} catch {
+			try {
+				console.error(message);
+			} catch {
+				// A fatal handler must still terminate if diagnostics are unavailable.
+			}
+		}
 	}
 
 	private cleanupSocket(): void {

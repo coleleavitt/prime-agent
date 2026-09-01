@@ -1,0 +1,2 @@
+- Fixed daemon reconnection after supervisor recovery fails to adopt an active session worker.
+- Added persistent supervisor exit diagnostics for signals and fatal asynchronous errors.

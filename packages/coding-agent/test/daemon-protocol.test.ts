@@ -119,6 +119,13 @@ describe("daemon protocol helpers", () => {
 		);
 	});
 
+	it("advertises resident recovery context separately from owned-session recovery", () => {
+		expect(DAEMON_SCHEMA_REVISION).toBeGreaterThanOrEqual(23);
+		expect(DAEMON_DEFAULT_SERVER_CAPABILITIES).toEqual(
+			expect.arrayContaining(["owned_session_recovery_context", "resident_session_recovery_context"]),
+		);
+	});
+
 	it("capability-gates explicit subagent deletion instead of schema-gating it", () => {
 		expect(DAEMON_COMMAND_COMPATIBILITY.delete_rlm_subagent).toEqual({
 			minProtocol: 7,

@@ -3291,6 +3291,53 @@ describe("daemon worker supervisor monitoring", () => {
 		expect(seed).toHaveBeenCalledWith(activeSessionId, streamingMessage);
 	});
 
+	it("relaunches a resident worker with fresh reconnect context", async () => {
+		vi.useFakeTimers();
+		const recoveryCommand = {
+			type: "create" as const,
+			sessionPath: "/tmp/resident-session.jsonl",
+			config: { cwd: "/tmp/fresh-resident" },
+			launchEnv: { PROVIDER_SECRET: "fresh" },
+			lifecycle: "resident" as const,
+		};
+		const worker = {
+			descriptor: {
+				workerId: "worker-resident-relaunch",
+				pid: 999_999_999,
+				rootActiveSessionId: "active-resident-relaunch",
+				lifecycle: "recovering" as const,
+				consecutiveFailures: 0,
+			},
+			summaries: new Map(),
+			intentionalStop: false,
+			stopRevision: 0,
+			launchEnv: recoveryCommand.launchEnv,
+			transientCreateCommand: recoveryCommand,
+			recovery: undefined as Promise<void> | undefined,
+		};
+		const launchWorker = vi.fn(async () => worker);
+		const recoverUncertainWorkerOperations = vi.fn(async () => undefined);
+		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			workers: new Map([[worker.descriptor.workerId, worker]]),
+			shuttingDown: false,
+			assertRecoveryAllowed: vi.fn(async () => undefined),
+			recoverUncertainWorkerOperations,
+			launchWorker,
+			persistWorker: vi.fn(),
+			syncAgentPeers: vi.fn(async () => undefined),
+			log: vi.fn(),
+		}) as {
+			recoverWorker(target: typeof worker): Promise<void>;
+		};
+
+		const recovering = supervisor.recoverWorker(worker);
+		await vi.runAllTimersAsync();
+		await recovering;
+
+		expect(recoverUncertainWorkerOperations).toHaveBeenCalledWith(worker, false);
+		expect(launchWorker).toHaveBeenCalledWith(recoveryCommand, worker, undefined);
+	});
+
 	it("reconstructs a client-owned recovery command from fresh attach context", async () => {
 		const activeSessionId = "active-owned-recovery";
 		const worker = {
@@ -3355,6 +3402,71 @@ describe("daemon worker supervisor monitoring", () => {
 			lifecycle: "client_owned",
 		});
 		expect(worker.launchEnv).toEqual({ OWNER_SECRET: "fresh" });
+		expect(recoverWorker).toHaveBeenCalledWith(worker);
+	});
+
+	it("reconstructs a resident recovery command from fresh attach context", async () => {
+		const activeSessionId = "active-resident-recovery";
+		const worker = {
+			descriptor: {
+				workerId: "worker-resident-recovery",
+				rootActiveSessionId: activeSessionId,
+				lifecycle: "failed",
+				consecutiveFailures: 2,
+				createCommand: { type: "create" as const, sessionPath: "/tmp/resident-session.jsonl" },
+			},
+			summaries: new Map(),
+			intentionalStop: false,
+			stopRevision: 0,
+			launchEnv: undefined as Record<string, string> | undefined,
+			transientCreateCommand: undefined as Record<string, unknown> | undefined,
+		};
+		const client = {
+			id: "client-1",
+			capabilities: new Set<string>(),
+			supportsExtensionUi: false,
+			attachedActiveSessionIds: new Set<string>(),
+		};
+		const recoverWorker = vi.fn(async () => {
+			throw new Error("stop after resident reconstruction");
+		});
+		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			workers: new Map([[worker.descriptor.workerId, worker]]),
+			clients: new Set([client]),
+			protocolClientIds: new WeakMap(),
+			persistWorker: vi.fn(),
+			recoverWorker,
+		}) as {
+			attachClient(
+				attachClient: typeof client,
+				command: {
+					type: "attach";
+					activeSessionId: string;
+					recoveryConfig: { cwd: string };
+					launchEnv: Record<string, string>;
+					env: Record<string, string>;
+				},
+			): Promise<unknown>;
+		};
+
+		await expect(
+			supervisor.attachClient(client, {
+				type: "attach",
+				activeSessionId,
+				recoveryConfig: { cwd: "/tmp/fresh-resident" },
+				launchEnv: { PROVIDER_SECRET: "fresh" },
+				env: { HERDR_PANE_ID: "pane-1" },
+			}),
+		).rejects.toThrow("stop after resident reconstruction");
+		expect(worker.transientCreateCommand).toEqual({
+			type: "create",
+			sessionPath: "/tmp/resident-session.jsonl",
+			config: { cwd: "/tmp/fresh-resident" },
+			env: { HERDR_PANE_ID: "pane-1" },
+			launchEnv: { PROVIDER_SECRET: "fresh" },
+			lifecycle: "resident",
+		});
+		expect(worker.launchEnv).toEqual({ PROVIDER_SECRET: "fresh" });
 		expect(recoverWorker).toHaveBeenCalledWith(worker);
 	});
 

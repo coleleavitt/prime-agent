@@ -175,8 +175,8 @@ export interface DaemonAgentConnectionOptions {
 	supportsExtensionUi?: boolean;
 	/** Dispose the connection by stopping its hidden worker instead of detaching. */
 	ownedSession?: boolean;
-	/** Fresh runtime context used only if the owned worker must be relaunched. */
-	ownedSessionRecoveryConfig?: AgentSessionRuntimeConfig;
+	/** Fresh runtime context used if the attached worker must be relaunched. */
+	sessionRecoveryConfig?: AgentSessionRuntimeConfig;
 	/** Require the target worker to have been created with telemetry disabled. */
 	telemetryDisabled?: true;
 }
@@ -332,11 +332,18 @@ export class DaemonAgentConnection implements AgentConnection {
 				...(this.options.ownedSession ? (["client_owned_sessions"] as const) : []),
 			],
 			env: this.options.sendClientEnv ? collectDaemonClientEnv() : undefined,
-			launchEnv: this.options.ownedSession ? collectDaemonLaunchEnv() : undefined,
-			...(this.options.ownedSession &&
-			this.options.ownedSessionRecoveryConfig &&
-			this.client.supportsServerCapability("owned_session_recovery_context")
-				? { recoveryConfig: this.options.ownedSessionRecoveryConfig }
+			launchEnv:
+				this.options.sessionRecoveryConfig &&
+				(this.options.ownedSession
+					? this.client.supportsServerCapability("owned_session_recovery_context")
+					: this.client.supportsServerCapability("resident_session_recovery_context"))
+					? collectDaemonLaunchEnv()
+					: undefined,
+			...(this.options.sessionRecoveryConfig &&
+			(this.options.ownedSession
+				? this.client.supportsServerCapability("owned_session_recovery_context")
+				: this.client.supportsServerCapability("resident_session_recovery_context"))
+				? { recoveryConfig: this.options.sessionRecoveryConfig }
 				: {}),
 			telemetryDisabled: this.options.telemetryDisabled,
 			resumeCursor:

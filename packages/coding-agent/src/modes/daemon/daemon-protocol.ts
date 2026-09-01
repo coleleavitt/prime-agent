@@ -67,8 +67,9 @@ export const DAEMON_COMMAND_ENVELOPE_MIN_PROTOCOL_VERSION = 7;
 // Revision 20 lets cancellation target a prompt the session owns but has not started.
 // Revision 21 adds capability-gated, session-scoped ACP MCP server replacement.
 // Revision 22 scopes ACP MCP replacement and cleanup to a connection owner.
-export const DAEMON_SCHEMA_REVISION = 22;
-export const DAEMON_SCHEMA_ID = "protocol-7-schema-22-4d515169dc6b";
+// Revision 23 lets a primary client provide transient context to recover a resident worker.
+export const DAEMON_SCHEMA_REVISION = 23;
+export const DAEMON_SCHEMA_ID = "protocol-7-schema-23-4d515169dc6b";
 
 export type DaemonProtocolName = typeof DAEMON_PROTOCOL_NAME;
 export type DaemonProtocolVersion = number;
@@ -110,6 +111,7 @@ export type DaemonServerCapability =
 	| "queue_message_mutation"
 	| "authoritative_child_roster"
 	| "owned_session_recovery_context"
+	| "resident_session_recovery_context"
 	| "rlm_quiescence_barrier"
 	| "session_input_pause"
 	| "owned_prompt_cancellation"
@@ -155,6 +157,7 @@ export const DAEMON_DEFAULT_SERVER_CAPABILITIES: readonly DaemonServerCapability
 	"queue_message_mutation",
 	"authoritative_child_roster",
 	"owned_session_recovery_context",
+	"resident_session_recovery_context",
 	"rlm_quiescence_barrier",
 	"session_input_pause",
 	"acp_mcp_servers",
@@ -177,7 +180,7 @@ export interface DaemonAttachClientMetadata {
 	resumeCursor?: DaemonResumeCursor;
 	/** Opt-out-only policy. A telemetry-enabled worker must reject this attach. */
 	telemetryDisabled?: true;
-	/** Fresh owner-supplied runtime context for recovering a client-owned worker. Never persisted. */
+	/** Fresh primary-client runtime context for recovering a failed worker. Never persisted. */
 	recoveryConfig?: AgentSessionRuntimeConfig;
 }
 
