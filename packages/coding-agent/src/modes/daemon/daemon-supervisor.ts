@@ -3317,9 +3317,19 @@ export class DaemonSupervisor {
 			worker.descriptor.lifecycle = "failed";
 			this.persistWorker(worker);
 			this.log(`Worker ${worker.descriptor.workerId} failed after three recovery attempts`);
-		})().finally(() => {
-			worker.recovery = undefined;
-		});
+		})()
+			// Recovery runs detached (`void this.recoverWorker(...)`), so an escaping
+			// rejection reaches the supervisor's fatal unhandledRejection handler and
+			// exits the process, killing every healthy session on this daemon because
+			// one worker was too busy to answer. Failure is already recorded on the
+			// descriptor and `reuseWorkerForCreate` re-reads worker state rather than
+			// depending on this rejection, so swallowing here loses no signal.
+			.catch((error: unknown) => {
+				this.log(`Worker ${worker.descriptor.workerId} recovery failed: ${String(error)}`);
+			})
+			.finally(() => {
+				worker.recovery = undefined;
+			});
 		return worker.recovery;
 	}
 
