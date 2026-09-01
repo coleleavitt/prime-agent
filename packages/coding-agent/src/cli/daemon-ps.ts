@@ -1,6 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync, unlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, lstatSync, readdirSync, readFileSync, rmSync, unlinkSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import chalk from "chalk";
 import { APP_NAME, getAgentDir, VERSION } from "../config.js";
@@ -105,11 +104,7 @@ export function parseSsListeners(stdout: string, appName: string): DiscoveredDae
 		if (!owner || !processNameMatches(owner[1]!, appName)) {
 			continue;
 		}
-		const normalized = normalizeSocketPath(socketPath);
-		if (isKernelForkServerSocketPath(normalized)) {
-			continue;
-		}
-		daemons.push({ pid: Number.parseInt(owner[2]!, 10), socketPath: normalized });
+		daemons.push({ pid: Number.parseInt(owner[2]!, 10), socketPath: normalizeSocketPath(socketPath) });
 	}
 	return daemons;
 }
@@ -126,9 +121,6 @@ export function parseLsofListeners(stdout: string): DiscoveredDaemonProcess[] {
 			pid = Number.parseInt(value, 10);
 		} else if (field === "n" && pid !== undefined && value.startsWith("/")) {
 			const socketPath = normalizeSocketPath(value);
-			if (isKernelForkServerSocketPath(socketPath)) {
-				continue;
-			}
 			const key = `${pid}:${socketPath}`;
 			if (!seen.has(key)) {
 				seen.add(key);
@@ -892,38 +884,6 @@ export function isWorkerSocketPath(socketPath: string): boolean {
 		basename(socketPath).startsWith("worker-") &&
 		basename(socketPath).endsWith(".sock")
 	);
-}
-
-/** Internal kernel forkserver listeners are not daemon control sockets. */
-export function isKernelForkServerSocketPath(socketPath: string): boolean {
-	if (process.platform === "win32") return false;
-	const normalized = normalizeSocketPath(socketPath);
-	const socketDirectory = dirname(normalized);
-	return (
-		basename(normalized) === "control.sock" &&
-		basename(socketDirectory).startsWith("prime-agent-forkserver-") &&
-		sameRealDirectory(dirname(socketDirectory), tmpdir())
-	);
-}
-
-/**
- * Compare two directories by their resolved real path, tolerating a symlinked or
- * trailing-slash tmpdir. `resolve()` alone does not collapse symlinks, so on
- * macOS a socket reported under `/private/tmp` while `tmpdir()` returns `/tmp`
- * (or vice versa) would fail a plain string compare and leave the forkserver
- * socket unfiltered — exactly the fail-open this guards against. `realpathSync`
- * can throw if a path no longer exists; fall back to `resolve()` so a vanished
- * directory degrades to the old behavior instead of crashing discovery.
- */
-function sameRealDirectory(a: string, b: string): boolean {
-	const real = (p: string): string => {
-		try {
-			return realpathSync(p);
-		} catch {
-			return resolve(p);
-		}
-	};
-	return real(a) === real(b);
 }
 
 async function stopBackgroundService(
