@@ -2,8 +2,7 @@ import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { compactRlmText, rlmChildLabel } from "../../core/agent-session.js";
-import type { AgentSessionRuntimeMetadata } from "../../core/agent-session-runtime.js";
+import { compactRlmText } from "../../core/agent-session.js";
 import type { AgentSessionRuntimeDiagnostic } from "../../core/agent-session-services.js";
 import { type AgentCronJob, isHeartbeatCronJob } from "../../core/cron-jobs.js";
 import type { SessionActionSnapshot } from "../../core/session-action-store.js";
@@ -69,7 +68,7 @@ export interface SessionSummary {
 	rlmChildId?: string;
 	repliedSinceTask?: boolean;
 	rlmParentNodeId?: string;
-	/** Source of the IPython cell that spawned this subagent, for display. */
+	/** Source of the Python cell that spawned this subagent, for display. */
 	spawnCode?: string;
 	modelFallbackMessage?: string;
 	diagnostics?: AgentSessionRuntimeDiagnostic[];
@@ -109,6 +108,17 @@ export function classifySessionRosterStatus(summary: SessionSummary): SessionRos
 
 export function isSessionSummaryBusy(summary: SessionSummary): boolean {
 	return summary.isSessionActive || summary.hasRunningRlmChildren === true;
+}
+
+/** Naming signals intent to return, so named sessions are exempt even when empty. */
+export function isEvictableEmptySessionSummary(summary: SessionSummary): boolean {
+	return (
+		summary.messageCount === 0 &&
+		!summary.sessionName &&
+		!isSessionSummaryBusy(summary) &&
+		summary.hasRegisteredHeartbeat !== true &&
+		summary.hasRegisteredCronJob !== true
+	);
 }
 
 export function buildSessionList(
@@ -329,87 +339,23 @@ export function summaryForInactiveSession(
 	};
 }
 
-/**
- * Build snapshots for all RLM child sessions hosted by the daemon under the
- * given session, including grandchildren. Mirrors the shape of live
- * rlm_child_update events so attach clients can seed their subagent state
- * from daemon memory instead of replaying the event stream.
- */
+/** Build the root AgentSession projection with daemon-only active session ids. */
 export function buildRlmChildSnapshots(
 	rootActiveSessionId: string,
 	activeSessions: readonly ActiveSessionState[],
 ): AgentConnectionRlmChildAgentSnapshot[] {
-	const childrenByParent = new Map<string, ActiveSessionState[]>();
-	for (const candidate of activeSessions) {
-		const metadata = candidate.runtime.metadata;
-		if (metadata.kind !== "subagent" || !metadata.parentActiveSessionId) {
-			continue;
-		}
-		const siblings = childrenByParent.get(metadata.parentActiveSessionId) ?? [];
-		siblings.push(candidate);
-		childrenByParent.set(metadata.parentActiveSessionId, siblings);
-	}
-
-	const snapshots: AgentConnectionRlmChildAgentSnapshot[] = [];
-	const visit = (parent: ActiveSessionState | undefined, parentActiveSessionId: string): void => {
-		const parentNodeId = parent?.runtime.metadata.rlmChildId;
-		for (const child of childrenByParent.get(parentActiveSessionId) ?? []) {
-			snapshots.push(rlmChildSnapshotForActiveSession(child, child.runtime.metadata, parentNodeId, parent));
-			// A child passes its own node id to its children as their parent id.
-			visit(child, child.activeSessionId);
-		}
-	};
 	const root = activeSessions.find((candidate) => candidate.activeSessionId === rootActiveSessionId);
-	visit(root, rootActiveSessionId);
-	return snapshots;
-}
-
-function rlmChildSnapshotForActiveSession(
-	activeSession: ActiveSessionState,
-	metadata: AgentSessionRuntimeMetadata,
-	parentNodeId: string | undefined,
-	parent: ActiveSessionState | undefined,
-): AgentConnectionRlmChildAgentSnapshot {
-	const session = activeSession.runtime.session;
-	let answerPreview: string | undefined;
-	let toolUseCount = 0;
-	const messages =
-		session.state.streamingMessage?.role === "assistant"
-			? [...session.messages, session.state.streamingMessage]
-			: session.messages;
-	for (const message of messages) {
-		if (message.role === "assistant") {
-			const text = compactRlmText(readMessageText(message.content));
-			if (text) {
-				answerPreview = text;
-			}
-			toolUseCount += message.content.filter((block) => block.type === "toolCall").length;
-		}
-	}
-	// The parent session's run tracker is the source of truth for child status;
-	// a daemon-hosted child whose agent is momentarily idle is still part of an
-	// active run. The streaming heuristic only covers parents the daemon does
-	// not host (e.g. children attributed to a session created by an older build).
-	const runStatus = metadata.rlmChildId
-		? parent?.runtime.session.getRlmChildRunStatus(metadata.rlmChildId)
-		: undefined;
-	const status = runStatus ?? (session.isSessionActive ? "running" : "done");
-	const isActive = status === "running" || session.isSessionActive;
-	return {
-		id: metadata.rlmChildId ?? activeSession.activeSessionId,
-		parentId: parentNodeId,
-		activeSessionId: activeSession.activeSessionId,
-		sessionName: session.sessionName,
-		model: session.model ? `${session.model.provider}/${session.model.id}` : undefined,
-		label: rlmChildLabel(metadata.prompt ?? ""),
-		status,
-		answerPreview,
-		toolUseCount: toolUseCount > 0 ? toolUseCount : undefined,
-		tokenCount: session._contextTokensForCurrentMessages(),
-		recap: session.getCurrentRecap(),
-		sessionDir: metadata.sessionDir ?? session.sessionManager.getSessionDir(),
-		activity: isActive ? { kind: session.isStreaming ? "writing" : "waiting" } : undefined,
-	};
+	if (!root) return [];
+	const activeSessionIds = new Map(
+		activeSessions.flatMap((candidate) => {
+			const childId = candidate.runtime.metadata.rlmChildId;
+			return childId ? [[childId, candidate.activeSessionId] as const] : [];
+		}),
+	);
+	return root.runtime.session.getRlmChildSnapshots().map((snapshot) => ({
+		...snapshot,
+		activeSessionId: activeSessionIds.get(snapshot.id),
+	}));
 }
 
 function firstUserMessageText(session: ActiveSessionState["runtime"]["session"]): string | undefined {
@@ -458,6 +404,10 @@ export function activeActivityForSession(activeSession: ActiveSessionState): Ses
 	// A finished subagent is resident but never gets a summarizer verdict, so don't hold
 	// it at "working" waiting for one — a not-busy subagent is simply idle/done.
 	if (activeSession.runtime.metadata?.kind === "subagent") {
+		return "idle";
+	}
+	// An empty session never gets a summarizer verdict; don't hold it at "working" forever.
+	if (activeSession.runtime.session.messages.length === 0) {
 		return "idle";
 	}
 	// Hold at "working" until the idle verdict is current, so the view never
