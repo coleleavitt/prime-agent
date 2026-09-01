@@ -29,6 +29,7 @@ import { ensureTool } from "../../utils/tools-manager.js";
 import { DaemonAgentConnection } from "../agent-connection/daemon-agent-connection.js";
 import type { AgentConnectionHeartbeat, AgentConnectionSavedSessionInfo } from "../agent-connection/types.js";
 import { DaemonClient, getDaemonSocketCloseReason } from "../daemon/daemon-client.js";
+import { isUnknownActiveSessionError } from "../daemon/daemon-errors.js";
 import {
 	collectDaemonClientEnv,
 	type DaemonClosingReason,
@@ -334,6 +335,7 @@ async function openAgentsViewSession(
 				closeClientOnDispose: true,
 				recoverDaemon: options.recoverDaemon,
 				reconnectTimeoutMs: options.reconnectTimeoutMs,
+				sessionRecoveryConfig: options.config,
 				telemetryDisabled: options.config.telemetryDisabled,
 			});
 			return { connection, summary };
@@ -357,6 +359,7 @@ async function openAgentsViewSession(
 			closeClientOnDispose: true,
 			recoverDaemon: options.recoverDaemon,
 			reconnectTimeoutMs: options.reconnectTimeoutMs,
+			sessionRecoveryConfig: options.config,
 			telemetryDisabled: options.config.telemetryDisabled,
 		});
 		return { connection, summary: resumed.summary, cwdFallbackNotice: resumed.cwdFallbackNotice };
@@ -409,10 +412,6 @@ function getRequiredActiveSessionId(summary: SessionSummary): string {
 		throw new Error("Daemon returned a session without an active session id");
 	}
 	return summary.activeSessionId;
-}
-
-function isUnknownActiveSessionError(error: unknown): boolean {
-	return error instanceof Error && error.message.startsWith("Unknown active session:");
 }
 
 export async function runAgentsViewMode(options: AgentsViewModeOptions): Promise<void> {

@@ -25,7 +25,7 @@ import {
 	type DaemonClient,
 	getDaemonSocketCloseReason,
 } from "../daemon/daemon-client.js";
-import { deserializeDaemonError } from "../daemon/daemon-errors.js";
+import { deserializeDaemonError, isUnknownActiveSessionError } from "../daemon/daemon-errors.js";
 import {
 	collectDaemonClientEnv,
 	collectDaemonLaunchEnv,
@@ -1521,6 +1521,9 @@ export class DaemonAgentConnection implements AgentConnection {
 					if (this.disposed) {
 						return;
 					}
+					if (isUnknownActiveSessionError(lastError)) {
+						break;
+					}
 					this.client.resetTransportForReconnect();
 					const remainingMs = deadline - Date.now();
 					if (remainingMs <= 0) {
@@ -1533,12 +1536,24 @@ export class DaemonAgentConnection implements AgentConnection {
 			}
 			if (!this.disposed) {
 				this.client.close();
-				await this.emit({ type: "closed", error: `Daemon reconnection failed: ${lastError.message}` });
+				await this.emit({ type: "closed", error: this.describeReconnectFailure(lastError) });
 			}
 		})().finally(() => {
 			this.reconnectPromise = undefined;
 		});
 		return this.reconnectPromise;
+	}
+
+	private describeReconnectFailure(error: Error): string {
+		if (!isUnknownActiveSessionError(error)) {
+			return `Daemon reconnection failed: ${error.message}`;
+		}
+		const resumeTarget = this.attachedSessionFile ?? this.attachedSessionId;
+		return (
+			`The daemon no longer has this session running, so it cannot be reattached. ` +
+			`Its conversation is still saved` +
+			(resumeTarget ? `; reopen it with \`prime-agent --resume ${resumeTarget}\`.` : `.`)
+		);
 	}
 
 	private async requestOk(command: DaemonCommandBody): Promise<void> {

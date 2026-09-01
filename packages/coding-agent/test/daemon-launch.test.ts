@@ -26,6 +26,8 @@ interface FakeDaemonOptions {
 	appVersion?: string;
 	schemaId?: string;
 	serverCapabilities?: string[];
+	/** When false, the server accepts connections but never greets, like a daemon with a blocked event loop. */
+	sendHello?: boolean;
 	onCommand?: (command: { type: string }) => void;
 }
 
@@ -43,15 +45,17 @@ async function startFakeDaemon(options: FakeDaemonOptions = {}): Promise<FakeDae
 	const socketPath = join(dir, "d.sock");
 	const server: Server = createServer((socket) => {
 		socket.on("error", () => undefined);
-		send(socket, {
-			type: "daemon_hello",
-			socketPath,
-			protocol: { name: "prime-agent.daemon", version: options.protocolVersion ?? DAEMON_PROTOCOL_VERSION },
-			appVersion: options.appVersion,
-			schemaId: options.schemaId ?? DAEMON_SCHEMA_ID,
-			clientId: "fake-client",
-			serverCapabilities: options.serverCapabilities ?? [],
-		});
+		if (options.sendHello !== false) {
+			send(socket, {
+				type: "daemon_hello",
+				socketPath,
+				protocol: { name: "prime-agent.daemon", version: options.protocolVersion ?? DAEMON_PROTOCOL_VERSION },
+				appVersion: options.appVersion,
+				schemaId: options.schemaId ?? DAEMON_SCHEMA_ID,
+				clientId: "fake-client",
+				serverCapabilities: options.serverCapabilities ?? [],
+			});
+		}
 		let buffer = "";
 		socket.on("data", (chunk) => {
 			buffer += chunk.toString();
@@ -271,6 +275,42 @@ describe("ensureInteractiveDaemonRunning", () => {
 		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
 
 		await expect(probe).resolves.toMatchObject({ status: "current" });
+	});
+
+	it("reports a connectable daemon that never greets as unresponsive rather than stale", async () => {
+		const commands: string[] = [];
+		const daemon = await startFakeDaemon({
+			sendHello: false,
+			onCommand: (command) => commands.push(command.type),
+		});
+		cleanups.push(daemon.close);
+
+		await expect(probeDaemonVersion(daemon.socketPath, [50, 50])).resolves.toEqual({ status: "unresponsive" });
+		expect(commands).not.toContain("shutdown");
+	});
+
+	it("does not replace a stale daemon whose worker is still recovering", async () => {
+		const commands: string[] = [];
+		const daemon = await startFakeDaemon({
+			protocolVersion: DAEMON_PROTOCOL_VERSION,
+			appVersion: VERSION,
+			schemaId: "stale-schema",
+			sessions: [
+				{
+					id: "recovering-1",
+					activeSessionId: "recovering-1",
+					isSessionActive: false,
+					isStreaming: false,
+					workerState: "recovering",
+				},
+			],
+			onCommand: (command) => commands.push(command.type),
+		});
+		cleanups.push(daemon.close);
+
+		await expect(ensureInteractiveDaemonRunning(daemon.socketPath)).rejects.toThrow("stale");
+		expect(commands).toContain("list");
+		expect(commands).not.toContain("shutdown");
 	});
 
 	it("fails fast with the daemon log tail when the spawned daemon exits during startup", async () => {

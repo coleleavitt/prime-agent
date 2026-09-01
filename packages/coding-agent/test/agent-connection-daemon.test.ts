@@ -45,6 +45,7 @@ class FakeDaemonClient {
 	resetTransportCount = 0;
 	reconnectError: Error | undefined;
 	attachFailures = 0;
+	attachUnknownActiveSession = false;
 	connectionStateGate: Promise<void> | undefined;
 	connectionStateFactory: ((activeSessionId: string) => AgentConnectionState) | undefined;
 	rlmChildren: AgentConnectionRlmChildAgentSnapshot[] = [];
@@ -113,12 +114,12 @@ class FakeDaemonClient {
 					await this.restoredAttachGate;
 					this.restoredAttachCompleted++;
 				}
-				if (command.activeSessionId === "missing") {
+				if (command.activeSessionId === "missing" || this.attachUnknownActiveSession) {
 					return {
 						type: "response",
 						command: command.type,
 						success: false,
-						error: "Unknown active session: missing",
+						error: `Unknown active session: ${command.activeSessionId}`,
 					};
 				}
 				return {
@@ -1418,6 +1419,29 @@ describe("DaemonAgentConnection", () => {
 
 		expect(events).toEqual([expect.objectContaining({ type: "connection_status", status: "reconnecting" })]);
 		expect(fakeClient.requests.at(-1)).toMatchObject({ type: "detach", activeSessionId: "active-restored" });
+	});
+
+	it("stops reconnecting once the daemon reports the session is gone", async () => {
+		const fakeClient = new FakeDaemonClient();
+		const connection = new DaemonAgentConnection(asDaemonClient(fakeClient), "active-original", {
+			recoverDaemon: async () => undefined,
+		});
+		const closedEvents: AgentConnectionEvent[] = [];
+		connection.subscribe((event) => {
+			if (event.type === "closed") closedEvents.push(event);
+		});
+		await connection.attach();
+
+		fakeClient.attachUnknownActiveSession = true;
+		fakeClient.emitClose(new Error("Daemon socket closed"));
+
+		await vi.waitFor(() => {
+			expect(closedEvents).toHaveLength(1);
+		});
+		const closedError = closedEvents[0]?.type === "closed" ? closedEvents[0].error : undefined;
+		expect(closedError).toContain("The daemon no longer has this session running");
+		expect(closedError).toContain("--resume /tmp/session-current.jsonl");
+		expect(fakeClient.requests.filter((request) => request.type === "attach")).toHaveLength(2);
 	});
 
 	it("returns to normal close handling after update restoration times out", async () => {

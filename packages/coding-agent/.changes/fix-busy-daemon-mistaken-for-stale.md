@@ -1,0 +1,3 @@
+- Fixed a busy daemon being mistaken for a stale one and replaced when it could not answer the handshake in time, which killed in-flight sessions and left open windows unable to reattach.
+- Fixed a session whose worker was still starting or recovering being reported idle, which let a stale-daemon replacement interrupt active work.
+- Changed reconnection to stop retrying once the daemon reports the session is gone, replacing a 60-second wait and a raw internal error with an immediate message naming the saved session to resume.

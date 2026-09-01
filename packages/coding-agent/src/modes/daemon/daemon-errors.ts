@@ -3,6 +3,18 @@ import { SessionImportFileNotFoundError } from "../../core/session-import-errors
 import { SessionAlreadyActiveError } from "../../core/session-lease.js";
 import type { DaemonErrorInfo, DaemonResponse } from "./daemon-protocol.js";
 
+export const UNKNOWN_ACTIVE_SESSION_ERROR_PREFIX = "Unknown active session:";
+
+// A supervisor loads its worker descriptors before it accepts connections, so
+// this answer is final for the daemon that gave it: retrying cannot change it.
+export function isUnknownActiveSessionErrorMessage(message: string): boolean {
+	return message.startsWith(UNKNOWN_ACTIVE_SESSION_ERROR_PREFIX);
+}
+
+export function isUnknownActiveSessionError(error: unknown): boolean {
+	return error instanceof Error && isUnknownActiveSessionErrorMessage(error.message);
+}
+
 export function serializeDaemonError(error: unknown): DaemonErrorInfo | undefined {
 	if (error instanceof MissingSessionCwdError) {
 		return { code: "missing_session_cwd", issue: error.issue };

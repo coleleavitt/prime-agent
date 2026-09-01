@@ -74,7 +74,7 @@ import { isTelemetryEnabled } from "./core/telemetry.js";
 import { printTimings, resetTimings, time } from "./core/timings.js";
 import { runMigrations, showDeprecationWarnings } from "./migrations.js";
 import { isDaemonCatalogProcess, runDaemonCatalogProcess } from "./modes/daemon/daemon-catalog-process.js";
-import { deserializeDaemonError } from "./modes/daemon/daemon-errors.js";
+import { deserializeDaemonError, isUnknownActiveSessionErrorMessage } from "./modes/daemon/daemon-errors.js";
 import { collectDaemonClientEnv, collectDaemonLaunchEnv } from "./modes/daemon/daemon-protocol.js";
 import {
 	DAEMON_WORKER_ACTIVE_SESSION_ID_ENV,
@@ -889,10 +889,6 @@ function getDaemonSummaryActiveSessionId(summary: SessionSummary): string {
 	return summary.activeSessionId ?? summary.id;
 }
 
-function isUnknownActiveSessionError(message: string): boolean {
-	return message.startsWith("Unknown active session:");
-}
-
 async function findActiveDaemonSessionSummary(
 	socketPath: string,
 	selector: string,
@@ -903,7 +899,7 @@ async function findActiveDaemonSessionSummary(
 	try {
 		const response = await client.request({ type: "get_state", activeSessionId: selector }, 3000);
 		if (!response.success) {
-			if (isUnknownActiveSessionError(response.error)) {
+			if (isUnknownActiveSessionErrorMessage(response.error)) {
 				return undefined;
 			}
 			throw new Error(response.error);
