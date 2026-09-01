@@ -144,6 +144,13 @@ export class DaemonWorkerClient {
 			}, timeoutMs);
 			this.pending.set(id, { resolve, reject, timeout });
 		});
+		// The send below awaits a socket flush, so a backpressured worker can hold it
+		// past timeoutMs. Both the timer above and close()/rejectAll can therefore
+		// reject this promise while it is still unreturned and unawaited, which Node
+		// reports as an unhandled rejection and the supervisor turns into
+		// process.exit(1). Attaching a sink keeps it "handled"; the rejection is still
+		// delivered to whoever awaits the promise returned below.
+		void response.catch(() => undefined);
 		try {
 			await this.channel.send(
 				{ kind: "command", requestId: id, commandType: command.type },
