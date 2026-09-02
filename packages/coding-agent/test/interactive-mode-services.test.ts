@@ -45,4 +45,43 @@ describe("InteractiveModeUiServices MCP refresh", () => {
 		expect(refresh).toHaveBeenCalledOnce();
 		expect(services.getInitialSessionName()).toBe("daemon-session");
 	});
+
+	it("exposes locally loaded extension shortcuts to a daemon-backed UI client", () => {
+		const shortcut = {
+			shortcut: "ctrl+space",
+			extensionPath: "/extensions/voice.ts",
+			description: "Start or stop voice dictation",
+			handler: vi.fn(),
+		};
+		const extension = {
+			path: "/extensions/voice.ts",
+			shortcuts: new Map([["ctrl+space", shortcut]]),
+		};
+		const extensionResult = {
+			extensions: [extension],
+			errors: [],
+			runtime: { flagValues: new Map(), pendingProviderRegistrations: [] },
+		};
+		const services = createInteractiveModeUiServicesFromServices({
+			services: {
+				cwd: "/daemon",
+				settingsManager: {},
+				modelRegistry: {},
+				resourceLoader: {
+					getThemes: () => ({ themes: [] }),
+					getExtensions: () => extensionResult,
+				},
+				mcpManager: { refresh: vi.fn() },
+			} as unknown as AgentSessionServices,
+			sessionManager: {
+				getCwd: () => "/daemon",
+				getSessionName: () => "daemon-session",
+			} as unknown as SessionManager,
+		});
+
+		const runner = services.getClientExtensionRunner?.();
+		expect(runner).toBeDefined();
+		expect(runner).toBe(services.getClientExtensionRunner?.());
+		expect(runner?.getShortcuts({})).toEqual(new Map([["ctrl+space", shortcut]]));
+	});
 });

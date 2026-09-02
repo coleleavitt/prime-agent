@@ -1,7 +1,7 @@
 import type { AgentSession, ExtensionBindings } from "../../core/agent-session.js";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.js";
 import type { AgentSessionServices } from "../../core/agent-session-services.js";
-import type { ExtensionCommandContext, ExtensionRunner, ToolDefinition } from "../../core/extensions/index.js";
+import { type ExtensionCommandContext, ExtensionRunner, type ToolDefinition } from "../../core/extensions/index.js";
 import type { ModelRegistry } from "../../core/model-registry.js";
 import type { SessionManager } from "../../core/session-manager.js";
 import type { SettingsManager } from "../../core/settings-manager.js";
@@ -19,7 +19,10 @@ export interface InteractiveModeUiServices {
 	modelRegistry: ModelRegistry;
 	getInitialCwd(): string;
 	getInitialSessionName(): string | undefined;
+	getClientSessionManager?(): SessionManager;
 	getThemes(): Theme[];
+	/** Locally loaded extension callbacks used only for client-side shortcuts. */
+	getClientExtensionRunner?(): ExtensionRunner;
 	/** Refreshes MCP providers after a client-side MCP settings mutation. */
 	refreshMcpProviders?(): void;
 }
@@ -61,7 +64,9 @@ export function createInteractiveModeUiServices(session: AgentSession): Interact
 		modelRegistry: session.modelRegistry,
 		getInitialCwd: () => session.sessionManager.getCwd(),
 		getInitialSessionName: () => session.sessionManager.getSessionName(),
+		getClientSessionManager: () => session.sessionManager,
 		getThemes: () => session.resourceLoader.getThemes().themes,
+		getClientExtensionRunner: () => session.extensionRunner,
 		refreshMcpProviders: () => session.refreshMcpProviders(),
 	};
 }
@@ -71,13 +76,28 @@ export function createInteractiveModeUiServicesFromServices(options: {
 	sessionManager: SessionManager;
 }): InteractiveModeUiServices {
 	const { services, sessionManager } = options;
+	let clientExtensionRunner: ExtensionRunner | undefined;
 
 	return {
 		settingsManager: services.settingsManager,
 		modelRegistry: services.modelRegistry,
 		getInitialCwd: () => sessionManager.getCwd(),
 		getInitialSessionName: () => sessionManager.getSessionName(),
+		getClientSessionManager: () => sessionManager,
 		getThemes: () => services.resourceLoader.getThemes().themes,
+		getClientExtensionRunner: () => {
+			if (!clientExtensionRunner) {
+				const loaded = services.resourceLoader.getExtensions();
+				clientExtensionRunner = new ExtensionRunner(
+					loaded.extensions,
+					loaded.runtime,
+					services.cwd,
+					sessionManager,
+					services.modelRegistry,
+				);
+			}
+			return clientExtensionRunner;
+		},
 		refreshMcpProviders: () => services.mcpManager.refresh(),
 	};
 }

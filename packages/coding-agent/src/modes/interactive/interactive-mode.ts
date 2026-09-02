@@ -1057,6 +1057,11 @@ export class InteractiveMode {
 		}
 		return this.localSessionHost;
 	}
+
+	private getClientExtensionRunner(): ExtensionRunner | undefined {
+		if (this.bindLocalSessionExtensions) return this.getLocalSessionHost().getExtensionRunner();
+		return this.uiServices.getClientExtensionRunner?.();
+	}
 	private get settingsManager() {
 		return this.uiServices.settingsManager;
 	}
@@ -2489,8 +2494,8 @@ export class InteractiveMode {
 		await this.refreshConnectionCatalog();
 		this.setupAutocompleteProvider();
 
-		const extensionRunner = localSessionHost.getExtensionRunner();
-		this.setupExtensionShortcuts(extensionRunner);
+		const extensionRunner = this.getClientExtensionRunner();
+		if (extensionRunner) this.setupExtensionShortcuts(extensionRunner);
 		this.showLoadedResources({ force: false, showDiagnosticsWhenQuiet: true });
 	}
 
@@ -2801,6 +2806,8 @@ export class InteractiveMode {
 			setRegisteredThemes(this.uiServices.getThemes());
 			await this.refreshConnectionCatalog();
 			this.setupAutocompleteProvider();
+			const clientExtensionRunner = this.getClientExtensionRunner();
+			if (clientExtensionRunner) this.setupExtensionShortcuts(clientExtensionRunner);
 			this.showLoadedResources({ force: false, showDiagnosticsWhenQuiet: true });
 		}
 		this.subscribeToAgent();
@@ -3081,40 +3088,45 @@ export class InteractiveMode {
 		const shortcuts = extensionRunner.getShortcuts(this.keybindings.getEffectiveConfig());
 		if (shortcuts.size === 0) return;
 
-		const localSessionHost = this.getLocalSessionHost();
-		const createContext = (): ExtensionContext => ({
-			ui: this.createExtensionUIContext(),
-			hasUI: true,
-			cwd: this.getCurrentCwd(),
-			sessionManager: localSessionHost.getSessionManager(),
-			modelRegistry: this.modelRegistry,
-			model: this.getCurrentModel(),
-			isIdle: () => !this.isAgentStreaming(),
-			signal: localSessionHost.getAbortSignal(),
-			abort: () => this.agentConnection.abort(),
-			hasPendingMessages: () => this.getQueuedActionCount() > 0,
-			shutdown: () => {
-				this.shutdownRequested = true;
-			},
-			getContextUsage: () => this.getConnectionContextUsage(),
-			compact: (options) => {
-				void (async () => {
-					try {
-						const result = await this.agentConnection.compact(options?.customInstructions);
-						options?.onComplete?.(result);
-					} catch (error) {
-						const err = error instanceof Error ? error : new Error(String(error));
-						options?.onError?.(err);
-					}
-				})();
-			},
-			getSystemPrompt: () => localSessionHost.getSystemPrompt(),
-		});
+		const createContext = async (): Promise<ExtensionContext> => {
+			const localSessionHost = this.localSessionHost;
+			const systemPrompt = localSessionHost?.getSystemPrompt() ?? (await this.agentConnection.getSystemPrompt());
+			const sessionManager = localSessionHost?.getSessionManager() ?? this.uiServices.getClientSessionManager?.();
+			if (!sessionManager) throw new Error("Client extension shortcuts require a local session manager");
+			return {
+				ui: this.createExtensionUIContext(),
+				hasUI: true,
+				cwd: this.getCurrentCwd(),
+				sessionManager,
+				modelRegistry: this.modelRegistry,
+				model: this.getCurrentModel(),
+				isIdle: () => !this.isAgentStreaming(),
+				signal: localSessionHost?.getAbortSignal(),
+				abort: () => this.agentConnection.abort(),
+				hasPendingMessages: () => this.getQueuedActionCount() > 0,
+				shutdown: () => {
+					this.shutdownRequested = true;
+				},
+				getContextUsage: () => this.getConnectionContextUsage(),
+				compact: (options) => {
+					void (async () => {
+						try {
+							const result = await this.agentConnection.compact(options?.customInstructions);
+							options?.onComplete?.(result);
+						} catch (error) {
+							const err = error instanceof Error ? error : new Error(String(error));
+							options?.onError?.(err);
+						}
+					})();
+				},
+				getSystemPrompt: () => systemPrompt,
+			};
+		};
 
 		this.defaultEditor.onExtensionShortcut = (data: string) => {
 			for (const [shortcutStr, shortcut] of shortcuts) {
 				if (matchesKey(data, shortcutStr as KeyId)) {
-					Promise.resolve(shortcut.handler(createContext())).catch((err) => {
+					void (async () => shortcut.handler(await createContext()))().catch((err) => {
 						this.showError(`Shortcut handler error: ${err instanceof Error ? err.message : String(err)}`);
 					});
 					return true;
@@ -8873,10 +8885,8 @@ export class InteractiveMode {
 			this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
 			await this.refreshConnectionCatalog();
 			this.setupAutocompleteProvider();
-			if (this.bindLocalSessionExtensions) {
-				const runner = this.getLocalSessionHost().getExtensionRunner();
-				this.setupExtensionShortcuts(runner);
-			}
+			const clientExtensionRunner = this.getClientExtensionRunner();
+			if (clientExtensionRunner) this.setupExtensionShortcuts(clientExtensionRunner);
 			await this.rebuildChatFromMessages();
 			dismissReloadBox(this.editor as Component);
 			this.showLoadedResources({
@@ -9863,9 +9873,7 @@ ${interrupt ? `| \`${interrupt}\` | Interrupt current operation |\n` : ""}${shor
 | mouse click on link | Open link in browser |
 `;
 
-		const shortcuts = this.bindLocalSessionExtensions
-			? this.getLocalSessionHost().getExtensionRunner().getShortcuts(this.keybindings.getEffectiveConfig())
-			: undefined;
+		const shortcuts = this.getClientExtensionRunner()?.getShortcuts(this.keybindings.getEffectiveConfig());
 		if (shortcuts && shortcuts.size > 0) {
 			hotkeys += `
 **Extensions**
