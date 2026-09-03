@@ -192,7 +192,11 @@ import {
 	type AutoRefineReason,
 	type AutoRefineReview,
 	appendGlobalRefinement,
+	applyRavoOutcome,
 	applyRefinementProposal,
+	countValidRefinementEdits,
+	emptyRavoState,
+	formatHarnessStateForPrompt,
 	generateRefinementId,
 	getGlobalHarnessStateDir,
 	getLocalHarnessStateDir,
@@ -205,9 +209,13 @@ import {
 	mergeRefinementHistory,
 	normalizeRefinementProposal,
 	planRefinement,
+	RAVO_DEFAULT_CONFIG,
 	REFINE_SKILL_NAME,
 	type RefinementPlan,
 	type RefinementResult,
+	ravoEnabled,
+	ravoEvaluateProposal,
+	rejectedRefinementResult,
 	reviewAutoRefine,
 	saveHarnessState,
 } from "./refinement/index.js";
@@ -8265,6 +8273,27 @@ export class AgentSession {
 		if (this._disposed || signal.aborted) {
 			throw new Error("Refinement cancelled because the session was disposed.");
 		}
+		// RAVO deep evaluation runs here in the background planning phase (one
+		// proposal, threaded through every gate); _applyRefine only reads the
+		// decision so the sync critical section stays LLM-free. Rollbacks are
+		// safety actions and bypass gating.
+		if (!options.rollbackId && ravoEnabled() && plan.proposal.edits.length > 0) {
+			const ravo = await ravoEvaluateProposal(plan.proposal, {
+				state: baselineState?.ravo ?? emptyRavoState(),
+				config: RAVO_DEFAULT_CONFIG,
+				validEdits: countValidRefinementEdits(plan.proposal),
+				conversationText: serializeConversation(convertToLlm(this.agent.state.messages)).slice(-40_000),
+				harnessOverview: formatHarnessStateForPrompt(planningState, { includeIpythonExamples: false }),
+				model,
+				apiKey,
+				headers,
+				signal,
+			});
+			if (this._disposed || signal.aborted) {
+				throw new Error("Refinement cancelled because the session was disposed.");
+			}
+			return { ...plan, baselineState, ravo };
+		}
 		return { ...plan, baselineState };
 	}
 
@@ -8348,12 +8377,41 @@ export class AgentSession {
 			if (this._disposed || refineAbort.signal.aborted) {
 				throw new Error("Refinement cancelled because the session was disposed.");
 			}
+			// RAVO gate decision (computed during planning): a rejected proposal is
+			// recorded in the session for observability but never touches the
+			// harness state — false rejections can cost progress, never corrupt
+			// the archive.
+			if (plan.ravo && plan.ravo.decision !== "commit") {
+				const rejected = rejectedRefinementResult(proposal, plan.ravo, { id: plan.id, scope: targetScope });
+				let rejectedAuditAppendError: { error: unknown } | undefined;
+				try {
+					this.sessionManager.appendCustomEntry("prime-agent.refinement", rejected);
+				} catch (error) {
+					rejectedAuditAppendError = { error };
+				}
+				try {
+					this._recordRefinementOutcome(rejected);
+				} catch (error) {
+					if (!rejectedAuditAppendError) throw error;
+				}
+				if (rejectedAuditAppendError) throw rejectedAuditAppendError.error;
+				try {
+					this._emit({ type: "refine_complete", result: rejected });
+				} catch {
+					// Listener failures must not turn a recorded rejection into an error.
+				}
+				return rejected;
+			}
 			const result = applyRefinementProposal(state, proposal, {
 				id: plan.id,
 				rollbackOf: plan.rollbackOf,
 				scope: targetScope,
 				baselineState: plan.baselineState,
 			});
+			if (plan.ravo) {
+				applyRavoOutcome(state, { id: plan.id, summary: proposal.summary }, plan.ravo);
+				result.ravo = plan.ravo;
+			}
 			result.harnessStatePath = saveHarnessState(targetHarnessStateDir, state);
 			if (targetScope === "global") {
 				appendGlobalRefinement(globalHarnessStateDir, result);

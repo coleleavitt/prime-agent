@@ -1,0 +1,1 @@
+- Added RAVO gating to /refine: proposals now pass a structural fast screen, a deep judge score gated against the refinement lineage, and a weighted criteria gate with weakness pressure before harness edits are committed; rejected proposals are recorded without touching harness state. Disable with `PRIME_AGENT_RAVO=0`.

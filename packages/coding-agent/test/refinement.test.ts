@@ -1002,6 +1002,11 @@ describe("harness refinement", () => {
 			),
 		);
 
+		// Second call is the RAVO deep judge scoring the proposal.
+		completeSimpleMock.mockResolvedValueOnce(
+			assistantText(JSON.stringify({ score: 80, failedCriteria: [], rationale: "well evidenced" })),
+		);
+
 		const result = await refineHarness(
 			[{ role: "user", content: "Use native validation.", timestamp: Date.now() } satisfies AgentMessage],
 			state,
@@ -1014,7 +1019,7 @@ describe("harness refinement", () => {
 			"xhigh",
 		);
 
-		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
+		expect(completeSimpleMock).toHaveBeenCalledTimes(2);
 		expect(completeSimpleMock.mock.calls[0][1]).toMatchObject({
 			systemPrompt: expect.stringContaining("The default editable continual harness store is local"),
 		});

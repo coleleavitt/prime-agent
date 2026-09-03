@@ -17,6 +17,15 @@ import { getAgentDir } from "../../config.js";
 import { serializeConversation } from "../compaction/utils.js";
 import { convertToLlm } from "../messages.js";
 import type { CustomEntry } from "../session-manager.js";
+import {
+	emptyRavoState,
+	RAVO_DEFAULT_CONFIG,
+	type RavoGateReport,
+	type RavoHarnessState,
+	ravoCommit,
+	ravoEnabled,
+	ravoEvaluateProposal,
+} from "./ravo.js";
 
 export const REFINEMENT_CUSTOM_TYPE = "prime-agent.refinement";
 
@@ -60,6 +69,8 @@ export interface HarnessState {
 	schema: number;
 	entries: Record<RefinementKind, Record<string, HarnessEntry>>;
 	refinements: HarnessRefinementEvent[];
+	/** RAVO lineage + co-evolving evaluator; absent until the first gated refinement. */
+	ravo?: RavoHarnessState;
 }
 
 export interface RefinementEdit {
@@ -99,6 +110,8 @@ export interface RefinementResult {
 	harnessStatePath: string;
 	rollbackOf?: string;
 	scope?: HarnessScope;
+	/** RAVO gate report for this refinement, when gating was active. */
+	ravo?: RavoGateReport;
 }
 
 export interface RefineOptions {
@@ -319,6 +332,10 @@ export function loadHarnessState(
 	}
 	if (Array.isArray(parsed.refinements)) {
 		state.refinements = parsed.refinements;
+	}
+	const ravo = objectRecord(parsed.ravo);
+	if (ravo && Array.isArray(ravo.lineage) && objectRecord(ravo.evaluator)) {
+		state.ravo = ravo as unknown as RavoHarnessState;
 	}
 	return state;
 }
@@ -713,6 +730,55 @@ function validateEdit(edit: RefinementEdit, computedId?: string): string | undef
 	return undefined;
 }
 
+/**
+ * Count edits that pass structural validation — the deterministic RAVO fast
+ * screen input. Uses the same `validateEdit` the apply path uses, so the
+ * screen can never pass an edit the apply path would reject structurally.
+ */
+export function countValidRefinementEdits(proposal: RefinementProposal): number {
+	let valid = 0;
+	for (const edit of proposal.edits) {
+		const computedId = edit.id ?? (edit.action === "create" ? slug(edit.title ?? edit.kind, edit.kind) : undefined);
+		if (!validateEdit(edit, computedId)) {
+			valid += 1;
+		}
+	}
+	return valid;
+}
+
+/**
+ * Record a committed champion in the harness RAVO state: append-only lineage
+ * (monotone best score) plus weakness pressure on the weakest failed
+ * criterion. Mutates `state` like `applyRefinementProposal` does.
+ */
+export function applyRavoOutcome(
+	state: HarnessState,
+	champion: { id: string; summary: string },
+	report: RavoGateReport,
+): void {
+	const ravoState = state.ravo ?? emptyRavoState();
+	state.ravo = ravoCommit(ravoState, champion, report);
+}
+
+/** Build the rejected-refinement result for a gated-out proposal (no edits applied). */
+export function rejectedRefinementResult(
+	proposal: RefinementProposal,
+	report: RavoGateReport,
+	options: { id: string; scope?: HarnessScope },
+): RefinementResult {
+	const reason = `ravo gate rejected (${report.decision}): ${report.rationale}`;
+	return {
+		id: options.id,
+		summary: `RAVO gate rejected: ${proposal.summary}`,
+		rationale: proposal.rationale,
+		expectedOutcome: proposal.expectedOutcome,
+		appliedEdits: proposal.edits.map((edit) => ({ ...edit, id: edit.id ?? "", applied: false, error: reason })),
+		harnessStatePath: "",
+		scope: options.scope,
+		ravo: report,
+	};
+}
+
 export function applyRefinementProposal(
 	state: HarnessState,
 	proposal: RefinementProposal,
@@ -860,6 +926,8 @@ export interface RefinementPlan {
 	rollbackScope?: HarnessScope;
 	/** Target-scope state captured before planning, used to reject conflicting edits at apply time. */
 	baselineState?: HarnessState;
+	/** RAVO gate report computed during the planning phase; apply decides on it. */
+	ravo?: RavoGateReport;
 }
 
 /**
@@ -1023,9 +1091,32 @@ export async function refineHarness(
 	thinkingLevel?: ThinkingLevel,
 ): Promise<RefinementResult> {
 	const plan = await planRefinement(messages, state, history, model, apiKey, options, headers, signal, thinkingLevel);
+	const scope = plan.rollbackScope ?? (options.global ? "global" : "local");
+	// Rollbacks are safety actions and bypass RAVO gating; empty proposals are
+	// "no useful edit" outcomes, not candidates.
+	if (!plan.rollbackOf && ravoEnabled() && plan.proposal.edits.length > 0) {
+		const report = await ravoEvaluateProposal(plan.proposal, {
+			state: state.ravo ?? emptyRavoState(),
+			config: RAVO_DEFAULT_CONFIG,
+			validEdits: countValidRefinementEdits(plan.proposal),
+			conversationText: serializeConversation(convertToLlm(messages)).slice(-40_000),
+			harnessOverview: overviewForPrompt(state),
+			model,
+			apiKey,
+			headers,
+			signal,
+		});
+		if (report.decision !== "commit") {
+			return rejectedRefinementResult(plan.proposal, report, { id: plan.id, scope });
+		}
+		const result = applyRefinementProposal(state, plan.proposal, { id: plan.id, scope });
+		applyRavoOutcome(state, { id: plan.id, summary: plan.proposal.summary }, report);
+		result.ravo = report;
+		return result;
+	}
 	return applyRefinementProposal(state, plan.proposal, {
 		id: plan.id,
 		rollbackOf: plan.rollbackOf,
-		scope: plan.rollbackScope ?? (options.global ? "global" : "local"),
+		scope,
 	});
 }
