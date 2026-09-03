@@ -77,6 +77,9 @@ describe("ExtensionRunner", () => {
 		shutdown: () => {},
 		getContextUsage: () => undefined,
 		compact: () => {},
+		runAgent: async () => {
+			throw new Error("not used");
+		},
 		getSystemPrompt: () => "",
 	};
 
@@ -424,6 +427,35 @@ describe("ExtensionRunner", () => {
 	});
 
 	describe("context creation", () => {
+		it("binds runAgent through ExtensionContext and keeps progress callback failures contained by the handler", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const runAgent = vi.fn(async () => ({
+				status: "completed" as const,
+				output: "child result",
+				messages: [],
+				model: "faux/child",
+				turns: 1,
+				toolCalls: 0,
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+			}));
+			runner.bindCore(extensionActions, { ...extensionContextActions, runAgent });
+
+			const options = { tools: { allow: ["read"] } };
+			await expect(runner.createContext().runAgent({ prompt: "inspect" }, options)).resolves.toMatchObject({
+				status: "completed",
+				output: "child result",
+			});
+			expect(runAgent).toHaveBeenCalledWith({ prompt: "inspect" }, options);
+		});
+
 		it("exposes the current abort signal on ExtensionContext", async () => {
 			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
 			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);

@@ -3176,6 +3176,10 @@ export class InteractiveMode {
 						}
 					})();
 				},
+				runAgent: (request, options) => {
+					if (!localSessionHost) throw new Error("runAgent is unavailable for client-local extensions");
+					return localSessionHost.runAgent(request, options);
+				},
 				getSystemPrompt: () => systemPrompt,
 			};
 		};

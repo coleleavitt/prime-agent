@@ -13,7 +13,7 @@ describe("AgentSession session_before_refine extension hook", () => {
 		}
 	});
 
-	it("applies an extension-provided proposal without calling the built-in planner", async () => {
+	it("gates an extension-provided proposal without calling the built-in planner", async () => {
 		const events: SessionBeforeRefineEvent[] = [];
 		const harness = await createHarness({
 			persistSession: true,
@@ -46,9 +46,10 @@ describe("AgentSession session_before_refine extension hook", () => {
 
 		const result = await harness.session.refine({ instructions: "capture lessons" });
 
-		expect(result.summary).toBe("extension summary");
+		expect(result.summary).toBe("RAVO gate rejected: extension summary");
 		expect(result.appliedEdits).toHaveLength(1);
-		expect(result.appliedEdits[0]?.applied).toBe(true);
+		expect(result.appliedEdits[0]?.applied).toBe(false);
+		expect(result.ravo?.judgeError).toBeDefined();
 		expect(events).toHaveLength(1);
 		expect(events[0]?.preparation.trigger).toBe("manual");
 		expect(events[0]?.preparation.scope).toBe("local");
@@ -57,7 +58,7 @@ describe("AgentSession session_before_refine extension hook", () => {
 
 		const state = loadHarnessState(result.harnessStatePath.replace(/\/[^/]+$/, ""), "local");
 		const memories = Object.values(state.entries.memory);
-		expect(memories.some((entry) => entry.title === "Extension memory")).toBe(true);
+		expect(memories.some((entry) => entry.title === "Extension memory")).toBe(false);
 	});
 
 	it("rejects invalid extension edits at apply time", async () => {
@@ -86,7 +87,7 @@ describe("AgentSession session_before_refine extension hook", () => {
 		const result = await harness.session.refine();
 
 		expect(result.appliedEdits[0]?.applied).toBe(false);
-		expect(result.appliedEdits[0]?.error).toContain("requires id");
+		expect(result.appliedEdits[0]?.error).toContain("ravo gate rejected");
 	});
 
 	it("normalizes malformed runtime extension proposals before applying them", async () => {
@@ -121,7 +122,7 @@ describe("AgentSession session_before_refine extension hook", () => {
 			expect(result.appliedEdits).toHaveLength(expectedEdits);
 			if (expectedEdits > 0) {
 				expect(result.appliedEdits[0]?.applied).toBe(false);
-				expect(result.appliedEdits[0]?.error).toContain("requires id");
+				expect(result.appliedEdits[0]?.error).toContain("ravo gate rejected");
 			}
 			expect(harness.eventsOfType("refine_failed")).toHaveLength(0);
 		}

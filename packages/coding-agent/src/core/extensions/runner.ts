@@ -9,6 +9,7 @@ import { type Theme, theme } from "../../modes/interactive/theme/theme.js";
 import type { ResourceDiagnostic } from "../diagnostics.js";
 import type { KeybindingsConfig } from "../keybindings.js";
 import type { ModelRegistry } from "../model-registry.js";
+import type { RunAgentHandler } from "../run-agent.js";
 import type { SessionManager } from "../session-manager.js";
 import type { BuildSystemPromptOptions } from "../system-prompt.js";
 import type {
@@ -248,6 +249,9 @@ export class ExtensionRunner {
 	private hasPendingMessagesFn: () => boolean = () => false;
 	private getContextUsageFn: () => ContextUsage | undefined = () => undefined;
 	private compactFn: (options?: CompactOptions) => void = () => {};
+	private runAgentFn: RunAgentHandler = async () => {
+		throw new Error("runAgent is unavailable before the extension runtime is bound");
+	};
 	private getSystemPromptFn: () => string = () => "";
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
@@ -305,6 +309,7 @@ export class ExtensionRunner {
 		this.shutdownHandler = contextActions.shutdown;
 		this.getContextUsageFn = contextActions.getContextUsage;
 		this.compactFn = contextActions.compact;
+		this.runAgentFn = contextActions.runAgent;
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
 
 		for (const { name, config, extensionPath } of this.runtime.pendingProviderRegistrations) {
@@ -630,6 +635,10 @@ export class ExtensionRunner {
 			compact: (options) => {
 				runner.assertActive();
 				runner.compactFn(options);
+			},
+			runAgent: (request, options) => {
+				runner.assertActive();
+				return runner.runAgentFn(request, options);
 			},
 			getSystemPrompt: () => {
 				runner.assertActive();

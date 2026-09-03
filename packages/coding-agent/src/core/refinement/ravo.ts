@@ -1,5 +1,7 @@
 import type { Model } from "@earendil-works/pi-ai";
 import { completeSimple } from "@earendil-works/pi-ai";
+import { type AssistedRavoAuthorization, authorizeAssistedRavo } from "../ravo/authority.js";
+import type { JsonValue } from "../ravo/reducer.js";
 import type { RefinementProposal } from "./refinement.js";
 
 /**
@@ -131,8 +133,10 @@ export interface RavoGateReport {
 	screenThreshold: number;
 	deepTolerance: number;
 	rationale: string;
-	/** Set when the deep judge call failed; the gate then fails open. */
+	/** Set when the deep judge call failed; evaluation then fails closed. */
 	judgeError?: string;
+	/** Generic-core authority decision, bound to the proposal and baseline. */
+	authorization?: AssistedRavoAuthorization;
 }
 
 /**
@@ -244,6 +248,8 @@ export async function ravoEvaluateProposal(
 		validEdits: number;
 		conversationText: string;
 		harnessOverview: string;
+		baseline: JsonValue;
+		proposalId: string;
 		model: Model<any>;
 		apiKey: string;
 		headers?: Record<string, string>;
@@ -261,13 +267,24 @@ export async function ravoEvaluateProposal(
 		deepTolerance: config.deepTolerance,
 	};
 	if (fastScore < config.screenThreshold) {
+		const rationale = `structural screen scored ${fastScore} below threshold ${config.screenThreshold}`;
+		const authorization = authorizeAssistedRavo({
+			proposalId: options.proposalId,
+			artifact: proposal as unknown as JsonValue,
+			baseline: options.baseline,
+			fastScore,
+			observation: { status: "abstain", detail: rationale },
+			screenThreshold: config.screenThreshold,
+			epsilon: config.epsilon,
+		});
 		return {
 			...base,
 			decision: "reject_screen",
 			deepScore: 0,
 			missedCriteria: [],
 			missedWeight: 0,
-			rationale: `structural screen scored ${fastScore} below threshold ${config.screenThreshold}`,
+			rationale,
+			authorization,
 		};
 	}
 
@@ -312,10 +329,27 @@ export async function ravoEvaluateProposal(
 		rationale = judged.rationale;
 	} catch (error) {
 		judgeError = error instanceof Error ? error.message : String(error);
-		rationale = `deep judge unavailable (${judgeError}); gate failed open`;
+		rationale = `deep judge unavailable (${judgeError}); no harness edits were authorized; retry /refine when evaluation is available`;
 	}
 
-	const decision = judgeError ? "commit" : ravoDecide(state, config, { fastScore, deepScore, missedCriteria });
+	const authorization = authorizeAssistedRavo({
+		proposalId: options.proposalId,
+		artifact: proposal as unknown as JsonValue,
+		baseline: options.baseline,
+		fastScore,
+		observation: judgeError
+			? { status: "error", detail: rationale }
+			: { status: "pass", score: deepScore, detail: rationale, failedCriteria: missedCriteria },
+		screenThreshold: config.screenThreshold,
+		epsilon: config.epsilon,
+	});
+	const decision: RavoDecision = authorization.authorized
+		? "commit"
+		: authorization.certificate.rejection === "screen"
+			? "reject_screen"
+			: authorization.certificate.rejection === "opponents"
+				? "reject_criteria"
+				: "reject_deep";
 	return {
 		...base,
 		decision,
@@ -324,6 +358,7 @@ export async function ravoEvaluateProposal(
 		missedWeight: ravoMissedWeight(state.evaluator, missedCriteria),
 		rationale,
 		judgeError,
+		authorization,
 	};
 }
 

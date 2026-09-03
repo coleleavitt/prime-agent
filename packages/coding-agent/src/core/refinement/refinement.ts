@@ -16,6 +16,7 @@ import { completeSimple } from "@earendil-works/pi-ai";
 import { getAgentDir } from "../../config.js";
 import { serializeConversation } from "../compaction/utils.js";
 import { convertToLlm } from "../messages.js";
+import type { JsonValue } from "../ravo/reducer.js";
 import type { CustomEntry } from "../session-manager.js";
 import {
 	emptyRavoState,
@@ -784,6 +785,7 @@ export function applyRefinementProposal(
 	proposal: RefinementProposal,
 	options: { id: string; rollbackOf?: string; scope?: HarnessScope; baselineState?: HarnessState },
 ): RefinementResult {
+	const working = structuredClone(state);
 	const appliedEdits: AppliedRefinementEdit[] = [];
 	const proposalModifiedKeys = new Set<string>();
 	for (const edit of proposal.edits) {
@@ -795,7 +797,7 @@ export function applyRefinementProposal(
 			continue;
 		}
 
-		const records = state.entries[edit.kind];
+		const records = working.entries[edit.kind];
 		const before = cloneEntry(records[id]);
 		const entryKey = `${edit.kind}:${id}`;
 		const baseline = cloneEntry(options.baselineState?.entries[edit.kind][id]);
@@ -855,7 +857,7 @@ export function applyRefinementProposal(
 	}
 
 	const changes = appliedEdits.filter((edit) => edit.applied).map((edit) => `${edit.action} ${edit.kind}:${edit.id}`);
-	state.refinements.push({
+	working.refinements.push({
 		id: options.id,
 		trigger: proposal.summary,
 		changes,
@@ -863,6 +865,22 @@ export function applyRefinementProposal(
 		outcome: proposal.expectedOutcome,
 		created_at: now(),
 	});
+
+	const allApplied = appliedEdits.every((edit) => edit.applied);
+	if (allApplied) {
+		state.schema = working.schema;
+		state.entries = working.entries;
+		state.refinements = working.refinements;
+		state.ravo = working.ravo;
+	} else {
+		for (const edit of appliedEdits) {
+			if (edit.applied) {
+				edit.applied = false;
+				edit.error = "proposal was not applied because another edit failed";
+			}
+		}
+		state.refinements.push({ ...working.refinements.at(-1)!, changes: [] });
+	}
 
 	return {
 		id: options.id,
@@ -1101,6 +1119,8 @@ export async function refineHarness(
 			validEdits: countValidRefinementEdits(plan.proposal),
 			conversationText: serializeConversation(convertToLlm(messages)).slice(-40_000),
 			harnessOverview: overviewForPrompt(state),
+			baseline: state as unknown as JsonValue,
+			proposalId: plan.id,
 			model,
 			apiKey,
 			headers,
@@ -1109,9 +1129,8 @@ export async function refineHarness(
 		if (report.decision !== "commit") {
 			return rejectedRefinementResult(plan.proposal, report, { id: plan.id, scope });
 		}
-		const result = applyRefinementProposal(state, plan.proposal, { id: plan.id, scope });
-		applyRavoOutcome(state, { id: plan.id, summary: plan.proposal.summary }, report);
-		result.ravo = report;
+		const result = applyRefinementProposal(state, plan.proposal, { id: plan.id, scope, baselineState: state });
+		if (result.appliedEdits.every((edit) => edit.applied)) result.ravo = report;
 		return result;
 	}
 	return applyRefinementProposal(state, plan.proposal, {

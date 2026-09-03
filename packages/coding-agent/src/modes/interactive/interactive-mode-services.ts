@@ -3,6 +3,7 @@ import type { AgentSessionRuntime } from "../../core/agent-session-runtime.js";
 import type { AgentSessionServices } from "../../core/agent-session-services.js";
 import { type ExtensionCommandContext, ExtensionRunner, type ToolDefinition } from "../../core/extensions/index.js";
 import type { ModelRegistry } from "../../core/model-registry.js";
+import type { RunAgentHandler } from "../../core/run-agent.js";
 import type { SessionManager } from "../../core/session-manager.js";
 import type { SettingsManager } from "../../core/settings-manager.js";
 import type { Theme } from "./theme/theme.js";
@@ -52,6 +53,7 @@ export interface InteractiveModeLocalSessionHost {
 	getToolRendererDefinition(toolName: string): InteractiveModeLocalToolRendererDefinition | undefined;
 	getSystemPrompt(): string;
 	getAbortSignal(): AbortSignal | undefined;
+	runAgent: RunAgentHandler;
 	bindExtensions(bindings: ExtensionBindings): Promise<void>;
 	newSession(options?: LocalExtensionNewSessionOptions): Promise<{ cancelled: boolean }>;
 	fork(entryId: string, options?: LocalExtensionForkOptions): Promise<{ cancelled: boolean; selectedText?: string }>;
@@ -128,6 +130,7 @@ export function createInteractiveModeLocalSessionHost(
 		},
 		getSystemPrompt: () => runtimeHost.session.systemPrompt,
 		getAbortSignal: () => runtimeHost.session.agent.signal,
+		runAgent: (request, options) => runtimeHost.session.runAgent(request, options),
 		bindExtensions: (bindings) => runtimeHost.session.bindExtensions(bindings),
 		newSession: (options) => runtimeHost.newSession(options),
 		fork: (entryId, options) => runtimeHost.fork(entryId, options),

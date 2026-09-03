@@ -50,6 +50,7 @@ import type { KeybindingsManager } from "../keybindings.js";
 import type { CustomMessage } from "../messages.js";
 import type { ModelRegistry } from "../model-registry.js";
 import type { HarnessState, RefinementProposal, RefinementResult } from "../refinement/index.js";
+import type { RunAgentHandler, RunAgentOptions, RunAgentRequest, RunAgentResult } from "../run-agent.js";
 import type {
 	BranchSummaryEntry,
 	CompactionEntry,
@@ -306,6 +307,8 @@ export interface ExtensionContext {
 	getContextUsage(): ContextUsage | undefined;
 	/** Trigger compaction without awaiting completion. */
 	compact(options?: CompactOptions): void;
+	/** Run an isolated child agent through the current host session machinery. */
+	runAgent(request: RunAgentRequest, options?: RunAgentOptions): Promise<RunAgentResult>;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
 }
@@ -1371,6 +1374,7 @@ export interface ExtensionContextActions {
 	shutdown: () => void;
 	getContextUsage: () => ContextUsage | undefined;
 	compact: (options?: CompactOptions) => void;
+	runAgent: RunAgentHandler;
 	getSystemPrompt: () => string;
 }
 
