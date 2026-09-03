@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-ai",
-	"version": "0.8.2-dev.0",
+	"version": "0.9.2-dev.0",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -9,10 +9,6 @@
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
-		},
-		"./compat": {
-			"types": "./dist/compat.d.ts",
-			"import": "./dist/compat.js"
 		},
 		"./anthropic": {
 			"types": "./dist/providers/anthropic.d.ts",

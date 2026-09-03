@@ -31,8 +31,6 @@ const DAEMON_STARTUP_LOG_TAIL_BYTES = 4 * 1024;
 const DAEMON_STARTUP_EXIT_GRACE_MS = 2_000;
 // The greeting is sent from the connection handler, so a late one means a
 // blocked event loop (worker recovery, snapshot transfer), not a wrong build.
-const DAEMON_HELLO_WAIT_TIMEOUTS_MS = [2_000, 4_000, 8_000];
-const DAEMON_UNRESPONSIVE_WAIT_MS = 60_000;
 
 export function isDaemonSessionSummary(value: unknown): value is SessionSummary {
 	if (!value || typeof value !== "object") {
@@ -68,14 +66,19 @@ async function canConnectToDaemon(socketPath: string, timeoutMs: number): Promis
 type DaemonVersionProbe =
 	| { status: "absent" }
 	| { status: "current"; hello: DaemonHello }
-	| { status: "unresponsive" }
-	| { status: "stale"; hello: DaemonHello };
+	| { status: "stale"; hello: DaemonHello }
+	| { status: "unresponsive" };
+
+function isCurrentDaemonHello(hello: DaemonHello): boolean {
+	return (
+		hello.protocol.version === DAEMON_PROTOCOL_VERSION &&
+		hello.schemaId === DAEMON_SCHEMA_ID &&
+		hello.appVersion === VERSION
+	);
+}
 
 /** Connect to a running daemon and check whether it matches this client's protocol and app version. */
-export async function probeDaemonVersion(
-	socketPath: string,
-	helloTimeoutsMs: readonly number[] = DAEMON_HELLO_WAIT_TIMEOUTS_MS,
-): Promise<DaemonVersionProbe> {
+export async function probeDaemonVersion(socketPath: string, helloTimeoutMs = 2000): Promise<DaemonVersionProbe> {
 	let client: DaemonClient | undefined;
 	for (const timeoutMs of [250, 2000]) {
 		const candidate = new DaemonClient(socketPath);
@@ -91,11 +94,8 @@ export async function probeDaemonVersion(
 		return { status: "absent" };
 	}
 	try {
-		const hello = await waitForDaemonHelloWithRetries(client, helloTimeoutsMs);
-		const current =
-			hello.protocol.version === DAEMON_PROTOCOL_VERSION &&
-			hello.schemaId === DAEMON_SCHEMA_ID &&
-			hello.appVersion === VERSION;
+		const hello = await client.waitForHello(helloTimeoutMs);
+		const current = isCurrentDaemonHello(hello);
 		if (!current) {
 			logDaemonLaunch(
 				`running daemon on ${socketPath} is stale: daemon v${hello.appVersion}/proto${hello.protocol.version}` +
@@ -108,31 +108,12 @@ export async function probeDaemonVersion(
 		}
 		return { status: "stale", hello };
 	} catch {
-		// Accepting connections but not greeting means alive and blocked; taking
-		// it over here is what used to kill mid-turn sessions.
-		logDaemonLaunch(
-			`running daemon on ${socketPath} accepted a connection but sent no hello within ` +
-				`${helloTimeoutsMs.reduce((total, value) => total + value, 0)}ms; treating as busy, not stale`,
-		);
+		// The supervisor accepts connections before startup and worker adoption finish.
+		logDaemonLaunch(`running daemon on ${socketPath} sent no recognizable hello; waiting for startup`);
 		return { status: "unresponsive" };
 	} finally {
 		client.close();
 	}
-}
-
-async function waitForDaemonHelloWithRetries(
-	client: DaemonClient,
-	helloTimeoutsMs: readonly number[],
-): Promise<DaemonHello> {
-	let lastError: unknown;
-	for (const timeoutMs of helloTimeoutsMs) {
-		try {
-			return await client.waitForHello(timeoutMs);
-		} catch (error) {
-			lastError = error;
-		}
-	}
-	throw lastError;
 }
 
 export async function listActiveDaemonSessionSummaries(
@@ -335,70 +316,70 @@ export async function probeRunningDaemonSessions(socketPath: string): Promise<Ru
 
 // Idle-but-loaded sessions reload from disk on the fresh daemon, so only a busy
 // session blocks replacing a stale daemon.
-async function shutdownStaleDaemonIfNotBusy(socketPath: string): Promise<boolean> {
+type StaleDaemonDisposition = "current" | "stopped" | "busy";
+
+async function shutdownStaleDaemonIfNotBusy(socketPath: string): Promise<StaleDaemonDisposition> {
 	const client = new DaemonClient(socketPath);
-	let connected = false;
-	let hasBusySessions = false;
-	let loadedSessionCount = 0;
 	try {
 		await client.connect(1000);
-		connected = true;
-		try {
-			const result = await queryActiveDaemonSessions(client, { includeClientOwned: true });
-			loadedSessionCount = result.sessions.length;
-			hasBusySessions =
-				result.busyClientOwnedSessionCount !== 0 || result.sessions.some((summary) => isSessionBusy(summary));
-		} catch {
-			// Couldn't confirm idleness: treat as busy rather than risk interrupting work.
-			hasBusySessions = true;
-		}
 	} catch {
-		// Couldn't reach it to inspect; don't send a blind shutdown, just verify below.
-	} finally {
 		client.close();
+		return (await waitForDaemonGone(socketPath)) ? "stopped" : "busy";
 	}
 
-	if (!connected) {
-		return waitForDaemonGone(socketPath);
+	let loadedSessionCount = 0;
+	let hasBusySessions = true;
+	try {
+		const result = await queryActiveDaemonSessions(client, { includeClientOwned: true });
+		loadedSessionCount = result.sessions.length;
+		hasBusySessions =
+			result.busyClientOwnedSessionCount !== 0 || result.sessions.some((summary) => isSessionBusy(summary));
+	} catch {
+		// An unresponsive daemon is not safe to replace.
+	}
+
+	const hello = client.hello;
+	if (hello && isCurrentDaemonHello(hello)) {
+		client.close();
+		logDaemonLaunch(`daemon on ${socketPath} finished starting while staleness was being checked; reusing it`);
+		return "current";
 	}
 	if (hasBusySessions) {
+		client.close();
 		logDaemonLaunch(`refusing to replace stale daemon on ${socketPath}: busy session(s) present`);
-		return false;
+		return "busy";
 	}
 	logDaemonLaunch(
 		`replacing stale daemon on ${socketPath} (idle): ${loadedSessionCount} loaded session(s) will reload`,
 	);
-	return shutdownDaemonAndWait(socketPath);
-}
-
-// A daemon recovering a worker can stay silent for tens of seconds. Waiting it
-// out keeps its sessions alive; spawning or replacing it here would not.
-async function settleDaemonProbe(socketPath: string): Promise<DaemonVersionProbe> {
-	const deadline = Date.now() + DAEMON_UNRESPONSIVE_WAIT_MS;
-	let probe = await probeDaemonVersion(socketPath);
-	while (probe.status === "unresponsive" && Date.now() < deadline) {
-		await delay(250);
-		probe = await probeDaemonVersion(socketPath);
-	}
-	return probe;
+	return (await shutdownConnectedDaemonAndWait(client, socketPath, 5000, hello)) ? "stopped" : "busy";
 }
 
 async function ensureDaemonRunning(socketPath: string, spawnCwd?: string): Promise<void> {
-	const probe = await settleDaemonProbe(socketPath);
+	const probeStartedAt = Date.now();
+	let probe = await probeDaemonVersion(socketPath);
+	if (probe.status === "unresponsive") {
+		const remainingStartupMs = Math.max(1, DAEMON_STARTUP_TIMEOUT_MS - (Date.now() - probeStartedAt));
+		probe = await probeDaemonVersion(socketPath, remainingStartupMs);
+	}
 	if (probe.status === "current") {
 		return;
 	}
 	if (probe.status === "unresponsive") {
 		throw new Error(
-			`The Prime Agent daemon on ${socketPath} is running but stopped responding to the handshake. ` +
-				`It was left running to protect any in-flight sessions. ` +
-				`Retry shortly, or stop it explicitly with \`prime-agent shutdown\` if it stays stuck.` +
-				readDaemonLogTail(socketPath, 0),
+			`Prime Agent daemon on ${socketPath} accepted connections but did not finish startup within ${DAEMON_STARTUP_TIMEOUT_MS / 1000} seconds. ` +
+				`It was left running to avoid interrupting active work.
+
+Run:
+${formatCurrentCliCommand(["shutdown", "--force"])}
+
+Then retry the original command.`,
 		);
 	}
 	if (probe.status === "stale") {
-		const stopped = await shutdownStaleDaemonIfNotBusy(socketPath);
-		if (!stopped) throw new StaleDaemonError(socketPath, probe.hello);
+		const disposition = await shutdownStaleDaemonIfNotBusy(socketPath);
+		if (disposition === "current") return;
+		if (disposition === "busy") throw new StaleDaemonError(socketPath, probe.hello);
 	}
 
 	const entrypoint = process.argv[1];
