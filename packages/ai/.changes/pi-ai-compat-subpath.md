@@ -1,0 +1,1 @@
+- Added an upstream-compatible `./compat` subpath that re-exports the primary module instance so extensions importing `@earendil-works/pi-ai/compat` share the host API-provider registry.

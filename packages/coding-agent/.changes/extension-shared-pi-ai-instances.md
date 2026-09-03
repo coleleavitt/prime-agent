@@ -1,0 +1,1 @@
+- Fixed extensions loading divergent pi-ai module copies: the extension loader now serves virtual pi module instances in every mode (including `/compat` and `/mcp` subpaths), so host-registered custom API providers no longer fail with "No API provider registered for api: ...".
