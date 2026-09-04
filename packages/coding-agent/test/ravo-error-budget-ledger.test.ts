@@ -127,4 +127,31 @@ describe("RAVO adaptive error-budget ledger", () => {
 		expect(build()).toBe(build());
 		expect(JSON.parse(build())).toMatchObject({ familyDelta: "1/5", allocatedDelta: "1/20", spentDelta: "1/20" });
 	});
+	it("restores a validated snapshot without resetting spent budget", () => {
+		const ledger = new ErrorBudgetLedger(r(1, 10));
+		ledger.registerCalibration(calibration("c", "judge", "h", r(1, 20)));
+		ledger.allocate({ decisionId: "d", evaluatorId: "judge", historyKey: "h", calibrationId: "c", delta: r(1, 20) });
+		ledger.recordEvaluation({ decisionId: "d", passed: true, calibrationId: "c" });
+		const restored = ErrorBudgetLedger.deserialize(ledger.serialize());
+		expect(restored.serialize()).toBe(ledger.serialize());
+		expect(() =>
+			restored.allocate({
+				decisionId: "next",
+				evaluatorId: "judge",
+				historyKey: "h",
+				calibrationId: "c",
+				delta: r(3, 50),
+			}),
+		).toThrow("exhausted");
+	});
+
+	it("rejects malformed and internally inconsistent snapshots", () => {
+		expect(() => ErrorBudgetLedger.deserialize("not-json")).toThrow("invalid");
+		const snapshot = JSON.parse(new ErrorBudgetLedger(r(1, 10)).serialize());
+		snapshot.spentDelta = "1/100";
+		expect(() => ErrorBudgetLedger.fromSnapshot(snapshot)).toThrow("inconsistent");
+		snapshot.spentDelta = "0/1";
+		snapshot.familyDelta = "not-rational";
+		expect(() => ErrorBudgetLedger.fromSnapshot(snapshot)).toThrow("invalid rational");
+	});
 });

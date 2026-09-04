@@ -16,17 +16,10 @@ import { completeSimple } from "@earendil-works/pi-ai";
 import { getAgentDir } from "../../config.js";
 import { serializeConversation } from "../compaction/utils.js";
 import { convertToLlm } from "../messages.js";
-import type { JsonValue } from "../ravo/reducer.js";
+import { emptyAssistedRavoState, normalizeAssistedRavoState } from "../ravo/authority.js";
+import type { JsonValue, RavoState } from "../ravo/reducer.js";
 import type { CustomEntry } from "../session-manager.js";
-import {
-	emptyRavoState,
-	RAVO_DEFAULT_CONFIG,
-	type RavoGateReport,
-	type RavoHarnessState,
-	ravoCommit,
-	ravoEnabled,
-	ravoEvaluateProposal,
-} from "./ravo.js";
+import { RAVO_DEFAULT_CONFIG, type RavoGateReport, ravoEnabled, ravoEvaluateProposal } from "./ravo.js";
 
 export const REFINEMENT_CUSTOM_TYPE = "prime-agent.refinement";
 
@@ -70,8 +63,8 @@ export interface HarnessState {
 	schema: number;
 	entries: Record<RefinementKind, Record<string, HarnessEntry>>;
 	refinements: HarnessRefinementEvent[];
-	/** RAVO lineage + co-evolving evaluator; absent until the first gated refinement. */
-	ravo?: RavoHarnessState;
+	/** Generic RAVO reducer state; absent until the first gated refinement. */
+	ravo?: RavoState<JsonValue>;
 }
 
 export interface RefinementEdit {
@@ -334,9 +327,8 @@ export function loadHarnessState(
 	if (Array.isArray(parsed.refinements)) {
 		state.refinements = parsed.refinements;
 	}
-	const ravo = objectRecord(parsed.ravo);
-	if (ravo && Array.isArray(ravo.lineage) && objectRecord(ravo.evaluator)) {
-		state.ravo = ravo as unknown as RavoHarnessState;
+	if (parsed.ravo !== undefined) {
+		state.ravo = normalizeAssistedRavoState(parsed.ravo);
 	}
 	return state;
 }
@@ -347,11 +339,17 @@ export function mergeHarnessStates(globalState: HarnessState, localState?: Harne
 	for (const kind of Object.keys(merged.entries) as RefinementKind[]) {
 		for (const [id, entry] of Object.entries(globalState.entries[kind])) {
 			const cloned = cloneEntry(entry)!;
-			merged.entries[kind][id] = { ...cloned, scope: normalizeHarnessScope(cloned.scope, "global") };
+			merged.entries[kind][id] = {
+				...cloned,
+				scope: normalizeHarnessScope(cloned.scope, "global"),
+			};
 		}
 		for (const [id, entry] of Object.entries(localState?.entries[kind] ?? {})) {
 			const cloned = cloneEntry(entry)!;
-			const scopedEntry = { ...cloned, scope: normalizeHarnessScope(cloned.scope, "local") };
+			const scopedEntry = {
+				...cloned,
+				scope: normalizeHarnessScope(cloned.scope, "local"),
+			};
 			const mergedId = merged.entries[kind][id] ? `${scopedEntry.scope}:${id}` : id;
 			merged.entries[kind][mergedId] = scopedEntry;
 		}
@@ -366,7 +364,10 @@ export function saveHarnessState(harnessStateDir: string, state: HarnessState): 
 	mkdirSync(harnessStateDir, { recursive: true });
 	try {
 		const mode = existsSync(statePath) ? statSync(statePath).mode & 0o777 : 0o600;
-		writeFileSync(tempPath, `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf8", mode });
+		writeFileSync(tempPath, `${JSON.stringify(state, null, 2)}\n`, {
+			encoding: "utf8",
+			mode,
+		});
 		renameSync(tempPath, statePath);
 	} finally {
 		if (existsSync(tempPath)) {
@@ -747,20 +748,6 @@ export function countValidRefinementEdits(proposal: RefinementProposal): number 
 	return valid;
 }
 
-/**
- * Record a committed champion in the harness RAVO state: append-only lineage
- * (monotone best score) plus weakness pressure on the weakest failed
- * criterion. Mutates `state` like `applyRefinementProposal` does.
- */
-export function applyRavoOutcome(
-	state: HarnessState,
-	champion: { id: string; summary: string },
-	report: RavoGateReport,
-): void {
-	const ravoState = state.ravo ?? emptyRavoState();
-	state.ravo = ravoCommit(ravoState, champion, report);
-}
-
 /** Build the rejected-refinement result for a gated-out proposal (no edits applied). */
 export function rejectedRefinementResult(
 	proposal: RefinementProposal,
@@ -773,7 +760,12 @@ export function rejectedRefinementResult(
 		summary: `RAVO gate rejected: ${proposal.summary}`,
 		rationale: proposal.rationale,
 		expectedOutcome: proposal.expectedOutcome,
-		appliedEdits: proposal.edits.map((edit) => ({ ...edit, id: edit.id ?? "", applied: false, error: reason })),
+		appliedEdits: proposal.edits.map((edit) => ({
+			...edit,
+			id: edit.id ?? "",
+			applied: false,
+			error: reason,
+		})),
 		harnessStatePath: "",
 		scope: options.scope,
 		ravo: report,
@@ -783,7 +775,12 @@ export function rejectedRefinementResult(
 export function applyRefinementProposal(
 	state: HarnessState,
 	proposal: RefinementProposal,
-	options: { id: string; rollbackOf?: string; scope?: HarnessScope; baselineState?: HarnessState },
+	options: {
+		id: string;
+		rollbackOf?: string;
+		scope?: HarnessScope;
+		baselineState?: HarnessState;
+	},
 ): RefinementResult {
 	const working = structuredClone(state);
 	const appliedEdits: AppliedRefinementEdit[] = [];
@@ -793,7 +790,12 @@ export function applyRefinementProposal(
 		const id = computedId ?? "";
 		const validationError = validateEdit(edit, id);
 		if (validationError) {
-			appliedEdits.push({ ...edit, id, applied: false, error: validationError });
+			appliedEdits.push({
+				...edit,
+				id,
+				applied: false,
+				error: validationError,
+			});
 			continue;
 		}
 
@@ -817,7 +819,12 @@ export function applyRefinementProposal(
 		}
 		if (edit.action === "delete") {
 			if (!before) {
-				appliedEdits.push({ ...edit, id, applied: false, error: "entry not found" });
+				appliedEdits.push({
+					...edit,
+					id,
+					applied: false,
+					error: "entry not found",
+				});
 				continue;
 			}
 			delete records[id];
@@ -826,11 +833,22 @@ export function applyRefinementProposal(
 			continue;
 		}
 		if (edit.action === "create" && before) {
-			appliedEdits.push({ ...edit, id, before, applied: false, error: "entry already exists" });
+			appliedEdits.push({
+				...edit,
+				id,
+				before,
+				applied: false,
+				error: "entry already exists",
+			});
 			continue;
 		}
 		if (edit.action === "update" && !before) {
-			appliedEdits.push({ ...edit, id, applied: false, error: "entry not found" });
+			appliedEdits.push({
+				...edit,
+				id,
+				applied: false,
+				error: "entry not found",
+			});
 			continue;
 		}
 
@@ -853,7 +871,13 @@ export function applyRefinementProposal(
 		};
 		records[id] = after;
 		proposalModifiedKeys.add(entryKey);
-		appliedEdits.push({ ...edit, id, before, after: cloneEntry(after), applied: true });
+		appliedEdits.push({
+			...edit,
+			id,
+			before,
+			after: cloneEntry(after),
+			applied: true,
+		});
 	}
 
 	const changes = appliedEdits.filter((edit) => edit.applied).map((edit) => `${edit.action} ${edit.kind}:${edit.id}`);
@@ -1014,7 +1038,13 @@ export async function planRefinement(
 		model,
 		{
 			systemPrompt: REFINEMENT_SYSTEM_PROMPT,
-			messages: [{ role: "user", content: [{ type: "text", text: userPrompt }], timestamp: Date.now() }],
+			messages: [
+				{
+					role: "user",
+					content: [{ type: "text", text: userPrompt }],
+					timestamp: Date.now(),
+				},
+			],
 		},
 		{ maxTokens: refinementMaxOutputTokens(model), signal, apiKey, headers },
 	);
@@ -1080,9 +1110,20 @@ ${conversationText}
 		model,
 		{
 			systemPrompt: AUTO_REFINE_REVIEW_SYSTEM_PROMPT,
-			messages: [{ role: "user", content: [{ type: "text", text: userPrompt }], timestamp: Date.now() }],
+			messages: [
+				{
+					role: "user",
+					content: [{ type: "text", text: userPrompt }],
+					timestamp: Date.now(),
+				},
+			],
 		},
-		{ maxTokens: autoRefineReviewMaxOutputTokens(model), signal, apiKey, headers },
+		{
+			maxTokens: autoRefineReviewMaxOutputTokens(model),
+			signal,
+			apiKey,
+			headers,
+		},
 	);
 	if (response.stopReason === "error") {
 		throw new Error(`Auto-refine review failed: ${response.errorMessage || "Unknown error"}`);
@@ -1114,7 +1155,7 @@ export async function refineHarness(
 	// "no useful edit" outcomes, not candidates.
 	if (!plan.rollbackOf && ravoEnabled() && plan.proposal.edits.length > 0) {
 		const report = await ravoEvaluateProposal(plan.proposal, {
-			state: state.ravo ?? emptyRavoState(),
+			state: state.ravo ?? emptyAssistedRavoState(),
 			config: RAVO_DEFAULT_CONFIG,
 			validEdits: countValidRefinementEdits(plan.proposal),
 			conversationText: serializeConversation(convertToLlm(messages)).slice(-40_000),
@@ -1127,10 +1168,21 @@ export async function refineHarness(
 			signal,
 		});
 		if (report.decision !== "commit") {
-			return rejectedRefinementResult(plan.proposal, report, { id: plan.id, scope });
+			if (report.authorization) state.ravo = report.authorization.nextState;
+			return rejectedRefinementResult(plan.proposal, report, {
+				id: plan.id,
+				scope,
+			});
 		}
-		const result = applyRefinementProposal(state, plan.proposal, { id: plan.id, scope, baselineState: state });
-		if (result.appliedEdits.every((edit) => edit.applied)) result.ravo = report;
+		const result = applyRefinementProposal(state, plan.proposal, {
+			id: plan.id,
+			scope,
+			baselineState: state,
+		});
+		if (result.appliedEdits.every((edit) => edit.applied) && report.authorization) {
+			state.ravo = report.authorization.nextState;
+			result.ravo = report;
+		}
 		return result;
 	}
 	return applyRefinementProposal(state, plan.proposal, {

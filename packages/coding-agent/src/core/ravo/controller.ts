@@ -7,7 +7,7 @@ import {
 	type ContextArchive,
 	type ContextViewLimits,
 } from "./context-view.js";
-import type { DecisionAllocation, ErrorBudgetLedger } from "./error-budget-ledger.js";
+import type { DecisionAllocation, ErrorBudgetLedger, ErrorBudgetLedgerSnapshot } from "./error-budget-ledger.js";
 import {
 	type GateStatus,
 	type JsonValue,
@@ -18,6 +18,7 @@ import {
 	type RavoState as ReducerState,
 	ravoStep,
 } from "./reducer.js";
+import type { ChampionCas } from "./types.js";
 
 export type RavoPhase =
 	| "inspect"
@@ -101,6 +102,8 @@ export interface RavoControllerCheckpoint<T extends JsonValue = JsonValue> {
 	feedback?: DiagnosticFeedback;
 	certificates: RavoGateCertificate[];
 	spentTokens: number;
+	archiveBaseline?: ChampionCas;
+	errorBudget: ErrorBudgetLedgerSnapshot;
 }
 export type RavoProgressEvent =
 	| { type: "phase"; phase: RavoPhase; round: number }
@@ -170,7 +173,7 @@ export async function runRavoController<T extends JsonValue>(
 	const now = options.now ?? Date.now;
 	const started = now();
 	const context = buildBoundedContextView(options.context, options.contextLimits);
-	const cp = options.checkpoint
+	const cp: RavoControllerCheckpoint<T> = options.checkpoint
 		? structuredClone(options.checkpoint)
 		: {
 				runId: options.runId,
@@ -180,8 +183,10 @@ export async function runRavoController<T extends JsonValue>(
 				state: structuredClone(options.initialState),
 				certificates: [],
 				spentTokens: 0,
+				errorBudget: options.ledger.toJSON(),
 			};
 	if (cp.runId !== options.runId) throw new Error("checkpoint runId mismatch");
+	if (options.checkpoint) options.ledger.restore(cp.errorBudget);
 	await options.archive.initialize();
 	if (!options.checkpoint)
 		await options.archive.append("run", { runId: options.runId, contextDigest: context.sha256 });
@@ -190,11 +195,16 @@ export async function runRavoController<T extends JsonValue>(
 			options.onProgress?.(event);
 		} catch {}
 	};
+	const persistCheckpoint = async (): Promise<void> => {
+		cp.errorBudget = options.ledger.toJSON();
+		const checkpoint = structuredClone(cp);
+		await options.archive.append("run", { runId: options.runId, checkpoint: checkpointJson(checkpoint) });
+		await options.onCheckpoint?.(checkpoint);
+	};
 	const setPhase = async (phase: RavoPhase): Promise<void> => {
 		cp.phase = phase;
 		emit({ type: "phase", phase, round: cp.round });
-		await options.archive.append("run", { runId: options.runId, checkpoint: checkpointJson(cp) });
-		await options.onCheckpoint?.(structuredClone(cp));
+		await persistCheckpoint();
 	};
 	const stop = async (reason: RavoStopReason, certificate?: RavoGateCertificate): Promise<RavoControllerResult<T>> => {
 		cp.phase = reason === "accepted" ? "accepted" : "stopped";
@@ -295,6 +305,11 @@ export async function runRavoController<T extends JsonValue>(
 				parentId: candidate.parentId,
 				repairOf: candidate.repairOf,
 			});
+			const archiveState = await options.archive.recover();
+			cp.archiveBaseline = {
+				revision: archiveState.revision,
+				championDigest: archiveState.championDigest,
+			};
 			await setPhase("evaluate");
 			const observations = await concurrentMap(options.evaluators, options.concurrency, async (adapter) => {
 				let allocation: DecisionAllocation | undefined;
@@ -310,6 +325,7 @@ export async function runRavoController<T extends JsonValue>(
 								},
 							};
 						options.ledger.allocate(allocation);
+						await persistCheckpoint();
 					} catch (error) {
 						return {
 							adapter,
@@ -328,6 +344,7 @@ export async function runRavoController<T extends JsonValue>(
 							passed: result.status === "pass",
 							calibrationId: allocation.calibrationId,
 						});
+						await persistCheckpoint();
 						if (!record.probabilisticallyAccepted)
 							result = {
 								status: "error",
@@ -366,7 +383,8 @@ export async function runRavoController<T extends JsonValue>(
 					signal: abort.signal,
 				});
 				if (gate.accepted) {
-					const before = await options.archive.recover();
+					const baseline = cp.archiveBaseline;
+					if (!baseline) throw new Error("archive CAS baseline was not bound before evaluation");
 					const digest = sha256(
 						canonicalJson({
 							proposal: candidate,
@@ -377,7 +395,7 @@ export async function runRavoController<T extends JsonValue>(
 					try {
 						await options.archive.accept(
 							{ runId: options.runId, proposalId: candidate.id, certificateDigest: digest },
-							{ revision: before.revision, championDigest: before.championDigest },
+							baseline,
 							digest,
 						);
 					} catch (error) {
@@ -385,6 +403,7 @@ export async function runRavoController<T extends JsonValue>(
 						throw error;
 					}
 					cp.state = stepped.state;
+					cp.errorBudget = options.ledger.toJSON();
 					cp.phase = "accepted";
 					emit({ type: "stopped", reason: "accepted" });
 					return {

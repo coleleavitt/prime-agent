@@ -188,7 +188,11 @@ import type { ModelRegistry } from "./model-registry.js";
 import { throwIfPromptAdmissionCancelled } from "./prompt-admission.js";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.js";
 import { RavoArchive } from "./ravo/archive.js";
-import { assistedRavoCertificateMatches } from "./ravo/authority.js";
+import {
+	assistedRavoBindingMatches,
+	assistedRavoCertificateMatches,
+	emptyAssistedRavoState,
+} from "./ravo/authority.js";
 import { canonicalJson } from "./ravo/canonical-json.js";
 import type { JsonValue } from "./ravo/reducer.js";
 import {
@@ -197,7 +201,6 @@ import {
 	appendGlobalRefinement,
 	applyRefinementProposal,
 	countValidRefinementEdits,
-	emptyRavoState,
 	formatHarnessStateForPrompt,
 	generateRefinementId,
 	getGlobalHarnessStateDir,
@@ -859,7 +862,11 @@ interface PostCompactionContinuationSettlement extends AgentMessageDeferred {
 }
 
 function createPostCompactionContinuationSettlement(): PostCompactionContinuationSettlement {
-	return { ...createAgentMessageDeferred(), continueAfterSessionInput: false, settled: false };
+	return {
+		...createAgentMessageDeferred(),
+		continueAfterSessionInput: false,
+		settled: false,
+	};
 }
 
 export interface ModelCycleResult {
@@ -889,7 +896,11 @@ type AutonomousSlashCommand = { kind: "status" } | { kind: "on" } | { kind: "off
 
 import type { RlmMaxDepthSource, RlmMaxDepthStatus, SetRlmMaxDepthResult } from "./rlm-max-depth.js";
 
-export type { RlmMaxDepthSource, RlmMaxDepthStatus, SetRlmMaxDepthResult } from "./rlm-max-depth.js";
+export type {
+	RlmMaxDepthSource,
+	RlmMaxDepthStatus,
+	SetRlmMaxDepthResult,
+} from "./rlm-max-depth.js";
 
 interface PersistedRlmMaxDepthState {
 	maxDepth: number;
@@ -1279,7 +1290,10 @@ export class AgentSession {
 		this._agentObserveController = config.agentObserveController;
 		this._mcpManager = config.mcpManager;
 		this._baseToolsOverride = config.baseToolsOverride;
-		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
+		this._sessionStartEvent = config.sessionStartEvent ?? {
+			type: "session_start",
+			reason: "startup",
+		};
 		const headerRlmDepth = this.sessionManager.getHeader()?.rlmDepth;
 		this._rlmDepth =
 			config.rlmDepth ??
@@ -1389,7 +1403,10 @@ export class AgentSession {
 			const activeToolNames = this.getActiveToolNames().filter((name) => !removedToolNames.has(name));
 			for (const name of removedToolNames) this._allowedToolNames?.delete(name);
 			this._acpMcpTools = [];
-			this._refreshToolRegistry({ activeToolNames, includeAllExtensionTools: true });
+			this._refreshToolRegistry({
+				activeToolNames,
+				includeAllExtensionTools: true,
+			});
 			this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
 			this.agent.state.systemPrompt = this._baseSystemPrompt;
 		}
@@ -2936,7 +2953,10 @@ export class AgentSession {
 		// A stale marker (continuation already consumed) matches no action; only an
 		// actual cancellation may roll back its queue-time continuationsUsed increment.
 		if (cancelled.length === 0) return;
-		this._setGoalState({ ...this._goalState, continuationsUsed: this._goalState.continuationsUsed - 1 });
+		this._setGoalState({
+			...this._goalState,
+			continuationsUsed: this._goalState.continuationsUsed - 1,
+		});
 		this._emitQueueUpdate();
 	}
 
@@ -4123,7 +4143,9 @@ export class AgentSession {
 		this._rlmChildCleanupFailures.clear();
 		this._deletedRlmChildIds.clear();
 		try {
-			await this._ipythonKernelProvisioner?.dispose({ snapshot: kernelSnapshot });
+			await this._ipythonKernelProvisioner?.dispose({
+				snapshot: kernelSnapshot,
+			});
 		} catch {
 			// a failed kernel startup already cleaned up after itself
 		}
@@ -6416,7 +6438,10 @@ export class AgentSession {
 		return this.clearQueuedUserMessagesMatching(isAgentSessionMessagePrompt);
 	}
 
-	clearQueuedUserMessagesMatching(predicate: (text: string) => boolean): { steering: string[]; followUp: string[] } {
+	clearQueuedUserMessagesMatching(predicate: (text: string) => boolean): {
+		steering: string[];
+		followUp: string[];
+	} {
 		const ownedActions = this._actionStore.ownedActions();
 		const dispatchedTurnCount = ownedActions.filter(
 			(action) =>
@@ -7613,7 +7638,10 @@ export class AgentSession {
 						return call(headers);
 					}
 					try {
-						const result = await call({ ...headers, ...modelRequestHeaders(requestId) });
+						const result = await call({
+							...headers,
+							...modelRequestHeaders(requestId),
+						});
 						uncommittedSlices.push(requestId);
 						return result;
 					} catch (error) {
@@ -8398,11 +8426,13 @@ export class AgentSession {
 		// safety actions and bypass gating.
 		if (!options.rollbackId && ravoEnabled() && plan.proposal.edits.length > 0) {
 			const ravo = await ravoEvaluateProposal(plan.proposal, {
-				state: baselineState?.ravo ?? emptyRavoState(),
+				state: baselineState?.ravo ?? emptyAssistedRavoState(),
 				config: RAVO_DEFAULT_CONFIG,
 				validEdits: countValidRefinementEdits(plan.proposal),
 				conversationText: serializeConversation(convertToLlm(this.agent.state.messages)).slice(-40_000),
-				harnessOverview: formatHarnessStateForPrompt(planningState, { includeIpythonExamples: false }),
+				harnessOverview: formatHarnessStateForPrompt(planningState, {
+					includeIpythonExamples: false,
+				}),
 				baseline: baselineState as unknown as JsonValue,
 				proposalId: plan.id,
 				model,
@@ -8415,7 +8445,10 @@ export class AgentSession {
 			}
 			const artifactRoot = this.sessionManager.getSessionArtifactDir();
 			if (artifactRoot && ravo.authorization) {
-				const archive = new RavoArchive({ artifactRoot, archivePath: "refinement-ravo" });
+				const archive = new RavoArchive({
+					artifactRoot,
+					archivePath: "refinement-ravo",
+				});
 				await archive.initialize();
 				const candidateBlob = await archive.putBlob(
 					Buffer.from(canonicalJson(JSON.parse(JSON.stringify(plan.proposal)))),
@@ -8423,8 +8456,16 @@ export class AgentSession {
 				const certificateBlob = await archive.putBlob(
 					Buffer.from(canonicalJson(JSON.parse(JSON.stringify(ravo.authorization.certificate)))),
 				);
-				await archive.append("proposal", { runId: plan.id, proposalId: plan.id, candidateBlob });
-				await archive.append("evaluation", { runId: plan.id, proposalId: plan.id, certificateBlob });
+				await archive.append("proposal", {
+					runId: plan.id,
+					proposalId: plan.id,
+					candidateBlob,
+				});
+				await archive.append("evaluation", {
+					runId: plan.id,
+					proposalId: plan.id,
+					certificateBlob,
+				});
 			}
 			return { ...plan, baselineState, ravo };
 		}
@@ -8511,10 +8552,16 @@ export class AgentSession {
 			if (this._disposed || refineAbort.signal.aborted) {
 				throw new Error("Refinement cancelled because the session was disposed.");
 			}
-			// RAVO gate decision (computed during planning): a rejected proposal is
-			// recorded in the session for observability but never touches the
-			// harness state — false rejections can cost progress, never corrupt
-			// the archive.
+			// RAVO gate decision (computed during planning): rejected proposals apply
+			// no harness edits, but their consumed evaluation state is persisted so a
+			// proposal id cannot be evaluated twice.
+			const bindingMatches =
+				plan.ravo?.authorization !== undefined &&
+				assistedRavoBindingMatches(
+					plan.ravo.authorization,
+					proposal as unknown as JsonValue,
+					state as unknown as JsonValue,
+				);
 			const authorizationMatches =
 				plan.ravo?.authorization !== undefined &&
 				assistedRavoCertificateMatches(
@@ -8523,7 +8570,7 @@ export class AgentSession {
 					state as unknown as JsonValue,
 				);
 			if (plan.ravo && (plan.ravo.decision !== "commit" || !authorizationMatches)) {
-				const rejectedReport = authorizationMatches
+				const rejectedReport = bindingMatches
 					? plan.ravo
 					: {
 							...plan.ravo,
@@ -8531,7 +8578,14 @@ export class AgentSession {
 							rationale:
 								"RAVO authorization no longer matches the complete proposal and current harness baseline; retry /refine",
 						};
-				const rejected = rejectedRefinementResult(proposal, rejectedReport, { id: plan.id, scope: targetScope });
+				const rejected = rejectedRefinementResult(proposal, rejectedReport, {
+					id: plan.id,
+					scope: targetScope,
+				});
+				if (bindingMatches && plan.ravo.authorization) {
+					state.ravo = plan.ravo.authorization.nextState;
+					rejected.harnessStatePath = saveHarnessState(targetHarnessStateDir, state);
+				}
 				let rejectedAuditAppendError: { error: unknown } | undefined;
 				try {
 					this.sessionManager.appendCustomEntry("prime-agent.refinement", rejected);
@@ -8557,21 +8611,28 @@ export class AgentSession {
 				scope: targetScope,
 				baselineState: plan.baselineState,
 			});
-			if (plan.ravo && result.appliedEdits.every((edit) => edit.applied)) {
+			if (plan.ravo?.authorization && result.appliedEdits.every((edit) => edit.applied)) {
+				state.ravo = plan.ravo.authorization.nextState;
 				result.ravo = plan.ravo;
 			}
 			result.harnessStatePath = saveHarnessState(targetHarnessStateDir, state);
 			if (plan.ravo?.authorization && result.appliedEdits.every((edit) => edit.applied)) {
 				const artifactRoot = this.sessionManager.getSessionArtifactDir();
 				if (artifactRoot) {
-					const archive = new RavoArchive({ artifactRoot, archivePath: "refinement-ravo" });
+					const archive = new RavoArchive({
+						artifactRoot,
+						archivePath: "refinement-ravo",
+					});
 					const before = await archive.recover();
 					const actualStateDigest = await archive.putBlob(
 						Buffer.from(canonicalJson(JSON.parse(JSON.stringify(state)))),
 					);
 					await archive.accept(
 						{ runId: plan.id, proposalId: plan.id, actualStateDigest },
-						{ revision: before.revision, championDigest: before.championDigest },
+						{
+							revision: before.revision,
+							championDigest: before.championDigest,
+						},
 						actualStateDigest,
 					);
 				}
@@ -10293,7 +10354,10 @@ export class AgentSession {
 			void session.disposeAsync().catch(() => undefined);
 			return false;
 		}
-		this._rlmChildSessions.set(childId, { session, run: this._activeRlmChildRuns.get(childId) });
+		this._rlmChildSessions.set(childId, {
+			session,
+			run: this._activeRlmChildRuns.get(childId),
+		});
 		if (unsubscribe) {
 			this._rlmChildUnsubscribes.set(childId, unsubscribe);
 		}
@@ -10467,7 +10531,10 @@ export class AgentSession {
 		const cancellation = new AbortController();
 		const cancelFromParent = () => cancellation.abort();
 		if (externalSignal?.aborted) cancellation.abort();
-		else externalSignal?.addEventListener("abort", cancelFromParent, { once: true });
+		else
+			externalSignal?.addEventListener("abort", cancelFromParent, {
+				once: true,
+			});
 		this._rlmQuiescenceWaitAborts.add(cancellation);
 		let rejectCancelled = (_error: Error) => {};
 		const cancelled = new Promise<never>((_resolve, reject) => {
@@ -11015,7 +11082,10 @@ export class AgentSession {
 					// A pre-bind failure leaves no row: "cancelled" is the wire's removal signal.
 					this._emit({
 						type: "rlm_child_update",
-						child: { ...this._rlmChildSnapshotForRun(run), status: "cancelled" },
+						child: {
+							...this._rlmChildSnapshotForRun(run),
+							status: "cancelled",
+						},
 					});
 				} else {
 					emitChildUpdate();

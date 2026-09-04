@@ -5,6 +5,7 @@ export * from "./controller.js";
 export type {
 	CalibrationAssumption,
 	DecisionAllocation,
+	ErrorBudgetLedgerSnapshot,
 	EvaluationRecord,
 	EvaluatorResult,
 	UnionBoundCertificate,

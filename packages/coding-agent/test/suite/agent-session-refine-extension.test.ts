@@ -44,7 +44,9 @@ describe("AgentSession session_before_refine extension hook", () => {
 		harness.setResponses([]);
 		await harness.session.prompt("hello").catch(() => {});
 
-		const result = await harness.session.refine({ instructions: "capture lessons" });
+		const result = await harness.session.refine({
+			instructions: "capture lessons",
+		});
 
 		expect(result.summary).toBe("RAVO gate rejected: extension summary");
 		expect(result.appliedEdits).toHaveLength(1);
@@ -59,6 +61,9 @@ describe("AgentSession session_before_refine extension hook", () => {
 		const state = loadHarnessState(result.harnessStatePath.replace(/\/[^/]+$/, ""), "local");
 		const memories = Object.values(state.entries.memory);
 		expect(memories.some((entry) => entry.title === "Extension memory")).toBe(false);
+		expect(state.ravo?.evaluatedProposalIds).toEqual([result.id]);
+		expect(state.ravo?.lineage).toEqual([]);
+		expect(state.ravo?.championId).toBeNull();
 	});
 
 	it("rejects invalid extension edits at apply time", async () => {
@@ -73,7 +78,12 @@ describe("AgentSession session_before_refine extension hook", () => {
 							expectedOutcome: "bad",
 							edits: [
 								// update without id is invalid
-								{ action: "update" as const, kind: "memory" as const, title: "x", content: "y" },
+								{
+									action: "update" as const,
+									kind: "memory" as const,
+									title: "x",
+									content: "y",
+								},
 							],
 						},
 					}));
@@ -178,8 +188,13 @@ describe("AgentSession session_before_refine extension hook", () => {
 		let handlerCalls = 0;
 		const harness = await createHarness({
 			persistSession: true,
-			settings: { autoRefine: { enabled: true, turnInterval: 1, cooldownMs: 0 } },
-			autoRefineReviewer: async () => ({ shouldRefine: true, rationale: "durable lesson" }),
+			settings: {
+				autoRefine: { enabled: true, turnInterval: 1, cooldownMs: 0 },
+			},
+			autoRefineReviewer: async () => ({
+				shouldRefine: true,
+				rationale: "durable lesson",
+			}),
 			extensionFactories: [
 				(pi) => {
 					pi.on("session_before_refine", async () => {
@@ -259,7 +274,9 @@ describe("AgentSession session_before_refine extension hook", () => {
 		await harness.session.prompt("hello").catch(() => {});
 
 		(harness.session.agent.state as { isStreaming: boolean }).isStreaming = true;
-		harness.session.handleRefineHostRequest("refine.run", { instructions: "x" });
+		harness.session.handleRefineHostRequest("refine.run", {
+			instructions: "x",
+		});
 		(harness.session.agent.state as { isStreaming: boolean }).isStreaming = false;
 
 		await harness.session.disposeAsync();

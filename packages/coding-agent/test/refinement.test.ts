@@ -117,7 +117,13 @@ function seedEntry(state: HarnessState, kind: RefinementKind, id = `${kind}_entr
 		kind === "skill"
 			? {
 					reference: skillReference,
-					arguments: { input: { type: "string", required: true, description: "Task input" } },
+					arguments: {
+						input: {
+							type: "string",
+							required: true,
+							description: "Task input",
+						},
+					},
 				}
 			: {};
 	applyRefinementProposal(
@@ -176,8 +182,20 @@ describe("harness refinement", () => {
 		const result = applyRefinementProposal(
 			state,
 			proposal("Update memory twice", [
-				{ action: "update", kind: "memory", id: "memory_entry", title: "First", content: "first" },
-				{ action: "update", kind: "memory", id: "memory_entry", title: "Second", content: "second" },
+				{
+					action: "update",
+					kind: "memory",
+					id: "memory_entry",
+					title: "First",
+					content: "first",
+				},
+				{
+					action: "update",
+					kind: "memory",
+					id: "memory_entry",
+					title: "Second",
+					content: "second",
+				},
 			]),
 			{ id: "refine_same_entry", baselineState, scope: "local" },
 		);
@@ -190,7 +208,10 @@ describe("harness refinement", () => {
 	it("infers legacy refinement scope from applied edit snapshots", () => {
 		const state = loadHarnessState(makeTempDir(), "global");
 		seedEntry(state, "memory", "global_memory");
-		const after = { ...state.entries.memory.global_memory, scope: "global" as const };
+		const after = {
+			...state.entries.memory.global_memory,
+			scope: "global" as const,
+		};
 		const result: RefinementResult = {
 			...proposal("Legacy global edit", []),
 			id: "legacy",
@@ -240,7 +261,13 @@ describe("harness refinement", () => {
 					...(kind === "skill"
 						? {
 								reference: skillReference,
-								arguments: { input: { type: "string", required: true, description: "Task input" } },
+								arguments: {
+									input: {
+										type: "string",
+										required: true,
+										description: "Task input",
+									},
+								},
 							}
 						: {}),
 					metadata: { kind },
@@ -283,7 +310,11 @@ describe("harness refinement", () => {
 						? {
 								reference: skillReference,
 								arguments: {
-									input: { type: "string", required: true, description: "Updated task input" },
+									input: {
+										type: "string",
+										required: true,
+										description: "Updated task input",
+									},
 								},
 							}
 						: {}),
@@ -363,7 +394,11 @@ describe("harness refinement", () => {
 							call_pattern: "await native_check(command=...)",
 						},
 						arguments: {
-							command: { type: "string", required: false, description: "Optional command to validate." },
+							command: {
+								type: "string",
+								required: false,
+								description: "Optional command to validate.",
+							},
 						},
 					},
 				],
@@ -390,7 +425,11 @@ describe("harness refinement", () => {
 							call_pattern: "await native_check(command=...)",
 						},
 						arguments: {
-							command: { type: "string", required: false, description: "Optional command to validate." },
+							command: {
+								type: "string",
+								required: false,
+								description: "Optional command to validate.",
+							},
 						},
 					},
 					{
@@ -429,7 +468,11 @@ describe("harness refinement", () => {
 						call_pattern: "await native_check(command=...)",
 					},
 					arguments: {
-						command: { type: "string", required: false, description: "Optional command override." },
+						command: {
+							type: "string",
+							required: false,
+							description: "Optional command override.",
+						},
 					},
 				},
 			]),
@@ -449,7 +492,11 @@ describe("harness refinement", () => {
 					call_pattern: "await native_check(command=...)",
 				},
 				arguments: {
-					command: { type: "string", required: false, description: "Optional command override." },
+					command: {
+						type: "string",
+						required: false,
+						description: "Optional command override.",
+					},
 				},
 				metadata: {},
 				version: 1,
@@ -675,12 +722,23 @@ describe("harness refinement", () => {
 
 			const state = loadHarnessState(dir);
 
-			expect(state.entries).toEqual({ prompt: {}, memory: {}, skill: {}, subagent: {} });
+			expect(state.entries).toEqual({
+				prompt: {},
+				memory: {},
+				skill: {},
+				subagent: {},
+			});
 			expect(state.refinements).toEqual([]);
 			applyRefinementProposal(
 				state,
 				proposal("Recover", [
-					{ action: "create", kind: "memory", id: "recovered", title: "Recovered", content: "ok" },
+					{
+						action: "create",
+						kind: "memory",
+						id: "recovered",
+						title: "Recovered",
+						content: "ok",
+					},
 				]),
 				{ id: "refine_recover" },
 			);
@@ -745,7 +803,11 @@ describe("harness refinement", () => {
 						? {
 								reference: skillReference,
 								arguments: {
-									input: { type: "string", required: true, description: "Replacement input" },
+									input: {
+										type: "string",
+										required: true,
+										description: "Replacement input",
+									},
 								},
 							}
 						: {}),
@@ -782,7 +844,13 @@ describe("harness refinement", () => {
 					...(kind === "skill"
 						? {
 								reference: skillReference,
-								arguments: { input: { type: "string", required: true, description: "Missing input" } },
+								arguments: {
+									input: {
+										type: "string",
+										required: true,
+										description: "Missing input",
+									},
+								},
 							}
 						: {}),
 				},
@@ -1004,11 +1072,23 @@ describe("harness refinement", () => {
 
 		// Second call is the RAVO deep judge scoring the proposal.
 		completeSimpleMock.mockResolvedValueOnce(
-			assistantText(JSON.stringify({ score: 80, failedCriteria: [], rationale: "well evidenced" })),
+			assistantText(
+				JSON.stringify({
+					score: 80,
+					failedCriteria: [],
+					rationale: "well evidenced",
+				}),
+			),
 		);
 
 		const result = await refineHarness(
-			[{ role: "user", content: "Use native validation.", timestamp: Date.now() } satisfies AgentMessage],
+			[
+				{
+					role: "user",
+					content: "Use native validation.",
+					timestamp: Date.now(),
+				} satisfies AgentMessage,
+			],
 			state,
 			[],
 			createRefineModel(true),
@@ -1050,19 +1130,35 @@ describe("harness refinement", () => {
 		expect(state.entries.memory.native_validation.content).toBe(
 			"Run validation through the target project environment.",
 		);
+		expect(state.ravo?.championId).toBe(result.id);
+		expect(state.ravo?.evaluatedProposalIds).toEqual([result.id]);
+		expect(state.ravo?.lineage[0]).toMatchObject({
+			proposalId: result.id,
+			parentId: null,
+			score: 80,
+		});
 	});
 
 	it("caps the refinement output budget by the model's own maxTokens", async () => {
 		const state = loadHarnessState(makeTempDir());
 		completeSimpleMock.mockResolvedValueOnce(
-			assistantText(JSON.stringify({ summary: "s", rationale: "r", expectedOutcome: "o", edits: [] })),
+			assistantText(
+				JSON.stringify({
+					summary: "s",
+					rationale: "r",
+					expectedOutcome: "o",
+					edits: [],
+				}),
+			),
 		);
 		// A large model must receive the policy ceiling, not its full output width.
 		const wideModel = { ...createRefineModel(false), maxTokens: 128_000 };
 
 		await refineHarness([], state, [], wideModel, "api-key", {});
 
-		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({ maxTokens: 32_000 });
+		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({
+			maxTokens: 32_000,
+		});
 	});
 
 	it("reports an exhausted output budget instead of a JSON parse error", async () => {
@@ -1076,7 +1172,10 @@ describe("harness refinement", () => {
   "edits": [
     { "action": "create", "kind": "memory", "id": "a", "title": "t", "content": "first" },
     { "action": "create", "kind": "memory", "id": "b", "title": "t2", "content": "second`;
-		completeSimpleMock.mockResolvedValueOnce({ ...assistantText(truncated), stopReason: "length" });
+		completeSimpleMock.mockResolvedValueOnce({
+			...assistantText(truncated),
+			stopReason: "length",
+		});
 
 		await expect(refineHarness([], state, [], createRefineModel(false), "api-key", {})).rejects.toThrow(
 			/output budget was exhausted/,
@@ -1184,7 +1283,9 @@ describe("harness refinement", () => {
 			content: "skill content",
 			path: "skill/path",
 			reference: skillReference,
-			arguments: { input: { type: "string", required: true, description: "Task input" } },
+			arguments: {
+				input: { type: "string", required: true, description: "Task input" },
+			},
 			metadata: { seeded: true },
 			version: 1,
 		});
@@ -1195,7 +1296,9 @@ describe("harness refinement", () => {
 		const state = loadHarnessState(makeTempDir());
 
 		await expect(
-			refineHarness([], state, [], {} as never, "api-key", { rollbackId: "missing_refinement" }),
+			refineHarness([], state, [], {} as never, "api-key", {
+				rollbackId: "missing_refinement",
+			}),
 		).rejects.toThrow("Refinement missing_refinement not found");
 	});
 });
@@ -1239,7 +1342,10 @@ describe("global refinement history", () => {
 			"utf8",
 		);
 
-		expect(loadGlobalRefinementHistory(dir)[0]).toMatchObject({ id: "refine_legacy_global", scope: "global" });
+		expect(loadGlobalRefinementHistory(dir)[0]).toMatchObject({
+			id: "refine_legacy_global",
+			scope: "global",
+		});
 	});
 
 	it("writes inferred legacy history scope back onto loaded results", () => {
@@ -1281,13 +1387,23 @@ describe("global refinement history", () => {
 	});
 
 	it("preserves global scope when session history shadows legacy global history", () => {
-		const globalOld = sampleResult("refine_shared", { scope: "global", summary: "global version" });
-		const sessionNew = sampleResult("refine_shared", { scope: undefined, summary: "session version" });
+		const globalOld = sampleResult("refine_shared", {
+			scope: "global",
+			summary: "global version",
+		});
+		const sessionNew = sampleResult("refine_shared", {
+			scope: undefined,
+			summary: "session version",
+		});
 
 		const merged = mergeRefinementHistory([globalOld], [sessionNew]);
 
 		expect(merged).toHaveLength(1);
-		expect(merged[0]).toMatchObject({ id: "refine_shared", summary: "session version", scope: "global" });
+		expect(merged[0]).toMatchObject({
+			id: "refine_shared",
+			summary: "session version",
+			scope: "global",
+		});
 	});
 
 	it("skips malformed history lines without throwing", () => {
@@ -1301,9 +1417,13 @@ describe("global refinement history", () => {
 	});
 
 	it("merges global and session history, preferring session entries by id", () => {
-		const globalOld = sampleResult("refine_shared", { summary: "global version" });
+		const globalOld = sampleResult("refine_shared", {
+			summary: "global version",
+		});
 		const globalOnly = sampleResult("refine_global_only");
-		const sessionNew = sampleResult("refine_shared", { summary: "session version" });
+		const sessionNew = sampleResult("refine_shared", {
+			summary: "session version",
+		});
 		const sessionOnly = sampleResult("refine_session_only");
 
 		const merged = mergeRefinementHistory([globalOld, globalOnly], [sessionNew, sessionOnly]);
@@ -1338,7 +1458,13 @@ describe("global refinement history", () => {
 		);
 
 		const plan = await planRefinement(
-			[{ role: "user", content: "remember this", timestamp: Date.now() } satisfies AgentMessage],
+			[
+				{
+					role: "user",
+					content: "remember this",
+					timestamp: Date.now(),
+				} satisfies AgentMessage,
+			],
 			state,
 			[],
 			createRefineModel(false),
@@ -1364,8 +1490,13 @@ describe("global refinement history", () => {
 		expect(state.entries.memory.planned_memory).toBeUndefined();
 		expect(state.refinements).toHaveLength(0);
 
-		const result = applyRefinementProposal(state, plan.proposal, { id: plan.id });
-		expect(result.appliedEdits[0]).toMatchObject({ id: "planned_memory", applied: true });
+		const result = applyRefinementProposal(state, plan.proposal, {
+			id: plan.id,
+		});
+		expect(result.appliedEdits[0]).toMatchObject({
+			id: "planned_memory",
+			applied: true,
+		});
 		expect(state.entries.memory.planned_memory).toBeDefined();
 	});
 
@@ -1383,7 +1514,13 @@ describe("global refinement history", () => {
 		);
 
 		await planRefinement(
-			[{ role: "user", content: "remember this only if global", timestamp: Date.now() } satisfies AgentMessage],
+			[
+				{
+					role: "user",
+					content: "remember this only if global",
+					timestamp: Date.now(),
+				} satisfies AgentMessage,
+			],
 			state,
 			[],
 			createRefineModel(false),
@@ -1402,7 +1539,13 @@ describe("global refinement history", () => {
 		const target = applyRefinementProposal(
 			state,
 			proposal("Target", [
-				{ action: "create", kind: "memory", id: "rollback_me", title: "Rollback me", content: "content" },
+				{
+					action: "create",
+					kind: "memory",
+					id: "rollback_me",
+					title: "Rollback me",
+					content: "content",
+				},
 			]),
 			{ id: "refine_rollback_target" },
 		);
@@ -1414,7 +1557,10 @@ describe("global refinement history", () => {
 		expect(plan.rollbackOf).toBe("refine_rollback_target");
 		expect(plan.rollbackScope).toBe("local");
 		expect(state.entries.memory.rollback_me).toBeDefined();
-		applyRefinementProposal(state, plan.proposal, { id: plan.id, rollbackOf: plan.rollbackOf });
+		applyRefinementProposal(state, plan.proposal, {
+			id: plan.id,
+			rollbackOf: plan.rollbackOf,
+		});
 		expect(state.entries.memory.rollback_me).toBeUndefined();
 	});
 

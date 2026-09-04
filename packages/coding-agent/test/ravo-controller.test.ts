@@ -233,4 +233,51 @@ describe("RAVO controller", () => {
 		expect(result.reason).toBe("accepted");
 		expect(result.checkpoint.workerHandle).toBe("child-1");
 	});
+	it("binds the champion CAS before evaluation begins", async () => {
+		const options = await base();
+		const competingDigest = "c".repeat(64);
+		const deep = options.evaluators.find((adapter) => adapter.kind === "deep");
+		if (!deep) throw new Error("missing deep evaluator");
+		deep.evaluate = async () => {
+			await options.archive.accept(
+				{ proposalId: "competing" },
+				{ revision: 0, championDigest: null },
+				competingDigest,
+			);
+			return { status: "completed", value: { status: "pass", score: 10 }, tokens: 1 };
+		};
+		const result = await runRavoController(options);
+		expect(result.reason).toBe("stale_cas");
+		expect(result.checkpoint.archiveBaseline).toEqual({ revision: 0, championDigest: null });
+		expect((await options.archive.recover()).championDigest).toBe(competingDigest);
+	});
+
+	it("restores the error budget from a restart checkpoint", async () => {
+		const first = await base({ maxRepairs: 0 });
+		first.ledger.registerCalibration({
+			id: "calibration",
+			evaluatorId: "deep",
+			historyKey: "round",
+			falsePassUpperBound: Rational.of(1, 20),
+			basis: "test calibration",
+		});
+		const deep = first.evaluators.find((adapter) => adapter.kind === "deep");
+		if (!deep) throw new Error("missing deep evaluator");
+		deep.probabilistic = true;
+		deep.allocation = () => ({
+			decisionId: "decision-1",
+			evaluatorId: "deep",
+			historyKey: "round",
+			calibrationId: "calibration",
+			delta: Rational.of(1, 20),
+		});
+		deep.evaluate = async () => ({ status: "completed", value: { status: "fail", score: 0 }, tokens: 1 });
+		const stopped = await runRavoController(first);
+		expect(stopped.checkpoint.errorBudget.spentDelta).toBe("1/20");
+
+		const resumed = await base({ archive: first.archive, checkpoint: stopped.checkpoint });
+		await runRavoController(resumed);
+		expect(resumed.ledger.spentDelta.toString()).toBe("1/20");
+		expect(resumed.ledger.allocatedDelta.toString()).toBe("1/20");
+	});
 });

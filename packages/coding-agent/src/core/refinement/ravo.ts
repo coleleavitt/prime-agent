@@ -1,7 +1,7 @@
 import type { Model } from "@earendil-works/pi-ai";
 import { completeSimple } from "@earendil-works/pi-ai";
 import { type AssistedRavoAuthorization, authorizeAssistedRavo } from "../ravo/authority.js";
-import type { JsonValue } from "../ravo/reducer.js";
+import type { JsonValue, RavoState } from "../ravo/reducer.js";
 import type { RefinementProposal } from "./refinement.js";
 
 /**
@@ -81,15 +81,38 @@ export const RAVO_DEFAULT_CONFIG: RavoConfig = {
 
 /** Seed opponent pool: the policy the refinement system prompt demands. */
 export const RAVO_SEED_CRITERIA: RavoCriterion[] = [
-	{ id: "evidence", weight: 1, description: "Every edit is backed by concrete trajectory evidence." },
-	{ id: "scope", weight: 1, description: "Edits match the requested scope (local vs global) policy." },
-	{ id: "minimality", weight: 1, description: "Edits touch the smallest relevant components; no sprawling rewrites." },
-	{ id: "contracts", weight: 1, description: "Skill edits carry a valid python reference and arguments contract." },
-	{ id: "novelty", weight: 1, description: "Edits do not duplicate or overlap existing harness entries." },
+	{
+		id: "evidence",
+		weight: 1,
+		description: "Every edit is backed by concrete trajectory evidence.",
+	},
+	{
+		id: "scope",
+		weight: 1,
+		description: "Edits match the requested scope (local vs global) policy.",
+	},
+	{
+		id: "minimality",
+		weight: 1,
+		description: "Edits touch the smallest relevant components; no sprawling rewrites.",
+	},
+	{
+		id: "contracts",
+		weight: 1,
+		description: "Skill edits carry a valid python reference and arguments contract.",
+	},
+	{
+		id: "novelty",
+		weight: 1,
+		description: "Edits do not duplicate or overlap existing harness entries.",
+	},
 ];
 
 export function emptyRavoState(): RavoHarnessState {
-	return { lineage: [], evaluator: { criteria: RAVO_SEED_CRITERIA.map((c) => ({ ...c })) } };
+	return {
+		lineage: [],
+		evaluator: { criteria: RAVO_SEED_CRITERIA.map((c) => ({ ...c })) },
+	};
 }
 
 /** Lean Def 1.1: best recorded deep score (0 for the empty lineage). */
@@ -148,7 +171,11 @@ export interface RavoGateReport {
 export function ravoDecide(
 	state: RavoHarnessState,
 	config: RavoConfig,
-	evaluation: { fastScore: number; deepScore: number; missedCriteria: string[] },
+	evaluation: {
+		fastScore: number;
+		deepScore: number;
+		missedCriteria: string[];
+	},
 ): RavoDecision {
 	if (evaluation.fastScore < config.screenThreshold) {
 		return "reject_screen";
@@ -214,7 +241,11 @@ Return JSON only:
 
 const RAVO_JUDGE_MAX_OUTPUT_TOKENS = 2_048;
 
-function extractJudgeJson(text: string): { score: number; failedCriteria: string[]; rationale: string } {
+function extractJudgeJson(text: string): {
+	score: number;
+	failedCriteria: string[];
+	rationale: string;
+} {
 	const trimmed = text.trim();
 	const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
 	const candidate = fenced ? fenced[1].trim() : trimmed;
@@ -243,7 +274,7 @@ function extractJudgeJson(text: string): { score: number; failedCriteria: string
 export async function ravoEvaluateProposal(
 	proposal: RefinementProposal,
 	options: {
-		state: RavoHarnessState;
+		state: RavoState<JsonValue>;
 		config: RavoConfig;
 		validEdits: number;
 		conversationText: string;
@@ -258,7 +289,7 @@ export async function ravoEvaluateProposal(
 ): Promise<RavoGateReport> {
 	const { state, config } = options;
 	const fastScore = ravoFastScreen(proposal, options.validEdits);
-	const bestScore = ravoBestScore(state.lineage);
+	const bestScore = state.lineage.reduce((best, entry) => Math.max(best, entry.score), 0);
 	const base = {
 		fastScore,
 		bestScore,
@@ -293,8 +324,12 @@ export async function ravoEvaluateProposal(
 	let rationale = "";
 	let judgeError: string | undefined;
 	try {
-		const criteriaText = state.evaluator.criteria
-			.map((c) => `- ${c.id} (weight ${c.weight}): ${c.description}`)
+		const descriptions = new Map(RAVO_SEED_CRITERIA.map((criterion) => [criterion.id, criterion.description]));
+		const criteriaText = state.opponents.criteria
+			.map(
+				(criterion) =>
+					`- ${criterion.id} (weight ${criterion.currentWeight}): ${descriptions.get(criterion.id) ?? criterion.id}`,
+			)
 			.join("\n");
 		const userPrompt = [
 			`<criteria>\n${criteriaText}\n</criteria>`,
@@ -307,7 +342,13 @@ export async function ravoEvaluateProposal(
 			options.model,
 			{
 				systemPrompt: RAVO_JUDGE_SYSTEM_PROMPT,
-				messages: [{ role: "user", content: [{ type: "text", text: userPrompt }], timestamp: Date.now() }],
+				messages: [
+					{
+						role: "user",
+						content: [{ type: "text", text: userPrompt }],
+						timestamp: Date.now(),
+					},
+				],
 			},
 			{
 				maxTokens: Math.min(options.model.maxTokens, RAVO_JUDGE_MAX_OUTPUT_TOKENS),
@@ -339,7 +380,12 @@ export async function ravoEvaluateProposal(
 		fastScore,
 		observation: judgeError
 			? { status: "error", detail: rationale }
-			: { status: "pass", score: deepScore, detail: rationale, failedCriteria: missedCriteria },
+			: {
+					status: "pass",
+					score: deepScore,
+					detail: rationale,
+					failedCriteria: missedCriteria,
+				},
 		screenThreshold: config.screenThreshold,
 		epsilon: config.epsilon,
 	});
@@ -355,7 +401,10 @@ export async function ravoEvaluateProposal(
 		decision,
 		deepScore,
 		missedCriteria,
-		missedWeight: ravoMissedWeight(state.evaluator, missedCriteria),
+		missedWeight: state.opponents.criteria.reduce(
+			(weight, criterion) => weight + (missedCriteria.includes(criterion.id) ? criterion.currentWeight : 0),
+			0,
+		),
 		rationale,
 		judgeError,
 		authorization,

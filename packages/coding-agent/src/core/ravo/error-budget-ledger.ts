@@ -38,6 +38,35 @@ export interface EvaluationRecord {
 	rejectionReason?: "uncalibrated";
 }
 
+export interface ErrorBudgetLedgerSnapshot {
+	schemaVersion: 1;
+	familyDelta: string;
+	allocatedDelta: string;
+	spentDelta: string;
+	calibrations: Array<{
+		id: string;
+		evaluatorId: string;
+		historyKey: string;
+		falsePassUpperBound: string;
+		basis: string;
+	}>;
+	allocations: Array<{
+		decisionId: string;
+		historyKey: string;
+		evaluatorId: string;
+		calibrationId: string;
+		delta: string;
+	}>;
+	evaluations: Array<{
+		decisionId: string;
+		passed: boolean;
+		probabilisticallyAccepted: boolean;
+		deltaSpent: string;
+		calibrationId?: string;
+		rejectionReason?: "uncalibrated";
+	}>;
+}
+
 export interface UnionBoundCertificate {
 	method: "adaptive-union-bound";
 	independenceAssumed: false;
@@ -67,6 +96,66 @@ export class ErrorBudgetLedger {
 
 	constructor(familyDelta: Rational) {
 		this.familyDelta = probability(familyDelta, "familyDelta");
+	}
+
+	static deserialize(serialized: string): ErrorBudgetLedger {
+		let value: unknown;
+		try {
+			value = JSON.parse(serialized);
+		} catch {
+			throw new TypeError("invalid error-budget ledger JSON");
+		}
+		return ErrorBudgetLedger.fromSnapshot(value);
+	}
+
+	static fromSnapshot(value: unknown): ErrorBudgetLedger {
+		const snapshot = parseSnapshot(value);
+		const ledger = new ErrorBudgetLedger(Rational.parse(snapshot.familyDelta));
+		for (const calibration of snapshot.calibrations) {
+			ledger.registerCalibration({
+				...calibration,
+				falsePassUpperBound: Rational.parse(calibration.falsePassUpperBound),
+			});
+		}
+		for (const allocation of snapshot.allocations) {
+			ledger.allocate({ ...allocation, delta: Rational.parse(allocation.delta) });
+		}
+		for (const evaluation of snapshot.evaluations) {
+			const record = ledger.recordEvaluation({
+				decisionId: evaluation.decisionId,
+				passed: evaluation.passed,
+				...(evaluation.calibrationId === undefined ? {} : { calibrationId: evaluation.calibrationId }),
+			});
+			if (
+				record.probabilisticallyAccepted !== evaluation.probabilisticallyAccepted ||
+				record.deltaSpent.toString() !== evaluation.deltaSpent ||
+				record.rejectionReason !== evaluation.rejectionReason
+			) {
+				throw new TypeError("error-budget evaluation record is inconsistent");
+			}
+		}
+		if (
+			ledger.allocatedDelta.toString() !== snapshot.allocatedDelta ||
+			ledger.spentDelta.toString() !== snapshot.spentDelta
+		) {
+			throw new TypeError("error-budget totals are inconsistent");
+		}
+		return ledger;
+	}
+
+	restore(value: unknown): void {
+		const restored = ErrorBudgetLedger.fromSnapshot(value);
+		if (restored.familyDelta.toString() !== this.familyDelta.toString()) {
+			throw new Error("error-budget familyDelta mismatch");
+		}
+		this.#calibrations.clear();
+		this.#allocations.clear();
+		this.#evaluations.length = 0;
+		for (const [id, assumption] of restored.#calibrations) this.#calibrations.set(id, assumption);
+		for (const [id, allocation] of restored.#allocations) this.#allocations.set(id, allocation);
+		this.#evaluations.push(...restored.#evaluations);
+		this.#allocatedDelta = restored.#allocatedDelta;
+		this.#spentDelta = restored.#spentDelta;
 	}
 
 	get allocatedDelta(): Rational {
@@ -139,16 +228,24 @@ export class ErrorBudgetLedger {
 		});
 	}
 
-	toJSON(): object {
+	toJSON(): ErrorBudgetLedgerSnapshot {
 		return {
 			schemaVersion: 1,
-			familyDelta: this.familyDelta,
-			allocatedDelta: this.#allocatedDelta,
-			spentDelta: this.#spentDelta,
-			calibrations: [...this.#calibrations.values()],
-			allocations: [...this.#allocations.values()],
-			evaluations: this.#evaluations,
-			certificate: this.certificate(),
+			familyDelta: this.familyDelta.toString(),
+			allocatedDelta: this.#allocatedDelta.toString(),
+			spentDelta: this.#spentDelta.toString(),
+			calibrations: [...this.#calibrations.values()].map((value) => ({
+				...value,
+				falsePassUpperBound: value.falsePassUpperBound.toString(),
+			})),
+			allocations: [...this.#allocations.values()].map((value) => ({
+				...value,
+				delta: value.delta.toString(),
+			})),
+			evaluations: this.#evaluations.map((value) => ({
+				...value,
+				deltaSpent: value.deltaSpent.toString(),
+			})),
 		};
 	}
 
@@ -159,4 +256,45 @@ export class ErrorBudgetLedger {
 
 function requireNonEmpty(value: string, name: string): void {
 	if (value.trim() === "") throw new TypeError(`${name} must not be empty`);
+}
+
+function parseSnapshot(value: unknown): ErrorBudgetLedgerSnapshot {
+	if (!isRecord(value) || value.schemaVersion !== 1) throw new TypeError("unsupported error-budget schema");
+	for (const key of ["familyDelta", "allocatedDelta", "spentDelta"] as const) requireRational(value[key], key);
+	if (!Array.isArray(value.calibrations) || !Array.isArray(value.allocations) || !Array.isArray(value.evaluations)) {
+		throw new TypeError("invalid error-budget collections");
+	}
+	for (const item of value.calibrations) {
+		if (!isRecord(item)) throw new TypeError("invalid calibration");
+		for (const key of ["id", "evaluatorId", "historyKey", "basis"] as const) requireString(item[key], key);
+		requireRational(item.falsePassUpperBound, "falsePassUpperBound");
+	}
+	for (const item of value.allocations) {
+		if (!isRecord(item)) throw new TypeError("invalid allocation");
+		for (const key of ["decisionId", "historyKey", "evaluatorId", "calibrationId"] as const)
+			requireString(item[key], key);
+		requireRational(item.delta, "delta");
+	}
+	for (const item of value.evaluations) {
+		if (!isRecord(item)) throw new TypeError("invalid evaluation");
+		requireString(item.decisionId, "decisionId");
+		if (typeof item.passed !== "boolean" || typeof item.probabilisticallyAccepted !== "boolean")
+			throw new TypeError("invalid evaluation flags");
+		requireRational(item.deltaSpent, "deltaSpent");
+		if (item.calibrationId !== undefined) requireString(item.calibrationId, "calibrationId");
+		if (item.rejectionReason !== undefined && item.rejectionReason !== "uncalibrated")
+			throw new TypeError("invalid rejectionReason");
+	}
+	return value as unknown as ErrorBudgetLedgerSnapshot;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function requireString(value: unknown, name: string): asserts value is string {
+	if (typeof value !== "string" || value.trim() === "") throw new TypeError(`${name} must be a non-empty string`);
+}
+function requireRational(value: unknown, name: string): asserts value is string {
+	if (typeof value !== "string") throw new TypeError(`${name} must be a rational string`);
+	Rational.parse(value);
 }

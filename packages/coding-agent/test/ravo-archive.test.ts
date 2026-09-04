@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -137,5 +138,41 @@ describe("RavoArchive", () => {
 		expect(() => new RavoArchive({ artifactRoot, archivePath: path.resolve(artifactRoot, "absolute") })).toThrow(
 			"relative",
 		);
+	});
+
+	it("serializes competing champion commits across separate processes", async () => {
+		const artifactRoot = await root();
+		await new RavoArchive({ artifactRoot }).initialize();
+		const tsxPath = path.resolve("../../node_modules/tsx/dist/cli.mjs");
+		const archivePath = path.resolve("src/core/ravo/archive.ts");
+		const worker = path.join(artifactRoot, "accept-worker.ts");
+		await writeFile(
+			worker,
+			`import { RavoArchive } from ${JSON.stringify(archivePath)};
+` +
+				`const archive = new RavoArchive({ artifactRoot: process.argv[2]! });
+` +
+				`archive.accept({ worker: process.argv[3]! }, { revision: 0, championDigest: null }, process.argv[3]!).catch((error) => { console.error(error); process.exitCode = 1; });
+`,
+		);
+		const run = (digest: string) =>
+			new Promise<{ code: number | null; stderr: string }>((resolve) => {
+				const child = spawn(process.execPath, [tsxPath, worker, artifactRoot, digest], {
+					stdio: ["ignore", "ignore", "pipe"],
+				});
+				let stderr = "";
+				child.stderr.setEncoding("utf8");
+				child.stderr.on("data", (chunk: string) => (stderr += chunk));
+				child.on("close", (code) => resolve({ code, stderr }));
+			});
+		const results = await Promise.all([run("1".repeat(64)), run("2".repeat(64))]);
+		expect(
+			results.filter((result) => result.code === 0),
+			JSON.stringify(results),
+		).toHaveLength(1);
+		expect(results.filter((result) => result.code !== 0)).toHaveLength(1);
+		expect(results.find((result) => result.code !== 0)?.stderr).toContain("RavoStaleCommitError");
+		const state = await new RavoArchive({ artifactRoot }).recover();
+		expect(state).toMatchObject({ revision: 1, eventCount: 1 });
 	});
 });

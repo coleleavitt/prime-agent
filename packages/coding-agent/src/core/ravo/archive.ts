@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { appendFile, mkdir, open, readFile, realpath, rename, rm, truncate } from "node:fs/promises";
 import path from "node:path";
+import lockfile from "proper-lockfile";
 import { canonicalJson, sha256 } from "./canonical-json.js";
 import {
 	type ChampionCas,
@@ -60,14 +61,22 @@ export class RavoArchive {
 
 	async initialize(): Promise<RavoState> {
 		await this.ensureContainedDirectory();
-		await mkdir(this.blobsDirectory, { recursive: true });
-		const handle = await open(this.eventsPath, "a");
-		await handle.close();
-		return this.recover();
+		return this.serialized(() =>
+			this.withFilesystemLock(async () => {
+				await mkdir(this.blobsDirectory, { recursive: true });
+				const handle = await open(this.eventsPath, "a");
+				await handle.close();
+				return this.recoverUnlocked();
+			}),
+		);
 	}
 
 	async recover(options: RecoverOptions = {}): Promise<RavoState> {
 		await this.ensureContainedDirectory();
+		return this.serialized(() => this.withFilesystemLock(() => this.recoverUnlocked(options)));
+	}
+
+	private async recoverUnlocked(options: RecoverOptions = {}): Promise<RavoState> {
 		await mkdir(this.blobsDirectory, { recursive: true });
 		let bytes: Buffer;
 		try {
@@ -108,10 +117,13 @@ export class RavoArchive {
 
 	async append(type: Exclude<RavoEventType, "accept">, payload: { [key: string]: JsonValue }): Promise<RavoEvent> {
 		assertNoSecrets(payload);
-		return this.serialized(async () => {
-			const state = await this.recover();
-			return this.appendUnderLock(type, payload, state);
-		});
+		await this.ensureContainedDirectory();
+		return this.serialized(() =>
+			this.withFilesystemLock(async () => {
+				const state = await this.recoverUnlocked();
+				return this.appendUnderLock(type, payload, state);
+			}),
+		);
 	}
 
 	async accept(
@@ -121,13 +133,16 @@ export class RavoArchive {
 	): Promise<RavoEvent> {
 		if (!/^[a-f0-9]{64}$/.test(championDigest)) throw new Error("championDigest must be a SHA-256 digest");
 		assertNoSecrets(payload);
-		return this.serialized(async () => {
-			const state = await this.recover();
-			if (state.revision !== expected.revision || state.championDigest !== expected.championDigest) {
-				throw new RavoStaleCommitError("Champion changed since evaluation");
-			}
-			return this.appendUnderLock("accept", { ...payload, championDigest }, state);
-		});
+		await this.ensureContainedDirectory();
+		return this.serialized(() =>
+			this.withFilesystemLock(async () => {
+				const state = await this.recoverUnlocked();
+				if (state.revision !== expected.revision || state.championDigest !== expected.championDigest) {
+					throw new RavoStaleCommitError("Champion changed since evaluation");
+				}
+				return this.appendUnderLock("accept", { ...payload, championDigest }, state);
+			}),
+		);
 	}
 
 	async putBlob(content: Uint8Array): Promise<string> {
@@ -240,6 +255,21 @@ export class RavoArchive {
 			await syncDirectory(this.directory);
 		} finally {
 			await rm(temporary, { force: true });
+		}
+	}
+
+	private async withFilesystemLock<T>(operation: () => Promise<T>): Promise<T> {
+		const release = await lockfile.lock(this.directory, {
+			lockfilePath: path.join(this.directory, ".archive.lock"),
+			realpath: false,
+			stale: 30_000,
+			update: 10_000,
+			retries: { retries: 100, factor: 1.2, minTimeout: 10, maxTimeout: 250 },
+		});
+		try {
+			return await operation();
+		} finally {
+			await release();
 		}
 	}
 
