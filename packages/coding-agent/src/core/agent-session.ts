@@ -223,6 +223,7 @@ import {
 } from "./refinement/index.js";
 import { resolveConfigValue } from "./resolve-config-value.js";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.js";
+import { assessRlmChildSettlement } from "./rlm-child-settlement.js";
 import {
 	type CreateRlmSubagentRuntimeOptions,
 	createDefaultRlmSubagentSessionName,
@@ -10953,6 +10954,14 @@ export class AgentSession {
 				});
 				await child.waitForRlmQuiescence();
 				if (run.error) throw new Error(run.error);
+				// A resolved prompt is not a result: refuse to settle a provider
+				// error, an abort, or an empty nominal stop as `done`.
+				const settlement = assessRlmChildSettlement({
+					messages: child.messages,
+					spawnMessageId: spawnMessage.details.id,
+					repliedToParent: child._parentReplyCount !== parentReplyCountBeforeRun,
+				});
+				if (!settlement.ok) throw new Error(settlement.reason);
 				run.status = "done";
 				// Only successful completions return; the edge lands on the parent's next commit.
 				const childLastCommitted = child.semanticEdges.lastCommittedRequestId;

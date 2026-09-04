@@ -1344,6 +1344,101 @@ describe("AgentSession rlm recursion", () => {
 		});
 	});
 
+	it("regression: fails a child whose terminal response is content [] / stop / usage 0 instead of settling done", async () => {
+		// Incident shape: an upstream proxy swallowed a LiteLLM error frame and
+		// the child's provider settled an empty, nominally successful stream.
+		const child = createSession({
+			rlmSessionDir: join(tempDir, "empty-terminal-child"),
+			streamFn: () => {
+				const stream = createAssistantMessageEventStream();
+				queueMicrotask(() => {
+					stream.push({
+						type: "done",
+						reason: "stop",
+						message: { ...assistantMessage("", usage(0, 0)), content: [] },
+					});
+				});
+				return stream;
+			},
+		});
+		const releaseRlmSubagentRuntime = vi.fn(async () => {});
+		const root = createSession({
+			subagentRuntimeHost: {
+				createRlmSubagentRuntime: async () => ({ session: child }),
+				releaseRlmSubagentRuntime,
+				deleteRlmSubagentRuntime: async () => {},
+			},
+		});
+
+		const spawned = await root.runRlmChild("empty child", { name: "empty-worker" });
+		await vi.waitFor(() => {
+			const failures = root.messages.filter(
+				(message) => message.role === "custom" && message.customType === "rlm_child_failure",
+			);
+			expect(failures).toHaveLength(1);
+			expect(failures[0]).toMatchObject({
+				content: expect.stringContaining(`RLM child empty-worker (${spawned.rlm_child_id}) failed:`),
+				details: { error: expect.stringContaining("empty assistant response (stopReason=stop usage=0") },
+			});
+		});
+		expect(
+			root.messages.filter(
+				(message) => message.role === "custom" && message.customType === "rlm_child_terminal_notice",
+			),
+		).toHaveLength(0);
+		expect(root.getRlmChildRunStatus(spawned.rlm_child_id)).toBe("error");
+		expect(releaseRlmSubagentRuntime).toHaveBeenCalledWith(
+			expect.objectContaining({ session: child }),
+			expect.objectContaining({ id: spawned.rlm_child_id }),
+			"error",
+		);
+	});
+
+	it("regression: fails a child whose terminal response is a provider error instead of settling done", async () => {
+		// The child session's own auto-retry is disabled so the provider error is
+		// terminal on the first turn; the settlement guard is what is under test.
+		const childSettings = SettingsManager.create(tempDir, tempDir);
+		childSettings.setRetryEnabled(false);
+		const child = createSession({
+			rlmSessionDir: join(tempDir, "error-terminal-child"),
+			settingsManager: childSettings,
+			streamFn: () => {
+				const stream = createAssistantMessageEventStream();
+				queueMicrotask(() => {
+					const message: AssistantMessage = {
+						...assistantMessage("", usage(0, 0)),
+						content: [],
+						stopReason: "error",
+						errorMessage: "OpenWebUI stream reported an error: serviceUnavailableException",
+					};
+					stream.push({ type: "error", reason: "error", error: message });
+				});
+				return stream;
+			},
+		});
+		const root = createSession({
+			subagentRuntimeHost: {
+				createRlmSubagentRuntime: async () => ({ session: child }),
+				releaseRlmSubagentRuntime: async () => {},
+				deleteRlmSubagentRuntime: async () => {},
+			},
+		});
+
+		const spawned = await root.runRlmChild("erroring child", { name: "error-worker" });
+		await vi.waitFor(() => {
+			const failures = root.messages.filter(
+				(message) => message.role === "custom" && message.customType === "rlm_child_failure",
+			);
+			expect(failures).toHaveLength(1);
+			expect(failures[0]).toMatchObject({
+				details: {
+					error: "child ended with a provider error: OpenWebUI stream reported an error: serviceUnavailableException",
+				},
+			});
+		});
+		expect(root.getRlmChildRunStatus(spawned.rlm_child_id)).toBe("error");
+	});
+
 	it("suppresses a done child's unsettled fallback notice at the cancellation cut", async () => {
 		const root = createSession();
 		let suppressed = false;
