@@ -1,0 +1,1 @@
+- Added an AgentSession-backed RAVO retained worker runtime so implement/repair roles can run as persistent child sessions with follow-up turns, cancellation, settlement-checked terminal results, and handle recovery after a restart.

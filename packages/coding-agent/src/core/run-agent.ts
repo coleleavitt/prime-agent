@@ -1,6 +1,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Model, Usage } from "@earendil-works/pi-ai";
 import type { AgentSession, AgentSessionEvent } from "./agent-session.js";
+import type { CustomMessage } from "./messages.js";
 
 export interface RunAgentRequest {
 	prompt: string;
@@ -48,6 +49,19 @@ export interface RunAgentSessionInput {
 	model: Model<any>;
 	request: RunAgentRequest;
 	options?: RunAgentOptions;
+	/** Transcript message that carries the prompt instead of a plain user message (retained workers). */
+	promptMessage?: CustomMessage;
+}
+
+/** Resolve a child tool selection against the parent's active tools. An allowlist never widens them. */
+export function resolveRunAgentTools(
+	activeTools: readonly string[],
+	selection: RunAgentToolSelection | undefined,
+): string[] {
+	if (selection === "active") return [...activeTools];
+	if (selection === undefined || selection === "none") return [];
+	const allowed = new Set(selection.allow);
+	return activeTools.filter((name) => allowed.has(name));
 }
 
 const emptyUsage = (): Usage => ({
@@ -87,7 +101,7 @@ function validateLimit(value: number | undefined, name: string): void {
 
 /** Run one child session to a terminal result while presenting stable extension-facing progress. */
 export async function runAgentSession(input: RunAgentSessionInput): Promise<RunAgentResult> {
-	const { session, model, request, options } = input;
+	const { session, model, request, options, promptMessage } = input;
 	validateLimit(options?.maxTurns, "maxTurns");
 	validateLimit(options?.tokenBudget, "tokenBudget");
 	let turns = 0;
@@ -142,6 +156,7 @@ export async function runAgentSession(input: RunAgentSessionInput): Promise<RunA
 				expandPromptTemplates: false,
 				source: "extension",
 				signal: options?.signal,
+				...(promptMessage ? { customMessage: promptMessage } : {}),
 			});
 			if (options?.signal?.aborted || limitReached) status = options?.signal?.aborted ? "aborted" : limitStatus();
 		}

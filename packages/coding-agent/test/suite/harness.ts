@@ -73,6 +73,9 @@ export interface HarnessOptions {
 	agentMessageController?: AgentSessionMessageController;
 	subagentRuntimeHost?: SubagentRuntimeHost;
 	persistSession?: boolean;
+	/** Reuse an existing session manager (e.g. reopen a persisted session to simulate a restart). */
+	sessionManager?: SessionManager;
+	rlmSessionDir?: string;
 	rlmDepth?: number;
 	rlmMaxDepth?: number;
 	autonomous?: AgentAutonomousConfig;
@@ -118,9 +121,9 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 	const withConfiguredAuth = options.withConfiguredAuth ?? true;
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
 
-	const sessionManager = options.persistSession
-		? SessionManager.create(tempDir, join(tempDir, "sessions"))
-		: SessionManager.inMemory();
+	const sessionManager =
+		options.sessionManager ??
+		(options.persistSession ? SessionManager.create(tempDir, join(tempDir, "sessions")) : SessionManager.inMemory());
 	const settingsManager = SettingsManager.inMemory(options.settings);
 
 	const authStorage = AuthStorage.inMemory();
@@ -197,6 +200,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		subagentRuntimeHost: options.subagentRuntimeHost,
 		baseToolsOverride: toolMap,
 		extensionRunnerRef,
+		rlmSessionDir: options.rlmSessionDir,
 		rlmDepth: options.rlmDepth,
 		rlmMaxDepth: options.rlmMaxDepth,
 		autonomous: options.autonomous,

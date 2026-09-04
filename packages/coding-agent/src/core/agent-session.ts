@@ -1,6 +1,15 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import {
@@ -246,7 +255,12 @@ import {
 	type RlmSubagentRuntime,
 	type SubagentRuntimeHost,
 } from "./rlm-runtime.js";
-import { type RunAgentHandler, type RunAgentToolSelection, runAgentSession } from "./run-agent.js";
+import {
+	type RunAgentHandler,
+	type RunAgentToolSelection,
+	resolveRunAgentTools,
+	runAgentSession,
+} from "./run-agent.js";
 import {
 	modelRequestHeaders,
 	SemanticEdgeRecorder,
@@ -955,6 +969,38 @@ interface RlmChildRun {
 interface RetainedRlmChild {
 	session: AgentSession;
 	run?: RlmChildRun;
+}
+
+export interface RetainedRlmChildOptions {
+	/** Initial task text; recorded as the child's spawn label. The caller prompts the child itself. */
+	prompt: string;
+	/** Authenticated model selector (`provider/id`). Defaults to the current model. */
+	model?: string;
+	/** Child tools; an allowlist is intersected with the parent's active tools. Default: `none`. */
+	tools?: RunAgentToolSelection;
+	/** Stable session name; defaults to a prompt-derived name. */
+	sessionName?: string;
+}
+
+export interface RetainedRlmChildHandle {
+	id: string;
+	session: AgentSession;
+	sessionDir: string;
+	model: Model<Api>;
+	/** False when the child was reopened from its persisted transcript rather than found resident. */
+	resident: boolean;
+}
+
+function findRetainedRlmChildSessionFile(childDir: string): string | undefined {
+	if (!existsSync(childDir)) return undefined;
+	let newest: { path: string; mtimeMs: number } | undefined;
+	for (const name of readdirSync(childDir)) {
+		if (!name.endsWith(".jsonl")) continue;
+		const path = join(childDir, name);
+		const mtimeMs = statSync(path).mtimeMs;
+		if (!newest || mtimeMs > newest.mtimeMs) newest = { path, mtimeMs };
+	}
+	return newest?.path;
 }
 
 interface RlmSubagentModelSelection {
@@ -9802,7 +9848,21 @@ export class AgentSession {
 		childSessionManager.appendModelChange(options.model.provider, options.model.id);
 		childSessionManager.appendThinkingLevelChange(options.thinkingLevel);
 		childSessionManager.appendServiceTierChange(options.serviceTier);
+		const child = this._buildInlineRlmChildSession(options, childSessionManager);
+		options.onSessionPublished?.(child);
+		return { session: child };
+	}
 
+	/**
+	 * Build an in-process child session over a prepared session manager. A fresh
+	 * child passes no transcript; a reopened retained child passes its persisted
+	 * messages and keeps the name recorded in its transcript.
+	 */
+	private _buildInlineRlmChildSession(
+		options: Omit<CreateRlmSubagentRuntimeOptions, "sessionName"> & { sessionName?: string },
+		childSessionManager: SessionManager,
+		messages?: AgentMessage[],
+	): AgentSession {
 		const childAgent = new Agent({
 			initialState: {
 				systemPrompt: "",
@@ -9825,6 +9885,7 @@ export class AgentSession {
 			maxRetryDelayMs: this.settingsManager.getProviderRetrySettings().maxRetryDelayMs,
 			toolExecution: this.agent.toolExecution,
 		});
+		if (messages) childAgent.state.messages = messages;
 
 		const child = new AgentSession({
 			agent: childAgent,
@@ -9849,7 +9910,7 @@ export class AgentSession {
 			semanticSpawnedByRequestId: options.spawnedByRequestId,
 			sessionStartEvent: { type: "session_start", reason: "startup" },
 		});
-		if (child.sessionName !== options.sessionName) {
+		if (options.sessionName !== undefined && child.sessionName !== options.sessionName) {
 			try {
 				child.setSessionName(options.sessionName);
 			} catch (error) {
@@ -9857,9 +9918,7 @@ export class AgentSession {
 				throw error;
 			}
 		}
-		options.onSessionPublished?.(child);
-
-		return { session: child };
+		return child;
 	}
 
 	private _abandonRlmRunForQuiescence(run: RlmChildRun): void {
@@ -10679,11 +10738,7 @@ export class AgentSession {
 	}
 
 	private _resolveRunAgentTools(selection: RunAgentToolSelection | undefined): string[] {
-		const activeTools = this.getActiveToolNames();
-		if (selection === "active") return activeTools;
-		if (selection === undefined || selection === "none") return [];
-		const allowed = new Set(selection.allow);
-		return activeTools.filter((name) => allowed.has(name));
+		return resolveRunAgentTools(this.getActiveToolNames(), selection);
 	}
 
 	/** Host binding for extension `ctx.runAgent()`. Unlike Python RLM, this awaits a structured terminal result. */
@@ -10747,6 +10802,147 @@ export class AgentSession {
 	};
 
 	runAgent: RunAgentHandler = (request, options) => this._runExtensionAgent(request, options);
+
+	/**
+	 * Create a child session that stays resident between turns. `runAgent` releases
+	 * its child once one prompt settles; RAVO retained workers need the same child
+	 * to take follow-up turns, so the caller owns prompting and settlement here and
+	 * the child is registered exactly like a finished Python RLM child: listed,
+	 * inspectable, deletable, and (daemon-hosted) eligible for passivation and
+	 * rehydration. Tools follow `runAgent` scope semantics and are never widened.
+	 */
+	async createRetainedRlmChild(options: RetainedRlmChildOptions): Promise<RetainedRlmChildHandle> {
+		if (this._disposed || this._disposing) {
+			throw new Error("Cannot create a retained child after its parent was disposed");
+		}
+		if (this._rlmDepth >= this._rlmMaxDepth) {
+			throw new Error(
+				`Agent recursion depth limit reached (RLM_DEPTH=${this._rlmDepth}, RLM_MAX_DEPTH=${this._rlmMaxDepth})`,
+			);
+		}
+		const requestedSessionName = normalizeRequestedRlmSubagentSessionName(options.sessionName);
+		if (requestedSessionName) assertDirectAgentMessageTarget(requestedSessionName);
+		const { model } = await this._resolveRlmSubagentModel(options.model);
+		const auth = await this._modelRegistry.getApiKeyAndHeaders(model);
+		if (!auth.ok) {
+			throw new Error(`Requested agent model "${model.provider}/${model.id}" failed authentication preflight`);
+		}
+		const sessionDir = this._createChildRlmSessionDir();
+		const id = basename(sessionDir);
+		const sessionName = requestedSessionName ?? createDefaultRlmSubagentSessionName(options.prompt, id);
+		const runtimeOptions: CreateRlmSubagentRuntimeOptions = {
+			...this._createRlmSubagentRuntimeOptions({
+				id,
+				prompt: options.prompt,
+				sessionName,
+				sessionDir,
+				model,
+			}),
+			activeToolNames: this._resolveRunAgentTools(options.tools),
+		};
+		let runtime: RlmSubagentRuntime;
+		try {
+			await this._assertRlmSubagentSessionNameAvailable(sessionName);
+			if (this._disposed || this._disposing) {
+				throw new Error("Cannot create a retained child after its parent was disposed");
+			}
+			runtime = await this._createRlmSubagentRuntime(runtimeOptions);
+		} catch (error) {
+			rmSync(sessionDir, { recursive: true, force: true });
+			throw error;
+		}
+		const child = runtime.session;
+		if (child.sessionName !== sessionName) child.setSessionName(sessionName);
+		const unsubscribe = this._forwardRetainedRlmChildEvents(id, child);
+		if (!this.registerRlmChildSession(id, child, unsubscribe)) {
+			unsubscribe();
+			if (this._subagentRuntimeHost?.releaseRlmSubagentRuntime) {
+				await this._subagentRuntimeHost
+					.releaseRlmSubagentRuntime(runtime, runtimeOptions, "error")
+					.catch(() => child.disposeAsync().catch(() => undefined));
+			} else {
+				await child.disposeAsync().catch(() => undefined);
+			}
+			throw new Error("Parent session was disposed while creating a retained child");
+		}
+		return { id, session: child, sessionDir, model, resident: true };
+	}
+
+	/**
+	 * Locate a retained child by id for a controller resuming from a checkpoint.
+	 * A resident child (still retained here, or rehydrated by the daemon) is
+	 * returned as is. Inline mode reopens the child's persisted transcript from
+	 * this session's artifact dir, so a worker survives a parent process restart.
+	 * Daemon-hosted passive children are the daemon's to hydrate and yield
+	 * undefined until resident. Reopened children start with no active tools;
+	 * the caller re-applies its explicit scope before the next turn.
+	 */
+	async reopenRetainedRlmChild(childId: string): Promise<RetainedRlmChildHandle | undefined> {
+		const resident = this._activeRlmChildRuns.get(childId)?.session ?? this._rlmChildSessions.get(childId)?.session;
+		if (resident) {
+			const model = resident.model;
+			if (!model) throw new Error(`Retained child "${childId}" has no model selected`);
+			return {
+				id: childId,
+				session: resident,
+				sessionDir: resident._rlmSessionDir ?? resident.sessionManager.getSessionDir(),
+				model,
+				resident: true,
+			};
+		}
+		if (this._subagentRuntimeHost || this._disposed || this._disposing) return undefined;
+		if (this._deletedRlmChildIds.has(childId) || this._deletingRlmChildren.has(childId)) return undefined;
+		const parentDir = this._rlmSessionDir ?? this.sessionManager.getSessionArtifactDir();
+		if (!parentDir) return undefined;
+		const childDir = join(parentDir, childId);
+		const sessionFile = findRetainedRlmChildSessionFile(childDir);
+		if (!sessionFile) return undefined;
+		const childSessionManager = SessionManager.open(sessionFile, childDir, this._cwd);
+		const context = childSessionManager.buildSessionContext();
+		const model =
+			(context.model ? this._modelRegistry.find(context.model.provider, context.model.modelId) : undefined) ??
+			this.model;
+		if (!model) throw new Error(formatNoModelSelectedMessage());
+		const runtimeOptions = this._createRlmSubagentRuntimeOptions({
+			id: childId,
+			prompt: "",
+			sessionName: childId,
+			sessionDir: childDir,
+			model,
+		});
+		const child = this._buildInlineRlmChildSession(
+			{ ...runtimeOptions, sessionName: undefined, activeToolNames: [] },
+			childSessionManager,
+			context.messages,
+		);
+		const unsubscribe = this._forwardRetainedRlmChildEvents(childId, child);
+		if (!this.registerRlmChildSession(childId, child, unsubscribe)) {
+			unsubscribe();
+			await child.disposeAsync().catch(() => undefined);
+			return undefined;
+		}
+		return { id: childId, session: child, sessionDir: childDir, model, resident: false };
+	}
+
+	private _forwardRetainedRlmChildEvents(childId: string, child: AgentSession): () => void {
+		return child.subscribe((event) => {
+			if (event.type === "rlm_child_update") {
+				this._emit(event);
+				return;
+			}
+			if (
+				event.type === "agent_start" ||
+				event.type === "agent_end" ||
+				event.type === "message_end" ||
+				event.type === "tool_execution_start" ||
+				event.type === "tool_execution_end" ||
+				event.type === "session_info_changed" ||
+				event.type === "recap_update"
+			) {
+				this._emit({ type: "rlm_child_update", child: this._rlmChildSnapshotForSession(childId, child) });
+			}
+		});
+	}
 
 	private async _resolveRlmSubagentModel(reference: string | undefined): Promise<RlmSubagentModelSelection> {
 		const parentModel = this.model;

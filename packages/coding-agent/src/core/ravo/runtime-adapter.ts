@@ -1,3 +1,4 @@
+import type { Usage } from "@earendil-works/pi-ai";
 import type { RunAgentHandler, RunAgentOptions, RunAgentStatus, RunAgentToolSelection } from "../run-agent.js";
 import type { ChildCall, RavoChildCallOptions, RavoChildResult } from "./controller.js";
 
@@ -6,6 +7,8 @@ export interface ChildRuntimeScope {
 	tools?: RunAgentToolSelection;
 	maxTurns?: number;
 	tokenBudget?: number;
+	/** Worker role label (`implement`, `repair`); retained runtimes use it to name the child session. */
+	role?: string;
 }
 
 export interface StructuredChildSpec<TInput, TOutput> {
@@ -14,11 +17,26 @@ export interface StructuredChildSpec<TInput, TOutput> {
 	scope?: ChildRuntimeScope;
 }
 
+export type RetainedWorkerTerminalReason =
+	| "completed"
+	| "empty_turn"
+	| "provider_error"
+	| "invalid_result"
+	| "aborted"
+	| "turn_limit"
+	| "budget_exceeded"
+	| "error";
+
 export interface RetainedWorkerTerminalResult {
 	status: RunAgentStatus;
+	/** Structured artifact parsed from the terminal turn; absent unless the turn completed with one. */
 	result?: unknown;
 	tokens: number;
 	error?: string;
+	/** Terminal assistant text of the turn, when any was produced. */
+	text?: string;
+	usage?: Usage;
+	reason?: RetainedWorkerTerminalReason;
 }
 
 export interface RetainedWorkerRuntime {
@@ -32,6 +50,7 @@ export interface RetainedWorkerRequest extends RetainedWorkerWaitOptions {
 	model?: string;
 	tools: RunAgentToolSelection;
 	maxTurns?: number;
+	role?: string;
 }
 
 export interface RetainedWorkerWaitOptions {
@@ -124,6 +143,7 @@ function retainedRequest(
 		tokenBudget: boundedTokenBudget(scope?.tokenBudget, options.tokenBudget),
 		...(scope?.model ? { model: scope.model } : {}),
 		...(scope?.maxTurns === undefined ? {} : { maxTurns: scope.maxTurns }),
+		...(scope?.role ? { role: scope.role } : {}),
 	};
 }
 
