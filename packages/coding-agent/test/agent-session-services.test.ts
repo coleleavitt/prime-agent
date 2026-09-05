@@ -160,7 +160,7 @@ describe("createAgentSessionFromServices", () => {
 				"disabled",
 				"projectOnly",
 				"https://secret.example/mcp",
-				"Authorization",
+				"Bearer reserved-secret",
 				"/secret/bin/filesystem",
 				"/private/data",
 				"/secret/cwd",

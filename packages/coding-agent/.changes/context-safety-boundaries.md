@@ -1,0 +1,3 @@
+- Added an explicit fail-closed contract for extension context hooks that must block provider requests.
+- Fixed child agents to resolve authenticated model aliases with the same fuzzy matching used by top-level selection.
+- Fixed repeated threshold checks from recording duplicate cancellation outcomes for an unchanged branch.

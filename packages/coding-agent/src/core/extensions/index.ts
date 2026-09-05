@@ -58,6 +58,7 @@ export type {
 	ExtensionCommandContextActions,
 	ExtensionContext,
 	ExtensionContextActions,
+	ExtensionContextBlockedError,
 	ExtensionError,
 	ExtensionEvent,
 	ExtensionFactory,
@@ -140,8 +141,10 @@ export type {
 } from "./types.js";
 export {
 	defineTool,
+	EXTENSION_CONTEXT_BLOCKED_ERROR_CODE,
 	isBashToolResult,
 	isEditToolResult,
+	isExtensionContextBlockedError,
 	isIpythonToolResult,
 	isToolCallEventType,
 } from "./types.js";

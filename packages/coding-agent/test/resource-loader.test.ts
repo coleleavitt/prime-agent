@@ -559,6 +559,38 @@ Explicit override.`,
 		});
 	});
 
+	describe("session scopes", () => {
+		it("creates independent extension runtime, factory state, and event-bus registrations", async () => {
+			const capturedApis: Array<{ getFlag(name: string): boolean | string | undefined }> = [];
+			let factoryRuns = 0;
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				extensionFactories: [
+					(pi) => {
+						factoryRuns++;
+						pi.registerFlag("scope", { type: "string", default: `scope-${factoryRuns}` });
+						capturedApis.push(pi);
+					},
+				],
+			});
+			await loader.reload();
+			const child = await loader.createSessionScope();
+
+			expect(child.getExtensions().runtime).not.toBe(loader.getExtensions().runtime);
+			expect(child.getExtensions().extensions[0]).not.toBe(loader.getExtensions().extensions[0]);
+			expect(factoryRuns).toBe(2);
+			child.getExtensions().runtime.flagValues.set("scope", "child");
+			expect(loader.getExtensions().runtime.flagValues.get("scope")).toBe("scope-1");
+			expect(capturedApis[0]?.getFlag("scope")).toBe("scope-1");
+			expect(capturedApis[1]?.getFlag("scope")).toBe("child");
+
+			child.getExtensions().runtime.invalidate("child disposed");
+			expect(() => capturedApis[1]?.getFlag("scope")).toThrow("child disposed");
+			expect(capturedApis[0]?.getFlag("scope")).toBe("scope-1");
+		});
+	});
+
 	describe("override functions", () => {
 		it("should apply skillsOverride", async () => {
 			const injectedSkill: Skill = {

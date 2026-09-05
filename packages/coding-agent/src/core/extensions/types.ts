@@ -901,6 +901,22 @@ export type ExtensionEvent =
 	| ToolCallEvent
 	| ToolResultEvent
 	| RefineCompleteEvent;
+/** Stable host ABI code for a context hook that must stop the provider request. */
+export const EXTENSION_CONTEXT_BLOCKED_ERROR_CODE = "EXTENSION_CONTEXT_BLOCKED";
+
+export interface ExtensionContextBlockedError extends Error {
+	readonly code: typeof EXTENSION_CONTEXT_BLOCKED_ERROR_CODE;
+}
+
+export function isExtensionContextBlockedError(error: unknown): error is ExtensionContextBlockedError {
+	return (
+		typeof error === "object" &&
+		error !== null &&
+		"code" in error &&
+		(error as { code?: unknown }).code === EXTENSION_CONTEXT_BLOCKED_ERROR_CODE
+	);
+}
+
 export interface ContextEventResult {
 	messages?: AgentMessage[];
 }

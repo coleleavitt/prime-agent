@@ -12,6 +12,7 @@ import type { ModelRegistry } from "../model-registry.js";
 import type { RunAgentHandler } from "../run-agent.js";
 import type { SessionManager } from "../session-manager.js";
 import type { BuildSystemPromptOptions } from "../system-prompt.js";
+import { disposeExtension } from "./loader.js";
 import type {
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
@@ -58,6 +59,7 @@ import type {
 	UserBashEvent,
 	UserBashEventResult,
 } from "./types.js";
+import { isExtensionContextBlockedError } from "./types.js";
 
 // Extension shortcuts compete with canonical keybinding ids from keybindings.json.
 // Only editor-global shortcuts are reserved here. Picker-specific bindings are not.
@@ -479,6 +481,7 @@ export class ExtensionRunner {
 		if (!this.staleMessage) {
 			this.staleMessage = message;
 			this.runtime.invalidate(message);
+			for (const extension of this.extensions) disposeExtension(extension);
 		}
 	}
 
@@ -703,6 +706,7 @@ export class ExtensionRunner {
 			for (const handler of handlers) {
 				try {
 					const handlerResult = await handler(event, ctx);
+					if (this.staleMessage) return undefined as RunnerEmitResult<TEvent>;
 
 					if (this.isSessionBeforeEvent(event) && handlerResult) {
 						result = handlerResult as SessionBeforeEventResult;
@@ -739,6 +743,7 @@ export class ExtensionRunner {
 				try {
 					const currentEvent: MessageEndEvent = { ...event, message: currentMessage };
 					const handlerResult = (await handler(currentEvent, ctx)) as MessageEndEventResult | undefined;
+					if (this.staleMessage) return undefined;
 					if (!handlerResult?.message) continue;
 
 					if (handlerResult.message.role !== currentMessage.role) {
@@ -780,6 +785,7 @@ export class ExtensionRunner {
 			for (const handler of handlers) {
 				try {
 					const handlerResult = (await handler(currentEvent, ctx)) as ToolResultEventResult | undefined;
+					if (this.staleMessage) return undefined;
 					if (!handlerResult) continue;
 
 					if (handlerResult.content !== undefined) {
@@ -828,6 +834,7 @@ export class ExtensionRunner {
 
 			for (const handler of handlers) {
 				const handlerResult = await handler(event, ctx);
+				if (this.staleMessage) return undefined;
 
 				if (handlerResult) {
 					result = handlerResult as ToolCallEventResult;
@@ -851,6 +858,7 @@ export class ExtensionRunner {
 			for (const handler of handlers) {
 				try {
 					const handlerResult = await handler(event, ctx);
+					if (this.staleMessage) return undefined;
 					if (handlerResult) {
 						return handlerResult as UserBashEventResult;
 					}
@@ -882,6 +890,7 @@ export class ExtensionRunner {
 				try {
 					const event: ContextEvent = { type: "context", messages: currentMessages };
 					const handlerResult = await handler(event, ctx);
+					if (this.staleMessage) return messages;
 
 					if (handlerResult && (handlerResult as ContextEventResult).messages) {
 						currentMessages = (handlerResult as ContextEventResult).messages!;
@@ -895,6 +904,7 @@ export class ExtensionRunner {
 						error: message,
 						stack,
 					});
+					if (isExtensionContextBlockedError(err)) throw err;
 				}
 			}
 		}
@@ -917,6 +927,7 @@ export class ExtensionRunner {
 						payload: currentPayload,
 					};
 					const handlerResult = await handler(event, ctx);
+					if (this.staleMessage) return payload;
 					if (handlerResult !== undefined) {
 						currentPayload = handlerResult;
 					}
@@ -968,6 +979,7 @@ export class ExtensionRunner {
 						systemPromptOptions,
 					};
 					const handlerResult = await handler(event, ctx);
+					if (this.staleMessage) return undefined;
 
 					if (handlerResult) {
 						const result = handlerResult as BeforeAgentStartEventResult;
@@ -1023,6 +1035,7 @@ export class ExtensionRunner {
 				try {
 					const event: ResourcesDiscoverEvent = { type: "resources_discover", cwd, reason };
 					const handlerResult = await handler(event, ctx);
+					if (this.staleMessage) return { skillPaths: [], promptPaths: [], themePaths: [] };
 					const result = handlerResult as ResourcesDiscoverResult | undefined;
 
 					if (result?.skillPaths?.length) {
@@ -1061,6 +1074,7 @@ export class ExtensionRunner {
 				try {
 					const event: InputEvent = { type: "input", text: currentText, images: currentImages, source };
 					const result = (await handler(event, ctx)) as InputEventResult | undefined;
+					if (this.staleMessage) return { action: "continue" };
 					if (result?.action === "handled") return result;
 					if (result?.action === "transform") {
 						currentText = result.text;

@@ -7,7 +7,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.js";
-import { createExtensionRuntime, discoverAndLoadExtensions } from "../src/core/extensions/loader.js";
+import { createEventBus } from "../src/core/event-bus.js";
+import {
+	createExtensionRuntime,
+	discoverAndLoadExtensions,
+	loadExtensionFromFactory,
+} from "../src/core/extensions/loader.js";
 import { ExtensionRunner } from "../src/core/extensions/runner.js";
 import type { ExtensionActions, ExtensionContextActions, ProviderConfig } from "../src/core/extensions/types.js";
 import { KeybindingsManager, type KeyId } from "../src/core/keybindings.js";
@@ -501,6 +506,27 @@ describe("ExtensionRunner", () => {
 			expect(errors[0].error).toContain("Handler error!");
 			expect(errors[0].event).toBe("context");
 		});
+
+		it("reports and rethrows explicit fail-closed context errors", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("context", async () => {
+						throw Object.assign(new Error("unsafe context"), { code: "EXTENSION_CONTEXT_BLOCKED" });
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "blocks.ts"), extCode);
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: string[] = [];
+			runner.onError((error) => errors.push(error.error));
+
+			await expect(runner.emitContext([])).rejects.toMatchObject({
+				message: "unsafe context",
+				code: "EXTENSION_CONTEXT_BLOCKED",
+			});
+			expect(errors).toEqual(["unsafe context"]);
+		});
 	});
 
 	describe("message renderers", () => {
@@ -805,6 +831,73 @@ describe("ExtensionRunner", () => {
 
 			runtime.unregisterProvider("instant-provider");
 			expect(modelRegistry.find("instant-provider", "instant-model")).toBeUndefined();
+		});
+	});
+
+	describe("lifecycle isolation", () => {
+		it("removes event-bus registrations when a factory fails", async () => {
+			const eventBus = createEventBus();
+			const runtime = createExtensionRuntime();
+			const calls: unknown[] = [];
+
+			await expect(
+				loadExtensionFromFactory(
+					(pi) => {
+						pi.events.on("ghost", (data) => calls.push(data));
+						throw new Error("factory failed");
+					},
+					tempDir,
+					eventBus,
+					runtime,
+				),
+			).rejects.toThrow("factory failed");
+
+			eventBus.emit("ghost", "late");
+			await Promise.resolve();
+			expect(calls).toEqual([]);
+		});
+
+		it("rolls back provider registrations when a factory fails", async () => {
+			const runtime = createExtensionRuntime();
+			await expect(
+				loadExtensionFromFactory(
+					(pi) => {
+						pi.registerProvider("ghost-provider", providerModelConfig);
+						throw new Error("factory failed");
+					},
+					tempDir,
+					createEventBus(),
+					runtime,
+				),
+			).rejects.toThrow("factory failed");
+			expect(runtime.pendingProviderRegistrations).toEqual([]);
+		});
+
+		it("ignores a late async hook result after invalidation", async () => {
+			const eventBus = createEventBus();
+			const runtime = createExtensionRuntime();
+			let settle!: (value: { payload: string }) => void;
+			const extension = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on(
+						"before_provider_request",
+						() =>
+							new Promise((resolve) => {
+								settle = resolve;
+							}),
+					);
+				},
+				tempDir,
+				eventBus,
+				runtime,
+			);
+			const runner = new ExtensionRunner([extension], runtime, tempDir, sessionManager, modelRegistry);
+			const pending = runner.emitBeforeProviderRequest({ payload: "original" });
+			await Promise.resolve();
+			runner.invalidate();
+			settle({ payload: "stale" });
+
+			await expect(pending).resolves.toEqual({ payload: "original" });
 		});
 	});
 

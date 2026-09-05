@@ -25,6 +25,14 @@ import type {
 } from "./types.js";
 
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
+const extensionDisposals = new WeakMap<Extension, Set<() => void>>();
+
+export function disposeExtension(extension: Extension): void {
+	const disposals = extensionDisposals.get(extension);
+	if (!disposals) return;
+	for (const dispose of disposals) dispose();
+	disposals.clear();
+}
 
 function normalizeUnicodeSpaces(str: string): string {
 	return str.replace(UNICODE_SPACES, " ");
@@ -95,8 +103,12 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		registerProvider: (name, config, extensionPath = "<unknown>") => {
 			runtime.pendingProviderRegistrations.push({ name, config, extensionPath });
 		},
-		unregisterProvider: (name) => {
-			runtime.pendingProviderRegistrations = runtime.pendingProviderRegistrations.filter((r) => r.name !== name);
+		unregisterProvider: (name, extensionPath) => {
+			runtime.pendingProviderRegistrations = runtime.pendingProviderRegistrations.filter(
+				(registration) =>
+					registration.name !== name ||
+					(extensionPath !== undefined && registration.extensionPath !== extensionPath),
+			);
 		},
 	};
 
@@ -250,6 +262,7 @@ function createExtensionAPI(
 		registerProvider(name: string, config: ProviderConfig) {
 			runtime.assertActive();
 			runtime.registerProvider(name, config, extension.path);
+			extensionDisposals.get(extension)?.add(() => runtime.unregisterProvider(name, extension.path));
 		},
 
 		unregisterProvider(name: string) {
@@ -257,7 +270,18 @@ function createExtensionAPI(
 			runtime.unregisterProvider(name, extension.path);
 		},
 
-		events: eventBus,
+		events: {
+			emit: (channel, data) => eventBus.emit(channel, data),
+			on: (channel, handler) => {
+				runtime.assertActive();
+				const unsubscribe = eventBus.on(channel, handler);
+				extensionDisposals.get(extension)?.add(unsubscribe);
+				return () => {
+					extensionDisposals.get(extension)?.delete(unsubscribe);
+					unsubscribe();
+				};
+			},
+		},
 	} as ExtensionAPI;
 
 	return api;
@@ -297,7 +321,8 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 			: "local";
 	const baseDir = extensionPath.startsWith("<") ? undefined : path.dirname(resolvedPath);
 
-	return {
+	const disposals = new Set<() => void>();
+	const extension: Extension = {
 		path: extensionPath,
 		resolvedPath,
 		sourceInfo: createSyntheticSourceInfo(extensionPath, { source, baseDir }),
@@ -308,6 +333,8 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 		flags: new Map(),
 		shortcuts: new Map(),
 	};
+	extensionDisposals.set(extension, disposals);
+	return extension;
 }
 
 async function loadExtension(
@@ -326,7 +353,12 @@ async function loadExtension(
 
 		const extension = createExtension(extensionPath, resolvedPath);
 		const api = createExtensionAPI(extension, runtime, cwd, eventBus);
-		await factory(api);
+		try {
+			await factory(api);
+		} catch (error) {
+			disposeExtension(extension);
+			throw error;
+		}
 
 		return { extension, error: null };
 	} catch (err) {
@@ -347,7 +379,12 @@ export async function loadExtensionFromFactory(
 ): Promise<Extension> {
 	const extension = createExtension(extensionPath, extensionPath);
 	const api = createExtensionAPI(extension, runtime, cwd, eventBus);
-	await factory(api);
+	try {
+		await factory(api);
+	} catch (error) {
+		disposeExtension(extension);
+		throw error;
+	}
 	return extension;
 }
 

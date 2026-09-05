@@ -313,6 +313,32 @@ export function resolveModelScopeFromModels(patterns: string[], availableModels:
 	return scopedModels;
 }
 
+/** Resolve one provider-qualified or bare model reference using canonical alias/fuzzy matching. */
+export function resolveModelReferenceFromModels(
+	reference: string,
+	availableModels: Model<Api>[],
+): Model<Api> | undefined {
+	const trimmed = reference.trim();
+	if (!trimmed) return undefined;
+	const slashIndex = trimmed.indexOf("/");
+	if (slashIndex !== -1) {
+		const provider = trimmed.substring(0, slashIndex);
+		const canonicalProvider = availableModels.find(
+			(model) => model.provider.toLowerCase() === provider.toLowerCase(),
+		)?.provider;
+		if (canonicalProvider) {
+			const pattern = trimmed.substring(slashIndex + 1);
+			const providerMatch = parseModelPattern(
+				pattern,
+				availableModels.filter((model) => model.provider === canonicalProvider),
+				{ allowInvalidThinkingLevelFallback: false },
+			).model;
+			if (providerMatch) return providerMatch;
+		}
+	}
+	return parseModelPattern(trimmed, availableModels, { allowInvalidThinkingLevelFallback: false }).model;
+}
+
 export async function resolveModelScope(patterns: string[], modelRegistry: ModelRegistry): Promise<ScopedModel[]> {
 	const availableModels = await modelRegistry.refreshAvailableModels();
 	return resolveModelScopeFromModels(patterns, availableModels);

@@ -10,7 +10,12 @@ export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.js";
 
 import { canonicalizePath, isLocalPath } from "../utils/paths.js";
 import { createEventBus, type EventBus } from "./event-bus.js";
-import { createExtensionRuntime, loadExtensionFromFactory, loadExtensions } from "./extensions/loader.js";
+import {
+	createExtensionRuntime,
+	disposeExtension,
+	loadExtensionFromFactory,
+	loadExtensions,
+} from "./extensions/loader.js";
 import type { Extension, ExtensionFactory, ExtensionRuntime, LoadExtensionsResult } from "./extensions/types.js";
 import { DefaultPackageManager, type PathMetadata } from "./package-manager.js";
 import type { PromptTemplate } from "./prompt-templates.js";
@@ -36,6 +41,8 @@ export interface ResourceLoader {
 	getAppendSystemPrompt(): string[];
 	extendResources(paths: ResourceExtensionPaths): void;
 	reload(): Promise<void>;
+	/** Create a session-local loader so mutable extension state is never shared. */
+	createSessionScope?(): Promise<ResourceLoader>;
 }
 
 function resolvePromptInput(input: string | undefined, description: string): string | undefined {
@@ -264,6 +271,36 @@ export class DefaultResourceLoader implements ResourceLoader {
 		return this.extensionsResult;
 	}
 
+	async createSessionScope(): Promise<ResourceLoader> {
+		const loader = new DefaultResourceLoader({
+			cwd: this.cwd,
+			agentDir: this.agentDir,
+			settingsManager: this.settingsManager,
+			additionalExtensionPaths: [...this.additionalExtensionPaths],
+			additionalSkillPaths: [...this.additionalSkillPaths],
+			additionalPromptTemplatePaths: [...this.additionalPromptTemplatePaths],
+			additionalThemePaths: [...this.additionalThemePaths],
+			extensionFactories: [...this.extensionFactories],
+			noExtensions: this.noExtensions,
+			noSkills: this.noSkills,
+			noPromptTemplates: this.noPromptTemplates,
+			noThemes: this.noThemes,
+			noContextFiles: this.noContextFiles,
+			bundledSkillsDir: this.bundledSkillsDir,
+			systemPrompt: this.systemPromptSource,
+			appendSystemPrompt: this.appendSystemPromptSource,
+			extensionsOverride: this.extensionsOverride,
+			skillsOverride: this.skillsOverride,
+			promptsOverride: this.promptsOverride,
+			themesOverride: this.themesOverride,
+			agentsFilesOverride: this.agentsFilesOverride,
+			systemPromptOverride: this.systemPromptOverride,
+			appendSystemPromptOverride: this.appendSystemPromptOverride,
+		});
+		await loader.reload();
+		return loader;
+	}
+
 	/** Extension file paths the last reload actually loaded (after settings overrides). */
 	getLoadedExtensionPaths(): string[] {
 		return this.loadedExtensionPaths;
@@ -334,6 +371,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	async reload(): Promise<void> {
+		for (const extension of this.extensionsResult.extensions) disposeExtension(extension);
+		this.extensionsResult.runtime.invalidate();
 		await this.settingsManager.reload();
 		const resolvedPaths = await this.packageManager.resolve();
 		const cliExtensionPaths = await this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, {

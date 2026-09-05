@@ -14,6 +14,23 @@ function openAICodexToken(accountId: string): string {
 }
 
 describe("ENG-4649 subagent model selection", () => {
+	it("resolves a canonical provider alias to the latest dated authenticated child model", async () => {
+		const harness = await createHarness({
+			provider: "anthropic",
+			models: [{ id: "claude-parent" }, { id: "claude-haiku-4-5-20251001" }],
+		});
+		try {
+			const internals = harness.session as unknown as {
+				_resolveRlmSubagentModel(reference: string): Promise<{ model: { provider: string; id: string } }>;
+			};
+			await expect(internals._resolveRlmSubagentModel("anthropic/claude-haiku-4-5")).resolves.toMatchObject({
+				model: { provider: "anthropic", id: "claude-haiku-4-5-20251001" },
+			});
+		} finally {
+			harness.cleanup();
+		}
+	});
+
 	it("searches a bounded authenticated catalog without advertising it", async () => {
 		const harness = await createHarness({
 			provider,
@@ -65,7 +82,8 @@ describe("ENG-4649 subagent model selection", () => {
 				source: "stale",
 				label: "expired",
 			});
-			await expect(harness.session.findRlmModels("", 8)).resolves.toEqual({ models: [] });
+			const afterExpiry = await harness.session.findRlmModels("", 20);
+			expect(afterExpiry.models.filter((model) => model.provider === provider)).toEqual([]);
 		} finally {
 			harness.cleanup();
 		}
@@ -88,7 +106,9 @@ describe("ENG-4649 subagent model selection", () => {
 		try {
 			harness.authStorage.setRuntimeApiKey(codexProvider, openAICodexToken("account-1"));
 			const discovered = await harness.session.findRlmModels("", 20);
-			expect(discovered.models.map((model) => model.selector)).toEqual([`${codexProvider}/parent-model`]);
+			expect(
+				discovered.models.filter((model) => model.provider === codexProvider).map((model) => model.selector),
+			).toEqual([`${codexProvider}/parent-model`]);
 			expect(fetchModels).toHaveBeenCalledWith(
 				expect.stringMatching(/\/codex\/models\?client_version=/),
 				expect.objectContaining({

@@ -1365,6 +1365,49 @@ describe("AgentSession compaction characterization", () => {
 		});
 	});
 
+	it("coalesces repeated cancelled threshold compaction checks for an unchanged effective branch", async () => {
+		const beforeCompact = vi.fn(() => ({ cancel: true as const }));
+		const harness = await createHarness({
+			settings: { compaction: { enabled: true, reserveTokens: 1_000, keepRecentTokens: 1 } },
+			models: [{ id: "faux-1", contextWindow: 200_000 }],
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", beforeCompact);
+				},
+			],
+		});
+		harnesses.push(harness);
+		const firstUser = { role: "user" as const, content: [{ type: "text" as const, text: "first" }], timestamp: 1 };
+		const firstAssistant = createAssistant(harness, { stopReason: "stop", totalTokens: 1_000, timestamp: 2 });
+		const secondUser = {
+			role: "user" as const,
+			content: [{ type: "text" as const, text: "x".repeat(800_000) }],
+			timestamp: 3,
+		};
+		const secondAssistant = createAssistant(harness, { stopReason: "stop", totalTokens: 199_500, timestamp: 4 });
+		for (const message of [firstUser, firstAssistant, secondUser, secondAssistant]) {
+			harness.sessionManager.appendMessage(message);
+		}
+		harness.session.agent.state.messages = [firstUser, firstAssistant, secondUser, secondAssistant];
+		const internals = harness.session as unknown as SessionWithCompactionInternals;
+
+		await internals._checkCompaction(secondAssistant, false, false);
+		await internals._checkCompaction(secondAssistant, false, false);
+
+		expect(beforeCompact).toHaveBeenCalledOnce();
+		expect(harness.eventsOfType("compaction_start")).toHaveLength(1);
+		const outcomes = harness.sessionManager
+			.getBranch()
+			.filter(
+				(entry) =>
+					entry.type === "custom_message" &&
+					entry.customType === "compaction_outcome" &&
+					(entry.details as { reason?: string; outcome?: string } | undefined)?.reason === "threshold" &&
+					(entry.details as { reason?: string; outcome?: string } | undefined)?.outcome === "cancelled",
+			);
+		expect(outcomes).toHaveLength(1);
+	});
+
 	it("does not trigger threshold compaction for error messages when no prior usage exists", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);

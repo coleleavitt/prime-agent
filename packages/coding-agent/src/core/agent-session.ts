@@ -194,6 +194,7 @@ import {
 	RLM_CHILD_TERMINAL_NOTICE_CUSTOM_TYPE,
 } from "./messages.js";
 import type { ModelRegistry } from "./model-registry.js";
+import { resolveModelReferenceFromModels } from "./model-resolver.js";
 import { throwIfPromptAdmissionCancelled } from "./prompt-admission.js";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.js";
 import { RavoArchive } from "./ravo/archive.js";
@@ -1173,6 +1174,8 @@ export class AgentSession {
 	private _compactionAbortController: AbortController | undefined = undefined;
 	private _autoCompactionAbortController: AbortController | undefined = undefined;
 	private _compactionOperation: Promise<void> | undefined = undefined;
+	/** Effective branch head for the last cancelled threshold attempt. */
+	private _cancelledThresholdCompactionHeadId: string | undefined;
 	/** One recovery attempt per overflow; "reported" dedups the failure notice. */
 	private _overflowRecovery: "idle" | "attempted" | "reported" = "idle";
 	private _continueAfterThresholdCompaction = false;
@@ -8768,6 +8771,15 @@ export class AgentSession {
 		return calculateContextTokens(assistantMessage.usage);
 	}
 
+	private _effectiveCompactionBranchHeadId(): string | undefined {
+		const branch = this.sessionManager.getBranch();
+		for (let index = branch.length - 1; index >= 0; index--) {
+			const entry = branch[index];
+			if (entry.type !== "custom_message" || entry.customType !== "compaction_outcome") return entry.id;
+		}
+		return undefined;
+	}
+
 	private async _checkCompaction(
 		assistantMessage: AssistantMessage,
 		skipAbortedCheck = true,
@@ -8856,6 +8868,12 @@ export class AgentSession {
 		const contextTokens = this._getThresholdContextTokens(assistantMessage, compactionTimestamp);
 		if (contextTokens === undefined) return false;
 		if (shouldCompact(contextTokens, contextWindow, settings)) {
+			if (
+				this._cancelledThresholdCompactionHeadId !== undefined &&
+				this._cancelledThresholdCompactionHeadId === this._effectiveCompactionBranchHeadId()
+			) {
+				return false;
+			}
 			if (queueAutonomousContinuation && this._queueGoalContinuationForThresholdCompaction(assistantMessage)) {
 				this._continueAfterThresholdCompaction = true;
 			} else if (
@@ -8931,6 +8949,7 @@ export class AgentSession {
 		reason: "overflow" | "threshold" | "requested",
 		willRetry: boolean,
 	): Promise<boolean> {
+		const thresholdSourceHeadId = reason === "threshold" ? this._effectiveCompactionBranchHeadId() : undefined;
 		// Any compaction consumes a pending model request and honors its instructions
 		// (overflow recovery can fire first and take the request with it).
 		const pending = this._pendingRequestedCompaction;
@@ -9032,6 +9051,7 @@ export class AgentSession {
 				errorMessage === "Compaction cancelled" || (error instanceof Error && error.name === "AbortError");
 			if (aborted) {
 				this._clearQueuedGoalContinuationAfterCancelledThresholdCompaction(queuedGoalContinuationForThisCompaction);
+				if (reason === "threshold") this._cancelledThresholdCompactionHeadId = thresholdSourceHeadId;
 				this._endCompactionUnsuccessfully(
 					reason,
 					"cancelled",
@@ -9664,6 +9684,7 @@ export class AgentSession {
 		this._modelRegistry.authStorage.reload();
 		resetApiProviders();
 		this._mcpManager?.refresh();
+		this._extensionRunner.invalidate();
 		await this._resourceLoader.reload();
 		this._buildRuntime({
 			activeToolNames: this.getActiveToolNames(),
@@ -9837,7 +9858,9 @@ export class AgentSession {
 		return this._createInlineRlmSubagentRuntime(options);
 	}
 
-	private _createInlineRlmSubagentRuntime(options: CreateRlmSubagentRuntimeOptions): RlmSubagentRuntime {
+	private async _createInlineRlmSubagentRuntime(
+		options: CreateRlmSubagentRuntimeOptions,
+	): Promise<RlmSubagentRuntime> {
 		const childSessionManager = SessionManager.create(this._cwd, options.sessionDir);
 		if (options.parentSession.sessionFile) {
 			childSessionManager.newSession({
@@ -9848,7 +9871,8 @@ export class AgentSession {
 		childSessionManager.appendModelChange(options.model.provider, options.model.id);
 		childSessionManager.appendThinkingLevelChange(options.thinkingLevel);
 		childSessionManager.appendServiceTierChange(options.serviceTier);
-		const child = this._buildInlineRlmChildSession(options, childSessionManager);
+		const resourceLoader = await this._createInlineRlmResourceLoader();
+		const child = this._buildInlineRlmChildSession(options, childSessionManager, undefined, resourceLoader);
 		options.onSessionPublished?.(child);
 		return { session: child };
 	}
@@ -9858,10 +9882,18 @@ export class AgentSession {
 	 * child passes no transcript; a reopened retained child passes its persisted
 	 * messages and keeps the name recorded in its transcript.
 	 */
+	private async _createInlineRlmResourceLoader(): Promise<ResourceLoader> {
+		const loader = await this._resourceLoader.createSessionScope?.();
+		if (loader) return loader;
+		if (this._resourceLoader.getExtensions().extensions.length === 0) return this._resourceLoader;
+		throw new Error("Inline RLM children require a resource loader that can create an isolated extension scope");
+	}
+
 	private _buildInlineRlmChildSession(
 		options: Omit<CreateRlmSubagentRuntimeOptions, "sessionName"> & { sessionName?: string },
 		childSessionManager: SessionManager,
 		messages?: AgentMessage[],
+		resourceLoader: ResourceLoader = this._resourceLoader,
 	): AgentSession {
 		const childAgent = new Agent({
 			initialState: {
@@ -9894,7 +9926,7 @@ export class AgentSession {
 			cwd: this._cwd,
 			agentDir: this._agentDir,
 			scopedModels: options.scopedModels,
-			resourceLoader: this._resourceLoader,
+			resourceLoader,
 			customTools: options.customTools,
 			modelRegistry: this._modelRegistry,
 			initialActiveToolNames: options.activeToolNames,
@@ -10910,10 +10942,12 @@ export class AgentSession {
 			sessionDir: childDir,
 			model,
 		});
+		const resourceLoader = await this._createInlineRlmResourceLoader();
 		const child = this._buildInlineRlmChildSession(
 			{ ...runtimeOptions, sessionName: undefined, activeToolNames: [] },
 			childSessionManager,
 			context.messages,
+			resourceLoader,
 		);
 		const unsubscribe = this._forwardRetainedRlmChildEvents(childId, child);
 		if (!this.registerRlmChildSession(childId, child, unsubscribe)) {
@@ -10957,9 +10991,7 @@ export class AgentSession {
 		if (`${parentModel.provider}/${parentModel.id}`.toLowerCase() === normalizedReference) {
 			return { model: parentModel };
 		}
-		const model = (await this._authenticatedRlmModels()).find(
-			(candidate) => `${candidate.provider}/${candidate.id}`.toLowerCase() === normalizedReference,
-		);
+		const model = resolveModelReferenceFromModels(reference, await this._authenticatedRlmModels());
 		if (!model) {
 			throw new Error(`Requested subagent model "${reference}" is unavailable, unauthenticated, or expired`);
 		}
