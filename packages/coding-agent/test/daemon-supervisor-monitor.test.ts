@@ -1036,6 +1036,40 @@ describe("daemon worker supervisor monitoring", () => {
 		}
 	});
 
+	it("joins repeated shutdown calls without truncating the mutation drain", async () => {
+		let releaseDrain = () => {};
+		const drain = new Promise<void>((resolve) => {
+			releaseDrain = resolve;
+		});
+		const exit = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+			throw new Error(`exit ${code}`);
+		}) as typeof process.exit);
+		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			shuttingDown: false,
+			signalCleanupHandlers: [],
+			workers: new Map(),
+			openingWorkers: new Map(),
+			clients: new Set(),
+			mutationDrain: { waitForDrain: vi.fn(() => drain) },
+			catalog: { stop: vi.fn(async () => undefined) },
+			cleanupSocket: vi.fn(),
+			snapshotCacheRoot: "\0",
+			log: vi.fn(),
+		}) as { shutdown(exitCode: number, stopWorkers: boolean): Promise<never> };
+
+		try {
+			const first = supervisor.shutdown(0, false).catch((error: unknown) => error);
+			const second = supervisor.shutdown(0, false).catch((error: unknown) => error);
+			await Promise.resolve();
+			expect(exit).not.toHaveBeenCalled();
+			releaseDrain();
+			await expect(Promise.all([first, second])).resolves.toEqual([new Error("exit 0"), new Error("exit 0")]);
+			expect(exit).toHaveBeenCalledOnce();
+		} finally {
+			exit.mockRestore();
+		}
+	});
+
 	it("completes shutdown without awaiting an unsignalable worker finalizer", async () => {
 		vi.useFakeTimers();
 		const root = mkdtempSync(join(tmpdir(), "prime-supervisor-shutdown-finalization-test-"));
@@ -3701,7 +3735,7 @@ describe("daemon worker supervisor monitoring", () => {
 		await vi.runAllTimersAsync();
 		await recovering;
 
-		expect(recoverUncertainWorkerOperations).toHaveBeenCalledWith(worker, false);
+		expect(recoverUncertainWorkerOperations).toHaveBeenCalledWith(worker);
 		expect(launchWorker).toHaveBeenCalledWith(recoveryCommand, worker, undefined);
 	});
 

@@ -56,6 +56,7 @@ describe("AgentSessionRuntime characterization", () => {
 			sessionManager?: SessionManager;
 			sessionOptions?: Parameters<CreateAgentSessionRuntimeFactory>[0]["sessionOptions"];
 			onCreateRuntime?: (options: Parameters<CreateAgentSessionRuntimeFactory>[0]) => void;
+			failReplacement?: boolean;
 		},
 	) {
 		const tempDir =
@@ -104,8 +105,13 @@ describe("AgentSessionRuntime characterization", () => {
 				noThemes: true,
 			},
 		};
+		let runtimeCreationCount = 0;
 		const createRuntime: CreateAgentSessionRuntimeFactory = async (runtimeOptions) => {
+			runtimeCreationCount++;
 			options?.onCreateRuntime?.(runtimeOptions);
+			if (options?.failReplacement && runtimeCreationCount > 1) {
+				throw new Error("replacement build failed");
+			}
 			const { cwd, sessionManager, sessionStartEvent } = runtimeOptions;
 			const services = await createAgentSessionServices({
 				...serviceOptions,
@@ -188,6 +194,16 @@ describe("AgentSessionRuntime characterization", () => {
 
 		expect(calls).toHaveLength(2);
 		expect(calls[1]?.sessionConfig).toBe(sessionConfig);
+	});
+
+	it("keeps the current session usable when replacement construction fails", async () => {
+		const { runtime } = await createRuntimeForTest(() => {}, { failReplacement: true });
+		const current = runtime.session;
+
+		await expect(runtime.newSession()).rejects.toThrow("replacement build failed");
+
+		expect(runtime.session).toBe(current);
+		await expect(runtime.session.prompt("still alive")).resolves.toBeUndefined();
 	});
 
 	it("copies depth across new-session parent reference edges", async () => {

@@ -24,6 +24,7 @@ export interface ActiveSessionBindingCallbacks {
 	sessionReplaced?: (state: ActiveSessionState) => void;
 	shutdown: () => void;
 	subagentRuntimeHost?: SubagentRuntimeHost;
+	beginMutation?: () => () => void;
 }
 
 type BroadcastSessionEvent = Extract<DaemonOutbound, { type: "session_event" }>["event"];
@@ -82,7 +83,7 @@ export async function bindActiveSessionState(
 
 	await session.bindExtensions({
 		uiContext: createExtensionUIContext(state, callbacks.broadcast),
-		commandContextActions: createCommandContextActions(state),
+		commandContextActions: createCommandContextActions(state, callbacks.beginMutation),
 		shutdownHandler: callbacks.shutdown,
 		onError: (error) => {
 			callbacks.broadcast(state, {
@@ -96,29 +97,43 @@ export async function bindActiveSessionState(
 	});
 }
 
-function createCommandContextActions(state: ActiveSessionState): ExtensionCommandContextActions {
+function createCommandContextActions(
+	state: ActiveSessionState,
+	beginMutation?: () => () => void,
+): ExtensionCommandContextActions {
+	const mutate = async <T>(operation: () => Promise<T>): Promise<T> => {
+		const release = beginMutation?.();
+		try {
+			return await operation();
+		} finally {
+			release?.();
+		}
+	};
 	return {
 		waitForIdle: () => state.runtime.session.waitForIdle(),
-		newSession: async (options) => state.runtime.newSession(options),
-		fork: async (entryId, options) => {
-			const result = await state.runtime.fork(entryId, options);
-			return { cancelled: result.cancelled };
-		},
-		navigateTree: async (targetId, options) => {
-			const result = await state.runtime.session.navigateTree(targetId, {
-				summarize: options?.summarize,
-				customInstructions: options?.customInstructions,
-				replaceInstructions: options?.replaceInstructions,
-				label: options?.label,
-			});
-			return { cancelled: result.cancelled };
-		},
-		switchSession: async (sessionPath, options) => state.runtime.switchSession(sessionPath, options),
-		reload: async () => {
-			// Reload re-evaluates extension modules, which capture client env
-			// (e.g. herdr pane identity) synchronously at load.
-			await withClientEnv(state.clientEnv, () => state.runtime.session.reload());
-		},
+		newSession: async (options) => mutate(() => state.runtime.newSession(options)),
+		fork: async (entryId, options) =>
+			mutate(async () => {
+				const result = await state.runtime.fork(entryId, options);
+				return { cancelled: result.cancelled };
+			}),
+		navigateTree: async (targetId, options) =>
+			mutate(async () => {
+				const result = await state.runtime.session.navigateTree(targetId, {
+					summarize: options?.summarize,
+					customInstructions: options?.customInstructions,
+					replaceInstructions: options?.replaceInstructions,
+					label: options?.label,
+				});
+				return { cancelled: result.cancelled };
+			}),
+		switchSession: async (sessionPath, options) => mutate(() => state.runtime.switchSession(sessionPath, options)),
+		reload: async () =>
+			mutate(async () => {
+				// Reload re-evaluates extension modules, which capture client env
+				// (e.g. herdr pane identity) synchronously at load.
+				await withClientEnv(state.clientEnv, () => state.runtime.session.reload());
+			}),
 	};
 }
 

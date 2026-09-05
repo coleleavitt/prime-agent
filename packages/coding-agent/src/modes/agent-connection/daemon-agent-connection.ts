@@ -255,6 +255,7 @@ export class DaemonAgentConnection implements AgentConnection {
 	private readonly definitiveRequestErrors = new WeakSet<Error>();
 	private disposing = false;
 	private disposed = false;
+	private disposePromise?: Promise<void>;
 
 	constructor(
 		private readonly client: DaemonTransportClient,
@@ -1533,33 +1534,37 @@ export class DaemonAgentConnection implements AgentConnection {
 	}
 
 	async dispose(): Promise<void> {
-		if (this.disposed || this.disposing) {
-			return;
+		if (this.disposePromise) {
+			return this.disposePromise;
 		}
 		this.disposing = true;
-		if (this.options.ownedSession && !this.client.isConnected && this.reconnectPromise) {
-			await Promise.race([this.reconnectPromise, delay(OWNED_SESSION_DISPOSE_RECONNECT_WAIT_MS)]).catch(
-				() => undefined,
-			);
-		}
-		this.disposed = true;
-		this.updateRestartPending = false;
-		await Promise.allSettled([...this.activeSideQuestionIds].map((id) => this.abortSideQuestion(id)));
-		await this.rosterStore?.dispose().catch(() => undefined);
-		this.rosterStore = undefined;
-		this.unsubscribeDaemonMessages();
-		this.unsubscribeDaemonClose();
-		if (this.options.ownedSession) {
-			await this.requestOk({ type: "complete_owned_session", activeSessionId: this.activeSessionId }).catch(
-				() => undefined,
-			);
-		} else {
-			await this.requestOk({ type: "detach", activeSessionId: this.activeSessionId }).catch(() => undefined);
-		}
-		if (this.options.closeClientOnDispose) {
-			this.client.close();
-		}
-		this.rejectSnapshotAssemblies(new Error("Daemon connection disposed during snapshot transfer"));
+		this.disposePromise = (async () => {
+			await this.ownedSessionPromotionTail;
+			if (this.options.ownedSession && !this.client.isConnected && this.reconnectPromise) {
+				await Promise.race([this.reconnectPromise, delay(OWNED_SESSION_DISPOSE_RECONNECT_WAIT_MS)]).catch(
+					() => undefined,
+				);
+			}
+			this.disposed = true;
+			this.updateRestartPending = false;
+			await Promise.allSettled([...this.activeSideQuestionIds].map((id) => this.abortSideQuestion(id)));
+			await this.rosterStore?.dispose().catch(() => undefined);
+			this.rosterStore = undefined;
+			this.unsubscribeDaemonMessages();
+			this.unsubscribeDaemonClose();
+			if (this.options.ownedSession) {
+				await this.requestOk({ type: "complete_owned_session", activeSessionId: this.activeSessionId }).catch(
+					() => undefined,
+				);
+			} else {
+				await this.requestOk({ type: "detach", activeSessionId: this.activeSessionId }).catch(() => undefined);
+			}
+			if (this.options.closeClientOnDispose) {
+				this.client.close();
+			}
+			this.rejectSnapshotAssemblies(new Error("Daemon connection disposed during snapshot transfer"));
+		})();
+		return this.disposePromise;
 	}
 
 	async promoteToResident(): Promise<void> {
@@ -1570,7 +1575,13 @@ export class DaemonAgentConnection implements AgentConnection {
 	}
 
 	private withOwnedSessionPromotion<T>(operation: (promoteOwnedSession: boolean) => Promise<T>): Promise<T> {
+		if (this.disposing || this.disposed) {
+			return Promise.reject(new Error("Daemon connection is disposing"));
+		}
 		const run = this.ownedSessionPromotionTail.then(async () => {
+			if (this.disposing || this.disposed) {
+				throw new Error("Daemon connection is disposing");
+			}
 			const promoteOwnedSession = this.options.ownedSession === true;
 			const result = await operation(promoteOwnedSession);
 			if (promoteOwnedSession) {

@@ -692,6 +692,7 @@ export class DaemonSupervisor {
 	private socketLeaseCompromise?: Error;
 	private ownership?: Awaited<ReturnType<typeof acquireDaemonSupervisorOwnership>>;
 	private cleanupPromise?: Promise<void>;
+	private shutdownPromise?: Promise<never>;
 	private shuttingDown = false;
 	private startupComplete = false;
 	private updateRestartPhase?: "draining" | "fencing" | "prepared";
@@ -1864,7 +1865,16 @@ export class DaemonSupervisor {
 		// Attach is intentionally read-only and is not fence-gated. If eviction wins
 		// the race, attach fails cleanly with "Session worker is not connected" and
 		// the client retries through the saved-session path instead of mutating state.
-		if (mutation) this.mutationDrain.begin();
+		if (mutation) {
+			try {
+				this.assertSupervisorServing();
+			} catch (error) {
+				if (parsedAdmission) this.deletePromptAdmission(parsedAdmission);
+				this.write(client, failure(command.id, command.type, error, serializeDaemonError(error)));
+				return;
+			}
+			this.mutationDrain.begin();
+		}
 		try {
 			const response = await this.handleCommand(client, command, cancellationAdmission);
 			if (response) {
@@ -6870,21 +6880,37 @@ export class DaemonSupervisor {
 		}
 	}
 
-	private async shutdown(
+	private shutdown(
 		exitCode: number,
 		stopWorkers: boolean,
 		relaunch = false,
 		forceWorkers = false,
 		closingReason?: DaemonClosingReason,
 	): Promise<never> {
-		if (this.shuttingDown) {
-			process.exit(exitCode);
-		}
+		this.shutdownPromise ??= this.shutdownOnce(exitCode, stopWorkers, relaunch, forceWorkers, closingReason);
+		return this.shutdownPromise;
+	}
+
+	private async shutdownOnce(
+		exitCode: number,
+		stopWorkers: boolean,
+		relaunch: boolean,
+		forceWorkers: boolean,
+		closingReason?: DaemonClosingReason,
+	): Promise<never> {
 		this.shuttingDown = true;
 		this.clearIdleEvictionTimer();
 		this.clearScheduledWakeTimer();
 		this.clearRosterWatchdogTimer();
 		await this.idleEvictionSweep?.catch(() => undefined);
+		await this.mutationDrain?.waitForDrain(
+			0,
+			AbortSignal.timeout(UPDATE_RESTART_MUTATION_DRAIN_TIMEOUT_MS),
+			"Timed out draining daemon mutations for shutdown",
+		);
+		while ((this.openingWorkers?.size ?? 0) > 0) {
+			await Promise.allSettled([...this.openingWorkers.values()]);
+		}
 		if (closingReason) {
 			for (const client of this.clients) {
 				this.write(client, { type: "daemon_closing", reason: closingReason });

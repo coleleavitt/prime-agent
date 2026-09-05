@@ -57,6 +57,7 @@ class FakeDaemonClient {
 	abortAndClearQueueUnknownCommand = false;
 	inputPauseAcquireGate: Promise<void> | undefined;
 	cronAddGate: Promise<void> | undefined;
+	terminalGate: Promise<void> | undefined;
 	promptGate: Promise<void> | undefined;
 	promptError: Error | undefined;
 	promptResponseError: string | undefined;
@@ -82,6 +83,10 @@ class FakeDaemonClient {
 		this.requests.push(command);
 		this.requestTimeouts.push(timeoutMs);
 		switch (command.type) {
+			case "detach":
+			case "complete_owned_session":
+				if (this.terminalGate) await this.terminalGate;
+				return { type: "response", command: command.type, success: true };
 			case "prompt":
 				if (this.promptGate) await this.promptGate;
 				if (this.promptError) throw this.promptError;
@@ -395,7 +400,6 @@ class FakeDaemonClient {
 			case "set_scoped_models":
 			case "rename_saved_session":
 			case "extension_ui_response":
-			case "detach":
 				return { type: "response", command: command.type, success: true };
 			case "cancel_rlm_child":
 				if (command.childId === "stale-daemon") {
@@ -1714,6 +1718,51 @@ describe("DaemonAgentConnection", () => {
 			(command): command is Extract<DaemonCommand, { type: "cron_add" }> => command.type === "cron_add",
 		);
 		expect(commands.map((command) => command.promoteOwnedSession)).toEqual([true, false]);
+	});
+
+	it("joins concurrent disposal and sends one terminal request", async () => {
+		const fakeClient = new FakeDaemonClient();
+		let releaseTerminal = () => {};
+		fakeClient.terminalGate = new Promise<void>((resolve) => {
+			releaseTerminal = resolve;
+		});
+		const connection = new DaemonAgentConnection(asDaemonClient(fakeClient), "active-1");
+
+		const first = connection.dispose();
+		const second = connection.dispose();
+		let secondSettled = false;
+		void second.then(() => {
+			secondSettled = true;
+		});
+		await vi.waitFor(() =>
+			expect(fakeClient.requests.filter((request) => request.type === "detach")).toHaveLength(1),
+		);
+		await Promise.resolve();
+		expect(secondSettled).toBe(false);
+
+		releaseTerminal();
+		await Promise.all([first, second]);
+		expect(fakeClient.requests.filter((request) => request.type === "detach")).toHaveLength(1);
+	});
+
+	it("waits for owned-session promotion before disposal chooses detach", async () => {
+		const fakeClient = new FakeDaemonClient();
+		let releasePromotion = () => {};
+		fakeClient.cronAddGate = new Promise<void>((resolve) => {
+			releasePromotion = resolve;
+		});
+		const connection = new DaemonAgentConnection(asDaemonClient(fakeClient), "active-1", { ownedSession: true });
+
+		const promotion = connection.addCronJob("0 * * * *", "promote");
+		await vi.waitFor(() => expect(fakeClient.requests.some((request) => request.type === "cron_add")).toBe(true));
+		const disposal = connection.dispose();
+		await Promise.resolve();
+		expect(fakeClient.requests.some((request) => request.type === "detach")).toBe(false);
+		expect(fakeClient.requests.some((request) => request.type === "complete_owned_session")).toBe(false);
+
+		releasePromotion();
+		await Promise.all([promotion, disposal]);
+		expect(fakeClient.requests.map((request) => request.type)).toEqual(["cron_add", "detach"]);
 	});
 
 	it("gates side-question follow-up transcripts on the daemon capability", async () => {

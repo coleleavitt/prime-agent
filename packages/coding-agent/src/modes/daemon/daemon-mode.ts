@@ -476,6 +476,7 @@ export class AgentDaemon {
 		{ client: DaemonSocketClient; ownerId: string; serverNames: string[]; release?: Promise<void> }
 	>();
 	private readonly mutationDrain = new MutationDrainLatch();
+	private shutdownPromise?: Promise<never>;
 	private updateRestart?: {
 		id: symbol;
 		owner?: DaemonSocketClient;
@@ -613,6 +614,13 @@ export class AgentDaemon {
 	// The daemon runs detached with no terminal, so route its diagnostics to its
 	// rotating log file and the shared structured log (and stderr too, for when
 	// it's run in the foreground).
+	private beginExtensionMutation(): () => void {
+		if (this.shuttingDown) throw new Error("Daemon is shutting down");
+		if (this.updateRestart) throw new Error("Daemon is preparing an update restart");
+		this.mutationDrain.begin();
+		return () => this.mutationDrain.end();
+	}
+
 	private log(message: string): void {
 		console.error(message);
 		structuredLog.warn(message, { socketPath: this.socketPath });
@@ -1464,6 +1472,7 @@ export class AgentDaemon {
 					void this.shutdown(0);
 				},
 				subagentRuntimeHost: this.createSubagentRuntimeHost(state),
+				beginMutation: () => this.beginExtensionMutation(),
 			});
 			if (runtimeOpenGuard) {
 				const guardResult = runtimeOpenGuard();
@@ -3343,6 +3352,10 @@ export class AgentDaemon {
 	}
 
 	private async handleLine(client: DaemonSocketClient, line: string): Promise<void> {
+		if (this.shuttingDown) {
+			this.write(client, failure(salvageDaemonCommandId(line), "shutdown", "Daemon is shutting down"));
+			return;
+		}
 		let command: DaemonCommand;
 		let clearParsedAdmission = () => {};
 		let promptHandlerOwnsAdmission = false;
@@ -3573,7 +3586,13 @@ export class AgentDaemon {
 					);
 					return;
 				}
-				if (!updateLifecycle) this.mutationDrain.begin();
+				if (!updateLifecycle) {
+					if (this.shuttingDown) {
+						this.write(client, failure(workerCommand.id, workerCommand.type, "Daemon is shutting down"));
+						return;
+					}
+					this.mutationDrain.begin();
+				}
 				try {
 					await this.handleWorkerCommand(client, workerCommand);
 				} finally {
@@ -3608,7 +3627,14 @@ export class AgentDaemon {
 			this.write(client, failure(command.id, command.type, "Daemon is preparing an update restart"));
 			return;
 		}
-		if (mutation) this.mutationDrain.begin();
+		if (mutation) {
+			if (this.shuttingDown) {
+				clearParsedAdmission();
+				this.write(client, failure(command.id, command.type, "Daemon is shutting down"));
+				return;
+			}
+			this.mutationDrain.begin();
+		}
 		try {
 			const response = await this.handleCommand(client, command, () => {
 				promptHandlerOwnsAdmission = true;
@@ -7294,10 +7320,12 @@ export class AgentDaemon {
 		return this.updateRestart?.phase === "publishing" ? "update" : "shutdown";
 	}
 
-	private async shutdown(exitCode: number): Promise<never> {
-		if (this.shuttingDown) {
-			process.exit(exitCode);
-		}
+	private shutdown(exitCode: number): Promise<never> {
+		this.shutdownPromise ??= this.shutdownOnce(exitCode);
+		return this.shutdownPromise;
+	}
+
+	private async shutdownOnce(exitCode: number): Promise<never> {
 		this.shuttingDown = true;
 		this.peerAdmissionsFenced = true;
 		this.peerGrants.clear();
@@ -7325,6 +7353,18 @@ export class AgentDaemon {
 			cleanup();
 		}
 		this.cronScheduler.stop();
+		await this.mutationDrain.waitForDrain(
+			0,
+			AbortSignal.timeout(UPDATE_RESTART_PREPARE_TIMEOUT_MS),
+			"Timed out draining daemon mutations for shutdown",
+		);
+		while (this.reservingSessionOpens.size > 0 || this.openingSessions.size > 0 || this.bindingCompletions.size > 0) {
+			await Promise.allSettled([
+				...this.reservingSessionOpens.values(),
+				...this.openingSessions.values(),
+				...this.bindingCompletions.values(),
+			]);
+		}
 		for (const state of [...this.sessions.values()]) {
 			await this.closeSession(state, closingReason);
 		}
