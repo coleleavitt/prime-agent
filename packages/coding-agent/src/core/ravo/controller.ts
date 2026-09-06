@@ -1,3 +1,4 @@
+import { runWithTraceContext, type Span, type SpanAttributes, startSpan } from "@earendil-works/pi-ai";
 import type { RunAgentStatus } from "../run-agent.js";
 import { type RavoArchive, RavoStaleCommitError } from "./archive.js";
 import { canonicalJson, sha256 } from "./canonical-json.js";
@@ -169,6 +170,17 @@ export interface RavoControllerResult<T extends JsonValue = JsonValue> {
 export async function runRavoController<T extends JsonValue>(
 	options: RavoControllerOptions<T>,
 ): Promise<RavoControllerResult<T>> {
+	return inRavoSpan(
+		"ravo.run",
+		{ "ravo.run_id": options.runId, "ravo.resumed": Boolean(options.checkpoint) },
+		(runSpan) => runController(options, runSpan),
+	);
+}
+
+async function runController<T extends JsonValue>(
+	options: RavoControllerOptions<T>,
+	runSpan: Span,
+): Promise<RavoControllerResult<T>> {
 	validateOptions(options);
 	const now = options.now ?? Date.now;
 	const started = now();
@@ -190,6 +202,7 @@ export async function runRavoController<T extends JsonValue>(
 	await options.archive.initialize();
 	if (!options.checkpoint)
 		await options.archive.append("run", { runId: options.runId, contextDigest: context.sha256 });
+	let roundSpan: Span | undefined;
 	const emit = (event: RavoProgressEvent): void => {
 		try {
 			options.onProgress?.(event);
@@ -203,11 +216,19 @@ export async function runRavoController<T extends JsonValue>(
 	};
 	const setPhase = async (phase: RavoPhase): Promise<void> => {
 		cp.phase = phase;
+		roundSpan?.setAttributes({ "ravo.phase": phase });
 		emit({ type: "phase", phase, round: cp.round });
 		await persistCheckpoint();
 	};
+	const runSummary = (reason: RavoStopReason): SpanAttributes => ({
+		"ravo.reason": reason,
+		"ravo.rounds": cp.round,
+		"ravo.repairs": cp.repairs,
+		"ravo.spent_tokens": cp.spentTokens,
+	});
 	const stop = async (reason: RavoStopReason, certificate?: RavoGateCertificate): Promise<RavoControllerResult<T>> => {
 		cp.phase = reason === "accepted" ? "accepted" : "stopped";
+		runSpan.setAttributes(runSummary(reason));
 		await options.archive.append("stop", { runId: options.runId, reason, round: cp.round });
 		emit({ type: "stopped", reason });
 		return { reason, checkpoint: cp, ...(certificate ? { certificate } : {}) };
@@ -239,11 +260,122 @@ export async function runRavoController<T extends JsonValue>(
 			reserved -= options.reservationPerCall;
 		}
 	};
-	try {
-		while (cp.round < options.maxRounds) {
-			if (abort.signal.aborted) throw new Stop("cancelled");
-			if (now() - started >= options.deadlineMs) throw new Stop("deadline");
-			cp.round += 1;
+	const propose = (inspection: InspectionFindings, plan: RavoPlan): Promise<ControllerProposal<T>> =>
+		inRavoSpan(
+			"ravo.proposal",
+			{ "ravo.round": cp.round, "ravo.kind": cp.feedback && cp.candidate ? "repair" : "implement" },
+			async (span) => {
+				const spentBefore = cp.spentTokens;
+				const proposal =
+					cp.feedback && cp.candidate
+						? await call(options.repair, {
+								context,
+								candidate: cp.candidate,
+								feedback: cp.feedback,
+								plan,
+								...(cp.workerHandle ? { workerHandle: cp.workerHandle } : {}),
+							})
+						: await call(options.implement, {
+								context,
+								inspection,
+								plan,
+								...(cp.workerHandle ? { workerHandle: cp.workerHandle } : {}),
+							});
+				span.setAttributes({
+					"ravo.proposal_id": proposal.id,
+					"ravo.candidate_tokens": cp.spentTokens - spentBefore,
+				});
+				validateProposal(proposal, cp.candidate, Boolean(cp.feedback));
+				return proposal;
+			},
+		);
+	const evaluateOne = async (
+		adapter: EvaluationAdapter<T>,
+		candidate: ControllerProposal<T>,
+	): Promise<{ adapter: EvaluationAdapter<T>; result: { status: GateStatus; score?: number; detail?: string } }> => {
+		let allocation: DecisionAllocation | undefined;
+		if (adapter.kind === "deep" && adapter.probabilistic) {
+			try {
+				allocation = adapter.allocation?.({ proposalId: candidate.id, round: cp.round });
+				if (!allocation)
+					return {
+						adapter,
+						result: {
+							status: "error" as const,
+							detail: "probabilistic deep evaluation was not preallocated",
+						},
+					};
+				options.ledger.allocate(allocation);
+				await persistCheckpoint();
+			} catch (error) {
+				return {
+					adapter,
+					result: {
+						status: "error" as const,
+						detail: error instanceof Error ? error.message : String(error),
+					},
+				};
+			}
+		}
+		try {
+			let result = await call(adapter.evaluate, { proposal: candidate, context });
+			if (allocation) {
+				const record = options.ledger.recordEvaluation({
+					decisionId: allocation.decisionId,
+					passed: result.status === "pass",
+					calibrationId: allocation.calibrationId,
+				});
+				await persistCheckpoint();
+				if (!record.probabilisticallyAccepted)
+					result = {
+						status: "error",
+						detail: record.rejectionReason ?? "probabilistic evaluation rejected",
+					};
+			}
+			return { adapter, result };
+		} catch (error) {
+			if (error instanceof Stop) throw error;
+			return {
+				adapter,
+				result: { status: "error" as const, detail: error instanceof Error ? error.message : String(error) },
+			};
+		}
+	};
+	const evaluateTraced = (adapter: EvaluationAdapter<T>, candidate: ControllerProposal<T>) =>
+		inRavoSpan(
+			"ravo.evaluation",
+			{ "ravo.proposal_id": candidate.id, "ravo.evaluator": adapter.id, "ravo.evaluator_kind": adapter.kind },
+			async (span) => {
+				const observation = await evaluateOne(adapter, candidate);
+				span.setAttributes({ "ravo.verdict": observation.result.status });
+				return observation;
+			},
+		);
+	const commitGate = (
+		candidate: ControllerProposal<T>,
+		certificate: RavoGateCertificate,
+	): Promise<{ accepted: false; detail?: string } | { accepted: true; digest: string }> =>
+		inRavoSpan(
+			"ravo.evaluation",
+			{ "ravo.proposal_id": candidate.id, "ravo.evaluator": "commit_gate", "ravo.evaluator_kind": "commit_gate" },
+			async (span) => {
+				const gate = await options.commitGate({ proposal: candidate, certificate, signal: abort.signal });
+				span.setAttributes({ "ravo.verdict": gate.accepted ? "accepted" : "rejected" });
+				if (!gate.accepted) return { accepted: false, ...(gate.detail ? { detail: gate.detail } : {}) };
+				const digest = sha256(
+					canonicalJson({
+						proposal: candidate,
+						certificate,
+						errorBudget: JSON.parse(options.ledger.serialize()) as JsonValue,
+					}),
+				);
+				span.setAttributes({ "ravo.certificate_digest": digest });
+				return { accepted: true, digest };
+			},
+		);
+	const runRound = async (span: Span): Promise<RavoControllerResult<T> | undefined> => {
+		roundSpan = span;
+		try {
 			await setPhase("inspect");
 			if (!cp.inspection) cp.inspection = await call(options.inspect, { context });
 			await setPhase("plan");
@@ -275,22 +407,7 @@ export async function runRavoController<T extends JsonValue>(
 				}
 			} else emit({ type: "supervisor", intervened: false });
 			await setPhase(cp.feedback ? "repair" : "implement");
-			const candidate =
-				cp.feedback && cp.candidate
-					? await call(options.repair, {
-							context,
-							candidate: cp.candidate,
-							feedback: cp.feedback,
-							plan: cp.plan,
-							...(cp.workerHandle ? { workerHandle: cp.workerHandle } : {}),
-						})
-					: await call(options.implement, {
-							context,
-							inspection: cp.inspection,
-							plan: cp.plan,
-							...(cp.workerHandle ? { workerHandle: cp.workerHandle } : {}),
-						});
-			validateProposal(candidate, cp.candidate, Boolean(cp.feedback));
+			const candidate = await propose(cp.inspection, cp.plan);
 			cp.candidate = candidate;
 			cp.feedback = undefined;
 			emit({
@@ -311,55 +428,9 @@ export async function runRavoController<T extends JsonValue>(
 				championDigest: archiveState.championDigest,
 			};
 			await setPhase("evaluate");
-			const observations = await concurrentMap(options.evaluators, options.concurrency, async (adapter) => {
-				let allocation: DecisionAllocation | undefined;
-				if (adapter.kind === "deep" && adapter.probabilistic) {
-					try {
-						allocation = adapter.allocation?.({ proposalId: candidate.id, round: cp.round });
-						if (!allocation)
-							return {
-								adapter,
-								result: {
-									status: "error" as const,
-									detail: "probabilistic deep evaluation was not preallocated",
-								},
-							};
-						options.ledger.allocate(allocation);
-						await persistCheckpoint();
-					} catch (error) {
-						return {
-							adapter,
-							result: {
-								status: "error" as const,
-								detail: error instanceof Error ? error.message : String(error),
-							},
-						};
-					}
-				}
-				try {
-					let result = await call(adapter.evaluate, { proposal: candidate, context });
-					if (allocation) {
-						const record = options.ledger.recordEvaluation({
-							decisionId: allocation.decisionId,
-							passed: result.status === "pass",
-							calibrationId: allocation.calibrationId,
-						});
-						await persistCheckpoint();
-						if (!record.probabilisticallyAccepted)
-							result = {
-								status: "error",
-								detail: record.rejectionReason ?? "probabilistic evaluation rejected",
-							};
-					}
-					return { adapter, result };
-				} catch (error) {
-					if (error instanceof Stop) throw error;
-					return {
-						adapter,
-						result: { status: "error" as const, detail: error instanceof Error ? error.message : String(error) },
-					};
-				}
-			});
+			const observations = await concurrentMap(options.evaluators, options.concurrency, (adapter) =>
+				evaluateTraced(adapter, candidate),
+			);
 			const evaluation = assembleEvaluation(candidate.id, observations);
 			cp.lastEvaluation = evaluation;
 			const stepped = ravoStep(
@@ -377,21 +448,11 @@ export async function runRavoController<T extends JsonValue>(
 			});
 			if (stepped.certificate.committed) {
 				await setPhase("commit_gate");
-				const gate = await options.commitGate({
-					proposal: candidate,
-					certificate: stepped.certificate,
-					signal: abort.signal,
-				});
+				const gate = await commitGate(candidate, stepped.certificate);
 				if (gate.accepted) {
 					const baseline = cp.archiveBaseline;
 					if (!baseline) throw new Error("archive CAS baseline was not bound before evaluation");
-					const digest = sha256(
-						canonicalJson({
-							proposal: candidate,
-							certificate: stepped.certificate,
-							errorBudget: JSON.parse(options.ledger.serialize()) as JsonValue,
-						}),
-					);
+					const digest = gate.digest;
 					try {
 						await options.archive.accept(
 							{ runId: options.runId, proposalId: candidate.id, certificateDigest: digest },
@@ -399,12 +460,17 @@ export async function runRavoController<T extends JsonValue>(
 							digest,
 						);
 					} catch (error) {
-						if (error instanceof RavoStaleCommitError) return stop("stale_cas", stepped.certificate);
+						if (error instanceof RavoStaleCommitError) {
+							span.setAttributes({ "ravo.outcome": "stopped", "ravo.reason": "stale_cas" });
+							return stop("stale_cas", stepped.certificate);
+						}
 						throw error;
 					}
 					cp.state = stepped.state;
 					cp.errorBudget = options.ledger.toJSON();
 					cp.phase = "accepted";
+					span.setAttributes({ "ravo.outcome": "accepted", "ravo.certificate_digest": digest });
+					runSpan.setAttributes({ ...runSummary("accepted"), "ravo.certificate_digest": digest });
 					emit({ type: "stopped", reason: "accepted" });
 					return {
 						reason: "accepted",
@@ -415,6 +481,7 @@ export async function runRavoController<T extends JsonValue>(
 				}
 				cp.feedback = diagnostic(stepped.certificate, gate.detail ?? "external commit gate rejected");
 			} else cp.feedback = diagnostic(stepped.certificate);
+			span.setAttributes({ "ravo.outcome": "rejected" });
 			cp.state = { ...cp.state, evaluatedProposalIds: stepped.state.evaluatedProposalIds };
 			await options.archive.append("reject", {
 				runId: options.runId,
@@ -423,7 +490,25 @@ export async function runRavoController<T extends JsonValue>(
 			});
 			await setPhase("diagnose");
 			cp.repairs += 1;
-			if (cp.repairs > options.maxRepairs) return stop("repair_limit", stepped.certificate);
+			if (cp.repairs > options.maxRepairs) {
+				span.setAttributes({ "ravo.reason": "repair_limit" });
+				return stop("repair_limit", stepped.certificate);
+			}
+			return undefined;
+		} catch (error) {
+			if (error instanceof Stop) span.setAttributes({ "ravo.outcome": "stopped" });
+			throw error;
+		} finally {
+			roundSpan = undefined;
+		}
+	};
+	try {
+		while (cp.round < options.maxRounds) {
+			if (abort.signal.aborted) throw new Stop("cancelled");
+			if (now() - started >= options.deadlineMs) throw new Stop("deadline");
+			cp.round += 1;
+			const result = await inRavoSpan("ravo.round", { "ravo.round": cp.round }, runRound);
+			if (result) return result;
 		}
 		return stop("round_limit", cp.certificates.at(-1));
 	} catch (error) {
@@ -432,6 +517,26 @@ export async function runRavoController<T extends JsonValue>(
 	} finally {
 		options.signal?.removeEventListener("abort", relayAbort);
 		abort.abort();
+	}
+}
+
+/**
+ * Run `fn` inside a child span of the ambient trace context. A thrown
+ * {@link Stop} is a normal terminal outcome (deadline/budget/cancel), so the
+ * span ends `ok` carrying `ravo.reason`; any other throw ends it `error`.
+ * Tracing never alters control flow: the value or error is passed through.
+ */
+async function inRavoSpan<T>(name: string, attrs: SpanAttributes, fn: (span: Span) => Promise<T>): Promise<T> {
+	const span = startSpan(name, attrs);
+	try {
+		const value = await runWithTraceContext(span.context, () => fn(span));
+		span.end();
+		return value;
+	} catch (error) {
+		if (error instanceof Stop) span.setAttributes({ "ravo.reason": error.reason });
+		else span.recordError(error);
+		span.end();
+		throw error;
 	}
 }
 
