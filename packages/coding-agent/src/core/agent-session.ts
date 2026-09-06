@@ -42,6 +42,7 @@ import {
 	modelsAreEqual,
 	resetApiProviders,
 	supportsFastMode,
+	withSpan,
 } from "@earendil-works/pi-ai";
 import { theme } from "../modes/interactive/theme/theme.js";
 import { stripFrontmatter } from "../utils/frontmatter.js";
@@ -171,6 +172,7 @@ import {
 } from "./goals.js";
 import type { HostRequestHandlers, KernelSentAgentMessage } from "./kernel/index.js";
 import { type RestoreResult, snapshotPathIn } from "./kernel/state-snapshot.js";
+import { setLogContext } from "./logging.js";
 import type { AcpMcpServerConfig } from "./mcp/acp-mcp-types.js";
 import type { McpManager } from "./mcp/mcp-manager.js";
 import {
@@ -1321,6 +1323,9 @@ export class AgentSession {
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
+		// The session manager minted or loaded the id synchronously; stamp it on
+		// every log line from here on (a session replacement re-runs this).
+		setLogContext({ sessionId: this.sessionManager.getSessionId() });
 		this.settingsManager = config.settingsManager;
 		this._serviceTierPreference = config.serviceTierPreference ?? config.agent.state.serviceTier;
 		this._scopedModels = config.scopedModels ?? [];
@@ -6193,9 +6198,20 @@ export class AgentSession {
 					for (const action of turns) transitionSessionAction(action, { state: "committing" });
 					this._notifySessionInputCheckpointChange();
 					this._emitQueueUpdate();
+					// The public prompt() returns once the input is accepted, so the trace
+					// root lives here instead: agent.prompt() settles only when the whole
+					// run (every agent.turn, tool call and kernel cell it spawns) is done.
+					// The log context tracks the session driving the run so an inline
+					// child session can't leave its id stamped on the parent's lines.
+					const runPrompt = () => {
+						setLogContext({ sessionId: this.sessionId });
+						return withSpan("agent.prompt", { "session.id": this.sessionId }, () =>
+							this.agent.prompt(preparedMessages),
+						);
+					};
 					return turns.some((action) => action.suppressAutonomousContinuation)
-						? this._runWithAutonomousContinuationSuppressed(() => this.agent.prompt(preparedMessages))
-						: this.agent.prompt(preparedMessages);
+						? this._runWithAutonomousContinuationSuppressed(runPrompt)
+						: runPrompt();
 				});
 			} finally {
 				commitFence.release();

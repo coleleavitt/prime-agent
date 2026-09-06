@@ -56,7 +56,7 @@ import { AuthStorage } from "./core/auth-storage.js";
 import { exportFromFile } from "./core/export-html/index.js";
 import type { ExtensionFactory } from "./core/extensions/types.js";
 import { KeybindingsManager } from "./core/keybindings.js";
-import { installFileLogSink, setLogContext } from "./core/logging.js";
+import { installFileLogSink, setLogContext, withInboundTraceContext } from "./core/logging.js";
 import type { ModelRegistry } from "./core/model-registry.js";
 import { findInitialModel, resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.js";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.js";
@@ -1101,6 +1101,12 @@ export async function main(args: string[], options?: MainOptions) {
 		waitForDaemonWorkerStartupGate();
 	}
 	installFileLogSink();
+	// An external caller (CI, a parent agent) can hand us its span via
+	// TRACEPARENT; everything this process traces then parents to it.
+	return withInboundTraceContext(() => dispatchMode(args, options));
+}
+
+async function dispatchMode(args: string[], options?: MainOptions) {
 	if (isDaemonCatalogProcess()) {
 		await runDaemonCatalogProcess();
 		return;

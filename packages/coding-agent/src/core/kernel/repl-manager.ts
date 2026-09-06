@@ -5,6 +5,16 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
 import { StringDecoder } from "node:string_decoder";
+import {
+	currentTraceparent,
+	getLogger,
+	injectTraceparentEnv,
+	parseTraceparent,
+	runWithTraceContext,
+	SPAN_END_MSG,
+	TRACE_LOG_COMPONENT,
+	withSpan,
+} from "@earendil-works/pi-ai";
 import { v4 as uuid } from "uuid";
 import { reapKernelOrphanProcesses, recordOrphanProcessState } from "../orphan-process-journal.js";
 import { ensureKernelPython } from "./bootstrap.js";
@@ -58,6 +68,8 @@ const MAX_HANDLED_HOST_REQUEST_IDS = 1024;
 // Cap for unattributed background output buffered between and during cells.
 const MAX_BACKGROUND_OUTPUT_CHARS = 64 * 1024;
 
+const traceLog = getLogger(TRACE_LOG_COMPONENT);
+
 const MAX_KERNEL_STDERR_CHARS = 8 * 1024;
 const MAX_KERNEL_STDERR_LOG_BYTES = 5 * 1024 * 1024;
 const KERNEL_STDERR_LOG_BUDGET_MARKER = "[stderr log budget exhausted]\n";
@@ -101,7 +113,7 @@ interface ActiveExecution {
 	reject: (error: Error) => void;
 }
 
-// Complete event vocabulary of protocol version 2 (see prime-agent-runtime/src/rlm/repl.md).
+// Complete event vocabulary of protocol version 3 (see prime-agent-runtime/src/rlm/repl.md).
 // The version handshake is exact, so an unknown kind is corruption, not a newer runtime.
 const PROTOCOL_EVENT_KINDS = new Set([
 	"ready",
@@ -112,7 +124,26 @@ const PROTOCOL_EVENT_KINDS = new Set([
 	"host_request",
 	"error",
 	"done",
+	"trace",
 ]);
+
+/**
+ * Forward a finished Python span (`{"event":"trace","msg":"span_end",...}`)
+ * to the shared logger with the exact shape TS spans use (see pi-ai log.ts
+ * reportSpanEnd), so agent.jsonl holds one trace across both runtimes. The
+ * runtime's `id` names the request the span belongs to, which is already an
+ * attribute, so it is dropped with `event`. A malformed frame is ignored:
+ * tracing must never fail the execution that produced it.
+ */
+function forwardKernelTraceEvent(event: Record<string, unknown>): void {
+	if (event.msg !== SPAN_END_MSG) return;
+	if (typeof event.name !== "string" || typeof event.traceId !== "string" || typeof event.spanId !== "string") {
+		return;
+	}
+	const { event: _kind, id: _requestId, msg: _msg, ...fields } = event;
+	if (fields.status === "error") traceLog.warn(SPAN_END_MSG, fields);
+	else traceLog.info(SPAN_END_MSG, fields);
+}
 
 /**
  * Reason a JSON object still isn't a valid protocol frame, or undefined.
@@ -309,11 +340,14 @@ export class ReplKernelManager {
 			cwd: this.options.cwd,
 			// bash.py journals its process groups under this pid so the host can
 			// reap them if the runtime dies without running its shutdown hook.
-			env: {
+			// TRACEPARENT seeds the runtime's root trace context (rlm.trace.from_env)
+			// so spans it opens outside any request still parent to the span that
+			// started the kernel.
+			env: injectTraceparentEnv({
 				...process.env,
 				...this.options.env,
 				PRIME_AGENT_KERNEL_OWNER_PID: String(process.pid),
-			},
+			}),
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 		this.child = child;
@@ -740,7 +774,11 @@ export class ReplKernelManager {
 			return;
 		}
 		if (type === "host_request") {
-			if (typeof event.id === "string") this.startHostRequest(event.id, event.data);
+			if (typeof event.id === "string") this.startHostRequest(event.id, event.data, event.traceparent);
+			return;
+		}
+		if (type === "trace") {
+			forwardKernelTraceEvent(event);
 			return;
 		}
 
@@ -912,14 +950,44 @@ export class ReplKernelManager {
 		}
 	}
 
-	private async executeInner(
+	/**
+	 * One protocol request as a `kernel.execute` span: it is the active context
+	 * while the frame is written (so the frame's `traceparent` names it and the
+	 * runtime's `kernel.cell` becomes its child) and ends when the request
+	 * settles, recording the outcome as `kernel.status`. A throw (kernel gone,
+	 * protocol corruption) is recorded by withSpan itself.
+	 */
+	private executeInner(
 		requestFields: Record<string, unknown> & { type: string },
 		code: string,
 		opts: ExecuteOptions,
 		started: number,
 	): Promise<InternalExecuteResult> {
-		const maxChars = opts.maxOutputChars ?? DEFAULT_MAX_OUTPUT_CHARS;
 		const requestId = uuid();
+		return withSpan(
+			"kernel.execute",
+			{ "kernel.request_id": requestId, "kernel.request_type": requestFields.type },
+			async (span) => {
+				try {
+					const result = await this.runRequest(requestFields, code, opts, started, requestId);
+					span.setAttributes({ "kernel.status": result.status });
+					return result;
+				} catch (error) {
+					span.setAttributes({ "kernel.status": "error" });
+					throw error;
+				}
+			},
+		);
+	}
+
+	private async runRequest(
+		requestFields: Record<string, unknown> & { type: string },
+		code: string,
+		opts: ExecuteOptions,
+		started: number,
+		requestId: string,
+	): Promise<InternalExecuteResult> {
+		const maxChars = opts.maxOutputChars ?? DEFAULT_MAX_OUTPUT_CHARS;
 
 		if (opts.signal?.aborted) {
 			return { stdout: "", stderr: "", status: "aborted", durationMs: Date.now() - started };
@@ -986,7 +1054,15 @@ export class ReplKernelManager {
 				this.lastCellCode = code;
 			}
 			try {
-				const sendPromise = this.writeLine({ ...requestFields, id: requestId });
+				// The kernel.execute span opened by executeInner is the active context
+				// here; the runtime adopts it for the cell (repl.py _request_trace_scope).
+				// Guarded anyway: a frame must never fail for lack of a context.
+				const traceparent = currentTraceparent();
+				const sendPromise = this.writeLine({
+					...requestFields,
+					id: requestId,
+					...(traceparent ? { traceparent } : {}),
+				});
 				sendPromise.catch(() => undefined);
 				await Promise.race([sendPromise, result.promise.then(() => undefined)]);
 				if (this.activeExecution === execution && execution.status !== "aborted") {
@@ -1182,7 +1258,7 @@ export class ReplKernelManager {
 		}
 	}
 
-	private startHostRequest(requestId: string, data: unknown): void {
+	private startHostRequest(requestId: string, data: unknown, traceparent?: unknown): void {
 		if (this.handledHostRequestIds.has(requestId)) {
 			return;
 		}
@@ -1193,9 +1269,20 @@ export class ReplKernelManager {
 			this.handledHostRequestIds.delete(oldest);
 		}
 
-		const task = (async () => {
+		// The frame's traceparent is the runtime's client span for this request;
+		// the handler runs as its child so a cell's host calls thread back to the
+		// cell. This stdout callback has no useful ambient context of its own
+		// (it inherits whatever was active at spawn), so a missing or malformed
+		// value simply falls back to that.
+		const parent = parseTraceparent(traceparent);
+		const requestType = isRecord(data) ? (data.type ?? data.kind) : undefined;
+		const spanAttrs = {
+			"host_request.rid": requestId,
+			"host_request.type": typeof requestType === "string" ? requestType : undefined,
+		};
+		const run = async () => {
 			try {
-				const result = await this.handleHostRequest(data);
+				const result = await withSpan("kernel.host_request", spanAttrs, () => this.handleHostRequest(data));
 				try {
 					await this.writeLine({ type: "host_reply", id: requestId, data: { status: "ok", result } });
 				} catch (replyError) {
@@ -1217,7 +1304,8 @@ export class ReplKernelManager {
 					);
 				}
 			}
-		})();
+		};
+		const task = parent ? runWithTraceContext(parent, run) : run();
 		this.inFlightHostRequests.add(task);
 		void task.finally(() => {
 			this.inFlightHostRequests.delete(task);
