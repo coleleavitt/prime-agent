@@ -123,6 +123,13 @@ export async function runAgentSession(input: RunAgentSessionInput): Promise<RunA
 			turns += 1;
 			if (event.message.role === "assistant") addUsage(usage, event.message.usage);
 			emitProgress({ type: "turn", turn: turns, tokens: usage.totalTokens });
+			// Limits exist to stop FURTHER turns. A turn that ends without tool
+			// calls is the run's final answer, so a limit crossed by it is not a
+			// truncation: reporting turn_limit/budget_exceeded there made callers
+			// (e.g. Magic Context's child runner) discard a complete answer and
+			// retry the same prompt on a bigger model.
+			const continues = event.message.role === "assistant" && event.message.stopReason === "toolUse";
+			if (!continues) return;
 			if (options?.maxTurns !== undefined && turns >= options.maxTurns) {
 				limitReached = true;
 				void session.abort();

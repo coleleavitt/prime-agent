@@ -16,14 +16,18 @@ const model = {
 	maxTokens: 100,
 } satisfies Model<"faux">;
 
-function assistant(text: string, tokens: number): AssistantMessage {
+function assistant(
+	text: string,
+	tokens: number,
+	stopReason: AssistantMessage["stopReason"] = "stop",
+): AssistantMessage {
 	return {
 		role: "assistant",
 		content: [{ type: "text", text }],
 		api: "faux",
 		provider: "faux",
 		model: "child",
-		stopReason: "stop",
+		stopReason,
 		timestamp: Date.now(),
 		usage: {
 			input: tokens,
@@ -57,7 +61,7 @@ function fakeSession(run: (emit: (event: AgentSessionEvent) => void) => Promise<
 
 describe("runAgentSession", () => {
 	it("reports a distinct turn limit and normalized progress", async () => {
-		const message = assistant("answer", 12);
+		const message = assistant("answer", 12, "toolUse");
 		const session = fakeSession(async (emit) => {
 			emit({ type: "tool_execution_start", toolCallId: "tool-1", toolName: "read", args: {} });
 			emit({ type: "tool_execution_end", toolCallId: "tool-1", toolName: "read", result: {}, isError: false });
@@ -75,12 +79,28 @@ describe("runAgentSession", () => {
 		expect(progress).toEqual(["started", "tool", "tool", "turn", "finished"]);
 	});
 
-	it("reports a distinct budget limit after the completed turn that crosses it", async () => {
-		const message = assistant("answer", 12);
+	it("reports a distinct budget limit when the turn that crosses it wants to continue", async () => {
+		const message = assistant("answer", 12, "toolUse");
 		const session = fakeSession(async (emit) => emit({ type: "turn_end", message, toolResults: [] }));
 		await expect(
 			runAgentSession({ session, model, request: { prompt: "task" }, options: { tokenBudget: 10 } }),
 		).resolves.toMatchObject({ status: "budget_exceeded", usage: { totalTokens: 12 } });
+	});
+
+	it("keeps a final answer that crosses the budget or turn limit as completed", async () => {
+		// The historian regression: a single 30k+ token summary turn ended with
+		// stopReason "stop" and was reported as budget_exceeded, so the caller
+		// threw the answer away and retried on the next model.
+		const message = assistant("answer", 12);
+		const session = fakeSession(async (emit) => emit({ type: "turn_end", message, toolResults: [] }));
+		const result = await runAgentSession({
+			session,
+			model,
+			request: { prompt: "task" },
+			options: { tokenBudget: 10, maxTurns: 1 },
+		});
+		expect(result).toMatchObject({ status: "completed", output: "answer", usage: { totalTokens: 12 } });
+		expect(session.abort).not.toHaveBeenCalled();
 	});
 
 	it("honors a pre-aborted linked signal without prompting", async () => {
