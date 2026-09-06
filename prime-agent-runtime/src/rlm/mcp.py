@@ -13,7 +13,7 @@ from contextlib import AsyncExitStack
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
-from . import host_request
+from . import host_request, trace
 from .mcp_base import _parse_result, _read_auth, _resolve_config_value
 
 __all__ = ["McpStartupError", "call_tool", "close", "list_tools", "reload"]
@@ -470,14 +470,37 @@ async def _dispatch(
 
 
 async def list_tools(server: str) -> list[dict[str, Any]]:
-    return await _dispatch(lambda: _registry.tools(server))
+    # One "mcp.call" span per public call (see repl.md "Trace context"); a lazy
+    # connect/spawn inside the call is simply part of the span's duration.
+    with trace.start_span("mcp.call", **_span_attrs(server, "list_tools")) as span:
+        tools = await _dispatch(lambda: _registry.tools(server))
+        span.attrs["mcp.tool_count"] = len(tools)
+        return tools
 
 
 async def call_tool(server: str, tool: str, arguments: dict[str, Any] | None = None) -> Any:
-    _validate_name(tool, "tool")
-    if arguments is not None and not isinstance(arguments, dict):
-        raise TypeError("arguments must be a dict or None")
-    return await _dispatch(lambda: _registry.call(server, tool, arguments or {}))
+    with trace.start_span("mcp.call", **_span_attrs(server, tool)):
+        _validate_name(tool, "tool")
+        if arguments is not None and not isinstance(arguments, dict):
+            raise TypeError("arguments must be a dict or None")
+        return await _dispatch(lambda: _registry.call(server, tool, arguments or {}))
+
+
+def _span_attrs(server: Any, tool: Any) -> dict[str, Any]:
+    """Attributes for an ``mcp.call`` span; never raises (names may still be invalid)."""
+    attrs: dict[str, Any] = {
+        "mcp.server": server if isinstance(server, str) else repr(server),
+        "mcp.tool": tool if isinstance(tool, str) else repr(tool),
+    }
+    try:
+        generation = _registry._generations.get(server)
+        # False means the call (re)connects the server lazily, so its duration
+        # includes the startup handshake; True means an open generation was
+        # available when the call began (a config change may still reconnect).
+        attrs["mcp.connected"] = generation is not None and not generation.closed
+    except Exception:  # noqa: BLE001 - e.g. an unhashable server name; validation reports it
+        attrs["mcp.connected"] = False
+    return attrs
 
 
 async def reload(server: str | None = None) -> None:

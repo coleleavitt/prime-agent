@@ -93,6 +93,34 @@ request's `done`. User code sees the cell context through `rlm.trace`
 span, and `bash()` children receive `TRACEPARENT` in their environment. See
 `docs/observability.md` at the repository root for the cross-process contract.
 
+Runtime spans emitted by the kernel itself (all children of the current
+context, or a fresh trace when there is none):
+
+- `kernel.cell` — one per `execute`/`snapshot`/`restore` request (`attrs`:
+  `kernel.request_id`, `kernel.request_type`).
+- `kernel.host_request` — client side of each `host_request` (`attrs`:
+  `host_request.rid`, `host_request.type`).
+- `bash.command` — one per `bash(command)` call, opened when the process is
+  spawned and ended exactly once when the foreground result is known
+  (`await`, `poll()`, `kill()`, or the process exiting unobserved all end it
+  through the same path). `attrs`: `bash.command` (text, truncated to 200
+  chars), `bash.pid`, `bash.exit_code`, `bash.output_bytes` (bytes written,
+  including any dropped middle), `bash.signal` (signal name when the shell
+  died by signal, i.e. a negative exit code), `bash.killed` (`kill()` was
+  called). Status is `error` with `attrs.error` `"exit code N"` /
+  `"killed by SIG…"` for a non-zero exit, `"spawn failed: …"` when the
+  process could not be started, and `"kernel shutdown"` when the kernel shuts
+  down with the command still running (the span is closed immediately at
+  shutdown instead of dangling; the later reap of the killed group does not
+  emit a second span). The child process receives `TRACEPARENT` of the
+  `bash.command` span, so anything it runs nests under the command.
+- `mcp.call` — one per `mcp.list_tools(server)` / `mcp.call_tool(server,
+  tool, arguments)` call (`attrs`: `mcp.server`, `mcp.tool` — `"list_tools"`
+  for listings —, `mcp.connected` whether an open generation existed when the
+  call began; `false` means a lazy connect/handshake ran inside the span;
+  `mcp.tool_count` on listings). An exception marks the span `error` with
+  `attrs.error` and propagates unchanged.
+
 ## Execution
 
 Cells compile with `PyCF_ALLOW_TOP_LEVEL_AWAIT` and run as tasks on the

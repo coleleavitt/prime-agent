@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import contextvars
 import json
 import os
 import secrets
@@ -94,6 +95,11 @@ class _BoundedBuffer:
         with self._lock:
             return len(self._head) + self._tail_size
 
+    def total(self) -> int:
+        """Bytes ever written, including the dropped middle."""
+        with self._lock:
+            return len(self._head) + self._tail_size + self._dropped
+
     def text(self) -> str:
         with self._lock:
             head = bytes(self._head)
@@ -117,7 +123,28 @@ class BashHandle:
 
     def __init__(self, command: str) -> None:
         self.command = command
+        # One "bash.command" span per call, a child of the calling cell's
+        # context (or a fresh trace); the child process inherits it through
+        # TRACEPARENT. _end_span finishes it exactly once from whichever path
+        # observes completion first (see _end_span).
+        self._span = trace.Span(
+            name="bash.command",
+            ctx=trace.child_context(trace.current()),
+            attrs={"bash.command": _truncate(command)},
+        )
+        self._span_lock = threading.Lock()
+        # The span ends on a watcher thread; emitting inside a copy of the
+        # caller's context keeps request-scoped tags (the cell id) attached.
+        self._span_context = contextvars.copy_context()
+        self._killed = False
         self._buffer = _BoundedBuffer()
+        try:
+            self._spawn(command)
+        except BaseException as exc:
+            self._end_span(error=_truncate(f"spawn failed: {type(exc).__name__}: {exc}"))
+            raise
+
+    def _spawn(self, command: str) -> None:
         self._done = threading.Event()
         self._eof = threading.Event()
         self._completion_terminal = threading.Event()
@@ -183,7 +210,7 @@ class BashHandle:
                 self._proc = subprocess.Popen(
                     [_shell(), "-c", script],
                     cwd=os.getcwd(),
-                    env=_child_env(),
+                    env=_child_env(self._span.ctx),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
@@ -191,7 +218,7 @@ class BashHandle:
                 )
             else:
                 self._proc = _winjob.spawn_in_job(
-                    self._job, [_shell(), "-c", script], cwd=os.getcwd(), env=_child_env()
+                    self._job, [_shell(), "-c", script], cwd=os.getcwd(), env=_child_env(self._span.ctx)
                 )
         except BaseException:
             for fd in (self._status_read, self._wake_read, self._wake_write):
@@ -205,6 +232,7 @@ class BashHandle:
             if status_write >= 0:
                 os.close(status_write)
         self._pid: int = self._proc.pid
+        self._span.attrs["bash.pid"] = self._pid
         self._released = False
         with _live_lock:
             _live_handles.add(self)
@@ -266,6 +294,7 @@ class BashHandle:
         self._released = True
         if self._reaped:
             return
+        self._killed = True
         if not _IS_POSIX:
             with self._kill_lock:
                 if self._reaped:  # re-check: _watch may have reaped while we waited
@@ -505,8 +534,41 @@ class BashHandle:
             self._done.set()
             callbacks = self._callbacks
             self._callbacks = []
+        # Emit before waking awaiters so the span precedes any work that follows the result.
+        self._end_span(exit_code=exit_code)
         for callback in callbacks:
             callback()
+
+    def _end_span(self, exit_code: int | None = None, error: str | None = None) -> None:
+        """Finish the bash.command span exactly once; never raises.
+
+        Called from _finalize (result known), from a failed spawn, and from
+        _kill_live_handles (kernel shutdown with the command still running:
+        the span ends as ``error`` "kernel shutdown" rather than dangling
+        unfinished in the trace). Later calls are no-ops, so the shutdown end
+        and a racing _finalize from the watcher thread cannot double-emit.
+        """
+        try:
+            with self._span_lock:
+                span = self._span
+                if span.ended:
+                    return
+                attrs = span.attrs
+                if exit_code is not None:
+                    attrs["bash.exit_code"] = exit_code
+                    if exit_code < 0:
+                        # Popen reports death by signal as -signum (POSIX).
+                        attrs["bash.signal"] = _signal_name(-exit_code)
+                    if error is None and exit_code != 0:
+                        error = (
+                            f"killed by {attrs['bash.signal']}" if exit_code < 0 else f"exit code {exit_code}"
+                        )
+                if self._killed:
+                    attrs["bash.killed"] = True
+                attrs["bash.output_bytes"] = self._buffer.total()
+                self._span_context.run(span.end, error=error)
+        except BaseException:  # noqa: BLE001 - tracing must never break the traced command
+            return
 
     def _add_done_callback(self, callback: Callable[[], None]) -> None:
         with self._callback_lock:
@@ -728,11 +790,25 @@ def _status_script(command: str, completion_a: str, completion_b: str) -> str:
     )
 
 
-def _child_env() -> dict[str, str]:
-    # TRACEPARENT carries the calling cell's span so the child's own tracing joins the trace.
-    return trace.inject_env(
-        {**os.environ, "NO_COLOR": "1", "TERM": "dumb", "CLICOLOR": "0", "FORCE_COLOR": "0"}
-    )
+def _child_env(ctx: trace.TraceContext | None = None) -> dict[str, str]:
+    # TRACEPARENT carries the bash.command span (``ctx``; default: the calling
+    # cell's context) so the child's own tracing nests under the command.
+    env = {**os.environ, "NO_COLOR": "1", "TERM": "dumb", "CLICOLOR": "0", "FORCE_COLOR": "0"}
+    if ctx is None:
+        return trace.inject_env(env)
+    env[trace.TRACEPARENT_ENV] = trace.format_traceparent(ctx)
+    return env
+
+
+def _truncate(value: str, limit: int = 200) -> str:
+    return value if len(value) <= limit else value[: limit - 3] + "..."
+
+
+def _signal_name(signum: int) -> str:
+    try:
+        return signal.Signals(signum).name
+    except ValueError:
+        return str(signum)
 
 
 def _signal_group(pid: int, sig: int) -> bool:
@@ -864,6 +940,14 @@ def _kill_live_handles() -> None:
     with _live_lock:
         handles = list(_live_handles)
     for handle in handles:
+        # The kernel is going away with the command still running: close its
+        # span now (error "kernel shutdown"); the host may already be gone by
+        # the time the watcher thread would report the kill.
+        try:
+            handle._killed = True
+            handle._end_span(error="kernel shutdown")
+        except BaseException:  # noqa: BLE001 - tracing must never block the kill
+            pass
         if _IS_POSIX:
             delivered = _signal_group(handle._pid, signal.SIGKILL)
         else:

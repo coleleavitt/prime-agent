@@ -2255,7 +2255,15 @@ class TraceProtocolTest(unittest.TestCase):
             events = repl.until_done("sub")
             self.assertEqual(one(events, "done")["status"], "ok")
             cell = spans(events, "kernel.cell")[0]
-            self.assertEqual(eval(one(events, "result")["text"]), f"00-{_TP_TRACE}-{cell['spanId']}-01")
+            # The child inherits the bash.command span (a child of the cell), not the cell itself.
+            (command,) = spans(events, "bash.command")
+            self.assertEqual(command["traceId"], _TP_TRACE)
+            self.assertEqual(command["parentSpanId"], cell["spanId"])
+            self.assertEqual(command["status"], "ok")
+            self.assertEqual(command["attrs"]["bash.exit_code"], 0)
+            # Ended on a watcher thread, yet still tagged with the request that spawned it.
+            self.assertEqual(command["id"], "sub")
+            self.assertEqual(eval(one(events, "result")["text"]), f"00-{_TP_TRACE}-{command['spanId']}-01")
 
     def test_snapshot_and_restore_are_traced(self):
         repl = self.start()
