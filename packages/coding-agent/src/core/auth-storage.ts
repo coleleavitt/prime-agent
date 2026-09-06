@@ -13,6 +13,7 @@ import {
 	type OAuthCredentials,
 	type OAuthLoginCallbacks,
 	type OAuthProviderId,
+	withSpan,
 } from "@earendil-works/pi-ai";
 import { getOAuthApiKey, getOAuthProvider, getOAuthProviders } from "@earendil-works/pi-ai/oauth";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
@@ -818,7 +819,13 @@ export class AuthStorage {
 				}
 			}
 
-			const refreshed = await getOAuthApiKey(providerId, oauthCreds);
+			// The token is expired: the refresh is a network round trip that runs
+			// under the auth file lock, so record it (provider, expiry age, outcome).
+			const refreshed = await withSpan(
+				"oauth.refresh",
+				{ "oauth.provider": providerId, "oauth.expired_ms": Date.now() - cred.expires },
+				() => getOAuthApiKey(providerId, oauthCreds),
+			);
 			if (!refreshed) {
 				return { result: null };
 			}

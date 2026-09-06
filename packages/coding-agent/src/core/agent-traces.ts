@@ -2,7 +2,8 @@ import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
 import { type Dirent, existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { withSpan } from "@earendil-works/pi-ai";
 import { appendRotatingLog, getAgentDir, getAgentTracesLogPath, getSessionsDir, VERSION } from "../config.js";
 import { readFirstLineSync } from "../utils/file-lines.js";
 import type { AuthStorage } from "./auth-storage.js";
@@ -888,9 +889,24 @@ async function uploadAgentTraceFileWithRequestGate(
 	options: AgentTraceUploadOptions,
 	beforeRequest?: BeforeTraceUploadRequest,
 ): Promise<AgentTraceUploadResult> {
-	const result = await performAgentTraceUpload(options, beforeRequest);
-	logAgentTraceOutcome(options.sessionFile, result);
-	return result;
+	// A session upload is an HTTP round trip with the whole transcript; its
+	// outcome only went to the rotating traces log, so a slow or failing upload
+	// at child teardown was invisible in the trace of the run that triggered it.
+	return withSpan(
+		"trace.upload",
+		{ "session.path": options.sessionFile ? basename(options.sessionFile) : undefined },
+		async (span) => {
+			const result = await performAgentTraceUpload(options, beforeRequest);
+			logAgentTraceOutcome(options.sessionFile, result);
+			span.setAttributes({
+				"upload.status": result.status,
+				"upload.bytes": result.status === "uploaded" ? result.bytesStored : undefined,
+				"upload.http_status": result.status === "failed" ? result.statusCode : undefined,
+			});
+			if (result.status === "failed") span.recordError(result.message);
+			return result;
+		},
+	);
 }
 
 export function uploadAgentTraceFile(options: AgentTraceUploadOptions): Promise<AgentTraceUploadResult> {

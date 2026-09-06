@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { type AssistantMessage, installDefaultSpanSink, type SpanEndRecord, setSpanSink } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR, getAgentTracesLogPath } from "../src/config.js";
 import {
@@ -263,6 +263,46 @@ describe("agent trace upload", () => {
 		expect(result).toEqual({ status: "disabled" });
 		expect(calls).toHaveLength(0);
 		expect(enabledSpy).toHaveBeenCalledTimes(3);
+	});
+
+	it("records the upload as a trace.upload span with its outcome", async () => {
+		const ended: SpanEndRecord[] = [];
+		setSpanSink((record) => ended.push(record));
+		try {
+			const cwd = join(tempDir, "project");
+			const sessionDir = join(tempDir, "sessions");
+			mkdirSync(cwd, { recursive: true });
+			const session = writeSession(cwd, sessionDir, "span-session");
+			const common = {
+				sessionFile: session.getSessionFile(),
+				authStorage: AuthStorage.inMemory({
+					[PRIME_AGENT_TRACES_PROVIDER_ID]: { type: "api_key" as const, key: "trace-key" },
+				}),
+				settingsManager: SettingsManager.inMemory({ agentTraces: { enabled: true } }),
+				baseUrl: "https://api.example.test",
+				reloadConfig: false,
+			};
+			await uploadAgentTraceFile({ ...common, fetchFn: createFetchRecorder([]) });
+			expect(ended.at(-1)).toMatchObject({
+				name: "trace.upload",
+				status: "ok",
+				attrs: { "upload.status": "uploaded", "upload.bytes": 123 },
+			});
+			// Same content again is deduplicated ("unchanged") — a distinct session for the failure.
+			const failing = writeSession(cwd, sessionDir, "span-session-fail");
+			await uploadAgentTraceFile({
+				...common,
+				sessionFile: failing.getSessionFile(),
+				fetchFn: (async () => new Response("nope", { status: 503 })) as typeof fetch,
+			});
+			expect(ended.at(-1)).toMatchObject({
+				name: "trace.upload",
+				status: "error",
+				attrs: { "upload.status": "failed", "upload.http_status": 503 },
+			});
+		} finally {
+			installDefaultSpanSink();
+		}
 	});
 
 	it("uploads raw session JSONL with trace headers", async () => {

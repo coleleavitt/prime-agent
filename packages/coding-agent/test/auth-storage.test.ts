@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { installDefaultSpanSink, type SpanEndRecord, setSpanSink } from "@earendil-works/pi-ai";
 import { registerOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -947,6 +948,60 @@ describe("AuthStorage", () => {
 
 			const secondTry = await authStorage.getApiKey(providerId);
 			expect(secondTry).toBe("Bearer refreshed-access-token");
+		});
+	});
+
+	describe("oauth refresh tracing", () => {
+		test("records an oauth.refresh span for an expired token, and its failure", async () => {
+			const ended: SpanEndRecord[] = [];
+			setSpanSink((record) => ended.push(record));
+			try {
+				let fail = false;
+				const providerId = `trace-oauth-provider-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+				registerOAuthProvider({
+					id: providerId,
+					name: "Traced OAuth Provider",
+					async login() {
+						throw new Error("Not used in this test");
+					},
+					async refreshToken(credentials) {
+						if (fail) throw new Error("refresh endpoint down");
+						return { ...credentials, access: "fresh", expires: Date.now() + 60_000 };
+					},
+					getApiKey(credentials) {
+						return `Bearer ${credentials.access}`;
+					},
+				});
+				writeAuthJson({
+					[providerId]: { type: "oauth", refresh: "r", access: "stale", expires: Date.now() - 5_000 },
+				});
+				authStorage = AuthStorage.create(authJsonPath);
+				expect(await authStorage.getApiKey(providerId)).toBe("Bearer fresh");
+				expect(ended.filter((r) => r.name === "oauth.refresh")).toHaveLength(1);
+				expect(ended[0]).toMatchObject({
+					name: "oauth.refresh",
+					status: "ok",
+					attrs: { "oauth.provider": providerId },
+				});
+				expect(ended[0]?.attrs["oauth.expired_ms"]).toBeGreaterThanOrEqual(5_000);
+
+				// A valid token needs no refresh: no span.
+				ended.length = 0;
+				expect(await authStorage.getApiKey(providerId)).toBe("Bearer fresh");
+				expect(ended).toHaveLength(0);
+
+				fail = true;
+				writeAuthJson({
+					[providerId]: { type: "oauth", refresh: "r", access: "stale", expires: Date.now() - 5_000 },
+				});
+				authStorage = AuthStorage.create(authJsonPath);
+				// getApiKey swallows the refresh failure (returns undefined); the span keeps the cause.
+				expect(await authStorage.getApiKey(providerId)).toBeUndefined();
+				expect(ended.at(-1)).toMatchObject({ name: "oauth.refresh", status: "error" });
+				expect(ended.at(-1)?.error).toContain("Failed to refresh OAuth token");
+			} finally {
+				installDefaultSpanSink();
+			}
 		});
 	});
 
