@@ -835,6 +835,66 @@ describe("ExtensionRunner", () => {
 	});
 
 	describe("lifecycle isolation", () => {
+		it("keeps a parent's provider when a child scope with the same extension disposes", async () => {
+			// Inline RLM children share the parent's ModelRegistry but load their own
+			// extension instances, which register the same provider names. Disposing
+			// the child (runner.invalidate -> disposeExtension -> unregisterProvider)
+			// must not strip the parent's registration.
+			const registerSharedProvider = (pi: Parameters<Parameters<typeof loadExtensionFromFactory>[0]>[0]) => {
+				pi.registerProvider("shared-provider", providerModelConfig);
+			};
+			const parentRuntime = createExtensionRuntime();
+			const parentExtension = await loadExtensionFromFactory(
+				registerSharedProvider,
+				tempDir,
+				createEventBus(),
+				parentRuntime,
+			);
+			const parent = new ExtensionRunner([parentExtension], parentRuntime, tempDir, sessionManager, modelRegistry);
+			parent.bindCore(extensionActions, extensionContextActions);
+			expect(modelRegistry.find("shared-provider", "instant-model")).toBeDefined();
+
+			const childRuntime = createExtensionRuntime();
+			const childExtension = await loadExtensionFromFactory(
+				registerSharedProvider,
+				tempDir,
+				createEventBus(),
+				childRuntime,
+			);
+			const child = new ExtensionRunner([childExtension], childRuntime, tempDir, sessionManager, modelRegistry);
+			child.bindCore(extensionActions, extensionContextActions);
+			expect(modelRegistry.find("shared-provider", "instant-model")).toBeDefined();
+
+			child.invalidate();
+			expect(modelRegistry.find("shared-provider", "instant-model")).toBeDefined();
+
+			parent.invalidate();
+			expect(modelRegistry.find("shared-provider", "instant-model")).toBeUndefined();
+		});
+
+		it("routes owner-aware provider actions through bindCore", async () => {
+			const runtime = createExtensionRuntime();
+			const extension = await loadExtensionFromFactory(
+				(pi) => {
+					pi.registerProvider("owned-provider", providerModelConfig);
+				},
+				tempDir,
+				createEventBus(),
+				runtime,
+			);
+			const registerOwners: unknown[] = [];
+			const unregisterOwners: unknown[] = [];
+			const runner = new ExtensionRunner([extension], runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions, {
+				registerProvider: (_name, _config, owner) => registerOwners.push(owner),
+				unregisterProvider: (_name, owner) => unregisterOwners.push(owner),
+			});
+			runner.invalidate();
+
+			expect(registerOwners).toEqual([runtime]);
+			expect(unregisterOwners).toEqual([runtime]);
+		});
+
 		it("removes event-bus registrations when a factory fails", async () => {
 			const eventBus = createEventBus();
 			const runtime = createExtensionRuntime();

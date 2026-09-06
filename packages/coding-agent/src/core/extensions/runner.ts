@@ -371,10 +371,14 @@ export class ExtensionRunner {
 		actions: ExtensionActions,
 		contextActions: ExtensionContextActions,
 		providerActions?: {
-			registerProvider?: (name: string, config: ProviderConfig) => void;
-			unregisterProvider?: (name: string) => void;
+			registerProvider?: (name: string, config: ProviderConfig, owner?: object) => void;
+			unregisterProvider?: (name: string, owner?: object) => void;
 		},
 	): void {
+		// Each runner (extension scope) owns its registrations. Inline RLM children
+		// share the parent's ModelRegistry but load their own extension instances,
+		// so a child's disposal must not strip the parent's provider of the same name.
+		const owner: object = this.runtime;
 		this.runtime.sendMessage = actions.sendMessage;
 		this.runtime.sendUserMessage = actions.sendUserMessage;
 		this.runtime.appendEntry = actions.appendEntry;
@@ -404,9 +408,9 @@ export class ExtensionRunner {
 		for (const { name, config, extensionPath } of this.runtime.pendingProviderRegistrations) {
 			try {
 				if (providerActions?.registerProvider) {
-					providerActions.registerProvider(name, config);
+					providerActions.registerProvider(name, config, owner);
 				} else {
-					this.modelRegistry.registerProvider(name, config);
+					this.modelRegistry.registerProvider(name, config, owner);
 				}
 			} catch (err) {
 				this.emitError({
@@ -420,17 +424,17 @@ export class ExtensionRunner {
 		this.runtime.pendingProviderRegistrations = [];
 		this.runtime.registerProvider = (name, config) => {
 			if (providerActions?.registerProvider) {
-				providerActions.registerProvider(name, config);
+				providerActions.registerProvider(name, config, owner);
 				return;
 			}
-			this.modelRegistry.registerProvider(name, config);
+			this.modelRegistry.registerProvider(name, config, owner);
 		};
 		this.runtime.unregisterProvider = (name) => {
 			if (providerActions?.unregisterProvider) {
-				providerActions.unregisterProvider(name);
+				providerActions.unregisterProvider(name, owner);
 				return;
 			}
-			this.modelRegistry.unregisterProvider(name);
+			this.modelRegistry.unregisterProvider(name, owner);
 		};
 	}
 

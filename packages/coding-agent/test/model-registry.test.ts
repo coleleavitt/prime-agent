@@ -887,6 +887,47 @@ describe("ModelRegistry", () => {
 			expect(registry.getProviderDisplayName("oauth-provider")).toBe("OAuth Provider");
 		});
 
+		test("unregisterProvider keeps a provider until its last owner releases it", () => {
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const config = {
+				baseUrl: "https://provider.test/v1",
+				apiKey: "TEST_KEY",
+				api: "openai-completions" as const,
+				models: [
+					{
+						id: "demo-model",
+						name: "Demo Model",
+						reasoning: false,
+						input: ["text" as const],
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+						contextWindow: 128000,
+						maxTokens: 4096,
+					},
+				],
+			};
+			const parentScope = {};
+			const childScope = {};
+
+			registry.registerProvider("shared-provider", config, parentScope);
+			registry.registerProvider("shared-provider", config, childScope);
+			expect(registry.find("shared-provider", "demo-model")).toBeDefined();
+
+			// A scope that never registered the name cannot strip it either.
+			registry.unregisterProvider("shared-provider", {});
+			expect(registry.find("shared-provider", "demo-model")).toBeDefined();
+
+			registry.unregisterProvider("shared-provider", childScope);
+			expect(registry.find("shared-provider", "demo-model")).toBeDefined();
+
+			registry.unregisterProvider("shared-provider", parentScope);
+			expect(registry.find("shared-provider", "demo-model")).toBeUndefined();
+
+			// Untracked registrations keep the legacy remove-outright behaviour.
+			registry.registerProvider("legacy-provider", config);
+			registry.unregisterProvider("legacy-provider");
+			expect(registry.find("legacy-provider", "demo-model")).toBeUndefined();
+		});
+
 		test("failed registerProvider does not persist invalid streamSimple config", () => {
 			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
 

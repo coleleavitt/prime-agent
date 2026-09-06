@@ -501,6 +501,13 @@ export class ModelRegistry {
 	private lastProviderAuthSourceTokens: Map<string, AuthSourceToken> = new Map();
 	private modelRequestHeaders: Map<string, Record<string, string>> = new Map();
 	private registeredProviders: Map<string, ProviderConfigInput> = new Map();
+	/**
+	 * Owners (extension runtimes / scopes) that currently hold each dynamic
+	 * provider registration. Inline RLM children share the parent's registry but
+	 * load their own extension instances, which register the same provider names;
+	 * a provider is only dropped once its last owner unregisters it.
+	 */
+	private providerOwners: Map<string, Set<object>> = new Map();
 	/** See beginProviderReload. */
 	private providerReloadDepth = 0;
 	private pendingProviderRemovals = new Set<string>();
@@ -1524,12 +1531,20 @@ export class ModelRegistry {
 	 * If provider has only baseUrl/headers: overrides existing models' URLs.
 	 * If provider has oauth: registers OAuth provider for /login support.
 	 */
-	registerProvider(providerName: string, config: ProviderConfigInput): void {
+	registerProvider(providerName: string, config: ProviderConfigInput, owner?: object): void {
 		this.validateProviderConfig(providerName, config);
 		// A provider re-registered during a reload is no longer stale.
 		this.pendingProviderRemovals.delete(providerName);
 		this.applyProviderConfig(providerName, config);
 		this.upsertRegisteredProvider(providerName, config);
+		if (owner) {
+			let owners = this.providerOwners.get(providerName);
+			if (!owners) {
+				owners = new Set();
+				this.providerOwners.set(providerName, owners);
+			}
+			owners.add(owner);
+		}
 	}
 
 	/**
@@ -1541,8 +1556,9 @@ export class ModelRegistry {
 	 * remaining dynamic providers.
 	 * Has no effect if the provider was never registered.
 	 */
-	unregisterProvider(providerName: string): void {
+	unregisterProvider(providerName: string, owner?: object): void {
 		if (!this.registeredProviders.has(providerName)) return;
+		if (!this.releaseProviderOwner(providerName, owner)) return;
 		if (this.providerReloadDepth > 0) {
 			// Inside a reload the extension that owns this provider is about to be
 			// re-run and will normally register it again; keep the live stream
@@ -1552,6 +1568,29 @@ export class ModelRegistry {
 		}
 		this.registeredProviders.delete(providerName);
 		this.refresh();
+	}
+
+	/**
+	 * Drop `owner`'s hold on a provider registration. Returns true when the
+	 * registration itself should be removed: no owner holds it any more (or
+	 * ownership was never tracked for it). A scope unregistering a name it does
+	 * not own never strips another scope's registration.
+	 */
+	private releaseProviderOwner(providerName: string, owner: object | undefined): boolean {
+		const owners = this.providerOwners.get(providerName);
+		if (!owners || owners.size === 0) {
+			this.providerOwners.delete(providerName);
+			return true;
+		}
+		if (owner === undefined) {
+			// Untracked (legacy) unregistration removes the provider outright.
+			this.providerOwners.delete(providerName);
+			return true;
+		}
+		owners.delete(owner);
+		if (owners.size > 0) return false;
+		this.providerOwners.delete(providerName);
+		return true;
 	}
 
 	/**
@@ -1575,7 +1614,10 @@ export class ModelRegistry {
 		if (this.providerReloadDepth > 0) return;
 		const stale = [...this.pendingProviderRemovals];
 		this.pendingProviderRemovals.clear();
-		for (const providerName of stale) this.registeredProviders.delete(providerName);
+		for (const providerName of stale) {
+			this.registeredProviders.delete(providerName);
+			this.providerOwners.delete(providerName);
+		}
 		// Reload always refreshes: built-in registrations are reset and every
 		// surviving dynamic provider is re-applied in one pass.
 		this.refresh();

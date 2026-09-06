@@ -9387,12 +9387,12 @@ export class AgentSession {
 				getSystemPrompt: () => this.systemPrompt,
 			},
 			{
-				registerProvider: (name, config) => {
-					this._modelRegistry.registerProvider(name, config);
+				registerProvider: (name, config, owner) => {
+					this._modelRegistry.registerProvider(name, config, owner);
 					this._refreshCurrentModelFromRegistry();
 				},
-				unregisterProvider: (name) => {
-					this._modelRegistry.unregisterProvider(name);
+				unregisterProvider: (name, owner) => {
+					this._modelRegistry.unregisterProvider(name, owner);
 					this._refreshCurrentModelFromRegistry();
 				},
 			},
