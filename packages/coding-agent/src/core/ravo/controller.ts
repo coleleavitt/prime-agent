@@ -206,7 +206,9 @@ async function runController<T extends JsonValue>(
 	const emit = (event: RavoProgressEvent): void => {
 		try {
 			options.onProgress?.(event);
-		} catch {}
+		} catch {
+			// Progress listeners are observers; a throwing listener must not abort the run.
+		}
 	};
 	const persistCheckpoint = async (): Promise<void> => {
 		cp.errorBudget = options.ledger.toJSON();
