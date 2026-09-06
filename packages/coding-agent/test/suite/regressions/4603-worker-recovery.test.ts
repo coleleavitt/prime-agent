@@ -1053,9 +1053,26 @@ describe("ENG-4603 worker recovery convergence", () => {
 		writeFileSync(lsofPath, '#!/bin/sh\nexec "$ENG_4603_SYSTEM_LSOF" -nP -F pn -U -a -p "$ENG_4603_LSOF_PIDS"\n', {
 			mode: 0o700,
 		});
+		// `shutdown` discovers daemons machine-wide through `ss -lxp` (and the
+		// lsof/ps fallbacks), so without this shim the regression stops every
+		// prime-agent daemon on the box — including a live one hosting the very
+		// agent that runs the suite. Keep the header line and only the sockets
+		// under this fixture's directories (its socket lives in agentDir).
+		const systemSsPath = spawnSync("which", ["ss"], { encoding: "utf8" }).stdout.trim();
+		const ssPath = join(paths.agentDir, "ss");
+		writeFileSync(
+			ssPath,
+			systemSsPath
+				? '#!/bin/sh\n"$ENG_4603_SYSTEM_SS" "$@" | awk -v dir="$ENG_4603_SOCKET_TMPDIR" -v agent="$ENG_4603_AGENT_DIR" \'NR==1 || index($0, dir) || index($0, agent)\'\n'
+				: "#!/bin/sh\nexit 1\n",
+			{ mode: 0o700 },
+		);
 		const lsofEnvironment = {
 			ENG_4603_LSOF_PIDS: `${predecessor.child.pid},${successor.child.pid},${workerPid}`,
 			ENG_4603_SYSTEM_LSOF: systemLsofPath,
+			ENG_4603_SYSTEM_SS: systemSsPath,
+			ENG_4603_SOCKET_TMPDIR: paths.socketTmpDir,
+			ENG_4603_AGENT_DIR: paths.agentDir,
 			PATH: `${paths.agentDir}:${process.env.PATH ?? ""}`,
 		};
 		const listenersBeforeShutdown = spawnSync(lsofPath, [], {
