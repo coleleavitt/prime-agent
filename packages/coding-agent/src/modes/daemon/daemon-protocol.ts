@@ -75,7 +75,7 @@ export const DAEMON_COMMAND_ENVELOPE_MIN_PROTOCOL_VERSION = 7;
 // Revision 26 publishes own-session usage totals on session summary and saved-session rows.
 // Revision 27 lets a primary client provide transient context to recover a resident worker.
 export const DAEMON_SCHEMA_REVISION = 27;
-export const DAEMON_SCHEMA_ID = "protocol-7-schema-27-853fb2cb00a7";
+export const DAEMON_SCHEMA_ID = "protocol-7-schema-27-962b8b4c5e35";
 
 export type DaemonProtocolName = typeof DAEMON_PROTOCOL_NAME;
 export type DaemonProtocolVersion = number;
