@@ -816,7 +816,33 @@ function prepareToolCallArguments(tool: AgentTool<any>, toolCall: AgentToolCall)
 	};
 }
 
-async function prepareToolCall(
+/**
+ * Argument validation plus the beforeToolCall hook, inside a `tool.prepare`
+ * span. The hook is where permission prompts and classifiers run, so a user
+ * taking two minutes to approve a command shows up here rather than as an
+ * unattributed gap between `llm.request` and `tool.execute`.
+ */
+function prepareToolCall(
+	currentContext: AgentContext,
+	assistantMessage: AssistantMessage,
+	toolCall: AgentToolCall,
+	config: AgentLoopConfig,
+	signal: AbortSignal | undefined,
+): Promise<PreparedToolCall | ImmediateToolCallOutcome> {
+	return withSpan("tool.prepare", { "tool.name": toolCall.name, "tool.call_id": toolCall.id }, async (span) => {
+		const outcome = await prepareToolCallUntraced(currentContext, assistantMessage, toolCall, config, signal);
+		if (outcome.kind === "immediate") {
+			const reason = outcome.result.content.find((part) => part.type === "text");
+			span.setAttributes({
+				"tool.blocked": true,
+				"tool.block_reason": reason && "text" in reason ? reason.text.slice(0, 200) : undefined,
+			});
+		}
+		return outcome;
+	});
+}
+
+async function prepareToolCallUntraced(
 	currentContext: AgentContext,
 	assistantMessage: AssistantMessage,
 	toolCall: AgentToolCall,

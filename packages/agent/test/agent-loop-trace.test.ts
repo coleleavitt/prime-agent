@@ -115,11 +115,50 @@ describe("agent loop trace spans", () => {
 		// Spans are ended child-first, before their parent turn.
 		expect(ended.map((record) => record.name)).toEqual([
 			"llm.request",
+			"tool.prepare",
 			"tool.execute",
 			"agent.turn",
 			"llm.request",
 			"agent.turn",
 		]);
+	});
+
+	it("attributes the beforeToolCall hook (permission prompts) to a tool.prepare span", async () => {
+		registration.setResponses([
+			fauxAssistantMessage([fauxToolCall("echo", { value: "one" }, { id: "call-1" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+		await runPrompt(registration, [okEcho], {
+			beforeToolCall: async () => {
+				await new Promise((resolve) => setTimeout(resolve, 30));
+				return undefined;
+			},
+		});
+		const prepare = byName("tool.prepare");
+		expect(prepare).toHaveLength(1);
+		expect(prepare[0]?.durationMs).toBeGreaterThanOrEqual(25);
+		expect(prepare[0]).toMatchObject({
+			status: "ok",
+			parentSpanId: byName("agent.turn")[0]?.spanId,
+			attrs: { "tool.name": "echo", "tool.call_id": "call-1" },
+		});
+		expect(prepare[0]?.attrs["tool.blocked"]).toBeUndefined();
+	});
+
+	it("marks a blocked or unknown tool on the tool.prepare span", async () => {
+		registration.setResponses([
+			fauxAssistantMessage([fauxToolCall("echo", { value: "one" }, { id: "call-1" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxToolCall("missing", {}, { id: "call-2" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+		await runPrompt(registration, [okEcho], {
+			beforeToolCall: async ({ toolCall }) =>
+				toolCall.id === "call-1" ? { block: true, reason: "denied by user" } : undefined,
+		});
+		const prepare = byName("tool.prepare");
+		expect(prepare.map((p) => p.attrs["tool.blocked"])).toEqual([true, true]);
+		expect(prepare[0]?.attrs["tool.block_reason"]).toBe("denied by user");
+		expect(prepare[1]?.attrs["tool.block_reason"]).toBe("Tool missing not found");
 	});
 
 	it("shares one traceId across all spans of a prompt", async () => {
