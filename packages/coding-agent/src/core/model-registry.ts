@@ -17,8 +17,9 @@ import {
 	type OpenAICompletionsCompat,
 	type OpenAIResponsesCompat,
 	registerApiProvider,
-	resetApiProviders,
+	registerBuiltInApiProviders,
 	type SimpleStreamOptions,
+	unregisterApiProviders,
 } from "@earendil-works/pi-ai";
 import { registerBuiltinMcpOAuthProviders } from "@earendil-works/pi-ai/mcp";
 import { registerOAuthProvider, resetOAuthProviders } from "@earendil-works/pi-ai/oauth";
@@ -450,6 +451,49 @@ function liveRegistries(): ModelRegistry[] {
 	return alive;
 }
 
+/** pi-ai source id under which a ModelRegistry registers an extension provider's stream. */
+function apiProviderSourceId(providerName: string): string {
+	return `provider:${providerName}`;
+}
+
+/** Every source id any ModelRegistry in this process has ever registered a stream under. */
+const ownedApiProviderSourceIds = new Set<string>();
+
+/**
+ * The API-registry half of a refresh: drop every extension-registered stream
+ * and restore the built-ins (an extension may have overridden a built-in api),
+ * so the re-apply pass below decides what survives.
+ *
+ * Deliberately NOT resetApiProviders(): that clears the whole process-global
+ * registry, including providers registered directly with pi-ai by the host
+ * (an SDK embedder's registerApiProvider, registerFauxProvider in tests) that
+ * no ModelRegistry owns and nothing re-applies. Since extension disposal
+ * unregisters its providers, a session replacement or child disposal would
+ * strip those for good — "No API provider registered for api: ..." on the very
+ * next turn, which regression #2860 covers.
+ */
+function resetOwnedApiProviders(): void {
+	for (const sourceId of ownedApiProviderSourceIds) unregisterApiProviders(sourceId);
+	registerBuiltInApiProviders();
+}
+
+function registerOwnedApiProvider(
+	providerName: string,
+	api: Api,
+	streamSimple: NonNullable<ProviderConfigInput["streamSimple"]>,
+): void {
+	const sourceId = apiProviderSourceId(providerName);
+	ownedApiProviderSourceIds.add(sourceId);
+	registerApiProvider(
+		{
+			api,
+			stream: (model, context, options) => streamSimple(model, context, options as SimpleStreamOptions),
+			streamSimple,
+		},
+		sourceId,
+	);
+}
+
 export class ModelRegistry {
 	private models: Model<Api>[] = [];
 	private providerRequestConfigs: Map<string, ProviderRequestConfig> = new Map();
@@ -505,7 +549,7 @@ export class ModelRegistry {
 		// Credentials may have been written by another process (e.g. the UI
 		// process saving a login while the session lives in the daemon).
 		this.authStorage.reload();
-		resetApiProviders();
+		resetOwnedApiProviders();
 		resetOAuthProviders();
 		// reset drops everything but model-provider built-ins; re-add MCP integrations
 		// (built-in catalog + this session's user-declared servers via the hook).
@@ -544,14 +588,7 @@ export class ModelRegistry {
 		}
 		if (config.streamSimple) {
 			const streamSimple = config.streamSimple;
-			registerApiProvider(
-				{
-					api: config.api!,
-					stream: (model, context, options) => streamSimple(model, context, options as SimpleStreamOptions),
-					streamSimple,
-				},
-				`provider:${providerName}`,
-			);
+			registerOwnedApiProvider(providerName, config.api!, streamSimple);
 		}
 	}
 
@@ -1598,14 +1635,7 @@ export class ModelRegistry {
 
 		if (config.streamSimple) {
 			const streamSimple = config.streamSimple;
-			registerApiProvider(
-				{
-					api: config.api!,
-					stream: (model, context, options) => streamSimple(model, context, options as SimpleStreamOptions),
-					streamSimple,
-				},
-				`provider:${providerName}`,
-			);
+			registerOwnedApiProvider(providerName, config.api!, streamSimple);
 		}
 
 		this.storeProviderRequestConfig(providerName, config);

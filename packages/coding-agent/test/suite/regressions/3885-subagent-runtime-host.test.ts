@@ -238,6 +238,12 @@ describe("ENG-3885 subagent runtime host", () => {
 
 		const result = await session.runRlmChild("inspect inline child persistence");
 		expect(result.session_dir).not.toBeNull();
+		// The spawn resolves at admission; an inline child is built (and its session
+		// file first written, on the session_info entry that names it) only after
+		// its isolated extension scope is ready, so wait for it to be listable.
+		await waitFor(() =>
+			session.getRlmChildSnapshots().some((child) => child.id === result.rlm_child_id && child.status !== "queued"),
+		);
 		const childSessions = await SessionManager.list(tempDir, result.session_dir!);
 		expect(childSessions).toHaveLength(1);
 		const childSessionFile = childSessions[0]!.path;
