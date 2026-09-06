@@ -237,6 +237,13 @@ export interface CreateRlmSubagentRuntimeOptions {
 	spawnedByRequestId?: string;
 	/** Source of the Python cell that spawned this subagent, for display. */
 	spawnCode?: string;
+	/**
+	 * The child lives only for one `runAgent` call: its session directory is a
+	 * temp dir the caller removes on release, so it must never be rehydrated as
+	 * a passive subagent and its ledger edge is closed on release regardless of
+	 * the terminal status.
+	 */
+	ephemeral?: boolean;
 	/** Publish the session to the parent before a host makes the runtime addressable. */
 	onSessionPublished?: (session: AgentSession) => void;
 }

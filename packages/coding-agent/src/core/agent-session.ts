@@ -10894,6 +10894,7 @@ export class AgentSession {
 				model,
 			}),
 			activeToolNames: this._resolveRunAgentTools(options?.tools),
+			ephemeral: true,
 		};
 		let runtime: RlmSubagentRuntime | undefined;
 		let releaseStatus: "done" | "error" | "cancelled" = "error";

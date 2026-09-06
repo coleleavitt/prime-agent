@@ -50,6 +50,7 @@ import {
 	detachClientFromActiveSession,
 	finishClientSnapshotStreaming,
 	getChildActiveSessionStates,
+	isEphemeralRunAgentSessionFile,
 	markClientSnapshotStreaming,
 	setDaemonClientSessionCapabilities,
 	shouldSendDaemonOutboundToClient,
@@ -937,6 +938,56 @@ describe("daemon mode helpers", () => {
 			kernelSnapshot: false,
 		});
 		expect(internals.sessions.has(childState.activeSessionId)).toBe(false);
+	});
+
+	it("closes an ephemeral runAgent child's ledger edge on every terminal status", async () => {
+		const daemon = new AgentDaemon("/tmp/prime-agent-daemon-release-ephemeral.sock", {
+			defaultSessionConfig: { agentDir: "/tmp", cwd: "/tmp" },
+			createRuntime: vi.fn(),
+		});
+		const parentState = makeState("parent");
+		const childState = makeState("child", parentState.activeSessionId);
+		Object.assign(childState.runtime.metadata, {
+			kind: "subagent",
+			parentActiveSessionId: parentState.activeSessionId,
+			rlmChildId: "run-agent-1",
+		});
+		const internals = daemon as unknown as {
+			sessions: Map<string, ActiveSessionState>;
+			closeSession: (state: ActiveSessionState) => Promise<void>;
+			recordRlmSubagentDeletion: (
+				parentState: ActiveSessionState,
+				childId: string,
+				reason?: string,
+			) => Promise<void>;
+			createSubagentRuntimeHost(parentState: ActiveSessionState): SubagentRuntimeHost;
+		};
+		internals.sessions.set(parentState.activeSessionId, parentState);
+		internals.sessions.set(childState.activeSessionId, childState);
+		internals.closeSession = vi.fn(async (state: ActiveSessionState) => {
+			internals.sessions.delete(state.activeSessionId);
+		});
+		const recordDeletion = vi.fn(async () => undefined);
+		internals.recordRlmSubagentDeletion = recordDeletion;
+		for (const status of ["done", "error"] as const) {
+			internals.sessions.set(childState.activeSessionId, childState);
+			await internals
+				.createSubagentRuntimeHost(parentState)
+				.releaseRlmSubagentRuntime?.(
+					{ session: childState.runtime.session },
+					{ id: "run-agent-1", ephemeral: true } as CreateRlmSubagentRuntimeOptions,
+					status,
+				);
+			expect(recordDeletion).toHaveBeenLastCalledWith(parentState, "run-agent-1", "gc");
+		}
+		expect(recordDeletion).toHaveBeenCalledTimes(2);
+	});
+
+	it("never rehydrates a runAgent child's temp session as a passive subagent", () => {
+		expect(isEphemeralRunAgentSessionFile("/tmp/pi-run-agent-srHwJx/01a0778d.jsonl")).toBe(true);
+		expect(isEphemeralRunAgentSessionFile("C:\\Temp\\pi-run-agent-abc\\s.jsonl")).toBe(true);
+		expect(isEphemeralRunAgentSessionFile("/home/me/.prime/agent/sessions/01a0778d.jsonl")).toBe(false);
+		expect(isEphemeralRunAgentSessionFile("/home/me/.prime/agent/rlm/pi-run-agent-notadir.jsonl")).toBe(false);
 	});
 
 	it("persists a real child completion for passive discovery, roster, and listing", async () => {

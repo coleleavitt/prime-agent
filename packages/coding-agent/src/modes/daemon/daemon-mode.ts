@@ -411,6 +411,11 @@ const RECOVERY_CHECKPOINT_EVENTS: ReadonlySet<string> = new Set([
 	"rlm_child_update",
 ]);
 
+/** runAgent children are created in `mkdtemp("pi-run-agent-")`; see CreateRlmSubagentRuntimeOptions.ephemeral. */
+export function isEphemeralRunAgentSessionFile(sessionFile: string): boolean {
+	return /[\\/]pi-run-agent-[^\\/]+[\\/]/.test(sessionFile);
+}
+
 function delay(ms: number): Promise<void> {
 	return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 }
@@ -1334,6 +1339,10 @@ export class AgentDaemon {
 				const entry = await this.passiveRlmSubagentEntryForEdge(edge, parent, legacyRegistryCache);
 				const sessionKey = resolve(entry.sessionFile);
 				if (entry.status === "deleted" || visited.has(sessionKey)) continue;
+				// A runAgent child left behind by a crash mid-run: its temp dir is
+				// not a session anyone can resume, and rehydrating it produced idle
+				// "run-agent-…" phantoms in the roster.
+				if (isEphemeralRunAgentSessionFile(entry.sessionFile)) continue;
 				visited.add(sessionKey);
 				const info = await readSessionInfo(entry.sessionFile);
 				if (!info) continue;
@@ -2449,9 +2458,18 @@ export class AgentDaemon {
 				// Persist the deletion boundary first, but never let a registry failure
 				// strand the cancelled child as a stale resident session.
 				let deletionError: unknown;
-				if (status === "cancelled") {
+				// An ephemeral (runAgent) child's temp session dir is removed by the
+				// caller right after this, so its ledger edge must close on every
+				// terminal status: a dangling spawn record either costs a failed
+				// readSessionInfo on every passive scan or, after a crash that left
+				// the dir behind, rehydrates a phantom idle session forever.
+				if (status === "cancelled" || options.ephemeral) {
 					try {
-						await this.recordRlmSubagentDeletion(parentState, options.id, "revoked");
+						await this.recordRlmSubagentDeletion(
+							parentState,
+							options.id,
+							status === "cancelled" ? "revoked" : "gc",
+						);
 					} catch (error) {
 						deletionError = error;
 					}
