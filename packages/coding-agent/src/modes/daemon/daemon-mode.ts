@@ -171,8 +171,8 @@ import {
 	buildRlmChildSnapshots,
 	buildSessionList,
 	classifySessionRosterStatus,
+	hasLiveSessionWork,
 	inactiveLifecycleForSession,
-	isActiveSessionBusy,
 	type SessionSummary,
 	scheduledJobRegistrations,
 	summaryForActiveSession,
@@ -214,6 +214,7 @@ import {
 	RlmSpawnLedger,
 	readLegacyRlmSubagentRegistry as readLegacyRlmSubagentRegistryFile,
 	tombstoneSavedSessionDelete,
+	withPassiveRlmDescendantInfos,
 } from "./rlm-ledger.js";
 import {
 	readRlmSubagentDisplayEntry,
@@ -987,6 +988,16 @@ export class AgentDaemon {
 			(message) => this.log(message),
 		);
 		return this.rlmSpawnLedgerInstance;
+	}
+
+	// Ledgers are per sessions-dir family: a catalog request for another dir must read that dir's ledger.
+	private rlmSpawnLedgerFor(sessionDir: string | undefined): RlmSpawnLedger {
+		if (sessionDir === undefined || resolve(sessionDir) === resolve(this.rlmLedgerSessionsDir())) {
+			return this.rlmSpawnLedger();
+		}
+		return new RlmSpawnLedger(this.agentDir, sessionDir, createRlmLedgerRegistrySeedSource(), (message) =>
+			this.log(message),
+		);
 	}
 
 	private async appendRlmLedgerRenameForState(state: ActiveSessionState, name: string): Promise<void> {
@@ -3901,8 +3912,13 @@ export class AgentDaemon {
 					command.scope === "current"
 						? await SessionManager.list(cwd, sessionDir, callbacks)
 						: await SessionManager.listAll(callbacks, sessionDir);
+				const sessions = await withPassiveRlmDescendantInfos(savedSessions, this.rlmSpawnLedgerFor(sessionDir), {
+					...(command.scope === "current" ? { cwd } : {}),
+					...(callbacks ? { onSession: callbacks.onSession } : {}),
+					log: (message) => this.log(message),
+				});
 				return success(command.id, "list_saved_sessions", {
-					sessions: savedSessions.map(serializeSavedSessionInfo),
+					sessions: sessions.map(serializeSavedSessionInfo),
 				});
 			}
 
@@ -6074,8 +6090,7 @@ export class AgentDaemon {
 		if (state.runtime.metadata.kind === "subagent") {
 			return false;
 		}
-		// A running bash or in-flight turn means there is live work to preserve.
-		if (state.runtime.session.isBashRunning || isActiveSessionBusy(state)) {
+		if (state.runtime.session.isBashRunning || hasLiveSessionWork(state)) {
 			return false;
 		}
 		return this.isEmptyDraftContent(state);
@@ -7000,7 +7015,7 @@ export class AgentDaemon {
 		}
 		const session = state.runtime.session;
 		const busy =
-			busyOverride ?? (isActiveSessionBusy(state) || session.isRetrying || session.hasAcceptedPromptInFlight);
+			busyOverride ?? (hasLiveSessionWork(state) || session.isRetrying || session.hasAcceptedPromptInFlight);
 		try {
 			this.recoveryJournal.record({
 				activeSessionId: state.activeSessionId,

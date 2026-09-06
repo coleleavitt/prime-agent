@@ -27,6 +27,7 @@ import {
 	buildAgentsViewRows,
 	buildUnifiedSessionIndex,
 	classifyAgentsViewSession,
+	computeRecursiveRollups,
 	createUnattachableChildOpenResult,
 	filterUnifiedSessions,
 	formatHeartbeatBadge,
@@ -302,6 +303,48 @@ describe("agents view state", () => {
 		expect(rows.map((row) => row.summary.sessionId)).toEqual(["beating", "recent"]);
 	});
 
+	test("demotes empty sessions to the bottom of their section except the entered-from anchor", () => {
+		const empty = makeSummary({
+			id: "empty",
+			activeSessionId: undefined,
+			sessionId: "empty",
+			sessionName: "empty",
+			messageCount: 0,
+			lastActivityAt: "2026-01-04T00:00:00Z",
+		});
+		const anchor = makeSummary({
+			id: "anchor",
+			activeSessionId: undefined,
+			sessionId: "anchor",
+			sessionName: "anchor",
+			messageCount: 0,
+			lastActivityAt: "2026-01-03T00:00:00Z",
+		});
+		const older = makeSummary({
+			id: "older",
+			activeSessionId: undefined,
+			sessionId: "older",
+			sessionName: "older",
+			messageCount: 3,
+			lastActivityAt: "2026-01-02T00:00:00Z",
+		});
+
+		// The entered-from session keeps its recency slot even while empty.
+		const anchored = buildAgentsViewRows(
+			[empty, anchor, older],
+			new Set(),
+			new Set(),
+			undefined,
+			undefined,
+			"anchor",
+		);
+		expect(anchored.map((row) => row.summary.sessionId)).toEqual(["anchor", "older", "empty"]);
+
+		// Entered from elsewhere, every empty session sinks below non-empty ones.
+		const unanchored = buildAgentsViewRows([empty, anchor, older]);
+		expect(unanchored.map((row) => row.summary.sessionId)).toEqual(["older", "empty", "anchor"]);
+	});
+
 	test("summarizes subagents on their parent and omits subagent rows", () => {
 		const rows = buildAgentsViewRows([
 			makeSummary({
@@ -412,6 +455,288 @@ describe("agents view state", () => {
 			section: "idle",
 			statusLabel: "heartbeat active",
 		});
+	});
+
+	test("counts a busy grandchild on every idle ancestor without promoting them", () => {
+		const summaries = [
+			makeSummary({
+				id: "parent-active",
+				activeSessionId: "parent-active",
+				sessionId: "parent-session",
+				sessionName: "Parent",
+				activity: "idle",
+				taskState: "completed",
+				hasRunningRlmChildren: true,
+				messageCount: 2,
+			}),
+			makeSummary({
+				id: "child-active",
+				activeSessionId: "child-active",
+				sessionId: "child-session",
+				sessionName: "Child",
+				runtimeKind: "subagent",
+				parentActiveSessionId: "parent-active",
+				activity: "idle",
+				taskState: "completed",
+			}),
+			makeSummary({
+				id: "grandchild-active",
+				activeSessionId: "grandchild-active",
+				sessionId: "grandchild-session",
+				sessionName: "Grandchild",
+				runtimeKind: "subagent",
+				parentActiveSessionId: "child-active",
+				activity: "working",
+				isSessionActive: true,
+				isStreaming: true,
+			}),
+		];
+
+		const collapsed = buildAgentsViewRows(summaries);
+		expect(collapsed[0]).toMatchObject({ kind: "agent", section: "idle", runningSubagentCount: 1 });
+		expect(collapsed[0]?.statusLabel).toBe("completed");
+		expect(collapsed[1]).toMatchObject({ kind: "subagent-summary", section: "idle", title: "1 subagent running" });
+
+		const expanded = buildAgentsViewRows(summaries, new Set([collapsed[0]?.identity ?? ""]));
+		const childRow = expanded.find((row) => row.title === "Child");
+		expect(childRow).toMatchObject({ kind: "subagent", section: "idle", runningSubagentCount: 1 });
+	});
+
+	test("keeps heartbeat-armed descendants out of the busy tally", () => {
+		const summaries = [
+			makeSummary({
+				id: "parent-active",
+				activeSessionId: "parent-active",
+				sessionId: "parent-session",
+				sessionName: "Parent",
+				activity: "idle",
+				taskState: "completed",
+				messageCount: 2,
+			}),
+			makeSummary({
+				id: "child-active",
+				activeSessionId: "child-active",
+				sessionId: "child-session",
+				sessionName: "Child",
+				runtimeKind: "subagent",
+				parentActiveSessionId: "parent-active",
+				activity: "idle",
+				taskState: "completed",
+			}),
+			makeSummary({
+				id: "grandchild-active",
+				activeSessionId: "grandchild-active",
+				sessionId: "grandchild-session",
+				sessionName: "Heartbeat grandchild",
+				runtimeKind: "subagent",
+				parentActiveSessionId: "child-active",
+				hasActiveHeartbeat: true,
+				activity: "idle",
+			}),
+		];
+
+		const collapsed = buildAgentsViewRows(summaries);
+		expect(collapsed[0]?.runningSubagentCount).toBe(0);
+		expect(collapsed[1]).toMatchObject({ kind: "subagent-summary", section: "idle", title: "1 subagent" });
+		const expanded = buildAgentsViewRows(summaries, new Set([collapsed[0]?.identity ?? ""]));
+		expect(expanded.find((row) => row.title === "Child")?.runningSubagentCount).toBe(0);
+	});
+
+	test("keeps the recursive total complete when search filters out a descendant", () => {
+		const parent = makeSummary({
+			id: "parent-active",
+			activeSessionId: "parent-active",
+			sessionId: "parent-session",
+			sessionName: "Searchable parent",
+			usage: { inputTokens: 100, outputTokens: 10, cost: 0.42 },
+		});
+		const child = makeSummary({
+			id: "child-active",
+			activeSessionId: "child-active",
+			sessionId: "child-session",
+			sessionName: "unrelated worker",
+			runtimeKind: "subagent",
+			parentActiveSessionId: "parent-active",
+			usage: { inputTokens: 50, outputTokens: 5, cost: 0.68 },
+		});
+		const grandchild = makeSummary({
+			id: "grandchild-active",
+			activeSessionId: "grandchild-active",
+			sessionId: "grandchild-session",
+			sessionName: "unrelated nested worker",
+			runtimeKind: "subagent",
+			parentActiveSessionId: "child-active",
+			usage: { inputTokens: 20, outputTokens: 2, cost: 0.18 },
+		});
+		const records = reconcileUnifiedSessions([parent, child, grandchild], []);
+		const rollups = computeRecursiveRollups(records);
+		const filtered = filterUnifiedSessions(records, (text) => text.includes("Searchable"));
+
+		expect(filtered).toHaveLength(1);
+		const rows = buildAgentsViewRows(filtered, new Set(), new Set(), undefined, rollups);
+		expect(rows[0]?.summary.usage?.cost).toBe(0.42);
+		expect(rows[0]?.recursiveCost).toBeCloseTo(1.28);
+		expect(rows[0]?.descendantCount).toBe(2);
+	});
+
+	test("keeps a parent's recursive total when a passivated child survives only as a catalog row", () => {
+		const parent = makeSummary({
+			id: "parent-active",
+			activeSessionId: "parent-active",
+			sessionId: "parent-session",
+			sessionFile: "/tmp/project/parent.jsonl",
+			usage: { inputTokens: 100, outputTokens: 10, cost: 0.42 },
+		});
+		const liveChild = makeSummary({
+			id: "child-active",
+			activeSessionId: "child-active",
+			sessionId: "child-session",
+			sessionFile: "/tmp/project/child.jsonl",
+			runtimeKind: "subagent",
+			parentActiveSessionId: "parent-active",
+			usage: { inputTokens: 50, outputTokens: 5, cost: 0.68 },
+		});
+		const before = reconcileUnifiedSessions([parent, liveChild], []);
+		const beforeRollup = computeRecursiveRollups(before).get(before[0]!);
+
+		// After a restart the child exists only as a saved-catalog row.
+		const after = reconcileUnifiedSessions(
+			[parent],
+			[
+				makeSessionInfo({
+					path: "/tmp/project/child.jsonl",
+					id: "child-session",
+					parentSessionPath: "/tmp/project/parent.jsonl",
+					rlmDepth: 1,
+					usage: { inputTokens: 50, outputTokens: 5, cost: 0.68 },
+				}),
+			],
+		);
+		const afterRollup = computeRecursiveRollups(after).get(after[0]!);
+
+		expect(beforeRollup?.cost).toBeCloseTo(1.1);
+		expect(afterRollup).toEqual(beforeRollup);
+		expect(afterRollup?.descendantCount).toBe(1);
+	});
+
+	test("rolls up spawned subagents but never a branched session's copied lineage", () => {
+		const source = makeSummary({
+			id: "src",
+			activeSessionId: "src",
+			sessionId: "src-session",
+			sessionFile: "/tmp/project/src.jsonl",
+			usage: { inputTokens: 100, outputTokens: 10, cost: 0.4 },
+		});
+		const branch = makeSessionInfo({
+			path: "/tmp/project/branch.jsonl",
+			id: "branch-session",
+			parentSessionPath: "/tmp/project/src.jsonl",
+			// Branch/fork headers keep the source's depth; only spawns go deeper.
+			rlmDepth: 0,
+			usage: { inputTokens: 100, outputTokens: 10, cost: 0.4 },
+		});
+		const child = makeSessionInfo({
+			path: "/tmp/project/child.jsonl",
+			id: "child-session",
+			parentSessionPath: "/tmp/project/src.jsonl",
+			rlmDepth: 1,
+			usage: { inputTokens: 20, outputTokens: 2, cost: 0.1 },
+		});
+
+		const branchOnly = reconcileUnifiedSessions([source], [branch]);
+		expect(computeRecursiveRollups(branchOnly).get(branchOnly[0]!)).toEqual({ cost: 0.4, descendantCount: 0 });
+
+		const withChild = reconcileUnifiedSessions([source], [branch, child]);
+		const rollup = computeRecursiveRollups(withChild).get(withChild[0]!);
+		expect(rollup?.descendantCount).toBe(1);
+		expect(rollup?.cost).toBeCloseTo(0.5);
+
+		// The tree shares that definition of "child": the branch renders as its
+		// own top-level session while only the spawned child nests and counts.
+		const rows = buildAgentsViewRows(withChild, new Set(), new Set(), undefined, computeRecursiveRollups(withChild));
+		expect(rows.find((row) => row.summary.sessionId === "branch-session")).toMatchObject({ kind: "agent", depth: 0 });
+		expect(rows.find((row) => row.kind === "subagent-summary")).toMatchObject({ title: "1 subagent" });
+	});
+
+	test("tallies a very deep child chain without overflowing the stack", () => {
+		const summaries = [
+			makeSummary({
+				id: "chain-root",
+				activeSessionId: "chain-root",
+				sessionId: "chain-root-session",
+				sessionName: "Chain root",
+				activity: "idle",
+				taskState: "completed",
+				messageCount: 2,
+			}),
+		];
+		const depth = 10_000;
+		for (let level = 1; level <= depth; level++) {
+			summaries.push(
+				makeSummary({
+					id: `chain-${level}`,
+					activeSessionId: `chain-${level}`,
+					sessionId: `chain-${level}-session`,
+					sessionName: `Chain ${level}`,
+					runtimeKind: "subagent",
+					parentActiveSessionId: level === 1 ? "chain-root" : `chain-${level - 1}`,
+					...(level === depth
+						? {
+								activity: "working" as const,
+								isSessionActive: true,
+								isStreaming: true,
+								usage: { inputTokens: 100, outputTokens: 10, cost: 0.5 },
+							}
+						: { activity: "idle" as const, taskState: "completed" as const }),
+				}),
+			);
+		}
+
+		const rows = buildAgentsViewRows(summaries);
+		expect(rows[0]).toMatchObject({ kind: "agent", section: "idle", runningSubagentCount: 1 });
+		expect(rows[0]?.recursiveCost).toBeCloseTo(0.5);
+	});
+
+	test("ranks idle rows with busy descendants above plain idle rows", () => {
+		const rows = buildAgentsViewRows([
+			makeSummary({
+				id: "plain-idle",
+				activeSessionId: "plain-idle",
+				sessionId: "plain-session",
+				sessionName: "Plain idle",
+				activity: "idle",
+				taskState: "completed",
+				messageCount: 2,
+				lastActivityAt: "2026-09-02T00:00:00Z",
+			}),
+			makeSummary({
+				id: "parent-active",
+				activeSessionId: "parent-active",
+				sessionId: "parent-session",
+				sessionName: "Busy-subtree parent",
+				activity: "idle",
+				taskState: "completed",
+				hasRunningRlmChildren: true,
+				messageCount: 2,
+				lastActivityAt: "2026-08-01T00:00:00Z",
+			}),
+			makeSummary({
+				id: "busy-child",
+				activeSessionId: "busy-child",
+				sessionId: "busy-child-session",
+				sessionName: "Busy child",
+				runtimeKind: "subagent",
+				parentActiveSessionId: "parent-active",
+				activity: "working",
+				isSessionActive: true,
+				isStreaming: true,
+			}),
+		]);
+
+		expect(rows.filter((row) => row.kind === "agent").map((row) => [row.title, row.section])).toEqual([
+			["Busy-subtree parent", "idle"],
+			["Plain idle", "idle"],
+		]);
 	});
 
 	test("keeps idle heartbeating subagents out of the running count", () => {
@@ -600,7 +925,7 @@ describe("agents view state", () => {
 		const oneLevel = buildAgentsViewRows(summaries, new Set([rootIdentity]));
 		expect(oneLevel.map((row) => [row.title, row.kind])).toEqual([
 			["Root", "agent"],
-			["1 subagent running", "subagent-summary"],
+			["2 subagents running", "subagent-summary"],
 			["Child", "subagent"],
 			["1 subagent running", "subagent-summary"],
 		]);
@@ -609,7 +934,7 @@ describe("agents view state", () => {
 		const twoLevel = buildAgentsViewRows(summaries, new Set([rootIdentity, childIdentity]));
 		expect(twoLevel.map((row) => [row.title, row.kind, row.depth])).toEqual([
 			["Root", "agent", 0],
-			["1 subagent running", "subagent-summary", 1],
+			["2 subagents running", "subagent-summary", 1],
 			["Child", "subagent", 1],
 			["1 subagent running", "subagent-summary", 2],
 			["Grandchild", "subagent", 2],
@@ -1559,6 +1884,13 @@ describe("agents view state", () => {
 				[root, registryChild],
 				[
 					makeSessionInfo({ path: rootPath, id: "root-session", rlmDepth: 0 }),
+					// The catalog also lists the resident child's file: it must merge, not duplicate.
+					makeSessionInfo({
+						path: "/tmp/project/registry-child.jsonl",
+						id: "registry-child",
+						parentSessionPath: rootPath,
+						rlmDepth: 1,
+					}),
 					makeSessionInfo({
 						path: "/tmp/project/saved-child.jsonl",
 						id: "saved-child",
@@ -1655,6 +1987,7 @@ function makeSessionInfo(overrides: Partial<SessionInfo> & { path: string; id: s
 		firstMessage: overrides.firstMessage ?? "hello",
 		allMessagesText: overrides.allMessagesText ?? "hello",
 		agentStatus: overrides.agentStatus,
+		usage: overrides.usage,
 	};
 }
 
