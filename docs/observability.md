@@ -37,6 +37,14 @@ the span so `grep withSpan`/`start_span` lands on it.
 | `kernel.host_request` | `host_request.rid`, `host_request.type`                       | done   | Python `rlm/repl.py` (client) / TS `core/kernel/repl-manager.ts` (server) |
 | `rlm.child`           | `rlm.child_id`, `rlm.depth`                                   | done   | coding-agent `modes/daemon/daemon-mode.ts` |
 | `daemon.command`      | `daemon.request_id`, `daemon.command_type`                    | done   | coding-agent `modes/daemon/daemon-mode.ts` |
+| `client.prompt`       | `client.command`, `client.source`, `client.queue_if_busy`, `session.active_id` | done | coding-agent `modes/agent-connection/daemon-agent-connection.ts` (TUI/CLI side root; worker spans nest under it) |
+| `tool.prepare`        | `tool.name`, `tool.call_id`, `tool.blocked`, `tool.block_reason` | done | pi-agent-core `agent-loop.ts` (argument validation + `beforeToolCall`: permission prompts live here) |
+| `extension.hooks`     | `hook.event`, `hook.handlers`, `hook.slowest`, `hook.slowest_ms`, `hook.errors`, `hook.<ext>_ms` (>25 ms) | done | coding-agent `core/extensions/runner.ts` (one span per emit, skipped when no handler) |
+| `session.compact`     | `session.id`, `llm.provider`, `llm.model`, `compact.tokens_before`, `compact.summary_chars`, `compact.first_kept_entry` | done | coding-agent `core/agent-session.ts` (manual and automatic) |
+| `agent.retry`         | `retry.attempt`, `retry.max_attempts`, `retry.delay_ms`, `retry.error` | done | coding-agent `core/agent-session.ts` (backoff wait before re-issuing a failed turn) |
+| `rlm.run_agent`       | `rlm.requested_model`, `rlm.model`, `rlm.status`, `rlm.turns` | done | coding-agent `core/agent-session.ts` (`ctx.runAgent` children) |
+| `cron.job`            | `cron.job_id`, `cron.name`, `cron.kind`, `cron.runtime_kind`, `cron.session_id`, `cron.deferred`, `cron.delivery`, `cron.result` | done | coding-agent `modes/daemon/daemon-mode.ts` (scheduled/heartbeat prompts nest their `agent.prompt` under it) |
+| `context.transform`   | `context.messages_in/out`, `context.targets`, `context.usage_percent`, `context.input_tokens`, `context.context_limit` | done | Magic Context `pi-plugin/src/context-handler.ts` (optional pi-ai bridge) |
 
 Supporting pieces:
 

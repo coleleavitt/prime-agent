@@ -20,6 +20,8 @@ import {
 	type Model,
 	parseTraceparent,
 	runWithTraceContext,
+	type Span,
+	type SpanAttributes,
 	type TraceContext,
 	withSpan,
 } from "@earendil-works/pi-ai";
@@ -263,6 +265,19 @@ export type {
 export { defaultDaemonSocketPath } from "./daemon-socket.js";
 
 const structuredLog = getLogger("coding-agent.daemon");
+/** Distinct supervisor peer-list failure messages already warned about in this process. */
+const loggedSupervisorPeerErrors = new Set<string>();
+
+/** `cron.job` span attributes; undefined values are dropped by the span. */
+function cronJobSpanAttributes(job: AgentCronJob): SpanAttributes {
+	return {
+		"cron.job_id": job.id,
+		"cron.name": job.label,
+		"cron.kind": job.source ?? "cron",
+		"cron.runtime_kind": job.runtimeKind,
+		"cron.session_id": job.activeSessionId,
+	};
+}
 const WORKER_SNAPSHOT_TERMINAL_DRAIN_TIMEOUT_MS = 1_000;
 const UPDATE_RESTART_PREPARE_TIMEOUT_MS = 90_000;
 const MAX_SESSION_SNAPSHOT_STABILIZATION_RETRIES = 3;
@@ -1840,7 +1855,22 @@ export class AgentDaemon {
 		}
 	}
 
-	private async runCronJob(job: AgentCronJob): Promise<"skipped" | undefined> {
+	/**
+	 * Runs one scheduled job inside a `cron.job` span. The span is the ambient
+	 * trace context while the prompt/heartbeat is dispatched, so the resulting
+	 * `agent.prompt` span (opened by the session prompt path) nests under it.
+	 * A deferred heartbeat ends ok with `cron.deferred=true`; a thrown failure
+	 * is recorded on the span and re-thrown to the scheduler unchanged.
+	 */
+	private runCronJob(job: AgentCronJob): Promise<"skipped" | undefined> {
+		return withSpan("cron.job", cronJobSpanAttributes(job), async (span) => {
+			const result = await this.executeCronJob(job, span);
+			span.setAttributes({ "cron.result": result ?? "ran" });
+			return result;
+		});
+	}
+
+	private async executeCronJob(job: AgentCronJob, span: Span): Promise<"skipped" | undefined> {
 		const requirePersistedJob = this.cronStore.list().some((candidate) => candidate.id === job.id);
 		const dueJob = requirePersistedJob ? this.getRunnableCronJob(job.id) : job;
 		if (!dueJob) {
@@ -1851,8 +1881,10 @@ export class AgentDaemon {
 		if (!state || !runnableJob || !this.isCronJobRunnableForState(runnableJob, state, requirePersistedJob)) {
 			return "skipped";
 		}
+		span.setAttributes(cronJobSpanAttributes(runnableJob));
 		const session = state.runtime.session;
 		if (shouldDeferHeartbeatCronJob(runnableJob, session)) {
+			span.setAttributes({ "cron.deferred": true });
 			return "skipped";
 		}
 		const shouldQueueCronPrompt =
@@ -1868,6 +1900,7 @@ export class AgentDaemon {
 			await session.followUp(runnableJob.prompt, undefined, {
 				resumeIfIdle: true,
 			});
+			span.setAttributes({ "cron.delivery": "followUp" });
 			return;
 		}
 		const getRunnableJob = (): AgentCronJob | undefined => {
@@ -1888,6 +1921,7 @@ export class AgentDaemon {
 		};
 		try {
 			if (isHeartbeatCronJob(current)) {
+				span.setAttributes({ "cron.delivery": "heartbeat" });
 				await session.promptHeartbeat(current, {
 					streamingBehavior: resolveHeartbeatStreamingBehavior(current.deliveryMode),
 					followUpQueueKey: `heartbeat:${current.id}`,
@@ -1896,6 +1930,7 @@ export class AgentDaemon {
 				});
 				return;
 			}
+			span.setAttributes({ "cron.delivery": "prompt" });
 			await session.promptUntilAccepted(current.prompt, {
 				streamingBehavior: "followUp",
 				source: "rpc",
@@ -5562,7 +5597,19 @@ export class AgentDaemon {
 			if (!response.success) throw deserializeDaemonError(response);
 			// SAFETY: The authenticated supervisor constructs the peer response.
 			return (response.data as { peers: AgentSessionMessageAgentSummary[] }).peers;
-		} catch {
+		} catch (error) {
+			// Degrade to local-only peers, but leave a worker-side record of why
+			// (e.g. "Worker authentication failed" is otherwise only visible on
+			// the supervisor). One warning per distinct message avoids spam from
+			// repeated list_agents calls.
+			const message = error instanceof Error ? error.message : String(error);
+			if (!loggedSupervisorPeerErrors.has(message)) {
+				loggedSupervisorPeerErrors.add(message);
+				structuredLog.warn("Supervisor list_agent_peers request failed; returning local peers only", {
+					error: message,
+					supervisorSocketPath,
+				});
+			}
 			return [];
 		} finally {
 			client.close();
