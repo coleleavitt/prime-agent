@@ -13,7 +13,7 @@ import {
 import { createServer, type Server, type Socket } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import { Writable } from "node:stream";
-import { getLogger } from "@earendil-works/pi-ai";
+import { currentTraceContext, getLogger, parseTraceparent, runWithTraceContext, withSpan } from "@earendil-works/pi-ai";
 import { createCliSubprocessEnv, createCliSubprocessLaunchSpec } from "../../cli/subprocess-launch.js";
 import {
 	appendRotatingLog,
@@ -1468,7 +1468,7 @@ export class DaemonSupervisor {
 			() => client.socket.destroy(),
 		);
 
-		client.detachInput = attachJsonlLineReader(socket, (line) => void this.handleLine(client, line));
+		client.detachInput = attachJsonlLineReader(socket, (line) => void this.handleClientLine(client, line));
 		let cleaned = false;
 		const cleanup = () => {
 			if (cleaned) {
@@ -1727,6 +1727,36 @@ export class DaemonSupervisor {
 			protocolVersion: envelope.protocol.version,
 			admission,
 		};
+	}
+
+	/**
+	 * Adopt the trace context the CLI stamped on its command envelope (falling
+	 * back to this process's ambient context, e.g. an inbound TRACEPARENT) and
+	 * handle the line inside a `daemon.command` span, so the worker frame the
+	 * command is relayed on inherits the caller's trace (see docs/observability.md).
+	 * The envelope is parsed again in handleLine; a malformed line reaches it
+	 * unchanged so the client still gets the parse failure.
+	 */
+	private handleClientLine(client: DaemonSocketClient, line: string): Promise<void> {
+		let inbound = currentTraceContext();
+		let requestId = "unknown";
+		let commandType = "unknown";
+		try {
+			const parsed = JSON.parse(line) as unknown;
+			if (isDaemonCommandEnvelope(parsed)) {
+				inbound = parseTraceparent(parsed.traceparent) ?? inbound;
+				requestId = String(parsed.id);
+				const type = (parsed.command as { type?: unknown }).type;
+				if (typeof type === "string") commandType = type;
+			}
+		} catch {
+			// handleLine reports parse failures; tracing stays silent.
+		}
+		return runWithTraceContext(inbound, () =>
+			withSpan("daemon.command", { "daemon.request_id": requestId, "daemon.command_type": commandType }, () =>
+				this.handleLine(client, line),
+			),
+		);
 	}
 
 	private async handleLine(client: DaemonSocketClient, line: string): Promise<void> {

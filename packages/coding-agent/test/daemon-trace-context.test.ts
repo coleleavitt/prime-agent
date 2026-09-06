@@ -22,6 +22,7 @@ import {
 	type DaemonCommand,
 	isDaemonCommandEnvelope,
 } from "../src/modes/daemon/daemon-protocol.js";
+import { DaemonSupervisor } from "../src/modes/daemon/daemon-supervisor.js";
 import { DaemonWorkerClient } from "../src/modes/daemon/daemon-worker-client.js";
 import { type DaemonWorkerFrameHeader, isDaemonWorkerFrameHeader } from "../src/modes/daemon/daemon-worker-protocol.js";
 
@@ -393,6 +394,48 @@ describe("daemon command context inheritance", () => {
 		});
 		await withSpan("process.inbound", async (ambient) => {
 			await internals.handleClientLine(makeSocketClient(), JSON.stringify({ id: "daemon_9", type: "list" }));
+			expect(seen[0]).toMatchObject({ traceId: ambient.context.traceId, parentSpanId: ambient.context.spanId });
+		});
+	});
+});
+
+describe("daemon supervisor client-socket command lines", () => {
+	interface SupervisorInternals {
+		handleClientLine(client: DaemonSocketClient, line: string): Promise<void>;
+		handleLine(client: DaemonSocketClient, line: string): Promise<void>;
+	}
+	// Constructor-bypass harness (see daemon-supervisor-admission.test.ts): only
+	// the context handleLine runs under is observed.
+	function makeSupervisor(): { internals: SupervisorInternals; seen: Array<TraceContext | undefined> } {
+		const internals = Object.create(DaemonSupervisor.prototype) as SupervisorInternals;
+		const seen: Array<TraceContext | undefined> = [];
+		internals.handleLine = vi.fn(async () => {
+			seen.push(currentTraceContext());
+		});
+		return { internals, seen };
+	}
+
+	it("adopts the CLI envelope's traceparent before relaying", async () => {
+		const { internals, seen } = makeSupervisor();
+		const envelope = {
+			...createDaemonCommandEnvelope({ id: "daemon_5", type: "list" }, "daemon_5", "client-1"),
+			traceparent: TRACEPARENT,
+		};
+		await internals.handleClientLine(makeSocketClient(), JSON.stringify(envelope));
+		expect(seen[0]).toMatchObject({ traceId: "0af7651916cd43dd8448eb211c80319c", parentSpanId: "b7ad6b7169203331" });
+		expect(ended[0]).toMatchObject({
+			name: "daemon.command",
+			attrs: { "daemon.request_id": "daemon_5", "daemon.command_type": "list" },
+		});
+	});
+
+	it("inherits the ambient context when the envelope carries none", async () => {
+		const { internals, seen } = makeSupervisor();
+		await withSpan("process.inbound", async (ambient) => {
+			await internals.handleClientLine(
+				makeSocketClient(),
+				JSON.stringify(createDaemonCommandEnvelope({ id: "daemon_6", type: "list" }, "daemon_6")),
+			);
 			expect(seen[0]).toMatchObject({ traceId: ambient.context.traceId, parentSpanId: ambient.context.spanId });
 		});
 	});
