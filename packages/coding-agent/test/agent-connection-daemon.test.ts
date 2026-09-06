@@ -3935,7 +3935,7 @@ describe("DaemonAgentConnection client.turn tracing", () => {
 		const fakeClient = new FakeDaemonClient();
 		const connection = new DaemonAgentConnection(asDaemonClient(fakeClient), "active-1");
 
-		await connection.prompt("hello", { source: "user" });
+		await connection.prompt("hello", { source: "interactive" });
 		expect(byName("client.prompt")).toHaveLength(1);
 		expect(byName("client.turn")).toHaveLength(0);
 
@@ -3955,7 +3955,7 @@ describe("DaemonAgentConnection client.turn tracing", () => {
 			parentSpanId: prompt?.spanId,
 			attrs: {
 				"session.active_id": "active-1",
-				"client.source": "user",
+				"client.source": "interactive",
 				"turn.queued": false,
 				"turn.messages": 2,
 			},
@@ -3973,9 +3973,9 @@ describe("DaemonAgentConnection client.turn tracing", () => {
 		const fakeClient = new FakeDaemonClient();
 		const connection = new DaemonAgentConnection(asDaemonClient(fakeClient), "active-1");
 
-		await connection.prompt("first", { source: "user" });
+		await connection.prompt("first", { source: "interactive" });
 		emitAgentStart(fakeClient);
-		await connection.prompt("second", { source: "user", queueIfBusy: true });
+		await connection.prompt("second", { source: "interactive", queueIfBusy: true });
 		expect(fakeClient.requestTraceparents).toHaveLength(2);
 		expect(fakeClient.requestTraceparents[0]).not.toEqual(fakeClient.requestTraceparents[1]);
 
