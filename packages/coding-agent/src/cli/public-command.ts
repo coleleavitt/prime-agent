@@ -18,6 +18,7 @@ import {
 import { handleDaemonCommand } from "./daemon-command.js";
 import { runPs, runReap, runShutdownAll } from "./daemon-ps.js";
 import { DAEMON_UPDATE_RESTART_COORDINATOR_FLAG } from "./daemon-update-restart.js";
+import { runTraceCommand } from "./trace-command.js";
 
 export interface PublicCommandResult {
 	handled: boolean;
@@ -145,6 +146,8 @@ async function runPublicCommand(args: string[]): Promise<PublicCommandResult> {
 		case "config":
 			if (!requireArgumentCount(args.slice(1), 0, "config")) return HANDLED;
 			return continueWith(args);
+		case "trace":
+			return runTrace(args.slice(1));
 		default:
 			return continueWith(args);
 	}
@@ -267,6 +270,14 @@ async function runShutdown(args: string[]): Promise<PublicCommandResult> {
 	const options = parseBooleanOptions(args, new Set(["--force", "--json"]), "shutdown");
 	if (!options) return HANDLED;
 	await runShutdownAll(options.has("--json"), options.has("--force"));
+	return HANDLED;
+}
+
+function runTrace(args: string[]): PublicCommandResult {
+	const exitCode = runTraceCommand(args, { stdout: console.log, stderr: console.error });
+	if (exitCode !== 0) {
+		process.exitCode = exitCode;
+	}
 	return HANDLED;
 }
 

@@ -176,6 +176,21 @@ export const COMMAND_SPECS: readonly CommandSpec[] = [
 		usage: "config",
 		summary: "Configure package resources",
 	},
+	{
+		path: ["trace"],
+		usage: "trace <traceId|traceparent> [--log <path>] [--json]",
+		summary: "Show one trace from the structured log as a span tree",
+		description:
+			"Reads ~/.prime/agent/logs/agent.jsonl (and its rotated .old sibling), keeps the entries for one trace id and prints spans with their log lines. Trace ids appear on every log line and on session records written during a traced turn.",
+		options: [
+			"--log <path>  Read this JSONL log instead of the default agent log",
+			"--json        Print the raw matching log lines instead of the tree",
+		],
+		examples: [
+			"trace 0af7651916cd43dd8448eb211c80319c",
+			"trace 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+		],
+	},
 ];
 
 export const PUBLIC_COMMAND_NAMES = new Set(

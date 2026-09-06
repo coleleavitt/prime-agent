@@ -1,5 +1,13 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, ImageContent, Message, ServiceTier, TextContent, Usage } from "@earendil-works/pi-ai";
+import {
+	type AssistantMessage,
+	currentTraceContext,
+	type ImageContent,
+	type Message,
+	type ServiceTier,
+	type TextContent,
+	type Usage,
+} from "@earendil-works/pi-ai";
 import { randomUUID } from "crypto";
 import {
 	appendFileSync,
@@ -103,6 +111,14 @@ export interface SessionEntryBase {
 	id: string;
 	parentId: string | null;
 	timestamp: string;
+	/**
+	 * W3C trace ids of the span active when the entry was appended, so a
+	 * session record can be joined to `~/.prime/agent/logs/agent.jsonl`
+	 * (`prime-agent trace <traceId>`). Absent when no span was active;
+	 * readers must tolerate their absence.
+	 */
+	traceId?: string;
+	spanId?: string;
 }
 
 export interface SessionMessageEntry extends SessionEntryBase {
@@ -313,6 +329,24 @@ export function getSessionArtifactPath(sessionDir: string, sessionId: string): s
 
 export function getSessionArtifactPathForFile(sessionFile: string, sessionId?: string): string {
 	return getSessionArtifactPath(dirname(sessionFile), sessionId ?? basename(sessionFile).replace(/\.jsonl$/, ""));
+}
+
+/**
+ * Stamp the active trace ids onto an entry before it is persisted. Only the
+ * ids are copied (never the parent span) so the record stays a plain join key
+ * against the structured log, and nothing is written when no span is active
+ * so files produced outside a traced turn are byte-identical to before.
+ * Tracing must never break session persistence.
+ */
+function stampTraceContext(entry: SessionEntryBase): void {
+	try {
+		const context = currentTraceContext();
+		if (!context) return;
+		entry.traceId = context.traceId;
+		entry.spanId = context.spanId;
+	} catch {
+		// A broken trace storage must not lose the session entry.
+	}
 }
 
 function generateId(byId: { has(id: string): boolean }): string {
@@ -1423,6 +1457,7 @@ export class SessionManager {
 	}
 
 	private _appendEntry(entry: SessionEntry): void {
+		stampTraceContext(entry);
 		this.fileEntries.push(entry);
 		this.byId.set(entry.id, entry);
 		this.leafId = entry.id;
