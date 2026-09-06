@@ -1,3 +1,4 @@
+import { withSpan } from "@earendil-works/pi-ai";
 import { getPiUserAgent } from "./pi-user-agent.js";
 
 const DEFAULT_PRIME_AGENT_DOWNLOAD_BASE_URL = "https://pub-728493de92a943e2a9b2d17b4719f318.r2.dev";
@@ -117,40 +118,50 @@ export async function getLatestPiRelease(
 ): Promise<LatestPiRelease | undefined> {
 	if (process.env.PI_SKIP_VERSION_CHECK || process.env.PI_OFFLINE) return undefined;
 
-	const baseUrl = getPrimeAgentDownloadBaseUrl();
-	const response = await fetch(`${baseUrl}/${getReleaseManifestPath(currentVersion)}`, {
-		headers: {
-			"User-Agent": getPiUserAgent(currentVersion),
-			accept: "application/json",
-		},
-		signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_VERSION_CHECK_TIMEOUT_MS),
-	});
-	if (!response.ok) return undefined;
+	// Tracing only: the span records the manifest lookup (`http.status`, latest
+	// version, whether an update is available). A failed fetch marks the span
+	// as error and is re-thrown unchanged, so callers keep their own handling.
+	return withSpan("update.check", { "update.current": currentVersion }, async (span) => {
+		const baseUrl = getPrimeAgentDownloadBaseUrl();
+		const response = await fetch(`${baseUrl}/${getReleaseManifestPath(currentVersion)}`, {
+			headers: {
+				"User-Agent": getPiUserAgent(currentVersion),
+				accept: "application/json",
+			},
+			signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_VERSION_CHECK_TIMEOUT_MS),
+		});
+		span.setAttributes({ "http.status": response.status });
+		if (!response.ok) return undefined;
 
-	const data = (await response.json()) as {
-		package?: unknown;
-		packageName?: unknown;
-		tarball?: unknown;
-		version?: unknown;
-	};
-	if (typeof data.version !== "string" || !data.version.trim()) {
-		return undefined;
-	}
-	const packageName =
-		typeof data.package === "string" && data.package.trim()
-			? data.package.trim()
-			: typeof data.packageName === "string" && data.packageName.trim()
-				? data.packageName.trim()
-				: undefined;
-	const installSpec = typeof data.tarball === "string" ? resolveReleaseUrl(baseUrl, data.tarball) : undefined;
-	const release: LatestPiRelease = { version: normalizeReleaseVersion(data.version) };
-	if (packageName) {
-		release.packageName = packageName;
-	}
-	if (installSpec) {
-		release.installSpec = installSpec;
-	}
-	return release;
+		const data = (await response.json()) as {
+			package?: unknown;
+			packageName?: unknown;
+			tarball?: unknown;
+			version?: unknown;
+		};
+		if (typeof data.version !== "string" || !data.version.trim()) {
+			return undefined;
+		}
+		const packageName =
+			typeof data.package === "string" && data.package.trim()
+				? data.package.trim()
+				: typeof data.packageName === "string" && data.packageName.trim()
+					? data.packageName.trim()
+					: undefined;
+		const installSpec = typeof data.tarball === "string" ? resolveReleaseUrl(baseUrl, data.tarball) : undefined;
+		const release: LatestPiRelease = { version: normalizeReleaseVersion(data.version) };
+		if (packageName) {
+			release.packageName = packageName;
+		}
+		if (installSpec) {
+			release.installSpec = installSpec;
+		}
+		span.setAttributes({
+			"update.latest": release.version,
+			"update.available": isNewerPackageVersion(release.version, currentVersion),
+		});
+		return release;
+	});
 }
 
 export async function getLatestPiVersion(

@@ -1,5 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { installDefaultSpanSink, type SpanEndRecord, setSpanSink } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const toolState = vi.hoisted(() => ({
@@ -14,7 +15,10 @@ vi.mock("../src/config.js", () => ({
 	getBinDir: () => toolState.toolsDir,
 }));
 
-vi.mock("os", () => ({
+// Partial mock: tools-manager now imports @earendil-works/pi-ai (tracing), which
+// lazily reads other "os" exports (homedir) and must see the real ones.
+vi.mock("os", async (importOriginal) => ({
+	...(await importOriginal<typeof import("os")>()),
 	arch: () => toolState.architecture,
 	platform: () => toolState.platform,
 }));
@@ -58,6 +62,7 @@ describe("tools manager", () => {
 	});
 
 	afterEach(() => {
+		installDefaultSpanSink();
 		vi.unstubAllGlobals();
 		if (originalPath === undefined) delete process.env.PATH;
 		else process.env.PATH = originalPath;
@@ -172,5 +177,114 @@ describe("tools manager", () => {
 		expect(windows).toContain("winget install BurntSushi.ripgrep.MSVC");
 		expect(termux).toContain("pkg install ripgrep");
 		expect(mac).toContain("Prime Agent and subagents remain available");
+	});
+
+	describe("tools.download span", () => {
+		const spans: SpanEndRecord[] = [];
+
+		beforeEach(() => {
+			spans.length = 0;
+			setSpanSink((record) => spans.push(record));
+		});
+
+		it("records tool, version, http status and bytes with the release lookup nested", async () => {
+			toolState.platform = "win32";
+			vi.stubGlobal(
+				"fetch",
+				vi
+					.fn()
+					.mockResolvedValueOnce(new Response(JSON.stringify({ tag_name: "15.1.0" }), { status: 200 }))
+					.mockResolvedValueOnce(
+						new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-length": "3" } }),
+					),
+			);
+			toolState.extractZip = async (_source, options) => {
+				writeExecutable(join(options.dir, "rg.exe"));
+			};
+
+			await expect(ensureToolWithStatus("rg")).resolves.toMatchObject({ status: "available" });
+
+			const lookup = spans.find((span) => span.name === "tools.release_lookup");
+			const download = spans.find((span) => span.name === "tools.download");
+			expect(lookup).toMatchObject({
+				status: "ok",
+				attrs: { "tool.repo": "BurntSushi/ripgrep", "http.status": 200, version: "15.1.0" },
+			});
+			expect(download).toMatchObject({
+				status: "ok",
+				attrs: { tool: "rg", version: "15.1.0", "http.status": 200, bytes: 3 },
+			});
+			expect(lookup?.parentSpanId).toBe(download?.spanId);
+			expect(lookup?.traceId).toBe(download?.traceId);
+		});
+
+		it("falls back to the written file size when content-length is absent", async () => {
+			toolState.platform = "win32";
+			vi.stubGlobal(
+				"fetch",
+				vi
+					.fn()
+					.mockResolvedValueOnce(new Response(JSON.stringify({ tag_name: "15.1.0" }), { status: 200 }))
+					.mockResolvedValueOnce(new Response(new Uint8Array([1, 2]), { status: 200 })),
+			);
+			toolState.extractZip = async (_source, options) => {
+				writeExecutable(join(options.dir, "rg.exe"));
+			};
+
+			await ensureToolWithStatus("rg");
+			const download = spans.find((span) => span.name === "tools.download");
+			// Response(Uint8Array) may or may not carry content-length; either way the count is exact.
+			expect(download?.attrs.bytes).toBe(2);
+		});
+
+		it("marks a failed release lookup as an error without changing the result", async () => {
+			vi.stubGlobal(
+				"fetch",
+				vi.fn(async () => new Response("rate limited", { status: 403 })),
+			);
+
+			await expect(ensureToolWithStatus("rg")).resolves.toMatchObject({
+				status: "unavailable",
+				reason: "download_failed",
+				detail: "GitHub API error: 403",
+			});
+			expect(spans.find((span) => span.name === "tools.release_lookup")).toMatchObject({
+				status: "error",
+				error: "GitHub API error: 403",
+				attrs: { "http.status": 403 },
+			});
+			const download = spans.find((span) => span.name === "tools.download");
+			expect(download).toMatchObject({ status: "error", error: "GitHub API error: 403", attrs: { tool: "rg" } });
+			expect(download?.attrs).not.toHaveProperty("version");
+		});
+
+		it("marks a failed download as an error with its http status", async () => {
+			vi.stubGlobal(
+				"fetch",
+				vi
+					.fn()
+					.mockResolvedValueOnce(new Response(JSON.stringify({ tag_name: "15.1.0" }), { status: 200 }))
+					.mockResolvedValueOnce(new Response("gone", { status: 404 })),
+			);
+
+			await expect(ensureToolWithStatus("rg")).resolves.toMatchObject({
+				status: "unavailable",
+				reason: "download_failed",
+				detail: "Failed to download: 404",
+			});
+			expect(spans.find((span) => span.name === "tools.download")).toMatchObject({
+				status: "error",
+				attrs: { tool: "rg", version: "15.1.0", "http.status": 404 },
+			});
+		});
+
+		it("opens no span when the tool is already available or downloads are skipped", async () => {
+			process.env.PI_OFFLINE = "1";
+			await ensureToolWithStatus("rg");
+			delete process.env.PI_OFFLINE;
+			writeExecutable(join(toolState.toolsDir, "rg"));
+			await ensureToolWithStatus("rg");
+			expect(spans).toEqual([]);
+		});
 	});
 });

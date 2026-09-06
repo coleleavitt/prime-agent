@@ -1,3 +1,4 @@
+import { installDefaultSpanSink, type SpanEndRecord, setSpanSink } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	checkForNewPiVersion,
@@ -21,6 +22,7 @@ function restoreEnv(name: string, value: string | undefined): void {
 }
 
 afterEach(() => {
+	installDefaultSpanSink();
 	vi.unstubAllGlobals();
 	restoreEnv("PI_SKIP_VERSION_CHECK", originalSkipVersionCheck);
 	restoreEnv("PI_OFFLINE", originalOffline);
@@ -93,5 +95,84 @@ describe("version checks", () => {
 
 		await expect(getLatestPiVersion("1.2.3")).resolves.toBeUndefined();
 		expect(fetchMock).not.toHaveBeenCalled();
+	});
+});
+
+describe("update.check span", () => {
+	const spans: SpanEndRecord[] = [];
+
+	function collectSpans(): void {
+		spans.length = 0;
+		setSpanSink((record) => spans.push(record));
+	}
+
+	it("records the manifest lookup with status, latest version and availability", async () => {
+		collectSpans();
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => Response.json({ version: "v1.2.4" })),
+		);
+
+		await expect(getLatestPiRelease("1.2.3")).resolves.toEqual({ version: "1.2.4" });
+
+		expect(spans.map((span) => span.name)).toEqual(["update.check"]);
+		expect(spans[0]).toMatchObject({
+			status: "ok",
+			attrs: { "update.current": "1.2.3", "update.latest": "1.2.4", "update.available": true, "http.status": 200 },
+		});
+	});
+
+	it("reports an up-to-date install as not available", async () => {
+		collectSpans();
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => Response.json({ version: "1.2.3" })),
+		);
+
+		await expect(checkForNewPiVersion("1.2.3")).resolves.toBeUndefined();
+		expect(spans[0]).toMatchObject({
+			name: "update.check",
+			status: "ok",
+			attrs: { "update.latest": "1.2.3", "update.available": false, "http.status": 200 },
+		});
+	});
+
+	it("keeps the http status on a non-ok manifest response without failing the span", async () => {
+		collectSpans();
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response("missing", { status: 404 })),
+		);
+
+		await expect(getLatestPiRelease("1.2.3")).resolves.toBeUndefined();
+		expect(spans[0]).toMatchObject({ name: "update.check", status: "ok", attrs: { "http.status": 404 } });
+		expect(spans[0].attrs).not.toHaveProperty("update.latest");
+	});
+
+	it("marks a network failure as a span error while callers keep swallowing it", async () => {
+		collectSpans();
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => Promise.reject(new Error("network unavailable"))),
+		);
+
+		// getLatestPiRelease re-throws exactly as before...
+		await expect(getLatestPiRelease("1.2.3")).rejects.toThrow("network unavailable");
+		expect(spans[0]).toMatchObject({ name: "update.check", status: "error", error: "network unavailable" });
+		expect(spans[0].attrs).not.toHaveProperty("http.status");
+
+		// ...and checkForNewPiVersion still swallows the failure.
+		spans.length = 0;
+		await expect(checkForNewPiVersion("1.2.3")).resolves.toBeUndefined();
+		expect(spans[0]).toMatchObject({ name: "update.check", status: "error" });
+	});
+
+	it("opens no span when version checks are disabled", async () => {
+		collectSpans();
+		process.env.PI_OFFLINE = "1";
+		vi.stubGlobal("fetch", vi.fn());
+
+		await expect(getLatestPiRelease("1.2.3")).resolves.toBeUndefined();
+		expect(spans).toEqual([]);
 	});
 });

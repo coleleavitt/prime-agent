@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { installDefaultSpanSink, type SpanEndRecord, setSpanSink } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as DaemonUpdateRestartModule from "../src/cli/daemon-update-restart.js";
 import {
@@ -617,6 +618,67 @@ describe("self-update daemon restart", () => {
 			expect(mockState.calls.some((call) => call === "daemon-request:prepare_update_restart")).toBe(false);
 			expect(mockState.calls.some((call) => call === "shutdown-daemon")).toBe(false);
 		} finally {
+			errorSpy.mockRestore();
+			logSpy.mockRestore();
+		}
+	});
+
+	it("traces the self-update as update.check, update.self and nested package.command spans", async () => {
+		process.env[SELF_UPDATE_INTERACTIVE_CHILD_ENV] = "1";
+		const spans: SpanEndRecord[] = [];
+		setSpanSink((record) => spans.push(record));
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		try {
+			await expect(handlePackageCommand(["update", "--self"])).resolves.toBe(true);
+
+			const check = spans.find((span) => span.name === "update.check");
+			const self = spans.find((span) => span.name === "update.self");
+			const commands = spans.filter((span) => span.name === "package.command");
+			expect(check).toMatchObject({
+				status: "ok",
+				attrs: {
+					"update.current": VERSION,
+					"update.latest": "999.0.0",
+					"update.available": true,
+					"http.status": 200,
+				},
+			});
+			expect(self).toMatchObject({ status: "ok", attrs: { "update.from": VERSION, "update.to": "999.0.0" } });
+			expect(commands.length).toBeGreaterThan(0);
+			for (const command of commands) {
+				expect(command).toMatchObject({ status: "ok", attrs: { exit_code: 0 } });
+				expect(command.attrs.command).toMatch(/^npm \S+$/);
+				expect(command.parentSpanId).toBe(self?.spanId);
+			}
+		} finally {
+			installDefaultSpanSink();
+			logSpy.mockRestore();
+		}
+	});
+
+	it("marks update.self as an error when the package command fails", async () => {
+		process.env[SELF_UPDATE_INTERACTIVE_CHILD_ENV] = "1";
+		mockState.spawnExitCodes = [23];
+		const spans: SpanEndRecord[] = [];
+		setSpanSink((record) => spans.push(record));
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		try {
+			await expect(handlePackageCommand(["update", "--self"])).resolves.toBe(true);
+			expect(process.exitCode).toBe(1);
+
+			expect(spans.find((span) => span.name === "package.command")).toMatchObject({
+				status: "error",
+				attrs: { exit_code: 23 },
+			});
+			expect(spans.find((span) => span.name === "update.self")).toMatchObject({
+				status: "error",
+				error: expect.stringContaining("exited with code 23"),
+			});
+		} finally {
+			installDefaultSpanSink();
 			errorSpy.mockRestore();
 			logSpy.mockRestore();
 		}

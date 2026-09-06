@@ -1,7 +1,8 @@
+import { currentSpan, type Span, withSpan } from "@earendil-works/pi-ai";
 import chalk from "chalk";
 import { spawnSync } from "child_process";
 import extractZip from "extract-zip";
-import { chmodSync, createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "fs";
+import { chmodSync, createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "fs";
 import { arch, platform } from "os";
 import { join } from "path";
 import { Readable } from "stream";
@@ -131,17 +132,34 @@ export function getToolPath(tool: ManagedTool): string | null {
 
 // Fetch latest release version from GitHub
 async function getLatestVersion(repo: string): Promise<string> {
-	const response = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
-		headers: { "User-Agent": `${APP_NAME}-coding-agent` },
-		signal: AbortSignal.timeout(NETWORK_TIMEOUT_MS),
+	return withSpan("tools.release_lookup", { "tool.repo": repo }, async (span) => {
+		const response = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
+			headers: { "User-Agent": `${APP_NAME}-coding-agent` },
+			signal: AbortSignal.timeout(NETWORK_TIMEOUT_MS),
+		});
+		span.setAttributes({ "http.status": response.status });
+
+		if (!response.ok) {
+			throw new Error(`GitHub API error: ${response.status}`);
+		}
+
+		const data = (await response.json()) as { tag_name: string };
+		const version = data.tag_name.replace(/^v/, "");
+		span.setAttributes({ version });
+		return version;
 	});
+}
 
-	if (!response.ok) {
-		throw new Error(`GitHub API error: ${response.status}`);
+// Best-effort byte count for the `tools.download` span: Content-Length when the
+// server sent it, otherwise the size of the file written to disk.
+function downloadedBytes(response: Response, dest: string): number | undefined {
+	const contentLength = Number.parseInt(response.headers.get("content-length") ?? "", 10);
+	if (Number.isFinite(contentLength) && contentLength >= 0) return contentLength;
+	try {
+		return statSync(dest).size;
+	} catch {
+		return undefined;
 	}
-
-	const data = (await response.json()) as { tag_name: string };
-	return data.tag_name.replace(/^v/, "");
 }
 
 // Download a file from URL
@@ -149,6 +167,9 @@ async function downloadFile(url: string, dest: string): Promise<void> {
 	const response = await fetch(url, {
 		signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
 	});
+	// Runs under downloadTool's `tools.download` span; attributes only.
+	const span = currentSpan();
+	span?.setAttributes({ "http.status": response.status });
 
 	if (!response.ok) {
 		throw new Error(`Failed to download: ${response.status}`);
@@ -160,6 +181,7 @@ async function downloadFile(url: string, dest: string): Promise<void> {
 
 	const fileStream = createWriteStream(dest);
 	await pipeline(Readable.fromWeb(response.body as any), fileStream);
+	span?.setAttributes({ bytes: downloadedBytes(response, dest) });
 }
 
 function findBinaryRecursively(rootDir: string, binaryFileName: string): string | null {
@@ -188,6 +210,10 @@ function findBinaryRecursively(rootDir: string, binaryFileName: string): string 
 class UnsupportedToolPlatformError extends Error {}
 
 async function downloadTool(tool: ManagedTool): Promise<string> {
+	return withSpan("tools.download", { tool }, (span) => downloadToolTraced(tool, span));
+}
+
+async function downloadToolTraced(tool: ManagedTool, span: Span): Promise<string> {
 	const config = TOOLS[tool];
 	if (!config) throw new Error(`Unknown tool: ${tool}`);
 
@@ -200,6 +226,7 @@ async function downloadTool(tool: ManagedTool): Promise<string> {
 
 	// Get latest version and the matching platform asset.
 	const version = await getLatestVersion(config.repo);
+	span.setAttributes({ version });
 	const assetName = config.getAssetName(version, plat, architecture);
 	if (!assetName) throw new UnsupportedToolPlatformError(`Unsupported platform: ${plat}/${architecture}`);
 

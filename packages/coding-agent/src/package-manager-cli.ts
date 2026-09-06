@@ -1,8 +1,8 @@
-import type { ImageContent, TextContent, UserMessage } from "@earendil-works/pi-ai";
+import { type ImageContent, type TextContent, type UserMessage, withSpan } from "@earendil-works/pi-ai";
 import chalk from "chalk";
 import { spawn } from "child_process";
 import { readFileSync, rmSync, statSync } from "fs";
-import { resolve, sep } from "path";
+import { basename, resolve, sep } from "path";
 import { selectConfig } from "./cli/config-selector.js";
 import {
 	ensureInteractiveDaemonRunning,
@@ -460,29 +460,38 @@ async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
 	return { installSpec: PACKAGE_NAME, packageName: PACKAGE_NAME, shouldRun: false };
 }
 
-async function runSelfUpdate(command: SelfUpdateCommand): Promise<void> {
-	console.log(chalk.dim(`Updating ${APP_NAME} with ${command.display}...`));
-	for (const step of command.steps ?? [command]) {
-		await new Promise<void>((resolve, reject) => {
-			// Windows package managers are commonly .cmd shims. Use the shell so Node can execute them.
-			const child = spawn(step.command, step.args, {
-				stdio: "inherit",
-				shell: shouldUseWindowsShell(step.command),
+async function runSelfUpdate(command: SelfUpdateCommand, versions: { from?: string; to?: string } = {}): Promise<void> {
+	// `update.self` traces the whole install; each package-manager step is a
+	// nested `package.command` span (program + first argument, exit code).
+	await withSpan("update.self", { "update.from": versions.from, "update.to": versions.to }, async () => {
+		console.log(chalk.dim(`Updating ${APP_NAME} with ${command.display}...`));
+		for (const step of command.steps ?? [command]) {
+			// Program + first argument only (`npm install`), never the full argv.
+			const commandLabel = `${basename(step.command)} ${step.args[0] ?? ""}`.trim();
+			await withSpan("package.command", { command: commandLabel }, (span) => {
+				return new Promise<void>((resolve, reject) => {
+					// Windows package managers are commonly .cmd shims. Use the shell so Node can execute them.
+					const child = spawn(step.command, step.args, {
+						stdio: "inherit",
+						shell: shouldUseWindowsShell(step.command),
+					});
+					child.on("error", (error) => {
+						reject(error);
+					});
+					child.on("close", (code, signal) => {
+						span.setAttributes({ exit_code: code ?? undefined, signal: signal ?? undefined });
+						if (code === 0) {
+							resolve();
+						} else if (signal) {
+							reject(new Error(`${step.display} terminated by signal ${signal}`));
+						} else {
+							reject(new Error(`${step.display} exited with code ${code ?? "unknown"}`));
+						}
+					});
+				});
 			});
-			child.on("error", (error) => {
-				reject(error);
-			});
-			child.on("close", (code, signal) => {
-				if (code === 0) {
-					resolve();
-				} else if (signal) {
-					reject(new Error(`${step.display} terminated by signal ${signal}`));
-				} else {
-					reject(new Error(`${step.display} exited with code ${code ?? "unknown"}`));
-				}
-			});
-		});
-	}
+		}
+	});
 }
 
 const UPDATE_RESTART_CONTINUATION_PROMPT =
@@ -1596,7 +1605,7 @@ export async function handlePackageCommand(args: string[]): Promise<boolean> {
 						return true;
 					}
 					try {
-						await runSelfUpdate(selfUpdateCommand);
+						await runSelfUpdate(selfUpdateCommand, { from: VERSION, to: selfUpdatePlan.targetVersion });
 					} catch (error: unknown) {
 						const message = error instanceof Error ? error.message : "Unknown package command error";
 						console.error(chalk.red(`Error: ${message}`));

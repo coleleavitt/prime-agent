@@ -24,6 +24,7 @@ function getEnv(): NodeJS.ProcessEnv {
 
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Readable } from "node:stream";
+import { type SpanAttributes, withSpan } from "@earendil-works/pi-ai";
 import { globSync } from "glob";
 import ignore from "ignore";
 import { minimatch } from "minimatch";
@@ -38,6 +39,17 @@ import type { PackageSource, SettingsManager } from "./settings-manager.js";
 const NETWORK_TIMEOUT_MS = 10000;
 const UPDATE_CHECK_CONCURRENCY = 4;
 const GIT_UPDATE_CONCURRENCY = 4;
+
+/**
+ * Attributes for a `package.command` span: program plus its first argument only
+ * (`git clone`, `npm install`), never the full argv, so registry URLs, tokens or
+ * local paths cannot leak into the trace log.
+ */
+function packageCommandAttributes(command: string, args: string[]): SpanAttributes {
+	const program = basename(command);
+	const firstArg = args[0];
+	return { command: firstArg ? `${program} ${firstArg}` : program };
+}
 
 function isOfflineModeEnabled(): boolean {
 	const value = process.env.PI_OFFLINE;
@@ -944,6 +956,12 @@ export class DefaultPackageManager implements PackageManager {
 	}
 
 	async install(source: string, options?: { local?: boolean }): Promise<void> {
+		await withSpan("package.install", { "package.source": source, "package.local": options?.local === true }, () =>
+			this.installUntraced(source, options),
+		);
+	}
+
+	private async installUntraced(source: string, options?: { local?: boolean }): Promise<void> {
 		const parsed = this.parseSource(source);
 		const scope: SourceScope = options?.local ? "project" : "user";
 		await this.withProgress("install", source, `Installing ${source}...`, async () => {
@@ -972,6 +990,12 @@ export class DefaultPackageManager implements PackageManager {
 	}
 
 	async remove(source: string, options?: { local?: boolean }): Promise<void> {
+		await withSpan("package.remove", { "package.source": source, "package.local": options?.local === true }, () =>
+			this.removeUntraced(source, options),
+		);
+	}
+
+	private async removeUntraced(source: string, options?: { local?: boolean }): Promise<void> {
 		const parsed = this.parseSource(source);
 		const scope: SourceScope = options?.local ? "project" : "user";
 		await this.withProgress("remove", source, `Removing ${source}...`, async () => {
@@ -996,6 +1020,14 @@ export class DefaultPackageManager implements PackageManager {
 	}
 
 	async update(source?: string): Promise<void> {
+		await withSpan("package.update", { "package.source": source ?? "all" }, async (span) => {
+			const count = await this.updateUntraced(source);
+			span.setAttributes({ "package.count": count });
+		});
+	}
+
+	/** Returns the number of configured sources that matched (and were updated). */
+	private async updateUntraced(source?: string): Promise<number> {
 		const globalSettings = this.settingsManager.getGlobalSettings();
 		const projectSettings = this.settingsManager.getProjectSettings();
 		const identity = source ? this.getPackageIdentity(source) : undefined;
@@ -1025,6 +1057,7 @@ export class DefaultPackageManager implements PackageManager {
 		}
 
 		await this.updateConfiguredSources(updateSources);
+		return updateSources.length;
 	}
 
 	private async updateConfiguredSources(sources: ConfiguredUpdateSource[]): Promise<void> {
@@ -1126,6 +1159,14 @@ export class DefaultPackageManager implements PackageManager {
 	}
 
 	async checkForAvailableUpdates(): Promise<PackageUpdate[]> {
+		return withSpan("package.check_updates", async (span) => {
+			const updates = await this.collectAvailableUpdates();
+			span.setAttributes({ "package.updates": updates.length });
+			return updates;
+		});
+	}
+
+	private async collectAvailableUpdates(): Promise<PackageUpdate[]> {
 		if (isOfflineModeEnabled()) {
 			return [];
 		}
@@ -2374,55 +2415,61 @@ export class DefaultPackageManager implements PackageManager {
 		args: string[],
 		options?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> },
 	): Promise<string> {
-		return new Promise((resolvePromise, reject) => {
-			const child = this.spawnCaptureCommand(command, args, options);
-			let stdout = "";
-			let stderr = "";
-			let timedOut = false;
-			const timeout =
-				typeof options?.timeoutMs === "number"
-					? setTimeout(() => {
-							timedOut = true;
-							child.kill();
-						}, options.timeoutMs)
-					: undefined;
+		return withSpan("package.command", packageCommandAttributes(command, args), (span) => {
+			return new Promise((resolvePromise, reject) => {
+				const child = this.spawnCaptureCommand(command, args, options);
+				let stdout = "";
+				let stderr = "";
+				let timedOut = false;
+				const timeout =
+					typeof options?.timeoutMs === "number"
+						? setTimeout(() => {
+								timedOut = true;
+								child.kill();
+							}, options.timeoutMs)
+						: undefined;
 
-			child.stdout?.on("data", (data) => {
-				stdout += data.toString();
-			});
-			child.stderr?.on("data", (data) => {
-				stderr += data.toString();
-			});
-			child.once("error", (error) => {
-				if (timeout) clearTimeout(timeout);
-				reject(error);
-			});
-			child.once("close", (code, signal) => {
-				if (timeout) clearTimeout(timeout);
-				if (timedOut) {
-					reject(new Error(`${command} ${args.join(" ")} timed out after ${options?.timeoutMs}ms`));
-					return;
-				}
-				if (code === 0) {
-					resolvePromise(stdout.trim());
-					return;
-				}
-				const exitStatus = code === null ? `signal ${signal ?? "unknown"}` : `code ${code}`;
-				reject(new Error(`${command} ${args.join(" ")} failed with ${exitStatus}: ${stderr || stdout}`));
+				child.stdout?.on("data", (data) => {
+					stdout += data.toString();
+				});
+				child.stderr?.on("data", (data) => {
+					stderr += data.toString();
+				});
+				child.once("error", (error) => {
+					if (timeout) clearTimeout(timeout);
+					reject(error);
+				});
+				child.once("close", (code, signal) => {
+					if (timeout) clearTimeout(timeout);
+					span.setAttributes({ exit_code: code ?? undefined, signal: signal ?? undefined });
+					if (timedOut) {
+						reject(new Error(`${command} ${args.join(" ")} timed out after ${options?.timeoutMs}ms`));
+						return;
+					}
+					if (code === 0) {
+						resolvePromise(stdout.trim());
+						return;
+					}
+					const exitStatus = code === null ? `signal ${signal ?? "unknown"}` : `code ${code}`;
+					reject(new Error(`${command} ${args.join(" ")} failed with ${exitStatus}: ${stderr || stdout}`));
+				});
 			});
 		});
 	}
 
 	private runCommand(command: string, args: string[], options?: { cwd?: string }): Promise<void> {
-		return new Promise((resolvePromise, reject) => {
-			const child = this.spawnCommand(command, args, options);
-			child.on("error", reject);
-			child.on("exit", (code) => {
-				if (code === 0) {
-					resolvePromise();
-				} else {
-					reject(new Error(`${command} ${args.join(" ")} failed with code ${code}`));
-				}
+		return withSpan("package.command", packageCommandAttributes(command, args), (span) => {
+			return new Promise((resolvePromise, reject) => {
+				const child = this.spawnCommand(command, args, options);
+				child.on("error", reject);
+				child.on("exit", (code) => {
+					span.setAttributes({ exit_code: code ?? undefined });
+					if (code === 0) {
+						resolvePromise();
+					} else {
+						reject(new Error(`${command} ${args.join(" ")} failed with code ${code}`));
+					}
+				});
 			});
 		});
 	}

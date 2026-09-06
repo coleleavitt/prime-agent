@@ -1,8 +1,9 @@
 import { EventEmitter } from "node:events";
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 import { PassThrough } from "node:stream";
+import { installDefaultSpanSink, type SpanEndRecord, setSpanSink } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DefaultPackageManager, type ProgressEvent, type ResolvedResource } from "../src/core/package-manager.js";
 import { SettingsManager } from "../src/core/settings-manager.js";
@@ -1881,6 +1882,151 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			child.emit("close", 0, null);
 
 			await expect(capturePromise).resolves.toBe("abc123");
+		});
+	});
+
+	describe("trace spans", () => {
+		const spans: SpanEndRecord[] = [];
+
+		beforeEach(() => {
+			spans.length = 0;
+			setSpanSink((record) => spans.push(record));
+		});
+
+		afterEach(() => {
+			installDefaultSpanSink();
+		});
+
+		const named = (name: string) => spans.filter((span) => span.name === name);
+
+		it("wraps install of a local path in package.install", async () => {
+			const localDir = join(tempDir, "local-pkg");
+			mkdirSync(localDir, { recursive: true });
+
+			await packageManager.install(localDir, { local: true });
+
+			expect(named("package.install")).toHaveLength(1);
+			expect(named("package.install")[0]).toMatchObject({
+				status: "ok",
+				attrs: { "package.source": localDir, "package.local": true },
+			});
+		});
+
+		it("records a failed install as an error span and re-throws unchanged", async () => {
+			const missing = join(tempDir, "does-not-exist");
+			await expect(packageManager.install(missing)).rejects.toThrow(`Path does not exist: ${missing}`);
+			expect(named("package.install")[0]).toMatchObject({
+				status: "error",
+				error: `Path does not exist: ${missing}`,
+				attrs: { "package.source": missing, "package.local": false },
+			});
+		});
+
+		it("nests package.command spans under package.install for npm installs", async () => {
+			const spawnSpy = vi
+				.spyOn(packageManager as any, "spawnCommand")
+				.mockImplementation((...callArgs: unknown[]) => {
+					const [command, args] = callArgs as [string, string[]];
+					const child = new MockSpawnedProcess();
+					queueMicrotask(() => child.emit("exit", command === "npm" && args[0] === "install" ? 0 : 1));
+					return child;
+				});
+
+			await packageManager.install("npm:@scope/pkg");
+
+			expect(spawnSpy).toHaveBeenCalledWith("npm", ["install", "-g", "@scope/pkg"], undefined);
+			const install = named("package.install")[0];
+			const command = named("package.command")[0];
+			expect(install).toMatchObject({ status: "ok", attrs: { "package.source": "npm:@scope/pkg" } });
+			// Program + first argument only: the package spec never reaches the trace log.
+			expect(command).toMatchObject({ status: "ok", attrs: { command: "npm install", exit_code: 0 } });
+			expect(command.attrs.command).not.toContain("@scope/pkg");
+			expect(command.parentSpanId).toBe(install.spanId);
+			expect(command.traceId).toBe(install.traceId);
+		});
+
+		it("wraps remove in package.remove", async () => {
+			await packageManager.remove(join(tempDir, "anything"));
+			expect(named("package.remove")[0]).toMatchObject({
+				status: "ok",
+				attrs: { "package.source": join(tempDir, "anything"), "package.local": false },
+			});
+		});
+
+		it("wraps update in package.update with the source or 'all'", async () => {
+			await packageManager.update();
+			expect(named("package.update")[0]).toMatchObject({
+				status: "ok",
+				attrs: { "package.source": "all", "package.count": 0 },
+			});
+
+			spans.length = 0;
+			await expect(packageManager.update("npm:missing")).rejects.toThrow();
+			expect(named("package.update")[0]).toMatchObject({
+				status: "error",
+				attrs: { "package.source": "npm:missing" },
+			});
+		});
+
+		it("wraps checkForAvailableUpdates in package.check_updates with the update count", async () => {
+			await expect(packageManager.checkForAvailableUpdates()).resolves.toEqual([]);
+			expect(named("package.check_updates")[0]).toMatchObject({ status: "ok", attrs: { "package.updates": 0 } });
+
+			spans.length = 0;
+			process.env.PI_OFFLINE = "1";
+			await expect(packageManager.checkForAvailableUpdates()).resolves.toEqual([]);
+			expect(named("package.check_updates")[0]).toMatchObject({ status: "ok", attrs: { "package.updates": 0 } });
+		});
+
+		it("records exit code and signal on captured commands", async () => {
+			const managerWithInternals = packageManager as unknown as {
+				spawnCaptureCommand(command: string, args: string[]): MockSpawnedProcess;
+				runCommandCapture(command: string, args: string[], options?: { timeoutMs?: number }): Promise<string>;
+			};
+			const child = new MockSpawnedProcess();
+			vi.spyOn(managerWithInternals, "spawnCaptureCommand").mockReturnValue(child);
+
+			const capturePromise = managerWithInternals.runCommandCapture("/usr/bin/git", ["ls-remote", "origin", "HEAD"]);
+			child.stderr.write("fatal: could not read from remote\n");
+			child.stderr.end();
+			child.emit("close", 128, null);
+			await expect(capturePromise).rejects.toThrow("failed with code 128");
+
+			expect(named("package.command")[0]).toMatchObject({
+				status: "error",
+				attrs: { command: "git ls-remote", exit_code: 128 },
+			});
+			expect(named("package.command")[0].attrs.command).not.toContain("origin");
+
+			spans.length = 0;
+			const killed = new MockSpawnedProcess();
+			vi.spyOn(managerWithInternals, "spawnCaptureCommand").mockReturnValue(killed);
+			const killedPromise = managerWithInternals.runCommandCapture("git", ["fetch"]);
+			killed.emit("close", null, "SIGKILL");
+			await expect(killedPromise).rejects.toThrow("signal SIGKILL");
+			expect(named("package.command")[0]).toMatchObject({
+				status: "error",
+				attrs: { command: "git fetch", signal: "SIGKILL" },
+			});
+			expect(named("package.command")[0].attrs).not.toHaveProperty("exit_code");
+		});
+
+		it("traces a real child process through runCommand", async () => {
+			const managerWithInternals = packageManager as unknown as {
+				runCommand(command: string, args: string[]): Promise<void>;
+			};
+
+			await managerWithInternals.runCommand(process.execPath, ["-e", ""]);
+			expect(named("package.command")[0]).toMatchObject({
+				status: "ok",
+				attrs: { command: `${basename(process.execPath)} -e`, exit_code: 0 },
+			});
+
+			spans.length = 0;
+			await expect(managerWithInternals.runCommand(process.execPath, ["-e", "process.exit(3)"])).rejects.toThrow(
+				"failed with code 3",
+			);
+			expect(named("package.command")[0]).toMatchObject({ status: "error", attrs: { exit_code: 3 } });
 		});
 	});
 });
