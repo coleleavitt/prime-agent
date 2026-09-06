@@ -237,6 +237,7 @@ export class DaemonAgentConnection implements AgentConnection {
 	private latestSnapshotIsFresh = false;
 	private attachedSessionId: string | undefined;
 	private attachedSessionFile: string | undefined;
+	private lastRecreateFailure: string | undefined;
 	private daemonLogPath: string | undefined;
 	private updateRestartPending = false;
 	private updateReconnectFailed = false;
@@ -1629,6 +1630,7 @@ export class DaemonAgentConnection implements AgentConnection {
 			let deadline: number | undefined;
 			let attempt = 0;
 			let lastError: Error = cause;
+			let recreatedAfterLoss = false;
 			while (!this.disposed) {
 				// A held direct link owns session liveness: control-plane recovery retries unbounded,
 				// and the bounded session-plane deadline arms only once the direct link is gone.
@@ -1678,6 +1680,20 @@ export class DaemonAgentConnection implements AgentConnection {
 						return;
 					}
 					if (isUnknownActiveSessionError(lastError)) {
+						// The daemon came back without this session (a forced shutdown or a
+						// crash, not a coordinated update restart). Reopen it from its file
+						// exactly like `--resume` would, then continue the normal attach path.
+						if (!recreatedAfterLoss) {
+							try {
+								if (await this.recreateSessionAfterDaemonLoss()) {
+									recreatedAfterLoss = true;
+									continue;
+								}
+							} catch (recreateError) {
+								this.lastRecreateFailure =
+									recreateError instanceof Error ? recreateError.message : String(recreateError);
+							}
+						}
 						break;
 					}
 					// A direct-half failure must not tear down a control-plane socket with a completed handshake.
@@ -1711,14 +1727,62 @@ export class DaemonAgentConnection implements AgentConnection {
 		return this.reconnectPromise;
 	}
 
+	/**
+	 * After an unplanned daemon loss the new supervisor knows nothing about this
+	 * session. When the session file and the runtime config that created it are
+	 * known, ask the daemon to load it again (the same `create` a `--resume`
+	 * performs) and adopt the new active session id so the reconnect loop can
+	 * attach to it. Returns false when there is not enough information.
+	 */
+	private async recreateSessionAfterDaemonLoss(): Promise<boolean> {
+		const sessionFile = this.attachedSessionFile;
+		const config = this.options.sessionRecoveryConfig;
+		if (!sessionFile || !config || this.disposed) return false;
+		// Someone else (an update restart, another window) may already have reopened it.
+		const listed = await this.client.request({ type: "list" }, 30000, { recoverable: false });
+		let activeSessionId: string | undefined;
+		if (listed.success) {
+			const existing = readSessionSummaries(listed.data).find(
+				(summary) => summary.sessionFile === sessionFile && summary.activeSessionId !== undefined,
+			);
+			activeSessionId = existing?.activeSessionId;
+		}
+		if (!activeSessionId) {
+			const created = await this.client.request(
+				{
+					type: "create",
+					config,
+					sessionPath: sessionFile,
+					env: this.options.sendClientEnv ? collectDaemonClientEnv() : undefined,
+					lifecycle: this.options.ownedSession ? "client_owned" : "resident",
+					launchEnv: collectDaemonLaunchEnv(),
+				},
+				DAEMON_LONG_RUNNING_REQUEST_TIMEOUT_MS,
+				{ recoverable: false },
+			);
+			if (!created.success) throw deserializeDaemonError(created);
+			const summary = created.data as { activeSessionId?: string } | undefined;
+			activeSessionId = summary?.activeSessionId;
+		}
+		if (!activeSessionId || this.disposed) return false;
+		this.activeSessionId = activeSessionId;
+		this.lastEventSequence = undefined;
+		this.lastEventCursor = undefined;
+		this.retiredEventGenerations.clear();
+		return true;
+	}
+
 	private describeReconnectFailure(error: Error): string {
 		if (!isUnknownActiveSessionError(error)) {
 			return `Daemon reconnection failed: ${error.message}`;
 		}
 		const resumeTarget = this.attachedSessionFile ?? this.attachedSessionId;
+		const recreateFailure = this.lastRecreateFailure;
+		this.lastRecreateFailure = undefined;
 		return (
-			`The daemon no longer has this session running, so it cannot be reattached. ` +
-			`Its conversation is still saved` +
+			`The daemon no longer has this session running, so it cannot be reattached` +
+			(recreateFailure ? ` (reopening it from its file failed: ${recreateFailure})` : ``) +
+			`. Its conversation is still saved` +
 			(resumeTarget ? `; reopen it with \`prime-agent --resume ${resumeTarget}\`.` : `.`)
 		);
 	}

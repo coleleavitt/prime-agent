@@ -64,6 +64,7 @@ class FakeDaemonClient {
 	cancelPromptAdmissionStatus: "cancelled" | "owned" | "unknown" = "owned";
 	serverCapabilities = new Set<string>();
 	updateRestartSessions: Array<Record<string, unknown>> = [];
+	createError: string | undefined;
 	hello: DaemonHello | undefined = {
 		type: "daemon_hello",
 		socketPath: "/tmp/fake.sock",
@@ -111,6 +112,23 @@ class FakeDaemonClient {
 					command: command.type,
 					success: true,
 					data: { sessions: this.updateRestartSessions },
+				};
+			case "create":
+				if (this.createError) {
+					return { type: "response", command: command.type, success: false, error: this.createError };
+				}
+				// The recreated session is attachable from now on.
+				this.attachUnknownActiveSession = false;
+				return {
+					type: "response",
+					command: command.type,
+					success: true,
+					data: {
+						id: "active-recreated",
+						activeSessionId: "active-recreated",
+						sessionId: "session-current",
+						sessionFile: "/tmp/session-current.jsonl",
+					},
 				};
 			case "attach":
 				if (this.attachFailures > 0) {
@@ -2160,6 +2178,62 @@ describe("DaemonAgentConnection", () => {
 
 		expect(events).toEqual([expect.objectContaining({ type: "connection_status", status: "reconnecting" })]);
 		expect(fakeClient.requests.at(-1)).toMatchObject({ type: "detach", activeSessionId: "active-restored" });
+	});
+
+	it("reopens the session from its file when the daemon came back without it", async () => {
+		const fakeClient = new FakeDaemonClient();
+		const config = { agentDir: "/tmp/agent", cwd: "/tmp/project" } as never;
+		const connection = new DaemonAgentConnection(asDaemonClient(fakeClient), "active-original", {
+			recoverDaemon: async () => undefined,
+			sessionRecoveryConfig: config,
+		});
+		const events: AgentConnectionEvent[] = [];
+		connection.subscribe((event) => events.push(event));
+		await connection.attach();
+
+		// A forced shutdown: the new supervisor has no such active session.
+		fakeClient.attachUnknownActiveSession = true;
+		fakeClient.emitClose(new Error("Daemon socket closed"));
+
+		await vi.waitFor(() => {
+			expect(events.some((event) => event.type === "session_resynced")).toBe(true);
+		});
+		const create = fakeClient.requests.find((request) => request.type === "create");
+		expect(create).toMatchObject({
+			type: "create",
+			sessionPath: "/tmp/session-current.jsonl",
+			config,
+			lifecycle: "resident",
+		});
+		expect(fakeClient.requests.at(-1)).not.toMatchObject({ type: "detach" });
+		expect(fakeClient.requests.filter((r) => r.type === "attach").map((r) => r.activeSessionId)).toEqual([
+			"active-original",
+			"active-original",
+			"active-recreated",
+		]);
+		expect(events.some((event) => event.type === "closed")).toBe(false);
+		expect(events.at(-1)).toMatchObject({ type: "connection_status", status: "connected" });
+	});
+
+	it("still closes with the resume hint when the session cannot be recreated", async () => {
+		const fakeClient = new FakeDaemonClient();
+		fakeClient.createError = "session file is corrupt";
+		const connection = new DaemonAgentConnection(asDaemonClient(fakeClient), "active-original", {
+			recoverDaemon: async () => undefined,
+			sessionRecoveryConfig: { agentDir: "/tmp/agent", cwd: "/tmp/project" } as never,
+		});
+		const closedEvents: AgentConnectionEvent[] = [];
+		connection.subscribe((event) => {
+			if (event.type === "closed") closedEvents.push(event);
+		});
+		await connection.attach();
+		fakeClient.attachUnknownActiveSession = true;
+		fakeClient.emitClose(new Error("Daemon socket closed"));
+		await vi.waitFor(() => {
+			expect(closedEvents).toHaveLength(1);
+		});
+		const closedError = closedEvents[0]?.type === "closed" ? closedEvents[0].error : undefined;
+		expect(closedError).toContain("session file is corrupt");
 	});
 
 	it("stops reconnecting once the daemon reports the session is gone", async () => {
