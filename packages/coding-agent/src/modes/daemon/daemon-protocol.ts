@@ -1,5 +1,11 @@
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ImageContent, ServiceTier, TextContent, Transport } from "@earendil-works/pi-ai";
+import {
+	currentTraceparent,
+	type ImageContent,
+	type ServiceTier,
+	type TextContent,
+	type Transport,
+} from "@earendil-works/pi-ai";
 import type {
 	AgentSessionMessageDeliveryMode,
 	AgentSessionMessageReceipt,
@@ -282,6 +288,12 @@ export interface DaemonCommandEnvelope<TCommand extends DaemonCommand = DaemonCo
 	id: DaemonCommandId;
 	protocol: DaemonProtocolInfo;
 	clientId?: DaemonClientId;
+	/**
+	 * W3C trace context of the sending client (see docs/observability.md).
+	 * Lives on the envelope, not the command, so the hashed DaemonCommand
+	 * schema is unaffected; older clients simply omit it.
+	 */
+	traceparent?: string;
 	command: TCommand;
 }
 
@@ -1229,11 +1241,13 @@ export function createDaemonCommandEnvelope<TCommand extends DaemonCommand>(
 	clientId?: DaemonClientId,
 	protocolVersion: DaemonProtocolVersion = DAEMON_PROTOCOL_VERSION,
 ): DaemonCommandEnvelope<TCommand> {
+	const traceparent = currentTraceparent();
 	return {
 		type: "command",
 		id,
 		protocol: { name: DAEMON_PROTOCOL_NAME, version: protocolVersion },
 		...(clientId ? { clientId } : {}),
+		...(traceparent !== undefined ? { traceparent } : {}),
 		command,
 	};
 }
@@ -1247,6 +1261,7 @@ export function isDaemonCommandEnvelope(value: unknown): value is DaemonCommandE
 		id?: unknown;
 		protocol?: { name?: unknown; version?: unknown };
 		clientId?: unknown;
+		traceparent?: unknown;
 		command?: unknown;
 	};
 	return (
@@ -1257,6 +1272,7 @@ export function isDaemonCommandEnvelope(value: unknown): value is DaemonCommandE
 		candidate.protocol.version >= DAEMON_COMMAND_ENVELOPE_MIN_PROTOCOL_VERSION &&
 		candidate.protocol.version <= DAEMON_PROTOCOL_VERSION &&
 		(candidate.clientId === undefined || typeof candidate.clientId === "string") &&
+		(candidate.traceparent === undefined || typeof candidate.traceparent === "string") &&
 		typeof candidate.command === "object" &&
 		candidate.command !== null
 	);

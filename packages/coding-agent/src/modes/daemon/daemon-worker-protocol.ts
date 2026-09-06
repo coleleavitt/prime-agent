@@ -41,6 +41,12 @@ export type DaemonWorkerFrameHeader =
 			kind: "command";
 			requestId: string;
 			commandType: string;
+			/**
+			 * W3C trace context of the sender (see docs/observability.md). Carried in
+			 * the transport header rather than the command body so the hashed
+			 * DaemonCommand schema stays untouched; legacy supervisors omit it.
+			 */
+			traceparent?: string;
 	  }
 	| {
 			kind: "outbound";
@@ -260,7 +266,11 @@ export function isDaemonWorkerFrameHeader(value: unknown): value is DaemonWorker
 	}
 	const candidate = value as Record<string, unknown>;
 	if (candidate.kind === "command") {
-		return typeof candidate.requestId === "string" && typeof candidate.commandType === "string";
+		return (
+			typeof candidate.requestId === "string" &&
+			typeof candidate.commandType === "string" &&
+			(candidate.traceparent === undefined || typeof candidate.traceparent === "string")
+		);
 	}
 	return (
 		candidate.kind === "outbound" &&

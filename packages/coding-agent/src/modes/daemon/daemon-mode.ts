@@ -12,7 +12,14 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { stat } from "node:fs/promises";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { type Api, getLogger, type Model } from "@earendil-works/pi-ai";
+import {
+	type Api,
+	getLogger,
+	type Model,
+	parseTraceparent,
+	runWithTraceContext,
+	withSpan,
+} from "@earendil-works/pi-ai";
 import { createCliSubprocessEnv, createCliSubprocessLaunchSpec } from "../../cli/subprocess-launch.js";
 import {
 	appendRotatingLog,
@@ -2522,7 +2529,22 @@ export class AgentDaemon {
 		};
 	}
 
-	private async createRlmSubagentRuntime(
+	/**
+	 * Child sessions are created in this worker process, so the `rlm.child`
+	 * span wraps admission (runtime construction, publication, ledger append)
+	 * rather than a process spawn; it inherits the parent's active context so
+	 * the child shares the parent turn's trace id.
+	 */
+	private createRlmSubagentRuntime(
+		parentState: ActiveSessionState,
+		options: CreateRlmSubagentRuntimeOptions,
+	): Promise<AgentSessionRuntime> {
+		return withSpan("rlm.child", { "rlm.child_id": options.id, "rlm.depth": options.rlmDepth }, () =>
+			this.admitRlmSubagentRuntime(parentState, options),
+		);
+	}
+
+	private async admitRlmSubagentRuntime(
 		parentState: ActiveSessionState,
 		options: CreateRlmSubagentRuntimeOptions,
 	): Promise<AgentSessionRuntime> {
@@ -3261,7 +3283,7 @@ export class AgentDaemon {
 				try {
 					for (const frame of decoder.push(chunk)) {
 						if (frame.header.kind === "command") {
-							void this.handleLine(client, frame.payload.toString("utf8"));
+							void this.handleCommandFrame(client, frame.header, frame.payload.toString("utf8"));
 						}
 					}
 				} catch (error) {
@@ -3360,6 +3382,28 @@ export class AgentDaemon {
 			}
 		}
 		return parsed;
+	}
+
+	/**
+	 * Run one worker-transport command under a `daemon.command` span. The span
+	 * continues the supervisor's trace when the frame header carries a valid
+	 * `traceparent` and roots a fresh trace otherwise (legacy supervisors omit
+	 * the field), so a turn started by the command is always correlatable.
+	 * `withSpan` invokes its body synchronously, which preserves handleLine's
+	 * contract that prompt admission is registered before its first await.
+	 */
+	private handleCommandFrame(
+		client: DaemonSocketClient,
+		header: Extract<DaemonWorkerFrameHeader, { kind: "command" }>,
+		line: string,
+	): Promise<void> {
+		return runWithTraceContext(parseTraceparent(header.traceparent), () =>
+			withSpan(
+				"daemon.command",
+				{ "daemon.request_id": header.requestId, "daemon.command_type": header.commandType },
+				() => this.handleLine(client, line),
+			),
+		);
 	}
 
 	private async handleLine(client: DaemonSocketClient, line: string): Promise<void> {

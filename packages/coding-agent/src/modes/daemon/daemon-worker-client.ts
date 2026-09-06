@@ -1,4 +1,5 @@
 import { createConnection, type Socket } from "node:net";
+import { currentTraceparent } from "@earendil-works/pi-ai";
 import { serializeJsonLine } from "../rpc/jsonl.js";
 import { type PrivateFrame, PrivateFramedChannel } from "../session-worker/private-framing.js";
 import {
@@ -223,9 +224,18 @@ export class DaemonWorkerClient {
 		// process.exit(1). Attaching a sink keeps it "handled"; the rejection is still
 		// delivered to whoever awaits the promise returned below.
 		void response.catch(() => undefined);
+		// The sender's trace context rides in the frame header (not the command
+		// body, which is schema-hashed) so the worker continues this trace instead
+		// of rooting a new one per command. Legacy workers ignore unknown fields.
+		const traceparent = currentTraceparent();
 		try {
 			await this.channel.send(
-				{ kind: "command", requestId: id, commandType: command.type },
+				{
+					kind: "command",
+					requestId: id,
+					commandType: command.type,
+					...(traceparent !== undefined ? { traceparent } : {}),
+				},
 				Buffer.from(serializeJsonLine(fullCommand)),
 			);
 		} catch (error) {
