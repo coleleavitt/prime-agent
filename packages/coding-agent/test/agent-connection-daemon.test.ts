@@ -1,6 +1,12 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { getModel } from "@earendil-works/pi-ai";
-import { describe, expect, it, vi } from "vitest";
+import {
+	currentTraceparent,
+	getModel,
+	installDefaultSpanSink,
+	type SpanEndRecord,
+	setSpanSink,
+} from "@earendil-works/pi-ai";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MissingSessionCwdError } from "../src/core/session-cwd.js";
 import { SessionImportFileNotFoundError } from "../src/core/session-import-errors.js";
 import {
@@ -37,6 +43,8 @@ import type { DaemonWorkerClient } from "../src/modes/daemon/daemon-worker-clien
 class FakeDaemonClient {
 	readonly requests: DaemonCommand[] = [];
 	readonly requestTimeouts: number[] = [];
+	/** Trace context active when each request was issued (what the real client puts on the envelope). */
+	readonly requestTraceparents: Array<string | undefined> = [];
 	attachResultFactory: ((command: Extract<DaemonCommand, { type: "attach" }>) => DaemonAttachResult) | undefined;
 	restoredAttachGate: Promise<void> | undefined;
 	restoredAttachCompleted = 0;
@@ -83,6 +91,7 @@ class FakeDaemonClient {
 	): Promise<DaemonResponse> {
 		this.requests.push(command);
 		this.requestTimeouts.push(timeoutMs);
+		this.requestTraceparents.push(currentTraceparent());
 		switch (command.type) {
 			case "detach":
 			case "complete_owned_session":
@@ -3873,5 +3882,187 @@ describe("DaemonAgentConnection", () => {
 		expect(fakeClient.getCloseListenerCount()).toBe(0);
 		expect(fakeClient.requests.map((request) => request.type)).toEqual(["attach", "detach"]);
 		expect(fakeClient.closeCount).toBe(1);
+	});
+});
+
+describe("DaemonAgentConnection client.turn tracing", () => {
+	const ended: SpanEndRecord[] = [];
+	const byName = (name: string) => ended.filter((record) => record.name === name);
+	const assistantMessage: AgentMessage = {
+		role: "assistant",
+		content: [{ type: "text", text: "done" }],
+		api: "test-api",
+		provider: "test-provider",
+		model: "test-model",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: "stop",
+		timestamp: 2,
+	};
+	const emitAgentStart = (client: FakeDaemonClient, activeSessionId = "active-1") =>
+		client.emitMessage({ type: "session_event", activeSessionId, event: { type: "agent_start" } });
+	const emitAssistantMessageEnd = (client: FakeDaemonClient, activeSessionId = "active-1") =>
+		client.emitMessage({
+			type: "session_event",
+			activeSessionId,
+			event: { type: "message_end", message: assistantMessage },
+		});
+	const emitAgentEnd = (client: FakeDaemonClient, activeSessionId = "active-1") =>
+		client.emitMessage({
+			type: "session_event",
+			activeSessionId,
+			event: { type: "agent_end", messages: [assistantMessage] },
+		});
+	const settle = async () => {
+		for (let i = 0; i < 4; i++) await Promise.resolve();
+	};
+
+	beforeEach(() => {
+		ended.length = 0;
+		setSpanSink((record) => ended.push(record));
+	});
+	afterEach(() => {
+		installDefaultSpanSink();
+	});
+
+	it("opens one client.turn under client.prompt that ends on the run's agent_end", async () => {
+		const fakeClient = new FakeDaemonClient();
+		const connection = new DaemonAgentConnection(asDaemonClient(fakeClient), "active-1");
+
+		await connection.prompt("hello", { source: "user" });
+		expect(byName("client.prompt")).toHaveLength(1);
+		expect(byName("client.turn")).toHaveLength(0);
+
+		emitAgentStart(fakeClient);
+		emitAssistantMessageEnd(fakeClient);
+		emitAssistantMessageEnd(fakeClient);
+		emitAgentEnd(fakeClient);
+		await settle();
+
+		const [prompt] = byName("client.prompt");
+		const turns = byName("client.turn");
+		expect(turns).toHaveLength(1);
+		const [turn] = turns;
+		expect(turn).toMatchObject({
+			status: "ok",
+			traceId: prompt?.traceId,
+			parentSpanId: prompt?.spanId,
+			attrs: {
+				"session.active_id": "active-1",
+				"client.source": "user",
+				"turn.queued": false,
+				"turn.messages": 2,
+			},
+		});
+		// The prompt request carried client.turn as the ambient context, so the worker nests under it.
+		expect(fakeClient.requestTraceparents).toEqual([`00-${turn?.traceId}-${turn?.spanId}-01`]);
+
+		// A later agent_end without an open turn is ignored.
+		emitAgentEnd(fakeClient);
+		await settle();
+		expect(byName("client.turn")).toHaveLength(1);
+	});
+
+	it("closes queued turns in submission order, one per agent_end", async () => {
+		const fakeClient = new FakeDaemonClient();
+		const connection = new DaemonAgentConnection(asDaemonClient(fakeClient), "active-1");
+
+		await connection.prompt("first", { source: "user" });
+		emitAgentStart(fakeClient);
+		await connection.prompt("second", { source: "user", queueIfBusy: true });
+		expect(fakeClient.requestTraceparents).toHaveLength(2);
+		expect(fakeClient.requestTraceparents[0]).not.toEqual(fakeClient.requestTraceparents[1]);
+
+		emitAssistantMessageEnd(fakeClient);
+		emitAgentEnd(fakeClient);
+		await settle();
+		expect(byName("client.turn")).toHaveLength(1);
+
+		emitAgentStart(fakeClient);
+		emitAgentEnd(fakeClient);
+		await settle();
+
+		const turns = byName("client.turn");
+		expect(turns).toHaveLength(2);
+		expect(turns.map((turn) => `00-${turn.traceId}-${turn.spanId}-01`)).toEqual(fakeClient.requestTraceparents);
+		expect(turns[0]).toMatchObject({ status: "ok", attrs: { "turn.queued": false, "turn.messages": 1 } });
+		expect(turns[1]).toMatchObject({ status: "ok", attrs: { "turn.queued": true, "turn.messages": 0 } });
+	});
+
+	it("ends an open turn with the close reason when the session closes mid-run", async () => {
+		const fakeClient = new FakeDaemonClient();
+		const connection = new DaemonAgentConnection(asDaemonClient(fakeClient), "active-1");
+		connection.subscribe(() => {});
+		await connection.attach();
+
+		await connection.prompt("hello");
+		emitAgentStart(fakeClient);
+		fakeClient.emitMessage({ type: "session_closed", activeSessionId: "active-1", reason: "killed" });
+		await settle();
+
+		const turns = byName("client.turn");
+		expect(turns).toHaveLength(1);
+		expect(turns[0]).toMatchObject({ status: "error", attrs: { "turn.messages": 0 } });
+		expect(turns[0]?.error).toContain("The daemon stopped this agent session.");
+
+		emitAgentEnd(fakeClient);
+		await settle();
+		expect(byName("client.turn")).toHaveLength(1);
+	});
+
+	it("ends an open turn when the connection is disposed", async () => {
+		const fakeClient = new FakeDaemonClient();
+		const connection = new DaemonAgentConnection(asDaemonClient(fakeClient), "active-1");
+		await connection.attach();
+
+		await connection.prompt("hello");
+		await connection.dispose();
+
+		const turns = byName("client.turn");
+		expect(turns).toHaveLength(1);
+		expect(turns[0]).toMatchObject({ status: "error" });
+		expect(turns[0]?.error).toContain("disposed");
+	});
+
+	it("ends the turn with an error immediately when admission is rejected", async () => {
+		const fakeClient = new FakeDaemonClient();
+		fakeClient.promptResponseError = "session rejected prompt";
+		const connection = new DaemonAgentConnection(asDaemonClient(fakeClient), "active-1");
+
+		await expect(connection.prompt("hello")).rejects.toEqual(new Error("session rejected prompt"));
+
+		const turns = byName("client.turn");
+		expect(turns).toHaveLength(1);
+		expect(turns[0]).toMatchObject({ status: "error", error: "session rejected prompt" });
+		expect(byName("client.prompt")[0]).toMatchObject({ status: "error" });
+
+		// No dangling turn: a later agent_end closes nothing.
+		emitAgentEnd(fakeClient);
+		await settle();
+		expect(byName("client.turn")).toHaveLength(1);
+	});
+
+	it("ends the turn with an error when a signal-backed admission is cancelled", async () => {
+		const fakeClient = new FakeDaemonClient();
+		fakeClient.promptError = new Error("transport failed");
+		fakeClient.cancelPromptAdmissionStatus = "cancelled";
+		const connection = new DaemonAgentConnection(asDaemonClient(fakeClient), "active-1");
+
+		await expect(connection.prompt("hello", { signal: new AbortController().signal })).rejects.toMatchObject({
+			message: "transport failed",
+		});
+
+		const turns = byName("client.turn");
+		expect(turns).toHaveLength(1);
+		expect(turns[0]).toMatchObject({ status: "error", error: "transport failed" });
+		// The prompt request (not the cancellation) ran under the turn context.
+		expect(fakeClient.requests.map((request) => request.type)).toEqual(["prompt", "cancel_prompt_admission"]);
+		expect(fakeClient.requestTraceparents[0]).toBe(`00-${turns[0]?.traceId}-${turns[0]?.spanId}-01`);
 	});
 });

@@ -1,6 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { type ImageContent, type ServiceTier, type Transport, withSpan } from "@earendil-works/pi-ai";
+import {
+	type ImageContent,
+	runWithTraceContext,
+	type ServiceTier,
+	type Span,
+	startSpan,
+	type Transport,
+	withSpan,
+} from "@earendil-works/pi-ai";
 import { appendRotatingLog, getAgentLogPath, getDaemonLogPath } from "../../config.js";
 import type { AgentSessionMessageReceipt, AgentSessionMessageSafetyStatus } from "../../core/agent-messages.js";
 import type { AgentSessionEvent } from "../../core/agent-session.js";
@@ -108,6 +116,18 @@ interface DaemonSnapshotAssembly {
 	resolve: (snapshot: DaemonSessionSnapshot) => void;
 	reject: (error: Error) => void;
 	timeout: ReturnType<typeof setTimeout>;
+}
+
+/**
+ * One submitted prompt's user-perceived run, from the moment the request is
+ * sent until the client sees the run end (`agent_end`, a `closed` event, or
+ * disposal). The span is the active trace context while the prompt request
+ * is issued so the worker's `daemon.command`/`agent.prompt` nest under it.
+ */
+interface ClientTurn {
+	span: Span;
+	/** Assistant `message_end` events observed while this turn was the oldest open one. */
+	messages: number;
 }
 
 export const DAEMON_REFINE_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
@@ -257,6 +277,10 @@ export class DaemonAgentConnection implements AgentConnection {
 	private disposing = false;
 	private disposed = false;
 	private disposePromise?: Promise<void>;
+	/** Open `client.turn` spans, oldest first; each `agent_end` closes the oldest. */
+	private readonly openClientTurns: ClientTurn[] = [];
+	/** Last run state seen through `agent_start`/`agent_end`; undefined until observed. */
+	private agentRunActive: boolean | undefined;
 
 	constructor(
 		private readonly client: DaemonTransportClient,
@@ -971,10 +995,13 @@ export class DaemonAgentConnection implements AgentConnection {
 	}
 
 	/**
-	 * Client-side root for a user prompt. The command envelope carries this
-	 * span's traceparent, so the worker's daemon.command and agent.prompt spans
-	 * nest under it and the trace starts in the process the user is looking at
-	 * (with the submit -> admission latency; for prompt_and_wait, the whole run).
+	 * Client-side root for a user prompt. A `client.turn` child span is opened
+	 * right before the request is sent and is the active context for it, so the
+	 * command envelope carries its traceparent and the worker's daemon.command
+	 * and agent.prompt spans nest under client.prompt -> client.turn. The trace
+	 * starts in the process the user is looking at: client.prompt measures
+	 * submit -> admission (for prompt_and_wait, the whole run) and client.turn
+	 * measures submit -> the run's `agent_end` as observed by this client.
 	 */
 	private promptWithAdmissionCancellation(
 		type: "prompt" | "prompt_and_wait",
@@ -1003,18 +1030,26 @@ export class DaemonAgentConnection implements AgentConnection {
 			throw new AgentConnectionPromptAdmissionError("Prompt admission was cancelled.", "cancelled");
 		}
 		if (!signal) {
-			await this.requestData<unknown>(
-				{
-					type,
-					activeSessionId: this.activeSessionId,
-					message,
-					images: options?.images,
-					streamingBehavior: options?.streamingBehavior,
-					queueIfBusy: options?.queueIfBusy,
-					source: options?.source,
-				},
-				DAEMON_LONG_RUNNING_REQUEST_TIMEOUT_MS,
-			);
+			const turn = this.openClientTurn(options);
+			try {
+				await runWithTraceContext(turn.span.context, () =>
+					this.requestData<unknown>(
+						{
+							type,
+							activeSessionId: this.activeSessionId,
+							message,
+							images: options?.images,
+							streamingBehavior: options?.streamingBehavior,
+							queueIfBusy: options?.queueIfBusy,
+							source: options?.source,
+						},
+						DAEMON_LONG_RUNNING_REQUEST_TIMEOUT_MS,
+					),
+				);
+			} catch (error) {
+				this.failClientTurn(turn, error);
+				throw error;
+			}
 			return;
 		}
 		const admissionId = `prompt-admission:${randomUUID()}`;
@@ -1040,15 +1075,16 @@ export class DaemonAgentConnection implements AgentConnection {
 			admissionId,
 		} as Extract<DaemonCommandBody, { type: typeof type }>;
 		let promptError: unknown;
-		const promptRequest = this.requestData<unknown>(command, DAEMON_LONG_RUNNING_REQUEST_TIMEOUT_MS).catch(
-			(error: unknown) => {
-				promptError =
-					error instanceof DaemonCapabilityUnavailableError && !error.afterReconnect
-						? new AgentConnectionPromptAdmissionError(error.message, "unsupported", { cause: error })
-						: error;
-				return "failed" as const;
-			},
-		);
+		const turn = this.openClientTurn(options);
+		const promptRequest = runWithTraceContext(turn.span.context, () =>
+			this.requestData<unknown>(command, DAEMON_LONG_RUNNING_REQUEST_TIMEOUT_MS),
+		).catch((error: unknown) => {
+			promptError =
+				error instanceof DaemonCapabilityUnavailableError && !error.afterReconnect
+					? new AgentConnectionPromptAdmissionError(error.message, "unsupported", { cause: error })
+					: error;
+			return "failed" as const;
+		});
 		try {
 			const first = await Promise.race([promptRequest.then(() => "settled" as const), aborted]);
 			if (first === "settled" && promptError === undefined) return;
@@ -1082,8 +1118,74 @@ export class DaemonAgentConnection implements AgentConnection {
 				status,
 				promptError === undefined ? undefined : { cause: promptError },
 			);
+		} catch (error) {
+			this.failClientTurn(turn, error);
+			throw error;
 		} finally {
 			signal.removeEventListener("abort", onAbort);
+		}
+	}
+
+	/**
+	 * Start the `client.turn` span for a prompt that is about to be sent. It is
+	 * a child of the active `client.prompt` span and stays open until the
+	 * client observes the run end. Never throws.
+	 */
+	private openClientTurn(options?: AgentConnectionPromptOptions): ClientTurn {
+		const queued = options?.queueIfBusy === true && this.isRunActiveForClientTurn();
+		const span = startSpan("client.turn", {
+			"session.active_id": this.activeSessionId,
+			"client.source": options?.source,
+			"turn.queued": queued,
+		});
+		const turn: ClientTurn = { span, messages: 0 };
+		this.openClientTurns.push(turn);
+		return turn;
+	}
+
+	private isRunActiveForClientTurn(): boolean {
+		if (this.openClientTurns.length > 0) return true;
+		if (this.agentRunActive !== undefined) return this.agentRunActive;
+		return this.latestSnapshot?.state.isStreaming === true;
+	}
+
+	/** Admission failed: the turn never ran, so it ends immediately with the failure. */
+	private failClientTurn(turn: ClientTurn, error: unknown): void {
+		const index = this.openClientTurns.indexOf(turn);
+		if (index !== -1) this.openClientTurns.splice(index, 1);
+		this.endClientTurn(turn, error);
+	}
+
+	private endClientTurn(turn: ClientTurn, error?: unknown): void {
+		try {
+			turn.span.setAttributes({ "turn.messages": turn.messages });
+			if (error !== undefined) turn.span.recordError(error);
+			turn.span.end();
+		} catch {
+			// Tracing must never affect the prompt path.
+		}
+	}
+
+	/** The run ended abnormally from the client's point of view (`closed` event or disposal). */
+	private endOpenClientTurns(error: string): void {
+		const turns = this.openClientTurns.splice(0, this.openClientTurns.length);
+		for (const turn of turns) this.endClientTurn(turn, new Error(error));
+	}
+
+	private observeClientTurnEvent(event: AgentSessionEvent): void {
+		if (event.type === "agent_start") {
+			this.agentRunActive = true;
+			return;
+		}
+		if (event.type === "message_end" && event.message.role === "assistant") {
+			const oldest = this.openClientTurns[0];
+			if (oldest) oldest.messages++;
+			return;
+		}
+		if (event.type === "agent_end") {
+			this.agentRunActive = false;
+			const oldest = this.openClientTurns.shift();
+			if (oldest) this.endClientTurn(oldest);
 		}
 	}
 
@@ -1562,6 +1664,7 @@ export class DaemonAgentConnection implements AgentConnection {
 			return this.disposePromise;
 		}
 		this.disposing = true;
+		this.endOpenClientTurns("Daemon connection disposed before the run ended.");
 		this.disposePromise = (async () => {
 			await this.ownedSessionPromotionTail;
 			if (this.options.ownedSession && !this.client.isConnected && this.reconnectPromise) {
@@ -1866,6 +1969,7 @@ export class DaemonAgentConnection implements AgentConnection {
 			if (message.event.type !== "refine_complete" && message.event.type !== "refine_failed") {
 				this.observeStreamingMessage(message.event);
 			}
+			this.observeClientTurnEvent(message.event);
 			if (message.event.type === "rlm_child_update") {
 				this.childRosterSequence = maxEventSequence(this.childRosterSequence, getDaemonMessageSequence(message));
 				this.observeRlmChildUpdate(message.event.child);
@@ -2382,6 +2486,10 @@ export class DaemonAgentConnection implements AgentConnection {
 	}
 
 	private async emit(event: AgentConnectionEvent): Promise<void> {
+		if (event.type === "closed") {
+			// The run can no longer be observed; every open turn ends with the close reason.
+			this.endOpenClientTurns(event.error ?? "Daemon connection closed before the run ended.");
+		}
 		const deliveries: Promise<void>[] = [];
 		for (const listener of [...this.listeners]) {
 			try {
