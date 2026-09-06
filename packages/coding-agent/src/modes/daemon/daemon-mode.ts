@@ -14,6 +14,7 @@ import { createConnection, createServer, type Server, type Socket } from "node:n
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import {
 	type Api,
+	currentTraceContext,
 	getLogger,
 	type Model,
 	parseTraceparent,
@@ -3388,8 +3389,8 @@ export class AgentDaemon {
 	/**
 	 * Run one worker-transport command under a `daemon.command` span. The span
 	 * continues the supervisor's trace when the frame header carries a valid
-	 * `traceparent` and roots a fresh trace otherwise (legacy supervisors omit
-	 * the field), so a turn started by the command is always correlatable.
+	 * `traceparent`, inherits the ambient context otherwise (legacy supervisors
+	 * omit the field), and roots a fresh trace only when neither exists.
 	 * `withSpan` invokes its body synchronously, which preserves handleLine's
 	 * contract that prompt admission is registered before its first await.
 	 */
@@ -3398,7 +3399,9 @@ export class AgentDaemon {
 		header: Extract<DaemonWorkerFrameHeader, { kind: "command" }>,
 		line: string,
 	): Promise<void> {
-		return runWithTraceContext(parseTraceparent(header.traceparent), () =>
+		// A header without traceparent must not discard the process's ambient
+		// context (an inbound TRACEPARENT), so fall back to it instead of exiting.
+		return runWithTraceContext(parseTraceparent(header.traceparent) ?? currentTraceContext(), () =>
 			withSpan(
 				"daemon.command",
 				{ "daemon.request_id": header.requestId, "daemon.command_type": header.commandType },
@@ -3430,7 +3433,7 @@ export class AgentDaemon {
 		} catch {
 			// handleLine reports the parse failure to the client; tracing stays silent.
 		}
-		return runWithTraceContext(inbound, () =>
+		return runWithTraceContext(inbound ?? currentTraceContext(), () =>
 			withSpan("daemon.command", { "daemon.request_id": requestId, "daemon.command_type": commandType }, () =>
 				this.handleLine(client, line),
 			),

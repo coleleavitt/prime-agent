@@ -379,3 +379,21 @@ describe("daemon client-socket command lines", () => {
 		expect(ended.map((r) => r.attrs["daemon.command_type"])).toEqual(["unknown", "unknown"]);
 	});
 });
+
+describe("daemon command context inheritance", () => {
+	it("inherits the ambient (inbound TRACEPARENT) context when the line carries none", async () => {
+		const daemon = new AgentDaemon("/tmp/prime-agent-test-never.sock", {
+			defaultSessionConfig: { agentDir: "/tmp", cwd: "/tmp" },
+			createRuntime: vi.fn(),
+		});
+		const internals = daemon as unknown as DaemonInternals;
+		const seen: Array<TraceContext | undefined> = [];
+		internals.handleLine = vi.fn(async () => {
+			seen.push(currentTraceContext());
+		});
+		await withSpan("process.inbound", async (ambient) => {
+			await internals.handleClientLine(makeSocketClient(), JSON.stringify({ id: "daemon_9", type: "list" }));
+			expect(seen[0]).toMatchObject({ traceId: ambient.context.traceId, parentSpanId: ambient.context.spanId });
+		});
+	});
+});
