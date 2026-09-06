@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ImageContent, ServiceTier, Transport } from "@earendil-works/pi-ai";
+import { type ImageContent, type ServiceTier, type Transport, withSpan } from "@earendil-works/pi-ai";
 import { appendRotatingLog, getAgentLogPath, getDaemonLogPath } from "../../config.js";
 import type { AgentSessionMessageReceipt, AgentSessionMessageSafetyStatus } from "../../core/agent-messages.js";
 import type { AgentSessionEvent } from "../../core/agent-session.js";
@@ -969,7 +969,30 @@ export class DaemonAgentConnection implements AgentConnection {
 		await this.promptWithAdmissionCancellation("prompt_and_wait", message, options);
 	}
 
-	private async promptWithAdmissionCancellation(
+	/**
+	 * Client-side root for a user prompt. The command envelope carries this
+	 * span's traceparent, so the worker's daemon.command and agent.prompt spans
+	 * nest under it and the trace starts in the process the user is looking at
+	 * (with the submit -> admission latency; for prompt_and_wait, the whole run).
+	 */
+	private promptWithAdmissionCancellation(
+		type: "prompt" | "prompt_and_wait",
+		message: string,
+		options?: AgentConnectionPromptOptions,
+	): Promise<void> {
+		return withSpan(
+			"client.prompt",
+			{
+				"client.command": type,
+				"client.source": options?.source,
+				"client.queue_if_busy": options?.queueIfBusy,
+				"session.active_id": this.activeSessionId,
+			},
+			() => this.promptWithAdmissionCancellationUntraced(type, message, options),
+		);
+	}
+
+	private async promptWithAdmissionCancellationUntraced(
 		type: "prompt" | "prompt_and_wait",
 		message: string,
 		options?: AgentConnectionPromptOptions,

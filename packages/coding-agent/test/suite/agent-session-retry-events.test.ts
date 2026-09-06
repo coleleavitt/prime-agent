@@ -1,5 +1,13 @@
 import type { AgentEvent, AgentTool } from "@earendil-works/pi-agent-core";
-import { type AssistantMessage, fauxAssistantMessage, fauxThinking, fauxToolCall } from "@earendil-works/pi-ai";
+import {
+	type AssistantMessage,
+	fauxAssistantMessage,
+	fauxThinking,
+	fauxToolCall,
+	installDefaultSpanSink,
+	type SpanEndRecord,
+	setSpanSink,
+} from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, type Harness } from "./harness.js";
@@ -98,6 +106,30 @@ describe("AgentSession retry and event characterization", () => {
 
 		expect(retryEvents).toEqual(["start:1", "start:2", "end:true"]);
 		expect(harness.faux.state.callCount).toBe(3);
+	});
+
+	it("records each backoff wait as an agent.retry span under the prompt", async () => {
+		const ended: SpanEndRecord[] = [];
+		setSpanSink((record) => ended.push(record));
+		try {
+			const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } } });
+			harnesses.push(harness);
+			harness.setResponses([
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+				fauxAssistantMessage("success"),
+			]);
+			await harness.session.prompt("test");
+			const retries = ended.filter((record) => record.name === "agent.retry");
+			expect(retries.map((record) => record.attrs["retry.attempt"])).toEqual([1, 2]);
+			expect(retries.map((record) => record.attrs["retry.delay_ms"])).toEqual([1, 2]);
+			expect(retries[0]?.attrs).toMatchObject({ "retry.max_attempts": 3, "retry.error": "overloaded_error" });
+			const prompt = ended.find((record) => record.name === "agent.prompt");
+			expect(prompt).toBeDefined();
+			expect(retries.every((record) => record.traceId === prompt?.traceId)).toBe(true);
+		} finally {
+			installDefaultSpanSink();
+		}
 	});
 
 	it("exhausts max retries and emits a failure event", async () => {

@@ -3,7 +3,10 @@ import { AgentContinueError, type AgentMessage, type ShouldStopAfterTurnContext 
 import {
 	type AssistantMessage,
 	fauxAssistantMessage,
+	installDefaultSpanSink,
 	type Model,
+	type SpanEndRecord,
+	setSpanSink,
 	type ToolResultMessage,
 	type Usage,
 } from "@earendil-works/pi-ai";
@@ -194,6 +197,42 @@ describe("AgentSession compaction characterization", () => {
 			role: "assistant",
 			content: [{ type: "text", text: "still usable" }],
 		});
+	});
+
+	it("runs the summarizer inside a session.compact span that nests its llm.request", async () => {
+		const ended: SpanEndRecord[] = [];
+		setSpanSink((record) => ended.push(record));
+		try {
+			const harness = await createHarness({ settings: { compaction: { keepRecentTokens: 1 } } });
+			harnesses.push(harness);
+			harness.setResponses([
+				fauxAssistantMessage("one response"),
+				fauxAssistantMessage("two response"),
+				fauxAssistantMessage("model-generated summary"),
+				fauxAssistantMessage("model-generated turn summary"),
+			]);
+			await harness.session.prompt("one");
+			await harness.session.prompt("two");
+			ended.length = 0;
+			const result = await harness.session.compact();
+			const compact = ended.filter((record) => record.name === "session.compact");
+			expect(compact).toHaveLength(1);
+			expect(compact[0]).toMatchObject({
+				status: "ok",
+				attrs: {
+					"session.id": harness.session.sessionId,
+					"compact.tokens_before": result.tokensBefore,
+					"compact.first_kept_entry": result.firstKeptEntryId,
+				},
+			});
+			expect(compact[0]?.attrs["compact.summary_chars"]).toBe(result.summary.length);
+			const summaryRequests = ended.filter(
+				(record) => record.name === "llm.request" && record.parentSpanId === compact[0]?.spanId,
+			);
+			expect(summaryRequests.length).toBeGreaterThan(0);
+		} finally {
+			installDefaultSpanSink();
+		}
 	});
 
 	it("renders an executing /compact as activity instead of queued work", async () => {

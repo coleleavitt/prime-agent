@@ -7640,7 +7640,34 @@ export class AgentSession {
 	 * skill. Throws CompactionSkippedError when there is nothing to compact and
 	 * Error("Compaction cancelled") on abort or extension cancel.
 	 */
-	private async _performCompaction(options: {
+	/**
+	 * Shared by manual and automatic compaction; runs inside a `session.compact`
+	 * span so the summary model call and the resulting token change are visible
+	 * in the trace next to the turns they interrupt.
+	 */
+	private _performCompaction(options: {
+		model: Model<any>;
+		apiKey: string;
+		headers?: Record<string, string>;
+		customInstructions?: string;
+		signal: AbortSignal;
+	}): Promise<CompactionResult> {
+		return withSpan(
+			"session.compact",
+			{ "session.id": this.sessionId, "llm.provider": options.model.provider, "llm.model": options.model.id },
+			async (span) => {
+				const result = await this._performCompactionUntraced(options);
+				span.setAttributes({
+					"compact.tokens_before": result.tokensBefore,
+					"compact.summary_chars": result.summary.length,
+					"compact.first_kept_entry": result.firstKeptEntryId,
+				});
+				return result;
+			},
+		);
+	}
+
+	private async _performCompactionUntraced(options: {
 		model: Model<any>;
 		apiKey: string;
 		headers?: Record<string, string>;
@@ -11719,7 +11746,16 @@ export class AgentSession {
 
 		this._retryAbortController = new AbortController();
 		try {
-			await sleep(delayMs, this._retryAbortController.signal);
+			await withSpan(
+				"agent.retry",
+				{
+					"retry.attempt": this._retryAttempt,
+					"retry.max_attempts": settings.maxRetries,
+					"retry.delay_ms": delayMs,
+					"retry.error": (message.errorMessage || "Unknown error").slice(0, 200),
+				},
+				() => sleep(delayMs, this._retryAbortController?.signal),
+			);
 		} catch {
 			const attempt = this._retryAttempt;
 			this._markProviderAuthStaleForRetryFailure(message, options);
