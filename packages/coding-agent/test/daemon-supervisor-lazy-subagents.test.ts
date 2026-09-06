@@ -812,7 +812,7 @@ describe("daemon supervisor passive subagent topology", () => {
 			await client.connect();
 
 			const rejected = await client.request({ type: "list_agent_peers", workerToken: "invalid-token" });
-			expect(rejected.success).toBe(false);
+			if (rejected.success) throw new Error("expected the invalid token to be rejected");
 			expect(rejected.error).toMatch(
 				/^Worker authentication failed \(client=.*token=inva… \(13 chars\), known workers=\[.*\]\)$/,
 			);

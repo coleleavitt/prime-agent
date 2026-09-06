@@ -2188,7 +2188,9 @@ describe("DaemonAgentConnection", () => {
 			sessionRecoveryConfig: config,
 		});
 		const events: AgentConnectionEvent[] = [];
-		connection.subscribe((event) => events.push(event));
+		connection.subscribe((event) => {
+			events.push(event);
+		});
 		await connection.attach();
 
 		// A forced shutdown: the new supervisor has no such active session.
