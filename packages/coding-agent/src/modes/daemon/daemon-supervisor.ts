@@ -1999,7 +1999,20 @@ export class DaemonSupervisor {
 				const requester = [...this.workers.values()].find(
 					(worker) => worker.descriptor.authenticationToken === command.workerToken,
 				);
-				if (!requester) throw new Error("Worker authentication failed");
+				if (!requester) {
+					// Name what we know so the trace can tell a stale token (a worker
+					// from a previous supervisor generation) from a malformed request.
+					const known = [...this.workers.values()].map(
+						(worker) => `${worker.descriptor.workerId}:${this.effectiveWorkerState(worker)}`,
+					);
+					throw new Error(
+						`Worker authentication failed (client=${client.id}, token=${
+							typeof command.workerToken === "string"
+								? `${command.workerToken.slice(0, 4)}… (${command.workerToken.length} chars)`
+								: typeof command.workerToken
+						}, known workers=[${known.join(", ")}])`,
+					);
+				}
 				const peers = [...this.workers.values()]
 					.filter(
 						(worker) =>

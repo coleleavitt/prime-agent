@@ -811,12 +811,11 @@ describe("daemon supervisor passive subagent topology", () => {
 			seedSupervisorRoster(supervisor, first, second, disconnected);
 			await client.connect();
 
-			await expect(
-				client.request({ type: "list_agent_peers", workerToken: "invalid-token" }),
-			).resolves.toMatchObject({
-				success: false,
-				error: "Worker authentication failed",
-			});
+			const rejected = await client.request({ type: "list_agent_peers", workerToken: "invalid-token" });
+			expect(rejected.success).toBe(false);
+			expect(rejected.error).toMatch(
+				/^Worker authentication failed \(client=.*token=inva… \(13 chars\), known workers=\[.*\]\)$/,
+			);
 			const response = await client.request({
 				type: "list_agent_peers",
 				workerToken: second.descriptor.authenticationToken,
