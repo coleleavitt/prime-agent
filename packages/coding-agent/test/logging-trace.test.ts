@@ -14,7 +14,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR, getAgentLogPath } from "../src/config.js";
-import { installFileLogSink, setLogContext, withInboundTraceContext } from "../src/core/logging.js";
+import { installFileLogSink, runWithLogContext, setLogContext, withInboundTraceContext } from "../src/core/logging.js";
 
 const INBOUND = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
 
@@ -125,5 +125,57 @@ describe("withInboundTraceContext", () => {
 		process.env.TRACEPARENT = "00-garbage";
 		expect(withInboundTraceContext(() => currentTraceContext())).toBeUndefined();
 		expect(withInboundTraceContext(() => 42)).toBe(42);
+	});
+});
+
+describe("scoped log context", () => {
+	let agentDir = "";
+	beforeEach(() => {
+		agentDir = mkdtempSync(join(tmpdir(), "prime-agent-logging-scope-"));
+		vi.stubEnv(ENV_AGENT_DIR, agentDir);
+	});
+	afterEach(() => {
+		setLogSink(undefined);
+		vi.unstubAllEnvs();
+		rmSync(agentDir, { recursive: true, force: true });
+	});
+
+	it("scopes sessionId to the async flow so concurrent sessions in one worker never share it", async () => {
+		installFileLogSink();
+		const log = getLogger("test");
+		const gate = new Promise<void>((resolve) => setTimeout(resolve, 5));
+		await Promise.all([
+			runWithLogContext({ sessionId: "session-a" }, async () => {
+				log.info("a-before");
+				await gate;
+				log.info("a-after");
+			}),
+			runWithLogContext({ sessionId: "session-b" }, async () => {
+				log.info("b-before");
+				await gate;
+				log.info("b-after");
+			}),
+		]);
+		log.info("unscoped");
+		const byMsg = new Map(readLines().map((l) => [l.msg, l]));
+		expect(byMsg.get("a-before")?.sessionId).toBe("session-a");
+		expect(byMsg.get("a-after")?.sessionId).toBe("session-a");
+		expect(byMsg.get("b-before")?.sessionId).toBe("session-b");
+		expect(byMsg.get("b-after")?.sessionId).toBe("session-b");
+		expect(byMsg.get("unscoped")).not.toHaveProperty("sessionId");
+	});
+
+	it("lets a nested scope (a child session) override only inside itself", () => {
+		installFileLogSink();
+		const log = getLogger("test");
+		runWithLogContext({ sessionId: "parent" }, () => {
+			log.info("parent-1");
+			runWithLogContext({ sessionId: "child" }, () => log.info("child-1"));
+			log.info("parent-2");
+		});
+		const byMsg = new Map(readLines().map((l) => [l.msg, l]));
+		expect(byMsg.get("parent-1")?.sessionId).toBe("parent");
+		expect(byMsg.get("child-1")?.sessionId).toBe("child");
+		expect(byMsg.get("parent-2")?.sessionId).toBe("parent");
 	});
 });

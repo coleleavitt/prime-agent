@@ -37,6 +37,7 @@ import type {
 import {
 	clampThinkingLevel,
 	cleanupSessionResources,
+	getLogger,
 	getSupportedThinkingLevels,
 	isContextOverflow,
 	modelsAreEqual,
@@ -171,7 +172,10 @@ import {
 } from "./goals.js";
 import type { HostRequestHandlers, KernelSentAgentMessage } from "./kernel/index.js";
 import { type RestoreResult, snapshotPathIn } from "./kernel/state-snapshot.js";
-import { setLogContext } from "./logging.js";
+import { runWithLogContext } from "./logging.js";
+
+const runAgentLog = getLogger("coding-agent.run-agent");
+
 import type { AcpMcpServerConfig } from "./mcp/acp-mcp-types.js";
 import type { McpManager } from "./mcp/mcp-manager.js";
 import {
@@ -259,6 +263,9 @@ import {
 } from "./rlm-runtime.js";
 import {
 	type RunAgentHandler,
+	type RunAgentOptions,
+	type RunAgentRequest,
+	type RunAgentResult,
 	type RunAgentToolSelection,
 	resolveRunAgentTools,
 	runAgentSession,
@@ -1322,9 +1329,6 @@ export class AgentSession {
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
-		// The session manager minted or loaded the id synchronously; stamp it on
-		// every log line from here on (a session replacement re-runs this).
-		setLogContext({ sessionId: this.sessionManager.getSessionId() });
 		this.settingsManager = config.settingsManager;
 		this._serviceTierPreference = config.serviceTierPreference ?? config.agent.state.serviceTier;
 		this._scopedModels = config.scopedModels ?? [];
@@ -6200,14 +6204,14 @@ export class AgentSession {
 					// The public prompt() returns once the input is accepted, so the trace
 					// root lives here instead: agent.prompt() settles only when the whole
 					// run (every agent.turn, tool call and kernel cell it spawns) is done.
-					// The log context tracks the session driving the run so an inline
-					// child session can't leave its id stamped on the parent's lines.
-					const runPrompt = () => {
-						setLogContext({ sessionId: this.sessionId });
-						return withSpan("agent.prompt", { "session.id": this.sessionId }, () =>
-							this.agent.prompt(preparedMessages),
+					// sessionId is scoped to this run's async flow: a worker hosts several
+					// sessions and each must label only its own lines.
+					const runPrompt = () =>
+						runWithLogContext({ sessionId: this.sessionId }, () =>
+							withSpan("agent.prompt", { "session.id": this.sessionId }, () =>
+								this.agent.prompt(preparedMessages),
+							),
 						);
-					};
 					return turns.some((action) => action.suppressAutonomousContinuation)
 						? this._runWithAutonomousContinuationSuppressed(runPrompt)
 						: runPrompt();
@@ -10818,7 +10822,28 @@ export class AgentSession {
 	}
 
 	/** Host binding for extension `ctx.runAgent()`. Unlike Python RLM, this awaits a structured terminal result. */
-	private readonly _runExtensionAgent: RunAgentHandler = async (request, options) => {
+	private readonly _runExtensionAgent: RunAgentHandler = (request, options) =>
+		// Callers (Magic Context's child runner, workflows) often swallow a failed
+		// attempt and move on to a fallback model, so the failure must be visible
+		// from the trace alone: the span records the requested model, the
+		// terminal status and any thrown error (e.g. model resolution or the
+		// authentication preflight failing before a child session exists).
+		withSpan("rlm.run_agent", { "rlm.requested_model": request.model }, async (span) => {
+			try {
+				const result = await this._runExtensionAgentInner(request, options);
+				span.setAttributes({ "rlm.status": result.status, "rlm.model": result.model, "rlm.turns": result.turns });
+				if (result.status === "error") span.recordError(result.error ?? "run-agent error");
+				return result;
+			} catch (error) {
+				runAgentLog.warn("runAgent failed before completion", {
+					requestedModel: request.model,
+					error: error instanceof Error ? error.message : String(error),
+				});
+				throw error;
+			}
+		});
+
+	private async _runExtensionAgentInner(request: RunAgentRequest, options?: RunAgentOptions): Promise<RunAgentResult> {
 		if (!request.prompt.trim()) throw new Error("runAgent prompt must not be empty");
 		if (this._disposed || this._disposing) throw new Error("Cannot run an agent after its parent was disposed");
 		if (this._rlmDepth >= this._rlmMaxDepth) {
@@ -10875,7 +10900,7 @@ export class AgentSession {
 				rmSync(sessionDir, { recursive: true, force: true });
 			}
 		}
-	};
+	}
 
 	runAgent: RunAgentHandler = (request, options) => this._runExtensionAgent(request, options);
 

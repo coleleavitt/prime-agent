@@ -21,9 +21,27 @@ installAsyncTraceContextStorage(new AsyncLocalStorage<TraceContext>());
 
 let context: Record<string, unknown> = {};
 
-/** Merge late-bound fields (e.g. mode, sessionId) into every subsequent log entry. */
+/**
+ * Fields that belong to one asynchronous flow rather than to the process. A
+ * daemon worker hosts several sessions at once (a root session plus RLM and
+ * runAgent children), so a process-global sessionId would label another
+ * session's lines with whichever session called setLogContext last.
+ */
+const scopedContext = new AsyncLocalStorage<Record<string, unknown>>();
+
+/** Merge late-bound process-wide fields (e.g. mode) into every subsequent log entry. */
 export function setLogContext(fields: Record<string, unknown>): void {
 	Object.assign(context, fields);
+}
+
+/**
+ * Run `fn` with `fields` (typically `{ sessionId }`) merged into every log
+ * entry emitted inside it, including entries from awaited continuations.
+ * Nested calls layer on top of the enclosing scope. Prefer this over
+ * setLogContext for anything that varies per session or per run.
+ */
+export function runWithLogContext<T>(fields: Record<string, unknown>, fn: () => T): T {
+	return scopedContext.run({ ...scopedContext.getStore(), ...fields }, fn);
 }
 
 /**
@@ -37,7 +55,11 @@ export function installFileLogSink(fields?: Record<string, unknown>): void {
 		// Context fields are defaults: the entry's own keys win so the reserved
 		// ts/level/component/msg and the traceId/spanId/parentSpanId that pi-ai
 		// stamps from the active span can never be overwritten by a context field.
-		appendRotatingLog(getAgentLogPath(), stringifyLogEntry({ ...context, ...entry }), AGENT_LOG_MAX_BYTES);
+		appendRotatingLog(
+			getAgentLogPath(),
+			stringifyLogEntry({ ...context, ...scopedContext.getStore(), ...entry }),
+			AGENT_LOG_MAX_BYTES,
+		);
 	});
 }
 

@@ -220,7 +220,8 @@ class Span:
         if error is not None:
             self.status = "error"
             self.error = error if isinstance(error, str) else f"{type(error).__name__}: {error}"
-        duration_ms = (time.monotonic() - self.start) * 1000.0
+        # Same precision as the TypeScript spans (3 decimals) so trees read uniformly.
+        duration_ms = round((time.monotonic() - self.start) * 1000.0, 3)
         event: dict[str, Any] = {
             "event": "trace",
             "msg": "span_end",
