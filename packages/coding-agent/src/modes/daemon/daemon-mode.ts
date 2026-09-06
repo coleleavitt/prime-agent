@@ -18,6 +18,7 @@ import {
 	type Model,
 	parseTraceparent,
 	runWithTraceContext,
+	type TraceContext,
 	withSpan,
 } from "@earendil-works/pi-ai";
 import { createCliSubprocessEnv, createCliSubprocessLaunchSpec } from "../../cli/subprocess-launch.js";
@@ -3305,7 +3306,7 @@ export class AgentDaemon {
 			};
 		} else {
 			client.detachInput = attachJsonlLineReader(socket, (line) => {
-				void this.handleLine(client, line);
+				void this.handleClientLine(client, line);
 			});
 		}
 
@@ -3402,6 +3403,36 @@ export class AgentDaemon {
 				"daemon.command",
 				{ "daemon.request_id": header.requestId, "daemon.command_type": header.commandType },
 				() => this.handleLine(client, line),
+			),
+		);
+	}
+
+	/**
+	 * Client-socket counterpart of handleCommandFrame: the CLI stamps its
+	 * active `traceparent` on the JSONL command envelope, so the supervisor
+	 * adopts it here before handling (and before relaying to a worker, whose
+	 * frame header is filled from the context active at send time). A line
+	 * that is not a valid envelope roots a fresh trace. Parsing is repeated
+	 * cheaply here rather than threading the envelope through handleLine.
+	 */
+	private handleClientLine(client: DaemonSocketClient, line: string): Promise<void> {
+		let inbound: TraceContext | undefined;
+		let requestId = "unknown";
+		let commandType = "unknown";
+		try {
+			const wireValue = JSON.parse(line) as unknown;
+			if (isDaemonCommandEnvelope(wireValue)) {
+				inbound = parseTraceparent(wireValue.traceparent);
+				requestId = String(wireValue.id);
+				const type = (wireValue.command as { type?: unknown }).type;
+				if (typeof type === "string") commandType = type;
+			}
+		} catch {
+			// handleLine reports the parse failure to the client; tracing stays silent.
+		}
+		return runWithTraceContext(inbound, () =>
+			withSpan("daemon.command", { "daemon.request_id": requestId, "daemon.command_type": commandType }, () =>
+				this.handleLine(client, line),
 			),
 		);
 	}

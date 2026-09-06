@@ -129,6 +129,7 @@ interface DaemonInternals {
 		line: string,
 	): Promise<void>;
 	handleLine(client: DaemonSocketClient, line: string): Promise<void>;
+	handleClientLine(client: DaemonSocketClient, line: string): Promise<void>;
 }
 
 function makeSocketClient(): DaemonSocketClient {
@@ -339,3 +340,42 @@ function makeRuntimeSession(
 		abort: vi.fn(async () => {}),
 	} as unknown as Awaited<ReturnType<CreateAgentSessionRuntimeFactory>>["session"];
 }
+
+describe("daemon client-socket command lines", () => {
+	function makeDaemon(): { internals: DaemonInternals; seen: Array<TraceContext | undefined> } {
+		const daemon = new AgentDaemon("/tmp/prime-agent-test-never.sock", {
+			defaultSessionConfig: { agentDir: "/tmp", cwd: "/tmp" },
+			createRuntime: vi.fn(),
+		});
+		const internals = daemon as unknown as DaemonInternals;
+		const seen: Array<TraceContext | undefined> = [];
+		internals.handleLine = vi.fn(async () => {
+			seen.push(currentTraceContext());
+		});
+		return { internals, seen };
+	}
+
+	it("adopts the CLI envelope's traceparent so relayed worker commands continue the caller's trace", async () => {
+		const { internals, seen } = makeDaemon();
+		const envelope = {
+			...createDaemonCommandEnvelope({ id: "daemon_3", type: "list" }, "daemon_3", "client-1"),
+			traceparent: TRACEPARENT,
+		};
+		await internals.handleClientLine(makeSocketClient(), JSON.stringify(envelope));
+		expect(seen[0]).toMatchObject({ traceId: "0af7651916cd43dd8448eb211c80319c", parentSpanId: "b7ad6b7169203331" });
+		expect(ended[0]).toMatchObject({
+			name: "daemon.command",
+			parentSpanId: "b7ad6b7169203331",
+			attrs: { "daemon.request_id": "daemon_3", "daemon.command_type": "list" },
+		});
+	});
+
+	it("roots a fresh trace for a legacy line and still reaches handleLine for garbage", async () => {
+		const { internals, seen } = makeDaemon();
+		await internals.handleClientLine(makeSocketClient(), JSON.stringify({ id: "daemon_4", type: "list" }));
+		await internals.handleClientLine(makeSocketClient(), "{not json");
+		expect(seen).toHaveLength(2);
+		expect(seen[0]?.parentSpanId).toBeUndefined();
+		expect(ended.map((r) => r.attrs["daemon.command_type"])).toEqual(["unknown", "unknown"]);
+	});
+});
