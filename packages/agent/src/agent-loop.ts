@@ -8,9 +8,11 @@ import {
 	type AssistantMessageEvent,
 	type Context,
 	EventStream,
+	type SpanAttributes,
 	streamSimple,
 	type ToolResultMessage,
 	validateToolArguments,
+	withSpan,
 } from "@earendil-works/pi-ai";
 import type {
 	AgentContext,
@@ -314,6 +316,7 @@ async function runLoop(
 	let pendingMessages: AgentMessage[] = await pollMessagesUnlessAborted(config.getSteeringMessages, signal);
 
 	const shouldStopBeforeTurn = (): boolean => !firstTurn && (config.shouldStopBeforeTurn?.() ?? false);
+	let turnIndex = 0;
 
 	while (true) {
 		throwIfAborted(signal);
@@ -321,47 +324,26 @@ async function runLoop(
 
 		while (hasMoreToolCalls || pendingMessages.length > 0) {
 			throwIfAborted(signal);
-			if (!firstTurn) {
-				await emit({ type: "turn_start" });
-			} else {
-				firstTurn = false;
-			}
+			const emitTurnStart = !firstTurn;
+			firstTurn = false;
+			const turnPendingMessages = pendingMessages;
+			pendingMessages = [];
 
-			if (pendingMessages.length > 0) {
-				for (const message of pendingMessages) {
-					await emit({ type: "message_start", message });
-					await emit({ type: "message_end", message });
-					currentContext.messages.push(message);
-					newMessages.push(message);
-				}
-				pendingMessages = [];
-			}
-
-			const message = await streamAssistantResponse(currentContext, config, signal, emit, streamFn);
-			newMessages.push(message);
-
-			if (message.stopReason === "error" || message.stopReason === "aborted") {
-				await emit({ type: "turn_end", message, toolResults: [] });
+			const turn = await runTurn(
+				{ index: turnIndex++, emitTurnStart, pendingMessages: turnPendingMessages },
+				currentContext,
+				newMessages,
+				config,
+				signal,
+				emit,
+				streamFn,
+			);
+			if (turn.terminal) {
 				await emit({ type: "agent_end", messages: newMessages });
 				return;
 			}
-
-			const toolCalls = message.content.filter((c) => c.type === "toolCall");
-
-			const toolResults: ToolResultMessage[] = [];
-			hasMoreToolCalls = false;
-			if (toolCalls.length > 0) {
-				const executedToolBatch = await executeToolCalls(currentContext, message, config, signal, emit);
-				toolResults.push(...executedToolBatch.messages);
-				hasMoreToolCalls = !executedToolBatch.terminate;
-
-				for (const result of toolResults) {
-					currentContext.messages.push(result);
-					newMessages.push(result);
-				}
-			}
-
-			await emit({ type: "turn_end", message, toolResults });
+			const { message, toolResults } = turn;
+			hasMoreToolCalls = turn.hasMoreToolCalls;
 			if (signal?.aborted) {
 				await emit({ type: "agent_end", messages: newMessages });
 				return;
@@ -446,6 +428,94 @@ async function runLoop(
 	}
 
 	await emit({ type: "agent_end", messages: newMessages });
+}
+
+type TurnInput = {
+	index: number;
+	/** The first turn's `turn_start` is emitted by the entry point before the loop runs. */
+	emitTurnStart: boolean;
+	/** Steering/follow-up/continuation messages that open this turn. */
+	pendingMessages: AgentMessage[];
+};
+
+type TurnOutcome = {
+	message: AssistantMessage;
+	toolResults: ToolResultMessage[];
+	/** The assistant stopped with an error or abort; the loop ends without post-turn hooks. */
+	terminal: boolean;
+	hasMoreToolCalls: boolean;
+};
+
+function turnSpanAttrs(config: AgentLoopConfig, index: number): SpanAttributes {
+	return {
+		"turn.index": index,
+		"llm.provider": config.model.provider,
+		"llm.model": config.model.id,
+	};
+}
+
+/**
+ * Run one assistant turn (`turn_start` ... `turn_end`) inside an `agent.turn`
+ * span so the provider request (pi-ai's own `llm.request` span) and every
+ * tool execution nest under it. When a caller has already activated a trace
+ * context (e.g. a session-level span) the turn becomes its child; otherwise
+ * each turn mints a fresh root trace.
+ */
+function runTurn(
+	turn: TurnInput,
+	currentContext: AgentContext,
+	newMessages: AgentMessage[],
+	config: AgentLoopConfig,
+	signal: AbortSignal | undefined,
+	emit: AgentEventSink,
+	streamFn?: StreamFn,
+): Promise<TurnOutcome> {
+	return withSpan("agent.turn", turnSpanAttrs(config, turn.index), async (span) => {
+		if (turn.emitTurnStart) {
+			await emit({ type: "turn_start" });
+		}
+
+		for (const message of turn.pendingMessages) {
+			await emit({ type: "message_start", message });
+			await emit({ type: "message_end", message });
+			currentContext.messages.push(message);
+			newMessages.push(message);
+		}
+
+		const message = await streamAssistantResponse(currentContext, config, signal, emit, streamFn);
+		newMessages.push(message);
+		span.setAttributes({ "turn.stop_reason": message.stopReason });
+
+		if (message.stopReason === "error" || message.stopReason === "aborted") {
+			// An abort is a normal outcome of the operation, not a failure of it.
+			if (message.stopReason === "error") {
+				span.recordError(message.errorMessage ?? "assistant response failed");
+			} else {
+				span.setAttributes({ "turn.aborted": true });
+			}
+			await emit({ type: "turn_end", message, toolResults: [] });
+			return { message, toolResults: [], terminal: true, hasMoreToolCalls: false };
+		}
+
+		const toolCalls = message.content.filter((c) => c.type === "toolCall");
+		span.setAttributes({ "turn.tool_calls": toolCalls.length });
+
+		const toolResults: ToolResultMessage[] = [];
+		let hasMoreToolCalls = false;
+		if (toolCalls.length > 0) {
+			const executedToolBatch = await executeToolCalls(currentContext, message, config, signal, emit);
+			toolResults.push(...executedToolBatch.messages);
+			hasMoreToolCalls = !executedToolBatch.terminate;
+
+			for (const result of toolResults) {
+				currentContext.messages.push(result);
+				newMessages.push(result);
+			}
+		}
+
+		await emit({ type: "turn_end", message, toolResults });
+		return { message, toolResults, terminal: false, hasMoreToolCalls };
+	});
 }
 
 async function streamAssistantResponse(
@@ -628,26 +698,15 @@ async function executeToolCallsSequential(
 		});
 
 		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, config, signal);
-		let finalized: FinalizedToolCallOutcome;
-		if (preparation.kind === "immediate") {
-			finalized = {
-				toolCall,
-				result: preparation.result,
-				isError: preparation.isError,
-			};
-		} else {
-			const executed = await executePreparedToolCall(preparation, signal, emit);
-			finalized = await finalizeExecutedToolCall(
-				currentContext,
-				assistantMessage,
-				preparation,
-				executed,
-				config,
-				signal,
-			);
-		}
-
-		await emitToolExecutionEnd(finalized, emit);
+		const finalized = await completeToolCall(
+			currentContext,
+			assistantMessage,
+			toolCall,
+			preparation,
+			config,
+			signal,
+			emit,
+		);
 		const toolResultMessage = createToolResultMessage(finalized);
 		await emitToolResultMessage(toolResultMessage, emit);
 		finalizedCalls.push(finalized);
@@ -684,29 +743,17 @@ async function executeToolCallsParallel(
 
 		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, config, signal);
 		if (preparation.kind === "immediate") {
-			const finalized = {
-				toolCall,
-				result: preparation.result,
-				isError: preparation.isError,
-			} satisfies FinalizedToolCallOutcome;
-			await emitToolExecutionEnd(finalized, emit);
-			finalizedCalls.push(finalized);
+			finalizedCalls.push(
+				await completeToolCall(currentContext, assistantMessage, toolCall, preparation, config, signal, emit),
+			);
 			continue;
 		}
 
-		finalizedCalls.push(async () => {
-			const executed = await executePreparedToolCall(preparation, signal, emit);
-			const finalized = await finalizeExecutedToolCall(
-				currentContext,
-				assistantMessage,
-				preparation,
-				executed,
-				config,
-				signal,
-			);
-			await emitToolExecutionEnd(finalized, emit);
-			return finalized;
-		});
+		// Each closure opens its own `tool.execute` span when it starts, so concurrently
+		// running tools never share (or leak) a trace context.
+		finalizedCalls.push(() =>
+			completeToolCall(currentContext, assistantMessage, toolCall, preparation, config, signal, emit),
+		);
 	}
 
 	const orderedFinalizedCalls = await Promise.all(
@@ -878,6 +925,62 @@ async function executePreparedToolCall(
 			isError: true,
 		};
 	}
+}
+
+function toolCallSpanAttrs(toolCall: AgentToolCall): SpanAttributes {
+	return { "tool.name": toolCall.name, "tool.call_id": toolCall.id };
+}
+
+function toolResultText(result: AgentToolResult<any>): string {
+	const text = result.content.find((part) => part.type === "text")?.text;
+	return text || "tool execution failed";
+}
+
+/**
+ * Execute a prepared tool call (or surface an immediate rejection such as an
+ * unknown tool or a blocked call) and emit `tool_execution_end`, all inside a
+ * `tool.execute` span. Preparation stays outside the span because the parallel
+ * path validates every call before running any of them; keeping the boundary
+ * identical on both paths means a `tool.execute` span always means the same
+ * thing. An error result marks the span failed; an abort is reported as
+ * `tool.aborted` with status "ok" since it is not a failure of the tool.
+ */
+function completeToolCall(
+	currentContext: AgentContext,
+	assistantMessage: AssistantMessage,
+	toolCall: AgentToolCall,
+	preparation: PreparedToolCall | ImmediateToolCallOutcome,
+	config: AgentLoopConfig,
+	signal: AbortSignal | undefined,
+	emit: AgentEventSink,
+): Promise<FinalizedToolCallOutcome> {
+	return withSpan("tool.execute", toolCallSpanAttrs(toolCall), async (span) => {
+		let finalized: FinalizedToolCallOutcome;
+		if (preparation.kind === "immediate") {
+			finalized = { toolCall, result: preparation.result, isError: preparation.isError };
+		} else {
+			const executed = await executePreparedToolCall(preparation, signal, emit);
+			finalized = await finalizeExecutedToolCall(
+				currentContext,
+				assistantMessage,
+				preparation,
+				executed,
+				config,
+				signal,
+			);
+		}
+
+		if (finalized.isError) {
+			if (signal?.aborted) {
+				span.setAttributes({ "tool.aborted": true });
+			} else {
+				span.recordError(toolResultText(finalized.result));
+			}
+		}
+
+		await emitToolExecutionEnd(finalized, emit);
+		return finalized;
+	});
 }
 
 async function finalizeExecutedToolCall(
