@@ -4,10 +4,13 @@
  */
 
 import * as fs from "node:fs";
+import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { type SpanAttributes, withSpan } from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
+import type { Jiti, JitiOptions } from "jiti";
 import { CONFIG_DIR_NAME, getAgentDir } from "../../config.js";
 import { createEventBus, type EventBus } from "../event-bus.js";
 import type { ExecOptions } from "../exec.js";
@@ -324,29 +327,102 @@ function createExtensionAPI(
 	return api;
 }
 
+/** Context jiti's public factories pass to its internal `createJiti`. */
+interface JitiContext {
+	onError: (error: Error) => never;
+	nativeImport: (id: string | URL) => Promise<unknown>;
+	createRequire: typeof createRequire;
+}
+
+type InternalCreateJiti = (id: string, options: JitiOptions, context: JitiContext) => Jiti;
+
+interface JitiInternals {
+	createJiti: InternalCreateJiti;
+	transform: NonNullable<JitiOptions["transform"]>;
+}
+
+let jitiInternalsPromise: Promise<JitiInternals | undefined> | undefined;
+
+function jitiInternals(): Promise<JitiInternals | undefined> {
+	if (!jitiInternalsPromise) jitiInternalsPromise = loadJitiInternals();
+	return jitiInternalsPromise;
+}
+
 /**
- * Pay the one-time cost of the lazy loader imports (jiti + the bundled host
- * module graph) up front so `extensions.load` attributes it to
- * `extensions.loader_ms` instead of to whichever extension happens to be
- * imported first. Same modules, same order of first use; a failure here is
- * ignored because loadExtensionModule reports it per extension as before.
+ * jiti's public factories (`jiti`, `jiti/static`) hard-wire `nativeImport` to
+ * `import()`. That hook is the only way to keep an ESM `.js` file (`.mjs`, or
+ * `.js` inside a `"type": "module"` package) out of Node's loader: jiti 2.x
+ * hands every such file imported asynchronously to `nativeImport` instead of
+ * transpiling it, and a native import never consults `virtualModules`, so a
+ * prebuilt extension gets its own `node_modules` copy of pi-ai (private API
+ * registry, private trace context, ~80 ms to evaluate) instead of the host
+ * instance. The internal factory jiti's wrappers call takes the hook as a
+ * parameter, so resolve it from the installed package. Undefined where the
+ * package files are not on disk (compiled Bun binary).
  */
-async function warmExtensionModuleLoader(): Promise<void> {
+async function loadJitiInternals(): Promise<JitiInternals | undefined> {
 	try {
-		await import("jiti/static");
-		await import("./bundled-modules.js");
+		const requireFromHere = createRequire(import.meta.url);
+		const jitiDir = path.dirname(requireFromHere.resolve("jiti/package.json"));
+		const createJiti = requireFromHere(path.join(jitiDir, "dist", "jiti.cjs")) as InternalCreateJiti;
+		const transform = requireFromHere(path.join(jitiDir, "dist", "babel.cjs")) as JitiInternals["transform"];
+		return typeof createJiti === "function" && typeof transform === "function"
+			? { createJiti, transform }
+			: undefined;
 	} catch {
-		// Surfaced by the per-extension load below.
+		return undefined;
 	}
 }
 
-async function loadExtensionModule(extensionPath: string) {
-	// jiti and the bundled virtual modules are loaded lazily so that importing
-	// the loader (which nearly every startup path does transitively) doesn't pay
-	// for the full package graph; both specifiers are literals, so Bun still
-	// bundles them into the compiled binary.
-	const { createJiti } = await import("jiti/static");
-	const jiti = createJiti(import.meta.url, {
+/** jiti resolves `.js` in a `"type": "module"` package and `.mjs` as native ESM. */
+const NATIVE_ESM_EXTENSIONS = new Set([".js", ".mjs"]);
+
+function realpathOrSelf(p: string): string {
+	try {
+		return fs.realpathSync(p);
+	} catch {
+		return p;
+	}
+}
+
+/** Nearest directory with a package.json above `entryPath`, else its own directory. */
+function extensionPackageRoot(entryPath: string): string {
+	const start = path.dirname(entryPath);
+	let dir = start;
+	while (true) {
+		if (fs.existsSync(path.join(dir, "package.json"))) return dir;
+		const parent = path.dirname(dir);
+		if (parent === dir) return start;
+		dir = parent;
+	}
+}
+
+/**
+ * Predicate for the ESM files an extension owns: `.js`/`.mjs` under the
+ * extension's package root, excluding anything under a `node_modules`
+ * directory (third-party dependencies keep resolving and loading natively
+ * from the extension's own `node_modules`).
+ */
+function extensionOwnedEsmFile(entryPath: string): (id: string | URL) => boolean {
+	const root = realpathOrSelf(extensionPackageRoot(entryPath)) + path.sep;
+	return (id) => {
+		const spec = typeof id === "string" ? id : id.href;
+		let file: string;
+		if (spec.startsWith("file:")) {
+			file = fileURLToPath(spec);
+		} else if (path.isAbsolute(spec)) {
+			file = spec;
+		} else {
+			return false;
+		}
+		if (!NATIVE_ESM_EXTENSIONS.has(path.extname(file))) return false;
+		const real = realpathOrSelf(file);
+		return real.startsWith(root) && !real.slice(root.length).split(path.sep).includes("node_modules");
+	};
+}
+
+async function createExtensionJiti(entryPath: string): Promise<Jiti> {
+	const options: JitiOptions = {
 		moduleCache: false,
 		// Serve pi packages from virtualModules in every mode so extensions share
 		// the host's live module instances. Path aliases are not equivalent: with
@@ -357,9 +433,61 @@ async function loadExtensionModule(extensionPath: string) {
 		// jiti handles ALL imports (not just the entry point).
 		virtualModules: (await import("./bundled-modules.js")).VIRTUAL_MODULES,
 		tryNative: false,
-	});
+	};
+	const internals = await jitiInternals();
+	if (!internals) {
+		const { createJiti } = await import("jiti/static");
+		return createJiti(import.meta.url, options);
+	}
+	const owned = extensionOwnedEsmFile(entryPath);
+	return internals.createJiti(
+		import.meta.url,
+		{ ...options, transform: internals.transform },
+		{
+			onError: (error) => {
+				throw error;
+			},
+			// Refusing the native import of an extension-owned ESM file makes jiti
+			// take its fallback for a failed native import: transpile the file, which
+			// routes its imports (static and dynamic) through virtualModules like a
+			// .ts entry. Everything else (node: builtins, data: URLs, third-party
+			// dependencies) imports natively as before.
+			nativeImport: (id) =>
+				owned(id)
+					? Promise.reject(new Error("extension-owned ESM module is transpiled by jiti to share host modules"))
+					: import(typeof id === "string" ? id : id.href),
+			createRequire,
+		},
+	);
+}
 
-	const module = await jiti.import(extensionPath, { default: true });
+/**
+ * Pay the one-time cost of the lazy loader imports (jiti + the bundled host
+ * module graph) up front so `extensions.load` attributes it to
+ * `extensions.loader_ms` instead of to whichever extension happens to be
+ * imported first. Same modules, same order of first use; a failure here is
+ * ignored because loadExtensionModule reports it per extension as before.
+ */
+async function warmExtensionModuleLoader(): Promise<void> {
+	try {
+		if (!(await jitiInternals())) await import("jiti/static");
+		await import("./bundled-modules.js");
+	} catch {
+		// Surfaced by the per-extension load below.
+	}
+}
+
+async function loadExtensionModule(extensionPath: string) {
+	// jiti and the bundled virtual modules are loaded lazily so that importing
+	// the loader (which nearly every startup path does transitively) doesn't pay
+	// for the full package graph; the specifiers are literals, so Bun still
+	// bundles them into the compiled binary.
+	// The entry is imported by its real path so a symlinked extension resolves
+	// bare specifiers from its real location, exactly as a native import would.
+	const entryPath = realpathOrSelf(extensionPath);
+	const jiti = await createExtensionJiti(entryPath);
+
+	const module = await jiti.import(entryPath, { default: true });
 	const factory = module as ExtensionFactory;
 	return typeof factory !== "function" ? undefined : factory;
 }
