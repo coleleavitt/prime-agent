@@ -6,12 +6,16 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { type SpanAttributes, withSpan } from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
 import { CONFIG_DIR_NAME, getAgentDir } from "../../config.js";
 import { createEventBus, type EventBus } from "../event-bus.js";
 import type { ExecOptions } from "../exec.js";
 import { execCommand } from "../exec.js";
 import { createSyntheticSourceInfo } from "../source-info.js";
+// runner.ts imports disposeExtension from this module; both bindings are only
+// dereferenced at call time, so the cycle is harmless under ESM live bindings.
+import { extensionSpanLabel } from "./runner.js";
 import type {
 	Extension,
 	ExtensionAPI,
@@ -26,6 +30,39 @@ import type {
 
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
 const extensionDisposals = new WeakMap<Extension, Set<() => void>>();
+
+/** Extension imports slower than this get their own `extensions.<label>_ms` span attribute. */
+const SLOW_EXTENSION_LOAD_MS = 100;
+
+/** Per-load timing accumulator behind the `extensions.load` span. */
+class ExtensionLoadTiming {
+	private errors = 0;
+	private readonly byExtension = new Map<string, number>();
+	private slowestMs = -1;
+	private slowestLabel: string | undefined;
+
+	record(extensionPath: string, durationMs: number, failed: boolean): void {
+		if (failed) this.errors += 1;
+		const label = extensionSpanLabel(extensionPath);
+		this.byExtension.set(label, (this.byExtension.get(label) ?? 0) + durationMs);
+		if (durationMs > this.slowestMs) {
+			this.slowestMs = durationMs;
+			this.slowestLabel = label;
+		}
+	}
+
+	attributes(): SpanAttributes {
+		const attrs: SpanAttributes = { "extensions.errors": this.errors };
+		if (this.slowestLabel !== undefined) {
+			attrs["extensions.slowest"] = this.slowestLabel;
+			attrs["extensions.slowest_ms"] = Math.round(this.slowestMs);
+		}
+		for (const [label, ms] of this.byExtension) {
+			if (ms > SLOW_EXTENSION_LOAD_MS) attrs[`extensions.${label}_ms`] = Math.round(ms);
+		}
+		return attrs;
+	}
+}
 
 export function disposeExtension(extension: Extension): void {
 	const disposals = extensionDisposals.get(extension);
@@ -287,6 +324,22 @@ function createExtensionAPI(
 	return api;
 }
 
+/**
+ * Pay the one-time cost of the lazy loader imports (jiti + the bundled host
+ * module graph) up front so `extensions.load` attributes it to
+ * `extensions.loader_ms` instead of to whichever extension happens to be
+ * imported first. Same modules, same order of first use; a failure here is
+ * ignored because loadExtensionModule reports it per extension as before.
+ */
+async function warmExtensionModuleLoader(): Promise<void> {
+	try {
+		await import("jiti/static");
+		await import("./bundled-modules.js");
+	} catch {
+		// Surfaced by the per-extension load below.
+	}
+}
+
 async function loadExtensionModule(extensionPath: string) {
 	// jiti and the bundled virtual modules are loaded lazily so that importing
 	// the loader (which nearly every startup path does transitively) doesn't pay
@@ -392,29 +445,54 @@ export async function loadExtensionFromFactory(
  * Load extensions from paths.
  */
 export async function loadExtensions(paths: string[], cwd: string, eventBus?: EventBus): Promise<LoadExtensionsResult> {
-	const extensions: Extension[] = [];
-	const errors: Array<{ path: string; error: string }> = [];
-	const resolvedEventBus = eventBus ?? createEventBus();
-	const runtime = createExtensionRuntime();
+	// One `extensions.load` span per call (attrs: `extensions.count`,
+	// `extensions.loader_ms`, `extensions.errors`, `extensions.slowest`,
+	// `extensions.slowest_ms`, and `extensions.<label>_ms` for imports slower
+	// than SLOW_EXTENSION_LOAD_MS).
+	// Load failures stay in `errors` exactly as before; tracing never throws.
+	return withSpan("extensions.load", { "extensions.count": paths.length }, async (span) => {
+		const extensions: Extension[] = [];
+		const errors: Array<{ path: string; error: string }> = [];
+		const resolvedEventBus = eventBus ?? createEventBus();
+		const runtime = createExtensionRuntime();
+		const timing = new ExtensionLoadTiming();
 
-	for (const extPath of paths) {
-		const { extension, error } = await loadExtension(extPath, cwd, resolvedEventBus, runtime);
-
-		if (error) {
-			errors.push({ path: extPath, error });
-			continue;
+		if (paths.length > 0) {
+			const loaderStarted = performance.now();
+			await warmExtensionModuleLoader();
+			span.setAttributes({ "extensions.loader_ms": Math.round(performance.now() - loaderStarted) });
 		}
 
-		if (extension) {
-			extensions.push(extension);
-		}
-	}
+		for (const extPath of paths) {
+			const started = performance.now();
+			const { extension, error } = await loadExtension(extPath, cwd, resolvedEventBus, runtime);
+			try {
+				timing.record(extPath, performance.now() - started, error !== null);
+			} catch {
+				// Timing bookkeeping must never affect the load result.
+			}
 
-	return {
-		extensions,
-		errors,
-		runtime,
-	};
+			if (error) {
+				errors.push({ path: extPath, error });
+				continue;
+			}
+
+			if (extension) {
+				extensions.push(extension);
+			}
+		}
+
+		try {
+			span.setAttributes(timing.attributes());
+		} catch {
+			// Attribute reporting must never affect the load result.
+		}
+		return {
+			extensions,
+			errors,
+			runtime,
+		};
+	});
 }
 
 interface PiManifest {

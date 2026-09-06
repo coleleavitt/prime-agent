@@ -330,18 +330,52 @@ describe("ReplKernelManager trace propagation", () => {
 		expect(spans.filter((s) => s.name === "kernel.host_request")).toHaveLength(2);
 	});
 
-	it("passes TRACEPARENT to the kernel process when spawned inside a span", async () => {
-		const kernel = newManager();
+	it("spawns the kernel under a kernel.start span that is a child of the caller's span", async () => {
+		const kernel = newManager({ snapshot: true });
 		const boot = await withSpan("boot", async (span) => {
 			await kernel.start();
 			return span.context;
 		});
-		expect(readFileSync(envLogPath, "utf8")).toBe(formatTraceparent(boot));
+		const startSpan = spans.find((s) => s.name === "kernel.start");
+		expect(startSpan).toBeDefined();
+		expect(startSpan?.traceId).toBe(boot.traceId);
+		expect(startSpan?.parentSpanId).toBe(boot.spanId);
+		expect(startSpan?.status).toBe("ok");
+		expect(startSpan?.attrs).toMatchObject({
+			"kernel.python": join(tempDir, "python"),
+			"kernel.restore": true,
+			"kernel.bootstrapped": false,
+		});
+		expect(typeof startSpan?.attrs["kernel.pid"]).toBe("number");
+		// The child inherits the kernel.start span (not the caller's), so Python-side
+		// roots parent under the spawn.
+		const inherited = parseTraceparent(readFileSync(envLogPath, "utf8"));
+		expect(inherited?.traceId).toBe(boot.traceId);
+		expect(inherited?.spanId).toBe(startSpan?.spanId);
+		// The caller's span outlives the start it wrapped.
+		expect(spans.map((s) => s.name).slice(-2)).toEqual(["kernel.start", "boot"]);
 	});
 
-	it("leaves TRACEPARENT unset when the kernel is spawned outside any span", async () => {
+	it("still opens kernel.start as its own root when spawned outside any span", async () => {
 		const kernel = newManager();
 		await kernel.start();
-		expect(readFileSync(envLogPath, "utf8")).toBe("");
+		const startSpan = spans.find((s) => s.name === "kernel.start");
+		expect(startSpan).toBeDefined();
+		expect(startSpan?.parentSpanId).toBeUndefined();
+		expect(startSpan?.attrs).toMatchObject({ "kernel.restore": false, "kernel.bootstrapped": false });
+		const inherited = parseTraceparent(readFileSync(envLogPath, "utf8"));
+		expect(inherited).toBeDefined();
+		expect(formatTraceparent(inherited as TraceContext)).toBe(
+			formatTraceparent({ traceId: startSpan?.traceId ?? "", spanId: startSpan?.spanId ?? "", flags: "01" }),
+		);
+	});
+
+	it("records a failed spawn on the kernel.start span", async () => {
+		manager = new ReplKernelManager({ python: join(tempDir, "missing-python"), cwd: tempDir });
+		await expect(manager.start()).rejects.toThrow();
+		const startSpan = spans.find((s) => s.name === "kernel.start");
+		expect(startSpan?.status).toBe("error");
+		expect(startSpan?.error).toBeTruthy();
+		expect(startSpan?.attrs["kernel.python"]).toBe(join(tempDir, "missing-python"));
 	});
 });

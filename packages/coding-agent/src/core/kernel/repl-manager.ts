@@ -12,6 +12,8 @@ import {
 	parseTraceparent,
 	runWithTraceContext,
 	SPAN_END_MSG,
+	type Span,
+	type SpanAttributes,
 	TRACE_LOG_COMPONENT,
 	withSpan,
 } from "@earendil-works/pi-ai";
@@ -296,7 +298,13 @@ export class ReplKernelManager {
 			throw createKernelStartupAbortError();
 		}
 		if (!this.startPromise) {
-			const startPromise = this.doStart({ onBootstrapProgress: options.onBootstrapProgress }).catch((error) => {
+			// One `kernel.start` span per spawn attempt (concurrent callers share
+			// it through the memoized promise). It is the active context while the
+			// child is spawned, so the TRACEPARENT the runtime inherits names this
+			// span and every Python span opened outside a request nests under it.
+			const startPromise = withSpan("kernel.start", this.startSpanAttributes(), (span) =>
+				this.doStart({ onBootstrapProgress: options.onBootstrapProgress }, span),
+			).catch((error) => {
 				// Only clear our own memoization: a stale start must not evict a newer one.
 				if (this.startPromise === startPromise) this.startPromise = undefined;
 				throw error;
@@ -306,7 +314,22 @@ export class ReplKernelManager {
 		return raceStartupWithAbort(this.startPromise, options.signal);
 	}
 
-	private async doStart(startOptions: KernelStartOptions): Promise<void> {
+	/**
+	 * Attributes of the `kernel.start` span: the interpreter (an explicit path,
+	 * or `venv` for the managed kernel venv resolved by ensureKernelPython),
+	 * whether a namespace restore is configured for this kernel, and whether
+	 * this start is the repair/re-bootstrap path (a protocol repair respawn or
+	 * the fresh start after a discarded repair, see ensureKernelRebootstrapped).
+	 */
+	private startSpanAttributes(): SpanAttributes {
+		return {
+			"kernel.python": this.options.python ?? "venv",
+			"kernel.restore": Boolean(this.options.snapshot),
+			"kernel.bootstrapped": this.pendingRebootstrap || this.protocolRepairOwner !== undefined,
+		};
+	}
+
+	private async doStart(startOptions: KernelStartOptions, span?: Span): Promise<void> {
 		if (this.state !== "idle") return;
 		const generation = ++this.startGeneration;
 		this.state = "starting";
@@ -317,12 +340,17 @@ export class ReplKernelManager {
 
 		let python: string;
 		try {
-			python =
-				this.options.python ??
-				(await ensureKernelPython({
+			if (this.options.python !== undefined) {
+				python = this.options.python;
+			} else {
+				const resolveStarted = performance.now();
+				python = await ensureKernelPython({
 					pythonSkills: this.options.pythonSkills,
 					onProgress: startOptions.onBootstrapProgress,
-				}));
+				});
+				// Venv check/bootstrap cost, separated from spawn-to-ready.
+				span?.setAttributes({ "kernel.python_ms": Math.round(performance.now() - resolveStarted) });
+			}
 			if (this.startStale(generation)) throw new Error("Kernel start superseded");
 			this.options.python = python;
 		} catch (error) {
@@ -352,6 +380,7 @@ export class ReplKernelManager {
 		});
 		this.child = child;
 		if (child.pid !== undefined) recordOrphanProcessState(child.pid, true);
+		span?.setAttributes({ "kernel.pid": child.pid });
 		this.readyDeferred = createDeferred<number>();
 		this.startupProtocolError = undefined;
 		this.wireChild(child);

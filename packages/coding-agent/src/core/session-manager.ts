@@ -5,8 +5,10 @@ import {
 	type ImageContent,
 	type Message,
 	type ServiceTier,
+	type SpanAttributes,
 	type TextContent,
 	type Usage,
+	withSpan,
 } from "@earendil-works/pi-ai";
 import { randomUUID } from "crypto";
 import {
@@ -661,6 +663,17 @@ export async function loadEntriesFromFileAsync(
 		}
 	}
 	return finalizeLoadedEntries(entries);
+}
+
+/** Opening attributes of the `session.load` span; the size is best-effort (absent for a missing file). */
+function sessionLoadAttributes(filePath: string): SpanAttributes {
+	let bytes: number | undefined;
+	try {
+		bytes = statSync(filePath).size;
+	} catch {
+		bytes = undefined;
+	}
+	return { "session.path": basename(filePath), "session.bytes": bytes };
 }
 
 function readSessionHeader(filePath: string): Partial<SessionHeader> | undefined {
@@ -2036,7 +2049,20 @@ export class SessionManager {
 		return new SessionManager(cwd, dir, undefined, true);
 	}
 
+	/**
+	 * Open a file-backed session under a `session.load` span (attrs:
+	 * `session.path` = file name only, `session.bytes`, `session.entries` =
+	 * parsed entry count). `create` (a fresh empty session) is not traced.
+	 */
 	static open(path: string, sessionDir?: string, cwdOverride?: string): SessionManager {
+		return withSpan("session.load", sessionLoadAttributes(path), (span) => {
+			const manager = SessionManager.openSync(path, sessionDir, cwdOverride);
+			span.setAttributes({ "session.entries": manager.fileEntries.length });
+			return manager;
+		});
+	}
+
+	private static openSync(path: string, sessionDir?: string, cwdOverride?: string): SessionManager {
 		// Only the header's cwd is needed to construct the manager; the constructor
 		// (setSessionFile) performs the full parse. Read just the first line here
 		// instead of parsing the entire file a second time — that double parse is a
@@ -2063,13 +2089,26 @@ export class SessionManager {
 		return new SessionManager(cwd ?? process.cwd(), dir, path, true);
 	}
 
+	/** Async twin of `open` (daemon path); same `session.load` span, one per call. */
 	static async openAsync(path: string, sessionDir?: string, cwdOverride?: string): Promise<SessionManager> {
+		return withSpan("session.load", sessionLoadAttributes(path), async (span) => {
+			const manager = await SessionManager.openAsyncUntraced(path, sessionDir, cwdOverride);
+			span.setAttributes({ "session.entries": manager.fileEntries.length });
+			return manager;
+		});
+	}
+
+	private static async openAsyncUntraced(
+		path: string,
+		sessionDir?: string,
+		cwdOverride?: string,
+	): Promise<SessionManager> {
 		if (!existsSync(path)) {
-			return SessionManager.open(path, sessionDir, cwdOverride);
+			return SessionManager.openSync(path, sessionDir, cwdOverride);
 		}
 		const entries = await loadEntriesFromFileAsync(path);
 		if (entries.length === 0) {
-			return SessionManager.open(path, sessionDir, cwdOverride);
+			return SessionManager.openSync(path, sessionDir, cwdOverride);
 		}
 		const cwd = cwdOverride ?? (entries[0] as SessionHeader).cwd;
 		const dir = sessionDir ?? resolve(path, "..");
