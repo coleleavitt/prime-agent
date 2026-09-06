@@ -1,5 +1,6 @@
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { findEnvKeys, getProviders } from "@earendil-works/pi-ai";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSession } from "../../../src/core/agent-session.js";
 import { createAgentSession } from "../../../src/core/sdk.js";
 import { SessionManager } from "../../../src/core/session-manager.js";
@@ -11,12 +12,23 @@ describe("ENG-4620 fast mode settings", () => {
 	let harness: Harness | undefined;
 	const sessions: AgentSession[] = [];
 
+	beforeEach(() => {
+		// Ambient provider API keys (e.g. OPENAI_API_KEY) make the built-in catalog
+		// "available" and leak its models into cycleModel(); keep the registry hermetic.
+		for (const provider of getProviders()) {
+			for (const envKey of findEnvKeys(provider) ?? []) {
+				vi.stubEnv(envKey, undefined);
+			}
+		}
+	});
+
 	afterEach(() => {
 		for (const session of sessions.splice(0)) {
 			session.dispose();
 		}
 		harness?.cleanup();
 		harness = undefined;
+		vi.unstubAllEnvs();
 	});
 
 	it("uses the saved fast mode preference for new sessions", async () => {

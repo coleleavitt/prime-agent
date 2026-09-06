@@ -24,6 +24,9 @@ describe("InteractiveMode startup hints", () => {
 		const mode = {
 			options: { returnToAgentsView },
 			editor: { getText: getEditorText },
+			// Connection-backed client without a UI-local extension runner, so
+			// getClientExtensionRunner() resolves to undefined instead of throwing.
+			uiServices: {},
 			connectionState: {
 				model: { name: "test-model", reasoning: true },
 				thinkingLevel: "high",
