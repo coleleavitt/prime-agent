@@ -258,12 +258,27 @@ const SLOW_HOOK_THRESHOLD_MS = 25;
  * file extension (parent directory when that segment is `index`), restricted
  * to `[a-zA-Z0-9_-]`.
  */
+const GENERIC_EXTENSION_SEGMENTS = new Set(["index", "dist", "build", "lib", "src", "out", "extensions", "extension"]);
+
+/**
+ * Human label for an extension in span attributes: the last path segment that
+ * is not a generic build/entry name, so `.../magic-context/dist/index.js` and
+ * `.../pi-anthropic-auth/dist/index.js` are told apart instead of both
+ * reading "dist" (or "index").
+ */
 export function extensionSpanLabel(extensionPath: string): string {
 	const segments = extensionPath.split(/[\\/]+/).filter((segment) => segment.length > 0);
-	let name = segments.pop() ?? "";
-	const dot = name.lastIndexOf(".");
-	if (dot > 0) name = name.slice(0, dot);
-	if (name === "index" && segments.length > 0) name = segments[segments.length - 1] ?? name;
+	let name = "";
+	while (segments.length > 0) {
+		let candidate = segments.pop() ?? "";
+		const dot = candidate.lastIndexOf(".");
+		if (dot > 0) candidate = candidate.slice(0, dot);
+		if (!GENERIC_EXTENSION_SEGMENTS.has(candidate)) {
+			name = candidate;
+			break;
+		}
+		name = candidate;
+	}
 	const sanitized = name.replace(/[^a-zA-Z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
 	return sanitized.length > 0 ? sanitized : "extension";
 }

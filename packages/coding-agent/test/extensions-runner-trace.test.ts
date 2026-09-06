@@ -231,6 +231,10 @@ describe("ExtensionRunner extension.hooks span", () => {
 		expect(extensionSpanLabel("/home/me/.pi/extensions/my ext.v2.ts")).toBe("my_ext_v2");
 		expect(extensionSpanLabel("<inline>")).toBe("inline");
 		expect(extensionSpanLabel("C:\\ext\\dir\\index.js")).toBe("dir");
+		// Built extensions all end in dist/index.js; the package dir is the label.
+		expect(extensionSpanLabel("/home/me/.prime/agent/extensions/magic-context/dist/index.js")).toBe("magic-context");
+		expect(extensionSpanLabel("/x/forks/anthropic-auth/packages/pi/dist/index.js")).toBe("pi");
+		expect(extensionSpanLabel("/dist/index.js")).toBe("dist");
 		expect(extensionSpanLabel("")).toBe("extension");
 	});
 });
