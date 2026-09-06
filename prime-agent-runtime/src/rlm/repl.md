@@ -57,9 +57,13 @@ runtime keeps serving. Closing stdin is equivalent to `shutdown`.
   MIME type to JSON payload, shipped verbatim from `emit()`. `id` rides task
   context: an asyncio task spawned by a cell keeps that cell's id even after
   the cell finishes; user threads emit `null`.
-- `{"event":"host_request","id":str,"data":{...}}` — one typed request from
-  runtime code to the host; the host answers with a `host_reply` request
-  carrying the same id.
+- `{"event":"host_request","id":str,"data":{...},"traceparent":str}` — one
+  typed request from runtime code to the host; the host answers with a
+  `host_reply` request carrying the same id. `traceparent` is the runtime's
+  `kernel.host_request` client span (see Trace context below).
+- `{"event":"trace","id":str|null,"msg":"span_end","name":str,"traceId":str,"spanId":str,"parentSpanId"?:str,"durationMs":float,"status":"ok"|"error","attrs":{...}}`
+  — one finished span. `id` is the request whose handling produced it (task
+  context, like `display`); `null` from user threads.
 - `{"event":"error","id":str|null,"ename":str,"evalue":str,"traceback":[str,...]}`
 - `{"event":"done","id":str,"status":"ok"|"error"}` — exactly one per id'd
   request, always after all of that request's other events. A snapshot `done`
@@ -74,6 +78,20 @@ with a marker byte sequence awaited in the pumps, so every byte the cell wrote
 synchronously — including direct fd writes — precedes its `done`. Ordering
 between a cell's Python-level writes and its raw fd writes is not guaranteed
 (two channels).
+
+## Trace context
+
+`execute`, `snapshot`, and `restore` accept an optional W3C `traceparent`
+string (`00-<32 hex>-<16 hex>-<2 hex>`, lowercase, non-zero ids). A valid
+value becomes the parent of the request's `kernel.cell` span
+(`attrs`: `kernel.request_id`, `kernel.request_type`); a missing or invalid
+value is ignored (no protocol error) and the request becomes a child of the
+context inherited from the `TRACEPARENT` environment variable at startup, or
+starts a fresh trace. The `kernel.cell` `trace` event is sent before the
+request's `done`. User code sees the cell context through `rlm.trace`
+(`current()`, `start_span()`), `host_request` spans are children of the cell
+span, and `bash()` children receive `TRACEPARENT` in their environment. See
+`docs/observability.md` at the repository root for the cross-process contract.
 
 ## Execution
 

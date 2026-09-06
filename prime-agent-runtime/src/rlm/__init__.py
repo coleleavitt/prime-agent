@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import trace
 from .bash import BashHandle, BashResult, bash
 from .harness import HarnessEntry, HarnessScope, HarnessState, RefinementEvent, get_harness_state
 
@@ -284,6 +285,7 @@ __all__ = [
     "list_subagents",
     "rlm",
     "run",
+    "trace",
 ]
 
 # Lazily re-export the MCP base class. Kept lazy so `import rlm` never requires

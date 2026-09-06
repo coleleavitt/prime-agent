@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, cast
 
-from . import _winjob
+from . import _winjob, trace
 
 _IS_POSIX = os.name == "posix"
 
@@ -729,7 +729,10 @@ def _status_script(command: str, completion_a: str, completion_b: str) -> str:
 
 
 def _child_env() -> dict[str, str]:
-    return {**os.environ, "NO_COLOR": "1", "TERM": "dumb", "CLICOLOR": "0", "FORCE_COLOR": "0"}
+    # TRACEPARENT carries the calling cell's span so the child's own tracing joins the trace.
+    return trace.inject_env(
+        {**os.environ, "NO_COLOR": "1", "TERM": "dumb", "CLICOLOR": "0", "FORCE_COLOR": "0"}
+    )
 
 
 def _signal_group(pid: int, sig: int) -> bool:

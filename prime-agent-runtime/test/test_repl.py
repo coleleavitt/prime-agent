@@ -2071,5 +2071,232 @@ class OwnerWatchdogTest(unittest.TestCase):
         self.assertEqual(calls, [("OpenProcess", 0x00100000, False, 778)])
 
 
+_TP_TRACE = "4bf92f3577b34da6a3ce929d0e0e4736"
+_TP_SPAN = "00f067aa0ba902b7"
+_TP = f"00-{_TP_TRACE}-{_TP_SPAN}-01"
+_HEX = set("0123456789abcdef")
+
+
+def _is_hex_id(value: object, length: int) -> bool:
+    return isinstance(value, str) and len(value) == length and set(value) <= _HEX and set(value) != {"0"}
+
+
+def spans(events: list[dict], name: str | None = None) -> list[dict]:
+    return [
+        e for e in events if e.get("event") == "trace" and e.get("msg") == "span_end" and (name is None or e["name"] == name)
+    ]
+
+
+class TraceProtocolTest(unittest.TestCase):
+    """End-to-end trace-context propagation over the JSONL protocol."""
+
+    def start(self, env: dict[str, str] | None = None) -> ReplProcess:
+        repl = ReplProcess(env)
+        self.addCleanup(repl.close)
+        self.assertEqual(repl.ready()[0]["event"], "ready")
+        return repl
+
+    def test_execute_with_traceparent_emits_child_cell_span(self):
+        repl = self.start()
+        repl.send({"type": "execute", "id": "t1", "code": "1+1", "traceparent": _TP})
+        events = repl.until_done("t1")
+        self.assertEqual(one(events, "result")["text"], "2")
+        self.assertEqual(one(events, "done")["status"], "ok")
+        cell = spans(events, "kernel.cell")
+        self.assertEqual(len(cell), 1)
+        span = cell[0]
+        self.assertEqual(span["id"], "t1")
+        self.assertEqual(span["traceId"], _TP_TRACE)
+        self.assertEqual(span["parentSpanId"], _TP_SPAN)
+        self.assertTrue(_is_hex_id(span["spanId"], 16))
+        self.assertNotEqual(span["spanId"], _TP_SPAN)
+        self.assertEqual(span["status"], "ok")
+        self.assertIsInstance(span["durationMs"], float)
+        self.assertEqual(span["attrs"], {"kernel.request_id": "t1", "kernel.request_type": "execute"})
+        # The span event belongs to the request: it precedes done, the last event of the id.
+        self.assertLess(events.index(span), events.index(one(events, "done")))
+
+    def test_execute_without_traceparent_mints_fresh_trace(self):
+        repl = self.start({"TRACEPARENT": ""})
+        events = repl.execute("t2", "'ok'")
+        self.assertEqual(one(events, "result")["text"], "'ok'")
+        self.assertEqual(one(events, "done")["status"], "ok")
+        span = spans(events, "kernel.cell")[0]
+        self.assertTrue(_is_hex_id(span["traceId"], 32))
+        self.assertTrue(_is_hex_id(span["spanId"], 16))
+        self.assertNotIn("parentSpanId", span)
+        # Every untraced request starts its own trace.
+        other = spans(repl.execute("t3", "2"), "kernel.cell")[0]
+        self.assertNotEqual(other["traceId"], span["traceId"])
+
+    def test_invalid_traceparent_is_ignored_without_protocol_error(self):
+        repl = self.start({"TRACEPARENT": ""})
+        for rid, bad in (("bad1", "garbage"), ("bad2", 42), ("bad3", f"00-{'0' * 32}-{_TP_SPAN}-01")):
+            repl.send({"type": "execute", "id": rid, "code": "3", "traceparent": bad})
+            events = repl.until_done(rid)
+            self.assertIsNone(one(events, "error"))
+            self.assertEqual(one(events, "result")["text"], "3")
+            span = spans(events, "kernel.cell")[0]
+            self.assertNotEqual(span["traceId"], _TP_TRACE)
+            self.assertNotIn("parentSpanId", span)
+
+    def test_cell_error_marks_span_error(self):
+        repl = self.start()
+        repl.send({"type": "execute", "id": "err", "code": "raise ValueError('x')", "traceparent": _TP})
+        events = repl.until_done("err")
+        self.assertEqual(one(events, "done")["status"], "error")
+        span = spans(events, "kernel.cell")[0]
+        self.assertEqual(span["status"], "error")
+        self.assertEqual(span["attrs"]["error"], "ValueError: x")
+        self.assertEqual(span["parentSpanId"], _TP_SPAN)
+
+    def test_traceparent_does_not_leak_into_next_request(self):
+        repl = self.start({"TRACEPARENT": ""})
+        repl.send({"type": "execute", "id": "a", "code": "1", "traceparent": _TP})
+        self.assertEqual(spans(repl.until_done("a"), "kernel.cell")[0]["traceId"], _TP_TRACE)
+        span = spans(repl.execute("b", "1"), "kernel.cell")[0]
+        self.assertNotEqual(span["traceId"], _TP_TRACE)
+        self.assertNotIn("parentSpanId", span)
+
+    def test_user_code_sees_cell_context(self):
+        repl = self.start()
+        code = "\n".join(
+            [
+                "from rlm import trace",
+                "ctx = trace.current()",
+                "with trace.start_span('user.work', step=1) as s:",
+                "    inner = trace.current()",
+                "(trace.format_traceparent(ctx), inner.parent_span_id == ctx.span_id, trace.current() is ctx)",
+            ]
+        )
+        repl.send({"type": "execute", "id": "u", "code": code, "traceparent": _TP})
+        events = repl.until_done("u")
+        cell = spans(events, "kernel.cell")[0]
+        user = spans(events, "user.work")[0]
+        seen, nested, restored = eval(one(events, "result")["text"])
+        self.assertEqual(seen, f"00-{_TP_TRACE}-{cell['spanId']}-01")
+        self.assertTrue(nested)
+        self.assertTrue(restored)
+        self.assertEqual(user["id"], "u")
+        self.assertEqual(user["traceId"], _TP_TRACE)
+        self.assertEqual(user["parentSpanId"], cell["spanId"])
+        self.assertEqual(user["attrs"], {"step": 1})
+        self.assertLess(events.index(user), events.index(cell))
+
+    def test_host_request_frame_carries_child_traceparent(self):
+        repl = self.start()
+        code = "\n".join(
+            [
+                "from rlm import host_request",
+                "await host_request('demo', {'value': 7})",
+            ]
+        )
+        repl.send({"type": "execute", "id": "hr", "code": code, "traceparent": _TP})
+        request = repl.read_event()
+        while request.get("event") != "host_request":
+            request = repl.read_event()
+        self.assertEqual(request["data"], {"type": "demo", "value": 7})
+        carried = request["traceparent"]
+        version, trace_id, span_id, flags = carried.split("-")
+        self.assertEqual((version, trace_id, flags), ("00", _TP_TRACE, "01"))
+        self.assertTrue(_is_hex_id(span_id, 16))
+        self.assertNotEqual(span_id, _TP_SPAN)
+        repl.send({"type": "host_reply", "id": request["id"], "data": {"status": "ok", "result": {}}})
+        events = repl.until_done("hr")
+        self.assertEqual(one(events, "done")["status"], "ok")
+        cell = spans(events, "kernel.cell")[0]
+        bridge = spans(events, "kernel.host_request")[0]
+        # The frame carried the host_request span, whose parent is the cell span.
+        self.assertEqual(bridge["spanId"], span_id)
+        self.assertEqual(bridge["parentSpanId"], cell["spanId"])
+        self.assertEqual(cell["parentSpanId"], _TP_SPAN)
+        self.assertEqual(bridge["traceId"], _TP_TRACE)
+        self.assertEqual(bridge["id"], "hr")
+        self.assertEqual(bridge["status"], "ok")
+        self.assertEqual(bridge["attrs"], {"host_request.rid": request["id"], "host_request.type": "demo"})
+        self.assertLess(events.index(bridge), events.index(cell))
+
+    def test_host_request_error_marks_span_error(self):
+        repl = self.start()
+        repl.send({"type": "execute", "id": "hre", "code": "from rlm import host_request\nawait host_request('demo')"})
+        request = repl.read_event()
+        while request.get("event") != "host_request":
+            request = repl.read_event()
+        repl.send({"type": "host_reply", "id": request["id"], "data": {"status": "error", "error": "nope"}})
+        events = repl.until_done("hre")
+        # The bridge itself completed (a reply arrived); the error is the cell's.
+        self.assertEqual(spans(events, "kernel.host_request")[0]["status"], "ok")
+        self.assertEqual(spans(events, "kernel.cell")[0]["status"], "error")
+
+    def test_env_traceparent_seeds_root_context(self):
+        repl = self.start({"TRACEPARENT": _TP})
+        events = repl.execute("seeded", "import os\nos.environ.get('TRACEPARENT')")
+        span = spans(events, "kernel.cell")[0]
+        self.assertEqual(span["traceId"], _TP_TRACE)
+        self.assertEqual(span["parentSpanId"], _TP_SPAN)
+        # A request-level traceparent still wins over the inherited root.
+        other = f"00-{'a' * 32}-{'b' * 16}-01"
+        repl.send({"type": "execute", "id": "explicit", "code": "1", "traceparent": other})
+        span = spans(repl.until_done("explicit"), "kernel.cell")[0]
+        self.assertEqual(span["traceId"], "a" * 32)
+        self.assertEqual(span["parentSpanId"], "b" * 16)
+
+    def test_bash_subprocess_inherits_cell_traceparent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repl = self.start(
+                {
+                    "TRACEPARENT": "",
+                    "PRIME_AGENT_INTERNAL_ORPHAN_PROCESS_JOURNAL": os.path.join(tmp, "journal.jsonl"),
+                    "PRIME_AGENT_KERNEL_OWNER_PID": str(os.getpid()),
+                }
+            )
+            code = "from rlm import bash\nr = await bash('printf %s \"$TRACEPARENT\"')\nr.output"
+            repl.send({"type": "execute", "id": "sub", "code": code, "traceparent": _TP})
+            events = repl.until_done("sub")
+            self.assertEqual(one(events, "done")["status"], "ok")
+            cell = spans(events, "kernel.cell")[0]
+            self.assertEqual(eval(one(events, "result")["text"]), f"00-{_TP_TRACE}-{cell['spanId']}-01")
+
+    def test_snapshot_and_restore_are_traced(self):
+        repl = self.start()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "state.dill")
+            manifest = os.path.join(tmp, "state.json")
+            repl.execute("seed", "answer = 42")
+            repl.send(
+                {"type": "snapshot", "id": "snap", "path": path, "manifest_path": manifest, "traceparent": _TP}
+            )
+            events = repl.until_done("snap")
+            self.assertEqual(one(events, "done")["status"], "ok")
+            span = spans(events, "kernel.cell")[0]
+            self.assertEqual(span["id"], "snap")
+            self.assertEqual(span["traceId"], _TP_TRACE)
+            self.assertEqual(span["parentSpanId"], _TP_SPAN)
+            self.assertEqual(span["attrs"], {"kernel.request_id": "snap", "kernel.request_type": "snapshot"})
+            self.assertLess(events.index(span), events.index(one(events, "done")))
+
+            repl.send({"type": "restore", "id": "rest", "path": path, "traceparent": _TP})
+            events = repl.until_done("rest")
+            self.assertEqual(one(events, "done")["status"], "ok")
+            span = spans(events, "kernel.cell")[0]
+            self.assertEqual(span["attrs"]["kernel.request_type"], "restore")
+            self.assertEqual(span["parentSpanId"], _TP_SPAN)
+            self.assertEqual(span["status"], "ok")
+
+            repl.send({"type": "snapshot", "id": "same", "path": path, "manifest_path": path})
+            events = repl.until_done("same")
+            self.assertEqual(one(events, "done")["status"], "error")
+            span = spans(events, "kernel.cell")[0]
+            self.assertEqual(span["status"], "error")
+            self.assertEqual(span["attrs"]["error"], "path and manifest_path must differ")
+
+    def test_list_names_is_untraced(self):
+        repl = self.start()
+        repl.send({"type": "list_names", "id": "ln", "traceparent": _TP})
+        events = repl.until_done("ln")
+        self.assertEqual(one(events, "done")["status"], "ok")
+        self.assertEqual(spans(events), [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import codecs
+import contextlib
 import contextvars
 import ctypes
 import inspect
@@ -26,9 +27,10 @@ import time
 import traceback
 import types
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from typing import Any
 
+from . import trace
 from .bash import _kill_live_handles
 
 PROTOCOL_VERSION = 3
@@ -49,6 +51,11 @@ _serve_task: asyncio.Task[Any] | None = None
 # detached task spawned by a cell keeps writing under that cell's id after
 # the cell finishes. Threads start with a fresh context and emit id null.
 _current_cell: contextvars.ContextVar[str | None] = contextvars.ContextVar("_current_cell", default=None)
+# The request (execute/snapshot/restore) whose handling emitted a trace span;
+# rides task context like _current_cell so late spans from a cell's background
+# tasks still name the cell that started them.
+_trace_request: contextvars.ContextVar[str | None] = contextvars.ContextVar("_trace_request", default=None)
+_TRACED_REQUESTS = ("execute", "snapshot", "restore")
 _active: dict[str, Any] = {"task": None, "rid": None, "interrupted": False}
 _cell_counter = 0
 _pending_host: dict[str, "asyncio.Future[dict[str, Any]]"] = {}
@@ -98,6 +105,11 @@ def is_active() -> bool:
     return _protocol_fd >= 0
 
 
+def _emit_span(event: dict[str, Any]) -> None:
+    """Ship one span_end trace event; ``id`` names the request it belongs to (or null)."""
+    _send({"event": "trace", "id": _trace_request.get(), **event})
+
+
 async def host_request(data: dict[str, Any]) -> dict[str, Any]:
     """Send one typed request to the host and await its raw reply dict."""
     if _loop is None:
@@ -107,9 +119,17 @@ async def host_request(data: dict[str, Any]) -> dict[str, Any]:
     rid = uuid.uuid4().hex
     future: asyncio.Future[dict[str, Any]] = _loop.create_future()
     _pending_host[rid] = future
+    attrs: dict[str, Any] = {"host_request.rid": rid}
+    request_type = data.get("type") or data.get("kind")
+    if isinstance(request_type, str):
+        attrs["host_request.type"] = request_type
     try:
-        _send({"event": "host_request", "id": rid, "data": data})
-        return await future
+        with trace.start_span("kernel.host_request", **attrs) as span:
+            frame: dict[str, Any] = {"event": "host_request", "id": rid, "data": data}
+            # The frame carries this client span so the host's server span becomes its child.
+            frame["traceparent"] = trace.format_traceparent(span.ctx)
+            _send(frame)
+            return await future
     finally:
         _pending_host.pop(rid, None)
 
@@ -541,27 +561,34 @@ async def _handle_execute(req: dict[str, Any], ns: dict[str, Any]) -> None:
     # the cell and from asyncio tasks it spawns carry this cell's id.
     token = _current_cell.set(cell_id)
     try:
-        codes, has_trailing = _compile_cell(req["code"], filename)
-        assert _loop is not None
-        task = _loop.create_task(_run_codes(codes, ns))
-        status, value, error = await _run_guarded(task, cell_id)
-        result_text: str | None = None
-        try:
-            if _consume_handoff_interrupt() and status == "ok":
-                # SIGINT landed between the task's completion and the finishing
-                # phase: it targeted this request, so cancel its remaining work.
-                status, error = "error", _error_event(cell_id, KeyboardInterrupt())
-            if status == "ok" and has_trailing and value is not None:
-                try:
-                    ns["_"] = value
-                    result_text = repr(value)
-                except BaseException as exc:  # noqa: BLE001 - a broken __repr__ is a cell error
-                    status, error = "error", _error_event(cell_id, exc)
-            _drain_output()
-        finally:
-            # Close the interrupt window before the protocol sends so a
-            # handler-raised KeyboardInterrupt can never tear a frame mid-_send.
-            _finish_request(cell_id)
+        # The span ends (and its trace event ships) before this request's
+        # result/error/done frames, keeping done the last event of the id.
+        with trace.start_span("kernel.cell", **_span_attrs(req)) as span:
+            codes, has_trailing = _compile_cell(req["code"], filename)
+            assert _loop is not None
+            # Created inside the span: the cell (and tasks it spawns) sees it as current.
+            task = _loop.create_task(_run_codes(codes, ns))
+            status, value, error = await _run_guarded(task, cell_id)
+            result_text: str | None = None
+            try:
+                if _consume_handoff_interrupt() and status == "ok":
+                    # SIGINT landed between the task's completion and the finishing
+                    # phase: it targeted this request, so cancel its remaining work.
+                    status, error = "error", _error_event(cell_id, KeyboardInterrupt())
+                if status == "ok" and has_trailing and value is not None:
+                    try:
+                        ns["_"] = value
+                        result_text = repr(value)
+                    except BaseException as exc:  # noqa: BLE001 - a broken __repr__ is a cell error
+                        status, error = "error", _error_event(cell_id, exc)
+                _drain_output()
+            finally:
+                # Close the interrupt window before the protocol sends so a
+                # handler-raised KeyboardInterrupt can never tear a frame mid-_send.
+                _finish_request(cell_id)
+            if error is not None:
+                span.status = "error"
+                span.error = f"{error.get('ename')}: {error.get('evalue')}"
         if result_text is not None:
             _send({"event": "result", "id": cell_id, "text": result_text})
         if error is not None:
@@ -851,46 +878,51 @@ async def _handle_state(req: dict[str, Any], ns: dict[str, Any]) -> None:
         return _restore_state(ns, req["path"], committed)
 
     assert _loop is not None
-    task = _loop.create_task(run())
-    outcome: tuple[str, Any, dict[str, Any] | None] | None = None
-    try:
-        outcome = await _run_guarded(task, rid)
-        _finish_request(rid)  # no post-run repr/drain: close the interrupt window now
-    except KeyboardInterrupt:
-        # A finishing-targeted SIGINT can raise anywhere between _run_guarded's
-        # finally publishing _finishing_rid and _finish_request clearing it; the
-        # handler only raises once _finishing_rid is set, so the task is already
-        # complete (destructively so for a pruning snapshot). Consume the
-        # interrupt and report the task's real outcome; escaping to the backstop
-        # would misreport a committed snapshot as failed.
-        _finish_request(rid)
-        if outcome is None:
-            # The KeyboardInterrupt pre-empted _run_guarded's return: recover
-            # the completed task's outcome with _run_guarded's failure mapping.
-            try:
-                outcome = ("ok", task.result(), None)
-            except asyncio.CancelledError as exc:
-                event = _interrupt_event(rid, exc) if _active["interrupted"] else _error_event(rid, exc)
-                outcome = ("error", None, event)
-            except BaseException as exc:  # noqa: BLE001 - every request failure becomes an error event
-                outcome = ("error", None, _error_event(rid, exc))
-    status, result, error = outcome
-    if (
-        committed
-        and _active["interrupted"]
-        and error is not None
-        and error.get("ename") == "KeyboardInterrupt"
-    ):
-        # Recover only a protocol interrupt that landed after the commit; a user KeyboardInterrupt keeps interrupted reporting.
-        status, result, error = "ok", committed[0], None
-    if status != "ok":
-        reason = "interrupted" if error and error.get("ename") == "KeyboardInterrupt" else (
-            f"{error.get('ename')}: {error.get('evalue')}" if error else "failed"
-        )
+    # The span ends before the done frame; a failed outcome marks it "error".
+    with trace.start_span("kernel.cell", **_span_attrs(req)) as span:
+        task = _loop.create_task(run())
+        outcome: tuple[str, Any, dict[str, Any] | None] | None = None
+        try:
+            outcome = await _run_guarded(task, rid)
+            _finish_request(rid)  # no post-run repr/drain: close the interrupt window now
+        except KeyboardInterrupt:
+            # A finishing-targeted SIGINT can raise anywhere between _run_guarded's
+            # finally publishing _finishing_rid and _finish_request clearing it; the
+            # handler only raises once _finishing_rid is set, so the task is already
+            # complete (destructively so for a pruning snapshot). Consume the
+            # interrupt and report the task's real outcome; escaping to the backstop
+            # would misreport a committed snapshot as failed.
+            _finish_request(rid)
+            if outcome is None:
+                # The KeyboardInterrupt pre-empted _run_guarded's return: recover
+                # the completed task's outcome with _run_guarded's failure mapping.
+                try:
+                    outcome = ("ok", task.result(), None)
+                except asyncio.CancelledError as exc:
+                    event = _interrupt_event(rid, exc) if _active["interrupted"] else _error_event(rid, exc)
+                    outcome = ("error", None, event)
+                except BaseException as exc:  # noqa: BLE001 - every request failure becomes an error event
+                    outcome = ("error", None, _error_event(rid, exc))
+        status, result, error = outcome
+        if (
+            committed
+            and _active["interrupted"]
+            and error is not None
+            and error.get("ename") == "KeyboardInterrupt"
+        ):
+            # Recover only a protocol interrupt that landed after the commit; a user KeyboardInterrupt keeps interrupted reporting.
+            status, result, error = "ok", committed[0], None
+        reason: str | None = None
+        if status != "ok":
+            reason = "interrupted" if error and error.get("ename") == "KeyboardInterrupt" else (
+                f"{error.get('ename')}: {error.get('evalue')}" if error else "failed"
+            )
+        elif "error" in result:
+            reason = result["error"]
+        if reason is not None:
+            span.status, span.error = "error", reason
+    if reason is not None:
         _send({"event": "done", "id": rid, "status": "error", "reason": reason})
-        return
-    if "error" in result:
-        _send({"event": "done", "id": rid, "status": "error", "reason": result["error"]})
         return
     _send({"event": "done", "id": rid, "status": "ok", **result})
 
@@ -907,6 +939,36 @@ async def _handle_list_names(req: dict[str, Any], ns: dict[str, Any]) -> None:
     _send({"event": "done", "id": req["id"], "status": "ok", "names": _list_names(ns)})
 
 
+def _span_attrs(req: dict[str, Any]) -> dict[str, Any]:
+    attrs: dict[str, Any] = {"kernel.request_id": req["id"]}
+    if isinstance(req.get("type"), str):
+        attrs["kernel.request_type"] = req["type"]
+    return attrs
+
+
+@contextlib.contextmanager
+def _request_trace_scope(req: dict[str, Any]) -> Iterator[None]:
+    """Adopt the request's ``traceparent`` (when valid) while it is handled.
+
+    Only execute/snapshot/restore are traced. A missing or malformed value is
+    ignored, never a protocol error: hosts predating trace propagation keep
+    working, and the request then becomes a child of whatever context the
+    kernel inherited (``TRACEPARENT`` at startup) or a fresh trace.
+    """
+    if req.get("type") not in _TRACED_REQUESTS:
+        yield
+        return
+    request_token = _trace_request.set(req["id"])
+    parent = trace.parse_traceparent(req.get("traceparent"))
+    trace_token = trace.set_current(parent) if parent is not None else None
+    try:
+        yield
+    finally:
+        if trace_token is not None:
+            trace.reset(trace_token)
+        _trace_request.reset(request_token)
+
+
 async def _handle_request(
     handler: Callable[[dict[str, Any], dict[str, Any]], Awaitable[None]],
     req: dict[str, Any],
@@ -914,7 +976,8 @@ async def _handle_request(
 ) -> None:
     # Backstop: one broken request (e.g. RecursionError in compile) fails alone, never the serve loop.
     try:
-        await handler(req, ns)
+        with _request_trace_scope(req):
+            await handler(req, ns)
     except BaseException as exc:  # noqa: BLE001 - any per-request failure becomes error+done
         rid = req["id"]
         with _interrupt_lock:
@@ -1142,6 +1205,13 @@ def main() -> None:
     user_module = types.ModuleType("__main__")
     user_module.__dict__["__builtins__"] = __builtins__
     sys.modules["__main__"] = user_module
+
+    # Trace context: an external TRACEPARENT seeds the root the serve task
+    # copies at creation; finished spans ship as trace events on the stream.
+    inherited = trace.from_env()
+    if inherited is not None:
+        trace.set_current(inherited)
+    trace.set_span_emitter(_emit_span)
 
     _loop = asyncio.new_event_loop()
     asyncio.set_event_loop(_loop)
