@@ -45,6 +45,25 @@ the span so `grep withSpan`/`start_span` lands on it.
 | `rlm.run_agent`       | `rlm.requested_model`, `rlm.model`, `rlm.status`, `rlm.turns` | done | coding-agent `core/agent-session.ts` (`ctx.runAgent` children) |
 | `cron.job`            | `cron.job_id`, `cron.name`, `cron.kind`, `cron.runtime_kind`, `cron.session_id`, `cron.deferred`, `cron.delivery`, `cron.result` | done | coding-agent `modes/daemon/daemon-mode.ts` (scheduled/heartbeat prompts nest their `agent.prompt` under it) |
 | `context.transform`   | `context.messages_in/out`, `context.targets`, `context.usage_percent`, `context.input_tokens`, `context.context_limit` | done | Magic Context `pi-plugin/src/context-handler.ts` (optional pi-ai bridge) |
+| `client.turn`         | `session.active_id`, `client.source`, `turn.queued`, `turn.messages` | done | coding-agent `modes/agent-connection/daemon-agent-connection.ts` (submit → `agent_end` seen by the window; error on close/dispose/rejected admission) |
+| `oauth.refresh`       | `oauth.provider`, `oauth.expired_ms`, `oauth.outcome` | done | coding-agent `core/auth-storage.ts` (refresh under the auth-file lock; a failure is otherwise swallowed into "no API key") |
+| `trace.upload`        | `upload.status`, `upload.bytes`, `http.status` | done | coding-agent `core/agent-traces.ts` |
+| `kernel.start`        | `kernel.python`, `kernel.restore`, `kernel.bootstrapped`, `kernel.python_ms`, `kernel.pid` | done | coding-agent `core/kernel/repl-manager.ts` (the child's `TRACEPARENT` names this span) |
+| `extensions.load`     | `extensions.count`, `extensions.loader_ms`, `extensions.errors`, `extensions.slowest`, `extensions.slowest_ms`, `extensions.<label>_ms` (>100 ms) | done | coding-agent `core/extensions/loader.ts` |
+| `session.load`        | `session.path`, `session.bytes`, `session.entries` | done | coding-agent `core/session-manager.ts` (`open`/`openAsync`) |
+| `bash.command`        | `bash.command`, `bash.pid`, `bash.exit_code`, `bash.signal`, `bash.killed`, `bash.output_bytes` | done | Python `rlm/bash.py` (the child's `TRACEPARENT` names this span; kernel shutdown ends it as error "kernel shutdown") |
+| `mcp.call`            | `mcp.server`, `mcp.tool`, `mcp.connected`, `mcp.tool_count` | done | Python `rlm/mcp.py` |
+| `ravo.run`            | `ravo.run_id`, `ravo.resumed`, `ravo.reason`, `ravo.rounds`, `ravo.repairs`, `ravo.spent_tokens`, `ravo.certificate_digest` | done | coding-agent `core/ravo/controller.ts` (deadline/budget/cancel are ok + reason) |
+| `ravo.round`          | `ravo.round`, `ravo.phase`, `ravo.outcome`, `ravo.reason` | done | coding-agent `core/ravo/controller.ts` |
+| `ravo.proposal`       | `ravo.round`, `ravo.kind`, `ravo.proposal_id`, `ravo.candidate_tokens` | done | coding-agent `core/ravo/controller.ts` (implement/repair child call) |
+| `ravo.evaluation`     | `ravo.proposal_id`, `ravo.evaluator`, `ravo.evaluator_kind`, `ravo.verdict`, `ravo.certificate_digest` | done | coding-agent `core/ravo/controller.ts` (each evaluator + the commit gate) |
+| `package.install` / `package.remove` / `package.update` / `package.check_updates` | `package.source`, `package.local`, `package.count`, `package.updates` | done | coding-agent `core/package-manager.ts` |
+| `package.command`     | `command` (program + first arg), `exit_code`, `signal` | done | coding-agent `core/package-manager.ts`, `package-manager-cli.ts` (nested git/npm child processes) |
+| `update.check`        | `update.current`, `update.latest`, `update.available`, `http.status` | done | coding-agent `utils/version-check.ts` |
+| `update.self`         | `update.from`, `update.to` | done | coding-agent `package-manager-cli.ts` |
+| `tools.download` / `tools.release_lookup` | `tool`, `version`, `bytes`, `tool.repo`, `http.status` | done | coding-agent `utils/tools-manager.ts` |
+| `historian.run` / `historian.subagent` / `historian.validate` / `historian.publish` | `historian.session_id`, `historian.chunk_start/end`, `historian.model`, `historian.pass`, `historian.outcome`, `historian.valid`, `historian.compartments`, `historian.facts`, `historian.failure_reason` | done | Magic Context `packages/pi-plugin/src/pi-historian-runner.ts` (via the optional pi-trace bridge) |
+| `auth.refresh` / `auth.catalog` / `auth.route` | `auth.reason`, `auth.account`, `auth.source`, `auth.outcome`, `http.status`, `catalog.models`, `catalog.cached`, `auth.pool_size`, `auth.selected` | done | anthropic-auth `packages/pi/src/{shared-refresh,index,stream}.ts` (via `trace-bridge.ts`) |
 
 Supporting pieces:
 
