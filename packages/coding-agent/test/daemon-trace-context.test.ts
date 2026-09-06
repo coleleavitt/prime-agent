@@ -377,7 +377,7 @@ describe("daemon client-socket command lines", () => {
 		await internals.handleClientLine(makeSocketClient(), "{not json");
 		expect(seen).toHaveLength(2);
 		expect(seen[0]?.parentSpanId).toBeUndefined();
-		expect(ended.map((r) => r.attrs["daemon.command_type"])).toEqual(["unknown", "unknown"]);
+		expect(ended.map((r) => r.attrs["daemon.command_type"])).toEqual(["list", "unknown"]);
 	});
 });
 
@@ -437,6 +437,31 @@ describe("daemon supervisor client-socket command lines", () => {
 				JSON.stringify(createDaemonCommandEnvelope({ id: "daemon_6", type: "list" }, "daemon_6")),
 			);
 			expect(seen[0]).toMatchObject({ traceId: ambient.context.traceId, parentSpanId: ambient.context.spanId });
+		});
+	});
+});
+
+describe("daemon command failure envelopes", () => {
+	it("marks the daemon.command span failed when the handler converts a throw into a failure envelope", async () => {
+		const daemon = new AgentDaemon("/tmp/prime-agent-test-never.sock", {
+			defaultSessionConfig: { agentDir: "/tmp", cwd: "/tmp" },
+			createRuntime: vi.fn(),
+		});
+		const internals = daemon as unknown as DaemonInternals & {
+			handleCommand: (...args: unknown[]) => Promise<unknown>;
+		};
+		internals.handleCommand = vi.fn(async () => {
+			throw new Error("Worker authentication failed");
+		});
+		const client = makeSocketClient();
+		await internals.handleClientLine(client, JSON.stringify({ id: "daemon_11", type: "list" }));
+		const written = (client.socket.write as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0]));
+		expect(written.some((line) => line.includes("Worker authentication failed"))).toBe(true);
+		expect(ended[0]).toMatchObject({
+			name: "daemon.command",
+			status: "error",
+			error: "Worker authentication failed",
+			attrs: { "daemon.command_type": "list" },
 		});
 	});
 });

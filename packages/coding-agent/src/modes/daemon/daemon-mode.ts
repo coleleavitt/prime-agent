@@ -14,6 +14,7 @@ import { createConnection, createServer, type Server, type Socket } from "node:n
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import {
 	type Api,
+	currentSpan,
 	currentTraceContext,
 	getLogger,
 	type Model,
@@ -3429,6 +3430,11 @@ export class AgentDaemon {
 				requestId = String(wireValue.id);
 				const type = (wireValue.command as { type?: unknown }).type;
 				if (typeof type === "string") commandType = type;
+			} else if (wireValue && typeof wireValue === "object") {
+				// Legacy bare command: still name the span after it.
+				const bare = wireValue as { id?: unknown; type?: unknown };
+				if (typeof bare.id === "string") requestId = bare.id;
+				if (typeof bare.type === "string") commandType = bare.type;
 			}
 		} catch {
 			// handleLine reports the parse failure to the client; tracing stays silent.
@@ -3732,6 +3738,7 @@ export class AgentDaemon {
 				this.write(client, response);
 			}
 		} catch (error) {
+			currentSpan()?.recordError(error);
 			// Only the error message reaches the client (serializeDaemonError drops
 			// the rest), so log the full stack here — this is the one place a handler
 			// crash like a RangeError from a pathological session is recoverable.

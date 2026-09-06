@@ -13,7 +13,14 @@ import {
 import { createServer, type Server, type Socket } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import { Writable } from "node:stream";
-import { currentTraceContext, getLogger, parseTraceparent, runWithTraceContext, withSpan } from "@earendil-works/pi-ai";
+import {
+	currentSpan,
+	currentTraceContext,
+	getLogger,
+	parseTraceparent,
+	runWithTraceContext,
+	withSpan,
+} from "@earendil-works/pi-ai";
 import { createCliSubprocessEnv, createCliSubprocessLaunchSpec } from "../../cli/subprocess-launch.js";
 import {
 	appendRotatingLog,
@@ -1748,6 +1755,11 @@ export class DaemonSupervisor {
 				requestId = String(parsed.id);
 				const type = (parsed.command as { type?: unknown }).type;
 				if (typeof type === "string") commandType = type;
+			} else if (parsed && typeof parsed === "object") {
+				// Legacy bare command: still name the span after it.
+				const bare = parsed as { id?: unknown; type?: unknown };
+				if (typeof bare.id === "string") requestId = bare.id;
+				if (typeof bare.type === "string") commandType = bare.type;
 			}
 		} catch {
 			// handleLine reports parse failures; tracing stays silent.
@@ -1916,6 +1928,9 @@ export class DaemonSupervisor {
 				this.write(client, response);
 			}
 		} catch (error) {
+			// The error becomes a failure envelope rather than propagating, so the
+			// daemon.command span would otherwise end "ok" for a failed command.
+			currentSpan()?.recordError(error);
 			this.log(`Supervisor command ${command.type} failed: ${error instanceof Error ? error.stack : String(error)}`);
 			let response = failure(command.id, command.type, error, serializeDaemonError(error));
 			if (journalIdentity && !isSupervisorGenerationStale(error)) {

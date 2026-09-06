@@ -3,6 +3,7 @@ import {
 	bindTraceContext,
 	childContext,
 	complete,
+	currentSpan,
 	currentTraceContext,
 	currentTraceparent,
 	fauxAssistantMessage,
@@ -197,5 +198,44 @@ describe("log stamping", () => {
 		} finally {
 			registration.unregister();
 		}
+	});
+});
+
+describe("currentSpan", () => {
+	const ended: SpanEndRecord[] = [];
+	beforeEach(() => {
+		ended.length = 0;
+		setSpanSink((record) => ended.push(record));
+	});
+	afterEach(() => setSpanSink(undefined));
+
+	it("returns the active span so a handler that swallows an error can still fail it", async () => {
+		await withSpan("daemon.command", async () => {
+			try {
+				throw new Error("Worker authentication failed");
+			} catch (error) {
+				currentSpan()?.recordError(error);
+				// converted to a failure envelope; nothing re-thrown
+			}
+		});
+		expect(ended).toHaveLength(1);
+		expect(ended[0]?.status).toBe("error");
+		expect(ended[0]?.error).toBe("Worker authentication failed");
+	});
+
+	it("is undefined outside any span and for a context that was only adopted", () => {
+		expect(currentSpan()).toBeUndefined();
+		runWithTraceContext(parseTraceparent(VALID), () => {
+			expect(currentTraceContext()).toBeDefined();
+			expect(currentSpan()).toBeUndefined();
+		});
+	});
+
+	it("resolves to the innermost span", () => {
+		withSpan("outer", (outer) => {
+			expect(currentSpan()).toBe(outer);
+			withSpan("inner", (inner) => expect(currentSpan()).toBe(inner));
+			expect(currentSpan()).toBe(outer);
+		});
 	});
 });

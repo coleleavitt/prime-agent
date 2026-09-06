@@ -293,7 +293,21 @@ class SpanImpl implements Span {
  * single callback (e.g. a streaming request ended from a `finally`).
  */
 export function startSpan(name: string, attrs?: SpanAttributes, parent?: TraceContext): Span {
-	return new SpanImpl(name, childContext(parent ?? storage.getStore()), attrs);
+	const span = new SpanImpl(name, childContext(parent ?? storage.getStore()), attrs);
+	spansByContext.set(span.context, span);
+	return span;
+}
+
+/** Span objects keyed by their (unique) context, so code deep inside a
+ * `withSpan` callback can mark the active span failed without threading the
+ * Span through every call — e.g. a command handler that converts a thrown
+ * error into a failure envelope instead of re-throwing. */
+const spansByContext = new WeakMap<TraceContext, Span>();
+
+/** The span whose context is active, if it was started by this module. */
+export function currentSpan(): Span | undefined {
+	const context = storage.getStore();
+	return context ? spansByContext.get(context) : undefined;
 }
 
 /**
