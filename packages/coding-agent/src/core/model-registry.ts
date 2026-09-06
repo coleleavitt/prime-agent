@@ -433,6 +433,23 @@ function isOfflineModeEnabled(): boolean {
 /**
  * Model registry - loads and manages models, resolves API keys via AuthStorage.
  */
+/**
+ * Every ModelRegistry alive in this process, held weakly so short-lived child
+ * sessions (runAgent/RLM) never leak. See refresh() for why a registry must
+ * know its siblings.
+ */
+const registryRefs = new Set<WeakRef<ModelRegistry>>();
+
+function liveRegistries(): ModelRegistry[] {
+	const alive: ModelRegistry[] = [];
+	for (const ref of registryRefs) {
+		const registry = ref.deref();
+		if (registry) alive.push(registry);
+		else registryRefs.delete(ref);
+	}
+	return alive;
+}
+
 export class ModelRegistry {
 	private models: Model<Api>[] = [];
 	private providerRequestConfigs: Map<string, ProviderRequestConfig> = new Map();
@@ -457,6 +474,7 @@ export class ModelRegistry {
 		readonly authStorage: AuthStorage,
 		private modelsJsonPath: string | undefined,
 	) {
+		registryRefs.add(new WeakRef(this));
 		this.loadModels();
 	}
 
@@ -501,8 +519,39 @@ export class ModelRegistry {
 
 		this.loadModels();
 
+		// The API/OAuth registries are process-global while ModelRegistry is
+		// per session, and a daemon worker hosts several sessions (root, RLM and
+		// runAgent children). Re-apply every OTHER live session's dynamic stream
+		// and OAuth registrations first, then our own (ours win on conflicts), so
+		// a child's refresh or disposal can never strip the parent's extension
+		// providers - the cause of "No API provider registered for api:
+		// cortexkit-anthropic-messages" mid-turn after a historian child ended.
+		for (const other of liveRegistries()) {
+			if (other === this) continue;
+			for (const [providerName, config] of other.registeredProviders.entries()) {
+				other.applyGlobalRegistrations(providerName, config);
+			}
+		}
 		for (const [providerName, config] of this.registeredProviders.entries()) {
 			this.applyProviderConfig(providerName, config);
+		}
+	}
+
+	/** The process-global part of applyProviderConfig: stream and OAuth registrations only. */
+	private applyGlobalRegistrations(providerName: string, config: ProviderConfigInput): void {
+		if (config.oauth) {
+			registerOAuthProvider({ ...config.oauth, id: providerName });
+		}
+		if (config.streamSimple) {
+			const streamSimple = config.streamSimple;
+			registerApiProvider(
+				{
+					api: config.api!,
+					stream: (model, context, options) => streamSimple(model, context, options as SimpleStreamOptions),
+					streamSimple,
+				},
+				`provider:${providerName}`,
+			);
 		}
 	}
 

@@ -1115,6 +1115,26 @@ describe("ModelRegistry", () => {
 			expect(getApiProvider("cortexkit-test-messages" as Api)).toBeDefined();
 		});
 
+		test("a sibling registry's refresh or disposal never strips this registry's extension API provider", () => {
+			const parent = ModelRegistry.create(authStorage, modelsJsonPath);
+			parent.registerProvider("oauth-ext", { api: "sibling-test-messages" as Api, streamSimple });
+			expect(getApiProvider("sibling-test-messages" as Api)).toBeDefined();
+
+			// A runAgent/RLM child session gets its own ModelRegistry in the same process.
+			const child = ModelRegistry.create(authStorage, modelsJsonPath);
+			child.refresh();
+			expect(getApiProvider("sibling-test-messages" as Api)).toBeDefined();
+
+			// The child loaded the same extension, then is disposed: unregister + refresh.
+			child.registerProvider("oauth-ext", { api: "sibling-test-messages" as Api, streamSimple });
+			child.unregisterProvider("oauth-ext");
+			expect(getApiProvider("sibling-test-messages" as Api)).toBeDefined();
+
+			// Only when the last owner unregisters does the api provider go away.
+			parent.unregisterProvider("oauth-ext");
+			expect(getApiProvider("sibling-test-messages" as Api)).toBeUndefined();
+		});
+
 		test("drops a provider that was not re-registered by the end of the reload", () => {
 			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
 			registry.registerProvider("gone-ext", { api: "gone-test-messages" as Api, streamSimple });
