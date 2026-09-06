@@ -5,6 +5,14 @@
  * Logging must never throw into the caller.
  */
 
+import {
+	currentTraceLogFields,
+	SPAN_END_MSG,
+	type SpanEndRecord,
+	setSpanSink,
+	TRACE_LOG_COMPONENT,
+} from "./trace-context.js";
+
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
 export interface LogEntry {
@@ -61,7 +69,15 @@ export function stringifyLogEntry(entry: LogEntry): string {
 function emit(level: LogLevel, component: string, msg: string, fields?: Record<string, unknown>): void {
 	try {
 		// Reserved keys win over caller fields so entries can't be misclassified.
-		const entry: LogEntry = { ...fields, ts: new Date().toISOString(), level, component, msg };
+		// Trace ids come from the active span so callers never thread them by hand.
+		const entry: LogEntry = {
+			...currentTraceLogFields(),
+			...fields,
+			ts: new Date().toISOString(),
+			level,
+			component,
+			msg,
+		};
 		try {
 			if (sink) {
 				sink(entry);
@@ -85,4 +101,30 @@ export function getLogger(component: string): Logger {
 		warn: (msg, fields) => emit("warn", component, msg, fields),
 		error: (msg, fields) => emit("error", component, msg, fields),
 	};
+}
+
+/**
+ * Default span reporter: every span end becomes one structured log entry
+ * (`component: "trace"`, `msg: "span_end"`) carrying its own ids explicitly,
+ * so it is complete even when read outside the span's async context.
+ */
+function reportSpanEnd(record: SpanEndRecord): void {
+	const { name, traceId, spanId, parentSpanId, durationMs, status, attrs, error } = record;
+	emit(status === "error" ? "warn" : "info", TRACE_LOG_COMPONENT, SPAN_END_MSG, {
+		name,
+		traceId,
+		spanId,
+		parentSpanId,
+		durationMs,
+		status,
+		attrs,
+		error,
+	});
+}
+
+setSpanSink(reportSpanEnd);
+
+/** Re-install the logger-backed span reporter (after a test replaced it). */
+export function installDefaultSpanSink(): void {
+	setSpanSink(reportSpanEnd);
 }

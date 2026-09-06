@@ -1,0 +1,201 @@
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+	bindTraceContext,
+	childContext,
+	complete,
+	currentTraceContext,
+	currentTraceparent,
+	fauxAssistantMessage,
+	formatTraceparent,
+	getLogger,
+	injectTraceparentEnv,
+	installDefaultSpanSink,
+	type LogEntry,
+	parseTraceparent,
+	registerFauxProvider,
+	runWithTraceContext,
+	type SpanEndRecord,
+	setLogSink,
+	setSpanSink,
+	startSpan,
+	traceContextFromEnv,
+	withSpan,
+} from "../src/index.js";
+
+const VALID = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+
+describe("traceparent parsing", () => {
+	it("round-trips a valid header", () => {
+		const ctx = parseTraceparent(VALID);
+		expect(ctx).toEqual({ traceId: "0af7651916cd43dd8448eb211c80319c", spanId: "b7ad6b7169203331", flags: "01" });
+		expect(formatTraceparent(ctx!)).toBe(VALID);
+	});
+
+	it.each([
+		["wrong version", "01-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"],
+		["short trace id", "00-0af7651916cd43dd8448eb211c8031-b7ad6b7169203331-01"],
+		["zero trace id", "00-00000000000000000000000000000000-b7ad6b7169203331-01"],
+		["zero span id", "00-0af7651916cd43dd8448eb211c80319c-0000000000000000-01"],
+		["uppercase", "00-0AF7651916CD43DD8448EB211C80319C-b7ad6b7169203331-01"],
+		["missing flags", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331"],
+		["not a string", 42],
+	])("rejects %s", (_label, value) => {
+		expect(parseTraceparent(value)).toBeUndefined();
+	});
+});
+
+describe("span context propagation", () => {
+	const ended: SpanEndRecord[] = [];
+	beforeEach(() => {
+		ended.length = 0;
+		setSpanSink((record) => ended.push(record));
+	});
+	afterEach(() => installDefaultSpanSink());
+
+	it("has no context outside a span", () => {
+		expect(currentTraceContext()).toBeUndefined();
+		expect(currentTraceparent()).toBeUndefined();
+	});
+
+	it("nests child spans under the active one and restores after exit", async () => {
+		await withSpan("outer", { a: 1 }, async (outer) => {
+			expect(currentTraceContext()?.spanId).toBe(outer.context.spanId);
+			expect(outer.context.parentSpanId).toBeUndefined();
+			await withSpan("inner", (inner) => {
+				expect(inner.context.traceId).toBe(outer.context.traceId);
+				expect(inner.context.parentSpanId).toBe(outer.context.spanId);
+				expect(inner.context.spanId).not.toBe(outer.context.spanId);
+			});
+			expect(currentTraceContext()?.spanId).toBe(outer.context.spanId);
+		});
+		expect(currentTraceContext()).toBeUndefined();
+		expect(ended.map((r) => r.name)).toEqual(["inner", "outer"]);
+		expect(ended[1]?.attrs).toEqual({ a: 1 });
+		expect(ended.every((r) => r.status === "ok")).toBe(true);
+	});
+
+	it("records errors and rethrows for sync and async bodies", async () => {
+		expect(() =>
+			withSpan("sync", () => {
+				throw new Error("boom");
+			}),
+		).toThrow("boom");
+		await expect(
+			withSpan("async", async () => {
+				throw new Error("later");
+			}),
+		).rejects.toThrow("later");
+		expect(ended.map((r) => [r.name, r.status, r.error])).toEqual([
+			["sync", "error", "boom"],
+			["async", "error", "later"],
+		]);
+	});
+
+	it("inherits an explicit parent context via runWithTraceContext", () => {
+		const parent = parseTraceparent(VALID)!;
+		runWithTraceContext(parent, () => {
+			expect(currentTraceparent()).toBe(VALID);
+			const span = startSpan("child");
+			expect(span.context.traceId).toBe(parent.traceId);
+			expect(span.context.parentSpanId).toBe(parent.spanId);
+			span.end();
+		});
+		expect(currentTraceContext()).toBeUndefined();
+	});
+
+	it("binds callbacks to the context active at bind time", async () => {
+		let seen: string | undefined;
+		const bound = withSpan("owner", () =>
+			bindTraceContext(() => {
+				seen = currentTraceparent();
+			}),
+		);
+		bound();
+		expect(seen).toBeDefined();
+		expect(currentTraceparent()).toBeUndefined();
+	});
+
+	it("ends a span once even if end() is called twice", () => {
+		const span = startSpan("once");
+		span.end();
+		span.end("error");
+		expect(ended).toHaveLength(1);
+		expect(ended[0]?.status).toBe("ok");
+	});
+
+	it("reads and injects TRACEPARENT through the environment", () => {
+		expect(traceContextFromEnv({ TRACEPARENT: VALID })).toEqual(parseTraceparent(VALID));
+		expect(traceContextFromEnv({})).toBeUndefined();
+		expect(injectTraceparentEnv({ PATH: "/bin" })).toEqual({ PATH: "/bin" });
+		runWithTraceContext(childContext(undefined), () => {
+			const env: Record<string, string | undefined> = injectTraceparentEnv({ PATH: "/bin" });
+			expect(env.TRACEPARENT).toBe(currentTraceparent());
+		});
+	});
+});
+
+describe("log stamping", () => {
+	const entries: LogEntry[] = [];
+	beforeEach(() => {
+		entries.length = 0;
+		setLogSink((entry) => entries.push(entry));
+	});
+	afterEach(() => {
+		setLogSink(undefined);
+		installDefaultSpanSink();
+	});
+
+	it("stamps traceId/spanId/parentSpanId on entries emitted inside a span", async () => {
+		const log = getLogger("test");
+		log.info("outside");
+		await withSpan("outer", async (outer) => {
+			log.info("in outer");
+			await withSpan("inner", (inner) => {
+				log.warn("in inner", { extra: true });
+				expect(entries.at(-1)).toMatchObject({
+					msg: "in inner",
+					extra: true,
+					traceId: inner.context.traceId,
+					spanId: inner.context.spanId,
+					parentSpanId: outer.context.spanId,
+				});
+			});
+		});
+		expect(entries[0]).not.toHaveProperty("traceId");
+		expect(entries[1]).toHaveProperty("traceId");
+		expect(entries[1]).not.toHaveProperty("parentSpanId");
+	});
+
+	it("reports span ends as structured trace entries by default", async () => {
+		await withSpan("work", { k: "v" }, async () => {});
+		const end = entries.find((e) => e.component === "trace" && e.msg === "span_end");
+		expect(end).toMatchObject({ level: "info", name: "work", status: "ok", attrs: { k: "v" } });
+		expect(typeof end?.durationMs).toBe("number");
+	});
+
+	it("wraps provider calls in an llm.request span carrying base_url and stop reason", async () => {
+		const registration = registerFauxProvider();
+		try {
+			registration.setResponses([fauxAssistantMessage("hello")]);
+			const model = registration.getModel();
+			await withSpan("agent.turn", async (turn) => {
+				await complete(model, { messages: [{ role: "user", content: "hi", timestamp: Date.now() }] });
+				const end = entries.find((e) => e.msg === "span_end" && e.name === "llm.request");
+				expect(end).toMatchObject({
+					traceId: turn.context.traceId,
+					parentSpanId: turn.context.spanId,
+					status: "ok",
+					attrs: {
+						"llm.provider": model.provider,
+						"llm.api": model.api,
+						"llm.model": model.id,
+						"llm.base_url": model.baseUrl,
+						"llm.stop_reason": "stop",
+					},
+				});
+			});
+		} finally {
+			registration.unregister();
+		}
+	});
+});

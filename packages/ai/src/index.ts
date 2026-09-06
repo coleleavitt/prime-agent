@@ -22,6 +22,7 @@ export type { OpenAIResponsesOptions } from "./providers/openai-responses.js";
 export * from "./providers/register-builtins.js";
 export * from "./session-resources.js";
 export * from "./stream.js";
+export * from "./trace-context.js";
 export * from "./types.js";
 export * from "./utils/diagnostics.js";
 export * from "./utils/event-stream.js";

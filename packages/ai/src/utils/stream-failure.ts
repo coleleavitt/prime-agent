@@ -204,7 +204,7 @@ const log = getLogger("ai.provider");
  * user-initiated aborts.
  */
 export function recordStreamFailure(
-	model: { provider: string; id: string; api: string },
+	model: { provider: string; id: string; api: string; baseUrl?: string },
 	output: AssistantMessage,
 	error: unknown,
 ): void {
@@ -221,6 +221,8 @@ export function recordStreamFailure(
 		provider: model.provider,
 		model: model.id,
 		api: model.api,
+		// The endpoint actually hit: a mis-routed provider is visible from this line alone.
+		baseUrl: model.baseUrl,
 		kind: info.kind,
 		providerErrorType: info.providerErrorType,
 		status: info.status,
