@@ -72,6 +72,27 @@ const MAX_BACKGROUND_OUTPUT_CHARS = 64 * 1024;
 
 const traceLog = getLogger(TRACE_LOG_COMPONENT);
 
+/**
+ * Env prefix of the daemon worker identity (`PRIME_AGENT_INTERNAL_DAEMON_*`:
+ * role, token, supervisor socket, recovery journal, startup gate) and of the
+ * session lease that only the worker process owns. The kernel and everything
+ * it spawns through `bash()` must not inherit them: a `prime-agent` run or a
+ * vitest suite started from a cell would otherwise present the live worker's
+ * token to the running supervisor (the source of the recurring
+ * "Worker authentication failed" warnings) and believe it *is* a worker.
+ * The orphan-process journal is kept — bash.py enrols its process groups there.
+ */
+const DAEMON_WORKER_IDENTITY_ENV_PREFIXES = ["PRIME_AGENT_INTERNAL_DAEMON_", "PRIME_AGENT_INTERNAL_SESSION_LEASE"];
+
+export function withoutDaemonWorkerIdentity(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+	const filtered: NodeJS.ProcessEnv = {};
+	for (const [key, value] of Object.entries(env)) {
+		if (DAEMON_WORKER_IDENTITY_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) continue;
+		filtered[key] = value;
+	}
+	return filtered;
+}
+
 const MAX_KERNEL_STDERR_CHARS = 8 * 1024;
 const MAX_KERNEL_STDERR_LOG_BYTES = 5 * 1024 * 1024;
 const KERNEL_STDERR_LOG_BUDGET_MARKER = "[stderr log budget exhausted]\n";
@@ -372,7 +393,7 @@ export class ReplKernelManager {
 			// so spans it opens outside any request still parent to the span that
 			// started the kernel.
 			env: injectTraceparentEnv({
-				...process.env,
+				...withoutDaemonWorkerIdentity(process.env),
 				...this.options.env,
 				PRIME_AGENT_KERNEL_OWNER_PID: String(process.pid),
 			}),

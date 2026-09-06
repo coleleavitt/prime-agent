@@ -15,7 +15,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.js";
 import {
 	AGENT_FAMILY_REACH_ERROR,
@@ -66,11 +66,53 @@ import {
 	failure,
 } from "../src/modes/daemon/daemon-protocol.js";
 import { activeActivityForSession, type SessionSummary } from "../src/modes/daemon/daemon-session-list.js";
-import { DAEMON_WORKER_SUPERVISOR_SOCKET_ENV } from "../src/modes/daemon/daemon-worker-protocol.js";
+import {
+	DAEMON_WORKER_ROLE_ENV,
+	DAEMON_WORKER_SUPERVISOR_SOCKET_ENV,
+	DAEMON_WORKER_TOKEN_ENV,
+} from "../src/modes/daemon/daemon-worker-protocol.js";
 import { RlmSpawnLedger } from "../src/modes/daemon/rlm-ledger.js";
 import { WorkerRecoveryJournal } from "../src/modes/daemon/worker-recovery-journal.js";
 
+// When this file runs from inside a Prime Agent session (a bash() cell in the
+// Python kernel), the process inherits the enclosing daemon worker's internal
+// environment. An AgentDaemon built with `worker: { authenticationToken }`
+// then reads PRIME_AGENT_INTERNAL_DAEMON_SUPERVISOR_SOCKET and sends
+// list_agent_peers with the test token to the user's LIVE supervisor, which
+// logs "Worker authentication failed" for every run. RLM_DEPTH likewise makes
+// the passive-subagent tests hydrate at the wrong depth. Strip the inherited
+// identity so the suite only ever talks to the fake supervisors it starts.
+const INHERITED_SESSION_ENV = [
+	DAEMON_WORKER_ROLE_ENV,
+	DAEMON_WORKER_TOKEN_ENV,
+	DAEMON_WORKER_SUPERVISOR_SOCKET_ENV,
+	"RLM_DEPTH",
+] as const;
+const inheritedSessionEnv = new Map<string, string | undefined>();
+
+beforeAll(() => {
+	for (const name of INHERITED_SESSION_ENV) {
+		inheritedSessionEnv.set(name, process.env[name]);
+		delete process.env[name];
+	}
+});
+
+afterAll(() => {
+	for (const [name, value] of inheritedSessionEnv) {
+		if (value === undefined) delete process.env[name];
+		else process.env[name] = value;
+	}
+});
+
 describe("daemon mode helpers", () => {
+	it("runs without an inherited daemon worker identity", () => {
+		// Guards the beforeAll above: a worker AgentDaemon must not find a real
+		// supervisor socket in the environment and phone home with a test token.
+		for (const name of INHERITED_SESSION_ENV) {
+			expect(process.env[name], name).toBeUndefined();
+		}
+	});
+
 	it("preserves envelope client identity while registering prompt admission", () => {
 		const daemon = new AgentDaemon("/tmp/unused-daemon.sock", {
 			defaultSessionConfig: { agentDir: "/tmp", cwd: "/tmp" },

@@ -36,6 +36,10 @@ function writeFakeRuntime(path: string): void {
 const fs = require("node:fs");
 const readline = require("node:readline");
 fs.writeFileSync(process.env.FAKE_REPL_ENV_LOG, process.env.TRACEPARENT ?? "");
+if (process.env.FAKE_REPL_ENV_JSON) {
+  const internal = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith("PRIME_AGENT_INTERNAL_")));
+  fs.writeFileSync(process.env.FAKE_REPL_ENV_JSON, JSON.stringify(internal));
+}
 const emit = (event) => process.stdout.write(JSON.stringify(event) + "\\n");
 const pendingHost = new Map();
 emit({ event: "ready", protocol: 3, python: process.version });
@@ -152,7 +156,11 @@ describe("ReplKernelManager trace propagation", () => {
 		manager = new ReplKernelManager({
 			python,
 			cwd: tempDir,
-			env: { FAKE_REPL_REQUEST_LOG: requestLogPath, FAKE_REPL_ENV_LOG: envLogPath },
+			env: {
+				FAKE_REPL_REQUEST_LOG: requestLogPath,
+				FAKE_REPL_ENV_LOG: envLogPath,
+				FAKE_REPL_ENV_JSON: join(tempDir, "env.json"),
+			},
 			hostHandlers: options.hostHandlers,
 			snapshot: options.snapshot
 				? { path: join(tempDir, "state.json"), manifestPath: join(tempDir, "manifest.json"), debounceMs: 1 }
@@ -174,6 +182,35 @@ describe("ReplKernelManager trace propagation", () => {
 		expect(frame).toBeDefined();
 		return frame as Record<string, unknown>;
 	}
+
+	it("does not hand the daemon worker identity to the kernel", async () => {
+		const injected = {
+			PRIME_AGENT_INTERNAL_DAEMON_WORKER: "1",
+			PRIME_AGENT_INTERNAL_DAEMON_WORKER_TOKEN: "worker-secret",
+			PRIME_AGENT_INTERNAL_DAEMON_SUPERVISOR_SOCKET: "/tmp/nope.sock",
+			PRIME_AGENT_INTERNAL_SESSION_LEASE_OWNER_ID: "owner",
+			PRIME_AGENT_INTERNAL_ORPHAN_PROCESS_JOURNAL: join(tempDir, "journal"),
+		};
+		const saved = Object.fromEntries(Object.keys(injected).map((key) => [key, process.env[key]]));
+		Object.assign(process.env, injected);
+		try {
+			const kernel = newManager();
+			expect((await kernel.execute("noop")).status).toBe("ok");
+		} finally {
+			for (const [key, value] of Object.entries(saved)) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+		}
+		const seen = JSON.parse(readFileSync(join(tempDir, "env.json"), "utf8")) as Record<string, string>;
+		// A `prime-agent` or vitest run started from a cell must not present the
+		// live worker's token to the supervisor or believe it is a worker itself.
+		expect(Object.keys(seen).filter((key) => key.includes("DAEMON") || key.includes("SESSION_LEASE"))).toEqual([]);
+		// bash.py still enrols its process groups in the orphan journal.
+		expect(seen.PRIME_AGENT_INTERNAL_ORPHAN_PROCESS_JOURNAL).toBe(
+			injected.PRIME_AGENT_INTERNAL_ORPHAN_PROCESS_JOURNAL,
+		);
+	});
 
 	it("stamps execute frames with the kernel.execute span, a child of the caller's span", async () => {
 		const kernel = newManager();
