@@ -368,6 +368,9 @@ export class ReplKernelManager {
 				python = await ensureKernelPython({
 					pythonSkills: this.options.pythonSkills,
 					onProgress: startOptions.onBootstrapProgress,
+					// Which path resolved the venv (stamped/verified/synced/bootstrapped):
+					// a multi-second python_ms is a sync or rebuild, not the warm check.
+					onResolved: (resolution) => span?.setAttributes({ "kernel.python_path": resolution }),
 				});
 				// Venv check/bootstrap cost, separated from spawn-to-ready.
 				span?.setAttributes({ "kernel.python_ms": Math.round(performance.now() - resolveStarted) });

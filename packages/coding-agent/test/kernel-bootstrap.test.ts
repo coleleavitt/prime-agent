@@ -1,7 +1,16 @@
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	DEFAULT_RLM_EXTRA_IMPORT_NAMES,
@@ -77,13 +86,14 @@ dependencies = ["${dependencyName}"]
 	return skill;
 }
 
-function writeFakePython(filePath: string, importableModules: readonly string[]): void {
+function writeFakePython(filePath: string, importableModules: readonly string[], invocationLog?: string): void {
 	const cases = importableModules.map((moduleName) => `    "import ${moduleName}") exit 0 ;;`).join("\n");
 	const runtimeCase = importableModules.includes("rlm") ? '    *"_harness_methods"*) exit 0 ;;' : "";
 	writeExecutable(
 		filePath,
 		[
 			"#!/bin/sh",
+			...(invocationLog ? [`printf '%s\\n' "$2" >> "${invocationLog}"`] : []),
 			'if [ "$1" = "-c" ]; then',
 			'  case "$2" in',
 			cases,
@@ -95,6 +105,33 @@ function writeFakePython(filePath: string, importableModules: readonly string[])
 			"",
 		].join("\n"),
 	);
+}
+
+/** The venv files the readiness stamp signs: pyvenv.cfg and the runtime's dist-info RECORD. */
+function writeFakeVenvLayout(venv: string): { sitePackages: string; record: string } {
+	const sitePackages = join(venv, "lib", "python3.11", "site-packages");
+	const distInfo = join(sitePackages, "prime_agent_runtime-0.1.0.dist-info");
+	mkdirSync(distInfo, { recursive: true });
+	mkdirSync(join(sitePackages, "rlm"), { recursive: true });
+	writeFileSync(join(venv, "pyvenv.cfg"), "home = /usr/bin\nversion_info = 3.11\n");
+	const record = join(distInfo, "RECORD");
+	writeFileSync(record, "rlm/__init__.py,sha256=abc,1\n");
+	return { sitePackages, record };
+}
+
+function countRuntimeChecks(invocationLog: string): number {
+	try {
+		return readFileSync(invocationLog, "utf8")
+			.split("\n")
+			.filter((line) => line.includes("_harness_methods")).length;
+	} catch {
+		return 0;
+	}
+}
+
+async function freshBootstrapModule(): Promise<typeof import("../src/core/kernel/bootstrap.js")> {
+	vi.resetModules();
+	return import("../src/core/kernel/bootstrap.js");
 }
 
 function installFakeUv(): string {
@@ -486,6 +523,202 @@ dependencies = ["httpx"]
 		await expect(ensureKernelPython()).resolves.toBe(join(venv, "bin", "python"));
 
 		expect(readFileSync(logPath, "utf8")).toContain(`venv ${venv} --python 3.11 --seed`);
+	});
+
+	it("resolves the runtime identity from the live source tree when running from source", async () => {
+		const sourceDir = resolve(__dirname, "..", "..", "..", "prime-agent-runtime");
+		const files = [join(sourceDir, "pyproject.toml")];
+		const collect = (dir: string): void => {
+			for (const entry of readdirSync(dir, { withFileTypes: true })) {
+				const full = join(dir, entry.name);
+				if (entry.isDirectory()) collect(full);
+				else if (entry.isFile() && entry.name.endsWith(".py")) files.push(full);
+			}
+		};
+		collect(join(sourceDir, "src", "rlm"));
+		files.sort();
+		const hash = createHash("sha256");
+		for (const file of files) {
+			hash.update(relative(sourceDir, file));
+			hash.update("\0");
+			hash.update(readFileSync(file));
+			hash.update("\0");
+		}
+
+		// A stale dist/prime-agent-runtime from an older build must not win over src/.
+		expect(runtimeIdentity).toBe(`sha256:${hash.digest("hex")}`);
+		await expect(resolveRuntimeIdentity()).resolves.toBe(runtimeIdentity);
+	});
+
+	it("stamps a verified venv and skips the interpreter check while the venv is unchanged", async () => {
+		const venv = join(tempDir, "kernel-venv");
+		const python = join(venv, "bin", "python");
+		const invocationLog = join(tempDir, "python.log");
+		mkdirSync(join(venv, "bin"), { recursive: true });
+		writeFakePython(python, ["rlm", ...DEFAULT_RLM_EXTRA_IMPORT_NAMES], invocationLog);
+		writeFakeVenvLayout(venv);
+		writeBootstrapVersion(venv);
+		process.env.PRIME_AGENT_KERNEL_VENV = venv;
+
+		const first = await freshBootstrapModule();
+		const resolutions: string[] = [];
+		await expect(first.ensureKernelPython({ onResolved: (r) => resolutions.push(r) })).resolves.toBe(python);
+		expect(countRuntimeChecks(invocationLog)).toBe(1);
+		expect(existsSync(join(venv, ".runtime-ready"))).toBe(true);
+
+		// Same process: memoized. Fresh process (module state reset): the stamp file.
+		await expect(first.ensureKernelPython({ onResolved: (r) => resolutions.push(r) })).resolves.toBe(python);
+		const second = await freshBootstrapModule();
+		await expect(second.ensureKernelPython({ onResolved: (r) => resolutions.push(r) })).resolves.toBe(python);
+		expect(countRuntimeChecks(invocationLog)).toBe(1);
+		expect(resolutions).toEqual(["verified", "stamped", "stamped"]);
+	});
+
+	it("re-runs the interpreter check when the venv changes under a stamp", async () => {
+		const venv = join(tempDir, "kernel-venv");
+		const python = join(venv, "bin", "python");
+		const invocationLog = join(tempDir, "python.log");
+		mkdirSync(join(venv, "bin"), { recursive: true });
+		writeFakePython(python, ["rlm", ...DEFAULT_RLM_EXTRA_IMPORT_NAMES], invocationLog);
+		const layout = writeFakeVenvLayout(venv);
+		writeBootstrapVersion(venv);
+		process.env.PRIME_AGENT_KERNEL_VENV = venv;
+
+		await expect(ensureKernelPython()).resolves.toBe(python);
+		expect(countRuntimeChecks(invocationLog)).toBe(1);
+
+		// A package (un)install changes the site-packages listing.
+		mkdirSync(join(layout.sitePackages, "httpx-9.9.9.dist-info"));
+		await expect(ensureKernelPython()).resolves.toBe(python);
+		expect(countRuntimeChecks(invocationLog)).toBe(2);
+		await expect(ensureKernelPython()).resolves.toBe(python);
+		expect(countRuntimeChecks(invocationLog)).toBe(2);
+
+		// A reinstalled runtime changes its RECORD.
+		writeFileSync(layout.record, "rlm/__init__.py,sha256=def,2\n");
+		await expect(ensureKernelPython()).resolves.toBe(python);
+		expect(countRuntimeChecks(invocationLog)).toBe(3);
+
+		// A recreated venv changes pyvenv.cfg.
+		writeFileSync(join(venv, "pyvenv.cfg"), "home = /opt/python/bin\nversion_info = 3.11\n");
+		await expect(ensureKernelPython()).resolves.toBe(python);
+		expect(countRuntimeChecks(invocationLog)).toBe(4);
+	});
+
+	it("does not let a stamp mask a runtime that fails the check after the venv changed", async () => {
+		const logPath = installFakeUv();
+		const venv = join(tempDir, "kernel-venv");
+		const python = join(venv, "bin", "python");
+		mkdirSync(join(venv, "bin"), { recursive: true });
+		writeFakePython(python, ["rlm", ...DEFAULT_RLM_EXTRA_IMPORT_NAMES]);
+		const layout = writeFakeVenvLayout(venv);
+		writeBootstrapVersion(venv);
+		process.env.PRIME_AGENT_KERNEL_VENV = venv;
+
+		await expect(ensureKernelPython()).resolves.toBe(python);
+		expect(existsSync(join(venv, ".runtime-ready"))).toBe(true);
+		expect(existsSync(logPath)).toBe(false);
+
+		// The runtime got replaced by one without rlm at all.
+		writeFakePython(python, ["dill"]);
+		writeFileSync(layout.record, "dill/__init__.py,sha256=old,1\n");
+		const resolutions: string[] = [];
+		await expect(ensureKernelPython({ onResolved: (r) => resolutions.push(r) })).resolves.toBe(
+			join(venv, "bin", "python"),
+		);
+		expect(resolutions).toEqual(["bootstrapped"]);
+
+		expect(readFileSync(logPath, "utf8")).toContain(`venv ${venv} --python 3.11 --seed`);
+	});
+
+	it("ignores a stamp written for a different runtime identity", async () => {
+		const logPath = installFakeUv();
+		const venv = join(tempDir, "kernel-venv");
+		const python = join(venv, "bin", "python");
+		const invocationLog = join(tempDir, "python.log");
+		mkdirSync(join(venv, "bin"), { recursive: true });
+		writeFakePython(python, ["rlm", ...DEFAULT_RLM_EXTRA_IMPORT_NAMES], invocationLog);
+		writeFakeVenvLayout(venv);
+		writeBootstrapVersion(venv);
+		process.env.PRIME_AGENT_KERNEL_VENV = venv;
+
+		await expect(ensureKernelPython()).resolves.toBe(python);
+		const stamp = JSON.parse(readFileSync(join(venv, ".runtime-ready"), "utf8"));
+		expect(stamp.runtime).toBe(runtimeIdentity);
+		writeFileSync(join(venv, ".runtime-ready"), `${JSON.stringify({ ...stamp, runtime: "sha256:other" })}\n`);
+
+		const fresh = await freshBootstrapModule();
+		await expect(fresh.ensureKernelPython()).resolves.toBe(python);
+		expect(countRuntimeChecks(invocationLog)).toBe(2);
+		expect(existsSync(logPath)).toBe(false);
+	});
+
+	it("treats the recorded Python skills as installed, not as the exact requested set", async () => {
+		const logPath = installFakeUv();
+		const venv = join(tempDir, "kernel-venv");
+		const python = join(venv, "bin", "python");
+		const shared = createPythonSkill("agent-message");
+		const rootOnly = createPythonSkill("refine");
+		mkdirSync(join(venv, "bin"), { recursive: true });
+		writeFakePython(python, ["rlm", ...DEFAULT_RLM_EXTRA_IMPORT_NAMES]);
+		writeBootstrapVersion(venv, [shared, rootOnly]);
+		const manifestBefore = readFileSync(join(venv, ".bootstrap-version"), "utf8");
+		process.env.PRIME_AGENT_KERNEL_VENV = venv;
+
+		// A session that does not see `refine` needs no sync and must not drop it.
+		const resolutions: string[] = [];
+		await expect(
+			ensureKernelPython({ pythonSkills: [shared], onResolved: (r) => resolutions.push(r) }),
+		).resolves.toBe(python);
+		await expect(
+			ensureKernelPython({ pythonSkills: [shared, rootOnly], onResolved: (r) => resolutions.push(r) }),
+		).resolves.toBe(python);
+		expect(existsSync(logPath)).toBe(false);
+		expect(readFileSync(join(venv, ".bootstrap-version"), "utf8")).toBe(manifestBefore);
+		expect(resolutions).toEqual(["verified", "verified"]);
+
+		// A new skill installs only itself; the manifest keeps everything installed.
+		const added = createPythonSkill("goal");
+		await expect(
+			ensureKernelPython({ pythonSkills: [shared, added], onResolved: (r) => resolutions.push(r) }),
+		).resolves.toBe(python);
+		const log = readFileSync(logPath, "utf8");
+		expect(log).toContain(`--editable ${added.packagePath}`);
+		expect(log).not.toContain(`--editable ${shared.packagePath}`);
+		expect(log).not.toContain(`--editable ${rootOnly.packagePath}`);
+		expect(resolutions.at(-1)).toBe("synced");
+		const version = JSON.parse(readFileSync(join(venv, ".bootstrap-version"), "utf8"));
+		expect(version.pythonSkills.map((skill: { importName: string }) => skill.importName)).toEqual([
+			shared.importName,
+			added.importName,
+			rootOnly.importName,
+		]);
+	});
+
+	it("drops a recorded Python skill displaced by an install of the same import name", async () => {
+		installFakeUv();
+		const venv = join(tempDir, "kernel-venv");
+		const python = join(venv, "bin", "python");
+		const previous = createPythonSkill("edit");
+		mkdirSync(join(venv, "bin"), { recursive: true });
+		writeFakePython(python, ["rlm", ...DEFAULT_RLM_EXTRA_IMPORT_NAMES]);
+		writeBootstrapVersion(venv, [previous]);
+		process.env.PRIME_AGENT_KERNEL_VENV = venv;
+
+		// Same import name from another checkout: uv replaces the editable install.
+		const replacement: KernelPythonSkill = {
+			...previous,
+			packagePath: join(tempDir, "other-checkout", "edit"),
+			pyprojectPath: join(tempDir, "other-checkout", "edit", "pyproject.toml"),
+		};
+		mkdirSync(replacement.packagePath, { recursive: true });
+		writeFileSync(replacement.pyprojectPath, readFileSync(previous.pyprojectPath));
+		await expect(ensureKernelPython({ pythonSkills: [replacement] })).resolves.toBe(python);
+
+		const version = JSON.parse(readFileSync(join(venv, ".bootstrap-version"), "utf8"));
+		expect(version.pythonSkills.map((skill: { packagePath: string }) => skill.packagePath)).toEqual([
+			replacement.packagePath,
+		]);
 	});
 
 	it("uses PRIME_AGENT_KERNEL_PYTHON as an override contract", async () => {

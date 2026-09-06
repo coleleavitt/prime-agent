@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { constants, existsSync, readdirSync, readFileSync } from "node:fs";
-import { access, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { constants, type Dirent, existsSync, readdirSync, readFileSync } from "node:fs";
+import { access, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { stderr, stdin } from "node:process";
@@ -55,15 +55,41 @@ const BOOTSTRAP_VERSION_FILE = ".bootstrap-version";
 const BOOTSTRAP_LOCK_NAME = ".bootstrap.lock";
 const BOOTSTRAP_LOCK_RETRY_MS = 100;
 const BOOTSTRAP_LOCK_STALE_WITHOUT_PID_MS = 30_000;
+// Sibling of .bootstrap-version: records the venv state under which RUNTIME_READY_CHECK
+// last passed, so a warm start can skip the interpreter spawn (see venvRuntimeReady).
+const RUNTIME_READY_STAMP_FILE = ".runtime-ready";
+const RUNTIME_READY_STAMP_SCHEMA = 1;
+const RUNTIME_READY_CHECK_HASH = `sha256:${createHash("sha256").update(RUNTIME_READY_CHECK).digest("hex")}`;
 
 let inFlightEnsureKernelPython: { key: string; promise: Promise<string> } | null = null;
+// Per-process memo of the last venv state that passed RUNTIME_READY_CHECK (python path ->
+// serialized signature). Consulted after the signature is recomputed, so an external
+// rebuild of the venv is still noticed within the process.
+const verifiedRuntimeSignatures = new Map<string, string>();
+// Per-process memo of the runtime source hash, keyed by the source dir's stat signature
+// (paths, sizes, mtimes): the content is re-hashed only when a file changed.
+let runtimeIdentityCache: { sourceDir: string; statSignature: string; identity: string } | null = null;
 
 export type KernelPythonSkill = PythonSkillRuntimeInfo;
 export type KernelBootstrapProgressHandler = (message: string) => void;
 
+/**
+ * How ensureKernelPython arrived at its interpreter:
+ * - `override`: PRIME_AGENT_KERNEL_PYTHON was validated and returned.
+ * - `stamped`: the venv matched .bootstrap-version and the .runtime-ready stamp; no
+ *   interpreter was spawned.
+ * - `verified`: the venv matched .bootstrap-version and RUNTIME_READY_CHECK was run.
+ * - `synced`: the base venv was current but Python skills were (re)installed.
+ * - `bootstrapped`: the venv was created or rebuilt.
+ */
+export type KernelPythonResolution = "override" | "stamped" | "verified" | "synced" | "bootstrapped";
+export type KernelPythonResolvedHandler = (resolution: KernelPythonResolution) => void;
+
 export interface EnsureKernelPythonOptions {
 	pythonSkills?: readonly KernelPythonSkill[];
 	onProgress?: KernelBootstrapProgressHandler;
+	/** Reports which path resolved the interpreter (diagnostics only). */
+	onResolved?: KernelPythonResolvedHandler;
 }
 
 interface BootstrapPythonSkill {
@@ -405,6 +431,182 @@ async function hasPrimeAgentRuntime(python: string): Promise<boolean> {
 	}
 }
 
+interface RuntimeReadySignature {
+	schema: number;
+	/** Hash of RUNTIME_READY_CHECK: a stricter check in a newer build re-verifies. */
+	check: string;
+	runtime: string;
+	/** realpath, size and mtime of the interpreter behind <venv>/bin/python. */
+	python: string;
+	/** Content hash of pyvenv.cfg: a recreated venv never matches an old stamp. */
+	venvConfig: string;
+	/** Hash of the site-packages listing: any package install/uninstall invalidates the stamp. */
+	sitePackages: string;
+	/** The installed prime-agent-runtime dist-info and the hash of its RECORD. */
+	runtimeInstall: string;
+}
+
+function sha256(content: string | Buffer): string {
+	return `sha256:${createHash("sha256").update(content).digest("hex")}`;
+}
+
+async function findSitePackagesDirs(venv: string): Promise<string[]> {
+	const dirs: string[] = [];
+	for (const libName of ["lib", "Lib"]) {
+		const libDir = path.join(venv, libName);
+		let entries: Dirent[];
+		try {
+			entries = await readdir(libDir, { withFileTypes: true });
+		} catch {
+			continue;
+		}
+		if (entries.some((entry) => entry.name === "site-packages")) {
+			dirs.push(path.join(libDir, "site-packages"));
+		}
+		for (const entry of entries) {
+			if (entry.isDirectory() && entry.name.startsWith("python")) {
+				dirs.push(path.join(libDir, entry.name, "site-packages"));
+			}
+		}
+	}
+	return dirs;
+}
+
+async function runtimeInstallSignature(venv: string): Promise<string> {
+	for (const siteDir of await findSitePackagesDirs(venv)) {
+		let entries: string[];
+		try {
+			entries = await readdir(siteDir);
+		} catch {
+			continue;
+		}
+		const distInfo = entries.filter((entry) => /^prime_agent_runtime-.*\.dist-info$/.test(entry)).sort();
+		if (distInfo.length === 0) continue;
+		const records = await Promise.all(
+			distInfo.map(async (name) => {
+				try {
+					return `${name}\0${sha256(await readFile(path.join(siteDir, name, "RECORD")))}`;
+				} catch {
+					return `${name}\0unreadable`;
+				}
+			}),
+		);
+		return `${path.relative(venv, siteDir)}\0${records.join("\0")}`;
+	}
+	return "missing";
+}
+
+async function computeRuntimeReadySignature(
+	python: string,
+	venv: string,
+	runtimeIdentity: string,
+): Promise<RuntimeReadySignature | null> {
+	try {
+		const [link, target, targetStat, venvConfig, runtimeInstall] = await Promise.all([
+			lstat(python),
+			realpath(python),
+			stat(python),
+			readFile(path.join(venv, "pyvenv.cfg")),
+			runtimeInstallSignature(venv),
+		]);
+		const siteDirs = await findSitePackagesDirs(venv);
+		const siteStats = await Promise.all(
+			siteDirs.map(async (dir) => {
+				try {
+					// Entry names, not the directory mtime: the first interpreter run adds
+					// __pycache__, which would otherwise invalidate every fresh stamp once.
+					const entries = (await readdir(dir)).filter((entry) => entry !== "__pycache__").sort();
+					return `${path.relative(venv, dir)}\0${sha256(entries.join("\n"))}`;
+				} catch {
+					return `${path.relative(venv, dir)}\0missing`;
+				}
+			}),
+		);
+		return {
+			schema: RUNTIME_READY_STAMP_SCHEMA,
+			check: RUNTIME_READY_CHECK_HASH,
+			runtime: runtimeIdentity,
+			python: `${target}\0${targetStat.size}\0${targetStat.mtimeMs}\0${link.mtimeMs}`,
+			venvConfig: sha256(venvConfig),
+			sitePackages: siteStats.join("\n"),
+			runtimeInstall,
+		};
+	} catch {
+		// Anything unreadable (no interpreter, no pyvenv.cfg): never trust or write a stamp.
+		return null;
+	}
+}
+
+function serializeRuntimeReadySignature(signature: RuntimeReadySignature): string {
+	return JSON.stringify({
+		schema: signature.schema,
+		check: signature.check,
+		runtime: signature.runtime,
+		python: signature.python,
+		venvConfig: signature.venvConfig,
+		sitePackages: signature.sitePackages,
+		runtimeInstall: signature.runtimeInstall,
+	});
+}
+
+async function readRuntimeReadyStamp(venv: string): Promise<string | null> {
+	try {
+		const parsed: unknown = JSON.parse(await readFile(path.join(venv, RUNTIME_READY_STAMP_FILE), "utf8"));
+		if (!isRecord(parsed) || parsed.schema !== RUNTIME_READY_STAMP_SCHEMA) return null;
+		const fields = ["check", "runtime", "python", "venvConfig", "sitePackages", "runtimeInstall"] as const;
+		if (!fields.every((field) => typeof parsed[field] === "string")) return null;
+		return serializeRuntimeReadySignature(parsed as unknown as RuntimeReadySignature);
+	} catch {
+		return null;
+	}
+}
+
+async function writeRuntimeReadyStamp(venv: string, serialized: string): Promise<void> {
+	// Best effort and atomic: a concurrent reader sees either the old or the new stamp,
+	// and a read-only venv simply keeps paying for the interpreter check.
+	const target = path.join(venv, RUNTIME_READY_STAMP_FILE);
+	const temp = `${target}.${process.pid}.tmp`;
+	try {
+		await writeFile(temp, `${serialized}\n`, "utf8");
+		await rename(temp, target);
+	} catch {
+		await rm(temp, { force: true }).catch(() => undefined);
+	}
+}
+
+/**
+ * RUNTIME_READY_CHECK for the managed venv, skipping the interpreter spawn (~50 ms+)
+ * when the venv is byte-for-byte in the state under which the check last passed. The
+ * signature covers the interpreter, pyvenv.cfg, the site-packages listing, the installed
+ * runtime's RECORD, the runtime identity and the check text itself: any package
+ * install, venv rebuild, runtime or build change re-runs the real check. A venv that
+ * decays without touching any of those still fails fast at the kernel protocol
+ * handshake; only the automatic rebuild for that case moves behind a stamp mismatch.
+ */
+async function venvRuntimeReady(
+	python: string,
+	venv: string,
+	runtimeIdentity: string,
+): Promise<{ ready: boolean; stamped: boolean }> {
+	const signature = await computeRuntimeReadySignature(python, venv, runtimeIdentity);
+	// Not a venv layout this stamp understands: the interpreter check decides alone.
+	if (!signature) return { ready: await hasPrimeAgentRuntime(python), stamped: false };
+	const serialized = serializeRuntimeReadySignature(signature);
+	if (verifiedRuntimeSignatures.get(python) === serialized) return { ready: true, stamped: true };
+	if ((await readRuntimeReadyStamp(venv)) === serialized) {
+		verifiedRuntimeSignatures.set(python, serialized);
+		return { ready: true, stamped: true };
+	}
+	if (!(await hasPrimeAgentRuntime(python))) return { ready: false, stamped: false };
+	// Re-read: the check may itself have been raced by a concurrent bootstrap.
+	const after = await computeRuntimeReadySignature(python, venv, runtimeIdentity);
+	if (after && serializeRuntimeReadySignature(after) === serialized) {
+		verifiedRuntimeSignatures.set(python, serialized);
+		await writeRuntimeReadyStamp(venv, serialized);
+	}
+	return { ready: true, stamped: false };
+}
+
 async function missingRlmExtraImportLabels(python: string): Promise<string[]> {
 	const missing: string[] = [];
 	for (const pkg of DEFAULT_RLM_EXTRA_PACKAGES) {
@@ -597,18 +799,28 @@ function extraUvArgsMatch(a: string[] | undefined, b: string[] | undefined): boo
 	return a.every((v, i) => v === b[i]);
 }
 
-function pythonSkillsMatch(a: BootstrapPythonSkill[] | undefined, b: readonly BootstrapPythonSkill[]): boolean {
-	const left = a ?? [];
-	if (left.length !== b.length) return false;
-	return left.every((skill, index) => {
-		const expected = b[index];
-		return (
-			skill.importName === expected.importName &&
-			skill.packagePath === expected.packagePath &&
-			skill.pyprojectPath === expected.pyprojectPath &&
-			skill.pyprojectHash === expected.pyprojectHash
-		);
-	});
+function pythonSkillKey(skill: Pick<BootstrapPythonSkill, "importName" | "packagePath">): string {
+	return `${skill.importName}\0${skill.packagePath}`;
+}
+
+function pythonSkillInstalled(installed: BootstrapPythonSkill | undefined, expected: BootstrapPythonSkill): boolean {
+	return (
+		installed !== undefined &&
+		installed.pyprojectPath === expected.pyprojectPath &&
+		installed.pyprojectHash === expected.pyprojectHash
+	);
+}
+
+// The manifest records what is installed in the venv; a session needs its skills to be
+// a subset of that, not the exact set. Sessions differ in visible skills (goal, compact,
+// refine, agent-message… are feature-gated), so exact matching made every alternation
+// between two sessions rewrite the manifest and reinstall the skills the other dropped.
+function pythonSkillsInstalled(
+	installed: readonly BootstrapPythonSkill[] | undefined,
+	expected: readonly BootstrapPythonSkill[],
+): boolean {
+	const byKey = new Map((installed ?? []).map((skill) => [pythonSkillKey(skill), skill]));
+	return expected.every((skill) => pythonSkillInstalled(byKey.get(pythonSkillKey(skill)), skill));
 }
 
 function bootstrapVersionCurrent(
@@ -619,7 +831,7 @@ function bootstrapVersionCurrent(
 	return (
 		version !== null &&
 		bootstrapBaseVersionCurrent(version, runtimeIdentity) &&
-		pythonSkillsMatch(version.pythonSkills, pythonSkills)
+		pythonSkillsInstalled(version.pythonSkills, pythonSkills)
 	);
 }
 
@@ -654,11 +866,15 @@ function runtimeCandidateDirs(): string[] {
 	// resolution breaks. `npm run build` rebuilds it from live source (copy-assets does
 	// rm -rf + cp), so the staleness hash still refreshes on every build. The relative
 	// paths below cover running from source (tsx) where dist/ hasn't been built.
-	return [
-		path.join(getPackageDir(), "dist", "prime-agent-runtime"),
-		path.resolve(moduleDir, "..", "..", "prime-agent-runtime"),
-		path.resolve(moduleDir, "..", "..", "..", "..", "..", "prime-agent-runtime"),
-	];
+	const distRuntime = path.join(getPackageDir(), "dist", "prime-agent-runtime");
+	const sourceRuntime = path.resolve(moduleDir, "..", "..", "..", "..", "..", "prime-agent-runtime");
+	// Running from source (tsx/vitest): moduleDir is <package>/src/core/kernel. A stale
+	// dist/ copy left by an older build must not win here, or a source run installs the
+	// old runtime into the shared venv (and the installed CLI rebuilds it right back).
+	if (path.basename(path.resolve(moduleDir, "..", "..")) === "src") {
+		return [sourceRuntime, distRuntime, path.resolve(moduleDir, "..", "..", "prime-agent-runtime")];
+	}
+	return [distRuntime, path.resolve(moduleDir, "..", "..", "prime-agent-runtime"), sourceRuntime];
 }
 
 async function resolveRuntimeSourceDir(): Promise<string | null> {
@@ -677,13 +893,20 @@ async function resolveRuntimeSourceDir(): Promise<string | null> {
 export async function resolveRuntimeIdentity(): Promise<string> {
 	const sourceDir = await resolveRuntimeSourceDir();
 	if (!sourceDir) return RUNTIME_REQUIREMENT;
-	return hashRuntimeSource(sourceDir);
+	const files = await listRuntimeSourceFiles(sourceDir);
+	const statSignature = await runtimeSourceStatSignature(sourceDir, files);
+	if (runtimeIdentityCache?.sourceDir === sourceDir && runtimeIdentityCache.statSignature === statSignature) {
+		return runtimeIdentityCache.identity;
+	}
+	const identity = await hashRuntimeSource(sourceDir, files);
+	runtimeIdentityCache = { sourceDir, statSignature, identity };
+	return identity;
 }
 
 // Throws if the local source can't be read. A failure here must surface rather than
 // fall back to RUNTIME_REQUIREMENT: that constant is the registry-install identity, and
 // recording it for a local checkout would permanently mask later source changes.
-async function hashRuntimeSource(sourceDir: string): Promise<string> {
+async function listRuntimeSourceFiles(sourceDir: string): Promise<string[]> {
 	const rlmDir = path.join(sourceDir, "src", "rlm");
 	const files: string[] = [path.join(sourceDir, "pyproject.toml")];
 	async function collect(dir: string): Promise<void> {
@@ -699,6 +922,17 @@ async function hashRuntimeSource(sourceDir: string): Promise<string> {
 	}
 	await collect(rlmDir);
 	files.sort();
+	return files;
+}
+
+async function runtimeSourceStatSignature(sourceDir: string, files: readonly string[]): Promise<string> {
+	const stats = await Promise.all(files.map((file) => stat(file)));
+	return stats
+		.map((fileStat, index) => `${path.relative(sourceDir, files[index])}\0${fileStat.size}\0${fileStat.mtimeMs}`)
+		.join("\n");
+}
+
+async function hashRuntimeSource(sourceDir: string, files: readonly string[]): Promise<string> {
 	const hash = createHash("sha256");
 	for (const file of files) {
 		hash.update(path.relative(sourceDir, file));
@@ -745,9 +979,7 @@ async function syncPythonSkills(
 ): Promise<void> {
 	const version = await readBootstrapVersion(venv);
 	const installedPythonSkills: BootstrapPythonSkill[] = [];
-	const currentPythonSkills = new Map(
-		(version?.pythonSkills ?? []).map((skill) => [`${skill.importName}\0${skill.packagePath}`, skill]),
-	);
+	const currentPythonSkills = new Map((version?.pythonSkills ?? []).map((skill) => [pythonSkillKey(skill), skill]));
 	const pythonSkillsByProjectName = new Map(
 		pythonSkills.map((skill) => [readPythonSkillProjectName(skill).replaceAll("_", "-").toLowerCase(), skill]),
 	);
@@ -765,8 +997,7 @@ async function syncPythonSkills(
 	);
 
 	for (const skill of sortPythonSkillsForInstall(pythonSkills)) {
-		const existingSkill = currentPythonSkills.get(`${skill.importName}\0${skill.packagePath}`);
-		if (existingSkill?.pyprojectPath === skill.pyprojectPath && existingSkill.pyprojectHash === skill.pyprojectHash) {
+		if (pythonSkillInstalled(currentPythonSkills.get(pythonSkillKey(skill)), skill)) {
 			installedPythonSkills.push(skill);
 			continue;
 		}
@@ -774,18 +1005,14 @@ async function syncPythonSkills(
 		const localDependencies = dependenciesBySkill.get(skill) ?? [];
 		const localDependencyArgs = localDependencies
 			.filter((dependency) => {
-				const installedDependency = currentPythonSkills.get(`${dependency.importName}\0${dependency.packagePath}`);
 				const installedThisSync = installedPythonSkills.some(
 					(installed) =>
-						installed.importName === dependency.importName &&
-						installed.packagePath === dependency.packagePath &&
-						installed.pyprojectPath === dependency.pyprojectPath &&
-						installed.pyprojectHash === dependency.pyprojectHash,
+						pythonSkillKey(installed) === pythonSkillKey(dependency) &&
+						pythonSkillInstalled(installed, dependency),
 				);
 				return !(
 					installedThisSync ||
-					(installedDependency?.pyprojectPath === dependency.pyprojectPath &&
-						installedDependency.pyprojectHash === dependency.pyprojectHash)
+					pythonSkillInstalled(currentPythonSkills.get(pythonSkillKey(dependency)), dependency)
 				);
 			})
 			.flatMap(formatPythonSkillInstallArgs);
@@ -810,14 +1037,50 @@ async function syncPythonSkills(
 			);
 		}
 	}
-	await writeBootstrapVersion(venv, runtimeIdentity, installedPythonSkills);
+	await writeBootstrapVersion(
+		venv,
+		runtimeIdentity,
+		mergeInstalledPythonSkills(version?.pythonSkills ?? [], installedPythonSkills),
+	);
 }
 
-async function kernelBaseReady(python: string, venv: string, runtimeIdentity: string): Promise<boolean> {
-	return (
-		(await hasPrimeAgentRuntime(python)) &&
-		bootstrapBaseVersionCurrent(await readBootstrapVersion(venv), runtimeIdentity)
+/**
+ * Manifest entries to record after a sync: everything installed this time plus the
+ * previously recorded skills this session did not ask for, which are still installed.
+ * A previous entry is dropped when a skill installed now displaces it in the venv:
+ * same key (a changed pyproject), same import name, or same project name.
+ */
+function mergeInstalledPythonSkills(
+	previous: readonly BootstrapPythonSkill[],
+	installed: readonly BootstrapPythonSkill[],
+): BootstrapPythonSkill[] {
+	const installedKeys = new Set(installed.map(pythonSkillKey));
+	const installedImportNames = new Set(installed.map((skill) => skill.importName));
+	const installedProjectNames = new Set(installed.map((skill) => normalizedPythonSkillProjectName(skill)));
+	const kept = previous.filter(
+		(skill) =>
+			!installedKeys.has(pythonSkillKey(skill)) &&
+			!installedImportNames.has(skill.importName) &&
+			!installedProjectNames.has(normalizedPythonSkillProjectName(skill)),
 	);
+	return [...kept, ...installed].sort((a, b) => {
+		const packageCompare = a.packagePath.localeCompare(b.packagePath);
+		if (packageCompare !== 0) return packageCompare;
+		return a.importName.localeCompare(b.importName);
+	});
+}
+
+function normalizedPythonSkillProjectName(skill: BootstrapPythonSkill): string {
+	return readPythonSkillProjectName(skill).replaceAll("_", "-").toLowerCase();
+}
+
+type KernelReadiness = { ready: false } | { ready: true; stamped: boolean };
+
+// Manifest first (a few file reads), interpreter check last: a stale manifest means a
+// sync or rebuild follows anyway, so the spawn would be wasted.
+async function kernelBaseReady(python: string, venv: string, runtimeIdentity: string): Promise<KernelReadiness> {
+	if (!bootstrapBaseVersionCurrent(await readBootstrapVersion(venv), runtimeIdentity)) return { ready: false };
+	return venvRuntimeReady(python, venv, runtimeIdentity);
 }
 
 async function kernelReady(
@@ -825,11 +1088,11 @@ async function kernelReady(
 	venv: string,
 	runtimeIdentity: string,
 	pythonSkills: readonly BootstrapPythonSkill[],
-): Promise<boolean> {
-	return (
-		(await hasPrimeAgentRuntime(python)) &&
-		bootstrapVersionCurrent(await readBootstrapVersion(venv), runtimeIdentity, pythonSkills)
-	);
+): Promise<KernelReadiness> {
+	if (!bootstrapVersionCurrent(await readBootstrapVersion(venv), runtimeIdentity, pythonSkills)) {
+		return { ready: false };
+	}
+	return venvRuntimeReady(python, venv, runtimeIdentity);
 }
 
 function formatBootstrapFailure(error: unknown): Error {
@@ -868,20 +1131,32 @@ async function ensureKernelPythonUncached(
 				);
 			}
 		}
-		if (missing.length === 0) return python;
+		if (missing.length === 0) {
+			options.onResolved?.("override");
+			return python;
+		}
 		throw new Error(`PRIME_AGENT_KERNEL_PYTHON points to a Python missing ${missing.join(" and ")}: ${python}`);
 	}
 
 	const venv = await resolveWritableKernelVenvDir();
 	const python = path.join(venv, "bin", "python");
 	const runtimeIdentity = await resolveRuntimeIdentity();
-	if (await kernelReady(python, venv, runtimeIdentity, pythonSkills)) return python;
+	const readiness = await kernelReady(python, venv, runtimeIdentity, pythonSkills);
+	if (readiness.ready) {
+		options.onResolved?.(readiness.stamped ? "stamped" : "verified");
+		return python;
+	}
 
 	const releaseLock = await acquireBootstrapLock(venv);
 	try {
-		if (await kernelReady(python, venv, runtimeIdentity, pythonSkills)) return python;
-		if (await kernelBaseReady(python, venv, runtimeIdentity)) {
+		const lockedReadiness = await kernelReady(python, venv, runtimeIdentity, pythonSkills);
+		if (lockedReadiness.ready) {
+			options.onResolved?.(lockedReadiness.stamped ? "stamped" : "verified");
+			return python;
+		}
+		if ((await kernelBaseReady(python, venv, runtimeIdentity)).ready) {
 			await syncPythonSkills(await ensureUv(options), venv, python, runtimeIdentity, pythonSkills, options);
+			options.onResolved?.("synced");
 			return python;
 		}
 
@@ -900,6 +1175,7 @@ async function ensureKernelPythonUncached(
 	}
 
 	reportProgress(options, "✓ ready");
+	options.onResolved?.("bootstrapped");
 	return python;
 }
 
