@@ -1095,6 +1095,46 @@ describe("ModelRegistry", () => {
 		});
 	});
 
+	describe("provider reload bracket", () => {
+		const streamSimple = (() => {
+			throw new Error("not called");
+		}) as any;
+
+		test("keeps an extension API provider registered across a reload until its replacement registers", () => {
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			registry.registerProvider("oauth-ext", { api: "cortexkit-test-messages" as Api, streamSimple });
+			expect(getApiProvider("cortexkit-test-messages" as Api)).toBeDefined();
+
+			registry.beginProviderReload();
+			// The outgoing extension instance is disposed: previously this dropped the stream immediately.
+			registry.unregisterProvider("oauth-ext");
+			expect(getApiProvider("cortexkit-test-messages" as Api)).toBeDefined();
+			// The new instance registers again (possibly seconds later), then the reload ends.
+			registry.registerProvider("oauth-ext", { api: "cortexkit-test-messages" as Api, streamSimple });
+			registry.endProviderReload();
+			expect(getApiProvider("cortexkit-test-messages" as Api)).toBeDefined();
+		});
+
+		test("drops a provider that was not re-registered by the end of the reload", () => {
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			registry.registerProvider("gone-ext", { api: "gone-test-messages" as Api, streamSimple });
+			registry.beginProviderReload();
+			registry.unregisterProvider("gone-ext");
+			expect(getApiProvider("gone-test-messages" as Api)).toBeDefined();
+			registry.endProviderReload();
+			expect(getApiProvider("gone-test-messages" as Api)).toBeUndefined();
+			expect(registry.getProviderDisplayName("gone-ext")).toBe("gone-ext");
+		});
+
+		test("unregisterProvider outside a reload still removes immediately; unbalanced end is a no-op", () => {
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			registry.registerProvider("plain-ext", { api: "plain-test-messages" as Api, streamSimple });
+			registry.unregisterProvider("plain-ext");
+			expect(getApiProvider("plain-test-messages" as Api)).toBeUndefined();
+			expect(() => registry.endProviderReload()).not.toThrow();
+		});
+	});
+
 	describe("auth refresh across processes", () => {
 		test("model catalog includes unauthenticated public models and hides private Prime routes", async () => {
 			const savedPrimeApiKey = process.env.PRIME_API_KEY;

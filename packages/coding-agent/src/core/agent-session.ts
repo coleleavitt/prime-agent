@@ -40,7 +40,6 @@ import {
 	getSupportedThinkingLevels,
 	isContextOverflow,
 	modelsAreEqual,
-	resetApiProviders,
 	supportsFastMode,
 	withSpan,
 } from "@earendil-works/pi-ai";
@@ -9709,15 +9708,24 @@ export class AgentSession {
 		// Re-read auth.json: a login saved by the client process (daemon mode) must be
 		// visible here so MCP skill gating sees the new credentials.
 		this._modelRegistry.authStorage.reload();
-		resetApiProviders();
-		this._mcpManager?.refresh();
-		this._extensionRunner.invalidate();
-		await this._resourceLoader.reload();
-		this._buildRuntime({
-			activeToolNames: this.getActiveToolNames(),
-			flagValues: previousFlagValues,
-			includeAllExtensionTools: true,
-		});
+		// Keep extension API providers (e.g. an OAuth extension's stream) live
+		// across the reload: a turn in flight must not fail with "No API provider
+		// registered" between the old extension's disposal and the new one's
+		// registration. endProviderReload resets and re-applies the registry once.
+		this._modelRegistry.beginProviderReload();
+		try {
+			this._mcpManager?.refresh();
+			this._extensionRunner.invalidate();
+			await this._resourceLoader.reload();
+			this._buildRuntime({
+				activeToolNames: this.getActiveToolNames(),
+				flagValues: previousFlagValues,
+				includeAllExtensionTools: true,
+			});
+		} finally {
+			// refresh() inside re-adds user-declared MCP OAuth providers via the reset hook.
+			this._modelRegistry.endProviderReload();
+		}
 
 		const hasBindings =
 			this._extensionUIContext ||

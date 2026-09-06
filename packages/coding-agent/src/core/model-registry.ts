@@ -440,6 +440,9 @@ export class ModelRegistry {
 	private lastProviderAuthSourceTokens: Map<string, AuthSourceToken> = new Map();
 	private modelRequestHeaders: Map<string, Record<string, string>> = new Map();
 	private registeredProviders: Map<string, ProviderConfigInput> = new Map();
+	/** See beginProviderReload. */
+	private providerReloadDepth = 0;
+	private pendingProviderRemovals = new Set<string>();
 	private authorizedPrivatePrimeInferenceModelIds = new Set<string>();
 	private authorizedPrivatePrimeInferenceTeamId: string | undefined;
 	private explicitPrivatePrimeInferenceModelIds = new Set<string>();
@@ -1437,6 +1440,8 @@ export class ModelRegistry {
 	 */
 	registerProvider(providerName: string, config: ProviderConfigInput): void {
 		this.validateProviderConfig(providerName, config);
+		// A provider re-registered during a reload is no longer stale.
+		this.pendingProviderRemovals.delete(providerName);
 		this.applyProviderConfig(providerName, config);
 		this.upsertRegisteredProvider(providerName, config);
 	}
@@ -1452,7 +1457,41 @@ export class ModelRegistry {
 	 */
 	unregisterProvider(providerName: string): void {
 		if (!this.registeredProviders.has(providerName)) return;
+		if (this.providerReloadDepth > 0) {
+			// Inside a reload the extension that owns this provider is about to be
+			// re-run and will normally register it again; keep the live stream
+			// registration until endProviderReload decides whether it came back.
+			this.pendingProviderRemovals.add(providerName);
+			return;
+		}
 		this.registeredProviders.delete(providerName);
+		this.refresh();
+	}
+
+	/**
+	 * Bracket an extension reload so providers unregistered by the outgoing
+	 * extension instances stay usable until their replacements register.
+	 *
+	 * Without this, a reload drops every extension-registered API provider (e.g.
+	 * an OAuth extension's `cortexkit-anthropic-messages`) at dispose time and
+	 * only restores it once the extension factory has finished — which can take
+	 * seconds when the factory fetches a model catalog — so a turn that is
+	 * in flight during the reload fails with "No API provider registered".
+	 * Nested brackets are supported; only the outermost end applies removals.
+	 */
+	beginProviderReload(): void {
+		this.providerReloadDepth++;
+	}
+
+	endProviderReload(): void {
+		if (this.providerReloadDepth === 0) return;
+		this.providerReloadDepth--;
+		if (this.providerReloadDepth > 0) return;
+		const stale = [...this.pendingProviderRemovals];
+		this.pendingProviderRemovals.clear();
+		for (const providerName of stale) this.registeredProviders.delete(providerName);
+		// Reload always refreshes: built-in registrations are reset and every
+		// surviving dynamic provider is re-applied in one pass.
 		this.refresh();
 	}
 
