@@ -267,9 +267,10 @@ function extractJudgeJson(text: string): {
 
 /**
  * Deep evaluation: one judge call scoring the candidate against the evaluator
- * criteria. Combines with `ravoDecide` into the full gate. Fails open on
- * judge errors (recorded in the report): the gate must not make refinement
- * less available than the ungated baseline when the judge is down.
+ * criteria. The generic authority (`authorizeAssistedRavo`) makes the
+ * decision. Judge errors are recorded in the report and fail closed: an
+ * unevaluated proposal is never authorized, so no harness edits apply until
+ * a retried /refine reaches the judge.
  */
 export async function ravoEvaluateProposal(
 	proposal: RefinementProposal,

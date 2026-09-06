@@ -1843,6 +1843,8 @@ describe("P0 concurrency regressions", () => {
 		const internals = harness.session as unknown as SerializedInternals;
 
 		// Mock only _planRefine (the LLM planning call), NOT _applyRefine.
+		// applyRefinementProposal is all-or-nothing (a proposal with any failing
+		// edit persists nothing), so the plan must be fully valid to persist.
 		const fauxPlan = {
 			id: "refine_p0_test",
 			proposal: {
@@ -1855,13 +1857,6 @@ describe("P0 concurrency regressions", () => {
 						kind: "memory" as const,
 						title: "P0 concurrency test memory",
 						content: "Added during non-mocked apply pipeline test",
-					},
-					{
-						action: "update" as const,
-						kind: "memory" as const,
-						id: "missing-memory",
-						title: "Missing",
-						content: "Rejected edit",
 					},
 				],
 			},
@@ -1902,7 +1897,7 @@ describe("P0 concurrency regressions", () => {
 			expect(memoryEntry?.content).toBe("Added during non-mocked apply pipeline test");
 		}
 
-		// refine_complete reports only successfully applied edits to extensions.
+		// refine_complete reports the applied edit count to extensions.
 		expect(refineCompleteEmitted).toBe(true);
 		expect(extensionEmit).toHaveBeenCalledWith(expect.objectContaining({ type: "refine_complete", appliedEdits: 1 }));
 	});

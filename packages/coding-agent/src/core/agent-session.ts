@@ -232,6 +232,7 @@ import {
 	RAVO_DEFAULT_CONFIG,
 	REFINE_SKILL_NAME,
 	type RefinementPlan,
+	type RefinementProposal,
 	type RefinementResult,
 	ravoEnabled,
 	ravoEvaluateProposal,
@@ -1028,6 +1029,28 @@ function autoRefineInstructions(reason: AutoRefineReason, review: AutoRefineRevi
 Reviewer instructions: ${review.instructions}`
 		: "";
 	return `Automatic refine review triggered by ${reason}. Only create/update/delete local harness entries if there is clear evidence that should help this session continue. Prefer an empty edits array over speculative or one-off memories. Do not promote anything global unless explicitly requested. Reviewer rationale: ${review.rationale}${detail}`;
+}
+
+/**
+ * Strips the `local:` / `global:` display prefixes that merged harness
+ * overviews show the planner. `_planRefine` canonicalizes the proposal before
+ * RAVO evaluation so the certificate binds the same edit set `_applyRefine`
+ * applies; `_applyRefine` strips again for plans that bypassed planning.
+ */
+function stripRefinementDisplayPrefixes(proposal: RefinementProposal): RefinementProposal {
+	const localPrefix = "local:";
+	const globalPrefix = "global:";
+	return {
+		...proposal,
+		edits: proposal.edits.map((edit) => ({
+			...edit,
+			id: edit.id?.startsWith(localPrefix)
+				? edit.id.slice(localPrefix.length)
+				: edit.id?.startsWith(globalPrefix)
+					? edit.id.slice(globalPrefix.length)
+					: edit.id,
+		})),
+	};
 }
 
 function isNonNegativeInteger(value: unknown): value is number {
@@ -8510,7 +8533,7 @@ export class AgentSession {
 				};
 			}
 		}
-		const plan =
+		const plannedPlan =
 			extensionProposal ??
 			(await planRefinement(
 				this.agent.state.messages,
@@ -8526,6 +8549,12 @@ export class AgentSession {
 		if (this._disposed || signal.aborted) {
 			throw new Error("Refinement cancelled because the session was disposed.");
 		}
+		// Canonicalize display ids before RAVO binds the proposal digest; the
+		// apply phase must evaluate exactly the edit set that was authorized.
+		const plan: RefinementPlan = {
+			...plannedPlan,
+			proposal: stripRefinementDisplayPrefixes(plannedPlan.proposal),
+		};
 		// RAVO deep evaluation runs here in the background planning phase (one
 		// proposal, threaded through every gate); _applyRefine only reads the
 		// decision so the sync critical section stays LLM-free. Rollbacks are
@@ -8640,21 +8669,7 @@ export class AgentSession {
 			// Re-read the target state immediately before applying so concurrent kernel
 			// (`rlm.harness`) writes during the LLM pass are not clobbered.
 			const state = loadHarnessState(targetHarnessStateDir, targetScope);
-			const proposal = {
-				...plan.proposal,
-				edits: plan.proposal.edits.map((edit) => {
-					const localPrefix = "local:";
-					const globalPrefix = "global:";
-					return {
-						...edit,
-						id: edit.id?.startsWith(localPrefix)
-							? edit.id.slice(localPrefix.length)
-							: edit.id?.startsWith(globalPrefix)
-								? edit.id.slice(globalPrefix.length)
-								: edit.id,
-					};
-				}),
-			};
+			const proposal = stripRefinementDisplayPrefixes(plan.proposal);
 			if (this._disposed || refineAbort.signal.aborted) {
 				throw new Error("Refinement cancelled because the session was disposed.");
 			}

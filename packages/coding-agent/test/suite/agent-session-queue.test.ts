@@ -77,6 +77,15 @@ function refinePlanJson(summary: string, edits: unknown[] = []): string {
 	});
 }
 
+/**
+ * Approval reply for the RAVO deep judge. `_planRefine` scores every non-empty
+ * proposal right after the planning reply, and the gate fails closed when the
+ * judge errors, so tests that expect edits to apply must queue this next.
+ */
+function ravoJudgeApprovalJson(): string {
+	return JSON.stringify({ score: 100, failedCriteria: [], rationale: "approved by the test judge" });
+}
+
 function createAutoRefineHarness(options: Parameters<typeof createHarness>[0] = {}): Promise<Harness> {
 	return createHarness({ ...options, persistSession: true });
 }
@@ -957,6 +966,7 @@ describe("AgentSession queue characterization", () => {
 							],
 						}),
 					),
+					fauxAssistantMessage(ravoJudgeApprovalJson()),
 				]);
 
 				const result = await harness.session.refine(refineOptions);
@@ -1020,6 +1030,7 @@ describe("AgentSession queue characterization", () => {
 						},
 					]),
 				),
+				fauxAssistantMessage(ravoJudgeApprovalJson()),
 			]);
 
 			const originalRefinement = await original.session.refine({ instructions: "remember this locally" });
@@ -1238,6 +1249,7 @@ describe("AgentSession queue characterization", () => {
 						}),
 					);
 				},
+				fauxAssistantMessage(ravoJudgeApprovalJson()),
 			]);
 
 			const refinePromise = harness.session.refine({ instructions: "update shared memory" });
@@ -1249,9 +1261,16 @@ describe("AgentSession queue characterization", () => {
 			releasePlan?.();
 
 			const result = await refinePromise;
+			// The RAVO certificate is bound to the planning-time baseline, so a
+			// concurrent harness write rejects the whole proposal before the
+			// per-edit "entry changed during refinement planning" check runs.
 			expect(result.appliedEdits).toMatchObject([
-				{ applied: false, error: "entry changed during refinement planning" },
+				{
+					applied: false,
+					error: expect.stringContaining("RAVO authorization no longer matches the complete proposal"),
+				},
 			]);
+			expect(result.ravo?.decision).toBe("reject_deep");
 			expect(loadHarnessState(localDir, "local").entries.memory.shared.content).toBe("concurrent kernel content");
 		} finally {
 			if (previousAgentDir === undefined) {
@@ -3567,6 +3586,7 @@ describe("AgentSession scheduler scenarios", () => {
 						{ action: "create", kind: "memory", id: "auto_one", title: "One", content: "First lesson." },
 					]),
 				),
+				fauxAssistantMessage(ravoJudgeApprovalJson()),
 				fauxAssistantMessage("second done"),
 				async () => {
 					await busyGate.promise;
@@ -3577,6 +3597,7 @@ describe("AgentSession scheduler scenarios", () => {
 						{ action: "create", kind: "memory", id: "auto_two", title: "Two", content: "Second lesson." },
 					]),
 				),
+				fauxAssistantMessage(ravoJudgeApprovalJson()),
 				fauxAssistantMessage("fourth done"),
 			]);
 
