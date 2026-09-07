@@ -162,16 +162,34 @@ describe("log stamping", () => {
 				});
 			});
 		});
-		expect(entries[0]).not.toHaveProperty("traceId");
-		expect(entries[1]).toHaveProperty("traceId");
-		expect(entries[1]).not.toHaveProperty("parentSpanId");
+		const outside = entries.find((entry) => entry.msg === "outside");
+		const inOuter = entries.find((entry) => entry.msg === "in outer");
+		expect(outside).not.toHaveProperty("traceId");
+		expect(inOuter).toHaveProperty("traceId");
+		expect(inOuter).not.toHaveProperty("parentSpanId");
 	});
 
-	it("reports span ends as structured trace entries by default", async () => {
-		await withSpan("work", { k: "v" }, async () => {});
+	it("reports span starts and ends as structured trace entries by default", async () => {
+		await withSpan("agent.prompt", { k: "v" }, async () => {});
+		const start = entries.find((e) => e.component === "trace" && e.msg === "span_start");
 		const end = entries.find((e) => e.component === "trace" && e.msg === "span_end");
-		expect(end).toMatchObject({ level: "info", name: "work", status: "ok", attrs: { k: "v" } });
+		expect(start).toMatchObject({ level: "info", name: "agent.prompt", attrs: { k: "v" } });
+		expect(end).toMatchObject({ level: "info", name: "agent.prompt", status: "ok", attrs: { k: "v" } });
+		expect(start?.traceId).toBe(end?.traceId);
+		expect(start?.spanId).toBe(end?.spanId);
 		expect(typeof end?.durationMs).toBe("number");
+	});
+
+	it("does not persist starts for high-volume spans", async () => {
+		await withSpan("llm.request", () => Promise.resolve());
+		await withSpan("tool.execute", () => Promise.resolve());
+		await withSpan("extension.hooks", () => Promise.resolve());
+		expect(entries.filter((entry) => entry.msg === "span_start")).toEqual([]);
+	});
+
+	it("allows callers to suppress a span end after the operation runs", () => {
+		withSpan("extension.hooks", (span) => span.setReportingEnabled(false));
+		expect(entries.filter((entry) => entry.msg === "span_end")).toEqual([]);
 	});
 
 	it("wraps provider calls in an llm.request span carrying base_url and stop reason", async () => {

@@ -15,6 +15,7 @@
 
 export const TRACEPARENT_ENV = "TRACEPARENT";
 export const TRACE_LOG_COMPONENT = "trace";
+export const SPAN_START_MSG = "span_start";
 export const SPAN_END_MSG = "span_end";
 
 export interface TraceContext {
@@ -50,6 +51,8 @@ export interface Span {
 	setAttributes(attrs: SpanAttributes): void;
 	/** Mark the span failed; `end()` will report `status: "error"`. */
 	recordError(error: unknown): void;
+	/** Enable or suppress the eventual span-end report. */
+	setReportingEnabled(enabled: boolean): void;
 	/** Idempotent. */
 	end(status?: SpanStatus): void;
 }
@@ -214,8 +217,19 @@ export function injectTraceparentEnv<T extends Record<string, string | undefined
 	return { ...env, [TRACEPARENT_ENV]: traceparent };
 }
 
-type SpanSink = (record: SpanEndRecord) => void;
+export interface SpanStartRecord {
+	name: string;
+	traceId: string;
+	spanId: string;
+	parentSpanId?: string;
+	attrs: SpanAttributes;
+}
+
+export type SpanSink = (record: SpanEndRecord) => void;
+type SpanStartSink = (record: SpanStartRecord) => void;
 let spanSink: SpanSink | undefined;
+let spanStartSink: SpanStartSink | undefined;
+const additionalSpanSinks = new Set<SpanSink>();
 
 /**
  * Install the process-wide span reporter. log.ts installs the default that
@@ -224,6 +238,17 @@ let spanSink: SpanSink | undefined;
  */
 export function setSpanSink(next: SpanSink | undefined): void {
 	spanSink = next;
+}
+
+/** Subscribe without replacing the structured-log span sink. Returns an idempotent unsubscribe function. */
+export function addSpanSink(next: SpanSink): () => void {
+	additionalSpanSinks.add(next);
+	return () => additionalSpanSinks.delete(next);
+}
+
+/** Install a reporter for span starts. Kept separate so existing span-end sinks remain compatible. */
+export function setSpanStartSink(next: SpanStartSink | undefined): void {
+	spanStartSink = next;
 }
 
 function errorText(error: unknown): string {
@@ -248,6 +273,7 @@ class SpanImpl implements Span {
 	readonly attrs: SpanAttributes;
 	private readonly started = performance.now();
 	private ended = false;
+	private reportingEnabled = true;
 	private failure: string | undefined;
 
 	constructor(
@@ -259,11 +285,15 @@ class SpanImpl implements Span {
 	}
 
 	setAttributes(attrs: SpanAttributes): void {
-		Object.assign(this.attrs, cleanAttrs(attrs));
+		if (!this.ended) Object.assign(this.attrs, cleanAttrs(attrs));
 	}
 
 	recordError(error: unknown): void {
-		this.failure = errorText(error);
+		if (!this.ended) this.failure = errorText(error);
+	}
+
+	setReportingEnabled(enabled: boolean): void {
+		if (!this.ended) this.reportingEnabled = enabled;
 	}
 
 	end(status?: SpanStatus): void {
@@ -276,16 +306,36 @@ class SpanImpl implements Span {
 			parentSpanId: this.context.parentSpanId,
 			durationMs: Math.round((performance.now() - this.started) * 1000) / 1000,
 			status: status ?? (this.failure === undefined ? "ok" : "error"),
-			attrs: this.attrs,
+			attrs: { ...this.attrs },
 			error: this.failure,
 		};
+		if (!this.reportingEnabled) return;
 		try {
 			spanSink?.(record);
 		} catch {
 			// Reporting must never break the traced operation.
 		}
+		for (const additionalSink of additionalSpanSinks) {
+			try {
+				additionalSink(record);
+			} catch {
+				// One diagnostic subscriber must not suppress the others.
+			}
+		}
 	}
 }
+
+/** Long-running operations whose start is useful when a process dies or hangs before span_end. */
+const ACTIVE_OPERATION_SPANS = new Set([
+	"client.turn",
+	"agent.prompt",
+	"historian.run",
+	"kernel.start",
+	"session.compact",
+	"cron.job",
+	"ravo.run",
+	"update.self",
+]);
 
 /**
  * Open a child span of the active context (or a new root) without changing
@@ -295,6 +345,18 @@ class SpanImpl implements Span {
 export function startSpan(name: string, attrs?: SpanAttributes, parent?: TraceContext): Span {
 	const span = new SpanImpl(name, childContext(parent ?? storage.getStore()), attrs);
 	spansByContext.set(span.context, span);
+	try {
+		if (ACTIVE_OPERATION_SPANS.has(name))
+			spanStartSink?.({
+				name: span.name,
+				traceId: span.context.traceId,
+				spanId: span.context.spanId,
+				parentSpanId: span.context.parentSpanId,
+				attrs: span.attrs,
+			});
+	} catch {
+		// Reporting must never break the traced operation.
+	}
 	return span;
 }
 

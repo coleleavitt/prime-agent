@@ -8,8 +8,11 @@
 import {
 	currentTraceLogFields,
 	SPAN_END_MSG,
+	SPAN_START_MSG,
 	type SpanEndRecord,
+	type SpanStartRecord,
 	setSpanSink,
+	setSpanStartSink,
 	TRACE_LOG_COMPONENT,
 } from "./trace-context.js";
 
@@ -108,6 +111,18 @@ export function getLogger(component: string): Logger {
  * (`component: "trace"`, `msg: "span_end"`) carrying its own ids explicitly,
  * so it is complete even when read outside the span's async context.
  */
+
+function reportSpanStart(record: SpanStartRecord): void {
+	const { name, traceId, spanId, parentSpanId, attrs } = record;
+	emit("info", TRACE_LOG_COMPONENT, SPAN_START_MSG, {
+		name,
+		traceId,
+		spanId,
+		parentSpanId,
+		attrs,
+	});
+}
+
 function reportSpanEnd(record: SpanEndRecord): void {
 	const { name, traceId, spanId, parentSpanId, durationMs, status, attrs, error } = record;
 	emit(status === "error" ? "warn" : "info", TRACE_LOG_COMPONENT, SPAN_END_MSG, {
@@ -122,9 +137,11 @@ function reportSpanEnd(record: SpanEndRecord): void {
 	});
 }
 
+setSpanStartSink(reportSpanStart);
 setSpanSink(reportSpanEnd);
 
 /** Re-install the logger-backed span reporter (after a test replaced it). */
 export function installDefaultSpanSink(): void {
+	setSpanStartSink(reportSpanStart);
 	setSpanSink(reportSpanEnd);
 }
