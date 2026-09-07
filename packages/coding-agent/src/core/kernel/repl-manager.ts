@@ -71,6 +71,7 @@ const MAX_HANDLED_HOST_REQUEST_IDS = 1024;
 const MAX_BACKGROUND_OUTPUT_CHARS = 64 * 1024;
 
 const traceLog = getLogger(TRACE_LOG_COMPONENT);
+const kernelLog = getLogger("kernel");
 
 /**
  * Env prefix of the daemon worker identity (`PRIME_AGENT_INTERNAL_DAEMON_*`:
@@ -112,6 +113,7 @@ interface InternalExecuteResult extends ExecuteResult {
 
 interface ActiveExecution {
 	requestId: string;
+	requestType: string;
 	/** Source of the cell currently executing; surfaced to rlm.run spawns. */
 	code: string;
 	started: number;
@@ -534,6 +536,14 @@ export class ReplKernelManager {
 			if (this.child !== child) return;
 			if (this.state !== "shutdown") {
 				this.appendKernelDiagnostic(`unexpected exit code=${code} signal=${signal}`);
+				kernelLog.error("kernel_exit", {
+					pid: child.pid,
+					exitCode: code,
+					signal,
+					pythonPath: this.options.python,
+					requestId: this.activeExecution?.requestId,
+					requestType: this.activeExecution?.requestType,
+				});
 			}
 			this.state = "shutdown";
 			liveKernels.delete(this);
@@ -1052,6 +1062,7 @@ export class ReplKernelManager {
 		const result = createDeferred<InternalExecuteResult>();
 		const execution: ActiveExecution = {
 			requestId,
+			requestType: requestFields.type,
 			code,
 			started,
 			maxChars,

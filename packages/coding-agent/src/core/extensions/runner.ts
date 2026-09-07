@@ -250,8 +250,24 @@ type HookInvoke = (
 	ctx: ExtensionContext,
 ) => Promise<unknown>;
 
-/** Handlers slower than this get their own `hook.<extension>_ms` span attribute. */
-const SLOW_HOOK_THRESHOLD_MS = 25;
+/** Default minimum duration for reporting a successful `extension.hooks` span. */
+const DEFAULT_TRACE_HOOK_MIN_DURATION_MS = 25;
+
+export interface ExtensionRunnerOptions {
+	/**
+	 * Report successful `extension.hooks` spans only when their total duration
+	 * reaches this threshold. Error spans are always reported. Set to `0` to
+	 * report every handled event.
+	 */
+	traceHookMinDurationMs?: number;
+}
+
+function traceHookMinDurationMs(options: ExtensionRunnerOptions | undefined): number {
+	const configured = options?.traceHookMinDurationMs;
+	return configured !== undefined && Number.isFinite(configured) && configured >= 0
+		? configured
+		: DEFAULT_TRACE_HOOK_MIN_DURATION_MS;
+}
 
 /**
  * Short, attribute-safe label for an extension: last path segment without its
@@ -297,7 +313,7 @@ class HookTiming {
 		if (threw) this.errors++;
 		const label = extensionSpanLabel(ext.path);
 		this.byExtension.set(label, (this.byExtension.get(label) ?? 0) + durationMs);
-		if (durationMs > SLOW_HOOK_THRESHOLD_MS) this.slowExtensions.add(label);
+		if (durationMs >= DEFAULT_TRACE_HOOK_MIN_DURATION_MS) this.slowExtensions.add(label);
 		if (durationMs > this.slowestMs) {
 			this.slowestMs = durationMs;
 			this.slowestLabel = label;
@@ -351,6 +367,7 @@ export class ExtensionRunner {
 	private shortcutDiagnostics: ResourceDiagnostic[] = [];
 	private commandDiagnostics: ResourceDiagnostic[] = [];
 	private staleMessage: string | undefined;
+	private readonly traceHookMinDurationMs: number;
 
 	constructor(
 		extensions: Extension[],
@@ -358,6 +375,7 @@ export class ExtensionRunner {
 		cwd: string,
 		sessionManager: SessionManager,
 		modelRegistry: ModelRegistry,
+		options?: ExtensionRunnerOptions,
 	) {
 		this.extensions = extensions;
 		this.runtime = runtime;
@@ -365,6 +383,7 @@ export class ExtensionRunner {
 		this.cwd = cwd;
 		this.sessionManager = sessionManager;
 		this.modelRegistry = modelRegistry;
+		this.traceHookMinDurationMs = traceHookMinDurationMs(options);
 	}
 
 	bindCore(
@@ -610,7 +629,9 @@ export class ExtensionRunner {
 	 * instead of the handler directly so each call is timed; `invoke` rethrows
 	 * handler errors unchanged so every emit method keeps its own semantics.
 	 * When no extension registered a handler for `eventType` the body runs
-	 * without a span, so idle events cost nothing. Tracing never throws.
+	 * without a span, so idle events cost nothing. Fast successful spans are
+	 * kept active for child parenting but suppressed from reporting. Tracing
+	 * never throws.
 	 */
 	private async runHandlersTraced<T>(eventType: string, body: (invoke: HookInvoke) => Promise<T>): Promise<T> {
 		if (!this.hasHandlers(eventType)) {
@@ -633,14 +654,23 @@ export class ExtensionRunner {
 				}
 			}
 		};
+		const started = performance.now();
 		return withSpan("extension.hooks", { "hook.event": eventType }, async (span) => {
+			let bodyThrew = false;
 			try {
 				return await body(invoke);
+			} catch (error) {
+				bodyThrew = true;
+				throw error;
 			} finally {
 				try {
 					span.setAttributes(timing.attributes());
+					const durationMs = performance.now() - started;
+					if (!bodyThrew && timing.errors === 0 && durationMs < this.traceHookMinDurationMs) {
+						span.setReportingEnabled(false);
+					}
 				} catch {
-					// Attribute reporting must never affect the emit result.
+					// Trace reporting must never affect the emit result.
 				}
 			}
 		});

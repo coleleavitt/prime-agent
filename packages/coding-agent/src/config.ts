@@ -3,6 +3,7 @@ import { createHash } from "crypto";
 import {
 	accessSync,
 	appendFileSync,
+	chmodSync,
 	constants,
 	existsSync,
 	mkdirSync,
@@ -11,10 +12,13 @@ import {
 	renameSync,
 	rmSync,
 	statSync,
+	writeFileSync,
 } from "fs";
 import { homedir } from "os";
 import { basename, dirname, join, resolve, sep, win32 } from "path";
+import { lockSync } from "proper-lockfile";
 import { fileURLToPath } from "url";
+import { gzipSync } from "zlib";
 import { shouldUseWindowsShell } from "./utils/child-process.js";
 import { normalizeSocketPath } from "./utils/daemon-socket-path.js";
 
@@ -576,28 +580,116 @@ export function getLegacyDaemonUpdateRestartManifestPath(agentDir: string = getA
 }
 
 const MAX_LOG_BYTES = 5 * 1024 * 1024;
+const DEFAULT_LOG_RETENTION = 5;
+const MAX_LOG_RETENTION = 100;
+const LOG_FILE_MODE = 0o600;
+const LOG_DIRECTORY_MODE = 0o700;
+const REDACTED = "[REDACTED]";
+
+function configuredLogRetention(): number {
+	const configured = process.env.PRIME_AGENT_LOG_RETENTION;
+	if (configured === undefined) return DEFAULT_LOG_RETENTION;
+	const parsed = Number.parseInt(configured, 10);
+	if (!Number.isFinite(parsed)) return DEFAULT_LOG_RETENTION;
+	return Math.min(MAX_LOG_RETENTION, Math.max(1, parsed));
+}
+
+/** Redact a small set of high-confidence credential forms before local persistence. */
+export function redactLocalLog(message: string): string {
+	return message
+		.replace(/(\b(?:Bearer|Basic)\s+)[A-Za-z0-9._~+/=-]+/gi, `$1${REDACTED}`)
+		.replace(
+			/(\b(?:authorization|api[-_]?key|access[-_]?token|refresh[-_]?token|client[-_]?secret|password|token|cookie|set-cookie|code)\b\s*["']?\s*[:=]\s*["']?)([^\s"',;}]+)/gi,
+			`$1${REDACTED}`,
+		)
+		.replace(/([?&](?:token|access_token|refresh_token|api_key|code)=)[^&#\s]+/gi, `$1${REDACTED}`)
+		.replace(/(https?:\/\/)[^/@\s]+@/gi, `$1${REDACTED}@`)
+		.replace(/\b(?:sk-(?:ant-)?[A-Za-z0-9_-]{16,}|gh[opusr]_[A-Za-z0-9]{16,})\b/g, REDACTED)
+		.replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, REDACTED);
+}
+
+function prepareSecureLog(logPath: string): void {
+	const logsDir = dirname(logPath);
+	mkdirSync(logsDir, { recursive: true, mode: LOG_DIRECTORY_MODE });
+	chmodSync(logsDir, LOG_DIRECTORY_MODE);
+	if (!existsSync(logPath)) {
+		try {
+			writeFileSync(logPath, "", { flag: "wx", mode: LOG_FILE_MODE });
+		} catch (error) {
+			if (!existsSync(logPath)) throw error;
+		}
+	}
+	chmodSync(logPath, LOG_FILE_MODE);
+}
+
+function rotateLog(logPath: string, retention: number): void {
+	const compressedGenerations = Math.max(0, retention - 2);
+	for (let generation = compressedGenerations + 1; generation < MAX_LOG_RETENTION; generation++) {
+		rmSync(`${logPath}.old.${generation}.gz`, { force: true });
+	}
+	for (let generation = compressedGenerations - 1; generation >= 1; generation--) {
+		const source = `${logPath}.old.${generation}.gz`;
+		if (existsSync(source)) {
+			const target = `${logPath}.old.${generation + 1}.gz`;
+			renameSync(source, target);
+			chmodSync(target, LOG_FILE_MODE);
+		}
+	}
+	const previous = `${logPath}.old`;
+	if (compressedGenerations > 0 && existsSync(previous)) {
+		const compressed = `${logPath}.old.1.gz`;
+		writeFileSync(compressed, gzipSync(readFileSync(previous)), { mode: LOG_FILE_MODE });
+		chmodSync(compressed, LOG_FILE_MODE);
+	}
+	rmSync(previous, { force: true });
+	if (retention > 1) {
+		renameSync(logPath, previous);
+		chmodSync(previous, LOG_FILE_MODE);
+	} else {
+		rmSync(logPath, { force: true });
+	}
+	writeFileSync(logPath, "", { flag: "wx", mode: LOG_FILE_MODE });
+}
 
 /**
- * Append a line to a log file, keeping its size bounded with a single-generation
- * rotation. Opens and closes per call (no held fd), so rotation works at runtime
- * — a long-lived writer rotates on the write that crosses the cap, not only at
- * startup. Best-effort: diagnostics must never throw into the caller.
+ * Append a redacted line to a local diagnostic log. Writes and rotation share a
+ * cross-process lock, files are owner-only, and retained generations are bounded.
+ * The newest rotated file remains `<path>.old`; older generations are gzip files.
+ * Best-effort: diagnostics must never throw into the caller.
  */
-export function appendRotatingLog(logPath: string, message: string, maxBytes: number = MAX_LOG_BYTES): void {
+export function appendRotatingLog(
+	logPath: string,
+	message: string,
+	maxBytes: number = MAX_LOG_BYTES,
+	retention: number = configuredLogRetention(),
+): void {
+	let release: (() => void) | undefined;
 	try {
-		mkdirSync(dirname(logPath), { recursive: true });
-		try {
-			if (existsSync(logPath) && statSync(logPath).size > maxBytes) {
-				// Drop any prior .old first: renameSync fails on Windows if it exists.
-				rmSync(`${logPath}.old`, { force: true });
-				renameSync(logPath, `${logPath}.old`);
+		const lockTarget = `${logPath}.rotation-lock`;
+		prepareSecureLog(lockTarget);
+		for (let attempt = 0; attempt < 5; attempt++) {
+			try {
+				release = lockSync(lockTarget, { realpath: false, stale: 10_000 });
+				break;
+			} catch {
+				if (attempt === 4) return;
+				Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5 * (attempt + 1));
 			}
-		} catch {
-			// Keep appending rather than dropping the log on a rotation failure.
 		}
-		appendFileSync(logPath, `${message}\n`);
+		prepareSecureLog(logPath);
+		if (statSync(logPath).size > maxBytes) {
+			rotateLog(logPath, Math.min(MAX_LOG_RETENTION, Math.max(1, Math.trunc(retention))));
+		}
+		appendFileSync(logPath, `${redactLocalLog(message)}\n`, { mode: LOG_FILE_MODE });
+		chmodSync(logPath, LOG_FILE_MODE);
 	} catch {
-		// A read-only or missing log dir must never break the caller.
+		// A read-only directory or unavailable lock must never break the caller.
+	} finally {
+		try {
+			release?.();
+		} catch {
+			// Lock cleanup is best-effort with the diagnostic write.
+		}
 	}
 }
 

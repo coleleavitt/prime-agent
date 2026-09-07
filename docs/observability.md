@@ -7,9 +7,9 @@ Status: implemented incrementally on branch `fix/forkserver-probe-hardening`.
 Every log line, every provider request, every tool execution, every Python
 kernel cell, every host request and every RLM child session carries one
 **W3C `traceparent`** so a single user turn can be followed across
-processes with one id. No third-party dependency is required; the format
-and the API surface mirror OpenTelemetry so an OTel SDK / OTLP exporter can
-be bridged in without touching call sites.
+processes with one id. No third-party dependency is required; the format and the API surface mirror
+OpenTelemetry. An optional dependency-free OTLP/HTTP JSON adapter can subscribe
+to the same span sink without changing call sites.
 
 ## Identity
 
@@ -62,7 +62,7 @@ the span so `grep withSpan`/`start_span` lands on it.
 | `update.check`        | `update.current`, `update.latest`, `update.available`, `http.status` | done | coding-agent `utils/version-check.ts` |
 | `update.self`         | `update.from`, `update.to` | done | coding-agent `package-manager-cli.ts` |
 | `tools.download` / `tools.release_lookup` | `tool`, `version`, `bytes`, `tool.repo`, `http.status` | done | coding-agent `utils/tools-manager.ts` |
-| `historian.run` / `historian.subagent` / `historian.validate` / `historian.publish` | `historian.session_id`, `historian.chunk_start/end`, `historian.model`, `historian.pass`, `historian.outcome`, `historian.valid`, `historian.compartments`, `historian.facts`, `historian.failure_reason` | done | Magic Context `packages/pi-plugin/src/pi-historian-runner.ts` (via the optional pi-trace bridge) |
+| `historian.run` / `historian.subagent` / `historian.validate` / `historian.publish` | `historian.session_id`, `historian.chunk_start/end`, `historian.model`, `historian.status` (run), `historian.pass`, `historian.outcome` (subagent), `historian.valid`, `historian.compartments`, `historian.facts`, `historian.failure_reason` | done | Magic Context `packages/pi-plugin/src/pi-historian-runner.ts` (via the optional pi-trace bridge) |
 | `auth.refresh` / `auth.catalog` / `auth.route` | `auth.reason`, `auth.account`, `auth.source`, `auth.outcome`, `http.status`, `catalog.models`, `catalog.cached`, `auth.pool_size`, `auth.selected` | done | anthropic-auth `packages/pi/src/{shared-refresh,index,stream}.ts` (via `trace-bridge.ts`) |
 
 Supporting pieces:
@@ -193,6 +193,30 @@ trace 0af7651916cd43dd8448eb211c80319c  (3 spans, 3 log lines, /home/me/.prime/a
 * Exit code 1 with an `Error:` line on stderr when the id is malformed, the
   log does not exist, or nothing matched.
 
+### `prime-agent health`
+
+```
+prime-agent health [--since <duration>] [--stuck-after <duration>] [--limit <n>] [--log <path>] [--json]
+```
+
+Reads the retained compressed generations, `agent.jsonl.old`, and `agent.jsonl`
+without contacting the daemon. It gives operators a bounded summary of recent:
+
+* failed `historian.*` spans;
+* provider stream failures and failed `llm.request` spans (deduplicated by trace);
+* likely stuck active operations, detected directly from unmatched `span_start` records
+  (with the legacy child-without-parent-end heuristic retained for older logs); and
+* daemon recovery log lines that report a failure, interruption, cancellation,
+  or unanswered recovery probe.
+
+The default window is 24 hours, the stuck threshold is 10 minutes, and at
+most 20 incident details are printed (hard maximum 200). Counts always cover
+the full selected window. `--json` emits the counts and bounded incident list
+for scripts. The command is a retained-log heuristic rather than a live
+health probe: retention can remove a span completion and create a false
+stuck-operation candidate, and successful recovery lines are intentionally omitted.
+Use the reported trace id with `prime-agent trace` for the full timeline.
+
 ### Parenting Prime Agent from outside
 
 Any process that starts `prime-agent` can hand it a span through the W3C
@@ -212,8 +236,60 @@ command envelopes carry the equivalent `traceparent` field, so a trace id
 chosen by CI or by a parent agent is the one that appears on every log line,
 session record and kernel cell below it.
 
-## Non-goals (for now)
+## Optional OTLP export and derived metrics
 
-* No OTLP exporter and no `@opentelemetry/*` dependency in the core
-  packages. A bridge can subscribe to `span_end` log entries.
-* No metrics; only traces + correlated logs.
+`createOtlpSpanExporter()` in pi-ai is a fully opt-in adapter. Creating it does
+not replace the JSONL reporter: attach `exporter.sink` with `addSpanSink()` and
+call the returned unsubscribe function during shutdown. The adapter posts
+OTLP/HTTP JSON to `<endpoint>/v1/traces` and `<endpoint>/v1/metrics` using the
+built-in `fetch`; no OpenTelemetry package is required.
+
+```ts
+const exporter = createOtlpSpanExporter({
+  endpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT!,
+  headers: { Authorization: `Bearer ${process.env.OTLP_TOKEN}` },
+  serviceName: "prime-agent",
+});
+const unsubscribe = addSpanSink(exporter.sink);
+
+// On orderly process shutdown:
+unsubscribe();
+await exporter.shutdown();
+```
+
+Prime Agent creates and attaches the adapter only when
+`OTEL_EXPORTER_OTLP_ENDPOINT` is set. `OTEL_EXPORTER_OTLP_HEADERS` optionally
+provides comma-separated `key=value` request headers. When the endpoint is
+unset, the path has no timer, queue, network calls, or derived-metric work.
+Export is diagnostic-only: sink and transport failures are swallowed. Orderly
+CLI completion drains it for up to one second and then proceeds with exit.
+
+The defaults batch 128 spans, retain at most 2,048 queued spans (dropping the
+oldest and exposing the count through `stats()`), flush every 5 seconds, and
+bound derived metrics to 256 distinct span names. Each flush exports delta
+`prime_agent.span.count`, `prime_agent.span.error_count`, and
+`prime_agent.span.duration_ms` sums grouped by `span.name`. `flush()` sends one
+batch; `shutdown()` stops the unrefed timer and drains all queued batches.
+All bounds and intervals are configurable for a host integration.
+
+## Local log safety and retention
+
+All local diagnostic writes pass through `appendRotatingLog`. The logs directory
+is owner-only (`0700`) and log generations are owner-readable (`0600`) on POSIX.
+High-confidence bearer tokens, API keys, refresh/access tokens, client secrets,
+password assignments, JWTs, and common provider tokens are redacted before disk.
+Rotation is serialized across processes. The active file and newest `.old` remain
+plain text; older generations are gzip-compressed. Five total generations are kept
+by default. Set `PRIME_AGENT_LOG_RETENTION` to an integer from 1 to 100 to change
+the bound. `prime-agent trace` and `prime-agent health` read all retained generations.
+
+Only long-running operations emit `span_start`, which makes a silent crash or hang
+visible without doubling all trace traffic. Successful `extension.hooks` spans
+under 25 ms are suppressed; failures and slow hooks remain visible.
+
+## Non-goals
+
+* No `@opentelemetry/*` runtime dependency. The OTLP/HTTP JSON adapter is built in.
+* No collector is contacted unless `OTEL_EXPORTER_OTLP_ENDPOINT` is explicitly set.
+* Derived metrics are process-local deltas exported through OTLP; Prime Agent does
+  not embed a metrics database, dashboard server, or alerting engine.

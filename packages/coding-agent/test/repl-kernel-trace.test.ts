@@ -303,7 +303,7 @@ describe("ReplKernelManager trace propagation", () => {
 		const kernel = newManager();
 		const result = await kernel.execute("emit-bad-trace");
 		expect(result.status).toBe("ok");
-		expect(entries.filter((e) => e.component === "trace")).toHaveLength(0);
+		expect(entries.filter((e) => e.component === "trace" && e.name !== "kernel.start")).toHaveLength(0);
 		// A later cell proves the child was not torn down as corrupt.
 		expect((await kernel.execute("noop")).status).toBe("ok");
 	});

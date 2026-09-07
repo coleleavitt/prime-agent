@@ -507,7 +507,7 @@ export class AgentDaemon {
 		{ client: DaemonSocketClient; ownerId: string; serverNames: string[]; release?: Promise<void> }
 	>();
 	private readonly mutationDrain = new MutationDrainLatch();
-	private shutdownPromise?: Promise<never>;
+	private shutdownPromise?: Promise<void>;
 	private updateRestart?: {
 		id: symbol;
 		owner?: DaemonSocketClient;
@@ -7485,12 +7485,12 @@ export class AgentDaemon {
 		return this.updateRestart?.phase === "publishing" ? "update" : "shutdown";
 	}
 
-	private shutdown(exitCode: number): Promise<never> {
+	private shutdown(exitCode: number): Promise<void> {
 		this.shutdownPromise ??= this.shutdownOnce(exitCode);
 		return this.shutdownPromise;
 	}
 
-	private async shutdownOnce(exitCode: number): Promise<never> {
+	private async shutdownOnce(exitCode: number): Promise<void> {
 		this.shuttingDown = true;
 		this.peerAdmissionsFenced = true;
 		this.peerGrants.clear();
@@ -7545,7 +7545,7 @@ export class AgentDaemon {
 			this.server.close(() => resolveClose());
 		});
 		this.cleanupSocketPath();
-		process.exit(exitCode);
+		process.exitCode = exitCode;
 	}
 }
 

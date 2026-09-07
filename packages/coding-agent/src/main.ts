@@ -59,6 +59,7 @@ import { KeybindingsManager } from "./core/keybindings.js";
 import { installFileLogSink, setLogContext, withInboundTraceContext } from "./core/logging.js";
 import type { ModelRegistry } from "./core/model-registry.js";
 import { findInitialModel, resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.js";
+import { installOtlpExporterFromEnv } from "./core/otlp-export.js";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.js";
 import type { CreateAgentSessionOptions } from "./core/sdk.js";
 import {
@@ -1101,9 +1102,14 @@ export async function main(args: string[], options?: MainOptions) {
 		waitForDaemonWorkerStartupGate();
 	}
 	installFileLogSink();
+	const otlp = installOtlpExporterFromEnv({ version: VERSION });
 	// An external caller (CI, a parent agent) can hand us its span via
 	// TRACEPARENT; everything this process traces then parents to it.
-	return withInboundTraceContext(() => dispatchMode(args, options));
+	try {
+		return await withInboundTraceContext(() => dispatchMode(args, options));
+	} finally {
+		await otlp?.shutdown();
+	}
 }
 
 async function dispatchMode(args: string[], options?: MainOptions) {

@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	buildTraceTree,
@@ -208,6 +209,25 @@ describe("trace tree", () => {
 		expect(tree.roots[0]!.logs.map((line) => line.entry.msg)).toEqual(["turn started"]);
 	});
 
+	it("uses span_start metadata for a silent active operation", () => {
+		const path = writeFixture(
+			JSON.stringify({
+				ts: "2026-09-08T11:00:00.000Z",
+				level: "info",
+				component: "trace",
+				msg: "span_start",
+				name: "agent.prompt",
+				traceId: TRACE,
+				spanId: TURN,
+				attrs: { "session.id": "active" },
+			}),
+		);
+		const tree = buildTraceTree(TRACE, readTraceLogLines([path], TRACE));
+		expect(tree.spanCount).toBe(0);
+		expect(tree.logCount).toBe(0);
+		expect(tree.roots.map((root) => [root.name, root.spanId])).toEqual([["(open) agent.prompt", TURN]]);
+	});
+
 	it("reads the rotated .old sibling before the live log", () => {
 		const path = writeFixture(FIXTURE.split("\n").slice(4).join("\n"));
 		writeFileSync(`${path}.old`, `${FIXTURE.split("\n").slice(0, 4).join("\n")}\n`);
@@ -215,6 +235,16 @@ describe("trace tree", () => {
 		const { code, stdout } = run([TRACE, "--log", path]);
 		expect(code).toBe(0);
 		expect(stdout[0]).toContain(`3 spans, 3 log lines, ${path}.old, ${path}`);
+		expect(stdout[0]).toContain("turn started");
+	});
+
+	it("reads gzip-compressed retained generations oldest first", () => {
+		const path = writeFixture(FIXTURE.split("\n").slice(4).join("\n"));
+		writeFileSync(`${path}.old.1.gz`, gzipSync(`${FIXTURE.split("\n").slice(0, 4).join("\n")}\n`));
+		expect(traceLogFiles(path)).toEqual([`${path}.old.1.gz`, path]);
+		const { code, stdout } = run([TRACE, "--log", path]);
+		expect(code).toBe(0);
+		expect(stdout[0]).toContain(`${path}.old.1.gz, ${path}`);
 		expect(stdout[0]).toContain("turn started");
 	});
 

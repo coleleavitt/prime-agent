@@ -182,9 +182,11 @@ describe("agent trace upload", () => {
 		}
 	});
 
-	it("does not upload when trace sharing is disabled", async () => {
+	it("does not upload or emit a span when trace sharing is disabled", async () => {
 		const sessionManager = writeSession(tempDir, join(tempDir, "sessions"), "disabled-session");
 		const calls: FetchCall[] = [];
+		const ended: SpanEndRecord[] = [];
+		setSpanSink((record) => ended.push(record));
 		const result = await uploadAgentTraceFile({
 			sessionFile: sessionManager.getSessionFile(),
 			authStorage: AuthStorage.inMemory({
@@ -198,6 +200,7 @@ describe("agent trace upload", () => {
 
 		expect(result).toEqual({ status: "disabled" });
 		expect(calls).toHaveLength(0);
+		expect(ended).toHaveLength(0);
 	});
 
 	it("allows an explicit one-shot upload without enabling automatic sharing", async () => {
@@ -622,7 +625,7 @@ describe("agent trace upload", () => {
 		});
 		expect(attempts).toBe(4);
 		expect(result.status).toBe("failed");
-		const retryDelays = timeoutSpy.mock.calls.map((call) => Number(call[1])).filter((delay) => delay < 15_000);
+		const retryDelays = timeoutSpy.mock.calls.map((call) => Number(call[1])).filter((delay) => delay <= 1_600);
 		expect(retryDelays).toEqual([400, 800, 1_600]);
 		randomSpy.mockRestore();
 	});
@@ -895,7 +898,7 @@ describe("agent trace upload", () => {
 		const result = await upload;
 		expect(attempts).toBe(1);
 		expect(result).toEqual({ status: "failed", message: "upload cancelled during cleanup" });
-		const retryDelays = timeoutSpy.mock.calls.map((call) => Number(call[1])).filter((delay) => delay < 15_000);
+		const retryDelays = timeoutSpy.mock.calls.map((call) => Number(call[1])).filter((delay) => delay <= 1_600);
 		expect(retryDelays).toEqual([]);
 	});
 

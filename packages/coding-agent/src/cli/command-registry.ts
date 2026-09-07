@@ -177,6 +177,21 @@ export const COMMAND_SPECS: readonly CommandSpec[] = [
 		summary: "Configure package resources",
 	},
 	{
+		path: ["health"],
+		usage: "health [--since <duration>] [--stuck-after <duration>] [--limit <n>] [--log <path>] [--json]",
+		summary: "Summarize recent operational failures from the structured log",
+		description:
+			"Reads the retained structured log and reports historian failures, provider errors, incomplete turns, and daemon recovery failures. The default window is 24h; a turn is considered stuck after 10m.",
+		options: [
+			"--since <duration>       Look back this far (default: 24h)",
+			"--stuck-after <duration>  Flag incomplete turns older than this (default: 10m)",
+			"--limit <n>              Show at most this many incident details (default: 20, max: 200)",
+			"--log <path>             Read this JSONL log instead of the default agent log",
+			"--json                   Print a machine-readable summary",
+		],
+		examples: ["health", "health --since 6h --json", "health --stuck-after 30m --limit 50"],
+	},
+	{
 		path: ["trace"],
 		usage: "trace <traceId|traceparent> [--log <path>] [--json]",
 		summary: "Show one trace from the structured log as a span tree",

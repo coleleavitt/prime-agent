@@ -1,6 +1,7 @@
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type LogEntry, setLogSink } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ReplKernelManager } from "../src/core/kernel/index.js";
 
@@ -69,6 +70,28 @@ describe("ReplKernelManager startup", () => {
 			);
 		} finally {
 			errorSpy.mockRestore();
+			await manager.shutdown({ snapshot: true, drainHostRequests: true });
+		}
+	});
+
+	it("logs structured diagnostics when a kernel exits unexpectedly", async () => {
+		const python = join(tempDir, "python");
+		writeExecutable(python, ["#!/bin/sh", "exit 42", ""].join("\n"));
+		const entries: LogEntry[] = [];
+		setLogSink((entry) => entries.push(entry));
+		const manager = new ReplKernelManager({ python, cwd: tempDir });
+
+		try {
+			await expect(manager.execute("print(1)")).rejects.toThrow(/Kernel exited before ready/);
+			expect(entries.find((entry) => entry.component === "kernel" && entry.msg === "kernel_exit")).toMatchObject({
+				level: "error",
+				exitCode: 42,
+				signal: null,
+				pythonPath: python,
+			});
+			expect(entries.find((entry) => entry.msg === "kernel_exit")?.pid).toEqual(expect.any(Number));
+		} finally {
+			setLogSink(undefined);
 			await manager.shutdown({ snapshot: true, drainHostRequests: true });
 		}
 	});

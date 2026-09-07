@@ -684,6 +684,9 @@ prime-agent --thinking high "Solve this complex problem"
 | `PRIME_API_KEY` | Prime Inference API key; also used for trace sharing if it has `agent_traces` scope |
 | `PRIME_AGENT_TRACES_API_KEY` | Prime API key used only for opt-in trace sharing |
 | `PRIME_AGENT_TRACES_BASE_URL` | Override the Prime Agent trace upload API base URL |
+| `PRIME_AGENT_LOG_RETENTION` | Total retained local log generations (1–100, default 5; older generations are gzip-compressed) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Opt in to best-effort OTLP/HTTP trace and derived metric export to this collector base URL |
+| `OTEL_EXPORTER_OTLP_HEADERS` | Optional comma-separated `key=value` request headers for the OTLP collector |
 | `PRIME_AGENT_KERNEL_PYTHON` | Use an existing Python environment with `prime-agent-runtime` instead of auto-bootstrapping `~/.prime/agent/kernel-venv` |
 | `VISUAL`, `EDITOR` | External editor for Ctrl+G |
 

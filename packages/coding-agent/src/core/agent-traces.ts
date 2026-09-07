@@ -889,6 +889,12 @@ async function uploadAgentTraceFileWithRequestGate(
 	options: AgentTraceUploadOptions,
 	beforeRequest?: BeforeTraceUploadRequest,
 ): Promise<AgentTraceUploadResult> {
+	// Disabled automatic uploads are a configuration check, not an upload
+	// attempt. Keep them outside tracing so routine session persists do not emit
+	// thousands of no-op trace.upload spans when sharing is off.
+	if (options.requireEnabled !== false && !(await getAgentTracesEnabled(options))) {
+		return { status: "disabled" };
+	}
 	// A session upload is an HTTP round trip with the whole transcript; its
 	// outcome only went to the rotating traces log, so a slow or failing upload
 	// at child teardown was invisible in the trace of the run that triggered it.

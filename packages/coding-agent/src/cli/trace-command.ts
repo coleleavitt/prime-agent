@@ -1,5 +1,13 @@
-import { existsSync, readFileSync } from "node:fs";
-import { type LogEntry, parseTraceparent, SPAN_END_MSG, TRACE_LOG_COMPONENT } from "@earendil-works/pi-ai";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { basename, dirname } from "node:path";
+import { gunzipSync } from "node:zlib";
+import {
+	type LogEntry,
+	parseTraceparent,
+	SPAN_END_MSG,
+	SPAN_START_MSG,
+	TRACE_LOG_COMPONENT,
+} from "@earendil-works/pi-ai";
 import { APP_NAME, getAgentLogPath } from "../config.js";
 
 /**
@@ -16,6 +24,8 @@ const TRACE_ID_RE = /^[0-9a-f]{32}$/;
 /** Fields already rendered structurally; everything else is printed as `key=value`. */
 const RESERVED_LOG_FIELDS = new Set(["ts", "level", "component", "msg", "traceId", "spanId", "parentSpanId"]);
 const MAX_FIELD_VALUE_CHARS = 120;
+const MAX_RETAINED_TRACE_LINES = 200_000;
+const MAX_DECOMPRESSED_LOG_BYTES = 64 * 1024 * 1024;
 
 export interface TraceCommandOptions {
 	traceId: string;
@@ -111,7 +121,22 @@ export function normalizeTraceId(value: string): string {
  * Only existing files are returned; a fresh install has neither.
  */
 export function traceLogFiles(logPath: string): string[] {
-	return [`${logPath}.old`, logPath].filter((file) => existsSync(file));
+	const directory = dirname(logPath);
+	const prefix = `${basename(logPath)}.old.`;
+	let compressed: string[] = [];
+	try {
+		compressed = readdirSync(directory)
+			.map((name) => ({
+				name,
+				match: new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\d+)\\.gz$`).exec(name),
+			}))
+			.filter((entry): entry is { name: string; match: RegExpExecArray } => entry.match !== null)
+			.sort((left, right) => Number(right.match[1]) - Number(left.match[1]))
+			.map((entry) => `${directory}/${entry.name}`);
+	} catch {
+		// A missing or unreadable directory is handled by the existing no-log path.
+	}
+	return [...compressed, `${logPath}.old`, logPath].filter((file) => existsSync(file));
 }
 
 /** Read every well-formed entry for `traceId` across `files`, keeping file order (oldest first). */
@@ -120,11 +145,16 @@ export function readTraceLogLines(files: string[], traceId: string): TraceLogLin
 	for (const file of files) {
 		// A quick substring test skips JSON.parse for the vast majority of lines
 		// that belong to other traces; the log can be tens of megabytes.
-		const content = readFileSync(file, "utf8");
+		const content = file.endsWith(".gz")
+			? gunzipSync(readFileSync(file), { maxOutputLength: MAX_DECOMPRESSED_LOG_BYTES }).toString("utf8")
+			: readFileSync(file, "utf8");
 		for (const raw of content.split("\n")) {
 			if (!raw.includes(traceId)) continue;
 			const entry = parseLogEntry(raw);
-			if (entry?.traceId === traceId) lines.push({ raw, entry, file });
+			if (entry?.traceId === traceId) {
+				lines.push({ raw, entry, file });
+				if (lines.length > MAX_RETAINED_TRACE_LINES) lines.shift();
+			}
 		}
 	}
 	return lines;
@@ -146,6 +176,15 @@ function isSpanEnd(entry: LogEntry): boolean {
 	return (
 		entry.component === TRACE_LOG_COMPONENT &&
 		entry.msg === SPAN_END_MSG &&
+		typeof entry.spanId === "string" &&
+		typeof entry.name === "string"
+	);
+}
+
+function isSpanStart(entry: LogEntry): boolean {
+	return (
+		entry.component === TRACE_LOG_COMPONENT &&
+		entry.msg === SPAN_START_MSG &&
 		typeof entry.spanId === "string" &&
 		typeof entry.name === "string"
 	);
@@ -179,6 +218,16 @@ export function buildTraceTree(traceId: string, lines: TraceLogLine[]): TraceTre
 	let spanCount = 0;
 	for (const line of lines) {
 		const { entry } = line;
+		if (!isSpanStart(entry)) continue;
+		const spanId = entry.spanId as string;
+		const parentSpanId = typeof entry.parentSpanId === "string" ? entry.parentSpanId : undefined;
+		const node = placeholder(spanId, parentSpanId, timestampMs(entry));
+		node.name = `(open) ${entry.name as string}`;
+		node.parentSpanId = parentSpanId;
+		node.startMs = timestampMs(entry);
+	}
+	for (const line of lines) {
+		const { entry } = line;
 		if (!isSpanEnd(entry)) continue;
 		const spanId = entry.spanId as string;
 		const parentSpanId = typeof entry.parentSpanId === "string" ? entry.parentSpanId : undefined;
@@ -196,7 +245,7 @@ export function buildTraceTree(traceId: string, lines: TraceLogLine[]): TraceTre
 	let logCount = 0;
 	for (const line of lines) {
 		const { entry } = line;
-		if (isSpanEnd(entry)) continue;
+		if (isSpanEnd(entry) || isSpanStart(entry)) continue;
 		logCount++;
 		if (typeof entry.spanId !== "string") {
 			unattributed.push(line);
@@ -234,7 +283,8 @@ export function buildTraceTree(traceId: string, lines: TraceLogLine[]): TraceTre
 }
 
 function formatValue(value: unknown): string {
-	const text = typeof value === "string" ? value : (JSON.stringify(value) ?? String(value));
+	const raw = typeof value === "string" ? value : (JSON.stringify(value) ?? String(value));
+	const text = raw.replace(/[\r\n\t]/g, " ").replace(/[\u001b\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "?");
 	return text.length > MAX_FIELD_VALUE_CHARS ? `${text.slice(0, MAX_FIELD_VALUE_CHARS - 1)}…` : text;
 }
 
@@ -267,7 +317,12 @@ function formatSpanHeading(node: SpanNode): string {
 
 function formatLogLine(line: TraceLogLine): string {
 	const { entry } = line;
-	const parts = [formatTime(entry), String(entry.level ?? "?").padEnd(5), entry.component, entry.msg];
+	const parts = [
+		formatTime(entry),
+		String(entry.level ?? "?").padEnd(5),
+		formatValue(entry.component),
+		formatValue(entry.msg),
+	];
 	const extra = formatFields(entry, RESERVED_LOG_FIELDS);
 	if (extra) parts.push(extra);
 	return parts.join("  ");

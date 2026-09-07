@@ -1,0 +1,5 @@
+- Added `prime-agent health` to summarize recent historian, provider, stuck-turn, and daemon recovery failures from retained structured logs.
+- Added opt-in OTLP trace and derived metric export through standard OpenTelemetry environment variables.
+- Secured local diagnostic logs with credential redaction, owner-only permissions, cross-process rotation, and bounded compressed retention.
+- Added active-operation start records, structured process and kernel crash diagnostics, and retained-log trace inspection.
+- Reduced trace volume by skipping disabled upload spans and reporting extension hook spans only when they are slow or contain handler errors.

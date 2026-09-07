@@ -7,6 +7,7 @@ import {
 	maybeRunOwnedSessionWorkerFrontend,
 } from "./cli/owned-session-worker.js";
 import { APP_NAME } from "./config.js";
+import { installFatalCrashHandlers, reportFatalCrash } from "./core/process-crash.js";
 
 export async function runCli(): Promise<void> {
 	try {
@@ -24,6 +25,8 @@ export async function runCli(): Promise<void> {
 	const args = process.argv.slice(2);
 	const handledByOwnedWorker = await maybeRunOwnedSessionWorkerFrontend(args);
 	if (!handledByOwnedWorker) {
+		const isDaemonProcess = args.some((arg, index) => arg === "--mode" && args[index + 1] === "daemon");
+		const removeCrashHandlers = isDaemonProcess ? undefined : installFatalCrashHandlers();
 		if (!isOwnedSessionWorkerProcess()) {
 			// Boot a cold daemon concurrently with this process's heavy imports.
 			maybeStartDaemonEarly(process.argv.slice(2));
@@ -38,8 +41,13 @@ export async function runCli(): Promise<void> {
 		setGlobalDispatcher(new EnvHttpProxyAgent({ bodyTimeout: 0, headersTimeout: 0 }));
 
 		try {
-			await main(process.argv.slice(2));
+			await main(args);
+		} catch (error) {
+			reportFatalCrash("top_level_rejection", error);
+			console.error(error instanceof Error ? (error.stack ?? error.message) : String(error));
+			process.exitCode = 1;
 		} finally {
+			removeCrashHandlers?.();
 			closeOwnedSessionWorkerOwnerWatch();
 		}
 	}

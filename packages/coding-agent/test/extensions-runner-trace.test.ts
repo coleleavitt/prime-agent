@@ -6,12 +6,12 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { type SpanEndRecord, setSpanSink } from "@earendil-works/pi-ai";
+import { currentTraceContext, type SpanEndRecord, setSpanSink, withSpan } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.js";
 import { createEventBus } from "../src/core/event-bus.js";
 import { createExtensionRuntime, loadExtensionFromFactory } from "../src/core/extensions/loader.js";
-import { ExtensionRunner, extensionSpanLabel } from "../src/core/extensions/runner.js";
+import { ExtensionRunner, type ExtensionRunnerOptions, extensionSpanLabel } from "../src/core/extensions/runner.js";
 import type { ExtensionError, ExtensionFactory, ExtensionRuntime } from "../src/core/extensions/types.js";
 import { ModelRegistry } from "../src/core/model-registry.js";
 import { SessionManager } from "../src/core/session-manager.js";
@@ -42,13 +42,16 @@ describe("ExtensionRunner extension.hooks span", () => {
 
 	const hookSpans = () => spans.filter((span) => span.name === "extension.hooks");
 
-	async function makeRunner(factories: Array<{ path: string; factory: ExtensionFactory }>): Promise<ExtensionRunner> {
+	async function makeRunner(
+		factories: Array<{ path: string; factory: ExtensionFactory }>,
+		options: ExtensionRunnerOptions | null = { traceHookMinDurationMs: 0 },
+	): Promise<ExtensionRunner> {
 		const eventBus = createEventBus();
 		const extensions = [];
 		for (const { path: extensionPath, factory } of factories) {
 			extensions.push(await loadExtensionFromFactory(factory, tempDir, eventBus, runtime, extensionPath));
 		}
-		return new ExtensionRunner(extensions, runtime, tempDir, sessionManager, modelRegistry);
+		return new ExtensionRunner(extensions, runtime, tempDir, sessionManager, modelRegistry, options ?? undefined);
 	}
 
 	it("opens no span when no extension handles the event", async () => {
@@ -99,6 +102,71 @@ describe("ExtensionRunner extension.hooks span", () => {
 		expect(span.durationMs).toBeGreaterThanOrEqual(0);
 	});
 
+	it("suppresses successful hook spans below the default duration threshold", async () => {
+		const runner = await makeRunner(
+			[
+				{
+					path: "/ext/fast.ts",
+					factory: (pi) => {
+						pi.on("context", () => undefined);
+					},
+				},
+			],
+			null,
+		);
+
+		await runner.emitContext([]);
+
+		expect(hookSpans()).toEqual([]);
+	});
+
+	it("retains successful hook spans at or above the configured duration threshold", async () => {
+		const runner = await makeRunner(
+			[
+				{
+					path: "/ext/slow.ts",
+					factory: (pi) => {
+						pi.on("context", async () => {
+							await sleep(10);
+						});
+					},
+				},
+			],
+			{ traceHookMinDurationMs: 5 },
+		);
+
+		await runner.emitContext([]);
+
+		expect(hookSpans()).toHaveLength(1);
+		expect(hookSpans()[0]!.durationMs).toBeGreaterThanOrEqual(5);
+	});
+
+	it("preserves active parent context for retained child spans when the fast hook span is suppressed", async () => {
+		let hookSpanId: string | undefined;
+		const runner = await makeRunner(
+			[
+				{
+					path: "/ext/nested.ts",
+					factory: (pi) => {
+						pi.on("context", () => {
+							hookSpanId = currentTraceContext()?.spanId;
+							return withSpan("extension.child", () => undefined);
+						});
+					},
+				},
+			],
+			{ traceHookMinDurationMs: 60_000 },
+		);
+
+		await runner.emitContext([]);
+
+		expect(hookSpans()).toEqual([]);
+		const child = spans.find((span) => span.name === "extension.child");
+		expect(child).toBeDefined();
+		expect(child!.parentSpanId).toBe(hookSpanId);
+		expect(child!.traceId).toBeTruthy();
+	});
+
 	it("attributes a slow handler to its extension", async () => {
 		const runner = await makeRunner([
 			{
@@ -134,22 +202,25 @@ describe("ExtensionRunner extension.hooks span", () => {
 	});
 
 	it("counts throwing handlers in hook.errors and keeps the span ok", async () => {
-		const runner = await makeRunner([
-			{
-				path: "/ext/broken.ts",
-				factory: (pi) => {
-					pi.on("context", () => {
-						throw new Error("boom");
-					});
+		const runner = await makeRunner(
+			[
+				{
+					path: "/ext/broken.ts",
+					factory: (pi) => {
+						pi.on("context", () => {
+							throw new Error("boom");
+						});
+					},
 				},
-			},
-			{
-				path: "/ext/healthy.ts",
-				factory: (pi) => {
-					pi.on("context", (event) => ({ messages: event.messages }));
+				{
+					path: "/ext/healthy.ts",
+					factory: (pi) => {
+						pi.on("context", (event) => ({ messages: event.messages }));
+					},
 				},
-			},
-		]);
+			],
+			null,
+		);
 		const errors: ExtensionError[] = [];
 		runner.onError((error) => errors.push(error));
 

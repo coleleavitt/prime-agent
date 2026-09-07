@@ -700,7 +700,7 @@ export class DaemonSupervisor {
 	private socketLeaseCompromise?: Error;
 	private ownership?: Awaited<ReturnType<typeof acquireDaemonSupervisorOwnership>>;
 	private cleanupPromise?: Promise<void>;
-	private shutdownPromise?: Promise<never>;
+	private shutdownPromise?: Promise<void>;
 	private shuttingDown = false;
 	private startupComplete = false;
 	private updateRestartPhase?: "draining" | "fencing" | "prepared";
@@ -6965,7 +6965,7 @@ export class DaemonSupervisor {
 		relaunch = false,
 		forceWorkers = false,
 		closingReason?: DaemonClosingReason,
-	): Promise<never> {
+	): Promise<void> {
 		this.shutdownPromise ??= this.shutdownOnce(exitCode, stopWorkers, relaunch, forceWorkers, closingReason);
 		return this.shutdownPromise;
 	}
@@ -6976,7 +6976,7 @@ export class DaemonSupervisor {
 		relaunch: boolean,
 		forceWorkers: boolean,
 		closingReason?: DaemonClosingReason,
-	): Promise<never> {
+	): Promise<void> {
 		this.shuttingDown = true;
 		this.clearIdleEvictionTimer();
 		this.clearScheduledWakeTimer();
@@ -7059,6 +7059,6 @@ export class DaemonSupervisor {
 			});
 			replacement.unref();
 		}
-		process.exit(exitCode);
+		process.exitCode = exitCode;
 	}
 }
