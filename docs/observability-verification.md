@@ -2,7 +2,7 @@
 
 Verified: 2026-09-07
 
-This record maps the requested observability work to committed implementation and test evidence. The implementation commits are `272cd6e23` and `d2eb1a022` in Prime Agent, plus `69d06746` in Magic Context.
+This record maps the requested observability work to committed implementation and test evidence. The implementation commits are `272cd6e23` and `d2eb1a022` in Prime Agent, `69d06746` in Magic Context, and `c94af45` in OpenWebUI auth. Prime Agent commit `a15055e3e` added this verification record.
 
 ## Requirement matrix
 
@@ -23,6 +23,7 @@ This record maps the requested observability work to committed implementation an
 - `extension.hooks` accounted for about 45% of retained spans. Fast successful hook spans are now suppressed while errors, slow hooks, and child parenting remain observable.
 - One Magic Context session emitted 230 no-op historian runs, usually about 11 seconds apart, after its protected-tail drain budget was exhausted. Magic Context commit `69d06746` latches the durable earliest retry time, preserves the 60-second emergency failure backoff, and fences late callbacks by activation generation.
 - Traces with up to 24,272 spans were investigated. Each had one `client.prompt` root and represented a legitimate long-running agent prompt, not ambient trace-context leakage.
+- Two OpenWebUI empty-completion failures were reconstructed under trace `822313486fa9fa9f10f08eff2c0243cd`. Existing spans contained provider, model, endpoint, usage, retries, and trace IDs, but not the extension's full frame counters. OpenWebUI auth commit `c94af45` now attaches bounded `owui.*` stream diagnostics to the active host `llm.request` span.
 
 ## Passing verification
 
@@ -34,7 +35,15 @@ Run after the implementation commits:
 - Python trace suite: 42 tests passed.
 - Magic Context Pi context/historian suite: 146 tests passed and Pi plugin typecheck passed.
 - Magic Context drain limiter/emergency suite: 20 tests passed.
+- OpenWebUI auth full suite: 11 files, 202 tests passed; lint, all three package typechecks, and all three package builds passed.
+- OpenWebUI empty-completion trace bridge focused suite: `stream.test.ts` plus `pi-trace.test.ts`, 29 tests passed before the full suite; the final full Pi package suite passed 52 tests.
 
-## Repository state
+## Repository state and publication
 
-The implementation was committed as coherent checkpoints and not pushed. At verification time Prime Agent was ahead of its tracked remote by two implementation commits, and Magic Context was ahead of `upstream/master` with `69d06746` included. Existing unrelated untracked artifacts in Prime Agent were not staged or modified.
+The user subsequently requested that all work be pushed. Final writable destinations:
+
+- Prime Agent `fix/forkserver-probe-hardening` -> `fork/fix/forkserver-probe-hardening` at `github.com/coleleavitt/prime-agent`.
+- Magic Context was rebased onto `cortexkit/magic-context` upstream, then pushed to writable `fork/master` at `github.com/coleleavitt/magic-context`; local `master` now tracks `fork/master`.
+- OpenWebUI auth `main` -> `origin/main` at `github.com/coleleavitt/opencode-openwebui-auth`.
+
+After publication each local branch was `0` behind and `0` ahead of its writable remote. All three repositories had no uncommitted tracked files. Existing unrelated untracked artifacts in Prime Agent were not staged or modified.

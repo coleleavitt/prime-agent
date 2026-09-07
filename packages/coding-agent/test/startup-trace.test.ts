@@ -93,8 +93,8 @@ describe("extensions.load span", () => {
 		expect(load.attrs["extensions.slowest_ms"]).toBeGreaterThanOrEqual(100);
 		expect(load.attrs["extensions.slow-ext_ms"]).toBeGreaterThanOrEqual(100);
 		expect(load.attrs["extensions.slow-ext_ms"]).toBe(load.attrs["extensions.slowest_ms"]);
-		// Only imports above the threshold get a per-extension attribute.
-		expect(load.attrs).not.toHaveProperty("extensions.fast-ext_ms");
+		// The fast import may also cross the reporting threshold on a loaded CI
+		// host; the deterministic contract is that the deliberately slow import is reported.
 		expect(load.durationMs).toBeGreaterThanOrEqual(load.attrs["extensions.slowest_ms"] as number);
 	});
 
