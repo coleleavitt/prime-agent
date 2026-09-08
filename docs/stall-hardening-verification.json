@@ -37,6 +37,22 @@
           "passed": 40,
           "skipped": 2,
           "failed": 0
+        },
+        "final npm run check": {
+          "exitCode": 0,
+          "result": "passed"
+        },
+        "final focused hardening": {
+          "exitCode": 0,
+          "passed": 413,
+          "skipped": 2,
+          "failed": 0
+        },
+        "final python discovery repeated": {
+          "exitCode": 0,
+          "passedPerRun": 328,
+          "runs": 2,
+          "failed": 0
         }
       }
     },
@@ -80,6 +96,21 @@
           "exitCode": 0,
           "passed": 7,
           "failed": 0
+        },
+        "final full gate": {
+          "exitCode": 0,
+          "nextestPassed": 1024,
+          "skipped": 4,
+          "doctests": "passed",
+          "docs": "passed",
+          "clippy": "passed",
+          "format": "passed"
+        },
+        "final llvm coverage": {
+          "exitCode": 0,
+          "linePercent": 87.66,
+          "regionPercent": 85.97,
+          "functionPercent": 85.61
         }
       },
       "cleanCheckoutBuildable": false,

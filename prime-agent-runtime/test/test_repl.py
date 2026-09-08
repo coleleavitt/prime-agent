@@ -2281,6 +2281,9 @@ class TraceProtocolTest(unittest.TestCase):
             # Ended on a watcher thread, yet still tagged with the request that spawned it.
             self.assertEqual(command["id"], "sub")
             self.assertEqual(eval(one(events, "result")["text"]), f"00-{_TP_TRACE}-{command['spanId']}-01")
+            # The REPL can append the final inactive orphan-journal record after
+            # the request result. Close it before TemporaryDirectory cleanup.
+            repl.close()
 
     def test_snapshot_and_restore_are_traced(self):
         repl = self.start()
