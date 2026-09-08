@@ -120,12 +120,16 @@ env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u GOOGLE_API_KEY \
   -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN \
   npm --prefix packages/ai run test:coverage
 npm --prefix packages/tui run test:coverage
-run_coding_coverage test:coverage
+# Run source-launched process shards before the broad in-process suite. CI gives
+# every strategy a fresh job; this ordering keeps the single-process verifier
+# equivalent by preventing residual default-suite runtime state from affecting
+# real daemon startup.
 run_coding_coverage test:coverage:process-supervisor
 run_coding_coverage test:coverage:process-singleton
 run_coding_coverage test:coverage:process-recovery
 run_coding_coverage test:coverage:process-update
 run_coding_coverage test:coverage:kernel
+run_coding_coverage test:coverage
 (
   cd prime-agent-runtime
   uv run coverage erase
