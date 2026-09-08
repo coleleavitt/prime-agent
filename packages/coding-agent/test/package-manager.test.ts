@@ -716,25 +716,11 @@ Content`,
 			expect(events.some((e) => e.type === "error")).toBe(true);
 		});
 
-		it("should recognize github URLs without git: prefix", async () => {
-			const events: ProgressEvent[] = [];
-			packageManager.setProgressCallback((event) => events.push(event));
-			const previousGitTerminalPrompt = process.env.GIT_TERMINAL_PROMPT;
-			process.env.GIT_TERMINAL_PROMPT = "0";
-
-			try {
-				try {
-					await packageManager.install("https://github.com/nonexistent/repo");
-				} catch {}
-			} finally {
-				if (previousGitTerminalPrompt === undefined) {
-					delete process.env.GIT_TERMINAL_PROMPT;
-				} else {
-					process.env.GIT_TERMINAL_PROMPT = previousGitTerminalPrompt;
-				}
-			}
-
-			expect(events.some((e) => e.type === "start" && e.action === "install")).toBe(true);
+		it("should recognize github URLs without git: prefix without network access", () => {
+			expect((packageManager as any).parseSource("https://github.com/nonexistent/repo")).toMatchObject({
+				type: "git",
+				repo: "https://github.com/nonexistent/repo",
+			});
 		});
 
 		it("should parse package source types from docs examples", () => {
