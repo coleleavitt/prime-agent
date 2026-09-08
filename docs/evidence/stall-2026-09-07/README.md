@@ -60,6 +60,12 @@ The historical implementation represented by `historical-eventbus-deadlock.rs` p
 
 This mirrors the historical Rye implementation and the exact watcher-failure test created by the persisted tool call.
 
+## Executable joins and syscall evidence
+
+`verify-record-joins.mjs` asserts the original raw-record chain from the child tool call through `tool.execute`, `kernel.execute`, `kernel.cell`, `bash.command`, and orphan PID enrollment/cleanup. It also negatively asserts that `traceparent`, trace flags, and PGID were not persisted.
+
+`historical-futex.strace` independently records the two blocking `FUTEX_WAIT` syscalls. `mutex-cycle.json` maps those waits to the exact nested source operations in `historical-eventbus-deadlock.rs`.
+
 ## Reproduction
 
 Run:

@@ -1,0 +1,31 @@
+{
+  "historicalSource": "historical-eventbus-deadlock.rs",
+  "steps": [
+    {
+      "line": 14,
+      "operation": "emit_batch locks delivery Mutex"
+    },
+    {
+      "line": 15,
+      "operation": "deliver invoked while guard remains in scope"
+    },
+    {
+      "line": 23,
+      "operation": "watcher returns error"
+    },
+    {
+      "line": 25,
+      "operation": "error path calls public emit(handler_error)"
+    },
+    {
+      "line": 20,
+      "operation": "emit calls emit_batch recursively"
+    },
+    {
+      "line": 14,
+      "operation": "same thread attempts second non-reentrant Mutex lock and blocks in futex"
+    }
+  ],
+  "syscallEvidence": "historical-futex.strace contains two unfinished FUTEX_WAIT calls for the main and event_bus_conti threads",
+  "control": "current-control.stdout records exact current test passing"
+}

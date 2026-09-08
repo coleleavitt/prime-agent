@@ -1,10 +1,9 @@
-wrapper_pid=2879394 child_pid=2879396
+wrapper_pid=2909371 child_pid=2909373
     PID    PPID    PGID     SID     TID STAT WCHAN                            COMMAND
-2879396 2879394 2879396 2879396 2879396 Ssl  futex_do_wait                    historical-even
-2879396 2879394 2879396 2879396 2879397 Ssl  futex_do_wait                    event_bus_conti
-Name:	historical-even
-Pid:	2879396
-PPid:	2879394
-NSpgid:	2879396
-NSsid:	2879396
-Threads:	2
+2909373 2909371 2909373 2909373 2909373 Ss   do_wait                          strace
+Name:	strace
+Pid:	2909373
+PPid:	2909371
+NSpgid:	2909373
+NSsid:	2909373
+Threads:	1

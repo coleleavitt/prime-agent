@@ -1,2 +1,2 @@
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
      Running tests/execution_primitives.rs (/home/cole/RustProjects/active/rye/target/debug/build/rye-agent-core/0a0c6f5e3a7c615a/out/execution_primitives-0a0c6f5e3a7c615a)
