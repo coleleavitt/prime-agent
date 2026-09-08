@@ -3,6 +3,7 @@ import { canonicalizePath } from "../../utils/paths.js";
 import type { AgentConnectionHeartbeat, AgentConnectionSavedSessionInfo } from "../agent-connection/index.js";
 import { rosterAgentIdForSummary } from "../daemon/agent-roster.js";
 import { classifySessionRosterStatus, type SessionSummary } from "../daemon/daemon-session-list.js";
+import { compileSearchQuery, matchCompiledSearchText } from "./session-view-search.js";
 
 export type AgentsViewSection = "running" | "idle" | "inactive";
 
@@ -403,6 +404,15 @@ export function getUnifiedSessionAncestorSessionIds(
 		current = findParentRecord(current, index.byKey);
 	}
 	return ancestors;
+}
+
+/** Compile the query once, then reuse it while filtering every session record. */
+export function filterUnifiedSessionsBySearchQuery(
+	records: readonly UnifiedSessionRecord[],
+	query: string,
+): UnifiedSessionRecord[] {
+	const compiled = compileSearchQuery(query);
+	return filterUnifiedSessions(records, (text) => matchCompiledSearchText(text, compiled).matches);
 }
 
 export function filterUnifiedSessions(

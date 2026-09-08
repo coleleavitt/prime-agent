@@ -1,0 +1,1 @@
+- Improved session dashboard and resume startup performance for large saved-session catalogs.

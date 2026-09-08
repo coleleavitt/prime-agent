@@ -45,7 +45,6 @@ import {
 	listDaemonSavedSessions,
 	renameDaemonSavedSession,
 } from "../daemon/saved-session-catalog.js";
-import { formatTokenCount } from "../interactive/agent-activity.js";
 import { CustomEditor } from "../interactive/components/custom-editor.js";
 import { keyText } from "../interactive/components/keybinding-hints.js";
 import { BrandSplashHeader, InteractiveMode } from "../interactive/interactive-mode.js";
@@ -77,14 +76,13 @@ import {
 	buildUnifiedSessionIndex,
 	computeRecursiveRollups,
 	createUnattachableChildOpenResult,
-	filterUnifiedSessions,
+	filterUnifiedSessionsBySearchQuery,
 	formatHeartbeatBadge,
 	getAgentsViewSelectionKey,
 	getAgentsViewSessionTitle,
 	getAgentsViewSummaryIdentity as getSummaryIdentity,
 	getUnifiedSessionAncestorSessionIds,
 	hasUnifiedSessionChildren,
-	isEmptyAgentsViewSession,
 	isSubagentSummary,
 	migrateAgentsViewIdentitySet,
 	reconcileUnifiedSessions,
@@ -100,8 +98,8 @@ import {
 	type UnifiedSessionIndex,
 	type UnifiedSessionRecord,
 } from "./agents-view-state.js";
+import { AgentsViewRenderPreparationCache, prepareAgentsViewRender } from "./agents-view-usage-layout.js";
 import { AgentsViewRosterStore, STALE_ROSTER_DAEMON_MESSAGE } from "./roster-store.js";
-import { matchesSearchText } from "./session-view-search.js";
 
 const HEARTBEAT_POLL_INTERVAL_MS = 15000;
 const RECONNECT_TIMEOUT_MS = 120000;
@@ -658,6 +656,7 @@ export class AgentsViewMode implements Component, Focusable {
 	private deleteConfirmTimer: ReturnType<typeof setTimeout> | undefined;
 	private workingIconFrame = 0;
 	private rows: AgentsViewRow[] = [];
+	private readonly renderPreparationCache = new AgentsViewRenderPreparationCache();
 	private lastListedSummaries: SessionSummary[] = [];
 	private lastVisibleSummaries: SessionSummary[] = [];
 	private savedSessions: AgentConnectionSavedSessionInfo[] = [];
@@ -897,15 +896,7 @@ export class AgentsViewMode implements Component, Focusable {
 		this.loadStartupNotices();
 		this.heartbeatPollTimer = setInterval(() => void this.refreshHeartbeats(), HEARTBEAT_POLL_INTERVAL_MS);
 		this.heartbeatPollTimer.unref?.();
-		this.animationTimer = setInterval(() => {
-			const hasRunning = this.rows.some((row) => row.section === "running");
-			const hasStaleAge = this.rows.some((row) => row.summary.lastHeardFromAt !== undefined);
-			if (!hasRunning && !hasStaleAge) return;
-			// Age labels are baked into rows at build time; ticking them needs a rebuild.
-			if (hasStaleAge) this.rebuildRows();
-			if (hasRunning) this.workingIconFrame += 1;
-			this.ui.requestRender();
-		}, WORKING_ICON_INTERVAL_MS);
+		this.animationTimer = setInterval(() => this.tickAnimation(), WORKING_ICON_INTERVAL_MS);
 		this.animationTimer.unref?.();
 
 		return runPromise;
@@ -1279,7 +1270,7 @@ export class AgentsViewMode implements Component, Focusable {
 
 	private getFilteredRecords(): UnifiedSessionRecord[] {
 		const query = this.replyTarget || this.renameTarget ? (this.actionModeSearchQuery ?? "") : this.editor.getText();
-		return filterUnifiedSessions(this.scopedRecords, (text) => matchesSearchText(text, query));
+		return filterUnifiedSessionsBySearchQuery(this.scopedRecords, query);
 	}
 
 	/** Rebuild rows from the last fetched summaries, keeping selection on the same row. */
@@ -1300,6 +1291,14 @@ export class AgentsViewMode implements Component, Focusable {
 		} else {
 			this.restoreSelection();
 		}
+	}
+
+	private tickAnimation(): void {
+		const preparation = this.renderPreparationCache.get(this.rows);
+		if (!preparation.hasRunningRow && !preparation.hasStaleAge) return;
+		if (preparation.hasRunningRow) this.workingIconFrame += 1;
+		// Stale ages are derived during rendering, so a tick only redraws the existing rows.
+		this.ui.requestRender();
 	}
 
 	private async submit(value: string, delivery: "steer" | "followUp" = "steer"): Promise<void> {
@@ -2202,24 +2201,14 @@ export class AgentsViewMode implements Component, Focusable {
 		this.savedCatalogRefreshPending = true;
 		this.savedCatalogReady = false;
 		const successfulSessions = this.lastSuccessfulSavedSessions;
-		const progressiveSessions = new Map(
-			successfulSessions.map((session) => [resolvePath(canonicalizePath(session.path)), session]),
-		);
 		try {
-			const onSession = (session: AgentConnectionSavedSessionInfo) => {
-				if (generation !== this.savedCatalogGeneration) return;
-				progressiveSessions.set(resolvePath(canonicalizePath(session.path)), session);
-				this.savedSessions = [...progressiveSessions.values()];
-				this.persistentState.savedSessions = this.savedSessions;
-				this.reconcileCatalogs();
-			};
+			// Keep the existing wire stream for mixed-version compatibility, but publish
+			// only its authoritative final snapshot. Rebuilding the accumulated prefix
+			// for every progress item made initial catalog loading quadratic.
 			const sessions = await listDaemonSavedSessions(
 				this.requireClient(),
 				this.getSavedSessionCatalogContext(),
 				"all",
-				{
-					onSession,
-				},
 			);
 			if (generation !== this.savedCatalogGeneration) return false;
 			this.savedSessions = sessions;
@@ -2473,7 +2462,7 @@ export class AgentsViewMode implements Component, Focusable {
 	}
 
 	private getAgentCountsText(): string {
-		const counts = countRowsBySection(this.rows);
+		const counts = this.renderPreparationCache.get(this.rows).counts;
 		return `${counts.running} running, ${counts.idle} idle, ${counts.inactive} inactive`;
 	}
 
@@ -2482,15 +2471,17 @@ export class AgentsViewMode implements Component, Focusable {
 			return [];
 		}
 		if (this.rows.length === 0) {
-			const emptyLegend = buildAgentsViewUsageLayout([]).legends.get("running") ?? "";
+			const preparation = this.renderPreparationCache.get(this.rows);
+			const emptyLegend = preparation.usageLayout.legends.get("running") ?? "";
 			return [
-				this.renderSectionHeading("running", width, emptyLegend),
+				this.renderSectionHeading("running", width, emptyLegend, preparation.counts),
 				theme.fg("dim", "  No sessions match your search."),
 			].slice(0, maxRows);
 		}
 
-		const displayItems = buildDisplayItems(this.rows);
-		const usageLayout = buildAgentsViewUsageLayout(this.rows);
+		const preparation = this.renderPreparationCache.get(this.rows);
+		const displayItems = preparation.displayItems;
+		const usageLayout = preparation.usageLayout;
 		const selectedIdentity = this.rows[this.selectedIndex]?.identity;
 		const selectedDisplayIndex = displayItems.findIndex(
 			(item) => item.type === "row" && item.row.identity === selectedIdentity,
@@ -2519,7 +2510,12 @@ export class AgentsViewMode implements Component, Focusable {
 				return "";
 			}
 			if (item.type === "heading") {
-				return this.renderSectionHeading(item.section, width, usageLayout.legends.get(item.section) ?? "");
+				return this.renderSectionHeading(
+					item.section,
+					width,
+					usageLayout.legends.get(item.section) ?? "",
+					preparation.counts,
+				);
 			}
 			if (item.type === "empty") {
 				return theme.fg("dim", "  No agents");
@@ -2538,7 +2534,7 @@ export class AgentsViewMode implements Component, Focusable {
 	private renderRow(
 		row: AgentsViewRow,
 		width: number,
-		rowDetails: ReadonlyMap<string, string> = buildAgentsViewUsageLayout([row]).details,
+		rowDetails: ReadonlyMap<string, string> = prepareAgentsViewRender([row]).usageLayout.details,
 	): string {
 		const selected = row.selectable && row.identity === this.rows[this.selectedIndex]?.identity;
 		const markRow = (line: string): string => (selected ? `${SELECTED_ROW_MARKER}${line}` : line);
@@ -2587,10 +2583,12 @@ export class AgentsViewMode implements Component, Focusable {
 				? `${row.summary.model.provider}/${row.summary.model.id}${row.summary.thinkingLevel && row.summary.thinkingLevel !== "off" ? `:${row.summary.thinkingLevel}` : ""}`
 				: undefined;
 		const statusLabel =
-			!pendingDelete &&
-			!pendingKill &&
-			(row.summary.statusLabel !== undefined || row.summary.lastHeardFromAt !== undefined)
-				? row.statusLabel
+			!pendingDelete && !pendingKill
+				? row.summary.statusLabel !== undefined
+					? row.statusLabel
+					: row.summary.lastHeardFromAt !== undefined
+						? `last heard ${formatAgentsViewStaleAge(row.summary.lastHeardFromAt)}`
+						: undefined
 				: undefined;
 		const suffixes = [statusLabel, modelLabel, summaryText].filter(
 			(suffix): suffix is string => suffix !== undefined && suffix.length > 0,
@@ -2610,8 +2608,12 @@ export class AgentsViewMode implements Component, Focusable {
 	// Bold like the section title so the legend reads as part of the header line.
 	// The legend is right-aligned to the same edge as the row details cells, so
 	// its columns sit exactly above the row columns.
-	private renderSectionHeading(section: AgentsViewSection, width: number, legend: string): string {
-		const counts = countRowsBySection(this.rows);
+	private renderSectionHeading(
+		section: AgentsViewSection,
+		width: number,
+		legend: string,
+		counts = this.renderPreparationCache.get(this.rows).counts,
+	): string {
 		const title = `${sectionTitle(section)} (${counts[section]})`;
 		const gap = width - visibleWidth(title) - visibleWidth(legend);
 		if (legend.length === 0 || gap < 2) {
@@ -2793,57 +2795,6 @@ export class AgentsViewMode implements Component, Focusable {
 	}
 }
 
-type DisplayItem =
-	| { type: "spacer" }
-	| { type: "heading"; section: AgentsViewSection }
-	| { type: "empty"; section: AgentsViewSection }
-	| { type: "row"; row: AgentsViewRow };
-
-function buildDisplayItems(rows: readonly AgentsViewRow[]): DisplayItem[] {
-	const items: DisplayItem[] = [];
-	const sections: AgentsViewSection[] = ["running", "idle", "inactive"];
-	for (const [index, section] of sections.entries()) {
-		if (index > 0) {
-			items.push({ type: "spacer" });
-		}
-		items.push({ type: "heading", section });
-		const sectionRows = getDisplayRowsForSection(rows, section);
-		if (sectionRows.length === 0) {
-			items.push({ type: "empty", section });
-			continue;
-		}
-		for (const row of sectionRows) {
-			items.push({ type: "row", row });
-		}
-	}
-	return items;
-}
-
-// Nested rows (subagent summaries and expanded subagents) always render in
-// their top-level agent's section block, regardless of their own section.
-function getDisplayRowsForSection(rows: readonly AgentsViewRow[], section: AgentsViewSection): AgentsViewRow[] {
-	const result: AgentsViewRow[] = [];
-	let include = false;
-	for (const row of rows) {
-		if (row.depth === 0) {
-			include = row.section === section;
-		}
-		if (include) {
-			result.push(row);
-		}
-	}
-	return result;
-}
-
-function countRowsBySection(rows: readonly AgentsViewRow[]): Record<AgentsViewSection, number> {
-	const agents = rows.filter((row) => row.kind === "agent");
-	return {
-		running: agents.filter((row) => row.section === "running").length,
-		idle: agents.filter((row) => row.section === "idle").length,
-		inactive: agents.filter((row) => row.section === "inactive").length,
-	};
-}
-
 function getSelectedRowIdentity(row: AgentsViewRow | undefined): string | undefined {
 	return row?.identity;
 }
@@ -2858,98 +2809,7 @@ function hasLiveWork(row: AgentsViewRow): boolean {
 	return row.section === "running" || row.runningSubagentCount > 0 || row.summary.hasRunningRlmChildren === true;
 }
 
-interface AgentsViewUsageParts {
-	inTokens: string;
-	outTokens: string;
-	agentCost: string;
-	count: string;
-	totalCost: string;
-	age: string;
-}
-
-const AGENTS_VIEW_USAGE_LABELS: AgentsViewUsageParts = {
-	inTokens: "↑in",
-	outTokens: "↓out",
-	agentCost: "$agent",
-	count: "#sub",
-	totalCost: "$total",
-	age: "age",
-};
-
-const AGENTS_VIEW_USAGE_COLUMNS = Object.keys(AGENTS_VIEW_USAGE_LABELS) as (keyof AgentsViewUsageParts)[];
-
-export interface AgentsViewUsageLayout {
-	/** Legend line per section, padded to that section's column widths. */
-	legends: ReadonlyMap<AgentsViewSection, string>;
-	/** Details string per row identity, padded to its section's column widths. */
-	details: ReadonlyMap<string, string>;
-}
-
-/**
- * One shared column layout per section for the header legend and every row:
- * each column is as wide as the section's widest value or its legend label,
- * everything right-aligned, so the ` · ` separators land in the same terminal
- * column for the legend and every row. Empty sessions render only the age,
- * aligned to the age column.
- */
-export function buildAgentsViewUsageLayout(rows: readonly AgentsViewRow[]): AgentsViewUsageLayout {
-	const rowsBySection = new Map<AgentsViewSection, AgentsViewRow[]>();
-	// Nested rows render inside their top-level agent's section block, so group
-	// by the block's section rather than each row's own.
-	let blockSection: AgentsViewSection = "running";
-	for (const row of rows) {
-		if (row.depth === 0) blockSection = row.section;
-		if (row.kind !== "agent" && row.kind !== "subagent") continue;
-		const sectionRows = rowsBySection.get(blockSection) ?? [];
-		sectionRows.push(row);
-		rowsBySection.set(blockSection, sectionRows);
-	}
-	const legends = new Map<AgentsViewSection, string>();
-	const details = new Map<string, string>();
-	for (const section of ["running", "idle", "inactive"] as const) {
-		const entries = (rowsBySection.get(section) ?? []).map((row) => {
-			const usage = row.summary.usage;
-			const parts: AgentsViewUsageParts = {
-				inTokens: `↑${formatTokenCount(usage?.inputTokens ?? 0)}`,
-				outTokens: `↓${formatTokenCount(usage?.outputTokens ?? 0)}`,
-				agentCost: `$${(usage?.cost ?? 0).toFixed(2)}`,
-				count: String(row.descendantCount),
-				totalCost: `$${row.recursiveCost.toFixed(2)}`,
-				age: formatSessionDuration(row.summary),
-			};
-			return { identity: row.identity, empty: isEmptyAgentsViewSession(row.summary), parts };
-		});
-		const widths = {} as Record<keyof AgentsViewUsageParts, number>;
-		for (const column of AGENTS_VIEW_USAGE_COLUMNS) {
-			let width = visibleWidth(AGENTS_VIEW_USAGE_LABELS[column]);
-			for (const entry of entries) {
-				// Empty sessions render no usage segment; only their age takes space.
-				if (entry.empty && column !== "age") continue;
-				width = Math.max(width, visibleWidth(entry.parts[column]));
-			}
-			widths[column] = width;
-		}
-		const pad = (parts: AgentsViewUsageParts, column: keyof AgentsViewUsageParts): string =>
-			padCellStart(parts[column], widths[column]);
-		const formatLine = (parts: AgentsViewUsageParts): string =>
-			[
-				`${pad(parts, "inTokens")} ${pad(parts, "outTokens")}`,
-				pad(parts, "agentCost"),
-				pad(parts, "count"),
-				pad(parts, "totalCost"),
-				pad(parts, "age"),
-			].join(" · ");
-		legends.set(section, formatLine(AGENTS_VIEW_USAGE_LABELS));
-		for (const entry of entries) {
-			details.set(entry.identity, entry.empty ? pad(entry.parts, "age") : formatLine(entry.parts));
-		}
-	}
-	return { legends, details };
-}
-
-function padCellStart(value: string, width: number): string {
-	return " ".repeat(Math.max(0, width - visibleWidth(value))) + value;
-}
+export { type AgentsViewUsageLayout, buildAgentsViewUsageLayout } from "./agents-view-usage-layout.js";
 
 // Explicit session names read bold so they stand out from fallback titles
 // (first prompt, cwd, ids); the "(no messages)" placeholder reads italic.
@@ -2973,10 +2833,11 @@ function formatRightTableCell(value: string, width: number): string {
 	return " ".repeat(Math.max(0, width - visibleWidth(truncated))) + truncated;
 }
 
-function formatSessionDuration(summary: SessionSummary): string {
-	return formatAgentsViewRelativeTime(
-		summary.activeSessionId ? (summary.created ?? summary.modified) : (summary.modified ?? summary.created),
-	);
+function formatAgentsViewStaleAge(timestamp: string, now: number = Date.now()): string {
+	const seconds = Math.max(0, Math.round((now - Date.parse(timestamp)) / 1000));
+	if (seconds < 120) return `${seconds}s ago`;
+	const minutes = Math.round(seconds / 60);
+	return minutes < 120 ? `${minutes}m ago` : `${Math.round(minutes / 60)}h ago`;
 }
 
 export function formatAgentsViewRelativeTime(value: string | undefined, now: number = Date.now()): string {

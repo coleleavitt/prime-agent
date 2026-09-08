@@ -53,6 +53,10 @@ const SESSION_LIST_PARSE_MAX_LINE_CHARS = 1024 * 1024;
 const SESSION_LIST_LARGE_MESSAGE_PREVIEW_MAX_CHARS = 256;
 const SESSION_STREAMING_LOAD_THRESHOLD_BYTES = 128 * 1024 * 1024;
 const SESSION_ASYNC_PARSE_YIELD_BYTES = 4 * 1024 * 1024;
+// Catalog reads are I/O-bound, but each active scan retains parser state and can
+// consume a file descriptor. Keep enough parallelism to hide storage latency
+// without opening every saved session at once.
+const SESSION_LIST_SCAN_CONCURRENCY = 8;
 
 // Entry types that can represent user intent (vs. daemon bookkeeping like
 // session_state/agent_status/git_state/child_usage_attributed). Used by
@@ -1168,13 +1172,19 @@ async function listSessionsFromDir(
 		}
 
 		let loaded = 0;
-		for (const file of files) {
-			const info = await readSessionInfo(file);
-			loaded++;
-			callbacks?.onProgress?.(progressOffset + loaded, total);
-			if (info) {
-				sessions.push(info);
-				callbacks?.onSession?.(info);
+		// Scan with bounded concurrency, then publish each batch in directory order.
+		// This improves cold catalog latency while keeping onProgress/onSession
+		// deterministic and avoiding an unbounded number of open JSONL streams.
+		for (let offset = 0; offset < files.length; offset += SESSION_LIST_SCAN_CONCURRENCY) {
+			const batch = files.slice(offset, offset + SESSION_LIST_SCAN_CONCURRENCY);
+			const infos = await Promise.all(batch.map((file) => readSessionInfo(file)));
+			for (const info of infos) {
+				loaded++;
+				callbacks?.onProgress?.(progressOffset + loaded, total);
+				if (info) {
+					sessions.push(info);
+					callbacks?.onSession?.(info);
+				}
 			}
 		}
 	} catch {

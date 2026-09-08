@@ -134,6 +134,84 @@ describe("AgentsViewMode", () => {
 		expect(self.savedSearchFetchStarted).toBe(true);
 	});
 
+	it("publishes a large saved-session catalog with one reconciliation", async () => {
+		const sessionCount = 100;
+		const sessions = Array.from(
+			{ length: sessionCount },
+			(_, index): AgentConnectionSavedSessionInfo => ({
+				path: `/tmp/session-${index}.jsonl`,
+				id: `session-${index}`,
+				cwd: "/tmp",
+				created: new Date("2026-01-01T00:00:00Z"),
+				modified: new Date("2026-01-01T00:00:00Z"),
+				messageCount: 1,
+				firstMessage: `session ${index}`,
+				allMessagesText: `session ${index}`,
+			}),
+		);
+		const request = vi.fn(async () => ({
+			success: true as const,
+			data: {
+				sessions: sessions.map((session) => ({
+					...session,
+					created: session.created.toISOString(),
+					modified: session.modified.toISOString(),
+				})),
+			},
+		}));
+		const self: Record<string, unknown> = {
+			options: { config: { cwd: "/tmp" } },
+			persistentState: {},
+			savedCatalogGeneration: 0,
+			savedCatalogReady: false,
+			savedCatalogRefreshPending: false,
+			lastSuccessfulSavedSessions: [],
+			savedSessions: [],
+			requireClient: () => ({ request }),
+			getSavedSessionCatalogContext: () => ({ cwd: "/tmp" }),
+			reconcileCatalogs: vi.fn(),
+			resolveMissingSelectionAnchor: vi.fn(),
+		};
+
+		await expect(invoke("refreshSavedSessions", self)).resolves.toBe(true);
+
+		expect(self.reconcileCatalogs).toHaveBeenCalledOnce();
+		expect(self.savedSessions).toEqual(sessions);
+		expect((self.persistentState as AgentsViewPersistentState).savedSessions).toEqual(sessions);
+		expect((self.persistentState as AgentsViewPersistentState).savedCatalogLoaded).toBe(true);
+	});
+
+	it("redraws stale ages without structurally rebuilding rows", () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-01-01T00:01:00Z"));
+		const rows = buildAgentsViewRows([
+			summary({
+				id: "stale",
+				sessionId: "stale",
+				lastHeardFromAt: "2026-01-01T00:00:00Z",
+			}),
+		]);
+		const view = new AgentsViewMode({ config: {}, uiServices: createUiServices() }, {});
+		Reflect.set(view, "rows", rows);
+		const rebuildRows = vi.spyOn(view as never, "rebuildRows");
+		const requestRender = vi.spyOn(Reflect.get(view, "ui") as { requestRender: () => void }, "requestRender");
+
+		try {
+			expect(invoke("renderRow", view, rows[0], 160)).toContain("last heard 60s ago");
+			vi.setSystemTime(new Date("2026-01-01T00:01:01Z"));
+
+			invoke("tickAnimation", view);
+
+			expect(rebuildRows).not.toHaveBeenCalled();
+			expect(Reflect.get(view, "rows")).toBe(rows);
+			expect(requestRender).toHaveBeenCalledOnce();
+			expect(invoke("renderRow", view, rows[0], 160)).toContain("last heard 61s ago");
+		} finally {
+			vi.useRealTimers();
+			stopThemeWatcher();
+		}
+	});
+
 	it("stops instead of deleting when an idle row's subtree still works", async () => {
 		const request = vi.fn(async () => ({ success: true as const, data: { cancelled: true } }));
 		const self = {
