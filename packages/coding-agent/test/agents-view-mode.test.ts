@@ -134,51 +134,52 @@ describe("AgentsViewMode", () => {
 		expect(self.savedSearchFetchStarted).toBe(true);
 	});
 
-	it("publishes a large saved-session catalog with one reconciliation", async () => {
-		const sessionCount = 100;
-		const sessions = Array.from(
-			{ length: sessionCount },
-			(_, index): AgentConnectionSavedSessionInfo => ({
-				path: `/tmp/session-${index}.jsonl`,
-				id: `session-${index}`,
-				cwd: "/tmp",
-				created: new Date("2026-01-01T00:00:00Z"),
-				modified: new Date("2026-01-01T00:00:00Z"),
-				messageCount: 1,
-				firstMessage: `session ${index}`,
-				allMessagesText: `session ${index}`,
-			}),
-		);
-		const request = vi.fn(async () => ({
-			success: true as const,
-			data: {
-				sessions: sessions.map((session) => ({
-					...session,
-					created: session.created.toISOString(),
-					modified: session.modified.toISOString(),
-				})),
-			},
-		}));
-		const self: Record<string, unknown> = {
-			options: { config: { cwd: "/tmp" } },
-			persistentState: {},
-			savedCatalogGeneration: 0,
-			savedCatalogReady: false,
-			savedCatalogRefreshPending: false,
-			lastSuccessfulSavedSessions: [],
-			savedSessions: [],
-			requireClient: () => ({ request }),
-			getSavedSessionCatalogContext: () => ({ cwd: "/tmp" }),
-			reconcileCatalogs: vi.fn(),
-			resolveMissingSelectionAnchor: vi.fn(),
-		};
+	it("reconciles a saved-session catalog once regardless of its size", async () => {
+		for (const sessionCount of [1, 100]) {
+			const sessions = Array.from(
+				{ length: sessionCount },
+				(_, index): AgentConnectionSavedSessionInfo => ({
+					path: `/tmp/session-${index}.jsonl`,
+					id: `session-${index}`,
+					cwd: "/tmp",
+					created: new Date("2026-01-01T00:00:00Z"),
+					modified: new Date("2026-01-01T00:00:00Z"),
+					messageCount: 1,
+					firstMessage: `session ${index}`,
+					allMessagesText: `session ${index}`,
+				}),
+			);
+			const request = vi.fn(async () => ({
+				success: true as const,
+				data: {
+					sessions: sessions.map((session) => ({
+						...session,
+						created: session.created.toISOString(),
+						modified: session.modified.toISOString(),
+					})),
+				},
+			}));
+			const self: Record<string, unknown> = {
+				options: { config: { cwd: "/tmp" } },
+				persistentState: {},
+				savedCatalogGeneration: 0,
+				savedCatalogReady: false,
+				savedCatalogRefreshPending: false,
+				lastSuccessfulSavedSessions: [],
+				savedSessions: [],
+				requireClient: () => ({ request }),
+				getSavedSessionCatalogContext: () => ({ cwd: "/tmp" }),
+				reconcileCatalogs: vi.fn(),
+				resolveMissingSelectionAnchor: vi.fn(),
+			};
 
-		await expect(invoke("refreshSavedSessions", self)).resolves.toBe(true);
+			await expect(invoke("refreshSavedSessions", self)).resolves.toBe(true);
 
-		expect(self.reconcileCatalogs).toHaveBeenCalledOnce();
-		expect(self.savedSessions).toEqual(sessions);
-		expect((self.persistentState as AgentsViewPersistentState).savedSessions).toEqual(sessions);
-		expect((self.persistentState as AgentsViewPersistentState).savedCatalogLoaded).toBe(true);
+			expect(self.reconcileCatalogs).toHaveBeenCalledOnce();
+			expect(self.savedSessions).toEqual(sessions);
+			expect((self.persistentState as AgentsViewPersistentState).savedSessions).toEqual(sessions);
+			expect((self.persistentState as AgentsViewPersistentState).savedCatalogLoaded).toBe(true);
+		}
 	});
 
 	it("redraws stale ages without structurally rebuilding rows", () => {
