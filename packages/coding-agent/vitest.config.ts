@@ -12,6 +12,12 @@ export default defineConfig({
 		globals: true,
 		environment: "node",
 		testTimeout: 30000,
+		coverage: {
+			provider: "v8",
+			reporter: ["lcov"],
+			reportsDirectory: process.env.COVERAGE_DIR ?? "coverage",
+			include: ["src/**/*.ts"],
+		},
 		env: { DO_NOT_TRACK: "1" },
 		tags: [
 			{

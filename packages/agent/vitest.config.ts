@@ -9,6 +9,12 @@ export default defineConfig({
 		globals: true,
 		environment: "node",
 		testTimeout: 30000, // 30 seconds for API calls
+		coverage: {
+			provider: "v8",
+			reporter: ["lcov"],
+			reportsDirectory: process.env.COVERAGE_DIR ?? "coverage",
+			include: ["src/**/*.ts"],
+		},
 	},
 	resolve: {
 		alias: [

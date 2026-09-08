@@ -9,7 +9,10 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["dill"]
+dev = [
+    "coverage[toml]>=7.10,<8",
+    "dill",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -17,3 +20,15 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/rlm"]
+
+[tool.coverage.run]
+branch = true
+relative_files = true
+source = ["rlm"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+[tool.coverage.xml]
+output = "coverage/coverage.xml"

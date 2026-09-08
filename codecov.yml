@@ -1,0 +1,58 @@
+codecov:
+  require_ci_to_pass: true
+  notify:
+    wait_for_ci: true
+
+coverage:
+  precision: 2
+  round: down
+  range: 70..100
+  status:
+    project:
+      default:
+        target: 70%
+        threshold: 0%
+        informational: false
+    patch:
+      default:
+        target: 80%
+        threshold: 0%
+        informational: false
+
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        target: auto
+        threshold: 0%
+        informational: false
+      - type: patch
+        target: 80%
+        threshold: 0%
+        informational: false
+  individual_components:
+    - component_id: coding-agent
+      name: Coding Agent
+      paths:
+        - packages/coding-agent/**
+    - component_id: agent-core
+      name: Agent Core
+      paths:
+        - packages/agent/**
+    - component_id: ai
+      name: AI
+      paths:
+        - packages/ai/**
+    - component_id: tui
+      name: TUI
+      paths:
+        - packages/tui/**
+    - component_id: runtime
+      name: Python Runtime
+      paths:
+        - prime-agent-runtime/**
+
+ignore:
+  - "**/test/**"
+  - "**/*.test.ts"
+  - "packages/ai/src/models.generated.ts"

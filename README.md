@@ -25,6 +25,9 @@ Prime Agent: A Self-Improving RLM Harness
   <a href="https://github.com/PrimeIntellect-ai/prime-agent/actions/workflows/build-binaries.yml">
     <img src="https://github.com/PrimeIntellect-ai/prime-agent/actions/workflows/build-binaries.yml/badge.svg" alt="Build Binaries" />
   </a>
+  <a href="https://codecov.io/gh/PrimeIntellect-ai/prime-agent">
+    <img src="https://codecov.io/gh/PrimeIntellect-ai/prime-agent/graph/badge.svg" alt="Codecov" />
+  </a>
   <a href="https://arxiv.org/abs/2608.23552">
     <img src="https://img.shields.io/badge/arXiv-2608.23552-b31b1b.svg" alt="arXiv" />
   </a>
@@ -106,6 +109,7 @@ Prime Agent is built for long-running work, especially for evaluations in resear
 - [Provider setup](packages/coding-agent/docs/providers.md) — subscription and API-key providers
 - [Architecture overview](packages/coding-agent/docs/architecture.md) — daemon, worker, kernel, and persistence boundaries
 - [Development](packages/coding-agent/docs/development.md) — build and run from source
+- [Coverage](docs/coverage.md) — local commands, CI artifacts, and Codecov gates
 
 ## Contributing
 
