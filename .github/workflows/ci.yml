@@ -109,9 +109,27 @@ jobs:
             coverage_file: packages/coding-agent/coverage/lcov.info
             coverage_prefix: packages/coding-agent/
             install_uv: true
-          - name: coding-agent process smoke
+          - name: coding-agent process supervisor
             package: packages/coding-agent
-            command: npm run test:coverage:process
+            command: npm run test:coverage:process-supervisor
+            coverage_file: packages/coding-agent/coverage/lcov.info
+            coverage_prefix: packages/coding-agent/
+            install_uv: true
+          - name: coding-agent process singleton
+            package: packages/coding-agent
+            command: npm run test:coverage:process-singleton
+            coverage_file: packages/coding-agent/coverage/lcov.info
+            coverage_prefix: packages/coding-agent/
+            install_uv: true
+          - name: coding-agent process recovery
+            package: packages/coding-agent
+            command: npm run test:coverage:process-recovery
+            coverage_file: packages/coding-agent/coverage/lcov.info
+            coverage_prefix: packages/coding-agent/
+            install_uv: true
+          - name: coding-agent process update
+            package: packages/coding-agent
+            command: npm run test:coverage:process-update
             coverage_file: packages/coding-agent/coverage/lcov.info
             coverage_prefix: packages/coding-agent/
             install_uv: true

@@ -1018,7 +1018,7 @@ interface RlmSubagentModelSelection {
 }
 
 const KERNEL_STATE_LISTING_TIMEOUT_MS = 5000;
-const RLM_SUBAGENT_DELETION_TIMEOUT_MS = 30_000;
+const RLM_SUBAGENT_DELETION_TIMEOUT_MS = 60_000;
 const RLM_MAX_DEPTH_STATE_CUSTOM_TYPE = "rlm_max_depth_state";
 
 function noopRlmChildAbort(): void {}

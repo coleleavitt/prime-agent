@@ -2621,15 +2621,27 @@ export class AgentDaemon {
 						childId,
 						state?.runtime.session.sessionId ?? session?.sessionId,
 						async () => {
+							let closeError: unknown;
 							try {
 								if (state) {
 									await this.closeSession(state, "killed", false, true, undefined, { kernelSnapshot: false });
 								} else {
 									await session?.disposeAsync({ kernelSnapshot: false });
 								}
-							} finally {
-								await staleSession?.disposeAsync({ kernelSnapshot: false });
+							} catch (error) {
+								closeError = error;
 							}
+							let staleError: unknown;
+							try {
+								await staleSession?.disposeAsync({ kernelSnapshot: false });
+							} catch (error) {
+								staleError = error;
+							}
+							if (closeError !== undefined && staleError !== undefined) {
+								throw new AggregateError([closeError, staleError], "RLM runtime cleanup failed");
+							}
+							if (closeError !== undefined) throw closeError;
+							if (staleError !== undefined) throw staleError;
 						},
 					);
 				} finally {

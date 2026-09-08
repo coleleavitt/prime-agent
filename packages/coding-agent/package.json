@@ -46,8 +46,11 @@
 		"bundle": "node scripts/bundle.mjs",
 		"test:kernel": "vitest --run --no-file-parallelism --tagsFilter kernel-heavy test/acp-kernel-features.test.ts test/acp-cold-cli.test.ts test/kernel-goal-skill.test.ts test/repl-kernel-state-roundtrip.test.ts test/repl-kernel-mcp-shutdown.test.ts",
 		"test:coverage": "tsx src/core/kernel/bootstrap-cli.ts && vitest --run --coverage --exclude test/daemon-supervisor-process.test.ts --exclude test/suite/regressions/4600-supervisor-singleton.test.ts --exclude test/suite/regressions/4603-worker-recovery.test.ts --exclude test/suite/regressions/4606-update-restart-coordinator.test.ts",
-		"test:coverage:process": "vitest --run --coverage test/daemon-supervisor-process.test.ts test/suite/regressions/4600-supervisor-singleton.test.ts test/suite/regressions/4603-worker-recovery.test.ts test/suite/regressions/4606-update-restart-coordinator.test.ts",
-		"test:coverage:kernel": "vitest --run --coverage --no-file-parallelism --tagsFilter kernel-heavy test/acp-kernel-features.test.ts test/acp-cold-cli.test.ts test/kernel-goal-skill.test.ts test/repl-kernel-state-roundtrip.test.ts test/repl-kernel-mcp-shutdown.test.ts test/repl-kernel-parent-watchdog.test.ts"
+		"test:coverage:kernel": "vitest --run --coverage --no-file-parallelism --tagsFilter kernel-heavy test/acp-kernel-features.test.ts test/acp-cold-cli.test.ts test/kernel-goal-skill.test.ts test/repl-kernel-state-roundtrip.test.ts test/repl-kernel-mcp-shutdown.test.ts test/repl-kernel-parent-watchdog.test.ts",
+		"test:coverage:process-supervisor": "vitest --run --coverage test/daemon-supervisor-process.test.ts",
+		"test:coverage:process-singleton": "vitest --run --coverage test/suite/regressions/4600-supervisor-singleton.test.ts",
+		"test:coverage:process-recovery": "vitest --run --coverage test/suite/regressions/4603-worker-recovery.test.ts",
+		"test:coverage:process-update": "vitest --run --coverage test/suite/regressions/4606-update-restart-coordinator.test.ts"
 	},
 	"dependencies": {
 		"@agentclientprotocol/sdk": "^1.3.0",
