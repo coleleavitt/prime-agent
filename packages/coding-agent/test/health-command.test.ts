@@ -264,6 +264,55 @@ describe("health command", () => {
 		expect(summary.counts).toMatchObject({ process: 1, kernel: 2, child: 1, lock: 1, orphan: 1 });
 	});
 
+	it("counts an unfinished child run span and a delivered completion notice as child incidents", () => {
+		const path = writeLog();
+		writeFileSync(
+			path,
+			`${[
+				row({
+					ts: "2026-09-08T10:00:00.000Z",
+					component: "trace",
+					msg: "span_start",
+					name: "rlm.child.run",
+					traceId: "3df7651916cd43dd8448eb211c80319f",
+					spanId: "run1",
+					attrs: { "rlm.child_id": "child-hung", "rlm.depth": 1 },
+				}),
+				row({
+					ts: "2026-09-08T11:30:00.000Z",
+					component: "coding-agent.rlm-child",
+					msg: "rlm_child_terminal_notice_delivered",
+					kind: "completed_without_reply",
+					"rlm.child_id": "child-silent",
+					sessionId: "child-session-1",
+					traceId: "4ef7651916cd43dd8448eb211c803190",
+					spanId: "run2",
+				}),
+				row({
+					ts: "2026-09-08T11:31:00.000Z",
+					component: "coding-agent.rlm-child",
+					msg: "rlm_child_terminal_notice_delivered",
+					kind: "cancelled",
+					"rlm.child_id": "child-cancelled",
+					sessionId: "child-session-2",
+				}),
+			].join("\n")}\n`,
+		);
+		const result = run(["--log", path, "--json"]);
+		const summary = JSON.parse(result.stdout[0]!) as {
+			counts: Record<string, number>;
+			incidents: Array<{ summary: string; traceId?: string; sessionId?: string }>;
+		};
+		expect(summary.counts.child).toBe(2);
+		expect(summary.incidents.some((item) => item.summary.includes("rlm.child.run span run1"))).toBe(true);
+		expect(summary.incidents.find((item) => item.summary.includes("child-silent"))).toMatchObject({
+			summary: "rlm child child-silent: completed_without_reply notice delivered to parent",
+			traceId: "4ef7651916cd43dd8448eb211c803190",
+			sessionId: "child-session-1",
+		});
+		expect(summary.incidents.some((item) => item.summary.includes("child-cancelled"))).toBe(false);
+	});
+
 	it("returns UNKNOWN for malformed, empty, or stale evidence", () => {
 		const path = writeLog();
 		writeFileSync(path, "not json\n");

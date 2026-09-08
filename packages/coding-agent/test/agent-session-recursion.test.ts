@@ -1344,6 +1344,144 @@ describe("AgentSession rlm recursion", () => {
 		});
 	});
 
+	it("drops a deferred completion notice when the child replies before the notice is delivered", async () => {
+		const childCompletion = deferred<void>();
+		const childStarted = deferred<void>();
+		const child = createSession({
+			depth: 1,
+			rlmSessionDir: join(tempDir, "late-reply-child"),
+			agentMessageController: {
+				listAgents: () => ({ agents: [] }),
+				roster: () => ({
+					current: { name: "late-reply-worker", id: child.sessionId, depth: 1 },
+					entries: [{ relationship: "parent", name: "parent", id: "parent-session", depth: 0, status: "idle" }],
+				}),
+				sendAgentMessage: async () => ({
+					id: "agentmsg-late-reply",
+					source: "agent_message",
+					target: { activeSessionId: "parent-active", sessionId: "parent-session" },
+					message: "late report",
+					deliveryStatus: "delivered",
+				}),
+			},
+			streamFn: () => {
+				const stream = createAssistantMessageEventStream();
+				childStarted.resolve();
+				void childCompletion.promise.then(() => {
+					stream.push({ type: "done", reason: "stop", message: assistantMessage("turn one ended") });
+				});
+				return stream;
+			},
+		});
+		let parentTurns = 0;
+		const root = createSession({
+			streamFn: () => {
+				parentTurns++;
+				return streamAnswer("parent consumed a notice");
+			},
+			subagentRuntimeHost: {
+				createRlmSubagentRuntime: async () => ({ session: child }),
+				deleteRlmSubagentRuntime: async () => {},
+			},
+		});
+
+		await root.runRlmChild("nonblocking child", { name: "late-reply-worker" });
+		await childStarted.promise;
+		const inputPause = root.acquireSessionInputPause();
+		childCompletion.resolve();
+		const deferredNotices = () =>
+			root
+				.getPendingNextTurnMessageSnapshots()
+				.filter((message) => message.customType === "rlm_child_terminal_notice");
+		await vi.waitFor(() => expect(deferredNotices()).toHaveLength(1));
+
+		const send = (child as unknown as InspectableRlmSession)._createKernelHostHandlers()["agent_message.send"];
+		if (!send) throw new Error("Missing agent_message.send host handler");
+		await send({ message: "late report", receiver_role: "parent" });
+
+		inputPause.release();
+		await vi.waitFor(() => expect(deferredNotices()).toHaveLength(0));
+		await root.waitForRlmQuiescence();
+		expect(
+			root.messages.filter(
+				(message) => message.role === "custom" && message.customType === "rlm_child_terminal_notice",
+			),
+		).toHaveLength(0);
+		expect(parentTurns).toBe(0);
+	});
+
+	it("postpones a completion notice while the child keeps working and rewrites its preview on delivery", async () => {
+		const firstTurn = deferred<void>();
+		const secondTurn = deferred<void>();
+		const childStarted = deferred<void>();
+		const secondTurnStarted = deferred<void>();
+		const child = createSession({
+			rlmSessionDir: join(tempDir, "still-working-child"),
+			streamFn: (_model, context) => {
+				const text = userText(context);
+				const stream = createAssistantMessageEventStream();
+				childStarted.resolve();
+				if (text === "second turn") secondTurnStarted.resolve();
+				void (text === "second turn" ? secondTurn.promise : firstTurn.promise).then(() => {
+					stream.push({
+						type: "done",
+						reason: "stop",
+						message: assistantMessage(text === "second turn" ? "final report text" : "first turn text"),
+					});
+				});
+				return stream;
+			},
+		});
+		const root = createSession({
+			subagentRuntimeHost: {
+				createRlmSubagentRuntime: async () => ({ session: child }),
+				deleteRlmSubagentRuntime: async () => {},
+			},
+		});
+
+		const spawned = await root.runRlmChild("start long work", { name: "still-working-worker" });
+		await childStarted.promise;
+		const inputPause = root.acquireSessionInputPause();
+		firstTurn.resolve();
+		const deferredNotices = () =>
+			root
+				.getPendingNextTurnMessageSnapshots()
+				.filter((message) => message.customType === "rlm_child_terminal_notice");
+		await vi.waitFor(() => expect(deferredNotices()).toHaveLength(1));
+		expect(deferredNotices()[0]).toMatchObject({
+			details: { lastAssistantTextPreview: "first turn text" },
+		});
+
+		const secondPrompt = child.prompt("second turn");
+		await secondTurnStarted.promise;
+		inputPause.release();
+		await sleep(600);
+		expect(deferredNotices()).toHaveLength(1);
+		expect(
+			root.messages.filter(
+				(message) => message.role === "custom" && message.customType === "rlm_child_terminal_notice",
+			),
+		).toHaveLength(0);
+
+		secondTurn.resolve();
+		await secondPrompt;
+		await vi.waitFor(
+			() => {
+				const notices = root.messages.filter(
+					(message) => message.role === "custom" && message.customType === "rlm_child_terminal_notice",
+				);
+				expect(notices).toHaveLength(1);
+				expect(notices[0]).toMatchObject({
+					content: expect.stringContaining(
+						`RLM child still-working-worker (${spawned.rlm_child_id}) completed without sending a reply`,
+					),
+					details: { kind: "completed_without_reply", lastAssistantTextPreview: "final report text" },
+				});
+			},
+			{ timeout: 5000 },
+		);
+	});
+
 	it("regression: fails a child whose terminal response is content [] / stop / usage 0 instead of settling done", async () => {
 		// Incident shape: an upstream proxy swallowed a LiteLLM error frame and
 		// the child's provider settled an empty, nominally successful stream.

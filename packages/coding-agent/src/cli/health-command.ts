@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { APP_NAME, getAgentLogPath } from "../config.js";
+import { RLM_CHILD_TERMINAL_NOTICE_DELIVERED_MSG } from "../core/messages.js";
 
 const DEFAULT_SINCE_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_STUCK_AFTER_MS = 10 * 60 * 1000;
@@ -14,6 +15,7 @@ const OPEN_OPERATION_SPANS = new Map<string, HealthCategory>([
 	["kernel.cell", "kernel"],
 	["kernel.execute", "kernel"],
 	["rlm.child", "child"],
+	["rlm.child.run", "child"],
 	["child.passivate", "child"],
 	["child.delete", "child"],
 	["cargo_lock_wait", "lock"],
@@ -21,6 +23,8 @@ const OPEN_OPERATION_SPANS = new Map<string, HealthCategory>([
 	["kernel.bootstrap_lock", "lock"],
 ]);
 const STUCK_TURN_SPANS = new Set(["client.turn", "agent.prompt"]);
+// A cancellation notice is an operator action, not an incident.
+const CHILD_TERMINAL_NOTICE_INCIDENT_KINDS = new Set(["completed_without_reply", "failure"]);
 const DURATION_RE = /^(\d+)(ms|s|m|h|d)$/;
 const DAEMON_RECOVERY_RE = /\b(recover(?:y|ing|ed)?|restart(?:ed|ing)?)\b/i;
 const DAEMON_FAILURE_RE = /\b(fail(?:ed|ure)?|interrupt(?:ed)?|cancel(?:led)?|could not|did not answer|uncertain)\b/i;
@@ -330,6 +334,13 @@ export function summarizeHealth(
 			const operationCategory = name.startsWith("child.") ? "child" : OPEN_OPERATION_SPANS.get(name);
 			if (operationCategory)
 				incidents.push(incident(operationCategory, entry, `${name}: ${detail(entry, "failed")}`));
+		}
+		if (entry.msg === RLM_CHILD_TERMINAL_NOTICE_DELIVERED_MSG) {
+			const kind = stringField(entry, "kind");
+			if (kind && CHILD_TERMINAL_NOTICE_INCIDENT_KINDS.has(kind)) {
+				const childId = stringField(entry, "rlm.child_id") ?? "unknown";
+				incidents.push(incident("child", entry, `rlm child ${childId}: ${kind} notice delivered to parent`));
+			}
 		}
 		if (entry.msg === "kernel_exit" && /kernel/i.test(entry.component)) {
 			incidents.push(incident("kernel", entry, detail(entry, "kernel exited unexpectedly")));

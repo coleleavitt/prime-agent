@@ -1,0 +1,2 @@
+- Fixed subagents being reported to their parent as "completed without sending a reply" while they were still working: the deferred notice is now re-checked against the child at delivery time, dropped when the child replies, postponed while the child stays busy, and rebuilt from the child's latest assistant text.
+- Added an `rlm.child.run` span covering a subagent run from admission to settlement, plus a log entry for every delivered child terminal notice, so `prime-agent health` counts hung child runs and false completions as child incidents.

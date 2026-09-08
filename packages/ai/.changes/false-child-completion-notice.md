@@ -1,0 +1,1 @@
+- Added `rlm.child.run` to the spans whose start is persisted, so a subagent run that never finishes stays visible in retained logs.

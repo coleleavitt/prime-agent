@@ -183,9 +183,11 @@ describe("log stamping", () => {
 	it("persists starts for bounded child lifecycle operations", async () => {
 		await withSpan("child.passivate", () => Promise.resolve());
 		await withSpan("child.delete", () => Promise.resolve());
+		await withSpan("rlm.child.run", () => Promise.resolve());
 		expect(entries.filter((entry) => entry.msg === "span_start").map((entry) => entry.name)).toEqual([
 			"child.passivate",
 			"child.delete",
+			"rlm.child.run",
 		]);
 	});
 

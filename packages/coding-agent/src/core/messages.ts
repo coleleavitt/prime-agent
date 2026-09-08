@@ -35,6 +35,8 @@ export const COMPACTION_OUTCOME_CUSTOM_TYPE = "compaction_outcome";
 export const REFINEMENT_OUTCOME_CUSTOM_TYPE = "refinement_outcome";
 export const RLM_CHILD_FAILURE_CUSTOM_TYPE = "rlm_child_failure";
 export const RLM_CHILD_TERMINAL_NOTICE_CUSTOM_TYPE = "rlm_child_terminal_notice";
+/** Structured log `msg` emitted once per child terminal notice delivered to a parent. */
+export const RLM_CHILD_TERMINAL_NOTICE_DELIVERED_MSG = "rlm_child_terminal_notice_delivered";
 
 export interface SessionSlashCommandDetails {
 	command: SessionSlashCommand;

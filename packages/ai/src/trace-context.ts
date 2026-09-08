@@ -337,6 +337,7 @@ const ACTIVE_OPERATION_SPANS = new Set([
 	"update.self",
 	"child.passivate",
 	"child.delete",
+	"rlm.child.run",
 ]);
 
 /**
