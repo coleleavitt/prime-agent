@@ -139,6 +139,7 @@ import {
 import {
 	acquireDaemonSupervisorOwnership,
 	isDaemonShutdownAdmissionActive,
+	isDaemonSupervisorStartupRaceError,
 	waitForDaemonStartupFence,
 } from "./daemon-supervisor-ownership.js";
 import {
@@ -686,7 +687,17 @@ function normalizeCapabilities(
 export async function runDaemonSupervisorMode(options: DaemonSupervisorOptions): Promise<never> {
 	const socketPath = normalizeSocketPath(options.socketPath ?? defaultDaemonSocketPath());
 	const supervisor = new DaemonSupervisor(socketPath, options);
-	await supervisor.start();
+	try {
+		await supervisor.start();
+	} catch (error) {
+		if (!isDaemonSupervisorStartupRaceError(error)) throw error;
+		// Losing this race is the designed outcome, not a crash: the client that spawned this
+		// process adopts the surviving daemon or retries. Report it as a startup outcome and keep
+		// the same exit code so callers behave exactly as before.
+		structuredLog.warn("daemon_supervisor_startup_superseded", { socketPath, error: error.message });
+		process.stderr.write(`${error.message}\n`);
+		process.exit(1);
+	}
 	return new Promise(() => {});
 }
 

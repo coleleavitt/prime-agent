@@ -444,6 +444,18 @@ async function mutateDaemonSupervisorOwner(
 	});
 }
 
+/**
+ * True when startup lost a race that another process is expected to win: a shutdown was already
+ * admitted, or a live supervisor already owns this socket. The client that spawned this process
+ * adopts the surviving daemon or retries, so the loser must exit quietly instead of reporting a
+ * crash.
+ */
+export function isDaemonSupervisorStartupRaceError(error: unknown): error is Error {
+	if (!(error instanceof Error)) return false;
+	const code = (error as { code?: unknown }).code;
+	return code === "daemon_shutdown_in_progress" || code === "daemon_supervisor_already_running";
+}
+
 export async function acquireDaemonSupervisorOwnership(
 	options: AcquireDaemonSupervisorOwnershipOptions,
 ): Promise<DaemonSupervisorOwnership> {

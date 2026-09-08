@@ -1,0 +1,1 @@
+- Fixed a daemon that lost a startup race to a shutdown or a live supervisor being reported as a fatal crash.
