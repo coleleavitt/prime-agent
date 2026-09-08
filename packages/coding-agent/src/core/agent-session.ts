@@ -139,6 +139,7 @@ import {
 	type MessageStartEvent,
 	type MessageUpdateEvent,
 	type ReplacedSessionContext,
+	type ScheduledWorkInfo,
 	type SessionBeforeCompactResult,
 	type SessionBeforeRefineResult,
 	type SessionBeforeTreeResult,
@@ -202,6 +203,7 @@ import {
 	RLM_CHILD_TERMINAL_NOTICE_CUSTOM_TYPE,
 	RLM_CHILD_TERMINAL_NOTICE_DELIVERED_MSG,
 	type RlmChildFailureDetails,
+	type RlmChildScheduledWork,
 	type RlmChildTerminalNoticeDetails,
 } from "./messages.js";
 import type { ModelRegistry } from "./model-registry.js";
@@ -1231,6 +1233,8 @@ export class AgentSession {
 	private readonly _durableRlmTerminalNoticeActionIds = new Set<string>();
 	/** Compose-time child state per child id, keyed for flush-time revalidation. */
 	private readonly _deferredRlmTerminalNoticeGuards = new Map<string, DeferredRlmTerminalNoticeGuard>();
+	/** Externally scheduled work declared for this session, keyed by declaring source. */
+	private readonly _scheduledWork = new Map<string, ScheduledWorkInfo>();
 	private _deferredRlmTerminalNoticeRecheckTimer: ReturnType<typeof setTimeout> | undefined;
 	private _sessionActionCommitTail: Promise<void> = Promise.resolve();
 	private _sessionActionCommitOwner: symbol | undefined;
@@ -4339,6 +4343,7 @@ export class AgentSession {
 			this._deletedRlmChildIds.clear();
 			this._cancelDeferredRlmTerminalNoticeRecheck();
 			this._deferredRlmTerminalNoticeGuards.clear();
+			this._scheduledWork.clear();
 			this._pendingNextTurnMessages = [];
 			const deliveryError = new Error("Session disposed before prompt delivery.");
 			const completionError = new Error("Session disposed before prompt completion.");
@@ -4901,6 +4906,35 @@ export class AgentSession {
 	}
 
 	/**
+	 * Declare externally scheduled work for this session. A session with a
+	 * declaration is waiting for that source to fire, not finished, so a parent
+	 * orchestrator must not read its idle turn boundary as a final result.
+	 */
+	setScheduledWork(key: string, work?: ScheduledWorkInfo): void {
+		this._scheduledWork.set(key, work ? { ...work } : {});
+	}
+
+	clearScheduledWork(key: string): void {
+		this._scheduledWork.delete(key);
+	}
+
+	/** Declared scheduled work, soonest run first, then by source for a stable order. */
+	getScheduledWork(): RlmChildScheduledWork[] {
+		return [...this._scheduledWork.entries()]
+			.map(([source, work]) => ({
+				source,
+				...(work.description !== undefined ? { description: work.description } : {}),
+				...(work.nextRunAtMs !== undefined ? { nextRunAtMs: work.nextRunAtMs } : {}),
+			}))
+			.sort((left, right) => {
+				const leftNext = left.nextRunAtMs ?? Number.POSITIVE_INFINITY;
+				const rightNext = right.nextRunAtMs ?? Number.POSITIVE_INFINITY;
+				if (leftNext !== rightNext) return leftNext - rightNext;
+				return left.source.localeCompare(right.source);
+			});
+	}
+
+	/**
 	 * Record the child state a `completed_without_reply` notice was composed
 	 * from. The notice can sit in the deferred queue for minutes, so delivery
 	 * re-reads this child instead of trusting the compose-time snapshot.
@@ -4939,12 +4973,16 @@ export class AgentSession {
 		}
 		this._deferredRlmTerminalNoticeGuards.delete(details.childId);
 		const lastAssistantText = child.getLastAssistantText();
+		// An idle child that still declares scheduled work is waiting, not
+		// finished: deliver the truth rather than postponing forever.
+		const scheduledWork = child.getScheduledWork();
 		return {
 			kind: "deliver",
 			guard,
 			message: createRlmChildTerminalNoticeMessage({
 				...details,
 				lastAssistantTextPreview: lastAssistantText ? compactRlmText(lastAssistantText) : undefined,
+				scheduledWork: scheduledWork.length > 0 ? scheduledWork : undefined,
 			}),
 		};
 	}
@@ -9488,6 +9526,8 @@ export class AgentSession {
 						});
 					});
 				},
+				setScheduledWork: (key, work) => this.setScheduledWork(key, work),
+				clearScheduledWork: (key) => this.clearScheduledWork(key),
 				appendEntry: (customType, data) => {
 					this.sessionManager.appendCustomEntry(customType, data);
 				},
@@ -11570,6 +11610,7 @@ export class AgentSession {
 						child._parentReplyCount === parentReplyCountBeforeRun
 					) {
 						const lastAssistantText = child.getLastAssistantText();
+						const scheduledWork = child.getScheduledWork();
 						this._registerDeferredRlmTerminalNoticeGuard(run.id, child);
 						await deliverTerminalMessageToParent(
 							createRlmChildTerminalNoticeMessage({
@@ -11577,6 +11618,7 @@ export class AgentSession {
 								childId: run.id,
 								sessionName,
 								lastAssistantTextPreview: lastAssistantText ? compactRlmText(lastAssistantText) : undefined,
+								scheduledWork: scheduledWork.length > 0 ? scheduledWork : undefined,
 							}),
 						);
 					}

@@ -400,6 +400,8 @@ export class ExtensionRunner {
 		const owner: object = this.runtime;
 		this.runtime.sendMessage = actions.sendMessage;
 		this.runtime.sendUserMessage = actions.sendUserMessage;
+		this.runtime.setScheduledWork = actions.setScheduledWork;
+		this.runtime.clearScheduledWork = actions.clearScheduledWork;
 		this.runtime.appendEntry = actions.appendEntry;
 		this.runtime.setSessionName = actions.setSessionName;
 		this.runtime.getSessionName = actions.getSessionName;

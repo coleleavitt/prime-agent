@@ -22,7 +22,7 @@ import { AgentSession, type RlmChildAgentSnapshot } from "../src/core/agent-sess
 import { AuthStorage } from "../src/core/auth-storage.js";
 import type { LoadExtensionsResult } from "../src/core/extensions/index.js";
 import { type HostRequestHandlers, ReplKernelManager } from "../src/core/kernel/index.js";
-import { convertToLlm } from "../src/core/messages.js";
+import { convertToLlm, createRlmChildTerminalNoticeMessage } from "../src/core/messages.js";
 import { ModelRegistry } from "../src/core/model-registry.js";
 import {
 	createDefaultRlmSubagentSessionName,
@@ -1480,6 +1480,85 @@ describe("AgentSession rlm recursion", () => {
 			},
 			{ timeout: 5000 },
 		);
+	});
+
+	it("reports a child's declared scheduled work instead of claiming it completed", async () => {
+		const child = createSession({ rlmSessionDir: join(tempDir, "scheduled-work-child") });
+		child.setScheduledWork("scheduler", { description: "2 tasks scheduled", nextRunAtMs: Date.now() + 300_000 });
+		const root = createSession({
+			subagentRuntimeHost: {
+				createRlmSubagentRuntime: async () => ({ session: child }),
+				deleteRlmSubagentRuntime: async () => {},
+			},
+		});
+
+		const spawned = await root.runRlmChild("start scheduled work", { name: "scheduled-worker" });
+		await vi.waitFor(() => {
+			const notices = root.messages.filter(
+				(message) => message.role === "custom" && message.customType === "rlm_child_terminal_notice",
+			);
+			expect(notices).toHaveLength(1);
+			expect(notices[0]).toMatchObject({
+				content: expect.stringMatching(
+					new RegExp(
+						`^RLM child scheduled-worker \\(${spawned.rlm_child_id}\\) ended its turn without sending a reply and still has 1 scheduled work item pending \\(soonest next run in \\d+m( \\d+s)?\\): scheduler: 2 tasks scheduled\\. The child is waiting, not finished; do not redo its work\\.`,
+					),
+				),
+				details: {
+					kind: "completed_without_reply",
+					scheduledWork: [
+						{ source: "scheduler", description: "2 tasks scheduled", nextRunAtMs: expect.any(Number) },
+					],
+				},
+			});
+		});
+	});
+
+	it("restores the plain completion wording once the child clears its scheduled work", async () => {
+		const childCompletion = deferred<void>();
+		const childStarted = deferred<void>();
+		const child = createSession({
+			rlmSessionDir: join(tempDir, "cleared-scheduled-work-child"),
+			streamFn: () => {
+				const stream = createAssistantMessageEventStream();
+				childStarted.resolve();
+				void childCompletion.promise.then(() => {
+					stream.push({ type: "done", reason: "stop", message: assistantMessage("last scheduled run done") });
+				});
+				return stream;
+			},
+		});
+		child.setScheduledWork("scheduler", { description: "1 task scheduled", nextRunAtMs: Date.now() + 60_000 });
+		const root = createSession({
+			subagentRuntimeHost: {
+				createRlmSubagentRuntime: async () => ({ session: child }),
+				deleteRlmSubagentRuntime: async () => {},
+			},
+		});
+
+		const spawned = await root.runRlmChild("finish scheduled work", { name: "cleared-worker" });
+		await childStarted.promise;
+		const inputPause = root.acquireSessionInputPause();
+		childCompletion.resolve();
+		const deferredNotices = () =>
+			root
+				.getPendingNextTurnMessageSnapshots()
+				.filter((message) => message.customType === "rlm_child_terminal_notice");
+		await vi.waitFor(() => expect(deferredNotices()).toHaveLength(1));
+		expect(deferredNotices()[0]?.details).toMatchObject({ scheduledWork: [{ source: "scheduler" }] });
+
+		child.clearScheduledWork("scheduler");
+		inputPause.release();
+		await vi.waitFor(() => {
+			const notices = root.messages.filter(
+				(message) => message.role === "custom" && message.customType === "rlm_child_terminal_notice",
+			);
+			expect(notices).toHaveLength(1);
+			expect(notices[0]).toMatchObject({
+				content: `RLM child cleared-worker (${spawned.rlm_child_id}) completed without sending a reply. Last assistant text: last scheduled run done`,
+			});
+			expect((notices[0] as { details: { scheduledWork?: unknown } }).details.scheduledWork).toBeUndefined();
+		});
 	});
 
 	it("regression: fails a child whose terminal response is content [] / stop / usage 0 instead of settling done", async () => {
@@ -4652,5 +4731,75 @@ describe("AgentSession RLM session dir", () => {
 			if (previousRef === undefined) delete process.env.MY_SERPER_REF;
 			else process.env.MY_SERPER_REF = previousRef;
 		}
+	});
+});
+
+describe("RLM child terminal notice content", () => {
+	const composedAt = Date.parse("2026-09-08T12:00:00.000Z");
+
+	it("states the pending scheduled work, its count, and the soonest relative next run", () => {
+		const notice = createRlmChildTerminalNoticeMessage(
+			{
+				kind: "completed_without_reply",
+				childId: "sub-1234",
+				sessionName: "wakeup-worker",
+				lastAssistantTextPreview: "build started",
+				scheduledWork: [
+					{ source: "scheduler", description: "2 tasks scheduled", nextRunAtMs: composedAt + 300_000 },
+					{ source: "watcher", nextRunAtMs: composedAt + 900_000 },
+				],
+			},
+			composedAt,
+		);
+
+		expect(notice.content).toBe(
+			"RLM child wakeup-worker (sub-1234) ended its turn without sending a reply and still has 2 scheduled work items pending (soonest next run in 5m): scheduler: 2 tasks scheduled, watcher. The child is waiting, not finished; do not redo its work. Last assistant text: build started",
+		);
+	});
+
+	it("reports an overdue run as due now and an undeclared run as unknown", () => {
+		const overdue = createRlmChildTerminalNoticeMessage(
+			{
+				kind: "completed_without_reply",
+				childId: "sub-1234",
+				sessionName: "wakeup-worker",
+				scheduledWork: [{ source: "scheduler", nextRunAtMs: composedAt - 1000 }],
+			},
+			composedAt,
+		);
+		expect(overdue.content).toContain("1 scheduled work item pending (soonest next run now): scheduler");
+
+		const unknown = createRlmChildTerminalNoticeMessage(
+			{
+				kind: "completed_without_reply",
+				childId: "sub-1234",
+				sessionName: "wakeup-worker",
+				scheduledWork: [{ source: "scheduler", description: "waiting on a file watcher" }],
+			},
+			composedAt,
+		);
+		expect(unknown.content).toContain(
+			"1 scheduled work item pending (next run unknown): scheduler: waiting on a file watcher",
+		);
+	});
+
+	it("keeps the original wording when no scheduled work is declared", () => {
+		expect(
+			createRlmChildTerminalNoticeMessage(
+				{
+					kind: "completed_without_reply",
+					childId: "sub-1234",
+					sessionName: "quiet-worker",
+					lastAssistantTextPreview: "all done",
+				},
+				composedAt,
+			).content,
+		).toBe("RLM child quiet-worker (sub-1234) completed without sending a reply. Last assistant text: all done");
+		expect(
+			createRlmChildTerminalNoticeMessage(
+				{ kind: "completed_without_reply", childId: "sub-1234", sessionName: "quiet-worker", scheduledWork: [] },
+				composedAt,
+			).content,
+		).toBe("RLM child quiet-worker (sub-1234) completed without sending a reply");
 	});
 });
