@@ -38,6 +38,7 @@ import {
 	createCompactionSummaryMessage,
 	createCustomMessage,
 } from "./messages.js";
+import { readSessionCatalogIndex, writeSessionCatalogIndex } from "./session-catalog-index.js";
 import {
 	addAssistantUsage,
 	cloneUsage,
@@ -989,6 +990,37 @@ interface SessionInfoCacheEntry {
 // content: cache list metadata and rescan only files that changed.
 const sessionInfoCache = new Map<string, SessionInfoCacheEntry>();
 
+// Session directories whose persisted catalog index has already been folded into
+// `sessionInfoCache` in this process. Reading it once per directory is enough:
+// afterwards the in-memory cache is at least as fresh as the file.
+const primedSessionIndexDirs = new Set<string>();
+
+/**
+ * Seed the in-memory catalog cache from the on-disk index so a cold process
+ * stats files instead of reparsing them. Entries are still validated against
+ * `(size, mtimeMs)` by `readSessionInfo`, so a stale index cannot be trusted
+ * into a wrong answer.
+ */
+async function primeSessionInfoCacheFromIndex(dir: string): Promise<void> {
+	if (primedSessionIndexDirs.has(dir)) return;
+	primedSessionIndexDirs.add(dir);
+	const persisted = await readSessionCatalogIndex(dir);
+	for (const [path, entry] of persisted) {
+		// A live entry was scanned by this process and is never older than disk.
+		if (!sessionInfoCache.has(path)) sessionInfoCache.set(path, entry);
+	}
+}
+
+/** Persist the current metadata for `dir`, best-effort. */
+async function persistSessionInfoCache(dir: string, files: readonly string[]): Promise<void> {
+	const entries = new Map<string, SessionInfoCacheEntry>();
+	for (const file of files) {
+		const cached = sessionInfoCache.get(file);
+		if (cached) entries.set(file, cached);
+	}
+	await writeSessionCatalogIndex(dir, entries);
+}
+
 // Concurrent catalog requests (multiple clients, overlapping refresh generations)
 // must not multiply open scans, so the slot pool below is module state rather
 // than per-request state. A waiter inherits the released slot directly; the
@@ -1208,13 +1240,20 @@ async function listSessionsFromDir(
 			.map((f) => join(dir, f));
 		const total = progressTotal ?? files.length;
 
+		await primeSessionInfoCacheFromIndex(dir);
+
 		const present = new Set(files);
+		let removedStaleEntry = false;
 		for (const key of sessionInfoCache.keys()) {
 			if (dirname(key) === dir && !present.has(key)) {
 				sessionInfoCache.delete(key);
+				removedStaleEntry = true;
 			}
 		}
 
+		// Identity, not presence: a file that changed on disk is still cached here,
+		// but `readSessionInfo` replaces its entry, and the index must follow.
+		const entriesBeforeScan = files.map((file) => sessionInfoCache.get(file));
 		let loaded = 0;
 		// The scan bound itself is process-wide (withSessionScanSlot); this loop keeps
 		// per-request promise/stat fan-out bounded and publishes each batch in sorted
@@ -1230,6 +1269,13 @@ async function listSessionsFromDir(
 					callbacks?.onSession?.(info);
 				}
 			}
+		}
+
+		// Only rewrite when this scan actually learned something: an unchanged
+		// catalog must not pay a full index write on every refresh.
+		const learnedSomething = files.some((file, index) => sessionInfoCache.get(file) !== entriesBeforeScan[index]);
+		if (learnedSomething || removedStaleEntry) {
+			await persistSessionInfoCache(dir, files);
 		}
 	} catch {
 		// Return no sessions when the directory cannot be read.

@@ -1,2 +1,3 @@
 - Improved session dashboard and resume startup performance for large saved-session catalogs.
 - Improved session selector startup by scanning the saved catalog only once.
+- Added a persisted session catalog index so listing saved sessions no longer reparses unchanged transcripts in each new process.

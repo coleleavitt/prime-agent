@@ -71,3 +71,24 @@ This broader run includes the five performance/resume test files listed above an
 An independent code audit of commits `9c951bd4`, `6bcaf4b1`, and `829424ab` reported no release-blocking production findings. A follow-up test audit found that the reconciliation regression needed to emit progressive wire events; the test now emits every `session_list_item` before the terminal response. It reviewed the complete changed implementations and surrounding call sites for reconciliation complexity, scanner bounds and order, search parity, render-cache expiry, resume matching semantics, daemon protocol classification, test adequacy, and changelog format.
 
 A follow-up audit also found clock-rollback invalidation missing from the render cache. The cache now invalidates when observed wall time moves backward, with a regression test. Remaining non-blocking risks are pathological reverse-ordered deep hierarchies, filesystem-scale stress beyond the deterministic scanner tests, lexical rather than realpath cwd equivalence, and possible future drift if the upstream fuzzy scorer changes.
+
+## Persisted catalog index
+
+`session-manager.ts` now seeds its in-memory catalog cache from
+`<sessionDir>/session-index.ndjson` before scanning. Entries are keyed by
+`(size, mtimeMs)` and revalidated by `readSessionInfo`, so a stale index can
+never be trusted into a wrong answer; it only removes work.
+
+The index is rewritten only when a scan learned something (a new file, a changed
+file, or a deleted one), so a warm refresh performs no write.
+
+Measured on the real 156-session store:
+
+| Process | `SessionManager.listAll()` |
+| --- | ---: |
+| Cold, no index (also builds it) | 918.9 ms |
+| Fresh process, warm index | 18.9 ms |
+| Fresh process, warm index | 17.6 ms |
+
+Index size for that store is 2.9 MB, which includes the full per-session search
+corpus, so rich transcript search stays available without reparsing JSONL.

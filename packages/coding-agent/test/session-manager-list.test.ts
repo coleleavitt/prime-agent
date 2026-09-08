@@ -1,6 +1,6 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const scan = vi.hoisted(() => ({
@@ -30,6 +30,7 @@ vi.mock("../src/utils/file-lines.js", async (importOriginal) => {
 	};
 });
 
+import { getSessionCatalogIndexPath } from "../src/core/session-catalog-index.js";
 import { SessionManager } from "../src/core/session-manager.js";
 
 const tempDirs: string[] = [];
@@ -58,6 +59,33 @@ function createSession(dir: string, index: number): string {
 		})}\n`,
 	);
 	return file;
+}
+
+// Writes an index exactly as another process would, so listing can be exercised
+// with a warm catalog that this process never scanned.
+function writeIndex(sessionDir: string, files: string[], overrides: { size?: number } = {}): void {
+	const lines = [JSON.stringify({ version: 1 })];
+	for (const [index, file] of files.entries()) {
+		const stats = statSync(file);
+		lines.push(
+			JSON.stringify({
+				file: basename(file),
+				size: overrides.size ?? stats.size,
+				mtimeMs: stats.mtimeMs,
+				info: {
+					id: `indexed-${index}`,
+					cwd: "/tmp/project",
+					rlmDepth: 0,
+					created: new Date(index * 1000).toISOString(),
+					modified: new Date(index * 1000).toISOString(),
+					messageCount: 1,
+					firstMessage: `indexed ${index}`,
+					allMessagesText: `indexed ${index}`,
+				},
+			}),
+		);
+	}
+	writeFileSync(getSessionCatalogIndexPath(sessionDir), `${lines.join("\n")}\n`);
 }
 
 describe("SessionManager saved-session listing", () => {
@@ -123,5 +151,82 @@ describe("SessionManager saved-session listing", () => {
 
 		const expected = created.map((file) => file.slice(file.lastIndexOf("/") + 1, -".jsonl".length)).sort();
 		expect(discovered).toEqual(expected);
+	});
+
+	it("persists catalog metadata so a cold process can skip reparsing", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "session-manager-index-"));
+		tempDirs.push(dir);
+		const files = Array.from({ length: 3 }, (_, index) => createSession(dir, index));
+
+		await SessionManager.listAll(undefined, dir);
+
+		const lines = readFileSync(getSessionCatalogIndexPath(dir), "utf8").trimEnd().split("\n");
+		expect(JSON.parse(lines[0]!)).toEqual({ version: 1 });
+		expect(lines.slice(1).map((line) => JSON.parse(line).file)).toEqual(files.map((file) => basename(file)));
+	});
+
+	it("reuses a valid on-disk index without reading any session file", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "session-manager-index-warm-"));
+		tempDirs.push(dir);
+		// A different process wrote this index; nothing here has been scanned yet.
+		writeIndex(dir, [createSession(dir, 0), createSession(dir, 1)]);
+
+		const sessions = await SessionManager.listAll(undefined, dir);
+
+		expect(scan.starts).toEqual([]);
+		// listAll sorts newest-modified first.
+		expect(sessions.map((session) => session.firstMessage)).toEqual(["indexed 1", "indexed 0"]);
+	});
+
+	it("rescans a session whose file changed after the index was written", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "session-manager-index-stale-"));
+		tempDirs.push(dir);
+		const file = createSession(dir, 0);
+		writeIndex(dir, [file], { size: 1 });
+
+		const sessions = await SessionManager.listAll(undefined, dir);
+
+		expect(scan.starts).toEqual([file]);
+		expect(sessions[0]?.firstMessage).not.toBe("indexed 0");
+	});
+
+	it("falls back to scanning when the index is corrupt", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "session-manager-index-corrupt-"));
+		tempDirs.push(dir);
+		const file = createSession(dir, 0);
+		writeFileSync(getSessionCatalogIndexPath(dir), "not json\n{oops\n");
+
+		const sessions = await SessionManager.listAll(undefined, dir);
+
+		expect(scan.starts).toEqual([file]);
+		expect(sessions).toHaveLength(1);
+	});
+
+	it("refreshes the index after a session file changes", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "session-manager-index-refresh-"));
+		tempDirs.push(dir);
+		const file = createSession(dir, 0);
+		writeIndex(dir, [file], { size: 1 });
+
+		await SessionManager.listAll(undefined, dir);
+
+		const lines = readFileSync(getSessionCatalogIndexPath(dir), "utf8").trimEnd().split("\n");
+		const entry = JSON.parse(lines[1]!);
+		expect(entry.size).toBe(statSync(file).size);
+		expect(entry.info.id).toBe("session-00");
+	});
+
+	it("drops deleted sessions from the index", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "session-manager-index-prune-"));
+		tempDirs.push(dir);
+		const kept = createSession(dir, 0);
+		const removed = createSession(dir, 1);
+		await SessionManager.listAll(undefined, dir);
+		rmSync(removed);
+
+		await SessionManager.listAll(undefined, dir);
+
+		const lines = readFileSync(getSessionCatalogIndexPath(dir), "utf8").trimEnd().split("\n");
+		expect(lines.slice(1).map((line) => JSON.parse(line).file)).toEqual([basename(kept)]);
 	});
 });
