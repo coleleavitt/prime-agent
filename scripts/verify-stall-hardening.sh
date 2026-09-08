@@ -97,6 +97,29 @@ env -u TRACEPARENT -u PRIME_AGENT_SESSION_ID -u PRIME_AGENT_DAEMON_SOCKET \
   -u PRIME_AGENT_DAEMON_SOCKET_OWNER_START_ID -u PRIME_AGENT_DAEMON_CLIENT_PID \
   -u PRIME_AGENT_DAEMON_CLIENT_START_ID \
   bash -c 'cd prime-agent-runtime && uv run python -m unittest discover -s test'
+section "Prime coverage lanes"
+npm --prefix packages/agent run test:coverage
+env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u GOOGLE_API_KEY \
+  -u GEMINI_API_KEY -u GROQ_API_KEY -u CEREBRAS_API_KEY \
+  -u XAI_API_KEY -u MISTRAL_API_KEY -u OPENROUTER_API_KEY \
+  -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN \
+  npm --prefix packages/ai run test:coverage
+npm --prefix packages/tui run test:coverage
+npm --prefix packages/coding-agent run test:coverage
+npm --prefix packages/coding-agent run test:coverage:process
+npm --prefix packages/coding-agent run test:coverage:kernel
+(
+  cd prime-agent-runtime
+  uv run coverage erase
+  env -u TRACEPARENT -u PRIME_AGENT_SESSION_ID -u PRIME_AGENT_DAEMON_SOCKET \
+    -u PRIME_AGENT_DAEMON_TOKEN -u PRIME_AGENT_DAEMON_SOCKET_OWNER_PID \
+    -u PRIME_AGENT_DAEMON_SOCKET_OWNER_START_ID -u PRIME_AGENT_DAEMON_CLIENT_PID \
+    -u PRIME_AGENT_DAEMON_CLIENT_START_ID \
+    uv run coverage run -m unittest discover -s test
+  uv run coverage xml
+  test -s coverage/coverage.xml
+)
+
 section "Rye full gate"
 (
   cd "$RYE_ROOT"
