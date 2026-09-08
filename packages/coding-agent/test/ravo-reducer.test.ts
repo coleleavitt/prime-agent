@@ -8,6 +8,9 @@ import {
 	type RavoScreenObservation,
 	type RavoState,
 	ravoBestScore,
+	ravoExtendOpponents,
+	ravoMarkProvisional,
+	ravoObserveChampion,
 	ravoPressure,
 	ravoStep,
 	ravoW,
@@ -198,6 +201,165 @@ describe("RAVO v2 pure reducer properties", () => {
 		const right = ravoStep(structuredClone(state), proposal("cert"), structuredClone(input), config).certificate;
 		expect(JSON.stringify(left)).toBe(JSON.stringify(right));
 		expect(left.criteria.map((item) => item.criterionId)).toEqual(["correctness", "evidence", "scope"]);
+	});
+
+	it("ravoExtendOpponents is idempotent, keeps existing weights, and preserves ravoW", () => {
+		const pressured = ravoPressure(opponents, ["scope"]);
+		const extended = ravoExtendOpponents(pressured, ["failure:abc", "scope", "failure:abc", ""]);
+		expect(extended.criteria.map(({ id }) => id)).toEqual(["correctness", "scope", "evidence", "failure:abc"]);
+		expect(extended.criteria.find(({ id }) => id === "scope")?.currentWeight).toBe(2);
+		expect(extended.criteria.find(({ id }) => id === "failure:abc")).toEqual({
+			id: "failure:abc",
+			seedWeight: 1,
+			currentWeight: 1,
+		});
+		expect(ravoExtendOpponents(extended, ["failure:abc"])).toBe(extended);
+		expect(ravoExtendOpponents(extended, [])).toBe(extended);
+		const state = emptyRavoState<{ generation: number }>(extended);
+		expect(ravoW(state)).toBe(true);
+		expect(ravoW({ ...state, opponents: ravoExtendOpponents(state.opponents, ["failure:def"]) })).toBe(true);
+	});
+
+	it("missedWeight_app: extending the pool only tightens the gate", () => {
+		const extended = ravoExtendOpponents(opponents, ["failure:abc"]);
+		for (const failed of [[], ["scope"], ["correctness"], ["scope", "correctness"]]) {
+			const before = ravoStep(
+				emptyRavoState<{ generation: number }>(opponents),
+				proposal("p"),
+				evaluation("p", { failed }),
+				config,
+			).certificate;
+			// The failure opponent is unaddressed (no observation), a conservative miss.
+			const after = ravoStep(
+				emptyRavoState<{ generation: number }>(extended),
+				proposal("p"),
+				evaluation("p", { failed }),
+				config,
+			).certificate;
+			expect(after.missedCurrentWeight).toBeGreaterThanOrEqual(before.missedCurrentWeight);
+			if (after.committed) expect(before.committed).toBe(true);
+		}
+	});
+
+	it("failure opponents are pressured like any other missed criterion", () => {
+		const extended = ravoExtendOpponents(opponents, ["failure:abc"]);
+		const state = emptyRavoState<{ generation: number }>(extended);
+		const failureCriteria: RavoEvaluation["criteria"] = extended.criteria.map(({ id }) => ({
+			criterionId: id,
+			status: id === "failure:abc" ? "fail" : "pass",
+		}));
+		const result = ravoStep(state, proposal("p"), evaluation("p", { criteria: failureCriteria }), config);
+		expect(result.certificate.committed).toBe(true);
+		expect(result.certificate.missedCriterionIds).toEqual(["failure:abc"]);
+		expect(result.state.opponents.criteria.find(({ id }) => id === "failure:abc")?.currentWeight).toBe(2);
+		expect(ravoW(result.state)).toBe(true);
+	});
+
+	it("ravoObserveChampion flags regression only inside the window and only for claimed fingerprints", () => {
+		const committed = ravoStep(
+			emptyRavoState<{ generation: number }>(opponents),
+			proposal("champ"),
+			evaluation("champ"),
+			config,
+		).state;
+		const state = ravoMarkProvisional(committed, "champ", {
+			claimedFingerprints: ["fp-a", "fp-b"],
+			window: { committedTurn: 10, untilTurn: 30 },
+		});
+		expect(ravoW(state)).toBe(true);
+		expect(state.lineage[0]).toMatchObject({
+			claimedFingerprints: ["fp-a", "fp-b"],
+			provisional: { committedTurn: 10, untilTurn: 30 },
+		});
+
+		// Inside the window, claimed fingerprint: regression.
+		const inside = ravoObserveChampion(state, "champ", ["fp-z", "fp-b"], 20);
+		expect(inside.regression).toBe(true);
+		expect(inside.state.lineage[0].provisional?.observedRecurrence).toEqual({ turn: 20, fingerprints: ["fp-b"] });
+		expect(inside.state.lineage.map(({ proposalId, score }) => ({ proposalId, score }))).toEqual(
+			state.lineage.map(({ proposalId, score }) => ({ proposalId, score })),
+		);
+		expect(inside.state.opponents).toBe(state.opponents);
+		expect(ravoW(inside.state)).toBe(true);
+
+		// Window boundaries are inclusive.
+		expect(ravoObserveChampion(state, "champ", ["fp-a"], 10).regression).toBe(true);
+		expect(ravoObserveChampion(state, "champ", ["fp-a"], 30).regression).toBe(true);
+		// Outside the window: no regression, state untouched.
+		for (const turn of [9, 31, -1, 1.5]) {
+			const outside = ravoObserveChampion(state, "champ", ["fp-a"], turn);
+			expect(outside.regression).toBe(false);
+			expect(outside.state).toBe(state);
+		}
+		// Unclaimed fingerprints inside the window: no regression.
+		const unclaimed = ravoObserveChampion(state, "champ", ["fp-z"], 20);
+		expect(unclaimed.regression).toBe(false);
+		expect(unclaimed.state).toBe(state);
+		// Non-provisional champion and unknown champion: no regression.
+		expect(ravoObserveChampion(committed, "champ", ["fp-a"], 20).regression).toBe(false);
+		expect(ravoObserveChampion(state, "ghost", ["fp-a"], 20).regression).toBe(false);
+	});
+
+	it("deepTolerance slackens only the deep gate; champion scores and bestScore stay unslacked", () => {
+		const tolerant = { ...config, deepTolerance: 3 };
+		const first = ravoStep(
+			emptyRavoState<{ generation: number }>(opponents),
+			proposal("a"),
+			evaluation("a", { deep: { status: "pass", score: 10 } }),
+			tolerant,
+		);
+		expect(first.certificate).toMatchObject({ committed: true, deepTolerance: 3 });
+		const within = ravoStep(
+			first.state,
+			proposal("b"),
+			evaluation("b", { deep: { status: "pass", score: 7 } }),
+			tolerant,
+		);
+		expect(within.certificate.committed).toBe(true);
+		expect(within.state.lineage.at(-1)?.score).toBe(7);
+		expect(ravoBestScore(within.state.lineage)).toBe(10);
+		const below = ravoStep(
+			within.state,
+			proposal("c"),
+			evaluation("c", { deep: { status: "pass", score: 6 } }),
+			tolerant,
+		);
+		expect(below.certificate).toMatchObject({ committed: false, rejection: "deep" });
+		const strict = ravoStep(
+			first.state,
+			proposal("d"),
+			evaluation("d", { deep: { status: "pass", score: 9 } }),
+			config,
+		);
+		expect(strict.certificate).toMatchObject({ committed: false, rejection: "deep", deepTolerance: 0 });
+		const invalid = ravoStep(first.state, proposal("e"), evaluation("e"), { ...config, deepTolerance: -1 });
+		expect(invalid.certificate).toMatchObject({ committed: false, rejection: "invalid_input" });
+	});
+
+	it("ravoMarkProvisional ignores unknown champions and invalid windows", () => {
+		const committed = ravoStep(
+			emptyRavoState<{ generation: number }>(opponents),
+			proposal("champ"),
+			evaluation("champ"),
+			config,
+		).state;
+		expect(ravoMarkProvisional(committed, "ghost", { claimedFingerprints: ["x"] })).toBe(committed);
+		expect(
+			ravoMarkProvisional(committed, "champ", {
+				claimedFingerprints: ["x"],
+				window: { committedTurn: 5, untilTurn: 4 },
+			}),
+		).toBe(committed);
+		const claimedOnly = ravoMarkProvisional(committed, "champ", { claimedFingerprints: ["b", "a", "b"] });
+		expect(claimedOnly.lineage[0].claimedFingerprints).toEqual(["a", "b"]);
+		expect(claimedOnly.lineage[0].provisional).toBeUndefined();
+		expect(ravoW(claimedOnly)).toBe(true);
+		expect(
+			ravoW({
+				...committed,
+				lineage: [{ ...committed.lineage[0], provisional: { committedTurn: 3, untilTurn: 1 } }],
+			}),
+		).toBe(false);
 	});
 
 	it("counterexample: invariants do not imply termination or artifact convergence", () => {

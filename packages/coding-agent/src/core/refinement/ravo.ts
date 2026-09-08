@@ -1,7 +1,14 @@
 import type { Model } from "@earendil-works/pi-ai";
 import { completeSimple } from "@earendil-works/pi-ai";
-import { type AssistedRavoAuthorization, authorizeAssistedRavo } from "../ravo/authority.js";
-import type { JsonValue, RavoState } from "../ravo/reducer.js";
+import {
+	type AssistedRavoAuthorization,
+	authorizeAssistedRavo,
+	DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS,
+	failureOpponentFingerprint,
+	isFailureOpponentId,
+} from "../ravo/authority.js";
+import { type FailureRecord, failureOpponentId, formatFailureLedgerForPrompt } from "../ravo/failure-ledger.js";
+import { type JsonValue, type RavoState, ravoExtendOpponents } from "../ravo/reducer.js";
 import type { RefinementProposal } from "./refinement.js";
 
 /**
@@ -25,12 +32,23 @@ import type { RefinementProposal } from "./refinement.js";
  *   (Rocq Prop 4.2 / Lean `pressure_support`), strictly increases its share
  *   (Rocq Prop 4.3), and only tightens future gates (Rocq Thm 7.5: weights
  *   only grow, so the seed-weight succession chain survives reweighting).
+ * - pool extension: recurring failure fingerprints join the pool as opponents
+ *   (`ravoExtendOpponents`). Adding an opponent can only raise missedWeight
+ *   (`missedWeight_app`), so extension only tightens the gate — a candidate
+ *   that ignores a recurring failure is charged its weight, never excused.
+ * - provisional commit: a champion that claims to address recurring failures
+ *   stays provisional for an observation window; a claimed fingerprint that
+ *   recurs inside the window is a measured fault (judge said pass, outcome
+ *   said fail) and feeds a gated repair (`ravoObserveChampion`). The fault
+ *   never bypasses the gate: the repair proposal is scored like any other.
  *
- * Divergence from the verified spec, stated honestly: the archive gate below
- * allows `deepTolerance` slack under the best recorded score, because judge
- * scores are noisy and a strict ratchet provably starves the loop (the flaw
- * the Rocq v2 development documents). Lineage monotonicity is unaffected —
- * the lineage is append-only and `bestScore` is a running max.
+ * Divergence from the verified spec, stated honestly: the deep gate (here and
+ * in the generic reducer via `RavoConfig.deepTolerance`) allows
+ * `deepTolerance` slack under the best recorded score, because judge scores
+ * are noisy and a strict ratchet provably starves the loop (the flaw the Rocq
+ * v2 development documents). Lineage monotonicity is unaffected — the lineage
+ * is append-only, champion scores are recorded unslacked, and `bestScore` is
+ * a running max.
  *
  * Implementation note (from the spec): the proposal is obtained ONCE per
  * iteration and threaded through all gates — an LLM session is not a pure
@@ -160,6 +178,10 @@ export interface RavoGateReport {
 	judgeError?: string;
 	/** Generic-core authority decision, bound to the proposal and baseline. */
 	authorization?: AssistedRavoAuthorization;
+	/** Failure fingerprint ids the judge accepted the proposal as addressing. */
+	addressedFingerprints: string[];
+	/** Failure opponent criterion ids (`failure:<fingerprint>`) in this gate. */
+	failureOpponents: string[];
 }
 
 /**
@@ -232,18 +254,32 @@ const RAVO_JUDGE_SYSTEM_PROMPT = `You are the RAVO deep evaluator for Prime Agen
 Score a proposed continual-harness refinement against the trajectory evidence.
 Judge the QUALITY OF THE RESULTING HARNESS STATE, not prose style.
 
+When <recurring_failures> is present, each listed failure is an opponent
+criterion (id "failure:<fingerprint>"). The proposal ADDRESSES a fingerprint
+only if its edits would plausibly prevent that exact failure from recurring
+(a memory, prompt note, skill fix, or subagent change that targets its cause).
+List the fingerprint ids the proposal genuinely addresses in
+"addressedFingerprints"; a fingerprint not listed there counts as a missed
+opponent. Never list a fingerprint the proposal merely mentions.
+
 Return JSON only:
 {
   "score": 0-100,
   "failedCriteria": ["criterion ids that the proposal fails"],
+  "addressedFingerprints": ["recurring failure fingerprint ids the proposal addresses"],
   "rationale": "one or two sentences"
 }`;
 
 const RAVO_JUDGE_MAX_OUTPUT_TOKENS = 2_048;
 
+function stringList(value: unknown): string[] {
+	return Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : [];
+}
+
 function extractJudgeJson(text: string): {
 	score: number;
 	failedCriteria: string[];
+	addressedFingerprints: string[];
 	rationale: string;
 } {
 	const trimmed = text.trim();
@@ -255,12 +291,10 @@ function extractJudgeJson(text: string): {
 	const record = typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {};
 	const rawScore = typeof record.score === "number" ? record.score : Number(record.score);
 	const score = Number.isFinite(rawScore) ? Math.min(100, Math.max(0, Math.round(rawScore))) : 0;
-	const failedCriteria = Array.isArray(record.failedCriteria)
-		? record.failedCriteria.filter((id): id is string => typeof id === "string")
-		: [];
 	return {
 		score,
-		failedCriteria,
+		failedCriteria: stringList(record.failedCriteria),
+		addressedFingerprints: stringList(record.addressedFingerprints),
 		rationale: typeof record.rationale === "string" ? record.rationale : "",
 	};
 }
@@ -271,6 +305,11 @@ function extractJudgeJson(text: string): {
  * decision. Judge errors are recorded in the report and fail closed: an
  * unevaluated proposal is never authorized, so no harness edits apply until
  * a retried /refine reaches the judge.
+ *
+ * `recurringFailures` become failure opponents in the pool; the judge must
+ * name the fingerprints the proposal addresses, and an unaddressed recurring
+ * failure is charged its opponent weight in the epsilon gate. A commit is
+ * provisional for `observationWindowTurns` turns from `turn` (default 20).
  */
 export async function ravoEvaluateProposal(
 	proposal: RefinementProposal,
@@ -286,9 +325,15 @@ export async function ravoEvaluateProposal(
 		apiKey: string;
 		headers?: Record<string, string>;
 		signal?: AbortSignal;
+		recurringFailures?: readonly FailureRecord[];
+		turn?: number;
+		observationWindowTurns?: number;
 	},
 ): Promise<RavoGateReport> {
 	const { state, config } = options;
+	const recurringFailures = options.recurringFailures ?? [];
+	const failureOpponents = [...new Set(recurringFailures.map((record) => failureOpponentId(record.fingerprint)))];
+	const observationWindowTurns = options.observationWindowTurns ?? DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS;
 	const fastScore = ravoFastScreen(proposal, options.validEdits);
 	const bestScore = state.lineage.reduce((best, entry) => Math.max(best, entry.score), 0);
 	const base = {
@@ -297,17 +342,26 @@ export async function ravoEvaluateProposal(
 		epsilon: config.epsilon,
 		screenThreshold: config.screenThreshold,
 		deepTolerance: config.deepTolerance,
+		failureOpponents,
+	};
+	const authorityInput = {
+		proposalId: options.proposalId,
+		artifact: proposal as unknown as JsonValue,
+		baseline: options.baseline,
+		fastScore,
+		state,
+		screenThreshold: config.screenThreshold,
+		epsilon: config.epsilon,
+		deepTolerance: config.deepTolerance,
+		failureOpponents,
+		turn: options.turn,
+		observationWindowTurns,
 	};
 	if (fastScore < config.screenThreshold) {
 		const rationale = `structural screen scored ${fastScore} below threshold ${config.screenThreshold}`;
 		const authorization = authorizeAssistedRavo({
-			proposalId: options.proposalId,
-			artifact: proposal as unknown as JsonValue,
-			baseline: options.baseline,
-			fastScore,
+			...authorityInput,
 			observation: { status: "abstain", detail: rationale },
-			screenThreshold: config.screenThreshold,
-			epsilon: config.epsilon,
 		});
 		return {
 			...base,
@@ -315,6 +369,7 @@ export async function ravoEvaluateProposal(
 			deepScore: 0,
 			missedCriteria: [],
 			missedWeight: 0,
+			addressedFingerprints: [],
 			rationale,
 			authorization,
 		};
@@ -322,18 +377,33 @@ export async function ravoEvaluateProposal(
 
 	let deepScore = bestScore;
 	let missedCriteria: string[] = [];
+	let addressedFingerprints: string[] = [];
 	let rationale = "";
 	let judgeError: string | undefined;
 	try {
 		const descriptions = new Map(RAVO_SEED_CRITERIA.map((criterion) => [criterion.id, criterion.description]));
-		const criteriaText = state.opponents.criteria
+		const failureDescriptions = new Map(
+			recurringFailures.map((record) => [
+				failureOpponentId(record.fingerprint),
+				`Recurring ${record.fingerprint.kind} (${record.count}x): ${record.fingerprint.message}`,
+			]),
+		);
+		const judgedPool = ravoExtendOpponents(state.opponents, failureOpponents);
+		const criteriaText = judgedPool.criteria
+			.filter((criterion) => !isFailureOpponentId(criterion.id) || failureDescriptions.has(criterion.id))
 			.map(
 				(criterion) =>
-					`- ${criterion.id} (weight ${criterion.currentWeight}): ${descriptions.get(criterion.id) ?? criterion.id}`,
+					`- ${criterion.id} (weight ${criterion.currentWeight}): ${descriptions.get(criterion.id) ?? failureDescriptions.get(criterion.id) ?? criterion.id}`,
 			)
 			.join("\n");
 		const userPrompt = [
 			`<criteria>\n${criteriaText}\n</criteria>`,
+			...(recurringFailures.length > 0
+				? [
+						`<recurring_failures>\n${formatFailureLedgerForPrompt(recurringFailures)}\n</recurring_failures>`,
+						`The proposal must address these recurring failures. Return the fingerprint ids it addresses in "addressedFingerprints" (candidates: ${recurringFailures.map((record) => record.fingerprint.id).join(", ")}).`,
+					]
+				: []),
 			`<current_harness_state>\n${options.harnessOverview}\n</current_harness_state>`,
 			`<proposal>\n${JSON.stringify(proposal, null, 2)}\n</proposal>`,
 			`<conversation>\n${options.conversationText}\n</conversation>`,
@@ -366,8 +436,10 @@ export async function ravoEvaluateProposal(
 			.map((content) => content.text)
 			.join("\n");
 		const judged = extractJudgeJson(text);
+		const knownFingerprints = new Set(recurringFailures.map((record) => record.fingerprint.id));
 		deepScore = judged.score;
 		missedCriteria = judged.failedCriteria;
+		addressedFingerprints = judged.addressedFingerprints.filter((id) => knownFingerprints.has(id));
 		rationale = judged.rationale;
 	} catch (error) {
 		judgeError = error instanceof Error ? error.message : String(error);
@@ -375,10 +447,7 @@ export async function ravoEvaluateProposal(
 	}
 
 	const authorization = authorizeAssistedRavo({
-		proposalId: options.proposalId,
-		artifact: proposal as unknown as JsonValue,
-		baseline: options.baseline,
-		fastScore,
+		...authorityInput,
 		observation: judgeError
 			? { status: "error", detail: rationale }
 			: {
@@ -386,9 +455,8 @@ export async function ravoEvaluateProposal(
 					score: deepScore,
 					detail: rationale,
 					failedCriteria: missedCriteria,
+					addressedFingerprints,
 				},
-		screenThreshold: config.screenThreshold,
-		epsilon: config.epsilon,
 	});
 	const decision: RavoDecision = authorization.authorized
 		? "commit"
@@ -397,15 +465,28 @@ export async function ravoEvaluateProposal(
 			: authorization.certificate.rejection === "opponents"
 				? "reject_criteria"
 				: "reject_deep";
+	// The certificate's missed set already charges unaddressed failure
+	// opponents; it is empty when the step never reached the opponents gate,
+	// so fall back to the judge's list plus the unaddressed fingerprints.
+	const unaddressed = failureOpponents.filter((id) => {
+		const fingerprint = failureOpponentFingerprint(id);
+		return fingerprint !== undefined && !addressedFingerprints.includes(fingerprint);
+	});
+	const missed =
+		authorization.certificate.criteria.length > 0
+			? authorization.certificate.missedCriterionIds
+			: [...new Set([...missedCriteria, ...unaddressed])];
+	const pool = ravoExtendOpponents(state.opponents, failureOpponents);
 	return {
 		...base,
 		decision,
 		deepScore,
-		missedCriteria,
-		missedWeight: state.opponents.criteria.reduce(
-			(weight, criterion) => weight + (missedCriteria.includes(criterion.id) ? criterion.currentWeight : 0),
+		missedCriteria: missed,
+		missedWeight: pool.criteria.reduce(
+			(weight, criterion) => weight + (missed.includes(criterion.id) ? criterion.currentWeight : 0),
 			0,
 		),
+		addressedFingerprints,
 		rationale,
 		judgeError,
 		authorization,

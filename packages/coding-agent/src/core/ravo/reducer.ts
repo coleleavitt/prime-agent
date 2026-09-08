@@ -19,12 +19,27 @@ export interface RavoOpponentPool {
 	criteria: RavoCriterion[];
 }
 
+/**
+ * Observation window attached to a provisional commit. A champion that
+ * claimed to address recurring failure fingerprints stays provisional until
+ * `untilTurn`; a claimed fingerprint recurring inside the window is a measured
+ * fault (the judge said pass, the outcome said fail) and is recorded here.
+ */
+export interface RavoProvisionalWindow {
+	committedTurn: number;
+	untilTurn: number;
+	observedRecurrence?: { turn: number; fingerprints: string[] };
+}
+
 export interface RavoChampion<TArtifact extends JsonValue = JsonValue> {
 	proposalId: string;
 	parentId: string | null;
 	score: number;
 	artifact: TArtifact;
 	missedCriterionIds: string[];
+	/** Failure fingerprint ids the committed proposal claimed to address. */
+	claimedFingerprints?: string[];
+	provisional?: RavoProvisionalWindow;
 }
 
 export interface RavoState<TArtifact extends JsonValue = JsonValue> {
@@ -69,6 +84,12 @@ export interface RavoConfig {
 	screenThreshold: number;
 	/** Maximum current opponent weight which may be missed. */
 	epsilon: number;
+	/**
+	 * Slack under the best recorded score tolerated by the deep gate (default
+	 * 0, the strict ratchet of the formalization). Champion scores are recorded
+	 * unslacked, so `ravoBestScore` stays a running max either way.
+	 */
+	deepTolerance?: number;
 }
 
 export type RavoRejection = "already_evaluated" | "invalid_input" | "screen" | "deep" | "opponents";
@@ -89,6 +110,7 @@ export interface RavoGateCertificate {
 	previousBestScore: number;
 	screenThreshold: number;
 	epsilon: number;
+	deepTolerance: number;
 	screen: RavoScreenObservation;
 	deep: RavoDeepObservation;
 	criteria: RavoCriterionCertificate[];
@@ -146,6 +168,20 @@ export function validRavoWeights(pool: RavoOpponentPool): boolean {
 	});
 }
 
+function validProvisionalWindow(window: RavoProvisionalWindow | undefined): boolean {
+	if (window === undefined) return true;
+	if (!isSafeNatural(window.committedTurn) || !isSafeNatural(window.untilTurn)) return false;
+	if (window.untilTurn < window.committedTurn) return false;
+	const observed = window.observedRecurrence;
+	if (observed === undefined) return true;
+	return (
+		isSafeNatural(observed.turn) &&
+		observed.turn >= window.committedTurn &&
+		observed.turn <= window.untilTurn &&
+		observed.fingerprints.every((id) => typeof id === "string" && id.length > 0)
+	);
+}
+
 /** `ravoW`: all serializable reducer invariants, including the champion chain. */
 export function ravoW(state: RavoState): boolean {
 	if (!validRavoWeights(state.opponents)) return false;
@@ -155,6 +191,8 @@ export function ravoW(state: RavoState): boolean {
 	for (const champion of state.lineage) {
 		if (!champion.proposalId || committed.has(champion.proposalId) || champion.parentId !== parent) return false;
 		if (!isSafeNatural(champion.score)) return false;
+		if (!validProvisionalWindow(champion.provisional)) return false;
+		if (champion.claimedFingerprints?.some((id) => typeof id !== "string" || id.length === 0)) return false;
 		committed.add(champion.proposalId);
 		parent = champion.proposalId;
 	}
@@ -192,6 +230,81 @@ export function ravoPressure(pool: RavoOpponentPool, weakCriterionIds: readonly 
 	};
 }
 
+/**
+ * Extend the opponent pool with new criteria at seed weight 1. Existing ids
+ * are kept untouched, so this is idempotent and never lowers a weight. Adding
+ * an opponent can only raise missedWeight (`missedWeight_app`), so extension
+ * only tightens the gate: a proposal that clears the extended pool clears the
+ * original one. `ravoW` is preserved because every added criterion satisfies
+ * `validRavoWeights` and the lineage is untouched.
+ */
+export function ravoExtendOpponents(pool: RavoOpponentPool, criterionIds: readonly string[]): RavoOpponentPool {
+	const existing = new Set(pool.criteria.map((criterion) => criterion.id));
+	const added: RavoCriterion[] = [];
+	for (const id of criterionIds) {
+		if (!id || existing.has(id)) continue;
+		existing.add(id);
+		added.push({ id, seedWeight: 1, currentWeight: 1 });
+	}
+	if (added.length === 0) return pool;
+	return { criteria: [...pool.criteria, ...added] };
+}
+
+/**
+ * Mark a committed champion provisional: record the fingerprints it claimed
+ * to address and the observation window `[committedTurn, untilTurn]`. Unknown
+ * champion ids and invalid windows are no-ops. Lineage order and scores are
+ * never touched, so `ravoBestScore` monotonicity is unaffected.
+ */
+export function ravoMarkProvisional<TArtifact extends JsonValue>(
+	state: RavoState<TArtifact>,
+	championId: string,
+	options: { claimedFingerprints: readonly string[]; window?: { committedTurn: number; untilTurn: number } },
+): RavoState<TArtifact> {
+	const index = state.lineage.findIndex((champion) => champion.proposalId === championId);
+	if (index === -1) return state;
+	const claimedFingerprints = sortedUnique(options.claimedFingerprints.filter((id) => id.length > 0));
+	const provisional: RavoProvisionalWindow | undefined = options.window
+		? { committedTurn: options.window.committedTurn, untilTurn: options.window.untilTurn }
+		: undefined;
+	if (!validProvisionalWindow(provisional)) return state;
+	const lineage = state.lineage.map((champion, position) =>
+		position === index
+			? { ...champion, claimedFingerprints, ...(provisional === undefined ? {} : { provisional }) }
+			: champion,
+	);
+	return { ...state, lineage };
+}
+
+/**
+ * Observe recurred failure fingerprints against a champion. A regression is a
+ * measured fault: the champion is provisional, `turn` lies inside its window,
+ * and at least one claimed fingerprint recurred. The recurrence is recorded on
+ * the champion; lineage order, scores, and opponent weights never change, so
+ * the caller must route the fault through a gated repair, never a bypass.
+ */
+export function ravoObserveChampion<TArtifact extends JsonValue>(
+	state: RavoState<TArtifact>,
+	championId: string,
+	recurredFingerprints: readonly string[],
+	turn: number,
+): { state: RavoState<TArtifact>; regression: boolean } {
+	const index = state.lineage.findIndex((champion) => champion.proposalId === championId);
+	if (index === -1) return { state, regression: false };
+	const champion = state.lineage[index];
+	const window = champion.provisional;
+	if (!window || !isSafeNatural(turn) || turn < window.committedTurn || turn > window.untilTurn) {
+		return { state, regression: false };
+	}
+	const claimed = new Set(champion.claimedFingerprints ?? []);
+	const fingerprints = sortedUnique(recurredFingerprints.filter((id) => claimed.has(id)));
+	if (fingerprints.length === 0) return { state, regression: false };
+	const lineage = state.lineage.map((entry, position) =>
+		position === index ? { ...entry, provisional: { ...window, observedRecurrence: { turn, fingerprints } } } : entry,
+	);
+	return { state: { ...state, lineage }, regression: true };
+}
+
 /** Exact comparison of a criterion's share without division. */
 export function shareStrictlyIncreased(
 	before: RavoOpponentPool,
@@ -227,6 +340,7 @@ function invalidCertificate<TArtifact extends JsonValue>(
 			previousBestScore: ravoBestScore(state.lineage),
 			screenThreshold: config.screenThreshold,
 			epsilon: config.epsilon,
+			deepTolerance: config.deepTolerance ?? 0,
 			screen: evaluation.screen,
 			deep: evaluation.deep,
 			criteria: [],
@@ -258,7 +372,8 @@ export function ravoStep<TArtifact extends JsonValue>(
 		evaluation.proposalId !== proposal.id ||
 		!ravoW(state) ||
 		!isSafeNatural(config.screenThreshold) ||
-		!isSafeNatural(config.epsilon)
+		!isSafeNatural(config.epsilon) ||
+		!isSafeNatural(config.deepTolerance ?? 0)
 	) {
 		return invalidCertificate(state, proposal, evaluation, config, "invalid_input");
 	}
@@ -272,11 +387,13 @@ export function ravoStep<TArtifact extends JsonValue>(
 	if (!screenPass) return invalidCertificate(evaluatedState, proposal, evaluation, config, "screen");
 
 	const previousBestScore = ravoBestScore(state.lineage);
+	const deepTolerance = config.deepTolerance ?? 0;
+	const slackedScore =
+		evaluation.deep.score !== undefined && isSafeNatural(evaluation.deep.score)
+			? checkedAdd(evaluation.deep.score, deepTolerance)
+			: undefined;
 	const deepPass =
-		evaluation.deep.status === "pass" &&
-		evaluation.deep.score !== undefined &&
-		isSafeNatural(evaluation.deep.score) &&
-		evaluation.deep.score >= previousBestScore;
+		evaluation.deep.status === "pass" && slackedScore !== undefined && slackedScore >= previousBestScore;
 	if (!deepPass) return invalidCertificate(evaluatedState, proposal, evaluation, config, "deep");
 
 	const observations = new Map<string, RavoCriterionObservation>();
@@ -331,6 +448,7 @@ export function ravoStep<TArtifact extends JsonValue>(
 		previousBestScore,
 		screenThreshold: config.screenThreshold,
 		epsilon: config.epsilon,
+		deepTolerance,
 		screen: evaluation.screen,
 		deep: evaluation.deep,
 		criteria,
