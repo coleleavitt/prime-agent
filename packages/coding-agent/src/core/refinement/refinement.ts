@@ -17,7 +17,12 @@ import { getAgentDir } from "../../config.js";
 import { serializeConversation } from "../compaction/utils.js";
 import { convertToLlm } from "../messages.js";
 import { emptyAssistedRavoState, normalizeAssistedRavoState } from "../ravo/authority.js";
-import { type FailureLedger, normalizeFailureLedger } from "../ravo/failure-ledger.js";
+import {
+	emptyFailureLedger,
+	type FailureLedger,
+	normalizeFailureLedger,
+	recurringFailures,
+} from "../ravo/failure-ledger.js";
 import type { JsonValue, RavoState } from "../ravo/reducer.js";
 import type { CustomEntry } from "../session-manager.js";
 import { RAVO_DEFAULT_CONFIG, type RavoGateReport, ravoEnabled, ravoEvaluateProposal } from "./ravo.js";
@@ -1168,6 +1173,8 @@ export async function refineHarness(
 			harnessOverview: overviewForPrompt(state),
 			baseline: state as unknown as JsonValue,
 			proposalId: plan.id,
+			recurringFailures: recurringFailures(state.failures ?? emptyFailureLedger()),
+			turn: messages.filter((message) => message.role === "assistant").length,
 			model,
 			apiKey,
 			headers,

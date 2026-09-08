@@ -218,6 +218,7 @@ import {
 	formatRegressionRefineInstructions,
 	type ProvisionalRegression,
 	recordProvisionalRegressions,
+	recurringFailures,
 	updateFailureLedger,
 } from "./ravo/failure-ledger.js";
 import type { JsonValue } from "./ravo/reducer.js";
@@ -7965,12 +7966,10 @@ export class AgentSession {
 			const localHarnessStateDir = this._localHarnessStateDir();
 			if (!localHarnessStateDir) return;
 			const messages: AgentMessage[] = [];
-			let turn = 0;
 			for (const entry of this.sessionManager.getBranch()) {
-				if (entry.type !== "message") continue;
-				messages.push(entry.message);
-				if (entry.message.role === "assistant") turn++;
+				if (entry.type === "message") messages.push(entry.message);
 			}
+			const turn = this._failureLedgerTurn();
 			let ledger =
 				this._failureLedger ?? loadHarnessState(localHarnessStateDir, "local").failures ?? emptyFailureLedger();
 			if (ledger.lastScannedEntryIndex > messages.length) {
@@ -8019,6 +8018,15 @@ export class AgentSession {
 		} catch {
 			// Failure accounting is opportunistic; never interrupt the agent loop.
 		}
+	}
+
+	/** Turn number used by the failure ledger and provisional windows: assistant messages on the active branch. */
+	private _failureLedgerTurn(): number {
+		let turn = 0;
+		for (const entry of this.sessionManager.getBranch()) {
+			if (entry.type === "message" && entry.message.role === "assistant") turn++;
+		}
+		return turn;
 	}
 
 	private _loadLocalHarnessRavoState(localHarnessStateDir: string): HarnessState["ravo"] {
@@ -8710,6 +8718,8 @@ export class AgentSession {
 				}),
 				baseline: baselineState as unknown as JsonValue,
 				proposalId: plan.id,
+				recurringFailures: recurringFailures(baselineState?.failures ?? emptyFailureLedger()),
+				turn: this._failureLedgerTurn(),
 				model,
 				apiKey,
 				headers,
