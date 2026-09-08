@@ -1,0 +1,1 @@
+- Added live Python and Bash operation tracing, silence and Cargo lock diagnostics, bounded lifecycle and bootstrap waits, process health reporting, and fail-closed coverage gates.

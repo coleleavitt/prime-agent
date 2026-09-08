@@ -1,10 +1,12 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
 import { appendRotatingLog, redactLocalLog } from "../src/config.js";
 
+const writerFixturePath = resolve(__dirname, "fixtures/local-log-writer-fixture.ts");
 let tempDir: string | undefined;
 
 afterEach(() => {
@@ -19,6 +21,24 @@ function logPath(): string {
 	tempDir = mkdtempSync(join(tmpdir(), "prime-agent-local-log-"));
 	mkdirSync(join(tempDir, "logs"));
 	return join(tempDir, "logs", "agent.log");
+}
+
+async function runWriter(path: string, writer: string, count: number): Promise<void> {
+	await new Promise<void>((resolvePromise, reject) => {
+		const child = spawn(process.execPath, ["--import", "tsx", writerFixturePath, path, writer, String(count)], {
+			env: { ...process.env, TSX_TSCONFIG_PATH: resolve(__dirname, "../../../tsconfig.json") },
+			stdio: ["ignore", "ignore", "pipe"],
+		});
+		let stderr = "";
+		child.stderr.on("data", (chunk) => {
+			stderr += chunk.toString();
+		});
+		child.once("error", reject);
+		child.once("close", (code) => {
+			if (code === 0) resolvePromise();
+			else reject(new Error(`writer ${writer} exited ${code}: ${stderr}`));
+		});
+	});
 }
 
 describe("local diagnostic logs", () => {
@@ -83,4 +103,31 @@ describe("local diagnostic logs", () => {
 		expect(() => statSync(`${path}.old.1.gz`)).toThrow();
 		expect(() => statSync(`${path}.old.2.gz`)).toThrow();
 	});
+
+	it.runIf(process.platform !== "win32")(
+		"serializes concurrent process rotation without losing or corrupting records",
+		async () => {
+			const path = logPath();
+			const writers = Array.from({ length: 6 }, (_, index) => `writer-${index}`);
+			const count = 12;
+			await Promise.all(writers.map((writer) => runWriter(path, writer, count)));
+
+			const files = readdirSync(join(tempDir!, "logs"))
+				.filter((name) => name === "agent.log" || name.startsWith("agent.log.old"))
+				.map((name) => join(tempDir!, "logs", name));
+			const lines = files.flatMap((file) => {
+				expect(statSync(file).mode & 0o777).toBe(0o600);
+				const bytes = readFileSync(file);
+				const text = file.endsWith(".gz") ? gunzipSync(bytes).toString() : bytes.toString();
+				return text.trim() ? text.trim().split("\n") : [];
+			});
+			const records = lines.map((line) => JSON.parse(line) as { writer: string; index: number });
+			const actual = new Set(records.map(({ writer, index }) => `${writer}:${index}`));
+			const expected = new Set(
+				writers.flatMap((writer) => Array.from({ length: count }, (_, index) => `${writer}:${index}`)),
+			);
+			expect(actual).toEqual(expected);
+			expect(records).toHaveLength(writers.length * count);
+		},
+	);
 });

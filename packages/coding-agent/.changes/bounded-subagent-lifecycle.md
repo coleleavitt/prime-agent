@@ -1,0 +1,1 @@
+- Fixed subagent passivation and deletion so stalled teardown cannot block later lifecycle work indefinitely.

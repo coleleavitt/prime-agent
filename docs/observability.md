@@ -204,17 +204,29 @@ without contacting the daemon. It gives operators a bounded summary of recent:
 
 * failed `historian.*` spans;
 * provider stream failures and failed `llm.request` spans (deduplicated by trace);
-* likely stuck active operations, detected directly from unmatched `span_start` records
-  (with the legacy child-without-parent-end heuristic retained for older logs); and
+* likely stuck turns and retained `bash.command`, `kernel.cell`, `kernel.execute`,
+  `rlm.child`, `cargo_lock_wait`, and `bootstrap_lock_wait` starts with no matching end;
+* unexpected kernel exits, fatal process crashes, child lifecycle failures, and failed
+  lock-wait spans;
+* orphan-journal corruption, write, and reap failures reported through structured logs; and
 * daemon recovery log lines that report a failure, interruption, cancellation,
   or unanswered recovery probe.
 
 The default window is 24 hours, the stuck threshold is 10 minutes, and at
 most 20 incident details are printed (hard maximum 200). Counts always cover
-the full selected window. `--json` emits the counts and bounded incident list
-for scripts. The command is a retained-log heuristic rather than a live
-health probe: retention can remove a span completion and create a false
-stuck-operation candidate, and successful recovery lines are intentionally omitted.
+the full selected window. Open-span correlation is retained independently of
+the 100,000-entry analysis buffer, so high-volume logs do not hide an old open
+operation. Python `bash.command` and `kernel.cell` `span_start` records may carry
+`bash.command` and `kernel.cell` attributes; health accepts these records without
+requiring the attributes.
+
+`--json` includes `status` (`healthy`, `unhealthy`, or `unknown`), `parseErrors`,
+`stale`, the counts, and the bounded incident list. Exit status is 0 only when
+recent evidence is valid and has no incidents. It is 2 for incidents or UNKNOWN
+(malformed, empty, or stale evidence), so unattended scripts fail closed; usage
+and file-read errors remain exit status 1. The command is a retained-log heuristic,
+not a live health probe. Retention can remove a span completion and create a false
+open-operation candidate, and successful recovery lines are intentionally omitted.
 Use the reported trace id with `prime-agent trace` for the full timeline.
 
 ### Parenting Prime Agent from outside

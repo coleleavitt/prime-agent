@@ -304,9 +304,7 @@ describe("daemon supervisor whole-tree eviction", () => {
 		idle.client!.request = vi.fn(() => listResponse);
 		supervisor.workers.set("idle", idle);
 		supervisor.catalog.stop = vi.fn(async () => undefined);
-		const exit = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
-			throw new Error(`exit ${code}`);
-		}) as typeof process.exit);
+		const previousExitCode = process.exitCode;
 
 		try {
 			supervisor.scheduleIdleEvictionSweep();
@@ -318,15 +316,14 @@ describe("daemon supervisor whole-tree eviction", () => {
 				(error: unknown) => error,
 			);
 			await Promise.resolve();
-			expect(exit).not.toHaveBeenCalled();
+			expect(process.exitCode).toBe(previousExitCode);
 			expect(supervisor.stopWorker).not.toHaveBeenCalled();
 
 			resolveList(success(undefined, "list", { sessions: [makeSummary("idle-root", now)] }));
-			await expect(shutdown).resolves.toEqual(new Error("exit 42"));
+			await expect(shutdown).resolves.toEqual(new Error('process.exit unexpectedly called with "42"'));
 			expect(supervisor.stopWorker).not.toHaveBeenCalled();
-			expect(exit).toHaveBeenCalledWith(42);
 		} finally {
-			exit.mockRestore();
+			process.exitCode = previousExitCode;
 			vi.useRealTimers();
 		}
 	});

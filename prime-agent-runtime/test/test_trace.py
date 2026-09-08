@@ -184,8 +184,13 @@ class EmitterTest(unittest.TestCase):
         self.addCleanup(trace.set_span_emitter, None)
         with trace.start_span("kernel.cell", **{"kernel.request_id": "r1", "n": 2}) as span:
             pass
-        self.assertEqual(len(events), 1)
-        event = events[0]
+        self.assertEqual(len(events), 2)
+        start, event = events
+        self.assertEqual(start["msg"], "span_start")
+        self.assertEqual(start["name"], "kernel.cell")
+        self.assertEqual(start["traceId"], span.trace_id)
+        self.assertEqual(start["spanId"], span.span_id)
+        self.assertEqual(start["attrs"], {"kernel.request_id": "r1", "n": 2})
         self.assertEqual(
             list(event),
             ["event", "msg", "name", "traceId", "spanId", "durationMs", "status", "attrs"],

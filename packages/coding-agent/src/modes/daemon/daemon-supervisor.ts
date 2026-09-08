@@ -58,6 +58,7 @@ import {
 	readActiveOrphanProcesses,
 	shouldReapOrphanProcess,
 } from "../../core/orphan-process-journal.js";
+import { shutdownInstalledOtlpExporter } from "../../core/otlp-export.js";
 import { PromptAdmissionCancelledError, waitForPromptAdmission } from "../../core/prompt-admission.js";
 import {
 	canEvictWorker,
@@ -4119,18 +4120,43 @@ export class DaemonSupervisor {
 		if (orphanProcessJournalPath) {
 			try {
 				const orphans = readActiveOrphanProcesses(orphanProcessJournalPath, worker.descriptor.pid);
-				let reapFailed = false;
-				let retryIsSafe = true;
+				let retainJournal = false;
 				for (const orphan of orphans) {
-					if (orphan.processStartId === undefined) retryIsSafe = false;
-					if (!shouldReapOrphanProcess(orphan)) {
-						continue;
+					let outcome: "reaped" | "failed" | "skipped_identity_mismatch" | "skipped_missing_identity";
+					if (orphan.processStartId === undefined) {
+						outcome = "skipped_missing_identity";
+						retainJournal = true;
+					} else if (!shouldReapOrphanProcess(orphan)) {
+						outcome = "skipped_identity_mismatch";
+					} else if (killOrphanProcess(orphan.pid)) {
+						outcome = "reaped";
+					} else {
+						outcome = "failed";
+						retainJournal = true;
 					}
-					if (!killOrphanProcess(orphan.pid)) reapFailed = true;
+					structuredLog.info("orphan reap outcome", {
+						workerId: worker.descriptor.workerId,
+						orphanPid: orphan.pid,
+						outcome,
+					});
+					this.log(`Orphan reap outcome for worker ${worker.descriptor.workerId}, pid ${orphan.pid}: ${outcome}`);
 				}
-				if (!reapFailed || !retryIsSafe) clearOrphanProcessJournal(orphanProcessJournalPath);
+				if (retainJournal) {
+					this.log(
+						`Orphan journal retained for worker ${worker.descriptor.workerId} so incomplete reaps can retry`,
+					);
+				} else {
+					clearOrphanProcessJournal(orphanProcessJournalPath);
+					this.log(`Orphan journal cleared for worker ${worker.descriptor.workerId}`);
+				}
 			} catch (error) {
+				structuredLog.error("orphan journal recovery failed", {
+					workerId: worker.descriptor.workerId,
+					journalPath: orphanProcessJournalPath,
+					error: error instanceof Error ? error.message : String(error),
+				});
 				this.log(`Could not reap orphaned worker resources: ${String(error)}`);
+				throw error;
 			}
 		}
 		if (uncertain.length === 0) {
@@ -7059,6 +7085,7 @@ export class DaemonSupervisor {
 			});
 			replacement.unref();
 		}
-		process.exitCode = exitCode;
+		await shutdownInstalledOtlpExporter();
+		process.exit(exitCode);
 	}
 }

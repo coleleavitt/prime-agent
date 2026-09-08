@@ -999,9 +999,7 @@ describe("daemon worker supervisor monitoring", () => {
 		});
 		const ownershipRelease = vi.fn(async () => undefined);
 		const log = vi.fn();
-		const exit = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
-			throw new Error(`exit ${code}`);
-		}) as typeof process.exit);
+		const previousExitCode = process.exitCode;
 		type ShutdownHarness = {
 			socketLease?: { release(): Promise<void> };
 			ownership?: { release(): Promise<void> };
@@ -1021,7 +1019,7 @@ describe("daemon worker supervisor monitoring", () => {
 		}) as ShutdownHarness;
 
 		try {
-			await expect(supervisor.shutdown(42, false)).rejects.toThrow("exit 42");
+			await expect(supervisor.shutdown(42, false)).rejects.toThrow('process.exit unexpectedly called with "42"');
 			expect(cleanupSocket).toHaveBeenCalledOnce();
 			expect(leaseRelease).toHaveBeenCalledOnce();
 			expect(ownershipRelease).toHaveBeenCalledOnce();
@@ -1030,9 +1028,8 @@ describe("daemon worker supervisor monitoring", () => {
 			expect(log).toHaveBeenCalledWith(expect.stringContaining("daemon socket lock"));
 			expect(supervisor.socketLease).toBeUndefined();
 			expect(supervisor.ownership).toBeUndefined();
-			expect(exit).toHaveBeenCalledWith(42);
 		} finally {
-			exit.mockRestore();
+			process.exitCode = previousExitCode;
 		}
 	});
 
@@ -1041,9 +1038,7 @@ describe("daemon worker supervisor monitoring", () => {
 		const drain = new Promise<void>((resolve) => {
 			releaseDrain = resolve;
 		});
-		const exit = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
-			throw new Error(`exit ${code}`);
-		}) as typeof process.exit);
+		const previousExitCode = process.exitCode;
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
 			shuttingDown: false,
 			signalCleanupHandlers: [],
@@ -1061,12 +1056,14 @@ describe("daemon worker supervisor monitoring", () => {
 			const first = supervisor.shutdown(0, false).catch((error: unknown) => error);
 			const second = supervisor.shutdown(0, false).catch((error: unknown) => error);
 			await Promise.resolve();
-			expect(exit).not.toHaveBeenCalled();
+			expect(process.exitCode).toBe(previousExitCode);
 			releaseDrain();
-			await expect(Promise.all([first, second])).resolves.toEqual([new Error("exit 0"), new Error("exit 0")]);
-			expect(exit).toHaveBeenCalledOnce();
+			await expect(Promise.all([first, second])).resolves.toEqual([
+				new Error('process.exit unexpectedly called with "0"'),
+				new Error('process.exit unexpectedly called with "0"'),
+			]);
 		} finally {
-			exit.mockRestore();
+			process.exitCode = previousExitCode;
 		}
 	});
 
@@ -1093,9 +1090,7 @@ describe("daemon worker supervisor monitoring", () => {
 			stopFinalization: new Promise<void>(() => {}),
 		};
 		const workers = new Map([[worker.descriptor.workerId, worker]]);
-		const exit = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
-			throw new Error(`exit ${code}`);
-		}) as typeof process.exit);
+		const previousExitCode = process.exitCode;
 		const killSpy = vi.spyOn(childProcessModule, "signalProcessGroupOrProcess").mockImplementation(() => {});
 		const existsSpy = vi.spyOn(childProcessModule, "processIdExists").mockReturnValue(true);
 		const aliveSpy = vi.spyOn(childProcessModule, "isProcessAlive").mockReturnValue(true);
@@ -1122,15 +1117,14 @@ describe("daemon worker supervisor monitoring", () => {
 				(error: unknown) => error,
 			);
 			await vi.advanceTimersByTimeAsync(2000);
-			await expect(shutdown).resolves.toEqual(new Error("exit 0"));
+			await expect(shutdown).resolves.toEqual(new Error('process.exit unexpectedly called with "0"'));
 
 			expect(workers.has(worker.descriptor.workerId)).toBe(true);
 			expect(killSpy).not.toHaveBeenCalled();
 			expect(catalogStop).toHaveBeenCalledOnce();
 			expect(log).toHaveBeenCalledWith(expect.stringContaining("remains tombstoned for recovery"));
-			expect(exit).toHaveBeenCalledWith(0);
 		} finally {
-			exit.mockRestore();
+			process.exitCode = previousExitCode;
 			killSpy.mockRestore();
 			existsSpy.mockRestore();
 			aliveSpy.mockRestore();
@@ -4158,7 +4152,7 @@ describe("daemon worker supervisor monitoring", () => {
 
 	it.each([
 		{ name: "identity-bearing", hasProcessIdentity: true, retained: true },
-		{ name: "PID-only", hasProcessIdentity: false, retained: false },
+		{ name: "PID-only", hasProcessIdentity: false, retained: true },
 	])("retains only a $name orphan journal after a failed reap", async ({ hasProcessIdentity, retained }) => {
 		const root = mkdtempSync(join(tmpdir(), "prime-supervisor-orphan-retry-test-"));
 		const orphanJournalPath = join(root, "worker.orphans.jsonl");
@@ -4195,18 +4189,29 @@ describe("daemon worker supervisor monitoring", () => {
 			assertRecoveryAllowed: vi.fn(async () => undefined),
 		}) as {
 			recoverUncertainWorkerOperations(target: typeof worker): Promise<void>;
+			log: ReturnType<typeof vi.fn>;
 		};
 		const kill = vi.spyOn(orphanProcessModule, "killOrphanProcess").mockReturnValue(false);
 
 		try {
 			await supervisor.recoverUncertainWorkerOperations(worker);
 
-			if (hasProcessIdentity || process.platform !== "win32") {
+			if (hasProcessIdentity) {
 				expect(kill).toHaveBeenCalledWith(orphanPid);
 			} else {
 				expect(kill).not.toHaveBeenCalled();
 			}
 			expect(existsSync(orphanJournalPath)).toBe(retained);
+			if (hasProcessIdentity) {
+				expect(supervisor.log).toHaveBeenCalledWith(expect.stringContaining(`pid ${orphanPid}: failed`));
+			} else {
+				expect(supervisor.log).toHaveBeenCalledWith(
+					expect.stringContaining(`pid ${orphanPid}: skipped_missing_identity`),
+				);
+			}
+			expect(supervisor.log).toHaveBeenCalledWith(
+				expect.stringContaining(retained ? "journal retained" : "journal cleared"),
+			);
 		} finally {
 			kill.mockRestore();
 			rmSync(root, { recursive: true, force: true });

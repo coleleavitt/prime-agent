@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from . import trace
-from .bash import BashHandle, BashResult, bash
+from .bash import BashHandle, BashResult, active_bash_commands, bash
 from .harness import HarnessEntry, HarnessScope, HarnessState, RefinementEvent, get_harness_state
 
 @dataclass(frozen=True)
@@ -275,6 +275,7 @@ __all__ = [
     "RLMSpawnHandle",
     "RLMSubagent",
     "RefinementEvent",
+    "active_bash_commands",
     "bash",
     "delete_subagent",
     "emit",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import signal
 import sys
 import unittest
 from types import SimpleNamespace
@@ -21,7 +22,10 @@ class _SpanCapture(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(trace.set_span_emitter, None)
 
     def spans(self, name: str) -> list[dict]:
-        return [event for event in self.events if event["name"] == name]
+        return [event for event in self.events if event.get("msg") == "span_end" and event["name"] == name]
+
+    def starts(self, name: str) -> list[dict]:
+        return [event for event in self.events if event.get("msg") == "span_start" and event["name"] == name]
 
 
 class BashCommandSpanTest(_SpanCapture):
@@ -45,7 +49,73 @@ class BashCommandSpanTest(_SpanCapture):
         self.assertNotIn("bash.killed", attrs)
         self.assertNotIn("error", attrs)
         # The cell span ends after the command span (both emitted once).
-        self.assertEqual([event["name"] for event in self.events], ["bash.command", "cell"])
+        self.assertEqual(
+            [(event["msg"], event["name"]) for event in self.events if "name" in event],
+            [("span_start", "bash.command"), ("span_end", "bash.command"), ("span_end", "cell")],
+        )
+
+    async def test_start_span_and_inventory_expose_progress_without_live_handle(self):
+        handle = bash("printf hello; sleep 30")
+        self.addCleanup(handle.kill, signal.SIGKILL)
+        for _ in range(100):
+            inventory = bash_module.active_bash_commands()
+            if inventory and inventory[0]["bash.output_bytes"] >= 5:
+                break
+            await asyncio.sleep(0.02)
+        (start,) = self.starts("bash.command")
+        record = next(item for item in inventory if item["bash.pid"] == handle.pid)
+        self.assertEqual(start["attrs"]["bash.pid"], handle.pid)
+        self.assertEqual(start["attrs"]["bash.pgid"], record["bash.pgid"])
+        self.assertEqual(start["attrs"]["bash.started_at"], record["bash.started_at"])
+        self.assertGreaterEqual(record["bash.output_bytes"], 5)
+        self.assertIn("bash.last_output_at", record)
+        self.assertNotIn("handle", record)
+        record["bash.pid"] = -1
+        self.assertEqual(handle.pid, start["attrs"]["bash.pid"])
+        handle.kill(sig=signal.SIGKILL)
+        await handle
+
+    async def test_cargo_lock_wait_emits_structured_event_and_end_attribute(self):
+        command = "printf 'Blocking waiting for file lock on build directory'; sleep 0.1"
+        await bash(command)
+        event = next(event for event in self.events if event.get("msg") == "cargo_lock_wait")
+        self.assertEqual(event["component"], "bash")
+        self.assertEqual(event["bash.wait_reason"], "cargo_build_lock")
+        self.assertGreaterEqual(event["bash.output_bytes"], 1)
+        (span,) = self.spans("bash.command")
+        self.assertEqual(span["attrs"]["bash.wait_reason"], "cargo_build_lock")
+        self.assertIn("bash.last_output_at", span["attrs"])
+        self.assertGreaterEqual(span["attrs"]["bash.elapsed_ms"], 0)
+        self.assertGreaterEqual(span["attrs"]["bash.silence_ms"], 0)
+
+    async def test_cargo_lock_detection_survives_output_chunk_boundary(self):
+        handle = bash("true")
+        await handle
+        handle._wait_reason = None
+        handle._cargo_probe_tail = b""
+        handle._record_output(b"Blocking waiting for file lock on build direc")
+        handle._record_output(b"tory")
+        self.assertEqual(handle._wait_reason, "cargo_build_lock")
+
+    async def test_no_output_warning_is_structured_and_contains_no_output(self):
+        with mock.patch.dict(bash_module.os.environ, {"PRIME_AGENT_BASH_NO_OUTPUT_WARN_MS": "20"}):
+            handle = bash("sleep 0.15")
+            await handle
+        warnings = [event for event in self.events if event.get("msg") == "command_no_output"]
+        self.assertTrue(warnings)
+        warning = warnings[0]
+        self.assertEqual(warning["component"], "bash")
+        self.assertEqual(warning["bash.output_bytes"], 0)
+        self.assertNotIn("output", warning)
+        self.assertGreaterEqual(warning["bash.silence_ms"], 20)
+
+    async def test_command_observability_redacts_secrets(self):
+        handle = bash("printf ok # --token=super-secret")
+        await handle
+        (start,) = self.starts("bash.command")
+        (span,) = self.spans("bash.command")
+        self.assertNotIn("super-secret", start["attrs"]["bash.command"])
+        self.assertEqual(start["attrs"]["bash.command"], span["attrs"]["bash.command"])
 
     async def test_span_without_ambient_context_starts_a_trace(self):
         self.assertIsNone(trace.current())

@@ -20,6 +20,7 @@ import {
 	type KernelPythonSkill,
 	resolveRuntimeIdentity,
 } from "../src/core/kernel/bootstrap.js";
+import { getProcessStartId } from "../src/core/session-lease.js";
 
 let tempDir = "";
 let originalEnv: NodeJS.ProcessEnv;
@@ -436,6 +437,33 @@ dependencies = ["httpx"]
 		await expect(ensureKernelPython()).resolves.toBe(python);
 
 		expect(readFileSync(logPath, "utf8")).toContain(`venv ${venv} --python 3.11 --seed`);
+	});
+
+	it("bounds lock contention and reports the owner identity, start time, and age", async () => {
+		const venv = join(tempDir, "kernel-venv");
+		const lockDir = `${venv}.bootstrap.lock`;
+		const createdAt = new Date(Date.now() - 2_000).toISOString();
+		mkdirSync(lockDir, { recursive: true });
+		writeFileSync(
+			join(lockDir, "owner.json"),
+			`${JSON.stringify({
+				version: 1,
+				token: "other-owner",
+				pid: process.pid,
+				processStartId: getProcessStartId(process.pid),
+				createdAt,
+			})}\n`,
+		);
+		process.env.PRIME_AGENT_KERNEL_VENV = venv;
+		process.env.PRIME_AGENT_INTERNAL_KERNEL_BOOTSTRAP_LOCK_TIMEOUT_MS = "0";
+		const progress: string[] = [];
+
+		await expect(ensureKernelPython({ onProgress: (message) => progress.push(message) })).rejects.toThrow(
+			new RegExp(`Timed out.*pid ${process.pid}.*started ${createdAt}.*age \\d+ms`),
+		);
+		expect(progress).toEqual([
+			expect.stringMatching(new RegExp(`waiting for python kernel setup lock .*pid ${process.pid}.*age \\d+ms`)),
+		]);
 	});
 
 	it("shares concurrent bootstrap work in one process", async () => {

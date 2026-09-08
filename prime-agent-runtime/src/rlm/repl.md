@@ -61,8 +61,8 @@ runtime keeps serving. Closing stdin is equivalent to `shutdown`.
   typed request from runtime code to the host; the host answers with a
   `host_reply` request carrying the same id. `traceparent` is the runtime's
   `kernel.host_request` client span (see Trace context below).
-- `{"event":"trace","id":str|null,"msg":"span_end","name":str,"traceId":str,"spanId":str,"parentSpanId"?:str,"durationMs":float,"status":"ok"|"error","attrs":{...}}`
-  — one finished span. `id` is the request whose handling produced it (task
+- `{"event":"trace","id":str|null,"msg":"span_start"|"span_end","name":str,"traceId":str,"spanId":str,"parentSpanId"?:str,"attrs":{...}}`
+  — one span lifecycle event. `span_end` also carries `durationMs` and `status`. `id` is the request whose handling produced it (task
   context, like `display`); `null` from user threads.
 - `{"event":"error","id":str|null,"ename":str,"evalue":str,"traceback":[str,...]}`
 - `{"event":"done","id":str,"status":"ok"|"error"}` — exactly one per id'd
@@ -87,7 +87,7 @@ value becomes the parent of the request's `kernel.cell` span
 (`attrs`: `kernel.request_id`, `kernel.request_type`); a missing or invalid
 value is ignored (no protocol error) and the request becomes a child of the
 context inherited from the `TRACEPARENT` environment variable at startup, or
-starts a fresh trace. The `kernel.cell` `trace` event is sent before the
+starts a fresh trace. The `kernel.cell` emits `span_start` before execution and `span_end` before the
 request's `done`. User code sees the cell context through `rlm.trace`
 (`current()`, `start_span()`), `host_request` spans are children of the cell
 span, and `bash()` children receive `TRACEPARENT` in their environment. See
@@ -113,7 +113,15 @@ context, or a fresh trace when there is none):
   down with the command still running (the span is closed immediately at
   shutdown instead of dangling; the later reap of the killed group does not
   emit a second span). The child process receives `TRACEPARENT` of the
-  `bash.command` span, so anything it runs nests under the command.
+  `bash.command` span, so anything it runs nests under the command. `bash.command`
+  emits `span_start` after spawn with `bash.pid`, `bash.pgid`, and
+  `bash.started_at`. `active_bash_commands()` returns up to 100 immutable
+  progress snapshots with elapsed/silence times, output byte count, and last
+  output time. Long silence emits structured `bash/command_no_output` events
+  after five minutes by default (`PRIME_AGENT_BASH_NO_OUTPUT_WARN_MS`, `0`
+  disables). Output matching Cargo's build-directory lock wait emits
+  `bash/cargo_lock_wait` immediately and records
+  `bash.wait_reason="cargo_build_lock"`; no captured output content is emitted.
 - `mcp.call` — one per `mcp.list_tools(server)` / `mcp.call_tool(server,
   tool, arguments)` call (`attrs`: `mcp.server`, `mcp.tool` — `"list_tools"`
   for listings —, `mcp.connected` whether an open generation existed when the

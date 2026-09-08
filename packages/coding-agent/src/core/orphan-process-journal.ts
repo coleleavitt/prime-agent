@@ -1,9 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { closeSync, fsyncSync, openSync, readFileSync, rmSync, writeSync } from "node:fs";
 import { win32 } from "node:path";
+import { getLogger } from "@earendil-works/pi-ai";
 import { getProcessStartId } from "./session-lease.js";
 
 export const ORPHAN_PROCESS_JOURNAL_ENV = "PRIME_AGENT_INTERNAL_ORPHAN_PROCESS_JOURNAL";
+
+const orphanJournalLog = getLogger("orphan-process-journal");
 
 interface OrphanProcessRecord {
 	version: 1;
@@ -45,8 +48,28 @@ export function recordOrphanProcessState(pid: number, active: boolean): void {
 		} finally {
 			closeSync(descriptor);
 		}
-	} catch {
-		// Process tracking must not make a successfully spawned command fail.
+	} catch (error) {
+		// Process tracking must not make a successfully spawned command fail, but
+		// losing the durable cleanup record must remain visible to operators.
+		orphanJournalLog.error("failed to append orphan process journal", {
+			path,
+			pid,
+			active,
+			error: error instanceof Error ? error.message : String(error),
+		});
+	}
+}
+
+export class OrphanProcessJournalIntegrityError extends Error {
+	readonly code = "orphan_process_journal_integrity" as const;
+
+	constructor(
+		readonly journalPath: string,
+		readonly lineNumber: number,
+		reason: string,
+	) {
+		super(`Invalid orphan process journal ${journalPath} at line ${lineNumber}: ${reason}`);
+		this.name = "OrphanProcessJournalIntegrityError";
 	}
 }
 
@@ -61,25 +84,29 @@ export function readActiveOrphanProcesses(path: string, ownerPid: number): Activ
 		throw error;
 	}
 	const latest = new Map<number, OrphanProcessRecord>();
-	for (const line of contents.split("\n")) {
-		if (!line) {
-			continue;
-		}
+	const lines = contents.split("\n");
+	for (const [index, line] of lines.entries()) {
+		if (!line) continue;
+		let record: Partial<OrphanProcessRecord>;
 		try {
-			const record = JSON.parse(line) as Partial<OrphanProcessRecord>;
-			if (
-				record.version === 1 &&
-				Number.isInteger(record.pid) &&
-				(record.pid ?? 0) > 0 &&
-				record.ownerPid === ownerPid &&
-				typeof record.active === "boolean" &&
-				typeof record.recordedAt === "string"
-			) {
-				latest.set(record.pid!, record as OrphanProcessRecord);
-			}
+			record = JSON.parse(line) as Partial<OrphanProcessRecord>;
 		} catch {
-			// A crash can truncate only the final append.
+			throw new OrphanProcessJournalIntegrityError(path, index + 1, "malformed JSON");
 		}
+		if (
+			record.version !== 1 ||
+			!Number.isInteger(record.pid) ||
+			(record.pid ?? 0) <= 0 ||
+			!Number.isInteger(record.ownerPid) ||
+			(record.ownerPid ?? 0) <= 0 ||
+			typeof record.active !== "boolean" ||
+			typeof record.recordedAt !== "string" ||
+			(record.kernelPid !== undefined && (!Number.isInteger(record.kernelPid) || record.kernelPid <= 0)) ||
+			(record.processStartId !== undefined && typeof record.processStartId !== "string")
+		) {
+			throw new OrphanProcessJournalIntegrityError(path, index + 1, "record failed schema validation");
+		}
+		if (record.ownerPid === ownerPid) latest.set(record.pid!, record as OrphanProcessRecord);
 	}
 	// Pid-only actives (no processStartId) still surface from old journals or
 	// host writes whose start-id query failed; reapers decide per-platform.
@@ -108,14 +135,28 @@ export function isOrphanProcessIdentityCurrent(orphan: ActiveOrphanProcess): boo
  * host-written rarities there).
  */
 export function shouldReapOrphanProcess(orphan: ActiveOrphanProcess): boolean {
-	if (orphan.processStartId === undefined) {
-		return process.platform !== "win32";
-	}
+	if (orphan.processStartId === undefined) return false;
 	return isOrphanProcessIdentityCurrent(orphan);
 }
 
 export function clearOrphanProcessJournal(path: string): void {
 	rmSync(path, { force: true });
+}
+
+export type OrphanProcessReapOutcome =
+	| { pid: number; outcome: "reaped" }
+	| { pid: number; outcome: "skipped_identity_mismatch" }
+	| { pid: number; outcome: "failed" };
+
+export function reapOrphanProcesses(orphans: readonly ActiveOrphanProcess[]): OrphanProcessReapOutcome[] {
+	return orphans.map((orphan) => {
+		if (!shouldReapOrphanProcess(orphan)) {
+			return { pid: orphan.pid, outcome: "skipped_identity_mismatch" };
+		}
+		return killOrphanProcess(orphan.pid)
+			? { pid: orphan.pid, outcome: "reaped" }
+			: { pid: orphan.pid, outcome: "failed" };
+	});
 }
 
 // Kills still-active bash() children journaled by the given kernel pid; sibling kernels' records are untouched.
@@ -127,20 +168,22 @@ export function reapKernelOrphanProcesses(kernelPid: number): void {
 	let orphans: ActiveOrphanProcess[];
 	try {
 		orphans = readActiveOrphanProcesses(path, process.pid);
-	} catch {
+	} catch (error) {
+		orphanJournalLog.error("refusing kernel orphan reap because journal integrity could not be verified", {
+			path,
+			kernelPid,
+			error: error instanceof Error ? error.message : String(error),
+		});
 		return;
 	}
-	for (const orphan of orphans) {
-		if (orphan.kernelPid !== kernelPid || orphan.pid === kernelPid) {
-			continue;
-		}
-		if (!shouldReapOrphanProcess(orphan)) {
-			continue;
-		}
-		// Inactive only after a delivered signal; a stale record is neutralized by the startId check.
-		if (killOrphanProcess(orphan.pid)) {
-			recordOrphanProcessState(orphan.pid, false);
-		}
+	const candidates = orphans.filter((orphan) => orphan.kernelPid === kernelPid && orphan.pid !== kernelPid);
+	for (const result of reapOrphanProcesses(candidates)) {
+		orphanJournalLog.info("kernel orphan reap outcome", {
+			kernelPid,
+			orphanPid: result.pid,
+			outcome: result.outcome,
+		});
+		if (result.outcome === "reaped") recordOrphanProcessState(result.pid, false);
 	}
 }
 

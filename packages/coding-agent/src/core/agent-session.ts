@@ -1018,6 +1018,7 @@ interface RlmSubagentModelSelection {
 }
 
 const KERNEL_STATE_LISTING_TIMEOUT_MS = 5000;
+const RLM_SUBAGENT_DELETION_TIMEOUT_MS = 30_000;
 const RLM_MAX_DEPTH_STATE_CUSTOM_TYPE = "rlm_max_depth_state";
 
 function noopRlmChildAbort(): void {}
@@ -1304,6 +1305,9 @@ export class AgentSession {
 			promise: Promise<RlmDeleteSubagentResult>;
 		}
 	>();
+	// A bounded caller may receive a timeout before physical teardown completes.
+	// Keep the selector reserved until this underlying completion fence settles.
+	private _rlmSubagentDeletionCompletions = new Map<string, Promise<void>>();
 	// Kept alive for retained children so nested updates (e.g. a grandchild cancel)
 	// still forward to root; torn down when the retained child is disposed.
 	private _rlmChildUnsubscribes = new Map<string, () => void>();
@@ -10307,23 +10311,46 @@ export class AgentSession {
 					this._deletingRlmChildren.delete(subagent.rlm_child_id);
 				}
 			};
+			const fences: Promise<unknown>[] = [];
+			const completion = this._rlmSubagentDeletionCompletions.get(subagent.rlm_child_id);
+			if (completion) fences.push(completion);
 			const run = this._activeRlmChildRuns.get(subagent.rlm_child_id);
-			if (run?.detachedDeletion) {
-				// Keep every selector reserved until the run settles, or until a failed
-				// cleanup is exposed for an explicit retry. Repeated deletes before that
-				// boundary return the same accepted result.
-				void run.deletionReservation.promise.then(clearReservation, clearReservation);
+			if (run?.detachedDeletion) fences.push(run.deletionReservation.promise);
+			if (fences.length > 0) {
+				void Promise.allSettled(fences).then(clearReservation);
 			} else {
 				clearReservation();
 			}
 		}
 	}
 
-	private _deleteRlmSubagentSession(childId: string, session?: AgentSession): Promise<void> {
-		if (this._subagentRuntimeHost) {
-			return this._subagentRuntimeHost.deleteRlmSubagentRuntime(childId, session);
+	private async _deleteRlmSubagentSession(childId: string, session?: AgentSession): Promise<void> {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const timeout = new Promise<never>((_, reject) => {
+			timer = setTimeout(
+				() => reject(new Error(`Timed out deleting RLM subagent ${childId}`)),
+				RLM_SUBAGENT_DELETION_TIMEOUT_MS,
+			);
+			timer.unref();
+		});
+		try {
+			const deletion = Promise.resolve(
+				this._subagentRuntimeHost
+					? this._subagentRuntimeHost.deleteRlmSubagentRuntime(childId, session)
+					: (session?.disposeAsync() ?? Promise.resolve()),
+			);
+			this._rlmSubagentDeletionCompletions.set(childId, deletion);
+			void deletion
+				.finally(() => {
+					if (this._rlmSubagentDeletionCompletions.get(childId) === deletion) {
+						this._rlmSubagentDeletionCompletions.delete(childId);
+					}
+				})
+				.catch(() => undefined);
+			return await Promise.race([deletion, timeout]);
+		} finally {
+			if (timer) clearTimeout(timer);
 		}
-		return session?.disposeAsync() ?? Promise.resolve();
 	}
 
 	private _ensureRlmRunDeletionCleanup(run: RlmChildRun, session: AgentSession): Promise<void> {

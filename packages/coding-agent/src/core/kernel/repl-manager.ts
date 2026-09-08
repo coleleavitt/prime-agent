@@ -12,6 +12,7 @@ import {
 	parseTraceparent,
 	runWithTraceContext,
 	SPAN_END_MSG,
+	SPAN_START_MSG,
 	type Span,
 	type SpanAttributes,
 	TRACE_LOG_COMPONENT,
@@ -161,13 +162,20 @@ const PROTOCOL_EVENT_KINDS = new Set([
  * tracing must never fail the execution that produced it.
  */
 function forwardKernelTraceEvent(event: Record<string, unknown>): void {
-	if (event.msg !== SPAN_END_MSG) return;
-	if (typeof event.name !== "string" || typeof event.traceId !== "string" || typeof event.spanId !== "string") {
+	const message = typeof event.msg === "string" ? event.msg : undefined;
+	if (!message) return;
+	const { event: _kind, id: _requestId, msg: _msg, ...fields } = event;
+	if (message === SPAN_END_MSG || message === SPAN_START_MSG) {
+		if (typeof event.name !== "string" || typeof event.traceId !== "string" || typeof event.spanId !== "string") {
+			return;
+		}
+		if (message === SPAN_END_MSG && fields.status === "error") traceLog.warn(message, fields);
+		else traceLog.info(message, fields);
 		return;
 	}
-	const { event: _kind, id: _requestId, msg: _msg, ...fields } = event;
-	if (fields.status === "error") traceLog.warn(SPAN_END_MSG, fields);
-	else traceLog.info(SPAN_END_MSG, fields);
+	if (typeof event.traceId !== "string" || typeof event.spanId !== "string") return;
+	if (message === "command_no_output" || message === "cargo_lock_wait") traceLog.warn(message, fields);
+	else if (message === "command_progress") traceLog.info(message, fields);
 }
 
 /**

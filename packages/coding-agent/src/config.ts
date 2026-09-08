@@ -667,13 +667,14 @@ export function appendRotatingLog(
 	try {
 		const lockTarget = `${logPath}.rotation-lock`;
 		prepareSecureLog(lockTarget);
-		for (let attempt = 0; attempt < 5; attempt++) {
+		const lockWait = new Int32Array(new SharedArrayBuffer(4));
+		for (let attempt = 0; attempt < 200; attempt++) {
 			try {
 				release = lockSync(lockTarget, { realpath: false, stale: 10_000 });
 				break;
 			} catch {
-				if (attempt === 4) return;
-				Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5 * (attempt + 1));
+				if (attempt === 199) return;
+				Atomics.wait(lockWait, 0, 0, 5);
 			}
 		}
 		prepareSecureLog(logPath);

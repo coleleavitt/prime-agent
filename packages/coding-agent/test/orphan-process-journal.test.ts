@@ -29,6 +29,19 @@ afterEach(() => {
 });
 
 describe("orphan process journal", () => {
+	it.each([
+		{ name: "malformed JSON", line: "{not-json" },
+		{ name: "invalid schema", line: JSON.stringify({ version: 1, pid: -1 }) },
+	])("fails closed on $name instead of hiding journal corruption", ({ line }) => {
+		const directory = mkdtempSync(join(tmpdir(), "prime-orphan-journal-test-"));
+		tempDirs.push(directory);
+		const path = join(directory, "orphans.jsonl");
+		appendFileSync(path, `${line}\n`);
+
+		expect(() => readActiveOrphanProcesses(path, process.pid)).toThrow(/Invalid orphan process journal .* at line 1/);
+		expect(existsSync(path)).toBe(true);
+	});
+
 	it("retains only detached processes still active for the crashed owner", () => {
 		const directory = mkdtempSync(join(tmpdir(), "prime-orphan-journal-test-"));
 		tempDirs.push(directory);
@@ -121,7 +134,7 @@ describe("orphan process journal", () => {
 	});
 
 	// POSIX behavior: CI runs Ubuntu, so this exercises the real kill path.
-	it("best-effort kills pid-only records in the kernel crash-reap path", async () => {
+	it("fails closed for pid-only records in the kernel crash-reap path", async () => {
 		const directory = mkdtempSync(join(tmpdir(), "prime-orphan-journal-test-"));
 		tempDirs.push(directory);
 		const path = join(directory, "orphans.jsonl");
@@ -147,9 +160,9 @@ describe("orphan process journal", () => {
 
 		reapKernelOrphanProcesses(kernelPid);
 
-		const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
-		await exited;
-		expect(child.signalCode).toBe("SIGKILL");
+		expect(child.exitCode).toBeNull();
+		expect(child.signalCode).toBeNull();
+		process.kill(childPid!, "SIGKILL");
 	});
 
 	it("win32 reapers ignore identity-free records", async () => {

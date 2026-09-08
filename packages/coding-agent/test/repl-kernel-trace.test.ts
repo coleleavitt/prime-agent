@@ -75,13 +75,17 @@ input.on("line", (line) => {
       attrs: { "kernel.request_id": request.id, "kernel.request_type": "execute" },
     };
     if (request.code === "hang") return;
-    if (request.code === "emit-trace") emit(span);
+    if (request.code === "emit-trace") {
+      emit({ ...span, msg: "span_start", durationMs: undefined, status: undefined });
+      emit({ event: "trace", id: request.id, component: "bash", msg: "cargo_lock_wait", traceId, spanId: "${HOST_SPAN_ID}", attrs: { "bash.pid": 42, "bash.wait_reason": "cargo_build_lock" } });
+      emit(span);
+    }
     if (request.code === "emit-error-trace") {
       emit({ ...span, status: "error", attrs: { ...span.attrs, error: "ValueError: nope" } });
     }
     if (request.code === "emit-bad-trace") {
       emit({ event: "trace", id: null, msg: "span_end" });
-      emit({ event: "trace", msg: "span_start", name: "x", traceId, spanId: "${HOST_SPAN_ID}" });
+      emit({ event: "trace", msg: "span_start", name: "x", traceId: 7, spanId: "${HOST_SPAN_ID}" });
       emit({ event: "trace", msg: "span_end", name: 7, traceId, spanId: "${HOST_SPAN_ID}" });
     }
     if (request.code.startsWith("host-request")) {
@@ -278,8 +282,11 @@ describe("ReplKernelManager trace propagation", () => {
 			return span.context;
 		});
 		const forwarded = entries.filter((e) => e.component === "trace" && e.name === "kernel.cell");
-		expect(forwarded).toHaveLength(2);
-		const [ok, failed] = forwarded as [LogEntry, LogEntry];
+		expect(forwarded).toHaveLength(3);
+		const [started, ok, failed] = forwarded as [LogEntry, LogEntry, LogEntry];
+		expect(started).toMatchObject({ level: "info", msg: "span_start", traceId: outer.traceId, spanId: HOST_SPAN_ID });
+		const cargoWait = entries.find((entry) => entry.msg === "cargo_lock_wait");
+		expect(cargoWait).toMatchObject({ level: "warn", traceId: outer.traceId, spanId: HOST_SPAN_ID });
 		const okFrame = frameFor((f) => f.code === "emit-trace");
 		expect(ok).toMatchObject({
 			level: "info",

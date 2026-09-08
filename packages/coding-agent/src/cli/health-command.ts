@@ -8,12 +8,34 @@ const DEFAULT_STUCK_AFTER_MS = 10 * 60 * 1000;
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 200;
 const MAX_HEALTH_ENTRIES = 100_000;
+const MAX_OPEN_LIFECYCLE_ENTRIES = 100_000;
+const OPEN_OPERATION_SPANS = new Map<string, HealthCategory>([
+	["bash.command", "process"],
+	["kernel.cell", "kernel"],
+	["kernel.execute", "kernel"],
+	["rlm.child", "child"],
+	["cargo_lock_wait", "lock"],
+	["bootstrap_lock_wait", "lock"],
+	["kernel.bootstrap_lock", "lock"],
+]);
 const STUCK_TURN_SPANS = new Set(["client.turn", "agent.prompt"]);
 const DURATION_RE = /^(\d+)(ms|s|m|h|d)$/;
 const DAEMON_RECOVERY_RE = /\b(recover(?:y|ing|ed)?|restart(?:ed|ing)?)\b/i;
 const DAEMON_FAILURE_RE = /\b(fail(?:ed|ure)?|interrupt(?:ed)?|cancel(?:led)?|could not|did not answer|uncertain)\b/i;
 
-export type HealthCategory = "historian" | "provider" | "stuck_turn" | "daemon_recovery";
+export type HealthCategory =
+	| "historian"
+	| "provider"
+	| "stuck_turn"
+	| "daemon_recovery"
+	| "process"
+	| "kernel"
+	| "child"
+	| "lock"
+	| "orphan"
+	| "diagnostic";
+
+export type HealthStatus = "healthy" | "unhealthy" | "unknown";
 
 export interface HealthCommandOptions {
 	logPath: string | undefined;
@@ -42,12 +64,16 @@ export interface HealthIncident {
 }
 
 export interface HealthSummary {
+	status: HealthStatus;
 	generatedAt: string;
 	since: string;
 	files: string[];
 	counts: Record<HealthCategory, number>;
 	incidents: HealthIncident[];
 	truncated: boolean;
+	parseErrors: number;
+	stale: boolean;
+	latestEntryAt?: string;
 }
 
 export interface HealthCommandIo {
@@ -133,27 +159,64 @@ function parseEntry(raw: string): HealthLogEntry | undefined {
 	}
 }
 
-export function readHealthLogEntries(files: readonly string[], cutoffMs: number): HealthLogEntry[] {
+export interface HealthLogReadResult {
+	entries: HealthLogEntry[];
+	parseErrors: number;
+	latestEntryAt?: string;
+}
+
+export function readHealthLogEntries(files: readonly string[], cutoffMs: number): HealthLogReadResult {
 	const entries: HealthLogEntry[] = [];
+	const openLifecycle = new Map<string, HealthLogEntry>();
+	let parseErrors = 0;
+	let latestEntryAt: string | undefined;
+	let latestEntryMs = Number.NEGATIVE_INFINITY;
 	for (const file of files) {
 		const content = file.endsWith(".gz")
 			? gunzipSync(readFileSync(file), { maxOutputLength: 64 * 1024 * 1024 }).toString("utf8")
 			: readFileSync(file, "utf8");
 		for (const raw of content.split("\n")) {
+			if (raw.trim() === "") continue;
 			const entry = parseEntry(raw);
-			if (!entry) continue;
+			if (!entry) {
+				parseErrors++;
+				continue;
+			}
 			const at = Date.parse(entry.ts);
-			if (!Number.isNaN(at)) {
-				const lifecycle = entry.component === "trace" && (entry.msg === "span_start" || entry.msg === "span_end");
-				if (at >= cutoffMs || lifecycle) {
-					entry._beforeWindow = at < cutoffMs;
-					entries.push(entry);
-					if (entries.length > MAX_HEALTH_ENTRIES) entries.shift();
+			if (Number.isNaN(at)) {
+				parseErrors++;
+				continue;
+			}
+			if (at > latestEntryMs) {
+				latestEntryMs = at;
+				latestEntryAt = entry.ts;
+			}
+			const key = entry.traceId && entry.spanId ? `${entry.traceId}:${entry.spanId}` : undefined;
+			if (entry.component === "trace" && entry.msg === "span_start" && key) {
+				openLifecycle.set(key, entry);
+				if (openLifecycle.size > MAX_OPEN_LIFECYCLE_ENTRIES) {
+					const oldest = openLifecycle.keys().next().value;
+					if (oldest) openLifecycle.delete(oldest);
+					parseErrors++;
 				}
 			}
+			if (entry.component === "trace" && entry.msg === "span_end" && key) openLifecycle.delete(key);
+			if (at < cutoffMs) continue;
+			entry._beforeWindow = false;
+			entries.push(entry);
+			if (entries.length > MAX_HEALTH_ENTRIES) entries.shift();
 		}
 	}
-	return entries.sort((left, right) => Date.parse(left.ts) - Date.parse(right.ts));
+	// Preserve unmatched starts independently from the bounded incident buffer. Otherwise
+	// a high-volume log can evict the start and make a genuinely open operation invisible.
+	for (const entry of openLifecycle.values()) {
+		if (!entries.includes(entry)) {
+			entry._beforeWindow = Date.parse(entry.ts) < cutoffMs;
+			entries.push(entry);
+		}
+	}
+	entries.sort((left, right) => Date.parse(left.ts) - Date.parse(right.ts));
+	return { entries, parseErrors, ...(latestEntryAt ? { latestEntryAt } : {}) };
 }
 
 function stringField(entry: HealthLogEntry, key: string): string | undefined {
@@ -209,6 +272,7 @@ export function summarizeHealth(
 	options: Pick<HealthCommandOptions, "stuckAfterMs" | "limit">,
 	files: string[],
 	since: string,
+	diagnostics: Pick<HealthLogReadResult, "parseErrors" | "latestEntryAt"> = { parseErrors: 0 },
 ): HealthSummary {
 	const incidents: HealthIncident[] = [];
 	const spanKey = (entry: HealthLogEntry): string | undefined =>
@@ -225,14 +289,16 @@ export function summarizeHealth(
 			.map(spanKey)
 			.filter((value): value is string => value !== undefined),
 	);
-	const activeStarts = entries.filter(
-		(entry) =>
+	const activeStarts = entries.filter((entry) => {
+		const name = stringField(entry, "name") ?? "";
+		return (
 			entry.component === "trace" &&
 			entry.msg === "span_start" &&
 			typeof entry.spanId === "string" &&
-			STUCK_TURN_SPANS.has(stringField(entry, "name") ?? "") &&
-			!endedSpanIds.has(spanKey(entry) ?? ""),
-	);
+			(STUCK_TURN_SPANS.has(name) || OPEN_OPERATION_SPANS.has(name)) &&
+			!endedSpanIds.has(spanKey(entry) ?? "")
+		);
+	});
 	const stuckCandidates = new Map<string, HealthLogEntry>();
 
 	for (const entry of entries) {
@@ -258,6 +324,34 @@ export function summarizeHealth(
 			incidents.push(incident("provider", entry, `${provider}: ${detail(entry, "request failed")}`));
 		}
 
+		if (entry.component === "trace" && entry.msg === "span_end" && name && spanFailed(entry)) {
+			const operationCategory = name.startsWith("child.") ? "child" : OPEN_OPERATION_SPANS.get(name);
+			if (operationCategory)
+				incidents.push(incident(operationCategory, entry, `${name}: ${detail(entry, "failed")}`));
+		}
+		if (entry.msg === "kernel_exit" && /kernel/i.test(entry.component)) {
+			incidents.push(incident("kernel", entry, detail(entry, "kernel exited unexpectedly")));
+		}
+		if (/fatal_crash/i.test(entry.msg)) incidents.push(incident("process", entry, entry.msg));
+		if (/child/i.test(entry.component) && /(?:timeout|timed out|error|failed)/i.test(entry.msg)) {
+			incidents.push(incident("child", entry, entry.msg));
+		}
+		if (
+			entry.component !== "trace" &&
+			(/^(?:cargo_lock_wait|bootstrap_lock_wait)$/i.test(entry.msg) ||
+				(/(?:cargo_lock_wait|bootstrap_lock_wait)/i.test(`${name ?? ""} ${entry.msg}`) &&
+					/(?:error|failed|failure|timeout|timed out)/i.test(entry.msg)))
+		) {
+			incidents.push(incident("lock", entry, entry.msg));
+		}
+		const orphanOutcome = spanAttrs(entry).outcome ?? entry.outcome;
+		if (
+			/orphan/i.test(`${entry.component} ${entry.msg}`) &&
+			(/(?:corrupt|write|failed|failure|could not|cannot)/i.test(entry.msg) || orphanOutcome === "failed")
+		) {
+			incidents.push(incident("orphan", entry, `${entry.msg}${orphanOutcome === "failed" ? ": failed" : ""}`));
+		}
+
 		if (
 			entry.component.includes("daemon") &&
 			DAEMON_RECOVERY_RE.test(entry.msg) &&
@@ -272,10 +366,11 @@ export function summarizeHealth(
 	for (const [spanId, entry] of stuckCandidates) {
 		const ageMs = nowMs - Date.parse(entry.ts);
 		if (ageMs >= options.stuckAfterMs) {
-			const name = stringField(entry, "name") ?? "turn";
+			const name = stringField(entry, "name") ?? "operation";
+			const category = STUCK_TURN_SPANS.has(name) ? "stuck_turn" : (OPEN_OPERATION_SPANS.get(name) ?? "process");
 			incidents.push(
 				incident(
-					"stuck_turn",
+					category,
 					entry,
 					`${name} span ${entry.spanId ?? spanId} has no completion after ${formatDuration(ageMs)}`,
 				),
@@ -283,15 +378,34 @@ export function summarizeHealth(
 		}
 	}
 	incidents.sort((left, right) => Date.parse(right.ts) - Date.parse(left.ts));
-	const counts: Record<HealthCategory, number> = { historian: 0, provider: 0, stuck_turn: 0, daemon_recovery: 0 };
+	const counts: Record<HealthCategory, number> = {
+		historian: 0,
+		provider: 0,
+		stuck_turn: 0,
+		daemon_recovery: 0,
+		process: 0,
+		kernel: 0,
+		child: 0,
+		lock: 0,
+		orphan: 0,
+		diagnostic: 0,
+	};
 	for (const item of incidents) counts[item.category]++;
+	const stale = diagnostics.latestEntryAt === undefined || Date.parse(diagnostics.latestEntryAt) < Date.parse(since);
+	const unknown = diagnostics.parseErrors > 0 || stale;
+	if (diagnostics.parseErrors > 0) counts.diagnostic++;
+	if (stale) counts.diagnostic++;
 	return {
+		status: incidents.length > 0 ? "unhealthy" : unknown ? "unknown" : "healthy",
 		generatedAt: new Date(nowMs).toISOString(),
 		since,
 		files,
 		counts,
 		incidents: incidents.slice(0, options.limit),
 		truncated: incidents.length > options.limit,
+		parseErrors: diagnostics.parseErrors,
+		stale,
+		...(diagnostics.latestEntryAt ? { latestEntryAt: diagnostics.latestEntryAt } : {}),
 	};
 }
 
@@ -316,6 +430,12 @@ function formatHealthSummary(summary: HealthSummary): string {
 		["provider", "Provider errors"],
 		["stuck_turn", "Stuck turns"],
 		["daemon_recovery", "Daemon recovery failures"],
+		["process", "Process failures"],
+		["kernel", "Kernel failures"],
+		["child", "Child failures"],
+		["lock", "Lock failures"],
+		["orphan", "Orphan cleanup failures"],
+		["diagnostic", "Diagnostic uncertainty"],
 	];
 	for (const [category, label] of labels) {
 		out.push(`${label}: ${summary.counts[category]}`);
@@ -329,6 +449,12 @@ function formatHealthSummary(summary: HealthSummary): string {
 			out.push(`  ${item.ts}  ${terminalSafe(item.summary)}${context ? `  ${terminalSafe(context)}` : ""}`);
 		}
 	}
+	if (summary.parseErrors > 0)
+		out.push(`UNKNOWN: ${summary.parseErrors} malformed log line(s) could not be evaluated.`);
+	if (summary.stale)
+		out.push(
+			`UNKNOWN: no valid log entry exists in the selected window (latest=${summary.latestEntryAt ?? "none"}).`,
+		);
 	if (summary.truncated) out.push("Recent incident details truncated; increase --limit to show more.");
 	return out.join("\n");
 }
@@ -354,10 +480,10 @@ export function runHealthCommand(args: string[], io: HealthCommandIo): number {
 	}
 	try {
 		const cutoffMs = nowMs - options.sinceMs;
-		const entries = readHealthLogEntries(files, cutoffMs);
-		const summary = summarizeHealth(entries, nowMs, options, files, new Date(cutoffMs).toISOString());
+		const read = readHealthLogEntries(files, cutoffMs);
+		const summary = summarizeHealth(read.entries, nowMs, options, files, new Date(cutoffMs).toISOString(), read);
 		io.stdout(options.json ? JSON.stringify(summary, undefined, 2) : formatHealthSummary(summary));
-		return 0;
+		return summary.status === "healthy" ? 0 : 2;
 	} catch (error) {
 		io.stderr(`Error: could not read ${files.join(", ")}: ${error instanceof Error ? error.message : String(error)}`);
 		return 1;

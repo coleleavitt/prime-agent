@@ -310,7 +310,8 @@ class ReplTest(unittest.TestCase):
         time.sleep(0.3)
         self.repl.send({"type": "execute", "id": "dup", "code": "print('imposter')"})
         error = self.repl.read_event()
-        self.assertEqual(error["event"], "error")
+        while error.get("event") != "error":
+            error = self.repl.read_event()
         self.assertEqual(error["ename"], "ProtocolError")
         self.assertIn("duplicate", error["evalue"])
         # The original request is unaffected and its targeted interrupt still lands.
@@ -2087,6 +2088,16 @@ def spans(events: list[dict], name: str | None = None) -> list[dict]:
     ]
 
 
+def span_starts(events: list[dict], name: str | None = None) -> list[dict]:
+    return [
+        e
+        for e in events
+        if e.get("event") == "trace"
+        and e.get("msg") == "span_start"
+        and (name is None or e["name"] == name)
+    ]
+
+
 class TraceProtocolTest(unittest.TestCase):
     """End-to-end trace-context propagation over the JSONL protocol."""
 
@@ -2105,6 +2116,12 @@ class TraceProtocolTest(unittest.TestCase):
         cell = spans(events, "kernel.cell")
         self.assertEqual(len(cell), 1)
         span = cell[0]
+        (start,) = span_starts(events, "kernel.cell")
+        self.assertEqual(start["traceId"], span["traceId"])
+        self.assertEqual(start["spanId"], span["spanId"])
+        self.assertEqual(start["parentSpanId"], span["parentSpanId"])
+        self.assertEqual(start["attrs"], span["attrs"])
+        self.assertLess(events.index(start), events.index(span))
         self.assertEqual(span["id"], "t1")
         self.assertEqual(span["traceId"], _TP_TRACE)
         self.assertEqual(span["parentSpanId"], _TP_SPAN)

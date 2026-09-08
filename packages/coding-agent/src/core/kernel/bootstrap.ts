@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants, type Dirent, existsSync, readdirSync, readFileSync } from "node:fs";
 import { access, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -8,7 +8,9 @@ import { stderr, stdin } from "node:process";
 import { createInterface } from "node:readline/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { getLogger, withSpan } from "@earendil-works/pi-ai";
 import { getPackageDir } from "../../config.js";
+import { getProcessStartId } from "../session-lease.js";
 import type { PythonSkillRuntimeInfo } from "../skills.js";
 
 const BOOTSTRAP_SCHEMA = 9;
@@ -54,7 +56,10 @@ const RUNTIME_READY_CHECK = `import inspect; import rlm; from rlm import McpInte
 const BOOTSTRAP_VERSION_FILE = ".bootstrap-version";
 const BOOTSTRAP_LOCK_NAME = ".bootstrap.lock";
 const BOOTSTRAP_LOCK_RETRY_MS = 100;
-const BOOTSTRAP_LOCK_STALE_WITHOUT_PID_MS = 30_000;
+const BOOTSTRAP_LOCK_PROGRESS_INTERVAL_MS = 5_000;
+const DEFAULT_BOOTSTRAP_LOCK_TIMEOUT_MS = 120_000;
+const BOOTSTRAP_LOCK_STALE_WITHOUT_OWNER_MS = 30_000;
+const bootstrapLog = getLogger("kernel.bootstrap");
 // Sibling of .bootstrap-version: records the venv state under which RUNTIME_READY_CHECK
 // last passed, so a warm start can skip the interpreter spawn (see venvRuntimeReady).
 const RUNTIME_READY_STAMP_FILE = ".runtime-ready";
@@ -642,6 +647,14 @@ function bootstrapLockDir(venv: string): string {
 	return path.join(path.dirname(venv), `${path.basename(venv)}${BOOTSTRAP_LOCK_NAME}`);
 }
 
+interface BootstrapLockOwner {
+	version: 1;
+	token: string;
+	pid: number;
+	processStartId?: string;
+	createdAt: string;
+}
+
 function processIsRunning(pid: number): boolean {
 	try {
 		process.kill(pid, 0);
@@ -651,46 +664,138 @@ function processIsRunning(pid: number): boolean {
 	}
 }
 
-async function readLockPid(lockDir: string): Promise<number | null> {
+async function readBootstrapLockOwner(lockDir: string): Promise<BootstrapLockOwner | null> {
 	try {
-		const raw = await readFile(path.join(lockDir, "pid"), "utf8");
-		const pid = Number.parseInt(raw.trim(), 10);
-		return Number.isInteger(pid) && pid > 0 ? pid : null;
+		const parsed: unknown = JSON.parse(await readFile(path.join(lockDir, "owner.json"), "utf8"));
+		if (
+			!isRecord(parsed) ||
+			parsed.version !== 1 ||
+			typeof parsed.token !== "string" ||
+			typeof parsed.pid !== "number" ||
+			!Number.isInteger(parsed.pid) ||
+			parsed.pid <= 0 ||
+			typeof parsed.createdAt !== "string" ||
+			(parsed.processStartId !== undefined && typeof parsed.processStartId !== "string")
+		) {
+			return null;
+		}
+		return parsed as unknown as BootstrapLockOwner;
 	} catch {
 		return null;
 	}
 }
 
-async function lockMissingPidIsStale(lockDir: string): Promise<boolean> {
+async function lockWithoutOwnerIsStale(lockDir: string): Promise<boolean> {
 	try {
 		const lockStat = await stat(lockDir);
-		return Date.now() - lockStat.mtimeMs > BOOTSTRAP_LOCK_STALE_WITHOUT_PID_MS;
+		return Date.now() - lockStat.mtimeMs > BOOTSTRAP_LOCK_STALE_WITHOUT_OWNER_MS;
 	} catch {
 		return false;
 	}
 }
 
-async function acquireBootstrapLock(venv: string): Promise<() => Promise<void>> {
-	const lockDir = bootstrapLockDir(venv);
-	await mkdir(path.dirname(lockDir), { recursive: true });
+function bootstrapLockOwnerIsRunning(owner: BootstrapLockOwner): boolean {
+	if (!processIsRunning(owner.pid)) return false;
+	return owner.processStartId === undefined || getProcessStartId(owner.pid) === owner.processStartId;
+}
 
-	for (;;) {
-		try {
-			await mkdir(lockDir);
-			await writeFile(path.join(lockDir, "pid"), `${process.pid}\n`, "utf8");
-			return () => rm(lockDir, { recursive: true, force: true });
-		} catch (error) {
-			if (!isNodeError(error, "EEXIST")) throw error;
-
-			const pid = await readLockPid(lockDir);
-			if (pid === null ? await lockMissingPidIsStale(lockDir) : !processIsRunning(pid)) {
-				await rm(lockDir, { recursive: true, force: true });
-				continue;
-			}
-
-			await sleep(BOOTSTRAP_LOCK_RETRY_MS);
-		}
+function bootstrapLockTimeoutMs(): number {
+	const raw = process.env.PRIME_AGENT_INTERNAL_KERNEL_BOOTSTRAP_LOCK_TIMEOUT_MS;
+	if (raw === undefined) return DEFAULT_BOOTSTRAP_LOCK_TIMEOUT_MS;
+	if (!/^(0|[1-9]\d*)$/.test(raw)) {
+		throw new Error(`Invalid PRIME_AGENT_INTERNAL_KERNEL_BOOTSTRAP_LOCK_TIMEOUT_MS: ${raw}`);
 	}
+	const configured = Number(raw);
+	if (!Number.isSafeInteger(configured)) {
+		throw new Error(`Invalid PRIME_AGENT_INTERNAL_KERNEL_BOOTSTRAP_LOCK_TIMEOUT_MS: ${raw}`);
+	}
+	return configured;
+}
+
+function describeBootstrapLockOwner(owner: BootstrapLockOwner | null, ageMs: number): string {
+	const identity = owner
+		? `pid ${owner.pid}${owner.processStartId ? ` (start ${owner.processStartId})` : ""}`
+		: "unknown owner";
+	return `${identity}, started ${owner?.createdAt ?? "unknown"}, age ${Math.max(0, Math.round(ageMs))}ms`;
+}
+
+async function acquireBootstrapLock(venv: string, options: EnsureKernelPythonOptions): Promise<() => Promise<void>> {
+	return withSpan("kernel.bootstrap_lock", { "kernel.venv": venv }, async (span) => {
+		const lockDir = bootstrapLockDir(venv);
+		const startedAt = Date.now();
+		const timeoutMs = bootstrapLockTimeoutMs();
+		let nextProgressAt = startedAt;
+		await mkdir(path.dirname(lockDir), { recursive: true });
+
+		for (;;) {
+			const token = randomUUID();
+			try {
+				await mkdir(lockDir);
+				const processStartId = getProcessStartId(process.pid);
+				const owner: BootstrapLockOwner = {
+					version: 1,
+					token,
+					pid: process.pid,
+					...(processStartId ? { processStartId } : {}),
+					createdAt: new Date().toISOString(),
+				};
+				await writeFile(path.join(lockDir, "owner.json"), `${JSON.stringify(owner)}\n`, "utf8");
+				const waitedMs = Date.now() - startedAt;
+				span.setAttributes({ "kernel.lock_wait_ms": waitedMs, "kernel.lock_owner_pid": process.pid });
+				bootstrapLog.info("kernel bootstrap lock acquired", { venv, waitedMs, ownerPid: process.pid });
+				return async () => {
+					const current = await readBootstrapLockOwner(lockDir);
+					if (current?.token === token) await rm(lockDir, { recursive: true, force: true });
+				};
+			} catch (error) {
+				if (!isNodeError(error, "EEXIST")) {
+					await rm(lockDir, { recursive: true, force: true }).catch(() => undefined);
+					throw error;
+				}
+
+				const owner = await readBootstrapLockOwner(lockDir);
+				if (owner ? !bootstrapLockOwnerIsRunning(owner) : await lockWithoutOwnerIsStale(lockDir)) {
+					// Re-read immediately before removal. Another contender may have reclaimed
+					// the stale directory and acquired it since our first observation.
+					const currentOwner = await readBootstrapLockOwner(lockDir);
+					if (currentOwner?.token !== owner?.token) continue;
+					bootstrapLog.warn("reclaiming stale kernel bootstrap lock", {
+						venv,
+						ownerPid: owner?.pid,
+						ownerProcessStartId: owner?.processStartId,
+						ownerStartedAt: owner?.createdAt,
+					});
+					await rm(lockDir, { recursive: true, force: true });
+					continue;
+				}
+
+				const now = Date.now();
+				const waitedMs = now - startedAt;
+				const ownerStarted = owner ? Date.parse(owner.createdAt) : Number.NaN;
+				const ownerAgeMs = Number.isFinite(ownerStarted) ? now - ownerStarted : waitedMs;
+				if (now >= nextProgressAt) {
+					const description = describeBootstrapLockOwner(owner, ownerAgeMs);
+					reportProgress(options, `› waiting for python kernel setup lock (${description})…`);
+					bootstrapLog.info("waiting for kernel bootstrap lock", {
+						venv,
+						waitedMs,
+						ownerPid: owner?.pid,
+						ownerProcessStartId: owner?.processStartId,
+						ownerStartedAt: owner?.createdAt,
+						ownerAgeMs,
+					});
+					nextProgressAt = now + BOOTSTRAP_LOCK_PROGRESS_INTERVAL_MS;
+				}
+				if (waitedMs >= timeoutMs) {
+					span.setAttributes({ "kernel.lock_wait_ms": waitedMs, "kernel.lock_timeout": true });
+					throw new Error(
+						`Timed out after ${waitedMs}ms waiting for python kernel setup lock at ${lockDir} (${describeBootstrapLockOwner(owner, ownerAgeMs)}).`,
+					);
+				}
+				await sleep(Math.min(BOOTSTRAP_LOCK_RETRY_MS, timeoutMs - waitedMs));
+			}
+		}
+	});
 }
 
 async function findExecutable(name: string): Promise<string | null> {
@@ -1147,7 +1252,7 @@ async function ensureKernelPythonUncached(
 		return python;
 	}
 
-	const releaseLock = await acquireBootstrapLock(venv);
+	const releaseLock = await acquireBootstrapLock(venv, options);
 	try {
 		const lockedReadiness = await kernelReady(python, venv, runtimeIdentity, pythonSkills);
 		if (lockedReadiness.ready) {

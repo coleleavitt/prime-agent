@@ -7,6 +7,7 @@ import atexit
 import contextvars
 import json
 import os
+import re
 import secrets
 import selectors
 import shutil
@@ -44,6 +45,11 @@ _COMPLETION_SUFFIX = b"\x1f"
 # wait for a confirmed group exit before CancelledError propagates.
 _CANCEL_TERM_GRACE = 0.5
 _CANCEL_KILL_WAIT = 2.0
+_DEFAULT_NO_OUTPUT_WARN_MS = 5 * 60 * 1000
+_NO_OUTPUT_REPEAT_MS = 5 * 60 * 1000
+_PROGRESS_INTERVAL_MS = 5 * 1000
+_CARGO_BUILD_LOCK_TEXT = b"Blocking waiting for file lock on build directory"
+_ACTIVE_INVENTORY_LIMIT = 100
 
 _live_handles: set["BashHandle"] = set()
 _live_lock = threading.Lock()
@@ -130,14 +136,20 @@ class BashHandle:
         self._span = trace.Span(
             name="bash.command",
             ctx=trace.child_context(trace.current()),
-            attrs={"bash.command": _truncate(command)},
+            attrs={"bash.command": _safe_command(command)},
         )
         self._span_lock = threading.Lock()
-        # The span ends on a watcher thread; emitting inside a copy of the
-        # caller's context keeps request-scoped tags (the cell id) attached.
         self._span_context = contextvars.copy_context()
         self._killed = False
         self._buffer = _BoundedBuffer()
+        self._started = time.monotonic()
+        self._started_at = datetime.now(timezone.utc)
+        self._last_output = self._started
+        self._last_output_at: datetime | None = None
+        self._last_progress = 0.0
+        self._wait_reason: str | None = None
+        self._cargo_probe_tail = b""
+        self._warning_stop = threading.Event()
         try:
             self._spawn(command)
         except BaseException as exc:
@@ -159,7 +171,6 @@ class BashHandle:
         self._callback_lock = threading.Lock()
         # Serializes kill/reap so a pid fallback can never outlive the process handle.
         self._kill_lock = threading.Lock()
-        self._started = time.monotonic()
         # POSIX: own process group so kill() signals the whole pipeline; Windows
         # contains the tree in a kill-on-close job object.
         self._status_read = -1
@@ -232,7 +243,20 @@ class BashHandle:
             if status_write >= 0:
                 os.close(status_write)
         self._pid: int = self._proc.pid
-        self._span.attrs["bash.pid"] = self._pid
+        self._pgid = self._pid
+        if _IS_POSIX:
+            try:
+                self._pgid = os.getpgid(self._pid)
+            except OSError:
+                pass
+        self._span.attrs.update(
+            {
+                "bash.pid": self._pid,
+                "bash.pgid": self._pgid,
+                "bash.started_at": self._started_at.isoformat(),
+            }
+        )
+        self._span.emit_start()
         self._released = False
         with _live_lock:
             _live_handles.add(self)
@@ -263,6 +287,8 @@ class BashHandle:
         threading.Thread(target=self._pump, daemon=True).start()
         threading.Thread(target=self._report, daemon=True).start()
         threading.Thread(target=self._watch, daemon=True).start()
+        if _no_output_warn_ms() > 0:
+            threading.Thread(target=self._warn_no_output, daemon=True).start()
 
     @property
     def pid(self) -> int:
@@ -324,7 +350,7 @@ class BashHandle:
         if not _IS_POSIX:
             try:
                 while chunk := stdout.read1(_READ_CHUNK):
-                    self._buffer.write(chunk)
+                    self._record_output(chunk)
             except (OSError, ValueError):
                 pass
             stdout.close()
@@ -358,30 +384,85 @@ class BashHandle:
         assert marker is not None
         with self._completion_lock:
             if self._completion_terminal.is_set():
-                self._buffer.write(chunk)
+                self._record_output(chunk)
                 return
             data = self._completion_pending + chunk
             marker_at = data.find(marker)
             if marker_at >= 0:
-                self._buffer.write(data[:marker_at])
+                self._record_output(data[:marker_at])
                 self._completion_pending = b""
                 self._completion_output = self._buffer.text()
                 self._completion_terminal.set()
-                self._buffer.write(data[marker_at + len(marker) :])
+                self._record_output(data[marker_at + len(marker) :])
                 return
             retained = 0
             for size in range(min(len(data), len(marker) - 1), 0, -1):
                 if data.endswith(marker[:size]):
                     retained = size
                     break
-            self._buffer.write(data[:-retained] if retained else data)
+            self._record_output(data[:-retained] if retained else data)
             self._completion_pending = data[-retained:] if retained else b""
+
+    def _record_output(self, chunk: bytes) -> None:
+        if not chunk:
+            return
+        self._buffer.write(chunk)
+        now = time.monotonic()
+        self._last_output = now
+        self._last_output_at = datetime.now(timezone.utc)
+        probe = self._cargo_probe_tail + chunk
+        if self._wait_reason is None and _CARGO_BUILD_LOCK_TEXT in probe:
+            self._wait_reason = "cargo_build_lock"
+            self._emit_progress("cargo_lock_wait", now)
+        keep = max(0, len(_CARGO_BUILD_LOCK_TEXT) - 1)
+        self._cargo_probe_tail = probe[-keep:] if keep else b""
+        if (now - self._last_progress) * 1000 >= _PROGRESS_INTERVAL_MS:
+            self._last_progress = now
+            self._emit_progress("command_progress", now)
+
+    def _progress_fields(self, now: float | None = None) -> dict[str, Any]:
+        current = time.monotonic() if now is None else now
+        fields: dict[str, Any] = {
+            "bash.pid": self._pid,
+            "bash.pgid": self._pgid,
+            "bash.elapsed_ms": round((current - self._started) * 1000),
+            "bash.silence_ms": round((current - self._last_output) * 1000),
+            "bash.output_bytes": self._buffer.total(),
+        }
+        if self._wait_reason is not None:
+            fields["bash.wait_reason"] = self._wait_reason
+        return fields
+
+    def _emit_progress(self, msg: str, now: float | None = None) -> None:
+        fields: dict[str, Any] = {
+            "traceId": self._span.trace_id,
+            "spanId": self._span.span_id,
+            **self._progress_fields(now),
+        }
+        if self._span.parent_span_id is not None:
+            fields["parentSpanId"] = self._span.parent_span_id
+        trace.emit_event("bash", msg, **fields)
+
+    def _warn_no_output(self) -> None:
+        threshold_ms = _no_output_warn_ms()
+        next_warning = self._last_output + threshold_ms / 1000.0
+        while not self._warning_stop.is_set():
+            wait = max(0.0, next_warning - time.monotonic())
+            if self._warning_stop.wait(wait):
+                return
+            now = time.monotonic()
+            silence_ms = (now - self._last_output) * 1000
+            if silence_ms < threshold_ms:
+                next_warning = self._last_output + threshold_ms / 1000.0
+                continue
+            self._emit_progress("command_no_output", now)
+            next_warning = now + _NO_OUTPUT_REPEAT_MS / 1000.0
 
     def _abandon_completion(self) -> None:
         with self._completion_lock:
             if self._completion_terminal.is_set():
                 return
-            self._buffer.write(self._completion_pending)
+            self._record_output(self._completion_pending)
             self._completion_pending = b""
             self._completion_terminal.set()
 
@@ -440,6 +521,7 @@ class BashHandle:
                 cast("_winjob.JobProcess", self._proc).close()
         if delivered:
             _record_journal(self._pid, active=False)
+        self._warning_stop.set()
         with _live_lock:
             _live_handles.discard(self)
 
@@ -565,7 +647,15 @@ class BashHandle:
                         )
                 if self._killed:
                     attrs["bash.killed"] = True
-                attrs["bash.output_bytes"] = self._buffer.total()
+                now = time.monotonic()
+                if hasattr(self, "_pid"):
+                    attrs.update(self._progress_fields(now))
+                attrs["bash.started_at"] = self._started_at.isoformat()
+                attrs["bash.elapsed_ms"] = round((now - self._started) * 1000)
+                attrs.setdefault("bash.output_bytes", self._buffer.total())
+                attrs.setdefault("bash.silence_ms", round((now - self._last_output) * 1000))
+                if self._last_output_at is not None:
+                    attrs["bash.last_output_at"] = self._last_output_at.isoformat()
                 self._span_context.run(span.end, error=error)
         except BaseException:  # noqa: BLE001 - tracing must never break the traced command
             return
@@ -692,6 +782,7 @@ class BashHandle:
             if not _IS_POSIX:
                 # Reaped commits before close: later lock holders skip raw-pid fallbacks.
                 cast("_winjob.JobProcess", self._proc).close()
+        self._warning_stop.set()
         with _live_lock:
             _live_handles.discard(self)
         if delivered:
@@ -798,6 +889,57 @@ def _child_env(ctx: trace.TraceContext | None = None) -> dict[str, str]:
         return trace.inject_env(env)
     env[trace.TRACEPARENT_ENV] = trace.format_traceparent(ctx)
     return env
+
+
+def _no_output_warn_ms() -> int:
+    raw = os.environ.get("PRIME_AGENT_BASH_NO_OUTPUT_WARN_MS")
+    if raw is None:
+        return _DEFAULT_NO_OUTPUT_WARN_MS
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return _DEFAULT_NO_OUTPUT_WARN_MS
+
+
+_SECRET_PATTERNS = (
+    re.compile(r"(?i)(bearer\s+)[^\s'\"]+"),
+    re.compile(r"(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)\s*[=:]\s*)[^\s'\"]+"),
+    re.compile(r"(?i)((?:--?(?:api[_-]?key|token|password|secret))(?:=|\s+))[^\s'\"]+"),
+)
+
+
+def _safe_command(command: str) -> str:
+    redacted = command
+    for pattern in _SECRET_PATTERNS:
+        redacted = pattern.sub(r"\1[REDACTED]", redacted)
+    return _truncate(redacted)
+
+
+def active_bash_commands(limit: int = _ACTIVE_INVENTORY_LIMIT) -> list[dict[str, Any]]:
+    """Return bounded immutable snapshots of active command progress.
+
+    Records are newly allocated dictionaries and never expose live handles.
+    Commands are redacted and truncated before they enter observability state.
+    """
+    if not isinstance(limit, int):
+        raise TypeError("limit must be an int")
+    limit = max(0, min(limit, _ACTIVE_INVENTORY_LIMIT))
+    with _live_lock:
+        handles = sorted(_live_handles, key=lambda handle: handle._started)[:limit]
+    now = time.monotonic()
+    records: list[dict[str, Any]] = []
+    for handle in handles:
+        record: dict[str, Any] = {
+            "bash.command": handle._span.attrs["bash.command"],
+            "bash.pid": handle._pid,
+            "bash.pgid": handle._pgid,
+            "bash.started_at": handle._started_at.isoformat(),
+            **handle._progress_fields(now),
+        }
+        if handle._last_output_at is not None:
+            record["bash.last_output_at"] = handle._last_output_at.isoformat()
+        records.append(record)
+    return records
 
 
 def _truncate(value: str, limit: int = 200) -> str:
@@ -964,8 +1106,9 @@ def _kill_live_handles() -> None:
                         handle._proc.kill()
                     except OSError:
                         pass
-        if delivered:
-            _record_journal(handle._pid, active=False)
+        # Signal delivery is not proof of process-group death. The watcher
+        # records inactive only after it confirms reaping; otherwise the host
+        # retains the active journal row for crash recovery.
 
 
 def _install_shutdown_hook() -> None:

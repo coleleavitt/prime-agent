@@ -100,6 +100,7 @@ import {
 	shouldDeferHeartbeatCronJob,
 } from "../../core/cron-jobs.js";
 import { ORPHAN_PROCESS_JOURNAL_ENV } from "../../core/orphan-process-journal.js";
+import { shutdownInstalledOtlpExporter } from "../../core/otlp-export.js";
 import { PromptAdmissionCancelledError, waitForPromptAdmission } from "../../core/prompt-admission.js";
 import type { CreateRlmSubagentRuntimeOptions, SubagentRuntimeHost } from "../../core/rlm-runtime.js";
 import {
@@ -245,6 +246,8 @@ export interface DaemonModeOptions {
 	socketPath?: string;
 	defaultSessionConfig: AgentSessionRuntimeConfig;
 	createRuntime: CreateAgentSessionRuntimeFactory;
+	/** Internal lifecycle deadline override used by focused daemon tests. */
+	subagentLifecycleTimeoutMs?: number;
 	worker?: {
 		authenticationToken: string;
 		workerInstanceId?: string;
@@ -265,6 +268,7 @@ export type {
 export { defaultDaemonSocketPath } from "./daemon-socket.js";
 
 const structuredLog = getLogger("coding-agent.daemon");
+const DEFAULT_SUBAGENT_LIFECYCLE_TIMEOUT_MS = 30_000;
 /** Distinct supervisor peer-list failure messages already warned about in this process. */
 const loggedSupervisorPeerErrors = new Set<string>();
 
@@ -617,6 +621,12 @@ export class AgentDaemon {
 		if (!options.defaultSessionConfig.agentDir) {
 			throw new Error("Daemon config is missing agentDir");
 		}
+		if (
+			options.subagentLifecycleTimeoutMs !== undefined &&
+			(!Number.isFinite(options.subagentLifecycleTimeoutMs) || options.subagentLifecycleTimeoutMs <= 0)
+		) {
+			throw new Error("subagentLifecycleTimeoutMs must be a positive finite number");
+		}
 		this.agentDir = options.defaultSessionConfig.agentDir;
 		this.cronStore = options.worker
 			? AgentCronJobStore.forSessionArtifacts()
@@ -656,6 +666,57 @@ export class AgentDaemon {
 		console.error(message);
 		structuredLog.warn(message, { socketPath: this.socketPath });
 		appendRotatingLog(getDaemonLogPath(this.socketPath), `[${new Date().toISOString()}] ${message}`);
+	}
+
+	private runSubagentLifecyclePhase<T>(
+		operation: "passivate" | "delete",
+		phase: "ledger_tombstone" | "runtime_close" | "cron_cancel" | "artifact_cleanup",
+		childId: string,
+		sessionId: string | undefined,
+		action: () => Promise<T> | T,
+		onCompletion?: (completion: Promise<T>) => void,
+	): Promise<T> {
+		const timeoutMs = this.options.subagentLifecycleTimeoutMs ?? DEFAULT_SUBAGENT_LIFECYCLE_TIMEOUT_MS;
+		return withSpan(
+			`child.${operation}`,
+			{
+				"child.id": childId,
+				"session.id": sessionId,
+				"child.lifecycle.phase": phase,
+			},
+			async (span) => {
+				const startedAt = Date.now();
+				let timer: ReturnType<typeof setTimeout> | undefined;
+				try {
+					const timeout = new Promise<never>((_, reject) => {
+						timer = setTimeout(
+							() => reject(new Error(`Timed out ${operation} ${phase} for child ${childId}`)),
+							timeoutMs,
+						);
+						timer.unref();
+					});
+					const completion = Promise.resolve().then(action);
+					onCompletion?.(completion);
+					const result = await Promise.race([completion, timeout]);
+					span.setAttributes({
+						"child.lifecycle.outcome": "success",
+						"child.lifecycle.duration_ms": Date.now() - startedAt,
+						"child.lifecycle.timeout": false,
+					});
+					return result;
+				} catch (error) {
+					const timedOut = error instanceof Error && error.message.startsWith("Timed out ");
+					span.setAttributes({
+						"child.lifecycle.outcome": timedOut ? "timeout" : "error",
+						"child.lifecycle.duration_ms": Date.now() - startedAt,
+						"child.lifecycle.timeout": timedOut,
+					});
+					throw error;
+				} finally {
+					if (timer) clearTimeout(timer);
+				}
+			},
+		);
 	}
 
 	// A crash thrown outside a command handler would otherwise vanish with the
@@ -2545,18 +2606,32 @@ export class AgentDaemon {
 				const childSessionFile =
 					persisted?.sessionFile ?? state?.runtime.session.sessionFile ?? legacyFallback?.sessionFile;
 				// Persist the deletion boundary before tearing down the runtime.
-				await this.recordRlmSubagentDeletion(parentState, childId);
+				await this.runSubagentLifecyclePhase(
+					"delete",
+					"ledger_tombstone",
+					childId,
+					state?.runtime.session.sessionId ?? persisted?.parentSessionId,
+					() => this.recordRlmSubagentDeletion(parentState, childId),
+				);
 				const staleSession = state && session && state.runtime.session !== session ? session : undefined;
 				try {
-					try {
-						if (state) {
-							await this.closeSession(state, "killed", false, true, undefined, { kernelSnapshot: false });
-						} else {
-							await session?.disposeAsync({ kernelSnapshot: false });
-						}
-					} finally {
-						await staleSession?.disposeAsync({ kernelSnapshot: false });
-					}
+					await this.runSubagentLifecyclePhase(
+						"delete",
+						"runtime_close",
+						childId,
+						state?.runtime.session.sessionId ?? session?.sessionId,
+						async () => {
+							try {
+								if (state) {
+									await this.closeSession(state, "killed", false, true, undefined, { kernelSnapshot: false });
+								} else {
+									await session?.disposeAsync({ kernelSnapshot: false });
+								}
+							} finally {
+								await staleSession?.disposeAsync({ kernelSnapshot: false });
+							}
+						},
+					);
 				} finally {
 					// Runs even when teardown throws: the jobs-cancel rewrite and the
 					// kernel dispose's final snapshot flush may have already happened,
@@ -2566,13 +2641,31 @@ export class AgentDaemon {
 					// would mask the teardown error and skip the sweep.
 					if (childSessionFile) {
 						try {
-							this.cancelScheduledJobsForSessionFile(childSessionFile);
+							await this.runSubagentLifecyclePhase(
+								"delete",
+								"cron_cancel",
+								childId,
+								state?.runtime.session.sessionId ?? session?.sessionId,
+								() => this.cancelScheduledJobsForSessionFile(childSessionFile),
+							);
 						} catch (error) {
 							this.log(
 								`failed to cancel scheduled jobs for deleted RLM subagent ${childId}: ${error instanceof Error ? error.message : String(error)}`,
 							);
 						}
-						await this.deleteRlmSubagentArtifacts(childId, childSessionFile);
+						try {
+							await this.runSubagentLifecyclePhase(
+								"delete",
+								"artifact_cleanup",
+								childId,
+								state?.runtime.session.sessionId ?? session?.sessionId,
+								() => this.deleteRlmSubagentArtifacts(childId, childSessionFile),
+							);
+						} catch (error) {
+							this.log(
+								`failed to remove artifact dir for deleted RLM subagent ${childId}: ${error instanceof Error ? error.message : String(error)}`,
+							);
+						}
 					}
 				}
 			},
@@ -2826,30 +2919,53 @@ export class AgentDaemon {
 			if (!unsubscribeChild) {
 				return;
 			}
-			try {
-				await this.closeSession(state, "shutdown", true, false);
-			} catch (error) {
-				if (
-					this.sessions.get(state.activeSessionId) === state &&
-					this.sessions.get(parentActiveSessionId) === parentState
-				) {
-					throw error;
-				}
-				unsubscribeChild();
-				throw error;
-			}
-			unsubscribeChild();
-			this.log(
-				`Passivated idle child sessionId=${state.runtime.session.sessionId} name=${JSON.stringify(state.runtime.session.sessionName ?? "")} idleMinutes=${idleMinutes}`,
+			let closeCompletion: Promise<void> | undefined;
+			await this.runSubagentLifecyclePhase(
+				"passivate",
+				"runtime_close",
+				childId,
+				state.runtime.session.sessionId,
+				() => this.closeSession(state, "shutdown", true, false),
+				(completion) => {
+					closeCompletion = completion.then(
+						() => {
+							unsubscribeChild();
+							this.log(
+								`Passivated idle child sessionId=${state.runtime.session.sessionId} name=${JSON.stringify(state.runtime.session.sessionName ?? "")} idleMinutes=${idleMinutes}`,
+							);
+						},
+						(error) => {
+							if (
+								this.sessions.get(state.activeSessionId) !== state ||
+								this.sessions.get(parentActiveSessionId) !== parentState
+							) {
+								unsubscribeChild();
+							}
+							throw error;
+						},
+					);
+					this.passivatingSessions.set(sessionKey, closeCompletion);
+					void closeCompletion.catch(() => undefined);
+				},
 			);
+			await closeCompletion;
 		});
 		this.passivatingSessions.set(sessionKey, passivation);
 		try {
 			await passivation;
 			return this.sessions.get(state.activeSessionId) !== state;
 		} finally {
-			if (this.passivatingSessions.get(sessionKey) === passivation) {
+			const completionFence = this.passivatingSessions.get(sessionKey);
+			if (completionFence === passivation) {
 				this.passivatingSessions.delete(sessionKey);
+			} else if (completionFence) {
+				void completionFence
+					.finally(() => {
+						if (this.passivatingSessions.get(sessionKey) === completionFence) {
+							this.passivatingSessions.delete(sessionKey);
+						}
+					})
+					.catch(() => undefined);
 			}
 		}
 	}
@@ -2872,10 +2988,21 @@ export class AgentDaemon {
 			.filter(({ snapshot }) => canPassivateSession(snapshot, idleEvictionMinutes, now))
 			.sort((left, right) => left.snapshot.lastActivityAt - right.snapshot.lastActivityAt)
 			.slice(0, limit);
-		const results = await Promise.all(
+		const results = await Promise.allSettled(
 			candidates.map(({ state, snapshot }) => this.passivateSession(state, idleEvictionMinutes, now, snapshot)),
 		);
-		return results.filter(Boolean).length;
+		let firstError: unknown;
+		for (const [index, result] of results.entries()) {
+			if (result.status === "rejected") {
+				firstError ??= result.reason;
+				const state = candidates[index]?.state;
+				this.log(
+					`Child passivation failed sessionId=${state?.runtime?.session?.sessionId ?? "unknown"}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
+				);
+			}
+		}
+		if (firstError !== undefined) throw firstError;
+		return results.filter((result) => result.status === "fulfilled" && result.value).length;
 	}
 
 	private findPassivationBySessionFile(sessionFile: string): Promise<void> | undefined {
@@ -7545,7 +7672,8 @@ export class AgentDaemon {
 			this.server.close(() => resolveClose());
 		});
 		this.cleanupSocketPath();
-		process.exitCode = exitCode;
+		await shutdownInstalledOtlpExporter();
+		process.exit(exitCode);
 	}
 }
 

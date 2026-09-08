@@ -16,6 +16,7 @@ import contextvars
 import os
 import secrets
 import time
+import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -26,6 +27,7 @@ __all__ = [
     "TraceContext",
     "child_context",
     "current",
+    "emit_event",
     "format_traceparent",
     "from_env",
     "inject_env",
@@ -186,6 +188,18 @@ def _emit(event: dict[str, Any]) -> None:
         return
 
 
+def emit_event(component: str, msg: str, **fields: Any) -> None:
+    """Emit one structured diagnostic event under the active trace context."""
+    event: dict[str, Any] = {"event": "trace", "component": component, "msg": msg, **fields}
+    ctx = current()
+    if ctx is not None:
+        event.setdefault("traceId", ctx.trace_id)
+        event.setdefault("spanId", ctx.span_id)
+        if ctx.parent_span_id is not None:
+            event.setdefault("parentSpanId", ctx.parent_span_id)
+    _emit(event)
+
+
 @dataclass
 class Span:
     """One in-flight span; :meth:`end` emits it exactly once."""
@@ -197,6 +211,8 @@ class Span:
     status: str = "ok"
     error: str | None = None
     ended: bool = False
+    started_emitted: bool = False
+    _lifecycle_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
     def trace_id(self) -> str:
@@ -210,11 +226,30 @@ class Span:
     def parent_span_id(self) -> str | None:
         return self.ctx.parent_span_id
 
+    def emit_start(self) -> None:
+        """Emit ``span_start`` once with a snapshot of the current attributes."""
+        with self._lifecycle_lock:
+            if self.started_emitted or self.ended:
+                return
+            self.started_emitted = True
+        event: dict[str, Any] = {
+            "event": "trace",
+            "msg": "span_start",
+            "name": self.name,
+            "traceId": self.ctx.trace_id,
+            "spanId": self.ctx.span_id,
+            "attrs": dict(self.attrs),
+        }
+        if self.ctx.parent_span_id is not None:
+            event["parentSpanId"] = self.ctx.parent_span_id
+        _emit(event)
+
     def end(self, status: str | None = None, error: BaseException | str | None = None) -> None:
         """Finish the span and emit ``span_end``; later calls are ignored."""
-        if self.ended:
-            return
-        self.ended = True
+        with self._lifecycle_lock:
+            if self.ended:
+                return
+            self.ended = True
         if status is not None:
             self.status = status
         if error is not None:
@@ -261,6 +296,8 @@ def start_span(name: str, **attrs: Any) -> Iterator[Span]:
     Set ``span.status = "error"`` inside the block to report a handled failure.
     """
     span = Span(name=name, ctx=child_context(current()), attrs=dict(attrs))
+    if name == "kernel.cell":
+        span.emit_start()
     token = set_current(span.ctx)
     try:
         yield span

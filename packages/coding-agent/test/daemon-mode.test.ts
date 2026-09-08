@@ -6297,6 +6297,100 @@ describe("daemon mode helpers", () => {
 		expect(internals.passivateSession).not.toHaveBeenCalledWith(queuedLeaf, expect.anything(), expect.anything());
 	});
 
+	it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+		"rejects invalid subagent lifecycle timeout %s",
+		(timeoutMs) => {
+			expect(
+				() =>
+					new AgentDaemon("/tmp/prime-agent-invalid-lifecycle-timeout.sock", {
+						defaultSessionConfig: { agentDir: "/tmp", cwd: "/tmp" },
+						createRuntime: vi.fn(),
+						subagentLifecycleTimeoutMs: timeoutMs,
+					}),
+			).toThrow("subagentLifecycleTimeoutMs must be a positive finite number");
+		},
+	);
+
+	it("keeps a late lifecycle completion observable after returning a bounded timeout", async () => {
+		const daemon = new AgentDaemon("/tmp/prime-agent-late-lifecycle.sock", {
+			defaultSessionConfig: { agentDir: "/tmp", cwd: "/tmp" },
+			createRuntime: vi.fn(),
+			subagentLifecycleTimeoutMs: 5,
+		});
+		let release!: () => void;
+		const action = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let completion: Promise<void> | undefined;
+		const internals = daemon as unknown as {
+			runSubagentLifecyclePhase(
+				operation: "passivate",
+				phase: "runtime_close",
+				childId: string,
+				sessionId: string,
+				action: () => Promise<void>,
+				onCompletion: (pending: Promise<void>) => void,
+			): Promise<void>;
+		};
+		await expect(
+			internals.runSubagentLifecyclePhase(
+				"passivate",
+				"runtime_close",
+				"child-1",
+				"session-1",
+				() => action,
+				(pending) => {
+					completion = pending;
+				},
+			),
+		).rejects.toThrow("Timed out passivate runtime_close for child child-1");
+		let settled = false;
+		void completion?.then(() => {
+			settled = true;
+		});
+		await Promise.resolve();
+		expect(settled).toBe(false);
+		release();
+		await completion;
+		expect(settled).toBe(true);
+	});
+
+	it("continues a child passivation sweep when one candidate fails", async () => {
+		const daemon = new AgentDaemon("/tmp/prime-agent-passivation-independent.sock", {
+			defaultSessionConfig: { agentDir: "/tmp", cwd: "/tmp" },
+			createRuntime: vi.fn(),
+		});
+		const first = makeState("first", "root");
+		const second = makeState("second", "root");
+		const internals = daemon as unknown as {
+			sessions: Map<string, ActiveSessionState>;
+			listPassiveRlmSubagents: ReturnType<typeof vi.fn>;
+			sessionPassivationSnapshot: ReturnType<typeof vi.fn>;
+			passivateSession: ReturnType<typeof vi.fn>;
+			passivateIdleChildren(threshold: number, now: number, limit: number): Promise<number>;
+		};
+		internals.sessions.set(first.activeSessionId, first);
+		internals.sessions.set(second.activeSessionId, second);
+		internals.listPassiveRlmSubagents = vi.fn(async () => []);
+		internals.sessionPassivationSnapshot = vi.fn(async (state: ActiveSessionState) => ({
+			isSessionActive: false,
+			attachedClients: 0,
+			hasRegisteredCronJob: false,
+			lastActivityAt: state === first ? 1 : 2,
+			hasParent: true,
+			hasNonPassiveDescendants: false,
+			isHydrating: false,
+		}));
+		internals.passivateSession = vi.fn(async (state: ActiveSessionState) => {
+			if (state === first) throw new Error("stuck candidate timed out");
+			return true;
+		});
+
+		await expect(internals.passivateIdleChildren(90, 200 * 60_000, 2)).rejects.toThrow("stuck candidate timed out");
+		expect(internals.passivateSession).toHaveBeenCalledTimes(2);
+		expect(internals.passivateSession.mock.calls.map((call) => call[0])).toContain(second);
+	});
+
 	it("passivates an idle leaf and makes list, attach, and message use the normal passive wake path", async () => {
 		const tempDir = mkdtempSync(join(tmpdir(), "prime-agent-daemon-passivate-child-"));
 		try {

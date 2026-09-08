@@ -145,7 +145,13 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
                 records = await _poll_journal(journal, count=1)
                 self.assertTrue(records[-1]["active"])
                 handle.kill(signal.SIGKILL)
-                records = await _poll_journal(journal, count=2)
+                await _poll_group_dead(handle.pid)
+                deadline = asyncio.get_running_loop().time() + 10
+                while asyncio.get_running_loop().time() < deadline:
+                    records = await _poll_journal(journal, count=1)
+                    if records and not records[-1]["active"]:
+                        break
+                    await asyncio.sleep(0.05)
             self.assertFalse(records[-1]["active"])
 
     async def test_early_shell_exit_returns_and_kills_group(self):
@@ -172,9 +178,14 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
                         break
                     await asyncio.sleep(0.05)
                 handle.kill(signal.SIGTERM)
-                records = await _poll_journal(journal, count=2, timeout=10)
+                await _poll_group_dead(handle.pid)
+                deadline = asyncio.get_running_loop().time() + 10
+                while asyncio.get_running_loop().time() < deadline:
+                    records = await _poll_journal(journal, count=1)
+                    if records and not records[-1]["active"]:
+                        break
+                    await asyncio.sleep(0.05)
             self.assertFalse(records[-1]["active"])
-            await _poll_group_dead(handle.pid)
 
     async def test_delivered_status_wins_when_shell_dies_during_completion(self):
         entered = threading.Event()
@@ -532,12 +543,13 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
         # Windows must raise without consulting PATH: a which() hit would be
         # the same repo-controlled-PATH hole the host-side resolution closed.
         with mock.patch.object(bash_module, "_IS_POSIX", False):
-            with mock.patch.object(
-                bash_module.shutil, "which", return_value=r"C:\evil\bash.exe"
-            ) as which:
-                with self.assertRaisesRegex(RuntimeError, "PRIME_AGENT_BASH_SHELL"):
-                    bash_module._shell()
-                which.assert_not_called()
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with mock.patch.object(
+                    bash_module.shutil, "which", return_value=r"C:\evil\bash.exe"
+                ) as which:
+                    with self.assertRaisesRegex(RuntimeError, "PRIME_AGENT_BASH_SHELL"):
+                        bash_module._shell()
+                    which.assert_not_called()
 
     async def test_pump_delayed_past_old_quiescence_bound_captures_all_output(self):
         # The ordered sentinel must wait through a pump delay beyond the old 500 ms bound.
@@ -1015,7 +1027,7 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
         term.assert_called_once()  # the killer saw _job None; no second terminate
         spawned[0].kill.assert_not_called()
         pid = spawned[0].pid
-        self.assertEqual(journal_calls, [(pid, True), (pid, False), (pid, False)])
+        self.assertEqual(journal_calls, [(pid, True), (pid, False)])
 
     async def test_windows_job_reap_and_kill(self):
         handle = bash("sleep 30")
@@ -1241,8 +1253,9 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_unconfigured_journal_stays_permissive(self):
         # Permissiveness is about configuration, not start-id availability.
-        with mock.patch.object(bash_module, "_process_start_id", return_value=None):
-            result = await bash("echo ok")
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with mock.patch.object(bash_module, "_process_start_id", return_value=None):
+                result = await bash("echo ok")
         self.assertEqual(result.exit_code, 0)
         self.assertIn("ok", result.output)
 

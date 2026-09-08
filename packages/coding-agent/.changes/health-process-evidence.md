@@ -1,0 +1,1 @@
+- Expanded `prime-agent health` with fail-closed process, kernel, child, lock, orphan, and diagnostic evidence.

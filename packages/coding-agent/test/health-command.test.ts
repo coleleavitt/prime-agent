@@ -123,9 +123,9 @@ describe("health command", () => {
 	it("summarizes all four incident classes and deduplicates provider span/log pairs", () => {
 		const path = writeLog();
 		const result = run(["--log", path]);
-		expect(result.code).toBe(0);
+		expect(result.code).toBe(2);
 		expect(result.stderr).toEqual([]);
-		expect(result.stdout[0]).toContain("health since 2026-09-07T12:00:00.000Z  (4 incidents;");
+		expect(result.stdout[0]).toContain("health since 2026-09-07T12:00:00.000Z  (5 incidents;");
 		expect(result.stdout[0]).toContain("Historian failures: 1");
 		expect(result.stdout[0]).toContain("Provider errors: 1");
 		expect(result.stdout[0]).toContain("Stuck turns: 1");
@@ -139,11 +139,13 @@ describe("health command", () => {
 		const path = writeLog();
 		const result = run(["--log", path, "--json", "--limit", "2"]);
 		const summary = JSON.parse(result.stdout[0]!) as {
+			status: string;
 			counts: Record<string, number>;
 			incidents: unknown[];
 			truncated: boolean;
 		};
-		expect(summary.counts).toEqual({ historian: 1, provider: 1, stuck_turn: 1, daemon_recovery: 1 });
+		expect(summary.counts).toMatchObject({ historian: 1, provider: 1, stuck_turn: 1, daemon_recovery: 1 });
+		expect(summary.status).toBe("unhealthy");
 		expect(summary.incidents).toHaveLength(2);
 		expect(summary.truncated).toBe(true);
 	});
@@ -197,6 +199,112 @@ describe("health command", () => {
 		const summary = JSON.parse(result.stdout[0]!) as { counts: Record<string, number>; files: string[] };
 		expect(summary.counts.provider).toBe(2);
 		expect(summary.files[0]).toBe(`${path}.old.1.gz`);
+	});
+
+	it("expands process, kernel, child, lock, and orphan evidence and fails closed", () => {
+		const path = writeLog();
+		writeFileSync(
+			path,
+			`${[
+				row({
+					ts: "2026-09-08T10:00:00.000Z",
+					component: "trace",
+					msg: "span_start",
+					name: "bash.command",
+					traceId: "p",
+					spanId: "p1",
+					attrs: { "bash.command": "sleep 99" },
+				}),
+				row({
+					ts: "2026-09-08T10:01:00.000Z",
+					component: "trace",
+					msg: "span_start",
+					name: "kernel.cell",
+					traceId: "k",
+					spanId: "k1",
+					attrs: { "kernel.cell": "print(1)" },
+				}),
+				row({
+					ts: "2026-09-08T10:02:00.000Z",
+					component: "trace",
+					msg: "span_end",
+					name: "rlm.child",
+					status: "error",
+					error: "child timed out",
+					traceId: "c",
+					spanId: "c1",
+				}),
+				row({
+					ts: "2026-09-08T10:03:00.000Z",
+					component: "trace",
+					msg: "span_end",
+					name: "cargo_lock_wait",
+					status: "error",
+					error: "lock timed out",
+					traceId: "l",
+					spanId: "l1",
+				}),
+				row({
+					ts: "2026-09-08T10:04:00.000Z",
+					component: "orphan-process",
+					msg: "Could not reap orphaned worker resources",
+				}),
+				row({
+					ts: "2026-09-08T10:05:00.000Z",
+					component: "kernel",
+					msg: "kernel_exit",
+					message: "unexpected exit",
+				}),
+			].join("\n")}\n`,
+		);
+		const result = run(["--log", path, "--json"]);
+		const summary = JSON.parse(result.stdout[0]!) as { status: string; counts: Record<string, number> };
+		expect(result.code).toBe(2);
+		expect(summary.status).toBe("unhealthy");
+		expect(summary.counts).toMatchObject({ process: 1, kernel: 2, child: 1, lock: 1, orphan: 1 });
+	});
+
+	it("returns UNKNOWN for malformed, empty, or stale evidence", () => {
+		const path = writeLog();
+		writeFileSync(path, "not json\n");
+		let result = run(["--log", path, "--json"]);
+		let summary = JSON.parse(result.stdout[0]!) as { status: string; parseErrors: number; stale: boolean };
+		expect(result.code).toBe(2);
+		expect(summary).toMatchObject({ status: "unknown", parseErrors: 1, stale: true });
+
+		writeFileSync(path, `${row({ ts: "2026-09-01T00:00:00.000Z", component: "session", msg: "ok" })}\n`);
+		result = run(["--log", path, "--json"]);
+		summary = JSON.parse(result.stdout[0]!) as typeof summary;
+		expect(summary).toMatchObject({ status: "unknown", parseErrors: 0, stale: true });
+	});
+
+	it("returns healthy only with valid recent evidence and no incidents", () => {
+		const path = writeLog();
+		writeFileSync(path, `${row({ ts: "2026-09-08T11:59:00.000Z", component: "session", msg: "heartbeat" })}\n`);
+		const result = run(["--log", path, "--json"]);
+		expect(result.code).toBe(0);
+		expect(JSON.parse(result.stdout[0]!)).toMatchObject({ status: "healthy", parseErrors: 0, stale: false });
+	});
+
+	it("keeps unmatched starts visible after the 100k bounded entry buffer evicts their position", () => {
+		const path = writeLog();
+		const lines = [
+			row({
+				ts: "2026-09-08T10:00:00.000Z",
+				component: "trace",
+				msg: "span_start",
+				name: "bash.command",
+				traceId: "large",
+				spanId: "open",
+			}),
+		];
+		for (let index = 0; index < 100_001; index++) {
+			lines.push(row({ ts: "2026-09-08T10:01:00.000Z", component: "noise", msg: `line ${index}` }));
+		}
+		writeFileSync(path, `${lines.join("\n")}\n`);
+		const result = run(["--log", path, "--json"]);
+		const summary = JSON.parse(result.stdout[0]!) as { counts: Record<string, number> };
+		expect(summary.counts.process).toBe(1);
 	});
 
 	it("reports missing logs and usage errors", () => {

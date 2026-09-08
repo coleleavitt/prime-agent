@@ -14,6 +14,12 @@ export interface InstalledOtlpExporter {
 	shutdown(): Promise<void>;
 }
 
+let installedExporter: InstalledOtlpExporter | undefined;
+
+export async function shutdownInstalledOtlpExporter(): Promise<void> {
+	await installedExporter?.shutdown();
+}
+
 export interface InstallOtlpExporterOptions {
 	version: string;
 	env?: OtlpRuntimeEnvironment;
@@ -76,14 +82,17 @@ export function installOtlpExporterFromEnv(options: InstallOtlpExporterOptions):
 	});
 	const unsubscribe = addSpanSink(exporter.sink);
 	let shutdownPromise: Promise<void> | undefined;
-	return {
+	const installed: InstalledOtlpExporter = {
 		exporter,
 		shutdown() {
 			shutdownPromise ??= (async () => {
 				unsubscribe();
 				await boundedShutdown(exporter, options.shutdownTimeoutMs ?? DEFAULT_OTLP_SHUTDOWN_TIMEOUT_MS);
+				if (installedExporter === installed) installedExporter = undefined;
 			})();
 			return shutdownPromise;
 		},
 	};
+	installedExporter = installed;
+	return installed;
 }
