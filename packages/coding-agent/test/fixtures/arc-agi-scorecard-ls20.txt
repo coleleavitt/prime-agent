@@ -1,0 +1,190 @@
+https://arcprize.org/api/games
+2026-09-08 13:46:01,233 | INFO | Game list: ['ls20-9607627b']
+2026-09-08 13:46:01 | INFO | Successfully fetched 25 environment(s) from API
+2026-09-08 13:46:01,418 | INFO | Successfully fetched 25 environment(s) from API
+***** MAKING SCORECARD
+2026-09-08 13:46:01 | INFO | Created new scorecard: 6ab903a6-3ba7-4bc4-9d77-0d7325dd793d
+2026-09-08 13:46:01,418 | INFO | Created new scorecard: 6ab903a6-3ba7-4bc4-9d77-0d7325dd793d
+***** MAKING ALL AGENTS with card id: 6ab903a6-3ba7-4bc4-9d77-0d7325dd793d
+2026-09-08 13:46:01 | INFO | Successfully fetched metadata for game ls20
+2026-09-08 13:46:01,606 | INFO | Successfully fetched metadata for game ls20
+2026-09-08 13:46:01 | INFO | Successfully downloaded game ls20 (version: 9607627b) to environment_files/ls20/9607627b
+2026-09-08 13:46:01,850 | INFO | Successfully downloaded game ls20 (version: 9607627b) to environment_files/ls20/9607627b
+2026-09-08 13:46:01 | INFO | Successfully loaded game class Ls20 from environment_files/ls20/9607627b/ls20.py
+2026-09-08 13:46:01,877 | INFO | Successfully loaded game class Ls20 from environment_files/ls20/9607627b/ls20.py
+2026-09-08 13:46:01,881 | INFO | created new recording for ls20-9607627b.random.80 into recordings/ls20-9607627b.random.80.b21b24cc-fd2c-4fca-a1aa-55c7b6339960.recording.jsonl
+2026-09-08 13:46:01,883 | INFO | ls20-9607627b - ACTION3: count 0, levels completed 0, avg fps 0.0)
+2026-09-08 13:46:01,885 | INFO | ls20-9607627b - ACTION2: count 1, levels completed 0, avg fps 10.0)
+2026-09-08 13:46:01,887 | INFO | ls20-9607627b - ACTION2: count 2, levels completed 0, avg fps 20.0)
+2026-09-08 13:46:01,889 | INFO | ls20-9607627b - ACTION5: count 3, levels completed 0, avg fps 30.0)
+2026-09-08 13:46:01,890 | INFO | ls20-9607627b - ACTION4: count 4, levels completed 0, avg fps 40.0)
+2026-09-08 13:46:01,892 | INFO | ls20-9607627b - ACTION4: count 5, levels completed 0, avg fps 50.0)
+2026-09-08 13:46:01,894 | INFO | ls20-9607627b - ACTION6: count 6, levels completed 0, avg fps 60.0)
+2026-09-08 13:46:01,896 | INFO | ls20-9607627b - ACTION1: count 7, levels completed 0, avg fps 70.0)
+2026-09-08 13:46:01,897 | INFO | ls20-9607627b - ACTION2: count 8, levels completed 0, avg fps 80.0)
+2026-09-08 13:46:01,899 | INFO | ls20-9607627b - ACTION4: count 9, levels completed 0, avg fps 90.0)
+2026-09-08 13:46:01,901 | INFO | ls20-9607627b - ACTION6: count 10, levels completed 0, avg fps 100.0)
+2026-09-08 13:46:01,902 | INFO | ls20-9607627b - ACTION4: count 11, levels completed 0, avg fps 110.0)
+2026-09-08 13:46:01,904 | INFO | ls20-9607627b - ACTION1: count 12, levels completed 0, avg fps 120.0)
+2026-09-08 13:46:01,906 | INFO | ls20-9607627b - ACTION6: count 13, levels completed 0, avg fps 130.0)
+2026-09-08 13:46:01,908 | INFO | ls20-9607627b - ACTION2: count 14, levels completed 0, avg fps 140.0)
+2026-09-08 13:46:01,910 | INFO | ls20-9607627b - ACTION4: count 15, levels completed 0, avg fps 150.0)
+2026-09-08 13:46:01,911 | INFO | ls20-9607627b - ACTION5: count 16, levels completed 0, avg fps 160.0)
+2026-09-08 13:46:01,913 | INFO | ls20-9607627b - ACTION2: count 17, levels completed 0, avg fps 170.0)
+2026-09-08 13:46:01,915 | INFO | ls20-9607627b - ACTION6: count 18, levels completed 0, avg fps 180.0)
+2026-09-08 13:46:01,916 | INFO | ls20-9607627b - ACTION1: count 19, levels completed 0, avg fps 190.0)
+2026-09-08 13:46:01,918 | INFO | ls20-9607627b - ACTION2: count 20, levels completed 0, avg fps 200.0)
+2026-09-08 13:46:01,919 | INFO | ls20-9607627b - ACTION7: count 21, levels completed 0, avg fps 210.0)
+2026-09-08 13:46:01,921 | INFO | ls20-9607627b - ACTION1: count 22, levels completed 0, avg fps 220.0)
+2026-09-08 13:46:01,922 | INFO | ls20-9607627b - ACTION4: count 23, levels completed 0, avg fps 230.0)
+2026-09-08 13:46:01,924 | INFO | ls20-9607627b - ACTION2: count 24, levels completed 0, avg fps 240.0)
+2026-09-08 13:46:01,925 | INFO | ls20-9607627b - ACTION4: count 25, levels completed 0, avg fps 250.0)
+2026-09-08 13:46:01,927 | INFO | ls20-9607627b - ACTION4: count 26, levels completed 0, avg fps 260.0)
+2026-09-08 13:46:01,928 | INFO | ls20-9607627b - ACTION1: count 27, levels completed 0, avg fps 270.0)
+2026-09-08 13:46:01,930 | INFO | ls20-9607627b - ACTION4: count 28, levels completed 0, avg fps 280.0)
+2026-09-08 13:46:01,931 | INFO | ls20-9607627b - ACTION4: count 29, levels completed 0, avg fps 290.0)
+2026-09-08 13:46:01,933 | INFO | ls20-9607627b - ACTION6: count 30, levels completed 0, avg fps 300.0)
+2026-09-08 13:46:01,934 | INFO | ls20-9607627b - ACTION2: count 31, levels completed 0, avg fps 310.0)
+2026-09-08 13:46:01,936 | INFO | ls20-9607627b - ACTION6: count 32, levels completed 0, avg fps 320.0)
+2026-09-08 13:46:01,938 | INFO | ls20-9607627b - ACTION7: count 33, levels completed 0, avg fps 330.0)
+2026-09-08 13:46:01,939 | INFO | ls20-9607627b - ACTION5: count 34, levels completed 0, avg fps 340.0)
+2026-09-08 13:46:01,941 | INFO | ls20-9607627b - ACTION7: count 35, levels completed 0, avg fps 350.0)
+2026-09-08 13:46:01,942 | INFO | ls20-9607627b - ACTION6: count 36, levels completed 0, avg fps 360.0)
+2026-09-08 13:46:01,944 | INFO | ls20-9607627b - ACTION7: count 37, levels completed 0, avg fps 370.0)
+2026-09-08 13:46:01,945 | INFO | ls20-9607627b - ACTION1: count 38, levels completed 0, avg fps 380.0)
+2026-09-08 13:46:01,947 | INFO | ls20-9607627b - ACTION4: count 39, levels completed 0, avg fps 390.0)
+2026-09-08 13:46:01,948 | INFO | ls20-9607627b - ACTION7: count 40, levels completed 0, avg fps 400.0)
+2026-09-08 13:46:01,950 | INFO | ls20-9607627b - ACTION1: count 41, levels completed 0, avg fps 410.0)
+2026-09-08 13:46:01,952 | INFO | ls20-9607627b - ACTION7: count 42, levels completed 0, avg fps 420.0)
+2026-09-08 13:46:01,953 | INFO | ls20-9607627b - ACTION6: count 43, levels completed 0, avg fps 430.0)
+2026-09-08 13:46:01,955 | INFO | ls20-9607627b - ACTION7: count 44, levels completed 0, avg fps 440.0)
+2026-09-08 13:46:01,956 | INFO | ls20-9607627b - ACTION2: count 45, levels completed 0, avg fps 450.0)
+2026-09-08 13:46:01,958 | INFO | ls20-9607627b - ACTION6: count 46, levels completed 0, avg fps 460.0)
+2026-09-08 13:46:01,960 | INFO | ls20-9607627b - ACTION2: count 47, levels completed 0, avg fps 470.0)
+2026-09-08 13:46:01,961 | INFO | ls20-9607627b - ACTION7: count 48, levels completed 0, avg fps 480.0)
+2026-09-08 13:46:01,963 | INFO | ls20-9607627b - ACTION1: count 49, levels completed 0, avg fps 490.0)
+2026-09-08 13:46:01,964 | INFO | ls20-9607627b - ACTION5: count 50, levels completed 0, avg fps 500.0)
+2026-09-08 13:46:01,966 | INFO | ls20-9607627b - ACTION1: count 51, levels completed 0, avg fps 510.0)
+2026-09-08 13:46:01,968 | INFO | ls20-9607627b - ACTION7: count 52, levels completed 0, avg fps 520.0)
+2026-09-08 13:46:01,969 | INFO | ls20-9607627b - ACTION6: count 53, levels completed 0, avg fps 530.0)
+2026-09-08 13:46:01,971 | INFO | ls20-9607627b - ACTION4: count 54, levels completed 0, avg fps 540.0)
+2026-09-08 13:46:01,972 | INFO | ls20-9607627b - ACTION1: count 55, levels completed 0, avg fps 550.0)
+2026-09-08 13:46:01,974 | INFO | ls20-9607627b - ACTION1: count 56, levels completed 0, avg fps 560.0)
+2026-09-08 13:46:01,975 | INFO | ls20-9607627b - ACTION2: count 57, levels completed 0, avg fps 570.0)
+2026-09-08 13:46:01,977 | INFO | ls20-9607627b - ACTION5: count 58, levels completed 0, avg fps 580.0)
+2026-09-08 13:46:01,979 | INFO | ls20-9607627b - ACTION5: count 59, levels completed 0, avg fps 590.0)
+2026-09-08 13:46:01,980 | INFO | ls20-9607627b - ACTION4: count 60, levels completed 0, avg fps 600.0)
+2026-09-08 13:46:01,982 | INFO | ls20-9607627b - ACTION2: count 61, levels completed 0, avg fps 610.0)
+2026-09-08 13:46:01,984 | INFO | ls20-9607627b - ACTION1: count 62, levels completed 0, avg fps 620.0)
+2026-09-08 13:46:01,985 | INFO | ls20-9607627b - ACTION7: count 63, levels completed 0, avg fps 630.0)
+2026-09-08 13:46:01,987 | INFO | ls20-9607627b - ACTION4: count 64, levels completed 0, avg fps 640.0)
+2026-09-08 13:46:01,989 | INFO | ls20-9607627b - ACTION4: count 65, levels completed 0, avg fps 650.0)
+2026-09-08 13:46:01,991 | INFO | ls20-9607627b - ACTION4: count 66, levels completed 0, avg fps 600.0)
+2026-09-08 13:46:01,993 | INFO | ls20-9607627b - ACTION7: count 67, levels completed 0, avg fps 609.09)
+2026-09-08 13:46:01,994 | INFO | ls20-9607627b - ACTION2: count 68, levels completed 0, avg fps 618.18)
+2026-09-08 13:46:01,996 | INFO | ls20-9607627b - ACTION5: count 69, levels completed 0, avg fps 627.27)
+2026-09-08 13:46:01,997 | INFO | ls20-9607627b - ACTION5: count 70, levels completed 0, avg fps 636.36)
+2026-09-08 13:46:02,006 | INFO | ls20-9607627b - ACTION1: count 71, levels completed 0, avg fps 591.67)
+2026-09-08 13:46:02,008 | INFO | ls20-9607627b - ACTION1: count 72, levels completed 0, avg fps 600.0)
+2026-09-08 13:46:02,010 | INFO | ls20-9607627b - ACTION5: count 73, levels completed 0, avg fps 608.33)
+2026-09-08 13:46:02,011 | INFO | ls20-9607627b - ACTION5: count 74, levels completed 0, avg fps 569.23)
+2026-09-08 13:46:02,013 | INFO | ls20-9607627b - ACTION7: count 75, levels completed 0, avg fps 576.92)
+2026-09-08 13:46:02,015 | INFO | ls20-9607627b - ACTION3: count 76, levels completed 0, avg fps 584.62)
+2026-09-08 13:46:02,016 | INFO | ls20-9607627b - ACTION7: count 77, levels completed 0, avg fps 592.31)
+2026-09-08 13:46:02,018 | INFO | ls20-9607627b - ACTION1: count 78, levels completed 0, avg fps 600.0)
+2026-09-08 13:46:02,020 | INFO | ls20-9607627b - ACTION7: count 79, levels completed 0, avg fps 607.69)
+2026-09-08 13:46:02,021 | INFO | ls20-9607627b - ACTION7: count 80, levels completed 0, avg fps 571.43)
+2026-09-08 13:46:02,021 | INFO | recording for ls20-9607627b.random.80 is available in recordings/ls20-9607627b.random.80.b21b24cc-fd2c-4fca-a1aa-55c7b6339960.recording.jsonl
+2026-09-08 13:46:02,021 | INFO | Exiting: agent reached MAX_ACTIONS of 80, took 0.14 seconds (578.57 average fps)
+2026-09-08 13:46:02 | INFO | Closed scorecard: 6ab903a6-3ba7-4bc4-9d77-0d7325dd793d
+2026-09-08 13:46:02,022 | INFO | Closed scorecard: 6ab903a6-3ba7-4bc4-9d77-0d7325dd793d
+2026-09-08 13:46:02,022 | INFO | --- FINAL SCORECARD REPORT ---
+2026-09-08 13:46:02,022 | INFO | {
+  "source_url": null,
+  "tags": [
+    "agent",
+    "random"
+  ],
+  "opaque": null,
+  "card_id": "6ab903a6-3ba7-4bc4-9d77-0d7325dd793d",
+  "api_key": null,
+  "score": 0.0,
+  "environments": [
+    {
+      "id": "ls20-9607627b",
+      "runs": [
+        {
+          "id": null,
+          "guid": "743762e0-bc98-406d-9a31-107442f534f7",
+          "score": 0.0,
+          "levels_completed": 0,
+          "actions": 81,
+          "resets": 0,
+          "state": "NOT_FINISHED",
+          "completed": false,
+          "level_scores": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "level_actions": [
+            81,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "level_baseline_actions": [
+            22,
+            123,
+            73,
+            84,
+            96,
+            192,
+            186
+          ],
+          "number_of_levels": null,
+          "number_of_environments": null,
+          "message": null
+        }
+      ],
+      "score": 0.0,
+      "actions": 81,
+      "levels_completed": 0,
+      "completed": false,
+      "level_count": 7,
+      "resets": 0
+    }
+  ],
+  "tags_scores": [
+    {
+      "id": "keyboard",
+      "guid": null,
+      "score": 0.0,
+      "levels_completed": 0,
+      "actions": 81,
+      "resets": null,
+      "state": null,
+      "completed": null,
+      "level_scores": null,
+      "level_actions": null,
+      "level_baseline_actions": null,
+      "number_of_levels": 7,
+      "number_of_environments": 1,
+      "message": null
+    }
+  ],
+  "total_environments_completed": 0,
+  "total_environments": 1,
+  "total_levels_completed": 0,
+  "total_levels": 7,
+  "total_actions": 81
+}
+2026-09-08 13:46:02,022 | INFO | Online scorecard is not available, to use the online API set the ONLINE_ONLY envvar to True
+2026-09-08 13:46:02,022 | INFO | Received SIGINT, exiting...

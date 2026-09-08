@@ -1,3 +1,4 @@
+export * from "./arc-agi-evaluator.js";
 export * from "./archive.js";
 export * from "./authority.js";
 export * from "./context-view.js";
