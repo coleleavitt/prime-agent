@@ -98,6 +98,9 @@ env -u TRACEPARENT -u PRIME_AGENT_SESSION_ID -u PRIME_AGENT_DAEMON_SOCKET \
   -u PRIME_AGENT_DAEMON_CLIENT_START_ID \
   bash -c 'cd prime-agent-runtime && uv run python -m unittest discover -s test'
 section "Prime coverage lanes"
+COVERAGE_HOME=$(mktemp -d "${TMPDIR:-/tmp}/prime-coverage-home.XXXXXX")
+cleanup_coverage_home() { rm -rf "$COVERAGE_HOME"; }
+trap cleanup_coverage_home EXIT
 npm --prefix packages/agent run test:coverage
 env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u GOOGLE_API_KEY \
   -u GEMINI_API_KEY -u GROQ_API_KEY -u CEREBRAS_API_KEY \
@@ -108,14 +111,17 @@ npm --prefix packages/tui run test:coverage
 env -u PRIME_AGENT_DAEMON_SOCKET -u PRIME_AGENT_DAEMON_TOKEN \
   -u PRIME_AGENT_DAEMON_SOCKET_OWNER_PID -u PRIME_AGENT_DAEMON_SOCKET_OWNER_START_ID \
   -u PRIME_AGENT_DAEMON_CLIENT_PID -u PRIME_AGENT_DAEMON_CLIENT_START_ID \
+  env HOME="$COVERAGE_HOME" PRIME_AGENT_CODING_AGENT_DIR="$COVERAGE_HOME/.prime/agent" \
   npm --prefix packages/coding-agent run test:coverage
 env -u PRIME_AGENT_DAEMON_SOCKET -u PRIME_AGENT_DAEMON_TOKEN \
   -u PRIME_AGENT_DAEMON_SOCKET_OWNER_PID -u PRIME_AGENT_DAEMON_SOCKET_OWNER_START_ID \
   -u PRIME_AGENT_DAEMON_CLIENT_PID -u PRIME_AGENT_DAEMON_CLIENT_START_ID \
+  env HOME="$COVERAGE_HOME" PRIME_AGENT_CODING_AGENT_DIR="$COVERAGE_HOME/.prime/agent" \
   npm --prefix packages/coding-agent run test:coverage:process
 env -u PRIME_AGENT_DAEMON_SOCKET -u PRIME_AGENT_DAEMON_TOKEN \
   -u PRIME_AGENT_DAEMON_SOCKET_OWNER_PID -u PRIME_AGENT_DAEMON_SOCKET_OWNER_START_ID \
   -u PRIME_AGENT_DAEMON_CLIENT_PID -u PRIME_AGENT_DAEMON_CLIENT_START_ID \
+  env HOME="$COVERAGE_HOME" PRIME_AGENT_CODING_AGENT_DIR="$COVERAGE_HOME/.prime/agent" \
   npm --prefix packages/coding-agent run test:coverage:kernel
 (
   cd prime-agent-runtime
