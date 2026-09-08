@@ -5942,10 +5942,16 @@ export class AgentSession {
 			action.payload.kind === "turn" &&
 			isAgentSessionMessage(primaryDeliveryRecord(action).message)
 		) {
-			assertAgentMessageQueueCapacity(
-				this._actionStore.unfinishedActions().length,
-				DEFAULT_AGENT_MESSAGE_MAX_PENDING_PER_SESSION,
-			);
+			// Only pending agent messages count against the agent message cap. Counting every
+			// queued action let unrelated backlog (queued user turns, wakeups) refuse a child's
+			// reply to its parent, which is the one message the parent is waiting for.
+			const pendingAgentMessages = this._actionStore
+				.unfinishedActions()
+				.filter(
+					(pending) =>
+						pending.payload.kind === "turn" && isAgentSessionMessage(primaryDeliveryRecord(pending).message),
+				).length;
+			assertAgentMessageQueueCapacity(pendingAgentMessages, DEFAULT_AGENT_MESSAGE_MAX_PENDING_PER_SESSION);
 		}
 		const coalescedOwner = options.restore ? undefined : this._coalescedFollowUpOwner(action);
 		if (coalescedOwner) {

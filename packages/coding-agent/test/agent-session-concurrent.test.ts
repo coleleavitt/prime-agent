@@ -595,6 +595,23 @@ describe("AgentSession concurrent prompt guard", () => {
 		expect(session.unfinishedActionCount).toBe(20);
 	});
 
+	it("counts only pending agent messages against the agent message cap", async () => {
+		createSession();
+		for (let index = 0; index < 25; index++) {
+			await session.followUp(`queued user turn ${index}`);
+		}
+		expect(session.unfinishedActionCount).toBeGreaterThanOrEqual(20);
+		const message = createAgentSessionMessage({
+			id: "agentmsg-after-backlog",
+			source: "agent_message",
+			message: "child reply after a full queue",
+			from: { clientId: "test" },
+			target: { activeSessionId: "target", sessionId: session.sessionId, runtimeKind: "subagent" },
+		});
+		await expect(session.queueAgentMessagePrompt(message.content, "steer", message)).resolves.toBeDefined();
+		await session.abort();
+	});
+
 	it("rejects an agent message when clear wins core admission", async () => {
 		createSession();
 		const internals = session as unknown as {
