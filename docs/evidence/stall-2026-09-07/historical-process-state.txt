@@ -1,0 +1,4 @@
+wrapper_pid=2740284 child_pid=2740286
+    PID     TID STAT WCHAN                            COMMAND
+2740286 2740286 Sl   futex_do_wait                    historical-even
+2740286 2740287 Sl   futex_do_wait                    event_bus_conti

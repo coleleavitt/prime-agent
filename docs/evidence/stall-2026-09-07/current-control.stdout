@@ -1,0 +1,5 @@
+
+running 1 test
+test event_bus_continues_watcher_delivery_after_listener_failure_and_reports_it ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 28 filtered out; finished in 0.00s
