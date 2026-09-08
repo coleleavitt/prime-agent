@@ -1,1 +1,2 @@
 - Improved session dashboard and resume startup performance for large saved-session catalogs.
+- Improved session selector startup by scanning the saved catalog only once.
