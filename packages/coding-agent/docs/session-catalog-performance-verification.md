@@ -54,3 +54,14 @@ Daemon compatibility: **137/137 tests passed** across:
 - TypeScript checking passed.
 - Installer check passed.
 - Browser smoke check passed.
+
+## Git-derived range verification
+
+The exact range from the parent of the first performance commit through the verification commit also contains unrelated concurrent changes. Git identified 10 changed test files across `packages/ai` and `packages/coding-agent`.
+
+With the agent-only `RLM_MAX_DEPTH` override removed, all Git-derived changed tests passed:
+
+- `packages/ai`: **24/24 tests passed** across 1 file.
+- `packages/coding-agent`: **225/225 tests passed** across 9 files.
+
+This broader run includes the five performance/resume test files listed above and every unrelated test file changed by interleaved commits in the same history range.
