@@ -313,6 +313,95 @@ describe("health command", () => {
 		expect(summary.incidents.some((item) => item.summary.includes("child-cancelled"))).toBe(false);
 	});
 
+	it("separates agent-visible tool errors from incidents and reports rejected agent messages", () => {
+		const path = writeLog();
+		writeFileSync(
+			path,
+			`${[
+				row({
+					ts: "2026-09-08T11:00:00.000Z",
+					component: "trace",
+					msg: "span_end",
+					name: "bash.command",
+					status: "error",
+					traceId: "5ff7651916cd43dd8448eb211c803191",
+					attrs: { "bash.command": "rg missing", "bash.exit_code": 1, error: "exit code 1" },
+				}),
+				row({
+					ts: "2026-09-08T11:01:00.000Z",
+					component: "trace",
+					msg: "span_end",
+					name: "bash.command",
+					status: "error",
+					traceId: "5ff7651916cd43dd8448eb211c803192",
+					attrs: { "bash.command": "missing-binary", error: "spawn ENOENT" },
+				}),
+				row({
+					ts: "2026-09-08T11:02:00.000Z",
+					component: "trace",
+					msg: "span_end",
+					name: "kernel.cell",
+					status: "error",
+					attrs: { error: "interrupted" },
+				}),
+				row({
+					ts: "2026-09-08T11:03:00.000Z",
+					component: "trace",
+					msg: "span_end",
+					name: "kernel.cell",
+					status: "error",
+					attrs: { error: "TypeError: 'str' object is not callable" },
+				}),
+				row({
+					ts: "2026-09-08T11:04:00.000Z",
+					component: "trace",
+					msg: "span_end",
+					name: "kernel.cell",
+					status: "error",
+					traceId: "5ff7651916cd43dd8448eb211c803193",
+					attrs: { error: "write failed" },
+				}),
+				row({
+					ts: "2026-09-08T11:05:00.000Z",
+					component: "trace",
+					msg: "span_end",
+					name: "kernel.host_request",
+					status: "error",
+					error: "Target session has too many pending messages: 24 unfinished, limit is 20",
+					sessionId: "child-session-9",
+					traceId: "5ff7651916cd43dd8448eb211c803194",
+					attrs: { "host_request.type": "agent_message.send" },
+				}),
+				row({
+					ts: "2026-09-08T11:06:00.000Z",
+					component: "trace",
+					msg: "span_end",
+					name: "kernel.host_request",
+					status: "error",
+					error: "agent_observe max_chars must be between 80 and 2000",
+					attrs: { "host_request.type": "agent_observe.recent" },
+				}),
+			].join("\n")}\n`,
+		);
+		const result = run(["--log", path, "--json"]);
+		const summary = JSON.parse(result.stdout[0]!) as {
+			counts: Record<string, number>;
+			toolErrors: Record<string, number>;
+			incidents: Array<{ category: string; summary: string; sessionId?: string }>;
+		};
+		expect(summary.toolErrors).toMatchObject({ process: 1, kernel: 3 });
+		expect(summary.counts).toMatchObject({ process: 1, kernel: 1, message_delivery: 1 });
+		expect(summary.incidents.find((item) => item.category === "process")?.summary).toBe("bash.command: spawn ENOENT");
+		expect(summary.incidents.find((item) => item.category === "kernel")?.summary).toBe("kernel.cell: write failed");
+		expect(summary.incidents.find((item) => item.category === "message_delivery")).toMatchObject({
+			summary: "agent_message.send: Target session has too many pending messages: 24 unfinished, limit is 20",
+			sessionId: "child-session-9",
+		});
+		const text = run(["--log", path]).stdout[0]!;
+		expect(text).toContain("Agent message delivery failures: 1");
+		expect(text).toContain("Agent-visible tool errors (not incidents): process=1 kernel=3");
+	});
+
 	it("returns UNKNOWN for malformed, empty, or stale evidence", () => {
 		const path = writeLog();
 		writeFileSync(path, "not json\n");

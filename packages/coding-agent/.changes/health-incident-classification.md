@@ -1,0 +1,2 @@
+- Stopped counting agent-visible tool errors as health incidents, so `prime-agent health` no longer buries real failures under failing commands and Python exceptions the agent already handled.
+- Added an agent message delivery category to `prime-agent health` that reports messages rejected because the target session's pending queue was full.
