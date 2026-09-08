@@ -11,6 +11,7 @@ import type {
 	DaemonDeleteSavedSessionResult,
 	DaemonSavedSessionInfo,
 	DaemonSavedSessionListCommand,
+	DaemonSavedSessionSearchTextEntry,
 } from "./daemon-protocol.js";
 import { deserializeSavedSessionInfo } from "./saved-session-info.js";
 
@@ -23,11 +24,25 @@ export async function listDaemonSavedSessions(
 	context: DaemonSavedSessionCatalogContext,
 	scope: AgentConnectionSavedSessionScope,
 	callbacks?: AgentConnectionSessionListCallbacks,
+	options: { includeSearchText?: boolean } = {},
 ): Promise<AgentConnectionSavedSessionInfo[]> {
+	// Only opt out against a daemon that can serve the corpus separately; an
+	// older daemon would ignore the flag and the corpus would be lost, not
+	// deferred.
+	const includeSearchText =
+		options.includeSearchText === false && client.supportsServerCapability("deferred_session_search_text")
+			? { includeSearchText: false }
+			: {};
 	const command: DaemonSavedSessionListCommand =
 		"activeSessionId" in context
-			? { type: "list_saved_sessions", activeSessionId: context.activeSessionId, scope }
-			: { type: "list_saved_sessions", cwd: context.cwd, sessionDir: context.sessionDir, scope };
+			? { type: "list_saved_sessions", activeSessionId: context.activeSessionId, scope, ...includeSearchText }
+			: {
+					type: "list_saved_sessions",
+					cwd: context.cwd,
+					sessionDir: context.sessionDir,
+					scope,
+					...includeSearchText,
+				};
 	const response = await client.request(command, 30000, {
 		onProgress: (update) => {
 			if (update.type === "session_list_progress") {
@@ -42,6 +57,30 @@ export async function listDaemonSavedSessions(
 	}
 	const data = response.data as { sessions: DaemonSavedSessionInfo[] };
 	return data.sessions.map(deserializeSavedSessionInfo);
+}
+
+/**
+ * Fetch transcript corpora for specific sessions. Returns an empty map when the
+ * daemon predates the capability, so callers keep whatever the catalog sent.
+ */
+export async function fetchDaemonSavedSessionSearchText(
+	client: DaemonTransportClient,
+	paths: readonly string[],
+	sessionDir?: string,
+): Promise<Map<string, string>> {
+	const corpora = new Map<string, string>();
+	if (paths.length === 0 || !client.supportsServerCapability("deferred_session_search_text")) {
+		return corpora;
+	}
+	const response = await client.request({ type: "get_saved_session_search_text", paths, sessionDir }, 30000);
+	if (!response.success) {
+		throw deserializeDaemonError(response);
+	}
+	const data = response.data as { entries: DaemonSavedSessionSearchTextEntry[] };
+	for (const entry of data.entries) {
+		corpora.set(entry.path, entry.allMessagesText);
+	}
+	return corpora;
 }
 
 export async function renameDaemonSavedSession(

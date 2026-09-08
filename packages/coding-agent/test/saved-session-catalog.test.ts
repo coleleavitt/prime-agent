@@ -3,12 +3,19 @@ import type { DaemonClient, DaemonClientRequestOptions } from "../src/modes/daem
 import type { DaemonCommand, DaemonResponse } from "../src/modes/daemon/daemon-protocol.js";
 import {
 	deleteDaemonSavedSession,
+	fetchDaemonSavedSessionSearchText,
 	listDaemonSavedSessions,
 	renameDaemonSavedSession,
 } from "../src/modes/daemon/saved-session-catalog.js";
+import { serializeSavedSessionInfo } from "../src/modes/daemon/saved-session-info.js";
 
 class FakeDaemonClient {
 	readonly commands: DaemonCommand[] = [];
+	constructor(readonly capabilities: readonly string[] = []) {}
+
+	supportsServerCapability(capability: string): boolean {
+		return this.capabilities.includes(capability);
+	}
 
 	async request(
 		command: DaemonCommand,
@@ -68,6 +75,16 @@ class FakeDaemonClient {
 							},
 						},
 					],
+				},
+			};
+		}
+		if (command.type === "get_saved_session_search_text") {
+			return {
+				type: "response",
+				command: "get_saved_session_search_text",
+				success: true,
+				data: {
+					entries: command.paths.map((path) => ({ path, allMessagesText: `corpus for ${path}` })),
 				},
 			};
 		}
@@ -148,5 +165,64 @@ describe("saved session catalog", () => {
 			{ type: "rename_saved_session", sessionPath: "/tmp/sessions/one.jsonl", name: "One" },
 			{ type: "delete_saved_session", sessionPath: "/tmp/sessions/one.jsonl" },
 		]);
+	});
+
+	it("keeps sending the transcript corpus to a daemon without the capability", async () => {
+		const fakeClient = new FakeDaemonClient();
+
+		await listDaemonSavedSessions(
+			asDaemonClient(fakeClient),
+			{ cwd: "/tmp/project", sessionDir: "/tmp/sessions" },
+			"current",
+			undefined,
+			{ includeSearchText: false },
+		);
+
+		// Opting out of a daemon that cannot serve the corpus separately would
+		// lose it, not defer it.
+		expect(fakeClient.commands[0]).not.toHaveProperty("includeSearchText");
+		expect(await fetchDaemonSavedSessionSearchText(asDaemonClient(fakeClient), ["/tmp/sessions/one.jsonl"])).toEqual(
+			new Map(),
+		);
+		expect(fakeClient.commands).toHaveLength(1);
+	});
+
+	it("defers the transcript corpus against a daemon that advertises the capability", async () => {
+		const fakeClient = new FakeDaemonClient(["deferred_session_search_text"]);
+
+		await listDaemonSavedSessions(
+			asDaemonClient(fakeClient),
+			{ cwd: "/tmp/project", sessionDir: "/tmp/sessions" },
+			"current",
+			undefined,
+			{ includeSearchText: false },
+		);
+		const corpora = await fetchDaemonSavedSessionSearchText(asDaemonClient(fakeClient), ["/tmp/sessions/one.jsonl"]);
+
+		expect(fakeClient.commands[0]).toMatchObject({ type: "list_saved_sessions", includeSearchText: false });
+		expect(fakeClient.commands[1]).toMatchObject({
+			type: "get_saved_session_search_text",
+			paths: ["/tmp/sessions/one.jsonl"],
+		});
+		expect(corpora.get("/tmp/sessions/one.jsonl")).toBe("corpus for /tmp/sessions/one.jsonl");
+	});
+
+	it("serializes the corpus unless the client opted out", () => {
+		const session = {
+			path: "/tmp/sessions/one.jsonl",
+			id: "one",
+			cwd: "/tmp/project",
+			rlmDepth: 0,
+			created: new Date("2026-01-01T00:00:00.000Z"),
+			modified: new Date("2026-01-02T00:00:00.000Z"),
+			messageCount: 1,
+			firstMessage: "hello",
+			allMessagesText: "hello transcript",
+		};
+
+		// Absent options is the old-client path and must still carry the corpus.
+		expect(serializeSavedSessionInfo(session).allMessagesText).toBe("hello transcript");
+		expect(serializeSavedSessionInfo(session, { includeSearchText: true }).allMessagesText).toBe("hello transcript");
+		expect(serializeSavedSessionInfo(session, { includeSearchText: false }).allMessagesText).toBe("");
 	});
 });

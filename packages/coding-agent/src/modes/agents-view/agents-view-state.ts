@@ -3,7 +3,13 @@ import { canonicalizePath } from "../../utils/paths.js";
 import type { AgentConnectionHeartbeat, AgentConnectionSavedSessionInfo } from "../agent-connection/index.js";
 import { rosterAgentIdForSummary } from "../daemon/agent-roster.js";
 import { classifySessionRosterStatus, type SessionSummary } from "../daemon/daemon-session-list.js";
-import { compileSearchQuery, matchCompiledSearchText } from "./session-view-search.js";
+import {
+	type CompiledSearchQuery,
+	compileSearchQuery,
+	createSearchTextCorpus,
+	matchSearchTextCorpus,
+	type SearchTextCorpus,
+} from "./session-view-search.js";
 
 export type AgentsViewSection = "running" | "idle" | "inactive";
 
@@ -21,7 +27,13 @@ export interface UnifiedSessionRecord {
 	/** Alternate keys used to restore selection while a session is persisted or reattached. */
 	identityAliases: readonly string[];
 	section: AgentsViewSection;
+	/** Cheap metadata corpus: ids, names, cwd, paths, first message, status summary. */
 	searchableText: string;
+	/**
+	 * Transcript corpus. `undefined` means "not loaded yet"; "" means loaded and
+	 * empty. Never treat `undefined` as a confirmed non-match.
+	 */
+	searchCorpus?: string;
 	heartbeat?: UnifiedSessionHeartbeat;
 }
 
@@ -165,7 +177,11 @@ function savedIdentityAliases(saved: AgentConnectionSavedSessionInfo): string[] 
 	return [fileIdentity(saved.path), `session:${saved.id}`];
 }
 
-function createUnifiedSearchableText(
+/**
+ * Metadata-only corpus. The transcript is deliberately excluded: it is megabytes
+ * per catalog and is attached separately once tier-2 search text is loaded.
+ */
+function createUnifiedSearchMetadataText(
 	daemon: SessionSummary | undefined,
 	saved: AgentConnectionSavedSessionInfo | undefined,
 ): string {
@@ -180,7 +196,6 @@ function createUnifiedSearchableText(
 		saved?.id,
 		saved?.name,
 		saved?.firstMessage,
-		saved?.allMessagesText,
 		saved?.agentStatus?.summary,
 		saved?.cwd,
 		saved?.path,
@@ -188,6 +203,13 @@ function createUnifiedSearchableText(
 	]
 		.filter((part): part is string => typeof part === "string" && part.length > 0)
 		.join(" ");
+}
+
+// "" means the transcript was not sent, not that the transcript is empty, so an
+// empty value must leave the record's corpus unloaded.
+function savedSearchCorpus(saved: AgentConnectionSavedSessionInfo | undefined): string | undefined {
+	const text = saved?.allMessagesText;
+	return typeof text === "string" && text.length > 0 ? text : undefined;
 }
 
 /**
@@ -221,7 +243,7 @@ export function reconcileUnifiedSessions(
 			...(heartbeat ? { heartbeat } : {}),
 		};
 		record.section = classifyUnifiedSession(record);
-		record.searchableText = createUnifiedSearchableText(daemon, undefined);
+		record.searchableText = createUnifiedSearchMetadataText(daemon, undefined);
 		records.push(record);
 		for (const alias of aliases) recordByAlias.set(alias, record);
 	}
@@ -232,16 +254,20 @@ export function reconcileUnifiedSessions(
 		if (record) {
 			record.saved = saved;
 			record.identityAliases = [...new Set([...record.identityAliases, ...aliases])];
-			record.searchableText = createUnifiedSearchableText(record.daemon, saved);
+			record.searchableText = createUnifiedSearchMetadataText(record.daemon, saved);
+			const corpus = savedSearchCorpus(saved);
+			if (corpus !== undefined) record.searchCorpus = corpus;
 			for (const alias of aliases) recordByAlias.set(alias, record);
 			continue;
 		}
+		const inactiveCorpus = savedSearchCorpus(saved);
 		const inactive: UnifiedSessionRecord = {
 			saved,
 			identity: aliases[0]!,
 			identityAliases: aliases,
 			section: "inactive",
-			searchableText: createUnifiedSearchableText(undefined, saved),
+			searchableText: createUnifiedSearchMetadataText(undefined, saved),
+			...(inactiveCorpus !== undefined ? { searchCorpus: inactiveCorpus } : {}),
 		};
 		records.push(inactive);
 		for (const alias of aliases) recordByAlias.set(alias, inactive);
@@ -406,23 +432,82 @@ export function getUnifiedSessionAncestorSessionIds(
 	return ancestors;
 }
 
+interface PreparedRecordSearchText {
+	metadataSource: string;
+	metadata: SearchTextCorpus;
+	corpusSource?: string;
+	corpus?: SearchTextCorpus;
+}
+
+// Normalizing a transcript is the expensive half of a keystroke, so each record
+// keeps its prepared forms until the underlying text itself changes.
+const preparedSearchTextByRecord = new WeakMap<UnifiedSessionRecord, PreparedRecordSearchText>();
+
+function prepareRecordSearchText(record: UnifiedSessionRecord): PreparedRecordSearchText {
+	const corpusSource =
+		record.searchCorpus !== undefined && record.searchCorpus.length > 0 ? record.searchCorpus : undefined;
+	const cached = preparedSearchTextByRecord.get(record);
+	if (cached && cached.metadataSource === record.searchableText && cached.corpusSource === corpusSource) {
+		return cached;
+	}
+	const metadata =
+		cached?.metadataSource === record.searchableText
+			? cached.metadata
+			: createSearchTextCorpus(record.searchableText);
+	const corpus =
+		corpusSource === undefined
+			? undefined
+			: cached?.corpusSource === corpusSource && cached.corpus
+				? cached.corpus
+				: createSearchTextCorpus(corpusSource);
+	const prepared: PreparedRecordSearchText = {
+		metadataSource: record.searchableText,
+		metadata,
+		...(corpus !== undefined && corpusSource !== undefined ? { corpusSource, corpus } : {}),
+	};
+	preparedSearchTextByRecord.set(record, prepared);
+	return prepared;
+}
+
+/**
+ * Metadata first, transcript only when it is loaded. An unloaded corpus is not a
+ * confirmed non-match: use getUnifiedSessionsMissingSearchCorpus to fetch it.
+ */
+function matchUnifiedSessionRecord(record: UnifiedSessionRecord, compiled: CompiledSearchQuery): boolean {
+	const prepared = prepareRecordSearchText(record);
+	if (matchSearchTextCorpus(prepared.metadata, compiled).matches) return true;
+	return prepared.corpus !== undefined && matchSearchTextCorpus(prepared.corpus, compiled).matches;
+}
+
 /** Compile the query once, then reuse it while filtering every session record. */
 export function filterUnifiedSessionsBySearchQuery(
 	records: readonly UnifiedSessionRecord[],
 	query: string,
 ): UnifiedSessionRecord[] {
 	const compiled = compileSearchQuery(query);
-	return filterUnifiedSessions(records, (text) => matchCompiledSearchText(text, compiled).matches);
+	return retainMatchesWithAncestors(records, (record) => matchUnifiedSessionRecord(record, compiled));
 }
 
 export function filterUnifiedSessions(
 	records: readonly UnifiedSessionRecord[],
 	matches: (searchableText: string) => boolean,
 ): UnifiedSessionRecord[] {
+	return retainMatchesWithAncestors(
+		records,
+		(record) =>
+			matches(record.searchableText) ||
+			(record.searchCorpus !== undefined && record.searchCorpus.length > 0 && matches(record.searchCorpus)),
+	);
+}
+
+function retainMatchesWithAncestors(
+	records: readonly UnifiedSessionRecord[],
+	matches: (record: UnifiedSessionRecord) => boolean,
+): UnifiedSessionRecord[] {
 	const index = buildUnifiedSessionIndex(records);
 	const retained = new Set<UnifiedSessionRecord>();
 	for (const record of records) {
-		if (!matches(record.searchableText)) continue;
+		if (!matches(record)) continue;
 		let current: UnifiedSessionRecord | undefined = record;
 		while (current && !retained.has(current)) {
 			retained.add(current);
@@ -432,6 +517,54 @@ export function filterUnifiedSessions(
 	// Keep catalog order and the original records so row ranking and sections
 	// remain authoritative while ancestors provide the hierarchy for matches.
 	return records.filter((record) => retained.has(record));
+}
+
+/**
+ * Attach loaded transcript corpus to existing records, keyed by session file path
+ * or session id, so a corpus fetch does not need a full catalog reconcile.
+ * Returns how many records changed.
+ */
+export function attachUnifiedSessionSearchCorpus(
+	records: readonly UnifiedSessionRecord[],
+	corpusByKey: ReadonlyMap<string, string>,
+	index: UnifiedSessionIndex = buildUnifiedSessionIndex(records),
+): number {
+	let attached = 0;
+	for (const [key, corpus] of corpusByKey) {
+		const record = findSearchCorpusRecord(key, index.byKey);
+		if (!record || record.searchCorpus === corpus) continue;
+		record.searchCorpus = corpus;
+		attached++;
+	}
+	return attached;
+}
+
+function findSearchCorpusRecord(
+	key: string,
+	byKey: ReadonlyMap<string, UnifiedSessionRecord>,
+): UnifiedSessionRecord | undefined {
+	for (const alias of [key, `session:${key}`, fileIdentity(key)]) {
+		const record = byKey.get(alias);
+		if (record) return record;
+	}
+	return undefined;
+}
+
+/**
+ * Session files whose transcript corpus is still unloaded. "" counts as loaded,
+ * so a session with a genuinely empty transcript is never re-fetched.
+ */
+export function getUnifiedSessionsMissingSearchCorpus(records: readonly UnifiedSessionRecord[]): string[] {
+	const paths: string[] = [];
+	const seen = new Set<string>();
+	for (const record of records) {
+		if (record.searchCorpus !== undefined) continue;
+		const path = record.saved?.path ?? record.daemon?.sessionFile;
+		if (path === undefined || seen.has(path)) continue;
+		seen.add(path);
+		paths.push(path);
+	}
+	return paths;
 }
 
 export interface UnifiedSessionIndex {

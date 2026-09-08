@@ -42,6 +42,7 @@ import { listDaemonHeartbeats } from "../daemon/heartbeat-catalog.js";
 import {
 	type DaemonSavedSessionCatalogContext,
 	deleteDaemonSavedSession,
+	fetchDaemonSavedSessionSearchText,
 	listDaemonSavedSessions,
 	renameDaemonSavedSession,
 } from "../daemon/saved-session-catalog.js";
@@ -72,6 +73,7 @@ import {
 	type AgentsViewScopeKey,
 	type AgentsViewSection,
 	type AgentsViewSelectionKey,
+	attachUnifiedSessionSearchCorpus,
 	buildAgentsViewRows,
 	buildUnifiedSessionIndex,
 	computeRecursiveRollups,
@@ -82,6 +84,7 @@ import {
 	getAgentsViewSessionTitle,
 	getAgentsViewSummaryIdentity as getSummaryIdentity,
 	getUnifiedSessionAncestorSessionIds,
+	getUnifiedSessionsMissingSearchCorpus,
 	hasUnifiedSessionChildren,
 	isSubagentSummary,
 	migrateAgentsViewIdentitySet,
@@ -657,6 +660,9 @@ export class AgentsViewMode implements Component, Focusable {
 	private workingIconFrame = 0;
 	private rows: AgentsViewRow[] = [];
 	private readonly renderPreparationCache = new AgentsViewRenderPreparationCache();
+	/** Corpora fetched for the current catalog generation, reattached after each reconcile. */
+	private readonly savedSearchCorpus = new Map<string, string>();
+	private searchCorpusFetchInFlight = false;
 	private lastListedSummaries: SessionSummary[] = [];
 	private lastVisibleSummaries: SessionSummary[] = [];
 	private savedSessions: AgentConnectionSavedSessionInfo[] = [];
@@ -1261,11 +1267,38 @@ export class AgentsViewMode implements Component, Focusable {
 	private queryChanged(): void {
 		this.persistentState.query = this.editor.getText();
 		this.armSavedSearchFetch();
+		this.armSearchCorpusFetch();
 		this.rebuildRows();
 		// Typing must not claim the visible fallback row while the restored
 		// anchor is still waiting for its catalog row.
 		if (!this.selectionAnchorPending) this.syncSelectedRowState();
 		this.ui.requestRender();
+	}
+
+	/**
+	 * The catalog is listed without transcript corpora, so the first real query
+	 * pulls them once per catalog generation and re-renders with full results.
+	 */
+	private armSearchCorpusFetch(): void {
+		if (this.editor.getText().trim().length === 0 || this.searchCorpusFetchInFlight) return;
+		const missing = getUnifiedSessionsMissingSearchCorpus(this.scopedRecords);
+		if (missing.length === 0) return;
+		this.searchCorpusFetchInFlight = true;
+		const generation = this.savedCatalogGeneration;
+		void (async () => {
+			try {
+				const corpora = await fetchDaemonSavedSessionSearchText(this.requireClient(), missing);
+				if (generation !== this.savedCatalogGeneration) return;
+				for (const [path, text] of corpora) this.savedSearchCorpus.set(path, text);
+				if (attachUnifiedSessionSearchCorpus(this.unifiedRecords, corpora, this.unifiedIndex) === 0) return;
+				this.rebuildRows();
+				this.ui.requestRender();
+			} catch {
+				// Searching without the transcript corpus is degraded, not broken.
+			} finally {
+				this.searchCorpusFetchInFlight = false;
+			}
+		})();
 	}
 
 	private getFilteredRecords(): UnifiedSessionRecord[] {
@@ -2156,6 +2189,10 @@ export class AgentsViewMode implements Component, Focusable {
 		this.lastVisibleSummaries = this.withPendingDeleteSession(visibleSessions);
 		this.unifiedRecords = reconcileUnifiedSessions(this.lastVisibleSummaries, this.savedSessions, this.heartbeats);
 		this.unifiedIndex = buildUnifiedSessionIndex(this.unifiedRecords);
+		// Reconcile builds fresh records, so previously fetched corpora must be reattached.
+		if (this.savedSearchCorpus.size > 0) {
+			attachUnifiedSessionSearchCorpus(this.unifiedRecords, this.savedSearchCorpus, this.unifiedIndex);
+		}
 		migrateAgentsViewIdentitySet(this.expandedSubagentParents, this.unifiedIndex.byKey);
 		migrateAgentsViewIdentitySet(this.programShownParents, this.unifiedIndex.byKey);
 
@@ -2205,12 +2242,17 @@ export class AgentsViewMode implements Component, Focusable {
 			// Keep the existing wire stream for mixed-version compatibility, but publish
 			// only its authoritative final snapshot. Rebuilding the accumulated prefix
 			// for every progress item made initial catalog loading quadratic.
+			// The corpus is ~14x the metadata and is only needed once a query is
+			// typed, so it is fetched separately by armSearchCorpusFetch.
 			const sessions = await listDaemonSavedSessions(
 				this.requireClient(),
 				this.getSavedSessionCatalogContext(),
 				"all",
+				undefined,
+				{ includeSearchText: false },
 			);
 			if (generation !== this.savedCatalogGeneration) return false;
+			this.savedSearchCorpus.clear();
 			this.savedSessions = sessions;
 			this.lastSuccessfulSavedSessions = sessions;
 			this.savedCatalogReady = true;

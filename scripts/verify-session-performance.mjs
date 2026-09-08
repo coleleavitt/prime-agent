@@ -39,8 +39,19 @@ requireInvariant(
 	"resume must perform exactly one flat-catalog scan",
 );
 
+const catalogIndex = readFileSync(resolve(codingAgent, "src/core/session-catalog-index.ts"), "utf8");
+requireInvariant(
+	catalogIndex.includes("allMessagesText: _searchText"),
+	"the metadata tier must not persist the transcript corpus",
+);
+requireInvariant(
+	/SESSION_SEARCH_TEXT_RETENTION = \d+/.test(catalogIndex),
+	"the corpus tier must be bounded by a retention limit",
+);
+
 const performanceTests = [
 	"test/agents-view-mode.test.ts",
+	"test/agents-view-state.test.ts",
 	"test/agents-view-usage-layout.test.ts",
 	"test/session-manager-list.test.ts",
 	"test/session-view-search.test.ts",

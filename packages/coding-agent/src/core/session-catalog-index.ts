@@ -12,7 +12,15 @@ import type { SessionUsageSummary } from "./usage.js";
  * Stored as JSONL rather than one JSON document: a torn or partially written
  * line costs one session's metadata instead of the whole index.
  */
-const SESSION_CATALOG_INDEX_VERSION = 1;
+const SESSION_CATALOG_INDEX_VERSION = 2;
+
+/**
+ * The transcript corpus is ~14x larger than the metadata it accompanies and is
+ * only needed once someone types a query, so it lives in a second file that is
+ * read on demand. Retaining it for every session would make the index grow with
+ * total transcript volume; retaining the newest slice keeps it bounded.
+ */
+export const SESSION_SEARCH_TEXT_RETENTION = 200;
 
 export interface SessionCatalogIndexEntry {
 	size: number;
@@ -29,6 +37,11 @@ export function getSessionCatalogIndexPath(sessionDir: string): string {
 	return join(sessionDir, "session-index.ndjson");
 }
 
+/** Companion corpus file for {@link getSessionCatalogIndexPath}. */
+export function getSessionSearchTextIndexPath(sessionDir: string): string {
+	return join(sessionDir, "session-search-index.ndjson");
+}
+
 interface SerializedSessionInfo {
 	id: string;
 	cwd: string;
@@ -40,13 +53,13 @@ interface SerializedSessionInfo {
 	modified: string;
 	messageCount: number;
 	firstMessage: string;
-	allMessagesText: string;
 	agentStatus?: AgentStatus;
 	usage?: SessionUsageSummary;
 }
 
 function serializeInfo(info: SessionInfo): SerializedSessionInfo {
-	const { path: _path, created, modified, ...rest } = info;
+	// `allMessagesText` is deliberately dropped here; it belongs to the corpus tier.
+	const { path: _path, allMessagesText: _searchText, created, modified, ...rest } = info;
 	return { ...rest, created: created.toISOString(), modified: modified.toISOString() };
 }
 
@@ -55,7 +68,8 @@ function deserializeInfo(value: SerializedSessionInfo, path: string): SessionInf
 	const modified = new Date(value.modified);
 	if (Number.isNaN(created.getTime()) || Number.isNaN(modified.getTime())) return undefined;
 	if (typeof value.id !== "string" || typeof value.cwd !== "string") return undefined;
-	return { ...value, path, created, modified };
+	// "" means "corpus not loaded", never "empty transcript".
+	return { ...value, path, created, modified, allMessagesText: "" };
 }
 
 interface SerializedIndexLine {
@@ -108,7 +122,6 @@ export async function writeSessionCatalogIndex(
 	entries: ReadonlyMap<string, SessionCatalogIndexEntry>,
 ): Promise<void> {
 	const path = getSessionCatalogIndexPath(sessionDir);
-	const temporaryPath = `${path}.${process.pid}.tmp`;
 	const lines = [JSON.stringify({ version: SESSION_CATALOG_INDEX_VERSION })];
 	for (const [sessionPath, entry] of entries) {
 		const line: SerializedIndexLine = {
@@ -119,6 +132,12 @@ export async function writeSessionCatalogIndex(
 		};
 		lines.push(JSON.stringify(line));
 	}
+	await writeIndexFile(path, lines);
+}
+
+/** Atomic and best-effort: a failed index write only costs the next scan. */
+async function writeIndexFile(path: string, lines: readonly string[]): Promise<void> {
+	const temporaryPath = `${path}.${process.pid}.tmp`;
 	try {
 		await writeFile(temporaryPath, `${lines.join("\n")}\n`);
 		await rename(temporaryPath, path);
@@ -137,4 +156,61 @@ function parseLine(line: string | undefined): object | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+export interface SessionSearchTextIndexEntry {
+	size: number;
+	mtimeMs: number;
+	searchText: string;
+}
+
+/** Read the corpus tier, keyed by absolute session path. */
+export async function readSessionSearchTextIndex(
+	sessionDir: string,
+): Promise<Map<string, SessionSearchTextIndexEntry>> {
+	const entries = new Map<string, SessionSearchTextIndexEntry>();
+	let contents: string;
+	try {
+		contents = await readFile(getSessionSearchTextIndexPath(sessionDir), "utf8");
+	} catch {
+		return entries;
+	}
+	const lines = contents.split("\n");
+	const header = parseLine(lines[0]);
+	if (!header || (header as { version?: unknown }).version !== SESSION_CATALOG_INDEX_VERSION) {
+		return entries;
+	}
+	for (const line of lines.slice(1)) {
+		const parsed = parseLine(line) as
+			| { file?: unknown; size?: unknown; mtimeMs?: unknown; searchText?: unknown }
+			| undefined;
+		if (!parsed || typeof parsed.file !== "string") continue;
+		if (typeof parsed.size !== "number" || typeof parsed.mtimeMs !== "number") continue;
+		if (typeof parsed.searchText !== "string") continue;
+		entries.set(join(sessionDir, parsed.file), {
+			size: parsed.size,
+			mtimeMs: parsed.mtimeMs,
+			searchText: parsed.searchText,
+		});
+	}
+	return entries;
+}
+
+/**
+ * Persist the corpus tier for the {@link SESSION_SEARCH_TEXT_RETENTION} most
+ * recently modified sessions. Older sessions stay searchable; their corpus is
+ * simply rebuilt from the transcript when a query needs it.
+ */
+export async function writeSessionSearchTextIndex(
+	sessionDir: string,
+	entries: ReadonlyMap<string, SessionSearchTextIndexEntry>,
+): Promise<void> {
+	const retained = [...entries.entries()]
+		.sort(([, a], [, b]) => b.mtimeMs - a.mtimeMs)
+		.slice(0, SESSION_SEARCH_TEXT_RETENTION);
+	const lines = [JSON.stringify({ version: SESSION_CATALOG_INDEX_VERSION })];
+	for (const [sessionPath, entry] of retained) {
+		lines.push(JSON.stringify({ file: basename(sessionPath), ...entry }));
+	}
+	await writeIndexFile(getSessionSearchTextIndexPath(sessionDir), lines);
 }

@@ -2049,6 +2049,15 @@ export class DaemonSupervisor {
 			}
 			case "list_saved_sessions":
 				return this.handleSavedSessionList(client, command);
+			case "get_saved_session_search_text": {
+				const corpora = await this.catalog.searchText(
+					command.paths,
+					command.sessionDir ?? this.defaultSessionConfig.sessionDir,
+				);
+				return success(command.id, command.type, {
+					entries: [...corpora].map(([path, allMessagesText]) => ({ path, allMessagesText })),
+				});
+			}
 			case "create": {
 				const worker = await this.createOrReuseWorker(this.protocolClientId(client), command);
 				const requestedSummary = command.sessionPath
@@ -2880,6 +2889,9 @@ export class DaemonSupervisor {
 		client: DaemonSocketClient,
 		command: Extract<DaemonCommand, { type: "list_saved_sessions" }>,
 	): Promise<DaemonResponse> {
+		// Absent means include: a client that predates the capability must keep
+		// receiving the corpus it still expects to search locally.
+		const includeSearchText = command.includeSearchText !== false;
 		let cwd: string;
 		let sessionDir: string | undefined;
 		let activeSessionId: string | undefined;
@@ -2909,17 +2921,21 @@ export class DaemonSupervisor {
 							type: "session_list_item",
 							command: "list_saved_sessions",
 							...(activeSessionId ? { activeSessionId } : {}),
-							session: serializeSavedSessionInfo(session),
+							session: serializeSavedSessionInfo(session, { includeSearchText }),
 						}),
 				}
 			: undefined;
-		const saved = await this.catalog.list(command.scope === "current" ? cwd : undefined, sessionDir, callbacks);
+		const saved = await this.catalog.list(command.scope === "current" ? cwd : undefined, sessionDir, callbacks, {
+			searchText: includeSearchText,
+		});
 		const sessions = await withPassiveRlmDescendantInfos(saved, this.rlmSpawnLedgerFor(sessionDir), {
 			...(command.scope === "current" ? { cwd } : {}),
 			...(callbacks ? { onSession: callbacks.onSession } : {}),
 			log: (message) => this.log(message),
 		});
-		return success(command.id, "list_saved_sessions", { sessions: sessions.map(serializeSavedSessionInfo) });
+		return success(command.id, "list_saved_sessions", {
+			sessions: sessions.map((session) => serializeSavedSessionInfo(session, { includeSearchText })),
+		});
 	}
 
 	private async createOrReuseWorker(clientId: string, command: DaemonCreateCommand): Promise<ResidentWorker> {

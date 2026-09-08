@@ -38,7 +38,13 @@ import {
 	createCompactionSummaryMessage,
 	createCustomMessage,
 } from "./messages.js";
-import { readSessionCatalogIndex, writeSessionCatalogIndex } from "./session-catalog-index.js";
+import {
+	readSessionCatalogIndex,
+	readSessionSearchTextIndex,
+	type SessionSearchTextIndexEntry,
+	writeSessionCatalogIndex,
+	writeSessionSearchTextIndex,
+} from "./session-catalog-index.js";
 import {
 	addAssistantUsage,
 	cloneUsage,
@@ -984,6 +990,8 @@ interface SessionInfoCacheEntry {
 	size: number;
 	mtimeMs: number;
 	info: SessionInfo | null;
+	/** False when `info.allMessagesText` is "" only because the corpus was not read. */
+	searchTextLoaded?: boolean;
 }
 
 // Session files are append-only, so an unchanged (size, mtimeMs) means identical
@@ -994,6 +1002,7 @@ const sessionInfoCache = new Map<string, SessionInfoCacheEntry>();
 // `sessionInfoCache` in this process. Reading it once per directory is enough:
 // afterwards the in-memory cache is at least as fresh as the file.
 const primedSessionIndexDirs = new Set<string>();
+const primedSessionSearchTextDirs = new Set<string>();
 
 /**
  * Seed the in-memory catalog cache from the on-disk index so a cold process
@@ -1007,8 +1016,34 @@ async function primeSessionInfoCacheFromIndex(dir: string): Promise<void> {
 	const persisted = await readSessionCatalogIndex(dir);
 	for (const [path, entry] of persisted) {
 		// A live entry was scanned by this process and is never older than disk.
-		if (!sessionInfoCache.has(path)) sessionInfoCache.set(path, entry);
+		if (!sessionInfoCache.has(path)) sessionInfoCache.set(path, { ...entry, searchTextLoaded: false });
 	}
+}
+
+/**
+ * Attach persisted corpora to cached metadata. Only entries whose
+ * `(size, mtimeMs)` still match are trusted, so a session edited since the
+ * corpus was written is left for a rescan.
+ */
+async function primeSessionSearchTextFromIndex(dir: string): Promise<void> {
+	if (primedSessionSearchTextDirs.has(dir)) return;
+	primedSessionSearchTextDirs.add(dir);
+	const persisted = await readSessionSearchTextIndex(dir);
+	for (const [path, entry] of persisted) {
+		const cached = sessionInfoCache.get(path);
+		if (!cached?.info || cached.searchTextLoaded) continue;
+		if (cached.size !== entry.size || cached.mtimeMs !== entry.mtimeMs) continue;
+		sessionInfoCache.set(path, {
+			...cached,
+			info: { ...cached.info, allMessagesText: entry.searchText },
+			searchTextLoaded: true,
+		});
+	}
+}
+
+export interface SessionListOptions {
+	/** False skips the corpus tier; listed sessions then carry `allMessagesText: ""`. */
+	searchText?: boolean;
 }
 
 /** Persist the current metadata for `dir`, best-effort. */
@@ -1019,6 +1054,17 @@ async function persistSessionInfoCache(dir: string, files: readonly string[]): P
 		if (cached) entries.set(file, cached);
 	}
 	await writeSessionCatalogIndex(dir, entries);
+}
+
+/** Persist the corpus tier for `dir`, best-effort. */
+async function persistSessionSearchTextCache(dir: string, files: readonly string[]): Promise<void> {
+	const entries = new Map<string, SessionSearchTextIndexEntry>();
+	for (const file of files) {
+		const cached = sessionInfoCache.get(file);
+		if (!cached?.info || cached.searchTextLoaded === false) continue;
+		entries.set(file, { size: cached.size, mtimeMs: cached.mtimeMs, searchText: cached.info.allMessagesText });
+	}
+	await writeSessionSearchTextIndex(dir, entries);
 }
 
 // Concurrent catalog requests (multiple clients, overlapping refresh generations)
@@ -1047,19 +1093,24 @@ async function withSessionScanSlot<T>(run: () => Promise<T>): Promise<T> {
 // racing a resume) share one scan instead of reading and parsing it twice.
 const sessionInfoInFlight = new Map<string, Promise<SessionInfo | null>>();
 
-export function readSessionInfo(filePath: string): Promise<SessionInfo | null> {
+/**
+ * `searchText` false serves cached metadata even when its corpus was never
+ * read, which is what lets a catalog listing skip the corpus tier entirely.
+ */
+export function readSessionInfo(filePath: string, options: { searchText?: boolean } = {}): Promise<SessionInfo | null> {
+	const wantsSearchText = options.searchText !== false;
 	const inFlight = sessionInfoInFlight.get(filePath);
 	if (inFlight) {
 		return inFlight;
 	}
-	const scan = readSessionInfoUncoalesced(filePath).finally(() => {
+	const scan = readSessionInfoUncoalesced(filePath, wantsSearchText).finally(() => {
 		sessionInfoInFlight.delete(filePath);
 	});
 	sessionInfoInFlight.set(filePath, scan);
 	return scan;
 }
 
-async function readSessionInfoUncoalesced(filePath: string): Promise<SessionInfo | null> {
+async function readSessionInfoUncoalesced(filePath: string, wantsSearchText: boolean): Promise<SessionInfo | null> {
 	let stats: Awaited<ReturnType<typeof stat>>;
 	try {
 		stats = await stat(filePath);
@@ -1068,10 +1119,13 @@ async function readSessionInfoUncoalesced(filePath: string): Promise<SessionInfo
 	}
 	const cached = sessionInfoCache.get(filePath);
 	if (cached && cached.size === stats.size && cached.mtimeMs === stats.mtimeMs) {
-		return cached.info;
+		// A metadata-only entry cannot answer a corpus request; fall through and scan.
+		if (!wantsSearchText || cached.info === null || cached.searchTextLoaded !== false) {
+			return cached.info;
+		}
 	}
 	const info = await withSessionScanSlot(() => scanSessionInfo(filePath, stats));
-	sessionInfoCache.set(filePath, { size: stats.size, mtimeMs: stats.mtimeMs, info });
+	sessionInfoCache.set(filePath, { size: stats.size, mtimeMs: stats.mtimeMs, info, searchTextLoaded: true });
 	return info;
 }
 
@@ -1224,7 +1278,9 @@ async function listSessionsFromDir(
 	callbacks?: SessionListCallbacks,
 	progressOffset = 0,
 	progressTotal?: number,
+	options: SessionListOptions = {},
 ): Promise<SessionInfo[]> {
+	const wantsSearchText = options.searchText !== false;
 	const sessions: SessionInfo[] = [];
 	if (!existsSync(dir)) {
 		return sessions;
@@ -1241,6 +1297,9 @@ async function listSessionsFromDir(
 		const total = progressTotal ?? files.length;
 
 		await primeSessionInfoCacheFromIndex(dir);
+		if (wantsSearchText) {
+			await primeSessionSearchTextFromIndex(dir);
+		}
 
 		const present = new Set(files);
 		let removedStaleEntry = false;
@@ -1260,7 +1319,7 @@ async function listSessionsFromDir(
 		// file order, so onProgress/onSession stay deterministic.
 		for (let offset = 0; offset < files.length; offset += SESSION_LIST_SCAN_CONCURRENCY) {
 			const batch = files.slice(offset, offset + SESSION_LIST_SCAN_CONCURRENCY);
-			const infos = await Promise.all(batch.map((file) => readSessionInfo(file)));
+			const infos = await Promise.all(batch.map((file) => readSessionInfo(file, { searchText: wantsSearchText })));
 			for (const info of infos) {
 				loaded++;
 				callbacks?.onProgress?.(progressOffset + loaded, total);
@@ -1276,6 +1335,9 @@ async function listSessionsFromDir(
 		const learnedSomething = files.some((file, index) => sessionInfoCache.get(file) !== entriesBeforeScan[index]);
 		if (learnedSomething || removedStaleEntry) {
 			await persistSessionInfoCache(dir, files);
+			if (wantsSearchText) {
+				await persistSessionSearchTextCache(dir, files);
+			}
 		}
 	} catch {
 		// Return no sessions when the directory cannot be read.
@@ -2283,29 +2345,73 @@ export class SessionManager {
 		return new SessionManager(targetCwd, dir, newSessionFile, true);
 	}
 
-	static async list(cwd: string, sessionDir?: string, callbacks?: SessionListCallbacks): Promise<SessionInfo[]> {
+	static async list(
+		cwd: string,
+		sessionDir?: string,
+		callbacks?: SessionListCallbacks,
+		options?: SessionListOptions,
+	): Promise<SessionInfo[]> {
 		const dir = sessionDir ?? getDefaultSessionDir(cwd);
 		const matchesCwd = (session: SessionInfo) => sessionInfoMatchesCwd(session, cwd);
 		const sessions = (
-			await listSessionsFromDir(dir, {
-				onProgress: callbacks?.onProgress,
-				onSession: callbacks?.onSession
-					? (session) => {
-							if (matchesCwd(session)) {
-								callbacks.onSession?.(session);
+			await listSessionsFromDir(
+				dir,
+				{
+					onProgress: callbacks?.onProgress,
+					onSession: callbacks?.onSession
+						? (session) => {
+								if (matchesCwd(session)) {
+									callbacks.onSession?.(session);
+								}
 							}
-						}
-					: undefined,
-			})
+						: undefined,
+				},
+				undefined,
+				undefined,
+				options,
+			)
 		).filter(matchesCwd);
 		sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
 		return sessions;
 	}
 
-	static async listAll(callbacks?: SessionListCallbacks, sessionDir?: string): Promise<SessionInfo[]> {
+	static async listAll(
+		callbacks?: SessionListCallbacks,
+		sessionDir?: string,
+		options?: SessionListOptions,
+	): Promise<SessionInfo[]> {
 		const sessionsDir = sessionDir ?? getSessionsDir();
-		const sessions = await listSessionsFromDir(sessionsDir, callbacks);
+		const sessions = await listSessionsFromDir(sessionsDir, callbacks, undefined, undefined, options);
 		sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
 		return sessions;
+	}
+
+	/**
+	 * Transcript corpora for specific sessions, used to answer a search after a
+	 * catalog was listed without them. Files whose corpus is not persisted are
+	 * rescanned; unreadable ones are simply absent from the result.
+	 */
+	static async readSearchText(paths: readonly string[], sessionDir?: string): Promise<Map<string, string>> {
+		const corpora = new Map<string, string>();
+		const byDir = new Map<string, string[]>();
+		for (const path of paths) {
+			const dir = sessionDir ?? dirname(path);
+			const group = byDir.get(dir);
+			if (group) group.push(path);
+			else byDir.set(dir, [path]);
+		}
+		for (const [dir, group] of byDir) {
+			await primeSessionInfoCacheFromIndex(dir);
+			await primeSessionSearchTextFromIndex(dir);
+			for (let offset = 0; offset < group.length; offset += SESSION_LIST_SCAN_CONCURRENCY) {
+				const batch = group.slice(offset, offset + SESSION_LIST_SCAN_CONCURRENCY);
+				const infos = await Promise.all(batch.map((path) => readSessionInfo(path)));
+				for (const [index, info] of infos.entries()) {
+					const path = batch[index];
+					if (info && path) corpora.set(path, info.allMessagesText);
+				}
+			}
+		}
+		return corpora;
 	}
 }

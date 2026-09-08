@@ -4150,6 +4150,9 @@ export class AgentDaemon {
 			}
 
 			case "list_saved_sessions": {
+				// Absent means include: a client that predates the capability must
+				// keep receiving the corpus it still expects to search locally.
+				const includeSearchText = command.includeSearchText !== false;
 				let activeSessionId: string | undefined;
 				let cwd: string;
 				let sessionDir: string | undefined;
@@ -4180,22 +4183,30 @@ export class AgentDaemon {
 									type: "session_list_item",
 									command: "list_saved_sessions",
 									...(activeSessionId ? { activeSessionId } : {}),
-									session: serializeSavedSessionInfo(session),
+									session: serializeSavedSessionInfo(session, { includeSearchText }),
 								});
 							},
 						}
 					: undefined;
+				const listOptions = { searchText: includeSearchText };
 				const savedSessions =
 					command.scope === "current"
-						? await SessionManager.list(cwd, sessionDir, callbacks)
-						: await SessionManager.listAll(callbacks, sessionDir);
+						? await SessionManager.list(cwd, sessionDir, callbacks, listOptions)
+						: await SessionManager.listAll(callbacks, sessionDir, listOptions);
 				const sessions = await withPassiveRlmDescendantInfos(savedSessions, this.rlmSpawnLedgerFor(sessionDir), {
 					...(command.scope === "current" ? { cwd } : {}),
 					...(callbacks ? { onSession: callbacks.onSession } : {}),
 					log: (message) => this.log(message),
 				});
 				return success(command.id, "list_saved_sessions", {
-					sessions: sessions.map(serializeSavedSessionInfo),
+					sessions: sessions.map((session) => serializeSavedSessionInfo(session, { includeSearchText })),
+				});
+			}
+
+			case "get_saved_session_search_text": {
+				const corpora = await SessionManager.readSearchText(command.paths, command.sessionDir);
+				return success(command.id, "get_saved_session_search_text", {
+					entries: [...corpora].map(([path, allMessagesText]) => ({ path, allMessagesText })),
 				});
 			}
 

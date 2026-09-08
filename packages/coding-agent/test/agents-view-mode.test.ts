@@ -112,6 +112,7 @@ describe("AgentsViewMode", () => {
 			armSavedSearchFetch(): void {
 				invoke("armSavedSearchFetch", self);
 			},
+			armSearchCorpusFetch: vi.fn(),
 		};
 
 		invoke("queryChanged", self);
@@ -171,7 +172,9 @@ describe("AgentsViewMode", () => {
 				savedCatalogRefreshPending: false,
 				lastSuccessfulSavedSessions: [],
 				savedSessions: [],
-				requireClient: () => ({ request }),
+				savedSearchCorpus: new Map(),
+				rearmSavedSearchFetch: vi.fn(),
+				requireClient: () => ({ request, supportsServerCapability: () => true }),
 				getSavedSessionCatalogContext: () => ({ cwd: "/tmp" }),
 				reconcileCatalogs: vi.fn(),
 				resolveMissingSelectionAnchor: vi.fn(),
@@ -399,7 +402,7 @@ describe("AgentsViewMode", () => {
 		const request = vi.fn(async () => ({ success: true as const, data: undefined }));
 		const self = {
 			options: { config: {} },
-			requireClient: () => ({ request }),
+			requireClient: () => ({ request, supportsServerCapability: () => true }),
 		};
 
 		await invoke("sendPrompt", self, "active-1", "private prompt", "steer");
@@ -552,7 +555,9 @@ describe("AgentsViewMode", () => {
 			savedCatalogRefreshPending: false,
 			lastSuccessfulSavedSessions: [],
 			savedSessions: [],
-			requireClient: () => ({ request }),
+			savedSearchCorpus: new Map(),
+			rearmSavedSearchFetch: vi.fn(),
+			requireClient: () => ({ request, supportsServerCapability: () => true }),
 			getSavedSessionCatalogContext: () => ({ cwd: "/tmp" }),
 			reconcileCatalogs: vi.fn(),
 			resolveMissingSelectionAnchor: vi.fn(),
@@ -617,6 +622,7 @@ describe("AgentsViewMode", () => {
 			persistentState,
 			lastListedSummaries: [root],
 			savedSessions: [],
+			savedSearchCorpus: new Map(),
 			heartbeats: [],
 			inactiveAgentIdentities: new Set(),
 			pendingDeleteAgent: undefined,
@@ -704,6 +710,7 @@ describe("AgentsViewMode", () => {
 				persistentState: {},
 				lastListedSummaries: [parent, child],
 				savedSessions: [],
+				savedSearchCorpus: new Map(),
 				heartbeats: [],
 				inactiveAgentIdentities: new Set(),
 				pendingDeleteAgent: undefined,
@@ -1226,6 +1233,7 @@ describe("AgentsViewMode persistent catalog state", () => {
 			setStatusMessage: vi.fn(),
 			applySessionList: vi.fn(),
 			armSavedSearchFetch: vi.fn(),
+			armSearchCorpusFetch: vi.fn(),
 		};
 
 		const reconnect = invoke("reconnectClient", self, client, new Error("disconnected")) as Promise<void>;

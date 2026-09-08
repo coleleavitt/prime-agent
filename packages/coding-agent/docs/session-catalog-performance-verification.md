@@ -92,3 +92,30 @@ Measured on the real 156-session store:
 
 Index size for that store is 2.9 MB, which includes the full per-session search
 corpus, so rich transcript search stays available without reparsing JSONL.
+
+## Two-tier catalog index
+
+The persisted index is split by access frequency:
+
+| File | Contents | Read |
+| --- | --- | --- |
+| `session-index.ndjson` | display metadata | always |
+| `session-search-index.ndjson` | transcript corpus, newest 200 sessions | only when a query needs it |
+
+The corpus was 94% of the single-file index, so keeping it out of the always-read
+tier is what makes catalog opening cheap. The 200-session retention limit bounds
+the corpus tier as the catalog grows; older sessions stay searchable and are
+rescanned on demand.
+
+Measured on the real 156-session store:
+
+| Path | Time | Bytes read |
+| --- | ---: | ---: |
+| Cold, no index (builds both tiers) | 881.4 ms | 345 MB of JSONL |
+| Warm, corpus included | 19.5 ms | 2.9 MB |
+| Warm, metadata only (dashboard) | 7.0 ms | 0.18 MB |
+
+The daemon now serves the corpus separately behind the
+`deferred_session_search_text` capability. A client that predates the capability
+never sends `includeSearchText`, and absent means include, so it still receives
+the transcript exactly as before.

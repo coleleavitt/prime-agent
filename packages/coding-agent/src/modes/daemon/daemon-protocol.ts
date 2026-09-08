@@ -80,8 +80,8 @@ export const DAEMON_COMMAND_ENVELOPE_MIN_PROTOCOL_VERSION = 7;
 // Revision 25 adds capability-gated direct worker peer transport discovery.
 // Revision 26 publishes own-session usage totals on session summary and saved-session rows.
 // Revision 27 lets a primary client provide transient context to recover a resident worker.
-export const DAEMON_SCHEMA_REVISION = 27;
-export const DAEMON_SCHEMA_ID = "protocol-7-schema-27-962b8b4c5e35";
+export const DAEMON_SCHEMA_REVISION = 28;
+export const DAEMON_SCHEMA_ID = "protocol-7-schema-28-3a91f0c4d7b2";
 
 export type DaemonProtocolName = typeof DAEMON_PROTOCOL_NAME;
 export type DaemonProtocolVersion = number;
@@ -129,7 +129,11 @@ export type DaemonServerCapability =
 	| "session_input_pause"
 	| "owned_prompt_cancellation"
 	| "acp_mcp_servers"
-	| "direct_peer_transport";
+	| "direct_peer_transport"
+	// The daemon honors includeSearchText on list_saved_sessions and serves
+	// get_saved_session_search_text. Clients must check before opting out of the
+	// transcript corpus, because an older daemon always sends it.
+	| "deferred_session_search_text";
 
 export type DaemonReplayStatus = "complete" | "partial" | "unavailable";
 
@@ -175,6 +179,7 @@ export const DAEMON_DEFAULT_SERVER_CAPABILITIES: readonly DaemonServerCapability
 	"rlm_quiescence_barrier",
 	"session_input_pause",
 	"acp_mcp_servers",
+	"deferred_session_search_text",
 ];
 
 /** Single-use short-lived credential for one direct TUI connection to one worker process incarnation. */
@@ -394,13 +399,21 @@ export interface DaemonUpdateRestartManifest {
 }
 
 export type DaemonSavedSessionListCommand =
-	| { id?: string; type: "list_saved_sessions"; activeSessionId: string; scope: AgentConnectionSavedSessionScope }
+	| {
+			id?: string;
+			type: "list_saved_sessions";
+			activeSessionId: string;
+			scope: AgentConnectionSavedSessionScope;
+			/** Absent means include, so a client predating the capability is unaffected. */
+			includeSearchText?: boolean;
+	  }
 	| {
 			id?: string;
 			type: "list_saved_sessions";
 			cwd: string;
 			sessionDir?: string;
 			scope: AgentConnectionSavedSessionScope;
+			includeSearchText?: boolean;
 	  };
 
 export type DaemonCommand =
@@ -413,6 +426,7 @@ export type DaemonCommand =
 			includeClientOwned?: boolean;
 	  }
 	| DaemonSavedSessionListCommand
+	| { id?: string; type: "get_saved_session_search_text"; paths: readonly string[]; sessionDir?: string }
 	| { id?: string; type: "list_agent_peers"; workerToken: string }
 	| { id?: string; type: "get_direct_worker_transport"; activeSessionId: string }
 	| { id?: string; type: "roster_subscribe" }
@@ -753,6 +767,11 @@ const SESSION_INPUT_PAUSE_COMMAND = {
 	capability: "session_input_pause",
 } as const;
 const AGENT_PEER_LIST_COMMAND = { minProtocol: 7, minSchemaRevision: 23 } as const;
+const DEFERRED_SESSION_SEARCH_TEXT_COMMAND = {
+	minProtocol: 7,
+	minSchemaRevision: 28,
+	capability: "deferred_session_search_text",
+} as const;
 const DIRECT_PEER_TRANSPORT_COMMAND = {
 	minProtocol: 7,
 	minSchemaRevision: 25,
@@ -763,6 +782,7 @@ export const DAEMON_COMMAND_COMPATIBILITY = {
 	ack_result: LEGACY_DAEMON_COMMAND,
 	list: LEGACY_DAEMON_COMMAND,
 	list_saved_sessions: LEGACY_DAEMON_COMMAND,
+	get_saved_session_search_text: DEFERRED_SESSION_SEARCH_TEXT_COMMAND,
 	list_agent_peers: AGENT_PEER_LIST_COMMAND,
 	get_direct_worker_transport: DIRECT_PEER_TRANSPORT_COMMAND,
 	create: LEGACY_DAEMON_COMMAND,
@@ -881,6 +901,7 @@ export const DAEMON_COMMAND_PLANE = {
 	ack_result: "control",
 	list: "control",
 	list_saved_sessions: "control",
+	get_saved_session_search_text: "control",
 	list_agent_peers: "control",
 	get_direct_worker_transport: "control",
 	create: "control",
@@ -1077,6 +1098,12 @@ export type DaemonRequestProgress =
 			activeSessionId?: string;
 			session: DaemonSavedSessionInfo;
 	  };
+
+/** One session's transcript corpus, fetched separately from the catalog. */
+export interface DaemonSavedSessionSearchTextEntry {
+	path: string;
+	allMessagesText: string;
+}
 
 export interface DaemonSavedSessionInfo {
 	path: string;
@@ -1301,6 +1328,7 @@ const READ_ONLY_DAEMON_COMMANDS: ReadonlySet<DaemonCommand["type"]> = new Set([
 	"ack_result",
 	"list",
 	"list_saved_sessions",
+	"get_saved_session_search_text",
 	"list_agent_peers",
 	"get_direct_worker_transport",
 	"attach",
