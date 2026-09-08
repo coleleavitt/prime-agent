@@ -37,6 +37,16 @@ The full W3C traceparent was not persisted. Its recoverable prefix is:
 
 The trace ID and parent span are persisted. The final two-character flags byte was never logged and cannot be recovered honestly.
 
+
+## Identifier provenance ledger
+
+`identifier-provenance.json` classifies every relevant identifier as directly persisted, independently reproduced, deterministically derived, or unrecoverable. In particular:
+
+- the original shell PID is persisted;
+- PGID equality is derived from the runtime process-group contract because the original `/proc` entry is gone;
+- the isolated reproduction independently records PID = PGID = SID and both thread wait channels;
+- the W3C flags byte and a pre-termination Bash start/end record were never persisted and are explicitly `null`.
+
 ## Mutex cycle
 
 The historical implementation represented by `historical-eventbus-deadlock.rs` preserves the load-bearing cycle:

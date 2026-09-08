@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 1,
+  "incident": "Rye EventBus deadlock, 2026-09-07",
+  "identifiers": [
+    {
+      "name": "parentSessionId",
+      "value": "01a0798b-5b2d-75ab-a43e-d21bce1b7251",
+      "provenance": "directly_persisted",
+      "source": "session-records.jsonl agent_message details.from.sessionId"
+    },
+    {
+      "name": "childSessionId",
+      "value": "01a079e8-aa23-748c-9b4a-88cb937fa10c",
+      "provenance": "directly_persisted",
+      "source": "artifact path and trace records sessionId"
+    },
+    {
+      "name": "childName",
+      "value": "execution-primitives-full",
+      "provenance": "directly_persisted",
+      "source": "session-records.jsonl session_info"
+    },
+    {
+      "name": "traceId",
+      "value": "416be8b73b78b1265c020008db687e70",
+      "provenance": "directly_persisted",
+      "source": "session-records.jsonl and trace-records.jsonl"
+    },
+    {
+      "name": "toolCallId",
+      "value": "call_0e26efe63a1c53178b2b0cbf6abb5465",
+      "provenance": "directly_persisted",
+      "source": "session-records.jsonl toolCall and toolResult"
+    },
+    {
+      "name": "toolExecuteSpanId",
+      "value": "f7bff4aa876e724a",
+      "provenance": "directly_persisted",
+      "source": "trace-records.jsonl"
+    },
+    {
+      "name": "kernelExecuteSpanId",
+      "value": "76e8d2f91f4ecbf3",
+      "provenance": "directly_persisted",
+      "source": "trace-records.jsonl"
+    },
+    {
+      "name": "kernelCellSpanId",
+      "value": "429381f604708259",
+      "provenance": "directly_persisted",
+      "source": "trace-records.jsonl"
+    },
+    {
+      "name": "bashCommandSpanId",
+      "value": "cd7af9524bfe8336",
+      "provenance": "directly_persisted",
+      "source": "trace-records.jsonl"
+    },
+    {
+      "name": "shellPid",
+      "value": 1022336,
+      "provenance": "directly_persisted",
+      "source": "orphan-journal-records.jsonl and trace-records.jsonl bash.pid"
+    },
+    {
+      "name": "shellPgid",
+      "value": 1022336,
+      "provenance": "deterministically_derived",
+      "source": "Python Bash runtime uses start_new_session=True then os.killpg(process.pid); original /proc entry no longer exists"
+    },
+    {
+      "name": "exactTest",
+      "value": "event_bus_continues_watcher_delivery_after_listener_failure_and_reports_it",
+      "provenance": "directly_persisted",
+      "source": "session-records.jsonl toolResult stops at this test"
+    },
+    {
+      "name": "historicalMutexWait",
+      "value": "main and event_bus_conti threads in futex_do_wait",
+      "provenance": "independently_reproduced",
+      "source": "historical-process-state.txt"
+    },
+    {
+      "name": "historicalProcessGroup",
+      "value": "PID=PGID=SID for isolated historical reproduction",
+      "provenance": "independently_reproduced",
+      "source": "historical-process-state.txt"
+    },
+    {
+      "name": "traceparentVersion",
+      "value": "00",
+      "provenance": "deterministically_derived",
+      "source": "only W3C version accepted/emitted by runtime"
+    },
+    {
+      "name": "traceparentFlags",
+      "value": null,
+      "provenance": "unrecoverable_never_persisted",
+      "source": "neither session, trace, nor orphan records store flags byte"
+    },
+    {
+      "name": "originalProcStat",
+      "value": null,
+      "provenance": "unrecoverable_after_cleanup",
+      "source": "/proc/1022336 removed when process exited"
+    },
+    {
+      "name": "preTerminationBashSpanRecord",
+      "value": null,
+      "provenance": "unrecoverable_never_persisted",
+      "source": "historical Python tracer emitted bash.command only on span_end; record flushed after SIGTERM"
+    }
+  ]
+}

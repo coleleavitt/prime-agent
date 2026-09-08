@@ -5,14 +5,17 @@ BIN=$(mktemp "${TMPDIR:-/tmp}/historical-eventbus.XXXXXX")
 trap 'rm -f "$BIN"' EXIT
 rustc --edition 2024 "$HERE/historical-eventbus-deadlock.rs" -o "$BIN"
 set +e
-timeout --signal=TERM --kill-after=2s 8s "$BIN" >"$HERE/historical.stdout" 2>"$HERE/historical.stderr" &
+timeout --signal=TERM --kill-after=2s 8s setsid "$BIN" >"$HERE/historical.stdout" 2>"$HERE/historical.stderr" &
 WRAPPER=$!
 sleep 1
 CHILD=$(pgrep -P "$WRAPPER" | head -1)
 {
   echo "wrapper_pid=$WRAPPER child_pid=${CHILD:-missing}"
   if [[ -n "${CHILD:-}" ]]; then
-    ps -L -p "$CHILD" -o pid,tid,stat,wchan:32,comm
+    ps -L -p "$CHILD" -o pid,ppid,pgid,sid,tid,stat,wchan:32,comm
+    if [[ -r "/proc/$CHILD/status" ]]; then
+      grep -E '^(Name|Pid|PPid|NSpgid|NSsid|Threads):' "/proc/$CHILD/status"
+    fi
   fi
 } >"$HERE/historical-process-state.txt"
 wait "$WRAPPER"
