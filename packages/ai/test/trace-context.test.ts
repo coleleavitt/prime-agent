@@ -180,6 +180,15 @@ describe("log stamping", () => {
 		expect(typeof end?.durationMs).toBe("number");
 	});
 
+	it("persists starts for bounded child lifecycle operations", async () => {
+		await withSpan("child.passivate", () => Promise.resolve());
+		await withSpan("child.delete", () => Promise.resolve());
+		expect(entries.filter((entry) => entry.msg === "span_start").map((entry) => entry.name)).toEqual([
+			"child.passivate",
+			"child.delete",
+		]);
+	});
+
 	it("does not persist starts for high-volume spans", async () => {
 		await withSpan("llm.request", () => Promise.resolve());
 		await withSpan("tool.execute", () => Promise.resolve());

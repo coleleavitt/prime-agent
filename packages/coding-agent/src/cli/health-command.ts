@@ -14,6 +14,8 @@ const OPEN_OPERATION_SPANS = new Map<string, HealthCategory>([
 	["kernel.cell", "kernel"],
 	["kernel.execute", "kernel"],
 	["rlm.child", "child"],
+	["child.passivate", "child"],
+	["child.delete", "child"],
 	["cargo_lock_wait", "lock"],
 	["bootstrap_lock_wait", "lock"],
 	["kernel.bootstrap_lock", "lock"],
@@ -378,6 +380,17 @@ export function summarizeHealth(
 		}
 	}
 	incidents.sort((left, right) => Date.parse(right.ts) - Date.parse(left.ts));
+	const deduplicatedIncidents = incidents.filter(
+		(item, index) =>
+			item.category !== "orphan" ||
+			incidents.findIndex(
+				(candidate) =>
+					candidate.category === "orphan" &&
+					candidate.traceId === item.traceId &&
+					candidate.sessionId === item.sessionId &&
+					candidate.summary === item.summary,
+			) === index,
+	);
 	const counts: Record<HealthCategory, number> = {
 		historian: 0,
 		provider: 0,
@@ -390,19 +403,19 @@ export function summarizeHealth(
 		orphan: 0,
 		diagnostic: 0,
 	};
-	for (const item of incidents) counts[item.category]++;
+	for (const item of deduplicatedIncidents) counts[item.category]++;
 	const stale = diagnostics.latestEntryAt === undefined || Date.parse(diagnostics.latestEntryAt) < Date.parse(since);
 	const unknown = diagnostics.parseErrors > 0 || stale;
 	if (diagnostics.parseErrors > 0) counts.diagnostic++;
 	if (stale) counts.diagnostic++;
 	return {
-		status: incidents.length > 0 ? "unhealthy" : unknown ? "unknown" : "healthy",
+		status: deduplicatedIncidents.length > 0 ? "unhealthy" : unknown ? "unknown" : "healthy",
 		generatedAt: new Date(nowMs).toISOString(),
 		since,
 		files,
 		counts,
-		incidents: incidents.slice(0, options.limit),
-		truncated: incidents.length > options.limit,
+		incidents: deduplicatedIncidents.slice(0, options.limit),
+		truncated: deduplicatedIncidents.length > options.limit,
 		parseErrors: diagnostics.parseErrors,
 		stale,
 		...(diagnostics.latestEntryAt ? { latestEntryAt: diagnostics.latestEntryAt } : {}),

@@ -335,6 +335,8 @@ const ACTIVE_OPERATION_SPANS = new Set([
 	"cron.job",
 	"ravo.run",
 	"update.self",
+	"child.passivate",
+	"child.delete",
 ]);
 
 /**
