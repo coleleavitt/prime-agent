@@ -318,31 +318,29 @@ class BashHandle:
         # Guard on group death, not _done: kill() must still reach a lingering
         # background group after the foreground result was already delivered.
         self._released = True
-        if self._reaped:
-            return
         self._killed = True
-        if not _IS_POSIX:
-            with self._kill_lock:
-                if self._reaped:  # re-check: _watch may have reaped while we waited
-                    return
-                if self._job is not None and _winjob.terminate(self._job):
-                    return
-                # TerminateJobObject failed or reap raced: taskkill fallback.
-                if not _taskkill_tree(self._pid):
-                    try:
-                        self._proc.kill()
-                    except OSError:
-                        pass
-            return
-        _signal_group(self._pid, sig)
+        with self._kill_lock:
+            if self._reaped:  # _watch may have reaped while we waited
+                return
+            if _IS_POSIX:
+                _signal_group(self._pid, sig)
+            elif self._job is not None and _winjob.terminate(self._job):
+                return
+            elif not _taskkill_tree(self._pid):
+                # TerminateJobObject/taskkill failed or reap raced: leader fallback.
+                try:
+                    self._proc.kill()
+                except OSError:
+                    pass
         if sig == signal.SIGTERM:
             timer = threading.Timer(grace, self._force_kill)
             timer.daemon = True
             timer.start()
 
     def _force_kill(self) -> None:
-        if not self._reaped:
-            _signal_group(self._pid, signal.SIGKILL)
+        with self._kill_lock:
+            if not self._reaped:
+                _signal_group(self._pid, signal.SIGKILL)
 
     def _pump(self) -> None:
         stdout = self._proc.stdout
@@ -656,7 +654,7 @@ class BashHandle:
                 attrs.setdefault("bash.silence_ms", round((now - self._last_output) * 1000))
                 if self._last_output_at is not None:
                     attrs["bash.last_output_at"] = self._last_output_at.isoformat()
-                self._span_context.run(span.end, error=error)
+                self._span_context.copy().run(span.end, error=error)
         except BaseException:  # noqa: BLE001 - tracing must never break the traced command
             return
 
@@ -1090,12 +1088,12 @@ def _kill_live_handles() -> None:
             handle._end_span(error="kernel shutdown")
         except BaseException:  # noqa: BLE001 - tracing must never block the kill
             pass
-        if _IS_POSIX:
-            delivered = _signal_group(handle._pid, signal.SIGKILL)
-        else:
-            with handle._kill_lock:
-                if handle._reaped:
-                    continue
+        with handle._kill_lock:
+            if handle._reaped:
+                continue
+            if _IS_POSIX:
+                _signal_group(handle._pid, signal.SIGKILL)
+            else:
                 delivered = handle._job is not None and _winjob.terminate(handle._job)
                 if not delivered:
                     delivered = _taskkill_tree(handle._pid)

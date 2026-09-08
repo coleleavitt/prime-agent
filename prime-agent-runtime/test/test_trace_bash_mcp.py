@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import signal
 import sys
+import threading
 import unittest
 from types import SimpleNamespace
 from unittest import mock
@@ -220,6 +221,23 @@ class BashCommandSpanTest(_SpanCapture):
         self.assertEqual(span["status"], "error")
         self.assertEqual(span["attrs"]["error"], "spawn failed: OSError: no fork")
         self.assertNotIn("bash.pid", span["attrs"])
+
+    async def test_concurrent_worker_threads_end_span_exactly_once(self):
+        handle = bash("sleep 30")
+        barrier = threading.Barrier(3)
+        threads = [
+            threading.Thread(target=lambda: (barrier.wait(), handle._end_span(error="race")))
+            for _ in range(2)
+        ]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join(timeout=2)
+            self.assertFalse(thread.is_alive())
+        handle.kill(signal.SIGKILL)
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(self.spans("bash.command")), 1)
 
     async def test_end_span_never_raises(self):
         handle = bash("true")
