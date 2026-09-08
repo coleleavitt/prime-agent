@@ -334,3 +334,19 @@ export function skippedSkillDryRun(proposal: RefinementProposal): SkillDryRunRes
 			: [],
 	);
 }
+
+/**
+ * The RAVO fast screen for one proposal: structural validity minus skill edits
+ * that fail the import dry-run. Without a kernel python the dry-run is skipped
+ * (never fail-closed), so the count equals countValidRefinementEdits. This is
+ * the Rocq S13 `fastDry` instance: a false screen can only cause a rejection.
+ */
+export async function screenRefinementProposal(
+	proposal: RefinementProposal,
+	opts: { signal?: AbortSignal; cwd?: string; timeoutMs?: number } = {},
+): Promise<{ validEdits: number; dryRun: SkillDryRunResult[] }> {
+	const structural = countValidRefinementEdits(proposal);
+	const pythonPath = resolveKernelPython();
+	const dryRun = pythonPath ? await dryRunSkillEdits(proposal, { pythonPath, ...opts }) : skippedSkillDryRun(proposal);
+	return { validEdits: screenValidEdits(proposal, structural, dryRun), dryRun };
+}

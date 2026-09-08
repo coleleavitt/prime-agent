@@ -227,7 +227,6 @@ import {
 	type AutoRefineReview,
 	appendGlobalRefinement,
 	applyRefinementProposal,
-	countValidRefinementEdits,
 	formatHarnessStateForPrompt,
 	generateRefinementId,
 	getGlobalHarnessStateDir,
@@ -252,6 +251,7 @@ import {
 	reviewAutoRefine,
 	saveHarnessState,
 } from "./refinement/index.js";
+import { screenRefinementProposal } from "./refinement/skill-dry-run.js";
 import { resolveConfigValue } from "./resolve-config-value.js";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.js";
 import { assessRlmChildSettlement } from "./rlm-child-settlement.js";
@@ -8711,7 +8711,7 @@ export class AgentSession {
 			const ravo = await ravoEvaluateProposal(plan.proposal, {
 				state: baselineState?.ravo ?? emptyAssistedRavoState(),
 				config: RAVO_DEFAULT_CONFIG,
-				validEdits: countValidRefinementEdits(plan.proposal),
+				validEdits: (await screenRefinementProposal(plan.proposal, { signal })).validEdits,
 				conversationText: serializeConversation(convertToLlm(this.agent.state.messages)).slice(-40_000),
 				harnessOverview: formatHarnessStateForPrompt(planningState, {
 					includeIpythonExamples: false,

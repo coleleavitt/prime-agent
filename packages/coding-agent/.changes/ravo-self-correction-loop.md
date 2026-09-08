@@ -1,0 +1,4 @@
+- Added a failure ledger: Python tracebacks, tool errors, and provider errors are fingerprinted and counted per session, and a fingerprint seen twice triggers a `/refine` that must address it.
+- Added recurring failures as RAVO opponents, provisional commits with a 20-turn observation window, and a gated repair refine when a claimed fix regresses.
+- Added a deterministic skill dry-run (import + callable check in the kernel python) as the RAVO fast screen for skill edits.
+- Fixed Assisted RAVO never counting judged misses and never threading persisted reducer state, so weakness pressure and the deep ratchet now apply.
