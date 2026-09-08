@@ -18,6 +18,7 @@ import {
 	REFINEMENT_OUTCOME_CUSTOM_TYPE,
 } from "../../src/core/messages.js";
 import {
+	type AutoRefineReason,
 	applyRefinementProposal,
 	getGlobalHarnessStateDir,
 	getHarnessStatePath,
@@ -31,8 +32,6 @@ import {
 import { parseSessionSlashCommand } from "../../src/core/slash-commands.js";
 import { createHarness, getAssistantTexts, getMessageText, getUserTexts, type Harness } from "./harness.js";
 import { createDeferred, createWaitingHarness, gatedHook, withStreaming } from "./scheduling.js";
-
-type AutoRefineReason = "turn_interval" | "compact";
 
 type AutoRefineInternals = {
 	_maybeAutoRefine(reason: AutoRefineReason): Promise<void>;

@@ -209,6 +209,17 @@ import {
 	emptyAssistedRavoState,
 } from "./ravo/authority.js";
 import { canonicalJson } from "./ravo/canonical-json.js";
+import {
+	emptyFailureLedger,
+	extractFailures,
+	type FailureLedger,
+	findProvisionalRegressions,
+	formatRecurrenceRefineInstructions,
+	formatRegressionRefineInstructions,
+	type ProvisionalRegression,
+	recordProvisionalRegressions,
+	updateFailureLedger,
+} from "./ravo/failure-ledger.js";
 import type { JsonValue } from "./ravo/reducer.js";
 import {
 	type AutoRefineReason,
@@ -1339,6 +1350,10 @@ export class AgentSession {
 	private _pendingThresholdCompactionAutonomousMessages: AgentMessage[] = [];
 	private _queuedGoalThresholdContinuation: AgentMessage | undefined;
 	private _pendingAutoRefineReview: { reason: AutoRefineReason; review: AutoRefineReview } | undefined;
+	private _failureLedger: FailureLedger | undefined;
+	private _failureLedgerDirty = false;
+	private _failureLedgerPendingRegressions: { regressions: ProvisionalRegression[]; turn: number }[] = [];
+	private readonly _failureRefineTriggered = new Set<string>();
 	private _autoRefineBranchVersion = 0;
 	private _autoRefineReviewAbort?: AbortController;
 	private _refineAbortController?: AbortController;
@@ -3785,6 +3800,10 @@ export class AgentSession {
 
 			if (event.message.role === "assistant") {
 				this._lastAssistantMessage = event.message;
+				// Turn boundary: fingerprint failures observed since the last scan and
+				// queue a deterministic recurrence/regression refine before any
+				// serialized background planning reads the harness state.
+				this._observeFailuresAtTurnBoundary();
 
 				const assistantMsg = event.message as AssistantMessage;
 				if (assistantMsg.stopReason !== "error") {
@@ -3867,6 +3886,7 @@ export class AgentSession {
 				// In serialized mode, agent-callable refine.run is serviced
 				// at the shouldStopAfterTurn boundary, not here at agent_end.
 				if (!this._serializedRefine) {
+					this._flushFailureLedger();
 					const consumedRequestedRefine = this._consumePendingRequestedRefine();
 					if (!consumedRequestedRefine) {
 						this._scheduleAutoRefineAfterAgentEnd();
@@ -7929,6 +7949,122 @@ export class AgentSession {
 			type: "refine_failed",
 			error: error instanceof Error ? error.message : String(error),
 		});
+	}
+
+	/**
+	 * Scan session messages appended since the last scan for failures, update
+	 * the per-session failure ledger, and queue a deterministic refine when a
+	 * fingerprint crosses the recurrence threshold or a provisional champion's
+	 * claimed fingerprint recurs inside its observation window. Both triggers
+	 * skip the auto-refine reviewer and cooldown (they ride the refine.run
+	 * channel) and are deduped per fingerprint per session. Best effort: the
+	 * ledger must never break the agent loop.
+	 */
+	private _observeFailuresAtTurnBoundary(): void {
+		try {
+			const localHarnessStateDir = this._localHarnessStateDir();
+			if (!localHarnessStateDir) return;
+			const messages: AgentMessage[] = [];
+			let turn = 0;
+			for (const entry of this.sessionManager.getBranch()) {
+				if (entry.type !== "message") continue;
+				messages.push(entry.message);
+				if (entry.message.role === "assistant") turn++;
+			}
+			let ledger =
+				this._failureLedger ?? loadHarnessState(localHarnessStateDir, "local").failures ?? emptyFailureLedger();
+			if (ledger.lastScannedEntryIndex > messages.length) {
+				// The branch shrank (rewind/branch switch); resume from the new tail.
+				ledger = { ...ledger, lastScannedEntryIndex: messages.length };
+			}
+			const observations = extractFailures(messages, { fromEntryIndex: ledger.lastScannedEntryIndex, turn });
+			const updated = updateFailureLedger(ledger, observations, { scannedThroughEntryIndex: messages.length });
+			this._failureLedger = updated.ledger;
+			this._failureLedgerDirty = true;
+
+			const recurredIds = [...new Set(observations.map((observation) => observation.fingerprint.id))];
+			const regressions = findProvisionalRegressions(
+				this._loadLocalHarnessRavoState(localHarnessStateDir),
+				recurredIds,
+				turn,
+			);
+			if (regressions.length > 0) {
+				this._failureLedgerPendingRegressions.push({ regressions, turn });
+			}
+			this._flushFailureLedger();
+
+			if (!this._autoRefineAllowedForSession() || !this.settingsManager.getAutoRefineSettings().enabled) {
+				return;
+			}
+			const regressed = regressions.filter((regression) =>
+				regression.fingerprints.some((id) => !this._failureRefineTriggered.has(`regression:${id}`)),
+			);
+			if (regressed.length > 0) {
+				for (const regression of regressed) {
+					for (const id of regression.fingerprints) this._failureRefineTriggered.add(`regression:${id}`);
+				}
+				const regressedIds = new Set(regressed.flatMap((regression) => regression.fingerprints));
+				const records = Object.values(updated.ledger.failures).filter((record) =>
+					regressedIds.has(record.fingerprint.id),
+				);
+				this._queueFailureTriggeredRefine(formatRegressionRefineInstructions(regressed, records));
+				return;
+			}
+			const recurring = updated.newlyRecurring.filter(
+				(record) => !this._failureRefineTriggered.has(`recurrence:${record.fingerprint.id}`),
+			);
+			if (recurring.length === 0) return;
+			for (const record of recurring) this._failureRefineTriggered.add(`recurrence:${record.fingerprint.id}`);
+			this._queueFailureTriggeredRefine(formatRecurrenceRefineInstructions(recurring));
+		} catch {
+			// Failure accounting is opportunistic; never interrupt the agent loop.
+		}
+	}
+
+	private _loadLocalHarnessRavoState(localHarnessStateDir: string): HarnessState["ravo"] {
+		return loadHarnessState(localHarnessStateDir, "local").ravo;
+	}
+
+	/**
+	 * Persist the in-memory ledger (and any recorded provisional regressions)
+	 * into the LOCAL harness state. Skipped while a refine plan or apply is in
+	 * flight: the RAVO certificate binds the baseline state digest, so a write
+	 * during planning would turn the commit into a binding-mismatch rejection.
+	 * The in-memory ledger stays authoritative and is flushed at the next boundary.
+	 */
+	private _flushFailureLedger(): void {
+		if (!this._failureLedgerDirty || !this._failureLedger) return;
+		if (this._refineInFlight || this._refinePlanInFlight || this._serializedPlanInFlight) return;
+		const localHarnessStateDir = this._localHarnessStateDir();
+		if (!localHarnessStateDir) return;
+		try {
+			const state = loadHarnessState(localHarnessStateDir, "local");
+			state.failures = this._failureLedger;
+			if (state.ravo) {
+				for (const pending of this._failureLedgerPendingRegressions) {
+					state.ravo = recordProvisionalRegressions(state.ravo, pending.regressions, pending.turn);
+				}
+			}
+			this._failureLedgerPendingRegressions = [];
+			saveHarnessState(localHarnessStateDir, state);
+			this._failureLedgerDirty = false;
+		} catch {
+			// Leave the ledger dirty; the next boundary retries.
+		}
+	}
+
+	/**
+	 * Queue a failure-triggered refine on the refine.run channel: serialized
+	 * sessions plan it in the background and apply at shouldStopAfterTurn,
+	 * interactive sessions consume it at agent_end. Existing pending
+	 * instructions are kept and the failure instructions appended.
+	 */
+	private _queueFailureTriggeredRefine(instructions: string): void {
+		const previous = this._pendingRequestedRefine;
+		this._pendingRequestedRefine = {
+			instructions: previous?.instructions ? `${previous.instructions}\n\n${instructions}` : instructions,
+			global: previous?.global,
+		};
 	}
 
 	private _consumePendingRequestedRefine(): boolean {

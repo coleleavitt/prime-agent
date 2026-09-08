@@ -17,6 +17,7 @@ import { getAgentDir } from "../../config.js";
 import { serializeConversation } from "../compaction/utils.js";
 import { convertToLlm } from "../messages.js";
 import { emptyAssistedRavoState, normalizeAssistedRavoState } from "../ravo/authority.js";
+import { type FailureLedger, normalizeFailureLedger } from "../ravo/failure-ledger.js";
 import type { JsonValue, RavoState } from "../ravo/reducer.js";
 import type { CustomEntry } from "../session-manager.js";
 import { RAVO_DEFAULT_CONFIG, type RavoGateReport, ravoEnabled, ravoEvaluateProposal } from "./ravo.js";
@@ -65,6 +66,8 @@ export interface HarnessState {
 	refinements: HarnessRefinementEvent[];
 	/** Generic RAVO reducer state; absent until the first gated refinement. */
 	ravo?: RavoState<JsonValue>;
+	/** Per-session failure ledger (local scope only); absent until the first observed failure. */
+	failures?: FailureLedger;
 }
 
 export interface RefinementEdit {
@@ -114,7 +117,7 @@ export interface RefineOptions {
 	global?: boolean;
 }
 
-export type AutoRefineReason = "turn_interval" | "compact";
+export type AutoRefineReason = "turn_interval" | "compact" | "recurrence" | "regression";
 
 export interface AutoRefineReviewContext {
 	reason: AutoRefineReason;
@@ -329,6 +332,9 @@ export function loadHarnessState(
 	}
 	if (parsed.ravo !== undefined) {
 		state.ravo = normalizeAssistedRavoState(parsed.ravo);
+	}
+	if (parsed.failures !== undefined) {
+		state.failures = normalizeFailureLedger(parsed.failures);
 	}
 	return state;
 }
