@@ -1,4 +1,5 @@
 import { getLogger } from "@earendil-works/pi-ai";
+import { shutdownInstalledOtlpExporter } from "./otlp-export.js";
 
 const log = getLogger("process");
 
@@ -28,7 +29,7 @@ export function installFatalCrashHandlers(): () => void {
 		handling = true;
 		reportFatalCrash(kind, error);
 		console.error(error instanceof Error ? (error.stack ?? error.message) : String(error));
-		process.exit(1);
+		void shutdownInstalledOtlpExporter().finally(() => process.exit(1));
 	};
 	const onException = (error: Error) => terminate("uncaught_exception", error);
 	const onRejection = (reason: unknown) => terminate("unhandled_rejection", reason);

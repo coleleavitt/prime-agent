@@ -755,17 +755,29 @@ async function acquireBootstrapLock(venv: string, options: EnsureKernelPythonOpt
 
 				const owner = await readBootstrapLockOwner(lockDir);
 				if (owner ? !bootstrapLockOwnerIsRunning(owner) : await lockWithoutOwnerIsStale(lockDir)) {
-					// Re-read immediately before removal. Another contender may have reclaimed
-					// the stale directory and acquired it since our first observation.
-					const currentOwner = await readBootstrapLockOwner(lockDir);
-					if (currentOwner?.token !== owner?.token) continue;
+					// Claim the exact directory atomically before deleting it. A contender can
+					// recreate `lockDir` after this rename without being removed by us.
+					const staleDir = `${lockDir}.stale-${randomUUID()}`;
+					try {
+						await rename(lockDir, staleDir);
+					} catch (renameError) {
+						if (isNodeError(renameError, "ENOENT")) continue;
+						throw renameError;
+					}
+					const claimedOwner = await readBootstrapLockOwner(staleDir);
+					if (claimedOwner?.token !== owner?.token) {
+						// The observed owner changed before our atomic claim. Restore it only if
+						// nobody has acquired the canonical path, then retry normally.
+						await rename(staleDir, lockDir).catch(() => undefined);
+						continue;
+					}
 					bootstrapLog.warn("reclaiming stale kernel bootstrap lock", {
 						venv,
 						ownerPid: owner?.pid,
 						ownerProcessStartId: owner?.processStartId,
 						ownerStartedAt: owner?.createdAt,
 					});
-					await rm(lockDir, { recursive: true, force: true });
+					await rm(staleDir, { recursive: true, force: true });
 					continue;
 				}
 

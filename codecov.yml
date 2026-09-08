@@ -23,7 +23,7 @@ component_management:
   default_rules:
     statuses:
       - type: project
-        target: auto
+        target: 70%
         threshold: 0%
         informational: false
       - type: patch

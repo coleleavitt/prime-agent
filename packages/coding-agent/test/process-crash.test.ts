@@ -2,9 +2,10 @@ import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.js";
-import { fatalCrashFields } from "../src/core/process-crash.js";
+import { installOtlpExporterFromEnv } from "../src/core/otlp-export.js";
+import { fatalCrashFields, installFatalCrashHandlers } from "../src/core/process-crash.js";
 
 const fixturePath = resolve(__dirname, "fixtures/process-crash-fixture.ts");
 const tempDirs: string[] = [];
@@ -52,6 +53,38 @@ describe("fatal crash diagnostics", () => {
 			kind: "unhandled_rejection",
 			errorMessage: "nope",
 		});
+	});
+
+	it("drains the installed OTLP exporter before exiting", async () => {
+		let releaseShutdown: (() => void) | undefined;
+		const shutdown = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					releaseShutdown = resolve;
+				}),
+		);
+		installOtlpExporterFromEnv({
+			version: "test",
+			env: { OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector.invalid" },
+			shutdownTimeoutMs: 5_000,
+			createExporter: () => ({
+				sink: () => undefined,
+				flush: async () => undefined,
+				shutdown,
+				abort: () => undefined,
+				metrics: () => [],
+				stats: () => ({ queued: 0, dropped: 0, exportErrors: 0 }),
+			}),
+		});
+		const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+		const cleanup = installFatalCrashHandlers();
+		process.emit("uncaughtException", new Error("drain before exit"));
+		await vi.waitFor(() => expect(shutdown).toHaveBeenCalledOnce());
+		expect(exit).not.toHaveBeenCalled();
+		releaseShutdown?.();
+		await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(1));
+		cleanup();
+		exit.mockRestore();
 	});
 
 	it.each([
