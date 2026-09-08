@@ -186,7 +186,8 @@ function readSupervisorConfig(agentDir: string): { defaultSessionConfig?: { sess
 }
 
 async function connectEventually(socketPath: string, child?: ChildProcess): Promise<DaemonClient> {
-	const deadline = Date.now() + 15_000;
+	const coverage = process.env.PRIME_AGENT_TEST_COVERAGE === "1";
+	const deadline = Date.now() + (coverage ? 45_000 : 15_000);
 	let lastError: unknown;
 	while (Date.now() < deadline) {
 		if (child && (child.exitCode !== null || child.signalCode !== null)) {
@@ -198,8 +199,8 @@ async function connectEventually(socketPath: string, child?: ChildProcess): Prom
 		}
 		const client = new DaemonClient(socketPath);
 		try {
-			await client.connect(250);
-			await client.waitForHello(1000);
+			await client.connect(coverage ? 1_000 : 250);
+			await client.waitForHello(coverage ? 5_000 : 1_000);
 			return client;
 		} catch (error) {
 			lastError = error;
