@@ -7,7 +7,8 @@
         "10a5f2aaf",
         "ccfcb1448",
         "5af42a109",
-        "bdd1c735b"
+        "bdd1c735b",
+        "461835b86"
       ],
       "trackedWorktreeClean": true,
       "checks": {
@@ -30,13 +31,20 @@
           "passed": 40,
           "skipped": 2,
           "failed": 0
+        },
+        "post-audit focused regression": {
+          "exitCode": 0,
+          "passed": 40,
+          "skipped": 2,
+          "failed": 0
         }
       }
     },
     "rye": {
       "commits": [
         "9b8be86",
-        "42f9417"
+        "42f9417",
+        "e18bc47"
       ],
       "preexistingUntrackedBaseline": true,
       "checks": {
@@ -67,8 +75,15 @@
           "exitCode": 0,
           "passed": 7,
           "failed": 0
+        },
+        "post-audit process regression": {
+          "exitCode": 0,
+          "passed": 7,
+          "failed": 0
         }
-      }
+      },
+      "cleanCheckoutBuildable": false,
+      "blockingReason": "Pre-existing project baseline (Cargo.toml, Cargo.lock, crate manifests, most source) was never tracked. Session rules forbid sweeping unrelated untracked files into a commit without explicit user override."
     }
   },
   "requirements": [
@@ -156,6 +171,10 @@
       "Rye local verify omitted docs"
     ],
     "externalRequirement": "Branch protection must require Codecov project, patch, and intended component status contexts; fail_ci_if_error covers upload/processing failure, not asynchronous threshold status failure.",
-    "ryeIntegrityBlocker": "Rye has no committed baseline. A clean checkout of its hardening commits is not buildable because pre-existing Cargo manifests and most source remain untracked. This session did not sweep unrelated baseline files."
+    "ryeIntegrityBlocker": "Rye has no committed baseline. A clean checkout of its hardening commits is not buildable because pre-existing Cargo manifests and most source remain untracked. This session did not sweep unrelated baseline files.",
+    "postAuditCommits": {
+      "prime-agent": "461835b86",
+      "rye": "e18bc47"
+    }
   }
 }
