@@ -149,16 +149,20 @@ describe("AgentsViewMode", () => {
 					allMessagesText: `session ${index}`,
 				}),
 			);
-			const request = vi.fn(async () => ({
-				success: true as const,
-				data: {
-					sessions: sessions.map((session) => ({
-						...session,
-						created: session.created.toISOString(),
-						modified: session.modified.toISOString(),
-					})),
-				},
+			const serializedSessions = sessions.map((session) => ({
+				...session,
+				created: session.created.toISOString(),
+				modified: session.modified.toISOString(),
 			}));
+			const request = vi.fn(
+				async (_command: unknown, _timeout: unknown, options: { onProgress: (update: unknown) => void }) => {
+					for (const session of serializedSessions) {
+						options.onProgress({ type: "session_list_item", session });
+						await Promise.resolve();
+					}
+					return { success: true as const, data: { sessions: serializedSessions } };
+				},
+			);
 			const self: Record<string, unknown> = {
 				options: { config: { cwd: "/tmp" } },
 				persistentState: {},

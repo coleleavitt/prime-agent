@@ -151,12 +151,14 @@ export function buildAgentsViewUsageLayout(
 export class AgentsViewRenderPreparationCache {
 	private rows: readonly AgentsViewRow[] | undefined;
 	private preparation: AgentsViewRenderPreparation | undefined;
+	private observedAt = Number.NEGATIVE_INFINITY;
 
 	get(rows: readonly AgentsViewRow[], now: number = Date.now()): AgentsViewRenderPreparation {
-		if (this.rows !== rows || !this.preparation || now >= this.preparation.expiresAt) {
+		if (this.rows !== rows || !this.preparation || now < this.observedAt || now >= this.preparation.expiresAt) {
 			this.rows = rows;
 			this.preparation = prepareAgentsViewRender(rows, now);
 		}
+		this.observedAt = now;
 		return this.preparation;
 	}
 }

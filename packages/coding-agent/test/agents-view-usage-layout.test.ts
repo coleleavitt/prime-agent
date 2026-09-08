@@ -99,6 +99,17 @@ describe("agents view render preparation", () => {
 		expect(afterExpiry.usageLayout.details.get(rows[0]!.identity)).toContain("31s");
 	});
 
+	it("invalidates cached age labels when wall time moves backward", () => {
+		const rows = [row({ summary: summary({ created: "2026-01-01T00:09:30Z" }) })];
+		const cache = new AgentsViewRenderPreparationCache();
+		const later = cache.get(rows, NOW);
+
+		const earlier = cache.get(rows, NOW - 10_000);
+
+		expect(earlier).not.toBe(later);
+		expect(earlier.usageLayout.details.get(rows[0]!.identity)).toContain("20s");
+	});
+
 	it("omits usage cells for empty sessions but retains their age", () => {
 		const empty = row({
 			section: "inactive",

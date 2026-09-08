@@ -55,7 +55,8 @@ const SESSION_STREAMING_LOAD_THRESHOLD_BYTES = 128 * 1024 * 1024;
 const SESSION_ASYNC_PARSE_YIELD_BYTES = 4 * 1024 * 1024;
 // Catalog reads are I/O-bound, but each active scan retains parser state and can
 // consume a file descriptor. Keep enough parallelism to hide storage latency
-// without opening every saved session at once.
+// without opening every saved session at once. The limit is process-wide, so
+// overlapping catalog requests share it instead of multiplying open scans.
 const SESSION_LIST_SCAN_CONCURRENCY = 8;
 
 // Entry types that can represent user intent (vs. daemon bookkeeping like
@@ -988,7 +989,45 @@ interface SessionInfoCacheEntry {
 // content: cache list metadata and rescan only files that changed.
 const sessionInfoCache = new Map<string, SessionInfoCacheEntry>();
 
-export async function readSessionInfo(filePath: string): Promise<SessionInfo | null> {
+// Concurrent catalog requests (multiple clients, overlapping refresh generations)
+// must not multiply open scans, so the slot pool below is module state rather
+// than per-request state. A waiter inherits the released slot directly; the
+// count is never decremented while another scan is queued to take it.
+let activeSessionScans = 0;
+const pendingSessionScans: Array<() => void> = [];
+
+async function withSessionScanSlot<T>(run: () => Promise<T>): Promise<T> {
+	if (activeSessionScans >= SESSION_LIST_SCAN_CONCURRENCY) {
+		await new Promise<void>((resolve) => pendingSessionScans.push(resolve));
+	} else {
+		activeSessionScans++;
+	}
+	try {
+		return await run();
+	} finally {
+		const next = pendingSessionScans.shift();
+		if (next) next();
+		else activeSessionScans--;
+	}
+}
+
+// Two callers asking for the same file (parallel `list`/`listAll`, or a refresh
+// racing a resume) share one scan instead of reading and parsing it twice.
+const sessionInfoInFlight = new Map<string, Promise<SessionInfo | null>>();
+
+export function readSessionInfo(filePath: string): Promise<SessionInfo | null> {
+	const inFlight = sessionInfoInFlight.get(filePath);
+	if (inFlight) {
+		return inFlight;
+	}
+	const scan = readSessionInfoUncoalesced(filePath).finally(() => {
+		sessionInfoInFlight.delete(filePath);
+	});
+	sessionInfoInFlight.set(filePath, scan);
+	return scan;
+}
+
+async function readSessionInfoUncoalesced(filePath: string): Promise<SessionInfo | null> {
 	let stats: Awaited<ReturnType<typeof stat>>;
 	try {
 		stats = await stat(filePath);
@@ -999,7 +1038,7 @@ export async function readSessionInfo(filePath: string): Promise<SessionInfo | n
 	if (cached && cached.size === stats.size && cached.mtimeMs === stats.mtimeMs) {
 		return cached.info;
 	}
-	const info = await scanSessionInfo(filePath, stats);
+	const info = await withSessionScanSlot(() => scanSessionInfo(filePath, stats));
 	sessionInfoCache.set(filePath, { size: stats.size, mtimeMs: stats.mtimeMs, info });
 	return info;
 }
@@ -1161,7 +1200,12 @@ async function listSessionsFromDir(
 
 	try {
 		const dirEntries = await readdir(dir);
-		const files = dirEntries.filter((f) => f.endsWith(".jsonl")).map((f) => join(dir, f));
+		// readdir order is filesystem-defined; sort so progress/session callbacks are
+		// reproducible across platforms rather than following creation order.
+		const files = dirEntries
+			.filter((f) => f.endsWith(".jsonl"))
+			.sort()
+			.map((f) => join(dir, f));
 		const total = progressTotal ?? files.length;
 
 		const present = new Set(files);
@@ -1172,9 +1216,9 @@ async function listSessionsFromDir(
 		}
 
 		let loaded = 0;
-		// Scan with bounded concurrency, then publish each batch in directory order.
-		// This improves cold catalog latency while keeping onProgress/onSession
-		// deterministic and avoiding an unbounded number of open JSONL streams.
+		// The scan bound itself is process-wide (withSessionScanSlot); this loop keeps
+		// per-request promise/stat fan-out bounded and publishes each batch in sorted
+		// file order, so onProgress/onSession stay deterministic.
 		for (let offset = 0; offset < files.length; offset += SESSION_LIST_SCAN_CONCURRENCY) {
 			const batch = files.slice(offset, offset + SESSION_LIST_SCAN_CONCURRENCY);
 			const infos = await Promise.all(batch.map((file) => readSessionInfo(file)));

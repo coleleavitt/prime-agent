@@ -32,7 +32,7 @@ Each value is the median of five current-HEAD runs. The sample covers reconcilia
 
 ## Deterministic tests
 
-Modified performance/regression files: **50/50 tests passed** across 5 files.
+Modified performance/regression files: **51/51 tests passed** across 5 files.
 
 - `test/agents-view-mode.test.ts`
 - `test/agents-view-usage-layout.test.ts`
@@ -68,6 +68,6 @@ This broader run includes the five performance/resume test files listed above an
 
 ## Independent final audit
 
-An independent code audit of commits `9c951bd4`, `6bcaf4b1`, and `829424ab` reported no release-blocking findings. It reviewed the complete changed implementations and surrounding call sites for reconciliation complexity, scanner bounds and order, search parity, render-cache expiry, resume matching semantics, daemon protocol classification, test adequacy, and changelog format.
+An independent code audit of commits `9c951bd4`, `6bcaf4b1`, and `829424ab` reported no release-blocking production findings. A follow-up test audit found that the reconciliation regression needed to emit progressive wire events; the test now emits every `session_list_item` before the terminal response. It reviewed the complete changed implementations and surrounding call sites for reconciliation complexity, scanner bounds and order, search parity, render-cache expiry, resume matching semantics, daemon protocol classification, test adequacy, and changelog format.
 
-Residual non-blocking risks are pathological reverse-ordered deep hierarchies, filesystem-scale stress beyond the deterministic scanner tests, lexical rather than realpath cwd equivalence, clock rollback during cached age display, and possible future drift if the upstream fuzzy scorer changes.
+A follow-up audit also found clock-rollback invalidation missing from the render cache. The cache now invalidates when observed wall time moves backward, with a regression test. Remaining non-blocking risks are pathological reverse-ordered deep hierarchies, filesystem-scale stress beyond the deterministic scanner tests, lexical rather than realpath cwd equivalence, and possible future drift if the upstream fuzzy scorer changes.
