@@ -23,12 +23,12 @@ Current real catalog: 156 sessions.
 
 | Synthetic sessions | Integrated build and render preparation |
 | ---: | ---: |
-| 100 | 9.79 ms |
-| 200 | 14.11 ms |
-| 400 | 27.15 ms |
-| 800 | 51.07 ms |
+| 100 | 7.34 ms |
+| 200 | 13.06 ms |
+| 400 | 28.05 ms |
+| 800 | 60.94 ms |
 
-The sample covers reconciliation, index construction, filtering, rollups, row construction, and render preparation. It is evidence of the expected near-linear trend, not a timing-gated test.
+Each value is the median of five current-HEAD runs. The sample covers reconciliation, index construction, filtering, rollups, row construction, and render preparation. It is evidence of the expected near-linear trend, not a timing-gated test.
 
 ## Deterministic tests
 
@@ -65,3 +65,9 @@ With the agent-only `RLM_MAX_DEPTH` override removed, all Git-derived changed te
 - `packages/coding-agent`: **225/225 tests passed** across 9 files.
 
 This broader run includes the five performance/resume test files listed above and every unrelated test file changed by interleaved commits in the same history range.
+
+## Independent final audit
+
+An independent code audit of commits `9c951bd4`, `6bcaf4b1`, and `829424ab` reported no release-blocking findings. It reviewed the complete changed implementations and surrounding call sites for reconciliation complexity, scanner bounds and order, search parity, render-cache expiry, resume matching semantics, daemon protocol classification, test adequacy, and changelog format.
+
+Residual non-blocking risks are pathological reverse-ordered deep hierarchies, filesystem-scale stress beyond the deterministic scanner tests, lexical rather than realpath cwd equivalence, clock rollback during cached age display, and possible future drift if the upstream fuzzy scorer changes.
