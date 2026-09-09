@@ -149,6 +149,13 @@ describe("RAVO controller", () => {
 		const cancelled = new AbortController();
 		cancelled.abort();
 		expect((await runRavoController(await base({ signal: cancelled.signal }))).reason).toBe("cancelled");
+		const midRun = new AbortController();
+		const midRunOptions = await base({ signal: midRun.signal });
+		midRunOptions.implement = vi.fn(async (_input, callOptions) => {
+			midRun.abort();
+			return { status: "aborted", tokens: 0, error: callOptions.signal.aborted ? "aborted" : "not aborted" };
+		});
+		expect((await runRavoController(midRunOptions)).reason).toBe("cancelled");
 		expect((await runRavoController(await base({ tokenBudget: 1 }))).reason).toBe("budget");
 		expect(
 			(

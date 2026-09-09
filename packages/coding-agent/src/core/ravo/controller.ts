@@ -256,7 +256,10 @@ async function runController<T extends JsonValue>(
 			if (!Number.isSafeInteger(result.tokens) || result.tokens < 0)
 				throw new Error("child returned invalid token usage");
 			cp.spentTokens += result.tokens;
-			if (result.status !== "completed") throw new ChildFailure(result.status, result.error);
+			if (result.status !== "completed") {
+				if (abort.signal.aborted) throw new Stop("cancelled");
+				throw new ChildFailure(result.status, result.error);
+			}
 			return result.value;
 		} finally {
 			reserved -= options.reservationPerCall;
