@@ -16,6 +16,7 @@ import {
 import { APP_TITLE, appendRotatingLog, getAgentDir, getClientErrorLogPath, VERSION } from "../../config.js";
 import type { AgentSessionRuntimeConfig } from "../../core/agent-session-config.js";
 import { KeybindingsManager } from "../../core/keybindings.js";
+import type { RavoRunStatus } from "../../core/ravo/run-service.js";
 import { SessionManager } from "../../core/session-manager.js";
 import {
 	BUILTIN_SLASH_COMMANDS,
@@ -73,12 +74,14 @@ import {
 	type AgentsViewScopeKey,
 	type AgentsViewSection,
 	type AgentsViewSelectionKey,
+	attachRavoRunStatus,
 	buildAgentsViewRows,
 	buildUnifiedSessionIndex,
 	computeRecursiveRollups,
 	createUnattachableChildOpenResult,
 	filterUnifiedSessions,
 	formatHeartbeatBadge,
+	formatRavoRunStatusLine,
 	getAgentsViewSelectionKey,
 	getAgentsViewSessionTitle,
 	getAgentsViewSummaryIdentity as getSummaryIdentity,
@@ -177,6 +180,8 @@ export type AgentsViewPersistentState = {
 	lastSuccessfulLiveSummaries?: SessionSummary[];
 	savedCatalogGeneration?: number;
 	heartbeats?: AgentConnectionHeartbeat[];
+	/** Latest live RAVO status per session id, valid for the current daemon connection. */
+	ravoStatusBySessionId?: Map<string, RavoRunStatus>;
 };
 
 type PromptCommand = Extract<DaemonCommand, { type: "prompt" }>;
@@ -432,6 +437,7 @@ export async function runAgentsViewMode(options: AgentsViewModeOptions): Promise
 		await persistentState.rosterStore?.dispose();
 		persistentState.rosterStore = undefined;
 		persistentState.rosterClient = undefined;
+		persistentState.ravoStatusBySessionId = undefined;
 	}
 }
 
@@ -856,8 +862,11 @@ export class AgentsViewMode implements Component, Focusable {
 		const client = this.persistentState.rosterClient;
 		this.client = client;
 		if (!client.isConnected) await client.reconnect();
+		const ravoRunUpdates = client.supportsServerCapability("ravo_run_updates");
 		this.unsubscribeClientMessage = client.onMessage((message) => {
 			if (message.type === "heartbeats_changed") void this.refreshHeartbeats();
+			if (ravoRunUpdates && message.type === "ravo_run_update")
+				this.onRavoRunUpdate(message.sessionId, message.status);
 		});
 		this.persistentState.rosterStore ??= new AgentsViewRosterStore();
 		this.rosterStore = this.persistentState.rosterStore;
@@ -2134,6 +2143,23 @@ export class AgentsViewMode implements Component, Focusable {
 		this.resolveMissingSelectionAnchor();
 	}
 
+	private onRavoRunUpdate(sessionId: string, status: RavoRunStatus): void {
+		if (this.stopped) return;
+		this.persistentState.ravoStatusBySessionId ??= new Map();
+		const statuses = this.persistentState.ravoStatusBySessionId;
+		const previous = statuses.get(sessionId);
+		if (previous && previous.updatedAt > status.updatedAt) return;
+		statuses.set(sessionId, status);
+		// reconcileCatalogs rebuilds the records and re-attaches every retained status.
+		if (this.unifiedIndex.byKey.has(`session:${sessionId}`)) this.reconcileCatalogs();
+	}
+
+	private attachRavoRunStatuses(): void {
+		const statuses = this.persistentState.ravoStatusBySessionId;
+		if (!statuses) return;
+		for (const [sessionId, status] of statuses) attachRavoRunStatus(this.unifiedRecords, sessionId, status);
+	}
+
 	private refreshSavedSessionsIfLoaded(): void {
 		if (this.persistentState.savedCatalogLoaded) void this.refreshSavedSessions({ preserveStatusOnError: true });
 	}
@@ -2156,6 +2182,7 @@ export class AgentsViewMode implements Component, Focusable {
 		);
 		this.lastVisibleSummaries = this.withPendingDeleteSession(visibleSessions);
 		this.unifiedRecords = reconcileUnifiedSessions(this.lastVisibleSummaries, this.savedSessions, this.heartbeats);
+		this.attachRavoRunStatuses();
 		this.unifiedIndex = buildUnifiedSessionIndex(this.unifiedRecords);
 		migrateAgentsViewIdentitySet(this.expandedSubagentParents, this.unifiedIndex.byKey);
 		migrateAgentsViewIdentitySet(this.programShownParents, this.unifiedIndex.byKey);
@@ -2436,6 +2463,7 @@ export class AgentsViewMode implements Component, Focusable {
 				const heartbeatsRefreshed = await this.refreshHeartbeats({ duringReconnect: true });
 				if (!heartbeatsRefreshed) throw new Error("Heartbeat catalog did not refresh during reconnect");
 				const sessions = this.rosterStore.summaries();
+				this.persistentState.ravoStatusBySessionId = undefined;
 				this.daemonShutdownReceived = false;
 				this.reconnectTimedOut = false;
 				this.setStatusMessage("Daemon reconnected", { render: false });
@@ -2524,6 +2552,9 @@ export class AgentsViewMode implements Component, Focusable {
 			if (item.type === "empty") {
 				return theme.fg("dim", "  No agents");
 			}
+			if (item.type === "ravo") {
+				return this.renderRavoRow(item.row, item.status, width);
+			}
 			return this.renderRow(item.row, width, usageLayout.details);
 		});
 		if (showLeadingEllipsis) {
@@ -2605,6 +2636,13 @@ export class AgentsViewMode implements Component, Focusable {
 		const base = `${indent}${cells[0]} ${heartbeatCell ? `${heartbeatCell} ` : ""}${cells[1]} ${cells[2]}`;
 		const line = padLine(truncateToWidth(base, width, ""), width);
 		return markRow(line);
+	}
+
+	// One dim detail line under an agent row while the daemon reports a live RAVO run for it.
+	private renderRavoRow(row: AgentsViewRow, status: RavoRunStatus, width: number): string {
+		const indent = "  ".repeat(row.depth + 1);
+		const line = theme.fg("dim", formatRavoRunStatusLine(status));
+		return padLine(truncateToWidth(`${indent}${line}`, width, ""), width);
 	}
 
 	// Bold like the section title so the legend reads as part of the header line.
@@ -2797,7 +2835,8 @@ type DisplayItem =
 	| { type: "spacer" }
 	| { type: "heading"; section: AgentsViewSection }
 	| { type: "empty"; section: AgentsViewSection }
-	| { type: "row"; row: AgentsViewRow };
+	| { type: "row"; row: AgentsViewRow }
+	| { type: "ravo"; row: AgentsViewRow; status: RavoRunStatus };
 
 function buildDisplayItems(rows: readonly AgentsViewRow[]): DisplayItem[] {
 	const items: DisplayItem[] = [];
@@ -2814,6 +2853,8 @@ function buildDisplayItems(rows: readonly AgentsViewRow[]): DisplayItem[] {
 		}
 		for (const row of sectionRows) {
 			items.push({ type: "row", row });
+			const ravo = row.kind === "agent" ? row.record?.ravo : undefined;
+			if (ravo) items.push({ type: "ravo", row, status: ravo });
 		}
 	}
 	return items;

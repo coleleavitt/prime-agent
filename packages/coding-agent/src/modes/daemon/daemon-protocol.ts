@@ -25,6 +25,7 @@ import type {
 import type { InputSource } from "../../core/extensions/types.js";
 import type { AcpMcpServerConfig } from "../../core/mcp/acp-mcp-types.js";
 import type { CustomMessage } from "../../core/messages.js";
+import type { RavoRunStatus } from "../../core/ravo/run-service.js";
 import type { QueuedMessageLane, QueuedMessageMutation } from "../../core/session-action-store.js";
 import type { SessionCwdIssue } from "../../core/session-cwd.js";
 import type { DeleteSessionFileResult } from "../../core/session-file-actions.js";
@@ -80,8 +81,9 @@ export const DAEMON_COMMAND_ENVELOPE_MIN_PROTOCOL_VERSION = 7;
 // Revision 25 adds capability-gated direct worker peer transport discovery.
 // Revision 26 publishes own-session usage totals on session summary and saved-session rows.
 // Revision 27 lets a primary client provide transient context to recover a resident worker.
-export const DAEMON_SCHEMA_REVISION = 27;
-export const DAEMON_SCHEMA_ID = "protocol-7-schema-27-962b8b4c5e35";
+// Revision 28 adds the capability-gated ravo_run_update push for roster subscribers.
+export const DAEMON_SCHEMA_REVISION = 28;
+export const DAEMON_SCHEMA_ID = "protocol-7-schema-28-1fbdc1d4d552";
 
 export type DaemonProtocolName = typeof DAEMON_PROTOCOL_NAME;
 export type DaemonProtocolVersion = number;
@@ -129,7 +131,10 @@ export type DaemonServerCapability =
 	| "session_input_pause"
 	| "owned_prompt_cancellation"
 	| "acp_mcp_servers"
-	| "direct_peer_transport";
+	| "direct_peer_transport"
+	// The daemon pushes ravo_run_update (live RAVO controller status keyed by
+	// session id) to roster subscribers. Clients must check before depending on it.
+	| "ravo_run_updates";
 
 export type DaemonReplayStatus = "complete" | "partial" | "unavailable";
 
@@ -175,6 +180,7 @@ export const DAEMON_DEFAULT_SERVER_CAPABILITIES: readonly DaemonServerCapability
 	"rlm_quiescence_barrier",
 	"session_input_pause",
 	"acp_mcp_servers",
+	"ravo_run_updates",
 ];
 
 /** Single-use short-lived credential for one direct TUI connection to one worker process incarnation. */
@@ -1136,6 +1142,7 @@ export type DaemonOutbound =
 	| { type: "daemon_closing"; reason: DaemonClosingReason }
 	| { type: "heartbeats_changed" }
 	| { type: "roster_update"; changed: AgentRosterEntry[]; removed?: string[]; resync?: true }
+	| { type: "ravo_run_update"; sessionId: string; status: RavoRunStatus }
 	| { type: "session_event"; activeSessionId: string; event: AgentConnectionSessionEvent; meta?: DaemonEventMeta }
 	| { type: "side_question_event"; activeSessionId: string; event: AgentConnectionSideQuestionEvent }
 	| { type: "session_status"; activeSessionId: string; recap?: string; meta?: DaemonEventMeta }
@@ -1219,6 +1226,7 @@ export const DAEMON_OUTBOUND_COMPATIBILITY = {
 	daemon_closing: LEGACY_DAEMON_COMMAND,
 	heartbeats_changed: { minProtocol: 7, capability: "heartbeat_catalog" },
 	roster_update: { minProtocol: 7, capability: "agent_roster" },
+	ravo_run_update: { minProtocol: 7, minSchemaRevision: 28, capability: "ravo_run_updates" },
 	session_event: LEGACY_DAEMON_COMMAND,
 	side_question_event: LEGACY_DAEMON_COMMAND,
 	session_status: LEGACY_DAEMON_COMMAND,

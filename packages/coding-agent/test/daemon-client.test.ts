@@ -2,8 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DaemonClient, getDaemonSocketCloseReason } from "../src/modes/daemon/daemon-client.js";
 import {
 	DAEMON_COMMAND_COMPATIBILITY,
+	DAEMON_OUTBOUND_COMPATIBILITY,
 	DAEMON_PROTOCOL_VERSION,
 	DAEMON_SCHEMA_REVISION,
+	type DaemonOutbound,
+	meetsDaemonCommandCompatibility,
 } from "../src/modes/daemon/daemon-protocol.js";
 
 const netMock = vi.hoisted(() => {
@@ -259,6 +262,47 @@ describe("DaemonClient", () => {
 		await expect(
 			client.request({ type: "get_direct_worker_transport", activeSessionId: "active-1" }),
 		).rejects.toThrow("does not support direct_peer_transport");
+		expect(socket.writes).toEqual([]);
+		client.close();
+	});
+
+	it("does not depend on ravo run updates from an old daemon without the capability", async () => {
+		const client = new DaemonClient("/tmp/prime-agent.sock");
+		const connect = client.connect();
+		const socket = netMock.sockets[0]!;
+		socket.emit("connect");
+		await connect;
+		emitHello(socket, DAEMON_PROTOCOL_VERSION, ["agent_roster"], DAEMON_SCHEMA_REVISION - 1);
+
+		expect(client.supportsServerCapability("ravo_run_updates")).toBe(false);
+		expect(meetsDaemonCommandCompatibility(client.hello!, DAEMON_OUTBOUND_COMPATIBILITY.ravo_run_update)).toBe(false);
+		// The push is passive: the client never sends a subscription command for it.
+		expect(socket.writes).toEqual([]);
+		client.close();
+	});
+
+	it("delivers ravo run updates from a capable daemon to message listeners", async () => {
+		const client = new DaemonClient("/tmp/prime-agent.sock");
+		const connect = client.connect();
+		const socket = netMock.sockets[0]!;
+		socket.emit("connect");
+		await connect;
+		emitHello(socket, DAEMON_PROTOCOL_VERSION, ["agent_roster", "ravo_run_updates"], DAEMON_SCHEMA_REVISION);
+
+		expect(client.supportsServerCapability("ravo_run_updates")).toBe(true);
+		expect(meetsDaemonCommandCompatibility(client.hello!, DAEMON_OUTBOUND_COMPATIBILITY.ravo_run_update)).toBe(true);
+		const received: DaemonOutbound[] = [];
+		client.onMessage((message) => {
+			received.push(message);
+		});
+		const update = {
+			type: "ravo_run_update",
+			sessionId: "session-1",
+			status: { runId: "run-1", phase: "plan", round: 1, repairs: 0, startedAt: 1, updatedAt: 2 },
+		};
+		socket.emit("data", `${JSON.stringify(update)}\n`);
+
+		expect(received).toEqual([update]);
 		expect(socket.writes).toEqual([]);
 		client.close();
 	});

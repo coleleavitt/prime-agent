@@ -5575,6 +5575,13 @@ export class DaemonSupervisor {
 			this.broadcastHeartbeatsChanged();
 			return;
 		}
+		if (outboundType === "ravo_run_update") {
+			// Latest-wins status push for roster subscribers; the worker already validated the shape.
+			for (const client of this.clients) {
+				if (client.rosterSubscribed === true) this.writeSerialized(client, frame.payload);
+			}
+			return;
+		}
 		if (outboundType === "session_snapshot_begin" && activeSessionId) {
 			try {
 				const begin = JSON.parse(frame.payload.toString("utf8")) as Extract<

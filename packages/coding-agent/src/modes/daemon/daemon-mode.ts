@@ -102,6 +102,7 @@ import {
 import { ORPHAN_PROCESS_JOURNAL_ENV } from "../../core/orphan-process-journal.js";
 import { shutdownInstalledOtlpExporter } from "../../core/otlp-export.js";
 import { PromptAdmissionCancelledError, waitForPromptAdmission } from "../../core/prompt-admission.js";
+import type { RavoRunStatus } from "../../core/ravo/run-service.js";
 import type { CreateRlmSubagentRuntimeOptions, SubagentRuntimeHost } from "../../core/rlm-runtime.js";
 import {
 	canPassivateSession,
@@ -6936,6 +6937,9 @@ export class AgentDaemon {
 			if (RECOVERY_CHECKPOINT_EVENTS.has(eventType)) {
 				this.recordWorkerRecoveryState(state, eventType);
 			}
+			if (message.event.type === "ravo_run_update") {
+				this.broadcastRavoRunUpdate(state, message.event.status);
+			}
 		}
 		this.stampRlmChildActiveSessionId(message);
 		this.observeRosterEvent(state, message);
@@ -7063,6 +7067,23 @@ export class AgentDaemon {
 
 	private broadcastGlobal(message: DaemonOutbound): void {
 		for (const client of this.clients) {
+			this.write(client, message);
+		}
+	}
+
+	// Live RAVO status is a fleet-level push keyed by session id: the supervisor relays
+	// it to roster subscribers, who are not attached to the session. Attached clients
+	// already receive the same status through the session_event channel.
+	private broadcastRavoRunUpdate(state: ActiveSessionState, status: RavoRunStatus): void {
+		const message: DaemonOutbound = {
+			type: "ravo_run_update",
+			sessionId: state.runtime.session.sessionId,
+			status,
+		};
+		for (const client of this.clients) {
+			if (!this.supervisorClaims.has(client) && client.rosterSubscribed !== true) {
+				continue;
+			}
 			this.write(client, message);
 		}
 	}

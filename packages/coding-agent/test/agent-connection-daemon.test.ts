@@ -3669,6 +3669,44 @@ describe("DaemonAgentConnection", () => {
 		});
 	});
 
+	it("ignores fleet-level ravo run updates without emitting or requesting anything", async () => {
+		const fakeClient = new FakeDaemonClient();
+		fakeClient.serverCapabilities.add("ravo_run_updates");
+		const connection = new DaemonAgentConnection(asDaemonClient(fakeClient), "active-1");
+		const events: AgentConnectionEvent[] = [];
+		connection.subscribe((event) => {
+			events.push(event);
+		});
+		await connection.attach();
+		const requestCount = fakeClient.requests.length;
+
+		fakeClient.emitMessage({
+			type: "ravo_run_update",
+			sessionId: "session-1",
+			status: { runId: "run-1", phase: "plan", round: 1, repairs: 0, startedAt: 1, updatedAt: 2 },
+		});
+		// The session's own status still arrives through the session_event channel.
+		fakeClient.emitMessage({
+			type: "session_event",
+			activeSessionId: "active-1",
+			event: {
+				type: "ravo_run_update",
+				status: { runId: "run-1", phase: "plan", round: 1, repairs: 0, startedAt: 1, updatedAt: 3 },
+			},
+		});
+
+		expect(events).toEqual([
+			{
+				type: "session_event",
+				event: {
+					type: "ravo_run_update",
+					status: { runId: "run-1", phase: "plan", round: 1, repairs: 0, startedAt: 1, updatedAt: 3 },
+				},
+			},
+		]);
+		expect(fakeClient.requests).toHaveLength(requestCount);
+	});
+
 	it("ignores delayed events from a retired daemon generation", async () => {
 		const fakeClient = new FakeDaemonClient();
 		const connection = new DaemonAgentConnection(asDaemonClient(fakeClient), "active-1");

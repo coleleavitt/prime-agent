@@ -1,4 +1,5 @@
 import { basename, resolve } from "node:path";
+import type { RavoRunStatus } from "../../core/ravo/run-service.js";
 import { canonicalizePath } from "../../utils/paths.js";
 import type { AgentConnectionHeartbeat, AgentConnectionSavedSessionInfo } from "../agent-connection/index.js";
 import { rosterAgentIdForSummary } from "../daemon/agent-roster.js";
@@ -22,6 +23,8 @@ export interface UnifiedSessionRecord {
 	section: AgentsViewSection;
 	searchableText: string;
 	heartbeat?: UnifiedSessionHeartbeat;
+	/** Latest live RAVO controller status pushed by the daemon for this session. */
+	ravo?: RavoRunStatus;
 }
 
 export interface AgentsViewScopeKey {
@@ -246,6 +249,39 @@ export function reconcileUnifiedSessions(
 		for (const alias of aliases) recordByAlias.set(alias, inactive);
 	}
 	return records;
+}
+
+/**
+ * Attach a live RAVO status to the record whose session id matches. Records are
+ * rebuilt on every reconcile, so the caller re-applies its retained statuses
+ * after each rebuild. Returns the record that received the status, if any.
+ */
+export function attachRavoRunStatus(
+	records: readonly UnifiedSessionRecord[],
+	sessionId: string,
+	status: RavoRunStatus,
+): UnifiedSessionRecord | undefined {
+	const alias = `session:${sessionId}`;
+	const record = records.find(
+		(candidate) => candidate.daemon?.sessionId === sessionId || candidate.identityAliases.includes(alias),
+	);
+	if (!record) return undefined;
+	record.ravo = status;
+	return record;
+}
+
+/** One-line RAVO status summary for a row: phase and counters while running, stop reason once finished. */
+export function formatRavoRunStatusLine(status: RavoRunStatus): string {
+	if (status.stopReason) return `ravo ${status.stopReason}`;
+	if (status.error) return "ravo error";
+	const parts = [`ravo ${status.phase} r${status.round}/${status.repairs}`];
+	const certificate = status.lastCertificate;
+	if (certificate) {
+		const score = certificate.deepScore ?? certificate.screenScore;
+		parts.push(`${certificate.status} ${score}`);
+		if (certificate.missed.length > 0) parts.push(`missed: ${certificate.missed.join(",")}`);
+	}
+	return parts.join(" · ");
 }
 
 /** Convert a merged row to the existing live-row rendering/action shape. */

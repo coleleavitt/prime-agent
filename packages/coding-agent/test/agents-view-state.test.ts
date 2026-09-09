@@ -21,6 +21,7 @@ import {
 	resolveAgentsViewSessionUiServices,
 	shouldReconnectAgentsViewDaemon,
 } from "../src/modes/agents-view/agents-view-mode.js";
+import { attachRavoRunStatus, formatRavoRunStatusLine } from "../src/modes/agents-view/agents-view-state.js";
 import {
 	type AgentsViewScopeFrame,
 	aggregateSessionHeartbeats,
@@ -577,6 +578,74 @@ describe("agents view state", () => {
 		expect(rows[0]?.summary.usage?.cost).toBe(0.42);
 		expect(rows[0]?.recursiveCost).toBeCloseTo(1.28);
 		expect(rows[0]?.descendantCount).toBe(2);
+	});
+
+	test("attaches a live RAVO status to the record matching its session id", () => {
+		const parent = makeSummary({
+			id: "parent-active",
+			activeSessionId: "parent-active",
+			sessionId: "parent-session",
+		});
+		const child = makeSummary({
+			id: "child-active",
+			activeSessionId: "child-active",
+			sessionId: "child-session",
+			runtimeKind: "subagent",
+			parentActiveSessionId: "parent-active",
+		});
+		const saved = makeSessionInfo({ path: "/tmp/project/saved.jsonl", id: "saved-session" });
+		const records = reconcileUnifiedSessions([parent, child], [saved]);
+		const status = {
+			runId: "run-1",
+			phase: "evaluate" as const,
+			round: 2,
+			repairs: 1,
+			startedAt: 1,
+			updatedAt: 2,
+			lastCertificate: {
+				proposalId: "p-1",
+				status: "reject_deep" as const,
+				screenScore: 90,
+				deepScore: 41,
+				missed: ["evidence", "scope"],
+			},
+		};
+
+		expect(attachRavoRunStatus(records, "child-session", status)?.daemon?.sessionId).toBe("child-session");
+		expect(records.find((record) => record.daemon?.sessionId === "child-session")?.ravo).toBe(status);
+		expect(records.find((record) => record.daemon?.sessionId === "parent-session")?.ravo).toBeUndefined();
+		expect(attachRavoRunStatus(records, "saved-session", status)?.saved?.id).toBe("saved-session");
+		expect(attachRavoRunStatus(records, "missing-session", status)).toBeUndefined();
+
+		const rebuilt = reconcileUnifiedSessions([parent, child], [saved]);
+		expect(rebuilt.every((record) => record.ravo === undefined)).toBe(true);
+	});
+
+	test("formats one RAVO status line from phase, counters, certificate, and stop reason", () => {
+		const base = { runId: "run-1", phase: "evaluate" as const, round: 2, repairs: 1, startedAt: 1, updatedAt: 2 };
+		expect(formatRavoRunStatusLine(base)).toBe("ravo evaluate r2/1");
+		expect(
+			formatRavoRunStatusLine({
+				...base,
+				lastCertificate: {
+					proposalId: "p-1",
+					status: "reject_deep",
+					screenScore: 90,
+					deepScore: 41,
+					missed: ["evidence", "scope"],
+				},
+			}),
+		).toBe("ravo evaluate r2/1 · reject_deep 41 · missed: evidence,scope");
+		expect(
+			formatRavoRunStatusLine({
+				...base,
+				lastCertificate: { proposalId: "p-1", status: "reject_screen", screenScore: 12, missed: [] },
+			}),
+		).toBe("ravo evaluate r2/1 · reject_screen 12");
+		expect(formatRavoRunStatusLine({ ...base, phase: "stopped", stopReason: "round_limit" })).toBe(
+			"ravo round_limit",
+		);
+		expect(formatRavoRunStatusLine({ ...base, phase: "stopped", error: "boom" })).toBe("ravo error");
 	});
 
 	test("keeps a parent's recursive total when a passivated child survives only as a catalog row", () => {

@@ -246,6 +246,15 @@ describe("daemon protocol helpers", () => {
 		expect(DAEMON_DEFAULT_SERVER_CAPABILITIES).toContain("session_input_pause");
 	});
 
+	it("capability- and schema-gates the ravo run update push", () => {
+		expect(DAEMON_OUTBOUND_COMPATIBILITY.ravo_run_update).toEqual({
+			minProtocol: 7,
+			minSchemaRevision: 28,
+			capability: "ravo_run_updates",
+		});
+		expect(DAEMON_DEFAULT_SERVER_CAPABILITIES).toContain("ravo_run_updates");
+	});
+
 	it("version- and capability-gates prompt admission cancellation", () => {
 		expect(DAEMON_COMMAND_COMPATIBILITY.cancel_prompt_admission).toEqual({
 			minProtocol: 7,

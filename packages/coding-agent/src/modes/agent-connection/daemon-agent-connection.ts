@@ -1916,6 +1916,11 @@ export class DaemonAgentConnection implements AgentConnection {
 			await this.emit({ type: "heartbeats_changed" });
 			return;
 		}
+		if (message.type === "ravo_run_update") {
+			// Fleet-level push for roster subscribers (agents view); this session's own
+			// status arrives through session_event, so it is not re-emitted here.
+			return;
+		}
 		if (!this.isMessageForActiveSession(message)) {
 			return;
 		}

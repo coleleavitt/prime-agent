@@ -1,0 +1,1 @@
+- Added a live RAVO status line under agent rows in the agents view, pushed by the daemon as the capability-gated `ravo_run_update` event (schema revision 28).
