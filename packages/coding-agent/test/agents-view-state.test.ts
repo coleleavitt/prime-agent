@@ -21,10 +21,11 @@ import {
 	resolveAgentsViewSessionUiServices,
 	shouldReconnectAgentsViewDaemon,
 } from "../src/modes/agents-view/agents-view-mode.js";
-import { attachRavoRunStatus, formatRavoRunStatusLine } from "../src/modes/agents-view/agents-view-state.js";
 import {
+	attachRavoRunStatus,
 	attachUnifiedSessionSearchCorpus,
 	filterUnifiedSessionsBySearchQuery,
+	formatRavoRunStatusLine,
 	getUnifiedSessionsMissingSearchCorpus,
 } from "../src/modes/agents-view/agents-view-state.js";
 import {
