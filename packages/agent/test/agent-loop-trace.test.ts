@@ -232,11 +232,98 @@ describe("agent loop trace spans", () => {
 				["call-throw", "error", "tool exploded"],
 			]);
 			expect(tool.map((record) => record.attrs["tool.name"])).toEqual(["echo", "missing", "echo"]);
+			// Only a thrown Error carries its class; soft failures and rejections do not.
+			expect(tool.map((record) => record.attrs["tool.error_name"])).toEqual([undefined, undefined, "Error"]);
 			const turn = byName("agent.turn")[0];
 			expect(tool.every((record) => record.parentSpanId === turn?.spanId)).toBe(true);
 			expect(turn?.status).toBe("ok");
+			expect(turn?.attrs).toMatchObject({
+				"turn.tool_calls": 3,
+				"turn.tool_errors": 3,
+				"turn.tool_error_names": "echo,missing",
+			});
 		},
 	);
+
+	it("rolls tool failures up to the agent.turn span without changing its status", async () => {
+		class KernelExitedError extends Error {
+			constructor(message: string) {
+				super(message);
+				this.name = "KernelExitedError";
+			}
+		}
+		const crashing: AgentTool<typeof echoSchema> = {
+			name: "ipython",
+			label: "ipython",
+			description: "ipython",
+			parameters: echoSchema,
+			execute: async () => {
+				throw new KernelExitedError("kernel exited with code 1");
+			},
+		};
+		registration.setResponses([
+			fauxAssistantMessage(
+				[
+					fauxToolCall("ipython", { value: "crash" }, { id: "call-crash" }),
+					fauxToolCall("echo", { value: "fine" }, { id: "call-fine" }),
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("done"),
+		]);
+
+		await runPrompt(registration, [okEcho, crashing]);
+
+		const tool = byName("tool.execute").sort((a, b) =>
+			String(a.attrs["tool.call_id"]).localeCompare(String(b.attrs["tool.call_id"])),
+		);
+		expect(tool.map((record) => [record.attrs["tool.call_id"], record.status])).toEqual([
+			["call-crash", "error"],
+			["call-fine", "ok"],
+		]);
+		expect(tool[0]).toMatchObject({
+			error: "kernel exited with code 1",
+			attrs: { "tool.name": "ipython", "tool.error_name": "KernelExitedError" },
+		});
+		expect(tool[1]?.attrs["tool.error_name"]).toBeUndefined();
+
+		const turns = byName("agent.turn");
+		expect(turns.map((turn) => turn.status)).toEqual(["ok", "ok"]);
+		expect(turns[0]?.attrs).toMatchObject({
+			"turn.tool_calls": 2,
+			"turn.tool_errors": 1,
+			"turn.tool_error_names": "ipython",
+		});
+		expect(turns[0]?.error).toBeUndefined();
+		// A turn without tool calls reports neither count.
+		expect(turns[1]?.attrs["turn.tool_calls"]).toBe(0);
+		expect(turns[1]?.attrs["turn.tool_errors"]).toBeUndefined();
+		expect(turns[1]?.attrs["turn.tool_error_names"]).toBeUndefined();
+	});
+
+	it("reports zero tool errors and dedupes and bounds the failing tool names", async () => {
+		registration.setResponses([
+			fauxAssistantMessage([fauxToolCall("echo", { value: "a" }, { id: "call-a" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage(
+				Array.from({ length: 10 }, (_, i) => fauxToolCall(`missing-${i}`, {}, { id: `call-${i}` })).concat(
+					fauxToolCall("missing-0", {}, { id: "call-dup" }),
+				),
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("done"),
+		]);
+
+		await runPrompt(registration, [okEcho]);
+
+		const turns = byName("agent.turn");
+		expect(turns[0]?.attrs["turn.tool_errors"]).toBe(0);
+		expect(turns[0]?.attrs["turn.tool_error_names"]).toBeUndefined();
+		expect(turns[1]?.attrs["turn.tool_errors"]).toBe(11);
+		expect(turns[1]?.attrs["turn.tool_error_names"]).toBe(
+			Array.from({ length: 8 }, (_, i) => `missing-${i}`).join(","),
+		);
+		expect(turns[1]?.status).toBe("ok");
+	});
 
 	it("gives concurrently running tools distinct spans under the same turn", async () => {
 		const seen = new Map<string, TraceContext | undefined>();

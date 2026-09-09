@@ -454,6 +454,25 @@ function turnSpanAttrs(config: AgentLoopConfig, index: number): SpanAttributes {
 	};
 }
 
+const TURN_TOOL_ERROR_NAMES_LIMIT = 8;
+
+/**
+ * Roll tool failures up to the turn so a session whose every tool call fails
+ * (e.g. a dead kernel) is visible at the turn level without opening each
+ * `tool.execute` child. The turn itself still completed, so its status stays "ok".
+ */
+function turnToolErrorAttrs(toolResults: ToolResultMessage[]): SpanAttributes {
+	const failed = toolResults.filter((result) => result.isError);
+	if (failed.length === 0) {
+		return { "turn.tool_errors": 0 };
+	}
+	const names = [...new Set(failed.map((result) => result.toolName))];
+	return {
+		"turn.tool_errors": failed.length,
+		"turn.tool_error_names": names.slice(0, TURN_TOOL_ERROR_NAMES_LIMIT).join(","),
+	};
+}
+
 /**
  * Run one assistant turn (`turn_start` ... `turn_end`) inside an `agent.turn`
  * span so the provider request (pi-ai's own `llm.request` span) and every
@@ -511,6 +530,7 @@ function runTurn(
 				currentContext.messages.push(result);
 				newMessages.push(result);
 			}
+			span.setAttributes(turnToolErrorAttrs(toolResults));
 		}
 
 		await emit({ type: "turn_end", message, toolResults });
@@ -783,17 +803,21 @@ type ImmediateToolCallOutcome = {
 	kind: "immediate";
 	result: AgentToolResult<any>;
 	isError: boolean;
+	/** `Error.name` of the thrown value when the rejection came from a throw. */
+	errorName?: string;
 };
 
 type ExecutedToolCallOutcome = {
 	result: AgentToolResult<any>;
 	isError: boolean;
+	errorName?: string;
 };
 
 type FinalizedToolCallOutcome = {
 	toolCall: AgentToolCall;
 	result: AgentToolResult<any>;
 	isError: boolean;
+	errorName?: string;
 };
 
 type FinalizedToolCallEntry = FinalizedToolCallOutcome | (() => Promise<FinalizedToolCallOutcome>);
@@ -893,6 +917,7 @@ async function prepareToolCallUntraced(
 			kind: "immediate",
 			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
 			isError: true,
+			errorName: thrownErrorName(error),
 		};
 	}
 }
@@ -949,8 +974,13 @@ async function executePreparedToolCall(
 				signal?.aborted ? "Tool execution aborted" : error instanceof Error ? error.message : String(error),
 			),
 			isError: true,
+			errorName: thrownErrorName(error),
 		};
 	}
+}
+
+function thrownErrorName(error: unknown): string | undefined {
+	return error instanceof Error && error.name ? error.name : undefined;
 }
 
 function toolCallSpanAttrs(toolCall: AgentToolCall): SpanAttributes {
@@ -983,7 +1013,12 @@ function completeToolCall(
 	return withSpan("tool.execute", toolCallSpanAttrs(toolCall), async (span) => {
 		let finalized: FinalizedToolCallOutcome;
 		if (preparation.kind === "immediate") {
-			finalized = { toolCall, result: preparation.result, isError: preparation.isError };
+			finalized = {
+				toolCall,
+				result: preparation.result,
+				isError: preparation.isError,
+				errorName: preparation.errorName,
+			};
 		} else {
 			const executed = await executePreparedToolCall(preparation, signal, emit);
 			finalized = await finalizeExecutedToolCall(
@@ -1000,6 +1035,7 @@ function completeToolCall(
 			if (signal?.aborted) {
 				span.setAttributes({ "tool.aborted": true });
 			} else {
+				span.setAttributes({ "tool.error_name": finalized.errorName });
 				span.recordError(toolResultText(finalized.result));
 			}
 		}
@@ -1019,6 +1055,7 @@ async function finalizeExecutedToolCall(
 ): Promise<FinalizedToolCallOutcome> {
 	let result = executed.result;
 	let isError = executed.isError;
+	let errorName = executed.errorName;
 
 	if (config.afterToolCall) {
 		try {
@@ -1047,6 +1084,7 @@ async function finalizeExecutedToolCall(
 		} catch (error) {
 			result = createErrorToolResult(error instanceof Error ? error.message : String(error));
 			isError = true;
+			errorName = thrownErrorName(error);
 		}
 	}
 
@@ -1054,6 +1092,7 @@ async function finalizeExecutedToolCall(
 		toolCall: prepared.toolCall,
 		result,
 		isError,
+		errorName: isError ? errorName : undefined,
 	};
 }
 

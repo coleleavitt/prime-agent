@@ -1,0 +1,1 @@
+- Added `turn.tool_errors` and `turn.tool_error_names` attributes to `agent.turn` trace spans and `tool.error_name` to failed `tool.execute` spans so tool failures are visible at the turn level.
