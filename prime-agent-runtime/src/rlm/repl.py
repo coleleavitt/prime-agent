@@ -19,7 +19,9 @@ import json
 import linecache
 import os
 import platform
+import select
 import signal
+import stat
 import sys
 import tempfile
 import threading
@@ -156,13 +158,139 @@ def _resolve_host_reply(rid: str, data: dict[str, Any]) -> None:
     _loop.call_soon_threadsafe(deliver)
 
 
+_DRAIN_HEAD = b"\xff<drain:"
+_DRAIN_TOKEN_LEN = len(_DRAIN_HEAD) + 32 + 2
+_HEX_DIGITS = frozenset(b"0123456789abcdef")
+
+
+def _drain_token_prefix(segment: bytes) -> bool:
+    """True when ``segment`` (shorter than a token) could be the start of one."""
+    head = min(len(segment), len(_DRAIN_HEAD))
+    if segment[:head] != _DRAIN_HEAD[:head]:
+        return False
+    body = segment[len(_DRAIN_HEAD) :]
+    return all(c in _HEX_DIGITS for c in body[:32]) and body[32:] in (b"", b">")
+
+
+def _is_drain_token(segment: bytes) -> bool:
+    return len(segment) == _DRAIN_TOKEN_LEN and _drain_token_prefix(segment[:-1]) and segment[-2:] == b">\xff"
+
+
+def _strip_drain_tokens(data: bytes) -> tuple[bytes, bytes]:
+    """Split ``data`` into (bytes free of drain tokens, tail held back as a possible token start)."""
+    out = bytearray()
+    i = 0
+    while True:
+        j = data.find(b"\xff", i)
+        if j == -1:
+            out += data[i:]
+            return bytes(out), b""
+        out += data[i:j]
+        segment = data[j : j + _DRAIN_TOKEN_LEN]
+        if _is_drain_token(segment):
+            i = j + _DRAIN_TOKEN_LEN
+            continue
+        if len(segment) < _DRAIN_TOKEN_LEN and _drain_token_prefix(segment):
+            return bytes(out), segment
+        out.append(0xFF)
+        i = j + 1
+
+
+def _write_best_effort(fd: int, data: bytes) -> None:
+    """Write to a non-blocking host pipe; a full or closed pipe drops the rest rather than stall."""
+    view = memoryview(data)
+    try:
+        while view:
+            view = view[os.write(fd, view) :]
+    except OSError:
+        pass
+
+
+def _stderr_tee_loop(src_fd: int, host_fd: int, pump_fd: int, parent_pid: int) -> None:
+    """Body of the forked stderr tee: copy fd-2 bytes to the pump and, token-free, to the host.
+
+    Runs in its own process so the copy needs no GIL: bytes native code writes
+    to fd 2 right before exit()/abort() still reach the host after the kernel
+    is gone. Exits on source EOF, or shortly after the parent dies when a
+    surviving grandchild keeps the write end open.
+    """
+    held = b""
+    parent_alive = True
+    # Once the parent is gone only its last words matter: copy what is already
+    # in flight, bounded in bytes and idle time, so a chatty grandchild that
+    # inherited fd 2 cannot keep this process alive.
+    post_mortem_budget = 1 << 20
+    while True:
+        if parent_alive and os.getppid() != parent_pid:
+            parent_alive = False
+        readable, _, _ = select.select([src_fd], [], [], 1.0 if parent_alive else 0.05)
+        if not readable:
+            if parent_alive:
+                continue
+            break
+        try:
+            chunk = os.read(src_fd, 65536)
+        except OSError:
+            break
+        if not chunk:
+            break
+        clean, held = _strip_drain_tokens(held + chunk)
+        _write_best_effort(host_fd, clean)
+        if pump_fd >= 0:
+            try:
+                view = memoryview(chunk)
+                while view:
+                    view = view[os.write(pump_fd, view) :]
+            except OSError:
+                pump_fd = -1
+        if not parent_alive:
+            post_mortem_budget -= len(chunk)
+            if post_mortem_budget <= 0:
+                break
+    _write_best_effort(host_fd, held)
+
+
+def _start_stderr_tee(src_r: int, src_w: int, host_fd: int) -> tuple[int, int]:
+    """Fork the stderr tee between the fd-2 pipe and the pump.
+
+    Returns ``(pump_read_fd, pump_tee_fd)``. Without fork (Windows) or when
+    fork fails, the pump reads the fd-2 pipe directly and tees to ``host_fd``
+    in-process (best effort only: the pump thread needs the GIL, which an
+    exiting native caller never releases).
+    """
+    if not hasattr(os, "fork"):
+        return src_r, host_fd
+    pump_r, pump_w = os.pipe()
+    parent_pid = os.getpid()
+    try:
+        pid = os.fork()
+    except OSError:
+        os.close(pump_r)
+        os.close(pump_w)
+        return src_r, host_fd
+    if pid == 0:
+        try:
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+            for fd in (0, 1, 2, src_w, pump_r, _protocol_fd):
+                with contextlib.suppress(OSError):
+                    os.close(fd)
+            _stderr_tee_loop(src_r, host_fd, pump_w, parent_pid)
+        finally:
+            os._exit(0)
+    os.close(src_r)
+    os.close(pump_w)
+    os.close(host_fd)
+    return pump_r, -1
+
+
 class _Pump:
     """Reads one captured-output pipe and ships its bytes as stream events."""
 
-    def __init__(self, read_fd: int, write_fd: int, stream: str) -> None:
+    def __init__(self, read_fd: int, write_fd: int, stream: str, tee_fd: int = -1) -> None:
         self._read_fd = read_fd
         # Private write end: a cell closing/reclaiming fd 1/2 cannot hijack drain tokens.
         self._token_fd = os.dup(write_fd)
+        self._tee_fd = tee_fd
         self._stream = stream
         self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
         self._lock = threading.Lock()
@@ -230,6 +358,8 @@ class _Pump:
     def _emit(self, data: bytes) -> None:
         if not data:
             return
+        if self._tee_fd >= 0:
+            _write_best_effort(self._tee_fd, data)
         text = self._decoder.decode(data)
         if text:
             # Raw fd bytes have no provable owner (os.write, C extensions,
@@ -1171,12 +1301,28 @@ _pump_err: _Pump
 
 
 def _setup_fds() -> int:
-    """Reserve stdout for the protocol; route fds 1/2 through captured pipes."""
+    """Reserve stdout for the protocol; route fds 1/2 through captured pipes.
+
+    The host's stderr pipe survives as a tee target: every raw byte that lands
+    on fd 2 is also copied there (drain tokens excluded), so a native crash's
+    last words reach the host's kernel stderr log even when the kernel dies
+    before its pump ships them as protocol events. No threads may exist yet:
+    the tee is a forked process.
+    """
     global _protocol_fd, _pump_out, _pump_err
     _protocol_fd = os.dup(1)
     os.set_inheritable(_protocol_fd, False)
-    out_r, out_w = os.pipe()
+    host_err = os.dup(2)
+    os.set_inheritable(host_err, False)
+    # Only a pipe/socket can fill up and stall the tee; a tty shares its open
+    # file description with the shell, so its blocking mode must not change.
+    with contextlib.suppress(OSError, ValueError):
+        mode = os.fstat(host_err).st_mode
+        if stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode):
+            os.set_blocking(host_err, False)
     err_r, err_w = os.pipe()
+    err_r, err_tee = _start_stderr_tee(err_r, err_w, host_err)
+    out_r, out_w = os.pipe()
     os.dup2(out_w, 1)
     os.dup2(err_w, 2)
     os.close(out_w)
@@ -1189,7 +1335,7 @@ def _setup_fds() -> int:
     os.close(devnull)
     sys.stdin = open(os.devnull, "r")  # user input() sees EOF, never protocol frames
     _pump_out = _Pump(out_r, 1, "stdout")
-    _pump_err = _Pump(err_r, 2, "stderr")
+    _pump_err = _Pump(err_r, 2, "stderr", tee_fd=err_tee)
     return stdin_fd
 
 

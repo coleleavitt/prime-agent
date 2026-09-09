@@ -21,7 +21,7 @@ _EOF = object()
 class ReplProcess:
     """Drives one `python -m rlm.repl` subprocess over the JSON-lines protocol."""
 
-    def __init__(self, env: dict[str, str] | None = None) -> None:
+    def __init__(self, env: dict[str, str] | None = None, stderr: int = subprocess.DEVNULL) -> None:
         env = {
             **os.environ,
             "PYTHONPATH": SRC + os.pathsep + os.environ.get("PYTHONPATH", ""),
@@ -32,7 +32,7 @@ class ReplProcess:
             [sys.executable, "-m", "rlm.repl"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=stderr,
             text=True,
             env=env,
         )
@@ -95,7 +95,7 @@ class ReplProcess:
         if self.proc.poll() is None:
             self.proc.kill()
             self.proc.wait(timeout=10)
-        for stream in (self.proc.stdin, self.proc.stdout):
+        for stream in (self.proc.stdin, self.proc.stdout, self.proc.stderr):
             if stream is not None:
                 stream.close()
 

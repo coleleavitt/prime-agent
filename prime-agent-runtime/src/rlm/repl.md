@@ -20,6 +20,25 @@ event.
   attributed to a cell.
   Neither channel can corrupt protocol framing. Ordering is preserved within
   each channel, not across them.
+- The host's original fd 2 (its stderr pipe) is kept as a tee target. Every
+  raw byte that lands on the captured fd 2 is also copied there, verbatim and
+  immediately, before it is decoded into a `stderr` event; the drain marker
+  bytes the runtime writes to fd 2 before each `done` are stripped from the
+  copy. Python-level `sys.stderr` writes never touch fd 2 and are not copied.
+  The copy exists for forensics only: when native code writes a message to
+  fd 2 and then calls `exit()`/`abort()`, the process is gone before the pump
+  thread can ship a protocol event, so the host's stderr tail and
+  `kernel-stderr.log` would otherwise be empty. On POSIX the copy is made by a
+  forked helper process (`python -m rlm.repl` in `ps`, single-threaded, child
+  of the kernel) sitting between fd 2 and the pump: it needs no GIL, so it
+  still forwards the last words after the kernel has died, then exits on fd-2
+  EOF or shortly after the kernel is gone (a grandchild that inherited fd 2
+  cannot keep it alive: post-mortem copying is bounded to ~1 MiB and 50 ms of
+  silence). Where `fork` is unavailable (Windows) or fails, the pump thread
+  tees in-process, which is best effort: it needs the GIL, which an exiting
+  native caller never releases. Writes to the host pipe never block; if the
+  host stops reading, the rest of the copy is dropped. The protocol `stderr`
+  events are unaffected either way.
 - fd 0 is rebound to `/dev/null` after the reader thread takes it, so user
   `input()` sees EOF instead of consuming protocol frames.
 
