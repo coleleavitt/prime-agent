@@ -86,7 +86,7 @@ flowchart TB
     direction LR
     FAST["fast screen<br/>structural validity − skill dry-run failures<br/>(refinement/skill-dry-run.ts)"]
     DEEP["deep score<br/>LLM judge 0-100, or ARC-AGI-3 levels completed<br/>(arc-agi-evaluator.ts)"]
-    OPP["opponents<br/>evidence · scope · minimality · contracts · novelty<br/>failure:&lt;fp&gt; per recurring error · arc:no-crash · arc:all-levels"]
+    OPP["opponents<br/>evidence · scope · minimality · contracts · novelty<br/>failure:&lt;fp&gt; per recurring error · arc:no-crash · arc:all-levels<br/>referee:counterexample — executable test, FlawUpheld ⇔ test fails"]
     STEP["ravoStep (reducer.ts)<br/>tau ≤ fast ∧ best ≤ deep ∧ missedWeight ≤ eps<br/>commit → pressure doubles missed weights"]
     AUTH["authorizeAssistedRavo (authority.ts)<br/>digest-binds proposal + baseline<br/>provisional champion, 20-turn window"]
     CTRL["runRavoController (controller.ts)<br/>inspect → plan → implement → evaluate → gate → diagnose/repair<br/>stops: accepted · round_limit · repair_limit · deadline · budget · cancelled"]
@@ -122,6 +122,10 @@ flowchart TB
 - `P`, `K`, `f` are the three inputs of `Agent(P, K, f)`. In Prime, `P` is `HarnessState.ravo.lineage`, `K` is the harness plus the failure ledger, `f` is the fast/deep/opponent adapter set built by `RavoRunService`.
 - The commit gate is the only place the lineage changes (`mutation_requires_authority`). A rejection never mutates state; it routes to Diagnose and repair.
 - Weakness pressure runs on commit: every opponent the accepted candidate missed doubles in weight, so the same gap cannot be exploited twice (`pressureW_ge`).
+- The referee (`ravo/refereed-opponent.ts`, Rocq S16) is the one opponent whose evidence is executable: a sealed child that sees only the proposal, the skill's module source, and the task must return a Python test; the kernel runs it and `FlawUpheld ⇔ test fails`. Prose without a test is not a miss (`prose_is_not_evidence`), a hang or a non-compiling test is not a flaw, and the referee stays in the persisted pool at its doubled weight so an upheld flaw costs more on the next run (`referee_gate_monotone`: adding it can only tighten the gate). Assisted `/refine` reports it as a not-applicable pass because it has no evaluator for it.
+- Token spend goes through `ravo/token-reservation-ledger.ts` (Rocq S14): a child is admitted only if `spent + reserved + estimate ≤ budget` (sum comparison, no saturation, so an over-committed ledger refuses even a zero-cost call — `gate_zero_refused_over_budget`), two admissions never oversubscribe (`gate_toctou_closed`), and `release ∘ gate = id`. A child may spend everything still unclaimed; overshoot is recorded, never hidden (`reachable_committed_bound`).
+- `implementCandidates` (`/ravo --candidates N`, `ravo.run(implement_candidates=N)`, 1..8) makes the implement phase a contest: n children propose, each is fast-screened, and the lexicographic winner (screen pass ≻ higher screen score ≻ fewer tokens ≻ index) proceeds to the deep gate. Repair rounds always use one candidate.
+- Harness entries carry asymmetric trust (`refinement/harness-trust.ts`, Rocq S15): default 50; a champion's observation window that closes clean credits every entry it touched +5, a measured fault inside it debits −15 (one fault costs three successes, `fail_then_three_succ`); below 30 an entry is dormant — kept in state and CRUD but not rendered into the prompt (`rendered_iff_30`) — and an explicit update revives it to 50. Windows settle at every turn boundary (`settleHarnessTrustWindows`).
 - The token budget and deadline are stop conditions, not gates: they bound cost, they do not affect which candidates can be committed.
 
 ## The self-improvement loop, end to end
@@ -179,7 +183,7 @@ flowchart TB
     direction TB
     FS{"fast screen ≥ 50<br/>structural + skill dry-run<br/>(kernel imports skill, resolves callable)<br/>no LLM"}:::gate
     DJ["deep judge (1 LLM call)<br/>deepScore 0–100 · missedCriteria · addressedFingerprints"]:::live
-    OPP[("OPPONENT POOL<br/>evidence · scope · minimality · contracts · novelty<br/>+ failure:&lt;fp&gt; for every recurring error<br/>each with weight w")]:::state
+    OPP[("OPPONENT POOL<br/>evidence · scope · minimality · contracts · novelty<br/>+ failure:&lt;fp&gt; for every recurring error<br/>+ referee:counterexample (executable, sealed)<br/>each with weight w")]:::state
     D1{"deepScore + 10 ≥ best(lineage)?"}:::gate
     D2{"Σ w(missed) ≤ ε = 1?"}:::gate
     FS -- yes --> DJ --> D1 -- yes --> D2

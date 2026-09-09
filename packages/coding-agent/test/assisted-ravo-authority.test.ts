@@ -81,6 +81,44 @@ describe("assisted RAVO authority", () => {
 		expect(state.opponents.criteria.find((criterion) => criterion.id === "scope")?.currentWeight).toBe(4);
 	});
 
+	it("keeps run-only criteria (referee, ARC outcomes) in the pool as not-applicable passes", () => {
+		// A /ravo run persisted the referee at weight 2 after an upheld flaw.
+		// The assisted path has no evaluator for it: it must neither charge it
+		// as an unobserved miss on every /refine nor drop it from the pool.
+		const seeded = pass().nextState;
+		const state = {
+			...seeded,
+			opponents: {
+				criteria: [
+					...seeded.opponents.criteria,
+					{ id: "referee:counterexample", seedWeight: 1, currentWeight: 2 },
+					{ id: "arc:all-levels", seedWeight: 1, currentWeight: 1 },
+				],
+			},
+		};
+		const result = authorizeAssistedRavo({
+			proposalId: "p2",
+			artifact,
+			baseline,
+			fastScore: 100,
+			observation: { status: "pass", score: 95, failedCriteria: [] },
+			state,
+			epsilon: 1,
+			turn: 7,
+		});
+		expect(result.authorized).toBe(true);
+		expect(result.certificate.missedCriterionIds).toEqual([]);
+		expect(
+			result.certificate.criteria
+				.filter((criterion) => criterion.criterionId.startsWith("referee:"))
+				.map((c) => c.status),
+		).toEqual(["pass"]);
+		expect(
+			result.nextState.opponents.criteria.find((criterion) => criterion.id === "referee:counterexample"),
+		).toMatchObject({ currentWeight: 2 });
+		expect(result.nextState.opponents.criteria.map((criterion) => criterion.id)).toContain("arc:all-levels");
+	});
+
 	it("rejects a proposal that ignores a recurring failure opponent of weight 2 under epsilon 1", () => {
 		// Seed the pool with the failure opponent already pressured to weight 2,
 		// as after one earlier miss.

@@ -184,8 +184,20 @@ export function authorizeAssistedRavo(input: {
 					: ("fail" as const),
 		...detail,
 	});
+	const assisted = new Set<string>(ASSISTED_RAVO_CRITERIA);
 	const criteria = [
 		...ASSISTED_RAVO_CRITERIA.map((criterionId) => judged(criterionId, !failed.has(criterionId))),
+		// Criteria that only a /ravo run can observe (the referee's executable
+		// counter-example, ARC outcome opponents) stay in the persisted pool so
+		// their weakness pressure survives across runs; the assisted path has no
+		// evaluator for them, so they are not-applicable passes here rather than
+		// unobserved abstentions that would be charged as misses on every /refine.
+		...state.opponents.criteria
+			.filter((criterion) => !assisted.has(criterion.id) && !isFailureOpponentId(criterion.id))
+			.map((criterion) => ({
+				...judged(criterion.id, true),
+				detail: "not applicable: criterion is observed only by /ravo runs",
+			})),
 		...state.opponents.criteria
 			.filter((criterion) => isFailureOpponentId(criterion.id))
 			.map((criterion) => {

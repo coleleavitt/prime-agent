@@ -63,10 +63,12 @@ export interface RavoCommandOptions {
 	global: boolean;
 	maxRounds?: number;
 	maxRepairs?: number;
+	implementCandidates?: number;
 	evaluator?: { kind: "arc-agi"; repoDir: string; game: string };
 }
 
-const RAVO_USAGE = "Usage: /ravo [--global] [--rounds N] [--repairs N] [--arc-repo DIR --arc-game ID] <task>";
+const RAVO_USAGE =
+	"Usage: /ravo [--global] [--rounds N] [--repairs N] [--candidates N] [--arc-repo DIR --arc-game ID] <task>";
 
 function parseRavoCount(flag: string, value: string | undefined): number {
 	if (value === undefined || !/^\d+$/.test(value) || Number(value) < 1) {
@@ -88,6 +90,7 @@ export function parseRavoCommandOptions(args: string): RavoCommandOptions {
 	let global = false;
 	let maxRounds: number | undefined;
 	let maxRepairs: number | undefined;
+	let implementCandidates: number | undefined;
 	let arcRepo: string | undefined;
 	let arcGame: string | undefined;
 	for (let index = 0; index < tokens.length; index++) {
@@ -108,7 +111,7 @@ export function parseRavoCommandOptions(args: string): RavoCommandOptions {
 			else arcGame = value;
 			continue;
 		}
-		const flagMatch = /^--(rounds|repairs)(?:=(.*))?$/.exec(token);
+		const flagMatch = /^--(rounds|repairs|candidates)(?:=(.*))?$/.exec(token);
 		if (flagMatch) {
 			const flag = `--${flagMatch[1]}`;
 			let value = flagMatch[2];
@@ -118,7 +121,11 @@ export function parseRavoCommandOptions(args: string): RavoCommandOptions {
 			}
 			const count = parseRavoCount(flag, value);
 			if (flagMatch[1] === "rounds") maxRounds = count;
-			else maxRepairs = count;
+			else if (flagMatch[1] === "repairs") maxRepairs = count;
+			else {
+				if (count > 8) throw new Error("--candidates must be between 1 and 8");
+				implementCandidates = count;
+			}
 			continue;
 		}
 		taskTokens.push(token);
@@ -131,6 +138,7 @@ export function parseRavoCommandOptions(args: string): RavoCommandOptions {
 		global,
 		...(maxRounds === undefined ? {} : { maxRounds }),
 		...(maxRepairs === undefined ? {} : { maxRepairs }),
+		...(implementCandidates === undefined ? {} : { implementCandidates }),
 		...(arcRepo === undefined || arcGame === undefined
 			? {}
 			: { evaluator: { kind: "arc-agi" as const, repoDir: arcRepo, game: arcGame } }),
@@ -242,7 +250,7 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 		name: "ravo",
 		description:
 			"Run the full RAVO loop (inspect, plan, implement, evaluate, diagnose, repair) over a continual harness mutation for a task",
-		argumentHint: "[--global] [--rounds N] [--repairs N] [--arc-repo DIR --arc-game ID] <task>",
+		argumentHint: "[--global] [--rounds N] [--repairs N] [--candidates N] [--arc-repo DIR --arc-game ID] <task>",
 		takesArgument: true,
 	},
 	{

@@ -13,7 +13,12 @@ import {
 	normalizeRefinementProposal,
 	type RefinementProposal,
 } from "../refinement/refinement.js";
-import { resolveKernelPython, screenRefinementProposal } from "../refinement/skill-dry-run.js";
+import {
+	readSkillModuleSource,
+	resolveKernelPython,
+	runSkillCounterexample,
+	screenRefinementProposal,
+} from "../refinement/skill-dry-run.js";
 import type { RunAgentHandler } from "../run-agent.js";
 import {
 	type ArcAgentArtifact,
@@ -61,6 +66,7 @@ import {
 	ravoMarkProvisional,
 	ravoStep,
 } from "./reducer.js";
+import { createRefereeOpponent, REFEREE_CRITERION_ID, REFEREE_ROLE, refereeSpec } from "./refereed-opponent.js";
 import {
 	type ChildRuntimeScope,
 	createRetainedWorkerChildCall,
@@ -89,6 +95,8 @@ export interface RavoRunRequest {
 	maxRepairs?: number;
 	deadlineMs?: number;
 	tokenBudget?: number;
+	/** Best-of-n implement fan-out (1..8, default 1); each candidate is fast-screened and the lexicographic winner proceeds. */
+	implementCandidates?: number;
 	evaluator?: "judge" | { kind: "arc-agi"; repoDir: string; game: string };
 }
 
@@ -239,7 +247,11 @@ export class RavoRunService {
 		const arc = request.evaluator !== undefined && request.evaluator !== "judge" ? request.evaluator : undefined;
 		const initialState: RavoState<JsonValue> = {
 			...baseRavo,
-			opponents: ravoExtendOpponents(baseRavo.opponents, [...activeFailureIds, ...(arc ? ARC_OPPONENT_IDS : [])]),
+			opponents: ravoExtendOpponents(baseRavo.opponents, [
+				...activeFailureIds,
+				...(arc ? ARC_OPPONENT_IDS : []),
+				REFEREE_CRITERION_ID,
+			]),
 		};
 		const config = { ...RAVO_DEFAULT_CONFIG };
 		const context = buildContextArchive(request, state, recurring, initialState);
@@ -296,7 +308,7 @@ export class RavoRunService {
 			? memoizedArcRun({ ...arc, ...(deps.arcRunner ? { runner: deps.arcRunner } : {}) })
 			: undefined;
 		const hygieneOpponents: EvaluationAdapter<JsonValue>[] = arcRun
-			? [...arcOpponents(arcRun), ...hygieneIds.map(notApplicableOpponent)]
+			? [...arcOpponents(arcRun), ...[...hygieneIds, REFEREE_CRITERION_ID].map(notApplicableOpponent)]
 			: hygieneIds.map(
 					(criterionId): EvaluationAdapter<JsonValue> => ({
 						id: `opponent:${criterionId}`,
@@ -314,8 +326,22 @@ export class RavoRunService {
 						},
 					}),
 				);
+		// The referee is the one opponent whose evidence is executable: a sealed
+		// child writes a counter-example test for each skill edit, and the kernel
+		// runs it. It sees neither the judge's output nor other verdicts.
+		const referee: EvaluationAdapter<JsonValue>[] = arcRun
+			? []
+			: [
+					createRefereeOpponent({
+						challenge: structured(refereeSpec(scopeOf(REFEREE_ROLE, { maxTurns: 4 }))),
+						run: (edit, testSource, { signal }) => runSkillCounterexample(edit, testSource, { signal }),
+						readSource: (edit, { signal }) => readSkillModuleSource(edit, { signal }),
+						proposalOf,
+					}),
+				];
 		const opponents: EvaluationAdapter<JsonValue>[] = [
 			...hygieneOpponents,
+			...referee,
 			...initialState.opponents.criteria
 				.filter((criterion) => isFailureOpponentId(criterion.id))
 				.map((criterion): EvaluationAdapter<JsonValue> => {
@@ -459,6 +485,7 @@ export class RavoRunService {
 			maxRounds: request.maxRounds ?? RAVO_RUN_DEFAULTS.maxRounds,
 			maxRepairs: request.maxRepairs ?? RAVO_RUN_DEFAULTS.maxRepairs,
 			deadlineMs: request.deadlineMs ?? RAVO_RUN_DEFAULTS.deadlineMs,
+			...(request.implementCandidates === undefined ? {} : { implementCandidates: request.implementCandidates }),
 			tokenBudget,
 			reservationPerCall: Math.max(1, Math.min(RAVO_RUN_DEFAULTS.reservationPerCall, Math.floor(tokenBudget / 8))),
 			concurrency: RAVO_RUN_DEFAULTS.concurrency,
@@ -540,6 +567,7 @@ function statusPatch(event: RavoProgressEvent): Partial<RavoRunStatus> {
 		case "evaluation":
 			return { lastEvent: event, lastCertificate: certificateSummary(event.certificate) };
 		case "supervisor":
+		case "candidates":
 			return { lastEvent: event };
 		case "stopped":
 			return {

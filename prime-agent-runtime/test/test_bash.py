@@ -55,6 +55,23 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
         awaited = await handle
         self.assertEqual(handle.poll(), awaited)
 
+    async def test_result_output_accepts_handle_spelling(self):
+        # Ledger fingerprint 17ed6bf0af1bcee0: `result.output()` was the most
+        # recurring kernel error (27 sessions), because the handle has a
+        # method and the result had a plain str.  Both spellings now work
+        # and the value is still an ordinary str for every consumer.
+        result = await bash("printf 'a\\nb\\nc\\n'")
+        self.assertEqual(result.output(), result.output)
+        self.assertIsInstance(result.output, str)
+        self.assertEqual(result.output, "a\nb\nc\n")
+        self.assertEqual(json.loads(json.dumps({"o": result.output})), {"o": "a\nb\nc\n"})
+        self.assertEqual(hash(result.output), hash("a\nb\nc\n"))
+        self.assertEqual(result.tail(2), "b\nc")
+        import pickle
+
+        self.assertIs(type(pickle.loads(pickle.dumps(result.output))), str)
+        self.assertEqual(result, bash_module.BashResult(result.exit_code, "a\nb\nc\n", result.duration))
+
     async def test_status_pipe_survives_high_fds_and_strict_posix_shell(self):
         # Regression: dash rejects multi-digit fds in redirections at parse
         # time, so the script must never reference the raw status-pipe fd.

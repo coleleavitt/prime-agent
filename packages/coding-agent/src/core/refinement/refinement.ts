@@ -25,6 +25,18 @@ import {
 } from "../ravo/failure-ledger.js";
 import type { JsonValue, RavoState } from "../ravo/reducer.js";
 import type { CustomEntry } from "../session-manager.js";
+import {
+	dormantEntries,
+	type HarnessTrustWindow,
+	harnessEntryKey,
+	normalizeTrust,
+	normalizeTrustWindows,
+	openHarnessTrustWindow,
+	partitionDormant,
+	revivedTrust,
+	TRUST_RESTRICTED_BELOW,
+	trustOf,
+} from "./harness-trust.js";
 import { RAVO_DEFAULT_CONFIG, type RavoGateReport, ravoEnabled, ravoEvaluateProposal } from "./ravo.js";
 
 export const REFINEMENT_CUSTOM_TYPE = "prime-agent.refinement";
@@ -54,6 +66,11 @@ export interface HarnessEntry {
 	created_at: string;
 	updated_at: string;
 	version: number;
+	/**
+	 * Asymmetric trust in [0, 100] (see `harness-trust.ts`); absent means 50.
+	 * Entries below 30 are dormant: kept in state, hidden from the prompt.
+	 */
+	trust?: number;
 }
 
 export interface HarnessRefinementEvent {
@@ -73,6 +90,12 @@ export interface HarnessState {
 	ravo?: RavoState<JsonValue>;
 	/** Per-session failure ledger (local scope only); absent until the first observed failure. */
 	failures?: FailureLedger;
+	/**
+	 * Trust windows keyed by committed proposal id: which entries each RAVO
+	 * champion touched and whether its observation window settled. Absent until
+	 * the first applied refinement.
+	 */
+	trustWindows?: Record<string, HarnessTrustWindow>;
 }
 
 export interface RefinementEdit {
@@ -322,12 +345,15 @@ export function loadHarnessState(
 			for (const [id, rawEntry] of Object.entries(records)) {
 				const entry = objectRecord(rawEntry);
 				if (!entry) continue;
+				const trust = normalizeTrust(entry.trust);
+				const { trust: _rawTrust, ...rest } = entry as unknown as HarnessEntry;
 				state.entries[kind][id] = {
-					...(entry as unknown as HarnessEntry),
+					...rest,
 					scope: normalizeHarnessScope(entry.scope, scope),
 					reference: objectRecord(entry.reference) ?? {},
 					arguments: objectRecord(entry.arguments) ?? {},
 					metadata: objectRecord(entry.metadata) ?? {},
+					...(trust === undefined ? {} : { trust }),
 				};
 			}
 		}
@@ -340,6 +366,10 @@ export function loadHarnessState(
 	}
 	if (parsed.failures !== undefined) {
 		state.failures = normalizeFailureLedger(parsed.failures);
+	}
+	const trustWindows = normalizeTrustWindows(parsed.trustWindows);
+	if (trustWindows !== undefined) {
+		state.trustWindows = trustWindows;
 	}
 	return state;
 }
@@ -494,7 +524,9 @@ export function formatHarnessStateForPrompt(
 
 	let totalEntries = 0;
 	for (const kind of Object.keys(state.entries) as RefinementKind[]) {
-		const entries = Object.values(state.entries[kind]).sort((a, b) =>
+		// Dormant entries (trust < 30) are not rendered: they stay in state and CRUD
+		// and are summarized in the footer so the model can revive one explicitly.
+		const entries = partitionDormant(Object.values(state.entries[kind])).active.sort((a, b) =>
 			[a.path, a.title, a.id].join("\0").localeCompare([b.path, b.title, b.id].join("\0")),
 		);
 		totalEntries += entries.length;
@@ -535,6 +567,11 @@ export function formatHarnessStateForPrompt(
 		lines.push("No saved harness entries yet.", "");
 	}
 
+	const dormantFooter = formatDormantFooter(state);
+	if (dormantFooter) {
+		lines.push(dormantFooter, "");
+	}
+
 	lines.push(`recent refinements: ${state.refinements.length}`);
 	for (const event of state.refinements.slice(-maxRefinements)) {
 		const changes = event.changes.length > 0 ? event.changes.join(", ") : "no applied edits";
@@ -549,10 +586,23 @@ export function formatHarnessStateForPrompt(
 	return lines.join("\n").trim();
 }
 
+/**
+ * One-line footer naming the dormant entries (trust < 30) that the main listing
+ * skips, so the model knows they exist and can revive one with an explicit
+ * update. Empty when nothing is dormant.
+ */
+function formatDormantFooter(state: HarnessState): string {
+	const dormant = dormantEntries(state);
+	if (dormant.length === 0) return "";
+	const ids = dormant.map((entry) => `${entry.kind}:${entry.scope ?? "global"}:${entry.id}`).join(", ");
+	const noun = dormant.length === 1 ? "entry" : "entries";
+	return `${dormant.length} dormant ${noun} (trust < ${TRUST_RESTRICTED_BELOW}, not shown; an explicit update revives one): ${ids}`;
+}
+
 function overviewForPrompt(state: HarnessState): string {
 	const lines: string[] = [];
 	for (const kind of Object.keys(state.entries) as RefinementKind[]) {
-		const entries = Object.values(state.entries[kind]);
+		const entries = partitionDormant(Object.values(state.entries[kind])).active;
 		lines.push(`${kind}: ${entries.length}`);
 		for (const entry of entries.slice(0, 40)) {
 			const content = entry.content.replace(/\s+/g, " ").slice(0, 240);
@@ -564,13 +614,18 @@ function overviewForPrompt(state: HarnessState): string {
 				entry.kind === "skill" && Object.keys(entry.reference).length > 0
 					? ` ref=${JSON.stringify(entry.reference).slice(0, 240)}`
 					: "";
+			const trustText = entry.trust === undefined ? "" : ` trust=${trustOf(entry)}`;
 			lines.push(
-				`- [${entry.scope ?? "global"}:${entry.id}] ${entry.title} (${entry.path}, v${entry.version})${referenceText}${argumentsText}: ${content}`,
+				`- [${entry.scope ?? "global"}:${entry.id}] ${entry.title} (${entry.path}, v${entry.version}${trustText})${referenceText}${argumentsText}: ${content}`,
 			);
 		}
 		if (entries.length > 40) {
 			lines.push(`- +${entries.length - 40} more ${kind} entries`);
 		}
+	}
+	const dormantFooter = formatDormantFooter(state);
+	if (dormantFooter) {
+		lines.push(dormantFooter);
 	}
 	return lines.join("\n");
 }
@@ -796,6 +851,7 @@ export function applyRefinementProposal(
 	const working = structuredClone(state);
 	const appliedEdits: AppliedRefinementEdit[] = [];
 	const proposalModifiedKeys = new Set<string>();
+	const touchedKeys: string[] = [];
 	for (const edit of proposal.edits) {
 		const computedId = edit.id ?? (edit.action === "create" ? slug(edit.title ?? edit.kind, edit.kind) : undefined);
 		const id = computedId ?? "";
@@ -865,6 +921,10 @@ export function applyRefinementProposal(
 
 		const createdAt = before?.created_at ?? now();
 		const version = before ? before.version + 1 : 1;
+		// An explicit update revives a dormant entry at the default trust; an active
+		// entry keeps its trust (an edit is not evidence of success). Created entries
+		// carry no trust field and are read as 50.
+		const trust = revivedTrust(before);
 		const after: HarnessEntry = {
 			id,
 			kind: edit.kind,
@@ -879,9 +939,11 @@ export function applyRefinementProposal(
 			created_at: createdAt,
 			updated_at: now(),
 			version,
+			...(trust === undefined ? {} : { trust }),
 		};
 		records[id] = after;
 		proposalModifiedKeys.add(entryKey);
+		touchedKeys.push(harnessEntryKey(edit.kind, id));
 		appliedEdits.push({
 			...edit,
 			id,
@@ -903,10 +965,18 @@ export function applyRefinementProposal(
 
 	const allApplied = appliedEdits.every((edit) => edit.applied);
 	if (allApplied) {
-		state.schema = working.schema;
-		state.entries = working.entries;
-		state.refinements = working.refinements;
-		state.ravo = working.ravo;
+		// Open the trust window for this proposal: the entries it created or updated
+		// are credited when its RAVO observation window closes clean and debited when
+		// a claimed fingerprint recurs inside it (see harness-trust.ts). Deletes are
+		// not tracked; there is no entry left to adjust.
+		const opened = openHarnessTrustWindow(working, options.id, touchedKeys);
+		state.schema = opened.schema;
+		state.entries = opened.entries;
+		state.refinements = opened.refinements;
+		state.ravo = opened.ravo;
+		if (opened.trustWindows !== undefined) {
+			state.trustWindows = opened.trustWindows;
+		}
 	} else {
 		for (const edit of appliedEdits) {
 			if (edit.applied) {

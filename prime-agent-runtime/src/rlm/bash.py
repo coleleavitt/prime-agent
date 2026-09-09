@@ -57,11 +57,42 @@ _hook_installed = False
 _hook_lock = threading.Lock()
 
 
+class _OutputText(str):
+    """Completed-command output that is BOTH a ``str`` and callable.
+
+    The live handle exposes ``h.output()`` (a method, because the buffer is
+    still growing) while the awaited result exposes ``result.output`` (a
+    field, because it is final).  Calling ``result.output()`` was the single
+    most recurring Python error across sessions (failure ledger fingerprint
+    ``17ed6bf0af1bcee0``: ``'str' object is not callable``), so the result's
+    text accepts both spellings.  ``__call__`` returns the same string; the
+    value is otherwise an ordinary ``str`` (equality, hashing, slicing,
+    ``json.dumps`` and pickling all behave as for ``str``).
+    """
+
+    __slots__ = ()
+
+    def __call__(self) -> str:
+        return str(self)
+
+    def __reduce__(self) -> tuple[type[str], tuple[str]]:
+        return (str, (str(self),))
+
+
 @dataclass(frozen=True)
 class BashResult:
     exit_code: int
     output: str
     duration: float
+
+    def __post_init__(self) -> None:
+        # ``output`` stays a str for every consumer; it just also tolerates
+        # the handle spelling ``result.output()``.
+        object.__setattr__(self, "output", _OutputText(self.output))
+
+    def tail(self, n: int = 50) -> str:
+        """Last ``n`` lines, mirroring ``BashHandle.tail`` so either object works."""
+        return "\n".join(str(self.output).splitlines()[-n:])
 
 
 class _BoundedBuffer:

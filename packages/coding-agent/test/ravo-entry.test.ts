@@ -247,7 +247,7 @@ describe("ravo entry points", () => {
 		expect(rows).toHaveLength(1);
 		expect(rows[0].details.success).toBe(false);
 		expect(rows[0].content).toContain(
-			"Usage: /ravo [--global] [--rounds N] [--repairs N] [--arc-repo DIR --arc-game ID] <task>",
+			"Usage: /ravo [--global] [--rounds N] [--repairs N] [--candidates N] [--arc-repo DIR --arc-game ID] <task>",
 		);
 		expect(ravoFake.FakeRavoRunService.instances.every((instance) => instance.startCalls.length === 0)).toBe(true);
 	});

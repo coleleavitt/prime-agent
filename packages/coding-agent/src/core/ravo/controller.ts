@@ -19,6 +19,7 @@ import {
 	type RavoState as ReducerState,
 	ravoStep,
 } from "./reducer.js";
+import { type TokenReservationAdmission, TokenReservationLedger } from "./token-reservation-ledger.js";
 import type { ChampionCas } from "./types.js";
 
 export type RavoPhase =
@@ -111,7 +112,25 @@ export type RavoProgressEvent =
 	| { type: "proposal"; proposalId: string; parentId: string | null; repairOf: string | null }
 	| { type: "evaluation"; proposalId: string; certificate: RavoGateCertificate }
 	| { type: "supervisor"; intervened: boolean; detail?: string }
+	| RavoCandidatesEvent
 	| { type: "stopped"; reason: RavoStopReason };
+/** Emitted once per best-of-n implement round, before the winning `proposal` event. */
+export interface RavoCandidatesEvent {
+	type: "candidates";
+	round: number;
+	/** `implementCandidates` as configured. */
+	requested: number;
+	/** Candidates that were admitted by the token ledger, implemented and screened. */
+	considered: number;
+	selected: string;
+	candidates: readonly {
+		proposalId: string;
+		status: GateStatus;
+		score?: number;
+		/** Tokens the implement call for this candidate reported (its fast screen is billed separately). */
+		tokens: number;
+	}[];
+}
 
 export interface RavoControllerOptions<T extends JsonValue = JsonValue> {
 	runId: string;
@@ -154,6 +173,12 @@ export interface RavoControllerOptions<T extends JsonValue = JsonValue> {
 	tokenBudget: number;
 	reservationPerCall: number;
 	concurrency: number;
+	/**
+	 * Number of implement candidates to fan out per implement round (default 1,
+	 * max 8). Each is screened by the fast evaluator and only the best one is
+	 * evaluated further; repair rounds always produce a single candidate.
+	 */
+	implementCandidates?: number;
 	signal?: AbortSignal;
 	now?: () => number;
 	onProgress?: (event: RavoProgressEvent) => void;
@@ -239,37 +264,57 @@ async function runController<T extends JsonValue>(
 	const relayAbort = (): void => abort.abort();
 	if (options.signal?.aborted) abort.abort();
 	else options.signal?.addEventListener("abort", relayAbort, { once: true });
-	let reserved = 0;
-	const call = async <I, O>(fn: ChildCall<I, O>, input: I): Promise<O> => {
+	// The reservation is only an admission floor for concurrent calls; a child may
+	// spend everything that is still unclaimed, so the total budget is the one knob.
+	// The ledger is rebuilt from the checkpoint so a resumed run keeps its spend.
+	const tokens = new TokenReservationLedger(options.tokenBudget, cp.spentTokens);
+	const admit = (): TokenReservationAdmission => {
 		if (abort.signal.aborted) throw new Stop("cancelled");
 		if (now() - started >= options.deadlineMs) throw new Stop("deadline");
-		// The reservation is only an admission floor for concurrent calls; a child may
-		// spend everything that is still unclaimed, so the total budget is the one knob.
-		const remaining = options.tokenBudget - cp.spentTokens - reserved;
-		if (remaining < options.reservationPerCall) throw new Stop("budget");
-		reserved += options.reservationPerCall;
+		const gate = tokens.gate(options.reservationPerCall);
+		if (!gate.ok) throw new Stop("budget");
+		return gate;
+	};
+	/**
+	 * Run one admitted child call and settle its token usage. A deferred (retained
+	 * worker) result binds its handle to the checkpoint unless `bindHandle` is false,
+	 * in which case the handle is only returned so the caller can bind the one it keeps.
+	 */
+	const settle = async <I, O>(
+		admission: TokenReservationAdmission,
+		fn: ChildCall<I, O>,
+		input: I,
+		bindHandle = true,
+	): Promise<{ value: O; tokens: number; handle?: string }> => {
+		let closed = false;
+		let handle: string | undefined;
 		try {
-			let result = await fn(input, { signal: abort.signal, tokenBudget: remaining });
+			const callOptions: RavoChildCallOptions = { signal: abort.signal, tokenBudget: admission.available };
+			let result = await fn(input, callOptions);
 			if (result.status === "deferred") {
-				cp.workerHandle = result.handle;
-				const resumed = await result.wait({ signal: abort.signal, tokenBudget: remaining });
+				handle = result.handle;
+				if (bindHandle) cp.workerHandle = handle;
+				const resumed = await result.wait(callOptions);
 				if (resumed.status === "deferred") throw new Error("nested deferred child result");
 				result = resumed;
 			}
 			if (!Number.isSafeInteger(result.tokens) || result.tokens < 0)
 				throw new Error("child returned invalid token usage");
-			cp.spentTokens += result.tokens;
+			tokens.settle(admission.reservationId, result.tokens);
+			closed = true;
+			cp.spentTokens = tokens.spent;
 			if (result.status !== "completed") {
 				if (abort.signal.aborted) throw new Stop("cancelled");
 				if (result.status === "budget_exceeded") throw new Stop("budget");
 				throw new ChildFailure(result.status, result.error);
 			}
-			return result.value;
+			return { value: result.value, tokens: result.tokens, ...(handle ? { handle } : {}) };
 		} finally {
-			reserved -= options.reservationPerCall;
+			if (!closed) tokens.release(admission.reservationId);
 		}
 	};
-	const propose = (inspection: InspectionFindings, plan: RavoPlan): Promise<ControllerProposal<T>> =>
+	const call = async <I, O>(fn: ChildCall<I, O>, input: I): Promise<O> => (await settle(admit(), fn, input)).value;
+	const proposeOne = (inspection: InspectionFindings, plan: RavoPlan): Promise<ProposalOutcome<T>> =>
 		inRavoSpan(
 			"ravo.proposal",
 			{ "ravo.round": cp.round, "ravo.kind": cp.feedback && cp.candidate ? "repair" : "implement" },
@@ -295,7 +340,7 @@ async function runController<T extends JsonValue>(
 					"ravo.candidate_tokens": cp.spentTokens - spentBefore,
 				});
 				validateProposal(proposal, cp.candidate, Boolean(cp.feedback));
-				return proposal;
+				return { proposal };
 			},
 		);
 	const evaluateOne = async (
@@ -360,6 +405,119 @@ async function runController<T extends JsonValue>(
 				return observation;
 			},
 		);
+	/**
+	 * Best-of-n implement: fan out `n` implement calls, screen each with the fast
+	 * evaluator and keep the lexicographically best (pass ≻ non-pass, higher score,
+	 * fewer tokens, lower index). Every candidate is admitted through the token
+	 * ledger up front; when a later candidate cannot be admitted the round proceeds
+	 * with the ones that were (the first refusal still stops the run on budget, as
+	 * a single implement call would). The winner's fast screen is reused by the
+	 * evaluate phase so the fast evaluator runs exactly once per candidate.
+	 */
+	const proposeBestOf = (
+		inspection: InspectionFindings,
+		plan: RavoPlan,
+		requested: number,
+	): Promise<ProposalOutcome<T>> =>
+		inRavoSpan(
+			"ravo.proposal",
+			{ "ravo.round": cp.round, "ravo.kind": "implement", "ravo.candidates_requested": requested },
+			async (span) => {
+				const spentBefore = cp.spentTokens;
+				const admissions: TokenReservationAdmission[] = [];
+				try {
+					for (let index = 0; index < requested; index += 1) admissions.push(admit());
+				} catch (error) {
+					if (!(error instanceof Stop && error.reason === "budget" && admissions.length > 0)) {
+						for (const admission of admissions) tokens.release(admission.reservationId);
+						throw error;
+					}
+				}
+				// Only the first candidate may continue a retained worker: concurrent
+				// `continue` calls on one handle would interleave, so the rest spawn fresh.
+				const input = { context, inspection, plan };
+				const retained = cp.workerHandle ? { ...input, workerHandle: cp.workerHandle } : input;
+				const fast = options.evaluators.find((adapter) => adapter.kind === "fast");
+				if (!fast) throw new Error("fast evaluator is required");
+				const outcomes = await concurrentMap(
+					admissions,
+					options.concurrency,
+					async (admission, index): Promise<ScreenedCandidate<T> | { error: unknown }> => {
+						try {
+							return await inRavoSpan(
+								"ravo.candidate",
+								{ "ravo.round": cp.round, "ravo.candidate_index": index },
+								async (candidateSpan) => {
+									const implemented = await settle(
+										admission,
+										options.implement,
+										index === 0 ? retained : input,
+										false,
+									);
+									validateProposal(implemented.value, cp.candidate, false);
+									const screen = await evaluateTraced(fast, implemented.value);
+									candidateSpan.setAttributes({
+										"ravo.proposal_id": implemented.value.id,
+										"ravo.candidate_tokens": implemented.tokens,
+										"ravo.verdict": screen.result.status,
+									});
+									return {
+										index,
+										proposal: implemented.value,
+										tokens: implemented.tokens,
+										screen,
+										...(implemented.handle ? { handle: implemented.handle } : {}),
+									};
+								},
+							);
+						} catch (error) {
+							// Every candidate must settle before the round reacts, so failures are
+							// collected here and rethrown once the fan-out has drained.
+							return { error };
+						}
+					},
+				);
+				const failures = outcomes.filter((o): o is { error: unknown } => "error" in o).map((o) => o.error);
+				const stop = failures.find((error): error is Stop => error instanceof Stop);
+				if (stop) throw stop;
+				if (failures.length > 0) throw failures[0];
+				const screened = outcomes.filter((o): o is ScreenedCandidate<T> => !("error" in o));
+				const ids = new Set(screened.map((c) => c.proposal.id));
+				if (ids.size !== screened.length) throw new Error("implement candidates must have distinct proposal ids");
+				const selected = [...screened].sort(compareCandidates)[0];
+				if (!selected) throw new Stop("budget");
+				if (selected.handle) cp.workerHandle = selected.handle;
+				span.setAttributes({
+					"ravo.proposal_id": selected.proposal.id,
+					"ravo.candidate_tokens": selected.tokens,
+					"ravo.candidates_considered": screened.length,
+					"ravo.fan_out_tokens": cp.spentTokens - spentBefore,
+				});
+				return {
+					proposal: selected.proposal,
+					screen: selected.screen,
+					candidates: {
+						type: "candidates",
+						round: cp.round,
+						requested,
+						considered: screened.length,
+						selected: selected.proposal.id,
+						candidates: screened.map((c) => ({
+							proposalId: c.proposal.id,
+							status: c.screen.result.status,
+							...(c.screen.result.score !== undefined ? { score: c.screen.result.score } : {}),
+							tokens: c.tokens,
+						})),
+					},
+				};
+			},
+		);
+	const propose = (inspection: InspectionFindings, plan: RavoPlan): Promise<ProposalOutcome<T>> => {
+		const requested = options.implementCandidates ?? 1;
+		return requested > 1 && !(cp.feedback && cp.candidate)
+			? proposeBestOf(inspection, plan, requested)
+			: proposeOne(inspection, plan);
+	};
 	const commitGate = (
 		candidate: ControllerProposal<T>,
 		certificate: RavoGateCertificate,
@@ -416,9 +574,11 @@ async function runController<T extends JsonValue>(
 				}
 			} else emit({ type: "supervisor", intervened: false });
 			await setPhase(cp.feedback ? "repair" : "implement");
-			const candidate = await propose(cp.inspection, cp.plan);
+			const proposed = await propose(cp.inspection, cp.plan);
+			const candidate = proposed.proposal;
 			cp.candidate = candidate;
 			cp.feedback = undefined;
+			if (proposed.candidates) emit(proposed.candidates);
 			emit({
 				type: "proposal",
 				proposalId: candidate.id,
@@ -437,9 +597,16 @@ async function runController<T extends JsonValue>(
 				championDigest: archiveState.championDigest,
 			};
 			await setPhase("evaluate");
-			const observations = await concurrentMap(options.evaluators, options.concurrency, (adapter) =>
-				evaluateTraced(adapter, candidate),
-			);
+			// A best-of-n winner was already screened while it was selected; only the
+			// remaining evaluators run here so the fast evaluator is not paid twice.
+			const screen = proposed.screen;
+			const pending = screen
+				? options.evaluators.filter((adapter) => adapter !== screen.adapter)
+				: options.evaluators;
+			const observations = [
+				...(screen ? [screen] : []),
+				...(await concurrentMap(pending, options.concurrency, (adapter) => evaluateTraced(adapter, candidate))),
+			];
 			const evaluation = assembleEvaluation(candidate.id, observations);
 			cp.lastEvaluation = evaluation;
 			const stepped = ravoStep(
@@ -549,6 +716,36 @@ async function inRavoSpan<T>(name: string, attrs: SpanAttributes, fn: (span: Spa
 	}
 }
 
+const MAX_IMPLEMENT_CANDIDATES = 8;
+type Observation<T extends JsonValue> = {
+	adapter: EvaluationAdapter<T>;
+	result: { status: GateStatus; score?: number; detail?: string };
+};
+interface ScreenedCandidate<T extends JsonValue> {
+	index: number;
+	proposal: ControllerProposal<T>;
+	tokens: number;
+	screen: Observation<T>;
+	/** Retained worker handle that produced the candidate, if the implement call deferred. */
+	handle?: string;
+}
+interface ProposalOutcome<T extends JsonValue> {
+	proposal: ControllerProposal<T>;
+	/** Fast screen already taken for `proposal` during best-of-n selection. */
+	screen?: Observation<T>;
+	candidates?: RavoCandidatesEvent;
+}
+/** Lexicographic best-of-n order: fast pass ≻ non-pass, higher score, fewer tokens, lower index. */
+function compareCandidates<T extends JsonValue>(a: ScreenedCandidate<T>, b: ScreenedCandidate<T>): number {
+	const passA = a.screen.result.status === "pass" ? 0 : 1;
+	const passB = b.screen.result.status === "pass" ? 0 : 1;
+	if (passA !== passB) return passA - passB;
+	const scoreA = a.screen.result.score ?? Number.NEGATIVE_INFINITY;
+	const scoreB = b.screen.result.score ?? Number.NEGATIVE_INFINITY;
+	if (scoreA !== scoreB) return scoreB > scoreA ? 1 : -1;
+	if (a.tokens !== b.tokens) return a.tokens - b.tokens;
+	return a.index - b.index;
+}
 class ChildFailure extends Error {
 	constructor(
 		readonly status: Exclude<RunAgentStatus, "completed">,
@@ -573,6 +770,13 @@ function validateOptions<T extends JsonValue>(o: RavoControllerOptions<T>): void
 	] as const)
 		if (!Number.isSafeInteger(value) || value < (name === "maxRepairs" ? 0 : 1))
 			throw new RangeError(`${name} is invalid`);
+	if (
+		o.implementCandidates !== undefined &&
+		(!Number.isSafeInteger(o.implementCandidates) ||
+			o.implementCandidates < 1 ||
+			o.implementCandidates > MAX_IMPLEMENT_CANDIDATES)
+	)
+		throw new RangeError("implementCandidates is invalid");
 	if (
 		o.evaluators.filter((e) => e.kind === "fast").length !== 1 ||
 		o.evaluators.filter((e) => e.kind === "deep").length !== 1
@@ -630,13 +834,17 @@ function diagnostic(c: RavoGateCertificate, extra?: string): DiagnosticFeedback 
 function checkpointJson<T extends JsonValue>(checkpoint: RavoControllerCheckpoint<T>): JsonValue {
 	return JSON.parse(JSON.stringify(checkpoint)) as JsonValue;
 }
-async function concurrentMap<I, O>(items: readonly I[], limit: number, fn: (item: I) => Promise<O>): Promise<O[]> {
+async function concurrentMap<I, O>(
+	items: readonly I[],
+	limit: number,
+	fn: (item: I, index: number) => Promise<O>,
+): Promise<O[]> {
 	const results = new Array<O>(items.length);
 	let cursor = 0;
 	const worker = async (): Promise<void> => {
 		while (cursor < items.length) {
 			const index = cursor++;
-			results[index] = await fn(items[index] as I);
+			results[index] = await fn(items[index] as I, index);
 		}
 	};
 	await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));

@@ -260,6 +260,7 @@ import {
 	rejectedRefinementResult,
 	reviewAutoRefine,
 	saveHarnessState,
+	settleHarnessTrustWindows,
 } from "./refinement/index.js";
 import { screenRefinementProposal } from "./refinement/skill-dry-run.js";
 import { resolveConfigValue } from "./resolve-config-value.js";
@@ -1193,6 +1194,10 @@ function parseRavoRunPayload(payload: Record<string, unknown>): RavoRunRequest {
 	}
 	const maxRounds = ravoPositiveInteger(payload, "max_rounds");
 	const maxRepairs = ravoPositiveInteger(payload, "max_repairs");
+	const implementCandidates = ravoPositiveInteger(payload, "implement_candidates");
+	if (implementCandidates !== undefined && implementCandidates > 8) {
+		throw new Error("ravo.run implement_candidates must be between 1 and 8");
+	}
 	const deadlineMs = ravoPositiveInteger(payload, "deadline_ms");
 	const tokenBudget = ravoPositiveInteger(payload, "token_budget");
 	const evaluator = parseRavoEvaluatorPayload(payload.arc_agi);
@@ -1203,6 +1208,7 @@ function parseRavoRunPayload(payload: Record<string, unknown>): RavoRunRequest {
 		...(globalFlag === true ? { global: true } : {}),
 		...(maxRounds === undefined ? {} : { maxRounds }),
 		...(maxRepairs === undefined ? {} : { maxRepairs }),
+		...(implementCandidates === undefined ? {} : { implementCandidates }),
 		...(deadlineMs === undefined ? {} : { deadlineMs }),
 		...(tokenBudget === undefined ? {} : { tokenBudget }),
 	};
@@ -6665,6 +6671,9 @@ export class AgentSession {
 						...(options.global ? { global: true } : {}),
 						...(options.maxRounds === undefined ? {} : { maxRounds: options.maxRounds }),
 						...(options.maxRepairs === undefined ? {} : { maxRepairs: options.maxRepairs }),
+						...(options.implementCandidates === undefined
+							? {}
+							: { implementCandidates: options.implementCandidates }),
 						...(options.evaluator === undefined ? {} : { evaluator: options.evaluator }),
 					});
 					if (!started.started) throw new Error(started.reason);
@@ -8444,8 +8453,14 @@ export class AgentSession {
 				}
 			}
 			this._failureLedgerPendingRegressions = [];
-			saveHarnessState(localHarnessStateDir, state);
+			// Asymmetric trust: a champion's observation window that closed clean
+			// credits the entries it touched (+5); a measured fault inside it
+			// debits them (-15). Entries below 30 go dormant and leave the prompt.
+			const settled = settleHarnessTrustWindows(state, this._failureLedgerTurn());
+			const trustChanged = settled !== state;
+			saveHarnessState(localHarnessStateDir, settled);
 			this._failureLedgerDirty = false;
+			if (trustChanged) this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
 		} catch {
 			// Leave the ledger dirty; the next boundary retries.
 		}

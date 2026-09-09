@@ -8,7 +8,8 @@ import {
 	isFailureOpponentId,
 } from "../ravo/authority.js";
 import { type FailureRecord, failureOpponentId, formatFailureLedgerForPrompt } from "../ravo/failure-ledger.js";
-import { type JsonValue, type RavoState, ravoExtendOpponents } from "../ravo/reducer.js";
+import { type JsonValue, type RavoChampion, type RavoState, ravoExtendOpponents } from "../ravo/reducer.js";
+import type { TrustOutcome } from "./harness-trust.js";
 import type { RefinementProposal } from "./refinement.js";
 
 /**
@@ -41,6 +42,13 @@ import type { RefinementProposal } from "./refinement.js";
  *   recurs inside the window is a measured fault (judge said pass, outcome
  *   said fail) and feeds a gated repair (`ravoObserveChampion`). The fault
  *   never bypasses the gate: the repair proposal is scored like any other.
+ * - asymmetric trust: the harness entries a committed proposal created or
+ *   updated are "touched" (recorded in `HarnessState.trustWindows` by the
+ *   apply path). The champion's observation window is the outcome oracle:
+ *   `ravoChampionWindowOutcome` reads it, and `settleHarnessTrustWindows`
+ *   (harness-trust.ts) credits +5 when it closes clean or debits -15 on a
+ *   measured fault, once per window per entry. Entries below trust 30 go
+ *   dormant (hidden from the prompt, kept in state) until an explicit update.
  *
  * Divergence from the verified spec, stated honestly: the deep gate (here and
  * in the generic reducer via `RavoConfig.deepTolerance`) allows
@@ -491,6 +499,25 @@ export async function ravoEvaluateProposal(
 		judgeError,
 		authorization,
 	};
+}
+
+/**
+ * Trust outcome a champion's provisional window has produced by `turn`:
+ * - `"failure"` once a measured fault is recorded (a claimed fingerprint recurred
+ *   inside the window; `ravoObserveChampion` / `recordProvisionalRegressions`);
+ * - `"success"` once the window closed (`turn > untilTurn`) without a fault;
+ * - `undefined` while the window is still open, or for a champion committed
+ *   without a window (no turn known at commit) — such a champion never settles.
+ * Pure; the caller (`settleHarnessTrustWindows`) enforces once-per-window.
+ */
+export function ravoChampionWindowOutcome(
+	champion: Pick<RavoChampion, "provisional">,
+	turn: number,
+): TrustOutcome | undefined {
+	const window = champion.provisional;
+	if (!window || !Number.isSafeInteger(turn) || turn < 0) return undefined;
+	if (window.observedRecurrence !== undefined) return "failure";
+	return turn > window.untilTurn ? "success" : undefined;
 }
 
 /** Whether RAVO gating is enabled (default on; disable with PRIME_AGENT_RAVO=0). */
