@@ -119,11 +119,13 @@ describe("parseArcScorecard", () => {
 
 describe("interpretArcRun", () => {
 	it("passes with the outcome score on a clean run", () => {
-		expect(interpretArcRun({ stdout: scorecardStdout(2, 7), exitCode: 0 }, "ls20")).toEqual({
+		const result = interpretArcRun({ stdout: scorecardStdout(2, 7), exitCode: 0 }, "ls20");
+		expect(result).toMatchObject({
 			status: "pass",
 			score: 29,
 			detail: "2/7 levels in 12 actions for ls20",
 		});
+		expect(result.scorecard).toMatchObject({ levelsCompleted: 2, totalLevels: 7, actions: 12 });
 	});
 
 	it("fails on a non-zero exit while keeping the score", () => {
@@ -142,11 +144,12 @@ describe("interpretArcRun", () => {
 			scorecardStdout(0, 7),
 		].join("\n");
 		const result = interpretArcRun({ stdout, exitCode: 0 }, "ls20");
-		expect(result).toEqual({
+		expect(result).toMatchObject({
 			status: "fail",
 			score: 0,
 			detail: "agent raised KeyError: 'missing'; 0/7 levels in 12 actions for ls20",
 		});
+		expect(result.scorecard?.levelsCompleted).toBe(0);
 	});
 
 	it("errors when no scorecard was produced", () => {
@@ -218,7 +221,7 @@ describe("createArcAgiEvaluator", () => {
 			{ proposal: proposal({ agentName: "ravo_candidate", source: SOURCE }), context },
 			callOptions(),
 		);
-		expect(result).toEqual({
+		expect(result).toMatchObject({
 			status: "completed",
 			tokens: 0,
 			value: { status: "pass", score: 43, detail: "3/7 levels in 12 actions for ls20" },

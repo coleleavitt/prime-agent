@@ -246,7 +246,9 @@ describe("ravo entry points", () => {
 		const rows = harness.session.messages.filter((message) => isSessionSlashCommandResultMessage(message));
 		expect(rows).toHaveLength(1);
 		expect(rows[0].details.success).toBe(false);
-		expect(rows[0].content).toContain("Usage: /ravo [--global] [--rounds N] [--repairs N] <task>");
+		expect(rows[0].content).toContain(
+			"Usage: /ravo [--global] [--rounds N] [--repairs N] [--arc-repo DIR --arc-game ID] <task>",
+		);
 		expect(ravoFake.FakeRavoRunService.instances.every((instance) => instance.startCalls.length === 0)).toBe(true);
 	});
 
@@ -283,6 +285,12 @@ describe("/ravo argument parsing", () => {
 	it("rejects missing tasks and invalid counts", () => {
 		expect(() => parseRavoCommandOptions("")).toThrow("Usage: /ravo");
 		expect(() => parseRavoCommandOptions("--global")).toThrow("Usage: /ravo");
+		expect(parseRavoCommandOptions("--arc-repo /tmp/arc --arc-game ls20 play ls20")).toEqual({
+			task: "play ls20",
+			global: false,
+			evaluator: { kind: "arc-agi", repoDir: "/tmp/arc", game: "ls20" },
+		});
+		expect(() => parseRavoCommandOptions("--arc-game ls20 play")).toThrow("Usage: /ravo");
 		expect(() => parseRavoCommandOptions("--rounds x task")).toThrow("--rounds expects a positive integer");
 		expect(() => parseRavoCommandOptions("task --repairs 0")).toThrow("--repairs expects a positive integer");
 		expect(() => parseRavoCommandOptions("task --rounds")).toThrow("--rounds expects a positive integer");

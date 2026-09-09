@@ -1,9 +1,10 @@
-import { existsSync } from "node:fs";
-import { mkdtemp } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Usage } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
+import type { ArcRunner } from "../src/core/ravo/arc-agi-evaluator.js";
 import { emptyAssistedRavoState } from "../src/core/ravo/authority.js";
 import type { FailureLedger } from "../src/core/ravo/failure-ledger.js";
 import type { JsonValue, RavoState } from "../src/core/ravo/reducer.js";
@@ -316,5 +317,125 @@ describe("RavoRunService", () => {
 		expect(requests[1]?.prompt).toMatch(/^# RAVO repair/);
 		expect(calls).toMatchObject({ implement: 0, repair: 0, judge: 2 });
 		expect(state().ravo?.lineage.at(-1)).toMatchObject({ parentId: "seed", score: 90 });
+	});
+});
+
+const ARC_AGENT_SOURCE = [
+	"from arcengine import FrameData, GameAction, GameState",
+	"from ..agent import Agent",
+	"class RavoTestAgent(Agent):",
+	"    MAX_ACTIONS = 8",
+	"    def is_done(self, frames, latest_frame):",
+	"        return latest_frame.state is GameState.WIN",
+	"    def choose_action(self, frames, latest_frame):",
+	"        return GameAction.RESET",
+].join("\n");
+
+function arcScorecard(levelsCompleted: number, totalLevels: number, actions: number): string {
+	return [
+		"2026-09-08 13:46:02,022 | INFO | --- FINAL SCORECARD REPORT ---",
+		"2026-09-08 13:46:02,022 | INFO | {",
+		`  "environments": [{"game_id": "ls20", "levels_completed": ${levelsCompleted}, "number_of_levels": ${totalLevels}, "total_actions": ${actions}, "state": "GAME_OVER"}],`,
+		`  "total_levels_completed": ${levelsCompleted},`,
+		`  "total_levels": ${totalLevels},`,
+		`  "total_actions": ${actions}`,
+		"}",
+	].join("\n");
+}
+
+const arcProposal = (source = ARC_AGENT_SOURCE, agentName = "ravo_test_agent") => ({
+	summary: "Candidate ARC agent",
+	rationale: "Play the game.",
+	expectedOutcome: "More levels.",
+	addressedFingerprints: [],
+	edits: [],
+	arcAgent: { agentName, source },
+});
+
+function fakeArcRunner(outcomes: Array<{ levels: number; total: number; actions: number; traceback?: string }>) {
+	const runs: string[] = [];
+	const runner: ArcRunner = async ({ args, cwd }) => {
+		runs.push(`${cwd} ${args.join(" ")}`);
+		const outcome = outcomes[Math.min(runs.length - 1, outcomes.length - 1)];
+		const stdout = arcScorecard(outcome.levels, outcome.total, outcome.actions);
+		return outcome.traceback
+			? { exitCode: 0, stdout, stderr: `Traceback (most recent call last):\n  File "x"\n${outcome.traceback}\n` }
+			: { exitCode: 0, stdout, stderr: "" };
+	};
+	return { runner, runs };
+}
+
+describe("RavoRunService with the ARC-AGI-3 outcome evaluator", () => {
+	const arcRequest = (repoDir: string): RavoRunRequest => ({
+		task: "play ls20",
+		maxRounds: 3,
+		maxRepairs: 2,
+		evaluator: { kind: "arc-agi", repoDir, game: "ls20" },
+	});
+
+	it("plays one game per candidate, scores by levels, and never consults the judge", async () => {
+		const repoDir = await mkdtemp(path.join(tmpdir(), "arc-repo-"));
+		await mkdir(path.join(repoDir, "agents", "templates"), { recursive: true });
+		await writeFile(path.join(repoDir, "agents", "__init__.py"), "AVAILABLE_AGENTS = {}\n", "utf8");
+		const arc = fakeArcRunner([{ levels: 3, total: 7, actions: 40 }]);
+		const { service, calls, state, harnessDir } = await harness({ implement: () => arcProposal() }, harnessState(), {
+			arcRunner: arc.runner,
+		});
+		const terminal = await service.start(arcRequest(repoDir));
+		expect(terminal.stopReason).toBe("accepted");
+		expect(terminal.lastCertificate).toMatchObject({
+			status: "commit",
+			screenScore: 100,
+			deepScore: 43,
+			missed: ["arc:all-levels"],
+		});
+		expect(calls.judge).toBe(0);
+		expect(arc.runs).toEqual([`${repoDir} run main.py --agent=ravo_test_agent --game=ls20`]);
+		expect(readFileSync(path.join(repoDir, "agents", "templates", "ravo_test_agent.py"), "utf8")).toContain(
+			"class RavoTestAgent(Agent)",
+		);
+		const persisted = state();
+		expect(persisted.ravo?.lineage.at(-1)).toMatchObject({ score: 43, missedCriterionIds: ["arc:all-levels"] });
+		expect(persisted.ravo?.opponents.criteria.find((c) => c.id === "arc:all-levels")?.currentWeight).toBe(2);
+		expect(persisted.ravo?.opponents.criteria.find((c) => c.id === "arc:no-crash")?.currentWeight).toBe(1);
+		expect(existsSync(path.join(harnessDir, "ravo", "arc", `${terminal.runId}-ravo_test_agent.py`))).toBe(true);
+	});
+
+	it("rejects a syntactically broken agent at the fast screen without playing", async () => {
+		const repoDir = await mkdtemp(path.join(tmpdir(), "arc-repo-"));
+		const arc = fakeArcRunner([{ levels: 7, total: 7, actions: 10 }]);
+		const { service } = await harness(
+			{
+				implement: () => arcProposal("class RavoTestAgent(Agent):\n  def broken(:\n"),
+				repair: () => arcProposal("class RavoTestAgent(Agent):\n  def broken(:\n"),
+			},
+			harnessState(),
+			{ arcRunner: arc.runner },
+		);
+		const terminal = await service.start({ ...arcRequest(repoDir), maxRepairs: 1 });
+		expect(terminal.stopReason).toBe("repair_limit");
+		expect(terminal.lastCertificate?.status).toBe("reject_screen");
+		expect(arc.runs).toEqual([]);
+	});
+
+	it("treats a crashing agent as a deep failure and repairs it", async () => {
+		const repoDir = await mkdtemp(path.join(tmpdir(), "arc-repo-"));
+		await mkdir(path.join(repoDir, "agents", "templates"), { recursive: true });
+		await writeFile(path.join(repoDir, "agents", "__init__.py"), "AVAILABLE_AGENTS = {}\n", "utf8");
+		const arc = fakeArcRunner([
+			{ levels: 0, total: 7, actions: 0, traceback: "KeyError: 'frame'" },
+			{ levels: 7, total: 7, actions: 30 },
+		]);
+		const { service, calls } = await harness(
+			{ implement: () => arcProposal(), repair: () => arcProposal(ARC_AGENT_SOURCE, "ravo_test_agent_v2") },
+			harnessState(),
+			{ arcRunner: arc.runner },
+		);
+		const terminal = await service.start(arcRequest(repoDir));
+		expect(terminal.stopReason).toBe("accepted");
+		expect(terminal.repairs).toBe(1);
+		expect(terminal.lastCertificate).toMatchObject({ status: "commit", deepScore: 100, missed: [] });
+		expect(calls.repair).toBe(1);
+		expect(arc.runs).toHaveLength(2);
 	});
 });

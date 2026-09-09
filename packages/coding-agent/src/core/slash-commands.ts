@@ -63,9 +63,10 @@ export interface RavoCommandOptions {
 	global: boolean;
 	maxRounds?: number;
 	maxRepairs?: number;
+	evaluator?: { kind: "arc-agi"; repoDir: string; game: string };
 }
 
-const RAVO_USAGE = "Usage: /ravo [--global] [--rounds N] [--repairs N] <task>";
+const RAVO_USAGE = "Usage: /ravo [--global] [--rounds N] [--repairs N] [--arc-repo DIR --arc-game ID] <task>";
 
 function parseRavoCount(flag: string, value: string | undefined): number {
 	if (value === undefined || !/^\d+$/.test(value) || Number(value) < 1) {
@@ -87,10 +88,24 @@ export function parseRavoCommandOptions(args: string): RavoCommandOptions {
 	let global = false;
 	let maxRounds: number | undefined;
 	let maxRepairs: number | undefined;
+	let arcRepo: string | undefined;
+	let arcGame: string | undefined;
 	for (let index = 0; index < tokens.length; index++) {
 		const token = tokens[index];
 		if (token === "--global") {
 			global = true;
+			continue;
+		}
+		const arcMatch = /^--arc-(repo|game)(?:=(.*))?$/.exec(token);
+		if (arcMatch) {
+			let value = arcMatch[2];
+			if (value === undefined) {
+				value = tokens[index + 1];
+				index++;
+			}
+			if (!value) throw new Error(RAVO_USAGE);
+			if (arcMatch[1] === "repo") arcRepo = value;
+			else arcGame = value;
 			continue;
 		}
 		const flagMatch = /^--(rounds|repairs)(?:=(.*))?$/.exec(token);
@@ -110,11 +125,15 @@ export function parseRavoCommandOptions(args: string): RavoCommandOptions {
 	}
 	const task = taskTokens.join(" ");
 	if (!task) throw new Error(RAVO_USAGE);
+	if ((arcRepo === undefined) !== (arcGame === undefined)) throw new Error(RAVO_USAGE);
 	return {
 		task,
 		global,
 		...(maxRounds === undefined ? {} : { maxRounds }),
 		...(maxRepairs === undefined ? {} : { maxRepairs }),
+		...(arcRepo === undefined || arcGame === undefined
+			? {}
+			: { evaluator: { kind: "arc-agi" as const, repoDir: arcRepo, game: arcGame } }),
 	};
 }
 
@@ -223,7 +242,7 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 		name: "ravo",
 		description:
 			"Run the full RAVO loop (inspect, plan, implement, evaluate, diagnose, repair) over a continual harness mutation for a task",
-		argumentHint: "[--global] [--rounds N] [--repairs N] <task>",
+		argumentHint: "[--global] [--rounds N] [--repairs N] [--arc-repo DIR --arc-game ID] <task>",
 		takesArgument: true,
 	},
 	{

@@ -23,13 +23,20 @@ await ravo.cancel()
 
 ## API
 
-- `await ravo.run(task, instructions=None, global_=False, max_rounds=None, max_repairs=None)`
+- `await ravo.run(task, instructions=None, global_=False, max_rounds=None, max_repairs=None, arc_agi=None)`
   — start a run. Returns `{"started": True, "runId": ...}` immediately, or
   `{"started": False, "reason": ...}` when a run is already in progress or
   RAVO is not available in this session. `task` is the harness change to
   search for; optional `instructions` add constraints. Set `global_=True` to
   target the global (cross-session) harness store; omit for local
   (session-scoped). `max_rounds` and `max_repairs` cap the loop.
+  `arc_agi={"repo_dir": "/path/to/ARC-AGI-3-Agents", "game": "ls20"}` swaps
+  the LLM judge for an outcome evaluator: each candidate must carry an
+  `arcAgent` (`{"agentName", "source"}`, a Python `Agent` subclass), the
+  fast screen is a syntax check, the deep score is the fraction of levels the
+  agent completes in a real game, and the opponents are `arc:no-crash` and
+  `arc:all-levels`. Accepted agents are written to
+  `<harness>/ravo/arc/<runId>-<agentName>.py`.
 - `await ravo.status()` — current run status as a dict (`runId`, `phase`,
   `round`, `repairs`, `stopReason`, `lastCertificate`, ...) or
   `{"phase": "idle"}` when nothing is running.

@@ -1162,6 +1162,22 @@ function ravoPositiveInteger(payload: Record<string, unknown>, key: string): num
 	return value;
 }
 
+function parseRavoEvaluatorPayload(value: unknown): RavoRunRequest["evaluator"] | undefined {
+	if (value === undefined || value === null) return undefined;
+	if (typeof value !== "object" || Array.isArray(value)) {
+		throw new Error("ravo.run arc_agi must be an object with repo_dir and game when provided");
+	}
+	const record = value as Record<string, unknown>;
+	const repoDir = record.repo_dir;
+	const game = record.game;
+	if (typeof repoDir !== "string" || !repoDir.trim())
+		throw new Error("ravo.run arc_agi.repo_dir must be a non-empty string");
+	if (typeof game !== "string" || !/^[a-z0-9_-]+$/i.test(game.trim())) {
+		throw new Error("ravo.run arc_agi.game must be a game id such as ls20");
+	}
+	return { kind: "arc-agi", repoDir: repoDir.trim(), game: game.trim() };
+}
+
 function parseRavoRunPayload(payload: Record<string, unknown>): RavoRunRequest {
 	const task = payload.task;
 	if (typeof task !== "string" || !task.trim()) {
@@ -1179,8 +1195,10 @@ function parseRavoRunPayload(payload: Record<string, unknown>): RavoRunRequest {
 	const maxRepairs = ravoPositiveInteger(payload, "max_repairs");
 	const deadlineMs = ravoPositiveInteger(payload, "deadline_ms");
 	const tokenBudget = ravoPositiveInteger(payload, "token_budget");
+	const evaluator = parseRavoEvaluatorPayload(payload.arc_agi);
 	return {
 		task: task.trim(),
+		...(evaluator === undefined ? {} : { evaluator }),
 		...(typeof instructions === "string" && instructions.trim() ? { instructions: instructions.trim() } : {}),
 		...(globalFlag === true ? { global: true } : {}),
 		...(maxRounds === undefined ? {} : { maxRounds }),
@@ -6647,6 +6665,7 @@ export class AgentSession {
 						...(options.global ? { global: true } : {}),
 						...(options.maxRounds === undefined ? {} : { maxRounds: options.maxRounds }),
 						...(options.maxRepairs === undefined ? {} : { maxRepairs: options.maxRepairs }),
+						...(options.evaluator === undefined ? {} : { evaluator: options.evaluator }),
 					});
 					if (!started.started) throw new Error(started.reason);
 					resultText = `RAVO run ${started.runId} started: ${options.task}`;

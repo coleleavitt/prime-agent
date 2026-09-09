@@ -35,6 +35,7 @@ async def run(
     global_: bool = False,
     max_rounds: int | None = None,
     max_repairs: int | None = None,
+    arc_agi: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Start the full RAVO loop over a continual harness mutation for `task`.
 
@@ -44,6 +45,10 @@ async def run(
     Progress is visible in the Agents View and via `status()`. Set
     `global_=True` to target the global (cross-session) harness store; omit
     for local (session-scoped). `max_rounds` and `max_repairs` cap the loop.
+    Pass `arc_agi={"repo_dir": "/path/to/ARC-AGI-3-Agents", "game": "ls20"}`
+    to evaluate candidates by playing a real ARC-AGI-3 game instead of the
+    LLM judge: the proposal must then carry an `arcAgent` (a Python `Agent`
+    subclass) and the deep score is the fraction of levels completed.
     """
     if not isinstance(task, str) or not task.strip():
         raise TypeError("task must be a non-empty str")
@@ -55,6 +60,9 @@ async def run(
         raise TypeError(f"global_ must be bool, got {type(global_).__name__}")
     _check_count("max_rounds", max_rounds)
     _check_count("max_repairs", max_repairs)
+    if arc_agi is not None:
+        if not isinstance(arc_agi, dict) or not isinstance(arc_agi.get("repo_dir"), str) or not isinstance(arc_agi.get("game"), str):
+            raise TypeError('arc_agi must be {"repo_dir": str, "game": str} or None')
     payload: dict[str, Any] = {"task": task}
     if instructions is not None:
         payload["instructions"] = instructions
@@ -64,6 +72,8 @@ async def run(
         payload["max_rounds"] = max_rounds
     if max_repairs is not None:
         payload["max_repairs"] = max_repairs
+    if arc_agi is not None:
+        payload["arc_agi"] = {"repo_dir": arc_agi["repo_dir"], "game": arc_agi["game"]}
     return await host_request("ravo.run", payload)
 
 

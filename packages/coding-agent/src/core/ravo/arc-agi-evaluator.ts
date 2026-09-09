@@ -69,6 +69,8 @@ export interface ArcEvaluationResult {
 	status: GateStatus;
 	score?: number;
 	detail?: string;
+	/** Parsed scorecard when the run produced one; absent on `error`. */
+	scorecard?: ArcScorecard;
 }
 
 export const DEFAULT_ARC_TIMEOUT_MS = 10 * 60 * 1000;
@@ -79,7 +81,7 @@ const CANDIDATE_HEADER = "# ravo-arc-agi candidate";
 const SCORECARD_MARKERS = ["--- FINAL SCORECARD REPORT ---", "--- EXISTING SCORECARD REPORT ---"];
 const CLASS_PATTERN = /^class\s+([A-Za-z_]\w*)\s*\(\s*(?:[\w.]+\.)?Agent\s*\)\s*:/m;
 
-class ArcEvaluationError extends Error {}
+export class ArcEvaluationError extends Error {}
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
 	return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -178,7 +180,8 @@ export function arcAgentSelector(agentName: string): string {
 	return agentName.toLowerCase();
 }
 
-function validateArtifact(artifact: unknown): ArcAgentArtifact {
+/** Structural check of a candidate: name pattern, non-empty source, one direct `Agent` subclass. Throws ArcEvaluationError. */
+export function validateArcArtifact(artifact: unknown): ArcAgentArtifact {
 	const record = asRecord(artifact);
 	if (!record) throw new ArcEvaluationError("artifact must be an object with agentName and source");
 	const { agentName, source } = record;
@@ -280,12 +283,17 @@ export function interpretArcRun(result: ArcRunnerResult, game: string): ArcEvalu
 	const score = arcScorecardScore(scorecard);
 	const summary = `${scorecard.levelsCompleted}/${scorecard.totalLevels} levels in ${scorecard.actions} actions for ${game}`;
 	if (result.exitCode !== 0) {
-		return { status: "fail", score, detail: `run exited ${result.exitCode}; ${summary}; ${tail(result.stderr, 5)}` };
+		return {
+			status: "fail",
+			score,
+			detail: `run exited ${result.exitCode}; ${summary}; ${tail(result.stderr, 5)}`,
+			scorecard,
+		};
 	}
 	if (traceback) {
-		return { status: "fail", score, detail: `agent raised ${traceback[1]}: ${traceback[2]}; ${summary}` };
+		return { status: "fail", score, detail: `agent raised ${traceback[1]}: ${traceback[2]}; ${summary}`, scorecard };
 	}
-	return { status: "pass", score, detail: summary };
+	return { status: "pass", score, detail: summary, scorecard };
 }
 
 /** Default runner: `uv run main.py ...` in the clone, killed on timeout or abort. */
@@ -379,7 +387,7 @@ export async function evaluateArcAgent(
 	const timeoutMs = options.timeoutMs ?? DEFAULT_ARC_TIMEOUT_MS;
 	const runner = options.runner ?? defaultArcRunner;
 	try {
-		const validated = validateArtifact(artifact);
+		const validated = validateArcArtifact(artifact);
 		if (signal.aborted) throw new ArcEvaluationError("ARC-AGI-3 run aborted");
 		await installArcAgent(options.repoDir, validated);
 		if (signal.aborted) throw new ArcEvaluationError("ARC-AGI-3 run aborted");

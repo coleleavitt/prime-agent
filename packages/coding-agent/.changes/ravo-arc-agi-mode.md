@@ -1,0 +1,1 @@
+- Added `/ravo --arc-repo DIR --arc-game ID` and `ravo.run(arc_agi=...)`: candidates are Python ARC-AGI-3 agents scored by a real game (levels completed) with `arc:no-crash` and `arc:all-levels` opponents instead of the LLM judge.

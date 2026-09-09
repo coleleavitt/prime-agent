@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -12,9 +13,15 @@ import {
 	normalizeRefinementProposal,
 	type RefinementProposal,
 } from "../refinement/refinement.js";
-import { screenRefinementProposal } from "../refinement/skill-dry-run.js";
+import { resolveKernelPython, screenRefinementProposal } from "../refinement/skill-dry-run.js";
 import type { RunAgentHandler } from "../run-agent.js";
-import { type ArcAgentArtifact, createArcAgiEvaluator } from "./arc-agi-evaluator.js";
+import {
+	type ArcAgentArtifact,
+	type ArcEvaluationResult,
+	type ArcRunner,
+	evaluateArcAgent,
+	validateArcArtifact,
+} from "./arc-agi-evaluator.js";
 import { RavoArchive } from "./archive.js";
 import { failureOpponentFingerprint, isFailureOpponentId, normalizeAssistedRavoState } from "./authority.js";
 import type { BoundedContextView, ContextArchive, ContextAtom, ContextViewLimits } from "./context-view.js";
@@ -120,6 +127,8 @@ export interface RavoRunServiceDeps {
 	saveState: (state: HarnessState) => Promise<void>;
 	onUpdate: (status: RavoRunStatus) => void;
 	now?: () => number;
+	/** Runs the ARC-AGI-3 harness for `evaluator: { kind: "arc-agi" }`; tests inject a fake. Defaults to `uv run main.py`. */
+	arcRunner?: ArcRunner;
 }
 
 /** JSON object produced by the implement/repair children: a RefinementProposal plus `addressedFingerprints`. */
@@ -223,9 +232,10 @@ export class RavoRunService {
 		const recurring = recurringFailures(state.failures ?? emptyFailureLedger());
 		const activeFailureIds = [...new Set(recurring.map((record) => failureOpponentId(record.fingerprint)))];
 		const baseRavo = normalizeAssistedRavoState(state.ravo);
+		const arc = request.evaluator !== undefined && request.evaluator !== "judge" ? request.evaluator : undefined;
 		const initialState: RavoState<JsonValue> = {
 			...baseRavo,
-			opponents: ravoExtendOpponents(baseRavo.opponents, activeFailureIds),
+			opponents: ravoExtendOpponents(baseRavo.opponents, [...activeFailureIds, ...(arc ? ARC_OPPONENT_IDS : [])]),
 		};
 		const config = { ...RAVO_DEFAULT_CONFIG };
 		const context = buildContextArchive(request, state, recurring, initialState);
@@ -239,7 +249,6 @@ export class RavoRunService {
 		});
 		const structured = <TInput, TOutput>(spec: StructuredChildSpec<TInput, TOutput>): ChildCall<TInput, TOutput> =>
 			retrying(createRunAgentChildCall(deps.runAgent, spec), CHILD_RETRIES);
-		const arc = request.evaluator !== undefined && request.evaluator !== "judge" ? request.evaluator : undefined;
 		let proposalCount = 0;
 		let planCount = 0;
 		const proposalSpec = (kind: "implement" | "repair") => ({
@@ -278,24 +287,30 @@ export class RavoRunService {
 
 		const judge = memoizedJudge(structured(judgeSpec(recurring, state, scopeOf("judge"))));
 		const hygieneIds = RAVO_SEED_CRITERIA.map((criterion) => criterion.id);
+		const arcRun = arc
+			? memoizedArcRun({ ...arc, ...(deps.arcRunner ? { runner: deps.arcRunner } : {}) })
+			: undefined;
+		const hygieneOpponents: EvaluationAdapter<JsonValue>[] = arcRun
+			? [...arcOpponents(arcRun), ...hygieneIds.map(notApplicableOpponent)]
+			: hygieneIds.map(
+					(criterionId): EvaluationAdapter<JsonValue> => ({
+						id: `opponent:${criterionId}`,
+						kind: "opponent",
+						criterionId,
+						evaluate: async (input, options) => {
+							const judged = await judge(input.proposal, input.context, options);
+							if (judged.status !== "completed") return judged;
+							const failed = judged.value.failedCriteria.includes(criterionId);
+							return {
+								status: "completed",
+								value: { status: failed ? "fail" : "pass", detail: judged.value.rationale },
+								tokens: judged.tokens,
+							};
+						},
+					}),
+				);
 		const opponents: EvaluationAdapter<JsonValue>[] = [
-			...hygieneIds.map(
-				(criterionId): EvaluationAdapter<JsonValue> => ({
-					id: `opponent:${criterionId}`,
-					kind: "opponent",
-					criterionId,
-					evaluate: async (input, options) => {
-						const judged = await judge(input.proposal, input.context, options);
-						if (judged.status !== "completed") return judged;
-						const failed = judged.value.failedCriteria.includes(criterionId);
-						return {
-							status: "completed",
-							value: { status: failed ? "fail" : "pass", detail: judged.value.rationale },
-							tokens: judged.tokens,
-						};
-					},
-				}),
-			),
+			...hygieneOpponents,
 			...initialState.opponents.criteria
 				.filter((criterion) => isFailureOpponentId(criterion.id))
 				.map((criterion): EvaluationAdapter<JsonValue> => {
@@ -328,31 +343,33 @@ export class RavoRunService {
 					};
 				}),
 		];
-		const fast: EvaluationAdapter<JsonValue> = {
-			id: "fast:structural-dry-run",
-			kind: "fast",
-			evaluate: async ({ proposal }, options) => {
-				const refinement = proposalOf(proposal.artifact);
-				const screened = await screenRefinementProposal(refinement, { signal: options.signal });
-				const score = ravoFastScreen(refinement, screened.validEdits);
-				const failures = screened.dryRun
-					.filter((item) => !item.ok)
-					.map((item) => `edit ${item.editIndex}: ${item.detail}`);
-				const invalid = refinement.edits.length - countValidRefinementEdits(refinement);
-				const detail = [
-					`${screened.validEdits}/${refinement.edits.length} edits pass the structural screen and dry-run`,
-					...(invalid > 0 ? [`${invalid} structurally invalid`] : []),
-					...failures,
-				].join("; ");
-				return {
-					status: "completed",
-					value: { status: score >= config.screenThreshold ? "pass" : "fail", score, detail },
-					tokens: 0,
+		const fast: EvaluationAdapter<JsonValue> = arcRun
+			? arcFastAdapter(config.screenThreshold)
+			: {
+					id: "fast:structural-dry-run",
+					kind: "fast",
+					evaluate: async ({ proposal }, options) => {
+						const refinement = proposalOf(proposal.artifact);
+						const screened = await screenRefinementProposal(refinement, { signal: options.signal });
+						const score = ravoFastScreen(refinement, screened.validEdits);
+						const failures = screened.dryRun
+							.filter((item) => !item.ok)
+							.map((item) => `edit ${item.editIndex}: ${item.detail}`);
+						const invalid = refinement.edits.length - countValidRefinementEdits(refinement);
+						const detail = [
+							`${screened.validEdits}/${refinement.edits.length} edits pass the structural screen and dry-run`,
+							...(invalid > 0 ? [`${invalid} structurally invalid`] : []),
+							...failures,
+						].join("; ");
+						return {
+							status: "completed",
+							value: { status: score >= config.screenThreshold ? "pass" : "fail", score, detail },
+							tokens: 0,
+						};
+					},
 				};
-			},
-		};
-		const deep: EvaluationAdapter<JsonValue> = arc
-			? arcDeepAdapter(arc)
+		const deep: EvaluationAdapter<JsonValue> = arcRun
+			? arcDeepAdapter(arcRun)
 			: {
 					id: "deep:judge",
 					kind: "deep",
@@ -424,6 +441,7 @@ export class RavoRunService {
 							.join("; "),
 					};
 				}
+				if (arc) await persistArcAgent(baseDir, runId, proposal.artifact);
 				current.ravo = ravoMarkProvisional(stepped.state, proposal.id, {
 					claimedFingerprints: addressedFingerprintsOf(proposal.artifact).filter((fingerprint) =>
 						activeFailureIds.includes(failureOpponentId(fingerprint)),
@@ -810,23 +828,157 @@ function arcArtifactOf(artifact: JsonValue): ArcAgentArtifact | undefined {
 	return { agentName: (skill.id ?? skill.title ?? "agent").replace(/[^a-zA-Z0-9_]+/g, "_"), source: skill.content };
 }
 
-function arcDeepAdapter(options: { repoDir: string; game: string }): EvaluationAdapter<JsonValue> {
-	const arc = createArcAgiEvaluator(options);
-	return {
-		id: arc.id,
-		kind: "deep",
-		evaluate: async ({ proposal, context }, callOptions) => {
+const ARC_OPPONENT_IDS = ["arc:no-crash", "arc:all-levels"] as const;
+
+type ArcRunFn = (proposal: ControllerProposal<JsonValue>, signal: AbortSignal) => Promise<ArcEvaluationResult>;
+
+/** One real game per proposal, shared by the deep gate and the outcome opponents. */
+function memoizedArcRun(options: { repoDir: string; game: string; runner?: ArcRunner }): ArcRunFn {
+	const pending = new Map<string, Promise<ArcEvaluationResult>>();
+	return (proposal, signal) => {
+		let shared = pending.get(proposal.id);
+		if (!shared) {
 			const artifact = arcArtifactOf(proposal.artifact);
-			if (!artifact) {
-				return {
-					status: "completed",
-					value: { status: "error", detail: "proposal carries no ARC agent source (arcAgent or a skill edit)" },
-					tokens: 0,
-				};
+			shared = artifact
+				? evaluateArcAgent(options, artifact, signal)
+				: Promise.resolve({
+						status: "error" as const,
+						detail: "proposal carries no ARC agent source (arcAgent or a skill edit)",
+					});
+			pending.set(proposal.id, shared);
+		}
+		return shared;
+	};
+}
+
+/** Deterministic screen for an ARC candidate: artifact shape plus a Python syntax check. No game is played. */
+function arcFastAdapter(screenThreshold: number): EvaluationAdapter<JsonValue> {
+	return {
+		id: "fast:arc-artifact",
+		kind: "fast",
+		evaluate: async ({ proposal }, options) => {
+			const artifact = arcArtifactOf(proposal.artifact);
+			let detail: string;
+			let ok = false;
+			try {
+				if (!artifact) throw new Error("proposal carries no ARC agent source (arcAgent or a skill edit)");
+				validateArcArtifact(artifact);
+				const syntax = await pythonSyntaxCheck(artifact.source, options.signal);
+				ok = syntax.ok;
+				detail = syntax.ok ? `agent ${artifact.agentName} parses` : `agent ${artifact.agentName}: ${syntax.detail}`;
+			} catch (error) {
+				detail = error instanceof Error ? error.message : String(error);
 			}
-			return arc.evaluate({ proposal: { ...proposal, artifact }, context }, callOptions);
+			const score = ok ? 100 : 0;
+			return {
+				status: "completed",
+				value: { status: score >= screenThreshold ? "pass" : "fail", score, detail },
+				tokens: 0,
+			};
 		},
 	};
+}
+
+function arcDeepAdapter(run: ArcRunFn): EvaluationAdapter<JsonValue> {
+	return {
+		id: "deep:arc-agi",
+		kind: "deep",
+		evaluate: async ({ proposal }, options) => {
+			const result = await run(proposal, options.signal);
+			return {
+				status: "completed",
+				value: {
+					status: result.status,
+					...(result.score === undefined ? {} : { score: result.score }),
+					...(result.detail === undefined ? {} : { detail: result.detail }),
+				},
+				tokens: 0,
+			};
+		},
+	};
+}
+
+/**
+ * Outcome opponents derived from the same game run: the agent must not crash,
+ * and it must finish every level. Missing `arc:all-levels` costs one weight
+ * unit at first; weakness pressure doubles it after a champion is accepted
+ * without finishing, so later candidates cannot keep winning on partial games.
+ */
+function arcOpponents(run: ArcRunFn): EvaluationAdapter<JsonValue>[] {
+	return [
+		{
+			id: "opponent:arc:no-crash",
+			kind: "opponent",
+			criterionId: "arc:no-crash",
+			evaluate: async ({ proposal }, options) => {
+				const result = await run(proposal, options.signal);
+				return {
+					status: "completed",
+					value: { status: result.status === "pass" ? "pass" : "fail", detail: result.detail ?? result.status },
+					tokens: 0,
+				};
+			},
+		},
+		{
+			id: "opponent:arc:all-levels",
+			kind: "opponent",
+			criterionId: "arc:all-levels",
+			evaluate: async ({ proposal }, options) => {
+				const result = await run(proposal, options.signal);
+				const card = result.scorecard;
+				const done = card !== undefined && card.totalLevels > 0 && card.levelsCompleted === card.totalLevels;
+				return {
+					status: "completed",
+					value: {
+						status: done ? "pass" : "fail",
+						detail: card
+							? `${card.levelsCompleted}/${card.totalLevels} levels`
+							: (result.detail ?? "no scorecard"),
+					},
+					tokens: 0,
+				};
+			},
+		},
+	];
+}
+
+/** Hygiene criteria judge harness prose; an ARC agent artifact has none, so they pass vacuously and keep their weights. */
+function notApplicableOpponent(criterionId: string): EvaluationAdapter<JsonValue> {
+	return {
+		id: `opponent:${criterionId}`,
+		kind: "opponent",
+		criterionId,
+		evaluate: async () => ({
+			status: "completed",
+			value: { status: "pass", detail: "not applicable to an ARC agent candidate" },
+			tokens: 0,
+		}),
+	};
+}
+
+async function pythonSyntaxCheck(source: string, signal: AbortSignal): Promise<{ ok: boolean; detail: string }> {
+	const python = resolveKernelPython() ?? "python3";
+	return new Promise((resolve) => {
+		const child = execFile(
+			python,
+			["-I", "-c", "import ast,sys; ast.parse(sys.stdin.read())"],
+			{ timeout: 10_000, signal },
+			(error, _stdout, stderr) => {
+				if (!error) return resolve({ ok: true, detail: "ok" });
+				const lines = String(stderr).trim().split("\n");
+				resolve({ ok: false, detail: lines.at(-1) || error.message });
+			},
+		);
+		child.stdin?.end(source);
+	});
+}
+
+async function persistArcAgent(baseDir: string, runId: string, artifact: JsonValue): Promise<void> {
+	const agent = arcArtifactOf(artifact);
+	if (!agent) return;
+	const dir = path.join(baseDir, "ravo", "arc");
+	await mkdir(dir, { recursive: true });
+	await writeFile(path.join(dir, `${runId}-${agent.agentName}.py`), agent.source, "utf8");
 }
 
 /** One judge call per proposal, shared by the deep gate and the hygiene opponents. Tokens are reported once. */
