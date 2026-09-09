@@ -7082,21 +7082,16 @@ export class AgentDaemon {
 		}
 	}
 
-	// Live RAVO status is a fleet-level push keyed by session id: the supervisor relays
-	// it to roster subscribers, who are not attached to the session. Attached clients
-	// already receive the same status through the session_event channel.
+	// Live RAVO status is a fleet-level push keyed by session id. Like heartbeats_changed
+	// it goes to every connected peer: the supervisor relays it to roster subscribers
+	// (who are not attached to the session) and clients without the capability ignore
+	// the unknown message type. Attached clients also receive the session_event.
 	private broadcastRavoRunUpdate(state: ActiveSessionState, status: RavoRunStatus): void {
-		const message: DaemonOutbound = {
+		this.broadcastGlobal({
 			type: "ravo_run_update",
 			sessionId: state.runtime.session.sessionId,
 			status,
-		};
-		for (const client of this.clients) {
-			if (!this.supervisorClaims.has(client) && client.rosterSubscribed !== true) {
-				continue;
-			}
-			this.write(client, message);
-		}
+		});
 	}
 
 	private rosterEntryForSessionPath(canonicalPath: string): WorkerRosterEntry | undefined {
