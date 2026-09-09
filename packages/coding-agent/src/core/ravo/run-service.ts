@@ -138,11 +138,11 @@ export const RAVO_RUN_DEFAULTS = {
 	maxRounds: 4,
 	maxRepairs: 3,
 	deadlineMs: 20 * 60 * 1000,
-	// A real AgentSession child carries the full Prime system prompt (~50k input
-	// tokens per turn), so one call needs a six-figure reservation; a run of
-	// ~10 child calls fits comfortably in 1.5M.
+	// The only budget knob a user sets. Each child may spend whatever is still
+	// unclaimed; a real AgentSession child costs ~50-100k tokens per call.
 	tokenBudget: 1_500_000,
-	reservationPerCall: 150_000,
+	// Admission floor per concurrent call (a child cannot start on scraps).
+	reservationPerCall: 60_000,
 	concurrency: 3,
 	familyDelta: Rational.of(1, 20),
 } as const;

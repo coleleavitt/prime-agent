@@ -243,13 +243,16 @@ async function runController<T extends JsonValue>(
 	const call = async <I, O>(fn: ChildCall<I, O>, input: I): Promise<O> => {
 		if (abort.signal.aborted) throw new Stop("cancelled");
 		if (now() - started >= options.deadlineMs) throw new Stop("deadline");
-		if (cp.spentTokens + reserved + options.reservationPerCall > options.tokenBudget) throw new Stop("budget");
+		// The reservation is only an admission floor for concurrent calls; a child may
+		// spend everything that is still unclaimed, so the total budget is the one knob.
+		const remaining = options.tokenBudget - cp.spentTokens - reserved;
+		if (remaining < options.reservationPerCall) throw new Stop("budget");
 		reserved += options.reservationPerCall;
 		try {
-			let result = await fn(input, { signal: abort.signal, tokenBudget: options.reservationPerCall });
+			let result = await fn(input, { signal: abort.signal, tokenBudget: remaining });
 			if (result.status === "deferred") {
 				cp.workerHandle = result.handle;
-				const resumed = await result.wait({ signal: abort.signal, tokenBudget: options.reservationPerCall });
+				const resumed = await result.wait({ signal: abort.signal, tokenBudget: remaining });
 				if (resumed.status === "deferred") throw new Error("nested deferred child result");
 				result = resumed;
 			}
