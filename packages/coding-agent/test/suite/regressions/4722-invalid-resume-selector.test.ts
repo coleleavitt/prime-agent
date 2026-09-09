@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseArgs } from "../../../src/cli/args.js";
 import {
 	findClosestSessionId,
@@ -15,8 +15,25 @@ describe("ENG-4722 invalid resume selectors", () => {
 	let harness: Harness | undefined;
 
 	afterEach(() => {
+		vi.restoreAllMocks();
 		harness?.cleanup();
 		harness = undefined;
+	});
+
+	it("scans the flat session catalog once for a resume selector", async () => {
+		harness = await createHarness();
+		const sessionDir = join(harness.tempDir, "sessions");
+		const sessionId = "019e71ec-e08a-75a9-b573-aaaaaaaaaaaa";
+		createSavedSession(harness.tempDir, sessionDir, sessionId);
+		const list = vi.spyOn(SessionManager, "list");
+		const listAll = vi.spyOn(SessionManager, "listAll");
+		const parsed = parseArgs(["--resume", sessionId]);
+
+		const sessionManager = await createSessionManager(parsed, harness.tempDir, sessionDir);
+
+		expect(sessionManager.getSessionId()).toBe(sessionId);
+		expect(list).not.toHaveBeenCalled();
+		expect(listAll).toHaveBeenCalledOnce();
 	});
 
 	it("rejects a mistyped session ID with the closest saved ID", async () => {

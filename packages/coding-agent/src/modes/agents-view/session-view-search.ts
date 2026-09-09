@@ -1,10 +1,25 @@
-import { fuzzyMatch } from "@earendil-works/pi-tui";
+import type { FuzzyMatch } from "@earendil-works/pi-tui";
+
 export interface ParsedSearchQuery {
 	mode: "tokens" | "regex";
 	tokens: { kind: "fuzzy" | "phrase"; value: string }[];
 	regex: RegExp | null;
 	/** If set, parsing failed and we should treat query as non-matching. */
 	error?: string;
+}
+
+export interface CompiledSearchQuery {
+	mode: "tokens" | "regex";
+	tokens: readonly { kind: "fuzzy" | "phrase"; value: string; lowerValue: string; normalizedValue: string }[];
+	regex: RegExp | null;
+	/** If set, parsing failed and we should treat query as non-matching. */
+	error?: string;
+}
+
+export interface SearchTextCorpus {
+	text: string;
+	lowerText: string;
+	normalizedText: string;
 }
 
 export interface MatchResult {
@@ -99,44 +114,122 @@ export function parseSearchQuery(query: string): ParsedSearchQuery {
 	return { mode: "tokens", tokens, regex: null };
 }
 
+/** Parse and normalize a query once so it can be reused across a session rebuild. */
+export function compileSearchQuery(query: string): CompiledSearchQuery {
+	return compileParsedSearchQuery(parseSearchQuery(query));
+}
+
+function compileParsedSearchQuery(parsed: ParsedSearchQuery): CompiledSearchQuery {
+	return {
+		mode: parsed.mode,
+		tokens: parsed.tokens.map((token) => ({
+			...token,
+			lowerValue: token.value.toLowerCase(),
+			normalizedValue: normalizeWhitespaceLower(token.value),
+		})),
+		regex: parsed.regex,
+		...(parsed.error ? { error: parsed.error } : {}),
+	};
+}
+
+/** Prepare both corpus forms once before evaluating any query tokens. */
+export function createSearchTextCorpus(text: string): SearchTextCorpus {
+	const lowerText = text.toLowerCase();
+	return { text, lowerText, normalizedText: lowerText.replace(/\s+/g, " ").trim() };
+}
+
 const STRICT_FUZZY_MAX_TOKEN_SCORE = 25;
 
-/** Match any precomputed search corpus using the resume picker's query language. */
-export function matchSearchText(text: string, parsed: ParsedSearchQuery): MatchResult {
-	if (parsed.mode === "regex") {
-		if (!parsed.regex) {
+/** Match a prepared corpus against a compiled query without further normalization. */
+export function matchSearchTextCorpus(corpus: SearchTextCorpus, compiled: CompiledSearchQuery): MatchResult {
+	if (compiled.error) return { matches: false, score: 0 };
+	if (compiled.mode === "regex") {
+		if (!compiled.regex) {
 			return { matches: false, score: 0 };
 		}
-		const idx = text.search(parsed.regex);
+		const idx = corpus.text.search(compiled.regex);
 		if (idx < 0) return { matches: false, score: 0 };
 		return { matches: true, score: idx * 0.1 };
 	}
 
-	if (parsed.tokens.length === 0) {
+	if (compiled.tokens.length === 0) {
 		return { matches: true, score: 0 };
 	}
 
 	let totalScore = 0;
-	const normalizedText = normalizeWhitespaceLower(text);
-
-	for (const token of parsed.tokens) {
-		const needle = normalizeWhitespaceLower(token.value);
+	for (const token of compiled.tokens) {
+		const needle = token.normalizedValue;
 		if (!needle) continue;
-		const idx = normalizedText.indexOf(needle);
+		const idx = corpus.normalizedText.indexOf(needle);
 		if (idx >= 0) {
 			totalScore += idx * 0.1;
 			continue;
 		}
 		if (token.kind === "phrase") return { matches: false, score: 0 };
-		const m = fuzzyMatch(token.value, text);
-		if (!m.matches || m.score > STRICT_FUZZY_MAX_TOKEN_SCORE) return { matches: false, score: 0 };
-		totalScore += m.score;
+		const match = fuzzyMatchLower(token.lowerValue, corpus.lowerText);
+		if (!match.matches || match.score > STRICT_FUZZY_MAX_TOKEN_SCORE) return { matches: false, score: 0 };
+		totalScore += match.score;
 	}
 
 	return { matches: true, score: totalScore };
 }
 
+/** Match raw text with a compiled query, preparing the corpus exactly once. */
+export function matchCompiledSearchText(text: string, compiled: CompiledSearchQuery): MatchResult {
+	return matchSearchTextCorpus(createSearchTextCorpus(text), compiled);
+}
+
+/** Match any precomputed search corpus using the resume picker's query language. */
+export function matchSearchText(text: string, parsed: ParsedSearchQuery): MatchResult {
+	return matchCompiledSearchText(text, compileParsedSearchQuery(parsed));
+}
+
+/** Backwards-compatible convenience API for one-off searches. */
 export function matchesSearchText(text: string, query: string): boolean {
-	const parsed = parseSearchQuery(query);
-	return !parsed.error && matchSearchText(text, parsed).matches;
+	return matchCompiledSearchText(text, compileSearchQuery(query)).matches;
+}
+
+// Equivalent to pi-tui's fuzzyMatch after its lowercasing step. Accepting
+// normalized inputs avoids lowercasing the same session corpus for every token.
+function fuzzyMatchLower(queryLower: string, textLower: string): FuzzyMatch {
+	const matchQuery = (normalizedQuery: string): FuzzyMatch => {
+		if (normalizedQuery.length === 0) return { matches: true, score: 0 };
+		if (normalizedQuery.length > textLower.length) return { matches: false, score: 0 };
+
+		let queryIndex = 0;
+		let score = 0;
+		let lastMatchIndex = -1;
+		let consecutiveMatches = 0;
+		for (let i = 0; i < textLower.length && queryIndex < normalizedQuery.length; i++) {
+			if (textLower[i] !== normalizedQuery[queryIndex]) continue;
+			const isWordBoundary = i === 0 || /[\s\-_./:]/.test(textLower[i - 1]!);
+			if (lastMatchIndex === i - 1) {
+				consecutiveMatches++;
+				score -= consecutiveMatches * 5;
+			} else {
+				consecutiveMatches = 0;
+				if (lastMatchIndex >= 0) score += (i - lastMatchIndex - 1) * 2;
+			}
+			if (isWordBoundary) score -= 10;
+			score += i * 0.1;
+			lastMatchIndex = i;
+			queryIndex++;
+		}
+		if (queryIndex < normalizedQuery.length) return { matches: false, score: 0 };
+		if (normalizedQuery === textLower) score -= 100;
+		return { matches: true, score };
+	};
+
+	const primaryMatch = matchQuery(queryLower);
+	if (primaryMatch.matches) return primaryMatch;
+	const alphaNumericMatch = queryLower.match(/^(?<letters>[a-z]+)(?<digits>[0-9]+)$/);
+	const numericAlphaMatch = queryLower.match(/^(?<digits>[0-9]+)(?<letters>[a-z]+)$/);
+	const swappedQuery = alphaNumericMatch
+		? `${alphaNumericMatch.groups?.digits ?? ""}${alphaNumericMatch.groups?.letters ?? ""}`
+		: numericAlphaMatch
+			? `${numericAlphaMatch.groups?.letters ?? ""}${numericAlphaMatch.groups?.digits ?? ""}`
+			: "";
+	if (!swappedQuery) return primaryMatch;
+	const swappedMatch = matchQuery(swappedQuery);
+	return swappedMatch.matches ? { matches: true, score: swappedMatch.score + 5 } : primaryMatch;
 }

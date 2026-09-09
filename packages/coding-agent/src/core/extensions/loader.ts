@@ -28,6 +28,7 @@ import type {
 	MessageRenderer,
 	ProviderConfig,
 	RegisteredCommand,
+	ScheduledWorkInfo,
 	ToolDefinition,
 } from "./types.js";
 
@@ -117,6 +118,10 @@ export function createExtensionRuntime(): ExtensionRuntime {
 	const runtime: ExtensionRuntime = {
 		sendMessage: notInitialized,
 		sendUserMessage: notInitialized,
+		// Declaring scheduled work during load is legal but has no host to record
+		// it yet; bindCore() replaces these with the session-backed handlers.
+		setScheduledWork: () => {},
+		clearScheduledWork: () => {},
 		appendEntry: notInitialized,
 		setSessionName: notInitialized,
 		getSessionName: notInitialized,
@@ -233,6 +238,16 @@ function createExtensionAPI(
 		sendUserMessage(content, options): void {
 			runtime.assertActive();
 			runtime.sendUserMessage(content, options);
+		},
+
+		setScheduledWork(key: string, work?: ScheduledWorkInfo): void {
+			runtime.assertActive();
+			runtime.setScheduledWork(key, work);
+		},
+
+		clearScheduledWork(key: string): void {
+			runtime.assertActive();
+			runtime.clearScheduledWork(key);
 		},
 
 		appendEntry(customType: string, data?: unknown): void {

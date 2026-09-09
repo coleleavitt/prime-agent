@@ -8,6 +8,7 @@ import {
 	acquireDaemonShutdownAdmission,
 	acquireDaemonSupervisorOwnership,
 	assertDaemonSupervisorOwnerCurrent,
+	isDaemonSupervisorStartupRaceError,
 	persistDaemonStartupFenceFromOwner,
 } from "../src/modes/daemon/daemon-supervisor-ownership.js";
 
@@ -193,6 +194,44 @@ describe("daemon supervisor ownership registry", () => {
 		await expect(pending).rejects.toMatchObject({ code: "daemon_shutdown_in_progress" });
 		await releasing;
 		expect(existsSync(admissionPath)).toBe(false);
+	});
+
+	it("classifies lost startup races so the loser exits without reporting a crash", async () => {
+		const paths = createPaths();
+		mkdirSync(paths.registryDir, { recursive: true, mode: 0o700 });
+		process.env[registryDirEnv] = paths.registryDir;
+
+		const holder = await acquire(paths, "live-owner");
+		const alreadyRunning = await acquireDaemonSupervisorOwnership({
+			socketPath: paths.socketPath,
+			agentDir: paths.agentDir,
+			descriptorDir: paths.descriptorDir,
+			appVersion: "test",
+			generation: "second-owner",
+		})
+			.then(() => undefined)
+			.catch((error: unknown) => error);
+		expect(isDaemonSupervisorStartupRaceError(alreadyRunning)).toBe(true);
+		await holder.release();
+
+		const admission = await acquireDaemonShutdownAdmission();
+		const duringShutdown = await acquireDaemonSupervisorOwnership({
+			socketPath: paths.socketPath,
+			agentDir: paths.agentDir,
+			descriptorDir: paths.descriptorDir,
+			appVersion: "test",
+			generation: "shutdown-loser",
+		})
+			.then(() => undefined)
+			.catch((error: unknown) => error);
+		expect(isDaemonSupervisorStartupRaceError(duringShutdown)).toBe(true);
+		await admission.release();
+
+		expect(isDaemonSupervisorStartupRaceError(new Error("Lock file is already being held"))).toBe(false);
+		expect(
+			isDaemonSupervisorStartupRaceError(Object.assign(new Error("stale"), { code: "supervisor_generation_stale" })),
+		).toBe(false);
+		expect(isDaemonSupervisorStartupRaceError("not an error")).toBe(false);
 	});
 
 	it("disambiguates never-acquired from lost-on-disk ownership errors", async () => {

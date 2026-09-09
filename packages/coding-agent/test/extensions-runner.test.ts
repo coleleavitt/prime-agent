@@ -59,6 +59,8 @@ describe("ExtensionRunner", () => {
 	const extensionActions: ExtensionActions = {
 		sendMessage: () => {},
 		sendUserMessage: () => {},
+		setScheduledWork: () => {},
+		clearScheduledWork: () => {},
 		appendEntry: () => {},
 		setSessionName: () => {},
 		getSessionName: () => undefined,
@@ -767,6 +769,58 @@ describe("ExtensionRunner", () => {
 			);
 
 			await expect(runtime.setSessionName("duplicate")).rejects.toBe(failure);
+		});
+	});
+
+	describe("scheduled work declarations", () => {
+		it("routes pi.setScheduledWork and pi.clearScheduledWork to the bound host actions", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.registerCommand("declare", {
+						description: "declare scheduled work",
+						handler: async () => {
+							pi.setScheduledWork("scheduler", { description: "2 tasks scheduled", nextRunAtMs: 1000 });
+							pi.clearScheduledWork("scheduler");
+						},
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "scheduled-work.ts"), extCode);
+
+			const declared: Array<[string, unknown]> = [];
+			const cleared: string[] = [];
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			expect(result.errors).toEqual([]);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(
+				{
+					...extensionActions,
+					setScheduledWork: (key, work) => declared.push([key, work]),
+					clearScheduledWork: (key) => cleared.push(key),
+				},
+				extensionContextActions,
+			);
+
+			const command = runner.getCommand("declare");
+			if (!command) throw new Error("Missing declare command");
+			await command.handler("", runner.createCommandContext());
+
+			expect(declared).toEqual([["scheduler", { description: "2 tasks scheduled", nextRunAtMs: 1000 }]]);
+			expect(cleared).toEqual(["scheduler"]);
+		});
+
+		it("ignores a declaration made during extension load, before bindCore", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.setScheduledWork("scheduler", { description: "declared too early" });
+					pi.clearScheduledWork("scheduler");
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "early-scheduled-work.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			expect(result.errors).toEqual([]);
+			expect(result.extensions).toHaveLength(1);
 		});
 	});
 

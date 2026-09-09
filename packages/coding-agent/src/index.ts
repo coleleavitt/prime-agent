@@ -98,6 +98,7 @@ export type {
 	RegisteredCommand,
 	RegisteredTool,
 	ResolvedCommand,
+	ScheduledWorkInfo,
 	SessionBeforeCompactEvent,
 	SessionBeforeForkEvent,
 	SessionBeforeRefineEvent,

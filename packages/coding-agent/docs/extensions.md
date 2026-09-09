@@ -1351,6 +1351,32 @@ When not streaming, the message is sent immediately and triggers a new turn. Whe
 
 See [send-user-message.ts](../examples/extensions/send-user-message.ts) for a complete example.
 
+### pi.setScheduledWork(key, work?) / pi.clearScheduledWork(key)
+
+Declare externally scheduled work for this session: a timer, a wakeup, a watcher. A session that
+declares work is waiting for it, not finished. A parent orchestrator reads the declaration, so an
+idle turn boundary is not mistaken for a final result and the parent waits instead of redoing the
+work.
+
+```typescript
+// One key per source; calling it again with the same key replaces the declaration.
+pi.setScheduledWork("scheduler", {
+  description: "2 tasks scheduled",
+  nextRunAtMs: Date.now() + 5 * 60_000,
+});
+
+// Drop it once nothing is pending.
+pi.clearScheduledWork("scheduler");
+```
+
+**ScheduledWorkInfo:**
+- `description` - short human summary, e.g. `"2 tasks scheduled"`
+- `nextRunAtMs` - epoch milliseconds of the soonest next run for this source
+
+Report after every change to your own schedule (add, remove, fire) so the host never holds a stale
+count or a next run that already happened. Calls made while extensions are still loading are
+ignored.
+
 ### pi.appendEntry(customType, data?)
 
 Persist extension state (does NOT participate in LLM context).

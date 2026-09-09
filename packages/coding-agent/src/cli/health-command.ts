@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { APP_NAME, getAgentLogPath } from "../config.js";
+import { RLM_CHILD_TERMINAL_NOTICE_DELIVERED_MSG } from "../core/messages.js";
 
 const DEFAULT_SINCE_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_STUCK_AFTER_MS = 10 * 60 * 1000;
@@ -14,6 +15,7 @@ const OPEN_OPERATION_SPANS = new Map<string, HealthCategory>([
 	["kernel.cell", "kernel"],
 	["kernel.execute", "kernel"],
 	["rlm.child", "child"],
+	["rlm.child.run", "child"],
 	["child.passivate", "child"],
 	["child.delete", "child"],
 	["cargo_lock_wait", "lock"],
@@ -21,6 +23,16 @@ const OPEN_OPERATION_SPANS = new Map<string, HealthCategory>([
 	["kernel.bootstrap_lock", "lock"],
 ]);
 const STUCK_TURN_SPANS = new Set(["client.turn", "agent.prompt"]);
+// A failing command or a raised Python exception is returned to the model, which reads it and
+// reacts. Those are agent-visible tool results, not operator incidents: a 24h window held 125
+// failed bash commands (mostly `rg` finding nothing and red tests) and 260 failed kernel cells
+// (174 of them cancellations), and none was an infrastructure failure. Counting them buried the
+// incidents that need a human.
+const PYTHON_EXCEPTION_RE = /^[A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt|Warning)\b/;
+const KERNEL_CANCELLATION_RE = /^(?:interrupted|cancell?ed)\b/i;
+const AGENT_MESSAGE_BACKPRESSURE_RE = /too many pending messages/i;
+// A cancellation notice is an operator action, not an incident.
+const CHILD_TERMINAL_NOTICE_INCIDENT_KINDS = new Set(["completed_without_reply", "failure"]);
 const DURATION_RE = /^(\d+)(ms|s|m|h|d)$/;
 const DAEMON_RECOVERY_RE = /\b(recover(?:y|ing|ed)?|restart(?:ed|ing)?)\b/i;
 const DAEMON_FAILURE_RE = /\b(fail(?:ed|ure)?|interrupt(?:ed)?|cancel(?:led)?|could not|did not answer|uncertain)\b/i;
@@ -33,6 +45,7 @@ export type HealthCategory =
 	| "process"
 	| "kernel"
 	| "child"
+	| "message_delivery"
 	| "lock"
 	| "orphan"
 	| "diagnostic";
@@ -71,6 +84,8 @@ export interface HealthSummary {
 	since: string;
 	files: string[];
 	counts: Record<HealthCategory, number>;
+	/** Failures the agent saw and could react to, reported for volume only. */
+	toolErrors: Record<HealthCategory, number>;
 	incidents: HealthIncident[];
 	truncated: boolean;
 	parseErrors: number;
@@ -264,8 +279,39 @@ function detail(entry: HealthLogEntry, fallback: string): string {
 	return (
 		stringField(entry, "error") ??
 		stringField(entry, "message") ??
+		(typeof attrs.error === "string" ? attrs.error : undefined) ??
 		(typeof attrs["historian.failure_reason"] === "string" ? attrs["historian.failure_reason"] : fallback)
 	);
+}
+
+/**
+ * True when the failure was handed back to the agent as a tool result. The model reads those and
+ * retries or changes course by itself, so they are volume, not incidents. A bash command that
+ * never reached an exit status did not run at all, which the agent cannot fix, so it stays an
+ * incident.
+ */
+function agentVisibleToolFailure(name: string, entry: HealthLogEntry): boolean {
+	const attrs = spanAttrs(entry);
+	if (name === "bash.command") return attrs["bash.exit_code"] !== undefined;
+	if (name !== "kernel.cell" && name !== "kernel.execute") return false;
+	const failure = detail(entry, "");
+	return KERNEL_CANCELLATION_RE.test(failure) || PYTHON_EXCEPTION_RE.test(failure);
+}
+
+function emptyCounts(): Record<HealthCategory, number> {
+	return {
+		historian: 0,
+		provider: 0,
+		stuck_turn: 0,
+		daemon_recovery: 0,
+		process: 0,
+		kernel: 0,
+		child: 0,
+		message_delivery: 0,
+		lock: 0,
+		orphan: 0,
+		diagnostic: 0,
+	};
 }
 
 export function summarizeHealth(
@@ -277,6 +323,7 @@ export function summarizeHealth(
 	diagnostics: Pick<HealthLogReadResult, "parseErrors" | "latestEntryAt"> = { parseErrors: 0 },
 ): HealthSummary {
 	const incidents: HealthIncident[] = [];
+	const toolErrors: Record<HealthCategory, number> = emptyCounts();
 	const spanKey = (entry: HealthLogEntry): string | undefined =>
 		entry.traceId && entry.spanId ? `${entry.traceId}:${entry.spanId}` : undefined;
 	const providerLogSpans = new Set(
@@ -328,8 +375,33 @@ export function summarizeHealth(
 
 		if (entry.component === "trace" && entry.msg === "span_end" && name && spanFailed(entry)) {
 			const operationCategory = name.startsWith("child.") ? "child" : OPEN_OPERATION_SPANS.get(name);
-			if (operationCategory)
-				incidents.push(incident(operationCategory, entry, `${name}: ${detail(entry, "failed")}`));
+			if (operationCategory) {
+				if (agentVisibleToolFailure(name, entry)) toolErrors[operationCategory]++;
+				else incidents.push(incident(operationCategory, entry, `${name}: ${detail(entry, "failed")}`));
+			}
+		}
+		if (
+			entry.component === "trace" &&
+			entry.msg === "span_end" &&
+			name === "kernel.host_request" &&
+			spanFailed(entry)
+		) {
+			// A rejected agent message is work that never reached its reader, and the sender is
+			// usually a child reporting to a parent that then treats it as having produced nothing.
+			const failure = detail(entry, "host request failed");
+			const attrs = spanAttrs(entry);
+			const requestType =
+				typeof attrs["host_request.type"] === "string" ? attrs["host_request.type"] : "host request";
+			if (AGENT_MESSAGE_BACKPRESSURE_RE.test(failure))
+				incidents.push(incident("message_delivery", entry, `${requestType}: ${failure}`));
+			else toolErrors.kernel++;
+		}
+		if (entry.msg === RLM_CHILD_TERMINAL_NOTICE_DELIVERED_MSG) {
+			const kind = stringField(entry, "kind");
+			if (kind && CHILD_TERMINAL_NOTICE_INCIDENT_KINDS.has(kind)) {
+				const childId = stringField(entry, "rlm.child_id") ?? "unknown";
+				incidents.push(incident("child", entry, `rlm child ${childId}: ${kind} notice delivered to parent`));
+			}
 		}
 		if (entry.msg === "kernel_exit" && /kernel/i.test(entry.component)) {
 			incidents.push(incident("kernel", entry, detail(entry, "kernel exited unexpectedly")));
@@ -391,18 +463,7 @@ export function summarizeHealth(
 					candidate.summary === item.summary,
 			) === index,
 	);
-	const counts: Record<HealthCategory, number> = {
-		historian: 0,
-		provider: 0,
-		stuck_turn: 0,
-		daemon_recovery: 0,
-		process: 0,
-		kernel: 0,
-		child: 0,
-		lock: 0,
-		orphan: 0,
-		diagnostic: 0,
-	};
+	const counts: Record<HealthCategory, number> = emptyCounts();
 	for (const item of deduplicatedIncidents) counts[item.category]++;
 	const stale = diagnostics.latestEntryAt === undefined || Date.parse(diagnostics.latestEntryAt) < Date.parse(since);
 	const unknown = diagnostics.parseErrors > 0 || stale;
@@ -414,6 +475,7 @@ export function summarizeHealth(
 		since,
 		files,
 		counts,
+		toolErrors,
 		incidents: deduplicatedIncidents.slice(0, options.limit),
 		truncated: deduplicatedIncidents.length > options.limit,
 		parseErrors: diagnostics.parseErrors,
@@ -446,6 +508,7 @@ function formatHealthSummary(summary: HealthSummary): string {
 		["process", "Process failures"],
 		["kernel", "Kernel failures"],
 		["child", "Child failures"],
+		["message_delivery", "Agent message delivery failures"],
 		["lock", "Lock failures"],
 		["orphan", "Orphan cleanup failures"],
 		["diagnostic", "Diagnostic uncertainty"],
@@ -462,6 +525,13 @@ function formatHealthSummary(summary: HealthSummary): string {
 			out.push(`  ${item.ts}  ${terminalSafe(item.summary)}${context ? `  ${terminalSafe(context)}` : ""}`);
 		}
 	}
+	const toolErrorTotals = Object.entries(summary.toolErrors).filter(([, count]) => count > 0);
+	if (toolErrorTotals.length > 0)
+		out.push(
+			`Agent-visible tool errors (not incidents): ${toolErrorTotals
+				.map(([category, count]) => `${category}=${count}`)
+				.join(" ")}`,
+		);
 	if (summary.parseErrors > 0)
 		out.push(`UNKNOWN: ${summary.parseErrors} malformed log line(s) could not be evaluated.`);
 	if (summary.stale)

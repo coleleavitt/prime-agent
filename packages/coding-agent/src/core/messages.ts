@@ -35,6 +35,8 @@ export const COMPACTION_OUTCOME_CUSTOM_TYPE = "compaction_outcome";
 export const REFINEMENT_OUTCOME_CUSTOM_TYPE = "refinement_outcome";
 export const RLM_CHILD_FAILURE_CUSTOM_TYPE = "rlm_child_failure";
 export const RLM_CHILD_TERMINAL_NOTICE_CUSTOM_TYPE = "rlm_child_terminal_notice";
+/** Structured log `msg` emitted once per child terminal notice delivered to a parent. */
+export const RLM_CHILD_TERMINAL_NOTICE_DELIVERED_MSG = "rlm_child_terminal_notice_delivered";
 
 export interface SessionSlashCommandDetails {
 	command: SessionSlashCommand;
@@ -95,6 +97,15 @@ export interface RlmChildFailureDetails {
 	error: string;
 }
 
+/** One source of externally scheduled work a child declared before its turn ended. */
+export interface RlmChildScheduledWork {
+	/** Declaring key, e.g. the extension name that owns the schedule. */
+	source: string;
+	description?: string;
+	/** Epoch milliseconds of the soonest next run for this source. */
+	nextRunAtMs?: number;
+}
+
 export type RlmChildTerminalNoticeDetails =
 	| {
 			kind: "cancelled";
@@ -107,7 +118,35 @@ export type RlmChildTerminalNoticeDetails =
 			childId: string;
 			sessionName: string;
 			lastAssistantTextPreview?: string;
+			/** Non-empty when the child is waiting on scheduled work rather than finished. */
+			scheduledWork?: RlmChildScheduledWork[];
 	  };
+
+function formatRelativeRunTime(nextRunAtMs: number, nowMs: number): string {
+	const deltaMs = nextRunAtMs - nowMs;
+	if (deltaMs <= 0) return "now";
+	const totalSeconds = Math.round(deltaMs / 1000);
+	if (totalSeconds < 60) return `in ${totalSeconds}s`;
+	const minutes = Math.floor(totalSeconds / 60);
+	const seconds = totalSeconds % 60;
+	if (minutes < 60) return seconds > 0 ? `in ${minutes}m ${seconds}s` : `in ${minutes}m`;
+	const hours = Math.floor(minutes / 60);
+	const remainingMinutes = minutes % 60;
+	return remainingMinutes > 0 ? `in ${hours}h ${remainingMinutes}m` : `in ${hours}h`;
+}
+
+function describeScheduledWork(work: readonly RlmChildScheduledWork[], nowMs: number): string {
+	const nextRuns = work
+		.map((entry) => entry.nextRunAtMs)
+		.filter((value): value is number => typeof value === "number");
+	const soonest = nextRuns.length > 0 ? Math.min(...nextRuns) : undefined;
+	const sources = work
+		.map((entry) => (entry.description ? `${entry.source}: ${entry.description}` : entry.source))
+		.join(", ");
+	const nextRun =
+		soonest === undefined ? "next run unknown" : `soonest next run ${formatRelativeRunTime(soonest, nowMs)}`;
+	return `${work.length} scheduled work item${work.length === 1 ? "" : "s"} pending (${nextRun}): ${sources}`;
+}
 
 export function createRlmChildFailureMessage(
 	details: RlmChildFailureDetails,
@@ -127,10 +166,19 @@ export function createRlmChildTerminalNoticeMessage(
 	details: RlmChildTerminalNoticeDetails,
 	timestamp = Date.now(),
 ): CustomMessage<RlmChildTerminalNoticeDetails> {
-	const content =
-		details.kind === "cancelled"
-			? `RLM child ${details.sessionName} (${details.childId}) was cancelled${details.reason ? `: ${details.reason}` : ""}`
-			: `RLM child ${details.sessionName} (${details.childId}) completed without sending a reply${details.lastAssistantTextPreview ? `. Last assistant text: ${details.lastAssistantTextPreview}` : ""}`;
+	const preview =
+		details.kind === "completed_without_reply" && details.lastAssistantTextPreview
+			? `. Last assistant text: ${details.lastAssistantTextPreview}`
+			: "";
+	const scheduledWork = details.kind === "completed_without_reply" ? (details.scheduledWork ?? []) : [];
+	let content: string;
+	if (details.kind === "cancelled") {
+		content = `RLM child ${details.sessionName} (${details.childId}) was cancelled${details.reason ? `: ${details.reason}` : ""}`;
+	} else if (scheduledWork.length > 0) {
+		content = `RLM child ${details.sessionName} (${details.childId}) ended its turn without sending a reply and still has ${describeScheduledWork(scheduledWork, timestamp)}. The child is waiting, not finished; do not redo its work${preview}`;
+	} else {
+		content = `RLM child ${details.sessionName} (${details.childId}) completed without sending a reply${preview}`;
+	}
 	return {
 		role: "custom",
 		customType: RLM_CHILD_TERMINAL_NOTICE_CUSTOM_TYPE,

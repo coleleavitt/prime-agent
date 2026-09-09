@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { matchesSavedSessionSelector, normalizeSessionId } from "./session-id.js";
 import type { SessionInfo } from "./session-manager.js";
 import { SessionManager } from "./session-manager.js";
@@ -51,13 +52,16 @@ export async function resolveSessionPath(selector: string, cwd: string, sessionD
 		return { type: "path", path: selector };
 	}
 
-	const localSessions = await SessionManager.list(cwd, sessionDir);
+	// Sessions live in one flat directory. Load it once, then derive the local
+	// view in memory instead of enumerating, statting, and sorting it twice.
+	const allSessions = await SessionManager.listAll(undefined, sessionDir);
+	const resolvedCwd = resolve(cwd);
+	const localSessions = allSessions.filter((session) => !!session.cwd && resolve(session.cwd) === resolvedCwd);
 	const localExactMatch = resolveExactMatch(selector, localSessions);
 	if (localExactMatch) {
 		return { type: "local", path: localExactMatch.path };
 	}
 
-	const allSessions = await SessionManager.listAll(undefined, sessionDir);
 	const globalExactMatch = resolveExactMatch(selector, allSessions);
 	if (globalExactMatch) {
 		return { type: "global", path: globalExactMatch.path, cwd: globalExactMatch.cwd };

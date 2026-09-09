@@ -249,7 +249,7 @@ describe("daemon protocol helpers", () => {
 	it("capability- and schema-gates the ravo run update push", () => {
 		expect(DAEMON_OUTBOUND_COMPATIBILITY.ravo_run_update).toEqual({
 			minProtocol: 7,
-			minSchemaRevision: 28,
+			minSchemaRevision: 29,
 			capability: "ravo_run_updates",
 		});
 		expect(DAEMON_DEFAULT_SERVER_CAPABILITIES).toContain("ravo_run_updates");

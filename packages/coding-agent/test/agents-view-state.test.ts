@@ -23,6 +23,11 @@ import {
 } from "../src/modes/agents-view/agents-view-mode.js";
 import { attachRavoRunStatus, formatRavoRunStatusLine } from "../src/modes/agents-view/agents-view-state.js";
 import {
+	attachUnifiedSessionSearchCorpus,
+	filterUnifiedSessionsBySearchQuery,
+	getUnifiedSessionsMissingSearchCorpus,
+} from "../src/modes/agents-view/agents-view-state.js";
+import {
 	type AgentsViewScopeFrame,
 	aggregateSessionHeartbeats,
 	buildAgentsViewRows,
@@ -1382,8 +1387,11 @@ describe("agents view state", () => {
 
 		const [record] = reconcileUnifiedSessions([daemon], [saved]);
 		expect(record).toMatchObject({ daemon, saved, identity: "file:/tmp/sessions/merged.jsonl", section: "idle" });
-		expect(record?.searchableText).toContain("uniquely searchable transcript");
+		// The transcript is kept out of the cheap metadata text but stays searchable.
+		expect(record?.searchableText).not.toContain("uniquely searchable transcript");
+		expect(record?.searchCorpus).toContain("uniquely searchable transcript");
 		expect(record?.searchableText).toContain("lunar regression");
+		expect(filterUnifiedSessionsBySearchQuery([record!], '"uniquely searchable"')).toHaveLength(1);
 		expect(buildAgentsViewRows([record!])[0]).toMatchObject({
 			title: "Live name",
 			record,
@@ -2020,6 +2028,126 @@ describe("agents view state", () => {
 			expect(formatAgentDepthLabel(0, true)).toBe("depth 0");
 			expect(formatAgentDepthLabel(3, false)).toBe("depth 3");
 		});
+	});
+});
+
+describe("agents view deferred search text", () => {
+	test("matches session metadata while every transcript is still unloaded", () => {
+		const records = reconcileUnifiedSessions(
+			[],
+			[
+				makeSessionInfo({
+					path: "/tmp/sessions/alpha.jsonl",
+					id: "alpha",
+					name: "Durable name",
+					allMessagesText: "",
+				}),
+			],
+		);
+
+		expect(records[0]?.searchCorpus).toBeUndefined();
+		expect(records[0]?.searchableText).toContain("Durable name");
+		expect(filterUnifiedSessionsBySearchQuery(records, '"durable name"')).toHaveLength(1);
+		expect(filterUnifiedSessionsBySearchQuery(records, '"alpha.jsonl"')).toHaveLength(1);
+	});
+
+	test("matches a transcript-only term only once the corpus is attached", () => {
+		const records = reconcileUnifiedSessions(
+			[],
+			[makeSessionInfo({ path: "/tmp/sessions/beta.jsonl", id: "beta", name: "Beta agent", allMessagesText: "" })],
+		);
+
+		expect(getUnifiedSessionsMissingSearchCorpus(records)).toEqual(["/tmp/sessions/beta.jsonl"]);
+		expect(filterUnifiedSessionsBySearchQuery(records, '"tidal anomaly"')).toHaveLength(0);
+
+		const attached = attachUnifiedSessionSearchCorpus(
+			records,
+			new Map([["/tmp/sessions/beta.jsonl", "the worker logged a tidal anomaly"]]),
+		);
+
+		expect(attached).toBe(1);
+		expect(filterUnifiedSessionsBySearchQuery(records, '"tidal anomaly"')).toHaveLength(1);
+		expect(getUnifiedSessionsMissingSearchCorpus(records)).toEqual([]);
+	});
+
+	test("treats a loaded empty transcript as loaded and an unsent one as missing", () => {
+		const records = reconcileUnifiedSessions(
+			[],
+			[makeSessionInfo({ path: "/tmp/sessions/gamma.jsonl", id: "gamma", allMessagesText: "" })],
+		);
+
+		expect(getUnifiedSessionsMissingSearchCorpus(records)).toEqual(["/tmp/sessions/gamma.jsonl"]);
+		expect(attachUnifiedSessionSearchCorpus(records, new Map([["/tmp/sessions/gamma.jsonl", ""]]))).toBe(1);
+		expect(records[0]?.searchCorpus).toBe("");
+		expect(getUnifiedSessionsMissingSearchCorpus(records)).toEqual([]);
+		expect(filterUnifiedSessionsBySearchQuery(records, '"tidal anomaly"')).toHaveLength(0);
+	});
+
+	test("attaches a corpus by session id and retains the ancestor chain for the match", () => {
+		const records = reconcileUnifiedSessions(
+			[
+				makeSummary({ id: "root", activeSessionId: "root", sessionId: "root-session", sessionName: "Root" }),
+				makeSummary({
+					id: "child",
+					activeSessionId: "child",
+					sessionId: "child-session",
+					sessionName: "Child",
+					runtimeKind: "subagent",
+					parentActiveSessionId: "root",
+				}),
+				makeSummary({
+					id: "leaf",
+					activeSessionId: "leaf",
+					sessionId: "leaf-session",
+					sessionName: "Leaf",
+					runtimeKind: "subagent",
+					parentActiveSessionId: "child",
+				}),
+			],
+			[],
+		);
+
+		expect(attachUnifiedSessionSearchCorpus(records, new Map([["leaf-session", "found a tidal anomaly"]]))).toBe(1);
+		expect(filterUnifiedSessionsBySearchQuery(records, '"tidal anomaly"').map((record) => record.identity)).toEqual([
+			records[0]?.identity,
+			records[1]?.identity,
+			records[2]?.identity,
+		]);
+	});
+
+	test("compiles the query once and normalizes each corpus once per rebuild", () => {
+		let trimCalls = 0;
+		const observableQuery = {
+			trim: () => {
+				trimCalls++;
+				return '"tidal anomaly"';
+			},
+		} as unknown as string;
+		let lowerCalls = 0;
+		const transcript = "the worker logged a tidal anomaly";
+		const observableCorpus = {
+			length: transcript.length,
+			toLowerCase: () => {
+				lowerCalls++;
+				return transcript;
+			},
+		} as unknown as string;
+		const records = reconcileUnifiedSessions(
+			[],
+			[
+				makeSessionInfo({ path: "/tmp/sessions/one.jsonl", id: "one", allMessagesText: "" }),
+				makeSessionInfo({ path: "/tmp/sessions/two.jsonl", id: "two", allMessagesText: "" }),
+			],
+		);
+		attachUnifiedSessionSearchCorpus(records, new Map([["/tmp/sessions/two.jsonl", observableCorpus]]));
+
+		expect(filterUnifiedSessionsBySearchQuery(records, observableQuery)).toHaveLength(1);
+		expect(trimCalls).toBe(1);
+		expect(lowerCalls).toBe(1);
+
+		// A second keystroke reuses the normalized transcript instead of redoing it.
+		expect(filterUnifiedSessionsBySearchQuery(records, '"logged a tidal"')).toHaveLength(1);
+		expect(lowerCalls).toBe(1);
 	});
 });
 

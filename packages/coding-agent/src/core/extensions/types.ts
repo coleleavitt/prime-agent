@@ -1097,6 +1097,19 @@ export interface ExtensionAPI {
 		options?: { deliverAs?: "steer" | "followUp" },
 	): void;
 
+	/**
+	 * Declare externally scheduled work for THIS session (timer, wakeup,
+	 * watcher); a session with declared work is waiting, not finished. Hosts
+	 * read the declaration to tell "idle between scheduled runs" apart from
+	 * "done", so an orchestrating parent waits instead of redoing the work.
+	 * Calling it again with the same key replaces the previous declaration;
+	 * omitting `work` declares pending work with no further detail.
+	 */
+	setScheduledWork(key: string, work?: ScheduledWorkInfo): void;
+
+	/** Drop the declaration made under `key`; nothing happens if there is none. */
+	clearScheduledWork(key: string): void;
+
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
 	appendEntry<T = unknown>(customType: string, data?: T): void;
 	/** Set the session display name (shown in session selector). */
@@ -1299,6 +1312,21 @@ export type SendUserMessageHandler = (
 
 export type AppendEntryHandler = <T = unknown>(customType: string, data?: T) => void;
 
+/**
+ * One source of externally scheduled work for a session (timer, wakeup,
+ * watcher). A session with declared work is waiting, not finished.
+ */
+export interface ScheduledWorkInfo {
+	/** Short human description, e.g. "2 tasks scheduled". */
+	description?: string;
+	/** Epoch milliseconds of the soonest next run this source will trigger. */
+	nextRunAtMs?: number;
+}
+
+export type SetScheduledWorkHandler = (key: string, work?: ScheduledWorkInfo) => void;
+
+export type ClearScheduledWorkHandler = (key: string) => void;
+
 export type SetSessionNameHandler = (name: string) => void | Promise<void>;
 
 export type GetSessionNameHandler = () => string | undefined;
@@ -1363,6 +1391,8 @@ export interface ExtensionRuntimeState {
 export interface ExtensionActions {
 	sendMessage: SendMessageHandler;
 	sendUserMessage: SendUserMessageHandler;
+	setScheduledWork: SetScheduledWorkHandler;
+	clearScheduledWork: ClearScheduledWorkHandler;
 	appendEntry: AppendEntryHandler;
 	setSessionName: SetSessionNameHandler;
 	getSessionName: GetSessionNameHandler;

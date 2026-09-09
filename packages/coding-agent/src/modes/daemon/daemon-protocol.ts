@@ -81,9 +81,10 @@ export const DAEMON_COMMAND_ENVELOPE_MIN_PROTOCOL_VERSION = 7;
 // Revision 25 adds capability-gated direct worker peer transport discovery.
 // Revision 26 publishes own-session usage totals on session summary and saved-session rows.
 // Revision 27 lets a primary client provide transient context to recover a resident worker.
-// Revision 28 adds the capability-gated ravo_run_update push for roster subscribers.
-export const DAEMON_SCHEMA_REVISION = 28;
-export const DAEMON_SCHEMA_ID = "protocol-7-schema-28-1fbdc1d4d552";
+// Revision 28 adds includeSearchText on list_saved_sessions and get_saved_session_search_text.
+// Revision 29 adds the capability-gated ravo_run_update push for roster subscribers.
+export const DAEMON_SCHEMA_REVISION = 29;
+export const DAEMON_SCHEMA_ID = "protocol-7-schema-29-02bd9757d85f";
 
 export type DaemonProtocolName = typeof DAEMON_PROTOCOL_NAME;
 export type DaemonProtocolVersion = number;
@@ -132,6 +133,10 @@ export type DaemonServerCapability =
 	| "owned_prompt_cancellation"
 	| "acp_mcp_servers"
 	| "direct_peer_transport"
+	// The daemon honors includeSearchText on list_saved_sessions and serves
+	// get_saved_session_search_text. Clients must check before opting out of the
+	// transcript corpus, because an older daemon always sends it.
+	| "deferred_session_search_text"
 	// The daemon pushes ravo_run_update (live RAVO controller status keyed by
 	// session id) to roster subscribers. Clients must check before depending on it.
 	| "ravo_run_updates";
@@ -180,6 +185,7 @@ export const DAEMON_DEFAULT_SERVER_CAPABILITIES: readonly DaemonServerCapability
 	"rlm_quiescence_barrier",
 	"session_input_pause",
 	"acp_mcp_servers",
+	"deferred_session_search_text",
 	"ravo_run_updates",
 ];
 
@@ -400,13 +406,21 @@ export interface DaemonUpdateRestartManifest {
 }
 
 export type DaemonSavedSessionListCommand =
-	| { id?: string; type: "list_saved_sessions"; activeSessionId: string; scope: AgentConnectionSavedSessionScope }
+	| {
+			id?: string;
+			type: "list_saved_sessions";
+			activeSessionId: string;
+			scope: AgentConnectionSavedSessionScope;
+			/** Absent means include, so a client predating the capability is unaffected. */
+			includeSearchText?: boolean;
+	  }
 	| {
 			id?: string;
 			type: "list_saved_sessions";
 			cwd: string;
 			sessionDir?: string;
 			scope: AgentConnectionSavedSessionScope;
+			includeSearchText?: boolean;
 	  };
 
 export type DaemonCommand =
@@ -419,6 +433,7 @@ export type DaemonCommand =
 			includeClientOwned?: boolean;
 	  }
 	| DaemonSavedSessionListCommand
+	| { id?: string; type: "get_saved_session_search_text"; paths: readonly string[]; sessionDir?: string }
 	| { id?: string; type: "list_agent_peers"; workerToken: string }
 	| { id?: string; type: "get_direct_worker_transport"; activeSessionId: string }
 	| { id?: string; type: "roster_subscribe" }
@@ -759,6 +774,11 @@ const SESSION_INPUT_PAUSE_COMMAND = {
 	capability: "session_input_pause",
 } as const;
 const AGENT_PEER_LIST_COMMAND = { minProtocol: 7, minSchemaRevision: 23 } as const;
+const DEFERRED_SESSION_SEARCH_TEXT_COMMAND = {
+	minProtocol: 7,
+	minSchemaRevision: 28,
+	capability: "deferred_session_search_text",
+} as const;
 const DIRECT_PEER_TRANSPORT_COMMAND = {
 	minProtocol: 7,
 	minSchemaRevision: 25,
@@ -769,6 +789,7 @@ export const DAEMON_COMMAND_COMPATIBILITY = {
 	ack_result: LEGACY_DAEMON_COMMAND,
 	list: LEGACY_DAEMON_COMMAND,
 	list_saved_sessions: LEGACY_DAEMON_COMMAND,
+	get_saved_session_search_text: DEFERRED_SESSION_SEARCH_TEXT_COMMAND,
 	list_agent_peers: AGENT_PEER_LIST_COMMAND,
 	get_direct_worker_transport: DIRECT_PEER_TRANSPORT_COMMAND,
 	create: LEGACY_DAEMON_COMMAND,
@@ -887,6 +908,7 @@ export const DAEMON_COMMAND_PLANE = {
 	ack_result: "control",
 	list: "control",
 	list_saved_sessions: "control",
+	get_saved_session_search_text: "control",
 	list_agent_peers: "control",
 	get_direct_worker_transport: "control",
 	create: "control",
@@ -1084,6 +1106,12 @@ export type DaemonRequestProgress =
 			session: DaemonSavedSessionInfo;
 	  };
 
+/** One session's transcript corpus, fetched separately from the catalog. */
+export interface DaemonSavedSessionSearchTextEntry {
+	path: string;
+	allMessagesText: string;
+}
+
 export interface DaemonSavedSessionInfo {
 	path: string;
 	id: string;
@@ -1226,7 +1254,7 @@ export const DAEMON_OUTBOUND_COMPATIBILITY = {
 	daemon_closing: LEGACY_DAEMON_COMMAND,
 	heartbeats_changed: { minProtocol: 7, capability: "heartbeat_catalog" },
 	roster_update: { minProtocol: 7, capability: "agent_roster" },
-	ravo_run_update: { minProtocol: 7, minSchemaRevision: 28, capability: "ravo_run_updates" },
+	ravo_run_update: { minProtocol: 7, minSchemaRevision: 29, capability: "ravo_run_updates" },
 	session_event: LEGACY_DAEMON_COMMAND,
 	side_question_event: LEGACY_DAEMON_COMMAND,
 	session_status: LEGACY_DAEMON_COMMAND,
@@ -1309,6 +1337,7 @@ const READ_ONLY_DAEMON_COMMANDS: ReadonlySet<DaemonCommand["type"]> = new Set([
 	"ack_result",
 	"list",
 	"list_saved_sessions",
+	"get_saved_session_search_text",
 	"list_agent_peers",
 	"get_direct_worker_transport",
 	"attach",

@@ -36,7 +36,8 @@ interface SessionInfoWire extends Omit<SessionInfo, "created" | "modified"> {
 }
 
 type CatalogRequest =
-	| { type: "request"; id: string; command: "list"; cwd?: string; sessionDir?: string }
+	| { type: "request"; id: string; command: "list"; cwd?: string; sessionDir?: string; searchText?: boolean }
+	| { type: "request"; id: string; command: "search_text"; paths: readonly string[]; sessionDir?: string }
 	| { type: "request"; id: string; command: "resolve"; selector: string; cwd: string; sessionDir?: string }
 	| { type: "request"; id: string; command: "rename"; sessionPath: string; name: string }
 	| { type: "request"; id: string; command: "delete"; sessionPath: string }
@@ -152,9 +153,10 @@ async function handleCatalogRequest(request: CatalogRequest): Promise<void> {
 					onSession: (session: SessionInfo) =>
 						sendCatalogMessage({ type: "session", id: request.id, session: serializeSessionInfo(session) }),
 				};
+				const options = { searchText: request.searchText !== false };
 				const sessions = request.cwd
-					? await SessionManager.list(request.cwd, request.sessionDir, callbacks)
-					: await SessionManager.listAll(callbacks, request.sessionDir);
+					? await SessionManager.list(request.cwd, request.sessionDir, callbacks, options)
+					: await SessionManager.listAll(callbacks, request.sessionDir, options);
 				sendCatalogMessage({
 					type: "response",
 					id: request.id,
@@ -163,6 +165,17 @@ async function handleCatalogRequest(request: CatalogRequest): Promise<void> {
 				});
 				return;
 			}
+			case "search_text": {
+				const corpora = await SessionManager.readSearchText(request.paths, request.sessionDir);
+				sendCatalogMessage({
+					type: "response",
+					id: request.id,
+					success: true,
+					data: { entries: [...corpora].map(([path, allMessagesText]) => ({ path, allMessagesText })) },
+				});
+				return;
+			}
+
 			case "resolve": {
 				const localMatch = resolveCatalogSessionMatch(
 					await SessionManager.list(request.cwd, request.sessionDir),
@@ -281,12 +294,28 @@ export class DaemonCatalogClient {
 		return this.starting;
 	}
 
-	async list(cwd?: string, sessionDir?: string, callbacks?: CatalogListCallbacks): Promise<SessionInfo[]> {
+	async list(
+		cwd?: string,
+		sessionDir?: string,
+		callbacks?: CatalogListCallbacks,
+		options: { searchText?: boolean } = {},
+	): Promise<SessionInfo[]> {
 		const data = await this.request<{ sessions: SessionInfoWire[] }>(
-			{ type: "request", id: randomUUID(), command: "list", cwd, sessionDir },
+			{ type: "request", id: randomUUID(), command: "list", cwd, sessionDir, searchText: options.searchText },
 			callbacks,
 		);
 		return data.sessions.map(deserializeSessionInfo);
+	}
+
+	async searchText(paths: readonly string[], sessionDir?: string): Promise<Map<string, string>> {
+		const data = await this.request<{ entries: { path: string; allMessagesText: string }[] }>({
+			type: "request",
+			id: randomUUID(),
+			command: "search_text",
+			paths,
+			sessionDir,
+		});
+		return new Map(data.entries.map((entry) => [entry.path, entry.allMessagesText]));
 	}
 
 	async rename(sessionPath: string, name: string): Promise<void> {
