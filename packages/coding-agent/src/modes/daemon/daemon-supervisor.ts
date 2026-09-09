@@ -2741,10 +2741,15 @@ export class DaemonSupervisor {
 			const releaseStopOwnership = this.acquireWorkerStopOwnership(match.worker);
 			let response: DaemonResponse;
 			try {
-				response = await this.forwardToWorker(match.worker, resolvedCommand);
+				// Short timeout: a wedged worker can't ack, so don't block stop/signal on it.
+				response = await this.forwardToWorker(match.worker, resolvedCommand, 5000);
+			} catch {
+				// Timeout or disconnect: the worker is being killed anyway.
+				response = success(command.id, "kill");
 			} finally {
 				try {
-					await this.stopWorker(match.worker, true, false, true);
+					// force=true: escalate to SIGKILL if the worker doesn't exit promptly.
+					await this.stopWorker(match.worker, true, true, true);
 				} finally {
 					releaseStopOwnership();
 				}
