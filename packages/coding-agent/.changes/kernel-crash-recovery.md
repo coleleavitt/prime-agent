@@ -1,0 +1,3 @@
+- Fixed the Python kernel staying dead after its process exited unexpectedly (for example a native `exit()` inside a cell); the next `ipython` call now starts a fresh kernel, revives variables from the last snapshot, and re-runs the runtime bootstrap instead of failing forever with "Kernel has been shut down".
+- Fixed the `ipython` tool result for a kernel crash to report the exit code or signal, the request it was serving, and the kernel's stderr tail, and to add a one-time notice on the first cell after the restart explaining what state was lost.
+- Fixed kernel traces so an unexpected kernel exit is linked to the cell that was running when it died.

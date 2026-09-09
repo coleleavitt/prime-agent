@@ -15,7 +15,9 @@ import {
 	KernelBusyAfterInterruptError,
 	type KernelClient,
 	type KernelDiffDisplay,
+	KernelExitedError,
 	type KernelSentAgentMessage,
+	type KernelUnexpectedExit,
 	ReplKernelManager,
 } from "../kernel/index.js";
 import { manifestPathIn, type RestoreResult, snapshotPathIn } from "../kernel/state-snapshot.js";
@@ -162,6 +164,31 @@ const KERNEL_RESTART_NOTICE = [
 	"</ipython_kernel_reset>",
 ].join("\n");
 
+function describeExitCause(exit: KernelUnexpectedExit): string {
+	return exit.signal !== null
+		? `signal ${exit.signal}`
+		: `exit code ${exit.exitCode === null ? "unknown" : exit.exitCode}`;
+}
+
+/** One-line notice for the first successful cell after the kernel died and was respawned. */
+export function kernelCrashRecoveryNotice(exit: KernelUnexpectedExit): string {
+	return [
+		"<ipython_kernel_reset>",
+		`The Python kernel was restarted after it exited unexpectedly (${describeExitCause(exit)}) at ${new Date(exit.at).toISOString()}; variables were revived from the last snapshot, but imports, live handles, open resources, and background tasks from before are gone.`,
+		"</ipython_kernel_reset>",
+	].join("\n");
+}
+
+export function kernelCrashDetails(exit: KernelUnexpectedExit): IpythonKernelCrashDetails {
+	return {
+		exitCode: exit.exitCode,
+		signal: exit.signal,
+		uptimeMs: exit.uptimeMs,
+		requestId: exit.requestId,
+		stderrTail: exit.stderrTail,
+	};
+}
+
 function createAbortError(): Error {
 	return new Error("Python execution aborted");
 }
@@ -247,6 +274,15 @@ function setWorkingMessage(ctx: ExtensionContext | undefined, message?: string):
 
 export type IpythonToolInput = Static<typeof ipythonSchema>;
 
+/** Structured facts about a kernel process that died mid-cell, mirrored from {@link KernelUnexpectedExit}. */
+export interface IpythonKernelCrashDetails {
+	exitCode: number | null;
+	signal: NodeJS.Signals | null;
+	uptimeMs: number;
+	requestId?: string;
+	stderrTail: string;
+}
+
 export interface IpythonToolDetails {
 	durationMs?: number;
 	status?: "ok" | "error" | "aborted" | "starting";
@@ -264,6 +300,8 @@ export interface IpythonToolDetails {
 	sentAgentMessages?: KernelSentAgentMessage[];
 	/** True when this result came after killing and restarting a busy kernel. */
 	kernelRestarted?: boolean;
+	/** Set when the kernel process died while running this cell; the next call gets a fresh kernel. */
+	kernelCrashed?: IpythonKernelCrashDetails;
 	error?: {
 		ename: string;
 		evalue: string;
@@ -311,6 +349,8 @@ export class IpythonKernelProvisioner {
 	private readonly startupListeners = new Set<KernelBootstrapProgressHandler>();
 	private lastStartupMessage?: string;
 	private _lastRestore?: RestoreResult;
+	/** `at` of the last unexpected kernel exit already surfaced to the model. */
+	private reportedExitAt?: number;
 	private readonly disposeController = new AbortController();
 	/** Snapshot policy of the dispose that aborted a startup, honored by startKernel's failure teardown. */
 	private disposeSnapshot = true;
@@ -338,6 +378,21 @@ export class IpythonKernelProvisioner {
 	/** Whether a kernel has finished starting and is currently running. */
 	get hasRunningKernel(): boolean {
 		return this.startedManager?.isRunning ?? false;
+	}
+
+	/**
+	 * The most recent unexpected kernel exit that has not been surfaced to the
+	 * model yet, marking it surfaced. The manager self-heals after such an exit
+	 * (fresh process, namespace revived from the snapshot), so the caller only
+	 * needs to explain once why live state changed.
+	 */
+	takeUnreportedExit(): KernelUnexpectedExit | undefined {
+		const exit = this.startedManager?.lastUnexpectedExit;
+		if (!exit || exit.at === this.reportedExitAt) {
+			return undefined;
+		}
+		this.reportedExitAt = exit.at;
+		return exit;
 	}
 
 	/** Remove live variables above the snapshot's per-variable size limit. */
@@ -564,21 +619,18 @@ async function executeWithBusyKernelChoice(
 	onWorkingMessage: (message?: string) => void,
 	onLateSentAgentMessage: ((toolCallId: string, message: KernelSentAgentMessage) => void) | undefined,
 	ctx: ExtensionContext | undefined,
-): Promise<{ result: ExecuteResult; kernelRestarted: boolean }> {
-	let kernelRestarted = false;
+	run: { kernelRestarted: boolean },
+): Promise<ExecuteResult> {
 	while (true) {
 		const m = await provisioner.ensure(reportStartupProgress, signal);
 		try {
-			return {
-				result: await m.execute(code, {
-					signal,
-					onStream,
-					onLateSentAgentMessage: onLateSentAgentMessage
-						? (message) => onLateSentAgentMessage(toolCallId, message)
-						: undefined,
-				}),
-				kernelRestarted,
-			};
+			return await m.execute(code, {
+				signal,
+				onStream,
+				onLateSentAgentMessage: onLateSentAgentMessage
+					? (message) => onLateSentAgentMessage(toolCallId, message)
+					: undefined,
+			});
 		} catch (error) {
 			if (!(error instanceof KernelBusyAfterInterruptError) || signal?.aborted) {
 				throw error;
@@ -591,7 +643,7 @@ async function executeWithBusyKernelChoice(
 			if (action === "kill") {
 				onWorkingMessage("Restarting Python kernel...");
 				await provisioner.kill();
-				kernelRestarted = true;
+				run.kernelRestarted = true;
 				continue;
 			}
 			throw error;
@@ -636,8 +688,10 @@ export function createIpythonToolDefinition(
 				});
 			};
 
+			const startedAt = Date.now();
+			const run = { kernelRestarted: false };
 			try {
-				const { result: r, kernelRestarted } = await executeWithBusyKernelChoice(
+				const r = await executeWithBusyKernelChoice(
 					provisioner,
 					reportStartupProgress,
 					toolCallId,
@@ -652,6 +706,7 @@ export function createIpythonToolDefinition(
 					setToolWorkingMessage,
 					options?.onLateSentAgentMessage,
 					ctx,
+					run,
 				);
 
 				let text = r.stdout;
@@ -663,8 +718,13 @@ export function createIpythonToolDefinition(
 				if (r.backgroundOutput) {
 					text += `${text ? "\n" : ""}[background output (unattributed)]\n${r.backgroundOutput}`;
 				}
-				if (kernelRestarted) {
+				if (run.kernelRestarted) {
 					text = text ? `${KERNEL_RESTART_NOTICE}\n\n${text}` : KERNEL_RESTART_NOTICE;
+				}
+				const recoveredExit = provisioner.takeUnreportedExit();
+				if (recoveredExit) {
+					const notice = kernelCrashRecoveryNotice(recoveredExit);
+					text = text ? `${notice}\n\n${text}` : notice;
 				}
 
 				const imageBlocks = imageBlocksFromAttachments(r.attachments);
@@ -683,10 +743,28 @@ export function createIpythonToolDefinition(
 						diffs: r.diffs,
 						attachments: r.attachments,
 						sentAgentMessages: r.sentAgentMessages,
-						kernelRestarted,
+						kernelRestarted: run.kernelRestarted,
 						error: r.error,
 					},
 					isError: r.status === "error" || r.status === "aborted",
+				};
+			} catch (error) {
+				// The interpreter died running this cell. Never re-run the cell
+				// (a cell that crashes the interpreter would loop); the manager
+				// respawns on the next call, so tell the model what happened.
+				if (!(error instanceof KernelExitedError)) {
+					throw error;
+				}
+				return {
+					content: [{ type: "text", text: error.message }],
+					details: {
+						durationMs: Date.now() - startedAt,
+						status: "error",
+						errorEname: error.name,
+						kernelRestarted: run.kernelRestarted,
+						kernelCrashed: kernelCrashDetails(error.exit),
+					},
+					isError: true,
 				};
 			} finally {
 				if (hasWorkingMessage) {

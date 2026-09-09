@@ -21,6 +21,54 @@ export class KernelBusyAfterInterruptError extends Error {
 	}
 }
 
+/** Facts about a kernel process that died outside any host-owned teardown. */
+export interface KernelUnexpectedExit {
+	exitCode: number | null;
+	signal: NodeJS.Signals | null;
+	/** Milliseconds between the kernel's ready event and its exit. */
+	uptimeMs: number;
+	/** Request the kernel was serving when it died, if any. */
+	requestId?: string;
+	requestType?: string;
+	/** Bounded tail of the stderr/diagnostic bytes the host captured for this kernel. */
+	stderrTail: string;
+	/** Epoch milliseconds of the exit. */
+	at: number;
+}
+
+export function describeKernelExit(exit: KernelUnexpectedExit): string {
+	const cause =
+		exit.signal !== null
+			? `killed by signal ${exit.signal}`
+			: `exit code ${exit.exitCode === null ? "unknown" : exit.exitCode}`;
+	const during = exit.requestType
+		? ` while serving ${exit.requestType} request ${exit.requestId ?? ""}`.trimEnd()
+		: "";
+	return `Kernel process exited unexpectedly (${cause})${during}`;
+}
+
+/**
+ * The kernel process died mid-request (native exit(), abort(), OOM kill, ...).
+ * The manager settles back to idle, so the next call spawns a fresh kernel:
+ * the user namespace is revived from the last snapshot and the runtime
+ * bootstrap (bash(), rlm, skills, MCP) is re-run. In-memory state that was
+ * never snapshotted, running background work, and open handles are gone.
+ */
+export class KernelExitedError extends Error {
+	readonly exit: KernelUnexpectedExit;
+
+	constructor(exit: KernelUnexpectedExit) {
+		const tail = exit.stderrTail.trim();
+		super(
+			`${describeKernelExit(exit)}. ` +
+				"A fresh kernel starts on the next call: variables come back from the last snapshot, imports and live handles (bash, rlm, skills) are re-bootstrapped; background tasks and open resources are lost." +
+				(tail ? `\nKernel stderr tail:\n${tail}` : ""),
+		);
+		this.name = "KernelExitedError";
+		this.exit = exit;
+	}
+}
+
 /**
  * Handles one typed request from Python code running in the kernel.
  * The returned record is delivered verbatim to the Python caller.
@@ -280,6 +328,8 @@ export interface KernelShutdownOptions {
 export interface KernelClient {
 	readonly ownerSessionId: string | undefined;
 	readonly isRunning: boolean;
+	/** The most recent unexpected death of a kernel this client owned, if any. */
+	readonly lastUnexpectedExit: KernelUnexpectedExit | undefined;
 	start(options?: KernelStartOptions): Promise<void>;
 	execute(code: string, opts?: ExecuteOptions): Promise<ExecuteResult>;
 	shutdown(opts?: KernelShutdownOptions): Promise<boolean>;

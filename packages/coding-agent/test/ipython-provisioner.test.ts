@@ -9,6 +9,8 @@ import {
 	type ExecuteResult,
 	KernelBusyAfterInterruptError,
 	type KernelClient,
+	KernelExitedError,
+	type KernelUnexpectedExit,
 	ReplKernelManager,
 } from "../src/core/kernel/index.js";
 import { createIpythonToolDefinition, IpythonKernelProvisioner } from "../src/core/tools/ipython.js";
@@ -41,6 +43,94 @@ function writeFakePython(opts: { sleepSeconds?: number } = {}): { python: string
 
 function okExecuteResult(): ExecuteResult {
 	return { stdout: "ok", stderr: "", status: "ok", durationMs: 1 };
+}
+
+function unexpectedExit(overrides: Partial<KernelUnexpectedExit> = {}): KernelUnexpectedExit {
+	return {
+		exitCode: 1,
+		signal: null,
+		uptimeMs: 1234,
+		requestId: "req-crash",
+		requestType: "execute",
+		stderrTail: "fatal: native exit",
+		at: 1_700_000_000_000,
+		...overrides,
+	};
+}
+
+function fakeProvisioner(ensure: () => Promise<KernelClient>): {
+	provisioner: IpythonKernelProvisioner;
+	ensure: ReturnType<typeof vi.fn>;
+	kill: ReturnType<typeof vi.fn>;
+} {
+	const ensureMock = vi.fn(ensure);
+	const kill = vi.fn(async () => {});
+	const takeUnreportedExit = vi.fn(() => undefined);
+	const provisioner = { ensure: ensureMock, kill, takeUnreportedExit } as unknown as IpythonKernelProvisioner;
+	return { provisioner, ensure: ensureMock, kill };
+}
+
+/**
+ * A protocol-3 kernel whose execute of a cell containing `CRASH` dies with
+ * native exit(3) after writing to stderr, the way idalib's exit(1) kills a
+ * real kernel. Every other cell (including the runtime bootstrap) succeeds.
+ */
+function writeCrashingReplRuntime(): { python: string; countRuns: () => number } {
+	const python = join(tempDir, "python-crash");
+	const countFile = join(tempDir, "crash-runs");
+	writeFileSync(
+		python,
+		`#!/usr/bin/env node
+const fs = require("node:fs");
+const readline = require("node:readline");
+fs.appendFileSync(${JSON.stringify(countFile)}, "run\\n");
+const emit = (event) => process.stdout.write(JSON.stringify(event) + "\\n");
+emit({ event: "ready", protocol: 3, python: process.version });
+const input = readline.createInterface({ input: process.stdin });
+input.on("line", (line) => {
+	const request = JSON.parse(line);
+	if (request.type === "restore") {
+		emit({ event: "done", id: request.id, status: "ok", restored: [], failed: [] });
+		return;
+	}
+	if (request.type === "snapshot") {
+		emit({ event: "done", id: request.id, status: "ok", saved: [], skipped: [], bytes: 0 });
+		return;
+	}
+	if (request.type === "execute") {
+		if (String(request.code).includes("CRASH")) {
+			fs.writeSync(2, "fatal: native exit from cell\\n");
+			process.exit(3);
+		}
+		emit({ event: "stdout", id: request.id, text: "ran " + request.code });
+		emit({ event: "done", id: request.id, status: "ok" });
+		return;
+	}
+	if (request.type === "shutdown") {
+		emit({ event: "done", id: request.id, status: "ok" });
+		process.exit(0);
+	}
+});
+`,
+	);
+	chmodSync(python, 0o755);
+	const countRuns = () => {
+		try {
+			return readFileSync(countFile, "utf8").split("\n").filter(Boolean).length;
+		} catch {
+			return 0;
+		}
+	};
+	return { python, countRuns };
+}
+
+function textOf(result: { content: Array<{ type: string; text?: string }> }): string {
+	return result.content[0]?.type === "text" ? (result.content[0].text ?? "") : "";
+}
+
+/** The ipython tool flags failed cells with an `isError` the core result type does not declare. */
+function isErrorOf(result: object): boolean | undefined {
+	return (result as { isError?: boolean }).isError;
 }
 
 function createBusyKernelContext(
@@ -334,9 +424,7 @@ describe("IpythonKernelProvisioner", () => {
 			.fn<KernelClient["execute"]>()
 			.mockResolvedValueOnce({ ...okExecuteResult(), backgroundOutput: "bg-line" });
 		const manager = { execute } as unknown as KernelClient;
-		const ensure = vi.fn(async () => manager);
-		const kill = vi.fn(async () => {});
-		const provisioner = { ensure, kill } as unknown as IpythonKernelProvisioner;
+		const { provisioner } = fakeProvisioner(async () => manager);
 		const tool = createIpythonToolDefinition(tempDir, { provisioner });
 
 		const result = await tool.execute("tool-call", { code: "x = 1" }, undefined, undefined, {} as ExtensionContext);
@@ -351,9 +439,7 @@ describe("IpythonKernelProvisioner", () => {
 			.mockRejectedValueOnce(new KernelBusyAfterInterruptError())
 			.mockResolvedValueOnce(okExecuteResult());
 		const manager = { execute } as unknown as KernelClient;
-		const ensure = vi.fn(async () => manager);
-		const kill = vi.fn(async () => {});
-		const provisioner = { ensure, kill } as unknown as IpythonKernelProvisioner;
+		const { provisioner, ensure, kill } = fakeProvisioner(async () => manager);
 		const select = vi.fn(async () => "Wait and preserve state");
 		const { ctx, setWorkingMessage } = createBusyKernelContext(select, { throwWorkingMessage: true });
 		const tool = createIpythonToolDefinition(tempDir, { provisioner });
@@ -382,11 +468,9 @@ describe("IpythonKernelProvisioner", () => {
 		const freshManager = {
 			execute: vi.fn<KernelClient["execute"]>().mockResolvedValueOnce(okExecuteResult()),
 		} as unknown as KernelClient;
-		const ensure = vi.fn(async () => {
+		const { provisioner, ensure, kill } = fakeProvisioner(async () => {
 			return ensure.mock.calls.length === 1 ? busyManager : freshManager;
 		});
-		const kill = vi.fn(async () => {});
-		const provisioner = { ensure, kill } as unknown as IpythonKernelProvisioner;
 		const select = vi.fn(async () => "Kill kernel and restart");
 		const { ctx, setWorkingMessage } = createBusyKernelContext(select, { throwWorkingMessage: true });
 		const tool = createIpythonToolDefinition(tempDir, { provisioner });
@@ -404,6 +488,160 @@ describe("IpythonKernelProvisioner", () => {
 		expect(freshManager.execute).toHaveBeenCalledWith("x = 1", expect.objectContaining({ signal: undefined }));
 		expect(setWorkingMessage).toHaveBeenCalledWith("Restarting Python kernel...");
 		expect(setWorkingMessage).toHaveBeenLastCalledWith(undefined);
+	});
+
+	it("reports a kernel that died mid-cell as a tool error with structured crash details", async () => {
+		const exit = unexpectedExit();
+		const execute = vi.fn<KernelClient["execute"]>().mockRejectedValueOnce(new KernelExitedError(exit));
+		const manager = { execute } as unknown as KernelClient;
+		const { provisioner, ensure, kill } = fakeProvisioner(async () => manager);
+		const select = vi.fn(async () => "Kill kernel and restart");
+		const { ctx } = createBusyKernelContext(select);
+		const tool = createIpythonToolDefinition(tempDir, { provisioner });
+
+		const result = await tool.execute("tool-call", { code: "import idapro" }, undefined, undefined, ctx);
+
+		expect(isErrorOf(result)).toBe(true);
+		expect(textOf(result)).toContain(
+			"Kernel process exited unexpectedly (exit code 1) while serving execute request req-crash",
+		);
+		expect(textOf(result)).toContain("A fresh kernel starts on the next call");
+		expect(textOf(result)).toContain("fatal: native exit");
+		expect(result.details.status).toBe("error");
+		expect(result.details.errorEname).toBe("KernelExitedError");
+		expect(result.details.kernelRestarted).toBe(false);
+		expect(result.details.kernelCrashed).toEqual({
+			exitCode: 1,
+			signal: null,
+			uptimeMs: 1234,
+			requestId: "req-crash",
+			stderrTail: "fatal: native exit",
+		});
+		// A cell that kills the interpreter must never be re-run automatically.
+		expect(execute).toHaveBeenCalledTimes(1);
+		expect(ensure).toHaveBeenCalledTimes(1);
+		expect(kill).not.toHaveBeenCalled();
+		expect(select).not.toHaveBeenCalled();
+	});
+
+	it("prepends the crash-recovery notice to the first successful cell after an unexpected exit, once", async () => {
+		const exit = unexpectedExit({ exitCode: 3, at: Date.UTC(2026, 0, 2, 3, 4, 5) });
+		const execute = vi
+			.fn<KernelClient["execute"]>()
+			.mockResolvedValueOnce({ ...okExecuteResult(), stdout: "first" })
+			.mockResolvedValueOnce({ ...okExecuteResult(), stdout: "second" });
+		const manager = { execute, isRunning: true, lastUnexpectedExit: exit } as unknown as KernelClient;
+		const provisioner = new IpythonKernelProvisioner(tempDir, {});
+		Reflect.set(provisioner, "managerPromise", Promise.resolve(manager));
+		Reflect.set(provisioner, "startedManager", manager);
+		const tool = createIpythonToolDefinition(tempDir, { provisioner });
+
+		const first = await tool.execute("call-1", { code: "x" }, undefined, undefined, {} as ExtensionContext);
+		const firstText = textOf(first);
+		expect(isErrorOf(first)).toBe(false);
+		expect(firstText.startsWith("<ipython_kernel_reset>\n")).toBe(true);
+		expect(firstText).toContain("exited unexpectedly (exit code 3) at 2026-01-02T03:04:05.000Z");
+		expect(firstText).toContain("variables were revived from the last snapshot");
+		expect(firstText.endsWith("\n\nfirst")).toBe(true);
+		expect(firstText.split("exited unexpectedly").length - 1).toBe(1);
+
+		const second = await tool.execute("call-2", { code: "y" }, undefined, undefined, {} as ExtensionContext);
+		expect(textOf(second)).toBe("second");
+	});
+
+	it("reports a later unexpected exit again, keyed by its timestamp", async () => {
+		const manager = {
+			isRunning: true,
+			lastUnexpectedExit: unexpectedExit({ at: 1 }),
+		} as unknown as KernelClient & { lastUnexpectedExit: KernelUnexpectedExit | undefined };
+		const provisioner = new IpythonKernelProvisioner(tempDir, {});
+		Reflect.set(provisioner, "startedManager", manager);
+
+		expect(provisioner.takeUnreportedExit()?.at).toBe(1);
+		expect(provisioner.takeUnreportedExit()).toBeUndefined();
+		manager.lastUnexpectedExit = unexpectedExit({ at: 2 });
+		expect(provisioner.takeUnreportedExit()?.at).toBe(2);
+		expect(provisioner.takeUnreportedExit()).toBeUndefined();
+	});
+
+	it("takeUnreportedExit() is empty without a started kernel", () => {
+		const provisioner = new IpythonKernelProvisioner(tempDir, {});
+		expect(provisioner.takeUnreportedExit()).toBeUndefined();
+	});
+
+	// The next two cases exercise the real ReplKernelManager: a kernel that
+	// dies mid-cell must reject that cell with KernelExitedError, settle to
+	// idle, and respawn on the next call without any provisioner intervention.
+	it("surfaces a real kernel's mid-cell death as a crash result and respawns on the next call", async () => {
+		const { python, countRuns } = writeCrashingReplRuntime();
+		const provisioner = new IpythonKernelProvisioner(tempDir, { python });
+		const tool = createIpythonToolDefinition(tempDir, { provisioner });
+		try {
+			const before = await tool.execute("call-0", { code: "x = 1" }, undefined, undefined, {} as ExtensionContext);
+			expect(isErrorOf(before)).toBe(false);
+			expect(textOf(before)).toBe("ran x = 1");
+			expect(countRuns()).toBe(1);
+			expect(provisioner.hasRunningKernel).toBe(true);
+
+			const crash = await tool.execute("call-1", { code: "CRASH()" }, undefined, undefined, {} as ExtensionContext);
+			expect(isErrorOf(crash)).toBe(true);
+			expect(textOf(crash)).toContain("exited unexpectedly (exit code 3)");
+			expect(textOf(crash)).toContain("fatal: native exit from cell");
+			expect(crash.details.kernelCrashed).toMatchObject({
+				exitCode: 3,
+				signal: null,
+				stderrTail: expect.stringContaining("native exit from cell"),
+			});
+			expect(crash.details.kernelCrashed?.uptimeMs).toBeGreaterThanOrEqual(0);
+			// The manager settled instead of sticking in "shutdown"; the crashed
+			// cell itself was not re-run.
+			expect(provisioner.hasRunningKernel).toBe(false);
+			expect(countRuns()).toBe(1);
+			expect(provisioner.manager?.lastUnexpectedExit).toMatchObject({ exitCode: 3 });
+
+			const after = await tool.execute("call-2", { code: "y = 2" }, undefined, undefined, {} as ExtensionContext);
+			expect(isErrorOf(after)).toBe(false);
+			const afterText = textOf(after);
+			expect(afterText.startsWith("<ipython_kernel_reset>\n")).toBe(true);
+			expect(afterText).toContain("restarted after it exited unexpectedly (exit code 3)");
+			expect(afterText.endsWith("\n\nran y = 2")).toBe(true);
+			expect(countRuns()).toBe(2);
+			expect(provisioner.hasRunningKernel).toBe(true);
+			expect(provisioner.manager).toBe(await provisioner.ensure());
+
+			const again = await tool.execute("call-3", { code: "z = 3" }, undefined, undefined, {} as ExtensionContext);
+			expect(textOf(again)).toBe("ran z = 3");
+		} finally {
+			await provisioner.dispose({ snapshot: false });
+		}
+	});
+
+	it("does not repeat the crash notice and reports a second crash separately", async () => {
+		const { python, countRuns } = writeCrashingReplRuntime();
+		const provisioner = new IpythonKernelProvisioner(tempDir, { python });
+		const tool = createIpythonToolDefinition(tempDir, { provisioner });
+		try {
+			const first = await tool.execute("call-1", { code: "CRASH()" }, undefined, undefined, {} as ExtensionContext);
+			expect(first.details.kernelCrashed?.exitCode).toBe(3);
+			const recovered = await tool.execute("call-2", { code: "a" }, undefined, undefined, {} as ExtensionContext);
+			expect(textOf(recovered)).toContain("<ipython_kernel_reset>");
+
+			const second = await tool.execute("call-3", { code: "CRASH()" }, undefined, undefined, {} as ExtensionContext);
+			expect(isErrorOf(second)).toBe(true);
+			expect(second.details.kernelCrashed?.exitCode).toBe(3);
+			const recoveredAgain = await tool.execute(
+				"call-4",
+				{ code: "b" },
+				undefined,
+				undefined,
+				{} as ExtensionContext,
+			);
+			expect(textOf(recoveredAgain)).toContain("<ipython_kernel_reset>");
+			expect(textOf(recoveredAgain).split("exited unexpectedly").length - 1).toBe(1);
+			expect(countRuns()).toBe(3);
+		} finally {
+			await provisioner.dispose({ snapshot: false });
+		}
 	});
 
 	it("does not delete the on-disk snapshot (the kernel survives compaction)", async () => {

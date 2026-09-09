@@ -1,11 +1,13 @@
 // Kernel client for the REPL runtime: the kernel is a JSON-lines subprocess
 // (`python -m rlm.repl`) — requests on stdin, events on stdout, stderr kept as
 // a diagnostics tail. The protocol is documented in prime-agent-runtime/src/rlm/repl.md.
+import { AsyncLocalStorage } from "node:async_hooks";
 import { type ChildProcess, spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import {
+	currentTraceContext,
 	currentTraceparent,
 	getLogger,
 	injectTraceparentEnv,
@@ -16,6 +18,7 @@ import {
 	type Span,
 	type SpanAttributes,
 	TRACE_LOG_COMPONENT,
+	type TraceContext,
 	withSpan,
 } from "@earendil-works/pi-ai";
 import { v4 as uuid } from "uuid";
@@ -29,6 +32,7 @@ import {
 	DEFAULT_MAX_OUTPUT_CHARS,
 	DEFAULT_SNAPSHOT_DEBOUNCE_MS,
 	DIFF_DISPLAY_MIME,
+	describeKernelExit,
 	type ExecuteOptions,
 	type ExecuteResult,
 	errorMessage,
@@ -42,10 +46,12 @@ import {
 	type KernelAttachment,
 	KernelBusyAfterInterruptError,
 	type KernelDiffDisplay,
+	KernelExitedError,
 	type KernelManagerOptions,
 	type KernelSentAgentMessage,
 	type KernelShutdownOptions,
 	type KernelStartOptions,
+	type KernelUnexpectedExit,
 	liveKernels,
 	MAX_ATTACHMENT_DATA_CHARS,
 	MAX_LATE_SENT_AGENT_MESSAGE_HANDLERS,
@@ -96,6 +102,8 @@ export function withoutDaemonWorkerIdentity(env: NodeJS.ProcessEnv): NodeJS.Proc
 }
 
 const MAX_KERNEL_STDERR_CHARS = 8 * 1024;
+/** Tail of the stderr buffer attached to an unexpected exit's record and log line. */
+const KERNEL_EXIT_STDERR_TAIL_CHARS = 1024;
 const MAX_KERNEL_STDERR_LOG_BYTES = 5 * 1024 * 1024;
 const KERNEL_STDERR_LOG_BUDGET_MARKER = "[stderr log budget exhausted]\n";
 
@@ -106,6 +114,9 @@ function writeFullySync(fd: number, data: Buffer): void {
 		offset += writeSync(fd, data, offset);
 	}
 }
+
+/** Runs a function inside the async context (trace span, log context) captured at admission. */
+type AsyncContextSnapshot = ReturnType<typeof AsyncLocalStorage.snapshot>;
 
 /** ExecuteResult plus the raw fields of the request's `done` event (state ops). */
 interface InternalExecuteResult extends ExecuteResult {
@@ -135,6 +146,8 @@ interface ActiveExecution {
 	status: ExecuteResult["status"];
 	doneFields?: Record<string, unknown>;
 	settled: boolean;
+	/** Async context of the caller, so diagnostics about this request land in its trace and session. */
+	runInContext: AsyncContextSnapshot;
 	resolve: (result: InternalExecuteResult) => void;
 	reject: (error: Error) => void;
 }
@@ -268,6 +281,15 @@ export class ReplKernelManager {
 	private pendingRestore = false;
 	private rebootstrapPromise?: Promise<boolean>;
 	private teardownInFlight = 0;
+	/** When the current child's ready event arrived; undefined before ready and after teardown. */
+	private readyAt?: number;
+	/** Context of the `kernel.start` span that spawned the current child, linked from its exit diagnostics. */
+	private startTrace?: TraceContext;
+	private lastUnexpectedExitValue?: KernelUnexpectedExit;
+	/** Generation of the child that last died outside any host-owned teardown. */
+	private unexpectedExitGeneration?: number;
+	/** No kernel has been spawned since the last unexpected exit: that exit explains a shut-down manager. */
+	private shutDownAfterUnexpectedExit = false;
 
 	constructor(options: KernelManagerOptions) {
 		this.options = {
@@ -285,6 +307,19 @@ export class ReplKernelManager {
 
 	get ownerSessionId(): string | undefined {
 		return this.options.sessionId;
+	}
+
+	get lastUnexpectedExit(): KernelUnexpectedExit | undefined {
+		return this.lastUnexpectedExitValue;
+	}
+
+	/** The generic teardown error, naming the crash when nothing was spawned since it. */
+	private shutdownError(): Error {
+		const exit = this.lastUnexpectedExitValue;
+		if (exit && this.shutDownAfterUnexpectedExit) {
+			return new Error(`Kernel has been shut down: ${describeKernelExit(exit)}`);
+		}
+		return new Error("Kernel has been shut down");
 	}
 
 	private appendKernelDiagnostic(message: string): void {
@@ -361,7 +396,12 @@ export class ReplKernelManager {
 	}
 
 	private async doStart(startOptions: KernelStartOptions, span?: Span): Promise<void> {
-		if (this.state !== "idle") return;
+		if (this.state !== "idle") {
+			// Memoized as a resolved start: the attributes are what tells a reader
+			// this span never produced a kernel.
+			span?.setAttributes({ "kernel.start.outcome": "skipped", "kernel.state": this.state });
+			return;
+		}
 		const generation = ++this.startGeneration;
 		this.state = "starting";
 		installSignalHandlersOnce();
@@ -388,13 +428,18 @@ export class ReplKernelManager {
 			if (this.startStale(generation)) throw new Error("Kernel start superseded");
 			this.options.python = python;
 		} catch (error) {
-			if (this.startStale(generation)) throw error; // never touch a newer start's state
+			if (this.startStale(generation)) {
+				span?.setAttributes({ "kernel.start.outcome": "superseded" });
+				throw error; // never touch a newer start's state
+			}
+			span?.setAttributes({ "kernel.start.outcome": "failed" });
 			liveKernels.delete(this);
 			if ((this.state as string) !== "shutdown") this.state = "idle";
 			throw error;
 		}
 
 		if ((this.state as string) === "shutdown") {
+			span?.setAttributes({ "kernel.start.outcome": "failed" });
 			throw new Error("Kernel was disposed during startup");
 		}
 
@@ -414,7 +459,12 @@ export class ReplKernelManager {
 		});
 		this.child = child;
 		if (child.pid !== undefined) recordOrphanProcessState(child.pid, true);
-		span?.setAttributes({ "kernel.pid": child.pid });
+		span?.setAttributes({ "kernel.pid": child.pid, "kernel.start.outcome": "spawned" });
+		// Kept for the exit diagnostics: an unexpected exit lands in the trace of
+		// the request it failed, and these ids link it back to the spawn.
+		this.startTrace = span?.context ?? currentTraceContext();
+		this.readyAt = undefined;
+		this.shutDownAfterUnexpectedExit = false;
 		this.readyDeferred = createDeferred<number>();
 		this.startupProtocolError = undefined;
 		this.wireChild(child);
@@ -433,7 +483,13 @@ export class ReplKernelManager {
 				);
 			}
 		} catch (e) {
-			if (this.startStale(generation)) throw e; // never tear down a newer start's kernel
+			if (this.startStale(generation)) {
+				// The exit handler already settled a child that died before ready.
+				const crashed = this.unexpectedExitGeneration === generation;
+				span?.setAttributes({ "kernel.start.outcome": crashed ? "failed" : "superseded" });
+				throw e; // never tear down a newer start's kernel
+			}
+			span?.setAttributes({ "kernel.start.outcome": "failed" });
 			const canRetryStartup = (this.state as string) !== "shutdown";
 			// Only the call that performed the cleanup may resurrect to idle; a
 			// concurrent kill()/teardown owns the state otherwise.
@@ -481,10 +537,12 @@ export class ReplKernelManager {
 			}
 		});
 
-		// The runtime dup2's fd 2 into its protocol pump before ready (repl.py
-		// _setup_fds), so this pipe only ever carries pre-ready bytes; the write
-		// budget caps what lands on disk, and once it is spent the handler keeps
-		// draining but discards (a blocked pipe would wedge a pre-ready kernel).
+		// Before ready the runtime writes fd 2 straight here; after ready it
+		// dup2's fd 2 into its protocol pump (repl.py _setup_fds), which frames
+		// the bytes as stderr events and also tees the raw bytes back to this
+		// pipe, so a native crash's last words still reach the tail and the log.
+		// The write budget caps what lands on disk, and once it is spent the
+		// handler keeps draining but discards (a blocked pipe would wedge the kernel).
 		const stderrLog = this.openStderrLog();
 		const stderrDecoder = new StringDecoder("utf8");
 		let stderrLogBudget = stderrLog?.budget ?? 0;
@@ -543,17 +601,9 @@ export class ReplKernelManager {
 		child.on("exit", (code, signal) => {
 			if (this.child !== child) return;
 			if (this.state !== "shutdown") {
-				this.appendKernelDiagnostic(`unexpected exit code=${code} signal=${signal}`);
-				kernelLog.error("kernel_exit", {
-					pid: child.pid,
-					exitCode: code,
-					signal,
-					pythonPath: this.options.python,
-					requestId: this.activeExecution?.requestId,
-					requestType: this.activeExecution?.requestType,
-				});
+				this.handleUnexpectedExit(child, code, signal);
+				return;
 			}
-			this.state = "shutdown";
 			liveKernels.delete(this);
 			// This exit is part of an in-flight graceful shutdown(): that call owns the
 			// teardown and runs cleanupResources itself. Cleaning up here would bump the
@@ -561,6 +611,81 @@ export class ReplKernelManager {
 			if (this.gracefulShutdownGeneration === this.startGeneration) return;
 			this.cleanupResources();
 		});
+	}
+
+	/**
+	 * The child died outside any host-owned teardown (native exit(), abort(),
+	 * OOM kill, ...). Record the facts, fail the request it was serving with
+	 * {@link KernelExitedError}, and settle at idle so the next start() spawns a
+	 * replacement (reprovisioned like a discarded protocol repair) instead of
+	 * every later request failing with a bare "Kernel has been shut down".
+	 */
+	private handleUnexpectedExit(child: ChildProcess, code: number | null, signal: NodeJS.Signals | null): void {
+		const generation = this.startGeneration;
+		const execution = this.activeExecution;
+		const readyAt = this.readyAt;
+		const startTrace = this.startTrace;
+		this.appendKernelDiagnostic(`unexpected exit code=${code} signal=${signal}`);
+		this.unexpectedExitGeneration = generation;
+		// A death before ready is start()'s failure ("Kernel exited before ready"),
+		// not a served kernel's crash: no record, and no reprovisioning debt.
+		const exit: KernelUnexpectedExit | undefined =
+			readyAt === undefined
+				? undefined
+				: {
+						exitCode: code,
+						signal,
+						uptimeMs: Math.max(0, Date.now() - readyAt),
+						requestId: execution?.requestId,
+						requestType: execution?.requestType,
+						stderrTail: this.kernelStderr.slice(-KERNEL_EXIT_STDERR_TAIL_CHARS),
+						at: Date.now(),
+					};
+		if (exit) {
+			this.lastUnexpectedExitValue = exit;
+			this.shutDownAfterUnexpectedExit = true;
+		}
+
+		const finish = () => {
+			const stderrTail = this.kernelStderr.slice(-KERNEL_EXIT_STDERR_TAIL_CHARS);
+			if (exit) exit.stderrTail = stderrTail;
+			// Logged inside the failing request's async context so the line lands in
+			// its trace (under the kernel.execute span) with its session's log fields,
+			// not in whatever context happened to be ambient in this callback.
+			const log = () =>
+				kernelLog.error("kernel_exit", {
+					pid: child.pid,
+					exitCode: code,
+					signal,
+					pythonPath: this.options.python,
+					requestId: execution?.requestId,
+					requestType: execution?.requestType,
+					uptimeMs: exit?.uptimeMs ?? null,
+					stderrTail,
+					startTraceId: startTrace?.traceId,
+					startSpanId: startTrace?.spanId,
+				});
+			if (execution) execution.runInContext(log);
+			else log();
+			// A host teardown (kill, dispose, shutdown) took over meanwhile and owns
+			// the state; its cleanup rejects the active request naming this exit.
+			if (this.child !== child || this.startStale(generation) || this.state === "shutdown") return;
+			if (exit) {
+				this.rejectActiveExecution(new KernelExitedError(exit));
+				this.killChildToIdle();
+				return;
+			}
+			this.state = "shutdown";
+			liveKernels.delete(this);
+			this.cleanupResources();
+			this.state = "idle";
+		};
+		// The kernel's last stderr bytes can still be in flight at 'exit': settle
+		// once the pipe drained (the post-exit destroy bounds the wait) so the
+		// tail carries them, as waitForReady does for a pre-ready death.
+		const stderr = child.stderr;
+		if (!stderr || stderr.closed) finish();
+		else stderr.once("close", finish);
 	}
 
 	private failProtocolFrame(child: ChildProcess, diagnostic: string): void {
@@ -841,6 +966,7 @@ export class ReplKernelManager {
 	private handleEvent(event: Record<string, unknown>): void {
 		const type = event.event;
 		if (type === "ready") {
+			this.readyAt = Date.now();
 			this.readyDeferred?.resolve(typeof event.protocol === "number" ? event.protocol : -1);
 			return;
 		}
@@ -964,7 +1090,7 @@ export class ReplKernelManager {
 		}
 		await this.start({ signal: opts.signal });
 		if ((this.state as string) === "shutdown") {
-			throw new Error("Kernel has been shut down");
+			throw this.shutdownError();
 		}
 		if (this.flushingSnapshotForDispose && !opts.internal) {
 			throw new Error("Kernel is shutting down");
@@ -997,13 +1123,20 @@ export class ReplKernelManager {
 				return { stdout: "", stderr: "", status: "aborted", durationMs: Date.now() - started };
 			}
 			if ((this.state as string) === "shutdown") {
-				throw new Error("Kernel has been shut down");
+				throw this.shutdownError();
 			}
 			// A repair started while this request was queued or busy-waiting: release
 			// the slot so the repair's own restore can run, then requeue behind it.
 			if (this.protocolRepairPromise && !opts.protocolRepair) {
 				resolveNext();
 				await this.waitForProtocolRepair(opts.signal);
+				return this.enqueueRequest(requestFields, code, opts, executionTimeoutMs);
+			}
+			// The kernel this request was admitted for died while it was queued
+			// (unexpected exit settles at idle): re-enter through start() so it runs
+			// on the replacement instead of failing on a disconnected stdin.
+			if ((this.state as string) === "idle") {
+				resolveNext();
 				return this.enqueueRequest(requestFields, code, opts, executionTimeoutMs);
 			}
 			if (executionTimeoutMs === undefined) {
@@ -1045,6 +1178,13 @@ export class ReplKernelManager {
 					return result;
 				} catch (error) {
 					span.setAttributes({ "kernel.status": "error" });
+					if (error instanceof KernelExitedError) {
+						span.setAttributes({
+							"kernel.exit_code": error.exit.exitCode ?? undefined,
+							"kernel.signal": error.exit.signal ?? undefined,
+							"kernel.uptime_ms": error.exit.uptimeMs,
+						});
+					}
 					throw error;
 				}
 			},
@@ -1086,6 +1226,7 @@ export class ReplKernelManager {
 			backgroundOutputTruncated: this.pendingBackgroundOutputTruncated,
 			status: "ok",
 			settled: false,
+			runInContext: AsyncLocalStorage.snapshot(),
 			resolve: result.resolve,
 			reject: result.reject,
 		};
@@ -1313,7 +1454,7 @@ export class ReplKernelManager {
 		const started = Date.now();
 		while (this.activeExecution && Date.now() - started < KERNEL_BUSY_REUSE_WAIT_MS) {
 			if ((this.state as string) === "shutdown") {
-				throw new Error("Kernel has been shut down");
+				throw this.shutdownError();
 			}
 			void this.interrupt().catch(() => undefined);
 			const remaining = KERNEL_BUSY_REUSE_WAIT_MS - (Date.now() - started);
@@ -1417,10 +1558,11 @@ export class ReplKernelManager {
 		// Stale pre-teardown background output must not surface after a restart.
 		this.pendingBackgroundOutput = "";
 		this.pendingBackgroundOutputTruncated = false;
-		this.rejectActiveExecution(new Error("Kernel has been shut down"));
+		this.rejectActiveExecution(this.shutdownError());
 		const child = this.child;
 		this.child = undefined;
 		this.readyDeferred = undefined;
+		this.readyAt = undefined;
 		if (child) {
 			child.stdin?.destroy();
 			child.stdout?.destroy();
