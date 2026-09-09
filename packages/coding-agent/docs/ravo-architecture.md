@@ -123,3 +123,118 @@ flowchart TB
 - The commit gate is the only place the lineage changes (`mutation_requires_authority`). A rejection never mutates state; it routes to Diagnose and repair.
 - Weakness pressure runs on commit: every opponent the accepted candidate missed doubles in weight, so the same gap cannot be exploited twice (`pressureW_ge`).
 - The token budget and deadline are stop conditions, not gates: they bound cost, they do not affect which candidates can be committed.
+
+## The self-improvement loop, end to end
+
+Stages: run a turn → observe failures at the turn boundary (`_observeFailuresAtTurnBoundary`) → trigger (recurrence ≥ 2, regression inside the 20-turn window, turn interval, manual) → plan from the serialized chain of thought (`planRefinement`) → weighted gate (`ravoDecide`) → commit with pressure (`ravoCommit`) → harness rendered into the next system prompt.
+
+```mermaid
+flowchart TB
+  classDef live fill:#dcfce7,stroke:#15803d,color:#14532d
+  classDef gate fill:#fef3c7,stroke:#b45309,color:#78350f
+  classDef state fill:#e0e7ff,stroke:#4338ca,color:#1e1b4b
+  classDef fixed fill:#f1f5f9,stroke:#475569,color:#0f172a,stroke-dasharray:4 3
+
+  subgraph RUN["① RUN A TURN  (RLM execution plane · immutable substrate)"]
+    direction LR
+    SP["system prompt<br/>= base prompt (fixed)<br/>+ Continual Harness State (mutable)"]:::fixed
+    LLM["model<br/>thinking · text · tool calls"]:::live
+    K["IPython kernel<br/>bash() · mcp · rlm() children"]:::fixed
+    TR["session JSONL<br/>(thinking blocks kept)"]:::state
+    SP --> LLM --> K --> TR
+  end
+
+  subgraph OBS["② OBSERVE  (every turn boundary · zero LLM tokens)"]
+    direction LR
+    EX["extractFailures<br/>python_exception · tool_error · provider_error"]:::live
+    FP["fingerprint = sha256(kind, source, class, normalized msg)[:16]<br/>numbers→#  strings→?  paths→&lt;path&gt;"]:::live
+    LED[("FAILURE LEDGER<br/>HarnessState.failures<br/>count · firstSeenTurn · lastSeenTurn")]:::state
+    EX --> FP --> LED
+  end
+  TR --> EX
+
+  subgraph TRIG["③ TRIGGER"]
+    direction LR
+    T1{"recurrence<br/>count ≥ 2"}:::gate
+    T2{"regression<br/>claimed fp recurs<br/>inside 20-turn window"}:::gate
+    T3{"turn_interval 25 / compact<br/>→ reviewer LLM + 20 min cooldown"}:::gate
+    T4["manual /refine · refine.run()"]:::live
+  end
+  LED --> T1
+  LED --> T2
+  TR --> T3
+
+  subgraph PLAN["④ PLAN  (agentic variation operator · 1 LLM call)"]
+    direction TB
+    IN["input = serializeConversation(last 80k chars)<br/>[Assistant thinking] + [Assistant] + [tool calls] + [Tool result]<br/>+ harness overview + refinement history + ledger"]:::live
+    PR["RefinementProposal<br/>edits[]: create|update|delete × prompt|memory|skill|subagent<br/>+ addressedFingerprints"]:::state
+    IN --> PR
+  end
+  T1 --> IN
+  T2 --> IN
+  T3 --> IN
+  T4 --> IN
+
+  subgraph GATE["⑤ GATE  (ravoEvaluateProposal → ravoDecide · pure reducer)"]
+    direction TB
+    FS{"fast screen ≥ 50<br/>structural + skill dry-run<br/>(kernel imports skill, resolves callable)<br/>no LLM"}:::gate
+    DJ["deep judge (1 LLM call)<br/>deepScore 0–100 · missedCriteria · addressedFingerprints"]:::live
+    OPP[("OPPONENT POOL<br/>evidence · scope · minimality · contracts · novelty<br/>+ failure:&lt;fp&gt; for every recurring error<br/>each with weight w")]:::state
+    D1{"deepScore + 10 ≥ best(lineage)?"}:::gate
+    D2{"Σ w(missed) ≤ ε = 1?"}:::gate
+    FS -- yes --> DJ --> D1 -- yes --> D2
+    OPP -.-> D2
+    FS -- no --> RS["reject_screen"]:::gate
+    D1 -- no --> RD["reject_deep"]:::gate
+    D2 -- no --> RC["reject_criteria"]:::gate
+  end
+  PR --> FS
+
+  subgraph COMMIT["⑥ COMMIT  (sync · LLM-free · digest re-verified)"]
+    direction TB
+    V["re-hash proposal + baseline harness<br/>mismatch ⇒ reject (stale context)"]:::live
+    AP["apply edits to disk<br/>memory · skill · prompt note · subagent"]:::live
+    LIN[("LINEAGE (append-only)<br/>best score is monotone")]:::state
+    PRS["PRESSURE<br/>w(missed[0]) ×= 2<br/>same weakness cannot pass twice"]:::live
+    WIN["champion claims fingerprints<br/>provisional window = 20 turns"]:::live
+    V --> AP --> LIN --> PRS --> WIN
+  end
+  D2 -- yes --> V
+  PRS --> OPP
+  WIN --> T2
+
+  AP ==>|"formatHarnessStateForPrompt<br/>rendered into next turn's prompt"| SP
+```
+
+One concrete cycle:
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant U as user
+  participant M as model + kernel
+  participant L as failure ledger
+  participant P as /refine planner
+  participant G as RAVO gate
+  participant H as harness on disk
+  Note over M: turn 3 — bash() raises TypeError in skill X
+  M->>L: extractFailures → fp a1b2c3 (count 1)
+  Note over M: turn 9 — same TypeError, different numbers/paths
+  M->>L: normalize → same fp a1b2c3 (count 2)
+  L-->>P: recurrence → refine (no reviewer, no cooldown)
+  P->>P: read thinking + tool results (last 80k) + ledger
+  P->>G: proposal: update skill X, addressedFingerprints=[a1b2c3]
+  G->>G: fast screen: kernel imports skill X → 100
+  G->>G: deep judge → 72, missed=[]
+  G->>G: opponents now include failure:a1b2c3 (w=1)
+  G->>G: 72+10 ≥ best(60) ✓ · Σw(missed)=0 ≤ 1 ✓ → commit
+  G->>H: re-verify digests → write skill X
+  G->>H: lineage += {score 72} · claim fp a1b2c3 · window turns 10–30
+  H-->>M: next system prompt carries the new skill X
+  alt fp a1b2c3 recurs at turn 17
+    M->>L: regression (measured fault, inside window)
+    L-->>P: regression refine → must re-address a1b2c3, w(failure:a1b2c3) doubles on commit
+  else silent through turn 30
+    Note over H: champion stands · correction confirmed by outcome, not opinion
+  end
+```

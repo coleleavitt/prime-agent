@@ -1,0 +1,28 @@
+sequenceDiagram
+  autonumber
+  participant U as user
+  participant M as model + kernel
+  participant L as failure ledger
+  participant P as /refine planner
+  participant G as RAVO gate
+  participant H as harness on disk
+  Note over M: turn 3 — bash() raises TypeError in skill X
+  M->>L: extractFailures → fp a1b2c3 (count 1)
+  Note over M: turn 9 — same TypeError, different numbers/paths
+  M->>L: normalize → same fp a1b2c3 (count 2)
+  L-->>P: recurrence → refine (no reviewer, no cooldown)
+  P->>P: read thinking + tool results (last 80k) + ledger
+  P->>G: proposal: update skill X, addressedFingerprints=[a1b2c3]
+  G->>G: fast screen: kernel imports skill X → 100
+  G->>G: deep judge → 72, missed=[]
+  G->>G: opponents now include failure:a1b2c3 (w=1)
+  G->>G: 72+10 ≥ best(60) ✓ · Σw(missed)=0 ≤ 1 ✓ → commit
+  G->>H: re-verify digests → write skill X
+  G->>H: lineage += {score 72} · claim fp a1b2c3 · window turns 10–30
+  H-->>M: next system prompt carries the new skill X
+  alt fp a1b2c3 recurs at turn 17
+    M->>L: regression (measured fault, inside window)
+    L-->>P: regression refine → must re-address a1b2c3, w(failure:a1b2c3) doubles on commit
+  else silent through turn 30
+    Note over H: champion stands · correction confirmed by outcome, not opinion
+  end
