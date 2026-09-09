@@ -258,6 +258,7 @@ async function runController<T extends JsonValue>(
 			cp.spentTokens += result.tokens;
 			if (result.status !== "completed") {
 				if (abort.signal.aborted) throw new Stop("cancelled");
+				if (result.status === "budget_exceeded") throw new Stop("budget");
 				throw new ChildFailure(result.status, result.error);
 			}
 			return result.value;

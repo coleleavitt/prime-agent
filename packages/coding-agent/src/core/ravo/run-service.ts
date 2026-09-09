@@ -138,7 +138,11 @@ export const RAVO_RUN_DEFAULTS = {
 	maxRounds: 4,
 	maxRepairs: 3,
 	deadlineMs: 20 * 60 * 1000,
-	tokenBudget: 400_000,
+	// A real AgentSession child carries the full Prime system prompt (~50k input
+	// tokens per turn), so one call needs a six-figure reservation; a run of
+	// ~10 child calls fits comfortably in 1.5M.
+	tokenBudget: 1_500_000,
+	reservationPerCall: 150_000,
 	concurrency: 3,
 	familyDelta: Rational.of(1, 20),
 } as const;
@@ -455,7 +459,7 @@ export class RavoRunService {
 			maxRepairs: request.maxRepairs ?? RAVO_RUN_DEFAULTS.maxRepairs,
 			deadlineMs: request.deadlineMs ?? RAVO_RUN_DEFAULTS.deadlineMs,
 			tokenBudget,
-			reservationPerCall: Math.max(1, Math.min(32_000, Math.floor(tokenBudget / 8))),
+			reservationPerCall: Math.max(1, Math.min(RAVO_RUN_DEFAULTS.reservationPerCall, Math.floor(tokenBudget / 8))),
 			concurrency: RAVO_RUN_DEFAULTS.concurrency,
 			signal,
 			now,
