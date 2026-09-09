@@ -1,0 +1,1 @@
+- Added `/ravo <task>` and the bundled `ravo` Python skill (`ravo.run`, `ravo.status`, `ravo.cancel`) to start the full RAVO loop over a continual harness mutation in the background, with `ravo_run_update` session events for live progress.

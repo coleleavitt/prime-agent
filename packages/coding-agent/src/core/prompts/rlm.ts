@@ -181,6 +181,12 @@ export function buildRlmPrompt(options: RlmPromptOptions): string {
 				"Treat continual harness refinement as a small, evidence-backed update after observing a repeated failure or reusable tactic: diagnose the issue, update the smallest relevant continual harness component, validate on the next action, then record the outcome. Use `await refine.run()` to turn repeated delegation patterns into reusable subagent specs, repeated procedures into skills, durable facts/preferences into memories, and narrow behavioral policies into prompt addendums. It returns immediately and runs when the current turn ends, so continue working normally after calling it. Do not rewrite the whole continual harness when a focused memory, skill, prompt note, or subagent spec is enough.",
 			);
 		}
+		if (installedSkills.includes("ravo")) {
+			parts.push(
+				"",
+				"When a harness change needs more than one focused edit and deserves its own evaluated search, use `await ravo.run(task)` to start the full RAVO loop (inspect, plan, implement, evaluate, diagnose, repair) over a continual harness mutation in the background; it returns immediately, progress is visible in the Agents View and via `await ravo.status()`, and `await ravo.cancel()` stops it.",
+			);
+		}
 	}
 
 	return parts.join("\n");

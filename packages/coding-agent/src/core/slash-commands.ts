@@ -10,7 +10,7 @@ export interface SlashCommandInfo {
 	sourceInfo: SourceInfo;
 }
 
-export const SESSION_SLASH_COMMAND_NAMES = ["compact", "refine", "goal", "autonomous"] as const;
+export const SESSION_SLASH_COMMAND_NAMES = ["compact", "refine", "ravo", "goal", "autonomous"] as const;
 
 export type SessionSlashCommandName = (typeof SESSION_SLASH_COMMAND_NAMES)[number];
 
@@ -56,6 +56,66 @@ export function parseRefineCommandOptions(args: string): RefineCommandOptions {
 		return { rollbackId, global };
 	}
 	return { instructions: rest || undefined, global };
+}
+
+export interface RavoCommandOptions {
+	task: string;
+	global: boolean;
+	maxRounds?: number;
+	maxRepairs?: number;
+}
+
+const RAVO_USAGE = "Usage: /ravo [--global] [--rounds N] [--repairs N] <task>";
+
+function parseRavoCount(flag: string, value: string | undefined): number {
+	if (value === undefined || !/^\d+$/.test(value) || Number(value) < 1) {
+		throw new Error(`${RAVO_USAGE} (${flag} expects a positive integer)`);
+	}
+	return Number(value);
+}
+
+/**
+ * Parse `/ravo` arguments. Flags may appear anywhere; the remaining tokens,
+ * joined by single spaces, are the task.
+ */
+export function parseRavoCommandOptions(args: string): RavoCommandOptions {
+	const tokens = args
+		.trim()
+		.split(/[\t\p{Zs} ]+/u)
+		.filter(Boolean);
+	const taskTokens: string[] = [];
+	let global = false;
+	let maxRounds: number | undefined;
+	let maxRepairs: number | undefined;
+	for (let index = 0; index < tokens.length; index++) {
+		const token = tokens[index];
+		if (token === "--global") {
+			global = true;
+			continue;
+		}
+		const flagMatch = /^--(rounds|repairs)(?:=(.*))?$/.exec(token);
+		if (flagMatch) {
+			const flag = `--${flagMatch[1]}`;
+			let value = flagMatch[2];
+			if (value === undefined) {
+				value = tokens[index + 1];
+				index++;
+			}
+			const count = parseRavoCount(flag, value);
+			if (flagMatch[1] === "rounds") maxRounds = count;
+			else maxRepairs = count;
+			continue;
+		}
+		taskTokens.push(token);
+	}
+	const task = taskTokens.join(" ");
+	if (!task) throw new Error(RAVO_USAGE);
+	return {
+		task,
+		global,
+		...(maxRounds === undefined ? {} : { maxRounds }),
+		...(maxRepairs === undefined ? {} : { maxRepairs }),
+	};
 }
 
 export interface BuiltinSlashCommand {
@@ -158,6 +218,13 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{
 		name: "refine",
 		description: "Refine continual harness prompt notes, skills, subagents, and memory",
+	},
+	{
+		name: "ravo",
+		description:
+			"Run the full RAVO loop (inspect, plan, implement, evaluate, diagnose, repair) over a continual harness mutation for a task",
+		argumentHint: "[--global] [--rounds N] [--repairs N] <task>",
+		takesArgument: true,
 	},
 	{
 		name: "goal",

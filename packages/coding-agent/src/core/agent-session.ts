@@ -222,6 +222,8 @@ import {
 	updateFailureLedger,
 } from "./ravo/failure-ledger.js";
 import type { JsonValue } from "./ravo/reducer.js";
+import { createAgentSessionRetainedWorkerRuntime } from "./ravo/retained-worker-runtime.js";
+import { type RavoRunRequest, RavoRunService, type RavoRunStatus } from "./ravo/run-service.js";
 import {
 	type AutoRefineReason,
 	type AutoRefineReview,
@@ -318,6 +320,7 @@ import type { SessionStats } from "./session-stats.js";
 import type { SettingsManager } from "./settings-manager.js";
 import { getPythonSkillRuntimeInfo, type Skill } from "./skills.js";
 import {
+	parseRavoCommandOptions,
 	parseRefineCommandOptions,
 	parseSessionSlashCommand,
 	parseSlashCommand,
@@ -433,7 +436,8 @@ export type AgentSessionEvent =
 			runId?: string;
 	  }
 	| { type: "refine_complete"; result: RefinementResult }
-	| { type: "refine_failed"; error: string };
+	| { type: "refine_failed"; error: string }
+	| { type: "ravo_run_update"; status: RavoRunStatus };
 
 export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
 
@@ -1101,6 +1105,45 @@ function parseGoalBudgetValue(value: string): number {
 	return budget;
 }
 
+const RAVO_SKILL_NAME = "ravo";
+
+function ravoPositiveInteger(payload: Record<string, unknown>, key: string): number | undefined {
+	const value = payload[key];
+	if (value === undefined || value === null) return undefined;
+	if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+		throw new Error(`ravo.run ${key} must be a positive integer when provided`);
+	}
+	return value;
+}
+
+function parseRavoRunPayload(payload: Record<string, unknown>): RavoRunRequest {
+	const task = payload.task;
+	if (typeof task !== "string" || !task.trim()) {
+		throw new Error("ravo.run task must be a non-empty string");
+	}
+	const instructions = payload.instructions;
+	if (instructions !== undefined && instructions !== null && typeof instructions !== "string") {
+		throw new Error("ravo.run instructions must be a string when provided");
+	}
+	const globalFlag = payload.global;
+	if (globalFlag !== undefined && globalFlag !== null && typeof globalFlag !== "boolean") {
+		throw new Error("ravo.run global must be a boolean when provided");
+	}
+	const maxRounds = ravoPositiveInteger(payload, "max_rounds");
+	const maxRepairs = ravoPositiveInteger(payload, "max_repairs");
+	const deadlineMs = ravoPositiveInteger(payload, "deadline_ms");
+	const tokenBudget = ravoPositiveInteger(payload, "token_budget");
+	return {
+		task: task.trim(),
+		...(typeof instructions === "string" && instructions.trim() ? { instructions: instructions.trim() } : {}),
+		...(globalFlag === true ? { global: true } : {}),
+		...(maxRounds === undefined ? {} : { maxRounds }),
+		...(maxRepairs === undefined ? {} : { maxRepairs }),
+		...(deadlineMs === undefined ? {} : { deadlineMs }),
+		...(tokenBudget === undefined ? {} : { tokenBudget }),
+	};
+}
+
 export function compactRlmText(text: string, maxLength = 160): string {
 	const compact = text.replace(/\s+/g, " ").trim();
 	if (compact.length <= maxLength) {
@@ -1358,6 +1401,7 @@ export class AgentSession {
 	private _autoRefineBranchVersion = 0;
 	private _autoRefineReviewAbort?: AbortController;
 	private _refineAbortController?: AbortController;
+	private _ravoRunService?: RavoRunService;
 	private readonly _autoRefineReviewer?: AutoRefineReviewer;
 	private readonly _serializedRefine: boolean;
 	private _refineInFlight?: Promise<void>;
@@ -3264,6 +3308,85 @@ export class AgentSession {
 	}
 
 	/**
+	 * Lazily construct the RAVO run service. It is only available where refine
+	 * is: a depth-0 session with a local harness state directory.
+	 */
+	private _ravoRunServiceForSession(): RavoRunService | undefined {
+		if (this._ravoRunService) return this._ravoRunService;
+		const harnessDir = this._localHarnessStateDir();
+		if (!harnessDir || !this._autoRefineAllowedForSession()) return undefined;
+		this._ravoRunService = new RavoRunService({
+			runAgent: this.runAgent,
+			retainedRuntime: createAgentSessionRetainedWorkerRuntime(this),
+			harnessDir,
+			globalHarnessDir: getGlobalHarnessStateDir(),
+			model: this.model,
+			loadState: async () => loadHarnessState(harnessDir, "local"),
+			saveState: async (state) => {
+				saveHarnessState(harnessDir, state);
+			},
+			onUpdate: (status) => {
+				if (this._disposed) return;
+				this._emit({ type: "ravo_run_update", status });
+			},
+		});
+		return this._ravoRunService;
+	}
+
+	/**
+	 * Start a RAVO run in the background. Returns as soon as the run is admitted;
+	 * the returned promise settles with the terminal status (or the run error).
+	 */
+	private _startRavoRun(
+		request: RavoRunRequest,
+	): { started: true; runId: string; completion: Promise<RavoRunStatus> } | { started: false; reason: string } {
+		if (this._disposed) return { started: false, reason: "session is disposed" };
+		const service = this._ravoRunServiceForSession();
+		if (!service) return { started: false, reason: "RAVO is not available in this session" };
+		if (service.running) {
+			const current = service.status();
+			return {
+				started: false,
+				reason: current ? `RAVO run ${current.runId} is already in progress` : "a RAVO run is already in progress",
+			};
+		}
+		const completion = service.start(request);
+		// Observe the rejection here so a background failure is never an
+		// unhandled rejection; callers attach their own handlers.
+		completion.catch(() => {});
+		const runId = service.status()?.runId ?? "pending";
+		return { started: true, runId, completion };
+	}
+
+	/**
+	 * Handle a ravo.* request from the bundled ravo skill. ravo.run starts the
+	 * full RAVO loop in the background and returns immediately; progress is
+	 * emitted as ravo_run_update events and readable through ravo.status.
+	 */
+	handleRavoHostRequest(type: string, payload: Record<string, unknown> = {}): Record<string, unknown> {
+		switch (type) {
+			case "ravo.status": {
+				return this._ravoRunServiceForSession()?.status() ?? { phase: "idle" };
+			}
+			case "ravo.cancel": {
+				return { cancelled: this._ravoRunServiceForSession()?.cancel() ?? false };
+			}
+			case "ravo.run": {
+				const request = parseRavoRunPayload(payload);
+				const started = this._startRavoRun(request);
+				if (!started.started) return { started: false, reason: started.reason };
+				return {
+					started: true,
+					runId: started.runId,
+					note: "The RAVO run continues in the background; check `ravo.status` or the Agents View for progress. Continue working normally.",
+				};
+			}
+			default:
+				throw new Error(`unknown ravo request type "${type}"`);
+		}
+	}
+
+	/**
 	 * Handle an rlm_heartbeat.* request from the bundled rlm-heartbeat skill.
 	 * These heartbeats are internal to this active session and never read or
 	 * mutate the user-level /heartbeat.
@@ -4291,6 +4414,7 @@ export class AgentSession {
 			// resolution cannot write harness state or re-subscribe handlers.
 			this._autoRefineReviewAbort?.abort();
 			this._refineAbortController?.abort();
+			this._ravoRunService?.cancel();
 			for (const timer of this._scheduledAutoRefineTimers) {
 				clearTimeout(timer);
 			}
@@ -6321,6 +6445,19 @@ export class AgentSession {
 					displayResult = false;
 					break;
 				}
+				case "ravo": {
+					const options = parseRavoCommandOptions(input.command.args);
+					const started = this._startRavoRun({
+						task: options.task,
+						...(options.global ? { global: true } : {}),
+						...(options.maxRounds === undefined ? {} : { maxRounds: options.maxRounds }),
+						...(options.maxRepairs === undefined ? {} : { maxRepairs: options.maxRepairs }),
+					});
+					if (!started.started) throw new Error(started.reason);
+					resultText = `RAVO run ${started.runId} started: ${options.task}`;
+					this._reportRavoRunCompletion(started.runId, started.completion, input.command);
+					break;
+				}
 				case "goal":
 					await this._handleGoalSlashCommand(input.text, input.images);
 					resultText = this._goalState.objective
@@ -6357,6 +6494,45 @@ export class AgentSession {
 			}
 			throw commandError;
 		}
+	}
+
+	/**
+	 * Append the terminal row for a `/ravo` run once its background promise
+	 * settles. The row is durable so a reload still shows how the run ended.
+	 */
+	private _reportRavoRunCompletion(
+		runId: string,
+		completion: Promise<RavoRunStatus>,
+		command: SessionSlashCommand,
+	): void {
+		void completion.then(
+			(status) => {
+				if (this._disposed) return;
+				try {
+					this._appendDurableSessionCommandMessage(
+						`RAVO run ${runId} ${status.stopReason ?? "stopped"}`,
+						command,
+						true,
+						false,
+					);
+				} catch {
+					// The completion row is informational; a persist failure must not surface as a crash.
+				}
+			},
+			(error: unknown) => {
+				if (this._disposed) return;
+				try {
+					this._appendDurableSessionCommandMessage(
+						`Command failed: RAVO run ${runId} failed: ${this._asError(error).message}`,
+						command,
+						true,
+						true,
+					);
+				} catch {
+					// See above.
+				}
+			},
+		);
 	}
 
 	private _appendDurableSessionCommandMessage(
@@ -9776,7 +9952,7 @@ export class AgentSession {
 			skills = skills.filter((skill) => skill.name !== COMPACT_SKILL_NAME);
 		}
 		if (!this._autoRefineAllowedForSession()) {
-			skills = skills.filter((skill) => skill.name !== REFINE_SKILL_NAME);
+			skills = skills.filter((skill) => skill.name !== REFINE_SKILL_NAME && skill.name !== RAVO_SKILL_NAME);
 		}
 		if (!this._agentMessageController) {
 			skills = skills.filter((skill) => skill.name !== AGENT_MESSAGE_SKILL_NAME);
@@ -9817,6 +9993,9 @@ export class AgentSession {
 		if (this._autoRefineAllowedForSession()) {
 			for (const type of ["refine.run", "refine.status"]) {
 				handlers[type] = async (payload) => this.handleRefineHostRequest(type, payload);
+			}
+			for (const type of ["ravo.run", "ravo.status", "ravo.cancel"]) {
+				handlers[type] = async (payload) => this.handleRavoHostRequest(type, payload);
 			}
 		}
 		if (this._rlmHeartbeatController) {
