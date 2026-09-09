@@ -16,4 +16,5 @@ export * from "./failure-ledger.js";
 export { probability, Rational } from "./rational.js";
 export * from "./reducer.js";
 export * from "./retained-worker-runtime.js";
+export * from "./run-service.js";
 export * from "./runtime-adapter.js";
