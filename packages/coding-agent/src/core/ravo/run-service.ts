@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Model } from "@earendil-works/pi-ai";
 import { RAVO_DEFAULT_CONFIG, RAVO_SEED_CRITERIA, ravoFastScreen } from "../refinement/ravo.js";
@@ -255,8 +255,9 @@ export class RavoRunService {
 			retrying(createRunAgentChildCall(deps.runAgent, spec), CHILD_RETRIES);
 		let proposalCount = 0;
 		let planCount = 0;
+		const arcReference = arc ? await readArcReference(arc.repoDir) : undefined;
 		const proposalSpec = (kind: "implement" | "repair") => ({
-			prompt: (input: ProposalInput) => proposalPrompt(kind, input, recurring, arc !== undefined),
+			prompt: (input: ProposalInput) => proposalPrompt(kind, input, recurring, arcReference),
 			validate: (value: unknown): ControllerProposal<JsonValue> => {
 				proposalCount += 1;
 				return {
@@ -266,7 +267,7 @@ export class RavoRunService {
 					artifact: validateArtifact(value),
 				};
 			},
-			scope: scopeOf(kind, { maxTurns: 4 }),
+			scope: scopeOf(kind, { maxTurns: 8 }),
 		});
 		const linkRepair =
 			(
@@ -685,11 +686,12 @@ function proposalPrompt(
 	kind: "implement" | "repair",
 	input: ProposalInput,
 	recurring: readonly FailureRecord[],
-	arc: boolean,
+	arcReference: string | undefined,
 ): string {
 	const fingerprints = recurring.map((record) => record.fingerprint.id);
 	return [
 		`# RAVO ${kind}`,
+		"Everything you need is in this message. Do not search, browse, or call tools; write the answer directly.",
 		kind === "implement"
 			? "Produce the refinement proposal that executes the plan."
 			: "Repair the rejected proposal so every finding below is resolved. Keep what was right; change only what the findings require.",
@@ -705,13 +707,35 @@ function proposalPrompt(
 					`Recurring failure fingerprints that must be addressed (list the ones you fix in addressedFingerprints): ${fingerprints.join(", ")}`,
 				]
 			: []),
-		...(arc
+		...(arcReference !== undefined
 			? [
-					'Also include "arcAgent": { "agentName": "python_module_name", "source": "full agent module source" } for the ARC-AGI-3 evaluator.',
+					`<arc_reference>\n${arcReference}\n</arc_reference>`,
+					'The candidate is a Python ARC-AGI-3 agent module: include "arcAgent": { "agentName": "snake_case_module_name", "source": "full module source" }. The module lives in agents/templates/, so import the base class with `from ..agent import Agent` exactly as the reference does. "edits" may be [].',
 				]
 			: []),
 		`Return JSON with this shape:\n${PROPOSAL_SHAPE}\n${JSON_ONLY}`,
 	].join("\n\n");
+}
+
+const ARC_REFERENCE_FILES = ["agents/agent.py", "agents/templates/random_agent.py"] as const;
+const ARC_REFERENCE_MAX_CHARS = 16_000;
+
+/** The harness interface a candidate must satisfy, read from the clone so the child never has to search for it. */
+async function readArcReference(repoDir: string): Promise<string> {
+	const sections: string[] = [];
+	let budget = ARC_REFERENCE_MAX_CHARS;
+	for (const relative of ARC_REFERENCE_FILES) {
+		try {
+			const text = await readFile(path.join(repoDir, relative), "utf8");
+			const clipped = text.length > budget ? `${text.slice(0, budget)}\n# ... clipped` : text;
+			budget -= clipped.length;
+			sections.push(`## ${relative}\n${clipped}`);
+		} catch {
+			sections.push(`## ${relative}\n(not readable)`);
+		}
+		if (budget <= 0) break;
+	}
+	return sections.join("\n\n");
 }
 
 const JUDGE_HEADER = `# RAVO judge
