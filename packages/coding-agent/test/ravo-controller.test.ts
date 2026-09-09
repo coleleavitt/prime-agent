@@ -3,7 +3,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { RavoArchive, RavoStaleCommitError } from "../src/core/ravo/archive.js";
-import { type EvaluationAdapter, type RavoControllerOptions, runRavoController } from "../src/core/ravo/controller.js";
+import {
+	type ControllerProposal,
+	type EvaluationAdapter,
+	type RavoChildResult,
+	type RavoControllerOptions,
+	runRavoController,
+} from "../src/core/ravo/controller.js";
 import { ErrorBudgetLedger } from "../src/core/ravo/error-budget-ledger.js";
 import { Rational } from "../src/core/ravo/rational.js";
 import { emptyRavoState } from "../src/core/ravo/reducer.js";
@@ -151,10 +157,12 @@ describe("RAVO controller", () => {
 		expect((await runRavoController(await base({ signal: cancelled.signal }))).reason).toBe("cancelled");
 		const midRun = new AbortController();
 		const midRunOptions = await base({ signal: midRun.signal });
-		midRunOptions.implement = vi.fn(async (_input, callOptions) => {
-			midRun.abort();
-			return { status: "aborted", tokens: 0, error: callOptions.signal.aborted ? "aborted" : "not aborted" };
-		});
+		midRunOptions.implement = vi.fn(
+			async (_input, callOptions): Promise<RavoChildResult<ControllerProposal<{ version: number }>>> => {
+				midRun.abort();
+				return { status: "aborted", tokens: 0, error: callOptions.signal.aborted ? "aborted" : "not aborted" };
+			},
+		);
 		expect((await runRavoController(midRunOptions)).reason).toBe("cancelled");
 		expect((await runRavoController(await base({ tokenBudget: 1 }))).reason).toBe("budget");
 		expect(

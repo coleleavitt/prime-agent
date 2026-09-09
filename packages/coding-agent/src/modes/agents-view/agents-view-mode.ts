@@ -641,6 +641,14 @@ export function resolveCurrentReplyTargetSummary(
 	return target.summary;
 }
 
+function attachRavoRunStatuses(
+	records: UnifiedSessionRecord[],
+	statuses: Map<string, RavoRunStatus> | undefined,
+): void {
+	if (!statuses) return;
+	for (const [sessionId, status] of statuses) attachRavoRunStatus(records, sessionId, status);
+}
+
 export class AgentsViewMode implements Component, Focusable {
 	focused = false;
 
@@ -2154,12 +2162,6 @@ export class AgentsViewMode implements Component, Focusable {
 		if (this.unifiedIndex.byKey.has(`session:${sessionId}`)) this.reconcileCatalogs();
 	}
 
-	private attachRavoRunStatuses(): void {
-		const statuses = this.persistentState.ravoStatusBySessionId;
-		if (!statuses) return;
-		for (const [sessionId, status] of statuses) attachRavoRunStatus(this.unifiedRecords, sessionId, status);
-	}
-
 	private refreshSavedSessionsIfLoaded(): void {
 		if (this.persistentState.savedCatalogLoaded) void this.refreshSavedSessions({ preserveStatusOnError: true });
 	}
@@ -2182,7 +2184,7 @@ export class AgentsViewMode implements Component, Focusable {
 		);
 		this.lastVisibleSummaries = this.withPendingDeleteSession(visibleSessions);
 		this.unifiedRecords = reconcileUnifiedSessions(this.lastVisibleSummaries, this.savedSessions, this.heartbeats);
-		this.attachRavoRunStatuses();
+		attachRavoRunStatuses(this.unifiedRecords, this.persistentState.ravoStatusBySessionId);
 		this.unifiedIndex = buildUnifiedSessionIndex(this.unifiedRecords);
 		migrateAgentsViewIdentitySet(this.expandedSubagentParents, this.unifiedIndex.byKey);
 		migrateAgentsViewIdentitySet(this.programShownParents, this.unifiedIndex.byKey);
@@ -2463,7 +2465,8 @@ export class AgentsViewMode implements Component, Focusable {
 				const heartbeatsRefreshed = await this.refreshHeartbeats({ duringReconnect: true });
 				if (!heartbeatsRefreshed) throw new Error("Heartbeat catalog did not refresh during reconnect");
 				const sessions = this.rosterStore.summaries();
-				this.persistentState.ravoStatusBySessionId = undefined;
+				// A reconnected daemon may have restarted; stale RAVO statuses are re-pushed by live runs.
+				if (this.persistentState) this.persistentState.ravoStatusBySessionId = undefined;
 				this.daemonShutdownReceived = false;
 				this.reconnectTimedOut = false;
 				this.setStatusMessage("Daemon reconnected", { render: false });
