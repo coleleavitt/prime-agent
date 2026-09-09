@@ -875,10 +875,11 @@ export class AgentsViewMode implements Component, Focusable {
 		const client = this.persistentState.rosterClient;
 		this.client = client;
 		if (!client.isConnected) await client.reconnect();
-		const ravoRunUpdates = client.supportsServerCapability("ravo_run_updates");
 		this.unsubscribeClientMessage = client.onMessage((message) => {
 			if (message.type === "heartbeats_changed") void this.refreshHeartbeats();
-			if (ravoRunUpdates && message.type === "ravo_run_update")
+			// Checked per message: reconnect() resolves before daemon_hello arrives, so the
+			// capability set is not known yet when this listener is installed.
+			if (message.type === "ravo_run_update" && client.supportsServerCapability("ravo_run_updates"))
 				this.onRavoRunUpdate(message.sessionId, message.status);
 		});
 		this.persistentState.rosterStore ??= new AgentsViewRosterStore();

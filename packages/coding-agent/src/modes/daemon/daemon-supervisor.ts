@@ -718,6 +718,9 @@ export class DaemonSupervisor {
 	private updateRestartPhase?: "draining" | "fencing" | "prepared";
 	private readonly mutationDrain = new MutationDrainLatch();
 	private readonly clients = new Set<DaemonSocketClient>();
+	/** Latest ravo_run_update payload per session id, replayed to new roster subscribers. */
+	private readonly latestRavoRunStatus = new Map<string, Buffer>();
+	private readonly ravoStatusWorker = new Map<string, ResidentWorker>();
 	private readonly connectionIds = new WeakMap<DaemonSocketClient, string>();
 	private readonly sessionInputPauseEpochs = new WeakMap<DaemonSocketClient, number>();
 	private readonly detachingInputPauseSessions = new WeakMap<DaemonSocketClient, Set<string>>();
@@ -2000,9 +2003,17 @@ export class DaemonSupervisor {
 				return undefined;
 			case "list":
 				return this.handleList(client, command);
-			case "roster_subscribe":
+			case "roster_subscribe": {
 				client.rosterSubscribed = true;
-				return success(command.id, command.type, { roster: this.rosterEntriesForClient() });
+				const response = success(command.id, command.type, { roster: this.rosterEntriesForClient() });
+				// Replay the latest RAVO status per session so a view opened mid-run is not
+				// blind until the next phase change; the response goes out first.
+				setImmediate(() => {
+					if (client.socket.destroyed || client.rosterSubscribed !== true) return;
+					for (const payload of this.latestRavoRunStatus.values()) this.writeSerialized(client, payload);
+				});
+				return response;
+			}
 			case "roster_unsubscribe":
 				client.rosterSubscribed = false;
 				client.rosterResyncPending = false;
@@ -3114,6 +3125,7 @@ export class DaemonSupervisor {
 			await this.recoverUncertainWorkerOperations(worker);
 			this.invalidateWorkerSessionInputPauses(worker, "Session worker stopped while input was paused");
 			this.workers.delete(worker.descriptor.workerId);
+			this.forgetRavoRunStatusFor(worker);
 			this.flipWorkerRosterEntriesInactive(worker);
 			this.deleteWorkerDescriptor(worker);
 			return true;
@@ -5569,6 +5581,30 @@ export class DaemonSupervisor {
 		);
 	}
 
+	private rememberRavoRunStatus(worker: ResidentWorker, payload: Buffer): void {
+		let sessionId: string | undefined;
+		try {
+			const parsed = JSON.parse(payload.toString("utf8")) as {
+				sessionId?: unknown;
+				status?: { stopReason?: unknown };
+			};
+			if (typeof parsed.sessionId === "string") sessionId = parsed.sessionId;
+		} catch {
+			return;
+		}
+		if (!sessionId) return;
+		this.latestRavoRunStatus.set(sessionId, payload);
+		this.ravoStatusWorker.set(sessionId, worker);
+	}
+
+	private forgetRavoRunStatusFor(worker: ResidentWorker): void {
+		for (const [sessionId, owner] of this.ravoStatusWorker) {
+			if (owner !== worker) continue;
+			this.ravoStatusWorker.delete(sessionId);
+			this.latestRavoRunStatus.delete(sessionId);
+		}
+	}
+
 	private handleWorkerFrame(
 		worker: ResidentWorker,
 		frame: PrivateFrame<DaemonWorkerFrameHeader>,
@@ -5604,6 +5640,7 @@ export class DaemonSupervisor {
 		}
 		if (outboundType === "ravo_run_update") {
 			// Latest-wins status push for roster subscribers; the worker already validated the shape.
+			this.rememberRavoRunStatus(worker, frame.payload);
 			for (const client of this.clients) {
 				if (client.rosterSubscribed === true) this.writeSerialized(client, frame.payload);
 			}
@@ -6005,6 +6042,7 @@ export class DaemonSupervisor {
 			if ((this.workerStopCounts?.get(worker) ?? 0) === 0) {
 				this.invalidateWorkerSessionInputPauses(worker, "Session worker stopped while input was paused");
 				this.workers.delete(worker.descriptor.workerId);
+				this.forgetRavoRunStatusFor(worker);
 				this.flipWorkerRosterEntriesInactive(worker);
 				this.deleteWorkerDescriptor(worker);
 			}
@@ -6574,6 +6612,7 @@ export class DaemonSupervisor {
 			ephemeralCancelSettled = await this.cancelEphemeralWorkerScheduledJobs(worker);
 		}
 		this.workers.delete(worker.descriptor.workerId);
+		this.forgetRavoRunStatusFor(worker);
 		this.flipWorkerRosterEntriesInactive(worker);
 		// A failed cancel keeps the stop tombstone as the durable intent; the enumeration retry or the next boot finishes it.
 		if (removeDescriptor && ephemeralCancelSettled) {
