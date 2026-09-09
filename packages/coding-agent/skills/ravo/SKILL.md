@@ -51,3 +51,7 @@ await ravo.cancel()
 - Prefer `refine.run()` for a single focused memory, skill, prompt note, or
   subagent spec edit. Use RAVO when the change needs evaluation and repair
   rounds to get right.
+
+## Architecture map
+
+A Mermaid map of the AVO loop and of Prime Agent's three planes (RLM execution, continual harness, RAVO) lives in `packages/coding-agent/docs/ravo-architecture.md`. Read it before planning a run that touches the loop itself.

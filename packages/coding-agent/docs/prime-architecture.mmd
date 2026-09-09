@@ -1,0 +1,60 @@
+%% Prime Agent architecture as of fix/forkserver-probe-hardening (2026-09-09).
+%% Three planes: RLM execution (what runs), Continual Harness (what is learned), RAVO (how learning is gated).
+flowchart TB
+  subgraph RLM["RLM execution plane — packages/coding-agent/src/core"]
+    direction LR
+    USER["User / CLI / TUI<br/>modes/interactive, daemon client"] --> AS["AgentSession<br/>core/agent-session.ts<br/>turn loop, events, host bridge"]
+    AS --> MODEL["Model call<br/>@earendil-works/pi-ai providers"]
+    AS --> KERNEL["IPython kernel (RLM)<br/>persistent Python REPL<br/>bash(), edit, skills, mcp"]
+    KERNEL --> SKILLS["Python skills<br/>skills/<name>/src<br/>refine · ravo · agent_message · ..."]
+    SKILLS -->|"host_request(name, payload)"| AS
+    KERNEL -->|"await rlm(task)"| CHILD["Child AgentSessions<br/>run-agent.ts / retained workers"]
+    CHILD --> AS
+    AS --> DAEMON["Daemon supervisor + workers<br/>modes/daemon<br/>protocol 7, schema 29, capabilities"]
+    DAEMON --> VIEW["Agents View<br/>modes/agents-view<br/>rows · usage · ravo status line"]
+    AS --> SESS["Session JSONL + two-tier catalog index<br/>session-manager.ts · session-catalog-index.ts"]
+  end
+
+  subgraph HARNESS["Continual Harness plane — core/refinement"]
+    direction LR
+    HS["HarnessState (harness_state.json)<br/>memories · skills · subagent specs · prompt notes<br/>ravo: ReducerState · failures: FailureLedger"]
+    LEDGER["Failure ledger<br/>core/ravo/failure-ledger.ts<br/>fingerprint(kind, source, class, msg) → count"]
+    TRIG["Refine triggers<br/>turn_interval · compact · recurrence(count>=2) · regression"]
+    PROP["refine.run / _planRefine<br/>LLM proposes RefinementProposal edits"]
+    HS --> PROP
+    LEDGER --> TRIG --> PROP
+  end
+
+  subgraph RAVO["RAVO plane — core/ravo"]
+    direction LR
+    FAST["fast screen<br/>structural validity − skill dry-run failures<br/>(refinement/skill-dry-run.ts)"]
+    DEEP["deep score<br/>LLM judge 0-100, or ARC-AGI-3 levels completed<br/>(arc-agi-evaluator.ts)"]
+    OPP["opponents<br/>evidence · scope · minimality · contracts · novelty<br/>failure:&lt;fp&gt; per recurring error · arc:no-crash · arc:all-levels"]
+    STEP["ravoStep (reducer.ts)<br/>tau ≤ fast ∧ best ≤ deep ∧ missedWeight ≤ eps<br/>commit → pressure doubles missed weights"]
+    AUTH["authorizeAssistedRavo (authority.ts)<br/>digest-binds proposal + baseline<br/>provisional champion, 20-turn window"]
+    CTRL["runRavoController (controller.ts)<br/>inspect → plan → implement → evaluate → gate → diagnose/repair<br/>stops: accepted · round_limit · repair_limit · deadline · budget · cancelled"]
+    SVC["RavoRunService (run-service.ts)<br/>/ravo &lt;task&gt; · ravo.run()<br/>--arc-repo DIR --arc-game ID"]
+    ARCH["RavoArchive<br/>hash-chained NDJSON + CAS"]
+    FAST --> STEP
+    DEEP --> STEP
+    OPP --> STEP
+    STEP --> AUTH
+    SVC --> CTRL --> STEP
+    STEP --> ARCH
+  end
+
+  AS -->|"tool errors · tracebacks · provider errors<br/>at every assistant turn boundary"| LEDGER
+  PROP -->|"proposal"| FAST
+  AUTH -->|"commit: apply edits, save state"| HS
+  HS -->|"memories · skills · notes into system prompt"| AS
+  LEDGER -->|"recurring fingerprints become opponents"| OPP
+  AS -->|"recurrence inside the provisional window = measured fault<br/>→ regression refine (gated repair)"| TRIG
+  SKILLS -->|"ravo.run → host bridge ravo.run"| SVC
+  CTRL -->|"children via runAgent / retained worker"| CHILD
+  CTRL -->|"RavoProgressEvent → ravo_run_update"| DAEMON
+  DEEP -.->|"ARC mode: uv run main.py --agent --game"| ARC["ARC-AGI-3 harness<br/>/tmp/arc-agi-3"]
+
+  classDef live fill:#e6f4ea,stroke:#3a8f5a,color:#173a24;
+  classDef store fill:#fff7e0,stroke:#b8860b,color:#3a2e00;
+  class USER,AS,MODEL,KERNEL,SKILLS,CHILD,DAEMON,VIEW,LEDGER,TRIG,PROP,FAST,DEEP,OPP,STEP,AUTH,CTRL,SVC live;
+  class HS,SESS,ARCH,ARC store;

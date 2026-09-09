@@ -1,0 +1,45 @@
+%% AVO agentic variation loop (Puget et al., arXiv:2603.24517) as RAVO instantiates it.
+%% Notation from ~/RocqProjects/ravo/Ravo.v: Agent(P, K, f) with lineage P, knowledge K, evaluator f.
+flowchart LR
+  subgraph IN["Inputs to AVO"]
+    P["Solution lineage P<br/>candidates + scores<br/>(Rocq: Lineage = list (A * nat))"]
+    K["Knowledge base K<br/>docs + code + failure ledger<br/>(Rocq S11: Ledger)"]
+    f["Evaluator f<br/>fast screen + deep outcome + opponents<br/>(Rocq: fast, deep, clearsEW)"]
+  end
+
+  subgraph LOOP["AVO agentic variation loop — Agent(P, K, f) is a general-purpose coding agent with Tools · Memory · Reasoning"]
+    direction TB
+    S1["1 Inspect context<br/>lineage, feedback, references"]
+    S2["2 Plan<br/>choose the next change"]
+    S3["3 Implement<br/>edit the candidate"]
+    S4["4 Evaluate<br/>invoke scoring function f"]
+    S5["5 Diagnose and repair<br/>adapt from failed attempts"]
+    S1 --> S2 --> S3 --> S4
+    S4 -->|"rejected"| S5
+    S5 --> S1
+  end
+
+  SUP["Supervisor<br/>watches stagnation, budget, deadline<br/>(RavoControllerOptions.supervisor)"]
+  CAND["Candidate<br/>solution and score (x, deep x)"]
+  GATE{"commit gate<br/>tau <= fast x<br/>bestScore P <= deep x<br/>missedWeight <= eps"}
+  UPD["Updated lineage<br/>accepted candidate appended<br/>(Rocq: commitGate, commitE)"]
+  REJ(("reject"))
+
+  P --> S1
+  K --> S5
+  f --> S4
+  SUP -.->|"conditional intervention"| S2
+  S4 --> CAND --> GATE
+  GATE -->|"commit"| UPD
+  GATE -->|"fail"| REJ
+  REJ -.->|"repair and retry"| S5
+  UPD -.->|"weakness pressure: double weight of missed opponents<br/>(Rocq S4/S6: pressureW)"| f
+
+  classDef input fill:#f4f6f8,stroke:#6b7c8a,color:#1c2b36;
+  classDef loop fill:#e8f2f6,stroke:#2f6f8f,color:#1c2b36;
+  classDef ok fill:#e6f4ea,stroke:#3a8f5a,color:#173a24;
+  classDef bad fill:#fdecec,stroke:#d9534f,color:#5a1a1a;
+  class P,K,f input;
+  class S1,S2,S3,S4,S5 loop;
+  class UPD ok;
+  class REJ bad;
