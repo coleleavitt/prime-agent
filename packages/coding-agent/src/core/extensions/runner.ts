@@ -290,6 +290,8 @@ export class ExtensionRunner {
 	): void {
 		this.runtime.sendMessage = actions.sendMessage;
 		this.runtime.sendUserMessage = actions.sendUserMessage;
+		this.runtime.queueExtensionFollowUp = actions.queueExtensionFollowUp;
+		this.runtime.cancelExtensionFollowUp = actions.cancelExtensionFollowUp;
 		this.runtime.appendEntry = actions.appendEntry;
 		this.runtime.setSessionName = actions.setSessionName;
 		this.runtime.getSessionName = actions.getSessionName;
@@ -479,6 +481,9 @@ export class ExtensionRunner {
 	): void {
 		if (!this.staleMessage) {
 			this.retire(message);
+			for (const extension of this.extensions) {
+				this.runtime.cancelExtensionFollowUp(extension);
+			}
 			this.runtime.invalidate(message);
 		}
 	}
