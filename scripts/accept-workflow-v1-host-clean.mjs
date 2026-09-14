@@ -189,7 +189,7 @@ execute("archive-tree-integrity", "node", ["-e", `
   const tree=execFileSync("git",["rev-parse","HEAD^{tree}"],{encoding:"utf8"}).trim();
   const status=execFileSync("git",["status","--porcelain=v1","--untracked-files=all"],{encoding:"utf8"});
   if(status!=="") throw new Error("temporary acceptance ledger is dirty");
-  console.log(JSON.stringify({acceptanceLedger:true, tree, clean:true, symlinks:names ? names.split("\n").length : 0}));
+  console.log(JSON.stringify({acceptanceLedger:true, tree, clean:true, symlinks:names ? names.split("\\n").length : 0}));
 `]);
 execute("forbidden-source-scan", "node", ["--input-type=module", "-e", scanCode]);
 execute("acceptance-policy-self-test", "node", ["--input-type=module", "-e", acceptancePolicyCode]);
