@@ -25,7 +25,17 @@ export class KernelBusyAfterInterruptError extends Error {
  * Handles one typed request from Python code running in the kernel.
  * The returned record is delivered verbatim to the Python caller.
  */
-export type HostRequestHandler = (payload: Record<string, unknown>) => Promise<Record<string, unknown>>;
+export interface HostRequestContext {
+	/** Aborted only by an exact-ID host_cancel or kernel teardown. */
+	signal: AbortSignal;
+	/** Exact process-local transport correlation for this request. */
+	requestId: string;
+}
+
+export type HostRequestHandler = (
+	payload: Record<string, unknown>,
+	context?: HostRequestContext,
+) => Promise<Record<string, unknown>>;
 
 /** Host request handlers keyed by request type (e.g. "rlm.run", "goal.complete"). */
 export type HostRequestHandlers = Record<string, HostRequestHandler>;

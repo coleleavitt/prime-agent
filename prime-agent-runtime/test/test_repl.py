@@ -130,7 +130,7 @@ class ReplTest(unittest.TestCase):
 
     def test_ready_handshake_and_startup_time(self):
         self.assertEqual(self.ready_event["event"], "ready")
-        self.assertEqual(self.ready_event["protocol"], 3)
+        self.assertEqual(self.ready_event["protocol"], 4)
         major, minor = sys.version_info[:2]
         self.assertTrue(self.ready_event["python"].startswith(f"{major}.{minor}."))
         # Loose bound for loaded CI machines; still catches an order-of-magnitude regression.
@@ -1323,7 +1323,7 @@ class ReplTest(unittest.TestCase):
         self._start_pending_host_request()
         self.repl.send({"type": "shutdown", "id": "__shutdown__"})
         events = self.repl.until_done("hr-pending")
-        self.assertEqual(one(events, "error")["ename"], "RuntimeError")
+        self.assertEqual(one(events, "error")["ename"], "HostConnectionLost")
         self.repl.until_done("__shutdown__")
         self.assertEqual(self.repl.proc.wait(timeout=10), 0)
 

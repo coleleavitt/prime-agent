@@ -503,14 +503,19 @@ __all__ = [
     "list_subagents",
     "rlm",
     "spawn",
+    "workflow",
 ]
 
 # Lazily re-export the generic MCP error type. Kept lazy so `import rlm` never
 # requires the optional `mcp` SDK — only modules that call into it do.
 _LAZY_MCP = {"McpToolError"}
+_LAZY_MODULES = {"workflow"}
 
 
 def __getattr__(name: str) -> Any:  # noqa: D401 - module-level lazy attr hook
+    if name in _LAZY_MODULES:
+        import importlib
+        return importlib.import_module(f"{__name__}.{name}")
     if name in _LAZY_MCP:
         from . import mcp
 

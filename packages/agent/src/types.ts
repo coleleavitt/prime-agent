@@ -36,6 +36,14 @@ export type StreamFn = (
  */
 export type ToolExecutionMode = "sequential" | "parallel";
 
+/**
+ * Construction-time policy for model-emitted tool calls.
+ *
+ * `"reject"` terminates the assistant turn with `unexpected_tool_call` before
+ * tool preparation, execution, result synthesis, or another provider turn.
+ */
+export type ToolCallPolicy = "execute" | "reject";
+
 /** A tool-call content block emitted by an assistant message. */
 export type AgentToolCall = Extract<AssistantMessage["content"][number], { type: "toolCall" }>;
 
@@ -117,6 +125,9 @@ export type GetContinuationMessagesContext = ShouldStopAfterTurnContext;
 
 export interface AgentLoopConfig extends SimpleStreamOptions {
 	model: Model<any>;
+
+	/** Immutable snapshot of the construction-time tool-call policy. */
+	readonly toolCallPolicy?: ToolCallPolicy;
 
 	/**
 	 * Converts AgentMessage[] to LLM-compatible Message[] before each LLM call.

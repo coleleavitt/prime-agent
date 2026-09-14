@@ -277,6 +277,10 @@ export type ResolvedRequestAuth =
 			error: string;
 	  };
 
+export type WorkflowModelPreflight =
+	| { ok: true; model: Model<Api>; apiKey?: string; headers?: Record<string, string> }
+	| { ok: false; error: string };
+
 export interface ModelCatalogSnapshot {
 	models: Model<Api>[];
 	configuredProviders: string[];
@@ -719,8 +723,10 @@ export class ModelRegistry {
 				if (!providerConfig.baseUrl) {
 					throw new Error(`Provider ${providerName}: "baseUrl" is required when defining custom models.`);
 				}
-				if (!providerConfig.apiKey) {
-					throw new Error(`Provider ${providerName}: "apiKey" is required when defining custom models.`);
+				if (!providerConfig.apiKey && !providerConfig.headers && providerConfig.authHeader !== false) {
+					throw new Error(
+						`Provider ${providerName}: "apiKey" or explicit "authHeader: false" is required when defining custom models.`,
+					);
 				}
 			}
 			// inherited from built-in models. Auth comes from env vars / auth storage.
@@ -1218,6 +1224,34 @@ export class ModelRegistry {
 		return model ? this.getModelForCurrentAuth(model) : undefined;
 	}
 
+	/** Resolve the exact registered model and its request policy before Workflow V1 can start a turn. */
+	async preflightWorkflowModel(model: Model<Api>): Promise<WorkflowModelPreflight> {
+		const registered = this.find(model.provider, model.id);
+		if (!registered) {
+			return { ok: false, error: `Model "${model.provider}/${model.id}" is not registered` };
+		}
+
+		const auth = await this.getApiKeyAndHeaders(registered);
+		if (!auth.ok) return auth;
+
+		const providerConfig = this.providerRequestConfigs.get(registered.provider);
+		const explicitlyAllowsNoAuth = providerConfig?.authHeader === false;
+		const hasResolvedHeaderCredential = auth.headers !== undefined && Object.keys(auth.headers).length > 0;
+		if (!auth.apiKey && !hasResolvedHeaderCredential && !explicitlyAllowsNoAuth) {
+			return {
+				ok: false,
+				error: `Provider "${registered.provider}" has neither usable credentials nor an explicit no-auth policy`,
+			};
+		}
+
+		return {
+			ok: true,
+			model: auth.requestModel ?? registered,
+			...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
+			...(auth.headers ? { headers: auth.headers } : {}),
+		};
+	}
+
 	/**
 	 * Get API key for a model.
 	 */
@@ -1475,7 +1509,7 @@ export class ModelRegistry {
 			authHeader?: boolean;
 		},
 	): void {
-		if (!config.apiKey && !config.headers && !config.authHeader) {
+		if (config.apiKey === undefined && config.headers === undefined && config.authHeader === undefined) {
 			return;
 		}
 
@@ -1732,8 +1766,10 @@ export class ModelRegistry {
 		if (!config.baseUrl) {
 			throw new Error(`Provider ${providerName}: "baseUrl" is required when defining models.`);
 		}
-		if (!config.apiKey && !config.oauth) {
-			throw new Error(`Provider ${providerName}: "apiKey" or "oauth" is required when defining models.`);
+		if (!config.apiKey && !config.oauth && !config.headers && config.authHeader !== false) {
+			throw new Error(
+				`Provider ${providerName}: "apiKey", "oauth", or explicit "authHeader: false" is required when defining models.`,
+			);
 		}
 
 		for (const modelDef of config.models) {

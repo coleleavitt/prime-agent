@@ -31,7 +31,7 @@ from typing import Any
 
 from .bash import _kill_live_handles
 
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 
 DEFAULT_SNAPSHOT_MAX_BYTES = 256 * 1024 * 1024
 DEFAULT_SNAPSHOT_MAX_VARIABLE_BYTES = 16 * 1024 * 1024
@@ -124,18 +124,72 @@ def active_cell_task() -> asyncio.Task[Any] | None:
     return task if isinstance(task, asyncio.Task) and not task.done() else None
 
 
-async def host_request(data: dict[str, Any]) -> dict[str, Any]:
-    """Send one typed request to the host and await its raw reply dict."""
+class HostRequestUnavailable(RuntimeError):
+    """The host rejected a request before provider dispatch (missing capability)."""
+
+
+class HostConnectionLost(RuntimeError):
+    """The authenticated host channel closed after a request may have dispatched."""
+
+
+class HostDrainTimeout(RuntimeError):
+    """A cancelled request did not produce a terminal reply inside its drain bound."""
+
+
+async def host_request(
+    data: dict[str, Any], *, cancel_on_cancel: bool = False, drain_timeout_ms: int | None = None
+) -> dict[str, Any]:
+    """Send one typed request and await its raw reply.
+
+    Cancellation-aware callers retain one settlement future. Their first task
+    cancellation emits one exact-ID ``host_cancel`` and then keeps awaiting that
+    same future. Further task cancellations are consumed while draining.
+    """
     if _loop is None:
-        raise RuntimeError("repl runtime is not serving")
+        raise HostRequestUnavailable("repl runtime is not serving")
     if _host_closed:
-        raise RuntimeError("host connection closed; host_request cannot be answered")
+        raise HostRequestUnavailable("host connection closed before request admission")
+    if cancel_on_cancel and (
+        isinstance(drain_timeout_ms, bool)
+        or not isinstance(drain_timeout_ms, int)
+        or not 1 <= drain_timeout_ms <= 30_000
+    ):
+        raise ValueError("drain_timeout_ms must be an integer in [1, 30000]")
     rid = uuid.uuid4().hex
     future: asyncio.Future[dict[str, Any]] = _loop.create_future()
     _pending_host[rid] = future
+    cancel_sent = False
+    deadline: float | None = None
     try:
         _send({"event": "host_request", "id": rid, "data": data})
-        return await future
+        while True:
+            try:
+                if deadline is None:
+                    return await asyncio.shield(future)
+                remaining = deadline - _loop.time()
+                if remaining <= 0:
+                    raise HostDrainTimeout("host request drain timed out")
+                done, _ = await asyncio.wait({future}, timeout=remaining)
+                if future in done:
+                    return future.result()
+                raise HostDrainTimeout("host request drain timed out")
+            except asyncio.CancelledError:
+                if not cancel_on_cancel:
+                    raise
+                # The host terminal may already have linearized even though
+                # this task's shield wake-up has not run yet. Terminal wins
+                # without emitting a late, spurious cancellation frame.
+                if future.done():
+                    return future.result()
+                # asyncio cancellation belongs to this waiter, never to the
+                # settlement future protected above. Consume repeat cancels.
+                task = asyncio.current_task()
+                if task is not None:
+                    task.uncancel()
+                if not cancel_sent:
+                    cancel_sent = True
+                    deadline = _loop.time() + drain_timeout_ms / 1000
+                    _send({"event": "host_cancel", "id": rid})
     finally:
         _pending_host.pop(rid, None)
 
@@ -147,7 +201,7 @@ def _fail_pending_host_requests() -> None:
     _host_closed = True
     for future in _pending_host.values():
         if not future.done():
-            future.set_exception(RuntimeError("host connection closed; host_request cannot be answered"))
+            future.set_exception(HostConnectionLost("host connection closed; host_request cannot be answered"))
 
 
 def _resolve_host_reply(rid: str, data: dict[str, Any]) -> None:

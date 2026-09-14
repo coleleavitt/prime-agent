@@ -277,6 +277,7 @@ import {
 	type RlmSubagentRuntime,
 	type SubagentRuntimeHost,
 } from "./rlm-runtime.js";
+import { runWorkflowAgent } from "./run-workflow-agent.js";
 import {
 	modelRequestHeaders,
 	SemanticEdgeRecorder,
@@ -346,6 +347,7 @@ import {
 	subtractAssistantUsage,
 } from "./usage.js";
 import { SERPER_CREDENTIAL_ID, SERPER_ENV_VAR, WEBSEARCH_SKILL_NAME } from "./websearch-credential.js";
+import { decodeWorkflowRunAgentRequest, WORKFLOW_RUN_AGENT_RESULT_PROTOCOL } from "./workflow-v1-wire.js";
 
 export type { GoalState, GoalStatus } from "./goals.js";
 export type { SessionStats } from "./session-stats.js";
@@ -1282,6 +1284,27 @@ function attributeChildUsage(parentUsage: Usage, childUsage: Usage): void {
 	addAssistantUsage(parentUsage, childUsage);
 	// Child work affects session-level billable totals, not the parent's model-facing context size.
 	parentUsage.totalTokens = parentContextTokens;
+}
+
+function boundedWorkflowError(error: unknown): string {
+	return (error instanceof Error ? error.message : String(error)).slice(0, 512);
+}
+
+function workflowZeroUsage(finality: "final" | "known_prefix") {
+	return {
+		inputTokens: 0,
+		outputTokens: 0,
+		cacheReadTokens: 0,
+		cacheWriteTokens: 0,
+		totalTokens: 0,
+		costInput: null,
+		costOutput: null,
+		costCacheRead: null,
+		costCacheWrite: null,
+		costTotal: null,
+		completeness: "complete_host_observation" as const,
+		finality,
+	};
 }
 
 export class AgentSession {
@@ -10385,6 +10408,104 @@ export class AgentSession {
 				this.collectRlmChildren(targets, timeoutMs),
 			),
 			"rlm.delete_subagent": createRlmDeleteSubagentHostHandler((target) => this.deleteRlmSubagent(target)),
+			"workflow.run_agent": async (payload, context) => {
+				const started = Date.now();
+				const request = decodeWorkflowRunAgentRequest(payload.request);
+				const base = {
+					protocol: WORKFLOW_RUN_AGENT_RESULT_PROTOCOL,
+					requestId: request.requestId,
+					nodeId: request.nodeId,
+				};
+				let selection: RlmSubagentModelSelection;
+				try {
+					const defaultSelector = this.model ? `${this.model.provider}/${this.model.id}` : undefined;
+					selection = await this._resolveRlmSubagentModel(request.model ?? defaultSelector, "workflow agent");
+				} catch (error) {
+					return {
+						...base,
+						resolvedModel: null,
+						turnsStarted: 0,
+						durationMs: Date.now() - started,
+						budgetExhausted: false,
+						budgetOvershootTokens: 0,
+						usage: workflowZeroUsage("final"),
+						outcome: "failed",
+						stopReason: "model_resolution_failed",
+						result: null,
+						error: { code: "MODEL_RESOLUTION_FAILED", message: boundedWorkflowError(error) },
+					};
+				}
+				const preflight = await this._modelRegistry.preflightWorkflowModel(selection.model);
+				if (!preflight.ok) {
+					return {
+						...base,
+						resolvedModel: null,
+						turnsStarted: 0,
+						durationMs: Date.now() - started,
+						budgetExhausted: false,
+						budgetOvershootTokens: 0,
+						usage: workflowZeroUsage("final"),
+						outcome: "failed",
+						stopReason: "model_resolution_failed",
+						result: null,
+						error: { code: "MODEL_RESOLUTION_FAILED", message: boundedWorkflowError(preflight.error) },
+					};
+				}
+				selection = { model: preflight.model };
+				const result = await runWorkflowAgent({
+					prompt: request.prompt,
+					model: selection.model,
+					streamFn: this.agent.streamFn,
+					getApiKey: () => preflight.apiKey,
+					headers: preflight.headers,
+					signal: context?.signal,
+					drainTimeoutMs: request.drainTimeoutMs,
+					maxResultUtf8Bytes: request.maxResultUtf8Bytes,
+				});
+				const usage = result.usage;
+				const total = usage.totalTokens;
+				const budgetExhausted = request.softTokenBudget != null && total >= request.softTokenBudget;
+				const common = {
+					...base,
+					resolvedModel: `${selection.model.provider}/${selection.model.id}`,
+					turnsStarted: result.turnsStarted,
+					durationMs: Date.now() - started,
+					budgetExhausted,
+					budgetOvershootTokens:
+						request.softTokenBudget == null ? 0 : Math.max(0, total - request.softTokenBudget),
+					usage,
+				};
+				if (result.outcome === "completed")
+					return { ...common, outcome: "completed", stopReason: "completed", result: result.result, error: null };
+				if (result.outcome === "cancelled")
+					return { ...common, outcome: "cancelled", stopReason: "caller_aborted", result: null, error: null };
+				if (result.outcome === "execution_unknown")
+					return {
+						...common,
+						outcome: "execution_unknown",
+						stopReason: result.reason,
+						result: null,
+						error: { code: "EXECUTION_UNKNOWN", message: result.error },
+					};
+				const failureCodes: Record<string, string> = {
+					provider_failed: "PROVIDER_FAILED",
+					result_missing: "RESULT_MISSING",
+					result_too_large: "RESULT_TOO_LARGE",
+					usage_invalid: "USAGE_INVALID",
+					unexpected_tool_call: "UNEXPECTED_TOOL_CALL",
+					host_failed: "HOST_FAILED",
+				};
+				return {
+					...common,
+					outcome: "failed",
+					stopReason: result.reason,
+					result: null,
+					error: {
+						code: failureCodes[result.reason] ?? "HOST_FAILED",
+						message: boundedWorkflowError(result.error),
+					},
+				};
+			},
 			"model.info": async () => ({
 				id: this.model?.id ?? null,
 				provider: this.model?.provider ?? null,

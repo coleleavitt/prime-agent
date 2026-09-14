@@ -51,7 +51,7 @@ import {
 	type SnapshotResult,
 } from "./state-snapshot.js";
 
-const REPL_PROTOCOL_VERSION = 3;
+const REPL_PROTOCOL_VERSION = 4;
 const READY_TIMEOUT_MS = 30_000;
 const REPAIR_STEP_TIMEOUT_MS = 30_000;
 // Runtime-minted host-request ids never repeat; the bound only guards a
@@ -112,6 +112,7 @@ const PROTOCOL_EVENT_KINDS = new Set([
 	"result",
 	"display",
 	"host_request",
+	"host_cancel",
 	"error",
 	"done",
 ]);
@@ -127,7 +128,7 @@ function invalidProtocolFrameReason(event: Record<string, unknown>): string | un
 		return "unknown protocol event";
 	}
 	if (
-		(event.event === "done" || event.event === "host_request") &&
+		(event.event === "done" || event.event === "host_request" || event.event === "host_cancel") &&
 		(typeof event.id !== "string" || event.id === "")
 	) {
 		return `${event.event} frame without id`;
@@ -181,6 +182,7 @@ export class ReplKernelManager {
 	private pendingBackgroundOutput = "";
 	private pendingBackgroundOutputTruncated = false;
 	private readonly inFlightHostRequests = new Set<Promise<void>>();
+	private readonly hostRequestControllers = new Map<string, AbortController>();
 	private readonly backgroundBashHandles = new Map<string, number>();
 	private state: "idle" | "starting" | "running" | "shutdown" = "idle";
 	/** Bumped by every teardown so a stale in-flight doStart can never touch a newer kernel. */
@@ -786,6 +788,10 @@ export class ReplKernelManager {
 			if (typeof event.id === "string") this.startHostRequest(event.id, event.data);
 			return;
 		}
+		if (type === "host_cancel") {
+			if (typeof event.id === "string") this.hostRequestControllers.get(event.id)?.abort();
+			return;
+		}
 
 		const id = typeof event.id === "string" ? event.id : undefined;
 		const execution = this.activeExecution;
@@ -1236,9 +1242,11 @@ export class ReplKernelManager {
 			this.handledHostRequestIds.delete(oldest);
 		}
 
+		const controller = new AbortController();
+		this.hostRequestControllers.set(requestId, controller);
 		const task = (async () => {
 			try {
-				const result = await this.handleHostRequest(data);
+				const result = await this.handleHostRequest(requestId, data, controller.signal);
 				try {
 					await this.writeLine({ type: "host_reply", id: requestId, data: { status: "ok", result } });
 				} catch (replyError) {
@@ -1264,10 +1272,17 @@ export class ReplKernelManager {
 		this.inFlightHostRequests.add(task);
 		void task.finally(() => {
 			this.inFlightHostRequests.delete(task);
+			if (this.hostRequestControllers.get(requestId) === controller) {
+				this.hostRequestControllers.delete(requestId);
+			}
 		});
 	}
 
-	private async handleHostRequest(data: unknown): Promise<Record<string, unknown>> {
+	private async handleHostRequest(
+		requestId: string,
+		data: unknown,
+		signal: AbortSignal,
+	): Promise<Record<string, unknown>> {
 		if (!isRecord(data)) {
 			throw new Error("host request payload must be an object");
 		}
@@ -1283,7 +1298,7 @@ export class ReplKernelManager {
 		// the in-flight execution; detached spawns (asyncio.create_task) fire after
 		// the scheduling cell goes idle, so fall back to that last cell's source.
 		const cellSourceCode = this.activeExecution?.code ?? this.lastCellCode;
-		return handler({ ...data, cellSourceCode });
+		return handler({ ...data, cellSourceCode }, { signal, requestId });
 	}
 
 	private async interrupt(): Promise<void> {
@@ -1297,6 +1312,8 @@ export class ReplKernelManager {
 		this.clearSnapshotTimer();
 		this.lateSentAgentMessageHandlers.clear();
 		this.pendingDoneWaiters.clear();
+		for (const controller of this.hostRequestControllers.values()) controller.abort();
+		this.hostRequestControllers.clear();
 		this.backgroundBashHandles.clear();
 		// Stale pre-teardown background output must not surface after a restart.
 		this.pendingBackgroundOutput = "";
@@ -1387,6 +1404,9 @@ export class ReplKernelManager {
 		}
 		// Captured before any await: teardowns and newer starts bump the counter.
 		const generation = this.startGeneration;
+		// Exact in-flight host operations must receive shutdown cancellation before
+		// any bounded settlement wait. Controllers remain indexed until each task settles.
+		for (const controller of this.hostRequestControllers.values()) controller.abort();
 		if (opts.snapshot) {
 			await this.flushSnapshotForDispose();
 			if (this.startStale(generation)) return false;
