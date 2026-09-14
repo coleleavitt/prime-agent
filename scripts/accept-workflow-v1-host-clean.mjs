@@ -184,9 +184,12 @@ const execute = (id, command, commandArgs, options) => {
 execute("archive-tree-integrity", "node", ["-e", `
   const {execFileSync}=require("node:child_process");
   const fs=require("node:fs");
-  if(fs.existsSync(".git")) throw new Error("archive unexpectedly contains .git");
+  if(!fs.existsSync(".git")) throw new Error("temporary acceptance ledger is missing");
   const names=execFileSync("find",[".","-type","l","-print"],{encoding:"utf8"}).trim();
-  console.log(JSON.stringify({gitMetadata:false, symlinks:names ? names.split("\\n").length : 0}));
+  const tree=execFileSync("git",["rev-parse","HEAD^{tree}"],{encoding:"utf8"}).trim();
+  const status=execFileSync("git",["status","--porcelain=v1","--untracked-files=all"],{encoding:"utf8"});
+  if(status!=="") throw new Error("temporary acceptance ledger is dirty");
+  console.log(JSON.stringify({acceptanceLedger:true, tree, clean:true, symlinks:names ? names.split("\n").length : 0}));
 `]);
 execute("forbidden-source-scan", "node", ["--input-type=module", "-e", scanCode]);
 execute("acceptance-policy-self-test", "node", ["--input-type=module", "-e", acceptancePolicyCode]);
