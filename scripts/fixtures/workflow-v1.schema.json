@@ -215,9 +215,6 @@
         },
         "definition": {
           "$ref": "#/$defs/definition"
-        },
-        "args": {
-          "$ref": "#/$defs/jsonValue"
         }
       }
     },

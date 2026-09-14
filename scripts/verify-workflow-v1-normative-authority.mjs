@@ -13,11 +13,11 @@ const authorityPath = resolve(authorityIndex >= 0 && process.argv[authorityIndex
 const EXPECTED = Object.freeze({
   format: "prime.workflow-v1-normative-authority/v1",
   repository: "coleleavitt/pi-plugin-workflow",
-  commit: "e47fd2a80b45cd4b6a9be8c05adad85ded187c1b",
-  tree: "95114d5cf2e03c3de25d0f667eb2be7ca7ebb5c1",
-  bundleSha256: "b61e746cdef154108a96239994454ab8bbf023270d72e866e0198fbcd6f28f2f",
+  commit: "1fa3ffc7372815e0f358e0e1854bba2396d40325",
+  tree: "f9b12a14af53a1da5f00e2070c528e7b9923b478",
+  bundleSha256: "b9bc393a60f3cb8439e65d9fffc00fc1c4c3916c3963c1c74b4f2c3e9c324dad",
   schemas: Object.freeze({
-    "workflow-v1.schema.json": Object.freeze({ path: "docs/api/workflow-v1.schema.json", blob: "aff1ed3454ddbbcdbd215384ff6f2124bd39613b", sha256: "79913bb20831758935910a0a49b2ddaf40299c283f876b081cd75f21791f3b27" }),
+    "workflow-v1.schema.json": Object.freeze({ path: "docs/api/workflow-v1.schema.json", blob: "8bf5fd80b9e6a1525ec4c73e5f1a9ca4149e6830", sha256: "db3aa583523d4374e5ef455b1ada26744e0cd862d43384b86210e4c39bbf8663" }),
     "workflow-native-host-v1.schema.json": Object.freeze({ path: "docs/api/workflow-native-host-v1.schema.json", blob: "18eef21d5126ade6989016591a4e2fb0b8907b94", sha256: "08ade62e424d7dad199ca87b1a2da8eb57da71657a497f6793862fa1d73e1f6a" }),
   }),
 });
@@ -26,7 +26,7 @@ const fail = (message) => { throw new Error(message); };
 const readAuthority = (path) => {
   const value = JSON.parse(readFileSync(path, "utf8"));
   if (value.format !== EXPECTED.format || value.repository !== EXPECTED.repository || value.commit !== EXPECTED.commit || value.tree !== EXPECTED.tree) fail("normative authority identity mismatch");
-  if (value.bundle?.sha256 !== EXPECTED.bundleSha256 || value.bundle?.ref !== "refs/authority/workflow-v1-e47fd2a") fail("normative authority bundle identity mismatch");
+  if (value.bundle?.sha256 !== EXPECTED.bundleSha256 || value.bundle?.ref !== "refs/authority/workflow-v1-1fa3ffc") fail("normative authority bundle identity mismatch");
   const schemas = Object.fromEntries((value.schemas ?? []).map((schema) => [schema.name, schema]));
   if (Object.keys(schemas).sort().join("\0") !== Object.keys(EXPECTED.schemas).sort().join("\0")) fail("normative authority schema set mismatch");
   for (const [name, expected] of Object.entries(EXPECTED.schemas)) {

@@ -13,11 +13,11 @@ for (const [file, marker] of required) {
   if (!readFileSync(file, "utf8").includes(marker)) throw new Error(`${file} missing ${marker}`);
 }
 
-// Normative source: pi-plugin-workflow e47fd2a80b45cd4b6a9be8c05adad85ded187c1b.
+// Normative source: pi-plugin-workflow 1fa3ffc7372815e0f358e0e1854bba2396d40325.
 // Both committed byte-for-byte public schema copies make clean-checkout acceptance
 // independent of a sibling repository. Digest mutants prove every pin is active.
 const normativeSchemas = new Map([
-  ["scripts/fixtures/workflow-v1.schema.json", "79913bb20831758935910a0a49b2ddaf40299c283f876b081cd75f21791f3b27"],
+  ["scripts/fixtures/workflow-v1.schema.json", "db3aa583523d4374e5ef455b1ada26744e0cd862d43384b86210e4c39bbf8663"],
   ["scripts/fixtures/workflow-native-host-v1.schema.json", "08ade62e424d7dad199ca87b1a2da8eb57da71657a497f6793862fa1d73e1f6a"],
 ]);
 for (const [path, expected] of normativeSchemas) {

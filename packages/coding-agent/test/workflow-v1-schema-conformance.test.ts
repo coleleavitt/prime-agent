@@ -6,7 +6,7 @@ import { decodeWorkflowRunAgentReply, decodeWorkflowRunAgentRequest } from "../s
 const schemaFixtures = [
 	[
 		"../../../scripts/fixtures/workflow-v1.schema.json",
-		"79913bb20831758935910a0a49b2ddaf40299c283f876b081cd75f21791f3b27",
+		"db3aa583523d4374e5ef455b1ada26744e0cd862d43384b86210e4c39bbf8663",
 	],
 	[
 		"../../../scripts/fixtures/workflow-native-host-v1.schema.json",

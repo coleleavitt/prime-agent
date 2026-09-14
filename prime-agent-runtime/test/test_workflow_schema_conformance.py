@@ -8,7 +8,7 @@ from rlm import workflow
 
 FIXTURE_DIR = Path(__file__).parents[2] / "scripts/fixtures"
 SCHEMA_DIGESTS = {
-    "workflow-v1.schema.json": "79913bb20831758935910a0a49b2ddaf40299c283f876b081cd75f21791f3b27",
+    "workflow-v1.schema.json": "db3aa583523d4374e5ef455b1ada26744e0cd862d43384b86210e4c39bbf8663",
     "workflow-native-host-v1.schema.json": "08ade62e424d7dad199ca87b1a2da8eb57da71657a497f6793862fa1d73e1f6a",
 }
 
