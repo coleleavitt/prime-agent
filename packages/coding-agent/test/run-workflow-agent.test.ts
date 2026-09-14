@@ -134,7 +134,11 @@ describe("runWorkflowAgent", () => {
 				return stream;
 			},
 		});
-		expect(options).toMatchObject({ maxRetries: 0 });
+		expect(options).toMatchObject({ apiKey: "test-key", maxRetries: 0 });
+		expect(Object.keys(options ?? {}).sort()).toEqual(["apiKey", "maxRetries", "signal"]);
+		expect(options).not.toHaveProperty("sessionId");
+		expect(options).not.toHaveProperty("onPayload");
+		expect(options).not.toHaveProperty("onResponse");
 		expect(result).toMatchObject({
 			outcome: "completed",
 			result: {

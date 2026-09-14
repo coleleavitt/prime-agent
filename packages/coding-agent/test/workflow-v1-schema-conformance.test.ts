@@ -3,9 +3,18 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { decodeWorkflowRunAgentReply, decodeWorkflowRunAgentRequest } from "../src/core/workflow-v1-wire.js";
 
-const schema = JSON.parse(
-	readFileSync(new URL("../../../scripts/fixtures/workflow-native-host-v1.schema.json", import.meta.url), "utf8"),
-);
+const schemaFixtures = [
+	[
+		"../../../scripts/fixtures/workflow-v1.schema.json",
+		"79913bb20831758935910a0a49b2ddaf40299c283f876b081cd75f21791f3b27",
+	],
+	[
+		"../../../scripts/fixtures/workflow-native-host-v1.schema.json",
+		"08ade62e424d7dad199ca87b1a2da8eb57da71657a497f6793862fa1d73e1f6a",
+	],
+] as const;
+const schemaBytes = readFileSync(new URL(schemaFixtures[1][0], import.meta.url));
+const schema = JSON.parse(schemaBytes.toString("utf8"));
 const requestSchema = schema.$defs.runAgentRequest.properties;
 const replyVariants = schema.$defs.runAgentReply.oneOf;
 const requestValue = () => ({
@@ -52,6 +61,16 @@ const rejectRequest = (patch: Record<string, unknown>) =>
 	expect(() => decodeWorkflowRunAgentRequest({ ...requestValue(), ...patch })).toThrow();
 
 describe("normative Workflow V1 schema conformance", () => {
+	it("pins both normative schemas and rejects byte mutants", () => {
+		for (const [path, expected] of schemaFixtures) {
+			const bytes = readFileSync(new URL(path, import.meta.url));
+			expect(createHash("sha256").update(bytes).digest("hex")).toBe(expected);
+			const mutant = Buffer.from(bytes);
+			mutant[mutant.length - 2] ^= 1;
+			expect(createHash("sha256").update(mutant).digest("hex")).not.toBe(expected);
+		}
+	});
+
 	it("copies normative protocol, policy, and request bounds", () => {
 		expect(requestSchema.protocol.const).toBe("prime.workflow.run-agent/v1");
 		expect(requestSchema.maxTurns.const).toBe(1);

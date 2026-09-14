@@ -7,8 +7,10 @@ import { createHash, createHmac } from "node:crypto";
 import {
 	type AnthropicMessagesCompat,
 	type Api,
+	type ApiStreamSimpleFunction,
 	type AssistantMessageEventStream,
 	type Context,
+	getApiProvider,
 	getModels,
 	getProviders,
 	type KnownProvider,
@@ -256,6 +258,35 @@ interface ProviderRequestConfig {
 	authHeader?: boolean;
 }
 
+const CREDENTIAL_HEADER_NAMES = new Set([
+	"authorization",
+	"proxy-authorization",
+	"api-key",
+	"x-api-key",
+	"x-auth-token",
+]);
+
+function hasCredentialBearingHeader(headers: Record<string, string> | undefined): boolean {
+	return Object.entries(headers ?? {}).some(
+		([name, value]) => CREDENTIAL_HEADER_NAMES.has(name.toLowerCase()) && value.trim().length > 0,
+	);
+}
+
+function hasConfiguredCredentialBearingHeader(
+	configuredHeaders: Record<string, string> | undefined,
+	resolvedHeaders: Record<string, string> | undefined,
+): boolean {
+	const resolvedByName = new Map(
+		Object.entries(resolvedHeaders ?? {}).map(([name, value]) => [name.toLowerCase(), value]),
+	);
+	return Object.keys(configuredHeaders ?? {}).some((name) => {
+		const normalizedName = name.toLowerCase();
+		return (
+			CREDENTIAL_HEADER_NAMES.has(normalizedName) && (resolvedByName.get(normalizedName)?.trim().length ?? 0) > 0
+		);
+	});
+}
+
 type ProviderRequestAuthSource = {
 	source: "environment" | "models_json_key" | "models_json_command";
 	configured: true;
@@ -278,7 +309,13 @@ export type ResolvedRequestAuth =
 	  };
 
 export type WorkflowModelPreflight =
-	| { ok: true; model: Model<Api>; apiKey?: string; headers?: Record<string, string> }
+	| {
+			ok: true;
+			model: Model<Api>;
+			streamSimple: ApiStreamSimpleFunction;
+			apiKey?: string;
+			headers?: Record<string, string>;
+	  }
 	| { ok: false; error: string };
 
 export interface ModelCatalogSnapshot {
@@ -1236,7 +1273,7 @@ export class ModelRegistry {
 
 		const providerConfig = this.providerRequestConfigs.get(registered.provider);
 		const explicitlyAllowsNoAuth = providerConfig?.authHeader === false;
-		const hasResolvedHeaderCredential = auth.headers !== undefined && Object.keys(auth.headers).length > 0;
+		const hasResolvedHeaderCredential = hasConfiguredCredentialBearingHeader(providerConfig?.headers, auth.headers);
 		if (!auth.apiKey && !hasResolvedHeaderCredential && !explicitlyAllowsNoAuth) {
 			return {
 				ok: false,
@@ -1244,9 +1281,16 @@ export class ModelRegistry {
 			};
 		}
 
+		const requestModel = auth.requestModel ?? registered;
+		const provider = getApiProvider(requestModel.api);
+		if (!provider) {
+			return { ok: false, error: `No API provider registered for api "${requestModel.api}"` };
+		}
+
 		return {
 			ok: true,
-			model: auth.requestModel ?? registered,
+			model: requestModel,
+			streamSimple: provider.streamSimple,
 			...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
 			...(auth.headers ? { headers: auth.headers } : {}),
 		};
@@ -1589,10 +1633,11 @@ export class ModelRegistry {
 					: undefined;
 
 			if (providerConfig?.authHeader) {
-				if (!apiKey) {
-					return { ok: false, error: `No API key found for "${model.provider}"` };
+				if (apiKey) {
+					headers = { ...headers, Authorization: `Bearer ${apiKey}` };
+				} else if (!hasCredentialBearingHeader(providerHeaders)) {
+					return { ok: false, error: `No API key or credential-bearing header found for "${model.provider}"` };
 				}
-				headers = { ...headers, Authorization: `Bearer ${apiKey}` };
 			}
 
 			if (requestHeaders) headers = { ...headers, ...requestHeaders };

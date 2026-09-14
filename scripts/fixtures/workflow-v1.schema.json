@@ -1,0 +1,700 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://prime-agent.local/schemas/workflow-v1.schema.json",
+  "title": "Prime Workflow V1 Python request and process-local result",
+  "description": "Normative closed schema for pure validation, synchronous ephemeral run requests, and bounded process-local results. No durable events, receipts, handles, retained-child identifiers, recovery, replay, retry, or status lookup.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/validateRequest"
+    },
+    {
+      "$ref": "#/$defs/runRequest"
+    },
+    {
+      "$ref": "#/$defs/validateResult"
+    },
+    {
+      "$ref": "#/$defs/runResult"
+    }
+  ],
+  "$defs": {
+    "jsonValue": {
+      "$dynamicAnchor": "jsonValue",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string",
+          "maxLength": 65536
+        },
+        {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {
+            "$dynamicRef": "#jsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "maxProperties": 256,
+          "propertyNames": {
+            "maxLength": 128
+          },
+          "additionalProperties": {
+            "$dynamicRef": "#jsonValue"
+          }
+        }
+      ]
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+    },
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "const": "candidate-envelope-v1"
+        }
+      }
+    },
+    "dependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nodeId",
+        "condition"
+      ],
+      "properties": {
+        "nodeId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "condition": {
+          "const": "accepted"
+        }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "prompt",
+        "dependsOn",
+        "acceptance"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "kind": {
+          "const": "agent"
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536
+        },
+        "dependsOn": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/dependency"
+          }
+        },
+        "acceptance": {
+          "$ref": "#/$defs/acceptance"
+        },
+        "maxTurns": {
+          "const": 1,
+          "default": 1,
+          "description": "Exactly one provider turn; omission normalizes to 1."
+        },
+        "softTokenBudget": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        }
+      }
+    },
+    "definition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol",
+        "name",
+        "nodes",
+        "outputs"
+      ],
+      "properties": {
+        "protocol": {
+          "const": "prime.workflow/v1"
+        },
+        "name": {
+          "$ref": "#/$defs/identifier"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "items": {
+            "$ref": "#/$defs/node"
+          }
+        },
+        "outputs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        },
+        "maxConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16,
+          "default": 1
+        },
+        "softTotalTokenBudget": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000000
+        },
+        "tokenBudget": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000000,
+          "deprecated": true,
+          "description": "Legacy alias for aggregate softTotalTokenBudget; specifying both is invalid semantically."
+        }
+      }
+    },
+    "validateRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "definition"
+      ],
+      "properties": {
+        "action": {
+          "const": "validate"
+        },
+        "definition": {
+          "$ref": "#/$defs/definition"
+        }
+      }
+    },
+    "runRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "definition"
+      ],
+      "properties": {
+        "action": {
+          "const": "run"
+        },
+        "definition": {
+          "$ref": "#/$defs/definition"
+        },
+        "args": {
+          "$ref": "#/$defs/jsonValue"
+        }
+      }
+    },
+    "generatedId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "issueCode": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+    },
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/issueCode"
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "nodeId": {
+          "$ref": "#/$defs/identifier"
+        }
+      }
+    },
+    "aggregateUsage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inputTokens",
+        "outputTokens",
+        "cacheReadTokens",
+        "cacheWriteTokens",
+        "totalTokens",
+        "softTotalTokenLimit",
+        "overshootTokens",
+        "costInput",
+        "costOutput",
+        "costCacheRead",
+        "costCacheWrite",
+        "costTotal",
+        "completeness",
+        "finality"
+      ],
+      "properties": {
+        "inputTokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "outputTokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "cacheReadTokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "cacheWriteTokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "totalTokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "softTotalTokenLimit": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "overshootTokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "costInput": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1000000000000000.0
+            }
+          ]
+        },
+        "costOutput": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1000000000000000.0
+            }
+          ]
+        },
+        "costCacheRead": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1000000000000000.0
+            }
+          ]
+        },
+        "costCacheWrite": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1000000000000000.0
+            }
+          ]
+        },
+        "costTotal": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1000000000000000.0
+            }
+          ]
+        },
+        "completeness": {
+          "const": "complete_host_observation"
+        },
+        "finality": {
+          "enum": [
+            "final",
+            "known_prefix"
+          ]
+        }
+      }
+    },
+    "validateResult": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "action",
+            "valid",
+            "definitionDigest",
+            "warnings"
+          ],
+          "properties": {
+            "action": {
+              "const": "validate"
+            },
+            "valid": {
+              "const": true
+            },
+            "definitionDigest": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "warnings": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "$ref": "#/$defs/issue"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "action",
+            "valid",
+            "errors",
+            "warnings"
+          ],
+          "properties": {
+            "action": {
+              "const": "validate"
+            },
+            "valid": {
+              "const": false
+            },
+            "errors": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 128,
+              "items": {
+                "$ref": "#/$defs/issue"
+              }
+            },
+            "warnings": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "$ref": "#/$defs/issue"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "runResult": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "action",
+            "definitionDigest",
+            "usage",
+            "warnings",
+            "outcome",
+            "outputs"
+          ],
+          "properties": {
+            "action": {
+              "const": "run"
+            },
+            "definitionDigest": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "usage": {
+              "$ref": "#/$defs/aggregateUsage"
+            },
+            "warnings": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "$ref": "#/$defs/issue"
+              }
+            },
+            "outcome": {
+              "const": "succeeded"
+            },
+            "outputs": {
+              "type": "object",
+              "maxProperties": 128,
+              "additionalProperties": {
+                "$ref": "#/$defs/jsonValue"
+              }
+            }
+          },
+          "allOf": [
+            {
+              "properties": {
+                "usage": {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/aggregateUsage"
+                    },
+                    {
+                      "properties": {
+                        "finality": {
+                          "const": "final"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                }
+              },
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "action",
+            "definitionDigest",
+            "usage",
+            "warnings",
+            "outcome",
+            "error"
+          ],
+          "properties": {
+            "action": {
+              "const": "run"
+            },
+            "definitionDigest": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "usage": {
+              "$ref": "#/$defs/aggregateUsage"
+            },
+            "warnings": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "$ref": "#/$defs/issue"
+              }
+            },
+            "outcome": {
+              "const": "failed"
+            },
+            "error": {
+              "$ref": "#/$defs/issue"
+            }
+          },
+          "allOf": [
+            {
+              "properties": {
+                "usage": {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/aggregateUsage"
+                    },
+                    {
+                      "properties": {
+                        "finality": {
+                          "const": "final"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                }
+              },
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "action",
+            "definitionDigest",
+            "usage",
+            "warnings",
+            "outcome"
+          ],
+          "properties": {
+            "action": {
+              "const": "run"
+            },
+            "definitionDigest": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "usage": {
+              "$ref": "#/$defs/aggregateUsage"
+            },
+            "warnings": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "$ref": "#/$defs/issue"
+              }
+            },
+            "outcome": {
+              "const": "cancelled"
+            }
+          },
+          "allOf": [
+            {
+              "properties": {
+                "usage": {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/aggregateUsage"
+                    },
+                    {
+                      "properties": {
+                        "finality": {
+                          "const": "final"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                }
+              },
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "action",
+            "definitionDigest",
+            "usage",
+            "warnings",
+            "outcome",
+            "error"
+          ],
+          "properties": {
+            "action": {
+              "const": "run"
+            },
+            "definitionDigest": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "usage": {
+              "$ref": "#/$defs/aggregateUsage"
+            },
+            "warnings": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "$ref": "#/$defs/issue"
+              }
+            },
+            "outcome": {
+              "const": "execution_unknown"
+            },
+            "error": {
+              "$ref": "#/$defs/issue"
+            }
+          },
+          "allOf": [
+            {
+              "properties": {
+                "usage": {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/aggregateUsage"
+                    },
+                    {
+                      "properties": {
+                        "finality": {
+                          "const": "known_prefix"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                }
+              },
+              "type": "object"
+            },
+            {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "const": "EXECUTION_UNKNOWN"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

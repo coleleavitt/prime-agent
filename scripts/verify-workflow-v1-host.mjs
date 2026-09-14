@@ -13,15 +13,21 @@ for (const [file, marker] of required) {
   if (!readFileSync(file, "utf8").includes(marker)) throw new Error(`${file} missing ${marker}`);
 }
 
-// Normative source: pi-plugin-workflow e47fd2a, docs/api/workflow-native-host-v1.schema.json.
-// The committed byte-for-byte copy makes clean-checkout acceptance independent of a sibling repository.
-const schemaPath = "scripts/fixtures/workflow-native-host-v1.schema.json";
-const schemaBytes = readFileSync(schemaPath);
-const schemaSha256 = createHash("sha256").update(schemaBytes).digest("hex");
-const expectedSchemaSha256 = "08ade62e424d7dad199ca87b1a2da8eb57da71657a497f6793862fa1d73e1f6a";
-if (schemaSha256 !== expectedSchemaSha256) {
-  throw new Error(`${schemaPath} digest mismatch: expected ${expectedSchemaSha256}, got ${schemaSha256}`);
+// Normative source: pi-plugin-workflow e47fd2a80b45cd4b6a9be8c05adad85ded187c1b.
+// Both committed byte-for-byte public schema copies make clean-checkout acceptance
+// independent of a sibling repository. Digest mutants prove every pin is active.
+const normativeSchemas = new Map([
+  ["scripts/fixtures/workflow-v1.schema.json", "79913bb20831758935910a0a49b2ddaf40299c283f876b081cd75f21791f3b27"],
+  ["scripts/fixtures/workflow-native-host-v1.schema.json", "08ade62e424d7dad199ca87b1a2da8eb57da71657a497f6793862fa1d73e1f6a"],
+]);
+for (const [path, expected] of normativeSchemas) {
+  const bytes = readFileSync(path);
+  const actual = createHash("sha256").update(bytes).digest("hex");
+  if (actual !== expected) throw new Error(`${path} digest mismatch: expected ${expected}, got ${actual}`);
+  const mutant = Buffer.from(bytes); mutant[mutant.length - 2] ^= 1;
+  if (createHash("sha256").update(mutant).digest("hex") === expected) throw new Error(`${path} digest mutant accepted`);
 }
+const schemaBytes = readFileSync("scripts/fixtures/workflow-native-host-v1.schema.json");
 const schema = JSON.parse(schemaBytes.toString("utf8"));
 const requestProperties = schema.$defs.runAgentRequest.properties;
 const schemaMarkers = [

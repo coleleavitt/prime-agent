@@ -67,10 +67,28 @@ if (archive.status !== 0) throw new Error(archive.stderr?.toString() || "git arc
 const extract = spawnSync("tar", ["-xf", "-", "-C", checkout], { input: archive.stdout, encoding: null });
 if (extract.status !== 0) throw new Error(extract.stderr?.toString() || "archive extraction failed");
 
+// Turn the archive into a local identity ledger. Git hashes every archived byte and
+// applies the archive's own ignore policy to generated build/install output.
+for (const commandArgs of [["init", "-q"], ["add", "-A"], ["-c", "user.name=acceptance", "-c", "user.email=acceptance@invalid", "commit", "-qm", "archive baseline"]]) {
+  const result = spawnSync("git", commandArgs, { cwd: checkout, encoding: "utf8" });
+  if (result.status !== 0) throw new Error(result.stderr || `git ${commandArgs.join(" ")} failed`);
+}
+const archiveIdentity = spawnSync("git", ["rev-parse", "HEAD^{tree}"], { cwd: checkout, encoding: "utf8" }).stdout.trim();
+const assertArchiveIdentity = (where) => {
+  const tree = spawnSync("git", ["write-tree"], { cwd: checkout, encoding: "utf8" });
+  const status = spawnSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], { cwd: checkout, encoding: "utf8" });
+  if (tree.status !== 0 || status.status !== 0 || tree.stdout.trim() !== archiveIdentity || status.stdout !== "") {
+    throw new Error(`archive checkout mutated ${where}: tree=${tree.stdout?.trim()} expected=${archiveIdentity} status=${JSON.stringify(status.stdout)}`);
+  }
+  return archiveIdentity;
+};
+assertArchiveIdentity("before first gate");
+
 const logs = join(output, "logs");
 mkdirSync(logs, { recursive: true });
 const results = [];
 const gate = (id, command, commandArgs, options = {}) => {
+  assertArchiveIdentity(`before gate ${id}`);
   process.stdout.write(`[gate] ${id}\n`);
   const gateState = join(sandbox, "g", String(results.length + 1));
   mkdirSync(gateState, { recursive: true });
@@ -101,6 +119,7 @@ const gate = (id, command, commandArgs, options = {}) => {
       return [artifact, sha256(readFileSync(path))];
     })) : undefined,
   });
+  assertArchiveIdentity(`after gate ${id}`);
   return result.status === 0;
 };
 const acceptancePolicyCode = String.raw`
@@ -117,20 +136,15 @@ for (const file of files) {
   const text = readFileSync(file, "utf8");
   for (const marker of forbidden) if (text.includes(marker)) violations.push(file + ": " + marker);
 }
+const runner = readFileSync(files[0], "utf8");
+if (runner.includes('execute("root-check", "npm", ["run", "check"])')) violations.push("root gate may invoke mutating npm check");
+for (const marker of ["assertArchiveIdentity", "before gate", "after gate", "after final gate", '"biome", "check", "--error-on-warnings"', '"packed-installed-hostile"']) {
+  if (!runner.includes(marker)) violations.push("missing acceptance invariant: " + marker);
+}
 if (violations.length) { console.error(violations.join("\n")); process.exit(1); }
-console.log(JSON.stringify({ filesScanned: files.length, forbiddenMatches: 0 }));
+console.log(JSON.stringify({ filesScanned: files.length, forbiddenMatches: 0, nonMutatingRootGate: true, perGateTreeIdentity: true, packedHostileInstall: true }));
 `;
 
-const oldHostCode = [
-  "import asyncio",
-  "from rlm.workflow import run_agent, CapabilityUnavailable",
-  "r={'protocol':'prime.workflow.run-agent/v1','requestId':'old-host','nodeId':'n','prompt':'x','model':None,'maxTurns':1,'maxResultUtf8Bytes':10,'drainTimeoutMs':10,'tools':'none'}",
-  "async def main():",
-  "  try: await run_agent(r)",
-  "  except CapabilityUnavailable: return",
-  "  raise SystemExit('old host unexpectedly admitted workflow.run_agent')",
-  "asyncio.run(main())",
-].join("\n");
 const scanCode = String.raw`
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -183,17 +197,19 @@ execute("schema-wire-focused", "npm", ["exec", "--workspace", "@earendil-works/p
 execute("object-route-race-focused", "npm", ["exec", "--workspace", "@earendil-works/pi-coding-agent", "--", "vitest", "--run", "test/run-workflow-agent.test.ts", "test/repl-kernel-abort.test.ts", "test/suite/workflow-v1-host-handler.test.ts"]);
 execute("agent-policy-focused", "npm", ["exec", "--workspace", "@earendil-works/pi-agent-core", "--", "vitest", "--run", "test/tool-call-policy.test.ts"]);
 execute("python-runtime-isolated", "node", ["scripts/verify-python-runtime-isolated.mjs", "--output", join(output, "python-isolated")], { artifacts: ["python-isolated/python-isolated.json", "python-isolated/python-isolated.json.sha256"] });
-execute("old-host-negative", "uv", ["run", "--project", "prime-agent-runtime", "python", "-c", oldHostCode], { env: { PRIME_AGENT_BASH_ORPHAN_JOURNAL: "", PRIME_AGENT_BASH_SHELL: "" } });
+execute("packed-installed-hostile", "node", ["scripts/verify-workflow-v1-packed-install.mjs"]);
 execute("recursion-file-isolated", "npm", ["exec", "--workspace", "@earendil-works/pi-coding-agent", "--", "vitest", "--run", "test/agent-session-recursion.test.ts", "--reporter=dot"]);
 execute("npm-native-bridge-isolated", "npm", ["exec", "--workspace", "@earendil-works/pi-coding-agent", "--", "vitest", "--run", "test/npm-native-bridge.test.ts", "--reporter=verbose"]);
 execute("eng-4600-isolated", "npm", ["exec", "--workspace", "@earendil-works/pi-coding-agent", "--", "vitest", "--run", "test/suite/regressions/4600-supervisor-singleton.test.ts", "--reporter=verbose"]);
 execute("eng-4606-isolated", "npm", ["exec", "--workspace", "@earendil-works/pi-coding-agent", "--", "vitest", "--run", "test/suite/regressions/4606-update-restart-coordinator.test.ts", "--reporter=verbose"]);
 execute("agent-full", "npm", ["test", "--workspace", "@earendil-works/pi-agent-core"]);
 execute("root-typecheck", "npm", ["exec", "--", "tsgo", "--noEmit"]);
-execute("root-check", "npm", ["run", "check"]);
+execute("root-check", "npm", ["exec", "--", "biome", "check", "--error-on-warnings", "."]);
 
+assertArchiveIdentity("after final gate");
 const manifest = {
   format: FORMAT,
+  integrity: { archiveTree: archiveIdentity, checkedBeforeAndAfterEveryGate: true, untrackedFilesPermitted: false },
   candidate: { commit, tree: runRaw("git", ["rev-parse", `${commit}^{tree}`]).stdout.trim(), source: "git archive" },
   verdict: results.length === 18 && results.every((result) => result.exitCode === 0) ? "PASS" : "FAIL",
   gates: results,

@@ -6,8 +6,11 @@ import unittest
 
 from rlm import workflow
 
-SCHEMA_PATH = Path(__file__).parents[2] / "scripts/fixtures/workflow-native-host-v1.schema.json"
-SCHEMA_SHA256 = "08ade62e424d7dad199ca87b1a2da8eb57da71657a497f6793862fa1d73e1f6a"
+FIXTURE_DIR = Path(__file__).parents[2] / "scripts/fixtures"
+SCHEMA_DIGESTS = {
+    "workflow-v1.schema.json": "79913bb20831758935910a0a49b2ddaf40299c283f876b081cd75f21791f3b27",
+    "workflow-native-host-v1.schema.json": "08ade62e424d7dad199ca87b1a2da8eb57da71657a497f6793862fa1d73e1f6a",
+}
 
 
 def req():
@@ -22,9 +25,17 @@ def done():
 class WorkflowSchemaConformanceTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        raw = SCHEMA_PATH.read_bytes()
-        assert hashlib.sha256(raw).hexdigest() == SCHEMA_SHA256
+        raw = (FIXTURE_DIR / "workflow-native-host-v1.schema.json").read_bytes()
         cls.schema = json.loads(raw)
+
+    def test_both_normative_schema_digests_and_mutants(self):
+        for name, expected in SCHEMA_DIGESTS.items():
+            with self.subTest(name=name):
+                raw = (FIXTURE_DIR / name).read_bytes()
+                self.assertEqual(hashlib.sha256(raw).hexdigest(), expected)
+                mutant = bytearray(raw)
+                mutant[-2] ^= 1
+                self.assertNotEqual(hashlib.sha256(mutant).hexdigest(), expected)
 
     def test_normative_schema_constants_and_bounds(self):
         props = self.schema["$defs"]["runAgentRequest"]["properties"]

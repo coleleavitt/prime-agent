@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
+import type { SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import type { HostRequestHandlers } from "../../src/core/kernel/index.js";
@@ -24,6 +28,25 @@ function registerHarnessProvider(
 			baseUrl: registeredModel.baseUrl,
 		})),
 	});
+}
+
+function filesystemSnapshot(root: string): Array<[string, string]> {
+	const entries: Array<[string, string]> = [];
+	const visit = (path: string): void => {
+		for (const name of readdirSync(path).sort()) {
+			const child = join(path, name);
+			const key = relative(root, child);
+			const stat = statSync(child);
+			if (stat.isDirectory()) {
+				entries.push([`${key}/`, "directory"]);
+				visit(child);
+			} else {
+				entries.push([key, createHash("sha256").update(readFileSync(child)).digest("hex")]);
+			}
+		}
+	};
+	visit(root);
+	return entries;
 }
 
 const request = {
@@ -124,6 +147,33 @@ describe("workflow.run_agent host handler", () => {
 		}
 	});
 
+	it.each([
+		["User-Agent only", { headers: { "User-Agent": "workflow-client" } }],
+		["arbitrary configured header", { headers: { "X-Workflow-Metadata": "not-a-secret" } }],
+	])("rejects %s as credentials before provider I/O", async (_name, config) => {
+		const harness = await createHarness({ provider: `workflow-host-${_name}`, withConfiguredAuth: false });
+		try {
+			registerHarnessProvider(harness, config);
+			harness.setResponses([fauxAssistantMessage("must remain")]);
+			const handler = (
+				harness.session as unknown as { _createKernelHostHandlers(): HostRequestHandlers }
+			)._createKernelHostHandlers()["workflow.run_agent"]!;
+			const result = await handler(
+				{ request },
+				{ signal: new AbortController().signal, requestId: "transport-non-credential-header" },
+			);
+			expect(result).toMatchObject({
+				outcome: "failed",
+				stopReason: "model_resolution_failed",
+				resolvedModel: null,
+				turnsStarted: 0,
+			});
+			expect(harness.getPendingResponseCount()).toBe(1);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
 	it("requires a resolvable credential when authHeader is enabled", async () => {
 		const provider = "workflow-host-auth-header-missing";
 		const envName = "WORKFLOW_HOST_MISSING_API_KEY";
@@ -157,6 +207,11 @@ describe("workflow.run_agent host handler", () => {
 	it.each([
 		["literal authHeader key", { apiKey: "workflow-key", authHeader: true }],
 		["command-backed authHeader key", { apiKey: "!printf workflow-command-key", authHeader: true }],
+		["literal Authorization header", { headers: { Authorization: "Bearer workflow-token" }, authHeader: true }],
+		[
+			"command-backed X-API-Key header",
+			{ headers: { "X-API-Key": "!printf workflow-header-key" }, authHeader: true },
+		],
 		[
 			"command-backed header on approved no-auth provider",
 			{ headers: { "X-Local-Auth": "!printf local-header" }, authHeader: false },
@@ -205,16 +260,33 @@ describe("workflow.run_agent host handler", () => {
 		}
 	});
 
-	it("does not enter session, RLM, or child-session routes", async () => {
-		const harness = await createHarness({ provider: "workflow-host-isolated", withConfiguredAuth: true });
+	it("bypasses the parent stream, semantic ledger, session persistence, and inherited headers", async () => {
+		const harness = await createHarness({ provider: "workflow-host-isolated", withConfiguredAuth: false });
 		try {
-			harness.setResponses([fauxAssistantMessage("isolated")]);
+			registerHarnessProvider(harness, {
+				apiKey: "workflow-key",
+				headers: { "X-Workflow-Auth": "workflow-secret" },
+				authHeader: true,
+			});
+			let providerOptions: SimpleStreamOptions | undefined;
+			harness.setResponses([
+				(_context, options) => {
+					providerOptions = options;
+					return fauxAssistantMessage("isolated");
+				},
+			]);
 			const session = harness.session as unknown as Record<string, unknown>;
 			const forbidden = vi.fn(() => {
-				throw new Error("alternate route entered");
+				throw new Error("parent route entered");
 			});
 			for (const name of ["prompt", "runRlmChild", "createRlmSession"]) session[name] = forbidden;
-			const beforeMessages = harness.session.messages.length;
+			harness.session.agent.streamFn = forbidden;
+			const recorder = session._semanticEdges as Record<string, unknown>;
+			const semanticSpies = ["startTurnRequest", "finishRequest", "failRequest"].map((name) =>
+				vi.spyOn(recorder, name as never),
+			);
+			const beforeMessages = [...harness.session.messages];
+			const beforeFiles = filesystemSnapshot(harness.tempDir);
 			const handler = (
 				harness.session as unknown as { _createKernelHostHandlers(): HostRequestHandlers }
 			)._createKernelHostHandlers()["workflow.run_agent"]!;
@@ -224,7 +296,17 @@ describe("workflow.run_agent host handler", () => {
 			);
 			expect(result).toMatchObject({ outcome: "completed", result: { text: "isolated" } });
 			expect(forbidden).not.toHaveBeenCalled();
-			expect(harness.session.messages).toHaveLength(beforeMessages);
+			for (const spy of semanticSpies) expect(spy).not.toHaveBeenCalled();
+			expect(harness.session.messages).toEqual(beforeMessages);
+			expect(filesystemSnapshot(harness.tempDir)).toEqual(beforeFiles);
+			expect(providerOptions?.headers).toEqual({
+				Authorization: "Bearer workflow-key",
+				"X-Workflow-Auth": "workflow-secret",
+			});
+			expect(providerOptions?.headers).not.toHaveProperty("X-ACP-Model-Request-ID");
+			expect(providerOptions?.headers).not.toHaveProperty("Idempotency-Key");
+			expect(Object.keys(providerOptions ?? {}).sort()).toEqual(["apiKey", "headers", "maxRetries", "signal"]);
+			expect(providerOptions).toMatchObject({ apiKey: "workflow-key", maxRetries: 0 });
 			expect(harness.getPendingResponseCount()).toBe(0);
 		} finally {
 			harness.cleanup();

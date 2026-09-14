@@ -177,9 +177,13 @@ export async function runWorkflowAgent(input: RunWorkflowAgentInput): Promise<Wo
 		physicalRequests += 1;
 		turnsStarted = 1;
 		if (physicalRequests !== 1) throw new Error("Workflow V1 attempted more than one provider request");
+		// Do not forward the Agent/session option bag. Workflow inference gets only
+		// its own resolved credential, cancellation signal, explicit auth headers,
+		// and the immutable no-retry policy.
 		const providerOptions: SimpleStreamOptions & { maxRetries: 0 } = {
-			...options,
-			...(input.headers ? { headers: { ...options?.headers, ...input.headers } } : {}),
+			...(options?.apiKey ? { apiKey: options.apiKey } : {}),
+			...(options?.signal ? { signal: options.signal } : {}),
+			...(input.headers ? { headers: { ...input.headers } } : {}),
 			maxRetries: 0,
 		};
 		const source = await input.streamFn(model, context, providerOptions);

@@ -10455,7 +10455,7 @@ export class AgentSession {
 				const result = await runWorkflowAgent({
 					prompt: request.prompt,
 					model: selection.model,
-					streamFn: this.agent.streamFn,
+					streamFn: preflight.streamSimple,
 					getApiKey: () => preflight.apiKey,
 					headers: preflight.headers,
 					signal: context?.signal,
