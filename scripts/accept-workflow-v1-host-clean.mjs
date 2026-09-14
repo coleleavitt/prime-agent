@@ -67,16 +67,19 @@ if (archive.status !== 0) throw new Error(archive.stderr?.toString() || "git arc
 const extract = spawnSync("tar", ["-xf", "-", "-C", checkout], { input: archive.stdout, encoding: null });
 if (extract.status !== 0) throw new Error(extract.stderr?.toString() || "archive extraction failed");
 
-// Turn the archive into a local identity ledger. Git hashes every archived byte and
-// applies the archive's own ignore policy to generated build/install output.
+// Turn the archive into a local identity ledger under one closed Git environment.
+// Global excludes/config must not hide bytes during add and reveal them during gates.
+const ledgerHome = join(sandbox, "git-home");
+mkdirSync(ledgerHome, { recursive: true });
+const ledgerEnv = { ...baseEnvironment, HOME: ledgerHome, GIT_CONFIG_NOSYSTEM: "1" };
 for (const commandArgs of [["init", "-q"], ["add", "-A"], ["-c", "user.name=acceptance", "-c", "user.email=acceptance@invalid", "commit", "-qm", "archive baseline"]]) {
-  const result = spawnSync("git", commandArgs, { cwd: checkout, encoding: "utf8" });
+  const result = spawnSync("git", commandArgs, { cwd: checkout, env: ledgerEnv, encoding: "utf8" });
   if (result.status !== 0) throw new Error(result.stderr || `git ${commandArgs.join(" ")} failed`);
 }
-const archiveIdentity = spawnSync("git", ["rev-parse", "HEAD^{tree}"], { cwd: checkout, encoding: "utf8" }).stdout.trim();
+const archiveIdentity = spawnSync("git", ["rev-parse", "HEAD^{tree}"], { cwd: checkout, env: ledgerEnv, encoding: "utf8" }).stdout.trim();
 const assertArchiveIdentity = (where) => {
-  const tree = spawnSync("git", ["write-tree"], { cwd: checkout, encoding: "utf8" });
-  const status = spawnSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], { cwd: checkout, encoding: "utf8" });
+  const tree = spawnSync("git", ["write-tree"], { cwd: checkout, env: ledgerEnv, encoding: "utf8" });
+  const status = spawnSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], { cwd: checkout, env: ledgerEnv, encoding: "utf8" });
   if (tree.status !== 0 || status.status !== 0 || tree.stdout.trim() !== archiveIdentity || status.stdout !== "") {
     throw new Error(`archive checkout mutated ${where}: tree=${tree.stdout?.trim()} expected=${archiveIdentity} status=${JSON.stringify(status.stdout)}`);
   }
@@ -100,6 +103,7 @@ const gate = (id, command, commandArgs, options = {}) => {
     XDG_DATA_HOME: join(gateState, "data"),
     XDG_STATE_HOME: join(gateState, "state"),
     TMPDIR: join(gateState, "tmp"),
+    GIT_CONFIG_NOSYSTEM: "1",
     ...options.env,
   };
   mkdirSync(isolatedEnv.TMPDIR, { recursive: true });
@@ -188,8 +192,8 @@ execute("archive-tree-integrity", "node", ["-e", `
   const names=execFileSync("find",[".","-type","l","-print"],{encoding:"utf8"}).trim();
   const tree=execFileSync("git",["rev-parse","HEAD^{tree}"],{encoding:"utf8"}).trim();
   const status=execFileSync("git",["status","--porcelain=v1","--untracked-files=all"],{encoding:"utf8"});
-  if(status!=="") throw new Error("temporary acceptance ledger is dirty");
-  console.log(JSON.stringify({acceptanceLedger:true, tree, clean:true, symlinks:names ? names.split("\\n").length : 0}));
+  console.log(JSON.stringify({acceptanceLedger:true, tree, clean:status==="", status, symlinks:names ? names.split("\\n").length : 0}));
+  if(status!=="") process.exit(1);
 `]);
 execute("forbidden-source-scan", "node", ["--input-type=module", "-e", scanCode]);
 execute("acceptance-policy-self-test", "node", ["--input-type=module", "-e", acceptancePolicyCode]);
