@@ -1,0 +1,74 @@
+{
+  "authorization": {
+    "canary": false,
+    "commitEvidence": false,
+    "enable": false,
+    "install": false,
+    "push": false
+  },
+  "blockers": [
+    {
+      "detail": "Packed verifier injects both schemas into a private staged package; normal build/package inputs and built dist contain no schema directory.",
+      "id": "normal-package-schema-copies-not-proven"
+    },
+    {
+      "detail": "acceptance.json does not contain or independently verify normative commit e47fd2a80b45cd4b6a9be8c05adad85ded187c1b.",
+      "id": "normative-commit-not-bound-in-machine-manifest"
+    }
+  ],
+  "candidate": {
+    "commit": "f73c7d295753e839fc78881dd697b2841001edb5",
+    "tree": "6b848b33fd68ff1db51ea1d69b1fb1bda4c35032"
+  },
+  "format": "prime.workflow-v1-host.independent-terminal-rereview/v1",
+  "independentReruns": {
+    "biome": {
+      "exitCode": 0,
+      "files": 1091
+    },
+    "focusedAgentTests": {
+      "failed": 0,
+      "passed": 2
+    },
+    "focusedWorkflowTests": {
+      "failed": 0,
+      "passed": 54
+    },
+    "packedVerifier": {
+      "exitCode": 0,
+      "qualification": "verifier-modified-package-does-not-prove-normal-artifact"
+    }
+  },
+  "mutations": {
+    "arbitraryHeaderAuth": "rejected",
+    "parentWrappedStream": "rejected",
+    "schemaByte": "rejected",
+    "toolPolicyExecute": "rejected"
+  },
+  "normative": {
+    "commit": "e47fd2a80b45cd4b6a9be8c05adad85ded187c1b",
+    "schemas": {
+      "workflow-native-host-v1.schema.json": "08ade62e424d7dad199ca87b1a2da8eb57da71657a497f6793862fa1d73e1f6a",
+      "workflow-v1.schema.json": "79913bb20831758935910a0a49b2ddaf40299c283f876b081cd75f21791f3b27"
+    }
+  },
+  "priorBlockers": {
+    "B1": "closed",
+    "B2": "closed",
+    "B3": "closed",
+    "B4": "closed-narrowly",
+    "B5": "open"
+  },
+  "suppliedEvidence": {
+    "declaredHashesVerified": true,
+    "directory": "/home/cole/.prime/agent/session-artifacts/01a03411-8ff2-75b9-8da1-96727d5e9061/workflow-v1-host-acceptance-f73c7d295",
+    "gates": 18,
+    "logLedgerSha256": "72d174917c60bf17c0f9edeee670c65f8ce55743e239de9821b14c62ff75571c",
+    "manifestSha256": "b0905b896ed8efc09c8dc720f709a00f0d64e83fff2b551e45edde51135ad909",
+    "pythonManifestSha256": "85d3c59b16d28b7aa035d6c9b4c2c07b29b20ca8fbaa9c364a924b84413833fe",
+    "pythonProcesses": 60,
+    "pythonTests": 339,
+    "zeroExitGates": 18
+  },
+  "verdict": "BLOCK"
+}

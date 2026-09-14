@@ -143,7 +143,7 @@ for (const file of files) {
 const runner = readFileSync(files[0], "utf8");
 const mutatingRootGate = ['execute("root-check", "npm", ["run", "', 'check"])'].join("");
 if (runner.includes(mutatingRootGate)) violations.push("root gate may invoke mutating npm check");
-for (const marker of ["assertArchiveIdentity", "before gate", "after gate", "after final gate", '"biome", "check", "--error-on-warnings"', '"packed-installed-hostile"']) {
+for (const marker of ["assertArchiveIdentity", "before gate", "after gate", "after final gate", '"biome", "check", "--error-on-warnings"', '"packed-installed-hostile"', '"normative-authority"']) {
   if (!runner.includes(marker)) violations.push("missing acceptance invariant: " + marker);
 }
 if (violations.length) { console.error(violations.join("\n")); process.exit(1); }
@@ -196,6 +196,7 @@ execute("archive-tree-integrity", "node", ["-e", `
   console.log(JSON.stringify({acceptanceLedger:true, tree, clean:status==="", status, symlinks:names ? names.split("\\n").length : 0}));
   if(status!=="") process.exit(1);
 `]);
+execute("normative-authority", "node", ["scripts/verify-workflow-v1-normative-authority.mjs"]);
 execute("forbidden-source-scan", "node", ["--input-type=module", "-e", scanCode]);
 execute("acceptance-policy-self-test", "node", ["--input-type=module", "-e", acceptancePolicyCode]);
 execute("install-locked", "npm", ["ci", "--ignore-scripts"]);
@@ -215,11 +216,13 @@ execute("root-typecheck", "npm", ["exec", "--", "tsgo", "--noEmit"]);
 execute("root-check", "npm", ["exec", "--", "biome", "check", "--error-on-warnings", "."]);
 
 assertArchiveIdentity("after final gate");
+const normativeAuthority = JSON.parse(readFileSync(join(checkout, "scripts/fixtures/workflow-v1-normative-authority.json"), "utf8"));
 const manifest = {
   format: FORMAT,
   integrity: { archiveTree: archiveIdentity, checkedBeforeAndAfterEveryGate: true, untrackedFilesPermitted: false },
   candidate: { commit, tree: runRaw("git", ["rev-parse", `${commit}^{tree}`]).stdout.trim(), source: "git archive" },
-  verdict: results.length === 18 && results.every((result) => result.exitCode === 0) ? "PASS" : "FAIL",
+  normativeAuthority: { ...normativeAuthority, verified: results.some((result) => result.id === "normative-authority" && result.exitCode === 0) },
+  verdict: results.length === 19 && results.every((result) => result.exitCode === 0) ? "PASS" : "FAIL",
   gates: results,
 };
 const canonical = canonicalJson(manifest);

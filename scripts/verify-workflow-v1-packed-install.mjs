@@ -28,25 +28,29 @@ const expected = {
   "workflow-native-host-v1.schema.json": "08ade62e424d7dad199ca87b1a2da8eb57da71657a497f6793862fa1d73e1f6a",
 };
 const assertDigest = (path, digest) => {
-  const actual = sha256(readFileSync(path));
+  const bytes = readFileSync(path);
+  const actual = sha256(bytes);
   if (actual !== digest) throw new Error(`${path}: expected ${digest}, got ${actual}`);
+  const mutated = Buffer.from(bytes);
+  mutated[Math.max(0, mutated.length - 2)] ^= 1;
+  if (sha256(mutated) === digest) throw new Error(`${path}: digest mutant was accepted`);
 };
 try {
-  // Pin both normative public schema byte streams before they enter the package.
+  // Verify every repository-owned and normally built schema copy. The verifier never
+  // injects schemas into staging: normal copy-assets is the delivery authority.
   for (const [name, digest] of Object.entries(expected)) {
-    const fixture = join(root, "scripts", "fixtures", name);
-    assertDigest(fixture, digest);
-    const mutated = Buffer.from(readFileSync(fixture)); mutated[mutated.length - 2] ^= 1;
-    if (sha256(mutated) === digest) throw new Error(`${name}: digest mutant was accepted`);
+    for (const schemaPath of [
+      join(root, "scripts", "fixtures", name),
+      join(root, "prime-agent-runtime", "schemas", name),
+      join(root, "packages", "coding-agent", "dist", "prime-agent-runtime", "schemas", name),
+    ]) assertDigest(schemaPath, digest);
   }
   const packageJson = JSON.parse(readFileSync(join(root, "packages", "coding-agent", "package.json"), "utf8"));
-  // Stage the exact built package outside the checkout, then add its normative schema bundle.
+  // Stage the exact already-built package outside the checkout without adding files.
   const packageStage = join(state, "package");
   cpSync(join(root, "packages", "coding-agent"), packageStage, { recursive: true, filter: (source) => !source.includes(`${join("", "node_modules")}`) });
-  for (const [name, digest] of Object.entries(expected)) {
-    const bundleCopy = join(packageStage, "dist", "prime-agent-runtime", "schemas", name);
-    mkdirSync(dirname(bundleCopy), { recursive: true }); cpSync(join(root, "scripts", "fixtures", name), bundleCopy); assertDigest(bundleCopy, digest);
-  }
+  for (const [name, digest] of Object.entries(expected))
+    assertDigest(join(packageStage, "dist", "prime-agent-runtime", "schemas", name), digest);
   // Pack internal workspaces too and make the staged CLI depend on those exact tarballs.
   const stagedJsonPath = join(packageStage, "package.json");
   const stagedJson = JSON.parse(readFileSync(stagedJsonPath, "utf8"));
@@ -69,7 +73,8 @@ try {
   for (const rel of ["dist/bundle/cli.js", "dist/prime-agent-runtime/src/rlm/workflow.py"]) {
     assertDigest(join(installed, rel), sha256(readFileSync(join(root, "packages", "coding-agent", rel))));
   }
-  for (const [name, digest] of Object.entries(expected)) assertDigest(join(installed, "dist", "prime-agent-runtime", "schemas", name), digest);
+  for (const [name, digest] of Object.entries(expected))
+    assertDigest(join(installed, "dist", "prime-agent-runtime", "schemas", name), digest);
   const versionProbe = spawnSync(process.execPath, [join(installed, "dist", "bundle", "cli.js"), "--version"], { cwd: hostile, env: cleanEnv, encoding: "utf8" });
   const version = `${versionProbe.stdout ?? ""}${versionProbe.stderr ?? ""}`.trim();
   if (versionProbe.status !== 0 || !version.includes(packageJson.version)) throw new Error(`installed CLI version mismatch: ${version}`);
@@ -86,5 +91,6 @@ asyncio.run(main())`;
   const result = JSON.parse(pythonOut.split("\n").at(-1));
   if (result.installedPythonWorkflow !== "capability-unavailable" || result.requestValidated !== true) throw new Error("installed Python Workflow call failed validation");
   console.log(JSON.stringify({ package: installedPackage.name, version: installedPackage.version, hostileCwd: true,
-    cleanEnvironment: true, bundleIdentity: true, schemas: expected, digestMutantsRejected: 2, pythonWorkflow: result }, null, 2));
+    cleanEnvironment: true, bundleIdentity: true, schemas: expected, schemaCopiesVerified: 5,
+    digestMutantsRejected: Object.keys(expected).length * 5, pythonWorkflow: result }, null, 2));
 } finally { rmSync(state, { recursive: true, force: true }); }
