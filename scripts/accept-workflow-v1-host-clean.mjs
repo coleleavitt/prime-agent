@@ -141,7 +141,8 @@ for (const file of files) {
   for (const marker of forbidden) if (text.includes(marker)) violations.push(file + ": " + marker);
 }
 const runner = readFileSync(files[0], "utf8");
-if (runner.includes('execute("root-check", "npm", ["run", "check"])')) violations.push("root gate may invoke mutating npm check");
+const mutatingRootGate = ['execute("root-check", "npm", ["run", "', 'check"])'].join("");
+if (runner.includes(mutatingRootGate)) violations.push("root gate may invoke mutating npm check");
 for (const marker of ["assertArchiveIdentity", "before gate", "after gate", "after final gate", '"biome", "check", "--error-on-warnings"', '"packed-installed-hostile"']) {
   if (!runner.includes(marker)) violations.push("missing acceptance invariant: " + marker);
 }
