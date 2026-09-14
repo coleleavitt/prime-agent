@@ -1,0 +1,258 @@
+{
+  "candidate": {
+    "commit": "e01de61d218170796590941a6d49bdd5385bf288",
+    "source": "git archive",
+    "tree": "786c634944749482ec85a78b7d807035b8a1c1c9"
+  },
+  "format": "prime.workflow-v1-host.normalized-acceptance-evidence/v1",
+  "independentVerification": {
+    "allDeclaredHashesMatched": true,
+    "candidateAndTreeMatched": true,
+    "candidateCleanBeforeEvidenceCommit": true,
+    "focusedAgentPolicyTests": "2/2",
+    "focusedWorkflowTests": "62/62",
+    "manifestSidecarMatched": true,
+    "normativeBundleVerified": true,
+    "packedHostileVerifier": "PASS",
+    "v2ImplementationMatches": 0
+  },
+  "integrity": {
+    "archiveTree": "786c634944749482ec85a78b7d807035b8a1c1c9",
+    "checkedBeforeAndAfterEveryGate": true,
+    "untrackedFilesPermitted": false
+  },
+  "normativeAuthority": {
+    "bundle": {
+      "path": "scripts/fixtures/pi-plugin-workflow-e47fd2a.bundle",
+      "ref": "refs/authority/workflow-v1-e47fd2a",
+      "sha256": "b61e746cdef154108a96239994454ab8bbf023270d72e866e0198fbcd6f28f2f"
+    },
+    "commit": "e47fd2a80b45cd4b6a9be8c05adad85ded187c1b",
+    "format": "prime.workflow-v1-normative-authority/v1",
+    "repository": "coleleavitt/pi-plugin-workflow",
+    "schemas": [
+      {
+        "blob": "aff1ed3454ddbbcdbd215384ff6f2124bd39613b",
+        "name": "workflow-v1.schema.json",
+        "path": "docs/api/workflow-v1.schema.json",
+        "sha256": "79913bb20831758935910a0a49b2ddaf40299c283f876b081cd75f21791f3b27"
+      },
+      {
+        "blob": "18eef21d5126ade6989016591a4e2fb0b8907b94",
+        "name": "workflow-native-host-v1.schema.json",
+        "path": "docs/api/workflow-native-host-v1.schema.json",
+        "sha256": "08ade62e424d7dad199ca87b1a2da8eb57da71657a497f6793862fa1d73e1f6a"
+      }
+    ],
+    "tree": "95114d5cf2e03c3de25d0f667eb2be7ca7ebb5c1",
+    "verified": true
+  },
+  "packageProof": {
+    "generatedTarballDirectlyEnumerated": true,
+    "generatedTarballMembersDirectlyExtractedAndHashedBeforeInstall": true,
+    "phases": [
+      "repository-source",
+      "normal-built-dist",
+      "generated-tarball",
+      "installed-package"
+    ],
+    "schemaMutants": {
+      "allRejected": true,
+      "count": 16,
+      "operations": [
+        "alter",
+        "omit"
+      ],
+      "samePhaseValidators": true
+    },
+    "schemas": [
+      {
+        "blob": "aff1ed3454ddbbcdbd215384ff6f2124bd39613b",
+        "name": "workflow-v1.schema.json",
+        "path": "docs/api/workflow-v1.schema.json",
+        "sha256": "79913bb20831758935910a0a49b2ddaf40299c283f876b081cd75f21791f3b27"
+      },
+      {
+        "blob": "18eef21d5126ade6989016591a4e2fb0b8907b94",
+        "name": "workflow-native-host-v1.schema.json",
+        "path": "docs/api/workflow-native-host-v1.schema.json",
+        "sha256": "08ade62e424d7dad199ca87b1a2da8eb57da71657a497f6793862fa1d73e1f6a"
+      }
+    ],
+    "verifierInjectedSchemas": false
+  },
+  "results": {
+    "gateCount": 19,
+    "gates": [
+      {
+        "artifacts": {},
+        "exitCode": 0,
+        "id": "archive-tree-integrity",
+        "log": "logs/01-archive-tree-integrity.log",
+        "logSha256": "acba31bcc80850196d61331747df55419a0b950615470419509ee934ef7258be",
+        "signal": null
+      },
+      {
+        "artifacts": {},
+        "exitCode": 0,
+        "id": "normative-authority",
+        "log": "logs/02-normative-authority.log",
+        "logSha256": "6ce8c4246bf3c072f0cb97a39a7d2054a4a4b192a866f4325335b4497c0da498",
+        "signal": null
+      },
+      {
+        "artifacts": {},
+        "exitCode": 0,
+        "id": "forbidden-source-scan",
+        "log": "logs/03-forbidden-source-scan.log",
+        "logSha256": "85bfff1e97708103fcdabd8f245a8f5baa84cc4b7c325b8d0eac46587fd065b5",
+        "signal": null
+      },
+      {
+        "artifacts": {},
+        "exitCode": 0,
+        "id": "acceptance-policy-self-test",
+        "log": "logs/04-acceptance-policy-self-test.log",
+        "logSha256": "5c2e8f7030cf8a2cd9a701ac435cf43d6dbd1d315daf97850fbf5928b0f97510",
+        "signal": null
+      },
+      {
+        "artifacts": {},
+        "exitCode": 0,
+        "id": "install-locked",
+        "log": "logs/05-install-locked.log",
+        "logSha256": "8ae17c1974fdf5faafe7830361bc411ec1e581a0b0a7387dcb062185cd12d667",
+        "signal": null
+      },
+      {
+        "artifacts": {},
+        "exitCode": 0,
+        "id": "build",
+        "log": "logs/06-build.log",
+        "logSha256": "512bb20ae4c3a4173499ead92261a460ba3687bca12bbcf7bfb7926f191cf2df",
+        "signal": null
+      },
+      {
+        "artifacts": {},
+        "exitCode": 0,
+        "id": "repository-host-verifier",
+        "log": "logs/07-repository-host-verifier.log",
+        "logSha256": "68ee7f0044c6afb471a5e04470d1104a4c6de9f0ea932e3e18a27ecf87b5c454",
+        "signal": null
+      },
+      {
+        "artifacts": {},
+        "exitCode": 0,
+        "id": "schema-wire-focused",
+        "log": "logs/08-schema-wire-focused.log",
+        "logSha256": "c320306ce43b2637b15404f91b1631da7a8b8c897bd7fe6d3fa2451a03ac92a9",
+        "signal": null
+      },
+      {
+        "artifacts": {},
+        "exitCode": 0,
+        "id": "object-route-race-focused",
+        "log": "logs/09-object-route-race-focused.log",
+        "logSha256": "51f3fb80247d70311f137f24c95684483c13e9f6b77a1d38bceae762998ef421",
+        "signal": null
+      },
+      {
+        "artifacts": {},
+        "exitCode": 0,
+        "id": "agent-policy-focused",
+        "log": "logs/10-agent-policy-focused.log",
+        "logSha256": "20348c0d9d614e78d53ef890bb9e523e5f7273bd91f548373a647c7a7b7da8e3",
+        "signal": null
+      },
+      {
+        "artifacts": {
+          "python-isolated/python-isolated.json": "12c19e5f22196a3b9be34b17f0b2d152db2da7eef43c0cc0bcc4070a41132a9a",
+          "python-isolated/python-isolated.json.sha256": "b0a0364b7d7e8e971545eefbc8c0d960ab2d5c603eaa8f8591bd1a9968cd1e25"
+        },
+        "exitCode": 0,
+        "id": "python-runtime-isolated",
+        "log": "logs/11-python-runtime-isolated.log",
+        "logSha256": "e32545d117b45e7ba3b3115171fb738cef40c8fff09fd6328139bf43d9fb607b",
+        "signal": null
+      },
+      {
+        "artifacts": {},
+        "exitCode": 0,
+        "id": "packed-installed-hostile",
+        "log": "logs/12-packed-installed-hostile.log",
+        "logSha256": "bfb1d0bdcd80b5a92f5a0355bd146012fdb25127b21e09135cd70c2f80e7d276",
+        "signal": null
+      },
+      {
+        "artifacts": {},
+        "exitCode": 0,
+        "id": "recursion-file-isolated",
+        "log": "logs/13-recursion-file-isolated.log",
+        "logSha256": "137903ecea69a851abab53000ecc98cf71526daf1b7251999a4e35cfe53a5a71",
+        "signal": null
+      },
+      {
+        "artifacts": {},
+        "exitCode": 0,
+        "id": "npm-native-bridge-isolated",
+        "log": "logs/14-npm-native-bridge-isolated.log",
+        "logSha256": "117559501f8c734bb5050bcafc16fa6d67b9b116c1e552b93c1cbc9f0c7fb9ab",
+        "signal": null
+      },
+      {
+        "artifacts": {},
+        "exitCode": 0,
+        "id": "eng-4600-isolated",
+        "log": "logs/15-eng-4600-isolated.log",
+        "logSha256": "75e614a9e16ee9707eac9ce4b86848802f569f906530af57a51844652f368fff",
+        "signal": null
+      },
+      {
+        "artifacts": {},
+        "exitCode": 0,
+        "id": "eng-4606-isolated",
+        "log": "logs/16-eng-4606-isolated.log",
+        "logSha256": "db4de179e513f604ed27b19b5cfcc598a45d0e82c46e1c3545d854ea451d2aa7",
+        "signal": null
+      },
+      {
+        "artifacts": {},
+        "exitCode": 0,
+        "id": "agent-full",
+        "log": "logs/17-agent-full.log",
+        "logSha256": "5c3a939b91890b59fbdf36784aa00aa8e8c8092c4055c67563c97e80711bdb3e",
+        "signal": null
+      },
+      {
+        "artifacts": {},
+        "exitCode": 0,
+        "id": "root-typecheck",
+        "log": "logs/18-root-typecheck.log",
+        "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "signal": null
+      },
+      {
+        "artifacts": {},
+        "exitCode": 0,
+        "id": "root-check",
+        "log": "logs/19-root-check.log",
+        "logSha256": "8b4dc52c70e57685b6d92242779ea4ca2fc9b01a4e1bf53320ff1fb38f4bc34a",
+        "signal": null
+      }
+    ],
+    "zeroExitGateCount": 19
+  },
+  "runtimeCounts": {
+    "agentFullTests": 72,
+    "pythonFreshProcesses": 60,
+    "pythonIsolatedBashMethods": 59,
+    "pythonNonBashTests": 280,
+    "pythonTotalTests": 339
+  },
+  "sourceEvidence": {
+    "directory": "/home/cole/.prime/agent/session-artifacts/01a03411-8ff2-75b9-8da1-96727d5e9061/workflow-v1-host-acceptance-e01de61d2",
+    "logLedgerSha256": "7d728f43a4f4bd23202bd6cc7aa3614412f7e447b4496c73af176e8b982e7e00",
+    "manifestSha256": "c0a7790eaf0a1c8a0695eba2c348589d44d5e18c5c6e9dac4dafd2b36fc7a340"
+  },
+  "verdict": "PASS"
+}

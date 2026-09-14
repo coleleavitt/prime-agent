@@ -1,0 +1,123 @@
+{
+  "candidateCommit": "e01de61d218170796590941a6d49bdd5385bf288",
+  "candidateTree": "786c634944749482ec85a78b7d807035b8a1c1c9",
+  "externalEvidenceDirectory": "/home/cole/.prime/agent/session-artifacts/01a03411-8ff2-75b9-8da1-96727d5e9061/workflow-v1-host-acceptance-e01de61d2",
+  "format": "prime.workflow-v1-host.acceptance-log-digest-inventory/v1",
+  "independentRehash": {
+    "allGateLogsMatched": true,
+    "allNestedArtifactsMatched": true,
+    "logLedgerEntriesMatched": true,
+    "manifestSidecarMatched": true
+  },
+  "logs": [
+    {
+      "gate": "archive-tree-integrity",
+      "path": "logs/01-archive-tree-integrity.log",
+      "sha256": "acba31bcc80850196d61331747df55419a0b950615470419509ee934ef7258be"
+    },
+    {
+      "gate": "normative-authority",
+      "path": "logs/02-normative-authority.log",
+      "sha256": "6ce8c4246bf3c072f0cb97a39a7d2054a4a4b192a866f4325335b4497c0da498"
+    },
+    {
+      "gate": "forbidden-source-scan",
+      "path": "logs/03-forbidden-source-scan.log",
+      "sha256": "85bfff1e97708103fcdabd8f245a8f5baa84cc4b7c325b8d0eac46587fd065b5"
+    },
+    {
+      "gate": "acceptance-policy-self-test",
+      "path": "logs/04-acceptance-policy-self-test.log",
+      "sha256": "5c2e8f7030cf8a2cd9a701ac435cf43d6dbd1d315daf97850fbf5928b0f97510"
+    },
+    {
+      "gate": "install-locked",
+      "path": "logs/05-install-locked.log",
+      "sha256": "8ae17c1974fdf5faafe7830361bc411ec1e581a0b0a7387dcb062185cd12d667"
+    },
+    {
+      "gate": "build",
+      "path": "logs/06-build.log",
+      "sha256": "512bb20ae4c3a4173499ead92261a460ba3687bca12bbcf7bfb7926f191cf2df"
+    },
+    {
+      "gate": "repository-host-verifier",
+      "path": "logs/07-repository-host-verifier.log",
+      "sha256": "68ee7f0044c6afb471a5e04470d1104a4c6de9f0ea932e3e18a27ecf87b5c454"
+    },
+    {
+      "gate": "schema-wire-focused",
+      "path": "logs/08-schema-wire-focused.log",
+      "sha256": "c320306ce43b2637b15404f91b1631da7a8b8c897bd7fe6d3fa2451a03ac92a9"
+    },
+    {
+      "gate": "object-route-race-focused",
+      "path": "logs/09-object-route-race-focused.log",
+      "sha256": "51f3fb80247d70311f137f24c95684483c13e9f6b77a1d38bceae762998ef421"
+    },
+    {
+      "gate": "agent-policy-focused",
+      "path": "logs/10-agent-policy-focused.log",
+      "sha256": "20348c0d9d614e78d53ef890bb9e523e5f7273bd91f548373a647c7a7b7da8e3"
+    },
+    {
+      "gate": "python-runtime-isolated",
+      "path": "logs/11-python-runtime-isolated.log",
+      "sha256": "e32545d117b45e7ba3b3115171fb738cef40c8fff09fd6328139bf43d9fb607b"
+    },
+    {
+      "gate": "packed-installed-hostile",
+      "path": "logs/12-packed-installed-hostile.log",
+      "sha256": "bfb1d0bdcd80b5a92f5a0355bd146012fdb25127b21e09135cd70c2f80e7d276"
+    },
+    {
+      "gate": "recursion-file-isolated",
+      "path": "logs/13-recursion-file-isolated.log",
+      "sha256": "137903ecea69a851abab53000ecc98cf71526daf1b7251999a4e35cfe53a5a71"
+    },
+    {
+      "gate": "npm-native-bridge-isolated",
+      "path": "logs/14-npm-native-bridge-isolated.log",
+      "sha256": "117559501f8c734bb5050bcafc16fa6d67b9b116c1e552b93c1cbc9f0c7fb9ab"
+    },
+    {
+      "gate": "eng-4600-isolated",
+      "path": "logs/15-eng-4600-isolated.log",
+      "sha256": "75e614a9e16ee9707eac9ce4b86848802f569f906530af57a51844652f368fff"
+    },
+    {
+      "gate": "eng-4606-isolated",
+      "path": "logs/16-eng-4606-isolated.log",
+      "sha256": "db4de179e513f604ed27b19b5cfcc598a45d0e82c46e1c3545d854ea451d2aa7"
+    },
+    {
+      "gate": "agent-full",
+      "path": "logs/17-agent-full.log",
+      "sha256": "5c3a939b91890b59fbdf36784aa00aa8e8c8092c4055c67563c97e80711bdb3e"
+    },
+    {
+      "gate": "root-typecheck",
+      "path": "logs/18-root-typecheck.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "gate": "root-check",
+      "path": "logs/19-root-check.log",
+      "sha256": "8b4dc52c70e57685b6d92242779ea4ca2fc9b01a4e1bf53320ff1fb38f4bc34a"
+    }
+  ],
+  "nestedArtifacts": [
+    {
+      "gate": "python-runtime-isolated",
+      "path": "python-isolated/python-isolated.json",
+      "sha256": "12c19e5f22196a3b9be34b17f0b2d152db2da7eef43c0cc0bcc4070a41132a9a"
+    },
+    {
+      "gate": "python-runtime-isolated",
+      "path": "python-isolated/python-isolated.json.sha256",
+      "sha256": "b0a0364b7d7e8e971545eefbc8c0d960ab2d5c603eaa8f8591bd1a9968cd1e25"
+    }
+  ],
+  "sourceLogLedgerSha256": "7d728f43a4f4bd23202bd6cc7aa3614412f7e447b4496c73af176e8b982e7e00",
+  "sourceManifestSha256": "c0a7790eaf0a1c8a0695eba2c348589d44d5e18c5c6e9dac4dafd2b36fc7a340"
+}
