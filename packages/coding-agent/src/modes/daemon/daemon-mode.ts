@@ -114,6 +114,7 @@ import { resolveSessionPath } from "../../core/session-resolver.js";
 import type { SessionStats } from "../../core/session-stats.js";
 import { SettingsManager } from "../../core/settings-manager.js";
 import { type SideQuestionRun, startSideQuestion } from "../../core/side-question.js";
+import { negotiateWorkflowV2Capability } from "../../core/workflow-v2-capability.js";
 import { isProcessAlive, spawnHidden, waitForChildProcess } from "../../utils/child-process.js";
 import { tryAcquireDirLock } from "../../utils/dir-lock.js";
 import { killTrackedDetachedChildren } from "../../utils/shell.js";
@@ -146,6 +147,19 @@ import { createCompactAssistantDelta } from "./compact-session-stream.js";
 import { filterClientEnv, withClientEnv } from "./daemon-client-env.js";
 import { deserializeDaemonError, serializeDaemonError } from "./daemon-errors.js";
 import { bindActiveSessionState } from "./daemon-extension-binding.js";
+// Workflow V2 Slice 3 OS-fence worker-side consumer (dormant behind the base-off guard).
+import {
+	decideWorkerAdoption,
+	decodeGeneration,
+	type HandshakeAck,
+	type HandshakeOffer,
+	type OsfControlDb,
+	type OsfenceMode,
+	type RouteTuple,
+	resolveOsfenceMode,
+	resolveRoute,
+	type WorkerAdoptionState,
+} from "./daemon-osfence.js";
 import {
 	collectDaemonLaunchEnv,
 	createDaemonEventMeta,
@@ -427,7 +441,16 @@ type SupervisorGenerationClaim = Omit<Extract<DaemonWorkerCommand, { type: "work
 interface BoundSupervisorGenerationClaim {
 	claim: SupervisorGenerationClaim;
 	ownerFingerprint: string;
+	/**
+	 * Workflow V2 Slice 3: the control-DB supervisor generation this worker adopted (§5.4), decoded
+	 * from the canonical decimal claim. Present only on the dormant fence path; the V1 fence recheck
+	 * ignores it and uses the PID/fingerprint diagnostic instead.
+	 */
+	osfenceAdoptedGeneration?: number;
 }
+
+/** Worker-side read-only view of the owner's control DB (§5.4, §6.1: readers never admit). */
+type OsfControlDbReader = Pick<OsfControlDb, "readGenerationUnchecked" | "readRoute">;
 
 const PEER_GRANT_TTL_LIMIT_MS = 30_000;
 // Only the supervisor registers grants, so the cap is a tripwire, never an eviction policy.
@@ -487,6 +510,14 @@ type PassiveRlmSubagent = PassiveRlmRoot & {
 
 class RuntimeOpenCancelledError extends Error {}
 class BoundSessionUnavailableError extends Error {}
+/** Workflow V2 Slice 3: raised when the control-DB worker fence recheck finds a stale supervisor. */
+class SupervisorClaimStaleError extends Error {
+	readonly code = "supervisor_generation_stale" as const;
+	constructor(reason: string) {
+		super(`Supervisor claim is stale under the OS fence: ${reason}`);
+		this.name = "SupervisorClaimStaleError";
+	}
+}
 
 export async function runDaemonMode(options: DaemonModeOptions): Promise<never> {
 	const socketPath = normalizeSocketPath(options.socketPath ?? defaultDaemonSocketPath());
@@ -578,6 +609,25 @@ export class AgentDaemon {
 	private supervisorLaunchInProgress = false;
 	private supervisorAbsentSince?: number;
 	private readonly supervisorClaims = new Map<DaemonSocketClient, BoundSupervisorGenerationClaim>();
+	/**
+	 * Workflow V2 Slice 3 worker-side OS-fence mode. Resolved from V2 capability negotiation, which
+	 * returns CAPABILITY_UNAVAILABLE, so this is always disabled and the worker fence recheck stays
+	 * on the V1 PID/fingerprint diagnostic path. When enabled (unreachable) the recheck reads the
+	 * owner-only control DB (generation, route) instead.
+	 */
+	private readonly osfenceWorkerMode: OsfenceMode = resolveOsfenceMode({
+		capabilityAvailable: (negotiateWorkflowV2Capability(undefined) as { available: boolean }).available,
+		platform: process.platform,
+		controlDb: undefined,
+		sqliteProbeOk: false,
+		controlRootIsLocal: true,
+	});
+	/** Injected read-only control-DB view; undefined until the control-DB slice is wired (dormant). */
+	private osfenceControlDbReader?: OsfControlDbReader;
+	/** This worker's own exact route tuple, bound on OS-fence adoption (§5.3); undefined on the V1 path. */
+	private osfenceWorkerRoute?: RouteTuple;
+	/** This worker's durable adoption identity under the fence (§5.4); seeded at launch. Dormant. */
+	private osfenceWorkerAdoption?: WorkerAdoptionState;
 	private readonly peerGrants = new Map<string, DaemonWorkerPeerGrant>();
 	private readonly peerClaims = new Map<DaemonSocketClient, DaemonWorkerPeerGrant>();
 	private peerAdmissionsFenced = false;
@@ -890,15 +940,91 @@ export class AgentDaemon {
 	private async checkSupervisorFences(): Promise<void> {
 		for (const [client, boundClaim] of this.supervisorClaims) {
 			try {
-				boundClaim.ownerFingerprint = await this.assertSupervisorClaimCurrent(
-					boundClaim.claim,
-					boundClaim.ownerFingerprint,
-				);
+				if (this.osfenceWorkerMode.enabled && this.osfenceControlDbReader) {
+					// Workflow V2 Slice 3 (§5.4): repoint the recheck at the control-DB (generation, route)
+					// read. A generation advance beyond the adopted one is GENERATION_STALE; a route that no
+					// longer resolves to this worker is stale. Dormant while the fence is disabled.
+					this.assertSupervisorClaimCurrentOsfence(boundClaim);
+				} else {
+					boundClaim.ownerFingerprint = await this.assertSupervisorClaimCurrent(
+						boundClaim.claim,
+						boundClaim.ownerFingerprint,
+					);
+				}
 			} catch {
 				if (this.revokeSupervisorClaim(client, boundClaim)) client.socket.end();
 			}
 		}
 		this.scheduleSupervisorFenceCheck();
+	}
+
+	/**
+	 * Workflow V2 Slice 3 worker fence recheck (§5.4). Reads the owner-only control DB read-only and
+	 * throws when the supervisor generation has advanced past the adopted one or the worker's route no
+	 * longer resolves to it, so the stale supervisor connection is revoked with zero effect. Never
+	 * consults PID/fingerprint for authority. Dormant: only invoked when the fence is enabled and a
+	 * reader is injected.
+	 */
+	private assertSupervisorClaimCurrentOsfence(boundClaim: BoundSupervisorGenerationClaim): void {
+		const reader = this.osfenceControlDbReader;
+		if (!reader || boundClaim.osfenceAdoptedGeneration === undefined) {
+			throw new Error("osfence worker recheck requires an adopted generation and a control-DB reader");
+		}
+		const observed = reader.readGenerationUnchecked();
+		if (observed !== boundClaim.osfenceAdoptedGeneration) {
+			throw new SupervisorClaimStaleError(
+				`supervisor generation advanced: observed ${observed} > adopted ${boundClaim.osfenceAdoptedGeneration}`,
+			);
+		}
+		if (this.osfenceWorkerRoute) {
+			const resolution = resolveRoute(reader, this.osfenceWorkerRoute, new Date().toISOString());
+			if (resolution.code !== "OK") {
+				throw new SupervisorClaimStaleError(`worker route no longer current: ${resolution.code}`);
+			}
+		}
+	}
+
+	/**
+	 * Worker-side two-way OS-fence adoption decision (§5.2, §5.4). Fails closed (reject_stale) when
+	 * the worker holds no bound adoption identity. On adopt/reconnect it binds the adopted supervisor
+	 * generation and the exact route for the repointed fence recheck. Dormant behind the base-off
+	 * guard; the decision algebra itself is {@link decideWorkerAdoption}.
+	 */
+	private decideWorkerOsfenceAdoption(offer: HandshakeOffer): { ack: HandshakeAck; adoptedGeneration: number } {
+		const now = new Date().toISOString();
+		const adoption = this.osfenceWorkerAdoption;
+		if (!adoption) {
+			// No bound fence identity: refuse rather than fabricate an adoption. Zero effect.
+			return {
+				ack: decideWorkerAdoption(
+					offer,
+					{
+						workerId: offer.route.workerId,
+						workerGeneration: offer.route.workerGeneration,
+						workerIncarnationId: offer.workerIncarnationId,
+						adoptedSupervisorGeneration: Number.MAX_SAFE_INTEGER,
+						adoptedSupervisorIncarnationId: "",
+						schemaDigest: offer.claim.schemaDigest,
+						capabilityDigest: offer.capabilityDigest,
+						route: offer.route,
+					},
+					now,
+				),
+				adoptedGeneration: 0,
+			};
+		}
+		const ack = decideWorkerAdoption(offer, adoption, now);
+		if (ack.decision === "adopt" || ack.decision === "reconnect") {
+			const adoptedGeneration = decodeGeneration(offer.claim.supervisorGeneration);
+			this.osfenceWorkerAdoption = {
+				...adoption,
+				adoptedSupervisorGeneration: adoptedGeneration,
+				adoptedSupervisorIncarnationId: offer.claim.supervisorIncarnationId,
+			};
+			this.osfenceWorkerRoute = adoption.route;
+			return { ack, adoptedGeneration };
+		}
+		return { ack, adoptedGeneration: adoption.adoptedSupervisorGeneration };
 	}
 
 	private assertSupervisorClaimCurrent(
@@ -3720,6 +3846,7 @@ export class AgentDaemon {
 				supervisorPid?: unknown;
 				supervisorProcessStartId?: unknown;
 				supervisorSocketPath?: unknown;
+				osfenceOffer?: unknown;
 				activeSessionId?: unknown;
 				admissionId?: unknown;
 				capabilities?: unknown;
@@ -3818,6 +3945,23 @@ export class AgentDaemon {
 					client.socket.end();
 					return;
 				}
+				// Workflow V2 Slice 3 two-way OS-fence handshake (§5.2, §5.4). When an offer is presented on
+				// the enabled fence path, the worker decides adoption strictly by the presented control-DB
+				// generation and exact route, replies with a channel-bound ack, and binds the adopted
+				// generation/route for the repointed recheck. Dormant while the fence is disabled or no offer
+				// is presented (legacy/V1 supervisor), so the V1 bearer-token path is byte-identical.
+				let osfenceAck: HandshakeAck | undefined;
+				let osfenceAdoptedGeneration: number | undefined;
+				if (this.osfenceWorkerMode.enabled && parsed.osfenceOffer) {
+					const decision = this.decideWorkerOsfenceAdoption(parsed.osfenceOffer as HandshakeOffer);
+					if (decision.ack.decision !== "adopt" && decision.ack.decision !== "reconnect") {
+						this.write(client, failure(commandId, "worker_auth", "supervisor_generation_stale"));
+						client.socket.end();
+						return;
+					}
+					osfenceAck = decision.ack;
+					osfenceAdoptedGeneration = decision.adoptedGeneration;
+				}
 				for (const previous of this.supervisorClaims.keys()) {
 					if (previous !== client) {
 						this.revokeSupervisorClaim(previous);
@@ -3826,7 +3970,11 @@ export class AgentDaemon {
 				}
 				client.authenticated = true;
 				client.authenticationRole = "supervisor";
-				this.supervisorClaims.set(client, { claim, ownerFingerprint });
+				this.supervisorClaims.set(client, {
+					claim,
+					ownerFingerprint,
+					...(osfenceAdoptedGeneration !== undefined ? { osfenceAdoptedGeneration } : {}),
+				});
 				this.clearSupervisorAvailabilityCheck();
 				this.scheduleSupervisorFenceCheck();
 				this.write(client, {
@@ -3841,6 +3989,7 @@ export class AgentDaemon {
 								? [DAEMON_WORKER_PEER_TRANSPORT_CAPABILITY]
 								: []),
 						],
+						...(osfenceAck ? { osfenceAck } : {}),
 					},
 				});
 				this.rosterReporter.snapshotPending = true;

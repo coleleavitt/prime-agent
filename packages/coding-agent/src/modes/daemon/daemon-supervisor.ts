@@ -52,6 +52,7 @@ import { canonicalSessionPath, getProcessStartId, SessionAlreadyActiveError } fr
 import { getSessionArtifactPathForFile, readSessionInfo, type SessionInfo } from "../../core/session-manager.js";
 import { looksLikeSessionPath } from "../../core/session-resolver.js";
 import { SettingsManager } from "../../core/settings-manager.js";
+import { negotiateWorkflowV2Capability } from "../../core/workflow-v2-capability.js";
 import { writeFileAtomicSync } from "../../utils/atomic-file.js";
 import {
 	isProcessAlive,
@@ -77,6 +78,15 @@ import { CommandRecoveryJournal, createCommandIdempotencyKey } from "./command-r
 import { CompactAssistantStreamReconstructor, isCompactAssistantDelta } from "./compact-session-stream.js";
 import { DAEMON_CATALOG_ROLE_ENV, DaemonCatalogClient } from "./daemon-catalog-process.js";
 import { DaemonSessionRecoveringError, deserializeDaemonError, serializeDaemonError } from "./daemon-errors.js";
+import {
+	digestOf,
+	EndpointPossession,
+	encodeGeneration,
+	type OsfControlDb,
+	type OsfenceMode,
+	resolveOsfenceMode,
+	runSupervisorAcquisition,
+} from "./daemon-osfence.js";
 import {
 	collectDaemonClientEnv,
 	createDaemonEventMeta,
@@ -743,6 +753,28 @@ export class DaemonSupervisor {
 	private readonly signalCleanupHandlers: Array<() => void> = [];
 	private readonly descriptorDir: string;
 	private readonly generation = randomUUID();
+	/**
+	 * Workflow V2 Slice 3 OS-fence mode. Resolved from V2 capability negotiation, which returns
+	 * CAPABILITY_UNAVAILABLE, so this is always disabled and the fence stays dormant. When enabled
+	 * (unreachable), {@link osfence} carries Layer A possession and the injected control DB, and the
+	 * monotonic control-DB generation replaces {@link generation} on the wire via {@link wireGeneration}.
+	 */
+	private readonly osfenceMode: OsfenceMode = resolveOsfenceMode({
+		// negotiateWorkflowV2Capability returns CAPABILITY_UNAVAILABLE today; read it dynamically so a
+		// future available profile flows through without a stale hardcoded false. The widening cast
+		// avoids a no-overlap error on the current unavailable-only return type.
+		capabilityAvailable: (negotiateWorkflowV2Capability(undefined) as { available: boolean }).available,
+		platform: process.platform,
+		controlDb: undefined,
+		sqliteProbeOk: false,
+		controlRootIsLocal: true,
+	});
+	private osfence?: {
+		possession: EndpointPossession;
+		controlDb: OsfControlDb;
+		adoptedGeneration: number;
+		adoptedGenerationString: string;
+	};
 	private readonly supervisorConfigPath: string;
 	private readonly defaultSessionConfig: AgentSessionRuntimeConfig;
 	private readonly snapshotCacheRoot: string;
@@ -831,6 +863,12 @@ export class DaemonSupervisor {
 			}
 			this.ownsSocketPath = true;
 			restrictDaemonSocketPath(this.socketPath);
+			// Workflow V2 Slice 3: elevate the just-acquired listening endpoint fd to Layer A possession
+			// (§2.1) once the exclusive listen() has succeeded. Dormant: osfenceMode is disabled while V2
+			// capability is unavailable, so this never runs on the live V1 path.
+			if (this.osfenceMode.enabled) {
+				this.elevateEndpointPossession();
+			}
 
 			this.registerSignalHandlers();
 			const ownedSessionFiles = new Set(
@@ -1319,6 +1357,61 @@ export class DaemonSupervisor {
 		}
 	}
 
+	/**
+	 * Workflow V2 Slice 3 Layer A elevation (§2.1, §4.1 step 4-6). Runs post-exclusive-listen only
+	 * on the dormant V2 fence path. Reaching here means the connect()-probe failed and this process
+	 * won the exclusive listen(), so any prior endpoint owner released its listening fd — a
+	 * kernel-confirmed endpoint release (§4.3). The injected control DB decides first_init vs
+	 * takeover and advances the monotonic generation inside its BEGIN IMMEDIATE transaction.
+	 */
+	private elevateEndpointPossession(): void {
+		if (!this.osfenceMode.enabled) {
+			return;
+		}
+		if (process.platform === "win32" || !this.socketIdentity) {
+			throw new Error("OS-fence Layer A requires a captured unix endpoint identity");
+		}
+		const controlDb = this.osfenceMode.controlDb;
+		const lease = this.socketLease;
+		const possession = new EndpointPossession({
+			socketPath: this.socketPath,
+			boundIdentity: this.socketIdentity,
+			platform: process.platform,
+			lease: lease
+				? {
+						get compromised(): boolean {
+							return lease.compromise !== undefined;
+						},
+					}
+				: undefined,
+			readIdentity: (socketPath) => getDaemonSocketIdentity(socketPath),
+		});
+		const incarnationId = this.generation;
+		const schemaDigest = digestOf(DAEMON_SCHEMA_ID, String(DAEMON_SCHEMA_REVISION), VERSION);
+		const record = runSupervisorAcquisition({
+			controlDb,
+			endpointIdentity: possession.identity,
+			incarnationId,
+			schemaDigest,
+			revocationProof: "endpoint_released_kernel_confirmed",
+		});
+		this.osfence = {
+			possession,
+			controlDb,
+			adoptedGeneration: record.generation,
+			adoptedGenerationString: encodeGeneration(record.generation),
+		};
+	}
+
+	/**
+	 * The generation advertised to workers. On the dormant V2 fence path this is the monotonic
+	 * control-DB generation as a canonical decimal string (§5.1); on the live V1 path it is the
+	 * per-process random UUID {@link generation}, byte-identical to prior behavior.
+	 */
+	private wireGeneration(): string {
+		return this.osfence?.adoptedGenerationString ?? this.generation;
+	}
+
 	private supervisorAuthenticationClaim(): {
 		supervisorGeneration: string;
 		supervisorPid: number;
@@ -1330,7 +1423,7 @@ export class DaemonSupervisor {
 			throw new SupervisorRecoveryCancelledError("Daemon supervisor ownership is unavailable");
 		}
 		return {
-			supervisorGeneration: this.generation,
+			supervisorGeneration: this.wireGeneration(),
 			supervisorPid: record.pid,
 			...(record.processStartId ? { supervisorProcessStartId: record.processStartId } : {}),
 			supervisorSocketPath: record.socketPath,
@@ -1480,7 +1573,7 @@ export class DaemonSupervisor {
 						schemaRevision: DAEMON_SCHEMA_REVISION,
 						appVersion: VERSION,
 						runtime: getDaemonRuntimeIdentity(),
-						supervisorGeneration: this.generation,
+						supervisorGeneration: this.wireGeneration(),
 						supervisorOwnerToken: this.ownership?.record.token,
 						supervisorPid: process.pid,
 						supervisorProcessStartId: this.ownership?.record.processStartId,
@@ -3570,6 +3663,17 @@ export class DaemonSupervisor {
 		await this.assertRecoveryAllowed();
 		if (worker.descriptor.processStartId === undefined && observedProcessStartId !== undefined) {
 			worker.descriptor.processStartId = observedProcessStartId;
+		}
+		if (this.osfenceMode.enabled) {
+			// Workflow V2 Slice 3 (§4.4): the heuristic SIGKILL of a live worker is not an authority
+			// path. Under the fence a live pre-roster worker is replaced only by an explicit, auditable
+			// operator fence + generation bump; absent that proof the worker is parked failed rather
+			// than killed on PID/identity heuristics. Dormant while the fence is disabled.
+			worker.descriptor.lifecycle = "failed";
+			worker.descriptor.lastError = `Pre-roster worker process ${worker.descriptor.pid} cannot be replaced without an operator fence under the OS fence`;
+			this.persistWorker(worker);
+			this.markWorkerRosterEntries(worker, "failed");
+			return;
 		}
 		const identity = () => this.processIdentity(worker.descriptor.pid, worker.descriptor.processStartId);
 		// The one deliberate kill of a live worker: it authenticated as ours and predates the roster
@@ -7020,6 +7124,10 @@ export class DaemonSupervisor {
 		if (this.socketLeaseCompromise) return;
 		this.socketLeaseCompromise = error;
 		this.shuttingDown = true;
+		// Workflow V2 Slice 3 (§4.5): loss of Layer A endpoint possession forces the writer to
+		// self-fence. Dormant unless the fence is enabled; relinquish() makes every subsequent
+		// assertWriterFence fail closed before any native-topology append.
+		this.osfence?.possession.relinquish();
 		this.fenceSupervisorSocket();
 		const message = `Daemon socket lease was compromised; relinquishing supervisor ownership: ${error.message}`;
 		try {
@@ -7125,6 +7233,15 @@ export class DaemonSupervisor {
 		const ownership = this.ownership;
 		this.ownership = undefined;
 		await this.runCleanupStep("daemon ownership", async () => ownership?.release());
+		// Workflow V2 Slice 3 ordered relinquish (§4.5): after server.close() and socket cleanup,
+		// relinquish Layer A possession and close the control-DB writer handle. Never decrements the
+		// generation; a crash before this leaves a state a successor can prove revoked. Dormant.
+		const osfence = this.osfence;
+		this.osfence = undefined;
+		if (osfence) {
+			osfence.possession.relinquish();
+			await this.runCleanupStep("osfence control db", () => osfence.controlDb.release());
+		}
 	}
 
 	private async runCleanupStep(label: string, action: () => void | Promise<void>): Promise<void> {

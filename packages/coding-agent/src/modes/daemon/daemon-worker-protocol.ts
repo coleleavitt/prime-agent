@@ -5,6 +5,8 @@ import type { IdleEvictionMinutes } from "../../core/session-action-store.js";
 export { SESSION_LEASE_OWNER_ID_ENV, SESSION_LEASES_ENABLED_ENV } from "../../core/session-lease.js";
 
 import type { WorkerRosterEntry } from "./agent-roster.js";
+// Workflow V2 Slice 3 OS-fence handshake shapes (dormant; carried additively on worker_auth).
+import type { HandshakeAck, HandshakeOffer } from "./daemon-osfence.js";
 import type { DaemonClientCapability, DaemonCommand, DaemonOutbound } from "./daemon-protocol.js";
 
 export const DAEMON_WORKER_ROLE_ENV = "PRIME_AGENT_INTERNAL_DAEMON_WORKER";
@@ -103,10 +105,18 @@ export type DaemonWorkerCommand =
 			type: "worker_auth";
 			token: string;
 			workerInstanceId?: string;
+			/** Canonical decimal generation string; monotonic on the V2 fence path (§5.1). */
 			supervisorGeneration: string;
 			supervisorPid: number;
 			supervisorProcessStartId?: string;
 			supervisorSocketPath: string;
+			/**
+			 * Additive Workflow V2 Slice 3 two-way OS-fence offer (§5.2). Absent on the live V1 path
+			 * and on legacy supervisors; when present the worker replies with an {@link HandshakeAck}
+			 * ({@link DaemonWorkerAuthOsfenceResult}). Never the ordering authority — that is the
+			 * control-DB generation carried in supervisorGeneration.
+			 */
+			osfenceOffer?: HandshakeOffer;
 	  }
 	| {
 			id?: string;
@@ -277,4 +287,14 @@ export function isDaemonWorkerFrameHeader(value: unknown): value is DaemonWorker
 			candidate.payloadEncoding === "jsonl" ||
 			candidate.payloadEncoding === "assistant-delta")
 	);
+}
+
+/**
+ * Additive worker_auth response payload for the Workflow V2 Slice 3 OS-fence two-way handshake.
+ * Absent on the live V1 path; carried inside the worker_auth response `data` when an
+ * {@link HandshakeOffer} was presented. The ack binds the channel; the accepted generation is
+ * still the control-DB monotonic value, never this transport payload.
+ */
+export interface DaemonWorkerAuthOsfenceResult {
+	osfenceAck: HandshakeAck;
 }

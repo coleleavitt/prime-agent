@@ -224,7 +224,10 @@ function isDeleteReason(value: unknown): value is RlmLedgerDeleteReason {
  * because silently skipping records a reader cannot understand would corrupt
  * topology.
  */
-function parseLedgerLine(line: string, index: number): RlmLedgerRecord | RlmLedgerMetaRecord | undefined {
+function parseLedgerLine(
+	line: string,
+	index: number,
+): RlmLedgerRecord | RlmLedgerMetaRecord | RlmLedgerAdmitRecord | undefined {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(line);
@@ -245,8 +248,19 @@ function parseLedgerLine(line: string, index: number): RlmLedgerRecord | RlmLedg
 		name?: unknown;
 		reason?: unknown;
 	};
-	if (record.v !== 1 || typeof record.at !== "string") {
+	if (typeof record.at !== "string" || (record.v !== 1 && record.v !== RLM_LEDGER_ADMIT_VERSION)) {
 		throw new Error(`Malformed RLM ledger line ${index + 1}: missing v/at`);
+	}
+	// V2 composite admission records (v:2, op:"admit") share this per-sessions-dir
+	// file but are owned by RlmCompositeAdmissionLedger. The V1 topology reader
+	// recognizes and skips them: they are not v1 spawn/rename/delete edges.
+	// Returning the record (not undefined) keeps replaySync from misreporting an
+	// unknown op; the topology loop below ignores op "admit".
+	if (record.v === RLM_LEDGER_ADMIT_VERSION) {
+		if (record.op !== RLM_LEDGER_ADMIT_OP) {
+			return undefined;
+		}
+		return record as unknown as RlmLedgerAdmitRecord;
 	}
 	switch (record.op) {
 		case "meta":
@@ -775,6 +789,9 @@ export class RlmSpawnLedger {
 		});
 		for (const record of records) {
 			if (record.op === "meta") continue;
+			// V2 composite admission records are not v1 topology edges; skip them
+			// before edgeKey (they carry no childId/child).
+			if (record.op === RLM_LEDGER_ADMIT_OP) continue;
 			const key = edgeKey(record.childId, record.child);
 			switch (record.op) {
 				case "spawn":
@@ -864,4 +881,569 @@ export async function tombstoneSavedSessionDelete(
 		await ledger.appendDelete({ childId: edge.childId, child: sessionPath, reason: "user" });
 	}
 	return { deletedInfo, ledgerEdge: matching[0] };
+}
+
+// ============================================================================
+// Workflow V2 Slice 3 — composite topology admission (capability UNAVAILABLE)
+// ============================================================================
+//
+// This section adds the closed V2 composite admission record and its replay
+// indexes to the same per-sessions-dir ledger file. It is dormant: no route,
+// daemon path, or capability negotiation reaches it (see
+// workflow-v2-capability.ts, which returns CAPABILITY_UNAVAILABLE). It exists
+// only behind unavailable wiring for Slice 3 conformance work.
+//
+// Authority split (docs/WORKFLOW-V2-SLICE3.md §3): the supervisor is the sole
+// OS-fenced writer of native RLM topology. One durable composite `admit`
+// record atomically reserves the request receipt, direct-parent edge, child
+// identity, and initial-turn identity BEFORE any child filesystem, runtime, or
+// provider effect (§4). Workers open a read-only reader and never admit.
+//
+// Durability/atomicity model: one composite record is a single JSONL line
+// appended through EventLog (single O_APPEND write + fsync), then VERIFIED by
+// re-reading. A crash before the terminating newline leaves an uncommitted
+// torn tail that EventLog skips on read and truncates on the next append — the
+// record was never durable and never launched, so it is "absent, retry once"
+// (§8.1). An interior corrupt/contradictory record fails closed as
+// ADMISSION_UNKNOWN. Composite lines can far exceed PIPE_BUF, so single-write
+// atomicity holds ONLY because the supervisor is the sole writer; global
+// sole-writer routing of every topology mutation is an enablement precondition
+// (§4.2) and is NOT yet globally enforced while V1 writers remain.
+//
+// No settlement, result, usage, capture, or cursor data lives here (§3): those
+// belong to the per-worker retained journal. This module owns admission only.
+
+/** V2 composite-record op/version. Distinct from the V1 v:1 topology records. */
+export const RLM_LEDGER_ADMIT_VERSION = 2 as const;
+export const RLM_LEDGER_ADMIT_OP = "admit" as const;
+
+const ADMISSION_RECEIPT_PROTOCOL = "prime.workflow.retained-admission-receipt/v2-slice3" as const;
+const ADMISSION_RECEIPT_PAYLOAD_PROTOCOL = "prime.workflow.retained-admission-receipt-payload/v2-slice3" as const;
+const MATERIALIZE_COMMAND_PROTOCOL = "prime.workflow.retained-materialize/v2-slice3" as const;
+const TOOLS_NONE_PROFILE = "workflow-v2-tools-none-v1" as const;
+
+export type Slice3ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
+/** Complete supervisor/worker/route generation fence (schema $defs/fence). */
+export interface Slice3Fence {
+	supervisorGeneration: number;
+	supervisorIncarnationId: string;
+	workerId: string;
+	workerGeneration: number;
+	workerIncarnationId: string;
+	routeRevision: number;
+}
+
+/** Non-self-referential admission-receipt payload (schema $defs/admissionReceiptPayload). */
+export interface AdmissionReceiptPayload {
+	authorityId: string;
+	rootSessionId: string;
+	parentSessionId: string;
+	workflowRunId: string;
+	nodeId: string;
+	attemptId: string;
+	workflowChildId: string;
+	protocol: typeof ADMISSION_RECEIPT_PAYLOAD_PROTOCOL;
+	requestId: string;
+	requestDigest: string;
+	rlmChildId: string;
+	turnId: string;
+	effectiveModel: string;
+	profile: typeof TOOLS_NONE_PROFILE;
+	tools: "none";
+	maxTurns: 1;
+	effectiveThinkingLevel: Slice3ThinkingLevel;
+	admissionSequence: number;
+	operation: "child.admit";
+	fence: Slice3Fence;
+}
+
+/** Admission-receipt envelope (schema $defs/admissionReceipt). digest = SHA-256(RFC 8785(payload)). */
+export interface AdmissionReceipt {
+	protocol: typeof ADMISSION_RECEIPT_PROTOCOL;
+	payload: AdmissionReceiptPayload;
+	digest: string;
+}
+
+/** One composite admit record (schema $defs/admitRecord). Single durable line. */
+export interface RlmLedgerAdmitRecord {
+	v: typeof RLM_LEDGER_ADMIT_VERSION;
+	op: typeof RLM_LEDGER_ADMIT_OP;
+	at: string;
+	fence: Slice3Fence;
+	authorityId: string;
+	rootSessionId: string;
+	parentSessionId: string;
+	parentSessionPath: string;
+	requestId: string;
+	requestDigest: string;
+	workflowRunId: string;
+	nodeId: string;
+	attemptId: string;
+	workflowChildId: string;
+	rlmChildId: string;
+	childSessionPath: string;
+	childArtifactDir: string;
+	depth: number;
+	name: string;
+	turnId: string;
+	promptUtf8Bytes: number;
+	promptDigest: string;
+	canonicalRequest: string;
+	effectiveModel: string;
+	profile: typeof TOOLS_NONE_PROFILE;
+	tools: "none";
+	maxTurns: 1;
+	receipt: string;
+	receiptDigest: string;
+	effectiveThinkingLevel: Slice3ThinkingLevel;
+	admissionSequence: number;
+	decodedReceipt: AdmissionReceipt;
+}
+
+/** Generation-bound materialization command (schema $defs/materializeCommand). */
+export interface Slice3MaterializeCommand {
+	protocol: typeof MATERIALIZE_COMMAND_PROTOCOL;
+	commandId: string;
+	fence: Slice3Fence;
+	requestId: string;
+	requestDigest: string;
+	admissionReceiptDigest: string;
+	rlmChildId: string;
+	turnId: string;
+	canonicalRequest: string;
+	effectiveModel: string;
+	profile: typeof TOOLS_NONE_PROFILE;
+	tools: "none";
+	maxTurns: 1;
+	effectiveThinkingLevel: Slice3ThinkingLevel;
+	authorityId: string;
+	rootSessionId: string;
+	parentSessionId: string;
+	workflowRunId: string;
+	nodeId: string;
+	attemptId: string;
+	workflowChildId: string;
+	admissionSequence: number;
+}
+
+/**
+ * Codec seam owned by core/workflow-v2-slice3-codec.ts
+ * (WorkflowV2Slice3SemanticValidator/v1). Injected so the ledger never carries
+ * a second canonicalizer/decoder (§9: the codec is the sole authority). The
+ * ledger owns only durable append, replay, and idempotency resolution.
+ */
+export interface Slice3LedgerCodec {
+	/** RFC 8785 canonical UTF-8 bytes of a JSON value. */
+	canonicalize(value: unknown): Buffer;
+	/** "sha256:" + lowercase hex of SHA-256 over bytes. */
+	digest(bytes: Buffer): string;
+	/** Canonical RFC 4648 padded base64 of bytes. */
+	encodeCanonicalBytes(bytes: Buffer): string;
+	/**
+	 * Strict decode + full §12 semantic validation of one composite admit
+	 * record: recomputes every digest and byte count, proves the decoded
+	 * receipt envelope/payload equal their stored canonical bytes and bind the
+	 * enclosing record, and rejects duplicate keys, unknown fields, invalid
+	 * UTF-8, noncanonical numbers/strings, and bound violations. Throws
+	 * Slice3CodecError on any violation; never returns a partially valid record.
+	 */
+	validateAdmitRecord(record: unknown): RlmLedgerAdmitRecord;
+}
+
+/** Typed error the codec throws for any structural/semantic violation. */
+export class Slice3CodecError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "Slice3CodecError";
+	}
+}
+
+export type AdmitConflictCode = "REQUEST_ID_CONFLICT" | "ADMISSION_UNKNOWN" | "STORE_CORRUPT";
+
+export type AdmitOutcome =
+	| { disposition: "admitted" | "replayed"; record: RlmLedgerAdmitRecord }
+	| { disposition: "conflict" | "rejected"; code: AdmitConflictCode; requestId: string };
+
+/**
+ * Everything the authenticated supervisor derives for one child.admit before
+ * touching the ledger (§4.2 steps 1-7). The caller supplies authority, parent,
+ * route, fence, preallocated child/turn identity, deterministic paths, the
+ * resolved model/profile, and the already-canonicalized request bytes/digest.
+ * The ledger allocates only the admission sequence, receipt, and `at`, then
+ * writes the one composite record.
+ */
+export interface AdmitInput {
+	fence: Slice3Fence;
+	authorityId: string;
+	rootSessionId: string;
+	parentSessionId: string;
+	parentSessionPath: string;
+	requestId: string;
+	requestDigest: string;
+	workflowRunId: string;
+	nodeId: string;
+	attemptId: string;
+	workflowChildId: string;
+	rlmChildId: string;
+	childSessionPath: string;
+	childArtifactDir: string;
+	depth: number;
+	name: string;
+	turnId: string;
+	promptUtf8Bytes: number;
+	promptDigest: string;
+	/** Canonical request bytes (the supervisor built these from the strict child.admit). */
+	canonicalRequest: Buffer;
+	effectiveModel: string;
+	effectiveThinkingLevel: Slice3ThinkingLevel;
+}
+
+const RLM_COMPOSITE_ADMISSION_QUEUE_INIT = Promise.resolve();
+
+/** Scoped idempotency key (§4.2 step 4): (authorityId, parentSessionId, "child.admit", requestId). */
+function admissionScopeKey(authorityId: string, parentSessionId: string, requestId: string): string {
+	return `${authorityId}\u0000${parentSessionId}\u0000child.admit\u0000${requestId}`;
+}
+
+/**
+ * V2 composite-admission ledger over the same per-sessions-dir file as the V1
+ * RlmSpawnLedger. Two modes: "writer" (the OS-fenced supervisor) may admit;
+ * "reader" (workers) may only read and validate. Every admit re-checks the
+ * injected writer fence at the append boundary, so a preflight check can never
+ * authorize a later durable write.
+ */
+export class RlmCompositeAdmissionLedger {
+	private readonly path: string;
+	private readonly eventLog: EventLog;
+	private queue: Promise<unknown> = RLM_COMPOSITE_ADMISSION_QUEUE_INIT;
+
+	constructor(
+		agentDir: string,
+		sessionsDir: string,
+		private readonly options: {
+			mode: "writer" | "reader";
+			codec: Slice3LedgerCodec;
+			/**
+			 * Proves the caller still holds OS endpoint ownership + the current
+			 * supervisor generation. Throws to fence a stale writer. Called at
+			 * construction-independent append time, never cached across awaits.
+			 */
+			assertWriterFence?: () => void;
+			log?: (message: string) => void;
+		},
+	) {
+		this.path = rlmLedgerPath(agentDir, sessionsDir);
+		this.eventLog = new EventLog(this.path, {
+			maxBytes: RLM_LEDGER_MAX_BYTES,
+			maxRecords: RLM_LEDGER_MAX_RECORDS,
+			log: (message) => this.options.log?.(`RLM composite admission: ${message}`),
+		});
+	}
+
+	get ledgerPath(): string {
+		return this.path;
+	}
+
+	/**
+	 * Admit one child.admit. Returns the durable composite record on success
+	 * (disposition "admitted") or the byte-identical stored record on replay
+	 * (disposition "replayed"); a conflicting/uncertain scope returns a closed
+	 * typed conflict WITHOUT allocating or writing.
+	 */
+	admit(input: AdmitInput): Promise<AdmitOutcome> {
+		return this.enqueue(() => this.admitUnlocked(input));
+	}
+
+	/** Read-only resolution of a scoped key (workers validate their bound receipt through this). */
+	lookup(authorityId: string, parentSessionId: string, requestId: string): Promise<RlmLedgerAdmitRecord | undefined> {
+		return this.enqueue(() => {
+			const index = this.replayAdmissionsSync();
+			const found = index.get(admissionScopeKey(authorityId, parentSessionId, requestId));
+			return found?.record;
+		});
+	}
+
+	/** All admitted records in this ledger (validated), for reconciliation/inspection. */
+	admissions(): Promise<RlmLedgerAdmitRecord[]> {
+		return this.enqueue(() => [...this.replayAdmissionsSync().values()].map((entry) => entry.record));
+	}
+
+	private enqueue<T>(fn: () => T): Promise<T> {
+		const next = this.queue.then(() => fn());
+		this.queue = next.catch(() => undefined);
+		return next;
+	}
+
+	private admitUnlocked(input: AdmitInput): AdmitOutcome {
+		if (this.options.mode !== "writer") {
+			// A reader can never admit — only the OS-fenced supervisor writes topology.
+			throw new Slice3CodecError("RLM composite admission: admit called on a read-only ledger");
+		}
+		// Fence recheck at the mutation boundary (§5: a preflight cannot authorize a later write).
+		this.options.assertWriterFence?.();
+
+		const scopeKey = admissionScopeKey(input.authorityId, input.parentSessionId, input.requestId);
+
+		// Replay the bounded canonical ledger. Torn tail is skipped by EventLog
+		// (uncommitted, retried); interior corruption/contradiction fences.
+		let index: Map<string, AdmissionIndexEntry>;
+		try {
+			index = this.replayAdmissionsSync();
+		} catch {
+			return { disposition: "rejected", code: "ADMISSION_UNKNOWN", requestId: input.requestId };
+		}
+
+		const existing = index.get(scopeKey);
+		if (existing) {
+			if (existing.corrupt) {
+				return { disposition: "rejected", code: "STORE_CORRUPT", requestId: input.requestId };
+			}
+			if (existing.record.requestDigest === input.requestDigest) {
+				// Same scope + same request bytes: return the byte-identical stored receipt.
+				return { disposition: "replayed", record: existing.record };
+			}
+			// Same request ID, different canonical bytes: conflict BEFORE any allocation/effect.
+			return { disposition: "conflict", code: "REQUEST_ID_CONFLICT", requestId: input.requestId };
+		}
+
+		// Allocate the supervisor admission sequence (monotone, sole-writer + serialized queue).
+		const admissionSequence = this.nextAdmissionSequenceSync(index);
+
+		let record: RlmLedgerAdmitRecord;
+		try {
+			record = this.buildAdmitRecord(input, admissionSequence);
+			// Gate on the sole codec/semantic validator BEFORE any durable byte.
+			this.options.codec.validateAdmitRecord(record);
+		} catch {
+			// A record this validator would refuse must never be written.
+			return { disposition: "rejected", code: "ADMISSION_UNKNOWN", requestId: input.requestId };
+		}
+
+		// Fence recheck immediately before the durable write.
+		this.options.assertWriterFence?.();
+		this.eventLog.appendSync([record], { durable: true });
+
+		// Verify: re-read and confirm the exact record is durable (detects a torn
+		// or short write). Success is reported ONLY after the record replays with
+		// a matching receipt digest; otherwise the outcome is unknown and no
+		// launch may proceed.
+		let verified: Map<string, AdmissionIndexEntry>;
+		try {
+			verified = this.replayAdmissionsSync();
+		} catch {
+			return { disposition: "rejected", code: "ADMISSION_UNKNOWN", requestId: input.requestId };
+		}
+		const stored = verified.get(scopeKey);
+		if (!stored || stored.corrupt || stored.record.receiptDigest !== record.receiptDigest) {
+			return { disposition: "rejected", code: "ADMISSION_UNKNOWN", requestId: input.requestId };
+		}
+		return { disposition: "admitted", record: stored.record };
+	}
+
+	private nextAdmissionSequenceSync(index: Map<string, AdmissionIndexEntry>): number {
+		let max = -1;
+		for (const entry of index.values()) {
+			if (!entry.corrupt && entry.record.admissionSequence > max) {
+				max = entry.record.admissionSequence;
+			}
+		}
+		return max + 1;
+	}
+
+	private buildAdmitRecord(input: AdmitInput, admissionSequence: number): RlmLedgerAdmitRecord {
+		const codec = this.options.codec;
+		const payload: AdmissionReceiptPayload = {
+			authorityId: input.authorityId,
+			rootSessionId: input.rootSessionId,
+			parentSessionId: input.parentSessionId,
+			workflowRunId: input.workflowRunId,
+			nodeId: input.nodeId,
+			attemptId: input.attemptId,
+			workflowChildId: input.workflowChildId,
+			protocol: ADMISSION_RECEIPT_PAYLOAD_PROTOCOL,
+			requestId: input.requestId,
+			requestDigest: input.requestDigest,
+			rlmChildId: input.rlmChildId,
+			turnId: input.turnId,
+			effectiveModel: input.effectiveModel,
+			profile: TOOLS_NONE_PROFILE,
+			tools: "none",
+			maxTurns: 1,
+			effectiveThinkingLevel: input.effectiveThinkingLevel,
+			admissionSequence,
+			operation: "child.admit",
+			fence: input.fence,
+		};
+		// Non-self-referential digest: SHA-256(RFC 8785(payload)).
+		const receiptDigest = codec.digest(codec.canonicalize(payload));
+		const decodedReceipt: AdmissionReceipt = {
+			protocol: ADMISSION_RECEIPT_PROTOCOL,
+			payload,
+			digest: receiptDigest,
+		};
+		const receiptBytes = codec.canonicalize(decodedReceipt);
+		return {
+			v: RLM_LEDGER_ADMIT_VERSION,
+			op: RLM_LEDGER_ADMIT_OP,
+			at: nowIso(),
+			fence: input.fence,
+			authorityId: input.authorityId,
+			rootSessionId: input.rootSessionId,
+			parentSessionId: input.parentSessionId,
+			parentSessionPath: input.parentSessionPath,
+			requestId: input.requestId,
+			requestDigest: input.requestDigest,
+			workflowRunId: input.workflowRunId,
+			nodeId: input.nodeId,
+			attemptId: input.attemptId,
+			workflowChildId: input.workflowChildId,
+			rlmChildId: input.rlmChildId,
+			childSessionPath: input.childSessionPath,
+			childArtifactDir: input.childArtifactDir,
+			depth: input.depth,
+			name: input.name,
+			turnId: input.turnId,
+			promptUtf8Bytes: input.promptUtf8Bytes,
+			promptDigest: input.promptDigest,
+			canonicalRequest: codec.encodeCanonicalBytes(input.canonicalRequest),
+			effectiveModel: input.effectiveModel,
+			profile: TOOLS_NONE_PROFILE,
+			tools: "none",
+			maxTurns: 1,
+			receipt: codec.encodeCanonicalBytes(receiptBytes),
+			receiptDigest,
+			effectiveThinkingLevel: input.effectiveThinkingLevel,
+			admissionSequence,
+			decodedReceipt,
+		};
+	}
+
+	/**
+	 * Build the generation-bound materialization command for an admitted record
+	 * (§5). The command carries the exact fence, receipt digest, and every
+	 * bound identity; the worker recomputes and validates it and allocates
+	 * nothing. `commandId` binds one delivery; the supervisor may redeliver only
+	 * the same generation-bound command for the same admitted record.
+	 */
+	buildMaterializeCommand(record: RlmLedgerAdmitRecord, commandId: string): Slice3MaterializeCommand {
+		return {
+			protocol: MATERIALIZE_COMMAND_PROTOCOL,
+			commandId,
+			fence: record.fence,
+			requestId: record.requestId,
+			requestDigest: record.requestDigest,
+			admissionReceiptDigest: record.receiptDigest,
+			rlmChildId: record.rlmChildId,
+			turnId: record.turnId,
+			canonicalRequest: record.canonicalRequest,
+			effectiveModel: record.effectiveModel,
+			profile: TOOLS_NONE_PROFILE,
+			tools: "none",
+			maxTurns: 1,
+			effectiveThinkingLevel: record.effectiveThinkingLevel,
+			authorityId: record.authorityId,
+			rootSessionId: record.rootSessionId,
+			parentSessionId: record.parentSessionId,
+			workflowRunId: record.workflowRunId,
+			nodeId: record.nodeId,
+			attemptId: record.attemptId,
+			workflowChildId: record.workflowChildId,
+			admissionSequence: record.admissionSequence,
+		};
+	}
+
+	/**
+	 * Replay v2 admit records into a scoped index. V1 records and non-admit v2
+	 * ops are ignored (legacy read compatibility). Each admit record is
+	 * revalidated through the codec; a semantically invalid or scope-colliding
+	 * record marks its scope corrupt so admission fences instead of allocating.
+	 */
+	private replayAdmissionsSync(): Map<string, AdmissionIndexEntry> {
+		const index = new Map<string, AdmissionIndexEntry>();
+		const records = this.eventLog.replaySync((line, lineIndex) => parseAdmitLine(line, lineIndex));
+		for (const raw of records) {
+			if (raw === undefined) continue;
+			let record: RlmLedgerAdmitRecord;
+			try {
+				record = this.options.codec.validateAdmitRecord(raw);
+			} catch {
+				// A stored record the validator rejects is corruption: mark its
+				// scope corrupt so the scope fences rather than silently dropping.
+				const key = admissionScopeKey(
+					stringOr(raw.authorityId),
+					stringOr(raw.parentSessionId),
+					stringOr(raw.requestId),
+				);
+				index.set(key, { record: undefined as never, corrupt: true });
+				continue;
+			}
+			const key = admissionScopeKey(record.authorityId, record.parentSessionId, record.requestId);
+			const existing = index.get(key);
+			if (existing) {
+				if (existing.corrupt) continue;
+				// Contradictory duplicate for the same scope: fence (§4.2 step 3).
+				if (existing.record.receiptDigest !== record.receiptDigest) {
+					index.set(key, { record: undefined as never, corrupt: true });
+				}
+				// Byte-identical duplicate is idempotent: keep the first.
+				continue;
+			}
+			index.set(key, { record, corrupt: false });
+		}
+		return index;
+	}
+}
+
+interface AdmissionIndexEntry {
+	record: RlmLedgerAdmitRecord;
+	corrupt: boolean;
+}
+
+function stringOr(value: unknown): string {
+	return typeof value === "string" ? value : "";
+}
+
+/**
+ * Parse one ledger line for the V2 admission reader. Returns a raw v2 admit
+ * object (validated deeply by the codec later), or undefined for v1/meta and
+ * non-admit v2 ops. An interior line that claims to be a v2 admit but lacks the
+ * scoped-key identity strings fails closed (throws) — consistent with the
+ * EventLog interior-malformed rule.
+ */
+function parseAdmitLine(line: string, index: number): RlmLedgerAdmitRawLine | undefined {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(line);
+	} catch (error) {
+		throw new Error(
+			`Malformed RLM ledger line ${index + 1}: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+	if (!parsed || typeof parsed !== "object") {
+		throw new Error(`Malformed RLM ledger line ${index + 1}: not an object`);
+	}
+	const record = parsed as { v?: unknown; op?: unknown };
+	if (record.v !== RLM_LEDGER_ADMIT_VERSION) return undefined;
+	if (record.op !== RLM_LEDGER_ADMIT_OP) return undefined;
+	const raw = parsed as RlmLedgerAdmitRawLine;
+	if (
+		typeof raw.authorityId !== "string" ||
+		typeof raw.parentSessionId !== "string" ||
+		typeof raw.requestId !== "string" ||
+		typeof raw.receiptDigest !== "string"
+	) {
+		throw new Error(`Malformed RLM ledger line ${index + 1}: v2 admit missing scoped-key identity`);
+	}
+	return raw;
+}
+
+interface RlmLedgerAdmitRawLine {
+	v: number;
+	op: string;
+	authorityId: unknown;
+	parentSessionId: unknown;
+	requestId: unknown;
+	receiptDigest: unknown;
+	[key: string]: unknown;
 }

@@ -285,10 +285,20 @@ describe("rlm spawn ledger", () => {
 			const reader = new RlmSpawnLedger(root, sessionsDir, undefined, (message) => logged.push(message));
 			await expect(reader.edges()).resolves.toEqual([expect.objectContaining({ childId: "sub-11111111" })]);
 			expect(logged.some((message) => message.includes("unknown op"))).toBe(true);
-			// A future major version still fails loudly.
+			// Workflow V2 Slice 3 shares this file: v:2 composite-admission records
+			// coexist with v1 topology and are TOLERATED (skipped) by the v1 reader
+			// rather than failing the whole ledger. See RlmCompositeAdmissionLedger.
 			writeFileSync(
 				ledger.ledgerPath,
 				`${readFileSync(ledger.ledgerPath, "utf8")}${JSON.stringify({ v: 2, op: "spawn", at: "2026-01-01T00:00:00.000Z" })}\n`,
+			);
+			await expect(new RlmSpawnLedger(root, sessionsDir).edges()).resolves.toEqual([
+				expect.objectContaining({ childId: "sub-11111111" }),
+			]);
+			// A genuinely unsupported future major version still fails loudly.
+			writeFileSync(
+				ledger.ledgerPath,
+				`${readFileSync(ledger.ledgerPath, "utf8")}${JSON.stringify({ v: 3, op: "spawn", at: "2026-01-01T00:00:00.000Z" })}\n`,
 			);
 			await expect(new RlmSpawnLedger(root, sessionsDir).edges()).rejects.toThrow("missing v/at");
 		} finally {
