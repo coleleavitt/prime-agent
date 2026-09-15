@@ -198,6 +198,36 @@ describe("Workflow V2 strict closed wire codecs", () => {
 			}),
 		).toThrow("UTF-8");
 	});
+	it("rejects every invalid definition graph and inconsistent node budget through all definition entry points", () => {
+		const node = definition().nodes[0];
+		const second = { ...node, nodeId: "n2" };
+		const invalid = [
+			{ ...definition(), nodes: [node, { ...second, nodeId: "n1" }] },
+			{ ...definition(), nodes: [{ ...node, dependsOn: [{ nodeId: "n1", require: "accepted" }] }] },
+			{ ...definition(), nodes: [{ ...node, dependsOn: [{ nodeId: "missing", require: "accepted" }] }] },
+			{
+				...definition(),
+				nodes: [
+					{ ...node, dependsOn: [{ nodeId: "n2", require: "accepted" }] },
+					{ ...second, dependsOn: [{ nodeId: "n1", require: "accepted" }] },
+				],
+			},
+			{ ...definition(), outputs: ["missing"] },
+			{ ...definition(), budget: { ...definition().budget, maxTotalTokens: 9 } },
+		];
+		for (const value of invalid) {
+			expect(() => decodeWorkflowV2Definition(value)).toThrow();
+			for (const action of ["validate", "create"])
+				expect(() =>
+					decodeWorkflowV2PublicRequest({
+						protocol: "prime.workflow.request/v2",
+						requestId: "r",
+						action,
+						definition: value,
+					}),
+				).toThrow();
+		}
+	});
 	it("checks public errors, fixed capability features, and canonical request digests", () => {
 		const error = {
 			protocol: "prime.workflow.error/v2",

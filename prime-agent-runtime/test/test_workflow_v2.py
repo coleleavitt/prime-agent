@@ -59,6 +59,13 @@ class WorkflowV2Test(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(workflow_v2.WorkflowV2WireError):
             await workflow_v2.request(request=value)
 
+    async def test_budget_must_cover_each_node_attempt(self):
+        for action in ("validate", "create"):
+            bad=definition(); bad["budget"]["maxTotalTokens"]=9
+            request={"protocol":workflow_v2.REQUEST_PROTOCOL,"requestId":"r","action":action,"definition":bad}
+            with self.assertRaises(workflow_v2.WorkflowV2WireError):
+                await workflow_v2.request(request=request)
+
     async def test_non_ok_host_reply_is_unavailable_not_fallback(self):
         with patch.object(repl,"host_request",AsyncMock(return_value={"status":"error","error":"disabled"})):
             with self.assertRaises(workflow_v2.CapabilityUnavailable):

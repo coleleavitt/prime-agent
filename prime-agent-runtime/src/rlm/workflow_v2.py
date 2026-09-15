@@ -181,6 +181,8 @@ def _validate_definition_semantics(definition: dict[str, Any]) -> None:
         if node["nodeId"] in dependencies or not set(dependencies) <= known:
             _fail(f"$.definition.nodes[{index}].dependsOn", "contains a self or unknown dependency")
         edges[node["nodeId"]] = dependencies
+        if definition["budget"]["maxTotalTokens"] < node["maxTokens"]:
+            _fail("$.definition.budget.maxTotalTokens", f"must be at least maxTokens for node {node['nodeId']!r}")
     visiting: set[str] = set()
     visited: set[str] = set()
     def visit(node_id: str) -> None:
