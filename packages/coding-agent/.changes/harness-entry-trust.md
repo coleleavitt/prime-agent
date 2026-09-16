@@ -1,0 +1,2 @@
+- Added trust scores to continual harness entries: an entry a refinement wrote while claiming to fix a recurring failure loses trust when the referee later re-runs that failure and it still happens, gains trust when its observation window closes with nothing refuted, and drops out of the rendered system prompt below the trust threshold while staying fully readable and editable.
+- Fixed continual harness updates dropping entry fields the writer does not model, so trust and any future per-entry state now survive an edit on both the TypeScript and the Python kernel side.

@@ -1,0 +1,1 @@
+- Added an opt-in global failure ledger (`PRIME_AGENT_GLOBAL_LEDGER=1`) so a failure fingerprint first seen in one session still counts towards recurrence in the next, flushed under a cross-process lock and kept out of the baseline a refinement certificate binds.

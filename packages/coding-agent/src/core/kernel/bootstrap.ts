@@ -52,7 +52,7 @@ const REQUIRED_HARNESS_METHODS = [
 	"delete_prompt_note",
 	"record_refinement",
 ];
-const RUNTIME_READY_CHECK = `import inspect; import rlm; from rlm import McpIntegration; import rlm.mcp as mcp; from rlm.harness import HarnessEntry; _harness_methods = ${JSON.stringify(REQUIRED_HARNESS_METHODS)}; assert callable(mcp.list_tools); assert callable(mcp.call_tool); assert hasattr(rlm, 'run'); assert callable(rlm); assert hasattr(rlm, 'rlm'); assert callable(rlm.rlm); assert callable(rlm.host_request); assert callable(rlm.find_models); assert callable(rlm.rlm.find_models); assert hasattr(rlm, 'harness'); assert hasattr(rlm, 'get_harness_state'); assert hasattr(rlm.rlm, 'harness'); assert hasattr(rlm.rlm, 'get_harness_state'); assert all(callable(getattr(_harness, _method, None)) for _harness in (rlm.harness, rlm.rlm.harness) for _method in _harness_methods); assert 'reference' in HarnessEntry.__dataclass_fields__; assert 'scope' in HarnessEntry.__dataclass_fields__; assert 'reference' in inspect.signature(rlm.harness.create_skill).parameters; assert 'reference' in inspect.signature(rlm.harness.update_skill).parameters; assert 'global_' in inspect.signature(rlm.harness.create_memory).parameters; assert 'global_' in inspect.signature(rlm.get_harness_state).parameters; assert not hasattr(rlm, 'background'); assert not hasattr(rlm.rlm, 'background'); from rlm.bash import BashHandle, BashResult; assert callable(rlm.bash); assert all(callable(getattr(BashHandle, _m, None)) for _m in ('tail', 'output', 'poll', 'kill')); assert {'exit_code', 'output', 'duration'} <= set(BashResult.__dataclass_fields__); import rlm.repl as _repl; assert callable(_repl.main); assert callable(_repl.emit); assert callable(_repl.host_request); assert callable(_repl.is_active); assert _repl.PROTOCOL_VERSION == 3; assert callable(rlm.emit); assert not hasattr(rlm, 'HOST_COMM_TARGET'); assert not hasattr(mcp, 'install_shutdown_hook')`;
+const RUNTIME_READY_CHECK = `import inspect; import rlm; from rlm import McpIntegration; import rlm.mcp as mcp; from rlm.harness import HarnessEntry; _harness_methods = ${JSON.stringify(REQUIRED_HARNESS_METHODS)}; assert callable(mcp.list_tools); assert callable(mcp.call_tool); assert hasattr(rlm, 'run'); assert callable(rlm); assert hasattr(rlm, 'rlm'); assert callable(rlm.rlm); assert callable(rlm.host_request); assert callable(rlm.find_models); assert callable(rlm.rlm.find_models); assert hasattr(rlm, 'harness'); assert callable(rlm.toolforge.publish); assert callable(rlm.rlm.toolforge.publish); assert hasattr(rlm, 'get_harness_state'); assert hasattr(rlm.rlm, 'harness'); assert hasattr(rlm.rlm, 'get_harness_state'); assert all(callable(getattr(_harness, _method, None)) for _harness in (rlm.harness, rlm.rlm.harness) for _method in _harness_methods); assert 'reference' in HarnessEntry.__dataclass_fields__; assert 'scope' in HarnessEntry.__dataclass_fields__; assert 'reference' in inspect.signature(rlm.harness.create_skill).parameters; assert 'reference' in inspect.signature(rlm.harness.update_skill).parameters; assert 'global_' in inspect.signature(rlm.harness.create_memory).parameters; assert 'global_' in inspect.signature(rlm.get_harness_state).parameters; assert not hasattr(rlm, 'background'); assert not hasattr(rlm.rlm, 'background'); from rlm.bash import BashHandle, BashResult; assert callable(rlm.bash); assert all(callable(getattr(BashHandle, _m, None)) for _m in ('tail', 'output', 'poll', 'kill')); assert {'exit_code', 'output', 'duration'} <= set(BashResult.__dataclass_fields__); import rlm.repl as _repl; assert callable(_repl.main); assert callable(_repl.emit); assert callable(_repl.host_request); assert callable(_repl.is_active); assert _repl.PROTOCOL_VERSION == 3; assert callable(rlm.emit); assert not hasattr(rlm, 'HOST_COMM_TARGET'); assert not hasattr(mcp, 'install_shutdown_hook')`;
 const BOOTSTRAP_VERSION_FILE = ".bootstrap-version";
 const BOOTSTRAP_LOCK_NAME = ".bootstrap.lock";
 const BOOTSTRAP_LOCK_RETRY_MS = 100;
@@ -1294,6 +1294,125 @@ async function ensureKernelPythonUncached(
 	reportProgress(options, "✓ ready");
 	options.onResolved?.("bootstrapped");
 	return python;
+}
+
+/** Interpreter of the managed kernel venv (or the override) when one is already on disk. */
+function resolveInstalledKernelPython(): { python?: string; venv: string } {
+	const venv = getKernelVenvDir();
+	const override = process.env.PRIME_AGENT_KERNEL_PYTHON;
+	if (override) {
+		const resolved = path.resolve(expandHome(override));
+		return existsSync(resolved) ? { python: resolved, venv } : { venv };
+	}
+	for (const candidate of [venv, getXdgKernelVenvDir()]) {
+		const python = path.join(candidate, "bin", "python");
+		if (existsSync(python)) return { python, venv: candidate };
+	}
+	return { venv };
+}
+
+export interface PythonSkillPackageInstall {
+	/** Package directory (holding pyproject.toml) to install editable into the kernel venv. */
+	packagePath: string;
+	importName: string;
+	/**
+	 * Runs while the bootstrap lock is held and before the install — the window
+	 * in which a staged package can be renamed into place without racing a
+	 * concurrent `syncPythonSkills`. A throw aborts the install.
+	 */
+	beforeInstall?: () => Promise<void>;
+	onProgress?: KernelBootstrapProgressHandler;
+	signal?: AbortSignal;
+}
+
+export interface PythonSkillPackageInstallResult {
+	installed: boolean;
+	detail: string;
+	durationMs: number;
+	python?: string;
+}
+
+export type PythonSkillPackageInstaller = (
+	request: PythonSkillPackageInstall,
+) => Promise<PythonSkillPackageInstallResult>;
+
+async function recordInstalledPythonSkill(venv: string, skill: BootstrapPythonSkill): Promise<void> {
+	const version = await readBootstrapVersion(venv);
+	// A manifest that does not describe the current runtime is about to be rebuilt
+	// wholesale by ensureKernelPython; writing into it would only claim a state the
+	// venv is not in.
+	if (!bootstrapBaseVersionCurrent(version, await resolveRuntimeIdentity())) return;
+	await writeBootstrapVersion(
+		venv,
+		version?.runtime ?? (await resolveRuntimeIdentity()),
+		mergeInstalledPythonSkills(version?.pythonSkills ?? [], [skill]),
+	);
+}
+
+/**
+ * Install one package into the live kernel venv without rebuilding it: the same
+ * `uv pip install --editable` `syncPythonSkills` runs, under the same bootstrap
+ * lock, recorded in the same manifest so the next start does not reinstall it.
+ *
+ * Never throws for an environment it cannot fix (no interpreter yet, no uv, a
+ * package uv refuses): those come back `installed: false` with a detail, because
+ * the package is on disk either way and the next kernel start installs it. A
+ * throw from `beforeInstall` does propagate — that is the caller's own step.
+ */
+export async function installPythonSkillPackage(
+	request: PythonSkillPackageInstall,
+): Promise<PythonSkillPackageInstallResult> {
+	const started = Date.now();
+	const elapsed = () => Date.now() - started;
+	const { python, venv } = resolveInstalledKernelPython();
+	const options: EnsureKernelPythonOptions = request.onProgress ? { onProgress: request.onProgress } : {};
+	if (request.signal?.aborted) throw new Error("aborted before the kernel skill install");
+	const releaseLock = await acquireBootstrapLock(venv, options);
+	try {
+		if (request.signal?.aborted) throw new Error("aborted before the kernel skill install");
+		await request.beforeInstall?.();
+		if (!python) {
+			return {
+				installed: false,
+				detail: "no kernel python on disk; the package installs at the next kernel start",
+				durationMs: elapsed(),
+			};
+		}
+		const packagePath = path.resolve(request.packagePath);
+		const pyprojectPath = path.join(packagePath, "pyproject.toml");
+		const skill: BootstrapPythonSkill = {
+			importName: request.importName,
+			packagePath,
+			pyprojectPath,
+			pyprojectHash: fileContentHash(pyprojectPath),
+		};
+		let uv: string;
+		try {
+			uv = await ensureUv(options);
+		} catch (error) {
+			return { installed: false, detail: `uv unavailable: ${errorMessage(error)}`, durationMs: elapsed(), python };
+		}
+		try {
+			await run(uv, ["pip", "install", "--python", python, ...formatPythonSkillInstallArgs(skill)]);
+		} catch (error) {
+			return {
+				installed: false,
+				detail: `editable install failed: ${errorMessage(error)}`,
+				durationMs: elapsed(),
+				python,
+			};
+		}
+		await recordInstalledPythonSkill(venv, skill).catch((error: unknown) => {
+			bootstrapLog.warn("kernel skill manifest update failed", {
+				venv,
+				importName: skill.importName,
+				error: errorMessage(error),
+			});
+		});
+		return { installed: true, detail: `editable install of ${packagePath}`, durationMs: elapsed(), python };
+	} finally {
+		await releaseLock().catch(() => undefined);
+	}
 }
 
 export function ensureKernelPython(options: EnsureKernelPythonOptions = {}): Promise<string> {

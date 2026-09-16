@@ -27,6 +27,7 @@ import {
 import type {
 	Api,
 	AssistantMessage,
+	Context,
 	ImageContent,
 	Model,
 	ServiceTier,
@@ -37,6 +38,7 @@ import type {
 import {
 	clampThinkingLevel,
 	cleanupSessionResources,
+	currentSpan,
 	currentTraceContext,
 	getLogger,
 	getSupportedThinkingLevels,
@@ -175,6 +177,7 @@ import {
 } from "./goals.js";
 import type { HostRequestHandlers, KernelSentAgentMessage } from "./kernel/index.js";
 import { type RestoreResult, snapshotPathIn } from "./kernel/state-snapshot.js";
+import { FAILURE_FINGERPRINT_ATTR } from "./learning-index.js";
 import { runWithLogContext } from "./logging.js";
 
 const runAgentLog = getLogger("coding-agent.run-agent");
@@ -214,6 +217,7 @@ import { RavoArchive } from "./ravo/archive.js";
 import {
 	assistedRavoBindingMatches,
 	assistedRavoCertificateMatches,
+	DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS,
 	emptyAssistedRavoState,
 } from "./ravo/authority.js";
 import { canonicalJson } from "./ravo/canonical-json.js";
@@ -221,9 +225,14 @@ import {
 	emptyFailureLedger,
 	extractFailures,
 	type FailureLedger,
+	type FailureObservation,
 	findProvisionalRegressions,
+	fingerprintToolResultText,
 	formatRecurrenceRefineInstructions,
 	formatRegressionRefineInstructions,
+	globalFailureLedgerEnabled,
+	mergeFailureObservations,
+	observationOrdinal,
 	type ProvisionalRegression,
 	recordProvisionalRegressions,
 	recurringFailures,
@@ -244,6 +253,7 @@ import {
 	getRefinementHistory,
 	type HarnessState,
 	inferRefinementResultScope,
+	isRollbackableRefinement,
 	loadGlobalRefinementHistory,
 	loadHarnessState,
 	mergeHarnessStates,
@@ -257,9 +267,12 @@ import {
 	type RefinementResult,
 	ravoEnabled,
 	ravoEvaluateProposal,
+	refinementBaselineView,
 	rejectedRefinementResult,
 	reviewAutoRefine,
 	saveHarnessState,
+	settleHarnessTrust,
+	withHarnessStateLock,
 } from "./refinement/index.js";
 import { screenRefinementProposal } from "./refinement/skill-dry-run.js";
 import { resolveConfigValue } from "./resolve-config-value.js";
@@ -1270,6 +1283,28 @@ function attributeChildUsage(parentUsage: Usage, childUsage: Usage): void {
 	parentUsage.totalTokens = parentContextTokens;
 }
 
+export function computeProviderRequestContext(
+	context: AgentContext,
+	baseSystemPrompt: string,
+	baseSystemPromptOptions: BuildSystemPromptOptions,
+	supportsTools: boolean,
+): Pick<Context, "systemPrompt" | "tools"> {
+	if (supportsTools) {
+		return { systemPrompt: context.systemPrompt, tools: context.tools };
+	}
+
+	const textOnlyBasePrompt = buildSystemPrompt({
+		...baseSystemPromptOptions,
+		selectedTools: [],
+		toolSnippets: {},
+		promptGuidelines: [],
+	});
+	const systemPrompt = context.systemPrompt.includes(baseSystemPrompt)
+		? context.systemPrompt.replace(baseSystemPrompt, () => textOnlyBasePrompt)
+		: textOnlyBasePrompt;
+	return { systemPrompt, tools: [] };
+}
+
 export class AgentSession {
 	readonly agent: Agent;
 	readonly sessionManager: SessionManager;
@@ -1466,6 +1501,8 @@ export class AgentSession {
 	private _failureLedger: FailureLedger | undefined;
 	private _failureLedgerDirty = false;
 	private _failureLedgerPendingRegressions: { regressions: ProvisionalRegression[]; turn: number }[] = [];
+	private _globalFailureLedger: FailureLedger | undefined;
+	private _globalFailureLedgerPending: FailureObservation[] = [];
 	private readonly _failureRefineTriggered = new Set<string>();
 	private _autoRefineBranchVersion = 0;
 	private _autoRefineReviewAbort?: AbortController;
@@ -1493,6 +1530,7 @@ export class AgentSession {
 		this._cwd = config.cwd;
 		this._agentDir = config.agentDir;
 		this._modelRegistry = config.modelRegistry;
+		this.agent.getRequestContext = (context, model) => this._getProviderRequestContext(context, model);
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._allowedToolNames = config.allowedToolNames ? new Set(config.allowedToolNames) : undefined;
@@ -1747,6 +1785,20 @@ export class AgentSession {
 		};
 
 		this.agent.afterToolCall = async ({ toolCall, args, result, isError }) => {
+			// Stamp the ledger's fingerprint onto the open `tool.execute` span.
+			//
+			// This hook is the only one that runs inside that span, so it is the
+			// one place the two identities can be made the same string without
+			// packages/agent importing from coding-agent. Before this, no producer
+			// anywhere wrote `failure.fingerprint` -- 0 of 157,374 span_end rows --
+			// so the learning index's treated cohort could never match a span and
+			// was empty by construction.
+			//
+			// It must run before the tool_result early return: whether an extension
+			// happens to be listening has nothing to do with whether the failure
+			// should be measurable.
+			this._tagFailureFingerprintOnCurrentSpan(toolCall.name, result.content, isError);
+
 			const runner = this._extensionRunner;
 			if (!runner.hasHandlers("tool_result")) {
 				return undefined;
@@ -4738,6 +4790,18 @@ export class AgentSession {
 			}
 		}
 		return Array.from(unique);
+	}
+
+	private _getProviderRequestContext(
+		context: AgentContext,
+		model: Model<any>,
+	): Pick<Context, "systemPrompt" | "tools"> {
+		return computeProviderRequestContext(
+			context,
+			this._baseSystemPrompt,
+			this._baseSystemPromptOptions,
+			this._modelRegistry.supportsTools(model.provider),
+		);
 	}
 
 	private _rebuildSystemPrompt(toolNames: string[]): string {
@@ -8350,6 +8414,12 @@ export class AgentSession {
 	 * skip the auto-refine reviewer and cooldown (they ride the refine.run
 	 * channel) and are deduped per fingerprint per session. Best effort: the
 	 * ledger must never break the agent loop.
+	 *
+	 * With `PRIME_AGENT_GLOBAL_LEDGER=1` the same observations are also folded
+	 * into the global ledger, and recurrence is judged there instead: the local
+	 * ledger stays a per-session record (it owns the scan cursor), while the
+	 * global one is what lets a fingerprint first seen in an earlier session
+	 * cross the threshold here.
 	 */
 	private _observeFailuresAtTurnBoundary(): void {
 		try {
@@ -8370,6 +8440,16 @@ export class AgentSession {
 			const updated = updateFailureLedger(ledger, observations, { scannedThroughEntryIndex: messages.length });
 			this._failureLedger = updated.ledger;
 			this._failureLedgerDirty = true;
+
+			let effectiveLedger = updated.ledger;
+			let newlyRecurring = updated.newlyRecurring;
+			if (globalFailureLedgerEnabled()) {
+				const merged = mergeFailureObservations(this._loadGlobalFailureLedger(), observations);
+				this._globalFailureLedger = merged.ledger;
+				this._globalFailureLedgerPending.push(...observations);
+				effectiveLedger = merged.ledger;
+				newlyRecurring = merged.newlyRecurring;
+			}
 
 			const recurredIds = [...new Set(observations.map((observation) => observation.fingerprint.id))];
 			const regressions = findProvisionalRegressions(
@@ -8393,13 +8473,13 @@ export class AgentSession {
 					for (const id of regression.fingerprints) this._failureRefineTriggered.add(`regression:${id}`);
 				}
 				const regressedIds = new Set(regressed.flatMap((regression) => regression.fingerprints));
-				const records = Object.values(updated.ledger.failures).filter((record) =>
+				const records = Object.values(effectiveLedger.failures).filter((record) =>
 					regressedIds.has(record.fingerprint.id),
 				);
 				this._queueFailureTriggeredRefine(formatRegressionRefineInstructions(regressed, records));
 				return;
 			}
-			const recurring = updated.newlyRecurring.filter(
+			const recurring = newlyRecurring.filter(
 				(record) => !this._failureRefineTriggered.has(`recurrence:${record.fingerprint.id}`),
 			);
 			if (recurring.length === 0) return;
@@ -8424,6 +8504,65 @@ export class AgentSession {
 	}
 
 	/**
+	 * The ledger the RAVO gate judges recurrence against. With the global ledger
+	 * on it is the cross-session one, so a fingerprint carried in from an earlier
+	 * session still becomes an opponent the proposal has to address.
+	 */
+	private _recurringFailureLedger(baselineState: HarnessState): FailureLedger {
+		if (globalFailureLedgerEnabled()) return this._loadGlobalFailureLedger();
+		return baselineState.failures ?? emptyFailureLedger();
+	}
+
+	/**
+	 * Attach the failure fingerprint to whatever span is open, when the result is one.
+	 *
+	 * Never throws and never opens a span of its own: a diagnostic that can fail
+	 * the tool call it describes is worse than no diagnostic. `setAttributes` is
+	 * a no-op once the span has ended, which is the right behaviour here.
+	 */
+	private _tagFailureFingerprintOnCurrentSpan(
+		toolName: string | undefined,
+		content: readonly { type: string; text?: string }[],
+		isError: boolean,
+	): void {
+		try {
+			const span = currentSpan();
+			if (!span) return;
+			const text = content
+				.filter((part) => part.type === "text" && typeof part.text === "string")
+				.map((part) => part.text ?? "")
+				.join("\n");
+			const fingerprint = fingerprintToolResultText(toolName, text, isError);
+			if (!fingerprint) return;
+			span.setAttributes({ [FAILURE_FINGERPRINT_ATTR]: fingerprint.id });
+		} catch {
+			// Tracing must never fail the execution that produced it.
+		}
+	}
+
+	/**
+	 * The durable ordinal trust windows and provisional regressions are measured in.
+	 *
+	 * Deliberately the *global* ledger even when the flag is off. With the flag
+	 * off nothing advances it, so a window simply never reaches its settle
+	 * point and no trust moves -- which is the fail-closed direction. Falling
+	 * back to the per-session assistant turn would silently reintroduce the bug
+	 * this replaces.
+	 */
+	private _durableObservationOrdinal(): number {
+		return observationOrdinal(this._loadGlobalFailureLedger());
+	}
+
+	/** The cross-session ledger, read once per session and kept current by each flush. */
+	private _loadGlobalFailureLedger(): FailureLedger {
+		if (!this._globalFailureLedger) {
+			this._globalFailureLedger =
+				loadHarnessState(getGlobalHarnessStateDir(), "global").failures ?? emptyFailureLedger();
+		}
+		return this._globalFailureLedger;
+	}
+
+	/**
 	 * Persist the in-memory ledger (and any recorded provisional regressions)
 	 * into the LOCAL harness state. Skipped while a refine plan or apply is in
 	 * flight: the RAVO certificate binds the baseline state digest, so a write
@@ -8431,8 +8570,9 @@ export class AgentSession {
 	 * The in-memory ledger stays authoritative and is flushed at the next boundary.
 	 */
 	private _flushFailureLedger(): void {
-		if (!this._failureLedgerDirty || !this._failureLedger) return;
 		if (this._refineInFlight || this._refinePlanInFlight || this._serializedPlanInFlight) return;
+		this._flushGlobalFailureLedger();
+		if (!this._failureLedgerDirty || !this._failureLedger) return;
 		const localHarnessStateDir = this._localHarnessStateDir();
 		if (!localHarnessStateDir) return;
 		try {
@@ -8448,6 +8588,39 @@ export class AgentSession {
 			this._failureLedgerDirty = false;
 		} catch {
 			// Leave the ledger dirty; the next boundary retries.
+		}
+	}
+
+	/**
+	 * Fold this session's not-yet-flushed observations into the GLOBAL failure
+	 * ledger so a fingerprint observed here still counts in the next session.
+	 * Read-modify-write under the harness state lock: two processes flushing at
+	 * once serialize, and neither loses the other's records. The pending list is
+	 * only cleared once the write lands, so a failed flush retries at the next
+	 * boundary instead of dropping observations.
+	 */
+	private _flushGlobalFailureLedger(): void {
+		if (!globalFailureLedgerEnabled() || this._globalFailureLedgerPending.length === 0) return;
+		const pending = this._globalFailureLedgerPending;
+		const globalHarnessStateDir = getGlobalHarnessStateDir();
+		try {
+			withSpan(
+				"harness.ledger.flush",
+				{ "session.id": this.sessionId, "ledger.scope": "global", "ledger.observations": pending.length },
+				(span) => {
+					withHarnessStateLock(globalHarnessStateDir, () => {
+						const state = loadHarnessState(globalHarnessStateDir, "global");
+						const merged = mergeFailureObservations(state.failures ?? emptyFailureLedger(), pending);
+						state.failures = merged.ledger;
+						saveHarnessState(globalHarnessStateDir, state);
+						this._globalFailureLedger = merged.ledger;
+						span.setAttributes({ "ledger.fingerprints": Object.keys(merged.ledger.failures).length });
+					});
+				},
+			);
+			this._globalFailureLedgerPending = [];
+		} catch {
+			// Leave the observations pending; the next boundary retries.
 		}
 	}
 
@@ -9026,7 +9199,9 @@ export class AgentSession {
 				? globalPlanningState
 				: mergeHarnessStates(globalPlanningState, localPlanningState);
 		const history = this._loadRefinementHistory();
-		const rollbackTarget = options.rollbackId ? history.find((item) => item.id === options.rollbackId) : undefined;
+		const rollbackTarget = options.rollbackId
+			? history.find((item) => item.id === options.rollbackId && isRollbackableRefinement(item))
+			: undefined;
 		let baselineScope = rollbackTarget
 			? (inferRefinementResultScope(rollbackTarget) ?? requestedScope)
 			: requestedScope;
@@ -9106,9 +9281,9 @@ export class AgentSession {
 				harnessOverview: formatHarnessStateForPrompt(planningState, {
 					includeIpythonExamples: false,
 				}),
-				baseline: baselineState as unknown as JsonValue,
+				baseline: refinementBaselineView(baselineState),
 				proposalId: plan.id,
-				recurringFailures: recurringFailures(baselineState?.failures ?? emptyFailureLedger()),
+				recurringFailures: recurringFailures(this._recurringFailureLedger(baselineState)),
 				turn: this._failureLedgerTurn(),
 				model,
 				apiKey,
@@ -9187,7 +9362,9 @@ export class AgentSession {
 			const localHarnessStateDir = this._localHarnessStateDir();
 			const requestedScope = options.global ? "global" : "local";
 			const history = this._loadRefinementHistory();
-			const rollbackTarget = options.rollbackId ? history.find((item) => item.id === options.rollbackId) : undefined;
+			const rollbackTarget = options.rollbackId
+				? history.find((item) => item.id === options.rollbackId && isRollbackableRefinement(item))
+				: undefined;
 			let targetScope = plan.rollbackScope ?? requestedScope;
 			let targetHarnessStateDir = targetScope === "global" ? globalHarnessStateDir : localHarnessStateDir;
 			if (targetScope === "local" && rollbackTarget?.harnessStatePath) {
@@ -9216,20 +9393,13 @@ export class AgentSession {
 			// RAVO gate decision (computed during planning): rejected proposals apply
 			// no harness edits, but their consumed evaluation state is persisted so a
 			// proposal id cannot be evaluated twice.
+			const baselineView = refinementBaselineView(state);
 			const bindingMatches =
 				plan.ravo?.authorization !== undefined &&
-				assistedRavoBindingMatches(
-					plan.ravo.authorization,
-					proposal as unknown as JsonValue,
-					state as unknown as JsonValue,
-				);
+				assistedRavoBindingMatches(plan.ravo.authorization, proposal as unknown as JsonValue, baselineView);
 			const authorizationMatches =
 				plan.ravo?.authorization !== undefined &&
-				assistedRavoCertificateMatches(
-					plan.ravo.authorization,
-					proposal as unknown as JsonValue,
-					state as unknown as JsonValue,
-				);
+				assistedRavoCertificateMatches(plan.ravo.authorization, proposal as unknown as JsonValue, baselineView);
 			if (plan.ravo && (plan.ravo.decision !== "commit" || !authorizationMatches)) {
 				const rejectedReport = bindingMatches
 					? plan.ravo
@@ -9246,6 +9416,13 @@ export class AgentSession {
 				if (bindingMatches && plan.ravo.authorization) {
 					state.ravo = plan.ravo.authorization.nextState;
 					rejected.harnessStatePath = saveHarnessState(targetHarnessStateDir, state);
+				}
+				// A rejection is evidence. It used to live only in the session JSONL, so
+				// every negative decision the gate made was discarded at session end and
+				// nothing downstream could ask why a proposal was refused twice.
+				// isRollbackableRefinement keeps it out of the rollback target set.
+				if (targetScope === "global") {
+					appendGlobalRefinement(globalHarnessStateDir, rejected);
 				}
 				let rejectedAuditAppendError: { error: unknown } | undefined;
 				try {
@@ -9266,11 +9443,26 @@ export class AgentSession {
 				}
 				return rejected;
 			}
+			// Trust is settled and claimed in the durable observation ordinal, not in
+			// per-session turns. Settling first means this commit's own claim cannot
+			// be credited by the window it is about to open.
+			const observationTurn = this._durableObservationOrdinal();
+			settleHarnessTrust(state, { turn: observationTurn });
+			const claimedFingerprints = plan.ravo?.addressedFingerprints ?? [];
 			const result = applyRefinementProposal(state, proposal, {
 				id: plan.id,
 				rollbackOf: plan.rollbackOf,
 				scope: targetScope,
 				baselineState: plan.baselineState,
+				...(claimedFingerprints.length > 0
+					? {
+							trustClaim: {
+								claimedFingerprints,
+								committedTurn: observationTurn,
+								untilTurn: observationTurn + DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS,
+							},
+						}
+					: {}),
 			});
 			if (plan.ravo?.authorization && result.appliedEdits.every((edit) => edit.applied)) {
 				state.ravo = plan.ravo.authorization.nextState;

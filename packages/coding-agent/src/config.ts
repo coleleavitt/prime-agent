@@ -558,6 +558,37 @@ export function getAgentLogPath(): string {
 	return join(getLogsDir(), "agent.jsonl");
 }
 
+/** Root of the learning index: roll-ups that outlive the size-rotated structured log. */
+export function getLearningDir(agentDir: string = getAgentDir()): string {
+	return join(agentDir, "learning");
+}
+
+/** Directory of day-partitioned learning roll-ups (`<YYYY-MM-DD>.json`). */
+export function getLearningIndexDir(agentDir: string = getAgentDir()): string {
+	return join(getLearningDir(agentDir), "days");
+}
+
+/** Roll-up file for one sealed UTC day of the learning index. */
+export function getLearningDayPath(day: string, agentDir: string = getAgentDir()): string {
+	return join(getLearningIndexDir(agentDir), `${day}.json`);
+}
+
+/** Root of the resolution index: per-repo joins from a failure fingerprint to the cell that fixed it. */
+export function getResolutionDir(agentDir: string = getAgentDir()): string {
+	return join(agentDir, "resolution");
+}
+
+/**
+ * Store file for one repo's resolutions. The basename keeps it readable; a hash
+ * of the repo path makes it unique so two checkouts that share a directory name
+ * don't share a store.
+ */
+export function getResolutionStorePath(repoDir: string, agentDir: string = getAgentDir()): string {
+	const hash = createHash("sha256").update(repoDir).digest("hex").slice(0, 16);
+	const name = basename(repoDir).replace(/[^A-Za-z0-9._-]/g, "_") || "repo";
+	return join(getResolutionDir(agentDir), `${name}.${hash}.json`);
+}
+
 /**
  * Log file for a daemon. The basename keeps it readable; a hash of the full
  * socket path makes it unique so two sockets that share a basename (e.g.

@@ -1,0 +1,4 @@
+- Added `rlm.toolforge.publish(name, source, doc, exit_test)`, which stages agent-written Python as a real skill package, accepts it only when its exit test fails against an unimplemented stub and passes against the implementation, then installs and binds it so the new name is callable in the same cell and in every later session.
+- Added a toolforge ledger at `~/.prime/agent/toolforge/ledger.json` recording every publish attempt with its double-run gate result, and taught the refinement skill screen to resolve imports against published packages.
+- Fixed Python skills being imported eagerly at kernel start, where a skill that blocked at import time hung startup forever; skills now import on first use and a name that is simply not installed is still reported at startup.
+- Fixed toolforge accepting a skill name such as `bash`, `open` or `json` that would shadow a kernel builtin, a Python builtin or a stdlib module in the REPL namespace.

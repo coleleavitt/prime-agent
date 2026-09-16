@@ -250,7 +250,9 @@ describe("ravo pure core", () => {
 	});
 
 	it("judge prompt lists recurring failures as opponents and demands addressedFingerprints", async () => {
-		const result = await evaluate({ judge: { score: 80, failedCriteria: [], addressedFingerprints: [] } });
+		const result = await evaluate({
+			judge: { verdict: "pass", score: 80, failedCriteria: [], addressedFingerprints: [] },
+		});
 		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
 		const request = completeSimpleMock.mock.calls[0][1] as { systemPrompt: string; messages: PiAi.Message[] };
 		expect(request.systemPrompt).toContain('"addressedFingerprints"');
@@ -276,7 +278,7 @@ describe("ravo pure core", () => {
 			),
 		};
 		const ignored = await evaluate({
-			judge: { score: 90, failedCriteria: [], addressedFingerprints: [] },
+			judge: { verdict: "pass", score: 90, failedCriteria: [], addressedFingerprints: [] },
 			state,
 			turn: 12,
 		});
@@ -288,7 +290,12 @@ describe("ravo pure core", () => {
 		expect(ignored.authorization?.nextState.championId).toBeNull();
 
 		const addressed = await evaluate({
-			judge: { score: 90, failedCriteria: [], addressedFingerprints: [recurringRecord.fingerprint.id, "unknown"] },
+			judge: {
+				verdict: "pass",
+				score: 90,
+				failedCriteria: [],
+				addressedFingerprints: [recurringRecord.fingerprint.id, "unknown"],
+			},
 			state,
 			turn: 12,
 			proposalId: "refine_2",
@@ -308,7 +315,12 @@ describe("ravo pure core", () => {
 
 	it("commit threads the existing lineage and honors a custom observation window", async () => {
 		const first = await evaluate({
-			judge: { score: 70, failedCriteria: [], addressedFingerprints: [recurringRecord.fingerprint.id] },
+			judge: {
+				verdict: "pass",
+				score: 70,
+				failedCriteria: [],
+				addressedFingerprints: [recurringRecord.fingerprint.id],
+			},
 			turn: 4,
 			observationWindowTurns: 3,
 		});
@@ -316,7 +328,12 @@ describe("ravo pure core", () => {
 		const firstState = first.authorization?.nextState;
 		expect(firstState?.lineage.at(-1)?.provisional).toEqual({ committedTurn: 4, untilTurn: 7 });
 		const second = await evaluate({
-			judge: { score: 75, failedCriteria: [], addressedFingerprints: [recurringRecord.fingerprint.id] },
+			judge: {
+				verdict: "pass",
+				score: 75,
+				failedCriteria: [],
+				addressedFingerprints: [recurringRecord.fingerprint.id],
+			},
 			state: firstState,
 			turn: 9,
 			proposalId: "refine_2",
@@ -325,14 +342,24 @@ describe("ravo pure core", () => {
 		expect(second.bestScore).toBe(70);
 		// The deep gate honors RAVO_DEFAULT_CONFIG.deepTolerance (10) under the best score.
 		const slack = await evaluate({
-			judge: { score: 60, failedCriteria: [], addressedFingerprints: [recurringRecord.fingerprint.id] },
+			judge: {
+				verdict: "pass",
+				score: 60,
+				failedCriteria: [],
+				addressedFingerprints: [recurringRecord.fingerprint.id],
+			},
 			state: firstState,
 			turn: 9,
 			proposalId: "refine_slack",
 		});
 		expect(slack.decision).toBe("commit");
 		const starved = await evaluate({
-			judge: { score: 59, failedCriteria: [], addressedFingerprints: [recurringRecord.fingerprint.id] },
+			judge: {
+				verdict: "pass",
+				score: 59,
+				failedCriteria: [],
+				addressedFingerprints: [recurringRecord.fingerprint.id],
+			},
 			state: firstState,
 			turn: 9,
 			proposalId: "refine_starved",

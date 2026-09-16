@@ -10,7 +10,7 @@ from pathlib import Path
 
 from rlm import harness as package_harness
 from rlm import rlm as callable_rlm
-from rlm.harness import HarnessState, get_harness_state
+from rlm.harness import KERNEL_ENTRY_SOURCE, HarnessState, get_harness_state
 
 PYTHON_REFERENCE = {
     "type": "python",
@@ -929,6 +929,198 @@ class HarnessStateTest(unittest.TestCase):
                 state.delete("tool", "tool")
             with self.assertRaisesRegex(ValueError, "unknown harness kind"):
                 state.list("tool")
+
+
+
+class HarnessStateDurabilityTest(unittest.TestCase):
+    """The kernel shares harness_state.json with the TypeScript host, which owns
+    top-level keys this dataclass does not model (`ravo`, `failures`,
+    `trustWindows`). A kernel-side write must round-trip them, and must not be
+    able to leave a truncated file behind."""
+
+    SEED = {
+        "schema": 1,
+        "entries": {"prompt": {}, "memory": {}, "skill": {}, "subagent": {}},
+        "refinements": [],
+        "ravo": {"champions": [{"id": "c1", "claimedFingerprints": ["abc123"]}]},
+        "failures": {
+            "schema": 1,
+            "failures": {"abc123": {"count": 2}},
+            "lastScannedEntryIndex": 7,
+        },
+        "trustWindows": {"abc123": {"clean": 3}},
+    }
+
+    def test_kernel_write_preserves_unmodelled_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "harness_state.json"
+            state_path.write_text(json.dumps(self.SEED), encoding="utf-8")
+
+            state = HarnessState(state_path)
+            state.upsert("memory", title="t", content="c")
+
+            after = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(after["ravo"], self.SEED["ravo"])
+            self.assertEqual(after["failures"], self.SEED["failures"])
+            self.assertEqual(after["trustWindows"], self.SEED["trustWindows"])
+            self.assertTrue(after["entries"]["memory"])
+
+    def test_write_preserves_file_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "harness_state.json"
+            state_path.write_text(json.dumps(self.SEED), encoding="utf-8")
+            os.chmod(state_path, 0o600)
+
+            state = HarnessState(state_path)
+            state.upsert("memory", title="t", content="c")
+
+            self.assertEqual(state_path.stat().st_mode & 0o777, 0o600)
+
+    def test_failed_write_leaves_original_intact(self) -> None:
+        """A crash mid-serialize must not truncate the file or strand a temp."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "harness_state.json"
+            state_path.write_text(json.dumps(self.SEED), encoding="utf-8")
+
+            state = HarnessState(state_path)
+            state.upsert("memory", title="t", content="c")
+            good = state_path.read_text(encoding="utf-8")
+
+            real_dump = json.dump
+
+            def exploding_dump(obj, fp, **kwargs):
+                fp.write('{"schema": 1, "entr')  # partial write, then die
+                raise OSError("disk full")
+
+            json.dump = exploding_dump
+            try:
+                with self.assertRaises(OSError):
+                    state.upsert("memory", title="t2", content="c2")
+            finally:
+                json.dump = real_dump
+
+            self.assertEqual(state_path.read_text(encoding="utf-8"), good)
+            self.assertNotEqual(state_path.stat().st_size, 0)
+            self.assertEqual(list(Path(temp_dir).glob("*.tmp")), [])
+
+    def test_state_with_no_unmodelled_keys_is_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "harness_state.json"
+            state = HarnessState(state_path)
+            state.upsert("memory", title="t", content="c")
+            after = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(set(after.keys()), {"schema", "entries", "refinements"})
+
+    def test_kernel_write_preserves_unmodelled_entry_keys(self) -> None:
+        """Per-entry host keys (`trust`) are dropped by the modelled-field filter
+        unless they are round-tripped the way the top-level keys are."""
+        seed = {
+            "schema": 1,
+            "entries": {
+                "prompt": {},
+                "memory": {},
+                "skill": {
+                    "probe": {
+                        "id": "probe",
+                        "kind": "skill",
+                        "title": "probe",
+                        "content": "body",
+                        "path": "skills/probe",
+                        "scope": "global",
+                        "reference": {"type": "python", "import": "probe", "callable": "run"},
+                        "arguments": {},
+                        "metadata": {},
+                        "source": "refine",
+                        "created_at": "2026-09-14T08:00:00.000Z",
+                        "updated_at": "2026-09-14T08:00:00.000Z",
+                        "version": 1,
+                        "trust": {"score": 20, "updated_at": "2026-09-15T08:00:00.000Z", "events": []},
+                    }
+                },
+                "subagent": {},
+            },
+            "refinements": [],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "harness_state.json"
+            state_path.write_text(json.dumps(seed), encoding="utf-8")
+
+            state = HarnessState(state_path)
+            state.upsert("memory", title="t", content="c")
+
+            after = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                after["entries"]["skill"]["probe"]["trust"],
+                seed["entries"]["skill"]["probe"]["trust"],
+            )
+            self.assertNotIn("extra", after["entries"]["skill"]["probe"])
+            self.assertEqual(after["entries"]["skill"]["probe"]["version"], 1)
+
+    def test_kernel_update_keeps_an_unmodelled_entry_key(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "harness_state.json"
+            state = HarnessState(state_path)
+            state.upsert("memory", title="t", content="c", id="m1")
+            state.entries["memory"]["m1"].extra = {"trust": {"score": 20, "updated_at": "", "events": []}}
+            state.save()
+
+            reopened = HarnessState(state_path)
+            reopened.upsert("memory", title="t2", content="c2", id="m1")
+
+            after = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(after["entries"]["memory"]["m1"]["trust"]["score"], 20)
+            self.assertEqual(after["entries"]["memory"]["m1"]["title"], "t2")
+            self.assertEqual(after["entries"]["memory"]["m1"]["version"], 2)
+
+
+class KernelEntryProvenanceTest(unittest.TestCase):
+    """Everything written here bypasses the RAVO gate; the store must say so.
+
+    26 of 27 entries in the real global store were indistinguishable from
+    host-gated ones because both were stamped "agent", so the ungated share of
+    the memory that reaches every future session could only be inferred.
+    """
+
+    def test_kernel_writes_are_labelled_kernel_not_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "harness_state.json"
+            state = HarnessState(state_path)
+            state.upsert("memory", title="t", content="c", id="m1")
+            state.create_memory("title", "content", id="m2")
+            state.save()
+
+            on_disk = json.loads(state_path.read_text(encoding="utf-8"))["entries"]["memory"]
+            self.assertEqual(on_disk["m1"]["source"], KERNEL_ENTRY_SOURCE)
+            self.assertEqual(on_disk["m2"]["source"], KERNEL_ENTRY_SOURCE)
+            self.assertNotEqual(on_disk["m1"]["source"], "agent")
+
+    def test_an_explicit_source_still_wins(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state = HarnessState(Path(temp_dir) / "harness_state.json")
+            entry = state.upsert("memory", title="t", content="c", id="m1", source="refine")
+            self.assertEqual(entry.source, "refine")
+
+    def test_legacy_rows_are_not_relabelled(self) -> None:
+        """A row with no source predates the split; inventing provenance is worse than none."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "harness_state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "entries": {
+                            "prompt": {},
+                            "memory": {"old": {"id": "old", "kind": "memory", "title": "t", "content": "c"}},
+                            "skill": {},
+                            "subagent": {},
+                        },
+                        "refinements": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state = HarnessState(state_path)
+            self.assertEqual(state.entries["memory"]["old"].source, "agent")
 
 
 if __name__ == "__main__":

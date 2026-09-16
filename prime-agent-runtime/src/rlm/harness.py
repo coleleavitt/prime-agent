@@ -15,12 +15,16 @@ from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
+from uuid import uuid4
 
 HarnessKind = Literal["prompt", "memory", "skill", "subagent"]
 HarnessScope = Literal["local", "global"]
 
 _DEFAULT_FILE_NAME = "harness_state.json"
 _DEFAULT_HARNESS_DIR_NAME = "harness"
+# Written by the kernel, gated by nothing. The host stamps "refine" on entries
+# that cleared the RAVO gate, so the two are distinguishable on disk.
+KERNEL_ENTRY_SOURCE = "kernel"
 _KINDS: tuple[HarnessKind, ...] = ("prompt", "memory", "skill", "subagent")
 _state_cache: dict[tuple[Path, HarnessScope], "HarnessState"] = {}
 
@@ -104,10 +108,21 @@ class HarnessEntry:
     reference: dict[str, Any] = field(default_factory=dict)
     arguments: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
-    source: str = "agent"
+    # Provenance, not decoration. Everything written through this module comes
+    # from inside the kernel and passes through no RAVO screen, no judge, no
+    # referee and no trust window -- unlike a `/refine` commit, which is
+    # stamped "refine" by the host. Labelling them apart is what makes the
+    # ungated share of the global store measurable instead of inferred; it was
+    # 26 of 27 global entries when this was added.
+    source: str = KERNEL_ENTRY_SOURCE
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
     version: int = 1
+    # Per-entry keys this dataclass does not model (`trust`, ...). The host owns
+    # them, exactly as it owns the unmodelled top-level keys in
+    # HarnessState._extra. They are flattened back onto the entry object by
+    # _entry_payload, so `extra` itself is never a key on disk.
+    extra: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
 
 @dataclass
@@ -122,8 +137,22 @@ class RefinementEvent:
     created_at: str = field(default_factory=_now)
 
 
-_ENTRY_FIELDS = {field.name for field in fields(HarnessEntry)}
+_ENTRY_FIELDS = {field.name for field in fields(HarnessEntry)} - {"extra"}
 _REFINEMENT_FIELDS = {field.name for field in fields(RefinementEvent)}
+# Top-level keys HarnessState models. Everything else on disk is host-owned
+# (`ravo`, `failures`, `trustWindows`) and is round-tripped through `_extra`.
+_MODELLED_TOP_LEVEL = {"schema", "entries", "refinements"}
+
+
+def _entry_payload(entry: HarnessEntry) -> dict[str, Any]:
+    """Serialize an entry with its unmodelled host-owned keys flattened back in.
+
+    Modelled fields win: `extra` only ever carries keys this dataclass does not
+    know about, so a stale duplicate there can never shadow a real field.
+    """
+    data = asdict(entry)
+    extra = data.pop("extra", None)
+    return {**extra, **data} if isinstance(extra, dict) and extra else data
 
 
 def _validate_python_skill_reference(reference: dict[str, Any] | None) -> dict[str, Any]:
@@ -166,6 +195,10 @@ class HarnessState:
         self._local_write_error = local_write_error
         self.entries: dict[HarnessKind, dict[str, HarnessEntry]] = {kind: {} for kind in _KINDS}
         self.refinements: list[RefinementEvent] = []
+        # Top-level keys this dataclass does not model (`ravo`, `failures`,
+        # `trustWindows`, ...). The host owns them; the kernel must round-trip them
+        # rather than drop them, or an in-kernel upsert silently deletes host state.
+        self._extra: dict[str, Any] = {}
         self._global_target_state_dir: Path | None = None
         # mtime of the file as of the last load/save, used to detect out-of-process
         # writes (e.g. the host `/refine` command) and avoid clobbering them.
@@ -199,6 +232,7 @@ class HarnessState:
     def load(self) -> "HarnessState":
         if self.file_path is None or not self.file_path.exists():
             self._loaded_mtime = None
+            self._extra = {}
             return self
         mtime = self._disk_mtime()
         try:
@@ -212,6 +246,8 @@ class HarnessState:
         # string; coerce those to an empty object before attribute access.
         if not isinstance(data, dict):
             data = {}
+
+        self._extra = {key: value for key, value in data.items() if key not in _MODELLED_TOP_LEVEL}
 
         entries: dict[HarnessKind, dict[str, HarnessEntry]] = {kind: {} for kind in _KINDS}
         raw_entries = data.get("entries", {})
@@ -234,6 +270,8 @@ class HarnessState:
                         if entry_data.get("scope") not in ("local", "global"):
                             entry_data["scope"] = self.scope
                         if not isinstance(entry_data.get("source"), str):
+                            # Pre-existing rows predate the kernel/refine split;
+                            # relabelling them would invent provenance.
                             entry_data["source"] = "agent"
                         version = entry_data.get("version", 1)
                         if isinstance(version, str):
@@ -250,6 +288,9 @@ class HarnessState:
                             entry_data["arguments"] = {}
                         if not isinstance(entry_data.get("metadata"), dict):
                             entry_data["metadata"] = {}
+                        entry_data["extra"] = {
+                            key: value for key, value in raw_entry.items() if key not in _ENTRY_FIELDS
+                        }
                         entries[kind][str(entry_id)] = HarnessEntry(**entry_data)
         self.entries = entries
 
@@ -288,15 +329,31 @@ class HarnessState:
             return self
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
         data = {
+            **self._extra,
             "schema": 1,
             "entries": {
-                kind: {entry_id: asdict(entry) for entry_id, entry in records.items()}
+                kind: {entry_id: _entry_payload(entry) for entry_id, entry in records.items()}
                 for kind, records in self.entries.items()
             },
             "refinements": [asdict(event) for event in self.refinements],
         }
-        with self.file_path.open("w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        # Write temp + os.replace so a crash mid-write cannot leave a truncated or
+        # zero-byte state file. Mirrors saveHarnessState in core/refinement/refinement.ts.
+        try:
+            mode = self.file_path.stat().st_mode & 0o777
+        except OSError:
+            mode = 0o600
+        tmp = self.file_path.with_name(f"{self.file_path.name}.{os.getpid()}.{uuid4().hex}.tmp")
+        try:
+            with tmp.open("w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.chmod(tmp, mode)
+            os.replace(tmp, self.file_path)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
         self._loaded_mtime = self._disk_mtime()
         return self
 
@@ -311,7 +368,7 @@ class HarnessState:
         reference: dict[str, Any] | None = None,
         arguments: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
-        source: str = "agent",
+        source: str = KERNEL_ENTRY_SOURCE,
         global_: bool = False,
         **kwargs: Any,
     ) -> HarnessEntry:
@@ -353,7 +410,7 @@ class HarnessState:
         reference: dict[str, Any] | None = None,
         arguments: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
-        source: str = "agent",
+        source: str = KERNEL_ENTRY_SOURCE,
     ) -> HarnessEntry:
         # Caller is responsible for syncing from disk first. create()/update() sync
         # once and then call this directly so their existence check and the write are
@@ -446,7 +503,7 @@ class HarnessState:
         reference: dict[str, Any] | None = None,
         arguments: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
-        source: str = "agent",
+        source: str = KERNEL_ENTRY_SOURCE,
         global_: bool = False,
         **kwargs: Any,
     ) -> HarnessEntry:
@@ -493,7 +550,7 @@ class HarnessState:
         reference: dict[str, Any] | None = None,
         arguments: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
-        source: str = "agent",
+        source: str = KERNEL_ENTRY_SOURCE,
         global_: bool = False,
         **kwargs: Any,
     ) -> HarnessEntry:
@@ -776,7 +833,7 @@ class HarnessState:
             "file_path": str(self.file_path),
             "scope": self.scope,
             "entries": {
-                kind: {entry_id: asdict(entry) for entry_id, entry in records.items()}
+                kind: {entry_id: _entry_payload(entry) for entry_id, entry in records.items()}
                 for kind, records in self.entries.items()
             },
             "refinements": [asdict(event) for event in self.refinements],

@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { getKernelVenvDir } from "../kernel/bootstrap.js";
+import { toolforgeSrcRoots } from "../toolforge/ledger.js";
 import { countValidRefinementEdits, type RefinementEdit, type RefinementProposal } from "./refinement.js";
 
 /**
@@ -340,13 +341,22 @@ export function skippedSkillDryRun(proposal: RefinementProposal): SkillDryRunRes
  * that fail the import dry-run. Without a kernel python the dry-run is skipped
  * (never fail-closed), so the count equals countValidRefinementEdits. This is
  * the Rocq S13 `fastDry` instance: a false screen can only cause a rejection.
+ *
+ * Every toolforge-published package root is on the probe's `sys.path`. Without
+ * that, a skill edit naming a module toolforge has just created is screened out
+ * for the window between the promote and the editable install becoming visible
+ * to a fresh interpreter — a rejection of the one thing in this system that
+ * writes new capability, for a reason that is purely about install timing.
  */
 export async function screenRefinementProposal(
 	proposal: RefinementProposal,
-	opts: { signal?: AbortSignal; cwd?: string; timeoutMs?: number } = {},
+	opts: { signal?: AbortSignal; cwd?: string; timeoutMs?: number; sysPath?: readonly string[] } = {},
 ): Promise<{ validEdits: number; dryRun: SkillDryRunResult[] }> {
 	const structural = countValidRefinementEdits(proposal);
 	const pythonPath = resolveKernelPython();
-	const dryRun = pythonPath ? await dryRunSkillEdits(proposal, { pythonPath, ...opts }) : skippedSkillDryRun(proposal);
+	const sysPath = [...(opts.sysPath ?? []), ...toolforgeSrcRoots()];
+	const dryRun = pythonPath
+		? await dryRunSkillEdits(proposal, { pythonPath, ...opts, sysPath })
+		: skippedSkillDryRun(proposal);
 	return { validEdits: screenValidEdits(proposal, structural, dryRun), dryRun };
 }

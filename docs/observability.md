@@ -57,6 +57,8 @@ the span so `grep withSpan`/`start_span` lands on it.
 | `ravo.round`          | `ravo.round`, `ravo.phase`, `ravo.outcome`, `ravo.reason` | done | coding-agent `core/ravo/controller.ts` |
 | `ravo.proposal`       | `ravo.round`, `ravo.kind`, `ravo.proposal_id`, `ravo.candidate_tokens` | done | coding-agent `core/ravo/controller.ts` (implement/repair child call) |
 | `ravo.evaluation`     | `ravo.proposal_id`, `ravo.evaluator`, `ravo.evaluator_kind`, `ravo.verdict`, `ravo.certificate_digest` | done | coding-agent `core/ravo/controller.ts` (each evaluator + the commit gate) |
+| `ravo.referee`        | `referee.claimed`, `referee.upheld`, `referee.cleared`, `referee.unverifiable`, `referee.no_evidence` | done | coding-agent `core/ravo/referee-runner.ts` (one per proposal that claims a recurring fingerprint) |
+| `ravo.replay_case`    | `referee.language`, `referee.timeout_ms`, `referee.python`, `referee.outcome`, `referee.exception_class` | done | coding-agent `core/ravo/referee-runner.ts` (the replay-case subprocess; `outcome: unrunnable` fails the gate closed) |
 | `package.install` / `package.remove` / `package.update` / `package.check_updates` | `package.source`, `package.local`, `package.count`, `package.updates` | done | coding-agent `core/package-manager.ts` |
 | `package.command`     | `command` (program + first arg), `exit_code`, `signal` | done | coding-agent `core/package-manager.ts`, `package-manager-cli.ts` (nested git/npm child processes) |
 | `update.check`        | `update.current`, `update.latest`, `update.available`, `http.status` | done | coding-agent `utils/version-check.ts` |
@@ -64,6 +66,9 @@ the span so `grep withSpan`/`start_span` lands on it.
 | `tools.download` / `tools.release_lookup` | `tool`, `version`, `bytes`, `tool.repo`, `http.status` | done | coding-agent `utils/tools-manager.ts` |
 | `historian.run` / `historian.subagent` / `historian.validate` / `historian.publish` | `historian.session_id`, `historian.chunk_start/end`, `historian.model`, `historian.status` (run), `historian.pass`, `historian.outcome` (subagent), `historian.valid`, `historian.compartments`, `historian.facts`, `historian.failure_reason` | done | Magic Context `packages/pi-plugin/src/pi-historian-runner.ts` (via the optional pi-trace bridge) |
 | `auth.refresh` / `auth.catalog` / `auth.route` | `auth.reason`, `auth.account`, `auth.source`, `auth.outcome`, `http.status`, `catalog.models`, `catalog.cached`, `auth.pool_size`, `auth.selected` | done | anthropic-auth `packages/pi/src/{shared-refresh,index,stream}.ts` (via `trace-bridge.ts`) |
+| `harness.ledger.flush` | `session.id`, `ledger.scope`, `ledger.observations`, `ledger.fingerprints` | done | coding-agent `core/agent-session.ts` (global failure ledger read-modify-write under the cross-process harness state lock; only with `PRIME_AGENT_GLOBAL_LEDGER=1`) |
+| `toolforge.publish`   | `toolforge.name`, `toolforge.import`, `toolforge.status`, `toolforge.installed`, `toolforge.gate_runs`, `toolforge.reason` | done | coding-agent `core/toolforge/publish.ts` (one per `rlm.toolforge.publish` host request; `status: rejected` carries the refusal reason) |
+| `toolforge.gate`      | `toolforge.name`, `toolforge.negative`, `toolforge.positive`, `toolforge.passed` | done | coding-agent `core/toolforge/publish.ts` (the double run; each half spawns a `ravo.replay_case` child, and a run that cannot be performed never passes) |
 
 Supporting pieces:
 

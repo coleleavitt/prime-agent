@@ -45,7 +45,11 @@ const proposal = (addressedFingerprints: string[] = []) => ({
 		},
 	],
 });
+// The deep gate only passes on an explicit pass token: a judge that omits the
+// field abstains, which rejects. These fixtures predate that and mean "judged
+// and passed", so they say so.
 const judgeVerdict = (score: number, failedCriteria: string[] = []) => ({
+	verdict: "pass",
 	score,
 	failedCriteria,
 	addressedFingerprints: [],

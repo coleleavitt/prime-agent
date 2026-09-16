@@ -206,6 +206,23 @@ export const COMMAND_SPECS: readonly CommandSpec[] = [
 			"trace 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
 		],
 	},
+	{
+		path: ["learning"],
+		usage: "learning [--log <path>] [--index <dir>] [--min-n <n>] [--limit <n>] [--no-seal] [--no-chart] [--json]",
+		summary: "Report whether addressed failure fingerprints actually got rarer",
+		description:
+			"Seals complete days of the structured log into a day-partitioned roll-up under ~/.prime/agent/learning, then compares the change in failure rate for fingerprints named in a refinement.committed against every other observed fingerprint. The roll-up is written while the raw log lines still exist, because agent.jsonl rotates by size. The p-value is withheld rather than printed when either cohort is below the minimum size.",
+		options: [
+			"--log <path>   Read this JSONL log instead of the default agent log",
+			"--index <dir>  Read and write roll-ups in this directory",
+			"--min-n <n>    Withhold the p-value below this cohort size (default: 5)",
+			"--limit <n>    Show at most this many fingerprint rows (default: 40)",
+			"--no-seal      Report on the existing index without reading the log",
+			"--no-chart     Skip the ASCII chart",
+			"--json         Print the report as JSON",
+		],
+		examples: ["learning", "learning --min-n 10 --json", "learning --no-seal --no-chart"],
+	},
 ];
 
 export const PUBLIC_COMMAND_NAMES = new Set(

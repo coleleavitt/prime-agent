@@ -1,0 +1,2 @@
+- Added a RAVO referee: a recurring failure a refinement claims to have fixed is now re-executed from a recorded replay case in a subprocess, and the claim is rejected when the failure still happens or cannot be checked.
+- Changed the RAVO deep gate to honour the judge's own pass/fail/abstain verdict instead of always passing it.

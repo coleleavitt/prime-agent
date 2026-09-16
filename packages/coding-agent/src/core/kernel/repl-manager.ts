@@ -182,8 +182,20 @@ function forwardKernelTraceEvent(event: Record<string, unknown>): void {
 		if (typeof event.name !== "string" || typeof event.traceId !== "string" || typeof event.spanId !== "string") {
 			return;
 		}
-		if (message === SPAN_END_MSG && fields.status === "error") traceLog.warn(message, fields);
-		else traceLog.info(message, fields);
+		if (message === SPAN_END_MSG && fields.status === "error") {
+			// The Python runtime carries the error text inside `attrs` (trace.py),
+			// but pi-ai's span_end shape puts `error` at the top level (log.ts
+			// reportSpanEnd). Without this hoist every kernel-side error reaches
+			// the log with no error text at all, so `prime-agent trace` shows a
+			// failed span with no reason and any consumer that keys on the error
+			// collapses thousands of distinct kernel and bash failures into two.
+			const attrs = fields.attrs;
+			if (typeof fields.error !== "string" && typeof attrs === "object" && attrs !== null && !Array.isArray(attrs)) {
+				const attrError = (attrs as Record<string, unknown>).error;
+				if (typeof attrError === "string" && attrError) fields.error = attrError;
+			}
+			traceLog.warn(message, fields);
+		} else traceLog.info(message, fields);
 		return;
 	}
 	if (typeof event.traceId !== "string" || typeof event.spanId !== "string") return;

@@ -1,0 +1,1 @@
+- Fixed settings and auth storage being permanently unable to load when a stale regular file sits at the `.lock` path; `proper-lockfile` locks are directories, so a leftover file made every attempt fail with `ENOTDIR` and degraded into a silent "Invalid settings file" warning.

@@ -12,11 +12,16 @@ import {
 import { join } from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
-import { completeSimple } from "@earendil-works/pi-ai";
+import { completeSimple, getLogger } from "@earendil-works/pi-ai";
+import { lockSync } from "proper-lockfile";
 import { getAgentDir } from "../../config.js";
 import { serializeConversation } from "../compaction/utils.js";
 import { convertToLlm } from "../messages.js";
-import { emptyAssistedRavoState, normalizeAssistedRavoState } from "../ravo/authority.js";
+import {
+	DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS,
+	emptyAssistedRavoState,
+	normalizeAssistedRavoState,
+} from "../ravo/authority.js";
 import {
 	emptyFailureLedger,
 	type FailureLedger,
@@ -24,8 +29,23 @@ import {
 	recurringFailures,
 } from "../ravo/failure-ledger.js";
 import type { JsonValue, RavoState } from "../ravo/reducer.js";
+import type { RefereeVerdict } from "../ravo/referee.js";
 import type { CustomEntry } from "../session-manager.js";
+import {
+	emptyEntryTrust,
+	type HarnessEntryTrust,
+	type HarnessTrustAdjustment,
+	type HarnessTrustWindows,
+	harnessEntryRef,
+	isDormantTrust,
+	normalizeEntryTrust,
+	normalizeTrustWindows,
+	openTrustWindow,
+	settleTrustWindows,
+} from "./harness-trust.js";
 import { RAVO_DEFAULT_CONFIG, type RavoGateReport, ravoEnabled, ravoEvaluateProposal } from "./ravo.js";
+
+const log = getLogger("coding-agent.refinement");
 
 export const REFINEMENT_CUSTOM_TYPE = "prime-agent.refinement";
 
@@ -54,6 +74,8 @@ export interface HarnessEntry {
 	created_at: string;
 	updated_at: string;
 	version: number;
+	/** Trust score and its measured history; absent means the default (fully trusted). */
+	trust?: HarnessEntryTrust;
 }
 
 export interface HarnessRefinementEvent {
@@ -73,6 +95,13 @@ export interface HarnessState {
 	ravo?: RavoState<JsonValue>;
 	/** Per-session failure ledger (local scope only); absent until the first observed failure. */
 	failures?: FailureLedger;
+	/**
+	 * Attribution records for gated commits: which entries a refinement wrote
+	 * and which failure fingerprints it claimed. A later upheld referee verdict
+	 * debits trust through these and nothing else. Absent until the first
+	 * commit that claimed a fingerprint.
+	 */
+	trustWindows?: HarnessTrustWindows;
 }
 
 export interface RefinementEdit {
@@ -308,10 +337,17 @@ export function loadHarnessState(
 		// a corrupt or unreadable (or non-object) state file must degrade to empty rather
 		// than throw and break the session. The next saveHarnessState rewrites it cleanly.
 		if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+			log.warn("harness.state.corrupt", { path: statePath, scope, reason: "not-an-object" });
 			return emptyHarnessState();
 		}
 		parsed = raw as Partial<HarnessState>;
-	} catch {
+	} catch (error) {
+		log.warn("harness.state.corrupt", {
+			path: statePath,
+			scope,
+			reason: "unreadable",
+			error: error instanceof Error ? error.message : String(error),
+		});
 		return emptyHarnessState();
 	}
 	const state = emptyHarnessState();
@@ -328,6 +364,9 @@ export function loadHarnessState(
 					reference: objectRecord(entry.reference) ?? {},
 					arguments: objectRecord(entry.arguments) ?? {},
 					metadata: objectRecord(entry.metadata) ?? {},
+					// A malformed trust record must not survive the spread above:
+					// an unreadable score would silently rank or hide an entry.
+					trust: normalizeEntryTrust(entry.trust),
 				};
 			}
 		}
@@ -340,6 +379,9 @@ export function loadHarnessState(
 	}
 	if (parsed.failures !== undefined) {
 		state.failures = normalizeFailureLedger(parsed.failures);
+	}
+	if (parsed.trustWindows !== undefined) {
+		state.trustWindows = normalizeTrustWindows(parsed.trustWindows);
 	}
 	return state;
 }
@@ -388,6 +430,115 @@ export function saveHarnessState(harnessStateDir: string, state: HarnessState): 
 	return statePath;
 }
 
+const HARNESS_STATE_LOCK_STALE_MS = 10_000;
+const HARNESS_STATE_LOCK_ATTEMPTS = 200;
+
+/**
+ * Serialize a read-modify-write of one harness state directory across
+ * processes. `saveHarnessState` is atomic per write, which is enough while a
+ * writer replaces the whole file from state it owns, but folding cross-session
+ * records into the global ledger means read, merge, write back — and two
+ * unsynchronized processes doing that each silently drop the other's records.
+ */
+export function withHarnessStateLock<T>(harnessStateDir: string, fn: () => T): T {
+	mkdirSync(harnessStateDir, { recursive: true });
+	const statePath = getHarnessStatePath(harnessStateDir);
+	const wait = new Int32Array(new SharedArrayBuffer(4));
+	let release: (() => void) | undefined;
+	for (let attempt = 0; attempt < HARNESS_STATE_LOCK_ATTEMPTS; attempt++) {
+		try {
+			release = lockSync(statePath, { realpath: false, stale: HARNESS_STATE_LOCK_STALE_MS });
+			break;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ELOCKED") {
+				throw error;
+			}
+			Atomics.wait(wait, 0, 0, 5);
+		}
+	}
+	if (!release) {
+		throw new Error(`Could not lock harness state: ${statePath}`);
+	}
+	try {
+		return fn();
+	} finally {
+		try {
+			release();
+		} catch {
+			// The lock expires on its own; a failed release must not mask the result.
+		}
+	}
+}
+
+/**
+ * The slice of harness state a RAVO certificate binds to. Deliberately narrower
+ * than the state on disk: the failure ledger is appended to at every turn
+ * boundary — and, once the global ledger is on, by other processes — so binding
+ * it would reject an in-flight `/refine` for a reason that has nothing to do
+ * with the proposal. `refinements` is left out for the same reason. Both sides
+ * of the binding (authorization and apply-time verification) must use this.
+ */
+/** An entry with its trust bookkeeping removed, for comparisons that must ignore it. */
+function withoutTrust(entry: HarnessEntry | undefined): HarnessEntry | undefined {
+	if (!entry || entry.trust === undefined) return entry;
+	const { trust: _trust, ...rest } = entry;
+	return rest;
+}
+
+function entriesWithoutTrust(entries: HarnessState["entries"]): HarnessState["entries"] {
+	const stripped = emptyHarnessState().entries;
+	for (const kind of Object.keys(entries) as RefinementKind[]) {
+		for (const [id, entry] of Object.entries(entries[kind])) {
+			stripped[kind][id] = withoutTrust(entry)!;
+		}
+	}
+	return stripped;
+}
+
+export function refinementBaselineView(state: HarnessState): JsonValue {
+	const view: { schema: number; entries: HarnessState["entries"]; ravo?: RavoState<JsonValue> } = {
+		schema: state.schema,
+		// Trust is settled at turn boundaries and by other processes, exactly
+		// like the failure ledger. Binding it would reject an in-flight /refine
+		// for a reason that has nothing to do with the proposal.
+		entries: entriesWithoutTrust(state.entries),
+	};
+	if (state.ravo !== undefined) {
+		view.ravo = state.ravo;
+	}
+	return view as unknown as JsonValue;
+}
+
+/**
+ * Settle the trust windows this turn and this verdict set can decide, and write
+ * the resulting scores back onto the entries the windows are attributed to.
+ *
+ * The verdicts must come from the referee (`adjudicateFailureClaims`), not from
+ * a judge or a proposal: an `upheld` status means a recorded replay case was
+ * re-executed and the recorded exception recurred. Nothing else debits trust.
+ */
+export function settleHarnessTrust(
+	state: HarnessState,
+	options: { verdicts?: readonly RefereeVerdict[]; turn: number; at?: string },
+): HarnessTrustAdjustment[] {
+	if (state.trustWindows === undefined) {
+		return [];
+	}
+	const settlement = settleTrustWindows(
+		state.trustWindows,
+		(kind, id) => state.entries[kind as RefinementKind]?.[id],
+		options,
+	);
+	state.trustWindows = settlement.windows;
+	for (const adjustment of settlement.adjustments) {
+		const entry = state.entries[adjustment.kind as RefinementKind]?.[adjustment.id];
+		if (entry) {
+			entry.trust = adjustment.trust;
+		}
+	}
+	return settlement.adjustments;
+}
+
 export function getRefinementHistoryPath(harnessStateDir: string = getGlobalHarnessStateDir()): string {
 	return join(harnessStateDir, REFINEMENT_HISTORY_FILE_NAME);
 }
@@ -406,6 +557,17 @@ export function appendGlobalRefinement(harnessStateDir: string, result: Refineme
 	mkdirSync(harnessStateDir, { recursive: true });
 	appendFileSync(historyPath, `${JSON.stringify(result)}\n`, "utf8");
 	return historyPath;
+}
+
+/**
+ * Whether a recorded refinement can be rolled back. A RAVO rejection is appended
+ * to the same history so the gate's negative decisions are durable and auditable,
+ * but it applied no edits, so offering it as a rollback target would plan an undo
+ * of something that never happened. Records with no `ravo` field predate the gate
+ * and stay eligible.
+ */
+export function isRollbackableRefinement(result: RefinementResult): boolean {
+	return result.ravo === undefined || result.ravo.decision === "commit";
 }
 
 export function loadGlobalRefinementHistory(harnessStateDir: string = getGlobalHarnessStateDir()): RefinementResult[] {
@@ -456,6 +618,73 @@ function compactText(text: string, maxLength: number): string {
 	return `${normalized.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 
+function harnessEntryPath(entry: HarnessEntry): string {
+	return typeof entry.path === "string" ? entry.path : "";
+}
+
+function harnessEntryRecency(entry: HarnessEntry): number {
+	const updated = Date.parse(entry.updated_at);
+	if (!Number.isNaN(updated)) {
+		return updated;
+	}
+	const created = Date.parse(entry.created_at);
+	return Number.isNaN(created) ? 0 : created;
+}
+
+/** Newest first, with path then id as deterministic tie-breakers. */
+function compareHarnessRecency(a: HarnessEntry, b: HarnessEntry): number {
+	const recency = harnessEntryRecency(b) - harnessEntryRecency(a);
+	if (recency !== 0) {
+		return recency;
+	}
+	const path = harnessEntryPath(a).localeCompare(harnessEntryPath(b));
+	return path !== 0 ? path : a.id.localeCompare(b.id);
+}
+
+/**
+ * Prompt slots are scarce, and ordering by `[path, title, id]` spends them on
+ * whichever path happens to sort first — repeatedly, because duplicates at one
+ * path sort adjacently. Rank the freshest entry at each path ahead of the
+ * siblings it supersedes, then by recency, so one crowded path cannot hide
+ * every lesson recorded elsewhere.
+ */
+/**
+ * A behavioural rule and an episodic project note are not the same kind of memory and must not
+ * compete for the same slots. Episodic notes are written constantly and are always the most recent,
+ * so a pure recency sort buries every durable preference within a day.
+ *
+ * Measured on the live store: ranking by recency alone put `preferences/version-control` — the only
+ * behavioural rule the refinement pass has ever produced — at rank 8 of 27, below the 6-entry limit,
+ * so it stopped being rendered at all while six fresh `projects/*` notes took its place.
+ */
+function isBehaviouralEntry(entry: HarnessEntry): boolean {
+	const path = harnessEntryPath(entry);
+	return path === "preferences" || path.startsWith("preferences/");
+}
+
+function rankByRecency(entries: readonly HarnessEntry[]): HarnessEntry[] {
+	const ranked = entries.map((entry) => ({ entry, superseded: 1 }));
+	const freshestAtPath = new Map<string, { entry: HarnessEntry; superseded: number }>();
+	for (const candidate of ranked) {
+		const current = freshestAtPath.get(harnessEntryPath(candidate.entry));
+		if (!current || compareHarnessRecency(candidate.entry, current.entry) < 0) {
+			freshestAtPath.set(harnessEntryPath(candidate.entry), candidate);
+		}
+	}
+	for (const current of freshestAtPath.values()) {
+		current.superseded = 0;
+	}
+	return ranked
+		.sort((a, b) => a.superseded - b.superseded || compareHarnessRecency(a.entry, b.entry))
+		.map((item) => item.entry);
+}
+
+function rankHarnessEntriesForPrompt(entries: readonly HarnessEntry[]): HarnessEntry[] {
+	const behavioural = rankByRecency(entries.filter(isBehaviouralEntry));
+	const episodic = rankByRecency(entries.filter((entry) => !isBehaviouralEntry(entry)));
+	return [...behavioural, ...episodic];
+}
+
 export function formatHarnessStateForPrompt(
 	state: HarnessState,
 	options: {
@@ -494,9 +723,13 @@ export function formatHarnessStateForPrompt(
 
 	let totalEntries = 0;
 	for (const kind of Object.keys(state.entries) as RefinementKind[]) {
-		const entries = Object.values(state.entries[kind]).sort((a, b) =>
-			[a.path, a.title, a.id].join("\0").localeCompare([b.path, b.title, b.id].join("\0")),
-		);
+		const all = Object.values(state.entries[kind]);
+		// A dormant entry has been measured wrong often enough to lose its prompt
+		// slot. It is not deleted and stays readable through harness CRUD; it just
+		// stops spending attention. Its existence is still announced, without its
+		// content, so the model can go and look.
+		const dormant = all.filter((entry) => isDormantTrust(entry.trust));
+		const entries = rankHarnessEntriesForPrompt(all.filter((entry) => !isDormantTrust(entry.trust)));
 		totalEntries += entries.length;
 		// Render subagent specs as a task-shaped roster the model can match against — the
 		// analogue of Claude Code's agent-type menu — rather than a bare count. In
@@ -527,6 +760,11 @@ export function formatHarnessStateForPrompt(
 		const overflow = entries.length - Math.min(entries.length, maxEntriesPerKind);
 		if (overflow > 0) {
 			lines.push(`- +${overflow} more ${kind} entries`);
+		}
+		if (dormant.length > 0) {
+			lines.push(
+				`- +${dormant.length} dormant ${kind} entries (below trust threshold; still readable and editable)`,
+			);
 		}
 		lines.push("");
 	}
@@ -791,11 +1029,18 @@ export function applyRefinementProposal(
 		rollbackOf?: string;
 		scope?: HarnessScope;
 		baselineState?: HarnessState;
+		/**
+		 * Fingerprints the gate accepted this commit as addressing. Opens a
+		 * trust window over the entries the proposal writes, which is the only
+		 * thing that makes a later referee verdict attributable to any of them.
+		 */
+		trustClaim?: { claimedFingerprints: readonly string[]; committedTurn: number; untilTurn?: number };
 	},
 ): RefinementResult {
 	const working = structuredClone(state);
 	const appliedEdits: AppliedRefinementEdit[] = [];
 	const proposalModifiedKeys = new Set<string>();
+	const touched: string[] = [];
 	for (const edit of proposal.edits) {
 		const computedId = edit.id ?? (edit.action === "create" ? slug(edit.title ?? edit.kind, edit.kind) : undefined);
 		const id = computedId ?? "";
@@ -817,7 +1062,7 @@ export function applyRefinementProposal(
 		if (
 			options.baselineState &&
 			!proposalModifiedKeys.has(entryKey) &&
-			JSON.stringify(before) !== JSON.stringify(baseline)
+			JSON.stringify(withoutTrust(before)) !== JSON.stringify(withoutTrust(baseline))
 		) {
 			appliedEdits.push({
 				...edit,
@@ -864,8 +1109,13 @@ export function applyRefinementProposal(
 		}
 
 		const createdAt = before?.created_at ?? now();
+		const updatedAt = now();
 		const version = before ? before.version + 1 : 1;
+		// Spread `before` first rather than enumerating its fields: an entry key
+		// this function does not know about (trust, and whatever comes next) has
+		// to survive an update instead of being silently dropped by the rewrite.
 		const after: HarnessEntry = {
+			...before,
 			id,
 			kind: edit.kind,
 			title: edit.title ?? before?.title ?? id,
@@ -877,10 +1127,12 @@ export function applyRefinementProposal(
 			metadata: edit.metadata ?? before?.metadata ?? {},
 			source: "refine",
 			created_at: createdAt,
-			updated_at: now(),
+			updated_at: updatedAt,
 			version,
+			trust: before?.trust ?? emptyEntryTrust(updatedAt),
 		};
 		records[id] = after;
+		touched.push(harnessEntryRef(edit.kind, id));
 		proposalModifiedKeys.add(entryKey);
 		appliedEdits.push({
 			...edit,
@@ -907,6 +1159,16 @@ export function applyRefinementProposal(
 		state.entries = working.entries;
 		state.refinements = working.refinements;
 		state.ravo = working.ravo;
+		const claim = options.trustClaim;
+		if (claim && claim.claimedFingerprints.length > 0 && touched.length > 0) {
+			state.trustWindows = openTrustWindow(state.trustWindows, {
+				proposalId: options.id,
+				touched,
+				claimedFingerprints: claim.claimedFingerprints,
+				committedTurn: claim.committedTurn,
+				untilTurn: claim.untilTurn ?? claim.committedTurn + DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS,
+			});
+		}
 	} else {
 		for (const edit of appliedEdits) {
 			if (edit.applied) {
@@ -1165,6 +1427,7 @@ export async function refineHarness(
 	// Rollbacks are safety actions and bypass RAVO gating; empty proposals are
 	// "no useful edit" outcomes, not candidates.
 	if (!plan.rollbackOf && ravoEnabled() && plan.proposal.edits.length > 0) {
+		const turn = messages.filter((message) => message.role === "assistant").length;
 		const report = await ravoEvaluateProposal(plan.proposal, {
 			state: state.ravo ?? emptyAssistedRavoState(),
 			config: RAVO_DEFAULT_CONFIG,
@@ -1174,7 +1437,7 @@ export async function refineHarness(
 			baseline: state as unknown as JsonValue,
 			proposalId: plan.id,
 			recurringFailures: recurringFailures(state.failures ?? emptyFailureLedger()),
-			turn: messages.filter((message) => message.role === "assistant").length,
+			turn,
 			model,
 			apiKey,
 			headers,
@@ -1191,6 +1454,11 @@ export async function refineHarness(
 			id: plan.id,
 			scope,
 			baselineState: state,
+			trustClaim: {
+				claimedFingerprints: report.addressedFingerprints,
+				committedTurn: turn,
+				untilTurn: turn + DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS,
+			},
 		});
 		if (result.appliedEdits.every((edit) => edit.applied) && report.authorization) {
 			state.ravo = report.authorization.nextState;

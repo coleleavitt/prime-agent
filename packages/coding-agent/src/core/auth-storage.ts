@@ -16,7 +16,7 @@ import {
 	withSpan,
 } from "@earendil-works/pi-ai";
 import { getOAuthApiKey, getOAuthProvider, getOAuthProviders } from "@earendil-works/pi-ai/oauth";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../config.js";
@@ -105,6 +105,27 @@ export interface AuthStorageBackend {
 	withLock<T>(fn: (current: string | undefined) => LockResult<T>): T;
 	withLockAsync<T>(fn: (current: string | undefined) => Promise<LockResult<T>>): Promise<T>;
 }
+/**
+ * `proper-lockfile` implements the lock as a DIRECTORY (mkdir is the atomic primitive) and releases
+ * it with rmdir. A leftover regular FILE at `<path>.lock` therefore wedges the path permanently:
+ * mkdir fails EEXIST, the stale-lock sweep calls rmdir, and that throws ENOTDIR on every attempt
+ * forever. Retrying cannot help because the condition is not contention. Clear it once, then retry.
+ *
+ * Observed in the wild: ~/.pi/agent/settings.json.lock sat as a 0-byte file for three months and
+ * silently disabled settings loading — which in turn disabled the package that supplies OAuth.
+ */
+function clearWrongTypeLockPath(path: string): boolean {
+	const lockPath = `${path}.lock`;
+	try {
+		if (!existsSync(lockPath) || statSync(lockPath).isDirectory()) {
+			return false;
+		}
+		unlinkSync(lockPath);
+		return true;
+	} catch {
+		return false;
+	}
+}
 
 export class FileAuthStorageBackend implements AuthStorageBackend {
 	constructor(private authPath: string = join(getAgentDir(), "auth.json")) {}
@@ -148,6 +169,10 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 					typeof error === "object" && error !== null && "code" in error
 						? String((error as { code?: unknown }).code)
 						: undefined;
+				// A wrong-type lock path is not contention and never resolves on its own.
+				if (code === "ENOTDIR" && clearWrongTypeLockPath(path)) {
+					continue;
+				}
 				if (code !== "ELOCKED" || attempt === maxAttempts) {
 					throw error;
 				}

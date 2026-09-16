@@ -1,4 +1,3 @@
-export * from "./arc-agi-evaluator.js";
 export * from "./archive.js";
 export * from "./authority.js";
 export * from "./context-view.js";
@@ -12,6 +11,7 @@ export type {
 	UnionBoundCertificate,
 } from "./error-budget-ledger.js";
 export { ErrorBudgetLedger } from "./error-budget-ledger.js";
+export * from "./external-evaluator.js";
 export * from "./failure-ledger.js";
 export { probability, Rational } from "./rational.js";
 export * from "./reducer.js";

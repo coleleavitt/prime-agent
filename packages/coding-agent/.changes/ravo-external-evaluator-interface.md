@@ -1,0 +1,3 @@
+- Added `ExternalEvaluatorSuite`, an interface for outcome evaluators that replace the RAVO judge gates, so the RAVO run service no longer contains benchmark-specific code.
+- Moved the ARC-AGI-3 gate wiring (outcome opponents, fast screen, prompt reference, committed-agent persistence) out of the run service and behind the new `createArcEvaluatorSuite` factory.
+- Removed the ARC-AGI-3 evaluator from the `core/ravo` barrel export; import it from `core/ravo/arc-agi-evaluator.js` directly.

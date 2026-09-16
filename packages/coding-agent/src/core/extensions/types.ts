@@ -1219,6 +1219,8 @@ export interface ExtensionAPI {
 export interface ProviderConfig {
 	/** Display name for the provider in UI. */
 	name?: string;
+	/** Whether this provider accepts tool definitions and tool calls. Defaults to true. */
+	supportsTools?: boolean;
 	/** Base URL for the API endpoint. Required when defining models. */
 	baseUrl?: string;
 	/** API key or environment variable name. Required when defining models (unless oauth provided). */

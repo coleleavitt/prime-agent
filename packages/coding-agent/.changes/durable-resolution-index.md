@@ -1,0 +1,1 @@
+- The resolution index now persists to a per-repo store under the agent dir, so the cell that fixed a Python failure is offered back in later sessions instead of only the one that discovered it.

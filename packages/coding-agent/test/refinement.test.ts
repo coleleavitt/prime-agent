@@ -1074,6 +1074,7 @@ describe("harness refinement", () => {
 		completeSimpleMock.mockResolvedValueOnce(
 			assistantText(
 				JSON.stringify({
+					verdict: "pass",
 					score: 80,
 					failedCriteria: [],
 					rationale: "well evidenced",

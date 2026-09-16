@@ -2,6 +2,15 @@ import { canonicalJson, sha256 } from "./canonical-json.js";
 import { FAILURE_OPPONENT_PREFIX } from "./failure-ledger.js";
 import type { JsonValue, RavoGateCertificate, RavoOpponentPool, RavoState } from "./reducer.js";
 import { emptyRavoState, ravoExtendOpponents, ravoMarkProvisional, ravoStep, ravoW } from "./reducer.js";
+import {
+	failureOpponentPassed,
+	isRefereeOpponentId,
+	type RefereeVerdict,
+	refereeDetail,
+	refereeOpponentFingerprint,
+	refereeOpponentId,
+	refereeOpponentPassed,
+} from "./referee.js";
 
 export const ASSISTED_RAVO_CRITERIA = ["evidence", "scope", "minimality", "contracts", "novelty"] as const;
 
@@ -134,10 +143,17 @@ export function ravoArtifactDigest(value: JsonValue): string {
  * in the epsilon gate exactly like the five assisted criteria and are
  * pressured like them when missed. A failure opponent named in
  * `failureOpponents` passes iff the judge listed its fingerprint in
- * `addressedFingerprints` and did not also list it as failed. Failure
+ * `addressedFingerprints`, did not also list it as failed, AND the referee did
+ * not refute the claim by re-running the recorded replay case. Failure
  * opponents already in the pool but absent from `failureOpponents` are
  * dormant (no longer recurring) and pass; their pressured weight is kept so a
  * later recurrence returns to the gate at full strength.
+ *
+ * Each adjudicated fingerprint also joins the pool as `referee:<fingerprint>`
+ * (Rocq `Ravo.v` Section 16: the referee is one more opponent, which can only
+ * tighten the gate). A claim the referee refutes therefore misses two
+ * criteria, which is what carries it past epsilon; an unclaimed or
+ * unadjudicated fingerprint is charged exactly what it was charged before.
  *
  * A commit is provisional: the champion records the claimed fingerprints and
  * an observation window of `observationWindowTurns` turns starting at `turn`
@@ -146,6 +162,13 @@ export function ravoArtifactDigest(value: JsonValue): string {
 export function authorizeAssistedRavo(input: {
 	proposalId: string;
 	artifact: JsonValue;
+	/**
+	 * The state the certificate is bound to. Pass only the slice the proposal
+	 * can be evaluated against (`refinementBaselineView` for harness state):
+	 * every byte in here has to be byte-identical again at apply time, so
+	 * append-only bookkeeping such as the failure ledger must be left out or a
+	 * turn-boundary flush in this or any other process rejects the commit.
+	 */
 	baseline: JsonValue;
 	fastScore: number;
 	observation: AssistedRavoObservation;
@@ -156,6 +179,8 @@ export function authorizeAssistedRavo(input: {
 	deepTolerance?: number;
 	/** Criterion ids (`failure:<fingerprint>`) of currently recurring failures. */
 	failureOpponents?: readonly string[];
+	/** Referee verdicts for the fingerprints the proposal claims (`adjudicateFailureClaims`). */
+	refereeVerdicts?: readonly RefereeVerdict[];
 	/** Turn at which the commit happens; enables the provisional window. */
 	turn?: number;
 	observationWindowTurns?: number;
@@ -166,10 +191,20 @@ export function authorizeAssistedRavo(input: {
 	const addressed = new Set(input.observation.addressedFingerprints ?? []);
 	const failureOpponents = (input.failureOpponents ?? []).filter(isFailureOpponentId);
 	const active = new Set(failureOpponents);
+	const verdicts = new Map((input.refereeVerdicts ?? []).map((verdict) => [verdict.fingerprintId, verdict]));
+	// Only a fingerprint the referee actually adjudicated joins the pool as a
+	// referee opponent; "no evidence" adds nothing that could ever fail.
+	const adjudicated = failureOpponents
+		.map((id) => failureOpponentFingerprint(id) ?? "")
+		.filter((fingerprint) => {
+			const status = verdicts.get(fingerprint)?.status;
+			return status !== undefined && status !== "no_evidence";
+		})
+		.map((fingerprint) => refereeOpponentId(fingerprint));
 	const baseState = input.state ?? emptyAssistedRavoState();
 	const state: RavoState<JsonValue> = {
 		...baseState,
-		opponents: ravoExtendOpponents(baseState.opponents, failureOpponents),
+		opponents: ravoExtendOpponents(baseState.opponents, [...failureOpponents, ...adjudicated]),
 	};
 	const detail = input.observation.detail === undefined ? {} : { detail: input.observation.detail };
 	// A judged miss under a passing deep observation is a "fail"; any non-pass
@@ -191,10 +226,26 @@ export function authorizeAssistedRavo(input: {
 			.map((criterion) => {
 				const fingerprint = failureOpponentFingerprint(criterion.id) ?? "";
 				const dormant = !active.has(criterion.id);
-				const passed = dormant || (addressed.has(fingerprint) && !failed.has(criterion.id));
-				return dormant
-					? { ...judged(criterion.id, true), detail: "dormant: fingerprint is not currently recurring" }
+				const claimed = addressed.has(fingerprint);
+				const verdict = verdicts.get(fingerprint);
+				const passed = dormant || (failureOpponentPassed(claimed, verdict) && !failed.has(criterion.id));
+				if (dormant) {
+					return { ...judged(criterion.id, true), detail: "dormant: fingerprint is not currently recurring" };
+				}
+				return verdict && verdict.status !== "no_evidence"
+					? { ...judged(criterion.id, passed), detail: verdict.detail }
 					: judged(criterion.id, passed);
+			}),
+		...state.opponents.criteria
+			.filter((criterion) => isRefereeOpponentId(criterion.id))
+			.map((criterion) => {
+				const fingerprint = refereeOpponentFingerprint(criterion.id) ?? "";
+				const claimed = addressed.has(fingerprint);
+				const verdict = verdicts.get(fingerprint);
+				return {
+					...judged(criterion.id, refereeOpponentPassed(claimed, verdict)),
+					detail: refereeDetail(verdict, claimed),
+				};
 			}),
 	];
 	const stepped = ravoStep(

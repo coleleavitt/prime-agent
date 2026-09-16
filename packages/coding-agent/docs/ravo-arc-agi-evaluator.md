@@ -103,7 +103,7 @@ Prerequisites:
   (`from ..agent import Agent`) like the shipped templates.
 
 ```ts
-import { createArcAgiEvaluator } from "./core/ravo/index.js";
+import { createArcAgiEvaluator } from "./core/ravo/arc-agi-evaluator.js";
 
 const deep = createArcAgiEvaluator({
 	repoDir: "/tmp/arc-agi-3",

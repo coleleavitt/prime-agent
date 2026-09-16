@@ -8,9 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import trace
+from . import toolforge, trace
 from .bash import BashHandle, BashResult, active_bash_commands, bash
 from .harness import HarnessEntry, HarnessScope, HarnessState, RefinementEvent, get_harness_state
+from .toolforge import ToolforgeRejected, ToolforgeSkill
 
 @dataclass(frozen=True)
 class RLMSpawnHandle:
@@ -233,6 +234,7 @@ _harness_state = _HarnessProxy()
 
 class _RLMCallable:
     harness = _harness_state
+    toolforge = toolforge
     get_harness_state = staticmethod(get_harness_state)
 
     async def run(self, prompt: str, **kwargs: Any) -> RLMSpawnHandle:
@@ -275,6 +277,8 @@ __all__ = [
     "RLMSpawnHandle",
     "RLMSubagent",
     "RefinementEvent",
+    "ToolforgeRejected",
+    "ToolforgeSkill",
     "active_bash_commands",
     "bash",
     "delete_subagent",
@@ -286,6 +290,7 @@ __all__ = [
     "list_subagents",
     "rlm",
     "run",
+    "toolforge",
     "trace",
 ]
 

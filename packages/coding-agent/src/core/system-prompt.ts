@@ -71,6 +71,11 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	const visiblePythonSkillImportNames = getPythonSkillRuntimeInfo(visibleSkills).map((skill) => skill.importName);
 	const hasRefineSkill = visibleSkills.some((skill) => skill.name === REFINE_SKILL_NAME);
 	const genericMcpSection = hasIpython ? formatGenericMcpGuidance(options.genericMcpServers) : "";
+	const harnessOverviewOptions = {
+		includeIpythonExamples: hasIpython,
+		includeShellExamples: hasBash,
+		includeRefineExamples: hasIpython && hasRefineSkill,
+	};
 
 	if (customPrompt) {
 		let prompt = customPrompt;
@@ -106,7 +111,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 		}
 
 		if (harnessState) {
-			prompt += `\n\n${formatHarnessStateForPrompt(harnessState, { includeIpythonExamples: hasIpython, includeShellExamples: hasBash, includeRefineExamples: hasIpython && hasRefineSkill })}`;
+			prompt += `\n\n${formatHarnessStateForPrompt(harnessState, harnessOverviewOptions)}`;
 		}
 
 		if (genericMcpSection) {
@@ -145,7 +150,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	}
 
 	if (harnessState) {
-		prompt += `\n\n${formatHarnessStateForPrompt(harnessState, { includeIpythonExamples: hasIpython, includeShellExamples: hasBash, includeRefineExamples: hasIpython && hasRefineSkill })}`;
+		prompt += `\n\n${formatHarnessStateForPrompt(harnessState, harnessOverviewOptions)}`;
 	}
 
 	if (genericMcpSection) {

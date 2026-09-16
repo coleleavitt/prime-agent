@@ -5,9 +5,10 @@ import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
 import { IMAGE_MIME_TYPES } from "../../utils/mime.js";
 import { resolveKernelBashShell } from "../../utils/shell.js";
+import { openResolutionStore, ResolutionIndex } from "../distill/resolution-index.js";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.js";
 import { withKernelBootPermit } from "../kernel/boot-gate.js";
-import type { KernelBootstrapProgressHandler } from "../kernel/bootstrap.js";
+import type { KernelBootstrapProgressHandler, PythonSkillPackageInstaller } from "../kernel/bootstrap.js";
 import {
 	type ExecuteResult,
 	type HostRequestHandlers,
@@ -22,6 +23,7 @@ import {
 } from "../kernel/index.js";
 import { manifestPathIn, type RestoreResult, snapshotPathIn } from "../kernel/state-snapshot.js";
 import type { PythonSkillRuntimeInfo } from "../skills.js";
+import { createToolforgeHostHandlers } from "../toolforge/publish.js";
 import { wrapToolDefinition } from "./tool-definition-wrapper.js";
 
 const RLM_BOOTSTRAP_HEADER_CODE = `
@@ -81,6 +83,7 @@ export function buildRlmBootstrapCode(pythonSkills: readonly PythonSkillRuntimeI
 ${baseCode}
 
 import importlib as _prime_agent_importlib
+import importlib.util as _prime_agent_importlib_util
 import inspect as _prime_agent_inspect
 import sys as _prime_agent_sys
 import types as _prime_agent_types
@@ -107,6 +110,14 @@ class _PrimeAgentUnavailableSkill:
     async def __call__(self, *args, **kwargs):
         return await self.run(*args, **kwargs)
 
+    def __getattr__(self, attribute):
+        if attribute.startswith("__") or attribute.startswith("_prime_agent_"):
+            raise AttributeError(attribute)
+        raise RuntimeError(
+            f"Python skill {self.__name__} is unavailable in this kernel. "
+            f"Import error: {self._prime_agent_import_error}"
+        )
+
     def __repr__(self):
         return f"<unavailable Python skill {self.__name__!r}: {self._prime_agent_import_error}>"
 
@@ -130,7 +141,7 @@ def _prime_agent_wrap_skill_module(module):
 
 _PRIME_AGENT_SKILL_IMPORT_ERRORS = {}
 
-for _prime_agent_skill_name in ${JSON.stringify(importNames)}:
+def _prime_agent_bind_skill(_prime_agent_skill_name):
     try:
         globals()[_prime_agent_skill_name] = _prime_agent_wrap_skill_module(
             _prime_agent_importlib.import_module(_prime_agent_skill_name)
@@ -141,6 +152,58 @@ for _prime_agent_skill_name in ${JSON.stringify(importNames)}:
             _prime_agent_skill_name,
             str(_prime_agent_skill_error),
         )
+    return globals()[_prime_agent_skill_name]
+
+class _PrimeAgentLazySkill:
+    """Import a Python skill on first use, not at kernel start.
+
+    Importing eagerly hands every installed skill a veto over the kernel
+    starting at all: a module that blocks at import time (a network call, a
+    lock, an input()) hangs the bootstrap forever, and the except clause around
+    it never runs because the import never returns. Deferring moves that cost
+    onto the first caller, where it is interruptible and attributable.
+    """
+
+    def __init__(self, name):
+        self._prime_agent_name = name
+        self.__name__ = name
+        self.__doc__ = f"Python skill {name} (imported on first use)"
+
+    def _prime_agent_load(self):
+        return _prime_agent_bind_skill(self._prime_agent_name)
+
+    def __getattr__(self, attribute):
+        # Dunder and private probes (pickle asking for __getstate__, dill walking
+        # __reduce_ex__) must never be what triggers the import.
+        if attribute.startswith("__") or attribute.startswith("_prime_agent_"):
+            raise AttributeError(attribute)
+        return getattr(self._prime_agent_load(), attribute)
+
+    async def __call__(self, *args, **kwargs):
+        result = self._prime_agent_load()(*args, **kwargs)
+        if _prime_agent_inspect.isawaitable(result):
+            return await result
+        return result
+
+    def __dir__(self):
+        return dir(self._prime_agent_load())
+
+    def __repr__(self):
+        return f"<Python skill {self._prime_agent_name!r} (imported on first use)>"
+
+for _prime_agent_skill_name in ${JSON.stringify(importNames)}:
+    # find_spec locates the module without executing it, so "not installed in
+    # this venv" is still reported at bootstrap (the common case, and the one
+    # worth failing fast on) while a module that merely takes a long time — or
+    # blocks forever — is left to its first caller.
+    try:
+        _prime_agent_skill_spec = _prime_agent_importlib_util.find_spec(_prime_agent_skill_name)
+    except Exception:
+        _prime_agent_skill_spec = True
+    if _prime_agent_skill_spec is None:
+        _prime_agent_bind_skill(_prime_agent_skill_name)
+    else:
+        globals()[_prime_agent_skill_name] = _PrimeAgentLazySkill(_prime_agent_skill_name)
 `.trim();
 }
 
@@ -334,6 +397,33 @@ export interface IpythonToolOptions {
 	onLateSentAgentMessage?: (toolCallId: string, message: KernelSentAgentMessage) => void;
 	/** Shared provisioner owning the kernel lifecycle. When provided, the remaining options are ignored. */
 	provisioner?: IpythonKernelProvisioner;
+	/**
+	 * Join from a failure fingerprint to the cell that fixed it, used to annotate a
+	 * recurrence. Omit for a fresh one owned by this tool definition, backed by the
+	 * durable store of the repo containing `cwd`.
+	 */
+	resolutionIndex?: ResolutionIndex;
+	/** Overrides for the `toolforge.publish` host request this kernel serves. */
+	toolforge?: IpythonToolforgeOptions;
+}
+
+/**
+ * How this kernel's `rlm.toolforge.publish` behaves. The handler is registered
+ * unconditionally — publishing is the agent's own capability, not a feature
+ * gate — but every destination it writes to is overridable so a test never
+ * touches the real skills directory or the shared kernel venv.
+ */
+export interface IpythonToolforgeOptions {
+	/** Set false to leave `toolforge.publish` unregistered for this kernel. */
+	enabled?: boolean;
+	/** Where accepted packages are promoted to. Defaults to `<agentDir>/skills`. */
+	skillsDir?: string;
+	ledgerPath?: string;
+	stagingDir?: string;
+	/** Promote + editable install. Defaults to the real kernel-venv installer. */
+	installPackage?: PythonSkillPackageInstaller;
+	/** Interpreter for the double-run gate. Defaults to the kernel python. */
+	pythonPath?: string;
 }
 
 /**
@@ -354,11 +444,36 @@ export class IpythonKernelProvisioner {
 	private readonly disposeController = new AbortController();
 	/** Snapshot policy of the dispose that aborted a startup, honored by startKernel's failure teardown. */
 	private disposeSnapshot = true;
+	/** Built once so a kernel restart cannot lose a publish already queued behind another. */
+	private toolforgeHandlers?: HostRequestHandlers;
 
 	constructor(
 		private readonly cwd: string,
 		private readonly options?: Omit<IpythonToolOptions, "provisioner">,
 	) {}
+
+	/**
+	 * Handlers this kernel answers. Toolforge goes first so a session-provided
+	 * handler of the same type still wins.
+	 */
+	private hostHandlers(): HostRequestHandlers {
+		const toolforge = this.options?.toolforge;
+		if (toolforge?.enabled === false) {
+			return { ...this.options?.hostHandlers };
+		}
+		if (!this.toolforgeHandlers) {
+			this.toolforgeHandlers = createToolforgeHostHandlers(() => ({
+				...(toolforge?.skillsDir ? { skillsDir: toolforge.skillsDir } : {}),
+				...(toolforge?.ledgerPath ? { ledgerPath: toolforge.ledgerPath } : {}),
+				...(toolforge?.stagingDir ? { stagingDir: toolforge.stagingDir } : {}),
+				...(toolforge?.installPackage ? { installPackage: toolforge.installPackage } : {}),
+				...(toolforge?.pythonPath ? { pythonPath: toolforge.pythonPath } : {}),
+				...(this.options?.sessionId ? { sessionId: this.options.sessionId } : {}),
+				reservedImportNames: (this.options?.pythonSkills ?? []).map((skill) => skill.importName),
+			}));
+		}
+		return { ...this.toolforgeHandlers, ...this.options?.hostHandlers };
+	}
 
 	/** The kernel manager, once a startup has completed successfully. */
 	get manager(): KernelClient | undefined {
@@ -524,7 +639,7 @@ export class IpythonKernelProvisioner {
 					...(commandPrefix ? { PRIME_AGENT_BASH_COMMAND_PREFIX: commandPrefix } : {}),
 				},
 				sessionId: this.options?.sessionId,
-				hostHandlers: this.options?.hostHandlers,
+				hostHandlers: this.hostHandlers(),
 				pythonSkills: this.options?.pythonSkills,
 				// Only persistent sessions (which have an artifact dir) get a revivable snapshot.
 				snapshot: snapshotDir
@@ -664,6 +779,7 @@ export function createIpythonToolDefinition(
 	options?: IpythonToolOptions,
 ): ToolDefinition<typeof ipythonSchema, IpythonToolDetails> {
 	const provisioner = options?.provisioner ?? new IpythonKernelProvisioner(cwd, options);
+	const resolutionIndex = options?.resolutionIndex ?? new ResolutionIndex({ store: openResolutionStore(cwd) });
 
 	return {
 		name: "ipython",
@@ -727,6 +843,15 @@ export function createIpythonToolDefinition(
 					text = text ? `${notice}\n\n${text}` : notice;
 				}
 
+				const isError = r.status === "error" || r.status === "aborted";
+				// Fingerprint what the model would have seen, then tell it how this
+				// same failure was fixed before — earlier in this session, or in an
+				// earlier session on this repo.
+				const hint = resolutionIndex.observe({ code: params.code, output: text, isError });
+				if (hint) {
+					text += `${text ? "\n\n" : ""}${hint.text}`;
+				}
+
 				const imageBlocks = imageBlocksFromAttachments(r.attachments);
 				const content: (TextContent | ImageContent)[] = [{ type: "text", text: text || "" }, ...imageBlocks];
 
@@ -746,7 +871,7 @@ export function createIpythonToolDefinition(
 						kernelRestarted: run.kernelRestarted,
 						error: r.error,
 					},
-					isError: r.status === "error" || r.status === "aborted",
+					isError,
 				};
 			} catch (error) {
 				// The interpreter died running this cell. Never re-run the cell

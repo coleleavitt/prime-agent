@@ -1,5 +1,6 @@
 import type { Model } from "@earendil-works/pi-ai";
-import { completeSimple } from "@earendil-works/pi-ai";
+import { completeSimple, getLogger } from "@earendil-works/pi-ai";
+import { REFINEMENT_COMMITTED_MSG, REFINEMENT_LOG_COMPONENT } from "../learning-index.js";
 import {
 	type AssistedRavoAuthorization,
 	authorizeAssistedRavo,
@@ -9,6 +10,8 @@ import {
 } from "../ravo/authority.js";
 import { type FailureRecord, failureOpponentId, formatFailureLedgerForPrompt } from "../ravo/failure-ledger.js";
 import { type JsonValue, type RavoState, ravoExtendOpponents } from "../ravo/reducer.js";
+import { isRefereeOpponentId, type RefereeVerdict, refereeOpponentId } from "../ravo/referee.js";
+import { adjudicateFailureClaims } from "../ravo/referee-runner.js";
 import type { RefinementProposal } from "./refinement.js";
 
 /**
@@ -36,6 +39,12 @@ import type { RefinementProposal } from "./refinement.js";
  *   (`ravoExtendOpponents`). Adding an opponent can only raise missedWeight
  *   (`missedWeight_app`), so extension only tightens the gate — a candidate
  *   that ignores a recurring failure is charged its weight, never excused.
+ * - the referee (Rocq `Ravo.v` Section 16): a claimed failure fingerprint that
+ *   carries a replay case is adjudicated by re-executing that case in a
+ *   subprocess, not by reading the claim. `FlawUpheld` iff the recorded
+ *   exception recurs (Thm 16.2); prose is not evidence (Thm 16.3); a
+ *   fingerprint with no case is never upheld (`no_test_no_flaw`) and falls back
+ *   to the claim. The referee is one more opponent, so it can only tighten.
  * - provisional commit: a champion that claims to address recurring failures
  *   stays provisional for an observation window; a claimed fingerprint that
  *   recurs inside the window is a measured fault (judge said pass, outcome
@@ -90,6 +99,8 @@ export interface RavoConfig {
 	/** Slack under bestScore tolerated by the deep gate (see header note). */
 	deepTolerance: number;
 }
+
+const refinementLog = getLogger(REFINEMENT_LOG_COMPONENT);
 
 export const RAVO_DEFAULT_CONFIG: RavoConfig = {
 	screenThreshold: 50,
@@ -182,6 +193,8 @@ export interface RavoGateReport {
 	addressedFingerprints: string[];
 	/** Failure opponent criterion ids (`failure:<fingerprint>`) in this gate. */
 	failureOpponents: string[];
+	/** Referee verdicts on the claimed fingerprints, one per re-executed replay case. */
+	refereeVerdicts?: RefereeVerdict[];
 }
 
 /**
@@ -260,10 +273,18 @@ only if its edits would plausibly prevent that exact failure from recurring
 (a memory, prompt note, skill fix, or subagent change that targets its cause).
 List the fingerprint ids the proposal genuinely addresses in
 "addressedFingerprints"; a fingerprint not listed there counts as a missed
-opponent. Never list a fingerprint the proposal merely mentions.
+opponent. Never list a fingerprint the proposal merely mentions. A fingerprint
+carrying a replay case is re-executed after you answer, so listing one whose
+failure has not actually stopped costs the proposal the gate.
+
+"verdict" is your own decision on the deep gate: "pass" if this candidate is at
+least as good a harness state as the current champion, "fail" if it is worse,
+"abstain" if you cannot tell from the evidence given. It is not a summary of
+"score"; a non-pass verdict rejects the candidate regardless of the number.
 
 Return JSON only:
 {
+  "verdict": "pass" | "fail" | "abstain",
   "score": 0-100,
   "failedCriteria": ["criterion ids that the proposal fails"],
   "addressedFingerprints": ["recurring failure fingerprint ids the proposal addresses"],
@@ -276,7 +297,23 @@ function stringList(value: unknown): string[] {
 	return Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : [];
 }
 
+/** The judge's own decision on the deep gate. Only an explicit pass token passes. */
+export type JudgeDeepVerdict = "pass" | "fail" | "abstain";
+
+export function parseJudgeVerdict(value: unknown): JudgeDeepVerdict {
+	const text = typeof value === "string" ? value.trim().toLowerCase() : "";
+	if (text === "pass" || text === "accept" || text === "passed" || text === "true") return "pass";
+	if (text === "fail" || text === "reject" || text === "false") return "fail";
+	// Absence is not consent. This used to return "pass", so a judge that omitted
+	// the field -- the behaviour of any model that drops one clause of a long
+	// prompt -- silently authorized the candidate, and the deep gate could not
+	// fail in the one direction that matters. "abstain" propagates through
+	// authorizeAssistedRavo as a conservative miss on every criterion.
+	return "abstain";
+}
+
 function extractJudgeJson(text: string): {
+	verdict: JudgeDeepVerdict;
 	score: number;
 	failedCriteria: string[];
 	addressedFingerprints: string[];
@@ -292,6 +329,7 @@ function extractJudgeJson(text: string): {
 	const rawScore = typeof record.score === "number" ? record.score : Number(record.score);
 	const score = Number.isFinite(rawScore) ? Math.min(100, Math.max(0, Math.round(rawScore))) : 0;
 	return {
+		verdict: parseJudgeVerdict(record.verdict ?? record.status),
 		score,
 		failedCriteria: stringList(record.failedCriteria),
 		addressedFingerprints: stringList(record.addressedFingerprints),
@@ -301,10 +339,13 @@ function extractJudgeJson(text: string): {
 
 /**
  * Deep evaluation: one judge call scoring the candidate against the evaluator
- * criteria. The generic authority (`authorizeAssistedRavo`) makes the
- * decision. Judge errors are recorded in the report and fail closed: an
- * unevaluated proposal is never authorized, so no harness edits apply until
- * a retried /refine reaches the judge.
+ * criteria, then the referee re-running the replay case of every fingerprint
+ * the judge accepted as addressed. The generic authority
+ * (`authorizeAssistedRavo`) makes the decision. Judge errors are recorded in
+ * the report and fail closed: an unevaluated proposal is never authorized, so
+ * no harness edits apply until a retried /refine reaches the judge. The judge's
+ * own `verdict` drives the deep gate, so a judge that says fail rejects the
+ * candidate whatever it scored.
  *
  * `recurringFailures` become failure opponents in the pool; the judge must
  * name the fingerprints the proposal addresses, and an unaddressed recurring
@@ -376,6 +417,7 @@ export async function ravoEvaluateProposal(
 	}
 
 	let deepScore = bestScore;
+	let deepVerdict: JudgeDeepVerdict = "pass";
 	let missedCriteria: string[] = [];
 	let addressedFingerprints: string[] = [];
 	let rationale = "";
@@ -389,7 +431,10 @@ export async function ravoEvaluateProposal(
 			]),
 		);
 		const judgedPool = ravoExtendOpponents(state.opponents, failureOpponents);
+		// Referee criteria are mechanical: the judge cannot influence them and is
+		// not invited to opine on them.
 		const criteriaText = judgedPool.criteria
+			.filter((criterion) => !isRefereeOpponentId(criterion.id))
 			.filter((criterion) => !isFailureOpponentId(criterion.id) || failureDescriptions.has(criterion.id))
 			.map(
 				(criterion) =>
@@ -438,6 +483,7 @@ export async function ravoEvaluateProposal(
 		const judged = extractJudgeJson(text);
 		const knownFingerprints = new Set(recurringFailures.map((record) => record.fingerprint.id));
 		deepScore = judged.score;
+		deepVerdict = judged.verdict;
 		missedCriteria = judged.failedCriteria;
 		addressedFingerprints = judged.addressedFingerprints.filter((id) => knownFingerprints.has(id));
 		rationale = judged.rationale;
@@ -446,12 +492,22 @@ export async function ravoEvaluateProposal(
 		rationale = `deep judge unavailable (${judgeError}); no harness edits were authorized; retry /refine when evaluation is available`;
 	}
 
+	// The referee re-executes the recorded replay case of every fingerprint the
+	// judge accepted as addressed. It is the only input to this gate the
+	// proposal did not write, and it runs before the authority so a refuted
+	// claim is charged as a missed opponent rather than believed.
+	const refereeVerdicts = judgeError
+		? []
+		: await adjudicateFailureClaims(recurringFailures, addressedFingerprints, {
+				...(options.signal ? { signal: options.signal } : {}),
+			});
 	const authorization = authorizeAssistedRavo({
 		...authorityInput,
+		refereeVerdicts,
 		observation: judgeError
 			? { status: "error", detail: rationale }
 			: {
-					status: "pass",
+					status: deepVerdict,
 					score: deepScore,
 					detail: rationale,
 					failedCriteria: missedCriteria,
@@ -476,7 +532,23 @@ export async function ravoEvaluateProposal(
 		authorization.certificate.criteria.length > 0
 			? authorization.certificate.missedCriterionIds
 			: [...new Set([...missedCriteria, ...unaddressed])];
-	const pool = ravoExtendOpponents(state.opponents, failureOpponents);
+	const pool = ravoExtendOpponents(state.opponents, [
+		...failureOpponents,
+		...refereeVerdicts
+			.filter((verdict) => verdict.status !== "no_evidence")
+			.map((verdict) => refereeOpponentId(verdict.fingerprintId)),
+	]);
+	// The outcome label the learning index rolls up: which fingerprints a
+	// commit claimed, recorded at the moment the gate let it through. Without
+	// this line there is no treated cohort to compare a later failure rate to.
+	if (decision === "commit") {
+		refinementLog.info(REFINEMENT_COMMITTED_MSG, {
+			proposalId: options.proposalId,
+			addressed: addressedFingerprints,
+			deepScore,
+			missed: missed.length,
+		});
+	}
 	return {
 		...base,
 		decision,
@@ -487,6 +559,7 @@ export async function ravoEvaluateProposal(
 			0,
 		),
 		addressedFingerprints,
+		refereeVerdicts,
 		rationale,
 		judgeError,
 		authorization,

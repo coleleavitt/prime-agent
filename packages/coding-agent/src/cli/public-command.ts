@@ -19,6 +19,7 @@ import { handleDaemonCommand } from "./daemon-command.js";
 import { runPs, runReap, runShutdownAll } from "./daemon-ps.js";
 import { DAEMON_UPDATE_RESTART_COORDINATOR_FLAG } from "./daemon-update-restart.js";
 import { runHealthCommand } from "./health-command.js";
+import { runLearningCommand } from "./learning-command.js";
 import { runTraceCommand } from "./trace-command.js";
 
 export interface PublicCommandResult {
@@ -151,6 +152,8 @@ async function runPublicCommand(args: string[]): Promise<PublicCommandResult> {
 			return runTrace(args.slice(1));
 		case "health":
 			return runHealth(args.slice(1));
+		case "learning":
+			return runLearning(args.slice(1));
 		default:
 			return continueWith(args);
 	}
@@ -279,6 +282,14 @@ async function runShutdown(args: string[]): Promise<PublicCommandResult> {
 function runHealth(args: string[]): PublicCommandResult {
 	const exitCode = runHealthCommand(args, { stdout: console.log, stderr: console.error });
 	if (exitCode !== 0) process.exitCode = exitCode;
+	return HANDLED;
+}
+
+function runLearning(args: string[]): PublicCommandResult {
+	const exitCode = runLearningCommand(args, { stdout: console.log, stderr: console.error });
+	if (exitCode !== 0) {
+		process.exitCode = exitCode;
+	}
 	return HANDLED;
 }
 

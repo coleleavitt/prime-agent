@@ -1,8 +1,11 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { EvaluationAdapter } from "./controller.js";
-import type { GateStatus } from "./reducer.js";
+import { normalizeRefinementProposal } from "../refinement/refinement.js";
+import { resolveKernelPython } from "../refinement/skill-dry-run.js";
+import type { ControllerProposal, EvaluationAdapter } from "./controller.js";
+import type { ExternalEvaluatorSuite } from "./external-evaluator.js";
+import type { GateStatus, JsonValue } from "./reducer.js";
 
 /**
  * ARC-AGI-3 deep evaluator.
@@ -13,6 +16,10 @@ import type { GateStatus } from "./reducer.js";
  * the final scorecard decides the verdict. The deep score is the percentage of
  * levels completed, which is the natural-number `deep : A -> nat` oracle the
  * reducer ratchets on (see docs/ravo-arc-agi-evaluator.md).
+ *
+ * This benchmark is not part of the RAVO gate. It reaches `RavoRunService`
+ * only as an `ExternalEvaluatorSuite`, so the whole ARC surface is this one
+ * file plus the `{ kind: "arc-agi" }` member of `RavoRunRequest["evaluator"]`.
  */
 
 export type ArcAgentArtifact = {
@@ -417,5 +424,211 @@ export function createArcAgiEvaluator(options: ArcAgiEvaluatorOptions): Evaluati
 			value: await evaluateArcAgent(options, proposal.artifact, callOptions.signal),
 			tokens: 0,
 		}),
+	};
+}
+
+/* ---------------------------------------------------------------------------
+ * ExternalEvaluatorSuite: the whole ARC-AGI-3 surface RavoRunService consumes.
+ * ------------------------------------------------------------------------ */
+
+const ARC_CRITERION_IDS = ["arc:no-crash", "arc:all-levels"] as const;
+const ARC_REFERENCE_FILES = ["agents/agent.py", "agents/templates/random_agent.py"] as const;
+const ARC_REFERENCE_MAX_CHARS = 16_000;
+const ARC_PROMPT_INSTRUCTION =
+	'The candidate is a Python ARC-AGI-3 agent module: include "arcAgent": { "agentName": "snake_case_module_name", "source": "full module source" }. The module lives in agents/templates/, so import the base class with `from ..agent import Agent` exactly as the reference does. "edits" may be [].';
+
+export interface ArcEvaluatorSuiteOptions extends ArcAgiEvaluatorOptions {
+	/** Fast-screen pass mark, taken from the reducer config. */
+	screenThreshold: number;
+}
+
+function recordOf(value: unknown): Record<string, unknown> {
+	return asRecord(value) ?? {};
+}
+
+/** The ARC agent module a proposal carries: an explicit `arcAgent`, else the first skill edit's content. */
+export function arcArtifactOfProposal(artifact: JsonValue): ArcAgentArtifact | undefined {
+	const arcAgent = recordOf(recordOf(artifact).arcAgent);
+	if (typeof arcAgent.agentName === "string" && typeof arcAgent.source === "string") {
+		return { agentName: arcAgent.agentName, source: arcAgent.source };
+	}
+	const skill = normalizeRefinementProposal(artifact).edits.find(
+		(edit) => edit.kind === "skill" && edit.action !== "delete" && edit.content,
+	);
+	if (!skill?.content) return undefined;
+	return { agentName: (skill.id ?? skill.title ?? "agent").replace(/[^a-zA-Z0-9_]+/g, "_"), source: skill.content };
+}
+
+type ArcRunFn = (proposal: ControllerProposal<JsonValue>, signal: AbortSignal) => Promise<ArcEvaluationResult>;
+
+/** One real game per proposal, shared by the deep gate and the outcome opponents. */
+function memoizedArcRun(options: ArcAgiEvaluatorOptions): ArcRunFn {
+	const pending = new Map<string, Promise<ArcEvaluationResult>>();
+	return (proposal, signal) => {
+		let shared = pending.get(proposal.id);
+		if (!shared) {
+			const artifact = arcArtifactOfProposal(proposal.artifact);
+			shared = artifact
+				? evaluateArcAgent(options, artifact, signal)
+				: Promise.resolve({
+						status: "error" as const,
+						detail: "proposal carries no ARC agent source (arcAgent or a skill edit)",
+					});
+			pending.set(proposal.id, shared);
+		}
+		return shared;
+	};
+}
+
+async function pythonSyntaxCheck(source: string, signal: AbortSignal): Promise<{ ok: boolean; detail: string }> {
+	const python = resolveKernelPython() ?? "python3";
+	return new Promise((resolve) => {
+		const child = execFile(
+			python,
+			["-I", "-c", "import ast,sys; ast.parse(sys.stdin.read())"],
+			{ timeout: 10_000, signal },
+			(error, _stdout, stderr) => {
+				if (!error) return resolve({ ok: true, detail: "ok" });
+				const lines = String(stderr).trim().split("\n");
+				resolve({ ok: false, detail: lines.at(-1) || error.message });
+			},
+		);
+		child.stdin?.end(source);
+	});
+}
+
+/** Deterministic screen for an ARC candidate: artifact shape plus a Python syntax check. No game is played. */
+function arcFastAdapter(screenThreshold: number): EvaluationAdapter<JsonValue> {
+	return {
+		id: "fast:arc-artifact",
+		kind: "fast",
+		evaluate: async ({ proposal }, options) => {
+			const artifact = arcArtifactOfProposal(proposal.artifact);
+			let detail: string;
+			let ok = false;
+			try {
+				if (!artifact) throw new Error("proposal carries no ARC agent source (arcAgent or a skill edit)");
+				validateArcArtifact(artifact);
+				const syntax = await pythonSyntaxCheck(artifact.source, options.signal);
+				ok = syntax.ok;
+				detail = syntax.ok ? `agent ${artifact.agentName} parses` : `agent ${artifact.agentName}: ${syntax.detail}`;
+			} catch (error) {
+				detail = error instanceof Error ? error.message : String(error);
+			}
+			const score = ok ? 100 : 0;
+			return {
+				status: "completed",
+				value: { status: score >= screenThreshold ? "pass" : "fail", score, detail },
+				tokens: 0,
+			};
+		},
+	};
+}
+
+function arcDeepAdapter(run: ArcRunFn): EvaluationAdapter<JsonValue> {
+	return {
+		id: "deep:arc-agi",
+		kind: "deep",
+		evaluate: async ({ proposal }, options) => {
+			const result = await run(proposal, options.signal);
+			return {
+				status: "completed",
+				value: {
+					status: result.status,
+					...(result.score === undefined ? {} : { score: result.score }),
+					...(result.detail === undefined ? {} : { detail: result.detail }),
+				},
+				tokens: 0,
+			};
+		},
+	};
+}
+
+/**
+ * Outcome opponents derived from the same game run: the agent must not crash,
+ * and it must finish every level. Missing `arc:all-levels` costs one weight
+ * unit at first; weakness pressure doubles it after a champion is accepted
+ * without finishing, so later candidates cannot keep winning on partial games.
+ */
+function arcOpponents(run: ArcRunFn): EvaluationAdapter<JsonValue>[] {
+	return [
+		{
+			id: "opponent:arc:no-crash",
+			kind: "opponent",
+			criterionId: "arc:no-crash",
+			evaluate: async ({ proposal }, options) => {
+				const result = await run(proposal, options.signal);
+				return {
+					status: "completed",
+					value: { status: result.status === "pass" ? "pass" : "fail", detail: result.detail ?? result.status },
+					tokens: 0,
+				};
+			},
+		},
+		{
+			id: "opponent:arc:all-levels",
+			kind: "opponent",
+			criterionId: "arc:all-levels",
+			evaluate: async ({ proposal }, options) => {
+				const result = await run(proposal, options.signal);
+				const card = result.scorecard;
+				const done = card !== undefined && card.totalLevels > 0 && card.levelsCompleted === card.totalLevels;
+				return {
+					status: "completed",
+					value: {
+						status: done ? "pass" : "fail",
+						detail: card
+							? `${card.levelsCompleted}/${card.totalLevels} levels`
+							: (result.detail ?? "no scorecard"),
+					},
+					tokens: 0,
+				};
+			},
+		},
+	];
+}
+
+/** The harness interface a candidate must satisfy, read from the clone so the child never has to search for it. */
+async function arcPromptSection(repoDir: string): Promise<string> {
+	const sections: string[] = [];
+	let budget = ARC_REFERENCE_MAX_CHARS;
+	for (const relative of ARC_REFERENCE_FILES) {
+		try {
+			const text = await readFile(path.join(repoDir, relative), "utf8");
+			const clipped = text.length > budget ? `${text.slice(0, budget)}\n# ... clipped` : text;
+			budget -= clipped.length;
+			sections.push(`## ${relative}\n${clipped}`);
+		} catch {
+			sections.push(`## ${relative}\n(not readable)`);
+		}
+		if (budget <= 0) break;
+	}
+	return `<arc_reference>\n${sections.join("\n\n")}\n</arc_reference>\n\n${ARC_PROMPT_INSTRUCTION}`;
+}
+
+async function persistArcAgent(baseDir: string, runId: string, artifact: JsonValue): Promise<void> {
+	const agent = arcArtifactOfProposal(artifact);
+	if (!agent) return;
+	const dir = path.join(baseDir, "ravo", "arc");
+	await mkdir(dir, { recursive: true });
+	await writeFile(path.join(dir, `${runId}-${agent.agentName}.py`), agent.source, "utf8");
+}
+
+/** Wire ARC-AGI-3 into a RAVO run as one external evaluator among many. */
+export function createArcEvaluatorSuite(options: ArcEvaluatorSuiteOptions): ExternalEvaluatorSuite {
+	const run = memoizedArcRun(options);
+	return {
+		criterionIds: ARC_CRITERION_IDS,
+		fast: arcFastAdapter(options.screenThreshold),
+		deep: arcDeepAdapter(run),
+		opponents: arcOpponents(run),
+		promptSection: () => arcPromptSection(options.repoDir),
+		artifactFields: (record) => {
+			const arcAgent = recordOf(record.arcAgent);
+			return typeof arcAgent.agentName === "string" && typeof arcAgent.source === "string"
+				? { arcAgent: { agentName: arcAgent.agentName, source: arcAgent.source } }
+				: undefined;
+		},
+		persistCommitted: (baseDir, runId, artifact) => persistArcAgent(baseDir, runId, artifact),
 	};
 }
