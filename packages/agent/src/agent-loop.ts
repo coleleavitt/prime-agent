@@ -575,10 +575,11 @@ async function streamAssistantResponse(
 				? await maybePromiseWithAbort(config.getApiKey(config.model.provider), signal)
 				: undefined) || config.apiKey;
 
+		const requestContext = config.getRequestContext?.(context, config.model);
 		const llmContext: Context = {
-			systemPrompt: config.getSystemPrompt?.() ?? context.systemPrompt,
+			systemPrompt: requestContext?.systemPrompt ?? config.getSystemPrompt?.() ?? context.systemPrompt,
 			messages: llmMessages,
-			tools: context.tools,
+			tools: requestContext?.tools ?? context.tools,
 		};
 
 		const response = await maybePromiseWithAbort(

@@ -725,3 +725,58 @@ describe("Agent", () => {
 		expect(receivedServiceTier).toBe("priority");
 	});
 });
+
+describe("request-local context overrides", () => {
+	const tool: AgentTool = {
+		name: "demo",
+		label: "Demo",
+		description: "demo tool",
+		parameters: Type.Object({}),
+		execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+	};
+
+	function captureAgent(calls: AgentContext[], provider = "openai") {
+		const model = { ...getModel("openai", "gpt-4o-mini"), provider };
+		return new Agent({
+			initialState: { model, systemPrompt: "tools prompt", tools: [tool] },
+			getRequestContext: (context, requestModel) =>
+				requestModel.provider === "text-only"
+					? { systemPrompt: "text prompt", tools: [] }
+					: { systemPrompt: context.systemPrompt, tools: context.tools },
+			streamFn: (_model, context) => {
+				calls.push(context as AgentContext);
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => stream.push({ type: "done", reason: "stop", message: createAssistantMessage("ok") }));
+				return stream;
+			},
+		});
+	}
+
+	it("keeps normal providers unchanged and isolates text-only request context", async () => {
+		const normalCalls: AgentContext[] = [];
+		const normal = captureAgent(normalCalls);
+		await normal.prompt("hello");
+		expect(normalCalls[0]).toMatchObject({ systemPrompt: "tools prompt", tools: [tool] });
+
+		const textCalls: AgentContext[] = [];
+		const textOnly = captureAgent(textCalls, "text-only");
+		const desiredTools = textOnly.state.tools;
+		await textOnly.prompt("hello");
+		expect(textCalls[0]).toMatchObject({ systemPrompt: "text prompt", tools: [] });
+		expect(textOnly.state.systemPrompt).toBe("tools prompt");
+		expect(textOnly.state.tools).toEqual(desiredTools);
+	});
+
+	it("re-evaluates provider capability on model switching and continue", async () => {
+		const calls: AgentContext[] = [];
+		const agent = captureAgent(calls, "text-only");
+		await agent.prompt("first");
+		agent.state.model = { ...agent.state.model, provider: "openai" };
+		await agent.prompt("second");
+		agent.state.model = { ...agent.state.model, provider: "text-only" };
+		agent.state.messages = [...agent.state.messages, { role: "user", content: "retry", timestamp: Date.now() }];
+		await agent.continue();
+		expect(calls.map((context) => context.tools?.length ?? 0)).toEqual([0, 1, 0]);
+		expect(agent.state.tools).toEqual([tool]);
+	});
+});

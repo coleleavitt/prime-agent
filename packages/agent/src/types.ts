@@ -1,6 +1,7 @@
 import type {
 	AssistantMessage,
 	AssistantMessageEvent,
+	Context,
 	ImageContent,
 	Message,
 	Model,
@@ -170,6 +171,12 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 
 	/** Resolves the system prompt immediately before each LLM call. */
 	getSystemPrompt?: () => string;
+
+	/**
+	 * Builds request-local prompt and tool overrides immediately before each LLM call.
+	 * The returned values affect only that request; the session context is never mutated.
+	 */
+	getRequestContext?: (context: AgentContext, model: Model<any>) => Pick<Context, "systemPrompt" | "tools">;
 
 	/**
 	 * Resolves an API key dynamically for each LLM call.

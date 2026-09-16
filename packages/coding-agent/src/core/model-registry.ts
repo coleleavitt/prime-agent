@@ -187,6 +187,7 @@ type ModelOverride = Static<typeof ModelOverrideSchema>;
 
 const ProviderConfigSchema = Type.Object({
 	name: Type.Optional(Type.String({ minLength: 1 })),
+	supportsTools: Type.Optional(Type.Boolean()),
 	baseUrl: Type.Optional(Type.String({ minLength: 1 })),
 	apiKey: Type.Optional(Type.String({ minLength: 1 })),
 	api: Type.Optional(Type.String({ minLength: 1 })),
@@ -244,6 +245,7 @@ interface ProviderOverride {
 }
 
 interface ProviderRequestConfig {
+	supportsTools?: boolean;
 	apiKey?: string;
 	headers?: Record<string, string>;
 	authHeader?: boolean;
@@ -758,9 +760,15 @@ export class ModelRegistry {
 				providerConfig.modelOverrides && Object.keys(providerConfig.modelOverrides).length > 0;
 
 			if (models.length === 0) {
-				if (!providerConfig.baseUrl && !providerConfig.headers && !providerConfig.compat && !hasModelOverrides) {
+				if (
+					!providerConfig.baseUrl &&
+					!providerConfig.headers &&
+					!providerConfig.compat &&
+					providerConfig.supportsTools === undefined &&
+					!hasModelOverrides
+				) {
 					throw new Error(
-						`Provider ${providerName}: must specify "baseUrl", "headers", "compat", "modelOverrides", or "models".`,
+						`Provider ${providerName}: must specify "baseUrl", "headers", "compat", "supportsTools", "modelOverrides", or "models".`,
 					);
 				}
 			} else if (!isBuiltIn) {
@@ -1357,16 +1365,18 @@ export class ModelRegistry {
 	private storeProviderRequestConfig(
 		providerName: string,
 		config: {
+			supportsTools?: boolean;
 			apiKey?: string;
 			headers?: Record<string, string>;
 			authHeader?: boolean;
 		},
 	): void {
-		if (!config.apiKey && !config.headers && !config.authHeader) {
+		if (config.supportsTools === undefined && !config.apiKey && !config.headers && !config.authHeader) {
 			return;
 		}
 
 		this.providerRequestConfigs.set(providerName, {
+			supportsTools: config.supportsTools,
 			apiKey: config.apiKey,
 			headers: config.headers,
 			authHeader: config.authHeader,
@@ -1468,9 +1478,12 @@ export class ModelRegistry {
 		};
 	}
 
-	/**
-	 * Get display name for a provider.
-	 */
+	/** Whether a provider accepts tool definitions and tool calls. Undeclared providers default to true. */
+	supportsTools(provider: string): boolean {
+		return this.providerRequestConfigs.get(provider)?.supportsTools !== false;
+	}
+
+	/** Get display name for a provider. */
 	getProviderDisplayName(provider: string): string {
 		const registeredProvider = this.registeredProviders.get(provider);
 		const oauthProvider = this.authStorage.getOAuthProviders().find((p) => p.id === provider);
@@ -1728,6 +1741,7 @@ export class ModelRegistry {
  */
 export interface ProviderConfigInput {
 	name?: string;
+	supportsTools?: boolean;
 	baseUrl?: string;
 	apiKey?: string;
 	api?: Api;

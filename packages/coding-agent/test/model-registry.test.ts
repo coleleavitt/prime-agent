@@ -1756,4 +1756,19 @@ describe("ModelRegistry", () => {
 			});
 		});
 	});
+
+	test("provider tool capability defaults true and follows registration/config refresh", () => {
+		const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+		expect(registry.supportsTools("undeclared")).toBe(true);
+
+		registry.registerProvider("text-only", { supportsTools: false });
+		expect(registry.supportsTools("text-only")).toBe(false);
+
+		registry.registerProvider("text-only", { supportsTools: true });
+		expect(registry.supportsTools("text-only")).toBe(true);
+
+		writeRawModelsJson({ configured: { supportsTools: false } });
+		registry.refresh();
+		expect(registry.supportsTools("configured")).toBe(false);
+	});
 });
