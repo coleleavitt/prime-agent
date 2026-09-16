@@ -5,7 +5,7 @@
  * createAgentSession() options. The SDK does the heavy lifting.
  */
 
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { type Api, type ImageContent, type Model, modelsAreEqual } from "@earendil-works/pi-ai";
 import { registerBuiltinMcpOAuthProviders } from "@earendil-works/pi-ai/mcp";
@@ -69,7 +69,12 @@ import {
 	type SessionCwdIssue,
 } from "./core/session-cwd.js";
 import { canonicalSessionPath, SessionAlreadyActiveError } from "./core/session-lease.js";
-import { SessionManager } from "./core/session-manager.js";
+import {
+	findMostRecentSessionForCwd,
+	getDefaultSessionDir,
+	loadEntriesFromFile,
+	SessionManager,
+} from "./core/session-manager.js";
 import { SettingsManager } from "./core/settings-manager.js";
 import { isTelemetryEnabled } from "./core/telemetry.js";
 import { printTimings, resetTimings, time } from "./core/timings.js";
@@ -78,9 +83,10 @@ import { isDaemonCatalogProcess, runDaemonCatalogProcess } from "./modes/daemon/
 import {
 	DaemonSessionCreateError,
 	deserializeDaemonCreateError,
+	deserializeDaemonError,
 	isUnknownActiveSessionErrorMessage,
 } from "./modes/daemon/daemon-errors.js";
-import { collectDaemonClientEnv, collectDaemonLaunchEnv } from "./modes/daemon/daemon-protocol.js";
+import { collectDaemonClientEnv, collectDaemonLaunchEnv, type DaemonResponse } from "./modes/daemon/daemon-protocol.js";
 import {
 	DAEMON_WORKER_ACTIVE_SESSION_ID_ENV,
 	daemonWorkerInstanceId,
@@ -118,29 +124,7 @@ import { shouldRunOnboarding } from "./modes/interactive/onboarding.js";
 import { initTheme, preloadCodeHighlighter, stopThemeWatcher } from "./modes/interactive/theme/theme.js";
 import { handleConfigCommand } from "./package-manager-cli.js";
 import { isLocalPath } from "./utils/paths.js";
-
-/**
- * Read all content from piped stdin.
- * Returns undefined if stdin is a TTY (interactive terminal).
- */
-async function readPipedStdin(): Promise<string | undefined> {
-	// If stdin is a TTY, we're running interactively - don't read stdin
-	if (process.stdin.isTTY) {
-		return undefined;
-	}
-
-	return new Promise((resolve) => {
-		let data = "";
-		process.stdin.setEncoding("utf8");
-		process.stdin.on("data", (chunk) => {
-			data += chunk;
-		});
-		process.stdin.on("end", () => {
-			resolve(data.trim() || undefined);
-		});
-		process.stdin.resume();
-	});
-}
+import { readPipedStdin } from "./utils/piped-stdin.js";
 
 function collectSettingsDiagnostics(
 	settingsManager: SettingsManager,
@@ -456,10 +440,22 @@ function getResumeSelector(parsed: Pick<Args, "resume">): string | undefined {
 	return typeof parsed.resume === "string" ? parsed.resume : undefined;
 }
 
+function readSessionManager(path: string, sessionDir?: string, cwdOverride?: string): SessionManager {
+	const entries = loadEntriesFromFile(path);
+	const header = entries.find((entry) => entry.type === "session");
+	const manager = SessionManager.inMemory(
+		cwdOverride ?? header?.cwd ?? process.cwd(),
+		sessionDir ?? dirname(resolve(path)),
+	);
+	manager.setSessionFile(path, entries);
+	return manager;
+}
+
 export async function createSessionManager(
 	parsed: Args,
 	cwd: string,
 	sessionDir: string | undefined,
+	readOnly = false,
 ): Promise<SessionManager> {
 	const explicitCwdOverride = parsed.cwd ? cwd : undefined;
 
@@ -485,9 +481,20 @@ export async function createSessionManager(
 		switch (resolved.type) {
 			case "path":
 			case "local":
-				return SessionManager.open(resolved.path, sessionDir, explicitCwdOverride);
+				return readOnly
+					? readSessionManager(resolved.path, sessionDir, explicitCwdOverride)
+					: SessionManager.open(resolved.path, sessionDir, explicitCwdOverride);
 
 			case "global": {
+				if (!process.stdin.isTTY) {
+					// The fork confirm reads stdin; without a TTY it would hang boot forever.
+					console.error(
+						chalk.red(
+							`Error: session ${resumeSelector} belongs to a different project (${resolved.cwd}). Pass --fork ${resumeSelector} to use it here, or run from that project's directory.`,
+						),
+					);
+					process.exit(1);
+				}
 				console.log(chalk.yellow(`Session found in different project: ${resolved.cwd}`));
 				const shouldFork = await promptConfirm("Fork this session into current directory?");
 				if (!shouldFork) {
@@ -500,10 +507,15 @@ export async function createSessionManager(
 	}
 
 	if (parsed.continue) {
+		if (readOnly) {
+			const dir = sessionDir ?? getDefaultSessionDir(cwd);
+			const path = findMostRecentSessionForCwd(dir, cwd);
+			return path ? readSessionManager(path, dir, cwd) : SessionManager.inMemory(cwd, dir);
+		}
 		return SessionManager.continueRecent(cwd, sessionDir);
 	}
 
-	return SessionManager.create(cwd, sessionDir);
+	return readOnly ? SessionManager.inMemory(cwd, sessionDir) : SessionManager.create(cwd, sessionDir);
 }
 
 function buildSessionOptions(
@@ -574,7 +586,7 @@ function buildSessionOptions(
 		options.thinkingLevel = config.thinking;
 	}
 
-	// Scoped models for Ctrl+P cycling
+	// Scoped models for Alt+M cycling
 	// Keep thinking level undefined when not explicitly set in the model pattern.
 	// Undefined means "inherit current session thinking level" during cycling.
 	if (scopedModels.length > 0) {
@@ -949,6 +961,22 @@ function getDaemonSummaryActiveSessionId(summary: SessionSummary): string {
 	return summary.activeSessionId ?? summary.id;
 }
 
+/**
+ * Unknown falls back to the saved-session path (whose create/open route retries recovery); recovering
+ * throws typed so an explicit --attach-agent surfaces the retryable state, not "No active agent found".
+ */
+export function resolveActiveSessionLookupFailure(
+	response: Extract<DaemonResponse, { success: false }>,
+): Error | undefined {
+	if (response.errorInfo?.code === "session_recovering") {
+		return deserializeDaemonError(response);
+	}
+	if (isUnknownActiveSessionErrorMessage(response.error)) {
+		return undefined;
+	}
+	return new Error(response.error);
+}
+
 async function findActiveDaemonSessionSummary(
 	socketPath: string,
 	selector: string,
@@ -959,10 +987,11 @@ async function findActiveDaemonSessionSummary(
 	try {
 		const response = await client.request({ type: "get_state", activeSessionId: selector }, 3000);
 		if (!response.success) {
-			if (isUnknownActiveSessionErrorMessage(response.error)) {
-				return undefined;
+			const failure = resolveActiveSessionLookupFailure(response);
+			if (failure) {
+				throw failure;
 			}
-			throw new Error(response.error);
+			return undefined;
 		}
 		if (!isDaemonSessionSummary(response.data)) {
 			throw new Error("Daemon returned an invalid active session summary");
@@ -977,7 +1006,7 @@ function createSessionManagerForActiveDaemonSummary(summary: SessionSummary, fal
 	const cwd = summary.cwd || fallbackCwd;
 	if (summary.sessionFile) {
 		try {
-			return SessionManager.open(summary.sessionFile, undefined, cwd);
+			return readSessionManager(summary.sessionFile, undefined, cwd);
 		} catch {
 			return SessionManager.inMemory(cwd);
 		}
@@ -1023,6 +1052,7 @@ async function createDaemonClientConnection(options: {
 		const attach = async (summary: SessionSummary) => {
 			const connection = await DaemonAgentConnection.attach(client, getDaemonSummaryActiveSessionId(summary), {
 				closeClientOnDispose: true,
+				deferSessionEvents: options.config.executionMode === "interactive",
 				sendClientEnv: true,
 				ownedSession: options.clientOwned,
 				sessionRecoveryConfig: options.config,
@@ -1292,7 +1322,7 @@ async function dispatchMode(args: string[], options?: MainOptions) {
 		sessionManager = SessionManager.inMemory(cwd);
 	} else {
 		try {
-			sessionManager = await createSessionManager(parsed, cwd, sessionDir);
+			sessionManager = await createSessionManager(parsed, cwd, sessionDir, useDaemonClient);
 		} catch (error) {
 			if (!(error instanceof SessionSelectorError)) {
 				throw error;
@@ -1313,7 +1343,9 @@ async function dispatchMode(args: string[], options?: MainOptions) {
 			if (!selectedCwd) {
 				process.exit(0);
 			}
-			sessionManager = SessionManager.open(missingSessionCwdIssue.sessionFile!, sessionDir, selectedCwd);
+			sessionManager = useDaemonClient
+				? readSessionManager(missingSessionCwdIssue.sessionFile!, sessionDir, selectedCwd)
+				: SessionManager.open(missingSessionCwdIssue.sessionFile!, sessionDir, selectedCwd);
 		} else {
 			console.error(chalk.red(new MissingSessionCwdError(missingSessionCwdIssue).message));
 			process.exit(1);
@@ -1407,7 +1439,7 @@ async function dispatchMode(args: string[], options?: MainOptions) {
 					return `${sm.model.id}${thinkingStr}`;
 				})
 				.join(", ");
-			console.log(chalk.dim(`Model scope: ${modelList} ${chalk.gray("(Ctrl+P to cycle)")}`));
+			console.log(chalk.dim(`Model scope: ${modelList} ${chalk.gray("(Alt+M to cycle)")}`));
 		}
 
 		const promptStashStore = new ClientPromptStashStore();
@@ -1443,7 +1475,6 @@ async function dispatchMode(args: string[], options?: MainOptions) {
 				migratedProviders,
 				modelFallbackMessage: startupModel.modelFallbackMessage,
 				promptStashStore,
-				startupModelId: startupModel.model?.id,
 				initialSession,
 				initialScopeKey,
 				verbose: parsed.verbose,
@@ -1693,7 +1724,7 @@ async function dispatchMode(args: string[], options?: MainOptions) {
 					return `${sm.model.id}${thinkingStr}`;
 				})
 				.join(", ");
-			console.log(chalk.dim(`Model scope: ${modelList} ${chalk.gray("(Ctrl+P to cycle)")}`));
+			console.log(chalk.dim(`Model scope: ${modelList} ${chalk.gray("(Alt+M to cycle)")}`));
 		}
 
 		const interactiveMode = new InteractiveMode({

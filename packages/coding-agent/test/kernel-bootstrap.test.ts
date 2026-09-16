@@ -7,6 +7,7 @@ import {
 	readdirSync,
 	readFileSync,
 	rmSync,
+	utimesSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,9 +19,9 @@ import {
 	ensureKernelPython,
 	getKernelVenvDir,
 	type KernelPythonSkill,
+	kernelVenvPython,
 	resolveRuntimeIdentity,
 } from "../src/core/kernel/bootstrap.js";
-import { getProcessStartId } from "../src/core/session-lease.js";
 
 let tempDir = "";
 let originalEnv: NodeJS.ProcessEnv;
@@ -442,18 +443,13 @@ dependencies = ["httpx"]
 	it("bounds lock contention and reports the owner identity, start time, and age", async () => {
 		const venv = join(tempDir, "kernel-venv");
 		const lockDir = `${venv}.bootstrap.lock`;
-		const createdAt = new Date(Date.now() - 2_000).toISOString();
+		const createdAtMs = Date.now() - 2_000;
+		const createdAt = new Date(createdAtMs).toISOString();
 		mkdirSync(lockDir, { recursive: true });
-		writeFileSync(
-			join(lockDir, "owner.json"),
-			`${JSON.stringify({
-				version: 1,
-				token: "other-owner",
-				pid: process.pid,
-				processStartId: getProcessStartId(process.pid),
-				createdAt,
-			})}\n`,
-		);
+		// The directory form of the lock: dir-lock reads the owner pid from
+		// <lockDir>/pid, and the reported start time is the lock's own mtime.
+		writeFileSync(join(lockDir, "pid"), `${process.pid}\n`);
+		utimesSync(lockDir, createdAtMs / 1000, createdAtMs / 1000);
 		process.env.PRIME_AGENT_KERNEL_VENV = venv;
 		process.env.PRIME_AGENT_INTERNAL_KERNEL_BOOTSTRAP_LOCK_TIMEOUT_MS = "0";
 		const progress: string[] = [];
@@ -779,7 +775,7 @@ dependencies = ["httpx"]
 		writeFakePython(overridePython, ["dill"]);
 		process.env.PRIME_AGENT_KERNEL_PYTHON = overridePython;
 
-		await expect(ensureKernelPython()).rejects.toThrow(/current prime-agent-runtime with callable rlm\.run/);
+		await expect(ensureKernelPython()).rejects.toThrow(/current prime-agent-runtime with callable rlm\.spawn/);
 	});
 
 	it("rejects PRIME_AGENT_KERNEL_PYTHON with a legacy harness API", async () => {
@@ -802,7 +798,7 @@ dependencies = ["httpx"]
 		);
 		process.env.PRIME_AGENT_KERNEL_PYTHON = overridePython;
 
-		await expect(ensureKernelPython()).rejects.toThrow(/current prime-agent-runtime with callable rlm\.run/);
+		await expect(ensureKernelPython()).rejects.toThrow(/current prime-agent-runtime with callable rlm\.spawn/);
 	});
 
 	it("fails an invalid PRIME_AGENT_KERNEL_PYTHON without bootstrapping", async () => {
@@ -811,5 +807,11 @@ dependencies = ["httpx"]
 		process.env.PRIME_AGENT_KERNEL_PYTHON = overridePython;
 
 		await expect(ensureKernelPython()).rejects.toThrow(/PRIME_AGENT_KERNEL_PYTHON points to a Python missing/);
+	});
+
+	it("resolves the venv python under Scripts\\python.exe on win32 (uv layout)", () => {
+		const venv = join(tempDir, "kernel-venv");
+		expect(kernelVenvPython(venv, "win32")).toBe(join(venv, "Scripts", "python.exe"));
+		expect(kernelVenvPython(venv, "linux")).toBe(join(venv, "bin", "python"));
 	});
 });

@@ -24,6 +24,7 @@ import type {
 	GetContinuationMessagesContext,
 	ShouldStopAfterTurnContext,
 	StreamFn,
+	ToolCallPolicy,
 	ToolExecutionMode,
 } from "./types.js";
 
@@ -113,8 +114,12 @@ export interface AgentOptions {
 	sessionId?: string;
 	thinkingBudgets?: ThinkingBudgets;
 	transport?: Transport;
-	maxRetryDelayMs?: number;
 	toolExecution?: ToolExecutionMode;
+	/**
+	 * Construction-time policy for model-emitted tool calls.
+	 * `"reject"` cannot be widened after the Agent is constructed.
+	 */
+	toolCallPolicy?: ToolCallPolicy;
 }
 
 class PendingMessageQueue {
@@ -218,8 +223,8 @@ export class Agent {
 	public sessionId?: string;
 	public thinkingBudgets?: ThinkingBudgets;
 	public transport: Transport;
-	public maxRetryDelayMs?: number;
 	public toolExecution: ToolExecutionMode;
+	private readonly toolCallPolicy!: ToolCallPolicy;
 
 	constructor(options: AgentOptions = {}) {
 		this._state = createMutableAgentState(options.initialState);
@@ -240,8 +245,12 @@ export class Agent {
 		this.sessionId = options.sessionId;
 		this.thinkingBudgets = options.thinkingBudgets;
 		this.transport = options.transport ?? "auto";
-		this.maxRetryDelayMs = options.maxRetryDelayMs;
 		this.toolExecution = options.toolExecution ?? "parallel";
+		Object.defineProperty(this, "toolCallPolicy", {
+			value: options.toolCallPolicy ?? "execute",
+			writable: false,
+			configurable: false,
+		});
 	}
 
 	/**
@@ -473,8 +482,8 @@ export class Agent {
 			onResponse: this.onResponse,
 			transport: this.transport,
 			thinkingBudgets: this.thinkingBudgets,
-			maxRetryDelayMs: this.maxRetryDelayMs,
 			toolExecution: this.toolExecution,
+			toolCallPolicy: this.toolCallPolicy,
 			beforeToolCall: this.beforeToolCall,
 			afterToolCall: this.afterToolCall,
 			shouldStopAfterTurn: async (context) => this.shouldStopAfterTurn?.(context) ?? false,

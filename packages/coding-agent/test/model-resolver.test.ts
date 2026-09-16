@@ -1,4 +1,4 @@
-import type { Model } from "@earendil-works/pi-ai";
+import { getModels, getSupportedThinkingLevels, type KnownProvider, type Model } from "@earendil-works/pi-ai";
 import { describe, expect, test, vi } from "vitest";
 import {
 	defaultModelPerProvider,
@@ -6,6 +6,7 @@ import {
 	resolveCliModel,
 	resolveModelScopeFromModels,
 } from "../src/core/model-resolver.js";
+import { getPrivatePrimeInferenceModels } from "../src/core/prime-inference-models.js";
 
 const mockModels: Model<"anthropic-messages">[] = [
 	{
@@ -294,17 +295,85 @@ describe("resolveCliModel", () => {
 		expect(result.model?.provider).toBe("openrouter");
 		expect(result.model?.id).toBe("qwen/qwen3-coder:exacto");
 	});
+
+	test("derives unknown private Prime Inference ids from a private-route template", () => {
+		// The registry a daemon worker builds for a fresh session: bundled public
+		// catalog plus bundled private models, without the team-authorized private
+		// catalog that only loads after refreshAvailableModels().
+		const registry = {
+			getAll: () => [...getModels("prime-inference"), ...getPrivatePrimeInferenceModels()],
+		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRegistry"];
+
+		const result = resolveCliModel({
+			cliProvider: "prime-inference",
+			cliModel: "internal/glm-5.3-fast",
+			modelRegistry: registry,
+		});
+
+		expect(result.error).toBeUndefined();
+		expect(result.model?.id).toBe("internal/glm-5.3-fast");
+		expect(result.model?.provider).toBe("prime-inference");
+		expect(result.model?.baseUrl).toBe("https://api.pinference.ai/api/v1");
+		const model = result.model as Model<"openai-completions">;
+		// The public provider default carries the zai thinking format; a private
+		// route must not inherit it (enable_thinking is a provider 400 there).
+		expect(model.compat?.thinkingFormat).toBeUndefined();
+		// The zai thinkingLevelMap would coerce thinking "off" to "low".
+		expect(getSupportedThinkingLevels(model).includes("off")).toBe(true);
+	});
+
+	test("still derives unknown public Prime Inference ids from the provider default", () => {
+		const registry = {
+			getAll: () => [...getModels("prime-inference"), ...getPrivatePrimeInferenceModels()],
+		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRegistry"];
+
+		const result = resolveCliModel({
+			cliProvider: "prime-inference",
+			cliModel: "z-ai/glm-9",
+			modelRegistry: registry,
+		});
+
+		expect(result.error).toBeUndefined();
+		expect(result.model?.id).toBe("z-ai/glm-9");
+		expect((result.model as Model<"openai-completions">).compat?.thinkingFormat).toBe("zai");
+	});
+
+	test("keeps an unknown private Prime Inference id unresolved without a private template", () => {
+		const registry = {
+			getAll: () => getModels("prime-inference"),
+		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRegistry"];
+
+		const result = resolveCliModel({
+			cliProvider: "prime-inference",
+			cliModel: "internal/glm-5.3-fast",
+			modelRegistry: registry,
+		});
+
+		expect(result.model).toBeUndefined();
+		expect(result.error).toContain("not found");
+	});
 });
 
 describe("default model selection", () => {
 	test("openai defaults track current models", () => {
 		expect(defaultModelPerProvider.openai).toBe("gpt-5.4");
 		expect(defaultModelPerProvider["openai-codex"]).toBe("gpt-5.5");
-		expect(defaultModelPerProvider["prime-inference"]).toBe("z-ai/glm-5.2");
+		expect(defaultModelPerProvider["prime-inference"]).toBe("z-ai/glm-5.3");
+	});
+
+	test("every per-provider default exists in the model catalog", () => {
+		for (const [provider, modelId] of Object.entries(defaultModelPerProvider)) {
+			const models = getModels(provider as KnownProvider);
+			if (models.length === 0) continue;
+			expect(
+				models.map((model) => model.id),
+				`default for ${provider}`,
+			).toContain(modelId);
+		}
 	});
 
 	test("zai, minimax, and cerebras defaults track current models", () => {
-		expect(defaultModelPerProvider.zai).toBe("glm-5.1");
+		expect(defaultModelPerProvider.zai).toBe("glm-5.3");
 		expect(defaultModelPerProvider.minimax).toBe("MiniMax-M2.7");
 		expect(defaultModelPerProvider["minimax-cn"]).toBe("MiniMax-M2.7");
 		expect(defaultModelPerProvider.cerebras).toBe("gpt-oss-120b");
@@ -347,15 +416,15 @@ describe("default model selection", () => {
 		expect(result.thinkingLevel).toBe("medium");
 	});
 
-	test("findInitialModel prefers GLM 5.2 when Prime Inference is configured", async () => {
+	test("findInitialModel prefers GLM 5.3 when Prime Inference is configured", async () => {
 		const anthropicModel: Model<"anthropic-messages"> = {
 			...mockModels[0],
 			id: "claude-opus-4-7",
 			name: "Claude Opus 4.7",
 		};
 		const primeModel: Model<"anthropic-messages"> = {
-			id: "z-ai/glm-5.2",
-			name: "GLM 5.2",
+			id: "z-ai/glm-5.3",
+			name: "GLM 5.3",
 			api: "anthropic-messages",
 			provider: "prime-inference",
 			baseUrl: "https://api.pinference.ai/api/v1",
@@ -366,7 +435,11 @@ describe("default model selection", () => {
 			maxTokens: 101376,
 		};
 		const registry = {
-			refreshAvailableModels: async () => [anthropicModel, primeModel],
+			refreshAvailableModels: async () => [
+				anthropicModel,
+				{ ...primeModel, id: "z-ai/glm-5.2", name: "GLM 5.2" },
+				primeModel,
+			],
 		} as unknown as Parameters<typeof findInitialModel>[0]["modelRegistry"];
 
 		const result = await findInitialModel({

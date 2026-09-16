@@ -21,7 +21,7 @@ import {
 } from "../src/modes/daemon/daemon-protocol.js";
 import type { SessionSummary } from "../src/modes/daemon/daemon-session-list.js";
 import { DaemonSocketPathLease } from "../src/modes/daemon/daemon-socket.js";
-import { DaemonSupervisor } from "../src/modes/daemon/daemon-supervisor.js";
+import { DaemonSupervisor, handshakeBudgetMs } from "../src/modes/daemon/daemon-supervisor.js";
 import {
 	DaemonWorkerAuthenticationError,
 	DaemonWorkerClient,
@@ -150,6 +150,7 @@ interface SupervisorMonitorHarness {
 	clients: Set<{ authenticated: boolean }>;
 	supervisorClaims: Map<object, object>;
 	shuttingDown: boolean;
+	supervisorAbsentSince?: number;
 	supervisorMonitorTimer?: ReturnType<typeof setTimeout>;
 	canConnectToSupervisor: (socketPath: string) => Promise<boolean>;
 	launchReplacementSupervisor: (socketPath: string) => Promise<void>;
@@ -252,6 +253,9 @@ function createSupervisorSnapshotState() {
 		publishedRosterIds: new Set<string>(),
 		pendingRosterRemoved: new Set<string>(),
 		rosterPushScheduled: false,
+		// Object.create(prototype) skips class field initializers, so every
+		// instance field these fakes reach has to be supplied here.
+		ravoStatusWorker: new Map<string, unknown>(),
 	};
 }
 
@@ -295,6 +299,8 @@ function createHarness(canConnect: () => Promise<boolean>): SupervisorMonitorHar
 	supervisorRegistryDirs.add(registryDir);
 	process.env[supervisorRegistryDirEnv] = registryDir;
 	return Object.assign(Object.create(AgentDaemon.prototype), {
+		osfenceWorkerMode: { enabled: false },
+		osfenceControlDbReader: undefined,
 		options: { worker: {} },
 		clients: new Set<{ authenticated: boolean }>(),
 		supervisorClaims: new Map<object, object>(),
@@ -398,8 +404,11 @@ describe("daemon worker supervisor monitoring", () => {
 			owner: client,
 			abort: new AbortController(),
 			phase: "prepared",
+			deferredClientEnv: [],
 		};
 		const daemon = Object.assign(Object.create(AgentDaemon.prototype), {
+			osfenceWorkerMode: { enabled: false },
+			osfenceControlDbReader: undefined,
 			options: { worker: { authenticationToken: "token" } },
 			supervisorClaims: new Map([[client, oldClaim]]),
 			updateRestart: transaction,
@@ -446,8 +455,11 @@ describe("daemon worker supervisor monitoring", () => {
 			owner: client,
 			abort: new AbortController(),
 			phase: "prepared",
+			deferredClientEnv: [],
 		};
 		const daemon = Object.assign(Object.create(AgentDaemon.prototype), {
+			osfenceWorkerMode: { enabled: false },
+			osfenceControlDbReader: undefined,
 			options: { worker: { authenticationToken: "token" } },
 			supervisorClaims: new Map([[client, oldClaim]]),
 			peerClaims: new Map(),
@@ -490,6 +502,8 @@ describe("daemon worker supervisor monitoring", () => {
 		let assertionCount = 0;
 		const handleWorkerCommand = vi.fn(async () => undefined);
 		const daemon = Object.assign(Object.create(AgentDaemon.prototype), {
+			osfenceWorkerMode: { enabled: false },
+			osfenceControlDbReader: undefined,
 			options: { worker: { authenticationToken: "token" } },
 			supervisorClaims: new Map(),
 			peerClaims: new Map(),
@@ -1006,6 +1020,7 @@ describe("daemon worker supervisor monitoring", () => {
 			shutdown(exitCode: number, stopWorkers: boolean, relaunch?: boolean, forceWorkers?: boolean): Promise<never>;
 		};
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			shuttingDown: false,
 			signalCleanupHandlers: [],
 			workers: new Map(),
@@ -1040,6 +1055,7 @@ describe("daemon worker supervisor monitoring", () => {
 		});
 		const previousExitCode = process.exitCode;
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			shuttingDown: false,
 			signalCleanupHandlers: [],
 			workers: new Map(),
@@ -1097,6 +1113,7 @@ describe("daemon worker supervisor monitoring", () => {
 		const catalogStop = vi.fn(async () => undefined);
 		const log = vi.fn();
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			shuttingDown: false,
 			signalCleanupHandlers: [],
 			workers,
@@ -1136,6 +1153,7 @@ describe("daemon worker supervisor monitoring", () => {
 		const fenceSupervisorSocket = vi.fn();
 		const lease = new DaemonSocketPathLease("/tmp/daemon.sock", async () => {});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			shuttingDown: false,
 			startupComplete: false,
 			socketLease: lease,
@@ -1161,6 +1179,7 @@ describe("daemon worker supervisor monitoring", () => {
 		const cleanupSupervisorResources = vi.fn(async () => {});
 		const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			shuttingDown: false,
 			startupComplete: true,
 			cleanupSupervisorResources,
@@ -1201,6 +1220,7 @@ describe("daemon worker supervisor monitoring", () => {
 		} as unknown as DaemonSocketClient;
 		const handleCommand = vi.fn();
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			shuttingDown: true,
 			generation: "fenced-generation",
 			socketPath: "/tmp/fenced.sock",
@@ -1249,6 +1269,41 @@ describe("daemon worker supervisor monitoring", () => {
 		await vi.runAllTimersAsync();
 
 		expect(daemon.canConnectToSupervisor).not.toHaveBeenCalled();
+	});
+
+	it("keeps the supervisor monitor armed after a replacement binds but exits before claiming", async () => {
+		vi.useFakeTimers();
+		// The supervisor socket is dead, comes up with the replacement launch,
+		// then dies again before the replacement ever claims the worker.
+		const probeResults = [false, true, false, false];
+		let probeCount = 0;
+		const daemon = createHarness(async () => {
+			const result = probeResults[Math.min(probeCount, probeResults.length - 1)];
+			probeCount += 1;
+			return result ?? false;
+		});
+		// Drive the fake clock until the expected number of probes have run;
+		// one advance alone does not flush the availability check chain.
+		const advanceUntilProbes = async (expected: number) => {
+			for (let step = 0; probeCount < expected && step < 200; step++) {
+				await vi.advanceTimersByTimeAsync(100);
+			}
+			expect(probeCount).toBe(expected);
+		};
+
+		daemon.scheduleSupervisorAvailabilityCheck("/tmp/supervisor.sock", 1500);
+		await advanceUntilProbes(2);
+		expect(daemon.launchReplacementSupervisor).toHaveBeenCalledOnce();
+		// The replacement binding mid-launch restarts the orphan window...
+		expect(daemon.supervisorAbsentSince).toBeUndefined();
+		// ...but a bind is not an authenticated claim: the monitor must stay armed
+		// instead of orphaning the worker if the replacement exits unclaimed.
+		expect(daemon.supervisorMonitorTimer).toBeDefined();
+
+		await advanceUntilProbes(4);
+		expect(daemon.launchReplacementSupervisor).toHaveBeenCalledTimes(2);
+		expect(daemon.canConnectToSupervisor).toHaveBeenCalledTimes(4);
+		expect(daemon.supervisorMonitorTimer).toBeDefined();
 	});
 
 	it("retries when shutdown admission lookup fails", async () => {
@@ -1552,6 +1607,7 @@ describe("daemon worker supervisor monitoring", () => {
 			worker.descriptor.lifecycle = "ready";
 		});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			persistWorker,
 			recoverWorker,
@@ -1607,6 +1663,7 @@ describe("daemon worker supervisor monitoring", () => {
 		const persistWorker = vi.fn();
 		const recoverWorker = vi.fn();
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			workerStopCounts: new Map(),
 			stopWorkerUntracked: vi.fn(async () => {
@@ -1668,6 +1725,7 @@ describe("daemon worker supervisor monitoring", () => {
 			if (removeDescriptor) deleteWorkerDescriptor(target);
 		});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers,
 			workerStopCounts: new Map(),
 			clients: new Set(),
@@ -1706,7 +1764,9 @@ describe("daemon worker supervisor monitoring", () => {
 		await expect(
 			supervisor.handleCommand({} as DaemonSocketClient, { type: "kill", activeSessionId: "root-active" }),
 		).resolves.toEqual(success(undefined, "kill"));
-		expect(stopWorkerUntracked).toHaveBeenCalledWith(worker, true, false, true, false, undefined);
+		// force=true: root kill escalates to SIGKILL rather than waiting on a wedged
+		// worker (ce2abeec3). The assertion stayed on the pre-escalation argument.
+		expect(stopWorkerUntracked).toHaveBeenCalledWith(worker, true, true, true, false, undefined);
 		expect(workers.has(worker.descriptor.workerId)).toBe(false);
 		expect(deleteWorkerDescriptor).toHaveBeenCalledWith(worker);
 		expect(supervisor.workerStopCounts.has(worker)).toBe(false);
@@ -1734,6 +1794,7 @@ describe("daemon worker supervisor monitoring", () => {
 			intentionalStop: false,
 		};
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			shuttingDown: false,
 		}) as RecoveryHarness;
@@ -1786,6 +1847,7 @@ describe("daemon worker supervisor monitoring", () => {
 			stopRevision: 0,
 		};
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			shuttingDown: false,
 			connectWorker: vi.fn(),
@@ -1827,6 +1889,203 @@ describe("daemon worker supervisor monitoring", () => {
 		);
 	});
 
+	/** A failed worker whose process identity is verifiably current (this test process). */
+	function retryableWorkerFixture(prefix: string) {
+		const root = {
+			id: `active-${prefix}`,
+			activeSessionId: `active-${prefix}`,
+			sessionId: `session-${prefix}`,
+			cwd: "/tmp",
+		} as SessionSummary;
+		const worker = {
+			descriptor: {
+				workerId: `worker-${prefix}`,
+				rootActiveSessionId: `active-${prefix}`,
+				rootSessionId: `session-${prefix}`,
+				lifecycle: "failed" as string,
+				pid: process.pid,
+				processStartId: getProcessStartId(process.pid),
+				stopRequestedAt: undefined as string | undefined,
+			},
+			client: undefined as { request: ReturnType<typeof vi.fn> } | undefined,
+			recovery: undefined as Promise<void> | undefined,
+			summaries: new Map<string, SessionSummary>(),
+			intentionalStop: false,
+			deferredRecoveryRounds: 0,
+		};
+		return { root, worker };
+	}
+
+	function retrySupervisor(worker: { descriptor: { workerId: string } }, overrides: Record<string, unknown>) {
+		return Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
+			workers: new Map([[worker.descriptor.workerId, worker]]),
+			clients: new Set(),
+			shuttingDown: false,
+			persistWorker: vi.fn(),
+			...overrides,
+		}) as object;
+	}
+
+	it("retries recovery on create reuse for a failed worker with a current process identity", async () => {
+		const { worker } = retryableWorkerFixture("failed-live");
+		worker.deferredRecoveryRounds = 11;
+		const recoverWorker = vi.fn(async () => {
+			worker.descriptor.lifecycle = "ready";
+		});
+		const supervisor = retrySupervisor(worker, {
+			recoverWorker,
+			isWorkerReadyForCreate: (target: typeof worker) => target.descriptor.lifecycle === "ready",
+		}) as unknown as {
+			reuseWorkerForCreate(
+				target: typeof worker,
+				ownerClientId: undefined,
+				sessionPath: string,
+			): Promise<typeof worker>;
+		};
+
+		await expect(supervisor.reuseWorkerForCreate(worker, undefined, "/tmp/failed-live.jsonl")).resolves.toBe(worker);
+		expect(recoverWorker).toHaveBeenCalledWith(worker);
+		expect(worker.deferredRecoveryRounds).toBe(0);
+	});
+
+	it("recovers a failed identity-current worker when a command is forwarded to it", async () => {
+		const { root, worker } = retryableWorkerFixture("failed-root");
+		const request = vi.fn(async () => ({ type: "response", command: "get_state", success: true, data: root }));
+		const recoverWorker = vi.fn(async () => {
+			worker.descriptor.lifecycle = "ready";
+			worker.client = { request };
+		});
+		const supervisor = retrySupervisor(worker, { recoverWorker }) as unknown as {
+			forwardToWorker(
+				target: typeof worker,
+				command: { type: "get_state"; activeSessionId: string },
+			): Promise<{ success: boolean; data?: SessionSummary }>;
+		};
+
+		const response = await supervisor.forwardToWorker(worker, {
+			type: "get_state",
+			activeSessionId: "active-failed-root",
+		});
+		expect(recoverWorker).toHaveBeenCalledOnce();
+		expect(response.success).toBe(true);
+		expect(response.data?.workerState).toBe("ready");
+	});
+
+	it("joins an in-flight recovery instead of failing a concurrent forwarded command", async () => {
+		const { root, worker } = retryableWorkerFixture("race");
+		const request = vi.fn(async () => ({ type: "response", command: "get_state", success: true, data: root }));
+		const release = createDeferred<void>();
+		const recoverWorker = vi.fn(() => {
+			worker.recovery = release.promise.then(() => {
+				worker.descriptor.lifecycle = "ready";
+				worker.client = { request };
+				worker.recovery = undefined;
+			});
+			return worker.recovery;
+		});
+		const supervisor = retrySupervisor(worker, { recoverWorker }) as unknown as {
+			forwardToWorker(
+				target: typeof worker,
+				command: { type: "get_state"; activeSessionId: string },
+			): Promise<{ success: boolean }>;
+		};
+
+		const first = supervisor.forwardToWorker(worker, { type: "get_state", activeSessionId: "active-race" });
+		await Promise.resolve();
+		const second = supervisor.forwardToWorker(worker, { type: "get_state", activeSessionId: "active-race" });
+		await Promise.resolve();
+		release.resolve();
+		const [firstResponse, secondResponse] = await Promise.all([first, second]);
+		expect(firstResponse.success).toBe(true);
+		expect(secondResponse.success).toBe(true);
+		expect(recoverWorker).toHaveBeenCalledOnce();
+	});
+
+	it("runs at most one recovery ladder for a single attach touch", async () => {
+		const { root, worker } = retryableWorkerFixture("double");
+		worker.summaries.set("active-double", root);
+		// Recovery exhausts and parks the same live worker failed again.
+		const recoverWorker = vi.fn(async () => {
+			worker.descriptor.lifecycle = "failed";
+		});
+		const supervisor = retrySupervisor(worker, { recoverWorker }) as unknown as {
+			attachClient(
+				client: DaemonSocketClient,
+				command: { type: "attach"; activeSessionId: string },
+			): Promise<unknown>;
+		};
+		seedSupervisorRoster(supervisor as object as Parameters<typeof seedSupervisorRoster>[0], worker);
+
+		await expect(
+			supervisor.attachClient({} as DaemonSocketClient, { type: "attach", activeSessionId: "active-double" }),
+		).rejects.toThrow("Session worker is failed");
+		expect(recoverWorker).toHaveBeenCalledOnce();
+	});
+
+	it("does not revive a stop-marked failed worker on attach", async () => {
+		const { worker } = retryableWorkerFixture("stopped");
+		worker.descriptor.stopRequestedAt = new Date().toISOString();
+		worker.intentionalStop = true;
+		const recoverWorker = vi.fn(async () => {});
+		const persistWorker = vi.fn();
+		const supervisor = retrySupervisor(worker, {
+			recoverWorker,
+			persistWorker,
+			findWorkerForClient: vi.fn(async () => {
+				throw new Error("Unknown active session: active-stopped");
+			}),
+		}) as unknown as {
+			attachClient(
+				client: DaemonSocketClient,
+				command: { type: "attach"; activeSessionId: string },
+			): Promise<unknown>;
+		};
+
+		await expect(
+			supervisor.attachClient({} as DaemonSocketClient, { type: "attach", activeSessionId: "active-stopped" }),
+		).rejects.toThrow("Unknown active session: active-stopped");
+		expect(recoverWorker).not.toHaveBeenCalled();
+		expect(persistWorker).not.toHaveBeenCalled();
+		expect(worker.intentionalStop).toBe(true);
+		expect(worker.descriptor.stopRequestedAt).toBeDefined();
+		expect(worker.descriptor.lifecycle).toBe("failed");
+	});
+
+	it("answers a descriptor-known unaddressable root session with a structured recovering error", async () => {
+		const { worker } = retryableWorkerFixture("gap");
+		worker.descriptor.lifecycle = "recovering";
+		const { worker: hexWorker } = retryableWorkerFixture("hex");
+		hexWorker.descriptor.rootActiveSessionId = "00ff77aa11bb22cc";
+		hexWorker.descriptor.rootSessionId = "0123456789abcdef";
+		hexWorker.descriptor.lifecycle = "recovering";
+		const supervisor = retrySupervisor(worker, {
+			matchWorkers: () => [],
+			refreshWorkerSummaries: vi.fn(async () => {}),
+		}) as unknown as { findWorker(selector: string): Promise<unknown> };
+		(supervisor as unknown as { workers: Map<string, unknown> }).workers.set("worker-hex", hexWorker);
+
+		await expect(supervisor.findWorker("active-gap")).rejects.toMatchObject({
+			name: "DaemonSessionRecoveringError",
+			code: "session_recovering",
+			activeSessionId: "active-gap",
+		});
+		// A stable-session-id selector still reports the ACTIVE id on the wire.
+		await expect(supervisor.findWorker("session-gap")).rejects.toMatchObject({
+			code: "session_recovering",
+			activeSessionId: "active-gap",
+		});
+		// Suffix addressing follows the roster rule: an unambiguous hex suffix of a recovering root is recovering.
+		await expect(supervisor.findWorker("77aa11bb22cc")).rejects.toMatchObject({
+			code: "session_recovering",
+			activeSessionId: "00ff77aa11bb22cc",
+		});
+		// Failed workers keep the unknown answer so clients take the create fallback that reclaims them.
+		worker.descriptor.lifecycle = "failed";
+		await expect(supervisor.findWorker("active-gap")).rejects.toThrow("Unknown active session: active-gap");
+		await expect(supervisor.findWorker("missing")).rejects.toThrow("Unknown active session: missing");
+	});
+
 	it("waits for worker recovery before reusing a saved session", async () => {
 		const root = { id: "active-root", activeSessionId: "active-root", sessionId: "session-root", cwd: "/tmp" };
 		const recovery = createDeferred<void>();
@@ -1842,6 +2101,7 @@ describe("daemon worker supervisor monitoring", () => {
 			intentionalStop: false,
 		};
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 		}) as {
 			reuseWorkerForCreate(
@@ -1886,6 +2146,7 @@ describe("daemon worker supervisor monitoring", () => {
 			seedSupervisorRoster(supervisor, worker);
 		});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			shuttingDown: false,
 			recoverWorker,
@@ -1917,6 +2178,7 @@ describe("daemon worker supervisor monitoring", () => {
 			worker.client = {};
 		});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			shuttingDown: false,
 			recoverWorker,
@@ -1946,6 +2208,7 @@ describe("daemon worker supervisor monitoring", () => {
 			intentionalStop: false,
 		};
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 		}) as {
 			reuseWorkerForCreate(
@@ -2005,6 +2268,7 @@ describe("daemon worker supervisor monitoring", () => {
 			summaries: new Map(),
 		};
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([
 				[unrelated.descriptor.workerId, unrelated],
 				[target.descriptor.workerId, target],
@@ -2025,6 +2289,7 @@ describe("daemon worker supervisor monitoring", () => {
 		const recoverUncertainWorkerOperations = vi.fn(async () => {});
 		const deleteWorkerDescriptor = vi.fn();
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers,
 			sessionInputPauses: new Map(),
 			processIdentity: vi.fn(() => "gone"),
@@ -2052,6 +2317,7 @@ describe("daemon worker supervisor monitoring", () => {
 		};
 		const stopWorker = vi.fn(async () => {});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			processIdentity: vi.fn(() => "current"),
 			stopWorker,
@@ -2092,6 +2358,7 @@ describe("daemon worker supervisor monitoring", () => {
 		const recoverWorker = vi.fn(() => pendingRecovery);
 		const persistWorker = vi.fn();
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			assertRecoveryAllowed: vi.fn(async () => {}),
 			connectWorker: vi.fn(async () => {}),
 			subscribeWorker: vi.fn(async () => {}),
@@ -2142,6 +2409,7 @@ describe("daemon worker supervisor monitoring", () => {
 		const recoverWorker = vi.fn(async () => undefined);
 		const persistWorker = vi.fn();
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			assertRecoveryAllowed: vi.fn(async () => undefined),
 			supervisorAuthenticationClaim: vi.fn(() => ({
 				supervisorGeneration: "generation",
@@ -2177,6 +2445,7 @@ describe("daemon worker supervisor monitoring", () => {
 		};
 		const persistWorker = vi.fn();
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			persistWorker,
 			markWorkerRosterEntries: vi.fn(),
@@ -2223,6 +2492,7 @@ describe("daemon worker supervisor monitoring", () => {
 			stopRevision: 0,
 		};
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			shuttingDown: false,
 			connectWorker: vi.fn(async () => {
@@ -2265,7 +2535,9 @@ describe("daemon worker supervisor monitoring", () => {
 			client: {},
 			intentionalStop: false,
 		};
-		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {}) as {
+		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
+		}) as {
 			effectiveWorkerState(target: object): string;
 		};
 
@@ -2278,7 +2550,9 @@ describe("daemon worker supervisor monitoring", () => {
 			client: undefined,
 			intentionalStop: false,
 		};
-		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {}) as {
+		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
+		}) as {
 			effectiveWorkerState(target: object): string;
 		};
 
@@ -2291,7 +2565,9 @@ describe("daemon worker supervisor monitoring", () => {
 			client: {},
 			intentionalStop: false,
 		};
-		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {}) as {
+		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
+		}) as {
 			effectiveWorkerState(target: object): string;
 		};
 
@@ -2324,6 +2600,7 @@ describe("daemon worker supervisor monitoring", () => {
 		const liveWorker = makeWorker("worker-live");
 		const stoppingWorker = makeWorker("worker-stopping", new Date().toISOString());
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([
 				[liveWorker.descriptor.workerId, liveWorker],
 				[stoppingWorker.descriptor.workerId, stoppingWorker],
@@ -2364,6 +2641,7 @@ describe("daemon worker supervisor monitoring", () => {
 		};
 		const stopWorker = vi.fn(async () => {});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			assertRecoveryAllowed: vi.fn(async () => undefined),
 			stopWorker,
 			log: vi.fn(),
@@ -2392,6 +2670,7 @@ describe("daemon worker supervisor monitoring", () => {
 		};
 		const stopOrder: string[] = [];
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			assertRecoveryAllowed: vi.fn(async () => undefined),
 			connectWorker: vi.fn(async () => {
 				stopOrder.push("connect");
@@ -2427,6 +2706,7 @@ describe("daemon worker supervisor monitoring", () => {
 		const persistWorker = vi.fn();
 		const stopWorker = vi.fn(async () => {});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			assertRecoveryAllowed: vi.fn(async () => undefined),
 			connectWorker: vi.fn(async () => {
 				throw new Error("connect refused");
@@ -2463,6 +2743,7 @@ describe("daemon worker supervisor monitoring", () => {
 		let alive = true;
 		const stopWorker = vi.fn(async () => {});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			shuttingDown: false,
 			stopWorker,
@@ -2515,6 +2796,7 @@ describe("daemon worker supervisor monitoring", () => {
 		let alive = true;
 		const stopWorker = vi.fn(async () => {});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			shuttingDown: false,
 			stopWorker,
@@ -2561,6 +2843,7 @@ describe("daemon worker supervisor monitoring", () => {
 		};
 		const stopWorker = vi.fn(async () => {});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			shuttingDown: false,
 			stopWorker,
@@ -2615,6 +2898,7 @@ describe("daemon worker supervisor monitoring", () => {
 		};
 		const stopWorker = vi.fn(async () => {});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			shuttingDown: false,
 			stopWorker,
@@ -2670,6 +2954,7 @@ describe("daemon worker supervisor monitoring", () => {
 		};
 		const workers = new Map([[worker.descriptor.workerId, worker]]);
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers,
 			shuttingDown: false,
 			persistWorker: vi.fn(),
@@ -2728,6 +3013,7 @@ describe("daemon worker supervisor monitoring", () => {
 		};
 		const workers = new Map([[worker.descriptor.workerId, worker]]);
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers,
 			shuttingDown: false,
 			persistWorker: vi.fn(),
@@ -2785,6 +3071,7 @@ describe("daemon worker supervisor monitoring", () => {
 			stopRevision: 0,
 		};
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			shuttingDown: false,
 			persistWorker: vi.fn(),
@@ -2836,6 +3123,7 @@ describe("daemon worker supervisor monitoring", () => {
 			workers.delete(worker.descriptor.workerId);
 		});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers,
 			shuttingDown: false,
 			stopWorker,
@@ -2888,6 +3176,7 @@ describe("daemon worker supervisor monitoring", () => {
 			workers.delete(worker.descriptor.workerId);
 		});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers,
 			shuttingDown: false,
 			stopWorker,
@@ -2946,6 +3235,7 @@ describe("daemon worker supervisor monitoring", () => {
 		};
 		const stopWorker = vi.fn(async () => {});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			shuttingDown: false,
 			stopWorker,
@@ -2994,6 +3284,7 @@ describe("daemon worker supervisor monitoring", () => {
 		};
 		const stopWorker = vi.fn(async () => {});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			shuttingDown: false,
 			stopWorker,
@@ -3047,6 +3338,7 @@ describe("daemon worker supervisor monitoring", () => {
 				throw new Error("archive temporarily unavailable");
 			});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers,
 			shuttingDown: false,
 			stopWorker,
@@ -3090,6 +3382,7 @@ describe("daemon worker supervisor monitoring", () => {
 		let alive = true;
 		const stopWorker = vi.fn(async () => {});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			shuttingDown: false,
 			stopWorker,
@@ -3136,6 +3429,7 @@ describe("daemon worker supervisor monitoring", () => {
 			workers.delete(worker.descriptor.workerId);
 		});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers,
 			stopWorker,
 			log: vi.fn(),
@@ -3172,6 +3466,7 @@ describe("daemon worker supervisor monitoring", () => {
 			workers.delete(worker.descriptor.workerId);
 		});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers,
 			stopWorker,
 			log: vi.fn(),
@@ -3217,6 +3512,7 @@ describe("daemon worker supervisor monitoring", () => {
 		});
 		const stopWorker = vi.fn(async () => {});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers,
 			stopWorker,
 			log: vi.fn(),
@@ -3255,6 +3551,7 @@ describe("daemon worker supervisor monitoring", () => {
 			stopFinalization: undefined as Promise<void> | undefined,
 		};
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			shuttingDown: false,
 			// Cleanup hangs past the bounded reclaim wait.
@@ -3301,6 +3598,7 @@ describe("daemon worker supervisor monitoring", () => {
 			workers.delete(worker.descriptor.workerId);
 		});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers,
 			shuttingDown: false,
 			stopWorker,
@@ -3341,6 +3639,7 @@ describe("daemon worker supervisor monitoring", () => {
 		};
 		const stopWorker = vi.fn(async () => {});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			stopWorker,
 			log: vi.fn(),
@@ -3368,6 +3667,7 @@ describe("daemon worker supervisor monitoring", () => {
 		};
 		const stopWorker = vi.fn(async () => {});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			stopWorker,
 			log: vi.fn(),
@@ -3393,6 +3693,7 @@ describe("daemon worker supervisor monitoring", () => {
 				})}\n`,
 			);
 			const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+				ravoStatusWorker: new Map<string, unknown>(),
 				descriptorDir,
 				socketPath: "/tmp/supervisor.sock",
 				workers: new Map(),
@@ -3486,6 +3787,7 @@ describe("daemon worker supervisor monitoring", () => {
 			);
 			const workers = new Map<string, { descriptor: Record<string, unknown> }>();
 			const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+				ravoStatusWorker: new Map<string, unknown>(),
 				descriptorDir,
 				socketPath: "/tmp/supervisor.sock",
 				workers,
@@ -3556,6 +3858,7 @@ describe("daemon worker supervisor monitoring", () => {
 				})}\n`,
 			);
 			const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+				ravoStatusWorker: new Map<string, unknown>(),
 				descriptorDir,
 				socketPath: "/tmp/supervisor.sock",
 				workers: new Map(),
@@ -3664,6 +3967,7 @@ describe("daemon worker supervisor monitoring", () => {
 		};
 		const seed = vi.fn();
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			clients: new Set([client]),
 			streamReconstructor: { seed },
@@ -3713,6 +4017,7 @@ describe("daemon worker supervisor monitoring", () => {
 		const launchWorker = vi.fn(async () => worker);
 		const recoverUncertainWorkerOperations = vi.fn(async () => undefined);
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			shuttingDown: false,
 			assertRecoveryAllowed: vi.fn(async () => undefined),
@@ -3761,6 +4066,7 @@ describe("daemon worker supervisor monitoring", () => {
 			throw new Error("stop after reconstruction");
 		});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			clients: new Set([client]),
 			protocolClientIds: new WeakMap(),
@@ -3826,6 +4132,7 @@ describe("daemon worker supervisor monitoring", () => {
 			throw new Error("stop after resident reconstruction");
 		});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			clients: new Set([client]),
 			protocolClientIds: new WeakMap(),
@@ -3897,6 +4204,7 @@ describe("daemon worker supervisor monitoring", () => {
 			attachedActiveSessionIds: new Set<string>(),
 		};
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			clients: new Set([client]),
 		}) as {
@@ -3932,6 +4240,7 @@ describe("daemon worker supervisor monitoring", () => {
 			attachedActiveSessionIds: new Set<string>(),
 		};
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			clients: new Set([client]),
 			protocolClientIds: new Map(),
@@ -3972,6 +4281,7 @@ describe("daemon worker supervisor monitoring", () => {
 		};
 		const catchUpClient = vi.fn(async () => undefined);
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			clients: new Set([client]),
 			streamReconstructor: { observe: vi.fn() },
 			catchUpClient,
@@ -4007,6 +4317,7 @@ describe("daemon worker supervisor monitoring", () => {
 		const requestWorker = vi.fn(async () => ({ success: true }));
 		const worker: SubscriptionWorker = { client: { requestWorker } };
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			clients: new Set(),
 		}) as {
 			subscribeWorker(worker: SubscriptionWorker, activeSessionId: string): Promise<void>;
@@ -4065,6 +4376,7 @@ describe("daemon worker supervisor monitoring", () => {
 			attachedActiveSessionIds: new Set<string>(),
 		};
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			clients: new Set([client]),
 		}) as {
@@ -4129,6 +4441,7 @@ describe("daemon worker supervisor monitoring", () => {
 		const markInterrupted = vi.fn(async () => undefined);
 		const kill = vi.spyOn(process, "kill").mockReturnValue(true);
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			shuttingDown: false,
 			catalog: { start: vi.fn(async () => undefined), markInterrupted },
@@ -4182,6 +4495,7 @@ describe("daemon worker supervisor monitoring", () => {
 			},
 		};
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			shuttingDown: false,
 			catalog: { start: vi.fn(async () => undefined), markInterrupted: vi.fn(async () => undefined) },
@@ -4232,6 +4546,7 @@ describe("daemon worker supervisor monitoring", () => {
 			throw new Error("catalog unavailable");
 		});
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			shuttingDown: false,
 			catalog: { start: catalogStart, markInterrupted: vi.fn() },
@@ -4285,6 +4600,7 @@ describe("daemon worker supervisor monitoring", () => {
 		const catalogError = new Error("Timed out starting daemon catalog");
 		const kill = vi.spyOn(orphanProcessModule, "killOrphanProcess").mockReturnValue(true);
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([[worker.descriptor.workerId, worker]]),
 			shuttingDown: false,
 			catalog: {
@@ -4327,6 +4643,7 @@ describe("daemon worker supervisor monitoring", () => {
 			client,
 		};
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([["worker", worker]]),
 		}) as { prepareUpdateRestartFenced(): Promise<unknown> };
 		await expect(supervisor.prepareUpdateRestartFenced()).rejects.toThrow(error);
@@ -4354,6 +4671,7 @@ describe("daemon worker supervisor monitoring", () => {
 			client,
 		};
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([["worker", worker]]),
 			validateAndPersistUpdateManifest: vi.fn(),
 			stopWorker: vi.fn(async () => undefined),
@@ -4382,6 +4700,7 @@ describe("daemon worker supervisor monitoring", () => {
 		} as unknown as DaemonSocketClient;
 		const mutationDrain = { begin: vi.fn(), end: vi.fn() };
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			ready: Promise.resolve(),
 			workers: new Map(),
 			protocolClientIds: new WeakMap(),
@@ -4428,6 +4747,7 @@ describe("daemon worker supervisor monitoring", () => {
 		} as unknown as DaemonSocketClient;
 		const mutationDrain = { begin: vi.fn(), end: vi.fn() };
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			ready: Promise.resolve(),
 			workers: new Map(),
 			protocolClientIds: new WeakMap(),
@@ -4472,6 +4792,7 @@ describe("daemon worker supervisor monitoring", () => {
 			sessions: [],
 		}));
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			mutationDrain,
 			workers: new Map(),
 			prepareUpdateRestartFenced: prepareFenced,
@@ -4527,6 +4848,7 @@ describe("daemon worker supervisor monitoring", () => {
 			client: undefined,
 		};
 		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			ravoStatusWorker: new Map<string, unknown>(),
 			workers: new Map([["resident-1", worker]]),
 		}) as {
 			prepareUpdateRestartFenced(): Promise<unknown>;
@@ -4534,5 +4856,14 @@ describe("daemon worker supervisor monitoring", () => {
 
 		await expect(supervisor.prepareUpdateRestartFenced()).rejects.toThrow(/resident-1.*recovering.*disconnected/);
 		expect(requestWorker).not.toHaveBeenCalled();
+	});
+
+	it("derives per-attempt handshake budgets from the remaining outer connect deadline", () => {
+		const now = 1_000_000;
+		expect(handshakeBudgetMs(now + 30_000, now)).toBe(30_000);
+		expect(handshakeBudgetMs(now + 2_500, now)).toBe(2_500);
+		expect(handshakeBudgetMs(now + 25, now)).toBe(25);
+		expect(() => handshakeBudgetMs(now, now)).toThrow(DaemonWorkerProbeTimeoutError);
+		expect(() => handshakeBudgetMs(now - 1, now)).toThrow(DaemonWorkerProbeTimeoutError);
 	});
 });

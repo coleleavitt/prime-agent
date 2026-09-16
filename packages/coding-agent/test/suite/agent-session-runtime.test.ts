@@ -30,6 +30,7 @@ import type {
 	SessionStartEvent,
 } from "../../src/index.js";
 import { createDefaultRuntimeFactory } from "../../src/main.js";
+import { conversationMessages } from "./harness.js";
 
 type RecordedSessionEvent =
 	| SessionBeforeSwitchEvent
@@ -472,6 +473,10 @@ describe("AgentSessionRuntime characterization", () => {
 
 	it("keeps semantic spawn lineage through the production runtime factory", async () => {
 		const tempDir = join(tmpdir(), `pi-runtime-factory-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		vi.stubEnv("HOME", tempDir);
+		cleanups.push(() => {
+			vi.unstubAllEnvs();
+		});
 		mkdirSync(tempDir, { recursive: true });
 		cleanups.push(() => rmSync(tempDir, { recursive: true, force: true }));
 		const faux = registerFauxProvider({ models: [{ id: "faux-1", reasoning: false }] });
@@ -532,6 +537,8 @@ describe("AgentSessionRuntime characterization", () => {
 			},
 		});
 		cleanups.push(() => created.session.dispose());
+		expect(created.services.modelRegistry.authStorage).toBe(created.services.authStorage);
+		expect(created.services.authStorage.getPrimeCliConfigPath()).toBe(join(tempDir, ".prime", "config.json"));
 		await created.session.bindExtensions({});
 
 		const ledgerPath = join(childSessionDir, SEMANTIC_EDGES_LEDGER_FILENAME);
@@ -632,7 +639,7 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(newSessionResult.cancelled).toBe(false);
 		await runtime.session.bindExtensions({});
 		expect(runtime.session).not.toBe(originalSession);
-		expect(runtime.session.messages).toEqual([]);
+		expect(conversationMessages(runtime.session)).toEqual([]);
 		const secondSessionFile = runtime.session.sessionFile;
 		expect(events).toEqual([
 			{ type: "session_before_switch", reason: "new", targetSessionFile: undefined },
@@ -746,7 +753,7 @@ describe("AgentSessionRuntime characterization", () => {
 
 		expect(result).toEqual({ cancelled: false, selectedText: "Say two" });
 		expect(
-			runtime.session.messages.map((message) =>
+			conversationMessages(runtime.session).map((message) =>
 				message.role === "user"
 					? typeof message.content === "string"
 						? message.content
@@ -768,7 +775,7 @@ describe("AgentSessionRuntime characterization", () => {
 		const result = await runtime.fork(userMessages[0]!.entryId);
 
 		expect(result).toEqual({ cancelled: false, selectedText: "Say one" });
-		expect(runtime.session.messages).toEqual([]);
+		expect(conversationMessages(runtime.session)).toEqual([]);
 		expect(runtime.session.sessionFile).toBeUndefined();
 	});
 
@@ -777,7 +784,7 @@ describe("AgentSessionRuntime characterization", () => {
 		await runtime.session.prompt("hello");
 		await runtime.session.prompt("again");
 
-		const beforeMessages = runtime.session.messages.map((message) => ({
+		const beforeMessages = conversationMessages(runtime.session).map((message) => ({
 			role: message.role,
 			text:
 				message.role === "user"
@@ -797,7 +804,7 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(result).toEqual({ cancelled: false, selectedText: undefined });
 		expect(runtime.session.sessionFile).not.toBe(previousSessionFile);
 		expect(
-			runtime.session.messages.map((message) => ({
+			conversationMessages(runtime.session).map((message) => ({
 				role: message.role,
 				text:
 					message.role === "user"
@@ -818,7 +825,7 @@ describe("AgentSessionRuntime characterization", () => {
 		await runtime.session.prompt("hello");
 		await runtime.session.prompt("again");
 
-		const beforeMessages = runtime.session.messages.map((message) => ({
+		const beforeMessages = conversationMessages(runtime.session).map((message) => ({
 			role: message.role,
 			text:
 				message.role === "user"
@@ -838,7 +845,7 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(result).toEqual({ cancelled: false, selectedText: undefined });
 		expect(runtime.session.sessionFile).toBeUndefined();
 		expect(
-			runtime.session.messages.map((message) => ({
+			conversationMessages(runtime.session).map((message) => ({
 				role: message.role,
 				text:
 					message.role === "user"

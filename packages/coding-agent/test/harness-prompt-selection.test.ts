@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { formatHarnessStateForPrompt, type HarnessEntry, type HarnessState } from "../src/core/refinement/index.js";
-import { buildSystemPrompt } from "../src/core/system-prompt.js";
 
 /**
  * Mirrors the shape of the real 27-entry global harness state (27 memories, no
@@ -230,20 +229,14 @@ describe("harness prompt selection", () => {
 		expect(rendered).toContain("version_control");
 	});
 
-	it("surfaces the freshest entry in the rendered system prompt", () => {
+	// buildSystemPrompt no longer takes harnessState: the store is delivered as a
+	// harness digest in context rather than baked into the base prompt. The
+	// selection this asserts is unchanged, so it is asserted where it now lives.
+	it("surfaces the freshest entry in the rendered harness overview", () => {
 		const state = seedGlobalHarnessState();
 
-		const rlmPrompt = buildSystemPrompt({ cwd: "/workspace", selectedTools: ["ipython"], harnessState: state });
-		expect(rlmPrompt).toContain("[global:obscura_baseline]");
-		expect(rlmPrompt.split("[global:ers_new_entity_").length - 1).toBe(1);
-
-		const customPrompt = buildSystemPrompt({
-			cwd: "/workspace",
-			customPrompt: "Custom system prompt.",
-			selectedTools: ["ipython"],
-			harnessState: state,
-		});
-		expect(customPrompt).toContain("[global:obscura_baseline]");
-		expect(customPrompt.split("[global:ers_new_entity_").length - 1).toBe(1);
+		const rendered = formatHarnessStateForPrompt(state);
+		expect(rendered).toContain("[global:obscura_baseline]");
+		expect(rendered.split("[global:ers_new_entity_").length - 1).toBe(1);
 	});
 });

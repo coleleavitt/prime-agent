@@ -73,7 +73,17 @@ export class KernelExitedError extends Error {
  * Handles one typed request from Python code running in the kernel.
  * The returned record is delivered verbatim to the Python caller.
  */
-export type HostRequestHandler = (payload: Record<string, unknown>) => Promise<Record<string, unknown>>;
+export interface HostRequestContext {
+	/** Aborted only by an exact-ID host_cancel or kernel teardown. */
+	signal: AbortSignal;
+	/** Exact process-local transport correlation for this request. */
+	requestId: string;
+}
+
+export type HostRequestHandler = (
+	payload: Record<string, unknown>,
+	context?: HostRequestContext,
+) => Promise<Record<string, unknown>>;
 
 /** Host request handlers keyed by request type (e.g. "rlm.run", "goal.complete"). */
 export type HostRequestHandlers = Record<string, HostRequestHandler>;
@@ -134,6 +144,9 @@ export const ATTACHMENT_DISPLAY_MIME = "application/vnd.prime-agent.attachment+j
 
 /** MIME tag the `agent-message` skill emits after sending a message. */
 export const AGENT_MESSAGE_DISPLAY_MIME = "application/vnd.prime-agent.agent-message+json";
+
+/** Internal lifetime notices, consumed before user display rendering. */
+export const BASH_ACTIVITY_DISPLAY_MIME = "application/vnd.prime-agent.bash-activity+json";
 
 /**
  * Hard ceiling on a single attachment's base64 payload, a defensive guard
@@ -330,6 +343,9 @@ export interface KernelClient {
 	readonly isRunning: boolean;
 	/** The most recent unexpected death of a kernel this client owned, if any. */
 	readonly lastUnexpectedExit: KernelUnexpectedExit | undefined;
+	readonly hasBackgroundWork: boolean;
+	/** Terminal: the kernel died or was torn down; only a fresh manager can serve again. */
+	readonly isDefunct: boolean;
 	start(options?: KernelStartOptions): Promise<void>;
 	execute(code: string, opts?: ExecuteOptions): Promise<ExecuteResult>;
 	shutdown(opts?: KernelShutdownOptions): Promise<boolean>;

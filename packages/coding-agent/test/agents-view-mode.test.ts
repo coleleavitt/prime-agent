@@ -1,3 +1,4 @@
+import { getModel } from "@earendil-works/pi-ai";
 import { setKeybindings } from "@earendil-works/pi-tui";
 import stripAnsi from "strip-ansi";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,20 +10,25 @@ import type { AgentConnectionSavedSessionInfo } from "../src/modes/agent-connect
 import {
 	AgentsViewMode,
 	type AgentsViewPersistentState,
-	buildAgentsViewUsageLayout,
+	buildCompactAgentsViewLayout,
 	combineAgentsViewStartupNotices,
 	createInitialAgentsViewPersistentState,
 	runAgentsViewMode,
 } from "../src/modes/agents-view/agents-view-mode.js";
+import * as agentsViewState from "../src/modes/agents-view/agents-view-state.js";
 import {
 	type AgentsViewRow,
 	buildAgentsViewRows,
 	reconcileUnifiedSessions,
 	resolveAgentsViewLeftResult,
+	type UnifiedSessionRecord,
 } from "../src/modes/agents-view/agents-view-state.js";
+import { AgentsViewRenderPreparationCache } from "../src/modes/agents-view/agents-view-usage-layout.js";
 import type { SessionSummary } from "../src/modes/daemon/daemon-session-list.js";
+import * as savedSessionCatalog from "../src/modes/daemon/saved-session-catalog.js";
 import type { InteractiveModeUiServices } from "../src/modes/interactive/interactive-mode-services.js";
-import { stopThemeWatcher, theme } from "../src/modes/interactive/theme/theme.js";
+import { initTheme, stopThemeWatcher, theme } from "../src/modes/interactive/theme/theme.js";
+import { WORKING_ICON_INTERVAL_MS } from "../src/modes/interactive/theme/working-icon.js";
 
 const modeMocks = vi.hoisted(() => ({
 	interactiveRun: vi.fn<() => Promise<never>>(),
@@ -88,6 +94,104 @@ function invoke(method: string, self: object, ...args: unknown[]): unknown {
 	return member.call(self, ...args);
 }
 
+function savedSession(id: string): AgentConnectionSavedSessionInfo {
+	return {
+		id,
+		path: `/tmp/${id}.jsonl`,
+		cwd: "/tmp",
+		created: new Date(0),
+		modified: new Date(0),
+		messageCount: 1,
+		firstMessage: id,
+		allMessagesText: id,
+	};
+}
+
+function deferredSavedCatalog() {
+	let resolve!: (sessions: AgentConnectionSavedSessionInfo[]) => void;
+	let reject!: (error: Error) => void;
+	let onSession: ((session: AgentConnectionSavedSessionInfo) => void) | undefined;
+	const promise = new Promise<AgentConnectionSavedSessionInfo[]>((res, rej) => {
+		resolve = res;
+		reject = rej;
+	});
+	vi.spyOn(savedSessionCatalog, "listDaemonSavedSessions").mockImplementationOnce(
+		async (_client, _context, _scope, callbacks) => {
+			onSession = callbacks?.onSession;
+			return promise;
+		},
+	);
+	return {
+		resolve,
+		reject,
+		emit(session: AgentConnectionSavedSessionInfo): void {
+			if (!onSession) throw new Error("Saved catalog refresh has not started");
+			onSession(session);
+		},
+	};
+}
+
+function catalogHarness(saved: AgentConnectionSavedSessionInfo[] = [], live: SessionSummary[] = []) {
+	const persistentState: AgentsViewPersistentState = {
+		savedSessions: saved,
+		lastSuccessfulSavedSessions: saved,
+		savedCatalogLoaded: true,
+	};
+	const self = {
+		persistentState,
+		lastListedSummaries: live,
+		savedSessions: saved,
+		lastSuccessfulSavedSessions: saved,
+		heartbeats: [],
+		rows: [] as AgentsViewRow[],
+		selectedIndex: 0,
+		savedCatalogGeneration: 0,
+		heartbeatCatalogGeneration: 0,
+		savedCatalogReady: true,
+		savedCatalogRefreshPending: false,
+		savedCatalogReconcileTimer: undefined as ReturnType<typeof setTimeout> | undefined,
+		stopped: false,
+		inactiveAgentIdentities: new Set<string>(),
+		// Both fields are ours and the merged harness came from main, so they were
+		// missing: reconcileCatalogs reads savedSearchCorpus.size, and the
+		// animation timer calls the extracted tickAnimation.
+		savedSearchCorpus: new Map<string, string>(),
+		unifiedRecords: [] as UnifiedSessionRecord[],
+		tickAnimation(): void {
+			invoke("tickAnimation", self);
+		},
+		expandedSubagentParents: new Set<string>(),
+		programShownParents: new Set<string>(),
+		editor: { getText: vi.fn(() => "") },
+		ui: { requestRender: vi.fn(), stop: vi.fn() },
+		requireClient: () => ({}),
+		getSavedSessionCatalogContext: () => ({ cwd: "/tmp" }),
+		withPendingDeleteSession: (sessions: SessionSummary[]) => sessions,
+		getFilteredRecords(): UnifiedSessionRecord[] {
+			return invoke("getFilteredRecords", self) as UnifiedSessionRecord[];
+		},
+		reconcileCatalogs: vi.fn((): void => {
+			invoke("reconcileCatalogs", self);
+		}),
+		rebuildRows: vi.fn((): void => {
+			invoke("rebuildRows", self);
+		}),
+		rearmSavedSearchFetch(): void {
+			invoke("rearmSavedSearchFetch", self);
+		},
+		armSavedSearchFetch: vi.fn(),
+		armSearchCorpusFetch: vi.fn(),
+		applyPendingAncestorExpansion: vi.fn(),
+		restoreSelection: vi.fn(),
+		syncSelectedRowState: vi.fn(),
+		resolveMissingSelectionAnchor: vi.fn(),
+		clearCtrlCExitHint: vi.fn(),
+		clearDeleteConfirmation: vi.fn(),
+		setStatusMessage: vi.fn(),
+	};
+	return self;
+}
+
 const settingsManager = {
 	getTheme: () => "dark",
 	getShowHardwareCursor: () => false,
@@ -105,6 +209,9 @@ describe("AgentsViewMode", () => {
 			editor: { getText: () => "matching query" },
 			persistentState: { query: "" },
 			savedSearchFetchStarted: true,
+			// Searching claims the visible row even while a remembered anchor is
+			// still waiting for its catalog row: user intent supersedes restore.
+			selectionAnchorPending: true,
 			selectedIndex: 4,
 			rebuildRows: vi.fn(),
 			syncSelectedRowState: vi.fn(),
@@ -120,6 +227,37 @@ describe("AgentsViewMode", () => {
 		expect(self.persistentState.query).toBe("matching query");
 		expect(self.rebuildRows).toHaveBeenCalledOnce();
 		expect(self.selectedIndex).toBe(4);
+		expect(self.syncSelectedRowState).toHaveBeenCalledOnce();
+	});
+
+	it("keeps the queried selection when a remembered session arrives later", () => {
+		const remembered = summary({
+			id: "remembered",
+			activeSessionId: "remembered",
+			sessionId: "remembered-session",
+			sessionFile: "/tmp/remembered.jsonl",
+			sessionName: "match remembered",
+		});
+		const fallback = summary({ sessionName: "match fallback" });
+		const persistentState = createInitialAgentsViewPersistentState({ initialSession: remembered });
+		persistentState.savedCatalogLoaded = true;
+		const view = new AgentsViewMode({ config: {}, uiServices: createUiServices() }, persistentState);
+		try {
+			Reflect.set(view, "lastListedSummaries", [fallback]);
+			invoke("reconcileCatalogs", view);
+			expect(Reflect.get(view, "selectionAnchorPending")).toBe(true);
+
+			invoke("setSearchQuery", view, "match");
+			expect(Reflect.get(view, "selectionAnchorPending")).toBe(false);
+			expect(persistentState.selectedSessionKey?.sessionId).toBe(fallback.sessionId);
+
+			Reflect.set(view, "lastListedSummaries", [remembered, fallback]);
+			invoke("reconcileCatalogs", view);
+			const rows = Reflect.get(view, "rows") as AgentsViewRow[];
+			expect(rows[Reflect.get(view, "selectedIndex") as number]?.summary.sessionId).toBe(fallback.sessionId);
+		} finally {
+			stopThemeWatcher();
+		}
 	});
 
 	it("loads the saved catalog on view entry without a search query", () => {
@@ -733,7 +871,7 @@ describe("AgentsViewMode", () => {
 				expect(parentRow?.identity).toBe("session:root-session");
 				expandedSubagentParents.add(parentRow!.identity);
 				invoke("reconcileCatalogs", self);
-				expect(rowsOf(self).some((row) => row.kind === "subagent-summary" && row.expanded)).toBe(true);
+				expect(rowsOf(self).some((row) => row.kind === "subagent")).toBe(true);
 			}
 			// The runtime flushes the session file; the record identity flips to file:.
 			self.lastListedSummaries = [{ ...parent, sessionFile: "/tmp/root.jsonl" }, child];
@@ -746,7 +884,7 @@ describe("AgentsViewMode", () => {
 		expect(
 			expandedRows.find((row) => row.kind === "agent" && row.summary.sessionId === "root-session")?.identity,
 		).toBe("file:/tmp/root.jsonl");
-		expect(expandedRows.some((row) => row.kind === "subagent-summary" && row.expanded)).toBe(true);
+		expect(expandedRows.some((row) => row.kind === "subagent-summary")).toBe(true);
 		expect(expandedRows.some((row) => row.kind === "subagent" && row.summary.sessionId === "child-session")).toBe(
 			true,
 		);
@@ -759,7 +897,64 @@ describe("AgentsViewMode", () => {
 		expect(collapsedView.expandedSubagentParents.size).toBe(0);
 	});
 
-	it("toggles subagent list expansion from the summary row", () => {
+	it("records only session-row identities when re-expanding pending ancestors", () => {
+		const parent = summary({ sessionName: "parent" });
+		const child = summary({
+			id: "child",
+			activeSessionId: "child",
+			sessionId: "child-session",
+			sessionFile: "/tmp/child.jsonl",
+			runtimeKind: "subagent",
+			parentActiveSessionId: parent.activeSessionId,
+		});
+		const view = new AgentsViewMode({ config: {}, uiServices: createUiServices() }, {});
+		try {
+			Reflect.set(view, "lastListedSummaries", [parent, child]);
+			invoke("reconcileCatalogs", view);
+			const persistentState = Reflect.get(view, "persistentState") as AgentsViewPersistentState;
+			persistentState.pendingExpandedAncestorSessionIds = [parent.sessionId];
+			invoke("applyPendingAncestorExpansion", view);
+			const expanded = Reflect.get(view, "expandedSubagentParents") as Set<string>;
+			expect(expanded).toEqual(new Set(["file:/tmp/scope.jsonl"]));
+			expect((Reflect.get(view, "rows") as AgentsViewRow[]).some((row) => row.kind === "subagent")).toBe(true);
+		} finally {
+			stopThemeWatcher();
+		}
+	});
+
+	it("keeps a subagent summary selected across roster refreshes", () => {
+		const parent = summary({ sessionName: "parent", sessionFile: undefined });
+		const child = summary({
+			id: "child",
+			activeSessionId: "child",
+			sessionId: "child-session",
+			sessionFile: "/tmp/child.jsonl",
+			runtimeKind: "subagent",
+			parentActiveSessionId: parent.activeSessionId,
+		});
+		const view = new AgentsViewMode({ config: {}, uiServices: createUiServices() }, {});
+		try {
+			Reflect.set(view, "lastListedSummaries", [parent, child]);
+			invoke("reconcileCatalogs", view);
+			invoke("moveSelection", view, 1);
+			const selectedRow = () => {
+				const rows = Reflect.get(view, "rows") as AgentsViewRow[];
+				return rows[Reflect.get(view, "selectedIndex") as number];
+			};
+			expect(selectedRow()?.kind).toBe("subagent-summary");
+			const provisionalIdentity = selectedRow()?.identity;
+
+			Reflect.set(view, "lastListedSummaries", [{ ...parent, sessionFile: "/tmp/parent.jsonl" }, child]);
+			invoke("reconcileCatalogs", view);
+
+			expect(selectedRow()?.kind).toBe("subagent-summary");
+			expect(selectedRow()?.identity).not.toBe(provisionalIdentity);
+		} finally {
+			stopThemeWatcher();
+		}
+	});
+
+	it("toggles subagent list expansion from the parent row", () => {
 		const expandedSubagentParents = new Set(["root-row"]);
 		const programShownParents = new Set(["root-row"]);
 		const persistentState: AgentsViewPersistentState = {
@@ -774,7 +969,7 @@ describe("AgentsViewMode", () => {
 			syncSelectedRowState: vi.fn(),
 			ui: { requestRender: vi.fn() },
 		};
-		const summaryRow = { kind: "subagent-summary", parentIdentity: "root-row", expanded: true };
+		const summaryRow = { kind: "agent", identity: "root-row", expanded: true };
 
 		invoke("toggleSubagentList", self, summaryRow);
 		expect(expandedSubagentParents.size).toBe(0);
@@ -808,144 +1003,346 @@ describe("AgentsViewMode", () => {
 		}
 	});
 
-	it("renders aligned usage columns with an explicit subagent count and drops the message count", () => {
+	it("shows each session model and aligned total cost including collapsed descendants", () => {
+		const created = new Date(Date.now() - 120_000).toISOString();
 		const parent = summary({
 			id: "spender",
 			activeSessionId: "spender",
 			sessionId: "spender-session",
+			sessionName: "spender",
+			// Provider path deliberately mismatches the catalog provider: only the id's
+			// embedded path matters to the column stripper.
+			model: { ...getModel("openai", "gpt-4o"), id: "moonshotai/gpt-5.6-sol" },
+			thinkingLevel: "high",
+			created,
+			summary: "Analyzing runtime composition",
 			usage: { inputTokens: 12437, outputTokens: 1234, cost: 0.42 },
 		});
 		const child = summary({
-			id: "spender-child",
-			activeSessionId: "spender-child",
-			sessionId: "spender-child-session",
-			sessionFile: "/tmp/spender-child.jsonl",
+			id: "child",
+			activeSessionId: "child",
+			sessionId: "child-session",
+			sessionFile: "/tmp/child.jsonl",
 			runtimeKind: "subagent",
 			parentActiveSessionId: "spender",
+			model: { ...getModel("openai", "gpt-4o"), provider: "prime-inference", id: "glm-5.2-fast" },
+			thinkingLevel: "off",
+			created,
 			usage: { inputTokens: 500, outputTokens: 50, cost: 0.68 },
 		});
 		const inactive = summary({
-			id: "saved-only",
+			id: "saved",
 			activeSessionId: undefined,
-			sessionId: "saved-only-session",
-			sessionFile: "/tmp/saved-only.jsonl",
+			sessionId: "saved-session",
+			sessionFile: "/tmp/saved.jsonl",
 			rosterStatus: "inactive",
-			messageCount: 7,
+			created,
+			model: { ...getModel("openai", "gpt-4o"), provider: "prime-inference", id: "glm-5.2-fast" },
+			usage: { inputTokens: 900, outputTokens: 80, cost: 123.45 },
 		});
-		const empty = summary({
-			id: "empty-draft",
-			activeSessionId: undefined,
-			sessionId: "empty-draft-session",
-			sessionFile: "/tmp/empty-draft.jsonl",
-			rosterStatus: "inactive",
-			messageCount: 0,
-			modified: new Date(Date.now() - 120_000).toISOString(),
-		});
+		// Expand the parent so the child's "off" level renders on a real row.
+		const rows = buildAgentsViewRows([parent, child, inactive], new Set(["file:/tmp/scope.jsonl"]));
 		const view = new AgentsViewMode({ config: {}, uiServices: createUiServices() }, {});
-
+		Reflect.set(view, "rows", rows);
+		Reflect.set(view, "selectedIndex", -1);
 		try {
-			const collapsed = buildAgentsViewRows([parent, child, inactive, empty]);
-			const rows = buildAgentsViewRows(
-				[parent, child, inactive, empty],
-				new Set(collapsed.map((row) => row.identity)),
-			);
-			Reflect.set(view, "rows", rows);
-			const layout = buildAgentsViewUsageLayout(rows);
-			const line = (row: AgentsViewRow | undefined) =>
-				stripAnsi(invoke("renderRow", view, row, 200, layout.details) as string);
-			const byId = (sessionId: string, kind?: string) =>
-				rows.find((row) => row.summary.sessionId === sessionId && (!kind || row.kind === kind));
-
-			// Shared per-section layout: every column right-aligned to
-			// max(widest section value, legend label width).
-			expect(line(byId("spender-session"))).toContain("↑12k ↓1.2k ·  $0.42 ·    1 ·  $1.10 ·");
-			expect(line(byId("spender-child-session", "subagent"))).toContain("↑500   ↓50 ·  $0.68 ·    0 ·  $0.68 ·");
-			const inactiveLine = line(byId("saved-only-session"));
-			expect(inactiveLine).toContain("↑0   ↓0 ·  $0.00 ·    0 ·  $0.00 ·");
-			expect(inactiveLine).not.toContain("7 ·");
-			// The ` · ` separators land in the same column for the legend and every
-			// row of its section.
-			const dotColumns = (text: string) => [...text].flatMap((ch, index) => (ch === "·" ? [index] : []));
-			for (const [section, sessionId] of [
-				["idle", "spender-session"],
-				["idle", "spender-child-session"],
-				["inactive", "saved-only-session"],
-			] as const) {
-				const detail = layout.details.get(byId(sessionId)!.identity)!;
-				expect(dotColumns(detail)).toEqual(dotColumns(layout.legends.get(section)!));
+			const parentRow = rows.find((row) => row.summary.sessionId === parent.sessionId)!;
+			const savedRow = rows.find((row) => row.summary.sessionId === inactive.sessionId)!;
+			const render = (row: AgentsViewRow, width: number) =>
+				stripAnsi(invoke("renderRow", view, row, width, buildCompactAgentsViewLayout(rows, width)) as string);
+			const parentLine = render(parentRow, 120);
+			const savedLine = render(savedRow, 120);
+			// Provider paths strip to the bare model name; an active thinking level
+			// suffixes it, while absent (saved row) and "off" levels render bare.
+			expect(parentLine).toContain("gpt-5.6-sol:high");
+			expect(parentLine).not.toContain("moonshotai");
+			expect(savedLine).toContain("glm-5.2-fast");
+			expect(savedLine).not.toContain("glm-5.2-fast:");
+			const childRow = rows.find((row) => row.summary.sessionId === child.sessionId)!;
+			expect(render(childRow, 120)).not.toContain("glm-5.2-fast:");
+			expect(parentLine).toContain("$1.10");
+			expect(parentLine).not.toContain("$0.42");
+			expect(parentLine).not.toMatch(/[↑↓]/);
+			expect(parentLine).toMatch(/2m\s*$/);
+			expect(parentLine.indexOf("$1.10") + "$1.10".length).toBe(savedLine.indexOf("$123.45") + "$123.45".length);
+			for (const width of [60, 80]) {
+				const narrow = render(parentRow, width);
+				expect(narrow).toContain("gpt-5.6-sol");
+				expect(narrow).toContain("$1.10");
+				expect(narrow).toMatch(/2m\s*$/);
+				expect(narrow.length).toBeLessThanOrEqual(width);
 			}
-			// Empty sessions keep the age but drop the whole usage segment.
-			const emptyLine = line(byId("empty-draft-session"));
-			expect(emptyLine).not.toContain("↑");
-			expect(emptyLine).not.toContain("$");
-			expect(emptyLine).toMatch(/\d+[smhd]\s*$/);
-			// Without a shared layout the row pads only against its own section of one.
-			const bare = { ...byId("spender-session")!, summary: { ...parent, usage: undefined } };
-			expect(stripAnsi(invoke("renderRow", view, bare, 200) as string)).toContain(
-				" ↑0   ↓0 ·  $0.00 ·    1 ·  $1.10 ·",
+		} finally {
+			stopThemeWatcher();
+		}
+	});
+
+	it("shows the recorded model on inactive saved sessions and keeps '-' without one", () => {
+		const saved = (id: string, model?: { provider: string; modelId: string }) => ({
+			path: `/tmp/${id}.jsonl`,
+			id,
+			cwd: "/tmp",
+			created: new Date("2026-01-01T00:00:00Z"),
+			modified: new Date("2026-01-01T00:00:00Z"),
+			messageCount: 1,
+			firstMessage: "hello",
+			allMessagesText: "hello",
+			...(model ? { model } : {}),
+		});
+		const records = reconcileUnifiedSessions(
+			[],
+			[saved("with-model", { provider: "prime-inference", modelId: "glm-4.7" }), saved("bare")],
+		);
+		const rows = buildAgentsViewRows(records);
+		const view = new AgentsViewMode({ config: {}, uiServices: createUiServices() }, {});
+		Reflect.set(view, "rows", rows);
+		Reflect.set(view, "selectedIndex", -1);
+		try {
+			const render = (id: string) =>
+				stripAnsi(invoke("renderRow", view, rows.find((row) => row.summary.sessionId === id)!, 120) as string);
+			expect(render("with-model")).toContain("glm-4.7");
+			expect(render("bare")).toMatch(/\s-\s/);
+			expect(render("bare")).not.toContain("glm-4.7");
+			expect(Reflect.get(AgentsViewMode.prototype, "renderActions")).toBeUndefined();
+		} finally {
+			stopThemeWatcher();
+		}
+	});
+
+	it("renders one column header across status groups without repeating subagent hints", () => {
+		const summaries = [
+			summary({
+				id: "busy",
+				activeSessionId: "busy",
+				sessionId: "busy-session",
+				sessionName: "busy",
+				activity: "working",
+				isStreaming: true,
+			}),
+			summary({
+				id: "idle",
+				activeSessionId: "idle",
+				sessionId: "idle-session",
+				sessionName: "idle",
+				sessionFile: "/tmp/idle.jsonl",
+			}),
+			summary({
+				id: "child",
+				sessionId: "child-session",
+				sessionFile: "/tmp/child.jsonl",
+				runtimeKind: "subagent",
+				parentActiveSessionId: "busy",
+			}),
+		];
+		const view = new AgentsViewMode({ config: {}, uiServices: createUiServices() }, {});
+		try {
+			Reflect.set(view, "lastListedSummaries", summaries);
+			invoke("reconcileCatalogs", view);
+			Reflect.set(view, "selectedIndex", -1);
+			Reflect.set(view, "ui", { terminal: { rows: 60 }, requestRender: () => {} });
+			const rendered = invoke("renderSessionRows", view, 120, 40) as string[];
+			const lines = rendered.map(stripAnsi);
+			expect(lines.filter((line) => /Model/.test(line) && /Age/i.test(line))).toHaveLength(1);
+			expect(rendered[0]).toBe(
+				theme.bold(buildCompactAgentsViewLayout(Reflect.get(view, "rows") as AgentsViewRow[], 120).legend),
+			);
+			expect(lines[1]).toBe("");
+			expect(lines[2]).toBe("Running (1)");
+			expect(rendered[2]).toContain(theme.fg("muted", "Running (1)"));
+			expect(lines).toContain("Idle (1)");
+			expect(lines).not.toContain("Inactive (0)");
+			expect(lines.join("\n")).not.toMatch(/show program|#sub|\$agent|↑in|↓out/);
+			const rows = Reflect.get(view, "rows") as AgentsViewRow[];
+			expect(rows.filter((row) => row.kind === "subagent-summary")).toHaveLength(1);
+			for (const line of rendered) {
+				expect(invoke("finalizeRenderedLine", view, line, 120)).not.toContain("\x1b[48");
+			}
+		} finally {
+			stopThemeWatcher();
+		}
+	});
+
+	it("renders a shared color-coded status circle for idle and inactive rows", () => {
+		const summaries = [
+			summary({
+				id: "busy",
+				activeSessionId: "busy",
+				sessionId: "busy-session",
+				sessionName: "busy",
+				activity: "working",
+				isStreaming: true,
+			}),
+			summary({
+				id: "idle",
+				activeSessionId: "idle",
+				sessionId: "idle-session",
+				sessionName: "idle",
+				sessionFile: "/tmp/idle.jsonl",
+			}),
+		];
+		const archived: AgentConnectionSavedSessionInfo = {
+			id: "archived",
+			path: "/tmp/archived.jsonl",
+			cwd: "/tmp/project",
+			created: new Date(0),
+			modified: new Date(0),
+			messageCount: 2,
+			firstMessage: "Fix authentication",
+			allMessagesText: "",
+			name: "archived session",
+		};
+		const view = new AgentsViewMode({ config: {}, uiServices: createUiServices() }, {});
+		try {
+			Reflect.set(view, "lastListedSummaries", summaries);
+			Reflect.set(view, "savedSessions", [archived]);
+			invoke("reconcileCatalogs", view);
+			Reflect.set(view, "selectedIndex", -1);
+			Reflect.set(view, "ui", { terminal: { rows: 60 }, requestRender: () => {} });
+			const rendered = invoke("renderSessionRows", view, 120, 40) as string[];
+			const output = rendered.map(stripAnsi).join("\n");
+			expect(output).toContain("Running (1)");
+			expect(output).toContain("Idle (1)");
+			expect(output).toContain("Inactive (1)");
+			const runningRow = rendered.find((line) => stripAnsi(line).includes("busy"))!;
+			const idleRow = rendered.find((line) => stripAnsi(line).includes("idle"))!;
+			const inactiveRow = rendered.find((line) => stripAnsi(line).includes("archived session"))!;
+			expect(runningRow).toContain(theme.bold("◇"));
+			expect(idleRow).toContain(theme.bold(theme.fg("warning", "•")));
+			expect(inactiveRow).toContain(theme.bold(theme.fg("dim", "•")));
+			expect(stripAnsi(runningRow)).toMatch(/◇ busy/u);
+			expect(stripAnsi(idleRow)).toMatch(/• idle/u);
+			expect(stripAnsi(inactiveRow)).toMatch(/• archived session/u);
+			expect(output).not.toContain("●");
+			expect(output).not.toContain("✓");
+		} finally {
+			stopThemeWatcher();
+		}
+	});
+
+	it("omits empty status categories and keeps feedback when no sessions match", () => {
+		const view = new AgentsViewMode({ config: {}, uiServices: createUiServices() }, { savedCatalogLoaded: true });
+		const finish = vi.fn();
+		Reflect.set(view, "finish", finish);
+		const render = () => (invoke("renderSessionRows", view, 120, 20) as string[]).map(stripAnsi);
+		const expectEmptyList = (message: string) => {
+			expect(render()).toEqual([message]);
+			expect(Reflect.get(view, "rows")).toEqual([]);
+			invoke("moveSelection", view, 1);
+			invoke("openSelected", view);
+			expect(finish).not.toHaveBeenCalled();
+		};
+		try {
+			invoke("reconcileCatalogs", view);
+			expectEmptyList("No sessions yet.");
+			Reflect.set(view, "lastListedSummaries", [summary({ sessionName: "Review changes" })]);
+			invoke("reconcileCatalogs", view);
+			expect(render()).not.toContain("Running (0)");
+			expect(render()).toContain("Idle (1)");
+			expect(render()).not.toContain("Inactive (0)");
+			invoke("setSearchQuery", view, "unmatched-session");
+			expectEmptyList("No sessions match your search.");
+			invoke("setSearchQuery", view, "");
+			invoke("moveSelection", view, 1);
+			invoke("openSelected", view);
+			expect(finish).toHaveBeenCalledWith(
+				expect.objectContaining({ summary: expect.objectContaining({ sessionName: "Review changes" }) }),
 			);
 		} finally {
 			stopThemeWatcher();
 		}
 	});
 
-	it("shows the bold usage legend on every section header", () => {
-		const running = (id: string, created: string) =>
-			summary({
-				id,
-				activeSessionId: id,
-				sessionId: `${id}-session`,
-				sessionName: id,
-				activity: "working",
-				isStreaming: true,
-				created,
-			});
-		const parent = running("busy-parent", "2026-01-01T00:00:00Z");
-		const child = summary({
-			id: "busy-child",
-			activeSessionId: "busy-child",
-			sessionId: "busy-child-session",
-			sessionName: "busy-child",
-			sessionFile: "/tmp/busy-child.jsonl",
-			runtimeKind: "subagent",
-			parentActiveSessionId: "busy-parent",
-		});
-		const summaries = [
-			running("busy-solo", "2026-01-02T00:00:00Z"),
-			parent,
-			child,
-			summary({ id: "idle-a", activeSessionId: "idle-a", sessionId: "idle-a-session", sessionName: "idle-a" }),
-			summary({ id: "idle-b", activeSessionId: "idle-b", sessionId: "idle-b-session", sessionName: "idle-b" }),
-		];
-		const parentIdentity = buildAgentsViewRows(summaries).find(
-			(row) => row.summary.sessionId === "busy-parent-session",
-		)!.identity;
-		const rows = buildAgentsViewRows(summaries, new Set([parentIdentity]));
-		const view = new AgentsViewMode({ config: {}, uiServices: createUiServices() }, {});
-
+	it.each(["replyTarget", "renameTarget"])("uses the preserved search for empty-state copy during %s", (target) => {
+		const view = new AgentsViewMode({ config: {}, uiServices: createUiServices() }, { savedCatalogLoaded: true });
 		try {
-			Reflect.set(view, "rows", rows);
-			Reflect.set(view, "selectedIndex", -1);
-			Reflect.set(view, "ui", { terminal: { rows: 60 }, requestRender: () => {} });
-			const rendered = invoke("renderSessionRows", view, 120, 40) as string[];
-			const lines = rendered.map(stripAnsi);
-			const headings = lines.filter((line) => /^(Running|Idle|Inactive) \(\d+\)/.test(line));
-			expect(headings).toHaveLength(3);
-			for (const heading of headings) {
-				expect(heading).toMatch(/↑in\s+↓out ·\s+\$agent ·\s+#sub ·\s+\$total ·\s+age$/);
-			}
-			// Same bold weight for title and legend.
-			const runningLegend = buildAgentsViewUsageLayout(rows).legends.get("running")!;
-			expect(invoke("renderSectionHeading", view, "running", 120, runningLegend)).toContain(
-				theme.bold(runningLegend),
-			);
+			Reflect.set(view, target, { summary: summary() });
+			Reflect.set(view, "actionModeSearchQuery", "");
+			Reflect.set(view, "editor", { getText: () => "a reply or new name" });
+			expect((invoke("renderSessionRows", view, 120, 20) as string[]).map(stripAnsi)).toEqual(["No sessions yet."]);
+			Reflect.set(view, "actionModeSearchQuery", "missing session");
+			Reflect.set(view, "editor", { getText: () => "" });
+			expect((invoke("renderSessionRows", view, 120, 20) as string[]).map(stripAnsi)).toEqual([
+				"No sessions match your search.",
+			]);
+		} finally {
+			stopThemeWatcher();
+		}
+	});
 
-			// Session rows carry no background of their own; only the selection
-			// highlight may paint one.
-			const finalized = rendered.map((line) => invoke("finalizeRenderedLine", view, line, 120) as string);
-			for (const line of finalized) {
-				expect(line).not.toContain("\x1b[48");
-			}
+	it("always renders inactive sessions; search is the only filter", () => {
+		const live = summary({ sessionName: "live" });
+		const saved = summary({
+			id: "saved",
+			activeSessionId: undefined,
+			sessionId: "saved-session",
+			sessionName: "archive-match",
+			sessionFile: "/tmp/saved.jsonl",
+			rosterStatus: "inactive",
+			lifecycle: "archived",
+		});
+		// The stale pre-removal collapse flag must be ignored.
+		const persistentState = { savedCatalogLoaded: true, inactiveExpanded: false } as AgentsViewPersistentState;
+		const view = new AgentsViewMode({ config: {}, uiServices: createUiServices() }, persistentState);
+		const rows = () => Reflect.get(view, "rows") as AgentsViewRow[];
+		const showsSaved = () => rows().some((row) => row.summary.sessionId === saved.sessionId);
+		try {
+			Reflect.set(view, "lastListedSummaries", [live]);
+			Reflect.set(view, "savedSessions", [
+				{
+					path: saved.sessionFile!,
+					id: saved.sessionId,
+					cwd: saved.cwd,
+					name: saved.sessionName,
+					created: new Date(),
+					modified: new Date(),
+					messageCount: 1,
+					firstMessage: "archive-match",
+					allMessagesText: "archive-match",
+				},
+			]);
+			invoke("reconcileCatalogs", view);
+			expect(showsSaved()).toBe(true);
+			// The removed Alt+I chord must not hide anything.
+			view.handleInput("\x1bi");
+			expect(showsSaved()).toBe(true);
+			invoke("setSearchQuery", view, "no-such-session");
+			expect(showsSaved()).toBe(false);
+		} finally {
+			stopThemeWatcher();
+		}
+	});
+
+	it("opens a parent with Enter and reveals its spawn program only on request", () => {
+		const parent = summary({ sessionName: "parent" });
+		const child = summary({
+			id: "child",
+			activeSessionId: "child",
+			sessionId: "child-session",
+			sessionFile: "/tmp/child.jsonl",
+			runtimeKind: "subagent",
+			parentActiveSessionId: parent.activeSessionId,
+			spawnCode: 'await rlm("Inspect the code")',
+		});
+		const view = new AgentsViewMode({ config: {}, uiServices: createUiServices() }, {});
+		const rows = () => Reflect.get(view, "rows") as AgentsViewRow[];
+		try {
+			Reflect.set(view, "lastListedSummaries", [parent, child]);
+			invoke("reconcileCatalogs", view);
+			expect(rows().map((row) => row.kind)).toEqual(["agent", "subagent-summary"]);
+			const finish = vi.fn();
+			Reflect.set(view, "finish", finish);
+			invoke("openSelected", view);
+			expect(finish).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: "open",
+					summary: expect.objectContaining({ sessionId: parent.sessionId }),
+				}),
+			);
+			invoke("cycleProgramForSelected", view);
+			expect(rows().some((row) => row.kind === "subagent-code" && row.code === child.spawnCode)).toBe(true);
+			expect(rows().some((row) => row.kind === "subagent" && row.summary.sessionId === child.sessionId)).toBe(true);
+			invoke("cycleProgramForSelected", view);
+			expect(rows().some((row) => row.kind === "subagent-code")).toBe(false);
 		} finally {
 			stopThemeWatcher();
 		}
@@ -971,41 +1368,223 @@ describe("AgentsViewMode", () => {
 			Reflect.set(view, "selectedIndex", rows.length - 1);
 			Reflect.set(view, "ui", { terminal: { rows: 13 }, requestRender: () => {} });
 			const lines = (invoke("renderSessionRows", view, 120, 4) as string[]).map(stripAnsi);
-			expect(lines[0]).toContain("...");
+			expect(lines[1]).toBe("");
+			expect(lines[2]).toContain("...");
+			expect(lines).toHaveLength(4);
 			const lastTitle = rows.at(-1)!.title;
 			expect(lines.some((line) => line.includes(lastTitle))).toBe(true);
+			for (let maxRows = 1; maxRows <= 10; maxRows += 1) {
+				for (let selectedIndex = 0; selectedIndex < rows.length; selectedIndex += 1) {
+					Reflect.set(view, "selectedIndex", selectedIndex);
+					const viewport = invoke("renderSessionRows", view, 120, maxRows) as string[];
+					const selected = viewport.filter((line) => line.includes("\0agents-view-selected-row\0"));
+					expect(viewport.length).toBeLessThanOrEqual(maxRows);
+					expect(selected).toHaveLength(1);
+					expect(selected[0]).toContain(rows[selectedIndex]!.title);
+				}
+			}
 		} finally {
 			stopThemeWatcher();
 		}
 	});
 
-	it("renders a collapsed group's busy-subagent badge legibly instead of dimmed", () => {
-		const parent = summary({ id: "parent", activeSessionId: "parent", sessionId: "parent-session" });
-		const busyChild = summary({
-			id: "busy-child",
-			activeSessionId: "busy-child",
-			sessionId: "busy-child-session",
-			sessionFile: "/tmp/busy-child.jsonl",
+	it("strips provider prefixes from compact row model labels", () => {
+		const view = new AgentsViewMode({ config: {}, uiServices: createUiServices() }, { savedCatalogLoaded: true });
+		try {
+			Reflect.set(view, "lastListedSummaries", [
+				summary({
+					model: { ...getModel("openai", "gpt-4o"), provider: "prime-inference", id: "internal/glm-5.3-fast" },
+					usage: { inputTokens: 100, outputTokens: 10, cost: 0.12 },
+				}),
+			]);
+			invoke("reconcileCatalogs", view);
+			const rows = (invoke("renderSessionRows", view, 120, 20) as string[]).map(stripAnsi).join("\n");
+			expect(rows).toContain("glm-5.3-fast");
+			expect(rows).not.toContain("internal/");
+			expect(rows).not.toContain("prime-inference");
+		} finally {
+			stopThemeWatcher();
+		}
+	});
+
+	it("keeps search to a quiet single row and reports nested depth in three metadata lines", () => {
+		const view = new AgentsViewMode({ config: {}, uiServices: createUiServices() }, { savedCatalogLoaded: true });
+		try {
+			Reflect.set(view, "lastListedSummaries", [summary({ sessionName: "Review changes" })]);
+			invoke("reconcileCatalogs", view);
+			const prompt = invoke("renderPrompt", view, 80) as string[];
+			expect(prompt).toHaveLength(1);
+			expect(stripAnsi(prompt[0]!)).toContain("Search sessions");
+			expect(prompt[0]).not.toContain("\x1b[48;");
+			const globalLines = (invoke("renderContent", view, 100, 40) as string[]).map(stripAnsi);
+			const searchIndex = globalLines.findIndex((line) => line.includes("Search sessions"));
+			expect(globalLines[searchIndex - 1]).toBe("");
+			expect(globalLines[searchIndex - 2]!.trim()).not.toBe("");
+			expect(globalLines[searchIndex + 1]).toBe("");
+			expect(globalLines[searchIndex + 2]).toMatch(/Session\s+Model/);
+			expect(globalLines.join("\n")).not.toContain("All sessions");
+			expect(globalLines.join("\n")).not.toContain("back ·");
+			expect(globalLines.filter((line) => /prime agent|agents \d|cwd /.test(line))).toHaveLength(3);
+			expect(globalLines.join("\n")).toContain("cwd /tmp");
+			expect(globalLines.join("\n")).not.toMatch(/depth\s+|model\s+/);
+			for (let height = 1; height <= 6; height += 1) {
+				const shortLines = (invoke("renderContent", view, 80, height) as string[]).map(stripAnsi);
+				expect(shortLines.length).toBeLessThanOrEqual(height);
+				expect(shortLines.join("\n")).toContain("Search sessions");
+				if (height > 1) expect(shortLines.join("\n")).toContain("Review changes");
+			}
+			Reflect.set(view, "scopeRootSummary", summary({ sessionName: "Fix authentication", rlmDepth: 3 }));
+			for (const width of [40, 100]) {
+				const lines = (invoke("renderContent", view, width, 40) as string[]).map(stripAnsi);
+				expect(lines.filter((line) => /prime agent|agents \d|depth /.test(line))).toHaveLength(3);
+				expect(lines.join("\n")).toContain("depth 4");
+				expect(lines.join("\n")).not.toMatch(/scope\s+|cwd\s+|model\s+/);
+				if (width === 100) expect(lines.join("\n")).toContain("← back · Fix authentication › subagents");
+			}
+			Reflect.set(view, "scopeRootSummary", undefined);
+			const restored = (invoke("renderContent", view, 100, 40) as string[]).map(stripAnsi).join("\n");
+			expect(restored).toContain("cwd /tmp");
+			expect(restored).not.toContain("depth ");
+		} finally {
+			stopThemeWatcher();
+		}
+	});
+
+	it("keeps abandoned saved entries out of rows and section counts before, during, and after search", () => {
+		const abandoned: AgentConnectionSavedSessionInfo = {
+			path: "/tmp/abandoned.jsonl",
+			id: "abandoned-session",
+			cwd: "/tmp/project",
+			created: new Date(0),
+			modified: new Date(0),
+			messageCount: 0,
+			firstMessage: "(no messages)",
+			allMessagesText: "",
+		};
+		const persistentState: AgentsViewPersistentState = { savedCatalogLoaded: true, savedSessions: [abandoned] };
+		const view = new AgentsViewMode({ config: {}, uiServices: createUiServices() }, persistentState);
+		try {
+			Reflect.set(view, "lastListedSummaries", [summary({ sessionName: "active", messageCount: 0 })]);
+			invoke("reconcileCatalogs", view);
+			const rowIds = () => (Reflect.get(view, "rows") as AgentsViewRow[]).map((row) => row.summary.sessionId);
+			const expectNoAbandonedRows = () => {
+				expect(rowIds()).not.toContain("abandoned-session");
+				const rendered = (invoke("renderSessionRows", view, 120, 20) as string[]).map(stripAnsi).join("\n");
+				expect(rendered).not.toContain("Inactive");
+				expect(rendered).not.toContain("(no messages)");
+				expect(invoke("getAgentCountsText", view)).toBe(`0 running, ${rowIds().length} idle, 0 inactive`);
+			};
+			expect(rowIds()).toEqual(["scope-session"]);
+			expectNoAbandonedRows();
+			for (const query of ["abandoned-session", "(no messages)", "project", "active"]) {
+				invoke("setSearchQuery", view, query);
+				expectNoAbandonedRows();
+			}
+			expect(rowIds()).toEqual(["scope-session"]);
+			invoke("setSearchQuery", view, "");
+			expect(rowIds()).toEqual(["scope-session"]);
+			expectNoAbandonedRows();
+			expect(persistentState.savedSessions).toEqual([abandoned]);
+		} finally {
+			stopThemeWatcher();
+		}
+	});
+
+	it("puts the expand affordance on the subagent summary line instead of the session row", () => {
+		const parent = summary({ sessionName: "parent" });
+		const child = summary({
+			id: "child",
+			activeSessionId: "child",
+			sessionId: "child-session",
+			sessionFile: "/tmp/child.jsonl",
 			runtimeKind: "subagent",
-			parentActiveSessionId: "parent",
+			parentActiveSessionId: parent.activeSessionId,
 			activity: "working",
-			isSessionActive: true,
 			isStreaming: true,
 		});
-		const idleChild = { ...busyChild, activity: "idle" as const, isSessionActive: false, isStreaming: false };
+		const secondChild = {
+			...child,
+			id: "child-2",
+			activeSessionId: "child-2",
+			sessionId: "child-session-2",
+			sessionFile: "/tmp/child-2.jsonl",
+		};
+		const childless = summary({
+			id: "solo",
+			activeSessionId: "solo",
+			sessionId: "solo-session",
+			sessionName: "solo",
+		});
 		const view = new AgentsViewMode({ config: {}, uiServices: createUiServices() }, {});
-
+		const rows = () => Reflect.get(view, "rows") as AgentsViewRow[];
+		const renderRow = (row: AgentsViewRow) =>
+			(invoke("renderRow", view, row, 120) as string).replace("\0agents-view-selected-row\0", "");
+		const summaryRow = () => rows().find((row) => row.kind === "subagent-summary")!;
 		try {
-			const busyRows = buildAgentsViewRows([parent, busyChild]);
-			const busySummaryRow = busyRows.find((row) => row.kind === "subagent-summary");
-			expect(busySummaryRow).toMatchObject({ section: "idle", title: "1 subagent running" });
-			Reflect.set(view, "rows", busyRows);
-			expect(invoke("renderRow", view, busySummaryRow, 160)).toContain(theme.fg("success", "▸ 1 subagent running"));
+			Reflect.set(view, "lastListedSummaries", [parent, child, secondChild, childless]);
+			invoke("reconcileCatalogs", view);
+			Reflect.set(view, "selectedIndex", -1);
+			expect(rows().map((row) => row.kind)).toEqual(["agent", "subagent-summary", "agent"]);
+			// Session rows carry no arrow; the summary line is the visible control.
+			for (const row of rows().filter((r) => r.kind === "agent")) {
+				expect(stripAnsi(renderRow(row))).not.toMatch(/[▸▾]/);
+			}
+			const collapsedLine = renderRow(summaryRow());
+			expect(stripAnsi(collapsedLine).trimEnd()).toBe("  ▸ 2 subagents running");
+			// Normal foreground: no dim/success styling on the summary line.
+			expect(collapsedLine).toBe(stripAnsi(collapsedLine));
+			// Expand from the summary row itself (keybinding unchanged).
+			Reflect.set(view, "selectedIndex", 1);
+			view.handleInput("\x1b[1;3C");
+			expect(rows().map((row) => row.kind)).toEqual(["agent", "subagent-summary", "subagent", "subagent", "agent"]);
+			expect(stripAnsi(renderRow(summaryRow())).trimEnd()).toBe("  ▾ 2 subagents running");
+			// Enter on the summary row collapses it again.
+			invoke("openSelected", view);
+			expect(rows().some((row) => row.kind === "subagent")).toBe(false);
+			expect(stripAnsi(renderRow(summaryRow()))).toContain("▸ 2 subagents running");
+			const idleChild = { ...child, activity: "idle", isStreaming: false };
+			Reflect.set(view, "lastListedSummaries", [parent, idleChild, secondChild, childless]);
+			invoke("reconcileCatalogs", view);
+			expect(stripAnsi(renderRow(summaryRow()))).toContain("▸ 1 subagent running");
+			Reflect.set(view, "lastListedSummaries", [
+				parent,
+				idleChild,
+				{ ...secondChild, activity: "idle", isStreaming: false },
+				childless,
+			]);
+			invoke("reconcileCatalogs", view);
+			// Finished subagents keep a visible, expandable summary line.
+			expect(stripAnsi(renderRow(summaryRow()))).toContain("▸ 2 subagents");
+		} finally {
+			stopThemeWatcher();
+		}
+	});
 
-			const idleRows = buildAgentsViewRows([parent, idleChild]);
-			const idleSummaryRow = idleRows.find((row) => row.kind === "subagent-summary");
-			Reflect.set(view, "rows", idleRows);
-			expect(invoke("renderRow", view, idleSummaryRow, 160)).toContain(theme.fg("dim", "▸ 1 subagent"));
+	it("adapts the tray hints to the selected row and the scope", () => {
+		const parent = summary({ sessionName: "parent" });
+		const child = summary({
+			id: "child",
+			activeSessionId: "child",
+			sessionId: "child-session",
+			sessionFile: "/tmp/child.jsonl",
+			runtimeKind: "subagent",
+			parentActiveSessionId: parent.activeSessionId,
+		});
+		const view = new AgentsViewMode({ config: {}, uiServices: createUiServices() }, {});
+		const hints = () => stripAnsi(invoke("renderHints", view, 200) as string);
+		try {
+			Reflect.set(view, "lastListedSummaries", [parent, child]);
+			invoke("reconcileCatalogs", view);
+			Reflect.set(view, "selectedIndex", 0);
+			expect(hints()).toBe("↑/↓ navigate   Enter/→ open   Ctrl+N new");
+			// Right toggles the summary row, so its hint follows the expansion state.
+			Reflect.set(view, "selectedIndex", 1);
+			expect(hints()).toBe("↑/↓ navigate   Enter/→ expand   Ctrl+N new");
+			view.handleInput("\x1b[C");
+			expect(hints()).toBe("↑/↓ navigate   Enter/→ collapse   Ctrl+N new");
+			// Only a scoped view has a parent to return to.
+			Reflect.set(view, "scopeRootSummary", parent);
+			expect(hints()).toBe("↑/↓ navigate   Enter/→ collapse   ← parent   Ctrl+N new");
 		} finally {
 			stopThemeWatcher();
 		}
@@ -1288,6 +1867,359 @@ describe("AgentsViewMode persistent catalog state", () => {
 		});
 
 		expect(runs).toBe(2);
+	});
+});
+
+describe("AgentsViewMode catalog performance", () => {
+	beforeEach(() => vi.useFakeTimers());
+	afterEach(() => vi.useRealTimers());
+
+	it("coalesces bursts without copying snapshots per item and flushes during a continuous stream", async () => {
+		const previous = [savedSession("previous")];
+		const self = catalogHarness(previous);
+		const catalog = deferredSavedCatalog();
+		const refresh = invoke("refreshSavedSessions", self) as Promise<boolean>;
+		const first = savedSession("first");
+		const updatedFirst = { ...first, path: "/tmp/./first.jsonl", name: "updated first" };
+		const second = savedSession("second");
+		const third = savedSession("third");
+		catalog.emit(first);
+		const firstTimer = self.savedCatalogReconcileTimer;
+		await vi.advanceTimersByTimeAsync(25);
+		catalog.emit(updatedFirst);
+		catalog.emit(second);
+		await vi.advanceTimersByTimeAsync(25);
+		catalog.emit(third);
+		await vi.advanceTimersByTimeAsync(24);
+
+		expect(self.savedSessions).toBe(previous);
+		expect(self.persistentState.savedSessions).toBe(previous);
+		expect(self.savedCatalogReconcileTimer).toBe(firstTimer);
+		expect(self.reconcileCatalogs).not.toHaveBeenCalled();
+		expect(vi.getTimerCount()).toBe(1);
+
+		await vi.advanceTimersByTimeAsync(1);
+		expect(self.reconcileCatalogs).toHaveBeenCalledOnce();
+		expect(self.savedSessions).toEqual([previous[0], updatedFirst, second, third]);
+		expect(self.persistentState.savedSessions).toBe(self.savedSessions);
+		expect(self.rows.map((row) => row.summary.sessionId).sort()).toEqual(["first", "previous", "second", "third"]);
+		expect(self.rows.find((row) => row.summary.sessionId === "first")?.title).toBe("updated first");
+		expect(self.savedCatalogReady).toBe(false);
+		expect(self.savedCatalogRefreshPending).toBe(true);
+		expect(self.lastSuccessfulSavedSessions).toBe(previous);
+		expect(self.persistentState.lastSuccessfulSavedSessions).toBe(previous);
+		expect(self.savedCatalogReconcileTimer).toBeUndefined();
+
+		const firstSnapshot = self.savedSessions;
+		const fourth = savedSession("fourth");
+		const fifth = savedSession("fifth");
+		catalog.emit(fourth);
+		await vi.advanceTimersByTimeAsync(50);
+		catalog.emit(fifth);
+		await vi.advanceTimersByTimeAsync(24);
+		expect(self.savedSessions).toBe(firstSnapshot);
+		expect(self.persistentState.savedSessions).toBe(firstSnapshot);
+		expect(self.reconcileCatalogs).toHaveBeenCalledOnce();
+		await vi.advanceTimersByTimeAsync(1);
+		expect(self.reconcileCatalogs).toHaveBeenCalledTimes(2);
+		expect(self.savedSessions).toEqual([...firstSnapshot, fourth, fifth]);
+		expect(self.rows).toHaveLength(6);
+		expect(self.savedCatalogRefreshPending).toBe(true);
+
+		catalog.resolve([updatedFirst, second, third, fourth, fifth]);
+		await expect(refresh).resolves.toBe(true);
+	});
+
+	it("publishes the final canonical catalog immediately and cancels its pending batch", async () => {
+		const self = catalogHarness([savedSession("previous")]);
+		const catalog = deferredSavedCatalog();
+		const refresh = invoke("refreshSavedSessions", self) as Promise<boolean>;
+		catalog.emit(savedSession("partial"));
+		const final = [savedSession("canonical")];
+		catalog.resolve(final);
+		await expect(refresh).resolves.toBe(true);
+
+		expect(self.savedSessions).toBe(final);
+		expect(self.lastSuccessfulSavedSessions).toBe(final);
+		expect(self.persistentState.savedSessions).toBe(final);
+		expect(self.persistentState.lastSuccessfulSavedSessions).toBe(final);
+		expect(self.persistentState.savedCatalogLoaded).toBe(true);
+		expect(self.savedCatalogReady).toBe(true);
+		expect(self.savedCatalogRefreshPending).toBe(false);
+		expect(self.rows.map((row) => row.summary.sessionId)).toEqual(["canonical"]);
+		expect(self.resolveMissingSelectionAnchor).toHaveBeenCalledOnce();
+		expect(self.savedCatalogReconcileTimer).toBeUndefined();
+		expect(vi.getTimerCount()).toBe(0);
+		await vi.advanceTimersByTimeAsync(150);
+		expect(self.savedSessions).toBe(final);
+		expect(self.reconcileCatalogs).toHaveBeenCalledOnce();
+	});
+
+	it.each([false, true])("restores the last successful catalog after failure (batch flushed: %s)", async (flushed) => {
+		const previous = [savedSession("previous")];
+		const self = catalogHarness(previous);
+		const catalog = deferredSavedCatalog();
+		const refresh = invoke("refreshSavedSessions", self) as Promise<boolean>;
+		catalog.emit(savedSession("partial"));
+		if (flushed) {
+			await vi.advanceTimersByTimeAsync(75);
+			expect(self.rows.map((row) => row.summary.sessionId).sort()).toEqual(["partial", "previous"]);
+			catalog.emit(savedSession("pending"));
+		}
+		catalog.reject(new Error("scan failed"));
+		await expect(refresh).resolves.toBe(false);
+
+		expect(self.savedSessions).toBe(previous);
+		expect(self.persistentState.savedSessions).toBe(previous);
+		expect(self.lastSuccessfulSavedSessions).toBe(previous);
+		expect(self.persistentState.lastSuccessfulSavedSessions).toBe(previous);
+		expect(self.rows.map((row) => row.summary.sessionId)).toEqual(["previous"]);
+		expect(self.savedCatalogReady).toBe(true);
+		expect(self.savedCatalogRefreshPending).toBe(false);
+		expect(self.setStatusMessage).toHaveBeenCalledWith("Failed to load saved sessions: scan failed");
+		expect(self.savedCatalogReconcileTimer).toBeUndefined();
+		expect(vi.getTimerCount()).toBe(0);
+		await vi.advanceTimersByTimeAsync(150);
+		expect(self.savedSessions).toBe(previous);
+		expect(self.reconcileCatalogs).toHaveBeenCalledTimes(flushed ? 2 : 1);
+	});
+
+	it.each(["success", "failure"])("fences a superseded scan's timer, callback, and terminal %s", async (outcome) => {
+		const previous = [savedSession("previous")];
+		const self = catalogHarness(previous);
+		const older = deferredSavedCatalog();
+		const newer = deferredSavedCatalog();
+		const oldRefresh = invoke("refreshSavedSessions", self) as Promise<boolean>;
+		older.emit(savedSession("old-partial"));
+		await vi.advanceTimersByTimeAsync(25);
+		const newRefresh = invoke("refreshSavedSessions", self) as Promise<boolean>;
+		expect(self.savedCatalogGeneration).toBe(2);
+		expect(self.persistentState.savedCatalogGeneration).toBe(2);
+		expect(self.savedCatalogReconcileTimer).toBeUndefined();
+		expect(vi.getTimerCount()).toBe(0);
+		older.emit(savedSession("old-late"));
+		expect(vi.getTimerCount()).toBe(0);
+		const replacement = savedSession("new-partial");
+		newer.emit(replacement);
+		const newTimer = self.savedCatalogReconcileTimer;
+		if (outcome === "success") older.resolve([savedSession("old-final")]);
+		else older.reject(new Error("old scan failed"));
+		await expect(oldRefresh).resolves.toBe(false);
+		expect(self.savedCatalogReconcileTimer).toBe(newTimer);
+		expect(self.savedCatalogRefreshPending).toBe(true);
+		expect(self.savedCatalogReady).toBe(false);
+		expect(self.resolveMissingSelectionAnchor).not.toHaveBeenCalled();
+		expect(self.setStatusMessage).not.toHaveBeenCalled();
+
+		await vi.advanceTimersByTimeAsync(50);
+		expect(self.savedSessions).toBe(previous);
+		expect(self.reconcileCatalogs).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(25);
+		expect(self.savedSessions).toEqual([...previous, replacement]);
+		expect(self.rows.map((row) => row.summary.sessionId).sort()).toEqual(["new-partial", "previous"]);
+		expect(self.reconcileCatalogs).toHaveBeenCalledOnce();
+		const final = [savedSession("new-final")];
+		newer.resolve(final);
+		await expect(newRefresh).resolves.toBe(true);
+		await vi.advanceTimersByTimeAsync(150);
+		expect(self.savedSessions).toBe(final);
+		expect(self.persistentState.savedSessions).toBe(final);
+		expect(self.reconcileCatalogs).toHaveBeenCalledTimes(2);
+	});
+
+	it.each(["success", "failure"])("finish cancels pending batches and ignores late catalog %s", async (outcome) => {
+		const previous = [savedSession("previous")];
+		const self = catalogHarness(previous);
+		const catalog = deferredSavedCatalog();
+		const refresh = invoke("refreshSavedSessions", self) as Promise<boolean>;
+		catalog.emit(savedSession("partial"));
+		expect(vi.getTimerCount()).toBe(1);
+		invoke("finish", self, { type: "exit" });
+		expect(self.stopped).toBe(true);
+		expect(self.savedCatalogReconcileTimer).toBeUndefined();
+		expect(vi.getTimerCount()).toBe(0);
+		catalog.emit(savedSession("late"));
+		if (outcome === "success") catalog.resolve([savedSession("final")]);
+		else catalog.reject(new Error("late failure"));
+		await expect(refresh).resolves.toBe(false);
+		await vi.advanceTimersByTimeAsync(150);
+
+		expect(self.savedSessions).toBe(previous);
+		expect(self.persistentState.savedSessions).toBe(previous);
+		expect(self.lastSuccessfulSavedSessions).toBe(previous);
+		expect(self.reconcileCatalogs).not.toHaveBeenCalled();
+		expect(self.ui.requestRender).not.toHaveBeenCalled();
+		expect(self.resolveMissingSelectionAnchor).not.toHaveBeenCalled();
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it("ticks stale ages and working icons without rebuilding rows or rendering an unchanged idle list", async () => {
+		initTheme("dark");
+		vi.setSystemTime(new Date("2026-01-01T00:00:10Z"));
+		const rows = buildAgentsViewRows([summary({ lastHeardFromAt: "2026-01-01T00:00:00Z" })]);
+		const self = {
+			rows,
+			selectedIndex: -1,
+			workingIconFrame: 0,
+			savedCatalogGeneration: 0,
+			heartbeatCatalogGeneration: 0,
+			persistentState: {
+				rosterClient: { isConnected: true, onMessage: vi.fn(() => vi.fn()) },
+				rosterStore: {
+					attach: vi.fn(async () => true),
+					onUpdate: vi.fn(() => vi.fn()),
+					summaries: () => [],
+				},
+			},
+			ui: {
+				addChild: vi.fn(),
+				setFocus: vi.fn(),
+				start: vi.fn(),
+				enterFullscreen: vi.fn(),
+				requestRender: vi.fn(),
+				invalidate: vi.fn(),
+				stop: vi.fn(),
+			},
+			subscribeToClientClose: vi.fn(),
+			applySessionList: vi.fn(),
+			armSavedSearchFetch: vi.fn(),
+			renderPreparationCache: new AgentsViewRenderPreparationCache(),
+			tickAnimation(): void {
+				invoke("tickAnimation", self);
+			},
+			resolveMissingSelectionAnchor: vi.fn(),
+			refreshHeartbeats: vi.fn(async () => true),
+			loadStartupNotices: vi.fn(),
+			rebuildRows: vi.fn(),
+			clearCtrlCExitHint: vi.fn(),
+			clearDeleteConfirmation: vi.fn(),
+			setStatusMessage: vi.fn(),
+			isPendingDeleteRow: () => false,
+			isPendingKillSubagentRow: () => false,
+			getRowIcon(section: AgentsViewRow["section"]): string {
+				return invoke("getRowIcon", self, section) as string;
+			},
+			formatRowIcon(section: AgentsViewRow["section"], icon: string): string {
+				return invoke("formatRowIcon", self, section, icon) as string;
+			},
+		};
+		const render = (row = self.rows[0]!) => stripAnsi(invoke("renderRow", self, row, 160) as string);
+		const run = invoke("run", self) as Promise<unknown>;
+		try {
+			await vi.advanceTimersByTimeAsync(0);
+			expect(self.ui.start).toHaveBeenCalledOnce();
+			expect(render()).toContain("last heard 10s ago");
+			self.ui.requestRender.mockClear();
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(self.ui.requestRender).toHaveBeenCalledTimes(1000 / WORKING_ICON_INTERVAL_MS);
+			expect(self.rebuildRows).not.toHaveBeenCalled();
+			expect(self.rows).toBe(rows);
+			expect(rows[0]?.statusLabel).toBe("last heard 10s ago");
+			expect(render()).toContain("last heard 11s ago");
+			expect(self.workingIconFrame).toBe(0);
+
+			self.rows = buildAgentsViewRows([summary({ activity: "working", isStreaming: true })]);
+			self.ui.requestRender.mockClear();
+			await vi.advanceTimersByTimeAsync(WORKING_ICON_INTERVAL_MS);
+			expect(self.workingIconFrame).toBe(1);
+			expect(self.ui.requestRender).toHaveBeenCalledOnce();
+			expect(render()).toContain("◈");
+			expect(render()).not.toContain("thinking");
+
+			self.rows = buildAgentsViewRows([summary()]);
+			self.ui.requestRender.mockClear();
+			await vi.advanceTimersByTimeAsync(WORKING_ICON_INTERVAL_MS);
+			expect(self.workingIconFrame).toBe(1);
+			expect(self.ui.requestRender).not.toHaveBeenCalled();
+			expect(self.rebuildRows).not.toHaveBeenCalled();
+
+			const recovering = buildAgentsViewRows([
+				summary({ statusLabel: "recovering", lastHeardFromAt: "2026-01-01T00:00:00Z" }),
+			])[0]!;
+			recovering.heartbeat = { activeCount: 1 };
+			const failed = buildAgentsViewRows([summary({ statusLabel: "failed" })])[0]!;
+			const statusLabel = vi.spyOn(agentsViewState, "getSessionStatusLabel");
+			expect(render(recovering)).toContain("recovering");
+			expect(render(recovering)).not.toContain("last heard");
+			expect(render(failed)).toContain("failed");
+			expect(render()).not.toContain("needs input");
+			expect(statusLabel).toHaveBeenCalledTimes(2);
+			expect(statusLabel).toHaveBeenCalledWith(recovering.summary, recovering.heartbeat);
+		} finally {
+			invoke("finish", self, { type: "exit" });
+			await run;
+		}
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it("reuses the catalog index and recursive totals across searches until reconciliation", () => {
+		const parent = summary({ sessionName: "parent", usage: { inputTokens: 0, outputTokens: 0, cost: 1 } });
+		const child = summary({
+			id: "child",
+			activeSessionId: "child",
+			sessionId: "child",
+			sessionFile: "/tmp/child.jsonl",
+			sessionName: "child",
+			runtimeKind: "subagent",
+			parentActiveSessionId: parent.activeSessionId,
+			usage: { inputTokens: 0, outputTokens: 0, cost: 2 },
+		});
+		const grandchild = summary({
+			id: "grandchild",
+			activeSessionId: "grandchild",
+			sessionId: "grandchild",
+			sessionFile: "/tmp/grandchild.jsonl",
+			sessionName: "grandchild",
+			runtimeKind: "subagent",
+			parentActiveSessionId: child.activeSessionId,
+			usage: { inputTokens: 0, outputTokens: 0, cost: 4 },
+		});
+		const self = catalogHarness([], [parent, child, grandchild]);
+		const computeRollups = vi.spyOn(agentsViewState, "computeRecursiveRollups");
+		const buildIndex = vi.spyOn(agentsViewState, "buildUnifiedSessionIndex");
+		const filterEmpty = vi.spyOn(agentsViewState, "filterEmptyAgentsViewSessions");
+		// getFilteredRecords routes through the BySearchQuery wrapper; spying the
+		// inner function would never fire, because the wrapper calls it directly.
+		const filterSearch = vi.spyOn(agentsViewState, "filterUnifiedSessionsBySearchQuery");
+		const buildRows = vi.spyOn(agentsViewState, "buildAgentsViewRows");
+		self.reconcileCatalogs();
+		const index = Reflect.get(self, "unifiedIndex");
+		const rollups = Reflect.get(self, "recursiveRollups");
+		expect(rollups).toBeInstanceOf(Map);
+		const parentRow = () => self.rows.find((row) => row.summary.sessionId === parent.sessionId);
+		expect(parentRow()).toMatchObject({ recursiveCost: 7, descendantCount: 2 });
+
+		for (const query of ["parent", "grandchild", "no match", ""]) {
+			self.editor.getText.mockReturnValue(query);
+			invoke("queryChanged", self);
+			expect(Reflect.get(self, "unifiedIndex")).toBe(index);
+			expect(Reflect.get(self, "recursiveRollups")).toBe(rollups);
+			if (query === "no match") expect(self.rows).toEqual([]);
+			else expect(parentRow()).toMatchObject({ recursiveCost: 7, descendantCount: 2 });
+		}
+		expect(computeRollups).toHaveBeenCalledOnce();
+		expect(buildIndex).toHaveBeenCalledOnce();
+		expect(filterEmpty).toHaveBeenCalledTimes(5);
+		expect(filterSearch).toHaveBeenCalledTimes(3);
+		for (const call of [...filterEmpty.mock.calls, ...filterSearch.mock.calls]) expect(call[2]).toBe(index);
+		for (const call of buildRows.mock.calls) expect(call[4]).toBe(rollups);
+
+		self.lastListedSummaries = [
+			parent,
+			child,
+			{ ...grandchild, usage: { inputTokens: 0, outputTokens: 0, cost: 10 } },
+			{ ...child, id: "new", activeSessionId: "new", sessionId: "new", sessionFile: "/tmp/new.jsonl" },
+		];
+		self.reconcileCatalogs();
+		expect(Reflect.get(self, "unifiedIndex")).not.toBe(index);
+		expect(Reflect.get(self, "recursiveRollups")).not.toBe(rollups);
+		expect(computeRollups).toHaveBeenCalledTimes(2);
+		expect(buildIndex).toHaveBeenCalledTimes(2);
+		expect(parentRow()).toMatchObject({ recursiveCost: 15, descendantCount: 3 });
+		self.editor.getText.mockReturnValue("parent");
+		invoke("queryChanged", self);
+		expect(parentRow()).toMatchObject({ recursiveCost: 15, descendantCount: 3 });
+		expect(computeRollups).toHaveBeenCalledTimes(2);
 	});
 });
 

@@ -21,6 +21,10 @@ function createContext(tokens: number | null, compact = vi.fn()): ExtensionConte
 			throw new Error("not used");
 		},
 		getSystemPrompt: () => "",
+		setTimeout: (callback, ms) => setTimeout(callback, ms),
+		clearTimeout: (handle) => clearTimeout(handle),
+		setInterval: (callback, ms) => setInterval(callback, ms),
+		clearInterval: (handle) => clearInterval(handle),
 	};
 }
 

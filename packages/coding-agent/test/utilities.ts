@@ -216,8 +216,17 @@ export function createTestResourceLoader(options: CreateTestResourceLoaderOption
 		runtime: createExtensionRuntime(),
 	};
 
-	return {
+	const loader: ResourceLoader = {
 		getExtensions: () => extensionsResult,
+		// Inline RLM children require an isolated extension scope. The real loader
+		// rebuilds one from its factories; this helper is handed an already-loaded
+		// result and cannot re-instantiate it, so the child scope is genuinely
+		// empty rather than a shared alias pretending to be isolated.
+		createSessionScope: async () =>
+			createTestResourceLoader({
+				...options,
+				extensionsResult: { extensions: [], errors: [], runtime: createExtensionRuntime() },
+			}),
 		getSkills: () => ({ skills: options.skills ?? [], diagnostics: [] }),
 		getPrompts: () => ({ prompts: [], diagnostics: [] }),
 		getThemes: () => ({ themes: [], diagnostics: [] }),
@@ -227,6 +236,7 @@ export function createTestResourceLoader(options: CreateTestResourceLoaderOption
 		extendResources: () => {},
 		reload: async () => {},
 	};
+	return loader;
 }
 
 /**

@@ -2,7 +2,7 @@
 // (`python -m rlm.repl`) — requests on stdin, events on stdout, stderr kept as
 // a diagnostics tail. The protocol is documented in prime-agent-runtime/src/rlm/repl.md.
 import { AsyncLocalStorage } from "node:async_hooks";
-import { type ChildProcess, spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -22,11 +22,13 @@ import {
 	withSpan,
 } from "@earendil-works/pi-ai";
 import { v4 as uuid } from "uuid";
+import { spawnHidden } from "../../utils/child-process.js";
 import { reapKernelOrphanProcesses, recordOrphanProcessState } from "../orphan-process-journal.js";
 import { ensureKernelPython } from "./bootstrap.js";
 import {
 	AGENT_MESSAGE_DISPLAY_MIME,
 	ATTACHMENT_DISPLAY_MIME,
+	BASH_ACTIVITY_DISPLAY_MIME,
 	createDeferred,
 	createKernelStartupAbortError,
 	DEFAULT_MAX_OUTPUT_CHARS,
@@ -68,7 +70,7 @@ import {
 	type SnapshotResult,
 } from "./state-snapshot.js";
 
-const REPL_PROTOCOL_VERSION = 3;
+const REPL_PROTOCOL_VERSION = 4;
 const READY_TIMEOUT_MS = 30_000;
 const REPAIR_STEP_TIMEOUT_MS = 30_000;
 // Runtime-minted host-request ids never repeat; the bound only guards a
@@ -161,6 +163,7 @@ const PROTOCOL_EVENT_KINDS = new Set([
 	"result",
 	"display",
 	"host_request",
+	"host_cancel",
 	"error",
 	"done",
 	"trace",
@@ -214,7 +217,7 @@ function invalidProtocolFrameReason(event: Record<string, unknown>): string | un
 		return "unknown protocol event";
 	}
 	if (
-		(event.event === "done" || event.event === "host_request") &&
+		(event.event === "done" || event.event === "host_request" || event.event === "host_cancel") &&
 		(typeof event.id !== "string" || event.id === "")
 	) {
 		return `${event.event} frame without id`;
@@ -268,6 +271,8 @@ export class ReplKernelManager {
 	private pendingBackgroundOutput = "";
 	private pendingBackgroundOutputTruncated = false;
 	private readonly inFlightHostRequests = new Set<Promise<void>>();
+	private readonly hostRequestControllers = new Map<string, AbortController>();
+	private readonly backgroundBashHandles = new Map<string, number>();
 	private state: "idle" | "starting" | "running" | "shutdown" = "idle";
 	/** Bumped by every teardown so a stale in-flight doStart can never touch a newer kernel. */
 	private startGeneration = 0;
@@ -323,6 +328,10 @@ export class ReplKernelManager {
 
 	get lastUnexpectedExit(): KernelUnexpectedExit | undefined {
 		return this.lastUnexpectedExitValue;
+	}
+
+	get hasBackgroundWork(): boolean {
+		return this.backgroundBashHandles.size > 0;
 	}
 
 	/** The generic teardown error, naming the crash when nothing was spawned since it. */
@@ -455,7 +464,7 @@ export class ReplKernelManager {
 			throw new Error("Kernel was disposed during startup");
 		}
 
-		const child = spawn(python, ["-m", "rlm.repl"], {
+		const child = spawnHidden(python, ["-m", "rlm.repl"], {
 			cwd: this.options.cwd,
 			// bash.py journals its process groups under this pid so the host can
 			// reap them if the runtime dies without running its shutdown hook.
@@ -465,6 +474,7 @@ export class ReplKernelManager {
 			env: injectTraceparentEnv({
 				...withoutDaemonWorkerIdentity(process.env),
 				...this.options.env,
+				...(process.platform === "win32" ? { PYTHONUTF8: "1" } : {}),
 				PRIME_AGENT_KERNEL_OWNER_PID: String(process.pid),
 			}),
 			stdio: ["pipe", "pipe", "pipe"],
@@ -525,6 +535,7 @@ export class ReplKernelManager {
 			buffered += decoder.write(buf);
 			let newline = buffered.indexOf("\n");
 			while (newline !== -1) {
+				if (this.child !== child) return;
 				const line = buffered.slice(0, newline);
 				buffered = buffered.slice(newline + 1);
 				newline = buffered.indexOf("\n");
@@ -589,6 +600,19 @@ export class ReplKernelManager {
 			} catch (error) {
 				this.appendKernelDiagnostic(`kernel stderr log close failed: ${errorMessage(error)}`);
 			}
+		});
+		// A pipe write into a dead kernel surfaces as an 'error' event on the
+		// stream (write EPIPE); without a listener Node rethrows it and takes
+		// down the whole worker. The pending writeLine rejection and the child
+		// 'exit' handler below own the fallout, so this only records the
+		// diagnosis.
+		child.stdin?.on("error", (error) => {
+			if (this.child !== child) return;
+			this.appendKernelDiagnostic(`kernel stdin error: ${errorMessage(error)}`);
+		});
+		child.stdout?.on("error", (error) => {
+			if (this.child !== child) return;
+			this.appendKernelDiagnostic(`kernel stdout error: ${errorMessage(error)}`);
 		});
 		child.once("exit", () => {
 			// One turn for the poll phase to deliver the bytes the kernel wrote
@@ -977,6 +1001,27 @@ export class ReplKernelManager {
 
 	private handleEvent(event: Record<string, unknown>): void {
 		const type = event.event;
+		if (type === "display" && isRecord(event.data) && BASH_ACTIVITY_DISPLAY_MIME in event.data) {
+			const activity = event.data[BASH_ACTIVITY_DISPLAY_MIME];
+			if (
+				isRecord(activity) &&
+				typeof activity.id === "string" &&
+				/^[a-f0-9]{32}$/.test(activity.id) &&
+				typeof activity.pid === "number" &&
+				Number.isSafeInteger(activity.pid) &&
+				activity.pid > 0 &&
+				typeof activity.active === "boolean"
+			) {
+				if (activity.active) {
+					if (!this.backgroundBashHandles.has(activity.id)) {
+						this.backgroundBashHandles.set(activity.id, activity.pid);
+					}
+				} else if (this.backgroundBashHandles.get(activity.id) === activity.pid) {
+					this.backgroundBashHandles.delete(activity.id);
+				}
+			}
+			return;
+		}
 		if (type === "ready") {
 			this.readyAt = Date.now();
 			this.readyDeferred?.resolve(typeof event.protocol === "number" ? event.protocol : -1);
@@ -988,6 +1033,10 @@ export class ReplKernelManager {
 		}
 		if (type === "trace") {
 			forwardKernelTraceEvent(event);
+			return;
+		}
+		if (type === "host_cancel") {
+			if (typeof event.id === "string") this.hostRequestControllers.get(event.id)?.abort();
 			return;
 		}
 
@@ -1494,6 +1543,8 @@ export class ReplKernelManager {
 			this.handledHostRequestIds.delete(oldest);
 		}
 
+		const controller = new AbortController();
+		this.hostRequestControllers.set(requestId, controller);
 		// The frame's traceparent is the runtime's client span for this request;
 		// the handler runs as its child so a cell's host calls thread back to the
 		// cell. This stdout callback has no useful ambient context of its own
@@ -1507,7 +1558,9 @@ export class ReplKernelManager {
 		};
 		const run = async () => {
 			try {
-				const result = await withSpan("kernel.host_request", spanAttrs, () => this.handleHostRequest(data));
+				const result = await withSpan("kernel.host_request", spanAttrs, () =>
+					this.handleHostRequest(requestId, data, controller.signal),
+				);
 				try {
 					await this.writeLine({ type: "host_reply", id: requestId, data: { status: "ok", result } });
 				} catch (replyError) {
@@ -1534,10 +1587,17 @@ export class ReplKernelManager {
 		this.inFlightHostRequests.add(task);
 		void task.finally(() => {
 			this.inFlightHostRequests.delete(task);
+			if (this.hostRequestControllers.get(requestId) === controller) {
+				this.hostRequestControllers.delete(requestId);
+			}
 		});
 	}
 
-	private async handleHostRequest(data: unknown): Promise<Record<string, unknown>> {
+	private async handleHostRequest(
+		requestId: string,
+		data: unknown,
+		signal: AbortSignal,
+	): Promise<Record<string, unknown>> {
 		if (!isRecord(data)) {
 			throw new Error("host request payload must be an object");
 		}
@@ -1553,7 +1613,7 @@ export class ReplKernelManager {
 		// the in-flight execution; detached spawns (asyncio.create_task) fire after
 		// the scheduling cell goes idle, so fall back to that last cell's source.
 		const cellSourceCode = this.activeExecution?.code ?? this.lastCellCode;
-		return handler({ ...data, cellSourceCode });
+		return handler({ ...data, cellSourceCode }, { signal, requestId });
 	}
 
 	private async interrupt(): Promise<void> {
@@ -1567,6 +1627,9 @@ export class ReplKernelManager {
 		this.clearSnapshotTimer();
 		this.lateSentAgentMessageHandlers.clear();
 		this.pendingDoneWaiters.clear();
+		for (const controller of this.hostRequestControllers.values()) controller.abort();
+		this.hostRequestControllers.clear();
+		this.backgroundBashHandles.clear();
 		// Stale pre-teardown background output must not surface after a restart.
 		this.pendingBackgroundOutput = "";
 		this.pendingBackgroundOutputTruncated = false;
@@ -1657,6 +1720,9 @@ export class ReplKernelManager {
 		}
 		// Captured before any await: teardowns and newer starts bump the counter.
 		const generation = this.startGeneration;
+		// Exact in-flight host operations must receive shutdown cancellation before
+		// any bounded settlement wait. Controllers remain indexed until each task settles.
+		for (const controller of this.hostRequestControllers.values()) controller.abort();
 		if (opts.snapshot) {
 			await this.flushSnapshotForDispose();
 			if (this.startStale(generation)) return false;
@@ -1925,5 +1991,9 @@ export class ReplKernelManager {
 
 	get isRunning(): boolean {
 		return this.state === "running";
+	}
+
+	get isDefunct(): boolean {
+		return this.state === "shutdown";
 	}
 }

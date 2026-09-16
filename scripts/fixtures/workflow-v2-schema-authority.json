@@ -1,0 +1,19 @@
+{
+  "bundle": {
+    "path": "scripts/fixtures/pi-plugin-workflow-af31f5e.bundle",
+    "ref": "refs/authority/workflow-v2-af31f5e",
+    "sha256": "00a33330b6bdcd7e99b929ed0216acc575a26b09ec73e218c42b6e76807380cb"
+  },
+  "commit": "af31f5e5e6e28cfd2577ca10012d20c4075fe564",
+  "format": "prime.workflow-v2-schema-authority/v1",
+  "repository": "coleleavitt/pi-plugin-workflow",
+  "schemas": [
+    {
+      "blob": "461a8e9ef7b44127567822979ce938f60cabb385",
+      "name": "workflow-v2.schema.json",
+      "path": "docs/api/workflow-v2.schema.json",
+      "sha256": "1f9088eca248f86bdfce97e23eb15f393ffc329a8fce9b33257729e3369b4a4a"
+    }
+  ],
+  "tree": "1151a584836dc255f99ef0f84e79540148a264ed"
+}

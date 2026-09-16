@@ -146,7 +146,7 @@ export interface ExtensionUIContext {
 	 */
 	setWorkingIndicator(options?: WorkingIndicatorOptions): void;
 
-	/** Set the label shown for hidden thinking blocks. Call with no argument to restore default. */
+	/** @deprecated No effect: thinking is displayed without a heading. Retained for existing extension/daemon callers. */
 	setHiddenThinkingLabel(label?: string): void;
 
 	/** Set a widget to display above or below the editor. Accepts string array or component factory. */
@@ -311,6 +311,18 @@ export interface ExtensionContext {
 	runAgent(request: RunAgentRequest, options?: RunAgentOptions): Promise<RunAgentResult>;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
+	/**
+	 * Schedule a callback on a host-owned timer. Unlike the global `setTimeout`, thrown
+	 * errors are reported through the extension error boundary instead of crashing the
+	 * process, and pending timers are cancelled when the extension host unloads.
+	 */
+	setTimeout(callback: () => void | Promise<void>, ms: number): ReturnType<typeof setTimeout>;
+	/** Cancel a timer created with `ctx.setTimeout`. Accepts undefined like the global `clearTimeout`. */
+	clearTimeout(handle: ReturnType<typeof setTimeout> | undefined): void;
+	/** Schedule a repeating callback on a host-owned timer. Same guarantees as `ctx.setTimeout`. */
+	setInterval(callback: () => void | Promise<void>, ms: number): ReturnType<typeof setInterval>;
+	/** Cancel a timer created with `ctx.setInterval`. Accepts undefined like the global `clearInterval`. */
+	clearInterval(handle: ReturnType<typeof setInterval> | undefined): void;
 }
 
 /**
@@ -1110,6 +1122,21 @@ export interface ExtensionAPI {
 	/** Drop the declaration made under `key`; nothing happens if there is none. */
 	clearScheduledWork(key: string): void;
 
+	/**
+	 * Queue one extension-owned follow-up under a key and await host admission.
+	 * A coalesced call returns the existing action and its signal does not gain
+	 * cancellation authority over that earlier admission. Ownership is runtime-only;
+	 * recovery keeps the queue key for ordering/coalescing evidence but drops ownership.
+	 */
+	queueFollowUp(
+		key: string,
+		content: string | (TextContent | ImageContent)[],
+		options?: { signal?: AbortSignal },
+	): Promise<ExtensionFollowUpAdmission>;
+
+	/** Cancel this extension's follow-up under key until its private delivery fence closes. */
+	cancelFollowUp(key: string): boolean;
+
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
 	appendEntry<T = unknown>(customType: string, data?: T): void;
 	/** Set the session display name (shown in session selector). */
@@ -1307,6 +1334,20 @@ export type SendMessageHandler = <T = unknown>(
 	options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
 ) => void;
 
+export interface ExtensionFollowUpAdmission {
+	actionId: string;
+	disposition: "starts_when_admitted" | "queued" | "coalesced";
+}
+
+export type QueueExtensionFollowUpHandler = (
+	owner: object,
+	key: string,
+	content: string | (TextContent | ImageContent)[],
+	options?: { signal?: AbortSignal },
+) => Promise<ExtensionFollowUpAdmission>;
+
+export type CancelExtensionFollowUpHandler = (owner: object, key?: string) => boolean;
+
 export type SendUserMessageHandler = (
 	content: string | (TextContent | ImageContent)[],
 	options?: { deliverAs?: "steer" | "followUp" },
@@ -1395,6 +1436,8 @@ export interface ExtensionActions {
 	sendUserMessage: SendUserMessageHandler;
 	setScheduledWork: SetScheduledWorkHandler;
 	clearScheduledWork: ClearScheduledWorkHandler;
+	queueExtensionFollowUp: QueueExtensionFollowUpHandler;
+	cancelExtensionFollowUp: CancelExtensionFollowUpHandler;
 	appendEntry: AppendEntryHandler;
 	setSessionName: SetSessionNameHandler;
 	getSessionName: GetSessionNameHandler;

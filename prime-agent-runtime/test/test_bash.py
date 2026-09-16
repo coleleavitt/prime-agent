@@ -13,6 +13,7 @@ import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from types import FunctionType, SimpleNamespace
 from unittest import mock
 
 from rlm import bash
@@ -54,6 +55,38 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
         handle = bash("echo again")
         awaited = await handle
         self.assertEqual(handle.poll(), awaited)
+
+    def test_construction_cleanup_uses_windows_signal_without_sigkill(self):
+        failure = RuntimeError("task construction failed")
+        loop = mock.Mock()
+        loop.create_task.side_effect = failure
+        bridge = SimpleNamespace(emit=mock.Mock())
+        namespace = dict(bash_module.BashHandle._schedule_background_completion_notice.__globals__)
+
+        def isolated_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if level == 1 and name == "" and fromlist == ("repl",):
+                return SimpleNamespace(repl=bridge)
+            return __import__(name, globals, locals, fromlist, level)
+
+        namespace.update(
+            _IS_POSIX=False,
+            signal=SimpleNamespace(SIGTERM=15),
+            asyncio=SimpleNamespace(get_running_loop=lambda: loop),
+            __builtins__={**vars(__import__("builtins")), "__import__": isolated_import},
+        )
+        schedule = FunctionType(
+            bash_module.BashHandle._schedule_background_completion_notice.__code__, namespace
+        )
+        handle = mock.Mock(_pid=42)
+        with self.assertRaises(RuntimeError) as caught:
+            schedule(handle)
+        self.assertIs(caught.exception, failure)
+        handle.kill.assert_called_once_with(15)
+        handle._notify_background_completion.return_value.close.assert_called_once_with()
+        activity = bridge.emit.call_args_list[0].args[0]
+        mime = "application/vnd.prime-agent.bash-activity+json"
+        self.assertTrue(activity[mime]["active"])
+        bridge.emit.assert_called_with({mime: {**activity[mime], "active": False}})
 
     async def test_status_pipe_survives_high_fds_and_strict_posix_shell(self):
         # Regression: dash rejects multi-digit fds in redirections at parse
@@ -98,6 +131,40 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.output.startswith("1\n"))
         self.assertIn("400000", result.output)
         self.assertIn("bytes dropped", result.output)
+
+    def test_child_env_is_non_interactive(self):
+        """Agent shells have no usable stdin: interactive prompts (git commit
+        opening $EDITOR, credential asks, pagers) can only hang. _child_env()
+        must neutralize them, overriding inherited terminal settings."""
+        with mock.patch.dict(
+            os.environ,
+            {
+                "EDITOR": "vim",
+                "PAGER": "less",
+                "GIT_SEQUENCE_EDITOR": "vim",
+                "GIT_ASKPASS": "/usr/bin/git-credential-manager",
+                "SSH_ASKPASS_REQUIRE": "force",
+            },
+        ):
+            env = bash_module._child_env()
+        self.assertEqual(env["GIT_EDITOR"], "true")
+        self.assertEqual(env["GIT_SEQUENCE_EDITOR"], "true")
+        self.assertEqual(env["EDITOR"], "true")
+        self.assertEqual(env["VISUAL"], "true")
+        self.assertEqual(env["GIT_TERMINAL_PROMPTS"], "0")
+        self.assertEqual(env["GIT_ASKPASS"], "true")
+        self.assertEqual(env["SSH_ASKPASS_REQUIRE"], "never")
+        self.assertEqual(env["PAGER"], "cat")
+        self.assertEqual(env["GIT_PAGER"], "cat")
+        self.assertEqual(env["DEBIAN_FRONTEND"], "noninteractive")
+
+    async def test_spawned_shell_receives_non_interactive_env(self):
+        handle = bash(
+            'echo "$GIT_EDITOR|$GIT_SEQUENCE_EDITOR|$GIT_TERMINAL_PROMPTS|$GIT_ASKPASS|$SSH_ASKPASS_REQUIRE"'
+        )
+        result = await handle
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("true|true|0|true|never", result.output)
 
     async def test_env_prefix_and_journal(self):
         with tempfile.TemporaryDirectory() as tmp:

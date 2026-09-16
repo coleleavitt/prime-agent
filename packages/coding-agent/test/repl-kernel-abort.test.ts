@@ -618,4 +618,101 @@ describe("ReplKernelManager abort handling", () => {
 		expect(result.backgroundOutput?.length).toBeLessThan(70 * 1024);
 		manager.disposeSync();
 	});
+
+	it("host_cancel aborts only the exact host request and replies after handler settlement", async () => {
+		let release: () => void = () => {};
+		const observed: Array<{ requestId?: string; aborted?: boolean }> = [];
+		const writeLine = vi.fn(async (_request: Record<string, unknown>) => {});
+		const manager = new ReplKernelManager({
+			cwd: process.cwd(),
+			hostHandlers: {
+				"workflow.run_agent": async (_payload, context) => {
+					if (!context) throw new Error("missing host context");
+					await new Promise<void>((resolve) => {
+						release = resolve;
+						context.signal.addEventListener("abort", () => resolve(), { once: true });
+					});
+					observed.push({ requestId: context.requestId, aborted: context.signal.aborted });
+					return { outcome: "cancelled" };
+				},
+			},
+		});
+		const internals = manager as unknown as ReplInternals;
+		Object.assign(internals, { state: "running", writeLine, start: async () => {} });
+		internals.handleEvent({ event: "host_request", id: "transport-a", data: { type: "workflow.run_agent" } });
+		await Promise.resolve();
+		expect(writeLine).not.toHaveBeenCalled();
+		internals.handleEvent({ event: "host_cancel", id: "other" });
+		await Promise.resolve();
+		expect(observed).toEqual([]);
+		internals.handleEvent({ event: "host_cancel", id: "transport-a" });
+		await vi.waitFor(() => expect(writeLine).toHaveBeenCalledOnce());
+		expect(observed).toEqual([{ requestId: "transport-a", aborted: true }]);
+		expect(writeLine).toHaveBeenCalledWith({
+			type: "host_reply",
+			id: "transport-a",
+			data: { status: "ok", result: { outcome: "cancelled" } },
+		});
+		release();
+	});
+
+	it("drops a late host_cancel after terminal settlement", async () => {
+		let aborts = 0;
+		const writeLine = vi.fn(async (_request: Record<string, unknown>) => {});
+		const manager = new ReplKernelManager({
+			cwd: process.cwd(),
+			hostHandlers: {
+				"workflow.run_agent": async (_payload, context) => {
+					if (!context) throw new Error("missing host context");
+					context.signal.addEventListener("abort", () => aborts++, { once: true });
+					return { outcome: "completed" };
+				},
+			},
+		});
+		const internals = manager as unknown as ReplInternals;
+		Object.assign(internals, { state: "running", writeLine, start: async () => {} });
+		internals.handleEvent({ event: "host_request", id: "transport-terminal", data: { type: "workflow.run_agent" } });
+		await vi.waitFor(() => expect(writeLine).toHaveBeenCalledOnce());
+		internals.handleEvent({ event: "host_cancel", id: "transport-terminal" });
+		await Promise.resolve();
+		expect(aborts).toBe(0);
+		expect(writeLine).toHaveBeenCalledOnce();
+	});
+
+	it("deduplicates repeated host_cancel and isolates an unrelated request", async () => {
+		const aborts: string[] = [];
+		const writeLine = vi.fn(async (_request: Record<string, unknown>) => {});
+		const manager = new ReplKernelManager({
+			cwd: process.cwd(),
+			hostHandlers: {
+				"workflow.run_agent": async (_payload, context) => {
+					if (!context) throw new Error("missing host context");
+					await new Promise<void>((resolve) => {
+						context.signal.addEventListener(
+							"abort",
+							() => {
+								aborts.push(context.requestId);
+								resolve();
+							},
+							{ once: true },
+						);
+					});
+					return { outcome: "cancelled" };
+				},
+			},
+		});
+		const internals = manager as unknown as ReplInternals;
+		Object.assign(internals, { state: "running", writeLine, start: async () => {} });
+		internals.handleEvent({ event: "host_request", id: "transport-first", data: { type: "workflow.run_agent" } });
+		internals.handleEvent({ event: "host_request", id: "transport-second", data: { type: "workflow.run_agent" } });
+		await Promise.resolve();
+		internals.handleEvent({ event: "host_cancel", id: "transport-first" });
+		internals.handleEvent({ event: "host_cancel", id: "transport-first" });
+		await vi.waitFor(() => expect(writeLine).toHaveBeenCalledOnce());
+		expect(aborts).toEqual(["transport-first"]);
+		expect(writeLine.mock.calls[0]?.[0]).toMatchObject({ id: "transport-first" });
+		internals.handleEvent({ event: "host_cancel", id: "transport-second" });
+		await vi.waitFor(() => expect(writeLine).toHaveBeenCalledTimes(2));
+		expect(aborts).toEqual(["transport-first", "transport-second"]);
+	});
 });

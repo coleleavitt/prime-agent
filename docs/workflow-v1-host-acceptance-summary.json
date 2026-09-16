@@ -1,0 +1,39 @@
+{
+  "blockers": [
+    "acceptance-mutates-source-and-misses-post-gate-tree-check",
+    "workflow-uses-parent-semantic-edge-persistence-wrapper",
+    "arbitrary-noncredential-headers-bypass-auth-preflight",
+    "installed-hostile-cwd-validation-missing",
+    "both-schema-and-installed-copy-validation-incomplete"
+  ],
+  "candidate": {
+    "commit": "886e9a8721a880a3f599256d61ef1db05703232c",
+    "tree": "94ab667582d4528aa90e93166610ae6ca9f5605e"
+  },
+  "commitAuthorized": false,
+  "format": "prime.workflow-v1-host.independent-terminal-review/v1",
+  "independentEvidence": {
+    "directory": "/tmp/workflow-v1-independent-acceptance-886e9a872",
+    "gates": 18,
+    "logLedgerSha256": "76bec37871bb9f903da1a5de6062404b79d4037a60d958b472d356c6e6411187",
+    "manifestSha256": "3c3cf913ef4c2681a50f8ac9cbf604f0e1ecfb7b04268116d3b3d000e8b02904",
+    "nonMutatingBiomeExitCode": 1,
+    "zeroExitGates": 18
+  },
+  "installAuthorized": false,
+  "normative": {
+    "commit": "e47fd2a80b45cd4b6a9be8c05adad85ded187c1b"
+  },
+  "pushAuthorized": false,
+  "reviewedChangedFiles": 29,
+  "suppliedEvidence": {
+    "declaredHashesVerified": true,
+    "directory": "/home/cole/.prime/agent/session-artifacts/01a03411-8ff2-75b9-8da1-96727d5e9061/workflow-v1-host-acceptance-886e9a872",
+    "gates": 18,
+    "logLedgerSha256": "8d8b175e27237d4ca2f7d80815a4c07e6db79c414b53bbea809d6282a084c8de",
+    "manifestSha256": "15e9255711125a1abed97dd1daf71ad25681308e8a8a2935657db0f39a65713b",
+    "pythonTests": 338,
+    "zeroExitGates": 18
+  },
+  "verdict": "BLOCK"
+}

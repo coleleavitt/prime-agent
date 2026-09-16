@@ -34,6 +34,17 @@ export function setLogContext(fields: Record<string, unknown>): void {
 	Object.assign(context, fields);
 }
 
+export function writeFileLogEntry(entry: LogEntry): void {
+	// Context fields are defaults: the entry's own keys win so the reserved
+	// ts/level/component/msg and the traceId/spanId/parentSpanId that pi-ai
+	// stamps from the active span can never be overwritten by a context field.
+	appendRotatingLog(
+		getAgentLogPath(),
+		stringifyLogEntry({ ...context, ...scopedContext.getStore(), ...entry }),
+		AGENT_LOG_MAX_BYTES,
+	);
+}
+
 /**
  * Run `fn` with `fields` (typically `{ sessionId }`) merged into every log
  * entry emitted inside it, including entries from awaited continuations.
@@ -51,16 +62,7 @@ export function runWithLogContext<T>(fields: Record<string, unknown>, fn: () => 
  */
 export function installFileLogSink(fields?: Record<string, unknown>): void {
 	context = { pid: process.pid, ...fields };
-	setLogSink((entry: LogEntry) => {
-		// Context fields are defaults: the entry's own keys win so the reserved
-		// ts/level/component/msg and the traceId/spanId/parentSpanId that pi-ai
-		// stamps from the active span can never be overwritten by a context field.
-		appendRotatingLog(
-			getAgentLogPath(),
-			stringifyLogEntry({ ...context, ...scopedContext.getStore(), ...entry }),
-			AGENT_LOG_MAX_BYTES,
-		);
-	});
+	setLogSink(writeFileLogEntry);
 }
 
 /**

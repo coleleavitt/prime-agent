@@ -1,0 +1,89 @@
+{
+  "acceptance": {
+    "agentFullTests": 72,
+    "declaredHashesVerified": true,
+    "directory": "/home/cole/.prime/agent/session-artifacts/01a03411-8ff2-75b9-8da1-96727d5e9061/workflow-v1-host-acceptance-e01de61d2",
+    "gates": 19,
+    "logLedgerSha256": "7d728f43a4f4bd23202bd6cc7aa3614412f7e447b4496c73af176e8b982e7e00",
+    "manifestSha256": "c0a7790eaf0a1c8a0695eba2c348589d44d5e18c5c6e9dac4dafd2b36fc7a340",
+    "pythonProcesses": 60,
+    "pythonTests": 339,
+    "zeroExitGates": 19
+  },
+  "authorization": {
+    "canary": false,
+    "commitEvidence": true,
+    "enable": false,
+    "install": false,
+    "push": false
+  },
+  "blockers": [],
+  "committedEvidence": {
+    "logDigestInventory": "docs/evidence/workflow-v1-host-acceptance-e01de61d2/log-digests.json",
+    "normalizedManifest": "docs/evidence/workflow-v1-host-acceptance-e01de61d2/acceptance.normalized.json"
+  },
+  "format": "prime.workflow-v1-host.independent-terminal-rereview/v1",
+  "implementationCandidate": {
+    "commit": "e01de61d218170796590941a6d49bdd5385bf288",
+    "tree": "786c634944749482ec85a78b7d807035b8a1c1c9"
+  },
+  "independentReruns": {
+    "agentPolicyFocused": {
+      "failed": 0,
+      "passed": 2
+    },
+    "normativeAuthorityVerifier": "PASS",
+    "packedHostileVerifier": "PASS",
+    "workflowFocused": {
+      "failed": 0,
+      "passed": 62
+    },
+    "workflowV2ImplementationMatches": 0
+  },
+  "normativeAuthority": {
+    "bundle": {
+      "path": "scripts/fixtures/pi-plugin-workflow-e47fd2a.bundle",
+      "ref": "refs/authority/workflow-v1-e47fd2a",
+      "sha256": "b61e746cdef154108a96239994454ab8bbf023270d72e866e0198fbcd6f28f2f"
+    },
+    "commit": "e47fd2a80b45cd4b6a9be8c05adad85ded187c1b",
+    "format": "prime.workflow-v1-normative-authority/v1",
+    "repository": "coleleavitt/pi-plugin-workflow",
+    "schemas": [
+      {
+        "blob": "aff1ed3454ddbbcdbd215384ff6f2124bd39613b",
+        "name": "workflow-v1.schema.json",
+        "path": "docs/api/workflow-v1.schema.json",
+        "sha256": "79913bb20831758935910a0a49b2ddaf40299c283f876b081cd75f21791f3b27"
+      },
+      {
+        "blob": "18eef21d5126ade6989016591a4e2fb0b8907b94",
+        "name": "workflow-native-host-v1.schema.json",
+        "path": "docs/api/workflow-native-host-v1.schema.json",
+        "sha256": "08ade62e424d7dad199ca87b1a2da8eb57da71657a497f6793862fa1d73e1f6a"
+      }
+    ],
+    "tree": "95114d5cf2e03c3de25d0f667eb2be7ca7ebb5c1",
+    "verified": true
+  },
+  "packageProof": {
+    "mutantsRejected": 16,
+    "phases": [
+      "repository-source",
+      "normal-built-dist",
+      "generated-tarball",
+      "installed-package"
+    ],
+    "schemaInjection": false,
+    "schemas": 2,
+    "tarballEnumeratedExtractedAndHashedBeforeInstall": true
+  },
+  "priorBlockers": {
+    "B1": "closed",
+    "B2": "closed",
+    "B3": "closed",
+    "B4": "closed",
+    "B5": "closed"
+  },
+  "verdict": "PASS"
+}

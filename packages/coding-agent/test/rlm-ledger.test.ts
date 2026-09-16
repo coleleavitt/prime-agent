@@ -108,6 +108,48 @@ describe("rlm spawn ledger", () => {
 		}
 	});
 
+	it("serves repeated reads through the stat-guarded cache without missing a rival writer's append", async () => {
+		const root = mkdtempSync(join(tmpdir(), "prime-rlm-ledger-"));
+		try {
+			const { sessionsDir, parentFile } = makeRoots(root);
+			const ledger = new RlmSpawnLedger(root, sessionsDir);
+			await ledger.appendSpawn({
+				childId: "sub-11111111",
+				parent: parentFile,
+				child: join(root, "a.jsonl"),
+				depth: 1,
+				name: "worker-a",
+			});
+
+			// Prime the cache: a read, then an unchanged-file read.
+			const first = await ledger.edges();
+			expect(first).toHaveLength(1);
+			const cached = await ledger.edges();
+			expect(cached).toHaveLength(1);
+
+			// A rival daemon process appends to the same file directly; the
+			// stat guard must notice and force a fresh replay.
+			const rivalLine = `${JSON.stringify({
+				v: 1,
+				op: "spawn",
+				at: new Date().toISOString(),
+				childId: "sub-22222222",
+				parent: parentFile,
+				child: join(root, "b.jsonl"),
+				depth: 1,
+				name: "worker-b",
+			})}\n`;
+			const { appendFileSync } = await import("node:fs");
+			appendFileSync(ledger.ledgerPath, rivalLine, "utf8");
+
+			const afterRival = await ledger.edges();
+			expect(afterRival).toHaveLength(2);
+			expect(afterRival.map((edge) => edge.childId).sort()).toEqual(["sub-11111111", "sub-22222222"]);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects a duplicate canonical child path at append", async () => {
 		const root = mkdtempSync(join(tmpdir(), "prime-rlm-ledger-dup-"));
 		try {
@@ -243,10 +285,20 @@ describe("rlm spawn ledger", () => {
 			const reader = new RlmSpawnLedger(root, sessionsDir, undefined, (message) => logged.push(message));
 			await expect(reader.edges()).resolves.toEqual([expect.objectContaining({ childId: "sub-11111111" })]);
 			expect(logged.some((message) => message.includes("unknown op"))).toBe(true);
-			// A future major version still fails loudly.
+			// Workflow V2 Slice 3 shares this file: v:2 composite-admission records
+			// coexist with v1 topology and are TOLERATED (skipped) by the v1 reader
+			// rather than failing the whole ledger. See RlmCompositeAdmissionLedger.
 			writeFileSync(
 				ledger.ledgerPath,
 				`${readFileSync(ledger.ledgerPath, "utf8")}${JSON.stringify({ v: 2, op: "spawn", at: "2026-01-01T00:00:00.000Z" })}\n`,
+			);
+			await expect(new RlmSpawnLedger(root, sessionsDir).edges()).resolves.toEqual([
+				expect.objectContaining({ childId: "sub-11111111" }),
+			]);
+			// A genuinely unsupported future major version still fails loudly.
+			writeFileSync(
+				ledger.ledgerPath,
+				`${readFileSync(ledger.ledgerPath, "utf8")}${JSON.stringify({ v: 3, op: "spawn", at: "2026-01-01T00:00:00.000Z" })}\n`,
 			);
 			await expect(new RlmSpawnLedger(root, sessionsDir).edges()).rejects.toThrow("missing v/at");
 		} finally {

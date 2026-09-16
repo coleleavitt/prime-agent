@@ -35,7 +35,7 @@ from typing import Any
 from . import trace
 from .bash import _kill_live_handles
 
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 
 DEFAULT_SNAPSHOT_MAX_BYTES = 256 * 1024 * 1024
 DEFAULT_SNAPSHOT_MAX_VARIABLE_BYTES = 16 * 1024 * 1024
@@ -49,15 +49,25 @@ _protocol_fd: int = -1
 _write_lock = threading.Lock()
 _loop: asyncio.AbstractEventLoop | None = None
 _serve_task: asyncio.Task[Any] | None = None
-# Attribution rides task context: asyncio tasks copy it at creation, so a
-# detached task spawned by a cell keeps writing under that cell's id after
-# the cell finishes. Threads start with a fresh context and emit id null.
+
+
+class _CellExecution:
+    def __init__(self) -> None:
+        self.finished = asyncio.Event()
+        self.owner: asyncio.Task[Any] | None = None
+
+
+# Asyncio tasks copy cell context at creation, so detached tasks retain their
+# output attribution and completion barrier. Threads start with a fresh context.
 _current_cell: contextvars.ContextVar[str | None] = contextvars.ContextVar("_current_cell", default=None)
 # The request (execute/snapshot/restore) whose handling emitted a trace span;
 # rides task context like _current_cell so late spans from a cell's background
 # tasks still name the cell that started them.
 _trace_request: contextvars.ContextVar[str | None] = contextvars.ContextVar("_trace_request", default=None)
 _TRACED_REQUESTS = ("execute", "snapshot", "restore")
+_current_cell_execution: contextvars.ContextVar[_CellExecution | None] = contextvars.ContextVar(
+    "_current_cell_execution", default=None
+)
 _active: dict[str, Any] = {"task": None, "rid": None, "interrupted": False}
 _cell_counter = 0
 _pending_host: dict[str, "asyncio.Future[dict[str, Any]]"] = {}
@@ -112,12 +122,53 @@ def _emit_span(event: dict[str, Any]) -> None:
     _send({"event": "trace", "id": _trace_request.get(), **event})
 
 
-async def host_request(data: dict[str, Any]) -> dict[str, Any]:
-    """Send one typed request to the host and await its raw reply dict."""
+def current_cell_completion_context() -> tuple[asyncio.Event, asyncio.Task[Any] | None] | None:
+    """Return the calling cell's completion barrier and owning execution task."""
+    execution = _current_cell_execution.get()
+    if execution is None:
+        return None
+    return execution.finished, execution.owner
+
+
+def active_cell_task() -> asyncio.Task[Any] | None:
+    """The cell body task executing right now, or None between cells (global
+    state, not the cell contextvar — detached tasks keep stale context copies)."""
+    with _interrupt_lock:
+        task = _active["task"]
+    return task if isinstance(task, asyncio.Task) and not task.done() else None
+
+
+class HostRequestUnavailable(RuntimeError):
+    """The host rejected a request before provider dispatch (missing capability)."""
+
+
+class HostConnectionLost(RuntimeError):
+    """The authenticated host channel closed after a request may have dispatched."""
+
+
+class HostDrainTimeout(RuntimeError):
+    """A cancelled request did not produce a terminal reply inside its drain bound."""
+
+
+async def host_request(
+    data: dict[str, Any], *, cancel_on_cancel: bool = False, drain_timeout_ms: int | None = None
+) -> dict[str, Any]:
+    """Send one typed request and await its raw reply.
+
+    Cancellation-aware callers retain one settlement future. Their first task
+    cancellation emits one exact-ID ``host_cancel`` and then keeps awaiting that
+    same future. Further task cancellations are consumed while draining.
+    """
     if _loop is None:
-        raise RuntimeError("repl runtime is not serving")
+        raise HostRequestUnavailable("repl runtime is not serving")
     if _host_closed:
-        raise RuntimeError("host connection closed; host_request cannot be answered")
+        raise HostRequestUnavailable("host connection closed before request admission")
+    if cancel_on_cancel and (
+        isinstance(drain_timeout_ms, bool)
+        or not isinstance(drain_timeout_ms, int)
+        or not 1 <= drain_timeout_ms <= 30_000
+    ):
+        raise ValueError("drain_timeout_ms must be an integer in [1, 30000]")
     rid = uuid.uuid4().hex
     future: asyncio.Future[dict[str, Any]] = _loop.create_future()
     _pending_host[rid] = future
@@ -125,13 +176,42 @@ async def host_request(data: dict[str, Any]) -> dict[str, Any]:
     request_type = data.get("type") or data.get("kind")
     if isinstance(request_type, str):
         attrs["host_request.type"] = request_type
+    cancel_sent = False
+    deadline: float | None = None
     try:
         with trace.start_span("kernel.host_request", **attrs) as span:
             frame: dict[str, Any] = {"event": "host_request", "id": rid, "data": data}
             # The frame carries this client span so the host's server span becomes its child.
             frame["traceparent"] = trace.format_traceparent(span.ctx)
             _send(frame)
-            return await future
+            while True:
+                try:
+                    if deadline is None:
+                        return await asyncio.shield(future)
+                    remaining = deadline - _loop.time()
+                    if remaining <= 0:
+                        raise HostDrainTimeout("host request drain timed out")
+                    done, _ = await asyncio.wait({future}, timeout=remaining)
+                    if future in done:
+                        return future.result()
+                    raise HostDrainTimeout("host request drain timed out")
+                except asyncio.CancelledError:
+                    if not cancel_on_cancel:
+                        raise
+                    # The host terminal may already have linearized even though
+                    # this task's shield wake-up has not run yet. Terminal wins
+                    # without emitting a late, spurious cancellation frame.
+                    if future.done():
+                        return future.result()
+                    # asyncio cancellation belongs to this waiter, never to the
+                    # settlement future protected above. Consume repeat cancels.
+                    task = asyncio.current_task()
+                    if task is not None:
+                        task.uncancel()
+                    if not cancel_sent:
+                        cancel_sent = True
+                        deadline = _loop.time() + drain_timeout_ms / 1000
+                        _send({"event": "host_cancel", "id": rid})
     finally:
         _pending_host.pop(rid, None)
 
@@ -143,7 +223,7 @@ def _fail_pending_host_requests() -> None:
     _host_closed = True
     for future in _pending_host.values():
         if not future.done():
-            future.set_exception(RuntimeError("host connection closed; host_request cannot be answered"))
+            future.set_exception(HostConnectionLost("host connection closed; host_request cannot be answered"))
 
 
 def _resolve_host_reply(rid: str, data: dict[str, Any]) -> None:
@@ -687,9 +767,9 @@ async def _handle_execute(req: dict[str, Any], ns: dict[str, Any]) -> None:
     cell_id = req["id"]
     _cell_counter += 1
     filename = f"<cell-{_cell_counter}>"
-    # The cell task (created below) copies this context, so writes made from
-    # the cell and from asyncio tasks it spawns carry this cell's id.
-    token = _current_cell.set(cell_id)
+    execution = _CellExecution()
+    cell_token = _current_cell.set(cell_id)
+    execution_token = _current_cell_execution.set(execution)
     try:
         # The span ends (and its trace event ships) before this request's
         # result/error/done frames, keeping done the last event of the id.
@@ -698,6 +778,7 @@ async def _handle_execute(req: dict[str, Any], ns: dict[str, Any]) -> None:
             assert _loop is not None
             # Created inside the span: the cell (and tasks it spawns) sees it as current.
             task = _loop.create_task(_run_codes(codes, ns))
+            execution.owner = task
             status, value, error = await _run_guarded(task, cell_id)
             result_text: str | None = None
             try:
@@ -725,7 +806,10 @@ async def _handle_execute(req: dict[str, Any], ns: dict[str, Any]) -> None:
             _send(error)
         _send({"event": "done", "id": cell_id, "status": status})
     finally:
-        _current_cell.reset(token)
+        execution.owner = None
+        execution.finished.set()
+        _current_cell_execution.reset(execution_token)
+        _current_cell.reset(cell_token)
 
 
 def _drain_output() -> None:

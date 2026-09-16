@@ -69,10 +69,9 @@ const RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS = [
 	"app.exit",
 	"app.suspend",
 	"app.model.select",
+	"app.model.cycleForward",
+	"app.model.cycleBackward",
 	"app.tools.expand",
-	"app.messages.expand",
-	"app.edits.expand",
-	"app.thinking.toggle",
 	"app.subagents.focus",
 	"app.editor.external",
 	"app.message.followUp",
@@ -368,6 +367,12 @@ export class ExtensionRunner {
 	private commandDiagnostics: ResourceDiagnostic[] = [];
 	private staleMessage: string | undefined;
 	private readonly traceHookMinDurationMs: number;
+	// WeakRefs let GC drop globally cleared timers; pending timers stay reachable via Node's active-timer list.
+	private timerHost: {
+		current: ExtensionRunner;
+		timers: Set<WeakRef<ReturnType<typeof setTimeout>>>;
+		refs: WeakMap<ReturnType<typeof setTimeout>, WeakRef<ReturnType<typeof setTimeout>>>;
+	};
 
 	constructor(
 		extensions: Extension[],
@@ -377,6 +382,7 @@ export class ExtensionRunner {
 		modelRegistry: ModelRegistry,
 		options?: ExtensionRunnerOptions,
 	) {
+		this.timerHost = { current: this, timers: new Set(), refs: new WeakMap() };
 		this.extensions = extensions;
 		this.runtime = runtime;
 		this.uiContext = noOpUIContext;
@@ -402,6 +408,8 @@ export class ExtensionRunner {
 		this.runtime.sendUserMessage = actions.sendUserMessage;
 		this.runtime.setScheduledWork = actions.setScheduledWork;
 		this.runtime.clearScheduledWork = actions.clearScheduledWork;
+		this.runtime.queueExtensionFollowUp = actions.queueExtensionFollowUp;
+		this.runtime.cancelExtensionFollowUp = actions.cancelExtensionFollowUp;
 		this.runtime.appendEntry = actions.appendEntry;
 		this.runtime.setSessionName = actions.setSessionName;
 		this.runtime.getSessionName = actions.getSessionName;
@@ -591,10 +599,37 @@ export class ExtensionRunner {
 		message = "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().",
 	): void {
 		if (!this.staleMessage) {
-			this.staleMessage = message;
+			this.retire(message);
+			for (const extension of this.extensions) {
+				this.runtime.cancelExtensionFollowUp(extension);
+			}
 			this.runtime.invalidate(message);
 			for (const extension of this.extensions) disposeExtension(extension);
 		}
+	}
+
+	/** True when this runner was built from exactly this extensions load (identity check). */
+	builtFromSameExtensions(extensions: Extension[]): boolean {
+		return this.extensions === extensions;
+	}
+
+	/** Take over the previous runner's timer host: adopted timers report through, and are gated by, this runner. */
+	adoptHostTimers(previous: ExtensionRunner): void {
+		this.timerHost = previous.timerHost;
+		this.timerHost.current = this;
+	}
+
+	/** Retire a replaced runner: ctx goes stale and no host timer outlives it, while the possibly shared/reused runtime stays live. */
+	retire(
+		message = "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().",
+	): void {
+		if (this.staleMessage) return;
+		this.staleMessage = message;
+		for (const ref of this.timerHost.timers) {
+			const handle = ref.deref();
+			if (handle) clearTimeout(handle);
+		}
+		this.timerHost.timers.clear();
 	}
 
 	private assertActive(): void {
@@ -612,6 +647,75 @@ export class ExtensionRunner {
 		for (const listener of this.errorListeners) {
 			listener(error);
 		}
+	}
+
+	/** Host-owned ctx timers: callbacks run through the same error boundary as event handlers. */
+	createTimerBindings(
+		ownerPath?: string,
+	): Pick<ExtensionContext, "setTimeout" | "clearTimeout" | "setInterval" | "clearInterval"> {
+		return {
+			setTimeout: (callback, ms) => {
+				this.assertActive();
+				return this.scheduleHostTimer("setTimeout", ownerPath, callback, ms);
+			},
+			clearTimeout: (handle) => this.clearHostTimer(handle),
+			setInterval: (callback, ms) => {
+				this.assertActive();
+				return this.scheduleHostTimer("setInterval", ownerPath, callback, ms);
+			},
+			clearInterval: (handle) => this.clearHostTimer(handle),
+		};
+	}
+
+	private scheduleHostTimer(
+		kind: "setTimeout" | "setInterval",
+		ownerPath: string | undefined,
+		callback: () => void | Promise<void>,
+		ms: number,
+	): ReturnType<typeof setTimeout> {
+		// Scheduling authority is the current host owner: a ctx captured before a reload cannot arm work for an unloaded extension world.
+		this.timerHost.current.assertActive();
+		const host = this.timerHost;
+		const run = () => {
+			// A fired timeout is dead: clearTimeout makes handle.refresh() a permanent no-op, so nothing revives it past unload.
+			if (kind === "setTimeout") {
+				this.untrackHostTimer(handle);
+				clearTimeout(handle);
+			}
+			try {
+				// Promise.resolve is thenable-safe: rejections from cross-realm promises and userland thenables land in the boundary instead of an unhandled rejection.
+				Promise.resolve(callback()).catch((err) => host.current.emitHostTimerError(kind, ownerPath, err));
+			} catch (err) {
+				host.current.emitHostTimerError(kind, ownerPath, err);
+			}
+		};
+		const handle = kind === "setTimeout" ? setTimeout(run, ms) : setInterval(run, ms);
+		// No sweep here: dead WeakRef shells from globally cleared timers are tiny and freed at unload; sweeping per schedule would be quadratic.
+		const ref = new WeakRef(handle);
+		host.timers.add(ref);
+		host.refs.set(handle, ref);
+		return handle;
+	}
+
+	private untrackHostTimer(handle: ReturnType<typeof setTimeout>): void {
+		const ref = this.timerHost.refs.get(handle);
+		if (ref) this.timerHost.timers.delete(ref);
+		this.timerHost.refs.delete(handle);
+	}
+
+	private emitHostTimerError(kind: "setTimeout" | "setInterval", ownerPath: string | undefined, err: unknown): void {
+		this.emitError({
+			extensionPath: ownerPath ?? "unknown",
+			event: kind,
+			error: err instanceof Error ? err.message : String(err),
+			stack: err instanceof Error ? err.stack : undefined,
+		});
+	}
+
+	private clearHostTimer(handle: ReturnType<typeof setTimeout> | undefined): void {
+		if (handle === undefined) return;
+		this.untrackHostTimer(handle);
+		clearTimeout(handle);
 	}
 
 	hasHandlers(eventType: string): boolean {
@@ -749,10 +853,11 @@ export class ExtensionRunner {
 	 * Create an ExtensionContext for use in event handlers and tool execution.
 	 * Context values are resolved at call time, so changes via bindCore/bindUI are reflected.
 	 */
-	createContext(): ExtensionContext {
+	createContext(ownerPath?: string): ExtensionContext {
 		const runner = this;
 		const getModel = this.getModel;
 		return {
+			...this.createTimerBindings(ownerPath),
 			get ui() {
 				runner.assertActive();
 				return runner.uiContext;
@@ -816,13 +921,13 @@ export class ExtensionRunner {
 		};
 	}
 
-	createCommandContext(): ExtensionCommandContext {
+	createCommandContext(ownerPath?: string): ExtensionCommandContext {
 		// Use property descriptors instead of object spread so the guarded getters from
 		// createContext() stay lazy. A spread would eagerly read them once and freeze the
 		// old values into the returned object, bypassing stale-instance checks.
 		const context = Object.defineProperties(
 			{},
-			Object.getOwnPropertyDescriptors(this.createContext()),
+			Object.getOwnPropertyDescriptors(this.createContext(ownerPath)),
 		) as ExtensionCommandContext;
 		context.waitForIdle = () => {
 			this.assertActive();
@@ -863,12 +968,12 @@ export class ExtensionRunner {
 
 	emit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {
 		return this.runHandlersTraced(event.type, async (invoke) => {
-			const ctx = this.createContext();
 			let result: SessionBeforeEventResult | undefined;
 
 			for (const ext of this.extensions) {
 				const handlers = ext.handlers.get(event.type);
 				if (!handlers || handlers.length === 0) continue;
+				const ctx = this.createContext(ext.path);
 
 				for (const handler of handlers) {
 					try {
@@ -900,13 +1005,13 @@ export class ExtensionRunner {
 
 	emitMessageEnd(event: MessageEndEvent): Promise<AgentMessage | undefined> {
 		return this.runHandlersTraced("message_end", async (invoke) => {
-			const ctx = this.createContext();
 			let currentMessage = event.message;
 			let modified = false;
 
 			for (const ext of this.extensions) {
 				const handlers = ext.handlers.get("message_end");
 				if (!handlers || handlers.length === 0) continue;
+				const ctx = this.createContext(ext.path);
 
 				for (const handler of handlers) {
 					try {
@@ -947,13 +1052,13 @@ export class ExtensionRunner {
 
 	emitToolResult(event: ToolResultEvent): Promise<ToolResultEventResult | undefined> {
 		return this.runHandlersTraced("tool_result", async (invoke) => {
-			const ctx = this.createContext();
 			const currentEvent: ToolResultEvent = { ...event };
 			let modified = false;
 
 			for (const ext of this.extensions) {
 				const handlers = ext.handlers.get("tool_result");
 				if (!handlers || handlers.length === 0) continue;
+				const ctx = this.createContext(ext.path);
 
 				for (const handler of handlers) {
 					try {
@@ -1002,12 +1107,12 @@ export class ExtensionRunner {
 
 	emitToolCall(event: ToolCallEvent): Promise<ToolCallEventResult | undefined> {
 		return this.runHandlersTraced("tool_call", async (invoke) => {
-			const ctx = this.createContext();
 			let result: ToolCallEventResult | undefined;
 
 			for (const ext of this.extensions) {
 				const handlers = ext.handlers.get("tool_call");
 				if (!handlers || handlers.length === 0) continue;
+				const ctx = this.createContext(ext.path);
 
 				for (const handler of handlers) {
 					const handlerResult = await invoke(ext, handler, event, ctx);
@@ -1028,11 +1133,10 @@ export class ExtensionRunner {
 
 	emitUserBash(event: UserBashEvent): Promise<UserBashEventResult | undefined> {
 		return this.runHandlersTraced("user_bash", async (invoke) => {
-			const ctx = this.createContext();
-
 			for (const ext of this.extensions) {
 				const handlers = ext.handlers.get("user_bash");
 				if (!handlers || handlers.length === 0) continue;
+				const ctx = this.createContext(ext.path);
 
 				for (const handler of handlers) {
 					try {
@@ -1060,12 +1164,12 @@ export class ExtensionRunner {
 
 	emitContext(messages: AgentMessage[]): Promise<AgentMessage[]> {
 		return this.runHandlersTraced("context", async (invoke) => {
-			const ctx = this.createContext();
 			let currentMessages = structuredClone(messages);
 
 			for (const ext of this.extensions) {
 				const handlers = ext.handlers.get("context");
 				if (!handlers || handlers.length === 0) continue;
+				const ctx = this.createContext(ext.path);
 
 				for (const handler of handlers) {
 					try {
@@ -1096,12 +1200,12 @@ export class ExtensionRunner {
 
 	emitBeforeProviderRequest(payload: unknown): Promise<unknown> {
 		return this.runHandlersTraced("before_provider_request", async (invoke) => {
-			const ctx = this.createContext();
 			let currentPayload = payload;
 
 			for (const ext of this.extensions) {
 				const handlers = ext.handlers.get("before_provider_request");
 				if (!handlers || handlers.length === 0) continue;
+				const ctx = this.createContext(ext.path);
 
 				for (const handler of handlers) {
 					try {
@@ -1139,20 +1243,20 @@ export class ExtensionRunner {
 	): Promise<BeforeAgentStartCombinedResult | undefined> {
 		return this.runHandlersTraced("before_agent_start", async (invoke) => {
 			let currentSystemPrompt = systemPrompt;
-			const ctx = Object.defineProperties(
-				{},
-				Object.getOwnPropertyDescriptors(this.createContext()),
-			) as ExtensionContext;
-			ctx.getSystemPrompt = () => {
-				this.assertActive();
-				return currentSystemPrompt;
-			};
 			const messages: NonNullable<BeforeAgentStartEventResult["message"]>[] = [];
 			let systemPromptModified = false;
 
 			for (const ext of this.extensions) {
 				const handlers = ext.handlers.get("before_agent_start");
 				if (!handlers || handlers.length === 0) continue;
+				const ctx = Object.defineProperties(
+					{},
+					Object.getOwnPropertyDescriptors(this.createContext(ext.path)),
+				) as ExtensionContext;
+				ctx.getSystemPrompt = () => {
+					this.assertActive();
+					return currentSystemPrompt;
+				};
 
 				for (const handler of handlers) {
 					try {
@@ -1209,7 +1313,6 @@ export class ExtensionRunner {
 		themePaths: Array<{ path: string; extensionPath: string }>;
 	}> {
 		return this.runHandlersTraced("resources_discover", async (invoke) => {
-			const ctx = this.createContext();
 			const skillPaths: Array<{ path: string; extensionPath: string }> = [];
 			const promptPaths: Array<{ path: string; extensionPath: string }> = [];
 			const themePaths: Array<{ path: string; extensionPath: string }> = [];
@@ -1217,6 +1320,7 @@ export class ExtensionRunner {
 			for (const ext of this.extensions) {
 				const handlers = ext.handlers.get("resources_discover");
 				if (!handlers || handlers.length === 0) continue;
+				const ctx = this.createContext(ext.path);
 
 				for (const handler of handlers) {
 					try {
@@ -1254,11 +1358,11 @@ export class ExtensionRunner {
 	/** Emit input event. Transforms chain, "handled" short-circuits. */
 	emitInput(text: string, images: ImageContent[] | undefined, source: InputSource): Promise<InputEventResult> {
 		return this.runHandlersTraced("input", async (invoke) => {
-			const ctx = this.createContext();
 			let currentText = text;
 			let currentImages = images;
 
 			for (const ext of this.extensions) {
+				const ctx = this.createContext(ext.path);
 				for (const handler of ext.handlers.get("input") ?? []) {
 					try {
 						const event: InputEvent = { type: "input", text: currentText, images: currentImages, source };

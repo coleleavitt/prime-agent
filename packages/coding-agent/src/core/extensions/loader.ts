@@ -122,6 +122,9 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		// it yet; bindCore() replaces these with the session-backed handlers.
 		setScheduledWork: () => {},
 		clearScheduledWork: () => {},
+		queueExtensionFollowUp: notInitialized,
+		// Invalidation can retire an unbound runner; cancellation cleanup is an idempotent no-op until bindCore().
+		cancelExtensionFollowUp: () => false,
 		appendEntry: notInitialized,
 		setSessionName: notInitialized,
 		getSessionName: notInitialized,
@@ -248,6 +251,16 @@ function createExtensionAPI(
 		clearScheduledWork(key: string): void {
 			runtime.assertActive();
 			runtime.clearScheduledWork(key);
+		},
+
+		queueFollowUp(key, content, options) {
+			runtime.assertActive();
+			return runtime.queueExtensionFollowUp(extension, key, content, options);
+		},
+
+		cancelFollowUp(key): boolean {
+			runtime.assertActive();
+			return runtime.cancelExtensionFollowUp(extension, key);
 		},
 
 		appendEntry(customType: string, data?: unknown): void {

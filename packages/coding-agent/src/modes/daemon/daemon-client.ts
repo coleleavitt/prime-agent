@@ -35,6 +35,8 @@ export type DaemonClientProgressListener = (message: DaemonRequestProgress) => v
 
 export interface DaemonClientRequestOptions {
 	onProgress?: DaemonClientProgressListener;
+	/** Runs synchronously before the reader dispatches any records following this response. */
+	onResponse?: (response: DaemonResponse) => void;
 	/**
 	 * False opts out of reconnect parking: a close rejects so the caller's own retry loop stays live.
 	 * Any caller that owns its own bounded retry MUST pass false; a parked request waits for a hello
@@ -125,6 +127,16 @@ export interface DaemonTransportClient {
 		options?: DaemonClientRequestOptions,
 	): Promise<DaemonResponse>;
 	close(): void;
+}
+
+const DEFAULT_DAEMON_REQUEST_TIMEOUT_MS = 30_000;
+// Windows worker startup can exceed 30 seconds under antivirus scanning.
+const WINDOWS_DAEMON_CREATE_TIMEOUT_MS = 120_000;
+
+function defaultDaemonRequestTimeout(command: DaemonCommandBody): number {
+	return command.type === "create" && process.platform === "win32"
+		? WINDOWS_DAEMON_CREATE_TIMEOUT_MS
+		: DEFAULT_DAEMON_REQUEST_TIMEOUT_MS;
 }
 
 const DEFAULT_RECONNECT_TIMEOUT_MS = 60_000;
@@ -320,7 +332,7 @@ export class DaemonClient {
 
 	async request(
 		command: DaemonCommandBody,
-		timeoutMs = 30000,
+		timeoutMs = defaultDaemonRequestTimeout(command),
 		options: DaemonClientRequestOptions = {},
 	): Promise<DaemonResponse> {
 		if (!this.socket || this.socket.destroyed) {
@@ -387,7 +399,14 @@ export class DaemonClient {
 
 		return new Promise((resolve, reject) => {
 			const pending: PendingDaemonRequest = {
-				resolve,
+				resolve: (response) => {
+					try {
+						options.onResponse?.(response);
+						resolve(response);
+					} catch (error) {
+						reject(error);
+					}
+				},
 				reject,
 				timeoutMs,
 				commandType: command.type,
@@ -706,6 +725,7 @@ function isDaemonSavedSessionAgentStatus(value: unknown): boolean {
 		typeof candidate.basedOnMessageCount === "number" &&
 		(candidate.taskState === undefined ||
 			candidate.taskState === "needs_input" ||
-			candidate.taskState === "completed")
+			candidate.taskState === "completed" ||
+			candidate.taskState === "error")
 	);
 }

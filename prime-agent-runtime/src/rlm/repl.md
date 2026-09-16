@@ -3,7 +3,7 @@
 `python -m rlm.repl` starts a CPython REPL runtime that executes code cells in
 one persistent `__main__` namespace on a single asyncio event loop. The wire
 format is newline-delimited JSON: one object per line, UTF-8, no other framing.
-The current protocol version is `3`; the runtime announces it in the `ready`
+The current protocol version is `4`; the runtime announces it in the `ready`
 event.
 
 ## Channels
@@ -61,7 +61,7 @@ runtime keeps serving. Closing stdin is equivalent to `shutdown`.
 
 ## Events
 
-- `{"event":"ready","protocol":3,"python":"3.13.11"}` — sent once at startup;
+- `{"event":"ready","protocol":4,"python":"3.13.11"}` — sent once at startup;
   the handshake. No banner precedes it.
 - `{"event":"stdout"|"stderr","id":str|null,"text":str}` — captured output.
   `id` is the cell whose Python execution context performed the write; asyncio
@@ -80,6 +80,8 @@ runtime keeps serving. Closing stdin is equivalent to `shutdown`.
   typed request from runtime code to the host; the host answers with a
   `host_reply` request carrying the same id. `traceparent` is the runtime's
   `kernel.host_request` client span (see Trace context below).
+- `{"event":"host_cancel","id":str}` — cancellation for that exact in-flight
+  host request. The host still sends its terminal `host_reply` after settlement.
 - `{"event":"trace","id":str|null,"msg":"span_start"|"span_end","name":str,"traceId":str,"spanId":str,"parentSpanId"?:str,"attrs":{...}}`
   — one span lifecycle event. `span_end` also carries `durationMs` and `status`. `id` is the request whose handling produced it (task
   context, like `display`); `null` from user threads.
@@ -207,8 +209,7 @@ strings; the dict is forwarded verbatim as the event's `data`.
 runtime-minted id and awaits the matching `host_reply`, returning its `data`
 dict verbatim. Replies are routed on the reader thread like `interrupt` —
 never through the request queue, since the awaiting cell is itself the
-in-flight execute. Replies for unknown ids, or for a request whose awaiting
-cell was cancelled, are dropped. `rlm.repl.is_active()` reports whether the
+in-flight execute. Replies for unknown ids are dropped. Cancellation-aware calls emit one exact-ID `host_cancel`, shield the same reply future, and keep it alive through their bounded drain. `rlm.repl.is_active()` reports whether the
 process is serving the protocol (importing the module does not count).
 
 ## Snapshot / restore

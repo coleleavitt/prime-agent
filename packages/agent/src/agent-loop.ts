@@ -28,6 +28,7 @@ import type {
 export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
 
 const ABORT_ERROR_MESSAGE = "Request was aborted";
+const UNEXPECTED_TOOL_CALL_ERROR_MESSAGE = "unexpected_tool_call";
 const EMPTY_USAGE: AssistantMessage["usage"] = {
 	input: 0,
 	output: 0,
@@ -150,6 +151,20 @@ function createAbortedAssistantMessage(
 
 function getTerminalMessage(event: Extract<AssistantMessageEvent, { type: "done" | "error" }>): AssistantMessage {
 	return event.type === "done" ? event.message : event.error;
+}
+
+function applyToolCallPolicy(message: AssistantMessage, config: AgentLoopConfig): AssistantMessage {
+	if (config.toolCallPolicy !== "reject" || !message.content.some((part) => part.type === "toolCall")) {
+		return message;
+	}
+
+	return {
+		...message,
+		content: cloneAssistantContent(message.content),
+		usage: cloneUsage(message.usage),
+		stopReason: "error",
+		errorMessage: UNEXPECTED_TOOL_CALL_ERROR_MESSAGE,
+	};
 }
 
 function endAgentStreamOnError(
@@ -642,6 +657,7 @@ async function streamAssistantResponse(
 							throw error;
 						}
 					}
+					finalMessage = applyToolCallPolicy(finalMessage, config);
 					if (addedPartial) {
 						context.messages[context.messages.length - 1] = finalMessage;
 					} else {
@@ -656,7 +672,7 @@ async function streamAssistantResponse(
 			}
 		}
 
-		const finalMessage = await maybePromiseWithAbort(response.result(), signal);
+		const finalMessage = applyToolCallPolicy(await maybePromiseWithAbort(response.result(), signal), config);
 		if (addedPartial) {
 			context.messages[context.messages.length - 1] = finalMessage;
 		} else {

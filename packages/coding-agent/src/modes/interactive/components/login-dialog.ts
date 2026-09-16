@@ -12,8 +12,8 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import { execFile } from "child_process";
 import { PRIME_BUTTERFLY_LOGO } from "../../../themes/prime-logo.js";
+import { execFileHidden } from "../../../utils/child-process.js";
 import { copyToClipboard } from "../../../utils/clipboard.js";
 import { theme } from "../theme/theme.js";
 import { formatKeyText, keyHint } from "./keybinding-hints.js";
@@ -57,7 +57,7 @@ class PrimeLoginHeader implements Component {
 		return [
 			...logoLines,
 			centeredLine("", safeWidth),
-			centeredLine(theme.bold(theme.fg("text", "Login to Prime Inference")), safeWidth),
+			centeredLine(theme.fg("text", "Login to Prime Inference"), safeWidth),
 			centeredLine(
 				theme.fg("muted", "Connect your Prime Intellect account to enable Prime Inference models."),
 				safeWidth,
@@ -182,7 +182,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 							url,
 						]
 					: ["xdg-open", url];
-		execFile(command, args, () => {});
+		execFileHidden(command, args, {}, () => {});
 
 		this.tui.requestRender();
 	}
@@ -332,7 +332,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 	}
 
 	private addSectionTitle(text: string): void {
-		this.contentContainer.addChild(new Text(theme.bold(theme.fg("text", text)), 0, 0));
+		this.contentContainer.addChild(new Text(theme.fg("text", text), 0, 0));
 	}
 
 	private addLabel(text: string): void {
