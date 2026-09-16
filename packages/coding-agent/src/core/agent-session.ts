@@ -229,7 +229,7 @@ import {
 	type RlmChildTerminalNoticeDetails,
 } from "./messages.js";
 import type { ModelRegistry } from "./model-registry.js";
-import { findExactModelReferenceMatch } from "./model-resolver.js";
+import { findExactModelReferenceMatch, resolveModelReferenceFromModels } from "./model-resolver.js";
 import { throwIfPromptAdmissionCancelled } from "./prompt-admission.js";
 import { expandPromptTemplate, type PromptTemplate, parseCommandArgs } from "./prompt-templates.js";
 import {
@@ -1614,6 +1614,10 @@ export class AgentSession {
 	private _goalAccountingStartedAt: number | undefined = undefined;
 	private _goalContinuationAwaitsRlmWork = false;
 	private _goalAccountedAssistantMessages = new WeakSet<AssistantMessage>();
+	/** Assistant messages whose goal budget limit has already been decided, so it is decided once. */
+	private _goalBudgetEvaluatedAssistantMessages = new WeakSet<AssistantMessage>();
+	/** Assistant messages whose message_end the dispatcher saw, recorded or deliberately skipped. */
+	private _goalMessageEndSeen = new WeakSet<AssistantMessage>();
 	private _goalAbortInProgress = false;
 	private _autonomousState: AutonomousRuntimeState;
 	private _autonomousContinuationSuppressionDepth = 0;
@@ -3094,41 +3098,65 @@ export class AgentSession {
 		return true;
 	}
 
-	private _accountGoalUsageForAssistantMessage(message: AssistantMessage): boolean {
+	/**
+	 * Attribute an assistant turn's tokens to the active goal, synchronously at its message_end.
+	 *
+	 * This runs from _handleAgentEvent, before the turn's tool calls execute, so the goal status
+	 * here is exactly what it was when the turn ended. Accounting used to happen only from the
+	 * async agent-event queue, which raced the turn's ipython cell: goal.complete() arriving over
+	 * the kernel host bridge could land first and drop the completing turn's own tokens.
+	 * Post-completion turns (e.g. a closing summary) end with the goal no longer active and are
+	 * not attributed.
+	 */
+	private _recordGoalTokensAtMessageEnd(message: AssistantMessage): void {
 		if (!this._goalState.objective) {
-			return false;
+			return;
 		}
 		if (message.stopReason === "error" || message.stopReason === "aborted") {
+			return;
+		}
+		if (this._goalAccountedAssistantMessages.has(message) || this._goalState.status !== "active") {
+			return;
+		}
+		this._goalAccountedAssistantMessages.add(message);
+		const goal = this._goalWithAccountedWallClock();
+		this._setGoalState({ ...goal, tokensUsed: goal.tokensUsed + goalTokenDeltaForUsage(message.usage) });
+	}
+
+	/**
+	 * Decide, once per recorded turn, whether the goal hit its token budget.
+	 *
+	 * Tokens are normally recorded at message_end; a turn the dispatcher never saw is recorded here
+	 * instead. This runs later from the event queue and only limits a goal that is still active: a
+	 * goal the same turn's cell completed keeps the tokens it spent but must not be flipped to
+	 * budget_limited or sent a stale budget steer.
+	 * Returns true when the caller should queue the budget-limit steer.
+	 */
+	private _accountGoalUsageForAssistantMessage(message: AssistantMessage): boolean {
+		// A message the dispatcher never saw has not been recorded yet, so record it now.
+		// One it saw and skipped ended with the goal inactive and must stay unattributed.
+		if (!this._goalMessageEndSeen.has(message)) {
+			this._recordGoalTokensAtMessageEnd(message);
+		}
+		if (!this._goalAccountedAssistantMessages.has(message)) {
 			return false;
 		}
-		if (this._goalAccountedAssistantMessages.has(message)) {
+		if (this._goalBudgetEvaluatedAssistantMessages.has(message)) {
 			return false;
 		}
-		// Usage is attributed at the assistant message's message_end, which fires
-		// before that turn's ipython cell runs. goal.complete() only arrives later
-		// over the kernel host bridge, so the completing turn is always accounted
-		// while the goal is still active. Only count turns spent pursuing the goal;
-		// post-completion turns (e.g. a closing summary) must not be attributed.
+		this._goalBudgetEvaluatedAssistantMessages.add(message);
 		if (this._goalState.status !== "active") {
 			return false;
 		}
-		this._goalAccountedAssistantMessages.add(message);
-		const tokenDelta = goalTokenDeltaForUsage(message.usage);
 		const goal = this._goalWithAccountedWallClock();
-		const nextGoal: GoalState = {
-			...goal,
-			tokensUsed: goal.tokensUsed + tokenDelta,
-		};
-		const budgetReached = nextGoal.tokenBudget !== undefined && nextGoal.tokensUsed >= nextGoal.tokenBudget;
-		if (!budgetReached) {
-			this._setGoalState(nextGoal);
+		if (goal.tokenBudget === undefined || goal.tokensUsed < goal.tokenBudget) {
 			return false;
 		}
 		this._setGoalState({
-			...nextGoal,
+			...goal,
 			active: false,
 			status: "budget_limited",
-			lastReason: `Reached ${nextGoal.tokenBudget} token goal budget`,
+			lastReason: `Reached ${goal.tokenBudget} token goal budget`,
 			lastError: undefined,
 		});
 		return true;
@@ -4465,6 +4493,11 @@ export class AgentSession {
 	}
 
 	private _handleAgentEvent = (event: AgentEvent): void => {
+		if (event.type === "message_end" && event.message.role === "assistant") {
+			const assistant = event.message as AssistantMessage;
+			this._goalMessageEndSeen.add(assistant);
+			this._recordGoalTokensAtMessageEnd(assistant);
+		}
 		this._createRetryPromiseForAgentEnd(event);
 		if (event.type === "message_start" || event.type === "message_end") {
 			for (const action of this._actionStore.ownedActions()) {
@@ -13142,7 +13175,14 @@ export class AgentSession {
 		const model =
 			candidates.find(
 				(candidate) => `${candidate.provider}/${candidate.id}`.toLowerCase() === normalizedReference,
-			) ?? findUniqueRlmShortFormModelMatch(reference, candidates, parentModel);
+			) ??
+			findUniqueRlmShortFormModelMatch(reference, candidates, parentModel) ??
+			// A provider-qualified alias such as "anthropic/claude-haiku-4-5" names no
+			// exact catalog id, so resolve it to the latest dated authenticated model.
+			// Limited to provider-qualified references on purpose: the short-form
+			// lookup above deliberately refuses an ambiguous bare name, and a pattern
+			// fallback there would silently pick one instead.
+			(reference.includes("/") ? resolveModelReferenceFromModels(reference, candidates) : undefined);
 		if (!model) {
 			throw new Error(formatRlmModelUnavailableError(reference, target, candidates));
 		}

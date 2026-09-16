@@ -12,6 +12,7 @@ import {
 	type ServiceTier,
 	supportsFastMode,
 	type ToolCall,
+	withSpan,
 } from "@earendil-works/pi-ai";
 import { BUILTIN_MCP_CATALOG } from "@earendil-works/pi-ai/mcp";
 import { registerOAuthProvider, unregisterOAuthProvider } from "@earendil-works/pi-ai/oauth";
@@ -1595,7 +1596,9 @@ export class InteractiveMode {
 		// `returnToAgentsView`, which is also set for direct daemon attaches that never
 		// rendered the agents view and still want the in-session fallback.)
 		const ownsGlobalStartupNotices = !this.options.agentsViewOwnsStartupNotices;
-		const newVersionPromise = ownsGlobalStartupNotices ? checkForNewPiVersion(this.version) : undefined;
+		const newVersionPromise = ownsGlobalStartupNotices
+			? checkForNewPiVersion(this.version, { trace: withSpan })
+			: undefined;
 		const packageUpdatesPromise = ownsGlobalStartupNotices
 			? checkForPackageUpdates({
 					cwd: this.getCurrentCwd(),

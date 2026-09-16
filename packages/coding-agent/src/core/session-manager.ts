@@ -1414,12 +1414,23 @@ async function scanSessionInfo(
 	return state.info;
 }
 
-/** A freshly scanned file always carries its corpus, so the persisted index can record it. */
+/**
+ * A freshly scanned file always carries its corpus, so the persisted index can record it.
+ *
+ * Only while its scan state survived the retained-usage bound. storeSessionScanState can
+ * evict the very state it just stored, and an evicted file is meant to pay a full rescan;
+ * caching it here anyway would answer the next read warm and keep its info alive, full
+ * search corpus included, however far past the bound it is. Both call sites store first.
+ */
 function rememberScannedSessionInfo(
 	filePath: string,
 	stats: { size: number; mtimeMs: number },
 	info: SessionInfo | null,
 ): void {
+	if (!sessionScanStates.has(filePath)) {
+		sessionInfoCache.delete(filePath);
+		return;
+	}
 	sessionInfoCache.set(filePath, { size: stats.size, mtimeMs: stats.mtimeMs, info, searchTextLoaded: true });
 }
 

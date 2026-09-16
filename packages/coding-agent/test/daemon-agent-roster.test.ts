@@ -48,6 +48,10 @@ function makeWorkerReporter(connected = true): WorkerReporterFixture {
 	const sentDeltas: RosterDelta[] = [];
 	const connection = { connected };
 	const daemon = Object.assign(Object.create(AgentDaemon.prototype), {
+		// Object.create skips class field initializers; the supervisor fence check
+		// reads osfenceWorkerMode before the claim check and throws when it is absent.
+		osfenceWorkerMode: { enabled: false },
+		osfenceControlDbReader: undefined,
 		options: { worker: { authenticationToken: "token" } },
 		sessions: new Map<string, ActiveSessionState>(),
 		cronStore: { list: () => [], cancelJobsForSession: () => [] },
@@ -560,6 +564,9 @@ interface SupervisorFixture {
 
 function makeSupervisor(workers: WorkerFixture[], extra: Record<string, unknown> = {}): SupervisorFixture {
 	return Object.assign(Object.create(DaemonSupervisor.prototype), {
+		// Object.create skips class field initializers; restartPreRosterWorker reads
+		// osfenceMode.enabled before deciding how to replace a live worker.
+		osfenceMode: { enabled: false },
 		workers: new Map(workers.map((worker) => [worker.descriptor.workerId, worker])),
 		clients: new Set(),
 		defaultSessionConfig: { agentDir: "/tmp", cwd: "/tmp" },

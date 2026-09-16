@@ -16,6 +16,22 @@ import { basename, dirname, join } from "node:path";
 export type DirLockAttempt = "acquired" | "held" | "reclaimed";
 
 /**
+ * Judges whether the recorded owner still holds the lock. `ownerStartId` is the
+ * owner's process start identity when the lock recorded one: a pid alone cannot
+ * tell a live owner from an unrelated process the OS gave the same pid after the
+ * owner died, and a recycled pid would otherwise hold the lock forever.
+ */
+export type DirLockOwnerAlive = (
+	ownerPid: number | undefined,
+	ownerStartId: string | undefined,
+) => Promise<boolean> | boolean;
+
+export interface DirLockOptions {
+	/** This process's start identity, recorded beside its pid for reuse detection. */
+	ownerStartId?: string;
+}
+
+/**
  * link(2)-published lock file: born with its owner content, EEXIST the only
  * collision signal; stale locks are renamed aside, verified, then deleted or
  * restored. A directory at the lock path is a legacy lock from the old protocol.
@@ -46,20 +62,34 @@ function sweepAbandonedCandidates(lockPath: string): void {
 
 export async function tryAcquireDirLock(
 	lockPath: string,
-	ownerAlive: (ownerPid: number | undefined) => Promise<boolean> | boolean,
+	ownerAlive: DirLockOwnerAlive,
+	options: DirLockOptions = {},
 ): Promise<DirLockAttempt> {
 	sweepAbandonedCandidates(lockPath);
-	return acquireAttempt(lockPath, ownerAlive, true);
+	return acquireAttempt(lockPath, ownerAlive, ownerContent(options.ownerStartId), true);
+}
+
+/**
+ * Lock content is the pid on the first line and, optionally, the start identity on
+ * the second. Newline-delimited on purpose: the macOS/BSD start identity is `ps`
+ * lstart output and contains spaces. A pid-only file from before this is still read.
+ */
+function ownerContent(ownerStartId: string | undefined): string {
+	if (ownerStartId === undefined || ownerStartId.length === 0 || /[\r\n]/.test(ownerStartId)) {
+		return `${process.pid}\n`;
+	}
+	return `${process.pid}\n${ownerStartId}\n`;
 }
 
 async function acquireAttempt(
 	lockPath: string,
-	ownerAlive: (ownerPid: number | undefined) => Promise<boolean> | boolean,
+	ownerAlive: DirLockOwnerAlive,
+	content: string,
 	retryOnSweptCandidate: boolean,
 ): Promise<DirLockAttempt> {
 	const token = `${process.pid}-${randomUUID()}`;
 	const tempPath = `${lockPath}.candidate-${token}`;
-	writeFileSync(tempPath, `${process.pid}\n`, { mode: 0o600 });
+	writeFileSync(tempPath, content, { mode: 0o600 });
 	try {
 		try {
 			linkSync(tempPath, lockPath);
@@ -81,7 +111,7 @@ async function acquireAttempt(
 				return "acquired";
 			}
 			if (candidateSwept && retryOnSweptCandidate) {
-				return acquireAttempt(lockPath, ownerAlive, false);
+				return acquireAttempt(lockPath, ownerAlive, content, false);
 			}
 			if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
 				throw error;
@@ -131,7 +161,7 @@ async function acquireAttempt(
 
 async function judgeAndReclaim(
 	lockPath: string,
-	ownerAlive: (ownerPid: number | undefined) => Promise<boolean> | boolean,
+	ownerAlive: DirLockOwnerAlive,
 	captured: { dev: bigint; ino: bigint; isDir: boolean },
 	token: string,
 ): Promise<DirLockAttempt> {
@@ -141,7 +171,8 @@ async function judgeAndReclaim(
 			// A transient read failure may hide a LIVE lock: never judge it stale.
 			return "held";
 		}
-		if (await ownerAlive(strictPid(judged === "absent" ? undefined : judged))) {
+		const owner = parseOwner(judged === "absent" ? undefined : judged);
+		if (await ownerAlive(owner.pid, owner.startId)) {
 			return "held";
 		}
 		const asidePath = `${lockPath}.stale-${token}`;
@@ -194,6 +225,16 @@ function readOwnerRaw(path: string, legacyDir: boolean): string | "absent" | "un
 	} catch (error) {
 		return (error as NodeJS.ErrnoException).code === "ENOENT" ? "absent" : "unreadable";
 	}
+}
+
+/** First line is the pid; an optional second line is the owner's start identity. */
+export function parseOwner(raw: string | undefined): { pid: number | undefined; startId: string | undefined } {
+	if (raw === undefined) {
+		return { pid: undefined, startId: undefined };
+	}
+	const [pidLine, startLine] = raw.split("\n");
+	const startId = startLine?.trim();
+	return { pid: strictPid(pidLine), startId: startId ? startId : undefined };
 }
 
 // kill(0)/kill(-n) probe our own process group: only an exact positive integer owns.

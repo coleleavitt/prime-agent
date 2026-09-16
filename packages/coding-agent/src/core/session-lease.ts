@@ -183,7 +183,7 @@ export function getProcessStartId(pid: number): string | undefined {
 let currentProcessStartId: string | undefined;
 let currentProcessStartIdRead = false;
 
-function getCurrentProcessStartId(): string | undefined {
+export function getCurrentProcessStartId(): string | undefined {
 	if (!currentProcessStartIdRead) {
 		currentProcessStartId = getProcessStartId(process.pid);
 		currentProcessStartIdRead = true;
@@ -191,15 +191,27 @@ function getCurrentProcessStartId(): string | undefined {
 	return currentProcessStartId;
 }
 
-function isLeaseOwnerAlive(owner: SessionLeaseOwner): boolean {
-	if (!isProcessAlive(owner.pid)) {
+/**
+ * Whether the process that recorded `pid` and `startId` is still that same process.
+ *
+ * A pid alone cannot tell a live owner from an unrelated process the OS handed the same pid
+ * after the owner exited, so a recorded start identity that no longer matches means the owner
+ * is gone. Fails safe toward alive: with no recorded identity, or when the current identity
+ * cannot be read, the pid check alone decides, so a lock is never stolen on missing evidence.
+ */
+export function isProcessIdentityAlive(pid: number, startId: string | undefined): boolean {
+	if (!isProcessAlive(pid)) {
 		return false;
 	}
-	if (!owner.processStartId) {
+	if (!startId) {
 		return true;
 	}
-	const currentStartId = getProcessStartId(owner.pid);
-	return currentStartId === undefined || currentStartId === owner.processStartId;
+	const currentStartId = getProcessStartId(pid);
+	return currentStartId === undefined || currentStartId === startId;
+}
+
+function isLeaseOwnerAlive(owner: SessionLeaseOwner): boolean {
+	return isProcessIdentityAlive(owner.pid, owner.processStartId);
 }
 
 function withLeaseGuard<T>(directory: string, action: () => T): T {

@@ -15,6 +15,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KernelExitedError, ReplKernelManager } from "../src/core/kernel/index.js";
+import { REPL_PROTOCOL_VERSION } from "../src/core/kernel/repl-manager.js";
 
 // Deterministic propagation across the awaits inside the manager (idempotent).
 installAsyncTraceContextStorage(new AsyncLocalStorage<TraceContext>());
@@ -44,7 +45,7 @@ if (fs.existsSync(process.env.FAKE_REPL_DIE_ON_BOOT)) {
   process.stderr.write(${JSON.stringify(BOOT_STDERR)} + "\\n");
   process.exit(3);
 }
-emit({ event: "ready", protocol: 3, python: process.version });
+emit({ event: "ready", protocol: ${REPL_PROTOCOL_VERSION}, python: process.version });
 const input = readline.createInterface({ input: process.stdin });
 input.on("line", (line) => {
   const request = JSON.parse(line);
@@ -389,7 +390,7 @@ type RaceInternals = {
 		signalCode: NodeJS.Signals | null;
 		kill: (signal?: NodeJS.Signals | number) => boolean;
 		pid?: number;
-		stdin: { destroyed: boolean; destroy: () => void };
+		stdin: { destroyed: boolean; destroy: () => void; on: (event: string, listener: (error: Error) => void) => void };
 		stdout: { destroy: () => void; on: (event: string, listener: (...args: unknown[]) => void) => void };
 		stderr: EventEmitter & { closed: boolean; destroy: () => void };
 	};
@@ -407,7 +408,7 @@ describe("ReplKernelManager unexpected exit racing a host teardown", () => {
 			signalCode: null as NodeJS.Signals | null,
 			kill: vi.fn(() => false),
 			pid: 4242,
-			stdin: { destroyed: false, destroy: vi.fn() },
+			stdin: { destroyed: false, destroy: vi.fn(), on: vi.fn() },
 			stdout: { destroy: vi.fn(), on: vi.fn() },
 			stderr,
 		});
@@ -447,7 +448,7 @@ describe("ReplKernelManager unexpected exit racing a host teardown", () => {
 			signalCode: null as NodeJS.Signals | null,
 			kill: vi.fn(() => false),
 			pid: 4243,
-			stdin: { destroyed: false, destroy: vi.fn() },
+			stdin: { destroyed: false, destroy: vi.fn(), on: vi.fn() },
 			stdout: { destroy: vi.fn(), on: vi.fn() },
 			stderr,
 		});

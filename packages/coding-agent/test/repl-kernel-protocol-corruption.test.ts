@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ReplKernelManager } from "../src/core/kernel/index.js";
+import { REPL_PROTOCOL_VERSION } from "../src/core/kernel/repl-manager.js";
 
 let tempDir = "";
 
@@ -32,10 +33,10 @@ if (fs.existsSync(process.env.FAKE_REPL_CORRUPT_BOOT)) {
   process.stdout.write("BROKEN-BOOT\\n");
 } else if (fs.existsSync(process.env.FAKE_REPL_READY_WITH_GARBAGE)) {
   process.stdout.write(
-    JSON.stringify({ event: "ready", protocol: 3, python: process.version }) + "\\nBROKEN-WITH-READY\\n",
+    JSON.stringify({ event: "ready", protocol: ${REPL_PROTOCOL_VERSION}, python: process.version }) + "\\nBROKEN-WITH-READY\\n",
   );
 } else if (!(count > 1 && fs.existsSync(process.env.FAKE_REPL_DELAY_READY))) {
-  emit({ event: "ready", protocol: 3, python: process.version });
+  emit({ event: "ready", protocol: ${REPL_PROTOCOL_VERSION}, python: process.version });
 }
 const input = readline.createInterface({ input: process.stdin });
 input.on("line", (line) => {

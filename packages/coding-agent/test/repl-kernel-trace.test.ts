@@ -17,6 +17,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type HostRequestHandlers, ReplKernelManager } from "../src/core/kernel/index.js";
+import { REPL_PROTOCOL_VERSION } from "../src/core/kernel/repl-manager.js";
 
 // Deterministic propagation across the awaits inside the manager regardless of
 // whether pi-ai's best-effort async install has resolved yet (idempotent).
@@ -42,7 +43,7 @@ if (process.env.FAKE_REPL_ENV_JSON) {
 }
 const emit = (event) => process.stdout.write(JSON.stringify(event) + "\\n");
 const pendingHost = new Map();
-emit({ event: "ready", protocol: 3, python: process.version });
+emit({ event: "ready", protocol: ${REPL_PROTOCOL_VERSION}, python: process.version });
 const input = readline.createInterface({ input: process.stdin });
 input.on("line", (line) => {
   const request = JSON.parse(line);

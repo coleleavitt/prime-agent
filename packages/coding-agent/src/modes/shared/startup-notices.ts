@@ -7,6 +7,7 @@
  * identical wording.
  */
 
+import { withSpan } from "@earendil-works/pi-ai";
 import { DefaultPackageManager } from "../../core/package-manager.js";
 import type { SettingsManager } from "../../core/settings-manager.js";
 import { spawnHidden } from "../../utils/child-process.js";
@@ -32,7 +33,7 @@ export interface StartupNoticeCheckOptions {
 /** Run every startup check in parallel and collect the results. */
 export async function gatherStartupNotices(options: StartupNoticeCheckOptions): Promise<StartupNotices> {
 	const [newVersion, packageUpdates, tmuxWarning] = await Promise.all([
-		checkForNewPiVersion(options.version),
+		checkForNewPiVersion(options.version, { trace: withSpan }),
 		checkForPackageUpdates(options),
 		checkTmuxKeyboardSetup(),
 	]);

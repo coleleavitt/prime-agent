@@ -1,4 +1,4 @@
-import { installDefaultSpanSink, type SpanEndRecord, setSpanSink } from "@earendil-works/pi-ai";
+import { installDefaultSpanSink, type SpanEndRecord, setSpanSink, withSpan } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	checkForNewPiVersion,
@@ -113,7 +113,7 @@ describe("update.check span", () => {
 			vi.fn(async () => Response.json({ version: "v1.2.4" })),
 		);
 
-		await expect(getLatestPiRelease("1.2.3")).resolves.toEqual({ version: "1.2.4" });
+		await expect(getLatestPiRelease("1.2.3", { trace: withSpan })).resolves.toEqual({ version: "1.2.4" });
 
 		expect(spans.map((span) => span.name)).toEqual(["update.check"]);
 		expect(spans[0]).toMatchObject({
@@ -129,7 +129,7 @@ describe("update.check span", () => {
 			vi.fn(async () => Response.json({ version: "1.2.3" })),
 		);
 
-		await expect(checkForNewPiVersion("1.2.3")).resolves.toBeUndefined();
+		await expect(checkForNewPiVersion("1.2.3", { trace: withSpan })).resolves.toBeUndefined();
 		expect(spans[0]).toMatchObject({
 			name: "update.check",
 			status: "ok",
@@ -144,7 +144,7 @@ describe("update.check span", () => {
 			vi.fn(async () => new Response("missing", { status: 404 })),
 		);
 
-		await expect(getLatestPiRelease("1.2.3")).resolves.toBeUndefined();
+		await expect(getLatestPiRelease("1.2.3", { trace: withSpan })).resolves.toBeUndefined();
 		expect(spans[0]).toMatchObject({ name: "update.check", status: "ok", attrs: { "http.status": 404 } });
 		expect(spans[0].attrs).not.toHaveProperty("update.latest");
 	});
@@ -157,13 +157,13 @@ describe("update.check span", () => {
 		);
 
 		// getLatestPiRelease re-throws exactly as before...
-		await expect(getLatestPiRelease("1.2.3")).rejects.toThrow("network unavailable");
+		await expect(getLatestPiRelease("1.2.3", { trace: withSpan })).rejects.toThrow("network unavailable");
 		expect(spans[0]).toMatchObject({ name: "update.check", status: "error", error: "network unavailable" });
 		expect(spans[0].attrs).not.toHaveProperty("http.status");
 
 		// ...and checkForNewPiVersion still swallows the failure.
 		spans.length = 0;
-		await expect(checkForNewPiVersion("1.2.3")).resolves.toBeUndefined();
+		await expect(checkForNewPiVersion("1.2.3", { trace: withSpan })).resolves.toBeUndefined();
 		expect(spans[0]).toMatchObject({ name: "update.check", status: "error" });
 	});
 
@@ -172,7 +172,7 @@ describe("update.check span", () => {
 		process.env.PI_OFFLINE = "1";
 		vi.stubGlobal("fetch", vi.fn());
 
-		await expect(getLatestPiRelease("1.2.3")).resolves.toBeUndefined();
+		await expect(getLatestPiRelease("1.2.3", { trace: withSpan })).resolves.toBeUndefined();
 		expect(spans).toEqual([]);
 	});
 });

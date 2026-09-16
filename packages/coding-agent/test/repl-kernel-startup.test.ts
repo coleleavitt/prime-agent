@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { type LogEntry, setLogSink } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ReplKernelManager } from "../src/core/kernel/index.js";
+import { REPL_PROTOCOL_VERSION } from "../src/core/kernel/repl-manager.js";
 
 // closeSync failures and short writes cannot be forced for real, so the mock
 // arms faults against the stderr log fd, marked at open by its path;
@@ -292,7 +293,9 @@ describe("ReplKernelManager startup", () => {
 		const manager = new ReplKernelManager({ python, cwd: tempDir });
 
 		try {
-			await expect(manager.execute("print(1)")).rejects.toThrow(/speaks protocol 1, expected 3/);
+			await expect(manager.execute("print(1)")).rejects.toThrow(
+				new RegExp(`speaks protocol 1, expected ${REPL_PROTOCOL_VERSION}`),
+			);
 		} finally {
 			errorSpy.mockRestore();
 			await manager.shutdown({ snapshot: true, drainHostRequests: true });

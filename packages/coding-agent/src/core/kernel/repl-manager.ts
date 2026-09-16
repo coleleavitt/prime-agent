@@ -70,7 +70,7 @@ import {
 	type SnapshotResult,
 } from "./state-snapshot.js";
 
-const REPL_PROTOCOL_VERSION = 4;
+export const REPL_PROTOCOL_VERSION = 4;
 const READY_TIMEOUT_MS = 30_000;
 const REPAIR_STEP_TIMEOUT_MS = 30_000;
 // Runtime-minted host-request ids never repeat; the bound only guards a

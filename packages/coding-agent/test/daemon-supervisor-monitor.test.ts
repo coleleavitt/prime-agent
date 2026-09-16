@@ -1282,10 +1282,16 @@ describe("daemon worker supervisor monitoring", () => {
 			probeCount += 1;
 			return result ?? false;
 		});
-		// Drive the fake clock until the expected number of probes have run;
-		// one advance alone does not flush the availability check chain.
+		// Drive the fake clock until the expected number of probes have run; one
+		// advance alone does not flush the availability check chain. The step
+		// budget is what bounds real time for the registry lock underneath, and
+		// 200 was enough when idle but not under the full suite, which left zero
+		// probes. The loop exits as soon as the count is reached, so a generous
+		// ceiling costs nothing and only bounds a genuine hang. Probes are at
+		// least 1500ms of fake time apart and a step is 100ms, so one step can
+		// never overshoot the exact count asserted.
 		const advanceUntilProbes = async (expected: number) => {
-			for (let step = 0; probeCount < expected && step < 200; step++) {
+			for (let step = 0; probeCount < expected && step < 1000; step++) {
 				await vi.advanceTimersByTimeAsync(100);
 			}
 			expect(probeCount).toBe(expected);

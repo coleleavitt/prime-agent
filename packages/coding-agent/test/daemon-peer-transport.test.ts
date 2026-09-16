@@ -270,6 +270,10 @@ describe("daemon worker peer transport", () => {
 	it("authenticates a downgraded supervisor that presents no worker instance id", async () => {
 		const makeAuthDaemon = () =>
 			Object.assign(Object.create(AgentDaemon.prototype), {
+				// Object.create skips class field initializers; worker_auth reads
+				// osfenceWorkerMode.enabled and failed the auth before this change.
+				osfenceWorkerMode: { enabled: false },
+				osfenceControlDbReader: undefined,
 				options: { worker: { authenticationToken: "worker-token", workerInstanceId: "instance-1" } },
 				supervisorClaims: new Map(),
 				peerClaims: new Map(),

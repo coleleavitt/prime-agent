@@ -9,8 +9,9 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { getLogger, withSpan } from "@earendil-works/pi-ai";
 import { getPackageDir } from "../../config.js";
-import { isProcessAlive, spawnHidden } from "../../utils/child-process.js";
+import { spawnHidden } from "../../utils/child-process.js";
 import { tryAcquireDirLock } from "../../utils/dir-lock.js";
+import { getCurrentProcessStartId, isProcessIdentityAlive } from "../session-lease.js";
 import type { PythonSkillRuntimeInfo } from "../skills.js";
 
 const BOOTSTRAP_SCHEMA = 9;
@@ -759,8 +760,15 @@ async function acquireBootstrapLock(venv: string, options: EnsureKernelPythonOpt
 		await mkdir(path.dirname(lockDir), { recursive: true });
 
 		for (;;) {
-			const attempt = await tryAcquireDirLock(lockDir, async (ownerPid) =>
-				ownerPid === undefined ? !(await lockWithoutOwnerIsStale(lockDir)) : isProcessAlive(ownerPid),
+			// The start identity rides beside the pid so a recycled pid cannot keep a dead
+			// owner's lock held until the bounded wait times out.
+			const attempt = await tryAcquireDirLock(
+				lockDir,
+				async (ownerPid, ownerStartId) =>
+					ownerPid === undefined
+						? !(await lockWithoutOwnerIsStale(lockDir))
+						: isProcessIdentityAlive(ownerPid, ownerStartId),
+				{ ownerStartId: getCurrentProcessStartId() },
 			);
 			if (attempt === "acquired") {
 				const waitedMs = Date.now() - startedAt;
@@ -1010,8 +1018,10 @@ function runtimeCandidateDirs(): string[] {
 	// Running from source (tsx/vitest): moduleDir is <package>/src/core/kernel. A stale
 	// dist/ copy left by an older build must not win here, or a source run installs the
 	// old runtime into the shared venv (and the installed CLI rebuilds it right back).
+	// The sidecar still leads: it exists only when a layout or PI_PACKAGE_DIR supplies one,
+	// and that explicit runtime must not be shadowed by the repo checkout's source.
 	if (path.basename(path.resolve(moduleDir, "..", "..")) === "src") {
-		return [sourceRuntime, sidecarRuntime, distRuntime, siblingRuntime];
+		return [sidecarRuntime, sourceRuntime, distRuntime, siblingRuntime];
 	}
 	return [sidecarRuntime, distRuntime, siblingRuntime, sourceRuntime];
 }

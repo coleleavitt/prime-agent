@@ -13,6 +13,7 @@ import {
 	type KernelUnexpectedExit,
 	ReplKernelManager,
 } from "../src/core/kernel/index.js";
+import { REPL_PROTOCOL_VERSION } from "../src/core/kernel/repl-manager.js";
 import { createIpythonToolDefinition, IpythonKernelProvisioner } from "../src/core/tools/ipython.js";
 
 let tempDir = "";
@@ -85,7 +86,7 @@ const fs = require("node:fs");
 const readline = require("node:readline");
 fs.appendFileSync(${JSON.stringify(countFile)}, "run\\n");
 const emit = (event) => process.stdout.write(JSON.stringify(event) + "\\n");
-emit({ event: "ready", protocol: 3, python: process.version });
+emit({ event: "ready", protocol: ${REPL_PROTOCOL_VERSION}, python: process.version });
 const input = readline.createInterface({ input: process.stdin });
 input.on("line", (line) => {
 	const request = JSON.parse(line);
@@ -176,7 +177,7 @@ function writeFakeReplRuntime(
 const fs = require("node:fs");
 const readline = require("node:readline");
 const emit = (event) => process.stdout.write(JSON.stringify(event) + "\\n");
-emit({ event: "ready", protocol: 3, python: process.version });
+emit({ event: "ready", protocol: ${REPL_PROTOCOL_VERSION}, python: process.version });
 const input = readline.createInterface({ input: process.stdin });
 input.on("line", (line) => {
 	const request = JSON.parse(line);

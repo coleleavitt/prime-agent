@@ -1,5 +1,21 @@
-import { withSpan } from "@earendil-works/pi-ai";
 import { getPiUserAgent } from "./pi-user-agent.js";
+
+/**
+ * Tracing is injected rather than imported. The npm release bridge transpiles this file on
+ * its own into an installation that has no node_modules yet, so importing pi-ai here made the
+ * bridge fail at link time. Callers that have tracing pass withSpan; the default does nothing.
+ */
+export interface VersionCheckSpan {
+	setAttributes(attributes: Record<string, string | number | boolean>): void;
+}
+
+export type VersionCheckTracer = <T>(
+	name: string,
+	attributes: Record<string, string | number | boolean>,
+	run: (span: VersionCheckSpan) => Promise<T>,
+) => Promise<T>;
+
+const untracedVersionCheck: VersionCheckTracer = (_name, _attributes, run) => run({ setAttributes: () => {} });
 
 const DEFAULT_PRIME_AGENT_DOWNLOAD_BASE_URL = "https://pub-728493de92a943e2a9b2d17b4719f318.r2.dev";
 const STABLE_VERSION_MANIFEST_PATH = "latest.json";
@@ -121,14 +137,15 @@ function resolveReleaseUrl(baseUrl: string, pathOrUrl: string): string | undefin
 
 export async function getLatestPiRelease(
 	currentVersion: string,
-	options: { timeoutMs?: number; baseUrl?: string } = {},
+	options: { timeoutMs?: number; baseUrl?: string; trace?: VersionCheckTracer } = {},
 ): Promise<LatestPiRelease | undefined> {
 	if (process.env.PI_SKIP_VERSION_CHECK || process.env.PI_OFFLINE) return undefined;
 
 	// Tracing only: the span records the manifest lookup (`http.status`, latest
 	// version, whether an update is available). A failed fetch marks the span
 	// as error and is re-thrown unchanged, so callers keep their own handling.
-	return withSpan("update.check", { "update.current": currentVersion }, async (span) => {
+	const trace = options.trace ?? untracedVersionCheck;
+	return trace("update.check", { "update.current": currentVersion }, async (span) => {
 		const baseUrl = options.baseUrl?.replace(/\/+$/, "") ?? getPrimeAgentDownloadBaseUrl();
 		const response = await fetch(`${baseUrl}/${getReleaseManifestPath(currentVersion)}`, {
 			headers: {
@@ -196,14 +213,17 @@ export async function getLatestPiRelease(
 
 export async function getLatestPiVersion(
 	currentVersion: string,
-	options: { timeoutMs?: number } = {},
+	options: { timeoutMs?: number; trace?: VersionCheckTracer } = {},
 ): Promise<string | undefined> {
 	return (await getLatestPiRelease(currentVersion, options))?.version;
 }
 
-export async function checkForNewPiVersion(currentVersion: string): Promise<string | undefined> {
+export async function checkForNewPiVersion(
+	currentVersion: string,
+	options: { trace?: VersionCheckTracer } = {},
+): Promise<string | undefined> {
 	try {
-		const latestVersion = await getLatestPiVersion(currentVersion);
+		const latestVersion = await getLatestPiVersion(currentVersion, options);
 		if (latestVersion && isNewerPackageVersion(latestVersion, currentVersion)) {
 			return latestVersion;
 		}

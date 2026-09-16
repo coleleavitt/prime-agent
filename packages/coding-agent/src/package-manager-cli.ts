@@ -462,7 +462,7 @@ async function getSelfUpdatePlan(force: boolean, rollback = false): Promise<Self
 	}
 	if (rollback) throw new Error("Rollback is only available for managed compiled installations.");
 	try {
-		const latestRelease = await getLatestPiRelease(VERSION);
+		const latestRelease = await getLatestPiRelease(VERSION, { trace: withSpan });
 		const packageName = latestRelease?.packageName ?? PACKAGE_NAME;
 		const installSpec = latestRelease?.installSpec ?? packageName;
 		const packageRenameRequiresUpdate = !latestRelease?.installSpec && packageName !== PACKAGE_NAME;

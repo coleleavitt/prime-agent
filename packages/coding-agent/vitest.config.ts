@@ -19,6 +19,7 @@ export default defineConfig({
 			include: ["src/**/*.ts"],
 		},
 		env: { DO_NOT_TRACK: "1" },
+		setupFiles: ["./test/setup/isolate-agent-dir.ts"],
 		tags: [
 			{
 				name: "process-stress",

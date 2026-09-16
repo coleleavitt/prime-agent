@@ -15,7 +15,6 @@ import {
 } from "fs";
 import { homedir } from "os";
 import { basename, dirname, join, posix, resolve, sep, win32 } from "path";
-import { lockSync } from "proper-lockfile";
 import { fileURLToPath } from "url";
 import { gzipSync } from "zlib";
 import { shouldUseWindowsShell, spawnSyncHidden } from "./utils/child-process.js";
@@ -684,6 +683,40 @@ function rotateLog(logPath: string, retention: number): void {
 }
 
 /**
+ * Synchronous cross-process lock for log rotation, built only on Node builtins.
+ *
+ * config.ts is loaded by the native-update and npm release bridge paths, which run before
+ * the package's node_modules exist, so it must not import proper-lockfile: that import alone
+ * failed those processes at link time. The lock is the same `<target>.lock` directory
+ * proper-lockfile creates, so a process still running older code contends for this lock
+ * instead of rotating the same log concurrently. Returns undefined while it is held.
+ */
+function tryLockLogRotationSync(target: string, staleMs: number): (() => void) | undefined {
+	const lockPath = `${target}.lock`;
+	try {
+		mkdirSync(lockPath);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+		let mtimeMs: number;
+		try {
+			mtimeMs = statSync(lockPath).mtimeMs;
+		} catch {
+			// Released between the mkdir and the stat: let the caller retry.
+			return undefined;
+		}
+		if (Date.now() - mtimeMs <= staleMs) return undefined;
+		// A writer that crashed while holding the lock left it behind: reclaim it once.
+		rmSync(lockPath, { recursive: true, force: true });
+		try {
+			mkdirSync(lockPath);
+		} catch {
+			return undefined;
+		}
+	}
+	return () => rmSync(lockPath, { recursive: true, force: true });
+}
+
+/**
  * Append a redacted line to a local diagnostic log. Writes and rotation share a
  * cross-process lock, files are owner-only, and retained generations are bounded.
  * The newest rotated file remains `<path>.old`; older generations are gzip files.
@@ -701,13 +734,10 @@ export function appendRotatingLog(
 		prepareSecureLog(lockTarget);
 		const lockWait = new Int32Array(new SharedArrayBuffer(4));
 		for (let attempt = 0; attempt < 200; attempt++) {
-			try {
-				release = lockSync(lockTarget, { realpath: false, stale: 10_000 });
-				break;
-			} catch {
-				if (attempt === 199) return;
-				Atomics.wait(lockWait, 0, 0, 5);
-			}
+			release = tryLockLogRotationSync(lockTarget, 10_000);
+			if (release) break;
+			if (attempt === 199) return;
+			Atomics.wait(lockWait, 0, 0, 5);
 		}
 		prepareSecureLog(logPath);
 		if (statSync(logPath).size > maxBytes) {

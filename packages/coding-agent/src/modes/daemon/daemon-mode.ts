@@ -117,7 +117,13 @@ import {
 	type SessionPassivationSnapshot,
 } from "../../core/session-action-store.js";
 import { deleteSessionArtifacts, deleteSessionFile } from "../../core/session-file-actions.js";
-import { acquireSessionLease, canonicalSessionPath, type SessionLease } from "../../core/session-lease.js";
+import {
+	acquireSessionLease,
+	canonicalSessionPath,
+	getCurrentProcessStartId,
+	isProcessIdentityAlive,
+	type SessionLease,
+} from "../../core/session-lease.js";
 import {
 	getSessionArtifactPathForFile,
 	readSessionInfo,
@@ -130,7 +136,7 @@ import type { SessionStats } from "../../core/session-stats.js";
 import { SettingsManager } from "../../core/settings-manager.js";
 import { type SideQuestionRun, startSideQuestion } from "../../core/side-question.js";
 import { negotiateWorkflowV2Capability } from "../../core/workflow-v2-capability.js";
-import { isProcessAlive, spawnHidden, waitForChildProcess } from "../../utils/child-process.js";
+import { spawnHidden, waitForChildProcess } from "../../utils/child-process.js";
 import { tryAcquireDirLock } from "../../utils/dir-lock.js";
 import { killTrackedDetachedChildren } from "../../utils/shell.js";
 import {
@@ -1173,8 +1179,13 @@ export class AgentDaemon {
 		let ownsLock = false;
 		try {
 			for (let attempt = 0; attempt < 3 && !ownsLock; attempt++) {
-				const result = await tryAcquireDirLock(lockDirectory, (ownerPid) =>
-					ownerPid !== undefined ? isProcessAlive(ownerPid) : false,
+				// A recycled pid must not hold the launch lock forever: that would stop this
+				// worker from ever relaunching a supervisor that has actually died.
+				const result = await tryAcquireDirLock(
+					lockDirectory,
+					(ownerPid, ownerStartId) =>
+						ownerPid !== undefined ? isProcessIdentityAlive(ownerPid, ownerStartId) : false,
+					{ ownerStartId: getCurrentProcessStartId() },
 				);
 				if (result === "held") {
 					return;

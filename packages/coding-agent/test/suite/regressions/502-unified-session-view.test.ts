@@ -52,6 +52,9 @@ function refreshHarness() {
 		savedCatalogGeneration?: number;
 	} = {};
 	return {
+		// A successful refresh clears the deferred search-corpus cache; the harness is
+		// built from plain fields, so that map has to be supplied here.
+		savedSearchCorpus: new Map<string, string>(),
 		reconnectPromise: undefined,
 		daemonShutdownReceived: false,
 		options: {},
@@ -147,6 +150,9 @@ describe("#502 unified session view regressions", () => {
 		const retried = deferred<{ success: true; data: { sessions: unknown[] } }>();
 		const replacement = savedSession("retried");
 		const client = {
+			// listDaemonSavedSessions checks capabilities before it requests; the other
+			// fake clients in this file already declare it.
+			supportsServerCapability: () => true,
 			request: vi.fn().mockReturnValueOnce(startup.promise).mockReturnValueOnce(retried.promise),
 		};
 		const harness = {

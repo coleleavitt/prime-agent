@@ -665,7 +665,11 @@ describe("agents view slash commands", () => {
 				syncSelectedRowState: vi.fn(),
 				ui: { requestRender: vi.fn() },
 				editor: editorWithText(text),
-				requireClient: () => ({ request }),
+				// listDaemonSavedSessions asks the client which capabilities the daemon
+				// serves before it sends the request. A fake without this threw first, so
+				// request was never reached. False models a daemon without deferred search
+				// text, which keeps the fetch on the path this latch test was written for.
+				requireClient: () => ({ request, supportsServerCapability: () => false }),
 				getSavedSessionCatalogContext: () => ({ cwd: "/tmp/project" }),
 				refreshSavedSessions: vi.fn((options?: unknown) => invoke("refreshSavedSessions", self, options)),
 				rearmSavedSearchFetch() {
@@ -674,6 +678,10 @@ describe("agents view slash commands", () => {
 				armSavedSearchFetch() {
 					return invoke("armSavedSearchFetch", self);
 				},
+				// Arming the saved-search fetch now also arms the deferred search-corpus
+				// fetch. This test is about the saved-search latch, so the corpus arm is
+				// stubbed rather than driven.
+				armSearchCorpusFetch: vi.fn(),
 			};
 			const supersede = () =>
 				(self.refreshSavedSessions as (options?: unknown) => Promise<boolean>)({ preserveStatusOnError: true });
