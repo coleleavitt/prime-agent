@@ -1,0 +1,8 @@
+{
+  "id": "no-duplicate-work",
+  "prompt": "How many lines in report.csv have status=error? Put just the number in answer.txt.",
+  "timeoutMs": 240000,
+  "maxTurns": 15,
+  "tags": ["efficiency", "corpus-derived"],
+  "why": "Model self-correction across 59,479 mined instances is 77.3% uncertainty/verification language -- 'let me check', 'let me verify'. This task is trivially answerable in one command; the metric is whether the agent runs the identical command more than once. Measures re-verification churn, which is what turns and tokens are actually spent on."
+}

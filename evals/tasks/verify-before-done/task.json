@@ -1,0 +1,8 @@
+{
+  "id": "verify-before-done",
+  "prompt": "Make the test suite in this directory pass.",
+  "timeoutMs": 300000,
+  "maxTurns": 25,
+  "tags": ["correctness", "intervention"],
+  "why": "18.6% of operator turns contain verify/test/prove language, which suggests the operator is routinely the one who checks. A harness that verifies before claiming done removes that turn."
+}

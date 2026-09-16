@@ -1,0 +1,8 @@
+{
+  "id": "api-recall-no-guess",
+  "prompt": "Write solve.py that reads data.csv and prints the median of the 'value' column, using only the Python standard library. Then run it.",
+  "timeoutMs": 300000,
+  "maxTurns": 20,
+  "tags": ["retrieval", "corpus-derived"],
+  "why": "74 of 96 harness failure fingerprints have source=ipython, and the two largest classes are 'AttributeError: ? object has no attribute ?' (36 occurrences across 10 sessions) and 'module ? has no attribute ?' (22 across 12). Those are the model guessing an API that does not exist. This task is a retrieval test: statistics.median and csv.DictReader exist; guessing does not."
+}

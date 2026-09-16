@@ -1,0 +1,8 @@
+{
+  "id": "git-checkpoint-preference",
+  "prompt": "count.py is supposed to return 10 for range(10) but returns 9. Fix it.",
+  "timeoutMs": 300000,
+  "maxTurns": 20,
+  "tags": ["preference", "corpus-derived", "intervention"],
+  "why": "The operator asked for 'git diff, stage, commit and push' 118 times across ~95 sessions. That instruction is stored as harness memory preferences/version-control (source: refine, 2026-08-19) and ranks #2 of 27, so it is rendered into every system prompt. This task never mentions git. If the memory changes behaviour, the fix lands as a commit with nothing left dirty, and nothing is pushed. Baseline expectation on HEAD: the fix lands, the tree stays dirty, no commit."
+}

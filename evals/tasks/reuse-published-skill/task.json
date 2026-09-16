@@ -1,0 +1,8 @@
+{
+  "id": "reuse-published-skill",
+  "prompt": "Write slugs.txt containing the slug of each line in names.txt, one per line.",
+  "timeoutMs": 300000,
+  "maxTurns": 20,
+  "tags": ["skill-reuse", "corpus-derived", "m5"],
+  "why": "517,640 tool parts contain 215,853 command bodies, of which 37,473 occurrences (17.4%) are exact re-derivations and 3,155 distinct bodies were rewritten in more than one session. A published skill exists for exactly this; the question is whether the agent finds and calls it or writes its own. Tests milestone 5 (toolforge) end to end."
+}
