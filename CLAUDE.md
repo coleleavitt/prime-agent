@@ -52,41 +52,44 @@ command part of startup without a capability gate.
 
 ## Current State
 
-Branch `perf/session-catalog-resume` on `f4afe5b5d`. Live detail and handoff notes are in `MEMORY.md`.
+Branch `perf/session-catalog-resume` on `15768af87`, 50 commits ahead of `main`, working tree clean apart from local
+junk. Live detail and handoff notes are in `MEMORY.md`. Installed build: `0.9.4-fork.15768af8`.
 
-- **Uncommitted: the self-improvement gate and Workspace Recall.** 57 modified tracked files (coding-agent `src`,
-  `test`, `docs` and `.changes`, `prime-agent-runtime`, `FLOWCHART.md`, `docs/`), plus new `src/core/recall/`,
-  `extensions/builtin/workspace-recall.ts`, `ravo/python-environment.ts`, three test files and six fragments.
-  `evals/run.mjs`, `evals/results/` and `evals/tasks/study-git-correction*` are separate, unrelated work.
-  - Refines: `refine.plan` and `refine.apply` detached root spans, and one
-    `refinement.committed|rejected|applied_unmeasured` record per refine at apply time. A failure refine that claims
-    nothing is `reject_unclaimed`; any other claimless commit applies without touching RAVO state. A cancelled queued
-    or requested refine reports `refine_failed` and releases its triggers.
-  - Ledger: global by default (`PRIME_AGENT_GLOBAL_LEDGER=0` keeps it per-session). Provisional windows carry a clock
-    (`ordinal` or `local-ordinal`), a regressed champion is repaired in its own scope, and a fingerprint is
-    non-actionable (counted, never a trigger) when a strict majority of its occurrences were outages, denials,
-    network failures or timeouts.
-  - Referee: replays run only for skill create/update edits whose imports a verified missing-module or
-    missing-distribution probe names, in one sanitized environment shared with the skill dry-run. `not_applicable`
-    exists, `no_evidence` fails closed, and verification runs off the turn path (`ravo.replay_verify`).
-  - Workspace Recall: a per-repo digest mark on `agent_end`, a `<workspace_recall>` block on a session's first
-    `ipython` result, and build claims from the kernel `done` frame's new `bashCommands`.
-    `PRIME_AGENT_WORKSPACE_RECALL=0` turns it off.
-- **Open on that set:**
-  - `npm run check` passes, and 131 related vitest files and the Python runtime suite pass (2026-09-16). Heavy suites
-    (`test:kernel`, `test:process`, `test:ci`) and `prime-agent trace` runtime validation were not run.
-  - Build claims need the runtime reinstalled: a kernel on the committed `prime-agent-runtime` sends no `bashCommands`,
-    so nothing is claimed until the kernel venv re-syncs and live kernels restart.
-  - `ravo.run` commits are measured on that run's own evaluators, skip the claimless-commit rules by design, and log no
-    `refinement.*` record, so the learning index does not see them.
-  - Trust debits never fire: `settleHarnessTrust` has one caller, and it passes no referee verdicts.
+- **Committed since `f4afe5b5d` (five commits):** the measurable self-improvement gate (refine spans and
+  `refinement.*` records, global-by-default ledger, referee replays, retired replay-case pruning, trust debits,
+  `ravo.run` logging, stale-evidence re-plan, rejection history), Workspace Recall, the Engineer Trajectory Index
+  (`core/distill/trajectory-index.ts`, `learning trajectory`, `PRIME_AGENT_TRAJECTORY_INDEX=0` off), auto-refine
+  scope global by default (only an explicit `"local"` stays session-scoped), and Dream-RSI in full: `core/dream/`,
+  `/dream` + the `dream` skill, `DreamRunService`, the capability-gated `dream_run_update` daemon event (schema
+  revision 32), four tasks (`circle-packing`, `sum-difference`, `python-speedup`, `autocorrelation`), the
+  dream-vs-fixed experiment with LLM and guidance arms, `evals/dream/plot_experiment.py`, `docs/dream-rsi.md`.
+- **Dream-RSI, measured honestly.** The replay objective is scale-invariant (`q` normalized to the pool range,
+  β1 = β2 = 0.05, quality guard) and seeds are deterministic; on circle-packing the dream arm ties the fixed arm at
+  equal budget with fewer probes. Replay can only reward spending less, never finding more (out-of-support limit), so
+  the LLM proposer is the only lever for quality gains. The first real-token run (Sonnet-5, autocorrelation, $1.70)
+  was null because 81 of 83 LLM proposals fell back to the local proposer; `15768af87` fixes the output contract and
+  persists every rejection (`<dream dir>/rejections/<run>.jsonl`, `dream.llm_reject_reason`, node `origin`). A
+  re-run on that build is the open measurement.
+- **Open:**
+  - `release:pack` does not build. Run `npm run build` in `packages/coding-agent` first or the tarball ships the old
+    `dist/` under a new version stamp (this happened once; the install was repeated).
+  - Child agents have no hard output cap or thinking override (`RunAgentOptions` has only `maxTurns`, `tokenBudget`);
+    a proposer that writes 30k tokens of prose stops on `length`. Documented in `docs/dream-rsi.md`.
+  - `dream.propose`/`dream.llm_propose` records only the last rejection reason of a retried attempt; the earlier one
+    lives only in the rejection log.
+  - Heavy suites last ran 2026-09-18: `test:kernel` 15/15, `test:process` 12 passed, `test:ci` 7581 passed with 4
+    failures — two in `daemon-supervisor-monitor.test.ts` that pass in isolation (111/111, load-flaky) and one each in
+    `stdin-guard-cold-cli.test.ts` and `regressions/4603-worker-recovery.test.ts` that fail identically on the base
+    commit (pre-existing). `npm run check` and the dream/refinement/ETI vitest files pass on `15768af87`.
+  - The harness benchmark (`evals/`) cannot show learning yet: cold 4/6, warm 4/6. `mem-off` 0/3 vs `mem-on` 3/3
+    shows retrieval works once a lesson is global; whether auto-refine now writes one is unmeasured.
 - **Known behaviour from the trace corpus** (157 374 real spans on this machine), useful as ground truth:
   `extension.hooks` is the hottest span at 46 721 occurrences; a single `context` hook has been observed taking 29 s;
   `kernel.host_request` for `agent_message.list_agents` has p50 ≈ 15 s; several span families show children outliving
   their parents. Treat these as measured facts, not guesses.
-- ~12 GB of untracked junk sits in the repo root (three core dumps, two session HTML exports), and ~34 GB more in
-  `packages/coding-agent/core.*` (node test-process dumps from 2026-09-16). Do not commit it; do not
-  delete it without asking.
+- Untracked junk: five core dumps in the repo root (`core.5176` 6.2 GB, `core.889387` 5.8 GB, three ~10 MB), plus
+  `.cortexkit/`, `.jython_cache/`, `.pi/`. The `packages/coding-agent/core.*` dumps and session HTML exports are gone.
+  Do not commit any of it; do not delete it without asking.
 
 ## Working Rules
 
