@@ -13,8 +13,11 @@ renders the paper's evidence figures for our fork:
     report.html      the four figures with captions built from the result metadata
 
 Nothing here is illustrative: every series is read from the result files. Several
-files are treated as seeds of one experiment (same task, rounds, budget and arms,
-distinct seeds) and reduced to mean/min/max per round; a single file is plotted as is.
+files are treated as seeds of one experiment (same task, rounds, budget, objective
+and arms, distinct seeds) and reduced to mean/min/max per round; a single file is
+plotted as is. Files that disagree on any of those, the replay objective's
+``beta1``/``beta2`` included, are refused with the differing values named: seeds
+scored by different objectives are not one experiment.
 
 The data layer (``load_results``, ``series``, ``headline``, ``--check``) is stdlib
 only. matplotlib is imported inside ``render`` so ``--check`` works on any
@@ -42,6 +45,14 @@ defaulted or averaged in. A headline whose reference arm did not run is no
 headline (there is no control). A malformed sub-field (a number where an object
 is expected, a string where a number is) falls back to the value recomputed from
 the rounds, and ``--check`` says whether the file and the recomputation agree.
+
+Direction (honesty rule for the words): a ratio at or above 1 reads ``1.11x fewer
+calls`` / ``1.03x higher score``; a ratio below 1 is never written as ``0.83x
+fewer``. It is written the right way round, as its inverse with the direction
+spelled out: ``1.20x MORE calls (72 vs 60)``, ``1.03x LOWER score``. The tone
+(ok/bad) still follows the raw ratio, and the operands are always printed in the
+same order (arm vs reference). An aggregate below 1 prints the inverse of the
+median ratio.
 
 Across seeds (honesty rule for the aggregate lines): the success colour needs the
 ratio defined in every seed. A ratio defined in one seed is that seed's ratio,
@@ -576,20 +587,51 @@ def load_result(path_arg: str | os.PathLike[str]) -> Result:
     }
 
 
+OBJECTIVE_FIELDS = ("beta1", "beta2")
+
+
+def objective_key(objective: dict[str, object] | None) -> tuple[float | None, ...] | None:
+    """The replay objective as the tuple that must agree across seeds; None when the file recorded none."""
+    if objective is None:
+        return None
+    return tuple(_num(objective.get(field)) for field in OBJECTIVE_FIELDS)
+
+
+def objective_text(objective: dict[str, object] | None) -> str:
+    """`beta1=0.05 beta2=0.05`, or `none recorded` when the file carries no objective."""
+    key = objective_key(objective)
+    if key is None:
+        return "none recorded"
+    return " ".join(f"{name}={'?' if v is None else f'{v:g}'}" for name, v in zip(OBJECTIVE_FIELDS, key, strict=True))
+
+
+def pool_key(r: Result) -> dict[str, tuple[object, str]]:
+    """What must agree across the files of one experiment: field -> (comparable value, printable value)."""
+    budget = json.dumps(r["budget"], sort_keys=True)
+    arms = tuple(a["arm"] for a in r["arms"])
+    return {
+        "task": (r["task"], r["task"]),
+        "rounds": (r["rounds"], str(r["rounds"])),
+        "budget": (budget, budget),
+        "objective": (objective_key(r["objective"]), objective_text(r["objective"])),
+        "arms": (arms, ",".join(arms)),
+    }
+
+
 def load_results(paths: list[str]) -> list[Result]:
+    """The files as seeds of one experiment; refused, naming the differing values, when they are not."""
     if not paths:
         raise ResultError("no result files given")
     results = [load_result(p) for p in paths]
     first = results[0]
-
-    def key(r: Result) -> tuple[str, int, str, tuple[str, ...]]:
-        return (r["task"], r["rounds"], json.dumps(r["budget"], sort_keys=True), tuple(a["arm"] for a in r["arms"]))
-
+    first_key = pool_key(first)
     for r in results[1:]:
-        if key(r) != key(first):
-            raise ResultError(
-                f"{r['path']}: task/rounds/budget/arms differ from {first['path']}; plot one experiment at a time"
-            )
+        mine = pool_key(r)
+        differing = [field for field in first_key if mine[field][0] != first_key[field][0]]
+        if differing:
+            detail = "; ".join(f"{field} {mine[field][1]} vs {first_key[field][1]}" for field in differing)
+            what = f"{'/'.join(differing)} differ from {first['path']} ({detail})"
+            raise ResultError(f"{r['path']}: {what}; plot one experiment at a time")
     seeds = [r["seed"] for r in results]
     if len(set(map(str, seeds))) != len(seeds):
         raise ResultError(f"duplicate seeds across result files: {seeds}")
@@ -731,22 +773,41 @@ def ratio_fmt(value: float) -> str:
     return text
 
 
+def ratio_words(kind: str, value: float) -> str:
+    """The ratio the right way round, never `0.83x fewer`.
+
+    At or above 1: `1.11x fewer calls` / `1.03x higher score`. Below 1: the inverse
+    with the direction spelled out, `1.20x MORE calls` / `1.03x LOWER score`, so a
+    reader never has to invert `0.83x fewer` in their head. A ratio that is not
+    positive has no inverse and is printed as the bare ratio.
+    """
+    noun = "calls" if kind == "calls" else "score"
+    if value <= 0:
+        return f"{noun} ratio {ratio_fmt(value)} (not positive)"
+    if value < 1 - EPS:
+        return f"{ratio_fmt(1 / value)}x {'MORE' if kind == 'calls' else 'LOWER'} {noun}"
+    return f"{ratio_fmt(value)}x {'fewer' if kind == 'calls' else 'higher'} {noun}"
+
+
 def multiplier_text(kind: str, head: Headline, arm: str) -> str:
-    """`1.11x fewer calls (27 vs 30)` or the literal undefined words."""
+    """`1.11x fewer calls (27 vs 30)`, `1.20x MORE calls (72 vs 60)`, or the literal undefined words.
+
+    The operands are always (arm vs reference), whichever way the ratio reads.
+    """
     ref = head["reference"]
     if kind == "calls":
         value = head["callsMultiplier"].get(arm)
         mine, theirs = head["probesToTarget"].get(arm), head["probesToTarget"].get(ref)
         if value is None:
             return "not reached" if mine is None else "not comparable"
-        return f"{ratio_fmt(value)}x fewer calls ({fmt(mine)} vs {fmt(theirs)})"
+        return f"{ratio_words('calls', value)} ({fmt(mine)} vs {fmt(theirs)})"
     value = head["scoreMultiplier"].get(arm)
     mine, theirs = head["bestAtBudget"].get(arm), head["bestAtBudget"].get(ref)
     if value is None:
         if mine is None:
             return "not comparable"
         return f"ratio undefined (reference best {fmt(theirs)}); delta at budget {fmt(head['deltaAtBudget'].get(arm))}"
-    return f"{ratio_fmt(value)}x higher score at budget {fmt(head['equalBudget'])} ({fmt(mine)} vs {fmt(theirs)})"
+    return f"{ratio_words('score', value)} at budget {fmt(head['equalBudget'])} ({fmt(mine)} vs {fmt(theirs)})"
 
 
 def delta_text(head: Headline, arm: str) -> str:
@@ -767,24 +828,27 @@ def aggregate_text(kind: str, name: str, agg: ArmAggregate) -> tuple[str, str]:
     that seed's ratio, never a median. Defined in k of N: "k/N", warn-toned, or
     bad when the partial median is below 1 (the undefined seeds never reached T,
     or had nothing inside B, so they cannot rescue it). Defined nowhere: the words.
+    A median below 1 reads the right way round (``ratio_words``): the number printed
+    is the inverse of the median ratio, and the tone still follows the median itself.
     """
     n = agg["n"]
     if kind == "calls":
         value, defined = agg["callsMultiplierMedian"], agg["callsMultiplierDefined"]
-        what, count = "fewer calls", f"reached T in {agg['reached']}/{n} seeds"
+        count = f"reached T in {agg['reached']}/{n} seeds"
     else:
         value, defined = agg["scoreMultiplierMedian"], agg["scoreMultiplierDefined"]
-        what, count = "score at B", f"comparable at B in {agg['comparable']}/{n} seeds"
+        count = f"comparable at B in {agg['comparable']}/{n} seeds"
     if value is None or defined == 0:
         return f"{name}: {count}; no {kind} ratio is defined", "warn"
+    what = ratio_words(kind, value) + ("" if kind == "calls" else " at B")
     if defined == n:
         if n == 1:
-            return f"{name}: {ratio_fmt(value)}x {what} (one seed); {count}", ratio_tone(value)
-        return f"{name}: median {ratio_fmt(value)}x {what}; {count}", ratio_tone(value)
+            return f"{name}: {what} (one seed); {count}", ratio_tone(value)
+        return f"{name}: median {what}; {count}", ratio_tone(value)
     tone = "bad" if value < 1 - EPS else "warn"
     if defined == 1:
-        return f"{name}: {count}; single-seed ratio {ratio_fmt(value)}x {what} (not a median)", tone
-    return f"{name}: {count}; median of the {defined} defined ratios {ratio_fmt(value)}x {what}", tone
+        return f"{name}: {count}; single-seed ratio {what} (not a median)", tone
+    return f"{name}: {count}; median of the {defined} defined ratios {what}", tone
 
 
 def check_tables(results: list[Result]) -> str:
@@ -796,7 +860,8 @@ def check_tables(results: list[Result]) -> str:
     b = first["budget"]
     lines.append(
         f"experiment task={first['task']} n={first['n']} rounds={first['rounds']} seeds={[r['seed'] for r in results]} "
-        f"budget W={b['workers']} k1={b['k1']} k2={b['k2']} dreams={b['dreams']} arms={arm_names(results)} "
+        f"budget W={b['workers']} k1={b['k1']} k2={b['k2']} dreams={b['dreams']} "
+        f"objective {objective_text(first['objective'])} arms={arm_names(results)} "
         f"proposer={first['proposer']} dreamer={first['dreamer']} model={first['model']}"
     )
     for name, s in ser.items():
@@ -1268,6 +1333,7 @@ def build_report(results, ser, head, pngs):
         ("seeds", ", ".join(str(r["seed"]) for r in results) + f" (n={n_seeds})"),
         ("rounds", str(first["rounds"])),
         ("budget per round", f"W={b['workers']} k1={b['k1']} k2={b['k2']} dreams={b['dreams']}"),
+        ("replay objective", objective_text(first["objective"])),
         ("arms", ", ".join(names)),
         ("proposer / dreamer", f"{first['proposer']} / {first['dreamer']}"),
         ("model", first["model"] or "none (local path)"),
@@ -1326,12 +1392,13 @@ def build_report(results, ser, head, pngs):
         f"Multipliers against the {REFERENCE_ARM} arm: fewer calls = probesToTarget({REFERENCE_ARM}) / "
         f"probesToTarget(arm), the compute at the first round reaching the {REFERENCE_ARM} arm's final best; "
         f"higher score = bestAtBudget(arm) / bestAtBudget({REFERENCE_ARM}) at the equal budget B. "
-        "A value below 1 is reported as is; an undefined value is written out as not reached / not comparable, "
-        "never clamped."
+        "A ratio below 1 is written the right way round, as its inverse with the direction spelled out "
+        "(1.20x MORE calls, 1.03x LOWER score), never as 0.83x fewer; the operands stay (arm vs reference). "
+        "An undefined value is written out as not reached / not comparable, never clamped."
         + (
             " Across seeds a ratio is aggregated over the seeds where it is defined and the line says how many: "
             "one seed is a single-seed ratio, not a median, and only a ratio defined in every seed can be shown "
-            "in the success colour."
+            "in the success colour. An aggregate below 1 prints the inverse of the median ratio."
             if n_seeds > 1
             else ""
         )

@@ -1,5 +1,7 @@
 import { APP_NAME } from "../config.js";
+import { DREAM_TASK_IDS } from "../core/dream/index.js";
 import { findSlashCommandSuggestion } from "../core/slash-commands.js";
+import { DREAM_USAGE } from "./dream-command.js";
 
 export interface CommandSpec {
 	path: readonly string[];
@@ -236,12 +238,12 @@ export const COMMAND_SPECS: readonly CommandSpec[] = [
 	},
 	{
 		path: ["dream"],
-		usage: "dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup>] [--n <26|32>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]",
+		usage: DREAM_USAGE,
 		summary: "Run the Dream-RSI explore/replay/improve loop, or its controlled experiment, on a local scored task",
 		description:
-			"Grows a discovery tree with a fixed, serializable exploration policy, freezes each tree into a zero-cost replay simulator, and improves the policy by local search over its typed parameters. The default subcommand is loop and the default task is circle-packing (n=26). experiment (alias compare) runs the paper's controlled comparison: every arm starts from the same policy, seed and per-round budget, and the fixed arm (Recursive Fixed Exploration) never dreams, so round 1 is identical by construction; per-round rows, the headline multipliers and a versioned result.json land under <dir>/experiments/<id>/ for evals/dream/plot_experiment.py. The local proposer and local policy search spend no model tokens and use no network. --llm-proposer, --llm-dreamer and the dream-guided/fixed-guided arms require an in-session agent handler and are rejected by the standalone CLI.",
+			"Grows a discovery tree with a fixed, serializable exploration policy, freezes each tree into a zero-cost replay simulator, and improves the policy by local search over its typed parameters. The default subcommand is loop and the default task is circle-packing (n=26). experiment (alias compare) runs the paper's controlled comparison: every arm starts from the same policy, seed and per-round budget, and the fixed arm (Recursive Fixed Exploration) never dreams, so on a deterministically scored task round 1 is identical across arms by construction; python-speedup is wall-clock scored, so its round-1 scores differ within timing noise, and result.json records scoring as deterministic or timing. Per-round rows, the headline multipliers and a versioned result.json land under <dir>/experiments/<id>/ for evals/dream/plot_experiment.py; per arm, final policy is the last one deployed and selected policy is the post-hoc winner on the arm's own pool. The local proposer and local policy search spend no model tokens and use no network. --llm-proposer, --llm-dreamer and the dream-guided/fixed-guided arms require an in-session agent handler and are rejected by the standalone CLI.",
 		options: [
-			"--task <name>     Scored task: circle-packing (default), sum-difference or python-speedup",
+			`--task <name>     Scored task, one of ${DREAM_TASK_IDS.join(", ")} (default: circle-packing)`,
 			"--n <26|32>       Circle count for circle-packing (default: 26)",
 			"--seed <n>        Seed for the injected RNG (default: 1)",
 			"--seeds <a,b,c>   experiment: run one experiment per seed, sequentially (overrides --seed)",
@@ -249,6 +251,8 @@ export const COMMAND_SPECS: readonly CommandSpec[] = [
 			"--k1 <n>          Max online exploration rounds (default: 12)",
 			"--k2 <n>          Max replay rounds per policy simulation (default: 24)",
 			"--dreams <n>      Revised policies M per dreaming step (default: 16)",
+			"--beta1 <x>       Replay objective: cost of spending the whole W*k1 probe budget, in quality points (default: 0.05)",
+			"--beta2 <x>       Replay objective: bonus for a fully parallel replay, in quality points (default: 0.05)",
 			"--iterations <n>  Explore/dream/redeploy iterations for loop (default: 3)",
 			"--rounds <n>      experiment: rollouts per arm (default: 4)",
 			"--arms <list>     experiment: comma-separated distinct arms out of dream, fixed, dream-guided, fixed-guided (default: dream,fixed)",

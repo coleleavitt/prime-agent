@@ -16,7 +16,7 @@
 import type { SeededRng } from "./rng.js";
 
 /** Identifier for a registered scored task. */
-export type DreamTaskId = "circle-packing" | "sum-difference" | "python-speedup";
+export type DreamTaskId = "circle-packing" | "sum-difference" | "python-speedup" | "autocorrelation";
 
 /**
  * Why an artifact scored invalid. Kept as a small open string so tasks can name
@@ -27,6 +27,8 @@ export type DreamFailClass =
 	| "out-of-bounds"
 	| "overlap"
 	| "negative-radius"
+	// autocorrelation: a step-function weight below zero.
+	| "negative-weight"
 	| "non-finite"
 	| "too-small"
 	| "degenerate"

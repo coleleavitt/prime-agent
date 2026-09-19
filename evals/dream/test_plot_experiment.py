@@ -15,7 +15,9 @@ including a "not reached" and a "not comparable" case. ``Honesty`` adds two-arm
 seeds where the dream arm reaches T early, late or never, to pin the across-seeds
 rule (a ratio defined in 1 of N seeds is a single-seed ratio, never a median in
 the success colour), a headline naming a reference arm that did not run, and a
-file whose optional fields are all malformed.
+file whose optional fields are all malformed. ``Direction`` pins the wording of a
+ratio below 1 (``1.20x MORE calls (72 vs 60)``, never ``0.83x fewer``), and
+``DataLayer`` the refusal to pool files scored by different replay objectives.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -203,6 +206,23 @@ def seed_never_reaching(seed: int) -> dict[str, Any]:
     )
 
 
+def seed_more_calls(seed: int) -> dict[str, Any]:
+    # fixed first reaches its final best 1.35 at round 3 (60 probes); dream reaches it at
+    # round 3 too but after 72 probes, so the calls ratio is 60/72 = 0.83 and must read as
+    # 1.20x MORE calls (72 vs 60). Inside B = 60 dream has 1.31 vs fixed's 1.35 (0.97, LOWER).
+    return result(
+        seed,
+        [
+            arm("fixed", rows([1.30, 1.31, 1.35], [20, 20, 20], [POLICY_A] * 3), fixed=True),
+            arm("dream", rows([1.30, 1.31, 1.36], [24, 24, 24], [POLICY_A, POLICY_B, POLICY_B])),
+        ],
+    )
+
+
+# A ratio below 1 written as `0.83x fewer` / `0.97x higher`; the caption's own "never as 0.83x fewer" is allowed.
+INVERTED_WORDING = re.compile(r"(?<!never as )\b0\.\d+x (fewer|higher)")
+
+
 def write(dir_: str, name: str, payload: dict[str, Any]) -> str:
     path = Path(dir_) / name
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -243,11 +263,56 @@ class DataLayer(unittest.TestCase):
         for a in other["arms"]:
             a["rounds"] = a["rounds"][:2]
         path = write(self.tmp.name, "other.json", other)
-        with self.assertRaises(pe.ResultError):
+        with self.assertRaises(pe.ResultError) as ctx:
             pe.load_results([self.p1, path])
+        message = str(ctx.exception)
+        self.assertIn(f"{path}: rounds differ from {self.p1} (rounds 2 vs 3)", message)
         dup = write(self.tmp.name, "dup.json", seed1())
         with self.assertRaises(pe.ResultError):
             pe.load_results([self.p1, dup])
+
+    def test_files_scored_by_different_objectives_are_refused_naming_both(self):
+        other = seed2()
+        other["objective"] = {"beta1": 0.05, "beta2": 0.05}
+        path = write(self.tmp.name, "other-objective.json", other)
+        with self.assertRaises(pe.ResultError) as ctx:
+            pe.load_results([self.p1, path])
+        message = str(ctx.exception)
+        self.assertIn(
+            f"{path}: objective differ from {self.p1} (objective beta1=0.05 beta2=0.05 vs beta1=0.01 beta2=0.02)",
+            message,
+            "the refusal names both files and both objectives, and only the field that differs",
+        )
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = pe.main([self.p1, path, "--check"])
+        self.assertEqual(code, 1)
+        self.assertIn("beta1=0.05 beta2=0.05 vs beta1=0.01 beta2=0.02", err.getvalue())
+
+    def test_a_file_without_an_objective_does_not_pool_with_one_that_has_it(self):
+        bare = seed2()
+        del bare["objective"]
+        path = write(self.tmp.name, "bare.json", bare)
+        with self.assertRaises(pe.ResultError) as ctx:
+            pe.load_results([self.p1, path])
+        self.assertIn("objective none recorded vs beta1=0.01 beta2=0.02", str(ctx.exception))
+        bare_first = seed1()
+        del bare_first["objective"]
+        both = pe.load_results([write(self.tmp.name, "bare1.json", bare_first), path])
+        self.assertEqual(len(both), 2, "two files that both record no objective are still one experiment")
+        self.assertEqual(pe.objective_text(both[0]["objective"]), "none recorded")
+
+    def test_objective_key_only_looks_at_beta1_and_beta2(self):
+        self.assertEqual(pe.objective_key({"beta1": 0.05, "beta2": 0.05}), (0.05, 0.05))
+        self.assertEqual(pe.objective_key({"beta1": 0.05, "beta2": 0.05, "note": "x"}), (0.05, 0.05))
+        self.assertEqual(pe.objective_key({"beta1": "0.05"}), (None, None))
+        self.assertIsNone(pe.objective_key(None))
+        self.assertEqual(pe.objective_text({"beta1": 0.05, "beta2": 1e-5}), "beta1=0.05 beta2=1e-05")
+        self.assertEqual(pe.objective_text({"beta2": 0.05}), "beta1=? beta2=0.05")
+
+    def test_check_header_names_the_objective(self):
+        text = pe.check_tables(pe.load_results([self.p1, self.p2]))
+        self.assertIn("objective beta1=0.01 beta2=0.02", text.splitlines()[0])
 
     def test_headline_values(self):
         results = pe.load_results([self.p1, self.p2])
@@ -432,9 +497,11 @@ class Honesty(unittest.TestCase):
     def test_partial_median_below_one_is_bad(self):
         results = self.load(seed_reaching_late(1), seed_reaching_late(2), seed_never_reaching(3))
         head = pe.headline(results)
+        self.assertAlmostEqual(head["aggregate"]["dream"]["callsMultiplierMedian"], 30 / 45)
         text, tone = aggregate_line(pe.headline_lines(results, head), "dream", "calls")
-        self.assertIn("reached T in 2/3 seeds; median of the 2 defined ratios 0.67x fewer calls", text)
-        self.assertEqual(tone, "bad")
+        self.assertIn("reached T in 2/3 seeds; median of the 2 defined ratios 1.50x MORE calls", text)
+        self.assertNotIn("0.67x fewer", text)
+        self.assertEqual(tone, "bad", "the tone follows the median ratio itself, not the inverse printed")
 
     def test_ratio_defined_in_every_seed_keeps_the_median_and_its_tone(self):
         results = self.load(seed_reaching_early(1), seed_reaching_early(2))
@@ -444,6 +511,7 @@ class Honesty(unittest.TestCase):
         self.assertEqual(tone, "ok")
         results = self.load(seed_reaching_late(4), seed_reaching_late(5))
         text, tone = aggregate_line(pe.headline_lines(results, pe.headline(results)), "dream", "calls")
+        self.assertIn("median 1.50x MORE calls; reached T in 2/2 seeds", text)
         self.assertEqual(tone, "bad")
 
     def test_ratio_defined_nowhere_says_so_in_words(self):
@@ -572,6 +640,82 @@ class Honesty(unittest.TestCase):
         self.assertIn("result.json", proc.stdout)
 
 
+class Direction(unittest.TestCase):
+    """A ratio below 1 reads the right way round: `1.20x MORE calls (72 vs 60)`, never `0.83x fewer`."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def load(self, *payloads):
+        paths = [write(self.tmp.name, f"s{p['seed']}.json", p) for p in payloads]
+        return pe.load_results(paths)
+
+    def test_calls_ratio_below_one_reads_as_more_calls_with_arm_vs_reference_operands(self):
+        results = self.load(seed_more_calls(1))
+        h = results[0]["headline"]
+        assert h is not None
+        self.assertEqual(h["probesToTarget"], {"fixed": 60, "dream": 72})
+        self.assertAlmostEqual(h["callsMultiplier"]["dream"], 60 / 72)
+        self.assertEqual(pe.multiplier_text("calls", h, "dream"), "1.20x MORE calls (72 vs 60)")
+        self.assertEqual(pe.ratio_tone(h["callsMultiplier"]["dream"]), "bad", "the tone still follows the raw ratio")
+        self.assertEqual(pe.multiplier_text("calls", h, "fixed"), "1.00x fewer calls (60 vs 60)")
+
+    def test_score_ratio_below_one_reads_as_lower_score(self):
+        results = self.load(seed_more_calls(1))
+        h = results[0]["headline"]
+        assert h is not None
+        self.assertEqual(h["equalBudget"], 60)
+        self.assertAlmostEqual(h["scoreMultiplier"]["dream"], 1.31 / 1.35)
+        self.assertEqual(pe.multiplier_text("score", h, "dream"), "1.03x LOWER score at budget 60 (1.3100 vs 1.3500)")
+        above = self.load(seed_reaching_early(2))[0]["headline"]
+        assert above is not None
+        self.assertEqual(
+            pe.multiplier_text("score", above, "dream"), "1.01x higher score at budget 35 (1.3600 vs 1.3500)"
+        )
+
+    def test_ratio_words_invert_below_one_and_never_print_one_for_not_one(self):
+        self.assertEqual(pe.ratio_words("calls", 30 / 27), "1.11x fewer calls")
+        self.assertEqual(pe.ratio_words("calls", 60 / 72), "1.20x MORE calls")
+        self.assertEqual(pe.ratio_words("calls", 1.0), "1.00x fewer calls")
+        self.assertEqual(pe.ratio_words("score", 1.31 / 1.3521), "1.03x LOWER score")
+        self.assertEqual(pe.ratio_words("score", 1.3902 / 1.3521), "1.03x higher score")
+        self.assertEqual(pe.ratio_words("score", 0.9995568711894772), "1.0004x LOWER score")
+        self.assertEqual(pe.ratio_words("score", 1 - 1e-12), "1.00x higher score")
+        self.assertEqual(pe.ratio_words("score", 0.0), "score ratio 0.00 (not positive)")
+
+    def test_no_inverted_wording_anywhere_on_the_page(self):
+        results = self.load(seed1(), seed2())
+        check = pe.check_tables(results)
+        self.assertIsNone(INVERTED_WORDING.search(check), check)
+        self.assertIn("1.03x LOWER score at budget 39 (1.3100 vs 1.3521)", check)
+        self.assertIn("2.00x MORE calls (90 vs 45)", check)
+        card = "\n".join(text for text, _tone in pe.headline_lines(results, pe.headline(results)))
+        self.assertIsNone(INVERTED_WORDING.search(card), card)
+        self.assertIn("dream-guided: 1.03x LOWER score at budget 39 (1.3100 vs 1.3521)", card)
+
+    def test_single_seed_headline_below_one_stays_a_single_seed_headline(self):
+        results = self.load(seed_more_calls(1))
+        check = pe.check_tables(results)
+        self.assertIn("dream: 1.20x MORE calls (72 vs 60); 1.03x LOWER score at budget 60 (1.3100 vs 1.3500)", check)
+        self.assertIn("dream: 1.20x MORE calls (one seed); reached T in 1/1 seeds", check)
+        self.assertIn("dream: 1.03x LOWER score at B (one seed); comparable at B in 1/1 seeds", check)
+        self.assertNotIn("median", check.split("across 1 seed(s)")[1].split("seed 1: headline")[0])
+        lines = pe.headline_lines(results, pe.headline(results))
+        self.assertNotIn("across", "\n".join(text for text, _tone in lines), "one seed has no across-seeds block")
+        tones = {text.strip(): tone for text, tone in lines}
+        self.assertEqual(tones["dream: 1.20x MORE calls (72 vs 60)"], "bad")
+        self.assertEqual(tones["dream: 1.03x LOWER score at budget 60 (1.3100 vs 1.3500)"], "bad")
+
+    def test_single_seed_ratio_below_one_across_seeds_is_not_a_median(self):
+        results = self.load(seed_more_calls(1), seed_never_reaching(2), seed_never_reaching(3))
+        text, tone = aggregate_line(pe.headline_lines(results, pe.headline(results)), "dream", "calls")
+        self.assertIn("reached T in 1/3 seeds; single-seed ratio 1.20x MORE calls (not a median)", text)
+        self.assertEqual(tone, "bad")
+
+
 @unittest.skipUnless(HAS_MPL, "matplotlib not installed for this interpreter")
 class Render(unittest.TestCase):
     def setUp(self):
@@ -624,6 +768,12 @@ class Render(unittest.TestCase):
         self.assertIn("nothing is illustrative", report)
         self.assertIn(NOTE, report)
         self.assertIn("guidance worse", report)
+        self.assertIn('<div class="line bad">  dream-guided: 1.03x LOWER score at budget 39 (1.3100 vs 1.3521)', report)
+        self.assertIn('<div class="line bad">  dream-guided: 2.00x MORE calls (90 vs 45)', report)
+        self.assertIsNone(INVERTED_WORDING.search(report), "no `0.83x fewer` anywhere on the page")
+        self.assertIn("never as 0.83x fewer", report)
+        self.assertIn("inverse of the median ratio", report)
+        self.assertIn("<th>replay objective</th><td>beta1=0.01 beta2=0.02</td>", report)
 
     def test_render_single_seed_and_short_run(self):
         short = seed1()

@@ -54,14 +54,17 @@ import {
  * in-session agent handler and are rejected by this standalone CLI, which imports
  * only `core/dream/index.js` (never the LLM path) and so cannot spend a token or
  * open a socket.
+ *
+ * `DREAM_USAGE` is the one usage string: `cli/command-registry.ts` imports it for
+ * `help dream`, and the Options rows there must name every flag it lists (a test
+ * in `test/dream-command.test.ts` checks both against the parser).
  */
 
 const DEFAULT_TASK: DreamTaskId = "circle-packing";
 const DEFAULT_N = 26;
 const ACCEPTED_CIRCLE_N = new Set([26, 32]);
 
-const DREAM_USAGE =
-	"dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup>] [--n <26|32>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]";
+export const DREAM_USAGE = `dream [rollout|replay|improve|loop|experiment|status|show] [--task <${DREAM_TASK_IDS.join("|")}>] [--n <26|32>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]`;
 
 const DEFAULT_EXPERIMENT_ROUNDS = 4;
 const DEFAULT_EXPERIMENT_ARMS: readonly ExperimentArm[] = LOCAL_EXPERIMENT_ARMS;
@@ -414,7 +417,7 @@ function printExperiment(result: ExperimentResult, io: DreamCommandIo, storeDir:
 	const budget = result.budget;
 	io.stdout(`dream experiment  ${result.experimentId}`);
 	io.stdout(
-		`  task ${result.task}${result.n !== undefined ? ` n ${result.n}` : ""}  seed ${result.seed}  rounds ${result.rounds}  W ${budget.workers}  k1 ${budget.k1}  k2 ${budget.k2}  M ${budget.dreams}  beta1 ${result.objective.beta1}  beta2 ${result.objective.beta2}  arms ${result.arms.map((arm) => arm.arm).join(",")}`,
+		`  task ${result.task}${result.n !== undefined ? ` n ${result.n}` : ""}  scoring ${result.scoring}  seed ${result.seed}  rounds ${result.rounds}  W ${budget.workers}  k1 ${budget.k1}  k2 ${budget.k2}  M ${budget.dreams}  beta1 ${result.objective.beta1}  beta2 ${result.objective.beta2}  arms ${result.arms.map((arm) => arm.arm).join(",")}`,
 	);
 	io.stdout(`  initial policy ${result.initialPolicyId}`);
 	for (const arm of result.arms) {
@@ -436,8 +439,9 @@ function printArm(arm: ExperimentArmResult, io: DreamCommandIo): void {
 			`    ${String(row.round).padStart(5)} | ${fmtScore(row.roundBest)} | ${fmtScore(row.cumulativeBest)} | ${String(row.probes).padStart(6)} | ${String(row.cumulativeProbes).padStart(10)} | ${row.policyId}${row.dreaming ? `  dreamed ${fmtScore(row.dreaming.currentScore)} -> ${fmtScore(row.dreaming.chosenScore)} improved ${row.dreaming.improved}` : ""}`,
 		);
 	}
+	// `final policy` is the last row's policy (what the arm last ran); `selected` is the post-hoc pool winner.
 	io.stdout(
-		`    final policy ${arm.finalPolicyId}  changes ${arm.policyChanges}  own-pool score ${fmtScore(arm.policyScoreOnOwnPool.initial)} -> ${fmtScore(arm.policyScoreOnOwnPool.final)}  final best ${fmtScore(arm.totals.finalBest)}  probes ${arm.totals.probes}  handler calls ${arm.totals.handlerCalls}  tokens ${arm.totals.tokens}`,
+		`    final policy ${arm.finalPolicyId}  changes ${arm.policyChanges}  selected policy ${arm.selectedPolicyId}  own-pool score ${fmtScore(arm.policyScoreOnOwnPool.initial)} -> ${fmtScore(arm.policyScoreOnOwnPool.final)}  final best ${fmtScore(arm.totals.finalBest)}  probes ${arm.totals.probes}  handler calls ${arm.totals.handlerCalls}  tokens ${arm.totals.tokens}`,
 	);
 }
 

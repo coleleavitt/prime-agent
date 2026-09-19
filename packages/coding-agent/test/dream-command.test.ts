@@ -2,12 +2,15 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { formatCommandHelp, getCommandSpec } from "../src/cli/command-registry.js";
 import {
+	DREAM_USAGE,
 	type DreamCommandIo,
 	DreamCommandUsageError,
 	parseDreamCommandArgs,
 	runDreamCommand,
 } from "../src/cli/dream-command.js";
+import { DREAM_TASK_IDS } from "../src/core/dream/tasks/index.js";
 
 /**
  * The `dream` CLI must run the whole Dream-RSI loop against a scratch store with
@@ -167,6 +170,46 @@ describe("parseDreamCommandArgs", () => {
 	});
 });
 
+describe("dream usage and help", () => {
+	const spec = getCommandSpec(["dream"])!;
+	const usageFlags = [...new Set(DREAM_USAGE.match(/--[a-z0-9-]+/g) ?? [])];
+	const optionRows = (spec.options ?? []).filter((row) => row.startsWith("--"));
+	const rowFlags = optionRows.map((row) => row.match(/^--[a-z0-9-]+/)![0]);
+
+	it("is one string shared by the parser's usage error and help dream, naming every registered task", () => {
+		expect(spec.usage).toBe(DREAM_USAGE);
+		expect(DREAM_USAGE).toContain(`--task <${DREAM_TASK_IDS.join("|")}>`);
+		expect(usageFlags.length).toBeGreaterThan(10);
+		const help = formatCommandHelp(["dream"])!;
+		expect(help).toContain(DREAM_USAGE);
+		for (const flag of usageFlags) expect(help).toContain(`  ${flag}`);
+	});
+
+	it("has an Options row for every flag in the usage, and no row for a flag the usage lacks", () => {
+		expect([...rowFlags].sort()).toEqual([...usageFlags].sort());
+		expect(rowFlags).toContain("--beta1");
+		expect(rowFlags).toContain("--beta2");
+		expect(rowFlags).toContain("--seeds");
+		expect(rowFlags).toContain("--overwrite");
+		for (const taskId of DREAM_TASK_IDS) {
+			expect(optionRows.find((row) => row.startsWith("--task "))).toContain(taskId);
+		}
+	});
+
+	it("names only flags the parser accepts", () => {
+		for (const flag of usageFlags) {
+			const takesValue = DREAM_USAGE.includes(`[${flag} <`);
+			try {
+				parseDreamCommandArgs(takesValue ? [flag, "1"] : [flag]);
+			} catch (error) {
+				// A value the parser dislikes is fine here; an unknown flag is not.
+				expect(error).toBeInstanceOf(DreamCommandUsageError);
+				expect((error as Error).message).not.toMatch(/Unknown option/);
+			}
+		}
+	});
+});
+
 describe("runDreamCommand loop", () => {
 	it("runs the whole loop at zero tokens and prints a per-round summary", () => {
 		const dir = scratch();
@@ -232,11 +275,22 @@ describe("runDreamCommand experiment", () => {
 		expect(err).toHaveLength(0);
 		const text = out.join("\n");
 		expect(text).toContain("dream experiment  sum-difference-s1-n3-");
+		expect(text).toContain("task sum-difference  scoring deterministic  seed 1");
 		expect(text).toContain("arm dream ");
 		expect(text).toContain("arm fixed ");
 		expect(text).toContain("round | best | cum best | probes | cum probes | policy");
 		expect(text).toContain("headline vs fixed");
 		expect(text).toContain("delta best");
+		// The final-policy line names the last row's policy, so it can never contradict the table above it.
+		const finalLines = out.filter((line) => line.includes("final policy"));
+		expect(finalLines).toHaveLength(2);
+		for (const line of finalLines) {
+			const match = line.match(/final policy (\S+) {2}changes (\d+) {2}selected policy (\S+) {2}own-pool score/);
+			expect(match, line).not.toBeNull();
+			const rows = out.slice(0, out.indexOf(line)).filter((row) => /^ {4}\s*[123] \|/.test(row));
+			const lastRowPolicy = rows.at(-1)!.split(" | ")[5]!.split("  ")[0];
+			expect(match![1]).toBe(lastRowPolicy);
+		}
 		expect(text).toMatch(/results .*\/experiments\/sum-difference-s1-n3-\d+\/result\.json/);
 		// One row per arm-round.
 		expect(out.filter((line) => /^ {4}\s*[123] \|/.test(line))).toHaveLength(6);
@@ -268,10 +322,15 @@ describe("runDreamCommand experiment", () => {
 			result.arms.every((arm: { rounds: unknown[]; totals: { tokens: number } }) => arm.rounds.length === 3),
 		).toBe(true);
 		expect(result.arms.every((arm: { totals: { tokens: number } }) => arm.totals.tokens === 0)).toBe(true);
+		expect(result.scoring).toBe("deterministic");
 		const fixed = result.arms.find((arm: { arm: string }) => arm.arm === "fixed");
 		expect(fixed.finalPolicyId).toBe(fixed.initialPolicyId);
+		expect(fixed.selectedPolicyId).toBe(fixed.initialPolicyId);
 		expect(fixed.rounds.every((row: { dreaming: unknown }) => row.dreaming === null)).toBe(true);
 		expect(fixed.storeDir).toBe(`experiments/${result.experimentId}/fixed`);
+		for (const arm of result.arms as { finalPolicyId: string; rounds: { policyId: string }[] }[]) {
+			expect(arm.finalPolicyId).toBe(arm.rounds.at(-1)!.policyId);
+		}
 		expect(existsSync(join(dirA, "experiments", result.experimentId, "result.json"))).toBe(true);
 	});
 

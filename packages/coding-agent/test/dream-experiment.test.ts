@@ -28,8 +28,10 @@ import {
 	readExperimentResult,
 	runExperiment,
 	runExperimentWithRunner,
+	taskScoring,
+	timingScoringNote,
 } from "../src/core/dream/experiment.js";
-import { runDreamLoop } from "../src/core/dream/loop.js";
+import { type DreamLoopResult, runDreamLoop } from "../src/core/dream/loop.js";
 import { DEFAULT_POLICY, policyId } from "../src/core/dream/policy.js";
 import {
 	DreamStoreError,
@@ -97,6 +99,7 @@ describe("runExperiment (local)", () => {
 		expect(result.schema).toBe(EXPERIMENT_SCHEMA);
 		expect(result.arms.map((a) => a.arm)).toEqual(["fixed", "dream"]);
 		expect(result.sharedInitialRollout).toBe(false);
+		expect(result.scoring).toBe("deterministic");
 		expect(result.initialPolicyId).toBe(policyId(DEFAULT_POLICY));
 		expect(result.experimentId).toBe(`sum-difference-s7-n3-${FIXED_CLOCK}`);
 
@@ -133,6 +136,7 @@ describe("runExperiment (local)", () => {
 		expect(fixed.mode).toEqual({ proposer: "local", dreamer: "local" });
 		expect(fixed.policyChanges).toBe(0);
 		expect(fixed.finalPolicyId).toBe(fixed.initialPolicyId);
+		expect(fixed.selectedPolicyId).toBe(fixed.initialPolicyId);
 		expect(fixed.policyScoreOnOwnPool.final).toBe(fixed.policyScoreOnOwnPool.initial);
 		expect(fixed.rounds.every((row) => row.dreaming === null)).toBe(true);
 		expect(fixed.rounds.every((row) => row.policyId === fixed.initialPolicyId)).toBe(true);
@@ -154,6 +158,9 @@ describe("runExperiment (local)", () => {
 		expect(dream.policyScoreOnOwnPool.final).toBeGreaterThanOrEqual(dream.policyScoreOnOwnPool.initial);
 		expect(dream.rounds.map((row) => row.round)).toEqual([1, 2, 3]);
 		expect(dream.rounds.map((row) => row.poolSize)).toEqual([0, 1, 2]);
+		// The final policy is what the arm last ran; the selected one is a post-hoc pick from {initial} + the dreamed ones.
+		expect(dream.finalPolicyId).toBe(dream.rounds.at(-1)!.policyId);
+		expect(dream.rounds.map((row) => row.policyId)).toContain(dream.selectedPolicyId);
 
 		expect(result.headline).not.toBeNull();
 		expect(result.headline!.reference).toBe("fixed");
@@ -174,6 +181,16 @@ describe("runExperiment (local)", () => {
 		expect(isExperimentResult(JSON.parse(readFileSync(path, "utf8")))).toBe(true);
 		expect(isExperimentResult({ ...result, schema: "x/0" })).toBe(false);
 		expect(isExperimentResult(null)).toBe(false);
+		// `scoring` and `selectedPolicyId` are additive: a file written before them still validates, a malformed one does not.
+		const { scoring: _scoring, ...legacy } = result;
+		expect(
+			isExperimentResult({
+				...legacy,
+				arms: result.arms.map(({ selectedPolicyId: _selected, ...armRest }) => armRest),
+			}),
+		).toBe(true);
+		expect(isExperimentResult({ ...result, scoring: "noisy" })).toBe(false);
+		expect(isExperimentResult({ ...result, arms: [{ ...result.arms[0]!, selectedPolicyId: 1 }] })).toBe(false);
 		expect(() => readExperimentResult(dir, "missing")).toThrow(DreamStoreError);
 
 		expect(() => runExperiment(SPEC, { dir, clock: () => FIXED_CLOCK })).toThrow(/already exists/);
@@ -208,6 +225,7 @@ describe("runExperiment (local)", () => {
 				arm: armResult.arm,
 				initialPolicyId: armResult.initialPolicyId,
 				finalPolicyId: armResult.finalPolicyId,
+				selectedPolicyId: armResult.selectedPolicyId,
 				policyScoreOnOwnPool: armResult.policyScoreOnOwnPool,
 				policyChanges: armResult.policyChanges,
 				totals: armResult.totals,
@@ -220,12 +238,23 @@ describe("runExperiment (local)", () => {
 		);
 	});
 
-	it("records the caveat note for python-speedup and the missing-control note without a fixed arm", () => {
+	it("marks the task's scoring, qualifies round 1 for a timing task, and notes the missing control", () => {
 		const dir = scratch();
 		const onlyDream = planExperiment({ ...SPEC, arms: ["dream"] }, { dir, clock: () => FIXED_CLOCK });
+		expect(onlyDream.scoring).toBe("deterministic");
 		expect(onlyDream.notes).toEqual(["no fixed arm ran: the headline multipliers are undefined", OBJECTIVE_NOTE]);
+		expect(taskScoring("circle-packing")).toBe("deterministic");
+		expect(taskScoring("sum-difference")).toBe("deterministic");
+		expect(taskScoring("python-speedup")).toBe("timing");
+		// Planning never runs a task, so python-speedup is safe to plan here; it is never rolled out in a test.
 		const speedup = planExperiment({ ...SPEC, task: "python-speedup" }, { dir, clock: () => FIXED_CLOCK });
-		expect(speedup.notes.some((note) => note.startsWith("python-speedup:"))).toBe(true);
+		expect(speedup.scoring).toBe("timing");
+		expect(speedup.notes).toEqual([timingScoringNote("python-speedup"), OBJECTIVE_NOTE]);
+		const note = speedup.notes[0]!;
+		expect(note.startsWith("python-speedup:")).toBe(true);
+		expect(note).toContain("wall-clock timed");
+		expect(note).toContain("round 1");
+		expect(note).toContain("timing noise");
 		expect(speedup.notes.at(-1)).toBe(OBJECTIVE_NOTE);
 		// A caller's objective is recorded on the plan and the result.
 		const tuned = planExperiment(
@@ -297,6 +326,7 @@ function syntheticArm(name: ExperimentArmResult["arm"], rows: ExperimentRoundRow
 		runId: "r",
 		initialPolicyId: "p",
 		finalPolicyId: "p",
+		selectedPolicyId: "p",
 		policyScoreOnOwnPool: { initial: 0, final: 0 },
 		policyChanges: 0,
 		rounds: rows,
@@ -432,6 +462,68 @@ describe("buildArmResult", () => {
 		expect(result.policyChanges).toBe(changes.length);
 		expect(result.totals.finalBest).toBe(loop.bestNodeScore);
 		expect(result.runId).toBe(loop.runId);
+		expect(result.finalPolicyId).toBe(loop.rounds.at(-1)!.policyId);
+		expect(result.selectedPolicyId).toBe(loop.finalPolicyId);
+	});
+
+	it("reports the last deployed policy as final and the post-hoc pool winner as selected, so the table cannot contradict the line", () => {
+		const record = (iteration: number, policy: string) => ({
+			iteration,
+			treeId: `t${iteration}`,
+			policyId: policy,
+			roundBest: 1 + iteration,
+			probes: 4,
+			decisionRounds: 2,
+			poolSize: iteration,
+			tokens: { rollout: 0, dreamer: 0, guidance: 0 },
+			handlerCalls: { proposer: 0, dreamer: 0, guidance: 0 },
+			dreaming: iteration === 0 ? null : { currentScore: 0.5, chosenScore: 0.6, improved: true, candidates: 2 },
+		});
+		// Round 3 ran p2, but on the final pool the loop's selection preferred the earlier p1.
+		const loop: DreamLoopResult = {
+			runId: "run",
+			task: "sum-difference",
+			seed: 1,
+			mode: "local",
+			iterations: 2,
+			fixedPolicy: false,
+			treeIds: ["t0", "t1", "t2"],
+			rounds: [record(0, "p0"), record(1, "p1"), record(2, "p2")],
+			initialPolicyId: "p0",
+			initialPolicyScore: 0.4,
+			finalPolicy: DEFAULT_POLICY,
+			finalPolicyId: "p1",
+			finalPolicyScore: 0.7,
+			improved: true,
+			bestNodeScore: 3,
+			tokens: 0,
+		};
+		const result = buildArmResult(
+			{ arm: "dream", fixedPolicy: false, guided: false, storeDir: "experiments/x/dream" },
+			{ proposer: "local", dreamer: "local" },
+			loop,
+		);
+		expect(result.finalPolicyId).toBe("p2");
+		expect(result.rounds.at(-1)!.policyId).toBe(result.finalPolicyId);
+		expect(result.policyChanges).toBe(2);
+		expect(result.selectedPolicyId).toBe("p1");
+		expect(result.policyScoreOnOwnPool).toEqual({ initial: 0.4, final: 0.7 });
+		// A loop that never dreamed reports the initial policy on both axes.
+		const fixed = buildArmResult(
+			{ arm: "fixed", fixedPolicy: true, guided: false, storeDir: "experiments/x/fixed" },
+			{ proposer: "local", dreamer: "local" },
+			{
+				...loop,
+				fixedPolicy: true,
+				rounds: [record(0, "p0"), record(1, "p0"), record(2, "p0")],
+				finalPolicyId: "p0",
+				finalPolicyScore: 0.4,
+				improved: false,
+			},
+		);
+		expect(fixed.finalPolicyId).toBe("p0");
+		expect(fixed.selectedPolicyId).toBe("p0");
+		expect(fixed.policyChanges).toBe(0);
 	});
 });
 

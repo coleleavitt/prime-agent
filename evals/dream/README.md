@@ -52,12 +52,16 @@ Output (default `plots/` next to the first result file):
 | `round_best.png` | 6a | round-best points per seed and the cumulative-best step per arm vs round |
 | `compute.png` | 3b / 5 | cumulative best vs cumulative discovery-agent calls per arm, with the fixed arm's final best `T` and the equal-budget line `B` |
 | `attempts.png` | 6b | evaluated attempts per round per arm; `Δ k/n` marks a policy change in k of n seeds (adaptivity) |
-| `headline.png` | the multipliers | `X.XXx fewer calls (a vs b)` and `Y.YYx higher score at budget B (a vs b)` per arm, or the literal words `not reached` / `not comparable` |
+| `headline.png` | the multipliers | `X.XXx fewer calls (a vs b)` and `Y.YYx higher score at budget B (a vs b)` per arm, read the right way round below 1 (`1.20x MORE calls (72 vs 60)`, `1.03x LOWER score`), or the literal words `not reached` / `not comparable` |
 | `report.html` | all four | self-contained page with captions built from the result metadata and the per-round table |
 
-Several files are treated as seeds of one experiment (same task, rounds, budget and arms; distinct
-seeds) and reduced to mean / min / max per round, with the median of the defined multipliers and
-"reached T in k/n seeds". A single file is plotted as is.
+Several files are treated as seeds of one experiment (same task, rounds, budget, replay objective
+and arms; distinct seeds) and reduced to mean / min / max per round, with the median of the defined
+multipliers and "reached T in k/n seeds". A single file is plotted as is. Files that disagree are
+refused, and the message names the field and both values, e.g.
+`s2/result.json: objective differ from s1/result.json (objective beta1=0.05 beta2=0.05 vs beta1=0.01 beta2=0.02); plot one experiment at a time`:
+seeds scored by different `beta1`/`beta2` are not one experiment, and a file that records no
+objective does not pool with one that does.
 
 ## What the numbers mean
 
@@ -68,10 +72,15 @@ seeds) and reduced to mean / min / max per round, with the median of the defined
   (the caption says what the files recorded).
 - **X x fewer calls** = `probesToTarget(fixed) / probesToTarget(arm)`, where `probesToTarget` is
   the compute at the FIRST round whose cumulative best reaches `T`. `not reached` when the arm
-  never gets there; below 1 is reported as is.
+  never gets there.
 - **Y x higher score** = `bestAtBudget(arm) / bestAtBudget(fixed)`, the cumulative best at the last
   round that fits inside `B`. `not comparable` when the arm's first round already exceeds `B`;
   when the reference best is 0 the ratio is undefined and the delta at budget is printed.
+- **Below 1 the words turn round, the numbers do not.** A ratio below 1 is never written as
+  `0.83x fewer calls`; it is written as its inverse with the direction spelled out,
+  `1.20x MORE calls (72 vs 60)` / `1.03x LOWER score at budget B (a vs b)`, with the operands still
+  in (arm vs reference) order. The colour follows the raw ratio (below 1 is bad). Across seeds an
+  aggregate below 1 prints the inverse of the median ratio (`median 1.50x MORE calls`).
 - **delta final best** = `deltaBest(arm) = finalBest(arm) - T`, printed with its sign.
 - **Ablation**: for each (unguided, guided) pair that ran, guided minus unguided final best; the
   paper's claim (semantic guidance is worse) holds only when the sign is negative, and the sign is
@@ -116,8 +125,9 @@ python3 -m unittest evals/dream/test_plot_experiment.py                         
 
 The tests use a synthetic result set (three arms, three rounds, two seeds, including a `not
 reached` and a `not comparable` case), plus fixtures for the across-seeds honesty rule (a ratio
-defined in 1 of 3, 2 of 3, all, and no seeds), a headline naming a reference arm that did not run,
-and a file whose optional fields are all malformed; the render tests are skipped, not failed, where
-matplotlib is missing. `basedpyright evals/dream/plot_experiment.py` reports no errors when run
+defined in 1 of 3, 2 of 3, all, and no seeds), the below-1 wording (`1.20x MORE calls (72 vs 60)`
+and no `0.83x fewer` anywhere on the page), the refusal to pool files with different objectives, a
+headline naming a reference arm that did not run, and a file whose optional fields are all
+malformed; the render tests are skipped, not failed, where matplotlib is missing. `basedpyright evals/dream/plot_experiment.py` reports no errors when run
 with an interpreter that has matplotlib (`--pythonpath ~/Documents/AISpecies/.venv/bin/python`).
 The files are formatted with `ruff format --line-length 120`.

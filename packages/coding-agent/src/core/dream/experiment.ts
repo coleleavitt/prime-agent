@@ -5,9 +5,13 @@
  * policy, seed, clock and per-round budget, each into its own store under
  * `<dir>/experiments/<id>/<arm>`, and records one row per round per arm. The
  * "fixed" arm is the paper's Recursive Fixed Exploration control: identical in
- * every respect except that it never dreams (`fixedPolicy`), so round 1 is
- * identical to the dreaming arm by construction and every later difference is the
- * learned policy's doing. The headline multipliers compare each arm against it.
+ * every respect except that it never dreams (`fixedPolicy`), so on a
+ * deterministically scored task round 1 is identical to the dreaming arm by
+ * construction and every later difference is the learned policy's doing. On a
+ * wall-clock-scored task (`scoring: "timing"`, python-speedup) round 1 shares its
+ * seed, policy and tree id across arms but its scores differ within timing noise;
+ * the result marks the task's scoring and says so in a note. The headline
+ * multipliers compare each arm against the control.
  *
  * Vocabulary. A ROUND is one rollout (`rounds = N` means N rollouts per arm; the
  * loop runs `iterations = N - 1`). PROBES (`tree.size - 1`, evaluated attempts) are
@@ -16,6 +20,15 @@
  * into that axis. A policy's own-pool replay score is an in-arm estimate and is
  * never compared across arms. A multiplier is reported only when defined (else
  * null, printed as "not reached"/"not comparable"); nothing is clamped.
+ *
+ * Two policy ids per arm. `finalPolicyId` is the LAST DEPLOYED policy, the one
+ * that grew the arm's last tree (the round table's last `policyId`), and
+ * `policyChanges` counts the table's changes, so the two can never disagree.
+ * `selectedPolicyId` is the loop's post-hoc `selectBestPolicy` winner over
+ * {initial} and every dreamed policy, scored on the arm's final pool; it may be an
+ * earlier policy, or the initial one, and `policyScoreOnOwnPool.final` is ITS
+ * score. A result file without `selectedPolicyId` predates the split, and its
+ * `finalPolicyId` is the selected policy.
  *
  * Two drivers share one plan/record/headline core:
  *   - `runExperiment` is the synchronous local runner behind the standalone CLI:
@@ -55,9 +68,29 @@ export const GUIDED_ARM_REJECTION_MESSAGE =
 const TARGET_EPS = 1e-9;
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
-const PYTHON_SPEEDUP_NOTE =
-	"python-speedup: evaluate is wall-clock timed; tree shapes and ids are deterministic, scores are not byte-deterministic";
 const NO_FIXED_ARM_NOTE = "no fixed arm ran: the headline multipliers are undefined";
+
+/**
+ * How a task's `evaluate` scores: `deterministic` is a pure function of the
+ * artifact, so one seed and one clock give a byte-reproducible experiment and
+ * round 1 is identical across arms; `timing` reads the wall clock, so scores
+ * differ run to run within timing noise.
+ */
+export type DreamTaskScoring = "deterministic" | "timing";
+const TIMING_SCORED_TASKS: ReadonlySet<DreamTaskId> = new Set<DreamTaskId>(["python-speedup"]);
+
+export function taskScoring(taskId: DreamTaskId): DreamTaskScoring {
+	return TIMING_SCORED_TASKS.has(taskId) ? "timing" : "deterministic";
+}
+
+export function isDreamTaskScoring(value: unknown): value is DreamTaskScoring {
+	return value === "deterministic" || value === "timing";
+}
+
+/** The note a wall-clock-scored task's result carries; prefixed with the task id. */
+export function timingScoringNote(taskId: DreamTaskId): string {
+	return `${taskId}: evaluate is wall-clock timed, so scores are not byte-deterministic; every arm's round 1 shares its seed, policy and tree id, but its scores differ within timing noise, so round 1 is identical across arms only on a deterministically scored task`;
+}
 /**
  * Appended to every result so a reader can tell a file scored by the normalized
  * objective from one scored by the raw-scale objective it replaced; the result
@@ -137,8 +170,15 @@ export interface ExperimentArmResult {
 	storeDir: string;
 	runId: string;
 	initialPolicyId: string;
+	/** The LAST DEPLOYED policy: the one that grew the arm's last tree (`rounds.at(-1).policyId`). */
 	finalPolicyId: string;
-	/** In-arm replay estimates on this arm's own final pool; never compared across arms. */
+	/** The post-hoc `selectBestPolicy` winner over {initial} and every dreamed policy, on the arm's final pool. */
+	selectedPolicyId: string;
+	/**
+	 * In-arm replay estimates on this arm's own final pool; never compared across
+	 * arms. `initial` is the initial policy's, `final` is the SELECTED policy's
+	 * (`selectedPolicyId`), so `final >= initial` by the no-worse rule.
+	 */
 	policyScoreOnOwnPool: { initial: number; final: number };
 	/** Rounds whose policy differs from the previous round's (Fig 6b adaptivity). */
 	policyChanges: number;
@@ -168,6 +208,8 @@ export interface ExperimentResult {
 	schema: typeof EXPERIMENT_SCHEMA;
 	experimentId: string;
 	task: DreamTaskId;
+	/** Whether the task's scores are a pure function of the artifact or read the wall clock. */
+	scoring: DreamTaskScoring;
 	n?: number;
 	seed: number | string;
 	rounds: number;
@@ -250,6 +292,7 @@ export interface ExperimentPlan {
 	experimentId: string;
 	task: ScoredTask<unknown>;
 	taskId: DreamTaskId;
+	scoring: DreamTaskScoring;
 	n: number | undefined;
 	seed: number | string;
 	rounds: number;
@@ -304,8 +347,9 @@ export function planExperiment(
 	const task = resolveTask({ task: spec.task, ...(n !== undefined ? { n } : {}) });
 	const objective = spec.objective ?? DEFAULT_OBJECTIVE;
 	const initialPolicy = spec.initialPolicy ?? DEFAULT_POLICY;
+	const scoring = taskScoring(spec.task);
 	const notes = [...(options.notes ?? [])];
-	if (spec.task === "python-speedup") notes.push(PYTHON_SPEEDUP_NOTE);
+	if (scoring === "timing") notes.push(timingScoringNote(spec.task));
 	if (!spec.arms.includes("fixed")) notes.push(NO_FIXED_ARM_NOTE);
 	notes.push(OBJECTIVE_NOTE);
 	const arms = spec.arms.map((arm, index): ExperimentArmPlan => {
@@ -339,6 +383,7 @@ export function planExperiment(
 		experimentId,
 		task,
 		taskId: spec.task,
+		scoring,
 		n,
 		seed: spec.seed,
 		rounds: spec.rounds,
@@ -359,7 +404,11 @@ function resetExperimentDir(plan: ExperimentPlan): void {
 	rmSync(experimentDir(plan.dir, plan.experimentId), { recursive: true, force: true });
 }
 
-/** Derive an arm's rows and totals from the loop's per-round records. */
+/**
+ * Derive an arm's rows and totals from the loop's per-round records. The arm's
+ * `finalPolicyId` is read off the last row (the last deployed policy), never off
+ * the loop's post-hoc selection, which is reported separately as `selectedPolicyId`.
+ */
 export function buildArmResult(
 	arm: Pick<ExperimentArmPlan, "arm" | "fixedPolicy" | "guided" | "storeDir">,
 	mode: ExperimentArmMode,
@@ -409,7 +458,8 @@ export function buildArmResult(
 		storeDir: arm.storeDir,
 		runId: loop.runId,
 		initialPolicyId: loop.initialPolicyId,
-		finalPolicyId: loop.finalPolicyId,
+		finalPolicyId: rounds.at(-1)?.policyId ?? loop.initialPolicyId,
+		selectedPolicyId: loop.finalPolicyId,
 		policyScoreOnOwnPool: { initial: loop.initialPolicyScore, final: loop.finalPolicyScore },
 		policyChanges,
 		rounds,
@@ -475,11 +525,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Structural check of a parsed result file: the versioned schema plus the fields every reader relies on. */
+/**
+ * Structural check of a parsed result file: the versioned schema plus the fields
+ * every reader relies on. `scoring` and the per-arm `selectedPolicyId` were added
+ * to schema 1 additively, so a file without them (written before the split) still
+ * validates; a malformed value does not.
+ */
 export function isExperimentResult(value: unknown): value is ExperimentResult {
 	if (!isRecord(value)) return false;
 	if (value.schema !== EXPERIMENT_SCHEMA) return false;
 	if (typeof value.experimentId !== "string" || typeof value.task !== "string") return false;
+	if (value.scoring !== undefined && !isDreamTaskScoring(value.scoring)) return false;
 	if (typeof value.rounds !== "number" || !isRecord(value.budget)) return false;
 	if (typeof value.initialPolicyId !== "string" || !isRecord(value.initialPolicy)) return false;
 	if (!Array.isArray(value.arms) || !Array.isArray(value.notes)) return false;
@@ -491,6 +547,7 @@ export function isExperimentResult(value: unknown): value is ExperimentResult {
 			isExperimentArm(arm.arm) &&
 			typeof arm.runId === "string" &&
 			typeof arm.storeDir === "string" &&
+			(arm.selectedPolicyId === undefined || typeof arm.selectedPolicyId === "string") &&
 			Array.isArray(arm.rounds) &&
 			isRecord(arm.totals),
 	);
@@ -529,6 +586,7 @@ function assembleResult(
 		schema: EXPERIMENT_SCHEMA,
 		experimentId: plan.experimentId,
 		task: plan.taskId,
+		scoring: plan.scoring,
 		...(plan.n !== undefined ? { n: plan.n } : {}),
 		seed: plan.seed,
 		rounds: plan.rounds,
@@ -568,8 +626,10 @@ const LOCAL_MODE: ExperimentArmMode = { proposer: "local", dreamer: "local" };
 
 /**
  * The synchronous, zero-token local runner (the standalone CLI). Every arm runs
- * `runDreamLoop` with no injected rng, so each seeds itself identically and
- * round 1 is byte-identical across arms. Only `dream` and `fixed` are served.
+ * `runDreamLoop` with no injected rng, so each seeds itself identically and, on a
+ * deterministically scored task, round 1 is byte-identical across arms (on a
+ * `timing` task only its seed, policy and tree id are). Only `dream` and `fixed`
+ * are served.
  */
 export function runExperiment(spec: ExperimentSpec, options: ExperimentRunOptions): ExperimentResult {
 	const plan = planExperiment(spec, options, LOCAL_EXPERIMENT_ARMS);

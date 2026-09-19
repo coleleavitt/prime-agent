@@ -4,11 +4,18 @@
  */
 
 import type { DreamTaskId, ScoredTask } from "../task.js";
+import {
+	AUTOCORRELATION_BIN_COUNTS,
+	autocorrelationPromptContext,
+	createAutocorrelationTask,
+	DEFAULT_AUTOCORRELATION_N,
+	isAutocorrelationBinCount,
+} from "./autocorrelation.js";
 import { createCirclePackingTask } from "./circle-packing.js";
 import { createPythonSpeedupTask, PYTHON_SPEEDUP_PROMPT_CONTEXT } from "./python-speedup.js";
 import { createSumDifferenceTask } from "./sum-difference.js";
 
-export const DREAM_TASK_IDS = ["circle-packing", "sum-difference", "python-speedup"] as const;
+export const DREAM_TASK_IDS = ["circle-packing", "sum-difference", "python-speedup", "autocorrelation"] as const;
 
 /** The circle counts the paper studies; the default is the smaller one. */
 export const CIRCLE_PACKING_PAPER_N = [26, 32] as const;
@@ -42,14 +49,32 @@ export function resolveTask(spec: DreamTaskSpec): ScoredTask<unknown> {
 			return createSumDifferenceTask() as unknown as ScoredTask<unknown>;
 		case "python-speedup":
 			return createPythonSpeedupTask() as unknown as ScoredTask<unknown>;
+		case "autocorrelation": {
+			const n = spec.n ?? DEFAULT_AUTOCORRELATION_N;
+			if (!isAutocorrelationBinCount(n)) {
+				throw new RangeError(
+					`autocorrelation requires n in {${AUTOCORRELATION_BIN_COUNTS.join(", ")}} (got ${String(spec.n)})`,
+				);
+			}
+			return createAutocorrelationTask(n) as unknown as ScoredTask<unknown>;
+		}
 	}
 }
 
 /**
  * The task-specific context an LLM proposer prompt carries (the public contract
- * and examples, never hidden tests). Only python-speedup has one; the other
- * tasks are fully described by their serialized candidate.
+ * and examples, never hidden tests). python-speedup and autocorrelation have
+ * one; the other tasks are fully described by their serialized candidate. `n`
+ * lets the autocorrelation contract name its bin count exactly; without it the
+ * contract is stated in terms of the candidate's own `n`.
  */
-export function taskPromptContext(taskId: DreamTaskId): string | undefined {
-	return taskId === "python-speedup" ? PYTHON_SPEEDUP_PROMPT_CONTEXT : undefined;
+export function taskPromptContext(taskId: DreamTaskId, n?: number): string | undefined {
+	switch (taskId) {
+		case "python-speedup":
+			return PYTHON_SPEEDUP_PROMPT_CONTEXT;
+		case "autocorrelation":
+			return autocorrelationPromptContext(n);
+		default:
+			return undefined;
+	}
 }
