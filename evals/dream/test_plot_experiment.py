@@ -18,6 +18,11 @@ the success colour), a headline naming a reference arm that did not run, and a
 file whose optional fields are all malformed. ``Direction`` pins the wording of a
 ratio below 1 (``1.20x MORE calls (72 vs 60)``, never ``0.83x fewer``), and
 ``DataLayer`` the refusal to pool files scored by different replay objectives.
+``Provenance`` covers the per-round provenance fields (``agentGeneratedCalls``,
+``localFallbacks``, ``llmProposals``, ``llmAccepted``, ``llmRejected`` by reason):
+a file that carries them puts agent-generated calls on the compute axis and gets
+the validity panel; a file written before origin tracking reads as "not recorded",
+never 0, and pools with a newer seed without inventing zeros for it.
 """
 
 from __future__ import annotations
@@ -217,6 +222,118 @@ def seed_more_calls(seed: int) -> dict[str, Any]:
             arm("dream", rows([1.30, 1.31, 1.36], [24, 24, 24], [POLICY_A, POLICY_B, POLICY_B])),
         ],
     )
+
+
+def rows_llm(
+    best: list[float],
+    accepted: list[int],
+    rejected: list[dict[str, int]],
+    fallbacks: list[int],
+    policies: list[str],
+) -> list[dict[str, Any]]:
+    """Round records with the provenance fields the LLM path writes after origin tracking.
+
+    probes = accepted + fallbacks (every attempt is an accepted child result or a local
+    fallback), llmProposals = accepted + sum(rejected), agentGeneratedCalls = accepted.
+    """
+    out = rows(best, [a + f for a, f in zip(accepted, fallbacks, strict=True)], policies)
+    cum_generated = 0
+    for row, acc, rej, fb in zip(out, accepted, rejected, fallbacks, strict=True):
+        counts = dict.fromkeys(pe.REJECT_REASONS, 0)
+        counts.update(rej)
+        cum_generated += acc
+        row["agentGeneratedCalls"] = acc
+        row["cumulativeAgentGeneratedCalls"] = cum_generated
+        row["localFallbacks"] = fb
+        row["llmProposals"] = acc + sum(counts.values())
+        row["llmAccepted"] = acc
+        row["llmRejected"] = counts
+        row["handlerCalls"] = {"proposer": row["llmProposals"], "dreamer": 0, "guidance": 0}
+        row["tokens"] = 300 * row["llmProposals"]
+    return out
+
+
+def arm_llm(name: str, rounds_: list[dict[str, Any]], fixed: bool = False, guided: bool = False) -> dict[str, Any]:
+    """An arm record on the LLM path with the provenance totals experiment.ts writes."""
+    a = arm(name, rounds_, fixed=fixed, guided=guided)
+    a["mode"] = {"proposer": "llm", "dreamer": "llm", "model": "anthropic/claude-sonnet-5"}
+    rejected = dict.fromkeys(pe.REJECT_REASONS, 0)
+    for r in rounds_:
+        for reason, count in r["llmRejected"].items():
+            rejected[reason] = rejected.get(reason, 0) + count
+    a["totals"].update(
+        {
+            "agentGeneratedCalls": rounds_[-1]["cumulativeAgentGeneratedCalls"],
+            "localFallbacks": sum(r["localFallbacks"] for r in rounds_),
+            "llmProposals": sum(r["llmProposals"] for r in rounds_),
+            "llmAccepted": sum(r["llmAccepted"] for r in rounds_),
+            "llmRejected": rejected,
+            "handlerCalls": sum(r["llmProposals"] for r in rounds_),
+            "tokens": sum(r["tokens"] for r in rounds_),
+        }
+    )
+    return a
+
+
+def seed_llm(seed: int) -> dict[str, Any]:
+    # The same probes and bests as seed_reaching_early (dream reaches T = 1.35 at 25
+    # probes vs the fixed arm's 30), but on the LLM path with provenance: most child
+    # results were rejected and the local mutator stood in, as in the measured run.
+    return result(
+        seed,
+        [
+            arm_llm(
+                "fixed",
+                rows_llm(
+                    [1.30, 1.35, 1.33],
+                    [0, 1, 0],
+                    [{"parse": 12, "shape": 3}, {"parse": 10, "shape": 4}, {"parse": 13, "shape": 2}],
+                    [15, 14, 15],
+                    [POLICY_A] * 3,
+                ),
+                fixed=True,
+            ),
+            arm_llm(
+                "dream",
+                rows_llm(
+                    [1.30, 1.36, 1.36],
+                    [0, 2, 1],
+                    [{"parse": 11, "shape": 4}, {"parse": 6, "shape": 2}, {"parse": 7, "error": 2}],
+                    [15, 8, 9],
+                    [POLICY_A, POLICY_B, POLICY_B],
+                ),
+            ),
+        ],
+    )
+
+
+def seed_local_with_provenance(seed: int) -> dict[str, Any]:
+    # The local path after origin tracking: provenance recorded, every count 0 (no
+    # child proposer ran, so every probe is a local candidate by design, not a fallback).
+    payload = seed_reaching_early(seed)
+    for a in payload["arms"]:
+        cum = 0
+        for r in a["rounds"]:
+            r.update(
+                {
+                    "agentGeneratedCalls": 0,
+                    "cumulativeAgentGeneratedCalls": cum,
+                    "localFallbacks": 0,
+                    "llmProposals": 0,
+                    "llmAccepted": 0,
+                    "llmRejected": dict.fromkeys(pe.REJECT_REASONS, 0),
+                }
+            )
+        a["totals"].update(
+            {
+                "agentGeneratedCalls": 0,
+                "localFallbacks": 0,
+                "llmProposals": 0,
+                "llmAccepted": 0,
+                "llmRejected": dict.fromkeys(pe.REJECT_REASONS, 0),
+            }
+        )
+    return payload
 
 
 # A ratio below 1 written as `0.83x fewer` / `0.97x higher`; the caption's own "never as 0.83x fewer" is allowed.
@@ -716,6 +833,247 @@ class Direction(unittest.TestCase):
         self.assertEqual(tone, "bad")
 
 
+class Provenance(unittest.TestCase):
+    """Agent-generated calls, local fallbacks and the proposal tally: read when present, "not recorded" when not."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def load(self, *payloads):
+        paths = [write(self.tmp.name, f"s{p['seed']}.json", p) for p in payloads]
+        return pe.load_results(paths)
+
+    def test_legacy_file_reads_as_not_recorded_never_zero(self):
+        results = self.load(seed1())
+        for a in results[0]["arms"]:
+            self.assertFalse(pe.provenance_recorded(a))
+            for key in ("totalAgentGeneratedCalls", "totalLocalFallbacks", "totalLlmProposals", "totalLlmAccepted"):
+                self.assertIsNone(a[key], key)
+            self.assertIsNone(a["totalLlmRejected"])
+            for row in a["rounds"]:
+                for key in ("agentGeneratedCalls", "cumulativeAgentGeneratedCalls", "localFallbacks", "llmProposals"):
+                    self.assertIsNone(row[key], key)
+                self.assertIsNone(row["llmRejected"])
+        self.assertEqual(pe.compute_axis(results), ("probes", "not recorded (result predates origin tracking)"))
+        ser = pe.series(results)
+        self.assertEqual(ser["dream"]["agentGeneratedCalls"]["mean"], [None, None, None])
+        self.assertEqual(ser["dream"]["llmRejected"]["parse"]["mean"], [None, None, None])
+        self.assertEqual(ser["dream"]["provenanceRecorded"], [False])
+        check = pe.check_tables(results)
+        self.assertIn("provenance: not recorded (result predates origin tracking)", check)
+        self.assertIn("compute axis: probes; agent-generated calls not recorded", check)
+        self.assertNotIn("tally consistent", check)
+        lines = pe.provenance_lines(results)
+        self.assertTrue(all(tone == "muted" for _text, tone in lines), lines)
+        self.assertTrue(lines[0][0].startswith("compute axis: probes; agent-generated calls not recorded"))
+        self.assertNotIn("agent-generated +", "\n".join(text for text, _tone in lines))
+
+    def test_provenance_fields_are_read_summed_and_put_on_the_compute_axis(self):
+        results = self.load(seed_llm(1))
+        dream = pe.arm_of(results[0], "dream")
+        self.assertTrue(pe.provenance_recorded(dream))
+        self.assertEqual([r["probes"] for r in dream["rounds"]], [15, 10, 10])
+        self.assertEqual([r["agentGeneratedCalls"] for r in dream["rounds"]], [0, 2, 1])
+        self.assertEqual([r["cumulativeAgentGeneratedCalls"] for r in dream["rounds"]], [0, 2, 3])
+        self.assertEqual([r["localFallbacks"] for r in dream["rounds"]], [15, 8, 9])
+        self.assertEqual([r["llmProposals"] for r in dream["rounds"]], [15, 10, 10])
+        self.assertEqual([r["llmAccepted"] for r in dream["rounds"]], [0, 2, 1])
+        self.assertEqual(dream["rounds"][2]["llmRejected"]["error"], 2)
+        self.assertEqual(dream["rounds"][2]["llmRejected"]["budget"], 0, "every known reason is present, 0 when unseen")
+        self.assertEqual(dream["totalProbes"], 35)
+        self.assertEqual(dream["totalAgentGeneratedCalls"], 3)
+        self.assertEqual(dream["totalLocalFallbacks"], 32)
+        self.assertEqual(dream["totalLlmProposals"], 35)
+        self.assertEqual(dream["totalLlmAccepted"], 3)
+        self.assertEqual(dream["totalLlmRejected"]["parse"], 24)
+        self.assertEqual(sum(dream["totalLlmRejected"].values()), 32)
+        self.assertTrue(pe.tally_consistent(dream))
+        self.assertEqual(
+            pe.provenance_text(dream),
+            "35 probes = 3 agent-generated + 32 local (32 fallbacks); "
+            "35 LLM proposals = 3 accepted + 32 rejected (parse 24, shape 6, error 2)",
+        )
+        self.assertEqual(pe.provenance_tone(dream), "warn", "fallbacks outnumber the agent's candidates")
+        kind, why = pe.compute_axis(results)
+        self.assertEqual(kind, "agentGenerated")
+        self.assertIn("probes include the local fallbacks", why)
+        ser = pe.series(results)
+        self.assertEqual(ser["dream"]["cumulativeAgentGeneratedCalls"]["mean"], [0.0, 2.0, 3.0])
+        self.assertEqual(ser["dream"]["llmRejected"]["parse"]["mean"], [11.0, 6.0, 7.0])
+        self.assertEqual(ser["dream"]["llmRejected"]["error"]["mean"], [0.0, 0.0, 2.0])
+        self.assertEqual(ser["fixed"]["totalLlmAccepted"], [1])
+        # The headline is unchanged by provenance: it stays on probes.
+        h = results[0]["headline"]
+        assert h is not None
+        self.assertEqual(h["probesToTarget"], {"fixed": 30, "dream": 25})
+        self.assertEqual(h["equalBudget"], 35)
+        check = pe.check_tables(results)
+        self.assertIn("compute axis: agent-generated calls, the candidates a child agent produced", check)
+        self.assertIn("provenance (recorded in 1/1 seeds; means over those)", check)
+        self.assertIn("| parse 7, error 2", check)
+        self.assertIn(
+            "seed 1: 35 probes = 3 agent-generated + 32 local (32 fallbacks); 35 LLM proposals = 3 accepted + "
+            "32 rejected (parse 24, shape 6, error 2); tally consistent (proposals = accepted + rejected): yes",
+            check,
+        )
+        lines = pe.provenance_lines(results)
+        tones = {text.strip(): tone for text, tone in lines}
+        self.assertEqual(tones["dream: 35 probes = 3 agent-generated + 32 local (32 fallbacks)"], "warn")
+        self.assertEqual(
+            tones["dream: 35 LLM proposals = 3 accepted + 32 rejected (parse 24, shape 6, error 2)"], "warn"
+        )
+
+    def test_totals_and_cumulatives_are_derived_when_the_file_omits_them(self):
+        payload = seed_llm(1)
+        for a in payload["arms"]:
+            for key in ("agentGeneratedCalls", "localFallbacks", "llmProposals", "llmAccepted", "llmRejected"):
+                del a["totals"][key]
+        dream_rows = payload["arms"][1]["rounds"]
+        for r in dream_rows:
+            del r["cumulativeAgentGeneratedCalls"]
+        fixed_rows = payload["arms"][0]["rounds"]
+        for r in fixed_rows:
+            del r["agentGeneratedCalls"]
+        results = self.load(payload)
+        dream = pe.arm_of(results[0], "dream")
+        self.assertEqual([r["cumulativeAgentGeneratedCalls"] for r in dream["rounds"]], [0, 2, 3])
+        self.assertEqual(dream["totalAgentGeneratedCalls"], 3)
+        self.assertEqual(dream["totalLocalFallbacks"], 32)
+        self.assertEqual(dream["totalLlmProposals"], 35)
+        self.assertEqual(dream["totalLlmRejected"]["parse"], 24)
+        fixed = pe.arm_of(results[0], "fixed")
+        self.assertEqual([r["agentGeneratedCalls"] for r in fixed["rounds"]], [0, 1, 0], "from the cumulative")
+        self.assertEqual(fixed["totalAgentGeneratedCalls"], 1)
+        canonical = pe.load_results([write(self.tmp.name, "canon.json", seed_llm(1))])[0]
+        self.assertEqual(results[0]["arms"], canonical["arms"])
+
+    def test_an_unlisted_reject_reason_is_kept_and_printed(self):
+        payload = seed_llm(1)
+        dream_rows = payload["arms"][1]["rounds"]
+        dream_rows[1]["llmRejected"]["weird"] = 2
+        dream_rows[1]["llmProposals"] += 2
+        payload["arms"][1]["totals"]["llmRejected"]["weird"] = 2
+        payload["arms"][1]["totals"]["llmProposals"] += 2
+        results = self.load(payload)
+        self.assertEqual(pe.reasons_seen(results), [*pe.REJECT_REASONS, "weird"])
+        dream = pe.arm_of(results[0], "dream")
+        self.assertEqual(dream["totalLlmRejected"]["weird"], 2)
+        self.assertTrue(pe.tally_consistent(dream))
+        self.assertIn("(parse 24, shape 6, error 2, weird 2)", pe.provenance_text(dream))
+        self.assertEqual(pe.series(results)["dream"]["llmRejected"]["weird"]["mean"], [0.0, 2.0, 0.0])
+        self.assertEqual(pe.reason_grey("weird", pe.reasons_seen(results)), pe.EXTRA_GREYS[0])
+        self.assertEqual(pe.reason_grey("parse", pe.reasons_seen(results)), pe.REASON_GREYS["parse"])
+
+    def test_a_legacy_seed_pools_with_a_provenance_seed_without_inventing_zeros(self):
+        results = self.load(seed_reaching_early(1), seed_llm(2))
+        kind, why = pe.compute_axis(results)
+        self.assertEqual((kind, why), ("probes", "recorded in 2/4 arm records only"))
+        ser = pe.series(results)
+        self.assertEqual(ser["dream"]["provenanceRecorded"], [False, True])
+        self.assertEqual(ser["dream"]["agentGeneratedCalls"]["perSeed"], [[None, None, None], [0.0, 2.0, 1.0]])
+        self.assertEqual(
+            ser["dream"]["agentGeneratedCalls"]["mean"], [0.0, 2.0, 1.0], "mean over the recorded seed only"
+        )
+        self.assertEqual(ser["dream"]["totalLlmProposals"], [None, 35])
+        check = pe.check_tables(results)
+        self.assertIn("provenance (recorded in 1/2 seeds; means over those)", check)
+        self.assertIn("seed 1: provenance not recorded", check)
+        self.assertIn("seed 2: 35 probes = 3 agent-generated + 32 local (32 fallbacks)", check)
+        self.assertIn("compute axis: probes; agent-generated calls recorded in 2/4 arm records only", check)
+        lines = pe.provenance_lines(results)
+        texts = [text.strip() for text, _tone in lines]
+        self.assertIn("seed 2 dream: 35 probes = 3 agent-generated + 32 local (32 fallbacks)", texts)
+        self.assertFalse(any(t.startswith("seed 1 ") for t in texts), "the legacy seed gets no provenance line")
+        # The headline is the same as for two legacy seeds: provenance never touches it.
+        agg = pe.headline(results)["aggregate"]["dream"]
+        self.assertEqual((agg["n"], agg["reached"]), (2, 2))
+        self.assertAlmostEqual(agg["callsMultiplierMedian"], 30 / 25)
+
+    def test_local_path_with_recorded_zero_provenance_keeps_probes_on_the_axis(self):
+        results = self.load(seed_local_with_provenance(1))
+        dream = pe.arm_of(results[0], "dream")
+        self.assertTrue(pe.provenance_recorded(dream))
+        self.assertEqual(dream["totalAgentGeneratedCalls"], 0)
+        kind, why = pe.compute_axis(results)
+        self.assertEqual(kind, "probes")
+        self.assertIn("no child proposer ran", why)
+        self.assertEqual(
+            pe.provenance_text(dream),
+            "35 probes = 0 agent-generated + 35 local (0 fallbacks); 0 LLM proposals = 0 accepted + 0 rejected (none)",
+        )
+        self.assertEqual(pe.provenance_tone(dream), "muted")
+        self.assertTrue(pe.tally_consistent(dream))
+        check = pe.check_tables(results)
+        self.assertIn("compute axis: probes; agent-generated calls 0 (no child proposer ran", check)
+        self.assertIn("| none", check)
+
+    def test_a_tally_that_does_not_add_up_is_flagged_bad(self):
+        payload = seed_llm(1)
+        payload["arms"][1]["totals"]["llmProposals"] = 40
+        results = self.load(payload)
+        dream = pe.arm_of(results[0], "dream")
+        self.assertEqual(dream["totalLlmProposals"], 40, "the file's total is taken as written")
+        self.assertFalse(pe.tally_consistent(dream))
+        self.assertEqual(pe.provenance_tone(dream), "bad")
+        self.assertIn("tally consistent (proposals = accepted + rejected): NO", pe.check_tables(results))
+        bad = [text for text, tone in pe.provenance_lines(results) if tone == "bad"]
+        self.assertTrue(any("does NOT add up" in text for text in bad), bad)
+        over = seed_llm(2)
+        over["arms"][1]["totals"]["agentGeneratedCalls"] = 99
+        results = self.load(over)
+        self.assertFalse(pe.tally_consistent(pe.arm_of(results[0], "dream")), "more agent-generated than probes")
+
+    def test_malformed_provenance_fields_read_as_not_recorded(self):
+        payload = seed_llm(1)
+        dream_arm = payload["arms"][1]
+        dream_arm["totals"]["agentGeneratedCalls"] = "3"
+        dream_arm["totals"]["llmRejected"] = "no"
+        dream_arm["totals"]["llmProposals"] = True
+        for r in dream_arm["rounds"]:
+            r["agentGeneratedCalls"] = "x"
+            r["cumulativeAgentGeneratedCalls"] = None
+            r["localFallbacks"] = [1]
+            r["llmProposals"] = True
+            r["llmAccepted"] = {"n": 1}
+            r["llmRejected"] = 5
+        results = self.load(payload)
+        dream = pe.arm_of(results[0], "dream")
+        self.assertFalse(pe.provenance_recorded(dream))
+        for row in dream["rounds"]:
+            self.assertIsNone(row["agentGeneratedCalls"])
+            self.assertIsNone(row["localFallbacks"])
+            self.assertIsNone(row["llmProposals"])
+            self.assertIsNone(row["llmAccepted"])
+            self.assertIsNone(row["llmRejected"])
+        self.assertIsNone(dream["totalLlmProposals"])
+        self.assertIsNone(dream["totalLlmRejected"])
+        self.assertEqual(pe.provenance_text(dream), "provenance not recorded (result predates origin tracking)")
+        self.assertEqual(pe.compute_axis(results), ("probes", "recorded in 1/2 arm records only"))
+        self.assertTrue(pe.provenance_recorded(pe.arm_of(results[0], "fixed")))
+        half = dict.fromkeys(pe.REJECT_REASONS, 0)
+        half["parse"] = "many"
+        self.assertEqual(pe._reject_counts(half)["parse"], 0, "a non-numeric count is absent, the reason stays")
+        self.assertIsNone(pe._reject_counts([]))
+        pe.check_tables(results)
+        for _text, tone in pe.provenance_lines(results):
+            self.assertIn(tone, {"muted", "warn", "bad"})
+
+    def test_check_cli_on_a_provenance_file_exits_zero_and_names_the_axis(self):
+        path = write(self.tmp.name, "llm.json", seed_llm(1))
+        proc = subprocess.run(
+            [sys.executable, str(HERE / "plot_experiment.py"), path, "--check"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("compute axis: agent-generated calls", proc.stdout)
+        self.assertIn("3 accepted + 32 rejected (parse 24, shape 6, error 2)", proc.stdout)
+
+
 @unittest.skipUnless(HAS_MPL, "matplotlib not installed for this interpreter")
 class Render(unittest.TestCase):
     def setUp(self):
@@ -749,13 +1107,13 @@ class Render(unittest.TestCase):
         paths = pe.render(pe.load_results([path]), out)
         report = paths["report"].read_text(encoding="utf-8")
         self.assertIn("no control", report)
-        for key in ("round_best", "compute", "attempts", "headline"):
+        for key in ("round_best", "compute", "attempts", "proposals", "headline"):
             self.assertGreater(paths[key].stat().st_size, 0, key)
 
-    def test_render_writes_four_pngs_and_a_report(self):
+    def test_render_writes_five_pngs_and_a_report(self):
         out = Path(self.tmp.name) / "plots"
         paths = pe.render(pe.load_results([self.p1, self.p2]), out)
-        for key in ("round_best", "compute", "attempts", "headline", "report"):
+        for key in ("round_best", "compute", "attempts", "proposals", "headline", "report"):
             self.assertTrue(paths[key].exists(), key)
             self.assertGreater(paths[key].stat().st_size, 0, key)
         report = paths["report"].read_text(encoding="utf-8")
@@ -794,6 +1152,48 @@ class Render(unittest.TestCase):
             code = pe.main([self.p1, "--no-reexec"])
         self.assertEqual(code, 0)
         self.assertTrue((Path(self.tmp.name) / "plots" / "report.html").exists())
+
+    def test_render_provenance_file_labels_the_axis_and_draws_the_validity_panel(self):
+        path = write(self.tmp.name, "llm.json", seed_llm(1))
+        out = Path(self.tmp.name) / "llm"
+        paths = pe.render(pe.load_results([path]), out)
+        self.assertGreater(paths["proposals"].stat().st_size, 0)
+        report = paths["report"].read_text(encoding="utf-8")
+        self.assertIn("The bold series is on agent-generated calls", report)
+        self.assertIn("the thin series is on probes", report)
+        self.assertIn("The compute axis of the compute figure is agent-generated calls", report)
+        self.assertIn("<h2>LLM-proposal validity per round</h2>", report)
+        self.assertIn("Child proposer results per round per arm", report)
+        self.assertIn("<td>parse 7, error 2</td>", report)
+        self.assertIn(
+            '<div class="line warn">  dream: 35 probes = 3 agent-generated + 32 local (32 fallbacks)</div>', report
+        )
+        self.assertIn("<th>agent-generated</th><th>cum agent-generated</th><th>local fallbacks</th>", report)
+        self.assertIn("not recorded, never as 0", report)
+        self.assertNotIn("not recorded (result predates origin tracking)", report)
+
+    def test_render_legacy_file_says_provenance_is_not_recorded(self):
+        out = Path(self.tmp.name) / "legacy"
+        paths = pe.render(pe.load_results([self.p1, self.p2]), out)
+        self.assertGreater(paths["proposals"].stat().st_size, 0, "the panel is written with the words, not skipped")
+        report = paths["report"].read_text(encoding="utf-8")
+        self.assertIn(
+            "Agent-generated calls are not recorded (result predates origin tracking), so they are not on this axis",
+            report,
+        )
+        self.assertIn("This result records no proposal provenance", report)
+        self.assertIn("are not recorded, not 0, and nothing is drawn", report)
+        self.assertIn("<td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>", report, "provenance cells read -")
+        self.assertNotIn("agent-generated +", report)
+
+    def test_render_mixed_seeds_keeps_probes_on_the_axis_and_says_how_many_recorded(self):
+        paths_in = [write(self.tmp.name, f"m{p['seed']}.json", p) for p in (seed_reaching_early(1), seed_llm(2))]
+        out = Path(self.tmp.name) / "mixed"
+        paths = pe.render(pe.load_results(paths_in), out)
+        report = paths["report"].read_text(encoding="utf-8")
+        self.assertIn("recorded in 2/4 arm records only, so they are not on this axis", report)
+        self.assertIn("seed 2 dream: 35 probes = 3 agent-generated + 32 local (32 fallbacks)", report)
+        self.assertGreater(paths["proposals"].stat().st_size, 0)
 
 
 if __name__ == "__main__":

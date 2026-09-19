@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { buildTreeFromRecords, createTree } from "../src/core/dream/tree.js";
-import type { NodeRecord, TreeHeaderRecord, TreeRecord } from "../src/core/dream/types.js";
+import { buildTreeFromRecords, createTree, nodeRecordOf } from "../src/core/dream/tree.js";
+import {
+	isNodeOrigin,
+	NODE_ORIGINS,
+	type NodeRecord,
+	nodeOrigin,
+	type TreeHeaderRecord,
+	type TreeRecord,
+} from "../src/core/dream/types.js";
 
 function header(treeId = "t1"): TreeHeaderRecord {
 	return {
@@ -16,6 +23,7 @@ function header(treeId = "t1"): TreeHeaderRecord {
 	};
 }
 
+/** A LEGACY node line: written before provenance, so it carries no `origin`. */
 function node(over: Partial<NodeRecord> & Pick<NodeRecord, "id" | "parentId" | "seq">): NodeRecord {
 	return {
 		type: "node",
@@ -92,6 +100,26 @@ describe("buildTreeFromRecords", () => {
 			]),
 		).toThrow();
 	});
+
+	it("reads a legacy tree without origins as a root plus local nodes, and keeps recorded origins", () => {
+		const legacy = buildTreeFromRecords(records);
+		expect(legacy.allNodes().map((entry) => entry.origin)).toEqual(["root", "local", "local"]);
+		expect(legacy.originCounts()).toEqual({ root: 1, local: 2, llm: 0 });
+
+		const recorded = buildTreeFromRecords([
+			header(),
+			node({ id: "t1-n0", parentId: null, seq: 0, origin: "root" }),
+			node({ id: "t1-n1", parentId: "t1-n0", seq: 1, origin: "llm" }),
+			node({ id: "t1-n2", parentId: "t1-n0", seq: 2, branch: 1, origin: "local" }),
+			node({ id: "t1-n3", parentId: "t1-n1", seq: 3, origin: "llm" }),
+		]);
+		expect(recorded.allNodes().map((entry) => entry.origin)).toEqual(["root", "llm", "local", "llm"]);
+		expect(recorded.originCounts()).toEqual({ root: 1, local: 1, llm: 2 });
+		// Round-tripping through records preserves every origin.
+		expect(buildTreeFromRecords([header(), ...recorded.toNodeRecords()]).originCounts()).toEqual(
+			recorded.originCounts(),
+		);
+	});
 });
 
 describe("createTree + addNode", () => {
@@ -138,5 +166,99 @@ describe("createTree + addNode", () => {
 			ts: 1,
 		});
 		expect(added.score).toBe(0);
+	});
+
+	it("marks the root, defaults an added node to local, and records an llm origin when given", () => {
+		const tree = createTree(header(), "root", 0.2);
+		expect(tree.nodeById(tree.rootId)?.origin).toBe("root");
+		const local = tree.addNode({
+			parentId: "t1-n0",
+			round: 1,
+			score: 0.3,
+			valid: true,
+			artifactRef: "a",
+			tokens: 0,
+			ts: 1,
+		});
+		const fallback = tree.addNode({
+			parentId: "t1-n0",
+			round: 1,
+			score: 0.3,
+			valid: true,
+			origin: "local",
+			artifactRef: "b",
+			tokens: 900,
+			ts: 1,
+		});
+		const agent = tree.addNode({
+			parentId: "t1-n0",
+			round: 1,
+			score: 0.5,
+			valid: true,
+			origin: "llm",
+			artifactRef: "c",
+			tokens: 270,
+			ts: 1,
+		});
+		expect([local.origin, fallback.origin, agent.origin]).toEqual(["local", "local", "llm"]);
+		expect(tree.originCounts()).toEqual({ root: 1, local: 2, llm: 1 });
+		// The tokens a rejected child spent stay on the fallback node, but its origin says the agent did not generate it.
+		expect(fallback.tokens).toBe(900);
+	});
+
+	it("writes origin on every persisted node record, keeping the line scalar-only", () => {
+		const tree = createTree(header(), "root", 0.2);
+		tree.addNode({ parentId: "t1-n0", round: 1, score: 0.3, valid: true, artifactRef: "a", tokens: 0, ts: 1 });
+		tree.addNode({
+			parentId: "t1-n0",
+			round: 1,
+			score: 0.4,
+			valid: false,
+			failClass: "overlap",
+			origin: "llm",
+			artifactRef: "b",
+			tokens: 5,
+			ts: 1,
+		});
+		const records = tree.toNodeRecords();
+		expect(records.map((record) => record.origin)).toEqual(["root", "local", "llm"]);
+		expect(records[2]!.failClass).toBe("overlap");
+		expect(records[0]).toEqual(nodeRecordOf(tree.nodeById("t1-n0")!));
+		for (const record of records) {
+			for (const [key, value] of Object.entries(record)) {
+				const scalar = value === null || ["string", "number", "boolean"].includes(typeof value);
+				expect(scalar, `node.${key} must be scalar`).toBe(true);
+			}
+		}
+		expect(Object.keys(records[2]!)).toEqual([
+			"type",
+			"id",
+			"parentId",
+			"branch",
+			"seq",
+			"round",
+			"score",
+			"valid",
+			"failClass",
+			"origin",
+			"artifactRef",
+			"tokens",
+			"ts",
+		]);
+	});
+});
+
+describe("nodeOrigin", () => {
+	it("resolves a recorded origin, and the legacy default otherwise", () => {
+		expect(NODE_ORIGINS).toEqual(["root", "local", "llm"]);
+		expect(nodeOrigin({ parentId: null, origin: undefined })).toBe("root");
+		expect(nodeOrigin({ parentId: "x", origin: undefined })).toBe("local");
+		expect(nodeOrigin({ parentId: "x", origin: "llm" })).toBe("llm");
+		expect(nodeOrigin({ parentId: "x", origin: "root" })).toBe("root");
+		// An unknown value on a hand-edited line is ignored in favour of the default.
+		expect(nodeOrigin({ parentId: "x", origin: "agent" as never })).toBe("local");
+		expect(isNodeOrigin("llm")).toBe(true);
+		expect(isNodeOrigin("agent")).toBe(false);
+		expect(isNodeOrigin(undefined)).toBe(false);
 	});
 });

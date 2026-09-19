@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	createRetainedWorkerChildCall,
 	createRunAgentChildCall,
+	extractJsonValue,
 	type RetainedWorkerRuntime,
 } from "../src/core/ravo/runtime-adapter.js";
 import type { RunAgentHandler, RunAgentResult, RunAgentStatus } from "../src/core/run-agent.js";
@@ -82,6 +83,34 @@ describe("RAVO runtime adapters", () => {
 		}
 	});
 
+	it("opts into lenient extraction only when asked: fences and prose around the object are then tolerated", async () => {
+		for (const output of [
+			'result: {"answer":42}',
+			'```json\n{"answer":42}\n```',
+			'Between {"answer":1} and\n{"answer":42, "note":"x"}\nwe pick the latter.',
+		]) {
+			const call = createRunAgentChildCall(async () => result(output), {
+				prompt: () => "evaluate leniently",
+				validate: validateAnswer,
+				extractJson: "object",
+			});
+			await expect(call({}, callOptions())).resolves.toEqual({
+				status: "completed",
+				value: { answer: 42 },
+				tokens: 7,
+			});
+		}
+		// Schema-invalid and truncated outputs still fail, and so does output with no object at all.
+		for (const output of ['{"answer":"42"}', 'partial {"answer": 4', "[1, 2, 3]", "no json here"]) {
+			const call = createRunAgentChildCall(async () => result(output), {
+				prompt: () => "evaluate leniently",
+				validate: validateAnswer,
+				extractJson: "object",
+			});
+			await expect(call({}, callOptions())).resolves.toMatchObject({ status: "error", tokens: 7 });
+		}
+	});
+
 	it("propagates terminal status and bounds the adapter token budget by the controller allocation", async () => {
 		const runAgent = vi.fn<RunAgentHandler>(async () => result("", "turn_limit"));
 		const call = createRunAgentChildCall(runAgent, {
@@ -157,5 +186,49 @@ describe("RAVO runtime adapters", () => {
 			tokens: 3,
 			error: "retained worker completed without a structured result",
 		});
+	});
+});
+
+describe("extractJsonValue", () => {
+	it("returns bare JSON of the requested kind as is", () => {
+		expect(extractJsonValue('{"a": 1}', "object")).toEqual({ a: 1 });
+		expect(extractJsonValue("  [1, 2]\n", "array")).toEqual([1, 2]);
+	});
+
+	it("strips markdown fences and prose before or after the value", () => {
+		expect(
+			extractJsonValue('Here you go:\n```json\n{"n": 4, "weights": [1, 2, 3, 4]}\n```\nHope this helps.', "object"),
+		).toEqual({
+			n: 4,
+			weights: [1, 2, 3, 4],
+		});
+		expect(extractJsonValue('Policies: [{"a": 1}, {"a": 2}] as requested.', "array")).toEqual([{ a: 1 }, { a: 2 }]);
+	});
+
+	it("picks the largest parseable value of the requested kind, so prose fragments and nested values never shadow the answer", () => {
+		const text =
+			'I moved mass from bins [1, 2] to the edges. Compared with {"n": 4} it is flatter: {"n": 4, "weights": [3, 1, 1, 3]} (see {"peak": 1.9}).';
+		expect(extractJsonValue(text, "object")).toEqual({ n: 4, weights: [3, 1, 1, 3] });
+		// Asked for an array, the largest one anywhere (here the nested weights) wins over the prose fragment.
+		expect(extractJsonValue(text, "array")).toEqual([3, 1, 1, 3]);
+		expect(extractJsonValue("Two lists: [1, 2] then [1, 2, 3, 4, 5].", "array")).toEqual([1, 2, 3, 4, 5]);
+		// An object wrapped in a stray array is still found.
+		expect(extractJsonValue('[{"answer": 42}]', "object")).toEqual({ answer: 42 });
+		expect(extractJsonValue('{"outer": {"inner": 1}}', "object")).toEqual({ outer: { inner: 1 } });
+	});
+
+	it("is string-aware: brackets and escaped quotes inside strings do not unbalance the scan", () => {
+		expect(extractJsonValue('note: {"text": "a } b ] \\" c", "k": [1]}', "object")).toEqual({
+			text: 'a } b ] " c',
+			k: [1],
+		});
+	});
+
+	it("throws when nothing of the requested kind parses, including a value truncated at an output cap", () => {
+		expect(() => extractJsonValue("no json here", "object")).toThrow(/no JSON object/);
+		expect(() => extractJsonValue('Reasoning... {"n": 4, "weights": [1, 2,', "object")).toThrow(/no JSON object/);
+		expect(() => extractJsonValue('{"a": 1}', "array")).toThrow(/no JSON array/);
+		expect(() => extractJsonValue("[1, 2]", "object")).toThrow(/no JSON object/);
+		expect(() => extractJsonValue("42", "object")).toThrow(/no JSON object/);
 	});
 });

@@ -50,10 +50,11 @@ Output (default `plots/` next to the first result file):
 | file | paper figure | what it shows |
 |---|---|---|
 | `round_best.png` | 6a | round-best points per seed and the cumulative-best step per arm vs round |
-| `compute.png` | 3b / 5 | cumulative best vs cumulative discovery-agent calls per arm, with the fixed arm's final best `T` and the equal-budget line `B` |
+| `compute.png` | 3b / 5 | cumulative best vs cumulative discovery compute per arm, with the fixed arm's final best `T` and the equal-budget line `B`; the compute axis is agent-generated calls (bold) with probes as the thin secondary series when the files record provenance, else probes, and the subtitle says which |
 | `attempts.png` | 6b | evaluated attempts per round per arm; `Δ k/n` marks a policy change in k of n seeds (adaptivity) |
-| `headline.png` | the multipliers | `X.XXx fewer calls (a vs b)` and `Y.YYx higher score at budget B (a vs b)` per arm, read the right way round below 1 (`1.20x MORE calls (72 vs 60)`, `1.03x LOWER score`), or the literal words `not reached` / `not comparable` |
-| `report.html` | all four | self-contained page with captions built from the result metadata and the per-round table |
+| `proposals.png` | validity | child proposer results per round per arm: accepted (arm colour) stacked with rejected by reason (grey), and the local fallbacks those rejections caused as the x-marked line; the words `not recorded` when the file predates origin tracking |
+| `headline.png` | the multipliers | `X.XXx fewer calls (a vs b)` and `Y.YYx higher score at budget B (a vs b)` per arm, read the right way round below 1 (`1.20x MORE calls (72 vs 60)`, `1.03x LOWER score`), or the literal words `not reached` / `not comparable`; then each arm's provenance totals (`47 probes = 2 agent-generated + 45 local (45 fallbacks)`) |
+| `report.html` | all five | self-contained page with captions built from the result metadata and the per-round table, provenance columns included |
 
 Several files are treated as seeds of one experiment (same task, rounds, budget, replay objective
 and arms; distinct seeds) and reduced to mean / min / max per round, with the median of the defined
@@ -65,9 +66,28 @@ objective does not pool with one that does.
 
 ## What the numbers mean
 
-- **Compute axis** = `cumulativeProbes`: evaluated attempts (revealed non-root nodes), the
-  discovery-agent calls, on every path. Handler invocations (proposer, dreamer, guidance) and
-  child tokens are **cost**; they are in the table and never on that axis.
+- **Probes** = evaluated attempts (revealed non-root nodes) on every path. On the LLM path a
+  probe's candidate is either **agent-generated** (the child's output parsed and entered the
+  tree, `origin: "llm"`) or a **local fallback** (the child's output was rejected and the local
+  mutator stood in; the child's tokens were still spent, and sit on the fallback node).
+- **Compute axis.** When every arm record carries provenance and a child proposer ran, the
+  compute figure's bold series is `cumulativeAgentGeneratedCalls`, the paper's "agent calls",
+  and `cumulativeProbes` is the thin secondary series (B is drawn in probes). Otherwise, and on
+  the local path (0 LLM proposals: every probe is a local candidate by design, not a fallback),
+  the axis is `cumulativeProbes` and the subtitle says why. The headline multipliers are on
+  probes on every path. Handler invocations (proposer, dreamer, guidance) and child tokens are
+  **cost**; they are in the table and never on that axis.
+- **Provenance** (`agentGeneratedCalls`, `localFallbacks`, `llmProposals`, `llmAccepted`,
+  `llmRejected` by reason: `parse`, `shape`, `invalid-candidate`, `error`, `length`, `aborted`,
+  `turn-limit`, `budget`) is read per round and from `totals` when present, summed from the
+  rounds when `totals` lacks it. A file written before origin tracking has none: that is
+  **not recorded**, never 0; its cells read `-`, the validity panel prints the words, and a
+  legacy seed pooled with a newer one is left out of the provenance means (the page says
+  `recorded in k/n`). `--check` prints the per-round provenance table, each arm's totals as
+  `47 probes = 2 agent-generated + 45 local (45 fallbacks); 47 LLM proposals = 2 accepted + 45
+  rejected (parse 34, shape 11)`, and whether the tally adds up. On the card that line is
+  warn-toned when the fallbacks outnumber the agent's candidates and bad when the tally does
+  not add up.
 - **T** = the fixed arm's final cumulative best; **B** = `equalBudget`, the smallest arm total
   (the caption says what the files recorded).
 - **X x fewer calls** = `probesToTarget(fixed) / probesToTarget(arm)`, where `probesToTarget` is
@@ -127,7 +147,11 @@ The tests use a synthetic result set (three arms, three rounds, two seeds, inclu
 reached` and a `not comparable` case), plus fixtures for the across-seeds honesty rule (a ratio
 defined in 1 of 3, 2 of 3, all, and no seeds), the below-1 wording (`1.20x MORE calls (72 vs 60)`
 and no `0.83x fewer` anywhere on the page), the refusal to pool files with different objectives, a
-headline naming a reference arm that did not run, and a file whose optional fields are all
-malformed; the render tests are skipped, not failed, where matplotlib is missing. `basedpyright evals/dream/plot_experiment.py` reports no errors when run
-with an interpreter that has matplotlib (`--pythonpath ~/Documents/AISpecies/.venv/bin/python`).
-The files are formatted with `ruff format --line-length 120`.
+headline naming a reference arm that did not run, a file whose optional fields are all
+malformed, and the provenance cases (a file carrying the per-round provenance fields, a legacy
+file without them, the two pooled, a local-path file recording all zeros, an unlisted reject
+reason, a tally that does not add up, and malformed provenance fields); the render tests are
+skipped, not failed, where matplotlib is missing. `basedpyright evals/dream/plot_experiment.py`
+reports no errors when run with an interpreter that has matplotlib
+(`--pythonpath ~/Documents/AISpecies/.venv/bin/python`). The files are formatted with
+`ruff format --line-length 120`.

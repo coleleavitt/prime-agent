@@ -247,16 +247,26 @@ function proposeCandidate(
 	return best ?? mutate(source, params.stepScale, moveCount, rng);
 }
 
+/** The concrete shape example every autocorrelation contract carries: a parseable object, small enough to read at a glance. */
+export const AUTOCORRELATION_SHAPE_EXAMPLE = '{"n": 4, "weights": [1.5, 2.5, 2.5, 1.5]}';
+
 /**
  * Public contract handed to an LLM proposer. Everything in it is derivable from
  * the problem statement; the candidate's own peak travels in its serialized form
  * (`peak`), so the proposer sees what it must beat. When `n` is omitted the text
- * describes the contract generically in terms of the candidate's `n`.
+ * describes the contract generically in terms of the candidate's `n`; callers
+ * that know the bin count pass it so the contract names the exact length. The
+ * last two lines state the exact output shape, with a parseable example, and the
+ * exact weights count, since a wrong length is the measured rejection.
  */
 export function autocorrelationPromptContext(n?: number): string {
 	const bins = n === undefined ? "n" : String(n);
 	const last = n === undefined ? "n-1" : String(n - 1);
 	const width = n === undefined ? "1/(2n)" : `1/${2 * n}`;
+	const yours =
+		n === undefined
+			? 'yours must keep the current candidate\'s "n" and have exactly n weights'
+			: `yours must have "n": ${n} and exactly ${n} weights`;
 	return [
 		"Task: propose a step function f on [-1/4, 1/4] whose autoconvolution peak max_t (f*f)(t) is as SMALL as possible.",
 		"Contract:",
@@ -268,6 +278,7 @@ export function autocorrelationPromptContext(n?: number): string {
 		"- Moving mass from the middle toward both edges lowers the central peak (f*f)(0) at the cost of raising the shoulders; the optimum balances a wide flat top of the autoconvolution.",
 		"- Good known solutions are not the uniform density: they look like an asymmetric plateau, with a spike near one edge and a gentle taper toward the other.",
 		"- Small local edits (a few bins at a time) that keep the autoconvolution's top flat tend to help; a single dominant bin makes the peak grow with n and is the worst shape.",
+		`Exact output shape: {"n": ${bins}, "weights": [w_0, ..., w_${last}]}, a JSON object with exactly these two keys (no "peak"). For example with n = 4: ${AUTOCORRELATION_SHAPE_EXAMPLE}; ${yours}.`,
 		`Return the complete candidate object; its weights array must have exactly ${bins} entries.`,
 	].join("\n");
 }

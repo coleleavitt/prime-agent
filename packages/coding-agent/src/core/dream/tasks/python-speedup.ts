@@ -108,6 +108,7 @@ export const PYTHON_SPEEDUP_PROMPT_CONTEXT = [
 	"Public examples (stdin -> stdout):",
 	'  "3\\n1 2 3" -> "4"',
 	'  "4\\n-3 7 0 2" -> "32"',
+	'Exact output shape: {"source": "<the complete Python 3 program as one JSON string>"}, a JSON object with exactly this one key.',
 	"Return the complete program as the source; it is validated as a single non-empty string.",
 ].join("\n");
 

@@ -3,9 +3,11 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+	type AssistantMessage,
 	addSpanSink,
 	installAsyncTraceContextStorage,
 	type SpanEndRecord,
+	type StopReason,
 	type TraceContext,
 	type Usage,
 	withSpan,
@@ -23,19 +25,28 @@ import {
 	GUIDANCE_PROMPT_HEADER,
 	type GuidanceInput,
 	isDreamAbortError,
+	PROPOSER_JSON_ONLY,
 	PROPOSER_PROMPT_HEADER,
 	proposePoliciesWithAgent,
 	runDreamLoopWithAgent,
 	runOnlineExplorationWithAgent,
 } from "../src/core/dream/llm.js";
-import type { DreamHandlerCalls } from "../src/core/dream/loop.js";
+import type { DreamHandlerCalls, DreamRoundRecord } from "../src/core/dream/loop.js";
 import { DEFAULT_POLICY, type ExplorationPolicy, policyId } from "../src/core/dream/policy.js";
-import { asyncOf, createLocalProposer } from "../src/core/dream/proposer.js";
+import {
+	asyncOf,
+	createLocalProposer,
+	type ProposalTally,
+	totalRejected,
+	zeroProposalTally,
+} from "../src/core/dream/proposer.js";
+import { RejectionLog, readRejections, rejectionsPath } from "../src/core/dream/rejections.js";
 import { createSeededRng } from "../src/core/dream/rng.js";
 import { runOnlineExploration } from "../src/core/dream/rollout.js";
-import { buildRecordedTree, DreamStoreError, listTrees, type RecordedTree } from "../src/core/dream/store.js";
+import { buildRecordedTree, DreamStoreError, listTrees, type RecordedTree, readTree } from "../src/core/dream/store.js";
 import type { ScoredTask } from "../src/core/dream/task.js";
-import { resolveTask } from "../src/core/dream/tasks/index.js";
+import { AUTOCORRELATION_SHAPE_EXAMPLE, createAutocorrelationTask } from "../src/core/dream/tasks/autocorrelation.js";
+import { resolveTask, taskPromptContext } from "../src/core/dream/tasks/index.js";
 import type { NodeRecord, TreeRecord } from "../src/core/dream/types.js";
 import type { ChildRuntimeScope } from "../src/core/ravo/runtime-adapter.js";
 import type { RunAgentHandler, RunAgentResult } from "../src/core/run-agent.js";
@@ -74,14 +85,28 @@ afterEach(() => {
 	for (const dir of scratchDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function usage(totalTokens: number): Usage {
+function usage(totalTokens: number, output = 0): Usage {
 	return {
-		input: totalTokens,
-		output: 0,
+		input: Math.max(0, totalTokens - output),
+		output,
 		cacheRead: 0,
 		cacheWrite: 0,
 		totalTokens,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
+}
+
+/** The child's terminal assistant message, so the proposer can read its stop reason. */
+function assistant(text: string, stopReason: StopReason, tokens: Usage): AssistantMessage {
+	return {
+		role: "assistant",
+		content: [{ type: "text", text }],
+		api: "anthropic-messages",
+		provider: "anthropic",
+		model: "faux/stub",
+		usage: tokens,
+		stopReason,
+		timestamp: FIXED_CLOCK,
 	};
 }
 
@@ -98,7 +123,15 @@ function result(over: Partial<RunAgentResult> & Pick<RunAgentResult, "status">):
 }
 
 type StubRole = keyof DreamHandlerCalls;
-type StubAnswer = { output?: string; status?: RunAgentResult["status"]; tokens?: number };
+type StubAnswer = {
+	output?: string;
+	status?: RunAgentResult["status"];
+	tokens?: number;
+	/** Output tokens within `tokens` (0 unless set). */
+	outputTokens?: number;
+	/** When set, the result carries a terminal assistant message with this stop reason. */
+	stopReason?: StopReason;
+};
 const DEFAULT_INSIGHTS = "Sets with a wide spread of gaps scored higher; dense arithmetic runs scored lower.";
 
 /** Classify a child prompt by the role header `llm.ts` puts on its first line; anything else is a test failure. */
@@ -144,7 +177,14 @@ function makeStub(opts: {
 		const tokens = spec?.tokens ?? 100;
 		total += tokens;
 		roleTokens[role] += tokens;
-		return result({ status: spec?.status ?? "completed", output: spec?.output ?? "", usage: usage(tokens) });
+		const output = spec?.output ?? "";
+		const used = usage(tokens, spec?.outputTokens ?? 0);
+		return result({
+			status: spec?.status ?? "completed",
+			output,
+			usage: used,
+			messages: spec?.stopReason ? [assistant(output, spec.stopReason, used)] : [],
+		});
 	};
 	return { handler, totalTokens: () => total, calls: () => calls, roleCalls, roleTokens, prompts };
 }
@@ -237,12 +277,222 @@ describe("createLlmProposer", () => {
 	it("surfaces an aborted child as a DreamAbortError sentinel (does not fall back)", async () => {
 		const task = resolveTask({ task: "sum-difference" });
 		const stub = makeStub({ proposerOutput: () => ({ status: "aborted", tokens: 10 }) });
+		const tally = zeroProposalTally();
 		const proposer = createLlmProposer(stub.handler, task, {
 			scope: SCOPE,
 			signal: liveController().signal,
 			tokenBudget: 200_000,
+			tally,
 		});
 		await expect(proposer.propose(null, PARAMS, createSeededRng(1), 1)).rejects.toBeInstanceOf(DreamAbortError);
+		expect(tally).toEqual({
+			...zeroProposalTally(),
+			llmProposals: 1,
+			llmRejected: { ...zeroProposalTally().llmRejected, aborted: 1 },
+		});
+		expect(tally.localFallbacks).toBe(0);
+	});
+});
+
+/** A 4-bin autocorrelation task (below the registry's paper sizes, so built directly): small enough to read a prompt. */
+function n4Task(): ScoredTask<unknown> {
+	return createAutocorrelationTask(4) as unknown as ScoredTask<unknown>;
+}
+const N4_PARENT = { n: 4, weights: [2, 2, 2, 2] };
+
+describe("createLlmProposer: extraction, rejection provenance and origin", () => {
+	function n4Proposer(stub: ReturnType<typeof makeStub>, tally: ProposalTally) {
+		const task = n4Task();
+		return {
+			task,
+			proposer: createLlmProposer(stub.handler, task, {
+				scope: SCOPE,
+				signal: liveController().signal,
+				tokenBudget: 200_000,
+				promptContext: taskPromptContext("autocorrelation", 4),
+				tally,
+			}),
+		};
+	}
+
+	it("accepts a JSON object wrapped in prose and code fences and marks it origin llm", async () => {
+		const wrapped = [
+			"Here is my improved candidate. I moved mass from the middle bins [1, 2] toward the edges:",
+			"```json",
+			'{"n": 4, "weights": [3, 1, 1, 3]}',
+			"```",
+			"This lowers the central peak {see the hint about a flat top}.",
+		].join("\n");
+		const stub = makeStub({ proposerOutput: () => ({ output: wrapped, tokens: 300, outputTokens: 120 }) });
+		const tally = zeroProposalTally();
+		const { task, proposer } = n4Proposer(stub, tally);
+		const { value: outcome, spans } = await captureSpans(() =>
+			proposer.propose(task.deserialize(N4_PARENT), PARAMS, createSeededRng(1), 1),
+		);
+		expect(outcome.origin).toBe("llm");
+		expect(outcome.tokens).toBe(300);
+		expect(task.serialize(outcome.artifact)).toMatchObject({ n: 4, weights: [3, 1, 1, 3] });
+		expect(stub.calls()).toBe(1);
+		expect(tally).toEqual({ ...zeroProposalTally(), llmProposals: 1, llmAccepted: 1 });
+		const span = spans.find((record) => record.name === "dream.llm_propose")!;
+		expect(span.attrs["dream.llm_fallback"]).toBe(false);
+		expect(span.attrs["dream.origin"]).toBe("llm");
+		expect(span.attrs["dream.llm_attempts"]).toBe(1);
+		expect(span.attrs["dream.llm_output_tokens"]).toBe(120);
+		expect(span.attrs["dream.llm_reject_reason"]).toBeUndefined();
+	});
+
+	it("rejects wrong-length weights as shape, retries once, then falls back with origin local and logs both rejections", async () => {
+		const short = '{"n": 4, "weights": [1, 2, 3]}';
+		const stub = makeStub({ proposerOutput: () => ({ output: short, tokens: 40, outputTokens: 15 }) });
+		const tally = zeroProposalTally();
+		const task = n4Task();
+		const logPath = rejectionsPath(dreamDir, "unit");
+		const proposer = createLlmProposer(stub.handler, task, {
+			scope: SCOPE,
+			signal: liveController().signal,
+			tokenBudget: 200_000,
+			promptContext: taskPromptContext("autocorrelation", 4),
+			tally,
+			iteration: 3,
+			rejections: new RejectionLog(logPath, () => FIXED_CLOCK),
+		});
+		const parent = task.deserialize(N4_PARENT);
+		const { value: outcome, spans } = await captureSpans(() =>
+			proposer.propose(parent, PARAMS, createSeededRng(7), 2),
+		);
+		expect(stub.calls()).toBe(2);
+		expect(outcome.origin).toBe("local");
+		expect(outcome.tokens).toBe(80);
+		const local = createLocalProposer(task).propose(parent, PARAMS, createSeededRng(7), 2);
+		expect(task.serialize(outcome.artifact)).toEqual(task.serialize(local.artifact));
+		expect(tally.llmProposals).toBe(2);
+		expect(tally.llmAccepted).toBe(0);
+		expect(tally.llmRejected.shape).toBe(2);
+		expect(totalRejected(tally)).toBe(2);
+		expect(tally.localFallbacks).toBe(1);
+		const span = spans.find((record) => record.name === "dream.llm_propose")!;
+		expect(span.attrs["dream.llm_fallback"]).toBe(true);
+		expect(span.attrs["dream.origin"]).toBe("local");
+		expect(span.attrs["dream.llm_reject_reason"]).toBe("shape");
+		expect(span.attrs["dream.llm_status"]).toBe("completed");
+		expect(span.attrs["dream.llm_attempts"]).toBe(2);
+		expect(span.attrs["dream.llm_output_tokens"]).toBe(30);
+		expect(span.attrs["dream.llm_reject_excerpt"]).toBe(short);
+		const logged = readRejections(logPath);
+		expect(logged).toHaveLength(2);
+		expect(logged.map((record) => [record.attempt, record.fellBack, record.reason])).toEqual([
+			[1, false, "shape"],
+			[2, true, "shape"],
+		]);
+		expect(logged.every((record) => record.iteration === 3 && record.round === 2 && record.ts === FIXED_CLOCK)).toBe(
+			true,
+		);
+		expect(
+			logged.every((record) => record.status === "completed" && record.tokens === 40 && record.outputTokens === 15),
+		).toBe(true);
+		expect(logged[0]!.excerpt).toBe(short);
+		expect(logged[0]!.error).toMatch(/length 4/);
+	});
+
+	it("classifies an output cut at the cap as length, does not retry it, and bounds the excerpt", async () => {
+		const runaway = `Let me reason about this carefully. ${"The peak is the central knot. ".repeat(40)}{"n": 4, "weights": [1, 2,`;
+		const stub = makeStub({
+			proposerOutput: () => ({ output: runaway, tokens: 32_500, outputTokens: 32_000, stopReason: "length" }),
+		});
+		const tally = zeroProposalTally();
+		const { task, proposer } = n4Proposer(stub, tally);
+		const { value: outcome, spans } = await captureSpans(() =>
+			proposer.propose(task.deserialize(N4_PARENT), PARAMS, createSeededRng(3), 1),
+		);
+		expect(stub.calls()).toBe(1);
+		expect(outcome.origin).toBe("local");
+		expect(outcome.tokens).toBe(32_500);
+		expect(tally).toEqual({
+			...zeroProposalTally(),
+			llmProposals: 1,
+			llmRejected: { ...zeroProposalTally().llmRejected, length: 1 },
+			localFallbacks: 1,
+		});
+		const span = spans.find((record) => record.name === "dream.llm_propose")!;
+		expect(span.attrs["dream.llm_reject_reason"]).toBe("length");
+		expect(span.attrs["dream.llm_output_tokens"]).toBe(32_000);
+		expect(span.attrs["dream.llm_attempts"]).toBe(1);
+		const excerpt = span.attrs["dream.llm_reject_excerpt"] as string;
+		expect(excerpt.length).toBeLessThanOrEqual(240);
+		expect(excerpt.startsWith("Let me reason")).toBe(true);
+		expect(excerpt.endsWith("[1, 2,")).toBe(true);
+		expect(excerpt).toContain(" ... ");
+	});
+
+	it("maps a finished-but-truncated parse to length too, and a mid-prose fragment never shadows the answer", async () => {
+		// A complete small object inside the prose plus the real, larger object: the largest wins.
+		const output =
+			'Compared with {"n": 4} the shape below is flatter:\n{"n": 4, "weights": [2.5, 1.5, 1.5, 2.5]}\nDone.';
+		const stub = makeStub({ proposerOutput: () => ({ output, tokens: 50 }) });
+		const tally = zeroProposalTally();
+		const { task, proposer } = n4Proposer(stub, tally);
+		const outcome = await proposer.propose(task.deserialize(N4_PARENT), PARAMS, createSeededRng(3), 1);
+		expect(outcome.origin).toBe("llm");
+		expect(task.serialize(outcome.artifact)).toMatchObject({ weights: [2.5, 1.5, 1.5, 2.5] });
+
+		// No JSON object at all -> parse; retried once, then fallback.
+		const prose = makeStub({
+			proposerOutput: () => ({ output: "I cannot improve on the uniform density.", tokens: 5 }),
+		});
+		const proseTally = zeroProposalTally();
+		const p = n4Proposer(prose, proseTally);
+		const fell = await p.proposer.propose(p.task.deserialize(N4_PARENT), PARAMS, createSeededRng(3), 1);
+		expect(fell.origin).toBe("local");
+		expect(prose.calls()).toBe(2);
+		expect(proseTally.llmRejected.parse).toBe(2);
+		expect(proseTally.localFallbacks).toBe(1);
+	});
+
+	it("maps a child error, turn limit and budget to their reasons; only the error is retried", async () => {
+		for (const [status, reason, calls] of [
+			["error", "error", 2],
+			["turn_limit", "turn-limit", 1],
+			["budget_exceeded", "budget", 1],
+		] as const) {
+			const stub = makeStub({ proposerOutput: () => ({ status, tokens: 3 }) });
+			const tally = zeroProposalTally();
+			const { task, proposer } = n4Proposer(stub, tally);
+			const outcome = await proposer.propose(task.deserialize(N4_PARENT), PARAMS, createSeededRng(1), 1);
+			expect(outcome.origin, status).toBe("local");
+			expect(stub.calls(), status).toBe(calls);
+			expect(tally.llmRejected[reason], status).toBe(calls);
+			expect(tally.localFallbacks, status).toBe(1);
+			expect(tally.llmProposals, status).toBe(calls);
+		}
+	});
+
+	it("puts the exact n, a parseable shape example and the JSON-only instruction LAST in the prompt", async () => {
+		const stub = makeStub({ proposerOutput: () => ({ output: '{"n": 4, "weights": [1, 1, 1, 1]}', tokens: 1 }) });
+		const { task, proposer } = n4Proposer(stub, zeroProposalTally());
+		await proposer.propose(task.deserialize(N4_PARENT), PARAMS, createSeededRng(1), 1);
+		const prompt = stub.prompts.proposer[0]!;
+		expect(prompt.startsWith(PROPOSER_PROMPT_HEADER)).toBe(true);
+		expect(prompt).toContain('"n": 4');
+		expect(prompt).toContain("exactly 4 weights");
+		expect(prompt).toContain("exactly 4 entries");
+		expect(prompt).not.toContain("exactly n entries");
+		expect(prompt).toContain(AUTOCORRELATION_SHAPE_EXAMPLE);
+		expect(JSON.parse(AUTOCORRELATION_SHAPE_EXAMPLE)).toEqual({ n: 4, weights: [1.5, 2.5, 2.5, 1.5] });
+		const lines = prompt.split("\n");
+		expect(lines.at(-1)).toBe(PROPOSER_JSON_ONLY);
+		expect(PROPOSER_JSON_ONLY).toMatch(/ONLY the JSON object/);
+		expect(PROPOSER_JSON_ONLY).toMatch(/no prose, no code fences/);
+		// Order: candidate, then the task contract, then the output contract, then the JSON-only line.
+		const candidate = prompt.indexOf("Current candidate (JSON)");
+		const contract = prompt.indexOf("Contract:");
+		const output = prompt.indexOf("Output contract:");
+		const last = prompt.lastIndexOf(PROPOSER_JSON_ONLY);
+		expect(candidate).toBeGreaterThan(0);
+		expect(contract).toBeGreaterThan(candidate);
+		expect(output).toBeGreaterThan(contract);
+		expect(last).toBeGreaterThan(output);
+		expect(prompt.indexOf(PROPOSER_JSON_ONLY)).toBe(last);
 	});
 });
 
@@ -761,6 +1011,63 @@ describe("runDreamLoopWithAgent: fixed policy, per-round records, shared round 1
 		expect(run.rounds[1]!.dreaming!.candidates).toBe(4);
 		expect(run.rounds[2]!.dreaming!.candidates).toBe(4);
 		expect(run.tokens).toBe(0);
+		// Provenance on the local path: nothing agent-generated, an all-zero tally, no rejection log.
+		expect(run.rounds.every((round) => round.agentGeneratedCalls === 0)).toBe(true);
+		expect(run.rounds.every((round) => JSON.stringify(round.proposals) === JSON.stringify(zeroProposalTally()))).toBe(
+			true,
+		);
+		expect(existsSync(join(dreamDir, "rejections"))).toBe(false);
+	});
+
+	it("counts every child result per round, keeps the tally identities, and logs rejections under the run key", async () => {
+		// Alternate: accepted, rejected(shape) then rejected(shape) -> fallback, accepted, ...
+		// so every rollout mixes agent-generated nodes with local fallbacks.
+		const good = '{"n": 4, "weights": [3, 1, 1, 3]}';
+		const bad = '{"n": 4, "weights": [1, 2]}';
+		const stub = makeStub({
+			proposerOutput: (call) => ({ output: call % 3 === 1 ? good : bad, tokens: 10 }),
+		});
+		const run = await runDreamLoopWithAgent(
+			agentOptions({
+				runAgent: stub.handler,
+				task: n4Task(),
+				taskId: "autocorrelation",
+				n: 4,
+				useLlmDreamer: false,
+				proposerPromptContext: taskPromptContext("autocorrelation", 4),
+			}),
+		);
+		expect(run.rounds).toHaveLength(3);
+		let rejectedTotal = 0;
+		for (const [index, round] of run.rounds.entries()) {
+			const tally = round.proposals!;
+			expect(round.agentGeneratedCalls, `round ${index} agent-generated`).toBe(tally.llmAccepted);
+			expect(tally.llmProposals, `round ${index} proposals`).toBe(tally.llmAccepted + totalRejected(tally));
+			expect(round.probes, `round ${index} probes`).toBe(tally.llmAccepted + tally.localFallbacks);
+			expect(tally.llmProposals, `round ${index} handler calls`).toBe(round.handlerCalls.proposer);
+			expect(tally.llmRejected.shape, `round ${index} shape`).toBe(totalRejected(tally));
+			expect(tally.localFallbacks, `round ${index} fallbacks`).toBeGreaterThan(0);
+			expect(tally.llmAccepted, `round ${index} accepted`).toBeGreaterThan(0);
+			rejectedTotal += totalRejected(tally);
+			// The persisted tree agrees: origin llm nodes are exactly the accepted results.
+			const tree = readTree(round.treeId, dreamDir);
+			const origins = tree.nodes.map((node) => node.origin);
+			expect(origins.filter((origin) => origin === "llm")).toHaveLength(tally.llmAccepted);
+			expect(origins.filter((origin) => origin === "local")).toHaveLength(tally.localFallbacks);
+			expect(origins.filter((origin) => origin === "root")).toHaveLength(1);
+		}
+		const logged = readRejections(rejectionsPath(dreamDir, `autocorrelation-s7-r${FIXED_CLOCK}`));
+		expect(logged).toHaveLength(rejectedTotal);
+		expect(logged.filter((record) => record.fellBack)).toHaveLength(
+			run.rounds.reduce((sum, round) => sum + round.proposals!.localFallbacks, 0),
+		);
+		expect(logged.every((record) => record.reason === "shape" && record.excerpt === bad)).toBe(true);
+		expect([...new Set(logged.map((record) => record.iteration))].sort()).toEqual([0, 1, 2]);
+		// The round table never counts a fallback as the agent's work.
+		const agentGenerated = run.rounds.reduce((sum, round) => sum + (round.agentGeneratedCalls ?? 0), 0);
+		const probes = run.rounds.reduce((sum, round) => sum + round.probes, 0);
+		expect(agentGenerated).toBeLessThan(probes);
+		expect(agentGenerated).toBeGreaterThan(0);
 	});
 
 	it("counts retried handler invocations: one failing then one completing child is two proposer calls for one probe", async () => {
@@ -783,6 +1090,7 @@ describe("runDreamLoopWithAgent: fixed policy, per-round records, shared round 1
 		const proposerOutput = () => ({ output: ARTIFACT, tokens: 10 });
 		const task = resolveTask({ task: "sum-difference" });
 		const seedStub = makeStub({ proposerOutput });
+		const seedTally = zeroProposalTally();
 		const shared = await runOnlineExplorationWithAgent(
 			{
 				task,
@@ -796,16 +1104,25 @@ describe("runDreamLoopWithAgent: fixed policy, per-round records, shared round 1
 				policy: DEFAULT_POLICY,
 				iteration: 0,
 			},
-			createLlmProposer(seedStub.handler, task, { scope: SCOPE, signal: liveController().signal, tokenBudget: 1 }),
+			createLlmProposer(seedStub.handler, task, {
+				scope: SCOPE,
+				signal: liveController().signal,
+				tokenBudget: 1,
+				tally: seedTally,
+			}),
 		);
 		const initialRollout = {
 			treeId: shared.treeId,
 			bestScore: shared.bestScore,
 			revealedCount: shared.revealedCount,
+			agentGeneratedCount: shared.agentGeneratedCount,
+			proposals: seedTally,
 			rounds: shared.rounds,
 			tokens: shared.tokens,
 			handlerCalls: { proposer: seedStub.roleCalls.proposer, dreamer: 0, guidance: 0 },
 		};
+		expect(shared.agentGeneratedCount).toBe(shared.revealedCount);
+		expect(seedTally.llmAccepted).toBe(shared.revealedCount);
 		const stub = makeStub({ proposerOutput, dreamerOutput: () => ({ output: REVISED }) });
 		const events: DreamProgressEvent[] = [];
 		const run = await runDreamLoopWithAgent(
@@ -819,12 +1136,17 @@ describe("runDreamLoopWithAgent: fixed policy, per-round records, shared round 1
 			policyId: policyId(DEFAULT_POLICY),
 			roundBest: shared.bestScore,
 			probes: shared.revealedCount,
+			agentGeneratedCalls: shared.revealedCount,
+			proposals: seedTally,
 			decisionRounds: shared.rounds,
 			poolSize: 0,
 			tokens: { rollout: shared.tokens, dreamer: 0, guidance: 0 },
 			handlerCalls: initialRollout.handlerCalls,
 			dreaming: null,
-		});
+		} satisfies DreamRoundRecord);
+		// The copied tally is a snapshot: later rounds start from zero.
+		expect(run.rounds[1]!.proposals!.llmAccepted).toBe(run.rounds[1]!.handlerCalls.proposer);
+		expect(run.rounds[1]!.agentGeneratedCalls).toBe(run.rounds[1]!.probes);
 		// The loop's own stub saw only iterations 1 and 2.
 		expect(stub.roleCalls.proposer).toBe(run.rounds[1]!.handlerCalls.proposer + run.rounds[2]!.handlerCalls.proposer);
 		expect(stub.roleCalls.proposer).toBeGreaterThan(0);

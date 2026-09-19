@@ -16,10 +16,15 @@
  * Vocabulary. A ROUND is one rollout (`rounds = N` means N rollouts per arm; the
  * loop runs `iterations = N - 1`). PROBES (`tree.size - 1`, evaluated attempts) are
  * the discovery compute — the paper's "agent calls" — on every path and the only
- * input to the multipliers. Handler calls and tokens are cost and are never mixed
- * into that axis. A policy's own-pool replay score is an in-arm estimate and is
- * never compared across arms. A multiplier is reported only when defined (else
- * null, printed as "not reached"/"not comparable"); nothing is clamped.
+ * input to the multipliers. AGENT-GENERATED CALLS (`agentGeneratedCalls`) are the
+ * probes whose candidate a child agent actually produced (`origin: "llm"` nodes);
+ * on the LLM path the rest are LOCAL FALLBACKS, where the child's output was
+ * rejected and the local mutator stood in, and `llmProposals` / `llmAccepted` /
+ * `llmRejected` (by reason) say what happened to every child result. Handler calls
+ * and tokens are cost and are never mixed into the compute axis. A policy's
+ * own-pool replay score is an in-arm estimate and is never compared across arms.
+ * A multiplier is reported only when defined (else null, printed as "not
+ * reached"/"not comparable"); nothing is clamped.
  *
  * Two policy ids per arm. `finalPolicyId` is the LAST DEPLOYED policy, the one
  * that grew the arm's last tree (the round table's last `policyId`), and
@@ -50,6 +55,7 @@ import { currentTraceContext, runWithTraceContext, type Span, startSpan, withSpa
 import { type DreamHandlerCalls, type DreamLoopResult, type DreamRoundRecord, runDreamLoop } from "./loop.js";
 import { DEFAULT_OBJECTIVE, type ReplayObjectiveConfig } from "./objective.js";
 import { DEFAULT_POLICY, type ExplorationPolicy, policyId } from "./policy.js";
+import { addProposalTally, type ProposalRejectReason, type ProposalTally, zeroProposalTally } from "./proposer.js";
 import { DreamStoreError, experimentArmDir, experimentDir, experimentResultPath } from "./store.js";
 import type { DreamTaskId, ScoredTask } from "./task.js";
 import { DEFAULT_CIRCLE_PACKING_N, resolveTask } from "./tasks/index.js";
@@ -145,6 +151,22 @@ export interface ExperimentRoundRow {
 	/** Evaluated attempts this round: the compute axis. */
 	probes: number;
 	cumulativeProbes: number;
+	/**
+	 * Probes this round whose candidate a child agent generated (`origin: "llm"`
+	 * nodes). 0 on the local path; on the LLM path `probes - agentGeneratedCalls`
+	 * is the number of local fallbacks. A plotter may use the cumulative series as
+	 * an alternative compute axis, labelled as such.
+	 */
+	agentGeneratedCalls: number;
+	cumulativeAgentGeneratedCalls: number;
+	/** Attempts whose candidate came from the local mutator after the child's output was rejected. */
+	localFallbacks: number;
+	/** Child proposer results examined this round (accepted + rejected, retries included). */
+	llmProposals: number;
+	/** Child results that parsed, deserialized and entered the tree. */
+	llmAccepted: number;
+	/** Rejected child results by reason; every reason present, 0 when unseen. */
+	llmRejected: Record<ProposalRejectReason, number>;
 	decisionRounds: number;
 	poolSize: number;
 	handlerCalls: DreamHandlerCalls;
@@ -183,7 +205,21 @@ export interface ExperimentArmResult {
 	/** Rounds whose policy differs from the previous round's (Fig 6b adaptivity). */
 	policyChanges: number;
 	rounds: ExperimentRoundRow[];
-	totals: { probes: number; handlerCalls: number; tokens: number; finalBest: number };
+	totals: ExperimentArmTotals;
+}
+
+export interface ExperimentArmTotals {
+	probes: number;
+	/** Probes a child agent generated; `probes - agentGeneratedCalls` are local candidates (fallbacks on the LLM path). */
+	agentGeneratedCalls: number;
+	localFallbacks: number;
+	llmProposals: number;
+	llmAccepted: number;
+	/** Rejected child results summed by reason over every round. */
+	llmRejected: Record<ProposalRejectReason, number>;
+	handlerCalls: number;
+	tokens: number;
+	finalBest: number;
 }
 
 export interface ExperimentHeadline {
@@ -404,10 +440,18 @@ function resetExperimentDir(plan: ExperimentPlan): void {
 	rmSync(experimentDir(plan.dir, plan.experimentId), { recursive: true, force: true });
 }
 
+/** A record's proposer tally, as a fresh copy; a record without one (untracked) reads as all zero. */
+function proposalsOf(record: Pick<DreamRoundRecord, "proposals">): ProposalTally {
+	return addProposalTally(zeroProposalTally(), record.proposals ?? zeroProposalTally());
+}
+
 /**
  * Derive an arm's rows and totals from the loop's per-round records. The arm's
  * `finalPolicyId` is read off the last row (the last deployed policy), never off
  * the loop's post-hoc selection, which is reported separately as `selectedPolicyId`.
+ * Provenance (`agentGeneratedCalls`, the proposer tally) is copied from each record
+ * and summed; a record that lacks it reads as zero agent-generated calls and an
+ * all-zero tally, never as "every probe was the agent's".
  */
 export function buildArmResult(
 	arm: Pick<ExperimentArmPlan, "arm" | "fixedPolicy" | "guided" | "storeDir">,
@@ -417,16 +461,22 @@ export function buildArmResult(
 	let cumulativeBest = 0;
 	let seenBest = false;
 	let cumulativeProbes = 0;
+	let cumulativeAgentGeneratedCalls = 0;
 	let cumulativeHandlerCalls = 0;
 	let cumulativeTokens = 0;
 	let policyChanges = 0;
 	let previousPolicyId: string | undefined;
+	let proposalTotals = zeroProposalTally();
 	const rounds = loop.rounds.map((record): ExperimentRoundRow => {
 		if (!seenBest || record.roundBest > cumulativeBest) {
 			cumulativeBest = record.roundBest;
 			seenBest = true;
 		}
 		cumulativeProbes += record.probes;
+		const agentGeneratedCalls = record.agentGeneratedCalls ?? 0;
+		cumulativeAgentGeneratedCalls += agentGeneratedCalls;
+		const proposals = proposalsOf(record);
+		proposalTotals = addProposalTally(proposalTotals, proposals);
 		const handlerCalls = record.handlerCalls.proposer + record.handlerCalls.dreamer + record.handlerCalls.guidance;
 		cumulativeHandlerCalls += handlerCalls;
 		const tokens = record.tokens.rollout + record.tokens.dreamer + record.tokens.guidance;
@@ -441,6 +491,12 @@ export function buildArmResult(
 			cumulativeBest,
 			probes: record.probes,
 			cumulativeProbes,
+			agentGeneratedCalls,
+			cumulativeAgentGeneratedCalls,
+			localFallbacks: proposals.localFallbacks,
+			llmProposals: proposals.llmProposals,
+			llmAccepted: proposals.llmAccepted,
+			llmRejected: proposals.llmRejected,
 			decisionRounds: record.decisionRounds,
 			poolSize: record.poolSize,
 			handlerCalls: { ...record.handlerCalls },
@@ -465,6 +521,11 @@ export function buildArmResult(
 		rounds,
 		totals: {
 			probes: cumulativeProbes,
+			agentGeneratedCalls: cumulativeAgentGeneratedCalls,
+			localFallbacks: proposalTotals.localFallbacks,
+			llmProposals: proposalTotals.llmProposals,
+			llmAccepted: proposalTotals.llmAccepted,
+			llmRejected: proposalTotals.llmRejected,
 			handlerCalls: cumulativeHandlerCalls,
 			tokens: cumulativeTokens,
 			finalBest: cumulativeBest,
@@ -527,9 +588,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * Structural check of a parsed result file: the versioned schema plus the fields
- * every reader relies on. `scoring` and the per-arm `selectedPolicyId` were added
- * to schema 1 additively, so a file without them (written before the split) still
- * validates; a malformed value does not.
+ * every reader relies on. `scoring`, the per-arm `selectedPolicyId` and the
+ * provenance fields (`agentGeneratedCalls`, `localFallbacks`, `llmProposals`,
+ * `llmAccepted`, `llmRejected` on rows and totals) were added to schema 1
+ * additively, so a file without them (written before they existed) still
+ * validates; a malformed value does not. A reader of an older file must treat a
+ * missing provenance field as "not recorded", not as zero agent-generated calls.
  */
 export function isExperimentResult(value: unknown): value is ExperimentResult {
 	if (!isRecord(value)) return false;
@@ -549,8 +613,18 @@ export function isExperimentResult(value: unknown): value is ExperimentResult {
 			typeof arm.storeDir === "string" &&
 			(arm.selectedPolicyId === undefined || typeof arm.selectedPolicyId === "string") &&
 			Array.isArray(arm.rounds) &&
-			isRecord(arm.totals),
+			isRecord(arm.totals) &&
+			hasWellFormedProvenance(arm.totals),
 	);
+}
+
+/** Provenance fields are optional (additive) but, when present, must be counts and a by-reason record. */
+function hasWellFormedProvenance(totals: Record<string, unknown>): boolean {
+	for (const key of ["agentGeneratedCalls", "localFallbacks", "llmProposals", "llmAccepted"]) {
+		if (totals[key] !== undefined && typeof totals[key] !== "number") return false;
+	}
+	if (totals.llmRejected === undefined) return true;
+	return isRecord(totals.llmRejected) && Object.values(totals.llmRejected).every((count) => typeof count === "number");
 }
 
 /** Write `<dir>/experiments/<id>/result.json` (dir 0700, file 0600, 2-space JSON) and return its path. */
@@ -658,11 +732,21 @@ export interface ExperimentArmProgress {
 	treeId?: string;
 }
 
-/** The one round-1 rollout an LLM runner shares across arms (see `ExperimentArmRunner.prepare`). */
+/**
+ * The one round-1 rollout an LLM runner shares across arms (see
+ * `ExperimentArmRunner.prepare`). The loop copies it into every arm's iteration-0
+ * record, so a runner that shares round 1 should carry its provenance too:
+ * `agentGeneratedCount` from the `ExploreResult` and the proposer's `proposals`
+ * tally. Absent, every arm's round 1 reports zero agent-generated calls.
+ */
 export interface ExperimentSharedRollout {
 	treeId: string;
 	bestScore: number;
 	revealedCount: number;
+	/** `ExploreResult.agentGeneratedCount`: probes a child agent generated. */
+	agentGeneratedCount?: number;
+	/** The shared rollout's proposer tally. */
+	proposals?: ProposalTally;
 	rounds: number;
 	tokens: number;
 	handlerCalls: DreamHandlerCalls;

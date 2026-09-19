@@ -62,11 +62,29 @@ export function resolveTask(spec: DreamTaskSpec): ScoredTask<unknown> {
 }
 
 /**
+ * The size parameter `resolveTask(spec)` actually builds with: the spec's `n`,
+ * else the task's default; `undefined` for a task without one. Prompt builders
+ * use it so the contract names the exact size even when the caller left `n` to
+ * the default.
+ */
+export function resolveTaskN(spec: DreamTaskSpec): number | undefined {
+	switch (spec.task) {
+		case "circle-packing":
+			return spec.n ?? DEFAULT_CIRCLE_PACKING_N;
+		case "autocorrelation":
+			return spec.n ?? DEFAULT_AUTOCORRELATION_N;
+		default:
+			return undefined;
+	}
+}
+
+/**
  * The task-specific context an LLM proposer prompt carries (the public contract
  * and examples, never hidden tests). python-speedup and autocorrelation have
  * one; the other tasks are fully described by their serialized candidate. `n`
- * lets the autocorrelation contract name its bin count exactly; without it the
- * contract is stated in terms of the candidate's own `n`.
+ * lets the autocorrelation contract name its bin count exactly (pass
+ * `resolveTaskN(spec)`); without it the contract is stated in terms of the
+ * candidate's own `n`.
  */
 export function taskPromptContext(taskId: DreamTaskId, n?: number): string | undefined {
 	switch (taskId) {

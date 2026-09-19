@@ -1,5 +1,11 @@
 import type { Usage } from "@earendil-works/pi-ai";
-import type { RunAgentHandler, RunAgentOptions, RunAgentStatus, RunAgentToolSelection } from "../run-agent.js";
+import type {
+	RunAgentHandler,
+	RunAgentOptions,
+	RunAgentRequest,
+	RunAgentStatus,
+	RunAgentToolSelection,
+} from "../run-agent.js";
 import type { ChildCall, RavoChildCallOptions, RavoChildResult } from "./controller.js";
 
 export interface ChildRuntimeScope {
@@ -11,10 +17,20 @@ export interface ChildRuntimeScope {
 	role?: string;
 }
 
+/** The top-level JSON container a lenient extraction looks for. */
+export type JsonContainer = "object" | "array";
+
 export interface StructuredChildSpec<TInput, TOutput> {
 	prompt: (input: TInput) => string;
 	validate: (value: unknown) => TOutput;
 	scope?: ChildRuntimeScope;
+	/**
+	 * Absent (RAVO's default), the child's whole output must be JSON. When set,
+	 * the output is searched for the largest balanced JSON value of this kind
+	 * (`extractJsonValue`), so markdown code fences and prose before or after the
+	 * value are tolerated. Dream-RSI opts its children in; RAVO stays strict.
+	 */
+	extractJson?: JsonContainer;
 }
 
 export type RetainedWorkerTerminalReason =
@@ -65,19 +81,97 @@ export function createRunAgentChildCall<TInput, TOutput>(
 ): ChildCall<TInput, TOutput> {
 	return async (input, options) => {
 		const result = await runAgent(
-			{
-				prompt: spec.prompt(input),
-				...(spec.scope?.model ? { model: spec.scope.model } : {}),
-			},
+			structuredChildRequest(spec.prompt(input), spec.scope),
 			runOptions(spec.scope, options),
 		);
 		if (result.status !== "completed") return failed(result.status, result.usage.totalTokens, result.error);
 		try {
-			return completed(spec.validate(parseJson(result.output)), result.usage.totalTokens);
+			const value = spec.extractJson ? extractJsonValue(result.output, spec.extractJson) : parseJson(result.output);
+			return completed(spec.validate(value), result.usage.totalTokens);
 		} catch (error) {
 			return failed("error", result.usage.totalTokens, errorMessage(error));
 		}
 	};
+}
+
+/** The `RunAgentRequest` a structured child is prompted with: the prompt plus the scope's model, when any. */
+export function structuredChildRequest(prompt: string, scope: ChildRuntimeScope | undefined): RunAgentRequest {
+	return { prompt, ...(scope?.model ? { model: scope.model } : {}) };
+}
+
+/** The `RunAgentOptions` a structured child runs under: the scope's tools and turn cap, and the bounded token budget. */
+export function structuredChildRunOptions(
+	scope: ChildRuntimeScope | undefined,
+	options: RavoChildCallOptions,
+): RunAgentOptions {
+	return runOptions(scope, options);
+}
+
+/**
+ * Lenient JSON extraction for a child that was asked for one JSON value but may
+ * have wrapped it in markdown code fences or prose. The whole output is tried
+ * first; otherwise every `{` (or `[`) is a candidate start, the balanced close
+ * is found by a string-aware scan, and the LARGEST candidate that parses wins,
+ * so a small JSON fragment mentioned in an explanation never shadows the answer
+ * and a nested value never shadows its parent. Throws when no value of the
+ * requested kind parses (e.g. output truncated mid-object).
+ */
+export function extractJsonValue(output: string, container: JsonContainer): unknown {
+	const text = output.trim();
+	const isWanted = (value: unknown): boolean =>
+		container === "array"
+			? Array.isArray(value)
+			: typeof value === "object" && value !== null && !Array.isArray(value);
+	try {
+		const whole = JSON.parse(text) as unknown;
+		if (isWanted(whole)) return whole;
+	} catch {
+		// Not bare JSON; scan for an embedded value.
+	}
+	const opener = container === "array" ? "[" : "{";
+	let best: { value: unknown; length: number } | undefined;
+	let start = text.indexOf(opener);
+	while (start !== -1) {
+		const end = balancedJsonEnd(text, start);
+		let next = start + 1;
+		if (end !== -1) {
+			try {
+				const value = JSON.parse(text.slice(start, end)) as unknown;
+				if (isWanted(value) && (best === undefined || end - start > best.length)) {
+					best = { value, length: end - start };
+				}
+				next = end;
+			} catch {
+				// Not JSON from this opener; the next opener may be.
+			}
+		}
+		start = text.indexOf(opener, next);
+	}
+	if (best === undefined) throw new Error(`child output contains no JSON ${container}`);
+	return best.value;
+}
+
+/** Index just past the bracket that balances the one at `start`, skipping brackets inside strings; -1 when unbalanced. */
+function balancedJsonEnd(text: string, start: number): number {
+	let depth = 0;
+	let inString = false;
+	let escaped = false;
+	for (let i = start; i < text.length; i++) {
+		const ch = text[i];
+		if (inString) {
+			if (escaped) escaped = false;
+			else if (ch === "\\") escaped = true;
+			else if (ch === '"') inString = false;
+			continue;
+		}
+		if (ch === '"') inString = true;
+		else if (ch === "{" || ch === "[") depth += 1;
+		else if (ch === "}" || ch === "]") {
+			depth -= 1;
+			if (depth === 0) return i + 1;
+		}
+	}
+	return -1;
 }
 
 /**

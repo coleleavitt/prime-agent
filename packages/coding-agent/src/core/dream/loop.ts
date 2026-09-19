@@ -36,6 +36,7 @@ import { withSpan } from "@earendil-works/pi-ai";
 import { runDreaming, selectBestPolicy } from "./improve.js";
 import { DEFAULT_OBJECTIVE, type ReplayObjectiveConfig } from "./objective.js";
 import { DEFAULT_POLICY, type ExplorationPolicy, policyId } from "./policy.js";
+import { type ProposalTally, zeroProposalTally } from "./proposer.js";
 import { createSeededRng, type SeededRng } from "./rng.js";
 import { type ExploreResult, runOnlineExploration } from "./rollout.js";
 import { listTrees, type RecordedTree, readTree } from "./store.js";
@@ -93,8 +94,12 @@ export interface DreamHandlerCalls {
 /**
  * One rollout of a loop, as the experiment runner records it. `probes` (revealed
  * non-root nodes, `tree.size - 1`) is the discovery compute on every path; handler
- * calls and tokens are cost and are never mixed into that axis. Collecting a
- * record touches no rng, tree or persistence, so the trees a loop grows are
+ * calls and tokens are cost and are never mixed into that axis. Provenance splits
+ * the probes: `agentGeneratedCalls` are the probes a child agent actually
+ * generated (`origin: "llm"` nodes) and `proposals` says what happened to every
+ * child result, so a local stand-in for a rejected child output is never counted
+ * as the agent's work. Collecting a record touches no rng, tree or persistence
+ * (reading node origins is read-only), so the trees a loop grows are
  * byte-identical with and without the records.
  */
 export interface DreamRoundRecord {
@@ -107,6 +112,18 @@ export interface DreamRoundRecord {
 	roundBest: number;
 	/** `ExploreResult.revealedCount` = `tree.size - 1`: evaluated attempts. */
 	probes: number;
+	/**
+	 * `ExploreResult.agentGeneratedCount`: probes whose candidate a child agent
+	 * generated. 0 on the local path. The LLM driver MUST set it; absent, the
+	 * experiment reports it as 0 (untracked), never as `probes`.
+	 */
+	agentGeneratedCalls?: number;
+	/**
+	 * Proposer provenance for this rollout (see `ProposalTally`): child results
+	 * examined, accepted, rejected by reason, and local fallbacks. All zero on the
+	 * local path; the LLM driver MUST set it. Absent reads as all zero.
+	 */
+	proposals?: ProposalTally;
 	/** `ExploreResult.rounds`: online decision rounds the policy took. */
 	decisionRounds: number;
 	/**
@@ -220,6 +237,8 @@ export function runDreamLoop(options: DreamLoopOptions): DreamLoopResult {
 					policyId: policyId(policy),
 					roundBest: result.bestScore,
 					probes: result.revealedCount,
+					agentGeneratedCalls: result.agentGeneratedCount,
+					proposals: zeroProposalTally(),
 					decisionRounds: result.rounds,
 					poolSize,
 					tokens: { rollout: result.tokens, dreamer: 0, guidance: 0 },

@@ -4,6 +4,7 @@ import { createSeededRng } from "../src/core/dream/rng.js";
 import type { ProposeParams } from "../src/core/dream/task.js";
 import {
 	AUTOCORRELATION_BIN_COUNTS,
+	AUTOCORRELATION_SHAPE_EXAMPLE,
 	type AutocorrelationArtifact,
 	autoconvolutionKnots,
 	autoconvolutionPeak,
@@ -15,7 +16,7 @@ import {
 	UNIFORM_DENSITY,
 	UNIFORM_ROOT_PEAK,
 } from "../src/core/dream/tasks/autocorrelation.js";
-import { DREAM_TASK_IDS, resolveTask, taskPromptContext } from "../src/core/dream/tasks/index.js";
+import { DREAM_TASK_IDS, resolveTask, resolveTaskN, taskPromptContext } from "../src/core/dream/tasks/index.js";
 import { canonicalJson } from "../src/core/ravo/canonical-json.js";
 
 const PROPOSE: ProposeParams = { stepScale: 0.2, refineDepth: 4, branchWidth: 2 };
@@ -266,8 +267,23 @@ describe("autocorrelation task: registry and prompt context", () => {
 		expect(sized).toContain('"n": 128');
 		expect(sized).toContain("width h = 1/256");
 		expect(sized).toContain("exactly 128 entries");
+		expect(sized).toContain('"n": 128 and exactly 128 weights');
 		expect(sized).toContain(`has peak ${UNIFORM_ROOT_PEAK}`);
+		expect(sized).not.toContain("exactly n entries");
+		// The exact-shape line carries a parseable example and names the two keys.
+		expect(sized).toContain(AUTOCORRELATION_SHAPE_EXAMPLE);
+		expect(JSON.parse(AUTOCORRELATION_SHAPE_EXAMPLE)).toEqual({ n: 4, weights: [1.5, 2.5, 2.5, 1.5] });
+		expect(sized).toContain('Exact output shape: {"n": 128, "weights": [w_0, ..., w_127]}');
+		expect(generic).toContain('Exact output shape: {"n": n, "weights": [w_0, ..., w_n-1]}');
 		expect(taskPromptContext("circle-packing")).toBeUndefined();
+		// The registry resolves the size the prompt should name: the spec's n, else the task default.
+		expect(resolveTaskN({ task: "autocorrelation" })).toBe(DEFAULT_AUTOCORRELATION_N);
+		expect(resolveTaskN({ task: "autocorrelation", n: 128 })).toBe(128);
+		expect(resolveTaskN({ task: "circle-packing" })).toBe(26);
+		expect(resolveTaskN({ task: "sum-difference" })).toBeUndefined();
+		expect(taskPromptContext("autocorrelation", resolveTaskN({ task: "autocorrelation" }))).toContain(
+			`exactly ${DEFAULT_AUTOCORRELATION_N} entries`,
+		);
 	});
 
 	it("reaches no ambient randomness or wall clock", () => {

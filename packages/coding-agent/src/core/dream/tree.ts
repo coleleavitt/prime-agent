@@ -6,10 +6,24 @@
  * the root accumulates many — exactly the shape the frozen replay simulator
  * relies on. This module has no IO: the online driver mutates a tree with
  * `addNode` and the store reconstructs one with `buildTreeFromRecords`.
+ *
+ * Every node carries its `origin` (`root` / `local` / `llm`), so a tree can say
+ * how many of its candidates a child agent generated as opposed to the local
+ * mutator standing in for a rejected child output. A node record without an
+ * origin predates provenance and reads as `local` (`root` for the root).
  */
 
 import type { DreamFailClass } from "./task.js";
-import { isNodeRecord, isTreeHeaderRecord, type NodeRecord, type TreeHeaderRecord, type TreeRecord } from "./types.js";
+import {
+	type CandidateOrigin,
+	isNodeRecord,
+	isTreeHeaderRecord,
+	type NodeOrigin,
+	type NodeRecord,
+	nodeOrigin,
+	type TreeHeaderRecord,
+	type TreeRecord,
+} from "./types.js";
 
 export interface DiscoveryNode {
 	id: string;
@@ -20,6 +34,7 @@ export interface DiscoveryNode {
 	score: number;
 	valid: boolean;
 	failClass?: DreamFailClass;
+	origin: NodeOrigin;
 	artifactRef: string;
 	tokens: number;
 	ts: number;
@@ -32,13 +47,37 @@ export interface NodeInput {
 	score: number;
 	valid: boolean;
 	failClass?: DreamFailClass;
+	/** Who generated the candidate; defaults to the local proposer. */
+	origin?: CandidateOrigin;
 	artifactRef: string;
 	tokens: number;
 	ts: number;
 }
 
+/** Node counts by origin over one tree; `root` is always 1 for a built tree. */
+export type OriginCounts = Record<NodeOrigin, number>;
+
 function finiteScore(score: number): number {
 	return Number.isFinite(score) ? score : 0;
+}
+
+/** The persisted line for one node: scalar fields only, `origin` always written. */
+export function nodeRecordOf(node: DiscoveryNode): NodeRecord {
+	return {
+		type: "node",
+		id: node.id,
+		parentId: node.parentId,
+		branch: node.branch,
+		seq: node.seq,
+		round: node.round,
+		score: node.score,
+		valid: node.valid,
+		...(node.failClass !== undefined ? { failClass: node.failClass } : {}),
+		origin: node.origin,
+		artifactRef: node.artifactRef,
+		tokens: node.tokens,
+		ts: node.ts,
+	};
 }
 
 export class DiscoveryTree {
@@ -111,6 +150,13 @@ export class DiscoveryTree {
 		return this.byId.size;
 	}
 
+	/** Node counts by origin: how many candidates the agent generated versus the local mutator. */
+	originCounts(): OriginCounts {
+		const counts: OriginCounts = { root: 0, local: 0, llm: 0 };
+		for (const node of this.byId.values()) counts[node.origin] += 1;
+		return counts;
+	}
+
 	/** Max score over valid nodes; 0 when nothing valid. */
 	bestScore(): number {
 		let best = 0;
@@ -151,6 +197,7 @@ export class DiscoveryTree {
 			score: finiteScore(input.score),
 			valid: input.valid,
 			failClass: input.failClass,
+			origin: input.origin ?? "local",
 			artifactRef: input.artifactRef,
 			tokens: input.tokens,
 			ts: input.ts,
@@ -163,20 +210,7 @@ export class DiscoveryTree {
 
 	/** The node records for this tree, in seq order (for persistence). */
 	toNodeRecords(): NodeRecord[] {
-		return this.allNodes().map((node) => ({
-			type: "node",
-			id: node.id,
-			parentId: node.parentId,
-			branch: node.branch,
-			seq: node.seq,
-			round: node.round,
-			score: node.score,
-			valid: node.valid,
-			...(node.failClass !== undefined ? { failClass: node.failClass } : {}),
-			artifactRef: node.artifactRef,
-			tokens: node.tokens,
-			ts: node.ts,
-		}));
+		return this.allNodes().map(nodeRecordOf);
 	}
 }
 
@@ -198,6 +232,7 @@ export function createTree(
 		round: 0,
 		score: finiteScore(rootScore),
 		valid: rootValid,
+		origin: "root",
 		artifactRef: rootArtifactRef,
 		tokens: 0,
 		ts: header.createdTs,
@@ -218,6 +253,7 @@ export function buildTreeFromRecords(records: readonly TreeRecord[]): DiscoveryT
 		score: finiteScore(record.score),
 		valid: record.valid,
 		failClass: record.failClass,
+		origin: nodeOrigin(record),
 		artifactRef: record.artifactRef,
 		tokens: record.tokens,
 		ts: record.ts,

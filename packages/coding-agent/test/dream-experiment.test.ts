@@ -31,8 +31,17 @@ import {
 	taskScoring,
 	timingScoringNote,
 } from "../src/core/dream/experiment.js";
-import { type DreamLoopResult, runDreamLoop } from "../src/core/dream/loop.js";
+import { type DreamLoopResult, type DreamRoundRecord, runDreamLoop } from "../src/core/dream/loop.js";
 import { DEFAULT_POLICY, policyId } from "../src/core/dream/policy.js";
+import {
+	addProposalTally,
+	PROPOSAL_REJECT_REASONS,
+	type ProposalTally,
+	tallyAccepted,
+	tallyRejected,
+	totalRejected,
+	zeroProposalTally,
+} from "../src/core/dream/proposer.js";
 import {
 	DreamStoreError,
 	experimentArmDir,
@@ -148,6 +157,23 @@ describe("runExperiment (local)", () => {
 		expect(fixed.totals.tokens).toBe(0);
 		expect(fixed.totals.probes).toBe(fixed.rounds.at(-1)!.cumulativeProbes);
 		expect(fixed.totals.finalBest).toBe(fixed.rounds.at(-1)!.cumulativeBest);
+		// The local path generates nothing through an agent: every probe is a local candidate, no fallback.
+		for (const armResult of result.arms) {
+			expect(armResult.totals.agentGeneratedCalls).toBe(0);
+			expect(armResult.totals.localFallbacks).toBe(0);
+			expect(armResult.totals.llmProposals).toBe(0);
+			expect(armResult.totals.llmAccepted).toBe(0);
+			expect(armResult.totals.llmRejected).toEqual(zeroProposalTally().llmRejected);
+			for (const row of armResult.rounds) {
+				expect(row.probes).toBeGreaterThan(0);
+				expect(row.agentGeneratedCalls).toBe(0);
+				expect(row.cumulativeAgentGeneratedCalls).toBe(0);
+				expect(row.localFallbacks).toBe(0);
+				expect(row.llmProposals).toBe(0);
+				expect(row.llmAccepted).toBe(0);
+				expect(totalRejected(row)).toBe(0);
+			}
+		}
 
 		const dream = arm(result, "dream");
 		expect(dream.fixedPolicy).toBe(false);
@@ -191,6 +217,28 @@ describe("runExperiment (local)", () => {
 		).toBe(true);
 		expect(isExperimentResult({ ...result, scoring: "noisy" })).toBe(false);
 		expect(isExperimentResult({ ...result, arms: [{ ...result.arms[0]!, selectedPolicyId: 1 }] })).toBe(false);
+		// Provenance totals are additive too: a file without them validates, a malformed one does not.
+		const {
+			agentGeneratedCalls: _agent,
+			localFallbacks: _fallbacks,
+			llmProposals: _proposals,
+			llmAccepted: _accepted,
+			llmRejected: _rejected,
+			...legacyTotals
+		} = result.arms[0]!.totals;
+		expect(isExperimentResult({ ...result, arms: [{ ...result.arms[0]!, totals: legacyTotals }] })).toBe(true);
+		expect(
+			isExperimentResult({
+				...result,
+				arms: [{ ...result.arms[0]!, totals: { ...result.arms[0]!.totals, agentGeneratedCalls: "3" } }],
+			}),
+		).toBe(false);
+		expect(
+			isExperimentResult({
+				...result,
+				arms: [{ ...result.arms[0]!, totals: { ...result.arms[0]!.totals, llmRejected: { parse: "1" } } }],
+			}),
+		).toBe(false);
 		expect(() => readExperimentResult(dir, "missing")).toThrow(DreamStoreError);
 
 		expect(() => runExperiment(SPEC, { dir, clock: () => FIXED_CLOCK })).toThrow(/already exists/);
@@ -298,12 +346,18 @@ describe("runExperiment (local)", () => {
 
 function row(
 	over: Partial<ExperimentRoundRow> & Pick<ExperimentRoundRow, "round" | "cumulativeBest" | "cumulativeProbes">,
-) {
+): ExperimentRoundRow {
 	return {
 		treeId: `t${over.round}`,
 		policyId: "p",
 		roundBest: over.cumulativeBest,
 		probes: 10,
+		agentGeneratedCalls: 0,
+		cumulativeAgentGeneratedCalls: 0,
+		localFallbacks: 0,
+		llmProposals: 0,
+		llmAccepted: 0,
+		llmRejected: zeroProposalTally().llmRejected,
 		decisionRounds: 1,
 		poolSize: over.round - 1,
 		handlerCalls: { proposer: 0, dreamer: 0, guidance: 0 },
@@ -312,7 +366,7 @@ function row(
 		cumulativeTokens: 0,
 		dreaming: null,
 		...over,
-	} satisfies ExperimentRoundRow;
+	};
 }
 
 function syntheticArm(name: ExperimentArmResult["arm"], rows: ExperimentRoundRow[]): ExperimentArmResult {
@@ -330,7 +384,17 @@ function syntheticArm(name: ExperimentArmResult["arm"], rows: ExperimentRoundRow
 		policyScoreOnOwnPool: { initial: 0, final: 0 },
 		policyChanges: 0,
 		rounds: rows,
-		totals: { probes: last.cumulativeProbes, handlerCalls: 0, tokens: 0, finalBest: last.cumulativeBest },
+		totals: {
+			probes: last.cumulativeProbes,
+			agentGeneratedCalls: last.cumulativeAgentGeneratedCalls,
+			localFallbacks: 0,
+			llmProposals: 0,
+			llmAccepted: 0,
+			llmRejected: zeroProposalTally().llmRejected,
+			handlerCalls: 0,
+			tokens: 0,
+			finalBest: last.cumulativeBest,
+		},
 	};
 }
 
@@ -524,6 +588,160 @@ describe("buildArmResult", () => {
 		expect(fixed.finalPolicyId).toBe("p0");
 		expect(fixed.selectedPolicyId).toBe("p0");
 		expect(fixed.policyChanges).toBe(0);
+	});
+
+	it("reports agent-generated calls apart from probes and fallbacks, summing the proposer tally by reason", () => {
+		// Round 1 (the measured defect's shape): 12 probes, 12 child results, 2 accepted, the rest
+		// parse failures that fell back to the local mutator. Round 2: 12 probes, one retry
+		// (13 results), 9 accepted, one shape rejection retried into an acceptance, 3 fallbacks.
+		const round1 = zeroProposalTally();
+		for (let index = 0; index < 12; index++) {
+			if (index < 2) tallyAccepted(round1);
+			else tallyRejected(round1, "parse", true);
+		}
+		const round2 = zeroProposalTally();
+		for (let index = 0; index < 9; index++) tallyAccepted(round2);
+		tallyRejected(round2, "shape", false);
+		tallyRejected(round2, "length", true);
+		tallyRejected(round2, "invalid-candidate", true);
+		tallyRejected(round2, "error", true);
+		expect(round1).toEqual({
+			llmProposals: 12,
+			llmAccepted: 2,
+			llmRejected: { ...zeroProposalTally().llmRejected, parse: 10 },
+			localFallbacks: 10,
+		});
+		expect(round2.llmProposals).toBe(13);
+		expect(round2.llmAccepted).toBe(9);
+		expect(totalRejected(round2)).toBe(4);
+		expect(round2.localFallbacks).toBe(3);
+
+		const record = (iteration: number, agentGeneratedCalls: number, proposals: ProposalTally): DreamRoundRecord => ({
+			iteration,
+			treeId: `t${iteration}`,
+			policyId: "p",
+			roundBest: 2 - iteration * 0.05,
+			probes: 12,
+			agentGeneratedCalls,
+			proposals,
+			decisionRounds: 3,
+			poolSize: iteration,
+			tokens: { rollout: 12 * 500, dreamer: 0, guidance: 0 },
+			handlerCalls: { proposer: proposals.llmProposals, dreamer: 0, guidance: 0 },
+			dreaming: null,
+		});
+		const loop: DreamLoopResult = {
+			runId: "run",
+			task: "autocorrelation",
+			seed: 7,
+			mode: "llm",
+			iterations: 1,
+			fixedPolicy: true,
+			treeIds: ["t0", "t1"],
+			rounds: [record(0, 2, round1), record(1, 9, round2)],
+			initialPolicyId: "p",
+			initialPolicyScore: 0.4,
+			finalPolicy: DEFAULT_POLICY,
+			finalPolicyId: "p",
+			finalPolicyScore: 0.4,
+			improved: false,
+			bestNodeScore: 2,
+			tokens: 24 * 500,
+		};
+		const result = buildArmResult(
+			{ arm: "fixed", fixedPolicy: true, guided: false, storeDir: "experiments/x/fixed" },
+			{ proposer: "llm", dreamer: "local", model: "faux/stub" },
+			loop,
+		);
+		const [first, second] = result.rounds as [ExperimentRoundRow, ExperimentRoundRow];
+		// Probes stay the compute axis; agent-generated calls are the subset the child actually produced.
+		expect([first.probes, first.cumulativeProbes]).toEqual([12, 12]);
+		expect([first.agentGeneratedCalls, first.cumulativeAgentGeneratedCalls]).toEqual([2, 2]);
+		expect([first.llmProposals, first.llmAccepted, first.localFallbacks]).toEqual([12, 2, 10]);
+		expect(first.llmRejected.parse).toBe(10);
+		expect(first.probes).toBe(first.agentGeneratedCalls + first.localFallbacks);
+		expect([second.probes, second.cumulativeProbes]).toEqual([12, 24]);
+		expect([second.agentGeneratedCalls, second.cumulativeAgentGeneratedCalls]).toEqual([9, 11]);
+		expect([second.llmProposals, second.llmAccepted, second.localFallbacks]).toEqual([13, 9, 3]);
+		expect(second.llmRejected).toEqual({
+			...zeroProposalTally().llmRejected,
+			shape: 1,
+			length: 1,
+			"invalid-candidate": 1,
+			error: 1,
+		});
+		expect(second.probes).toBe(second.agentGeneratedCalls + second.localFallbacks);
+		// Handler calls are cost and stay separate from both compute counts.
+		expect([first.cumulativeHandlerCalls, second.cumulativeHandlerCalls]).toEqual([12, 25]);
+		expect(result.totals).toEqual({
+			probes: 24,
+			agentGeneratedCalls: 11,
+			localFallbacks: 13,
+			llmProposals: 25,
+			llmAccepted: 11,
+			llmRejected: {
+				...zeroProposalTally().llmRejected,
+				parse: 10,
+				shape: 1,
+				length: 1,
+				"invalid-candidate": 1,
+				error: 1,
+			},
+			handlerCalls: 25,
+			tokens: 24 * 500,
+			finalBest: 2,
+		});
+		expect(result.totals.llmRejected).toEqual(addProposalTally(round1, round2).llmRejected);
+		// The rows hold copies: mutating the loop's tally afterwards changes nothing.
+		tallyAccepted(round1);
+		expect(result.rounds[0]!.llmAccepted).toBe(2);
+		expect(result.totals.llmAccepted).toBe(11);
+	});
+
+	it("reads a record without provenance as zero agent-generated calls, never as every probe", () => {
+		const untracked: DreamRoundRecord = {
+			iteration: 0,
+			treeId: "t0",
+			policyId: "p",
+			roundBest: 1,
+			probes: 12,
+			decisionRounds: 3,
+			poolSize: 0,
+			tokens: { rollout: 6000, dreamer: 0, guidance: 0 },
+			handlerCalls: { proposer: 12, dreamer: 0, guidance: 0 },
+			dreaming: null,
+		};
+		const result = buildArmResult(
+			{ arm: "dream", fixedPolicy: false, guided: false, storeDir: "experiments/x/dream" },
+			{ proposer: "llm", dreamer: "llm" },
+			{
+				runId: "run",
+				task: "autocorrelation",
+				seed: 1,
+				mode: "llm",
+				iterations: 0,
+				fixedPolicy: false,
+				treeIds: ["t0"],
+				rounds: [untracked],
+				initialPolicyId: "p",
+				initialPolicyScore: 0,
+				finalPolicy: DEFAULT_POLICY,
+				finalPolicyId: "p",
+				finalPolicyScore: 0,
+				improved: false,
+				bestNodeScore: 1,
+				tokens: 6000,
+			},
+		);
+		const only = result.rounds[0]!;
+		expect(only.probes).toBe(12);
+		expect(only.handlerCalls.proposer).toBe(12);
+		expect(only.agentGeneratedCalls).toBe(0);
+		expect(only.llmProposals).toBe(0);
+		expect(only.localFallbacks).toBe(0);
+		expect(only.llmRejected).toEqual(zeroProposalTally().llmRejected);
+		expect(Object.keys(only.llmRejected).sort()).toEqual([...PROPOSAL_REJECT_REASONS].sort());
+		expect(result.totals.agentGeneratedCalls).toBe(0);
 	});
 });
 

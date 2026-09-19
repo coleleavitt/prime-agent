@@ -51,11 +51,12 @@ import {
 	runOnlineExplorationWithAgent,
 } from "./llm.js";
 import type { DreamLoopResult } from "./loop.js";
-import { asyncOf, createLocalProposer } from "./proposer.js";
+import { asyncOf, createLocalProposer, zeroProposalTally } from "./proposer.js";
+import { RejectionLog, rejectionsPath } from "./rejections.js";
 import { createSeededRng } from "./rng.js";
 import type { DreamExperimentLlmContext } from "./run-service.js";
 import { copyTree } from "./store.js";
-import { taskPromptContext } from "./tasks/index.js";
+import { resolveTaskN, taskPromptContext } from "./tasks/index.js";
 
 /** What the agent-backed arm runner is built from: the service's LLM context plus two optional knobs. */
 export interface AgentExperimentRunnerOptions extends DreamExperimentLlmContext {
@@ -148,7 +149,9 @@ interface SharedRolloutOptions {
  * iteration 0 (same policy, rng fork label, clock, budget and tree id), grown into
  * the first arm's store and copied to the others. Its proposer handler calls are
  * counted (retries included) and reported on every arm's round-1 record, since
- * every arm shares that cost.
+ * every arm shares that cost; so are its provenance (`agentGeneratedCount`, the
+ * proposer tally), and its rejections are logged under the first arm's store as
+ * `<experimentId>-shared`.
  */
 async function sharedInitialRollout(
 	plan: ExperimentPlan,
@@ -161,11 +164,15 @@ async function sharedInitialRollout(
 		proposerCalls += 1;
 		return options.runAgent(request, callOptions);
 	};
+	const tally = zeroProposalTally();
 	const proposer = options.useLlmProposer
 		? createLlmProposer(counting, plan.task, {
 				scope: options.scope,
 				signal: options.signal,
 				tokenBudget: options.tokenBudget,
+				tally,
+				iteration: 0,
+				rejections: new RejectionLog(rejectionsPath(first.dir, `${plan.experimentId}-shared`), first.loop.clock),
 				...(options.promptContext ? { promptContext: options.promptContext } : {}),
 			})
 		: asyncOf(createLocalProposer(plan.task));
@@ -193,6 +200,8 @@ async function sharedInitialRollout(
 		treeId: explore.treeId,
 		bestScore: explore.bestScore,
 		revealedCount: explore.revealedCount,
+		agentGeneratedCount: explore.agentGeneratedCount,
+		proposals: tally,
 		rounds: explore.rounds,
 		tokens: explore.tokens,
 		handlerCalls: { proposer: proposerCalls, dreamer: 0, guidance: 0 },
@@ -207,7 +216,7 @@ export interface ExperimentWithAgentOptions extends ExperimentRunOptions {
 	useLlmProposer: boolean;
 	useLlmDreamer: boolean;
 	childTokenBudget?: number;
-	/** The task's public contract for the proposer prompt; defaults to `taskPromptContext(spec.task)`. */
+	/** The task's public contract for the proposer prompt; defaults to `taskPromptContext(spec.task, resolveTaskN(spec))`. */
 	proposerPromptContext?: string;
 	/** See `AgentExperimentRunnerOptions.shareInitialRollout`; default true. */
 	shareInitialRollout?: boolean;
@@ -225,7 +234,7 @@ export async function runExperimentWithAgent(
 	options: ExperimentWithAgentOptions,
 ): Promise<ExperimentResult> {
 	assertGuidedArmsServed(spec.arms, options.useLlmProposer);
-	const promptContext = options.proposerPromptContext ?? taskPromptContext(spec.task);
+	const promptContext = options.proposerPromptContext ?? taskPromptContext(spec.task, resolveTaskN(spec));
 	const runner = createAgentExperimentRunner({
 		runAgent: options.runAgent,
 		scope: options.scope,

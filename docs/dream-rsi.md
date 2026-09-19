@@ -145,8 +145,13 @@ expanded), else `<agent-dir>/dream`. Trees are `<dreamDir>/trees/<treeId>.jsonl`
 `<dreamDir>/trees/<treeId>/blobs/<seq>.json`, so node lines stay scalar-only.
 
 - **Header** (line 0): `{type:"tree",version,treeId,taskId,n?,w,seed,policyId,iteration,createdTs}`.
-- **Node line**: `{type:"node",id,parentId,branch,seq,round,score,valid,failClass?,artifactRef,tokens,ts}`
-  with `id = <treeId>-n<seq>` and `ts` from the injected clock.
+- **Node line**:
+  `{type:"node",id,parentId,branch,seq,round,score,valid,failClass?,origin,artifactRef,tokens,ts}`
+  with `id = <treeId>-n<seq>` and `ts` from the injected clock. `origin` is provenance: `root` for
+  the seeded root, `local` for the zero-token mutator, `llm` for a candidate a child agent
+  generated. On the LLM-proposer path a `local` non-root node is a FALLBACK (the child's output was
+  rejected and the mutator stood in), and its `tokens` are what that rejected child spent. A line
+  written before provenance existed has no `origin` and reads as `root` / `local` (`nodeOrigin`).
 - **Reveal line** (one per online round): `{type:"reveal",round,ids:[...]}` — informational for
   `show`; replay derives reveals from `seq` + `parent` and does not read it.
 
@@ -222,6 +227,52 @@ LLM proposer/dreamer require an in-session agent handler and are unavailable fro
 
 No token is spent and no socket is opened.
 
+### The LLM proposer's output contract and rejection provenance
+
+A real run showed the failure the local fallback hides: on one model 81 of 83 `dream.llm_propose`
+spans fell back because the child wrapped its JSON in an explanation or code fences, returned the
+wrong `weights` length, or (with thinking on) ran to a 32k-token output cap; every fallback was
+recorded as a normal node with the child's tokens and no mark, so "agent calls" overstated the
+agent's work and the rejection cause was gone. `createLlmProposer` (`llm.ts`) now works like this:
+
+- **Extraction.** The child's output is searched for its JSON object with `extractJsonValue`
+  (`ravo/runtime-adapter.ts`): the whole output is tried first, then every `{` is a candidate start,
+  the balanced close is found by a string-aware scan, and the LARGEST candidate that parses wins, so
+  fences, prose before or after the object, and a small fragment quoted in an explanation are all
+  tolerated. The dreamer (`array`) and guidance writer (`object`) opt in the same way through
+  `StructuredChildSpec.extractJson`; RAVO's own children keep the strict whole-output parse.
+- **Prompt.** The proposer prompt is header, optional guidance, the current candidate, the
+  generation hints, the task contract from `taskPromptContext(task, resolveTaskN(spec))` — which
+  names the exact size (`"n": 64 and exactly 64 weights`) and carries a parseable shape example —
+  then an output contract (one JSON object in the candidate's shape, no prose, no fences, no thinking
+  out loud, keep it as short as the object) and, as the LAST line, `PROPOSER_JSON_ONLY`.
+- **Classification.** Every child result is accepted or rejected with one `ProposalRejectReason`:
+  `parse` (no JSON object), `shape` (the task's `deserialize` threw a `TypeError`: wrong keys,
+  wrong `weights` length, non-numeric entries), `invalid-candidate` (any other refusal), `error`,
+  `turn-limit`, `budget`, `aborted`, and `length` when the child's final message stopped at its
+  output cap (a rejection of that output is `length` whatever the parser said). `error`, `parse`,
+  `shape` and `invalid-candidate` get one retry (`PROPOSER_RETRIES`); `length` does not, so a
+  runaway is never paid for twice. When the last result is rejected the local mutator stands in,
+  the node is `origin: "local"`, and the child's tokens stay on it; an accepted result is
+  `origin: "llm"`; an abort throws `DreamAbortError`.
+- **Records.** The `dream.llm_propose` span carries `dream.llm_attempts`, `dream.llm_output_tokens`,
+  `dream.origin` and, on a rejection, `dream.llm_reject_reason`, `dream.llm_status` and a
+  240-character `dream.llm_reject_excerpt`. Every rejection is one line of
+  `<dreamDir>/rejections/<runKey>.jsonl` (`rejections.ts`; `runKey` is
+  `<task>-s<seed>-r<clock>` for a loop and `<experimentId>-shared` for an experiment's shared
+  round 1, written under the first arm's store): `{type:"rejection",ts,iteration,round,attempt,
+  reason,status,fellBack,tokens,outputTokens,stopReason?,error?,excerpt}`. The per-rollout
+  `ProposalTally` (`llmProposals`, `llmAccepted`, `llmRejected` by reason, `localFallbacks`) is
+  copied onto each `DreamRoundRecord.proposals` next to `agentGeneratedCalls`, and the experiment
+  rows and totals carry the same fields, so a fallback is never counted as the agent's work.
+
+What this path still cannot do is cap a child's output or thinking: `RunAgentOptions` exposes
+`tokenBudget` and `maxTurns`, which only stop FURTHER turns, and a single-turn proposer child has
+none. A hard cap needs `RunAgentOptions.maxOutputTokens` (applied as the stream `maxTokens`) and a
+`RunAgentRequest.thinkingLevel` plumbed into `_createRlmSubagentRuntimeOptions`; until then the
+contract above and the `length` classification are the defences, and a `length` rejection in the
+log is the signal to run the proposer with thinking off.
+
 ## Experiments: the fixed-exploration control
 
 The mechanism above is the paper's Figures 1–2. Its evidence (Figures 3–6) is a comparison against
@@ -237,6 +288,17 @@ experiment` runs that comparison; `evals/dream/plot_experiment.py` draws it.
 - **Probes** = evaluated attempts = `ExploreResult.revealedCount` = `tree.size - 1`. This is
   discovery compute, the paper's "agent calls", on every path (local and LLM alike), and the only
   input to the multipliers.
+- **Agent-generated calls** = `ExploreResult.agentGeneratedCount` = the probes whose candidate a
+  child agent actually produced (nodes with `origin: "llm"`). On the LLM path
+  `probes - agentGeneratedCalls` are **local fallbacks**: attempts whose child output was rejected
+  and replaced by the local mutator. The per-round rows carry `agentGeneratedCalls`,
+  `cumulativeAgentGeneratedCalls` and `localFallbacks` beside `probes`, so a plot can label which
+  series is on its compute axis; the headline multipliers stay on probes. Zero on the local path.
+- **Proposals**: what happened to every child proposer result, per round — `llmProposals`
+  (results examined, retries included; `= llmAccepted + sum(llmRejected)`), `llmAccepted` (each one
+  is an `origin: "llm"` node) and `llmRejected` by reason (`parse`, `shape`, `invalid-candidate`,
+  `error`, `length`, `aborted`, `turn-limit`, `budget`; every reason present, 0 when unseen). All
+  zero on the local path.
 - **Handler calls** per role (`proposer`, `dreamer`, `guidance`; retries included) and child
   **tokens** are cost. They are recorded and plotted as cost and never mixed into the compute axis.
   Zero on the local path.
@@ -277,8 +339,11 @@ The result is `<dream dir>/experiments/<experimentId>/result.json`, schema
 proposer/dreamer mode, model), one entry per arm with `storeDir` (relative to the dream dir),
 `runId`, `initialPolicyId` / `finalPolicyId`, the policy's score on the arm's own final pool, the
 per-round rows (`treeId`, `policyId`, `roundBest`, `cumulativeBest`, probes and cumulative probes,
-per-role handler calls, tokens, the `dreaming` record or null), the arm totals, the `headline`
-block, `sharedInitialRollout`, `createdTs` and `notes`. Every number is finite; an undefined value
+`agentGeneratedCalls` and `cumulativeAgentGeneratedCalls`, `localFallbacks`, `llmProposals`,
+`llmAccepted`, `llmRejected` by reason, per-role handler calls, tokens, the `dreaming` record or
+null), the arm totals (the same provenance counts summed), the `headline` block,
+`sharedInitialRollout`, `createdTs` and `notes`. The provenance fields are additive: a result
+written before them still validates, and a reader must treat their absence as "not recorded". Every number is finite; an undefined value
 is `null`, never `NaN`. On the local path the whole file is JSON-equal across repeat runs with the
 same seed and clock (`storeDir` is relative), every tree file is byte-identical, and the fixed
 arm's round-`i` tree id equals the dream arm's. Two runs of the same seed under different clocks
@@ -397,6 +462,7 @@ authoritative rows are in `docs/observability.md`; this table is the per-file ma
 | `dream.replay` | `replay.ts` `simulatePolicyWithSpan` (standalone root; bare `simulatePolicy` opens none so it can run in a tight dreaming loop) / `improve.ts` `runDreaming` (one coarse per-step child of `dream.dream`) | root or `dream.dream` | `dream.policy_id`, `dream.tree_id?`, `dream.revealed_n`, `dream.rounds`, `dream.v`, `dream.out_of_support`, `dream.simulations?` |
 | `dream.dream` | `improve.ts` `runDreaming` | `dream.run` (sync) / detached root (async) | `dream.candidates`, `dream.pool_size`, `dream.chosen_policy_id`, `dream.chosen_score`, `dream.current_score`, `dream.chosen_quality`, `dream.current_quality`, `dream.quality_rejected`, `dream.improved` |
 | `dream.redeploy` | `loop.ts` | `dream.run` (sync) / detached root (async) | `dream.explore` attrs plus `dream.policy_id`, `dream.fixed_policy` |
+| `dream.llm_propose` | `llm.ts` `createLlmProposer` (LLM-proposer path only; one per generation attempt, wrapping every child call of that attempt) | `dream.round` | `dream.round`, `dream.tokens`, `dream.llm_output_tokens`, `dream.llm_attempts`, `dream.llm_fallback`, `dream.origin`, `dream.llm_reject_reason?`, `dream.llm_status?`, `dream.llm_reject_excerpt?` |
 | `dream.llm_guidance` | `llm.ts` (guided arms only; one per iteration `>= 1`) | `dream.run` | `dream.iteration`, `dream.pool_size`, `dream.tokens`, `dream.llm_fallback` |
 
 Also owed in `packages/ai/src/trace-context.ts` (off-limits here): add `"dream.run"`, `"dream.dream"`,

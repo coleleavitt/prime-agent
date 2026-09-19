@@ -28,6 +28,7 @@ import {
 	isRevealRecord,
 	isTreeHeaderRecord,
 	type NodeRecord,
+	nodeOrigin,
 	type RevealRecord,
 	type TreeHeaderRecord,
 	type TreeRecord,
@@ -163,7 +164,7 @@ export class TreeWriter {
 export interface RecordedTree {
 	readonly header: TreeHeaderRecord;
 	readonly rootId: string;
-	/** All node records in seq order, including the root at seq 0. */
+	/** All node records in seq order, including the root at seq 0; every one carries a resolved `origin`. */
 	readonly nodes: readonly NodeRecord[];
 	/** Online reveal lines (informational; replay derives reveals itself). */
 	readonly reveals: readonly RevealRecord[];
@@ -231,14 +232,23 @@ function noBlobLoader(node: NodeRecord): unknown {
 	throw new DreamStoreError(`no blob loader configured for node ${node.id}`);
 }
 
-/** Build a frozen recorded tree from records in memory (no filesystem access). */
+/** A node record with its origin resolved (the legacy default for a line written before provenance). */
+function withOrigin(record: NodeRecord): NodeRecord {
+	return { ...record, origin: nodeOrigin(record) };
+}
+
+/**
+ * Build a frozen recorded tree from records in memory (no filesystem access).
+ * Node records come back with `origin` resolved, so a reader never has to know
+ * the legacy default.
+ */
 export function buildRecordedTree(
 	records: readonly TreeRecord[],
 	blobLoader: (node: NodeRecord) => unknown = noBlobLoader,
 ): RecordedTree {
 	const header = records.find(isTreeHeaderRecord);
 	if (!header) throw new DreamStoreError("records have no tree header");
-	const nodes = records.filter(isNodeRecord);
+	const nodes = records.filter(isNodeRecord).map(withOrigin);
 	const reveals = records.filter(isRevealRecord);
 	return new RecordedTreeImpl(header, nodes, reveals, blobLoader);
 }
@@ -279,7 +289,17 @@ export interface TreeSummary {
 	iteration: number;
 	createdTs: number;
 	nodeCount: number;
+	/** Nodes whose candidate a child agent generated (`origin: "llm"`); 0 for a local tree. */
+	agentGeneratedCount: number;
 	bestScore: number;
+}
+
+function agentGeneratedCountOf(records: readonly TreeRecord[]): number {
+	let count = 0;
+	for (const record of records) {
+		if (isNodeRecord(record) && nodeOrigin(record) === "llm") count += 1;
+	}
+	return count;
 }
 
 function bestScoreOf(records: readonly TreeRecord[]): number {
@@ -325,6 +345,7 @@ export function listTrees(dir?: string): TreeSummary[] {
 			iteration: header.iteration,
 			createdTs: header.createdTs,
 			nodeCount: records.filter(isNodeRecord).length,
+			agentGeneratedCount: agentGeneratedCountOf(records),
 			bestScore: bestScoreOf(records),
 		});
 	}

@@ -20,6 +20,23 @@ export type DreamClock = () => number;
 /** Whether a run's proposer/dreamer are the local zero-token path or the LLM path. */
 export type DreamMode = "local" | "llm";
 
+/**
+ * Who generated a node's artifact: the task's seeded `root`, the `local`
+ * zero-token proposer, or a child agent (`llm`). On the LLM-proposer path a
+ * `local` non-root node is a FALLBACK — the child's output was rejected and the
+ * local mutator stood in — so counting `llm` nodes gives the agent-generated
+ * candidates, never the handler calls.
+ */
+export const NODE_ORIGINS = ["root", "local", "llm"] as const;
+export type NodeOrigin = (typeof NODE_ORIGINS)[number];
+
+/** The origin a proposed (non-root) candidate can carry. */
+export type CandidateOrigin = Exclude<NodeOrigin, "root">;
+
+export function isNodeOrigin(value: unknown): value is NodeOrigin {
+	return typeof value === "string" && (NODE_ORIGINS as readonly string[]).includes(value);
+}
+
 /** Line 0 of a tree file: the run metadata shared by every node in the tree. */
 export interface TreeHeaderRecord {
 	type: "tree";
@@ -54,9 +71,21 @@ export interface NodeRecord {
 	score: number;
 	valid: boolean;
 	failClass?: DreamFailClass;
+	/**
+	 * Provenance. Every line written since provenance was added carries it; a
+	 * line without it predates provenance and reads through `nodeOrigin` as
+	 * `root` for the root and `local` for every other node.
+	 */
+	origin?: NodeOrigin;
 	artifactRef: string;
 	tokens: number;
 	ts: number;
+}
+
+/** A node line's origin with the legacy default: `root` for the root, `local` for every other node. */
+export function nodeOrigin(record: Pick<NodeRecord, "parentId" | "origin">): NodeOrigin {
+	if (isNodeOrigin(record.origin)) return record.origin;
+	return record.parentId === null ? "root" : "local";
 }
 
 /** One online round's reveal set: informational for `show`; replay does not read it. */

@@ -1,8 +1,10 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { addSpanSink, type SpanEndRecord } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_POLICY } from "../src/core/dream/policy.js";
+import { createLocalProposer, type Proposer } from "../src/core/dream/proposer.js";
 import { createSeededRng } from "../src/core/dream/rng.js";
 import {
 	attemptRngLabel,
@@ -10,6 +12,7 @@ import {
 	LlmProposerUnavailableError,
 	runOnlineExploration,
 } from "../src/core/dream/rollout.js";
+import { listTrees, readTree } from "../src/core/dream/store.js";
 import type { DreamTaskId } from "../src/core/dream/task.js";
 import { resolveTask } from "../src/core/dream/tasks/index.js";
 import { createSumDifferenceTask } from "../src/core/dream/tasks/sum-difference.js";
@@ -43,6 +46,7 @@ function explore(
 	task: DreamTaskId = "circle-packing",
 	n: number | undefined = 26,
 	clockMs: number = FIXED_CLOCK,
+	proposer?: Proposer<unknown>,
 ) {
 	return runOnlineExploration({
 		task: resolveTask({ task, n }),
@@ -56,7 +60,37 @@ function explore(
 		dir,
 		policy: DEFAULT_POLICY,
 		iteration: 0,
+		...(proposer ? { proposer } : {}),
 	});
+}
+
+/**
+ * A token-free stand-in for the LLM proposer's OUTCOMES: the same local
+ * candidates, but every `accept`-th attempt is stamped `origin: "llm"` (an
+ * accepted child result) and the rest `origin: "local"` (a fallback after a
+ * rejected one), each carrying the tokens a child would have spent. No handler,
+ * no network; the rng stream is untouched, so the tree shape equals the local one.
+ */
+function stampedProposer(task: DreamTaskId, n: number | undefined, accept: number): Proposer<unknown> {
+	const local = createLocalProposer(resolveTask({ task, n }));
+	let attempt = 0;
+	return {
+		propose(parent, params, rng, round) {
+			attempt += 1;
+			const outcome = local.propose(parent, params, rng, round);
+			return attempt % accept === 0
+				? { ...outcome, tokens: 270, origin: "llm" }
+				: { ...outcome, tokens: 600, origin: "local" };
+		},
+	};
+}
+
+function nodeLines(dir: string, treeId: string): Record<string, unknown>[] {
+	return readFileSync(join(dir, "trees", `${treeId}.jsonl`), "utf8")
+		.trim()
+		.split("\n")
+		.map((line) => JSON.parse(line) as Record<string, unknown>)
+		.filter((line) => line.type === "node");
 }
 
 /** The clock-free shape of a grown tree: per node (parent seq, branch, round, score, valid), in seq order. */
@@ -81,6 +115,86 @@ describe("runOnlineExploration (circle-packing)", () => {
 		expect(result.tree.size).toBe(result.revealedCount + 1);
 		expect(result.bestScore).toBeGreaterThan(result.rootScore);
 		expect(result.bestNodeId).not.toBe(`${result.treeId}-n0`);
+		// Nothing on the local path is agent-generated.
+		expect(result.agentGeneratedCount).toBe(0);
+		expect(result.tree.originCounts()).toEqual({ root: 1, local: result.revealedCount, llm: 0 });
+	});
+
+	it("persists origin on every node line: root, then local for the whole local path", () => {
+		const result = explore(dreamDir, 5);
+		const lines = nodeLines(dreamDir, result.treeId);
+		expect(lines[0]!.origin).toBe("root");
+		expect(lines.slice(1).every((line) => line.origin === "local")).toBe(true);
+		const summary = listTrees(dreamDir).find((tree) => tree.treeId === result.treeId)!;
+		expect(summary.nodeCount).toBe(result.tree.size);
+		expect(summary.agentGeneratedCount).toBe(0);
+	});
+
+	it("records an injected outcome's origin on the node, its line and the dream.attempt span, and counts the agent's candidates", () => {
+		const spans: SpanEndRecord[] = [];
+		const unsubscribe = addSpanSink((record) => spans.push(record));
+		let result: ExploreResult;
+		try {
+			result = explore(dreamDir, 5, "circle-packing", 26, FIXED_CLOCK, stampedProposer("circle-packing", 26, 3));
+		} finally {
+			unsubscribe();
+		}
+		const localDir = mkdtempSync(join(tmpdir(), "dream-origin-local-"));
+		try {
+			const local = explore(localDir, 5);
+			// Provenance never reaches the rng: the stamped rollout grows the local tree's shape.
+			expect(shape(result)).toEqual(shape(local));
+			expect(result.treeId).toBe(local.treeId);
+		} finally {
+			rmSync(localDir, { recursive: true, force: true });
+		}
+
+		const nonRoot = result.tree.allNodes().filter((node) => node.parentId !== null);
+		const llmNodes = nonRoot.filter((node) => node.origin === "llm");
+		expect(llmNodes.length).toBe(Math.floor(nonRoot.length / 3));
+		expect(result.agentGeneratedCount).toBe(llmNodes.length);
+		expect(result.tree.originCounts()).toEqual({
+			root: 1,
+			local: nonRoot.length - llmNodes.length,
+			llm: llmNodes.length,
+		});
+		// Every attempt cost child tokens whether or not the agent's output was accepted.
+		expect(result.tokens).toBe(llmNodes.length * 270 + (nonRoot.length - llmNodes.length) * 600);
+		expect(nonRoot.every((node) => node.tokens === (node.origin === "llm" ? 270 : 600))).toBe(true);
+
+		const lines = nodeLines(dreamDir, result.treeId);
+		expect(lines.map((line) => line.origin)).toEqual(result.tree.allNodes().map((node) => node.origin));
+		expect(listTrees(dreamDir).find((tree) => tree.treeId === result.treeId)!.agentGeneratedCount).toBe(
+			llmNodes.length,
+		);
+		const recorded = readTree(result.treeId, dreamDir);
+		expect(recorded.nodes.map((node) => node.origin)).toEqual(result.tree.allNodes().map((node) => node.origin));
+
+		const attempts = spans.filter((span) => span.name === "dream.attempt");
+		expect(attempts).toHaveLength(nonRoot.length);
+		const byNode = new Map(attempts.map((span) => [span.attrs["dream.node_id"], span.attrs["dream.origin"]]));
+		for (const node of nonRoot) expect(byNode.get(node.id)).toBe(node.origin);
+		expect(attempts.every((span) => typeof span.attrs["dream.origin"] === "string")).toBe(true);
+	});
+
+	it("reads a tree written before provenance as a root plus local nodes", () => {
+		const result = explore(dreamDir, 5);
+		const path = join(dreamDir, "trees", `${result.treeId}.jsonl`);
+		const legacy = readFileSync(path, "utf8")
+			.split("\n")
+			.map((line) => {
+				if (line.length === 0) return line;
+				const parsed = JSON.parse(line) as Record<string, unknown>;
+				delete parsed.origin;
+				return JSON.stringify(parsed);
+			})
+			.join("\n");
+		expect(legacy).not.toContain('"origin"');
+		writeFileSync(path, legacy);
+		const recorded = readTree(result.treeId, dreamDir);
+		expect(recorded.nodes[0]!.origin).toBe("root");
+		expect(recorded.nodes.slice(1).every((node) => node.origin === "local")).toBe(true);
+		expect(listTrees(dreamDir).find((tree) => tree.treeId === result.treeId)!.agentGeneratedCount).toBe(0);
 	});
 
 	it("persists a scalar-only JSONL tree with header, node and reveal lines plus blobs", () => {

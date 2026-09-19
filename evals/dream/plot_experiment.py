@@ -8,9 +8,11 @@ renders the paper's evidence figures for our fork:
     round_best.png   round-best points + cumulative-best step per arm vs round   (Fig 6a)
     compute.png      cumulative best vs cumulative discovery compute per arm     (Figs 3b/5)
     attempts.png     evaluated attempts per round per arm, policy changes marked (Fig 6b)
+    proposals.png    LLM-proposal validity per round per arm: accepted vs rejected
+                     by reason, with the local fallbacks the rejections caused
     headline.png     the multipliers against the "fixed" arm, or the literal words
                      "not reached" / "not comparable" when a multiplier is undefined
-    report.html      the four figures with captions built from the result metadata
+    report.html      the five figures with captions built from the result metadata
 
 Nothing here is illustrative: every series is read from the result files. Several
 files are treated as seeds of one experiment (same task, rounds, budget, objective
@@ -27,10 +29,23 @@ looks for a fallback interpreter (``$DREAM_PLOT_PYTHON``, then
 using, and re-executes itself there; if none has it, it exits 3 with an
 actionable message.
 
-Compute axis (honesty rule): ``cumulativeProbes`` is discovery compute, the
-paper's "agent calls": evaluated attempts (revealed non-root nodes) on every
-path. Handler invocations (proposer, dreamer, guidance) and child tokens are
-COST and are never mixed into that axis; the report prints them separately.
+Compute axis (honesty rule): a probe is an evaluated attempt (a revealed non-root
+node). On the LLM path a probe's candidate is either AGENT-GENERATED (the child's
+output parsed and entered the tree, ``origin: "llm"``) or a LOCAL FALLBACK (the
+child's output was rejected and the local mutator stood in; the child's tokens
+were still spent). The paper's "agent calls" are the agent-generated ones, so when
+every arm recorded provenance and a child proposer ran, ``compute.png`` puts
+``cumulativeAgentGeneratedCalls`` on the compute axis (bold) with
+``cumulativeProbes`` as a thin secondary series, and says so. Otherwise, and on
+the local path, the axis is ``cumulativeProbes`` and the subtitle says why. The
+headline multipliers stay on probes on every path. Handler invocations (proposer,
+dreamer, guidance) and child tokens are COST and are never on that axis.
+
+Provenance fields (``agentGeneratedCalls``, ``cumulativeAgentGeneratedCalls``,
+``localFallbacks``, ``llmProposals``, ``llmAccepted``, ``llmRejected`` by reason,
+and the same names under ``totals``) are read when present. A file written before
+origin tracking has none: that is "not recorded", never 0, and the page says so
+rather than plotting an empty series as a measurement.
 
 Field names: the reader takes the file's names (``probes``, ``cumulativeProbes``,
 ``handlerCalls``, ``totals``, ``policyScoreOnOwnPool``, ``probesToTarget``,
@@ -109,6 +124,25 @@ EXTRA_COLORS = ("#d55181", "#9085e9", "#e66767", "#008300")
 REFERENCE_ARM = "fixed"
 ABLATION_PAIRS = (("dream", "dream-guided"), ("fixed", "fixed-guided"))
 
+# PROPOSAL_REJECT_REASONS in core/dream/proposer.ts, in its order. A reason the file
+# carries that is not listed here is kept and printed, never dropped.
+REJECT_REASONS: tuple[str, ...] = ("parse", "shape", "invalid-candidate", "error", "length", "aborted", "turn-limit", "budget")
+# Rejected segments are neutral ink (a wasted call has no identity of its own; the
+# arm hue is reserved for the candidates the agent generated). One fixed step per
+# reason, interleaved light/dark so reasons adjacent in the list stay apart in a
+# stack; an unlisted reason takes the next unused step.
+REASON_GREYS = {
+    "parse": "#d3d7dd",
+    "shape": "#7b838f",
+    "invalid-candidate": "#aab1bb",
+    "error": "#4c535e",
+    "length": "#c0c5cd",
+    "aborted": "#626a76",
+    "turn-limit": "#8f97a2",
+    "budget": "#3e4552",
+}
+EXTRA_GREYS = ("#e2e5ea", "#565d69", "#9ca4ae")
+
 
 class ResultError(ValueError):
     """A result file cannot be used as experiment evidence."""
@@ -131,6 +165,13 @@ class RoundRow(TypedDict):
     cumulativeBest: float
     probes: int
     cumulativeProbes: int
+    # Provenance: None is "not recorded" (a file written before origin tracking), never 0.
+    agentGeneratedCalls: int | None
+    cumulativeAgentGeneratedCalls: int | None
+    localFallbacks: int | None
+    llmProposals: int | None
+    llmAccepted: int | None
+    llmRejected: dict[str, int] | None
     handlerCalls: int
     cumulativeHandlerCalls: int
     decisionRounds: int
@@ -158,6 +199,11 @@ class Arm(TypedDict):
     policyChanges: int
     finalBest: float
     totalProbes: int
+    totalAgentGeneratedCalls: int | None
+    totalLocalFallbacks: int | None
+    totalLlmProposals: int | None
+    totalLlmAccepted: int | None
+    totalLlmRejected: dict[str, int] | None
     totalHandlerCalls: int
     totalTokens: int
     rounds: list[RoundRow]
@@ -256,11 +302,42 @@ def _int(value: object, default: int = 0) -> int:
     return int(value)
 
 
+def _int_or_none(value: object) -> int | None:
+    """An integer count, or None when the field is absent or not a number: "not recorded", never 0."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return int(value)
+
+
 def _dict(value: object) -> dict[str, object]:
     """The value when it is an object, else an empty one: a malformed sub-field never raises."""
     if not isinstance(value, dict):
         return {}
     return {str(k): v for k, v in value.items()}
+
+
+def _reject_counts(value: object) -> dict[str, int] | None:
+    """``llmRejected`` as reason -> count with every known reason present (0 when unseen).
+
+    None when the field is absent or not an object. A reason the file carries that
+    is not in REJECT_REASONS is kept; a count that is not a number is treated as absent.
+    """
+    if not isinstance(value, dict):
+        return None
+    counts: dict[str, int] = {reason: 0 for reason in REJECT_REASONS}
+    for key, raw in value.items():
+        count = _int_or_none(raw)
+        if count is not None:
+            counts[str(key)] = count
+    return counts
+
+
+def _sum_counts(dicts: list[dict[str, int]]) -> dict[str, int]:
+    total: dict[str, int] = {reason: 0 for reason in REJECT_REASONS}
+    for d in dicts:
+        for key, count in d.items():
+            total[key] = total.get(key, 0) + count
+    return total
 
 
 def _get(mapping: object, *keys: str, default: object = None) -> object:
@@ -301,6 +378,20 @@ def normalize_round(row: object, index: int, previous: RoundRow | None) -> Round
     )
     prev_probes = previous["cumulativeProbes"] if previous else 0
     cumulative_probes = _int(_get(row, "cumulativeProbes", "cumulativeCalls"), prev_probes + probes)
+    # Provenance: absent stays None. A file that carries only the cumulative count
+    # gives up the per-round count as the difference; one that carries only the
+    # per-round count gives up the cumulative one as the running sum.
+    agent_generated = _int_or_none(_get(row, "agentGeneratedCalls"))
+    cumulative_agent_raw = _int_or_none(_get(row, "cumulativeAgentGeneratedCalls"))
+    prev_agent = (previous["cumulativeAgentGeneratedCalls"] if previous else None) or 0
+    if agent_generated is None and cumulative_agent_raw is not None:
+        agent_generated = cumulative_agent_raw - prev_agent
+    if agent_generated is None:
+        cumulative_agent: int | None = None
+    elif cumulative_agent_raw is not None:
+        cumulative_agent = cumulative_agent_raw
+    else:
+        cumulative_agent = prev_agent + agent_generated
     prev_handler = previous["cumulativeHandlerCalls"] if previous else 0
     cumulative_handler = _int(_get(row, "cumulativeHandlerCalls"), prev_handler + handler_calls)
     tokens_raw = _get(row, "tokens", default=0)
@@ -320,6 +411,12 @@ def normalize_round(row: object, index: int, previous: RoundRow | None) -> Round
         "cumulativeBest": cumulative_best,
         "probes": probes,
         "cumulativeProbes": cumulative_probes,
+        "agentGeneratedCalls": agent_generated,
+        "cumulativeAgentGeneratedCalls": cumulative_agent,
+        "localFallbacks": _int_or_none(_get(row, "localFallbacks")),
+        "llmProposals": _int_or_none(_get(row, "llmProposals")),
+        "llmAccepted": _int_or_none(_get(row, "llmAccepted")),
+        "llmRejected": _reject_counts(_get(row, "llmRejected")),
         "handlerCalls": handler_calls,
         "cumulativeHandlerCalls": cumulative_handler,
         "decisionRounds": _int(_get(row, "decisionRounds")),
@@ -371,6 +468,24 @@ def normalize_arm(raw: object, index: int) -> Arm:
         improved = improved_raw
     else:
         improved = initial_score is not None and final_score is not None and final_score > initial_score
+
+    def total_count(key: str, per_round: list[int | None]) -> int | None:
+        """The file's total, else the sum of the rounds when every round recorded it, else None."""
+        recorded = _int_or_none(totals.get(key))
+        if recorded is not None:
+            return recorded
+        if all(v is not None for v in per_round):
+            return sum(v for v in per_round if v is not None)
+        return None
+
+    agent_generated_total = _int_or_none(totals.get("agentGeneratedCalls"))
+    if agent_generated_total is None:
+        agent_generated_total = last["cumulativeAgentGeneratedCalls"]
+    rejected_total = _reject_counts(totals.get("llmRejected"))
+    if rejected_total is None:
+        per_round_rejected = [row["llmRejected"] for row in rounds]
+        if all(d is not None for d in per_round_rejected):
+            rejected_total = _sum_counts([d for d in per_round_rejected if d is not None])
     return {
         "arm": name,
         "fixedPolicy": bool(_get(raw, "fixedPolicy", default=name.startswith("fixed"))),
@@ -390,6 +505,11 @@ def normalize_arm(raw: object, index: int) -> Arm:
         "totalProbes": _int(
             totals.get("probes"), _int(_get(raw, "totalCalls", "totalAttempts"), last["cumulativeProbes"])
         ),
+        "totalAgentGeneratedCalls": agent_generated_total,
+        "totalLocalFallbacks": total_count("localFallbacks", [row["localFallbacks"] for row in rounds]),
+        "totalLlmProposals": total_count("llmProposals", [row["llmProposals"] for row in rounds]),
+        "totalLlmAccepted": total_count("llmAccepted", [row["llmAccepted"] for row in rounds]),
+        "totalLlmRejected": rejected_total,
         "totalHandlerCalls": _int(
             totals.get("handlerCalls"), _int(_get(raw, "totalOverheadCalls"), last["cumulativeHandlerCalls"])
         ),
@@ -650,6 +770,11 @@ SERIES_FIELDS = (
     "cumulativeBest",
     "probes",
     "cumulativeProbes",
+    "agentGeneratedCalls",
+    "cumulativeAgentGeneratedCalls",
+    "localFallbacks",
+    "llmProposals",
+    "llmAccepted",
     "handlerCalls",
     "cumulativeHandlerCalls",
     "tokens",
@@ -670,22 +795,72 @@ def _field(row: RoundRow, field: str) -> float | None:
     return _num(value)
 
 
+def provenance_recorded(arm: Arm) -> bool:
+    """Whether this arm record says which probes the agent generated (a file written after origin tracking)."""
+    return arm["totalAgentGeneratedCalls"] is not None
+
+
+def reasons_seen(results: list[Result]) -> list[str]:
+    """The reject reasons to show: the known list in its order, then any unlisted reason a file carries."""
+    extra: set[str] = set()
+    for r in results:
+        for arm in r["arms"]:
+            for counts in [arm["totalLlmRejected"], *(row["llmRejected"] for row in arm["rounds"])]:
+                if counts is not None:
+                    extra.update(k for k in counts if k not in REJECT_REASONS)
+    return [*REJECT_REASONS, *sorted(extra)]
+
+
+def reason_grey(reason: str, reasons: list[str]) -> str:
+    known = REASON_GREYS.get(reason)
+    if known is not None:
+        return known
+    unlisted = [r for r in reasons if r not in REASON_GREYS]
+    return EXTRA_GREYS[unlisted.index(reason) % len(EXTRA_GREYS)]
+
+
+class StatSeries(TypedDict):
+    perSeed: list[list[float | None]]
+    mean: list[float | None]
+    min: list[float | None]
+    max: list[float | None]
+
+
+def _stat_lists(per_seed_values: list[list[float | None]], rounds: int) -> StatSeries:
+    by_round = [_stats([vals[i] for vals in per_seed_values]) for i in range(rounds)]
+    return {
+        "perSeed": per_seed_values,
+        "mean": [s["mean"] for s in by_round],
+        "min": [s["min"] for s in by_round],
+        "max": [s["max"] for s in by_round],
+    }
+
+
 def series(results: list[Result]):
-    """Per arm, per round: each field across seeds as per-seed lists plus mean/min/max."""
+    """Per arm, per round: each field across seeds as per-seed lists plus mean/min/max.
+
+    A provenance field a seed did not record is None in its per-seed list and is left
+    out of the mean (``provenanceRecorded`` says which seeds have it); it is never
+    read as 0. ``llmRejected`` is one such series per reason (``reasons_seen``).
+    """
     out = {}
     rounds = results[0]["rounds"]
+    reasons = reasons_seen(results)
     for name in arm_names(results):
-        per_seed = [arm_of(r, name)["rounds"] for r in results]
+        arms = [arm_of(r, name) for r in results]
+        per_seed = [arm["rounds"] for arm in arms]
         fields = {}
         for field in SERIES_FIELDS:
-            per_seed_values = [[_field(row, field) for row in rows] for rows in per_seed]
-            by_round = [_stats([vals[i] for vals in per_seed_values]) for i in range(rounds)]
-            fields[field] = {
-                "perSeed": per_seed_values,
-                "mean": [s["mean"] for s in by_round],
-                "min": [s["min"] for s in by_round],
-                "max": [s["max"] for s in by_round],
-            }
+            fields[field] = _stat_lists([[_field(row, field) for row in rows] for rows in per_seed], rounds)
+        rejected = {}
+        for reason in reasons:
+            per_seed_values: list[list[float | None]] = []
+            for rows in per_seed:
+                per_seed_values.append(
+                    [None if row["llmRejected"] is None else float(row["llmRejected"].get(reason, 0)) for row in rows]
+                )
+            rejected[reason] = _stat_lists(per_seed_values, rounds)
+        fields["llmRejected"] = rejected
         policy_changes = []
         for i in range(rounds):
             changed = 0
@@ -697,13 +872,133 @@ def series(results: list[Result]):
             "rounds": list(range(1, rounds + 1)),
             "seeds": [r["seed"] for r in results],
             "policyChanges": policy_changes,
-            "finalBest": [arm_of(r, name)["finalBest"] for r in results],
-            "totalProbes": [arm_of(r, name)["totalProbes"] for r in results],
-            "totalHandlerCalls": [arm_of(r, name)["totalHandlerCalls"] for r in results],
-            "totalTokens": [arm_of(r, name)["totalTokens"] for r in results],
+            "finalBest": [arm["finalBest"] for arm in arms],
+            "totalProbes": [arm["totalProbes"] for arm in arms],
+            "totalHandlerCalls": [arm["totalHandlerCalls"] for arm in arms],
+            "totalTokens": [arm["totalTokens"] for arm in arms],
+            "provenanceRecorded": [provenance_recorded(arm) for arm in arms],
+            "totalAgentGeneratedCalls": [arm["totalAgentGeneratedCalls"] for arm in arms],
+            "totalLocalFallbacks": [arm["totalLocalFallbacks"] for arm in arms],
+            "totalLlmProposals": [arm["totalLlmProposals"] for arm in arms],
+            "totalLlmAccepted": [arm["totalLlmAccepted"] for arm in arms],
+            "totalLlmRejected": [arm["totalLlmRejected"] for arm in arms],
             **fields,
         }
     return out
+
+
+def compute_axis(results: list[Result]) -> tuple[str, str]:
+    """Which cumulative count is the compute axis of compute.png, with the reason in words.
+
+    ``("agentGenerated", why)`` when every arm record of every file recorded
+    provenance and a child proposer ran (LLM proposals somewhere): the paper's
+    "agent calls" are the candidates the agent generated, and probes (which include
+    the local fallbacks) become the thin secondary series. Otherwise
+    ``("probes", why)``, where ``why`` completes "agent-generated calls ...": not
+    recorded (the file predates origin tracking), recorded in only some of the arm
+    records, or 0 because no child proposer ran (every probe is a local candidate
+    by design, not a fallback). The headline multipliers are on probes on every path.
+    """
+    arms = [a for r in results for a in r["arms"]]
+    recorded = [a for a in arms if provenance_recorded(a)]
+    if not recorded:
+        return "probes", "not recorded (result predates origin tracking)"
+    if len(recorded) < len(arms):
+        return "probes", f"recorded in {len(recorded)}/{len(arms)} arm records only"
+    proposals = sum(a["totalLlmProposals"] or 0 for a in recorded)
+    generated = sum(a["totalAgentGeneratedCalls"] or 0 for a in recorded)
+    if proposals == 0 and generated == 0:
+        return "probes", "0 (no child proposer ran: every probe is a local candidate by design)"
+    return "agentGenerated", "the candidates a child agent produced; probes include the local fallbacks"
+
+
+def compute_axis_text(results: list[Result]) -> str:
+    """One sentence naming the compute axis and why; the headline note is always on probes."""
+    kind, why = compute_axis(results)
+    if kind == "agentGenerated":
+        return f"compute axis: agent-generated calls, {why}; headline multipliers are on probes"
+    return f"compute axis: probes; agent-generated calls {why}; headline multipliers are on probes"
+
+
+def tally_consistent(arm: Arm) -> bool | None:
+    """proposals == accepted + sum(rejected) and agent-generated <= probes; None when not recorded."""
+    if not provenance_recorded(arm):
+        return None
+    generated = arm["totalAgentGeneratedCalls"] or 0
+    if generated > arm["totalProbes"]:
+        return False
+    proposals, accepted, rejected = arm["totalLlmProposals"], arm["totalLlmAccepted"], arm["totalLlmRejected"]
+    if proposals is None or accepted is None or rejected is None:
+        return True
+    return proposals == accepted + sum(rejected.values())
+
+
+def rejected_words(counts: dict[str, int] | None) -> str:
+    """`parse 60, shape 21` for the nonzero reasons in list order, or `none`."""
+    if not counts:
+        return "none"
+    order = [*REJECT_REASONS, *sorted(k for k in counts if k not in REJECT_REASONS)]
+    parts = [f"{reason} {counts[reason]}" for reason in order if counts.get(reason, 0)]
+    return ", ".join(parts) if parts else "none"
+
+
+def provenance_parts(arm: Arm) -> tuple[str, str]:
+    """(probes sentence, proposals sentence) for one arm's totals.
+
+    ``83 probes = 2 agent-generated + 81 local (81 fallbacks)`` and
+    ``83 LLM proposals = 2 accepted + 81 rejected (parse 60, shape 21)``; a tally the
+    file did not record says so instead of printing zeros.
+    """
+    if not provenance_recorded(arm):
+        return "provenance not recorded (result predates origin tracking)", ""
+    generated = arm["totalAgentGeneratedCalls"] or 0
+    local = arm["totalProbes"] - generated
+    fallbacks = arm["totalLocalFallbacks"]
+    probes = f"{arm['totalProbes']} probes = {generated} agent-generated + {local} local"
+    probes += f" ({fmt(fallbacks)} fallbacks)" if fallbacks is not None else " (fallbacks not recorded)"
+    proposals, accepted, rejected = arm["totalLlmProposals"], arm["totalLlmAccepted"], arm["totalLlmRejected"]
+    if proposals is None or accepted is None:
+        return probes, "proposal tally not recorded"
+    rejected_total = sum(rejected.values()) if rejected else proposals - accepted
+    return (
+        probes,
+        f"{proposals} LLM proposals = {accepted} accepted + {rejected_total} rejected ({rejected_words(rejected)})",
+    )
+
+
+def provenance_text(arm: Arm) -> str:
+    """The two ``provenance_parts`` as one line."""
+    probes, proposals = provenance_parts(arm)
+    return f"{probes}; {proposals}" if proposals else probes
+
+
+def provenance_tone(arm: Arm) -> str:
+    """bad when the tally does not add up; warn when the local fallbacks outnumber the agent's candidates."""
+    if tally_consistent(arm) is False:
+        return "bad"
+    fallbacks = arm["totalLocalFallbacks"] or 0
+    if fallbacks and fallbacks >= (arm["totalAgentGeneratedCalls"] or 0):
+        return "warn"
+    return "muted"
+
+
+def provenance_lines(results: list[Result]) -> list[tuple[str, str]]:
+    """(text, tone) rows for the card: the compute axis, then two lines per recorded arm record."""
+    lines = [(wrapped, "muted") for wrapped in textwrap.wrap(compute_axis_text(results), 108)]
+    for r in results:
+        for arm in r["arms"]:
+            if not provenance_recorded(arm):
+                continue
+            prefix = f"seed {r['seed']} " if len(results) > 1 else ""
+            tone = provenance_tone(arm)
+            probes, proposals = provenance_parts(arm)
+            lines.append((f"  {prefix}{arm['arm']}: {probes}", tone))
+            lines.append((f"  {prefix}{arm['arm']}: {proposals}", tone))
+            if tally_consistent(arm) is False:
+                lines.append(
+                    (f"  {prefix}{arm['arm']}: tally does NOT add up (proposals != accepted + rejected)", "bad")
+                )
+    return lines
 
 
 def _defined(values: list[float | None]) -> list[float]:
@@ -856,6 +1151,7 @@ def check_tables(results: list[Result]) -> str:
     ser = series(results)
     head = headline(results)
     first = results[0]
+    reasons = reasons_seen(results)
     lines: list[str] = []
     b = first["budget"]
     lines.append(
@@ -877,6 +1173,36 @@ def check_tables(results: list[Result]) -> str:
                 f"{fmt(s['handlerCalls']['mean'][i]):>13} | {fmt(s['tokens']['mean'][i]):>6} | "
                 f"{s['policyChanges'][i]}/{len(s['seeds'])}"
             )
+        recorded = sum(1 for flag in s["provenanceRecorded"] if flag)
+        if not recorded:
+            lines.append("  provenance: not recorded (result predates origin tracking)")
+            continue
+        lines.append(
+            f"  provenance (recorded in {recorded}/{len(s['seeds'])} seeds; means over those): "
+            "round | agent-generated | cum agent-generated | local fallbacks | LLM proposals | accepted | rejected"
+        )
+        for i, rnd in enumerate(s["rounds"]):
+            rejected = ", ".join(
+                f"{reason} {fmt(s['llmRejected'][reason]['mean'][i])}"
+                for reason in reasons
+                if (s["llmRejected"][reason]["mean"][i] or 0) > 0
+            )
+            lines.append(
+                f"  {rnd:>5} | {fmt(s['agentGeneratedCalls']['mean'][i]):>15} | "
+                f"{fmt(s['cumulativeAgentGeneratedCalls']['mean'][i]):>19} | {fmt(s['localFallbacks']['mean'][i]):>15} | "
+                f"{fmt(s['llmProposals']['mean'][i]):>13} | {fmt(s['llmAccepted']['mean'][i]):>8} | {rejected or 'none'}"
+            )
+        for r in results:
+            arm = arm_of(r, name)
+            if not provenance_recorded(arm):
+                lines.append(f"  seed {r['seed']}: provenance not recorded")
+                continue
+            consistent = tally_consistent(arm)
+            lines.append(
+                f"  seed {r['seed']}: {provenance_text(arm)}; tally consistent (proposals = accepted + rejected): "
+                f"{'yes' if consistent else 'NO'}"
+            )
+    lines.append(compute_axis_text(results))
     lines.append("headline")
     if head["reference"] is None:
         lines.append("  no reference arm ran: no control, no multipliers")
@@ -946,6 +1272,7 @@ def render(results, out_dir):
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
 
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -1057,25 +1384,41 @@ def render(results, out_dir):
     plt.close(fig)
 
     # (b) performance vs cumulative compute -----------------------------------
+    axis_kind, axis_why = compute_axis(results)
+    agent_axis = axis_kind == "agentGenerated"
+    if agent_axis:
+        compute_sub = (
+            "bold: x = cumulative agent-generated calls (candidates a child agent produced), the compute axis · "
+            "thin: x = cumulative probes (every evaluated attempt, local fallbacks included), the headline's axis; "
+            "B is drawn in probes"
+        )
+        x_label = "cumulative calls (bold: agent-generated · thin: all probes)"
+    else:
+        compute_sub = f"x = cumulative probes (evaluated attempts) · agent-generated calls {axis_why}"
+        x_label = "cumulative probes (evaluated attempts)"
     fig, ax = new_fig(
         "Cumulative best vs cumulative discovery compute (Figs 3b/5)",
         [
             base_sub,
-            "x = cumulative probes (evaluated attempts, the discovery-agent calls) · handler calls and tokens are cost, "
-            "not on this axis" + (" · one line per seed" if n_seeds > 1 else ""),
+            compute_sub
+            + " · handler calls and tokens are cost, not on this axis"
+            + (" · one line per seed" if n_seeds > 1 else ""),
         ],
     )
-    style(ax, "", "cumulative probes (discovery-agent calls)", "cumulative best score")
+    style(ax, "", x_label, "cumulative best score")
+    bold_field = "cumulativeAgentGeneratedCalls" if agent_axis else "cumulativeProbes"
     for i, name in enumerate(names):
         s = ser[name]
         color = arm_color(name, i)
         rightmost = None
-        for k, (calls, best) in enumerate(
-            zip(s["cumulativeProbes"]["perSeed"], s["cumulativeBest"]["perSeed"], strict=True)
-        ):
+        for k, (calls, best) in enumerate(zip(s[bold_field]["perSeed"], s["cumulativeBest"]["perSeed"], strict=True)):
+            points = [(c, v) for c, v in zip(calls, best, strict=True) if c is not None and v is not None]
+            if not points:
+                continue
+            xs_, ys_ = [p[0] for p in points], [p[1] for p in points]
             ax.plot(
-                calls,
-                best,
+                xs_,
+                ys_,
                 color=color,
                 lw=2.0 if n_seeds == 1 else 1.4,
                 ls=ARM_LINESTYLES.get(name, "-"),
@@ -1085,8 +1428,22 @@ def render(results, out_dir):
                 label=name if k == 0 else None,
                 zorder=3,
             )
-            if rightmost is None or calls[-1] > rightmost[0]:
-                rightmost = (calls[-1], best[-1])
+            if rightmost is None or xs_[-1] > rightmost[0]:
+                rightmost = (xs_[-1], ys_[-1])
+        if agent_axis:
+            for probes, best in zip(s["cumulativeProbes"]["perSeed"], s["cumulativeBest"]["perSeed"], strict=True):
+                ax.plot(
+                    probes,
+                    best,
+                    color=color,
+                    lw=0.9,
+                    ls=ARM_LINESTYLES.get(name, "-"),
+                    marker=ARM_MARKERS.get(name, "o"),
+                    ms=3,
+                    mfc=BG,
+                    alpha=0.6,
+                    zorder=2,
+                )
         if rightmost:
             end_label(ax, name, rightmost)
     ax.margins(x=0.14)
@@ -1112,7 +1469,7 @@ def render(results, out_dir):
         ax.text(
             b,
             0.02,
-            f"B = equal budget {fmt(b)}{agg}",
+            f"B = equal budget {fmt(b)} probes{agg}" + (" (thin series)" if agent_axis else ""),
             transform=ax.get_xaxis_transform(),
             color=MUTED,
             fontsize=8,
@@ -1130,7 +1487,15 @@ def render(results, out_dir):
             fontsize=9.5,
             ha="center",
         )
-    if len(names) >= 2:
+    if agent_axis:
+        handles, labels = ax.get_legend_handles_labels()
+        handles.append(Line2D([], [], color=FG, lw=2.0, label="bold: agent-generated calls (compute axis)"))
+        handles.append(
+            Line2D([], [], color=FG, lw=0.9, alpha=0.6, label="thin: all probes (headline axis, incl. local fallbacks)")
+        )
+        labels.extend(h.get_label() for h in handles[len(labels) :])
+        ax.legend(handles, labels, facecolor=BG, edgecolor=GRID, labelcolor=FG, fontsize=8, loc="best")
+    elif len(names) >= 2:
         legend(ax)
     p_compute = out / "compute.png"
     fig.savefig(p_compute, dpi=130, facecolor=BG)
@@ -1183,8 +1548,135 @@ def render(results, out_dir):
     fig.savefig(p_attempts, dpi=130, facecolor=BG)
     plt.close(fig)
 
+    # (e) LLM-proposal validity per round ------------------------------------------
+    # One panel per arm that recorded provenance; stacked bars of child results per
+    # round: accepted (the arm's hue: these became agent-generated nodes) then each
+    # rejected reason in neutral steps; the local fallbacks those rejections caused
+    # are the marked line. Handler calls and tokens are elsewhere; this is validity.
+    reasons = reasons_seen(results)
+    prov_names = [name for name in names if any(ser[name]["provenanceRecorded"])]
+    recorded_seeds = {name: sum(1 for flag in ser[name]["provenanceRecorded"] if flag) for name in prov_names}
+    prov_sub = [base_sub]
+    if prov_names:
+        prov_sub.append(
+            "bar = child results per round: accepted (arm colour; each is one agent-generated node) stacked with "
+            "rejected by reason (grey) · x-marked line = local fallbacks, attempts whose last child result was rejected"
+            + (
+                " · means over the seeds that recorded it: "
+                + ", ".join(f"{name} {k}/{n_seeds}" for name, k in recorded_seeds.items())
+                if n_seeds > 1
+                else ""
+            )
+        )
+    sub_lines = [wrapped for line in prov_sub for wrapped in (textwrap.wrap(line, 118) or [""])]
+    line_in, panel_in, gap_in, bottom_in = 0.19, 1.75, 0.5, 0.5
+    header_in = 0.62 + line_in * len(sub_lines) + 0.4
+    n_panels = max(1, len(prov_names))
+    fig_h = header_in + n_panels * panel_in + (n_panels - 1) * gap_in + bottom_in
+    fig = plt.figure(figsize=(9, fig_h), facecolor=BG)
+    fig.text(0.07, 1 - 0.3 / fig_h, "LLM-proposal validity per round", color=FG, fontsize=13, ha="left", va="top")
+    y_text = 1 - 0.62 / fig_h
+    for wrapped in sub_lines:
+        fig.text(0.07, y_text, wrapped, color=MUTED, fontsize=8.5, ha="left", va="top")
+        y_text -= line_in / fig_h
+    if not prov_names:
+        ax = fig.add_axes((0.09, bottom_in / fig_h, 0.86, panel_in / fig_h))
+        style(ax, "")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.text(
+            0.5,
+            0.5,
+            "LLM-proposal provenance not recorded in this result (predates origin tracking): nothing to show",
+            transform=ax.transAxes,
+            color=WARN,
+            fontsize=9.5,
+            ha="center",
+            va="center",
+        )
+    for j, name in enumerate(prov_names):
+        s = ser[name]
+        color = arm_color(name, names.index(name))
+        ax_bottom = (bottom_in + (n_panels - 1 - j) * (panel_in + gap_in)) / fig_h
+        ax = fig.add_axes((0.09, ax_bottom, 0.62, panel_in / fig_h))
+        handles = []
+        accepted = [v or 0 for v in s["llmAccepted"]["mean"]]
+        handles.append(
+            ax.bar(
+                x,
+                accepted,
+                width=0.62,
+                color=color,
+                edgecolor=BG,
+                linewidth=1.2,
+                label="accepted (agent-generated)",
+                zorder=3,
+            )
+        )
+        stack_top = list(accepted)
+        for reason in reasons:
+            values = [v or 0 for v in s["llmRejected"][reason]["mean"]]
+            if not any(values):
+                continue
+            handles.append(
+                ax.bar(
+                    x,
+                    values,
+                    bottom=stack_top,
+                    width=0.62,
+                    color=reason_grey(reason, reasons),
+                    edgecolor=BG,
+                    linewidth=1.2,
+                    label=f"rejected: {reason}",
+                    zorder=3,
+                )
+            )
+            stack_top = [top + v for top, v in zip(stack_top, values, strict=True)]
+        fallbacks = [v or 0 for v in s["localFallbacks"]["mean"]]
+        handles.extend(
+            ax.plot(
+                x,
+                fallbacks,
+                color=FG,
+                lw=1.4,
+                ls="--",
+                marker="x",
+                ms=7,
+                mew=1.6,
+                label="local fallbacks",
+                zorder=4,
+            )
+        )
+        totals_text = ", ".join(
+            f"{label} {fmt(statistics.fmean(vals))}"
+            for label, vals in (
+                ("proposals", [v for v in s["totalLlmProposals"] if v is not None]),
+                ("accepted", [v for v in s["totalLlmAccepted"] if v is not None]),
+                ("fallbacks", [v for v in s["totalLocalFallbacks"] if v is not None]),
+                ("probes", [p for p, flag in zip(s["totalProbes"], s["provenanceRecorded"], strict=True) if flag]),
+            )
+            if vals
+        )
+        style(ax, f"{name} · totals: {totals_text}", "round" if j == n_panels - 1 else "", "child results")
+        ax.set_xticks(x)
+        ax.set_xlim(0.5, rounds + 0.5)
+        ax.margins(y=0.15)
+        ax.legend(
+            handles=handles,
+            facecolor=BG,
+            edgecolor=GRID,
+            labelcolor=FG,
+            fontsize=8,
+            loc="upper left",
+            bbox_to_anchor=(1.01, 1.0),
+            borderaxespad=0.0,
+        )
+    p_proposals = out / "proposals.png"
+    fig.savefig(p_proposals, dpi=130, facecolor=BG)
+    plt.close(fig)
+
     # (d) headline card ----------------------------------------------------------
-    card_lines = headline_lines(results, head)
+    card_lines = headline_lines(results, head) + provenance_lines(results)
     height = 1.3 + 0.36 * len(card_lines)
     fig = plt.figure(figsize=(9, height), facecolor=BG)
     fig.text(
@@ -1221,7 +1713,13 @@ def render(results, out_dir):
             results,
             ser,
             head,
-            {"round_best": p_round, "compute": p_compute, "attempts": p_attempts, "headline": p_headline},
+            {
+                "round_best": p_round,
+                "compute": p_compute,
+                "attempts": p_attempts,
+                "proposals": p_proposals,
+                "headline": p_headline,
+            },
         ),
         encoding="utf-8",
     )
@@ -1229,6 +1727,7 @@ def render(results, out_dir):
         "round_best": p_round,
         "compute": p_compute,
         "attempts": p_attempts,
+        "proposals": p_proposals,
         "headline": p_headline,
         "report": p_report,
     }
@@ -1349,8 +1848,23 @@ def build_report(results, ser, head, pngs):
     )
     notes = "".join(f"<li>{html.escape(n)}</li>" for n in first["notes"]) or "<li>none</li>"
     card = "".join(
-        f'<div class="line {tone}">{html.escape(text)}</div>' for text, tone in headline_lines(results, head)
+        f'<div class="line {tone}">{html.escape(text)}</div>'
+        for text, tone in headline_lines(results, head) + provenance_lines(results)
     )
+    axis_kind, axis_why = compute_axis(results)
+    agent_axis = axis_kind == "agentGenerated"
+    reasons = reasons_seen(results)
+    any_provenance = any(any(ser[name]["provenanceRecorded"]) for name in names)
+
+    def rejected_cell(s, i):
+        if s["llmProposals"]["mean"][i] is None:
+            return "-"
+        parts = [
+            f"{reason} {fmt(s['llmRejected'][reason]['mean'][i])}"
+            for reason in reasons
+            if (s["llmRejected"][reason]["mean"][i] or 0) > 0
+        ]
+        return ", ".join(parts) if parts else "0"
 
     table_rows = []
     for name in names:
@@ -1363,6 +1877,12 @@ def build_report(results, ser, head, pngs):
                 fmt(s["cumulativeBest"]["mean"][i]),
                 fmt(s["probes"]["mean"][i]),
                 fmt(s["cumulativeProbes"]["mean"][i]),
+                fmt(s["agentGeneratedCalls"]["mean"][i]),
+                fmt(s["cumulativeAgentGeneratedCalls"]["mean"][i]),
+                fmt(s["localFallbacks"]["mean"][i]),
+                fmt(s["llmProposals"]["mean"][i]),
+                fmt(s["llmAccepted"]["mean"][i]),
+                rejected_cell(s, i),
                 fmt(s["handlerCalls"]["mean"][i]),
                 fmt(s["tokens"]["mean"][i]),
                 f"{s['policyChanges'][i]}/{n_seeds}",
@@ -1375,9 +1895,21 @@ def build_report(results, ser, head, pngs):
         f"{first['rounds']} rounds. Round 1 uses the same initial policy in every arm."
         + (f" N = {first['rounds']} rounds is too short to show a curve." if first["rounds"] < 3 else "")
     )
+    if agent_axis:
+        axis_words = (
+            "Cumulative best score against cumulative compute. The bold series is on agent-generated calls, the "
+            "candidates a child agent produced (origin llm nodes); the thin series is on probes, every evaluated "
+            "attempt including the local fallbacks that stood in for a rejected child result. The headline "
+            "multipliers and B are in probes. "
+        )
+    else:
+        axis_words = (
+            "Cumulative best score against cumulative probes, every evaluated attempt on every path. "
+            f"Agent-generated calls are {axis_why}, so they are not on this axis. "
+        )
     caption_b = (
-        "Cumulative best score against cumulative probes, the evaluated attempts that are the discovery-agent calls "
-        f"on every path. T is the {REFERENCE_ARM} arm's final best; B is the equal-budget line, "
+        axis_words
+        + f"T is the {REFERENCE_ARM} arm's final best; B is the equal-budget line, "
         + budget_meaning(results)
         + (" (both median over seeds)" if n_seeds > 1 else "")
         + ". Handler calls (proposer, dreamer, guidance) and child tokens are cost, not the compute axis; "
@@ -1388,6 +1920,21 @@ def build_report(results, ser, head, pngs):
         f"previous round's in k of n seeds; the {REFERENCE_ARM} arm runs the same policy every round by construction, "
         "so its series is flat in expectation."
     )
+    if any_provenance:
+        caption_e = (
+            f"Child proposer results per round per arm{agg_note}: accepted results (the arm's colour; each became one "
+            "agent-generated node) stacked with rejected results by reason (grey: parse = no JSON value in the "
+            "output, shape = not the candidate shape, invalid-candidate = the task refused it, error / length / "
+            "aborted / turn-limit / budget = the child did not finish). The x-marked line is the local fallbacks: "
+            "attempts whose last child result was rejected, so the local mutator's candidate was evaluated with the "
+            "child's tokens on its node. proposals = accepted + rejected; on the LLM path probes = accepted + "
+            "fallbacks."
+        )
+    else:
+        caption_e = (
+            "This result records no proposal provenance (it was written before origin tracking), so accepted, "
+            "rejected and fallback counts are not recorded, not 0, and nothing is drawn."
+        )
     caption_d = (
         f"Multipliers against the {REFERENCE_ARM} arm: fewer calls = probesToTarget({REFERENCE_ARM}) / "
         f"probesToTarget(arm), the compute at the first round reaching the {REFERENCE_ARM} arm's final best; "
@@ -1405,9 +1952,16 @@ def build_report(results, ser, head, pngs):
     )
     honest = (
         "Every series on this page is measured from the result files; nothing is illustrative. Handler calls and "
-        "tokens are cost, not the compute axis: the compute axis is probes (evaluated attempts, the discovery-agent "
-        "calls) on every path. The policy score on an arm's own pool is an in-arm replay estimate and is never "
-        "compared across arms."
+        "tokens are cost, not the compute axis. The compute axis of the compute figure is "
+        + (
+            "agent-generated calls (candidates a child agent produced), with probes (every evaluated attempt, local "
+            "fallbacks included) as the thin secondary series"
+            if agent_axis
+            else f"probes (every evaluated attempt); agent-generated calls {axis_why}"
+        )
+        + "; the headline multipliers are on probes on every path. A provenance field a file does not carry is "
+        "shown as not recorded, never as 0. The policy score on an arm's own pool is an in-arm replay estimate and "
+        "is never compared across arms."
     )
     more = f" and {n_seeds - 1} more seed file(s)" if n_seeds > 1 else ""
     return f"""<!DOCTYPE html>
@@ -1443,8 +1997,11 @@ figcaption {{ color: var(--muted); font-size: 12.5px; margin-top: 6px; }}
 <figure>{img(pngs["compute"])}<figcaption>{html.escape(caption_b)}</figcaption></figure>
 <h2>Attempts per round (Fig 6b)</h2>
 <figure>{img(pngs["attempts"])}<figcaption>{html.escape(caption_c)}</figcaption></figure>
+<h2>LLM-proposal validity per round</h2>
+<figure>{img(pngs["proposals"])}<figcaption>{html.escape(caption_e)}</figcaption></figure>
 <h2>Table{html.escape(agg_note)}</h2>
-<table><tr><th>arm</th><th>round</th><th>round best</th><th>cum best</th><th>probes</th><th>cum probes</th><th>handler calls (cost)</th><th>tokens (cost)</th><th>policy changed</th></tr>{"".join(table_rows)}</table>
+<p class="sub">Provenance columns (agent-generated through rejected) read - when the file did not record them.</p>
+<table><tr><th>arm</th><th>round</th><th>round best</th><th>cum best</th><th>probes</th><th>cum probes</th><th>agent-generated</th><th>cum agent-generated</th><th>local fallbacks</th><th>LLM proposals</th><th>accepted</th><th>rejected by reason</th><th>handler calls (cost)</th><th>tokens (cost)</th><th>policy changed</th></tr>{"".join(table_rows)}</table>
 <h2>Notes from the result files</h2>
 <ul>{notes}</ul>
 </main></body></html>

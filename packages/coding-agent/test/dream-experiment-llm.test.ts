@@ -33,7 +33,9 @@ import {
 } from "../src/core/dream/llm.js";
 import type { DreamHandlerCalls } from "../src/core/dream/loop.js";
 import { DEFAULT_POLICY, type ExplorationPolicy, policyId } from "../src/core/dream/policy.js";
-import { experimentArmDir, experimentResultPath, listTrees } from "../src/core/dream/store.js";
+import { totalRejected, zeroProposalTally } from "../src/core/dream/proposer.js";
+import { readRejections, rejectionsPath } from "../src/core/dream/rejections.js";
+import { experimentArmDir, experimentResultPath, listTrees, readTree } from "../src/core/dream/store.js";
 import type { ChildRuntimeScope } from "../src/core/ravo/runtime-adapter.js";
 import type { RunAgentHandler, RunAgentResult } from "../src/core/run-agent.js";
 
@@ -245,6 +247,22 @@ describe("runExperimentWithAgent (stub handler, four arms)", () => {
 		expect(shared.calls).toEqual({ proposer: first.handlerCalls.proposer, dreamer: 0, guidance: 0 });
 		expect(shared.calls.proposer).toBe(first.probes);
 		expect(shared.tokens).toBe(first.tokens);
+		// Every stub answer was accepted: the shared round is entirely agent-generated, nothing fell back.
+		expect(first.agentGeneratedCalls).toBe(first.probes);
+		expect(first.llmProposals).toBe(first.probes);
+		expect(first.llmAccepted).toBe(first.probes);
+		expect(first.localFallbacks).toBe(0);
+		expect(first.llmRejected).toEqual(zeroProposalTally().llmRejected);
+		expect(
+			existsSync(
+				rejectionsPath(experimentArmDir(dir, result.experimentId, "dream"), `${result.experimentId}-shared`),
+			),
+		).toBe(false);
+		for (const a of result.arms) {
+			expect(a.totals.agentGeneratedCalls).toBe(a.totals.probes);
+			expect(a.totals.localFallbacks).toBe(0);
+			expect(a.rounds.every((row) => row.agentGeneratedCalls === row.llmAccepted)).toBe(true);
+		}
 		// Round 1 cost the stub exactly one rollout's worth, however many arms ran.
 		const roundOneCalls = [...stub.tallies.entries()]
 			.filter(([name]) => name !== SHARED)
@@ -304,6 +322,74 @@ describe("runExperimentWithAgent (stub handler, four arms)", () => {
 			.map((event) => event.type === "arm_start" && event.arm);
 		expect(starts).toEqual([...SPEC.arms]);
 		expect(stub.events.at(-1)?.type).toBe("completed");
+	});
+
+	it("reports rejected child results apart from agent-generated candidates, per round and in the rejection logs", async () => {
+		const dir = scratch();
+		// Every other proposer result has the wrong shape: rejected, retried, then a local fallback.
+		let proposerCalls = 0;
+		const stub = makeArmStub({
+			...llmAnswers(),
+			proposer: () => {
+				proposerCalls += 1;
+				return proposerCalls % 3 === 1
+					? { output: ARTIFACT, tokens: 10 }
+					: { output: JSON.stringify({ notASet: true }), tokens: 10 };
+			},
+		});
+		const result = await runExperimentWithAgent(
+			{ ...SPEC, arms: ["fixed", "dream"] },
+			{
+				dir,
+				clock: () => FIXED_CLOCK,
+				runAgent: stub.handler,
+				scope: SCOPE,
+				signal: new AbortController().signal,
+				useLlmProposer: true,
+				useLlmDreamer: false,
+				onProgress: stub.onProgress,
+			},
+		);
+		const first = result.arms[0]!.rounds[0]!;
+		expect(first.llmProposals).toBe(first.llmAccepted + totalRejected(first));
+		expect(first.probes).toBe(first.llmAccepted + first.localFallbacks);
+		expect(first.agentGeneratedCalls).toBe(first.llmAccepted);
+		expect(first.localFallbacks).toBeGreaterThan(0);
+		expect(first.llmRejected.shape).toBe(totalRejected(first));
+		expect(first.handlerCalls.proposer).toBe(first.llmProposals);
+		// The shared round's rejections are logged once, under the first arm's store.
+		const firstDir = experimentArmDir(dir, result.experimentId, "fixed");
+		const sharedLog = readRejections(rejectionsPath(firstDir, `${result.experimentId}-shared`));
+		expect(sharedLog).toHaveLength(totalRejected(first));
+		expect(sharedLog.filter((record) => record.fellBack)).toHaveLength(first.localFallbacks);
+		expect(sharedLog.every((record) => record.iteration === 0 && record.reason === "shape")).toBe(true);
+		expect(
+			existsSync(
+				rejectionsPath(experimentArmDir(dir, result.experimentId, "dream"), `${result.experimentId}-shared`),
+			),
+		).toBe(false);
+		for (const a of result.arms) {
+			const second = a.rounds[1]!;
+			expect(second.llmProposals).toBe(second.llmAccepted + totalRejected(second));
+			expect(second.probes).toBe(second.llmAccepted + second.localFallbacks);
+			expect(second.agentGeneratedCalls).toBe(second.llmAccepted);
+			expect(second.cumulativeAgentGeneratedCalls).toBe(first.agentGeneratedCalls + second.agentGeneratedCalls);
+			expect(a.totals.agentGeneratedCalls).toBe(first.agentGeneratedCalls + second.agentGeneratedCalls);
+			expect(a.totals.localFallbacks).toBe(first.localFallbacks + second.localFallbacks);
+			expect(a.totals.llmProposals).toBe(first.llmProposals + second.llmProposals);
+			expect(a.totals.agentGeneratedCalls).toBeLessThan(a.totals.probes);
+			// The arm's own loop logs its later rounds under its run key, in its own store.
+			const armLog = readRejections(
+				rejectionsPath(experimentArmDir(dir, result.experimentId, a.arm), `sum-difference-s7-r${FIXED_CLOCK}`),
+			);
+			expect(armLog).toHaveLength(totalRejected(second));
+			expect(armLog.every((record) => record.iteration === 1)).toBe(true);
+			// The persisted trees carry the same split.
+			const tree = readTree(second.treeId, experimentArmDir(dir, result.experimentId, a.arm));
+			expect(tree.nodes.filter((node) => node.origin === "llm")).toHaveLength(second.agentGeneratedCalls);
+			expect(tree.nodes.filter((node) => node.origin === "local")).toHaveLength(second.localFallbacks);
+		}
+		expect(isExperimentResult(readExperimentResult(dir, result.experimentId))).toBe(true);
 	});
 
 	it("with the local proposer and dreamer never calls the handler and matches the sync runner arm for arm", async () => {

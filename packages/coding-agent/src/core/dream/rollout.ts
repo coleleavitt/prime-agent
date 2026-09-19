@@ -36,8 +36,8 @@ import { createLocalProposer, type ProposeOutcome, type Proposer } from "./propo
 import type { SeededRng } from "./rng.js";
 import { TreeWriter } from "./store.js";
 import type { DreamTaskId, ProposeParams, ScoredTask } from "./task.js";
-import { createTree, type DiscoveryNode, type DiscoveryTree } from "./tree.js";
-import type { DreamClock, NodeRecord, TreeHeaderRecord } from "./types.js";
+import { createTree, type DiscoveryNode, type DiscoveryTree, nodeRecordOf } from "./tree.js";
+import type { DreamClock, TreeHeaderRecord } from "./types.js";
 
 /** A round improves the best score only when it beats it by more than this. Shared by both drivers. */
 export const IMPROVE_EPS = 1e-12;
@@ -81,7 +81,14 @@ export interface ExploreResult {
 	treeId: string;
 	tree: DiscoveryTree;
 	rounds: number;
+	/** Revealed non-root nodes (`tree.size - 1`): evaluated attempts, the compute axis. */
 	revealedCount: number;
+	/**
+	 * Revealed nodes whose candidate a child agent generated (`origin: "llm"`).
+	 * 0 on the local path; on the LLM path `revealedCount - agentGeneratedCount`
+	 * is the number of attempts the local mutator stood in for.
+	 */
+	agentGeneratedCount: number;
 	bestScore: number;
 	bestNodeId: string;
 	rootScore: number;
@@ -134,23 +141,6 @@ export function liveObservation(tree: DiscoveryTree, workers: number, round: num
 				.map(toCell),
 		bestScore: () => tree.bestScore(),
 		revealedNonRootCount: () => tree.size - 1,
-	};
-}
-
-export function nodeRecordOf(node: DiscoveryNode): NodeRecord {
-	return {
-		type: "node",
-		id: node.id,
-		parentId: node.parentId,
-		branch: node.branch,
-		seq: node.seq,
-		round: node.round,
-		score: node.score,
-		valid: node.valid,
-		...(node.failClass !== undefined ? { failClass: node.failClass } : {}),
-		artifactRef: node.artifactRef,
-		tokens: node.tokens,
-		ts: node.ts,
 	};
 }
 
@@ -270,7 +260,9 @@ export function selectRoundCells(state: RolloutState, round: number): Cell[] {
  * span: evaluate, serialize, append the node and its blob. The node-id attribute
  * is read from `tree.size` BEFORE the node is added, and the local proposer opens
  * no span of its own, so the emitted span tree is identical to a fully sync
- * rollout. Returns the created node and the tokens the outcome reported.
+ * rollout. The outcome's `origin` (default `local`) is persisted on the node and
+ * set on the span as `dream.origin`. Returns the created node and the tokens the
+ * outcome reported.
  */
 export function commitAttempt(
 	state: RolloutState,
@@ -295,6 +287,7 @@ export function commitAttempt(
 				score: evaluation.score,
 				valid: evaluation.valid,
 				...(evaluation.failClass !== undefined ? { failClass: evaluation.failClass } : {}),
+				origin: outcome.origin ?? "local",
 				artifactRef,
 				tokens: outcome.tokens,
 				ts: state.clock(),
@@ -306,6 +299,7 @@ export function commitAttempt(
 				"dream.valid": node.valid,
 				"dream.score": node.score,
 				"dream.tokens": node.tokens,
+				"dream.origin": node.origin,
 				...(node.failClass !== undefined ? { "dream.fail_class": node.failClass } : {}),
 			});
 			return { node, tokens: outcome.tokens };
@@ -336,6 +330,7 @@ export function finishRollout(state: RolloutState, rounds: number, tokens: numbe
 		tree: state.tree,
 		rounds,
 		revealedCount: state.tree.size - 1,
+		agentGeneratedCount: state.tree.originCounts().llm,
 		bestScore: best.score,
 		bestNodeId: best.id,
 		rootScore: state.tree.nodeById(state.tree.rootId)!.score,

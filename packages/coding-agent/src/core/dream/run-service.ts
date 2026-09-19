@@ -51,7 +51,7 @@ import type { DreamLoopResult } from "./loop.js";
 import { createSeededRng, type SeededRng } from "./rng.js";
 import { experimentResultPath } from "./store.js";
 import type { DreamTaskId } from "./task.js";
-import { resolveTask, taskPromptContext } from "./tasks/index.js";
+import { resolveTask, resolveTaskN, taskPromptContext } from "./tasks/index.js";
 import type { DreamClock } from "./types.js";
 
 /** Why a Dream-RSI run ended. `completed` covers both improved and no-improvement finishes. */
@@ -130,7 +130,7 @@ export interface DreamExperimentLlmContext {
 	signal: AbortSignal;
 	useLlmProposer: boolean;
 	useLlmDreamer: boolean;
-	/** The task's public contract for the proposer prompt (python-speedup only). */
+	/** The task's public contract for the proposer prompt (`taskPromptContext(task, resolveTaskN(spec))`; python-speedup and autocorrelation have one). */
 	proposerPromptContext?: string;
 }
 
@@ -290,8 +290,9 @@ export class DreamRunService {
 		const deps = this.#deps;
 		const seed = request.seed ?? DREAM_RUN_DEFAULTS.seed;
 		const rng = deps.rng ?? createSeededRng(seed);
-		const task = resolveTask({ task: request.task, ...(request.n !== undefined ? { n: request.n } : {}) });
-		const promptContext = taskPromptContext(request.task);
+		const taskSpec = { task: request.task, ...(request.n !== undefined ? { n: request.n } : {}) };
+		const task = resolveTask(taskSpec);
+		const promptContext = taskPromptContext(request.task, resolveTaskN(taskSpec));
 		try {
 			const result: DreamLoopResult = await runDreamLoopWithAgent({
 				runAgent: deps.runAgent,
@@ -346,7 +347,10 @@ export class DreamRunService {
 					"LLM experiment arms need an in-session LLM arm runner (DreamRunServiceDeps.llmExperimentRunner); this session has none, so llmProposer/llmDreamer and the guided arms are unavailable",
 				);
 			}
-			const promptContext = taskPromptContext(request.task);
+			const promptContext = taskPromptContext(
+				request.task,
+				resolveTaskN({ task: request.task, ...(request.n !== undefined ? { n: request.n } : {}) }),
+			);
 			runner = factory({
 				runAgent: deps.runAgent,
 				scope: this.#scope(),

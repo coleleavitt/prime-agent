@@ -37,8 +37,15 @@
 import { existsSync } from "node:fs";
 import { currentTraceContext, runWithTraceContext, type Span, startSpan, withSpan } from "@earendil-works/pi-ai";
 import type { ChildCall } from "../ravo/controller.js";
-import { type ChildRuntimeScope, createRunAgentChildCall } from "../ravo/runtime-adapter.js";
-import type { RunAgentHandler } from "../run-agent.js";
+import {
+	type ChildRuntimeScope,
+	createRunAgentChildCall,
+	extractJsonValue,
+	type JsonContainer,
+	structuredChildRequest,
+	structuredChildRunOptions,
+} from "../ravo/runtime-adapter.js";
+import type { RunAgentHandler, RunAgentResult, RunAgentStatus } from "../run-agent.js";
 import { proposePolicies, runDreaming, selectBestPolicy } from "./improve.js";
 import { type DreamHandlerCalls, type DreamLoopResult, type DreamRoundRecord, freezePool } from "./loop.js";
 import { DEFAULT_OBJECTIVE, type ReplayObjectiveConfig } from "./objective.js";
@@ -52,7 +59,19 @@ import {
 	SELECTION_RULES,
 	STOP_RULES,
 } from "./policy.js";
-import { type AsyncProposer, asyncOf, createLocalProposer } from "./proposer.js";
+import {
+	type AsyncProposer,
+	addProposalTally,
+	asyncOf,
+	createLocalProposer,
+	type ProposalRejectReason,
+	type ProposalTally,
+	type ProposeOutcome,
+	tallyAccepted,
+	tallyRejected,
+	zeroProposalTally,
+} from "./proposer.js";
+import { excerptOf, RejectionLog, rejectionsPath } from "./rejections.js";
 import { createSeededRng, type SeededRng } from "./rng.js";
 import {
 	applyRoundStop,
@@ -72,8 +91,24 @@ import type { DreamClock, DreamMode, NodeRecord } from "./types.js";
 
 /** Per-attempt child token budget when a caller does not set one. */
 export const DEFAULT_CHILD_TOKEN_BUDGET = 200_000;
+/** Child results a proposer attempt examines at most: the first plus this many retries on a retryable rejection. */
+export const PROPOSER_RETRIES = 1;
 const JSON_OBJECT_ONLY = "Return exactly one JSON object and nothing else: no prose, no code fences.";
 const JSON_ARRAY_ONLY = "Return exactly one JSON array and nothing else: no prose, no code fences.";
+
+/**
+ * The LAST line of every proposer prompt. A child that reasons out loud around
+ * the object, fences it, or runs past its output cap is the measured failure
+ * mode (81/83 fallbacks on one real run), so the instruction is explicit, names
+ * every forbidden wrapper, and comes after everything else in the prompt.
+ */
+export const PROPOSER_JSON_ONLY = "Return ONLY the JSON object, no prose, no code fences, no text before or after it.";
+const PROPOSER_OUTPUT_CONTRACT = [
+	"Output contract:",
+	"- Your entire reply is ONE JSON object: the improved candidate, in the exact shape the contract above describes (without a contract, the same keys as the current candidate; a derived field such as a score or peak may be omitted).",
+	"- Do not think out loud, explain, or add any text before or after the object. Do not wrap it in markdown code fences.",
+	"- Keep the reply as short as the object itself: a reply that runs past its output limit is discarded and replaced by a local mutation.",
+].join("\n");
 
 /**
  * The first line of every child prompt, by role. Each is a prompt's first
@@ -132,7 +167,44 @@ export interface LlmProposerOptions {
 	 * after the prompt header only when non-empty. Advisory text, never a score.
 	 */
 	guidance?: string;
+	/**
+	 * Per-rollout provenance the proposer records into (mutated through
+	 * `tallyAccepted`/`tallyRejected`): every child result examined, accepted or
+	 * rejected by reason, and the attempts that fell back to the local mutator.
+	 * The driver snapshots it per round.
+	 */
+	tally?: ProposalTally;
+	/** Where every rejected child result is written (reason, status, tokens, a bounded output excerpt). */
+	rejections?: RejectionLog;
+	/** The loop iteration the rollout belongs to, stamped on each rejection record; defaults to 0. */
+	iteration?: number;
 }
+
+/** What became of one child proposer result before it could enter the tree. */
+type ChildOutcome<T> =
+	| { status: "accepted"; value: T; tokens: number; outputTokens: number }
+	| {
+			status: "rejected";
+			reason: ProposalRejectReason;
+			childStatus: RunAgentStatus;
+			tokens: number;
+			outputTokens: number;
+			stopReason?: string;
+			error?: string;
+			excerpt: string;
+	  };
+
+/**
+ * Rejections worth one more child call. A cap overrun (`length`) is not: the
+ * retry would most likely run away again, doubling the most expensive failure.
+ * A turn limit, budget or abort is terminal for the attempt by definition.
+ */
+const RETRYABLE_REJECTIONS: ReadonlySet<ProposalRejectReason> = new Set<ProposalRejectReason>([
+	"error",
+	"parse",
+	"shape",
+	"invalid-candidate",
+]);
 
 export interface LlmDreamerOptions {
 	scope: ChildRuntimeScope;
@@ -144,50 +216,170 @@ export interface LlmDreamerOptions {
 
 /**
  * An `AsyncProposer` that generates each attempt through a child coding agent.
- * The child emits one JSON artifact, validated by `task.deserialize` before it
- * can enter the tree. On a non-abort child failure the proposer FALLS BACK to the
- * task's local `propose` (deterministic, zero extra tokens beyond what the child
- * already spent); on an abort it throws `DreamAbortError` so the driver stops.
+ * The child's output is searched for its JSON object (`extractJsonValue`: code
+ * fences and prose around it are tolerated, since the object wrapped in an
+ * explanation was the measured failure mode), then validated by
+ * `task.deserialize` before it can enter the tree as an `origin: "llm"` node.
+ * A retryable rejection gets `PROPOSER_RETRIES` more child calls. When the last
+ * result is still rejected the proposer FALLS BACK to the task's local `propose`
+ * (deterministic, zero extra tokens beyond what the child already spent) and the
+ * node is `origin: "local"`; an abort throws `DreamAbortError` so the driver
+ * stops. Every child result is tallied (`options.tally`) and every rejection is
+ * logged (`options.rejections`) and put on the `dream.llm_propose` span, so a
+ * fallback is never mistaken for the agent's work and its cause is recoverable.
  */
 export function createLlmProposer(
 	runAgent: RunAgentHandler,
 	task: ScoredTask<unknown>,
 	options: LlmProposerOptions,
 ): AsyncProposer<unknown> {
-	const childCall = retrying(
-		createRunAgentChildCall<ProposeChildInput, unknown>(runAgent, {
-			prompt: buildProposePrompt(task.id, options.promptContext, options.guidance),
-			validate: (value) => task.deserialize(value),
-			scope: options.scope,
-		}),
-		1,
-	);
+	const prompt = buildProposePrompt(task.id, options.promptContext, options.guidance);
+	const tally = options.tally ?? zeroProposalTally();
+	const iteration = options.iteration ?? 0;
+	const child = (input: ProposeChildInput): Promise<ChildOutcome<unknown>> =>
+		runStructuredChild(runAgent, prompt(input), options, "object", (value) => task.deserialize(value));
 	return {
-		propose(parent, params, rng, round) {
-			return withSpan("dream.llm_propose", { "dream.round": round }, async (span) => {
-				const parentJson = parent === null ? null : task.serialize(parent);
-				const result = await childCall(
-					{ parentJson, params, round },
-					{ signal: options.signal, tokenBudget: options.tokenBudget },
-				);
-				if (result.status === "deferred") {
-					throw new Error("dream LLM proposer received an unexpected deferred child result");
-				}
-				if (result.status === "completed") {
-					span.setAttributes({ "dream.tokens": result.tokens, "dream.llm_fallback": false });
-					return { artifact: result.value, tokens: result.tokens };
-				}
-				if (result.status === "aborted" || options.signal.aborted) {
-					throw new DreamAbortError("dream proposer child aborted");
-				}
-				// error / turn_limit / budget_exceeded: fall back to the deterministic local
-				// proposer, keeping the tokens the child already spent.
-				const fallback = task.propose(parent, params, rng, round);
-				span.setAttributes({ "dream.tokens": result.tokens, "dream.llm_fallback": true });
-				return { artifact: fallback, tokens: result.tokens };
-			});
+		propose(parent, params, rng, round): Promise<ProposeOutcome<unknown>> {
+			return withSpan(
+				"dream.llm_propose",
+				{ "dream.round": round },
+				async (span): Promise<ProposeOutcome<unknown>> => {
+					const parentJson = parent === null ? null : task.serialize(parent);
+					const input: ProposeChildInput = { parentJson, params, round };
+					let tokens = 0;
+					let outputTokens = 0;
+					let attempts = 0;
+					let last: ChildOutcome<unknown>;
+					const reject = (outcome: ChildOutcome<unknown> & { status: "rejected" }, fellBack: boolean): void => {
+						tallyRejected(tally, outcome.reason, fellBack);
+						options.rejections?.append({
+							iteration,
+							round,
+							attempt: attempts,
+							reason: outcome.reason,
+							status: outcome.childStatus,
+							fellBack,
+							tokens: outcome.tokens,
+							outputTokens: outcome.outputTokens,
+							...(outcome.stopReason === undefined ? {} : { stopReason: outcome.stopReason }),
+							...(outcome.error === undefined ? {} : { error: outcome.error }),
+							excerpt: outcome.excerpt,
+						});
+					};
+					for (;;) {
+						attempts += 1;
+						last = await child(input);
+						tokens += last.tokens;
+						outputTokens += last.outputTokens;
+						if (last.status === "accepted") break;
+						const retry =
+							RETRYABLE_REJECTIONS.has(last.reason) && attempts <= PROPOSER_RETRIES && !options.signal.aborted;
+						if (!retry) break;
+						reject(last, false);
+					}
+					span.setAttributes({
+						"dream.tokens": tokens,
+						"dream.llm_output_tokens": outputTokens,
+						"dream.llm_attempts": attempts,
+					});
+					if (last.status === "accepted") {
+						tallyAccepted(tally);
+						span.setAttributes({ "dream.llm_fallback": false, "dream.origin": "llm" });
+						return { artifact: last.value, tokens, origin: "llm" };
+					}
+					span.setAttributes({
+						"dream.llm_reject_reason": last.reason,
+						"dream.llm_status": last.childStatus,
+						"dream.llm_reject_excerpt": last.excerpt,
+					});
+					if (last.reason === "aborted" || options.signal.aborted) {
+						reject(last, false);
+						span.setAttributes({ "dream.llm_fallback": false });
+						throw new DreamAbortError("dream proposer child aborted");
+					}
+					// The child's output is rejected for good: fall back to the deterministic
+					// local proposer, keeping the tokens the child already spent on the node.
+					reject(last, true);
+					const fallback = task.propose(parent, params, rng, round);
+					span.setAttributes({ "dream.llm_fallback": true, "dream.origin": "local" });
+					return { artifact: fallback, tokens, origin: "local" };
+				},
+			);
 		},
 	};
+}
+
+/**
+ * One structured child call, classified. A non-completed child maps by status
+ * (`error`, `turn-limit`, `budget`, `aborted`). A completed one must yield a
+ * JSON value of the requested kind (`parse` otherwise) that `validate` accepts:
+ * a `TypeError` is the tasks' structural refusal (`shape`: wrong keys, wrong
+ * `weights` length, non-numeric entries), any other error is `invalid-candidate`.
+ * When the child's final message stopped at its output cap, a rejection of that
+ * output is `length` whatever the parser said, since the cap is the cause.
+ */
+async function runStructuredChild<T>(
+	runAgent: RunAgentHandler,
+	prompt: string,
+	options: Pick<LlmProposerOptions, "scope" | "signal" | "tokenBudget">,
+	container: JsonContainer,
+	validate: (value: unknown) => T,
+): Promise<ChildOutcome<T>> {
+	const result = await runAgent(
+		structuredChildRequest(prompt, options.scope),
+		structuredChildRunOptions(options.scope, { signal: options.signal, tokenBudget: options.tokenBudget }),
+	);
+	const tokens = result.usage.totalTokens;
+	const outputTokens = result.usage.output;
+	const stopReason = lastAssistantStopReason(result);
+	const rejected = (reason: ProposalRejectReason, error?: string): ChildOutcome<T> => ({
+		status: "rejected",
+		reason: stopReason === "length" && result.status === "completed" ? "length" : reason,
+		childStatus: result.status,
+		tokens,
+		outputTokens,
+		...(stopReason === undefined ? {} : { stopReason }),
+		...(error === undefined ? {} : { error }),
+		excerpt: excerptOf(result.output),
+	});
+	if (result.status !== "completed") return rejected(statusRejectReason(result.status), result.error);
+	let value: unknown;
+	try {
+		value = extractJsonValue(result.output, container);
+	} catch (error) {
+		return rejected("parse", errorText(error));
+	}
+	try {
+		return { status: "accepted", value: validate(value), tokens, outputTokens };
+	} catch (error) {
+		return rejected(error instanceof TypeError ? "shape" : "invalid-candidate", errorText(error));
+	}
+}
+
+function statusRejectReason(status: Exclude<RunAgentStatus, "completed">): ProposalRejectReason {
+	switch (status) {
+		case "aborted":
+			return "aborted";
+		case "turn_limit":
+			return "turn-limit";
+		case "budget_exceeded":
+			return "budget";
+		case "error":
+			return "error";
+	}
+}
+
+/** The stop reason of the child's final assistant message, when the handler returned its transcript. */
+function lastAssistantStopReason(result: RunAgentResult): string | undefined {
+	for (let i = result.messages.length - 1; i >= 0; i--) {
+		const message = result.messages[i];
+		if (message?.role === "assistant") return message.stopReason;
+	}
+	return undefined;
+}
+
+function errorText(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -210,6 +402,7 @@ export async function proposePoliciesWithAgent(
 			prompt: buildDreamPrompt,
 			validate: parseCandidateArray,
 			scope: options.scope,
+			extractJson: "array",
 		}),
 		1,
 	);
@@ -368,6 +561,7 @@ function resolveGuidance(
 					prompt: buildGuidancePrompt,
 					validate: parseInsights,
 					scope: options.scope,
+					extractJson: "object",
 				}),
 				1,
 			);
@@ -481,6 +675,10 @@ export interface DreamInitialRollout {
 	treeId: string;
 	bestScore: number;
 	revealedCount: number;
+	/** `ExploreResult.agentGeneratedCount` of the shared rollout; absent reads as 0 (untracked), never as `revealedCount`. */
+	agentGeneratedCount?: number;
+	/** The shared rollout's proposer tally; absent reads as all zero. */
+	proposals?: ProposalTally;
 	rounds: number;
 	tokens: number;
 	handlerCalls: DreamHandlerCalls;
@@ -626,10 +824,13 @@ async function dreamLoopBody(
 
 	// Per-round accounting. The wrappers count every actual handler invocation of
 	// the current round by role (retries included, since `retrying` sits inside
-	// them); `record` snapshots and resets both tallies. Nothing here touches the
-	// rng, the tree or persistence.
+	// them); the proposer tallies every child result it examines; `record`
+	// snapshots and resets all three. Nothing here touches the rng, the tree or
+	// persistence. The rejection log exists only on the LLM-proposer path, so the
+	// local path writes nothing new and reads the clock no more than before.
 	let calls = zeroCalls();
 	let roleTokens = zeroTokens();
+	let tally = zeroProposalTally();
 	const counting =
 		(role: HandlerRole): RunAgentHandler =>
 		(request, callOptions) => {
@@ -639,13 +840,19 @@ async function dreamLoopBody(
 	const proposerHandler = counting("proposer");
 	const dreamerHandler = counting("dreamer");
 	const guidanceHandler = counting("guidance");
+	const rejections = options.useLlmProposer
+		? new RejectionLog(rejectionsPath(dir, `${taskId}-s${options.seed}-r${options.clock()}`), options.clock)
+		: undefined;
 
-	const makeProposer = (guidance: string): AsyncProposer<unknown> =>
+	const makeProposer = (guidance: string, iteration: number): AsyncProposer<unknown> =>
 		options.useLlmProposer
 			? createLlmProposer(proposerHandler, task, {
 					scope: options.scope,
 					signal,
 					tokenBudget: childTokenBudget,
+					tally,
+					iteration,
+					...(rejections ? { rejections } : {}),
 					...(options.proposerPromptContext ? { promptContext: options.proposerPromptContext } : {}),
 					...(guidance.length > 0 ? { guidance } : {}),
 				})
@@ -667,7 +874,7 @@ async function dreamLoopBody(
 				policy,
 				iteration,
 			},
-			makeProposer(guidance),
+			makeProposer(guidance, iteration),
 			signal,
 		);
 	};
@@ -685,7 +892,7 @@ async function dreamLoopBody(
 		}
 	};
 	const record = (
-		result: Pick<ExploreResult, "treeId" | "bestScore" | "revealedCount" | "rounds">,
+		result: Pick<ExploreResult, "treeId" | "bestScore" | "revealedCount" | "rounds" | "agentGeneratedCount">,
 		policy: ExplorationPolicy,
 		iteration: number,
 		poolSize: number,
@@ -700,6 +907,8 @@ async function dreamLoopBody(
 			policyId: policyId(policy),
 			roundBest: result.bestScore,
 			probes: result.revealedCount,
+			agentGeneratedCalls: result.agentGeneratedCount,
+			proposals: addProposalTally(zeroProposalTally(), tally),
 			decisionRounds: result.rounds,
 			poolSize,
 			tokens: { ...roleTokens },
@@ -708,6 +917,7 @@ async function dreamLoopBody(
 		});
 		calls = zeroCalls();
 		roleTokens = zeroTokens();
+		tally = zeroProposalTally();
 	};
 
 	if (options.initialRollout) {
@@ -718,7 +928,8 @@ async function dreamLoopBody(
 		if (signal.aborted) throw new DreamAbortError("dream run aborted before rollout");
 		calls = { ...shared.handlerCalls };
 		roleTokens.rollout = shared.tokens;
-		record(shared, initialPolicy, 0, 0, null);
+		tally = addProposalTally(zeroProposalTally(), shared.proposals ?? zeroProposalTally());
+		record({ ...shared, agentGeneratedCount: shared.agentGeneratedCount ?? 0 }, initialPolicy, 0, 0, null);
 	} else {
 		const first = await rollout(initialPolicy, 0, "");
 		roleTokens.rollout = first.tokens;
@@ -870,6 +1081,8 @@ function buildProposePrompt(
 	guidance?: string,
 ): (input: ProposeChildInput) => string {
 	const guidanceBlock = guidance && guidance.length > 0 ? [`${GUIDANCE_PROMPT_PREFIX}\n${guidance}`] : [];
+	// The task contract (with the exact size, e.g. the bin count) sits between the
+	// candidate and the output contract; the JSON-only instruction is the last line.
 	return (input) =>
 		[
 			`${PROPOSER_PROMPT_HEADER} (${taskId})`,
@@ -878,7 +1091,8 @@ function buildProposePrompt(
 			`Current candidate (JSON), or null to start fresh:\n${input.parentJson === null ? "null" : JSON.stringify(input.parentJson)}`,
 			`Generation hints: stepScale=${input.params.stepScale}, refineDepth=${input.params.refineDepth}, branchWidth=${input.params.branchWidth}; round ${input.round}.`,
 			...(promptContext ? [promptContext] : []),
-			`It must be a candidate this task can deserialize. ${JSON_OBJECT_ONLY}`,
+			PROPOSER_OUTPUT_CONTRACT,
+			PROPOSER_JSON_ONLY,
 		].join("\n\n");
 }
 
@@ -888,7 +1102,7 @@ function buildDreamPrompt(input: DreamChildInput): string {
 		`Propose ${input.m} revised exploration policies that should score better than the current one on replay. A policy is DATA: a flat JSON object with exactly these fields.`,
 		policySchemaText(),
 		`Current policy:\n${JSON.stringify(input.current)}`,
-		`${JSON_ARRAY_ONLY} It must hold ${input.m} policy objects. Any object with an unknown field, a wrong type, or an out-of-range value is discarded.`,
+		`The array must hold ${input.m} policy objects. Any object with an unknown field, a wrong type, or an out-of-range value is discarded. ${JSON_ARRAY_ONLY}`,
 	].join("\n\n");
 }
 
