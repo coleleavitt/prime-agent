@@ -1,16 +1,12 @@
 {
  "id": "study-git-correction",
- "prompt": "count.py is supposed to return 10 for range(10) but returns 9. Fix it.",
+ "prompt": "src/sum.js should return the sum of the integers 1..n but it returns one term short. Fix it.",
  "followups": [
-  "You left the working tree dirty. When you finish a fix like this, always stage and commit it as a checkpoint with a clear message, and leave the tree clean. Do not push unless I ask. Please remember this for future sessions.",
-  "Good. Now make sure that preference is persisted to your harness so a future session behaves this way without me asking."
+  { "prompt": "You left the working tree dirty. When you finish a fix like this, always stage and commit it as a checkpoint with a clear message, and leave the tree clean. Do not push unless I ask.", "when": "fail" },
+  { "prompt": "Good. Now make sure that preference is persisted to your harness so a future session behaves this way without me asking.", "when": "always" }
  ],
  "timeoutMs": 420000,
  "maxTurns": 30,
- "tags": [
-  "study",
-  "trigger",
-  "intervention"
- ],
- "why": "STUDY task. A quiet success generates no refinement trigger, which is why phase B wrote 0 memories. This task forces the real trigger: the agent finishes, the operator corrects it, and the correction is exactly the instruction the corpus shows repeated 118 times across ~95 sessions. The question is whether one correction produces a durable harness entry that a later cold task can inherit."
+ "tags": ["study", "trigger", "intervention"],
+ "why": "STUDY (training) task. A quiet success generates no refinement trigger, which is why an untriggered study phase wrote 0 memories. This forces the trigger: the agent finishes a JS off-by-one in a subdir (a different surface from the Python count.py TEST task it teaches), the operator corrects it, and the correction is exactly the checkpoint instruction the corpus shows repeated 118 times across ~95 sessions. The 'when:fail' correction is only delivered while the task is still failing and counts as a human intervention; the 'when:always' followup asks for explicit harness persistence. Whether that produces a durable, transferable harness entry is the question phase warm answers on the held-out Python task."
 }

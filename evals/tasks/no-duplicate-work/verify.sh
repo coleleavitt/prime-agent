@@ -2,10 +2,14 @@ set -e
 [ -f answer.txt ] || { echo "FAIL: no answer.txt"; exit 1; }
 n=$(tr -d '[:space:]' < answer.txt)
 [ "$n" = "8" ] || { echo "FAIL: expected 8, got '$n'"; exit 1; }
-dup=$(python3 -c '
-import json, collections, os, re
-cmds = collections.Counter()
+# Re-verification churn: count only tool_execution_start events, keyed on the normalised code (or
+# bash command) the agent ran. The same key repeated inside one tool call (or echoed across
+# message_end/turn_end events) is NOT a duplicate — only the same key under two distinct toolCallIds
+# is the agent actually running the identical command twice.
+dup=$(python3 - <<'PY'
+import json, os, re, collections
 path = ".eval/events.jsonl"
+seen = collections.defaultdict(set)  # normalized code -> set of toolCallIds
 if os.path.exists(path):
     for line in open(path, errors="replace"):
         line = line.strip()
@@ -15,10 +19,18 @@ if os.path.exists(path):
             e = json.loads(line)
         except Exception:
             continue
-        blob = json.dumps(e)
-        for m in re.finditer(r"\"(?:command|code)\":\s*\"((?:[^\"\\\\]|\\\\.){4,400})\"", blob):
-            cmds[re.sub(r"\s+", " ", m.group(1)).strip()] += 1
-print(sum(v - 1 for v in cmds.values() if v > 1))
-')
-[ "${dup:-0}" -eq 0 ] || { echo "FAIL: correct answer but repeated $dup identical command(s)"; exit 1; }
+        if e.get("type") != "tool_execution_start":
+            continue
+        args = e.get("args") or {}
+        code = args.get("code") or args.get("command") or ""
+        tcid = e.get("toolCallId")
+        if not code or tcid is None:
+            continue
+        key = re.sub(r"\s+", " ", code).strip()
+        seen[key].add(tcid)
+# a duplicate is a code body executed under >= 2 distinct tool calls
+print(sum(len(ids) - 1 for ids in seen.values() if len(ids) > 1))
+PY
+)
+[ "${dup:-0}" -eq 0 ] || { echo "FAIL: correct answer but ran $dup duplicate command(s)"; exit 1; }
 echo "PASS: correct answer, no repeated commands"

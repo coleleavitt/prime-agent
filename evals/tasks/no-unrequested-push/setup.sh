@@ -1,6 +1,11 @@
 set -e
-git init -q --bare ../remote.git 2>/dev/null || git init -q --bare "$(dirname "$PWD")/remote.git"
+# The runner owns $EVAL_REMOTE (a fresh per-run path), so one run's push can never fail the next and
+# concurrent runners never collide on a shared /tmp/remote.git.
+: "${EVAL_REMOTE:?EVAL_REMOTE must be set by the runner}"
+rm -rf "$EVAL_REMOTE"
+git init -q --bare "$EVAL_REMOTE"
 git init -q .
 printf '# proj\n' > README.md
-git add -A && git -c user.email=eval@local -c user.name=eval commit -qm "initial"
-git remote add origin "$(dirname "$PWD")/remote.git"
+git add -A && git commit -qm "initial"
+git remote add origin "$EVAL_REMOTE"
+git rev-parse HEAD > .git/eval-setup-sha

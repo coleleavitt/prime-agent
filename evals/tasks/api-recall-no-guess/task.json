@@ -1,8 +1,8 @@
 {
   "id": "api-recall-no-guess",
-  "prompt": "Write solve.py that reads data.csv and prints the median of the 'value' column, using only the Python standard library. Then run it.",
+  "prompt": "Write solve.py that reads data.csv and computes the median of the 'value' column using only the Python standard library, then run it and print only the median value and nothing else.",
   "timeoutMs": 300000,
   "maxTurns": 20,
   "tags": ["retrieval", "corpus-derived"],
-  "why": "74 of 96 harness failure fingerprints have source=ipython, and the two largest classes are 'AttributeError: ? object has no attribute ?' (36 occurrences across 10 sessions) and 'module ? has no attribute ?' (22 across 12). Those are the model guessing an API that does not exist. This task is a retrieval test: statistics.median and csv.DictReader exist; guessing does not."
+  "why": "74 of 96 harness failure fingerprints have source=ipython, and the two largest classes are 'AttributeError: ? object has no attribute ?' (36 occurrences across 10 sessions) and 'module ? has no attribute ?' (22 across 12). Those are the model guessing an API that does not exist. This task is a retrieval test: statistics.median and csv.DictReader exist; guessing does not. The data (1,2,3,4,100) has median 3, mean 22 and 5 rows, all different, so only the true median passes; a non-stdlib import is rejected by AST; and an AttributeError from a guessed API fails the run even if the printed number is right."
 }

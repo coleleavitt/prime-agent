@@ -163,7 +163,7 @@ describe("AgentSession queue characterization", () => {
 				instructions: "capture the durable lesson",
 			},
 			expectedReviewContext: { reason: "turn_interval", turnsSinceLastReview: 2 },
-			refineFragments: ["capture the durable lesson", "local harness entries", "Do not promote anything global"],
+			refineFragments: ["capture the durable lesson", "global harness entries"],
 			turnsAfter: 0,
 			compactPendingAfter: undefined as boolean | undefined,
 			scheduleCalledWith: undefined as AutoRefineReason | undefined,
@@ -3587,10 +3587,11 @@ describe("AgentSession scheduler scenarios", () => {
 		const previousAgentDir = process.env.PRIME_AGENT_CODING_AGENT_DIR;
 		process.env.PRIME_AGENT_CODING_AGENT_DIR = `${harness.tempDir}/agent`;
 		try {
-			const localDir = getLocalHarnessStateDir(harness.sessionManager.getSessionArtifactDir())!;
+			// Auto-refine defaults to global scope, so the applied memories land in the global store.
+			const globalDir = getGlobalHarnessStateDir();
 			const memoryIds = () => {
 				try {
-					return Object.keys(loadHarnessState(localDir, "local").entries.memory ?? {});
+					return Object.keys(loadHarnessState(globalDir, "global").entries.memory ?? {});
 				} catch {
 					return [];
 				}

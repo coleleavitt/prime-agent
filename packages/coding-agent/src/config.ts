@@ -573,6 +573,16 @@ export function getLearningDayPath(day: string, agentDir: string = getAgentDir()
 	return join(getLearningIndexDir(agentDir), `${day}.json`);
 }
 
+/** Global Engineer Trajectory Index store: one derived diff over the sealed learning days. */
+export function getTrajectoryIndexPath(agentDir: string = getAgentDir()): string {
+	return join(getLearningDir(agentDir), "trajectory.json");
+}
+
+/** Directory of offline cross-tool backfill day files (`<corpus>/<YYYY-MM-DD>.json`), CLI-study-only. */
+export function getTrajectoryBackfillDir(agentDir: string = getAgentDir()): string {
+	return join(getLearningDir(agentDir), "backfill");
+}
+
 /** Root of the resolution index: per-repo joins from a failure fingerprint to the cell that fixed it. */
 export function getResolutionDir(agentDir: string = getAgentDir()): string {
 	return join(agentDir, "resolution");

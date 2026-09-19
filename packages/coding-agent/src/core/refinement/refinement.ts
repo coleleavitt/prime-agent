@@ -14,9 +14,10 @@ import { dirname, join } from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { completeSimple, getLogger } from "@earendil-works/pi-ai";
-import { lock, lockSync } from "proper-lockfile";
+import { lockSync } from "proper-lockfile";
 import { getAgentDir, redactLocalLog } from "../../config.js";
 import { realpathIfPresentSync, writeFileAtomicSync } from "../../utils/atomic-file.js";
+import { sleep } from "../../utils/sleep.js";
 import { serializeConversation } from "../compaction/utils.js";
 import { convertToLlm } from "../messages.js";
 import { completeWithProviderRetry, type ProviderRetryPolicy } from "../provider-retry.js";
@@ -247,6 +248,8 @@ export interface AutoRefineReview {
 	shouldRefine: boolean;
 	rationale: string;
 	instructions?: string;
+	/** The scope the reviewer asks the follow-up refine to run in; absent is treated as global (the permissive default), and only an explicit "local" keeps it session-scoped. */
+	scope?: HarnessScope;
 }
 
 const REFINEMENT_SYSTEM_PROMPT = `You are Prime Agent's /refine continual harness subsystem.
@@ -308,13 +311,16 @@ JSON only with this exact shape:
 const AUTO_REFINE_REVIEW_SYSTEM_PROMPT = `You are Prime Agent's automatic /refine review gate.
 
 Decide whether this checkpoint should run /refine. Auto /refine writes local continual harness state by default, so approve when the trajectory contains evidence useful to this session's future turns.
-Reject one-off noise, unsupported hypotheses, and transient tool outputs. Ask for global refinement only for durable cross-session lessons or explicitly project-qualified lessons likely to be reused in future sessions.
+Reject one-off noise, unsupported hypotheses, and transient tool outputs.
+
+Scope defaults to global (cross-session) — the permissive default. Emit "scope": "local" ONLY when the entry is genuinely session-specific and must not affect future sessions (current-run progress, task state, one-off coordination). Durable lessons, corrections, preferences, and reusable facts stay global; when in doubt, omit scope (global).
 
 Return JSON only:
 {
   "shouldRefine": true|false,
   "rationale": "short reason",
-  "instructions": "optional concise instructions for /refine if shouldRefine is true"
+  "instructions": "optional concise instructions for /refine if shouldRefine is true",
+  "scope": "local"|"global"
 }`;
 
 // These caps apply only with reasoning off; thinking and JSON otherwise share the model's output budget.
@@ -594,28 +600,34 @@ const HARNESS_STATE_LOCK_ASYNC_RETRY_MS = 25;
 export async function withHarnessStateLockAsync<T>(harnessStateDir: string, fn: () => T): Promise<T> {
 	mkdirSync(harnessStateDir, { recursive: true });
 	const statePath = getHarnessStatePath(harnessStateDir);
-	let release: () => Promise<void>;
-	try {
-		release = await lock(statePath, {
-			realpath: false,
-			stale: HARNESS_STATE_LOCK_STALE_MS,
-			retries: {
-				retries: Math.ceil((HARNESS_STATE_LOCK_STALE_MS * 1.5) / HARNESS_STATE_LOCK_ASYNC_RETRY_MS),
-				factor: 1,
-				minTimeout: HARNESS_STATE_LOCK_ASYNC_RETRY_MS,
-				maxTimeout: HARNESS_STATE_LOCK_ASYNC_RETRY_MS,
-			},
-		});
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== "ELOCKED") throw error;
+	// Poll the synchronous lock with an awaited sleep between attempts rather
+	// than handing the whole wait to proper-lockfile's async `lock`: its retry
+	// path can leave the lock directory on disk before `fn` runs (a partial
+	// acquisition another process then reads as ours), whereas `lockSync` either
+	// takes the lock atomically or leaves nothing behind. The event loop is free
+	// between attempts, and `fn` still runs synchronously while the lock is held.
+	const attempts = Math.ceil((HARNESS_STATE_LOCK_STALE_MS * 1.5) / HARNESS_STATE_LOCK_ASYNC_RETRY_MS);
+	let release: (() => void) | undefined;
+	for (let attempt = 0; attempt < attempts; attempt++) {
+		try {
+			release = lockSync(statePath, { realpath: false, stale: HARNESS_STATE_LOCK_STALE_MS });
+			break;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ELOCKED") throw error;
+			await sleep(HARNESS_STATE_LOCK_ASYNC_RETRY_MS);
+		}
+	}
+	if (!release) {
 		throw new Error(`Could not lock harness state: ${statePath}`);
 	}
 	try {
 		return fn();
 	} finally {
-		await release().catch(() => {
+		try {
+			release();
+		} catch {
 			// The lock expires on its own; a failed release must not mask the result.
-		});
+		}
 	}
 }
 
@@ -1318,6 +1330,18 @@ export function formatHarnessStateForPrompt(
 		/** Select entries by relevance to these terms instead of
 		 * alphabetical order. */
 		queryTerms?: HarnessQueryTerms;
+		/**
+		 * Off-turn-path engineer-trajectory bias, built by the caller from the
+		 * sealed trajectory index. `classOf` maps a merged harness-entry id to its
+		 * class (stable-gap surfaces first, then new, then internalized, which
+		 * sinks past the slice); `lines` are raw, confound-tagged stable-gap lines
+		 * sanitized here before they enter the prompt. Absent restores today's
+		 * ordering and output byte-for-byte.
+		 */
+		trajectory?: {
+			classOf: Map<string, "stable-gap" | "new" | "internalized">;
+			lines: string[];
+		};
 	} = {},
 ): string {
 	const maxEntriesPerKind = options.maxEntriesPerKind ?? DEFAULT_OVERVIEW_ENTRY_LIMIT;
@@ -1346,6 +1370,27 @@ export function formatHarnessStateForPrompt(
 	];
 
 	const queryTerms = options.queryTerms;
+	const trajectory = options.trajectory;
+	// stable-gap surfaces first, then new, then unlabelled; internalized sinks
+	// below unlabelled so it falls past the slice-at-6 and is effectively
+	// suppressed without being deleted. The class is a lead comparator key that
+	// dominates before the existing relevance/recency order, never replaces it.
+	const trajectoryRank = (entry: HarnessEntry): number => {
+		switch (trajectory?.classOf.get(entry.id)) {
+			case "stable-gap":
+				return 0;
+			case "new":
+				return 1;
+			case "internalized":
+				return 3;
+			default:
+				return 2;
+		}
+	};
+	const withTrajectory =
+		(compare: (a: HarnessEntry, b: HarnessEntry) => number) =>
+		(a: HarnessEntry, b: HarnessEntry): number =>
+			(trajectory ? trajectoryRank(a) - trajectoryRank(b) : 0) || compare(a, b);
 	let totalEntries = 0;
 	for (const kind of Object.keys(state.entries) as RefinementKind[]) {
 		const all = Object.values(state.entries[kind]);
@@ -1361,8 +1406,10 @@ export function formatHarnessStateForPrompt(
 		// demoting behavioural rules out of the rendered slots entirely.
 		const entries =
 			queryTerms !== undefined && queryTerms.size > 0
-				? [...live].sort((a, b) => compareRankedHarnessEntries(a, b, queryTerms))
-				: rankHarnessEntriesForPrompt(live);
+				? [...live].sort(withTrajectory((a, b) => compareRankedHarnessEntries(a, b, queryTerms)))
+				: trajectory
+					? [...rankHarnessEntriesForPrompt(live)].sort(withTrajectory(() => 0))
+					: rankHarnessEntriesForPrompt(live);
 		totalEntries += entries.length;
 		// Render subagent specs as a task-shaped roster the model can match against — the
 		// analogue of Claude Code's agent-type menu — rather than a bare count. In
@@ -1407,6 +1454,20 @@ export function formatHarnessStateForPrompt(
 
 	if (totalEntries === 0) {
 		lines.push("No saved harness entries yet.", "");
+	}
+
+	// Bounded, confound-flagged trajectory residue: up to three stable-gap lines,
+	// each re-sanitized here (the caller's lines are raw) so a single injected
+	// newline or angle bracket can never break the section. Absent trajectory or
+	// no stable gaps leaves the prompt untouched.
+	const trajLines = (trajectory?.lines ?? [])
+		.map((line) => sanitizeRefinementPromptText(line, maxContentLength))
+		.filter((line) => line.length > 0)
+		.slice(0, 3);
+	if (trajLines.length > 0) {
+		lines.push("engineer trajectory (confound-flagged; local signal, may reflect task-mix):");
+		for (const line of trajLines) lines.push(`- ${line}`);
+		lines.push("");
 	}
 
 	const refinements = state.refinements.filter(isListedRefinementEvent);
@@ -2259,6 +2320,13 @@ function parseAutoRefineReview(text: string): AutoRefineReview {
 		shouldRefine: record.shouldRefine === true,
 		rationale: typeof record.rationale === "string" ? record.rationale : "No rationale provided.",
 		instructions: typeof record.instructions === "string" ? record.instructions : undefined,
+		// Most permissive by default: absent or unknown scope is treated as global downstream;
+		// only an explicit "local" keeps a refine session-scoped.
+		...(record.scope === "local"
+			? { scope: "local" as const }
+			: record.scope === "global"
+				? { scope: "global" as const }
+				: {}),
 	};
 }
 
@@ -2291,7 +2359,7 @@ ${historyText}
 			`<conversation>
 ${conversation}
 </conversation>`,
-			"Return shouldRefine=true when the trajectory contains evidence useful to this session's future turns. Prefer local harness edits for current task progress and current-run coordination; a transient condition (an open blocker, a pending rename) belongs there only with how to re-check it. Ask for global refinement only for durable cross-session lessons or explicitly project-qualified facts likely to be reused in future sessions.",
+			'Return shouldRefine=true when the trajectory contains evidence useful to this session\'s future turns. Prefer local harness edits for current task progress and current-run coordination; a transient condition (an open blocker, a pending rename) belongs there only with how to re-check it. Scope defaults to local: set scope=global only when the trajectory holds an explicit operator or user correction stating a durable standing rule ("always", "never", "when you finish", "do not ... unless") meant to hold in future sessions; routine progress, task state, and one-off facts are never global.',
 		].join("\n\n");
 	const reasoning = getAuxiliaryThinkingLevel(model, thinkingLevel);
 	const { model: requestModel, userPrompt } = refinementRequest(

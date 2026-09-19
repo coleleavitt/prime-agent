@@ -1,4 +1,15 @@
-import { APP_NAME, getAgentLogPath, getLearningIndexDir } from "../config.js";
+import { withSpan } from "@earendil-works/pi-ai";
+import { APP_NAME, getAgentLogPath, getLearningIndexDir, getTrajectoryIndexPath } from "../config.js";
+import {
+	buildTrajectoryReport,
+	DEFAULT_MIN_TRAJECTORY_WINDOWS,
+	DEFAULT_TRAJECTORY_INTERNALIZED_GAP,
+	readBackfillDays,
+	sealTrajectoryWindows,
+	type TrajectoryReport,
+	type TrajectoryStoreFile,
+	writeTrajectoryIndex,
+} from "../core/distill/trajectory-index.js";
 import {
 	buildLearningReport,
 	DEFAULT_MIN_COHORT_N,
@@ -204,6 +215,9 @@ function chartLines(report: LearningReport): string[] {
 }
 
 export function runLearningCommand(args: string[], io: LearningCommandIo): number {
+	if (args[0] === "trajectory") {
+		return runTrajectorySubcommand(args.slice(1), io);
+	}
 	let options: LearningCommandOptions;
 	try {
 		options = parseLearningCommandArgs(args);
@@ -248,4 +262,196 @@ export function runLearningCommand(args: string[], io: LearningCommandIo): numbe
 		for (const line of chartLines(report)) io.stdout(line);
 	}
 	return report.pValue === undefined ? 2 : 0;
+}
+
+// ---------------------------------------------------------------------------
+// `learning trajectory` subcommand (Engineer Trajectory Index)
+// ---------------------------------------------------------------------------
+
+interface TrajectoryCommandOptions {
+	indexDir: string | undefined;
+	includeBackfill: boolean;
+	minWindows: number;
+	gap: number;
+	seal: boolean;
+	json: boolean;
+	limit: number;
+}
+
+const TRAJECTORY_MAX_ROWS = 40;
+
+function parseTrajectoryCommandArgs(args: string[]): TrajectoryCommandOptions {
+	let indexDir: string | undefined;
+	let includeBackfill = false;
+	let minWindows = DEFAULT_MIN_TRAJECTORY_WINDOWS;
+	let gap = DEFAULT_TRAJECTORY_INTERNALIZED_GAP;
+	let seal = true;
+	let json = false;
+	let limit = TRAJECTORY_MAX_ROWS;
+	const takeValue = (index: number, option: string): string => {
+		const value = args[index];
+		if (value === undefined || value.startsWith("-")) {
+			throw new LearningCommandUsageError(`${option} requires a value.`);
+		}
+		return value;
+	};
+	const positiveInteger = (raw: string, option: string): number => {
+		const parsed = Number.parseInt(raw, 10);
+		if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+			throw new LearningCommandUsageError(`${option} requires a positive integer.`);
+		}
+		return parsed;
+	};
+	for (let index = 0; index < args.length; index++) {
+		const arg = args[index]!;
+		if (arg === "--json") {
+			json = true;
+		} else if (arg === "--no-seal") {
+			seal = false;
+		} else if (arg === "--include-backfill") {
+			includeBackfill = true;
+		} else if (arg === "--index") {
+			indexDir = takeValue(++index, "--index");
+		} else if (arg.startsWith("--index=")) {
+			indexDir = arg.slice("--index=".length) || undefined;
+			if (!indexDir) throw new LearningCommandUsageError("--index requires a value.");
+		} else if (arg === "--min-windows") {
+			minWindows = positiveInteger(takeValue(++index, "--min-windows"), "--min-windows");
+		} else if (arg.startsWith("--min-windows=")) {
+			minWindows = positiveInteger(arg.slice("--min-windows=".length), "--min-windows");
+		} else if (arg === "--gap") {
+			gap = positiveInteger(takeValue(++index, "--gap"), "--gap");
+		} else if (arg.startsWith("--gap=")) {
+			gap = positiveInteger(arg.slice("--gap=".length), "--gap");
+		} else if (arg === "--limit") {
+			limit = positiveInteger(takeValue(++index, "--limit"), "--limit");
+		} else if (arg.startsWith("--limit=")) {
+			limit = positiveInteger(arg.slice("--limit=".length), "--limit");
+		} else {
+			throw new LearningCommandUsageError(
+				arg.startsWith("-")
+					? `Unknown option for learning trajectory: ${arg}`
+					: `learning trajectory takes no operands: ${arg}`,
+			);
+		}
+	}
+	return { indexDir, includeBackfill, minWindows, gap, seal, json, limit };
+}
+
+function formatTrajectoryReport(report: TrajectoryReport, indexDir: string, storePath: string, limit: number): string {
+	const out: string[] = [];
+	out.push(`engineer trajectory  ${storePath}`);
+	out.push(`  learning days  ${indexDir}`);
+	out.push(
+		`  ${report.windowsObserved} observed window${report.windowsObserved === 1 ? "" : "s"} (min ${report.minWindows} to emit a label)`,
+	);
+	if (report.windows.length > 0) {
+		const spans = report.windows.map(
+			(window) => `${window.window}(${window.corpus}:${window.days}d/${window.turns}t)`,
+		);
+		out.push(`  windows: ${spans.join(" ")}`);
+	}
+	out.push("");
+	const shown = report.rows.slice(0, limit);
+	if (shown.length === 0) {
+		out.push("  (no failure fingerprints observed in any sealed window)");
+	} else {
+		const idWidth = Math.max(11, ...shown.map((row) => row.fingerprint.length));
+		const nameWidth = Math.max(4, ...shown.map((row) => row.name.length || 1));
+		const labelWidth = Math.max(5, ...shown.map((row) => row.label.length));
+		const header = `  ${"fingerprint".padEnd(idWidth)}  ${"span".padEnd(nameWidth)}  ${"label".padEnd(labelWidth)}  ${"window span".padEnd(21)}  ${"rec".padStart(3)}  sec  confounds`;
+		out.push(header);
+		out.push(`  ${"-".repeat(Math.max(0, header.length - 2))}`);
+		for (const row of shown) {
+			const windowSpan = `${row.sinceWindow}..${row.lastWindow}`;
+			out.push(
+				`  ${row.fingerprint.padEnd(idWidth)}  ${(row.name || "-").padEnd(nameWidth)}  ${row.label.padEnd(labelWidth)}  ${windowSpan.padEnd(21)}  ${String(row.windowsRecurring).padStart(3)}  ${row.securityClass ? "yes" : " - "}  ${row.confounds}`,
+			);
+		}
+		if (report.rows.length > shown.length) {
+			out.push(`  ... ${report.rows.length - shown.length} more (raise --limit)`);
+		}
+	}
+	out.push("");
+	out.push("  rate of change (new - retired per window):");
+	if (report.rate.length === 0) {
+		out.push("    (none)");
+	} else {
+		for (const step of report.rate) {
+			const value = step.newMinusRetired === null ? "null (gap)" : String(step.newMinusRetired);
+			const retired = step.retired === null ? "null" : String(step.retired);
+			out.push(`    ${step.window}  appeared ${step.appeared}, retired ${retired}, net ${value}`);
+		}
+	}
+	return out.join("\n");
+}
+
+function runTrajectorySubcommand(args: string[], io: LearningCommandIo): number {
+	let options: TrajectoryCommandOptions;
+	try {
+		options = parseTrajectoryCommandArgs(args);
+	} catch (error) {
+		if (!(error instanceof LearningCommandUsageError)) throw error;
+		io.stderr(`Error: ${error.message}`);
+		io.stderr(
+			`Usage: ${APP_NAME} learning trajectory [--index <dir>] [--include-backfill] [--min-windows <n>] [--gap <m>] [--no-seal] [--limit <n>] [--json]`,
+		);
+		return 1;
+	}
+	const indexDir = options.indexDir ?? getLearningIndexDir();
+	const nowMs = io.now?.() ?? Date.now();
+	if (options.seal) {
+		const files = learningLogFiles(getAgentLogPath());
+		try {
+			sealLearningDays({ files, indexDir, nowMs });
+		} catch (error) {
+			io.stderr(
+				`Error: could not seal the learning index: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			return 1;
+		}
+	}
+	const days = readLearningIndex(indexDir);
+	const backfillDays = options.includeBackfill ? readBackfillDays() : undefined;
+	if (days.length === 0 && (!backfillDays || backfillDays.length === 0)) {
+		io.stderr(`Error: no sealed days in ${indexDir}`);
+		return 1;
+	}
+
+	const storePath = getTrajectoryIndexPath();
+	const report = withSpan("trajectory.seal", {}, (span): TrajectoryReport => {
+		// The persisted store is always prime-only, so backfill never lands on disk.
+		const diskFile: TrajectoryStoreFile = sealTrajectoryWindows({
+			days,
+			minWindows: options.minWindows,
+			internalizedGap: options.gap,
+			nowMs,
+		});
+		writeTrajectoryIndex(diskFile);
+		const displayFile: TrajectoryStoreFile = options.includeBackfill
+			? sealTrajectoryWindows({
+					days,
+					backfillDays,
+					minWindows: options.minWindows,
+					internalizedGap: options.gap,
+					nowMs,
+				})
+			: diskFile;
+		const built = buildTrajectoryReport(displayFile);
+		span.setAttributes({
+			windows: built.windowsObserved,
+			labelled: displayFile.labels.filter((label) => label.corpus === "prime" && label.label !== null).length,
+			withheld: displayFile.labels.filter((label) => label.corpus === "prime" && label.withheld !== undefined)
+				.length,
+			backfill: options.includeBackfill,
+		});
+		return built;
+	});
+
+	if (options.json) {
+		io.stdout(JSON.stringify({ ...report, indexDir, storePath }, undefined, 2));
+		return report.allWithheld ? 2 : 0;
+	}
+	io.stdout(formatTrajectoryReport(report, indexDir, storePath, options.limit));
+	return report.allWithheld ? 2 : 0;
 }

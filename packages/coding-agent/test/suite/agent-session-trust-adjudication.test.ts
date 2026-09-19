@@ -72,6 +72,7 @@ type SessionInternals = {
 	_trustAdjudicationsAwaiting: Map<string, unknown>;
 	_trustAdjudicationsQueued: Set<string>;
 	_pendingTrustEvidence: TrustWindowEvidence[];
+	_globalPendingTrustEvidence: TrustWindowEvidence[];
 };
 
 function traceback(module: string): string {
@@ -698,6 +699,107 @@ describe("AgentSession post-commit trust adjudication", () => {
 		});
 		expect(trustLogs(HARNESS_TRUST_SETTLED_MSG)).toEqual([
 			expect.objectContaining({ proposalId: "refine_seed", scope: "local", outcome: "contested" }),
+		]);
+	});
+
+	it("settles a global memory trust window contested at the root ledger flush when its claimed failure recurs", async () => {
+		writeFailures([deployRecord(2)]);
+		const harness = await sessionWith([deployTool()]);
+		seedWindow(getGlobalHarnessStateDir(), "global", {
+			kind: "memory",
+			fingerprint: DEPLOY_FINGERPRINT,
+			untilTurn: 3,
+		});
+
+		await runTool(harness, "deploy");
+		expect(stateOf(harness, "global").trustWindows?.refine_seed).toMatchObject({
+			outcome: "open",
+			recurrences: { [DEPLOY_FINGERPRINT]: 3 },
+		});
+		expect(trustLogs(HARNESS_TRUST_SETTLED_MSG)).toEqual([]);
+
+		await runTool(harness, "deploy");
+
+		const state = stateOf(harness, "global");
+		expect(state.trustWindows?.refine_seed?.outcome).toBe("contested");
+		expect(state.entries.memory[MEMORY_ID].trust).toBeUndefined();
+		expect(stateOf(harness, "local").trustWindows).toBeUndefined();
+		const settling = named("harness.ledger.flush").find((span) => span.attrs["trust.contested"] === 1);
+		expect(settling?.attrs).toMatchObject({ "ledger.scope": "global", "trust.faulted": 0, "trust.clean": 0 });
+		expect(trustLogs(HARNESS_TRUST_SETTLED_MSG)).toEqual([
+			expect.objectContaining({
+				proposalId: "refine_seed",
+				scope: "global",
+				from: "open",
+				outcome: "contested",
+				ordinal: 4,
+				fingerprints: [DEPLOY_FINGERPRINT],
+			}),
+		]);
+		expect(named("harness.trust.adjudicate")).toEqual([]);
+	});
+
+	it("folds global pending trust evidence into a global refine apply before it settles windows", async () => {
+		writeFailures([deployRecord(30)]);
+		const harness = await sessionWith([]);
+		harness.setResponses([fauxAssistantMessage("hi")]);
+		await harness.session.prompt("hello");
+		await harness.session.waitForIdle();
+		seedWindow(getGlobalHarnessStateDir(), "global", {
+			kind: "memory",
+			fingerprint: DEPLOY_FINGERPRINT,
+			untilTurn: 3,
+		});
+		internalsOf(harness)._globalPendingTrustEvidence.push({
+			type: "recurrence",
+			proposalId: "refine_seed",
+			fingerprintId: DEPLOY_FINGERPRINT,
+			ordinal: 3,
+		});
+		harness.setResponses([
+			fauxAssistantMessage(
+				JSON.stringify({
+					summary: "Deploy note",
+					rationale: "evidence",
+					expectedOutcome: "fewer failures",
+					edits: [
+						{
+							action: "create",
+							kind: "memory",
+							id: "deploy_manifest",
+							title: "Deploy manifest",
+							content: "Validate the manifest before deploying.",
+						},
+					],
+				}),
+			),
+			fauxAssistantMessage(
+				JSON.stringify({
+					verdict: "pass",
+					score: 90,
+					failedCriteria: [],
+					addressedFingerprints: [],
+					rationale: "ok",
+				}),
+			),
+		]);
+
+		const result = await harness.session.refine({ global: true, instructions: "capture the deploy lesson" });
+
+		expect(result.ravo).toMatchObject({ decision: "commit", measurable: false });
+		const state = stateOf(harness, "global");
+		expect(state.trustWindows?.refine_seed).toMatchObject({ outcome: "contested", settledTurn: 30 });
+		expect(state.entries.memory[MEMORY_ID].trust).toBeUndefined();
+		expect(state.entries.memory.deploy_manifest).toBeDefined();
+		expect(named("refine.apply")[0]?.attrs).toMatchObject({
+			"refine.decision": "commit_unmeasured",
+			"refine.scope": "global",
+			"trust.contested": 1,
+			"trust.clean": 0,
+			"trust.faulted": 0,
+		});
+		expect(trustLogs(HARNESS_TRUST_SETTLED_MSG)).toEqual([
+			expect.objectContaining({ proposalId: "refine_seed", scope: "global", outcome: "contested" }),
 		]);
 	});
 

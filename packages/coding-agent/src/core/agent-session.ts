@@ -141,6 +141,13 @@ import {
 import type { AgentCronJob, AgentRlmHeartbeatController, AgentRlmHeartbeatStatusUpdate } from "./cron-jobs.js";
 import { normalizeHeartbeatDeliveryMode } from "./cron-jobs.js";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
+import {
+	formatTrajectoryLines,
+	isTrajectoryIndexEnabled,
+	readTrajectoryIndex,
+	trajectoryClassForEntries,
+	trajectoryInternalizedFingerprints,
+} from "./distill/trajectory-index.js";
 import { type DreamRunRequest, DreamRunService, type DreamRunStatus } from "./dream/run-service.js";
 import { getDreamDir } from "./dream/store.js";
 import { isDreamTaskId } from "./dream/tasks/index.js";
@@ -1382,7 +1389,10 @@ function autoRefineInstructions(reason: AutoRefineReason, review: AutoRefineRevi
 		? `
 Reviewer instructions: ${review.instructions}`
 		: "";
-	return `Automatic refine review triggered by ${reason}. Only create/update/delete local harness entries if there is clear evidence that should help this session continue. Prefer an empty edits array over speculative or one-off memories. Do not promote anything global unless explicitly requested. Reviewer rationale: ${review.rationale}${detail}`;
+	if (review.scope === "local") {
+		return `Automatic refine review triggered by ${reason}. Keep this session-scoped: only create/update/delete local harness entries if there is clear evidence that should help this session continue. Prefer an empty edits array over speculative or one-off memories. Do not promote anything global. Reviewer rationale: ${review.rationale}${detail}`;
+	}
+	return `Automatic refine review triggered by ${reason}. Create, update, or delete global harness entries when there is clear evidence they will help future Prime Agent sessions; a durable preference, correction, or reusable fact belongs here. Prefer an empty edits array over speculative or one-off memories, and do not record transient session progress or task state globally. Reviewer rationale: ${review.rationale}${detail}`;
 }
 
 /**
@@ -3686,7 +3696,14 @@ export class AgentSession {
 				this._assistantTurnsSinceAutoRefine = 0;
 				return;
 			}
-			await this._runSerializedRefine({ instructions: autoRefineInstructions(reason, review), reason }, "auto");
+			await this._runSerializedRefine(
+				{
+					instructions: autoRefineInstructions(reason, review),
+					reason,
+					...(review.scope !== "local" ? { global: true } : {}),
+				},
+				"auto",
+			);
 			if (this._disposed || this._disposing || branchVersion !== this._autoRefineBranchVersion) {
 				return;
 			}
@@ -3870,6 +3887,7 @@ export class AgentSession {
 				planOptions = {
 					instructions: autoRefineInstructions("turn_interval", review),
 					reason: "turn_interval",
+					...(review.scope !== "local" ? { global: true } : {}),
 				};
 			}
 			// For explicit refine.run (skipReview=true), plan directly with
@@ -9915,8 +9933,18 @@ export class AgentSession {
 				}
 				return;
 			}
+			// Lever 2: mute the auto-refine recurrence reminder for a fingerprint the
+			// engineer has demonstrably internalized (DROPPED in the sealed
+			// trajectory), unless it is recurring live in this session's own ledger
+			// (the override) or is a security/credential class (never in the set).
+			const liveRecurring = recurringFailures(this._failureLedger ?? emptyFailureLedger()).map(
+				(record) => record.fingerprint.id,
+			);
+			const internalizedReminders = this._trajectoryInternalizedReminders(liveRecurring);
 			const recurring = newlyRecurring.filter(
-				(record) => !this._failureRefineTriggered.has(`recurrence:${record.fingerprint.id}`),
+				(record) =>
+					!this._failureRefineTriggered.has(`recurrence:${record.fingerprint.id}`) &&
+					!internalizedReminders.has(record.fingerprint.id),
 			);
 			if (recurring.length === 0) return;
 			for (const record of recurring) this._failureRefineTriggered.add(`recurrence:${record.fingerprint.id}`);
@@ -11062,7 +11090,10 @@ export class AgentSession {
 		this._autoRefineInProgress = true;
 		try {
 			const result = await this.refine(
-				{ instructions: autoRefineInstructions(reason, review) },
+				{
+					instructions: autoRefineInstructions(reason, review),
+					...(review.scope !== "local" ? { global: true } : {}),
+				},
 				{ trigger: "auto", reason },
 			);
 			this._pendingAutoRefineReview = undefined;
@@ -11160,12 +11191,54 @@ export class AgentSession {
 		const hasIpython = tools.includes("ipython");
 		const visibleSkills = this._modelVisibleSkills().filter((skill) => !skill.disableModelInvocation);
 		const hasRefineSkill = visibleSkills.some((skill) => skill.name === REFINE_SKILL_NAME);
-		return formatHarnessStateForPrompt(this._loadMergedHarnessState(), {
+		const merged = this._loadMergedHarnessState();
+		return formatHarnessStateForPrompt(merged, {
 			includeIpythonExamples: hasIpython,
 			includeShellExamples: tools.includes("bash"),
 			includeRefineExamples: hasIpython && hasRefineSkill,
 			queryTerms: this._buildHarnessDigestQueryTerms(),
+			trajectory: this._harnessTrajectoryBias(merged),
 		});
+	}
+
+	/**
+	 * Off-turn-path engineer-trajectory bias for the digest, read only from the
+	 * sealed `trajectory.json` through its stat cache (no span, no day scan). The
+	 * class map biases entry ordering (stable-gap surfaces, internalized sinks)
+	 * and the lines are the raw, confound-tagged stable-gap residue that
+	 * `formatHarnessStateForPrompt` sanitizes before it enters the prompt. Absent
+	 * when the kill switch is off or nothing has been sealed, so the digest is
+	 * byte-identical to today.
+	 */
+	private _harnessTrajectoryBias(
+		merged: HarnessState,
+	): { classOf: Map<string, "stable-gap" | "new" | "internalized">; lines: string[] } | undefined {
+		if (!isTrajectoryIndexEnabled()) return undefined;
+		const index = readTrajectoryIndex();
+		if (!index) return undefined;
+		return {
+			classOf: trajectoryClassForEntries(index, merged),
+			lines: formatTrajectoryLines(index, 3),
+		};
+	}
+
+	/**
+	 * Fingerprints the sealed trajectory index marks internalized (DROPPED),
+	 * whose auto-refine recurrence reminder Lever 2 mutes because the engineer has
+	 * demonstrably stopped hitting them. Two guardrails are enforced here and in
+	 * the index: security/credential-class fingerprints are never in the returned
+	 * set (`trajectoryInternalizedFingerprints` excludes them), so their reminder
+	 * always fires; and the LIVE-RECURRENCE OVERRIDE drops any fingerprint that is
+	 * recurring in this session's own ledger scan, so a fresh recurrence always
+	 * outranks a stale DROP. Empty when the kill switch is off or nothing has been
+	 * sealed, so every reminder fires exactly as today.
+	 */
+	private _trajectoryInternalizedReminders(liveRecurringIds: Iterable<string>): Set<string> {
+		if (!isTrajectoryIndexEnabled()) return new Set<string>();
+		const internalized = trajectoryInternalizedFingerprints(readTrajectoryIndex());
+		if (internalized.size === 0) return internalized;
+		for (const id of liveRecurringIds) internalized.delete(id);
+		return internalized;
 	}
 
 	/**

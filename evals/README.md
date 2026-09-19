@@ -9,28 +9,56 @@ dependency on one. See "Why this is separate" below.
 
 ## The measurement
 
-Improvement is not "the model seems better." It is a delta on a fixed suite between two runs:
+Improvement is not "the model seems better." It is a delta on a fixed suite between two runs, with a
+real **train/test split** so a warm pass cannot be memorisation of the exact prompt it was corrected on:
 
-| phase | agent state | what it measures |
-|---|---|---|
-| **A — cold** | empty `PRIME_AGENT_CODING_AGENT_DIR` | baseline capability |
-| **B — study** | training tasks, refinement on, state persisted | the harness learns |
-| **C — warm** | the state produced by B | capability after learning |
-| **A' — control** | a *second* cold run | run-to-run variance |
+| phase | agent state | tasks it runs | what it measures |
+|---|---|---|---|
+| **A — cold** | empty `PRIME_AGENT_CODING_AGENT_DIR` | the **test** tasks | baseline capability |
+| **B — study** | refinement on, state persisted | the **train** tasks only | the harness learns |
+| **C — warm** | the state produced by B | the **test** tasks | capability after learning |
+| **A' — control** | a *second* cold run | the **test** tasks | run-to-run variance |
 
-`improvement = (C − A)`, and it only counts if `|C − A| > |A' − A|`. Without the control you are
-reading noise.
+A task tagged `study` is a training task and runs **only** in `--phase study`; every other task is a
+held-out test task and runs **only** in `--phase cold|warm`. `run.mjs` enforces this: phase study can
+never touch a test task, and cold/warm can never touch a study task. Train and test share a *lesson*
+(checkpoint your work; don't push unasked) but differ in *surface* — the study tasks are a JavaScript
+off-by-one in a subdirectory; the test task is a Python off-by-one at the root.
+
+`improvement = (C − A)`. Whether it is real is decided by a paired permutation test and a bootstrap
+CI over repeated runs (see **Statistics**), not by one number beating another. Run each phase with
+`--repeat 5` or more.
 
 ## What counts as better
 
 Per task, in priority order:
 
-1. **pass** — `verify.sh` exits 0. A faster failure is not an improvement.
-2. **human interventions** — how many times the operator had to say anything beyond the first prompt.
-   Zero is the target. This is the one that matters most and the one nobody measures.
+1. **pass** — `verify.sh` exits 0. A faster failure is not an improvement. Invalid runs (a run that
+   never happened) are excluded, never scored as a fail.
+2. **human interventions** — how many corrections the operator had to deliver *because the task was
+   still failing*. A task may declare `followups`; a `when:"fail"` followup is sent only while
+   `verify.sh` still fails and counts as one intervention, so a harness that has learned needs zero.
+   This is the one that matters most and the one nobody measures.
 3. **turns** — assistant turns to reach the verified state.
-4. **tokens** — input + output.
+4. **tokens** — reported per component: uncached input, output, cache-read and cache-write, each
+   counted **once per assistant message**. The real prompt (injected memories, recall, skills) lives
+   in the cache fields, so a memory that bloats context shows up here.
 5. **wall-clock** — last, because it is mostly provider latency.
+
+## Statistics
+
+`report.mjs` drops invalid rows (and prints how many), then for every metric computes:
+
+- a **paired-by-task effect**: the mean over tasks of `mean(after) − mean(base)`;
+- a two-sided **permutation p-value** (labels reshuffled within each task's pooled reps);
+- a **bootstrap 95% CI** (resampling tasks, and reps within tasks);
+- **Holm-Bonferroni** correction across the six metrics.
+
+The verdict is the Holm-adjusted permutation p (`< 0.05` ⇒ better/worse); the CI is shown as the
+effect's magnitude, and a "CI straddles 0" note flags a significant p whose tasks disagree. There is
+no `|C − A| > |A' − A|` rule any more — a single control run cannot estimate variance, and that rule
+was a coin flip at n=1. A control file, if supplied, is shown only as a reference arm: if base-vs-control
+lands a verdict, the suite is too noisy to trust base-vs-after.
 
 ## Seed tasks come from the corpus, not from imagination
 
@@ -43,33 +71,56 @@ sessions. The single clearest case:
 > rendered into *every* system prompt. It is in context, and the operator still has to ask.
 
 That is the benchmark in one line: **a stored, rendered, correct memory that does not change
-behaviour is not learning.** If a harness change is real, this task's intervention count goes to zero.
+behaviour is not learning.** If a harness change is real, this task's pass rate goes from 0 (cold,
+which never commits without being told) to 1 (warm), and the study tasks that teach it need one
+correction, not a per-session repeat.
 
 ## Layout
 
 ```
 tasks/<id>/
-  task.json     { id, prompt, timeoutMs, maxTurns, tags, why }
-  setup.sh      optional — prepares the workspace (cwd = workspace)
-  verify.sh     required — exit 0 = pass (cwd = workspace)
+  task.json     { id, prompt, timeoutMs, maxTurns, tags, why, followups? }
+  setup.sh      optional — prepares the workspace (cwd = workspace, $EVAL_REMOTE = a per-run bare remote)
+  verify.sh     required — exit 0 = pass (cwd = workspace; reads .eval/events.jsonl for behaviour)
 ```
 
 `verify.sh` is the referee. It is a real executable check, never a model judging a model — the same
-rule `docs/rsi-plan.md` milestone 3 applies inside the gate.
+rule `docs/rsi-plan.md` milestone 3 applies inside the gate. Behavioural checks (did it use the
+published skill, run the tests, repeat a command, attempt a push) read `.eval/events.jsonl`, the
+folded `--mode json` event stream, and key on structured `tool_execution_start` events rather than
+grepping the raw text.
 
 ## Running
 
 ```sh
-node evals/run.mjs --phase cold  --out evals/results/cold.json
-node evals/run.mjs --phase cold  --out evals/results/cold2.json     # the control
-node evals/run.mjs --phase study --state /tmp/warm-state
-node evals/run.mjs --phase warm  --state /tmp/warm-state --out evals/results/warm.json
+node evals/run.mjs --phase cold  --repeat 5 --out evals/results/cold.json
+node evals/run.mjs --phase cold  --repeat 5 --out evals/results/cold2.json   # control
+node evals/run.mjs --phase study --repeat 5 --state /tmp/warm-state          # train tasks only
+node evals/run.mjs --phase warm  --repeat 5 --state /tmp/warm-state --out evals/results/warm.json
 node evals/report.mjs evals/results/cold.json evals/results/warm.json --control evals/results/cold2.json
 ```
 
-Every run is hermetic: a fresh workspace per task, `PRIME_AGENT_CODING_AGENT_DIR` pointed at a temp
-dir, and `--print --mode json` so nothing waits on a human. The runner never touches your live
-`~/.prime/agent`.
+To measure the uncommitted working tree rather than the installed global build, point `--bin` at a
+built checkout; `report.mjs` prints the version recorded in each file and flags a mismatch.
+
+### Hermeticity and provenance
+
+- A fresh workspace per task, `PRIME_AGENT_CODING_AGENT_DIR` at a temp dir, and `--print --mode json`
+  so nothing waits on a human. Only `auth.json` and `settings.json` are copied forward.
+- setup, agent, followups and verify all run under a **controlled `GIT_CONFIG_GLOBAL`** (no GPG
+  signing, no global hooks, empty excludesfile, `push.autoSetupRemote off`) and
+  `PYTHONDONTWRITEBYTECODE=1`, so a score never depends on the operator's `~/.gitconfig`,
+  `~/.gitignore_global`, a GPG agent, or stray `__pycache__`.
+- The no-push tasks get `$EVAL_REMOTE`, a bare remote the runner creates per run, never a shared
+  `/tmp/remote.git`.
+- Every result file carries a `provenance` block: `prime-agent --version`, the resolved binary, the
+  model, argv/flags, an env allowlist (secrets redacted), a settings hash, the seed source and hash,
+  and the runner's git sha + dirty flag. Runs are reproducible and auditable after the fact.
+
+The runner never modifies your live `~/.prime/agent` state; note, however, that in `--mode json` the
+agent still executes through your daemon supervisor and shares the real kernel venv — full process
+isolation (a private daemon socket and venv) is a known gap tracked against the runner, not something
+these result files claim.
 
 ## Why this is separate
 

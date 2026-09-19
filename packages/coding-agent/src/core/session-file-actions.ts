@@ -41,20 +41,35 @@ function sessionFileId(sessionPath: string): string | undefined {
 /**
  * Ids of the RLM child sessions, at any depth, whose transcripts live under an
  * artifact directory: each child's transcript sits directly in its `sub-*` directory.
+ *
+ * The walk is explicit rather than `readdir({ recursive: true })` because the
+ * shipped binary is Bun-compiled, and Bun's recursive `readdir` follows
+ * symlinked directories; a session whose artifact dir held a symlink could then
+ * walk out of the artifact tree entirely. Symlinks are skipped and only real
+ * directories are descended into.
  */
 async function childSessionIds(artifactDir: string): Promise<string[]> {
-	let entries: Dirent[];
-	try {
-		entries = await readdir(artifactDir, { withFileTypes: true, recursive: true });
-	} catch {
-		return [];
-	}
-	return entries.flatMap((entry) => {
-		if (!entry.isFile() || !entry.name.endsWith(".jsonl") || !basename(entry.parentPath).startsWith("sub-"))
-			return [];
-		const id = sessionFileId(join(entry.parentPath, entry.name));
-		return id === undefined ? [] : [id];
-	});
+	const ids: string[] = [];
+	const walk = async (dir: string): Promise<void> => {
+		let entries: Dirent[];
+		try {
+			entries = await readdir(dir, { withFileTypes: true });
+		} catch {
+			return;
+		}
+		for (const entry of entries) {
+			if (entry.isSymbolicLink()) continue;
+			const entryPath = join(dir, entry.name);
+			if (entry.isDirectory()) {
+				await walk(entryPath);
+			} else if (entry.isFile() && entry.name.endsWith(".jsonl") && basename(dir).startsWith("sub-")) {
+				const id = sessionFileId(entryPath);
+				if (id !== undefined) ids.push(id);
+			}
+		}
+	};
+	await walk(artifactDir);
+	return ids;
 }
 
 /**
