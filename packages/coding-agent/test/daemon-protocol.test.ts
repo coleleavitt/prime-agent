@@ -255,6 +255,18 @@ describe("daemon protocol helpers", () => {
 		expect(DAEMON_DEFAULT_SERVER_CAPABILITIES).toContain("ravo_run_updates");
 	});
 
+	it("capability- and schema-gates the dream run update push", () => {
+		expect(DAEMON_OUTBOUND_COMPATIBILITY.dream_run_update).toEqual({
+			minProtocol: 7,
+			minSchemaRevision: 32,
+			capability: "dream_run_updates",
+		});
+		expect(DAEMON_DEFAULT_SERVER_CAPABILITIES).toContain("dream_run_updates");
+		// A compatible, capability-gated addition never bumps the protocol version.
+		expect(DAEMON_PROTOCOL_VERSION).toBe(7);
+		expect(DAEMON_SCHEMA_REVISION).toBe(32);
+	});
+
 	it("version- and capability-gates prompt admission cancellation", () => {
 		expect(DAEMON_COMMAND_COMPATIBILITY.cancel_prompt_admission).toEqual({
 			minProtocol: 7,

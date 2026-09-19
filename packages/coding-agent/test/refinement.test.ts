@@ -4,9 +4,12 @@ import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type * as PiAi from "@earendil-works/pi-ai";
 import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
+import { type LogEntry, setLogSink } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { REFINEMENT_LOG_COMPONENT } from "../src/core/learning-index.js";
+import { type FailureLedger, fingerprintFailure } from "../src/core/ravo/failure-ledger.js";
 import {
-	appendGlobalRefinement,
+	appendRefinementHistory,
 	applyRefinementProposal,
 	formatHarnessStateForPrompt,
 	getGlobalHarnessStateDir,
@@ -18,8 +21,8 @@ import {
 	type HarnessState,
 	harnessQueryTerms,
 	inferRefinementResultScope,
-	loadGlobalRefinementHistory,
 	loadHarnessState,
+	loadRefinementHistory,
 	mergeHarnessStates,
 	mergeRefinementHistory,
 	planRefinement,
@@ -1134,13 +1137,13 @@ describe("harness refinement", () => {
 		expect(state.entries.memory.native_validation.content).toBe(
 			"Run validation through the target project environment.",
 		);
-		expect(state.ravo?.championId).toBe(result.id);
-		expect(state.ravo?.evaluatedProposalIds).toEqual([result.id]);
-		expect(state.ravo?.lineage[0]).toMatchObject({
-			proposalId: result.id,
-			parentId: null,
-			score: 80,
-		});
+		// The judge claimed no fingerprint, so the commit applies but is unmeasured:
+		// nothing later can confirm or refute it, and the RAVO state does not learn from it.
+		expect(result.ravo?.measurable).toBe(false);
+		expect(state.ravo?.championId).toBeNull();
+		expect(state.ravo?.evaluatedProposalIds).toEqual([]);
+		expect(state.ravo?.lineage).toEqual([]);
+		expect(state.refinements.at(-1)).toMatchObject({ id: result.id, reason: "manual" });
 	});
 
 	it("caps the refinement output budget by the model's own maxTokens", async () => {
@@ -1322,15 +1325,15 @@ describe("global refinement history", () => {
 
 	it("appends and reloads refinement results across calls", () => {
 		const dir = makeTempDir();
-		expect(loadGlobalRefinementHistory(dir)).toEqual([]);
+		expect(loadRefinementHistory(getRefinementHistoryPath(dir), "global")).toEqual([]);
 
 		const first = sampleResult("refine_1");
 		const second = sampleResult("refine_2");
-		const historyPath = appendGlobalRefinement(dir, first);
-		appendGlobalRefinement(dir, second);
+		const historyPath = appendRefinementHistory(getRefinementHistoryPath(dir), first);
+		appendRefinementHistory(getRefinementHistoryPath(dir), second);
 
 		expect(historyPath).toBe(getRefinementHistoryPath(dir));
-		expect(loadGlobalRefinementHistory(dir)).toEqual([
+		expect(loadRefinementHistory(getRefinementHistoryPath(dir), "global")).toEqual([
 			{ ...first, scope: "global" },
 			{ ...second, scope: "global" },
 		]);
@@ -1346,7 +1349,7 @@ describe("global refinement history", () => {
 			"utf8",
 		);
 
-		expect(loadGlobalRefinementHistory(dir)[0]).toMatchObject({
+		expect(loadRefinementHistory(getRefinementHistoryPath(dir), "global")[0]).toMatchObject({
 			id: "refine_legacy_global",
 			scope: "global",
 		});
@@ -1384,7 +1387,7 @@ describe("global refinement history", () => {
 		});
 		appendFileSync(getRefinementHistoryPath(dir), `${JSON.stringify(legacy)}\n`, "utf8");
 
-		expect(loadGlobalRefinementHistory(dir)[0]).toMatchObject({
+		expect(loadRefinementHistory(getRefinementHistoryPath(dir), "global")[0]).toMatchObject({
 			id: "refine_legacy_inferred",
 			scope: "global",
 		});
@@ -1413,11 +1416,11 @@ describe("global refinement history", () => {
 	it("skips malformed history lines without throwing", () => {
 		const dir = makeTempDir();
 		const valid = sampleResult("refine_valid");
-		appendGlobalRefinement(dir, valid);
+		appendRefinementHistory(getRefinementHistoryPath(dir), valid);
 		appendFileSync(getRefinementHistoryPath(dir), "not json\n", "utf8");
 		appendFileSync(getRefinementHistoryPath(dir), `${JSON.stringify({ id: "x" })}\n`, "utf8");
 
-		expect(loadGlobalRefinementHistory(dir)).toEqual([{ ...valid, scope: "global" }]);
+		expect(loadRefinementHistory(getRefinementHistoryPath(dir), "global")).toEqual([{ ...valid, scope: "global" }]);
 	});
 
 	it("merges global and session history, preferring session entries by id", () => {
@@ -1585,14 +1588,17 @@ describe("global refinement history", () => {
 			{ id: "refine_session_a" },
 		);
 		applied.harnessStatePath = saveHarnessState(dir, sessionAState);
-		appendGlobalRefinement(dir, applied);
+		appendRefinementHistory(getRefinementHistoryPath(dir), applied);
 
 		// A fresh session loads the global state and the global history (its own session
 		// has no record of refine_session_a) and can still roll it back.
 		const sessionBState = loadHarnessState(dir);
 		expect(sessionBState.entries.memory.session_a_memory).toBeDefined();
 
-		const globalHistory = mergeRefinementHistory(loadGlobalRefinementHistory(dir), getRefinementHistory([]));
+		const globalHistory = mergeRefinementHistory(
+			loadRefinementHistory(getRefinementHistoryPath(dir), "global"),
+			getRefinementHistory([]),
+		);
 		const rollback = await refineHarness([], sessionBState, globalHistory, {} as never, "api-key", {
 			rollbackId: "refine_session_a",
 		});
@@ -1828,5 +1834,186 @@ describe("harness digest relevance ranking", () => {
 		});
 		expect(ranked).toContain("[global:worktree]");
 		expect(ranked).not.toContain("[global:question]");
+	});
+});
+
+describe("refinement reasons and final outcomes", () => {
+	let entries: LogEntry[];
+
+	beforeEach(() => {
+		entries = [];
+		setLogSink((entry) => entries.push(entry));
+	});
+
+	afterEach(() => {
+		setLogSink(undefined);
+	});
+
+	const outcomeLines = () => entries.filter((entry) => entry.component === REFINEMENT_LOG_COMPONENT);
+	const memoryEdit = (id: string): RefinementProposal["edits"] => [
+		{ action: "create", kind: "memory", id, title: id, content: `${id} content` },
+	];
+	const deployFailure = fingerprintFailure("tool_error", "deploy", undefined, "deploy script exited with code 2");
+
+	function recurringLedger(): FailureLedger {
+		return {
+			schema: 1,
+			lastScannedEntryIndex: 0,
+			failures: {
+				[deployFailure.id]: {
+					fingerprint: deployFailure,
+					count: 3,
+					firstSeenTurn: 1,
+					lastSeenTurn: 3,
+					firstSeenAt: "2026-09-16T00:00:00.000Z",
+					lastSeenAt: "2026-09-16T00:03:00.000Z",
+					excerpt: "deploy script exited with code 2",
+					addressedByProposalIds: [],
+				},
+			},
+		};
+	}
+
+	function queuePlanAndJudge(edits: RefinementProposal["edits"], addressedFingerprints: string[]): void {
+		completeSimpleMock.mockResolvedValueOnce(
+			assistantText(JSON.stringify({ summary: "Fix deploy", rationale: "r", expectedOutcome: "o", edits })),
+		);
+		completeSimpleMock.mockResolvedValueOnce(
+			assistantText(
+				JSON.stringify({
+					verdict: "pass",
+					score: 90,
+					failedCriteria: [],
+					addressedFingerprints,
+					rationale: "judged",
+				}),
+			),
+		);
+	}
+
+	it("lists only refinements that changed something and were not periodic checkpoints", () => {
+		const dir = makeTempDir();
+		const state = loadHarnessState(dir);
+		applyRefinementProposal(state, proposal("Directed lesson", memoryEdit("directed")), {
+			id: "refine_directed",
+			reason: "manual",
+		});
+		applyRefinementProposal(state, proposal("Checkpoint note", memoryEdit("checkpoint")), {
+			id: "refine_checkpoint",
+			reason: "turn_interval",
+		});
+		applyRefinementProposal(state, proposal("Compaction note", memoryEdit("compacted")), {
+			id: "refine_compact",
+			reason: "compact",
+		});
+		applyRefinementProposal(state, proposal("Nothing to do", []), { id: "refine_empty", reason: "recurrence" });
+		applyRefinementProposal(state, proposal("Kernel note", memoryEdit("kernel")), { id: "refine_kernel" });
+		saveHarnessState(dir, state);
+
+		const reloaded = loadHarnessState(dir);
+		expect(reloaded.refinements.map((event) => event.reason)).toEqual([
+			"manual",
+			"turn_interval",
+			"compact",
+			"recurrence",
+			undefined,
+		]);
+		expect("reason" in reloaded.refinements[4]).toBe(false);
+		const prompt = formatHarnessStateForPrompt(reloaded);
+		expect(prompt).toContain("recent refinements: 2");
+		expect(prompt).toContain("- [refine_directed] Directed lesson: create memory:directed");
+		expect(prompt).toContain("- [refine_kernel] Kernel note: create memory:kernel");
+		for (const hidden of ["refine_checkpoint", "refine_compact", "refine_empty", "no applied edits"]) {
+			expect(prompt).not.toContain(hidden);
+		}
+	});
+
+	it("tells the planner to fix causes and not to write edits for the evaluator", async () => {
+		completeSimpleMock.mockResolvedValueOnce(
+			assistantText(JSON.stringify({ summary: "noop", rationale: "none", expectedOutcome: "none", edits: [] })),
+		);
+		await planRefinement([], loadHarnessState(makeTempDir()), [], createRefineModel(false), "api-key", {});
+
+		const systemPrompt: string = completeSimpleMock.mock.calls[0][1].systemPrompt;
+		expect(systemPrompt).toContain("Propose a general fix for the underlying cause of a failure");
+		expect(systemPrompt).toContain("a flaky network, or any other failure outside the harness");
+		expect(systemPrompt).toContain("say so in the rationale and do not target it");
+		expect(systemPrompt).toContain("Never write an edit whose purpose is to satisfy the evaluator");
+		expect(systemPrompt.indexOf("Never write an edit")).toBeLessThan(
+			systemPrompt.indexOf('"summary": "one sentence"'),
+		);
+	});
+
+	it("rejects a failure refine that claims nothing and reports that decision once", async () => {
+		const state = loadHarnessState(makeTempDir());
+		state.failures = recurringLedger();
+		queuePlanAndJudge(memoryEdit("deploy_note"), []);
+
+		const result = await refineHarness([], state, [], createRefineModel(false), "api-key", { reason: "recurrence" });
+
+		expect(result.ravo?.decision).toBe("reject_unclaimed");
+		expect(result.appliedEdits.some((edit) => edit.applied)).toBe(false);
+		expect(state.entries.memory.deploy_note).toBeUndefined();
+		expect(outcomeLines()).toEqual([
+			expect.objectContaining({
+				msg: "refinement.rejected",
+				proposalId: result.id,
+				decision: "reject_unclaimed",
+				claimed: 0,
+				reason: "recurrence",
+				scope: "local",
+			}),
+		]);
+	});
+
+	it.each([
+		{ global: false, clock: "local-ordinal" },
+		{ global: true, clock: "ordinal" },
+	])(
+		"measures a claimed failure fix on the clock of the ledger its state carries (global: $global) and reports it as committed",
+		async ({ global, clock }) => {
+			const state = loadHarnessState(makeTempDir());
+			state.failures = recurringLedger();
+			queuePlanAndJudge(memoryEdit("deploy_note"), [deployFailure.id]);
+
+			const result = await refineHarness([], state, [], createRefineModel(false), "api-key", {
+				reason: "recurrence",
+				global,
+			});
+
+			expect(result.ravo).toMatchObject({ decision: "commit", measurable: true });
+			expect(state.ravo?.lineage[0]).toMatchObject({
+				proposalId: result.id,
+				claimedFingerprints: [deployFailure.id],
+				provisional: { committedTurn: 3, untilTurn: 23, clock },
+			});
+			expect(state.trustWindows?.[result.id]).toMatchObject({ committedTurn: 3, outcome: "open" });
+			expect(state.refinements.at(-1)).toMatchObject({ id: result.id, reason: "recurrence" });
+			expect(outcomeLines()).toEqual([
+				expect.objectContaining({
+					msg: "refinement.committed",
+					proposalId: result.id,
+					addressed: [deployFailure.id],
+					reason: "recurrence",
+				}),
+			]);
+		},
+	);
+
+	it("reports an empty proposal as no_edits and a directed claimless commit as applied unmeasured", async () => {
+		const state = loadHarnessState(makeTempDir());
+		completeSimpleMock.mockResolvedValueOnce(
+			assistantText(JSON.stringify({ summary: "noop", rationale: "none", expectedOutcome: "none", edits: [] })),
+		);
+		const empty = await refineHarness([], state, [], createRefineModel(false), "api-key", {});
+		queuePlanAndJudge(memoryEdit("directed_note"), []);
+		const directed = await refineHarness([], state, [], createRefineModel(false), "api-key", {});
+
+		expect(directed.ravo).toMatchObject({ decision: "commit", measurable: false });
+		expect(state.entries.memory.directed_note).toBeDefined();
+		expect(outcomeLines()).toEqual([
+			expect.objectContaining({ msg: "refinement.rejected", proposalId: empty.id, decision: "no_edits" }),
+			expect.objectContaining({ msg: "refinement.applied_unmeasured", proposalId: directed.id, reason: "manual" }),
+		]);
 	});
 });

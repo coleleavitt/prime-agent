@@ -23,9 +23,10 @@ import {
 	getGlobalHarnessStateDir,
 	getHarnessStatePath,
 	getLocalHarnessStateDir,
+	getRefinementHistoryPath,
 	type HarnessEntry,
-	loadGlobalRefinementHistory,
 	loadHarnessState,
+	loadRefinementHistory,
 	type RefinementResult,
 	saveHarnessState,
 } from "../../src/core/refinement/index.js";
@@ -259,7 +260,7 @@ describe("AgentSession queue characterization", () => {
 				for (const fragment of refineFragments) {
 					expect(refine).toHaveBeenCalledWith(
 						expect.objectContaining({ instructions: expect.stringContaining(fragment) }),
-						{ trigger: "auto" },
+						{ trigger: "auto", reason: "turn_interval" },
 					);
 				}
 			}
@@ -505,7 +506,7 @@ describe("AgentSession queue characterization", () => {
 
 		expect(refine).toHaveBeenCalledWith(
 			expect.objectContaining({ instructions: expect.stringContaining("durable lesson") }),
-			{ trigger: "auto" },
+			{ trigger: "auto", reason: "turn_interval" },
 		);
 		expect(guardWasSetDuringRefine).toBe(true);
 		expect(internals._autoRefineInProgress).toBe(false);
@@ -1401,7 +1402,7 @@ describe("AgentSession queue characterization", () => {
 			const stored = JSON.parse(readFileSync(getHarnessStatePath(globalDir), "utf8"));
 			expect(stored.entries.memory.legacy_target).toBeUndefined();
 			expect(stored.entries.memory.keep_me.scope).toBe("global");
-			const rollbackRecord = loadGlobalRefinementHistory(globalDir).find(
+			const rollbackRecord = loadRefinementHistory(getRefinementHistoryPath(globalDir), "global").find(
 				(item) => item.rollbackOf === "refine_legacy",
 			);
 			expect(rollbackRecord).toBeDefined();

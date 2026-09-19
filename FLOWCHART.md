@@ -2,7 +2,7 @@
 
 A living map of the architecture. Keep it current as the code changes; see [Keeping this current](#keeping-this-current).
 
-Last verified against: `perf/session-catalog-resume` @ `ce2abeec3`, plus the working tree · 2026-09-16
+Last verified against: `perf/session-catalog-resume` @ `f4afe5b5d`, plus the working tree · 2026-09-18
 
 ---
 
@@ -174,16 +174,20 @@ Sketch only — the detail lives in `packages/coding-agent/docs/ravo-architectur
 
 ```mermaid
 flowchart LR
-    RUN["agent runs"] -->|"tool errors, tracebacks"| LED["failure ledger"]
+    RUN["agent runs"] -->|"tool errors, tracebacks"| LED["failure ledger<br/>global by default"]
     RUN -->|"the cell that fixed it"| RIX["resolution index<br/>durable, per repo"]
     RIX -->|"hint on the next recurrence"| RUN
-    LED -->|"same failure twice"| REF["refine: propose a change"]
-    LED -->|"recorded replay case"| RFE["referee<br/>re-runs it in a subprocess"]
+    RUN -->|"agent_end: digests of HEAD, index,<br/>dirty paths, build claims"| WR["workspace recall<br/>one mark per repo"]
+    WR -->|"what changed, on the first ipython result"| RUN
+    LED -->|"same actionable failure twice"| REF["refine: propose a change"]
+    LED -->|"verified replay case,<br/>skill-editing proposals only"| RFE["referee<br/>re-runs it in a subprocess"]
     REF --> GATE{"RAVO gate"}
     RFE -->|"the one signal<br/>the proposal did not write"| GATE
-    GATE -->|"rejected"| LED
+    GATE -->|"rejected: decision, judge rationale,<br/>missed criteria into the next proposal;<br/>stale evidence re-plans once"| REF
     GATE -->|"accepted"| HS["harness state<br/>memories · skills · notes"]
-    HS -->|"into the system prompt"| RUN
+    HS -->|"into context: a notice now,<br/>a digest at cold starts"| RUN
+    HS -->|"claimed failure recurs in a trust window:<br/>the skill's own import"| RFE
+    RFE -->|"upheld: -15 on that skill,<br/>dormant below 30"| HS
     RUN -->|"span log, sealed by day"| LIX["learning index<br/>did it actually get rarer?"]
 
     style RUN fill:#e6f4ea,stroke:#3a8f5a,color:#173a24
@@ -191,6 +195,7 @@ flowchart LR
     style RFE fill:#fff4e0,stroke:#b8860b,color:#3a2e00
     style HS fill:#f3e8fd,stroke:#7a4fa5,color:#2b1240
     style RIX fill:#f3e8fd,stroke:#7a4fa5,color:#2b1240
+    style WR fill:#f3e8fd,stroke:#7a4fa5,color:#2b1240
     style LIX fill:#e8f0fe,stroke:#4a6fa5,color:#11243d
 ```
 
@@ -200,23 +205,33 @@ Three planes, one sentence each:
 - **Continual Harness** remembers — memories, skills, prompt notes, and a ledger of what keeps failing.
 - **RAVO** governs — a weighted gate that decides which proposed self-change is allowed to stick.
 
-Four loops run at different speeds, and they are not equally trustworthy:
+Five loops run at different speeds, and they are not equally trustworthy:
 
 | loop | horizon | what it changes | what checks it |
 |---|---|---|---|
 | resolution index | the same repo, later | nothing — it annotates the next failing `ipython` result with the cell that fixed it before | nothing re-runs it; the join from failure to fix is a heuristic |
+| workspace recall | the same repo, next session | nothing — it appends a bounded `<workspace_recall>` block (at most 2 KB) to a top-level session's first `ipython` result: what changed since the last session's mark, how many paths provably did not, and which build claims still hold | every digest is recomputed from the live workspace; a build claim is CURRENT only when the whole workspace digest matches it exactly and nothing is unverifiable; no file content or command output is stored |
 | refinement + RAVO | across sessions | harness state: memories, skills, prompt notes | a weighted gate, plus the referee below |
 | toolforge (§4) | permanent | the tool surface itself | a double run: must fail on a stub, pass on the real code |
 | learning index | weeks | nothing — it *is* the measurement | a one-sided Mann-Whitney U, treated fingerprints against the rest |
 
 > **Reading zero.** The learning index is real code with real tests, and it has never produced a number. It needs
-> `refinement.committed` records to form a treated cohort, and there are **0 of them in all 193,538 retained log
-> lines** — the RAVO gate has never once reached a commit on this machine. `prime-agent learning` therefore reports
-> `insufficient evidence` and will keep doing so until that changes. Two further caveats on the day it does: the
-> comparison is treated-versus-everything-else, and fingerprints are selected for refinement *because* they recur
-> often, so regression to the mean will flatter any intervention until the control cohort is matched on
-> pre-treatment rate; and an in-cell traceback is counted twice, once on `kernel.cell` and once on the
-> `tool.execute` that carries its fingerprint. Both are known, neither is fixed.
+> `refinement.committed` records to form a treated cohort, and a first measurement found **0 of them in 193,538
+> retained log lines**. Two causes were measured on 2026-09-16: none of the ~3,100 retained `kernel.host_request`
+> spans is a `refine.*` request, so the agent itself never asked for a refine; and the global failure ledger was
+> opt-in and unset (no `harness.ledger.flush` span is retained), so recurrence was counted within one session only.
+> The ledger is now global by default. A `refinement.committed` line is now written only at apply time, and only for a
+> commit that claimed at least one fingerprint; a claimless commit logs `refinement.applied_unmeasured`, and the index
+> skips the claimless commit lines older builds wrote. The few `refinement.committed` lines the retained log holds
+> today all come from the gate-time logger this replaced (none carries `reason`) and name a single fingerprint between
+> them, far below the five-per-cohort minimum, so `prime-agent learning` still reports insufficient evidence.
+> `ravo.run` proposals now log their outcome too (reason `ravo_run`), with the claim held to what the judge named and
+> the certificate credited, so a RAVO run's commits reach the index as well; none has run on this machine (no RAVO-run
+> checkpoint or archive on disk, no `ravo.run` span in the retained log). Two
+> further caveats on the day it does: the comparison is treated-versus-everything-else, and fingerprints are selected
+> for refinement *because* they recur often, so regression to the mean will flatter any intervention until the control
+> cohort is matched on pre-treatment rate; and an in-cell traceback is counted twice, once on `kernel.cell` and once on
+> the `tool.execute` that carries its fingerprint. Both are known, neither is fixed.
 
 The **referee** is the interesting one. Every other opponent in the gate reduces to the proposal grading itself: the
 proposal says it addressed a failure, and absent evidence it is believed. The referee is the only input the proposal
@@ -224,6 +239,32 @@ did not write — a recorded failure carries an executable replay case, and the 
 subprocess. Still raises, or could not be run at all, and the claim is refused. It fails closed, deliberately unlike
 the fast pre-screens, because here a verification that did not happen is the only thing standing between an unchecked
 claim and a commit.
+
+It only speaks where a replay can. A case is derived from the kernel's own traceback for a missing module or
+distribution, and counts only once a self-check (`ravo.replay_verify`) has seen it reproduce. At the gate, the referee
+runs a claimed fingerprint's verified cases only when a skill the proposal creates or updates imports what they probe.
+Any other claim (a memory or prompt fix, a failure no probe describes) is `not_applicable`: nothing runs, the claim
+stands, and the provisional window is its referee. A claim a replay should speak to but whose cases never reproduced
+is `no_evidence`, and fails closed. In `/refine` the claim itself is the judge's; the proposal carries none.
+
+It also speaks after the fact, and that is the only path by which a harness entry loses trust. When a failure a
+committed refinement claimed recurs inside that commit's trust window, and the recurrence's own probe names an import
+the skill it wrote still has exactly as the commit recorded it, the same replay runs again off the turn path
+(`harness.trust.adjudicate`). Upheld costs that skill entry 15 trust points and faults the window; below 30 the entry
+goes dormant — dropped from the rendered prompt, still readable and editable. Anything else leaves trust alone: a window
+whose claim recurred without an upheld verdict closes contested and earns nothing, and one that closes with no
+recurrence credits every entry it touched with 5.
+
+A rejection changes nothing the working model sees. The proposal id is spent, and the rejection is recorded three ways:
+in the session JSONL; in the refinement history of the scope it targeted, where the next planner reads its gate
+decision, the judge's cleaned and quoted rationale and its missed criteria ids, never its scores; and as a
+`refinement.rejected` log line carrying the `cause` that classified it. An auto-refine round then restarts its
+20-minute cooldown, and a failure trigger does not fire again for that fingerprint in the same session. One case is
+held open: a judge rejection made on evidence that arrived while the proposal was being planned, with no referee
+verdict against the claim, is tagged stale and leaves its round open — no cooldown, no interval reset, the triggering
+failures still held — to plan once more on the current conversation as soon as the session is idle. That re-plan closes
+the round and is never re-planned itself; a user `/refine` is tagged but not re-planned. Only an applied refinement puts
+a notice in the model's context.
 
 The **learning index** is the honest end of all this: nothing feeds it back automatically. `agent.jsonl` rotates by
 size, so the evidence for a multi-week trend is deleted before the trend can form; the index seals complete days into
@@ -251,11 +292,24 @@ The self-improvement gates hang too far right to draw on that line, so they are 
 
 ```
 kernel.host_request → toolforge.publish → toolforge.gate → ravo.replay_case
-ravo.referee → ravo.replay_case
+tool.prepare → extension.hooks → recall.digest
+tool.execute → extension.hooks → recall.witness, recall.digest
+ravo.evaluation → ravo.referee → ravo.replay_case                       (inside a ravo.run)
+
+refine.plan → ravo.referee → ravo.replay_case                           (detached roots from here down)
+refine.apply
+ravo.replay_verify → ravo.replay_case
+harness.trust.adjudicate → ravo.referee → ravo.replay_case
+recall.mark
 ```
 
-`ravo.referee` is parented by whichever gate invoked it — the refinement gate or the RAVO run service — so it has no
-one fixed place in the tree. Every `ravo.replay_case` is a real subprocess.
+`ravo.referee` has three parents: `refine.plan` when `/refine` gates a proposal, `ravo.evaluation` inside a
+`ravo.run`, and `harness.trust.adjudicate` for a post-commit trust replay. The last five roots run after or beside the
+turn that started them, so each is a root of its own rather than a child that outlives its parent: `refine.plan`,
+`refine.apply`, `harness.trust.adjudicate` and `recall.mark` carry that turn's trace id as `trigger.trace_id`, and
+`refinement.id` joins a plan to its apply. A refine re-planned after a stale-evidence rejection is another
+`refine.plan`/`refine.apply` pair of roots, joined to the rejection it replaces by `refine.replan_of`. Every
+`ravo.replay_case` is a real subprocess.
 
 | want | do |
 |---|---|

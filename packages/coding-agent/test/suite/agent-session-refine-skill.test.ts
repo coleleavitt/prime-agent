@@ -4,12 +4,22 @@ import { createHarness, type Harness } from "./harness.js";
 type SessionInternals = {
 	_consumePendingRequestedRefine: () => boolean;
 	_emitRefineFailed: (error: unknown) => void;
-	_pendingRequestedRefine: { instructions?: string; global?: boolean } | undefined;
+	_pendingRequestedRefine: { instructions?: string; global?: boolean; reason?: string } | undefined;
 	_serializedPlanInFlight?: Promise<unknown>;
-	_serializedExplicitRefineOptions?: { instructions?: string; global?: boolean };
+	_serializedExplicitRefineOptions?: { instructions?: string; global?: boolean; reason?: string };
 	_refineAbortController?: AbortController;
 	_createKernelHostHandlers: () => Record<string, unknown>;
 	refine: (options: { instructions?: string; global?: boolean }) => Promise<unknown>;
+};
+
+type FailureQueueInternals = {
+	_queueFailureTriggeredRefine(
+		instructions: string,
+		reason: "recurrence" | "regression",
+		fingerprintIds: readonly string[],
+		global?: boolean,
+	): void;
+	_deferredRefineRequests: unknown[];
 };
 
 function setStreaming(harness: Harness, streaming: boolean) {
@@ -79,12 +89,231 @@ describe("AgentSession refine skill host requests", () => {
 
 		setStreaming(harness, true);
 		harness.session.handleRefineHostRequest("refine.run", { instructions: "first", global: true });
+		harness.session.handleRefineHostRequest("refine.run", { instructions: "second", global: true });
+		setStreaming(harness, false);
+
+		const internals = harness.session as unknown as SessionInternals & FailureQueueInternals;
+		expect(internals._pendingRequestedRefine?.instructions).toBe("second");
+		expect(internals._pendingRequestedRefine?.global).toBe(true);
+		expect(internals._deferredRefineRequests).toEqual([]);
+	});
+
+	it("never turns a refine.run without the global flag into a global one", async () => {
+		const harness = await createHarness({ persistSession: true });
+		harnesses.push(harness);
+		const internals = harness.session as unknown as SessionInternals & FailureQueueInternals;
+
+		setStreaming(harness, true);
+		harness.session.handleRefineHostRequest("refine.run", { instructions: "first", global: true });
 		harness.session.handleRefineHostRequest("refine.run", { instructions: "second" });
 		setStreaming(harness, false);
 
-		const internals = harness.session as unknown as SessionInternals;
-		expect(internals._pendingRequestedRefine?.instructions).toBe("second");
-		expect(internals._pendingRequestedRefine?.global).toBe(true);
+		expect(internals._pendingRequestedRefine).toEqual({ instructions: "first", global: true, reason: "refine_run" });
+		expect(internals._deferredRefineRequests).toEqual([{ instructions: "second", reason: "refine_run" }]);
+	});
+
+	it("keeps the agent's local refine.run out of a queued global failure repair", async () => {
+		const harness = await createHarness({ persistSession: true });
+		harnesses.push(harness);
+		const internals = harness.session as unknown as SessionInternals & FailureQueueInternals;
+		const globalRepair = {
+			instructions: "global regression",
+			reason: "regression",
+			kind: "failure",
+			triggerFingerprintIds: ["fp_global"],
+			global: true,
+		};
+
+		setStreaming(harness, true);
+		internals._queueFailureTriggeredRefine("global regression", "regression", ["fp_global"], true);
+		// The refine skill leaves the key out for global_=False.
+		harness.session.handleRefineHostRequest("refine.run", {
+			instructions: "remember this user prefers tabs in this repo",
+		});
+		harness.session.handleRefineHostRequest("refine.run", { instructions: "and spaces in markdown" });
+		setStreaming(harness, false);
+
+		expect(internals._pendingRequestedRefine).toEqual(globalRepair);
+		expect(internals._deferredRefineRequests).toEqual([
+			{ instructions: "and spaces in markdown", reason: "refine_run" },
+		]);
+
+		const refineSpy = vi.spyOn(internals, "refine").mockResolvedValue({});
+		expect(internals._consumePendingRequestedRefine()).toBe(true);
+		expect(refineSpy.mock.calls).toEqual([
+			[
+				{ instructions: "global regression", global: true },
+				{
+					source: "self",
+					reason: "regression",
+					queueVersion: expect.any(Number),
+					kind: "failure",
+					triggerFingerprintIds: ["fp_global"],
+				},
+			],
+			[
+				{ instructions: "and spaces in markdown", global: undefined },
+				{ source: "self", reason: "refine_run", queueVersion: expect.any(Number) },
+			],
+		]);
+	});
+
+	it("runs merged pending requests under the strongest reason without losing a failure list", async () => {
+		const harness = await createHarness({ persistSession: true });
+		harnesses.push(harness);
+		const internals = harness.session as unknown as SessionInternals & FailureQueueInternals;
+
+		setStreaming(harness, true);
+		harness.session.handleRefineHostRequest("refine.run", { instructions: "remember the deploy flag" });
+		expect(internals._pendingRequestedRefine?.reason).toBe("refine_run");
+		internals._queueFailureTriggeredRefine("recurrence list", "recurrence", ["fp_a"]);
+		// The agent's own request is in it, so it is gated as directed, not as a failure refine.
+		expect(internals._pendingRequestedRefine).toEqual({
+			instructions: "remember the deploy flag\n\nrecurrence list",
+			reason: "recurrence",
+			kind: "directed",
+			triggerFingerprintIds: ["fp_a"],
+		});
+		internals._queueFailureTriggeredRefine("regression list", "regression", ["fp_b"]);
+		internals._queueFailureTriggeredRefine("second recurrence list", "recurrence", ["fp_a", "fp_c"]);
+		expect(internals._pendingRequestedRefine?.reason).toBe("regression");
+		// A later refine.run neither downgrades the reason nor drops the failure lists it was merged into.
+		harness.session.handleRefineHostRequest("refine.run", { instructions: "and this" });
+		setStreaming(harness, false);
+		expect(internals._pendingRequestedRefine).toEqual({
+			instructions:
+				"remember the deploy flag\n\nrecurrence list\n\nregression list\n\nsecond recurrence list\n\nand this",
+			reason: "regression",
+			kind: "directed",
+			triggerFingerprintIds: ["fp_a", "fp_b", "fp_c"],
+		});
+
+		const refineSpy = vi.spyOn(internals, "refine").mockResolvedValue({});
+		internals._consumePendingRequestedRefine();
+		expect(refineSpy).toHaveBeenCalledWith(
+			{ instructions: expect.stringContaining("regression list"), global: undefined },
+			{
+				source: "self",
+				reason: "regression",
+				queueVersion: expect.any(Number),
+				kind: "directed",
+				triggerFingerprintIds: ["fp_a", "fp_b", "fp_c"],
+			},
+		);
+	});
+
+	it("keeps a merged request a failure refine only while every part of it is one", async () => {
+		const harness = await createHarness({ persistSession: true });
+		harnesses.push(harness);
+		const internals = harness.session as unknown as SessionInternals & FailureQueueInternals;
+
+		internals._queueFailureTriggeredRefine("recurrence list", "recurrence", ["fp_a"]);
+		internals._queueFailureTriggeredRefine("regression list", "regression", ["fp_b"]);
+		expect(internals._pendingRequestedRefine).toEqual({
+			instructions: "recurrence list\n\nregression list",
+			reason: "regression",
+			kind: "failure",
+			triggerFingerprintIds: ["fp_a", "fp_b"],
+		});
+
+		const refineSpy = vi.spyOn(internals, "refine").mockResolvedValue({});
+		expect(internals._consumePendingRequestedRefine()).toBe(true);
+		expect(refineSpy).toHaveBeenCalledWith(
+			{ instructions: "recurrence list\n\nregression list", global: undefined },
+			{
+				source: "self",
+				reason: "regression",
+				queueVersion: expect.any(Number),
+				kind: "failure",
+				triggerFingerprintIds: ["fp_a", "fp_b"],
+			},
+		);
+	});
+
+	it("queues a global repair apart from a local one and runs both, each in its own scope", async () => {
+		const harness = await createHarness({ persistSession: true });
+		harnesses.push(harness);
+		const internals = harness.session as unknown as SessionInternals & FailureQueueInternals;
+
+		internals._queueFailureTriggeredRefine("local regression", "regression", ["fp_local"]);
+		internals._queueFailureTriggeredRefine("global regression", "regression", ["fp_global"], true);
+		internals._queueFailureTriggeredRefine("local recurrence", "recurrence", ["fp_other"]);
+		expect(internals._pendingRequestedRefine).toEqual({
+			instructions: "local regression\n\nlocal recurrence",
+			reason: "regression",
+			kind: "failure",
+			triggerFingerprintIds: ["fp_local", "fp_other"],
+		});
+		expect(internals._deferredRefineRequests).toEqual([
+			{
+				instructions: "global regression",
+				reason: "regression",
+				kind: "failure",
+				triggerFingerprintIds: ["fp_global"],
+				global: true,
+			},
+		]);
+		expect(harness.session.handleRefineHostRequest("refine.status").pending).toBe(true);
+
+		const refineSpy = vi.spyOn(internals, "refine").mockResolvedValue({});
+		expect(internals._consumePendingRequestedRefine()).toBe(true);
+		expect(refineSpy.mock.calls).toEqual([
+			[
+				{ instructions: "local regression\n\nlocal recurrence", global: undefined },
+				{
+					source: "self",
+					reason: "regression",
+					queueVersion: expect.any(Number),
+					kind: "failure",
+					triggerFingerprintIds: ["fp_local", "fp_other"],
+				},
+			],
+			[
+				{ instructions: "global regression", global: true },
+				{
+					source: "self",
+					reason: "regression",
+					queueVersion: expect.any(Number),
+					kind: "failure",
+					triggerFingerprintIds: ["fp_global"],
+				},
+			],
+		]);
+		expect(harness.session.handleRefineHostRequest("refine.status").pending).toBe(false);
+	});
+
+	it("does not let a refine.run of the other scope absorb a queued failure repair", async () => {
+		const harness = await createHarness({ persistSession: true });
+		harnesses.push(harness);
+		const internals = harness.session as unknown as SessionInternals & FailureQueueInternals;
+
+		setStreaming(harness, true);
+		internals._queueFailureTriggeredRefine("local recurrence", "recurrence", ["fp_a"]);
+		harness.session.handleRefineHostRequest("refine.run", { instructions: "share this", global: true });
+		setStreaming(harness, false);
+
+		expect(internals._pendingRequestedRefine).toEqual({
+			instructions: "local recurrence",
+			reason: "recurrence",
+			kind: "failure",
+			triggerFingerprintIds: ["fp_a"],
+		});
+		expect(internals._deferredRefineRequests).toEqual([
+			{ instructions: "share this", global: true, reason: "refine_run" },
+		]);
+	});
+
+	it("drops parked repairs along with the pending request on dispose", async () => {
+		const harness = await createHarness({ persistSession: true });
+		harnesses.push(harness);
+		const internals = harness.session as unknown as SessionInternals & FailureQueueInternals;
+
+		internals._queueFailureTriggeredRefine("local regression", "regression", ["fp_local"]);
+		internals._queueFailureTriggeredRefine("global regression", "regression", ["fp_global"], true);
+		harness.session.dispose();
+
+		expect(internals._pendingRequestedRefine).toBeUndefined();
+		expect(internals._deferredRefineRequests).toEqual([]);
 	});
 
 	it("replaces an in-flight serialized plan instead of applying both requests", async () => {
@@ -97,11 +326,15 @@ describe("AgentSession refine skill host requests", () => {
 		internals._refineAbortController = abort;
 
 		setStreaming(harness, true);
-		harness.session.handleRefineHostRequest("refine.run", { instructions: "replacement" });
+		harness.session.handleRefineHostRequest("refine.run", { instructions: "replacement", global: true });
 		setStreaming(harness, false);
 
 		expect(abort.signal.aborted).toBe(true);
-		expect(internals._pendingRequestedRefine).toEqual({ instructions: "replacement", global: true });
+		expect(internals._pendingRequestedRefine).toEqual({
+			instructions: "replacement",
+			global: true,
+			reason: "refine_run",
+		});
 	});
 
 	it("discards a settled serialized plan when a replacement request arrives", async () => {
@@ -112,14 +345,47 @@ describe("AgentSession refine skill host requests", () => {
 		internals._serializedExplicitRefineOptions = { instructions: "first", global: true };
 
 		setStreaming(harness, true);
-		harness.session.handleRefineHostRequest("refine.run", { instructions: "replacement" });
+		harness.session.handleRefineHostRequest("refine.run", { instructions: "replacement", global: true });
 		setStreaming(harness, false);
 
 		await expect(internals._serializedPlanInFlight).resolves.toEqual({
 			status: "invalidated",
 			branchVersion: expect.any(Number),
 		});
-		expect(internals._pendingRequestedRefine).toEqual({ instructions: "replacement", global: true });
+		expect(internals._pendingRequestedRefine).toEqual({
+			instructions: "replacement",
+			global: true,
+			reason: "refine_run",
+		});
+	});
+
+	it("leaves a global repair planning in flight alone and parks a refine.run without the global flag", async () => {
+		const harness = await createHarness({ persistSession: true, serializedRefine: true });
+		harnesses.push(harness);
+		const internals = harness.session as unknown as SessionInternals & FailureQueueInternals;
+		const abort = new AbortController();
+		const planning = new Promise<unknown>(() => {});
+		internals._serializedPlanInFlight = planning;
+		internals._serializedExplicitRefineOptions = {
+			instructions: "global regression",
+			global: true,
+			reason: "regression",
+		};
+		internals._refineAbortController = abort;
+
+		setStreaming(harness, true);
+		harness.session.handleRefineHostRequest("refine.run", {
+			instructions: "remember this user prefers tabs in this repo",
+		});
+		setStreaming(harness, false);
+
+		expect(abort.signal.aborted).toBe(false);
+		expect(internals._serializedPlanInFlight).toBe(planning);
+		expect(internals._pendingRequestedRefine).toBeUndefined();
+		expect(internals._deferredRefineRequests).toEqual([
+			{ instructions: "remember this user prefers tabs in this repo", reason: "refine_run" },
+		]);
+		expect(harness.session.handleRefineHostRequest("refine.status").pending).toBe(true);
 	});
 
 	it("rejects refine.run while no turn is active", async () => {
@@ -181,7 +447,10 @@ describe("AgentSession refine skill host requests", () => {
 		const internals = harness.session as unknown as SessionInternals;
 		const refineSpy = vi.spyOn(internals, "refine").mockResolvedValue({});
 		internals._consumePendingRequestedRefine();
-		expect(refineSpy).toHaveBeenCalledWith({ instructions: "test", global: undefined }, { source: "self" });
+		expect(refineSpy).toHaveBeenCalledWith(
+			{ instructions: "test", global: undefined },
+			{ source: "self", reason: "refine_run", queueVersion: expect.any(Number) },
+		);
 		expect(internals._pendingRequestedRefine).toBeUndefined();
 	});
 

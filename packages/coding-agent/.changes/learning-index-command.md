@@ -1,2 +1,2 @@
 - Added `prime-agent learning`, which seals the structured log into a day-partitioned failure-fingerprint index that outlives log rotation and reports whether addressed fingerprints got rarer than untreated ones, withholding the p-value when either cohort is too small.
-- Added a `refinement.committed` log record naming the failure fingerprints each committed refinement claimed to address.
+- Added a `refinement.committed` log record naming the failure fingerprints a refinement claimed to address, written when the refinement applies and only when it claimed at least one; the learning index ignores claimless commits, including ones in days it already sealed.

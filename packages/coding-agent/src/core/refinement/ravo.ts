@@ -9,9 +9,18 @@ import {
 	isFailureOpponentId,
 } from "../ravo/authority.js";
 import { type FailureRecord, failureOpponentId, formatFailureLedgerForPrompt } from "../ravo/failure-ledger.js";
-import { type JsonValue, type RavoState, ravoExtendOpponents } from "../ravo/reducer.js";
-import { isRefereeOpponentId, type RefereeVerdict, refereeOpponentId } from "../ravo/referee.js";
+import { type JsonValue, type RavoState, type RavoWindowClock, ravoExtendOpponents } from "../ravo/reducer.js";
+import {
+	isRefereeOpponentId,
+	type RefereeVerdict,
+	type RefereeVerdictStatus,
+	refereeOpponentId,
+	refereeVerdictIsEvidence,
+	skillImportsOf,
+} from "../ravo/referee.js";
 import { adjudicateFailureClaims } from "../ravo/referee-runner.js";
+import { toolforgeSrcRoots } from "../toolforge/ledger.js";
+import type { RefineEvidenceDriftKind } from "./evidence-drift.js";
 import type { RefinementProposal } from "./refinement.js";
 
 /**
@@ -39,17 +48,23 @@ import type { RefinementProposal } from "./refinement.js";
  *   (`ravoExtendOpponents`). Adding an opponent can only raise missedWeight
  *   (`missedWeight_app`), so extension only tightens the gate — a candidate
  *   that ignores a recurring failure is charged its weight, never excused.
- * - the referee (Rocq `Ravo.v` Section 16): a claimed failure fingerprint that
- *   carries a replay case is adjudicated by re-executing that case in a
- *   subprocess, not by reading the claim. `FlawUpheld` iff the recorded
- *   exception recurs (Thm 16.2); prose is not evidence (Thm 16.3); a
- *   fingerprint with no case is never upheld (`no_test_no_flaw`) and falls back
- *   to the claim. The referee is one more opponent, so it can only tighten.
+ * - the referee (Rocq `Ravo.v` Section 16): a claimed failure fingerprint whose
+ *   verified missing-module or missing-distribution replay cases name what a
+ *   skill of the proposal imports is adjudicated by re-executing those cases in
+ *   a subprocess, not by reading the claim. `FlawUpheld`
+ *   iff the recorded exception recurs (Thm 16.2); prose is not evidence
+ *   (Thm 16.3); a fingerprint no replay can speak to is never upheld
+ *   (`no_test_no_flaw`) and falls back to the claim. The referee is one more
+ *   opponent, so it can only tighten.
  * - provisional commit: a champion that claims to address recurring failures
  *   stays provisional for an observation window; a claimed fingerprint that
  *   recurs inside the window is a measured fault (judge said pass, outcome
  *   said fail) and feeds a gated repair (`ravoObserveChampion`). The fault
  *   never bypasses the gate: the repair proposal is scored like any other.
+ * - measurability: a commit that claims no fingerprint cannot be confirmed or
+ *   refuted by anything later, so it applies its edits but leaves the RAVO
+ *   state untouched. A failure-triggered refine that claims nothing is
+ *   rejected outright (`reject_unclaimed`).
  *
  * Divergence from the verified spec, stated honestly: the deep gate (here and
  * in the generic reducer via `RavoConfig.deepTolerance`) allows
@@ -101,6 +116,145 @@ export interface RavoConfig {
 }
 
 const refinementLog = getLogger(REFINEMENT_LOG_COMPONENT);
+
+export const REFINEMENT_REJECTED_MSG = "refinement.rejected";
+export const REFINEMENT_APPLIED_UNMEASURED_MSG = "refinement.applied_unmeasured";
+
+/** Why a refine ran. */
+export type RefineReason =
+	| "manual"
+	| "refine_run"
+	| "recurrence"
+	| "regression"
+	| "turn_interval"
+	| "compact"
+	| "rollback"
+	| "ravo_run";
+
+/**
+ * What a refine is for. A `failure` refine exists to stop recorded failures and
+ * must claim one; a `checkpoint` is periodic housekeeping; a `directed` refine
+ * does what it was asked.
+ */
+export type RefineKind = "directed" | "checkpoint" | "failure";
+
+export function refineKindOf(reason: RefineReason): RefineKind {
+	switch (reason) {
+		case "turn_interval":
+		case "compact":
+			return "checkpoint";
+		case "recurrence":
+		case "regression":
+			return "failure";
+		case "manual":
+		case "refine_run":
+		case "rollback":
+		case "ravo_run":
+			return "directed";
+	}
+}
+
+/**
+ * The decision a refinement actually ended with, after apply-time checks. It
+ * differs from the gate's `RavoDecision`: a gate commit can still apply
+ * unmeasured, fail to apply, or be a rollback that never met the gate.
+ */
+export type RefineFinalDecision =
+	| "commit"
+	| "commit_unmeasured"
+	| "reject_screen"
+	| "reject_deep"
+	| "reject_criteria"
+	| "reject_unclaimed"
+	| "partial"
+	| "rollback"
+	| "no_edits";
+
+/**
+ * Why a proposal was rejected. Only `gate` and `stale_evidence` mean the judge
+ * decided on the edit: `screen` is the structural screen or skill dry-run,
+ * `judge_unavailable` never reached the judge, and `baseline_changed` is a gate
+ * approval that no longer held when it applied.
+ */
+export type RefinementRejectionCause = "gate" | "screen" | "judge_unavailable" | "baseline_changed" | "stale_evidence";
+
+export interface RefinementOutcomeLog {
+	proposalId: string;
+	decision: RefineFinalDecision;
+	addressed: readonly string[];
+	deepScore: number;
+	missed: number;
+	claimed: number;
+	reason: RefineReason;
+	scope: "local" | "global";
+	/** Logged on a `reject_*` decision only. */
+	cause?: RefinementRejectionCause;
+	/** A judge rejection made after the conversation moved while it was planned; see `isStaleEvidenceRejection`. */
+	staleEvidence?: boolean;
+	driftKind?: RefineEvidenceDriftKind;
+	/** Messages the judge read that the proposer did not. */
+	driftMessages?: number;
+	/** Whether the stale rejection leaves its round open for one re-plan. */
+	replanScheduled?: boolean;
+	/** The stale-evidence rejection this refinement re-planned. */
+	replanOf?: string;
+}
+
+/**
+ * Emit exactly one structured line for a refinement's final decision. Call it
+ * at apply time, never at gate time: the gate's commit can still be downgraded.
+ *
+ * - `refinement.committed` only for a measurable commit (`commit` with a
+ *   non-empty `addressed`). The learning index treats these as its treated
+ *   cohort, so an unmeasured commit must never appear here.
+ * - `refinement.applied_unmeasured` for edits that applied without a claim:
+ *   `commit_unmeasured`, a `commit` with nothing addressed, and `rollback`.
+ * - `refinement.rejected` for everything that applied no edits, carrying
+ *   `cause` on a `reject_*` decision when the caller classified one, and the
+ *   drift and re-plan fields on a stale-evidence rejection.
+ *
+ * Every message carries `replanOf` when the refinement re-planned a
+ * stale-evidence rejection.
+ */
+export function logRefinementOutcome(input: RefinementOutcomeLog): void {
+	const { proposalId, decision, deepScore, reason, scope } = input;
+	const replan = input.replanOf === undefined ? {} : { replanOf: input.replanOf };
+	if (decision === "commit" && input.addressed.length > 0) {
+		refinementLog.info(REFINEMENT_COMMITTED_MSG, {
+			proposalId,
+			addressed: [...input.addressed],
+			deepScore,
+			missed: input.missed,
+			reason,
+			scope,
+			...replan,
+		});
+		return;
+	}
+	if (decision === "commit" || decision === "commit_unmeasured" || decision === "rollback") {
+		refinementLog.info(REFINEMENT_APPLIED_UNMEASURED_MSG, { proposalId, deepScore, reason, scope, ...replan });
+		return;
+	}
+	refinementLog.info(REFINEMENT_REJECTED_MSG, {
+		proposalId,
+		decision,
+		deepScore,
+		missed: input.missed,
+		claimed: input.claimed,
+		reason,
+		scope,
+		...(input.cause === undefined || !decision.startsWith("reject_") ? {} : { cause: input.cause }),
+		...(input.staleEvidence === true
+			? {
+					staleEvidence: true,
+					driftKind: input.driftKind,
+					driftMessages: input.driftMessages,
+					replanScheduled: input.replanScheduled === true,
+				}
+			: {}),
+		...replan,
+	});
+}
 
 export const RAVO_DEFAULT_CONFIG: RavoConfig = {
 	screenThreshold: 50,
@@ -171,7 +325,13 @@ export function ravoPressure(evaluator: RavoEvaluator, weakId: string): RavoEval
 	};
 }
 
-export type RavoDecision = "commit" | "reject_screen" | "reject_deep" | "reject_criteria";
+export type RavoDecision = "commit" | "reject_screen" | "reject_deep" | "reject_criteria" | "reject_unclaimed";
+
+export type RefereeCounts = Record<RefereeVerdictStatus, number>;
+
+function emptyRefereeCounts(): RefereeCounts {
+	return { cleared: 0, upheld: 0, unverifiable: 0, no_evidence: 0, not_applicable: 0 };
+}
 
 /** The gate report attached to a refinement plan and result. */
 export interface RavoGateReport {
@@ -193,8 +353,15 @@ export interface RavoGateReport {
 	addressedFingerprints: string[];
 	/** Failure opponent criterion ids (`failure:<fingerprint>`) in this gate. */
 	failureOpponents: string[];
-	/** Referee verdicts on the claimed fingerprints, one per re-executed replay case. */
+	/** Referee verdicts on the claimed fingerprints, one per claimed fingerprint. */
 	refereeVerdicts?: RefereeVerdict[];
+	/**
+	 * Whether the RAVO state learns from this decision: a commit that claims at
+	 * least one fingerprint. An unmeasured commit applies its edits, but its
+	 * `authorization.nextState` is the input state.
+	 */
+	measurable: boolean;
+	refereeCounts: RefereeCounts;
 }
 
 /**
@@ -274,8 +441,11 @@ only if its edits would plausibly prevent that exact failure from recurring
 List the fingerprint ids the proposal genuinely addresses in
 "addressedFingerprints"; a fingerprint not listed there counts as a missed
 opponent. Never list a fingerprint the proposal merely mentions. A fingerprint
-carrying a replay case is re-executed after you answer, so listing one whose
-failure has not actually stopped costs the proposal the gate.
+marked replay=verified is re-executed after you answer when a skill the proposal
+writes imports the module its replay case probes, so listing one whose failure
+has not actually stopped costs the proposal the gate. Do not list a fingerprint
+whose failure is outside the harness's control (a provider outage, a user
+denial, a flaky network).
 
 "verdict" is your own decision on the deep gate: "pass" if this candidate is at
 least as good a harness state as the current champion, "fail" if it is worse,
@@ -339,8 +509,8 @@ function extractJudgeJson(text: string): {
 
 /**
  * Deep evaluation: one judge call scoring the candidate against the evaluator
- * criteria, then the referee re-running the replay case of every fingerprint
- * the judge accepted as addressed. The generic authority
+ * criteria, then the referee re-running the applicable replay cases of the
+ * fingerprints the judge accepted as addressed. The generic authority
  * (`authorizeAssistedRavo`) makes the decision. Judge errors are recorded in
  * the report and fail closed: an unevaluated proposal is never authorized, so
  * no harness edits apply until a retried /refine reaches the judge. The judge's
@@ -350,7 +520,16 @@ function extractJudgeJson(text: string): {
  * `recurringFailures` become failure opponents in the pool; the judge must
  * name the fingerprints the proposal addresses, and an unaddressed recurring
  * failure is charged its opponent weight in the epsilon gate. A commit is
- * provisional for `observationWindowTurns` turns from `turn` (default 20).
+ * provisional for `observationWindowTurns` from `turn` (default 20), measured
+ * on `turnClock`.
+ *
+ * `refineKind` decides what a claimless result means. For `failure`, a judged
+ * proposal that addresses no fingerprint is `reject_unclaimed`. For any other
+ * kind a claimless commit is authorized but unmeasured (`measurable: false`,
+ * `authorization.nextState` is `state` unchanged).
+ *
+ * Nothing is logged here; the apply phase reports the final decision through
+ * `logRefinementOutcome`.
  */
 export async function ravoEvaluateProposal(
 	proposal: RefinementProposal,
@@ -368,10 +547,14 @@ export async function ravoEvaluateProposal(
 		signal?: AbortSignal;
 		recurringFailures?: readonly FailureRecord[];
 		turn?: number;
+		/** Clock `turn` is read off: `"ordinal"` for the global ledger's, `"local-ordinal"` for a session ledger's. */
+		turnClock?: RavoWindowClock;
 		observationWindowTurns?: number;
+		refineKind?: RefineKind;
 	},
 ): Promise<RavoGateReport> {
 	const { state, config } = options;
+	const refineKind = options.refineKind ?? "directed";
 	const recurringFailures = options.recurringFailures ?? [];
 	const failureOpponents = [...new Set(recurringFailures.map((record) => failureOpponentId(record.fingerprint)))];
 	const observationWindowTurns = options.observationWindowTurns ?? DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS;
@@ -396,7 +579,9 @@ export async function ravoEvaluateProposal(
 		deepTolerance: config.deepTolerance,
 		failureOpponents,
 		turn: options.turn,
+		...(options.turnClock === undefined ? {} : { turnClock: options.turnClock }),
 		observationWindowTurns,
+		unclaimedCommit: refineKind === "failure" ? ("reject" as const) : ("unmeasured" as const),
 	};
 	if (fastScore < config.screenThreshold) {
 		const rationale = `structural screen scored ${fastScore} below threshold ${config.screenThreshold}`;
@@ -413,6 +598,8 @@ export async function ravoEvaluateProposal(
 			addressedFingerprints: [],
 			rationale,
 			authorization,
+			measurable: false,
+			refereeCounts: emptyRefereeCounts(),
 		};
 	}
 
@@ -492,14 +679,18 @@ export async function ravoEvaluateProposal(
 		rationale = `deep judge unavailable (${judgeError}); no harness edits were authorized; retry /refine when evaluation is available`;
 	}
 
-	// The referee re-executes the recorded replay case of every fingerprint the
-	// judge accepted as addressed. It is the only input to this gate the
-	// proposal did not write, and it runs before the authority so a refuted
-	// claim is charged as a missed opponent rather than believed.
+	// The referee re-executes the verified replay cases of the fingerprints the
+	// judge accepted as addressed, where a skill the proposal writes imports what
+	// a case probes, with the toolforge roots the fast screen imports from. It is
+	// the only input to this gate the proposal did not write, and it runs before
+	// the authority so a refuted claim is charged as a missed opponent rather
+	// than believed.
 	const refereeVerdicts = judgeError
 		? []
 		: await adjudicateFailureClaims(recurringFailures, addressedFingerprints, {
 				...(options.signal ? { signal: options.signal } : {}),
+				skillImports: skillImportsOf(proposal.edits),
+				sysPath: toolforgeSrcRoots(),
 			});
 	const authorization = authorizeAssistedRavo({
 		...authorityInput,
@@ -514,13 +705,18 @@ export async function ravoEvaluateProposal(
 					addressedFingerprints,
 				},
 	});
-	const decision: RavoDecision = authorization.authorized
-		? "commit"
-		: authorization.certificate.rejection === "screen"
-			? "reject_screen"
-			: authorization.certificate.rejection === "opponents"
-				? "reject_criteria"
-				: "reject_deep";
+	// A failure-triggered refine exists to stop the listed failures; judged as
+	// addressing none of them, whatever else the gate said, it is unclaimed.
+	const unclaimed = refineKind === "failure" && !judgeError && addressedFingerprints.length === 0;
+	const decision: RavoDecision = unclaimed
+		? "reject_unclaimed"
+		: authorization.authorized
+			? "commit"
+			: authorization.certificate.rejection === "screen"
+				? "reject_screen"
+				: authorization.certificate.rejection === "opponents"
+					? "reject_criteria"
+					: "reject_deep";
 	// The certificate's missed set already charges unaddressed failure
 	// opponents; it is empty when the step never reached the opponents gate,
 	// so fall back to the judge's list plus the unaddressed fingerprints.
@@ -534,21 +730,10 @@ export async function ravoEvaluateProposal(
 			: [...new Set([...missedCriteria, ...unaddressed])];
 	const pool = ravoExtendOpponents(state.opponents, [
 		...failureOpponents,
-		...refereeVerdicts
-			.filter((verdict) => verdict.status !== "no_evidence")
-			.map((verdict) => refereeOpponentId(verdict.fingerprintId)),
+		...refereeVerdicts.filter(refereeVerdictIsEvidence).map((verdict) => refereeOpponentId(verdict.fingerprintId)),
 	]);
-	// The outcome label the learning index rolls up: which fingerprints a
-	// commit claimed, recorded at the moment the gate let it through. Without
-	// this line there is no treated cohort to compare a later failure rate to.
-	if (decision === "commit") {
-		refinementLog.info(REFINEMENT_COMMITTED_MSG, {
-			proposalId: options.proposalId,
-			addressed: addressedFingerprints,
-			deepScore,
-			missed: missed.length,
-		});
-	}
+	const refereeCounts = emptyRefereeCounts();
+	for (const verdict of refereeVerdicts) refereeCounts[verdict.status] += 1;
 	return {
 		...base,
 		decision,
@@ -563,6 +748,8 @@ export async function ravoEvaluateProposal(
 		rationale,
 		judgeError,
 		authorization,
+		measurable: decision === "commit" && addressedFingerprints.length > 0,
+		refereeCounts,
 	};
 }
 

@@ -141,11 +141,15 @@ export interface RavoControllerOptions<T extends JsonValue = JsonValue> {
 		ControllerProposal<T>
 	>;
 	evaluators: readonly EvaluationAdapter<T>[];
+	/**
+	 * `stale` refuses a commit because the state it was evaluated against moved
+	 * outside the run: no repair can fix that, so the run stops with `stale_cas`.
+	 */
 	commitGate: (input: {
 		proposal: ControllerProposal<T>;
 		certificate: RavoGateCertificate;
 		signal: AbortSignal;
-	}) => Promise<{ accepted: boolean; detail?: string }>;
+	}) => Promise<{ accepted: boolean; detail?: string; stale?: boolean }>;
 	supervisor?: ChildCall<SupervisorSignal<T>, { intervene: boolean; advice?: string }>;
 	shouldConsultSupervisor?: (signal: SupervisorSignal<T>) => boolean;
 	maxRounds: number;
@@ -363,14 +367,16 @@ async function runController<T extends JsonValue>(
 	const commitGate = (
 		candidate: ControllerProposal<T>,
 		certificate: RavoGateCertificate,
-	): Promise<{ accepted: false; detail?: string } | { accepted: true; digest: string }> =>
+	): Promise<{ accepted: false; detail?: string; stale: boolean } | { accepted: true; digest: string }> =>
 		inRavoSpan(
 			"ravo.evaluation",
 			{ "ravo.proposal_id": candidate.id, "ravo.evaluator": "commit_gate", "ravo.evaluator_kind": "commit_gate" },
 			async (span) => {
 				const gate = await options.commitGate({ proposal: candidate, certificate, signal: abort.signal });
 				span.setAttributes({ "ravo.verdict": gate.accepted ? "accepted" : "rejected" });
-				if (!gate.accepted) return { accepted: false, ...(gate.detail ? { detail: gate.detail } : {}) };
+				if (!gate.accepted) {
+					return { accepted: false, stale: gate.stale === true, ...(gate.detail ? { detail: gate.detail } : {}) };
+				}
 				const digest = sha256(
 					canonicalJson({
 						proposal: candidate,
@@ -458,6 +464,10 @@ async function runController<T extends JsonValue>(
 			if (stepped.certificate.committed) {
 				await setPhase("commit_gate");
 				const gate = await commitGate(candidate, stepped.certificate);
+				if (!gate.accepted && gate.stale) {
+					span.setAttributes({ "ravo.outcome": "stopped", "ravo.reason": "stale_cas" });
+					return stop("stale_cas", stepped.certificate);
+				}
 				if (gate.accepted) {
 					const baseline = cp.archiveBaseline;
 					if (!baseline) throw new Error("archive CAS baseline was not bound before evaluation");

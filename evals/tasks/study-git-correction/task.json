@@ -1,0 +1,16 @@
+{
+ "id": "study-git-correction",
+ "prompt": "count.py is supposed to return 10 for range(10) but returns 9. Fix it.",
+ "followups": [
+  "You left the working tree dirty. When you finish a fix like this, always stage and commit it as a checkpoint with a clear message, and leave the tree clean. Do not push unless I ask. Please remember this for future sessions.",
+  "Good. Now make sure that preference is persisted to your harness so a future session behaves this way without me asking."
+ ],
+ "timeoutMs": 420000,
+ "maxTurns": 30,
+ "tags": [
+  "study",
+  "trigger",
+  "intervention"
+ ],
+ "why": "STUDY task. A quiet success generates no refinement trigger, which is why phase B wrote 0 memories. This task forces the real trigger: the agent finishes, the operator corrects it, and the correction is exactly the instruction the corpus shows repeated 118 times across ~95 sessions. The question is whether one correction produces a durable harness entry that a later cold task can inherit."
+}

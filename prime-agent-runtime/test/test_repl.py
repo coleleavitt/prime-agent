@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 import unittest
+from datetime import datetime
 from unittest import mock
 
 SRC = os.path.join(os.path.dirname(__file__), "..", "src")
@@ -726,6 +727,47 @@ class ReplTest(unittest.TestCase):
                 return
             time.sleep(0.05)
         self.fail(f"bash child {pid} survived runtime shutdown")
+
+    def test_done_frame_reports_bash_commands_finished_inside_the_cell(self):
+        long_command = "true " + "x" * 400
+        code = "\n".join(
+            [
+                "from rlm import bash",
+                "import asyncio",
+                "await bash('printf built')",
+                "await bash('exit 3')",
+                "await bash('API_KEY=hunter2 true')",
+                f"await bash({long_command!r})",
+                "quick = bash('true')",
+                "await asyncio.sleep(0.5)",
+                "late = bash('sleep 0.3; printf late')",
+            ]
+        )
+        events = self.repl.execute("bash-commands", code)
+        done = one(events, "done")
+        self.assertEqual(done["status"], "ok")
+        records = done["bashCommands"]
+        self.assertEqual(
+            [(record["command"], record["exitCode"]) for record in records],
+            [
+                ("printf built", 0),
+                ("exit 3", 3),
+                ("API_KEY=[REDACTED] true", 0),
+                (long_command[:300], 0),
+                ("true", 0),
+            ],
+        )
+        self.assertTrue(records[3]["commandTruncated"])
+        self.assertNotIn("commandTruncated", records[0])
+        for record in records:
+            started = datetime.fromisoformat(record["startedAt"])
+            self.assertLessEqual(started, datetime.fromisoformat(record["endedAt"]))
+
+        # The detached command finishes during the next cell, which did not start it.
+        later = self.repl.execute("bash-commands-later", "await asyncio.sleep(0.6)\n(await late).exit_code")
+        self.assertNotIn("bashCommands", one(later, "done"))
+        plain = self.repl.execute("bash-commands-none", "1 + 1")
+        self.assertNotIn("bashCommands", one(plain, "done"))
 
     def test_async_bash_completion_notifies_only_after_an_unawaited_creating_cell(self):
         direct = self.repl.execute(

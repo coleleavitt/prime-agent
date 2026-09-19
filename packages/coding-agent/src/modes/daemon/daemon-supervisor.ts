@@ -756,6 +756,9 @@ export class DaemonSupervisor {
 	/** Latest ravo_run_update payload per session id, replayed to new roster subscribers. */
 	private readonly latestRavoRunStatus = new Map<string, Buffer>();
 	private readonly ravoStatusWorker = new Map<string, ResidentWorker>();
+	/** Latest dream_run_update payload per session id, replayed to new roster subscribers. */
+	private readonly latestDreamRunStatus = new Map<string, Buffer>();
+	private readonly dreamStatusWorker = new Map<string, ResidentWorker>();
 	private readonly connectionIds = new WeakMap<DaemonSocketClient, string>();
 	private readonly sessionInputPauseEpochs = new WeakMap<DaemonSocketClient, number>();
 	private readonly detachingInputPauseSessions = new WeakMap<DaemonSocketClient, Set<string>>();
@@ -2132,6 +2135,7 @@ export class DaemonSupervisor {
 				setImmediate(() => {
 					if (client.socket.destroyed || client.rosterSubscribed !== true) return;
 					for (const payload of this.latestRavoRunStatus.values()) this.writeSerialized(client, payload);
+					for (const payload of this.latestDreamRunStatus.values()) this.writeSerialized(client, payload);
 				});
 				return response;
 			}
@@ -3284,6 +3288,7 @@ export class DaemonSupervisor {
 			this.invalidateWorkerSessionInputPauses(worker, "Session worker stopped while input was paused");
 			this.workers.delete(worker.descriptor.workerId);
 			this.forgetRavoRunStatusFor(worker);
+			this.forgetDreamRunStatusFor(worker);
 			this.flipWorkerRosterEntriesInactive(worker);
 			this.deleteWorkerDescriptor(worker);
 			return true;
@@ -5907,6 +5912,30 @@ export class DaemonSupervisor {
 		}
 	}
 
+	private rememberDreamRunStatus(worker: ResidentWorker, payload: Buffer): void {
+		let sessionId: string | undefined;
+		try {
+			const parsed = JSON.parse(payload.toString("utf8")) as {
+				sessionId?: unknown;
+				status?: { stopReason?: unknown };
+			};
+			if (typeof parsed.sessionId === "string") sessionId = parsed.sessionId;
+		} catch {
+			return;
+		}
+		if (!sessionId) return;
+		this.latestDreamRunStatus.set(sessionId, payload);
+		this.dreamStatusWorker.set(sessionId, worker);
+	}
+
+	private forgetDreamRunStatusFor(worker: ResidentWorker): void {
+		for (const [sessionId, owner] of this.dreamStatusWorker) {
+			if (owner !== worker) continue;
+			this.dreamStatusWorker.delete(sessionId);
+			this.latestDreamRunStatus.delete(sessionId);
+		}
+	}
+
 	private handleWorkerFrame(
 		worker: ResidentWorker,
 		frame: PrivateFrame<DaemonWorkerFrameHeader>,
@@ -5943,6 +5972,14 @@ export class DaemonSupervisor {
 		if (outboundType === "ravo_run_update") {
 			// Latest-wins status push for roster subscribers; the worker already validated the shape.
 			this.rememberRavoRunStatus(worker, frame.payload);
+			for (const client of this.clients) {
+				if (client.rosterSubscribed === true) this.writeSerialized(client, frame.payload);
+			}
+			return;
+		}
+		if (outboundType === "dream_run_update") {
+			// Latest-wins status push for roster subscribers; the worker already validated the shape.
+			this.rememberDreamRunStatus(worker, frame.payload);
 			for (const client of this.clients) {
 				if (client.rosterSubscribed === true) this.writeSerialized(client, frame.payload);
 			}
@@ -6359,6 +6396,7 @@ export class DaemonSupervisor {
 				this.invalidateWorkerSessionInputPauses(worker, "Session worker stopped while input was paused");
 				this.workers.delete(worker.descriptor.workerId);
 				this.forgetRavoRunStatusFor(worker);
+				this.forgetDreamRunStatusFor(worker);
 				this.flipWorkerRosterEntriesInactive(worker);
 				this.deleteWorkerDescriptor(worker);
 			}
@@ -7023,6 +7061,7 @@ export class DaemonSupervisor {
 		}
 		this.workers.delete(worker.descriptor.workerId);
 		this.forgetRavoRunStatusFor(worker);
+		this.forgetDreamRunStatusFor(worker);
 		this.flipWorkerRosterEntriesInactive(worker);
 		// A failed cancel keeps the stop tombstone as the durable intent; the enumeration retry or the next boot finishes it.
 		if (removeDescriptor && ephemeralCancelSettled) {

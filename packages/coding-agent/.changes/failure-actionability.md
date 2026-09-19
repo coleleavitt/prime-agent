@@ -1,0 +1,5 @@
+- Added actionability to the failure ledger: aborts, user denials, a shut-down kernel, network and DNS errors, timeouts, a locked database, and provider rate limits, capacity, 5xx, refusal, content-filter and empty-completion errors are still counted but never trigger a refine or join the gate as opponents.
+- Changed a fingerprint to count as non-actionable only while a strict majority of its occurrences classified that way (`nonActionableCount`), so one outage cannot mute a fixable failure and one fixable occurrence cannot arm an outage.
+- Changed turn-boundary regression checks to ignore a non-actionable occurrence, so a denial or outage never regresses a champion that claimed its fingerprint.
+- Changed a failure record's non-actionable tally to count every occurrence when its fingerprint's normalized message or exception class alone classifies non-actionable, so a record written before the tally existed (or under-counted since) cannot load as actionable.
+- Changed the recurrence refine trigger to fire when a fingerprint enters the recurring-and-actionable set, including when it turns actionable after it already crossed the threshold.

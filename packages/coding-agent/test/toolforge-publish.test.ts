@@ -175,6 +175,39 @@ describeIfPython("toolforge double-run gate", () => {
 		expect(existsSync(join(skillsDir, "slugify"))).toBe(false);
 	}, 60_000);
 
+	it("runs the exit test in the inherited environment: variables and the user's PYTHONPATH reach it", async () => {
+		const saved = { probe: process.env.PRIME_AGENT_TOOLFORGE_GATE_PROBE, pythonPath: process.env.PYTHONPATH };
+		const userRoot = mkdtempSync(join(tmpdir(), "pi-toolforge-user-path-"));
+		writeFileSync(join(userRoot, "prime_agent_user_only_helper.py"), 'EXPECTED = "a-b"\n', "utf-8");
+		process.env.PRIME_AGENT_TOOLFORGE_GATE_PROBE = "inherited";
+		process.env.PYTHONPATH = userRoot;
+		try {
+			const result = await publish({
+				exitTest: [
+					"import os",
+					"import prime_agent_user_only_helper",
+					"import slugify",
+					"",
+					'assert os.environ.get("PRIME_AGENT_TOOLFORGE_GATE_PROBE") == "inherited", sorted(os.environ)',
+					'assert slugify.run("A B") == prime_agent_user_only_helper.EXPECTED',
+					"",
+				].join("\n"),
+			});
+			expect(result.reason).toBeUndefined();
+			expect(result.status).toBe("published");
+			expect(result.gate.map((run) => [run.phase, run.outcome, run.ok])).toEqual([
+				["negative", "raised", true],
+				["positive", "clean", true],
+			]);
+		} finally {
+			if (saved.probe === undefined) delete process.env.PRIME_AGENT_TOOLFORGE_GATE_PROBE;
+			else process.env.PRIME_AGENT_TOOLFORGE_GATE_PROBE = saved.probe;
+			if (saved.pythonPath === undefined) delete process.env.PYTHONPATH;
+			else process.env.PYTHONPATH = saved.pythonPath;
+			rmSync(userRoot, { recursive: true, force: true });
+		}
+	}, 60_000);
+
 	it("rejects a shadowing name before spawning anything", async () => {
 		const result = await publish({ name: "json" });
 

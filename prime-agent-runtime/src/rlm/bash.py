@@ -52,6 +52,7 @@ _PROGRESS_INTERVAL_MS = 5 * 1000
 _CARGO_BUILD_LOCK_TEXT = b"Blocking waiting for file lock on build directory"
 _ACTIVE_INVENTORY_LIMIT = 100
 _COMPLETION_NOTICE_COMMAND_CAP = 1000
+_CELL_COMMAND_CAP = 300
 _ASYNCIO_WRAPPER_CALLBACKS = {
     ("asyncio.tasks", "gather.<locals>._done_callback"),
     ("asyncio.tasks", "shield.<locals>._inner_done_callback"),
@@ -73,6 +74,18 @@ def _current_cell_completion_context() -> tuple[asyncio.Event, asyncio.Task[Any]
 
         if repl.is_active():
             return repl.current_cell_completion_context()
+    except (ImportError, RuntimeError):
+        pass
+    return None
+
+
+def _current_cell_bash_recorder() -> Callable[[dict[str, Any]], None] | None:
+    """The creating cell's command log, or None outside a REPL cell."""
+    try:
+        from . import repl
+
+        if repl.is_active():
+            return repl.current_cell_bash_recorder()
     except (ImportError, RuntimeError):
         pass
     return None
@@ -265,6 +278,7 @@ class BashHandle:
         self._creating_cell_finished = completion_context[0] if completion_context else None
         self._creating_cell_task = completion_context[1] if completion_context else None
         self._awaited_by_creating_cell = False
+        self._cell_bash_recorder = _current_cell_bash_recorder()
         self._buffer = _BoundedBuffer()
         self._started = time.monotonic()
         self._started_at = datetime.now(timezone.utc)
@@ -751,8 +765,29 @@ class BashHandle:
             self._callbacks = []
         # Emit before waking awaiters so the span precedes any work that follows the result.
         self._end_span(exit_code=exit_code)
+        # Before the awaiters wake too, so an awaiting cell always finds its command recorded.
+        self._record_in_cell(exit_code)
         for callback in callbacks:
             callback()
+
+    def _record_in_cell(self, exit_code: int) -> None:
+        """Report the finished command to the creating cell, which keeps it only while its body runs."""
+        recorder = self._cell_bash_recorder
+        if recorder is None:
+            return
+        try:
+            command = _redact_command(self.command)
+            record: dict[str, Any] = {
+                "command": command[:_CELL_COMMAND_CAP],
+                "exitCode": exit_code,
+                "startedAt": self._started_at.isoformat(),
+                "endedAt": datetime.now(timezone.utc).isoformat(),
+            }
+            if len(command) > _CELL_COMMAND_CAP:
+                record["commandTruncated"] = True
+            recorder(record)
+        except BaseException:  # noqa: BLE001 - awaiters wake after this; it must never raise
+            return
 
     def _end_span(self, exit_code: int | None = None, error: str | None = None) -> None:
         """Finish the bash.command span exactly once; never raises.
@@ -1221,11 +1256,15 @@ _SECRET_PATTERNS = (
 )
 
 
-def _safe_command(command: str) -> str:
+def _redact_command(command: str) -> str:
     redacted = command
     for pattern in _SECRET_PATTERNS:
         redacted = pattern.sub(r"\1[REDACTED]", redacted)
-    return _truncate(redacted)
+    return redacted
+
+
+def _safe_command(command: str) -> str:
+    return _truncate(_redact_command(command))
 
 
 def active_bash_commands(limit: int = _ACTIVE_INVENTORY_LIMIT) -> list[dict[str, Any]]:

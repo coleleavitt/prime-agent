@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { getKernelVenvDir } from "../kernel/bootstrap.js";
-import { toolforgeSrcRoots } from "../toolforge/ledger.js";
+import { skillImportEnvironment } from "../ravo/python-environment.js";
 import { countValidRefinementEdits, type RefinementEdit, type RefinementProposal } from "./refinement.js";
 
 /**
@@ -14,6 +15,12 @@ import { countValidRefinementEdits, type RefinementEdit, type RefinementProposal
  * `reference.import` and resolves `reference.callable` via getattr. The
  * callable is never invoked. Import errors, missing attributes, malformed
  * references, and timeouts all count as a failed screen for that edit.
+ *
+ * The probe runs where referee adjudication replays a missing-module case: in
+ * `skillImportEnvironment` and in a fresh temporary working directory that is
+ * removed afterwards. Neither the process environment nor the working
+ * directory can then make the screen pass an import the referee cannot
+ * resolve, or the reverse.
  */
 
 export interface SkillDryRunResult {
@@ -27,9 +34,19 @@ export interface SkillDryRunOptions {
 	pythonPath: string;
 	/** Per-edit wall-clock bound; the interpreter is killed when exceeded. Default 5000. */
 	timeoutMs?: number;
+	/**
+	 * The directory relative `sysPath` and PYTHONPATH entries resolve against.
+	 * Default `process.cwd()`. The probe itself always runs in a fresh
+	 * temporary directory.
+	 */
 	cwd?: string;
 	signal?: AbortSignal;
-	/** Extra environment for the probe; merged over process.env. */
+	/**
+	 * Host environment overrides, merged over process.env before the probe's
+	 * environment is derived from it: only PATH, HOME, LANG (on win32 also
+	 * `WINDOWS_PYTHON_ENV_KEYS`) and the PYTHONPATH entries reach the
+	 * interpreter.
+	 */
 	env?: NodeJS.ProcessEnv;
 	/** Extra directories prepended to sys.path in the probe (e.g. a skill package root). */
 	sysPath?: readonly string[];
@@ -41,13 +58,11 @@ const MAX_DETAIL_CHARS = 2000;
 const OK_MARKER = "OK";
 
 // The probe never calls the callable. `-I` drops cwd/user-site and ignores
-// PYTHON* env vars, so PYTHONPATH is re-applied explicitly from os.environ to
-// match what the real kernel process sees; extra sys.path entries arrive via argv.
+// PYTHON* env vars, so PYTHONPATH is re-applied explicitly from os.environ.
 const PROBE_PROGRAM = [
 	"import importlib, os, sys",
-	"mod, attr, extra = sys.argv[1], sys.argv[2], sys.argv[3]",
-	"paths = [p for p in extra.split(os.pathsep) if p] + [p for p in os.environ.get('PYTHONPATH', '').split(os.pathsep) if p]",
-	"sys.path[0:0] = paths",
+	"mod, attr = sys.argv[1], sys.argv[2]",
+	"sys.path[0:0] = [p for p in os.environ.get('PYTHONPATH', '').split(os.pathsep) if p]",
 	"try:",
 	"    obj = importlib.import_module(mod)",
 	"    for part in attr.split('.'):",
@@ -146,10 +161,32 @@ function trimDetail(text: string): string {
 	return trimmed.length > MAX_DETAIL_CHARS ? `${trimmed.slice(0, MAX_DETAIL_CHARS)}…` : trimmed;
 }
 
-function probeOne(
+async function probeOne(
 	parsed: ParsedReference,
 	options: SkillDryRunOptions,
 	timeoutMs: number,
+): Promise<{ ok: boolean; detail: string }> {
+	let workdir: string;
+	try {
+		workdir = await mkdtemp(path.join(os.tmpdir(), "prime-agent-dry-run-"));
+	} catch (error) {
+		return {
+			ok: false,
+			detail: `no working directory for the dry-run probe: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	}
+	try {
+		return await spawnProbe(parsed, options, timeoutMs, workdir);
+	} finally {
+		await rm(workdir, { recursive: true, force: true }).catch(() => undefined);
+	}
+}
+
+function spawnProbe(
+	parsed: ParsedReference,
+	options: SkillDryRunOptions,
+	timeoutMs: number,
+	workdir: string,
 ): Promise<{ ok: boolean; detail: string }> {
 	return new Promise((resolve) => {
 		const started = Date.now();
@@ -166,22 +203,15 @@ function probeOne(
 		const label = `${parsed.moduleName}.${parsed.callableName}`;
 		let child: ReturnType<typeof spawn>;
 		try {
-			child = spawn(
-				options.pythonPath,
-				[
-					"-I",
-					"-c",
-					PROBE_PROGRAM,
-					parsed.moduleName,
-					parsed.callableName,
-					(options.sysPath ?? []).join(path.delimiter),
-				],
-				{
-					cwd: options.cwd,
-					env: { ...process.env, ...options.env },
-					stdio: ["ignore", "pipe", "pipe"],
-				},
-			);
+			child = spawn(options.pythonPath, ["-I", "-c", PROBE_PROGRAM, parsed.moduleName, parsed.callableName], {
+				cwd: workdir,
+				env: skillImportEnvironment(
+					options.sysPath ?? [],
+					{ ...process.env, ...options.env },
+					{ cwd: options.cwd },
+				),
+				stdio: ["ignore", "pipe", "pipe"],
+			});
 		} catch (error) {
 			finish(
 				false,
@@ -342,11 +372,12 @@ export function skippedSkillDryRun(proposal: RefinementProposal): SkillDryRunRes
  * (never fail-closed), so the count equals countValidRefinementEdits. This is
  * the Rocq S13 `fastDry` instance: a false screen can only cause a rejection.
  *
- * Every toolforge-published package root is on the probe's `sys.path`. Without
- * that, a skill edit naming a module toolforge has just created is screened out
- * for the window between the promote and the editable install becoming visible
- * to a fresh interpreter — a rejection of the one thing in this system that
- * writes new capability, for a reason that is purely about install timing.
+ * Every toolforge-published package root is on the probe's `sys.path`
+ * (`skillImportEnvironment`). Without that, a skill edit naming a module
+ * toolforge has just created is screened out for the window between the
+ * promote and the editable install becoming visible to a fresh interpreter — a
+ * rejection of the one thing in this system that writes new capability, for a
+ * reason that is purely about install timing.
  */
 export async function screenRefinementProposal(
 	proposal: RefinementProposal,
@@ -354,9 +385,6 @@ export async function screenRefinementProposal(
 ): Promise<{ validEdits: number; dryRun: SkillDryRunResult[] }> {
 	const structural = countValidRefinementEdits(proposal);
 	const pythonPath = resolveKernelPython();
-	const sysPath = [...(opts.sysPath ?? []), ...toolforgeSrcRoots()];
-	const dryRun = pythonPath
-		? await dryRunSkillEdits(proposal, { pythonPath, ...opts, sysPath })
-		: skippedSkillDryRun(proposal);
+	const dryRun = pythonPath ? await dryRunSkillEdits(proposal, { pythonPath, ...opts }) : skippedSkillDryRun(proposal);
 	return { validEdits: screenValidEdits(proposal, structural, dryRun), dryRun };
 }

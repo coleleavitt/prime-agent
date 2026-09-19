@@ -100,6 +100,7 @@ import {
 	resolveHeartbeatStreamingBehavior,
 	shouldDeferHeartbeatCronJob,
 } from "../../core/cron-jobs.js";
+import type { DreamRunStatus } from "../../core/dream/run-service.js";
 import { ORPHAN_PROCESS_JOURNAL_ENV } from "../../core/orphan-process-journal.js";
 import { shutdownInstalledOtlpExporter } from "../../core/otlp-export.js";
 import { PromptAdmissionCancelledError, waitForPromptAdmission } from "../../core/prompt-admission.js";
@@ -7503,6 +7504,9 @@ export class AgentDaemon {
 			if (message.event.type === "ravo_run_update") {
 				this.broadcastRavoRunUpdate(state, message.event.status);
 			}
+			if (message.event.type === "dream_run_update") {
+				this.broadcastDreamRunUpdate(state, message.event.status);
+			}
 		}
 		this.stampRlmChildActiveSessionId(message);
 		this.observeRosterEvent(state, message);
@@ -7671,6 +7675,18 @@ export class AgentDaemon {
 	private broadcastRavoRunUpdate(state: ActiveSessionState, status: RavoRunStatus): void {
 		this.broadcastGlobal({
 			type: "ravo_run_update",
+			sessionId: state.runtime.session.sessionId,
+			status,
+		});
+	}
+
+	// Live Dream-RSI status is a fleet-level push keyed by session id, mirroring
+	// broadcastRavoRunUpdate: the supervisor relays it to roster subscribers (who
+	// are not attached to the session) and clients without the capability ignore
+	// the unknown message type. Attached clients also receive the session_event.
+	private broadcastDreamRunUpdate(state: ActiveSessionState, status: DreamRunStatus): void {
+		this.broadcastGlobal({
+			type: "dream_run_update",
 			sessionId: state.runtime.session.sessionId,
 			status,
 		});

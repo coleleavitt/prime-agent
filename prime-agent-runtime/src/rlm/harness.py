@@ -208,6 +208,9 @@ class RefinementEvent:
     evidence: str = ""
     outcome: str = ""
     created_at: str = field(default_factory=_now)
+    # Why the host ran the refine (`manual`, `recurrence`, `turn_interval`, ...).
+    # The host filters its prompt listing on it, so a kernel save must keep it.
+    reason: str | None = None
 
 
 _ENTRY_FIELDS = {field.name for field in fields(HarnessEntry)} - {"extra"}
@@ -226,6 +229,14 @@ def _entry_payload(entry: HarnessEntry) -> dict[str, Any]:
     data = asdict(entry)
     extra = data.pop("extra", None)
     return {**extra, **data} if isinstance(extra, dict) and extra else data
+
+
+def _refinement_payload(event: RefinementEvent) -> dict[str, Any]:
+    """Serialize a refinement event, leaving `reason` off the events that have none."""
+    data = asdict(event)
+    if data.get("reason") is None:
+        data.pop("reason", None)
+    return data
 
 
 def _validate_python_skill_reference(reference: dict[str, Any] | None) -> dict[str, Any]:
@@ -384,6 +395,8 @@ class HarnessState:
                         event_data["changes"] = [str(change) for change in changes]
                     elif not isinstance(changes, list):
                         continue
+                    if not isinstance(event_data.get("reason"), str):
+                        event_data.pop("reason", None)
                     self.refinements.append(RefinementEvent(**event_data))
         self._loaded_mtime = mtime
         return self
@@ -408,7 +421,7 @@ class HarnessState:
                 kind: {entry_id: _entry_payload(entry) for entry_id, entry in records.items()}
                 for kind, records in self.entries.items()
             },
-            "refinements": [asdict(event) for event in self.refinements],
+            "refinements": [_refinement_payload(event) for event in self.refinements],
         }
         # Atomic replace on the real file: aliases survive, readers never see a torn
         # file, and a crash mid-write cannot leave a truncated or zero-byte state.
@@ -961,7 +974,7 @@ class HarnessState:
                 kind: {entry_id: _entry_payload(entry) for entry_id, entry in records.items()}
                 for kind, records in self.entries.items()
             },
-            "refinements": [asdict(event) for event in self.refinements],
+            "refinements": [_refinement_payload(event) for event in self.refinements],
         }
 
 

@@ -1,4 +1,5 @@
 import { basename, isAbsolute, resolve } from "node:path";
+import type { DreamRunStatus } from "../../core/dream/run-service.js";
 import type { RavoRunStatus } from "../../core/ravo/run-service.js";
 import { canonicalizePath } from "../../utils/paths.js";
 import type { AgentConnectionHeartbeat, AgentConnectionSavedSessionInfo } from "../agent-connection/index.js";
@@ -38,6 +39,8 @@ export interface UnifiedSessionRecord {
 	heartbeat?: UnifiedSessionHeartbeat;
 	/** Latest live RAVO controller status pushed by the daemon for this session. */
 	ravo?: RavoRunStatus;
+	/** Latest live Dream-RSI run status pushed by the daemon for this session. */
+	dream?: DreamRunStatus;
 }
 
 export interface AgentsViewScopeKey {
@@ -350,6 +353,36 @@ export function formatRavoRunStatusLine(status: RavoRunStatus): string {
 		if (certificate.missed.length > 0) parts.push(`missed: ${certificate.missed.join(",")}`);
 	}
 	return parts.join(" · ");
+}
+
+/**
+ * Attach a live Dream-RSI status to the record whose session id matches. Records
+ * are rebuilt on every reconcile, so the caller re-applies its retained statuses
+ * after each rebuild. Returns the record that received the status, if any.
+ */
+export function attachDreamRunStatus(
+	records: readonly UnifiedSessionRecord[],
+	sessionId: string,
+	status: DreamRunStatus,
+): UnifiedSessionRecord | undefined {
+	const alias = `session:${sessionId}`;
+	const record = records.find(
+		(candidate) => candidate.daemon?.sessionId === sessionId || candidate.identityAliases.includes(alias),
+	);
+	if (!record) return undefined;
+	record.dream = status;
+	return record;
+}
+
+/** One-line Dream-RSI status summary for a row: phase and score while running, stop reason once finished. */
+export function formatDreamRunStatusLine(status: DreamRunStatus): string {
+	if (status.stopReason) return `dream ${status.stopReason}`;
+	if (status.error) return "dream error";
+	const suffix =
+		status.finalPolicyScore !== undefined
+			? ` final ${status.finalPolicyScore.toFixed(4)} improved ${status.improved}`
+			: "";
+	return `dream ${status.phase} it${status.iteration} best ${status.bestNodeScore.toFixed(4)}${suffix}`;
 }
 
 /** Convert a merged row to the existing live-row rendering/action shape. */

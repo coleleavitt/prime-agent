@@ -1,0 +1,9 @@
+- Changed the /refine planner and the auto-refine reviewer to see why an earlier proposal was rejected: its gate decision, the judge's rationale and the criteria it missed, never its scores, with the judge's text stripped of markup and invisible characters, truncated, quoted and marked as untrusted judge output.
+- Added a per-session refinement log under the agent directory (`harness/local-refinements/<session id>.jsonl`) that records every local refinement, applied or rejected, and is removed when the session is deleted, together with the logs of its RLM child sessions.
+- Added up to three recent rejections from other sessions to the planner of a refine queued by a recurring or regressed failure: proposals made for that failure first, then proposals only planned while it was recurring, marked as not targeting it. The planner sees their decision, judge rationale, missed criteria and edit ids, with no proposal text or scores.
+- Changed the refinement history given to planners and to `session_before_refine` extensions to be in planning order, and to include the local refinement log.
+- Changed judge error text to be redacted in refinement history files.
+- Added `cause` to `refinement.rejected` log records, and `refine.rejection_cause`, `refine.history_record` and `refine.related_rejections` span attributes.
+- Fixed a rejected create edit appearing with an empty id in the refinement history.
+- Fixed a gate rejection being recorded as a lost approval, without the judge's rationale, when the harness changed while it was planned.
+- Fixed a global refine reporting failure after it had applied, and /refine failing to plan, when the refinement history file could not be read or written.

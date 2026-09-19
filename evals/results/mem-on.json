@@ -1,0 +1,85 @@
+{
+ "phase": "cold",
+ "startedAt": "2026-09-16T19:39:40.957Z",
+ "tasks": 1,
+ "results": [
+  {
+   "id": "git-checkpoint-preference",
+   "phase": "cold",
+   "invalid": false,
+   "invalidReason": null,
+   "recoveredErrors": 0,
+   "pass": true,
+   "timedOut": false,
+   "wallMs": 19471,
+   "turns": 6,
+   "toolCalls": 5,
+   "tools": {
+    "ipython": 5
+   },
+   "tokensIn": 16,
+   "tokensOut": 1422,
+   "errors": 0,
+   "asks": 0,
+   "events": 230,
+   "stopReason": null,
+   "humanInterventions": 0,
+   "verifyStdout": "PASS: fixed and committed, tree clean (2 commits)",
+   "verifyStderr": "",
+   "agentExit": 0,
+   "rep": 0
+  },
+  {
+   "id": "git-checkpoint-preference",
+   "phase": "cold",
+   "invalid": false,
+   "invalidReason": null,
+   "recoveredErrors": 0,
+   "pass": true,
+   "timedOut": false,
+   "wallMs": 23758,
+   "turns": 5,
+   "toolCalls": 4,
+   "tools": {
+    "ipython": 4
+   },
+   "tokensIn": 14,
+   "tokensOut": 1238,
+   "errors": 0,
+   "asks": 0,
+   "events": 190,
+   "stopReason": null,
+   "humanInterventions": 0,
+   "verifyStdout": "PASS: fixed and committed, tree clean (2 commits)",
+   "verifyStderr": "",
+   "agentExit": 0,
+   "rep": 1
+  },
+  {
+   "id": "git-checkpoint-preference",
+   "phase": "cold",
+   "invalid": false,
+   "invalidReason": null,
+   "recoveredErrors": 0,
+   "pass": true,
+   "timedOut": false,
+   "wallMs": 22942,
+   "turns": 6,
+   "toolCalls": 5,
+   "tools": {
+    "ipython": 5
+   },
+   "tokensIn": 16,
+   "tokensOut": 1314,
+   "errors": 0,
+   "asks": 0,
+   "events": 206,
+   "stopReason": null,
+   "humanInterventions": 0,
+   "verifyStdout": "PASS: fixed and committed, tree clean (2 commits)",
+   "verifyStderr": "",
+   "agentExit": 0,
+   "rep": 2
+  }
+ ]
+}

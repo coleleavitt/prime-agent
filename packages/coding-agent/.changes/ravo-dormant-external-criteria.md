@@ -1,0 +1,1 @@
+- Fixed `/refine` and judge-scored `ravo.run` charging every proposal for persisted criteria they cannot evaluate, such as the `arc:*` opponents an ARC-AGI run adds; those criteria now pass as dormant and keep their weights.

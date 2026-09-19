@@ -22,6 +22,7 @@ import type {
 	AgentHeartbeatManagementAction,
 	AgentHeartbeatUpdateAction,
 } from "../../core/cron-jobs.js";
+import type { DreamRunStatus } from "../../core/dream/run-service.js";
 import type { InputSource } from "../../core/extensions/types.js";
 import type { AcpMcpServerConfig } from "../../core/mcp/acp-mcp-types.js";
 import type { CustomMessage } from "../../core/messages.js";
@@ -85,8 +86,9 @@ export const DAEMON_COMMAND_ENVELOPE_MIN_PROTOCOL_VERSION = 7;
 // Revision 29 adds the capability-gated ravo_run_update push for roster subscribers.
 // Revision 30 adds structured session_recovering failure info for known-but-unaddressable sessions.
 // Revision 31 publishes the last recorded model on saved-session rows.
-export const DAEMON_SCHEMA_REVISION = 31;
-export const DAEMON_SCHEMA_ID = "protocol-7-schema-31-8b4689068818";
+// Revision 32 adds the capability-gated dream_run_update push for roster subscribers.
+export const DAEMON_SCHEMA_REVISION = 32;
+export const DAEMON_SCHEMA_ID = "protocol-7-schema-32-757a3004bda2";
 
 export type DaemonProtocolName = typeof DAEMON_PROTOCOL_NAME;
 export type DaemonProtocolVersion = number;
@@ -141,7 +143,10 @@ export type DaemonServerCapability =
 	| "deferred_session_search_text"
 	// The daemon pushes ravo_run_update (live RAVO controller status keyed by
 	// session id) to roster subscribers. Clients must check before depending on it.
-	| "ravo_run_updates";
+	| "ravo_run_updates"
+	// The daemon pushes dream_run_update (live Dream-RSI run status keyed by
+	// session id) to roster subscribers. Clients must check before depending on it.
+	| "dream_run_updates";
 
 export type DaemonReplayStatus = "complete" | "partial" | "unavailable";
 
@@ -189,6 +194,7 @@ export const DAEMON_DEFAULT_SERVER_CAPABILITIES: readonly DaemonServerCapability
 	"acp_mcp_servers",
 	"deferred_session_search_text",
 	"ravo_run_updates",
+	"dream_run_updates",
 ];
 
 /** Single-use short-lived credential for one direct TUI connection to one worker process incarnation. */
@@ -1176,6 +1182,7 @@ export type DaemonOutbound =
 	| { type: "heartbeats_changed" }
 	| { type: "roster_update"; changed: AgentRosterEntry[]; removed?: string[]; resync?: true }
 	| { type: "ravo_run_update"; sessionId: string; status: RavoRunStatus }
+	| { type: "dream_run_update"; sessionId: string; status: DreamRunStatus }
 	| { type: "session_event"; activeSessionId: string; event: AgentConnectionSessionEvent; meta?: DaemonEventMeta }
 	| { type: "side_question_event"; activeSessionId: string; event: AgentConnectionSideQuestionEvent }
 	| { type: "session_status"; activeSessionId: string; recap?: string; meta?: DaemonEventMeta }
@@ -1260,6 +1267,7 @@ export const DAEMON_OUTBOUND_COMPATIBILITY = {
 	heartbeats_changed: { minProtocol: 7, capability: "heartbeat_catalog" },
 	roster_update: { minProtocol: 7, capability: "agent_roster" },
 	ravo_run_update: { minProtocol: 7, minSchemaRevision: 29, capability: "ravo_run_updates" },
+	dream_run_update: { minProtocol: 7, minSchemaRevision: 32, capability: "dream_run_updates" },
 	session_event: LEGACY_DAEMON_COMMAND,
 	side_question_event: LEGACY_DAEMON_COMMAND,
 	session_status: LEGACY_DAEMON_COMMAND,

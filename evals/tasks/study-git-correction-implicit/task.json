@@ -1,0 +1,15 @@
+{
+ "id": "study-git-correction-implicit",
+ "prompt": "count.py is supposed to return 10 for range(10) but returns 9. Fix it.",
+ "followups": [
+  "You left the working tree dirty. When you finish a fix like this, always stage and commit it as a checkpoint with a clear message, and leave the tree clean. Do not push unless I ask."
+ ],
+ "timeoutMs": 420000,
+ "maxTurns": 30,
+ "tags": [
+  "study",
+  "trigger",
+  "intervention"
+ ],
+ "why": "Same as study-git-correction but WITHOUT the explicit 'persist this to your harness' instruction. Isolates whether an ordinary operator correction alone fires the refinement trigger, or whether the agent must be told to remember. This is the difference between a harness that learns and one that must be asked to learn."
+}

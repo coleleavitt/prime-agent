@@ -18,12 +18,15 @@ import {
 	sealLearningDays,
 	spanFingerprintKey,
 	TURN_SPAN_NAME,
+	writeLearningDay,
 } from "../src/core/learning-index.js";
 import { emptyAssistedRavoState } from "../src/core/ravo/authority.js";
 import type { FailureRecord } from "../src/core/ravo/failure-ledger.js";
 import {
 	countValidRefinementEdits,
+	logRefinementOutcome,
 	RAVO_DEFAULT_CONFIG,
+	type RavoGateReport,
 	type RefinementProposal,
 	ravoEvaluateProposal,
 } from "../src/core/refinement/index.js";
@@ -280,6 +283,61 @@ describe("treated versus untreated cohorts", () => {
 		expect(strict.cohorts.treated.medianDelta).toBeLessThan(-0.5);
 	});
 
+	it("never counts or pivots on a commit that claimed nothing, in raw lines or in days sealed before", () => {
+		const claimless = [500, 1000, 1500].map((turn) =>
+			JSON.stringify({
+				ts: isoAt(turn),
+				level: "info",
+				component: REFINEMENT_LOG_COMPONENT,
+				msg: REFINEMENT_COMMITTED_MSG,
+				proposalId: `legacy-${turn}`,
+				addressed: [],
+				deepScore: 70,
+				missed: 0,
+			}),
+		);
+		const expected = reportFor(treatedIds).report;
+		const { days } = rollUpLearningDays(
+			[writeLog(`${seedLog(treatedIds)}${claimless.join("\n")}\n`)],
+			AFTER_CORPUS_MS,
+		);
+		expect(days.flatMap((day) => day.commits).map((commit) => commit.proposalId)).toEqual(["champion-1"]);
+		const report = buildLearningReport(days, { nowMs: AFTER_CORPUS_MS });
+		expect(report.commits).toBe(1);
+		expect(report.pivotAt).toBe(expected.pivotAt);
+		expect(report.cohorts).toEqual(expected.cohorts);
+		expect(report.pValue).toBe(expected.pValue);
+
+		// A day sealed by an older build still holds the claimless commits.
+		const legacyDays = days.map((day, index) =>
+			index === 2
+				? {
+						...day,
+						commits: claimless.map((raw) => {
+							const line = JSON.parse(raw) as { ts: string; proposalId: string };
+							return { at: line.ts, proposalId: line.proposalId, addressed: [] };
+						}),
+					}
+				: day,
+		);
+		expect(buildLearningReport(legacyDays, { nowMs: AFTER_CORPUS_MS }).pivotAt).toBe(expected.pivotAt);
+		const indexDir = tempDir("learning-legacy-index-");
+		for (const day of legacyDays) writeLearningDay(indexDir, day);
+		const reread = readLearningIndex(indexDir);
+		expect(reread.flatMap((day) => day.commits).map((commit) => commit.proposalId)).toEqual(["champion-1"]);
+		const rereadReport = buildLearningReport(reread, { nowMs: AFTER_CORPUS_MS });
+		expect(rereadReport.commits).toBe(1);
+		expect(rereadReport.pivotAt).toBe(expected.pivotAt);
+
+		// Claimless commits alone are no commits at all.
+		const onlyClaimless = buildLearningReport(
+			legacyDays.map((day, index) => (index === 2 ? day : { ...day, commits: [] })),
+			{ nowMs: AFTER_CORPUS_MS },
+		);
+		expect(onlyClaimless.commits).toBe(0);
+		expect(onlyClaimless.insufficientEvidence).toBe("no refinement.committed record in the index");
+	});
+
 	it("refuses when nothing has ever been committed", () => {
 		const log = seedLog(treatedIds)
 			.split("\n")
@@ -463,13 +521,19 @@ describe("refinement.committed reaches the index", () => {
 		};
 	}
 
-	async function evaluate(judge: Record<string, unknown>): Promise<LogEntry[]> {
+	/**
+	 * Gate the proposal, then report its outcome the way the apply phase does.
+	 * Returns what the gate logged and what the outcome report logged, separately.
+	 */
+	async function evaluate(
+		judge: Record<string, unknown>,
+	): Promise<{ report: RavoGateReport; atGate: LogEntry[]; committed: LogEntry[] }> {
 		const captured: LogEntry[] = [];
 		completeSimpleMock.mockReset();
 		completeSimpleMock.mockResolvedValueOnce(assistantText(JSON.stringify(judge)));
 		setLogSink((entry) => captured.push(entry));
 		try {
-			await ravoEvaluateProposal(proposal, {
+			const report = await ravoEvaluateProposal(proposal, {
 				state: emptyAssistedRavoState(),
 				config: RAVO_DEFAULT_CONFIG,
 				validEdits: countValidRefinementEdits(proposal),
@@ -482,37 +546,52 @@ describe("refinement.committed reaches the index", () => {
 				recurringFailures: [recurring],
 				turn: 7,
 			});
+			const atGate = captured.filter((entry) => entry.component === REFINEMENT_LOG_COMPONENT);
+			logRefinementOutcome({
+				proposalId: "refine_1",
+				decision: report.decision === "commit" && !report.measurable ? "commit_unmeasured" : report.decision,
+				addressed: report.addressedFingerprints,
+				deepScore: report.deepScore,
+				missed: report.missedCriteria.length,
+				claimed: report.addressedFingerprints.length,
+				reason: "manual",
+				scope: "local",
+			});
+			const committed = captured.filter((entry) => entry.msg === REFINEMENT_COMMITTED_MSG);
+			return { report, atGate, committed };
 		} finally {
 			setLogSink(undefined);
 		}
-		return captured.filter((entry) => entry.msg === REFINEMENT_COMMITTED_MSG);
 	}
 
-	it("emits the addressed fingerprints on commit and nothing on rejection", async () => {
-		const committed = await evaluate({
+	it("emits the addressed fingerprints on a measurable commit and nothing on rejection", async () => {
+		const { report, atGate, committed } = await evaluate({
 			verdict: "pass",
 			score: 80,
 			failedCriteria: [],
 			addressedFingerprints: [recurring.fingerprint.id],
 		});
+		// The gate itself logs nothing: apply can still downgrade its commit.
+		expect(atGate).toEqual([]);
+		expect(report.measurable).toBe(true);
 		expect(committed).toHaveLength(1);
 		expect(committed[0]!.addressed).toEqual([recurring.fingerprint.id]);
 		expect(committed[0]!.proposalId).toBe("refine_1");
 		expect(committed[0]!.component).toBe(REFINEMENT_LOG_COMPONENT);
 
 		// An unaddressed recurring failure is charged its opponent weight and rejected.
-		expect(
-			await evaluate({
-				verdict: "pass",
-				score: 80,
-				failedCriteria: ["evidence", "scope"],
-				addressedFingerprints: [],
-			}),
-		).toEqual([]);
+		const rejected = await evaluate({
+			verdict: "pass",
+			score: 80,
+			failedCriteria: ["evidence", "scope"],
+			addressedFingerprints: [],
+		});
+		expect(rejected.atGate).toEqual([]);
+		expect(rejected.committed).toEqual([]);
 	});
 
 	it("rolls the emitted record up as a treated cohort member", async () => {
-		const committed = await evaluate({
+		const { committed } = await evaluate({
 			verdict: "pass",
 			score: 80,
 			failedCriteria: [],

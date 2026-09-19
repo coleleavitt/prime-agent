@@ -4,25 +4,35 @@ import path from "node:path";
 import type { Model } from "@earendil-works/pi-ai";
 import {
 	type JudgeDeepVerdict,
+	logRefinementOutcome,
 	parseJudgeVerdict,
 	RAVO_DEFAULT_CONFIG,
 	RAVO_SEED_CRITERIA,
+	type RefineFinalDecision,
+	type RefinementRejectionCause,
 	ravoFastScreen,
 } from "../refinement/ravo.js";
 import {
 	applyRefinementProposal,
+	carryObservedRecurrences,
 	countValidRefinementEdits,
 	formatHarnessStateForPrompt,
 	type HarnessScope,
 	type HarnessState,
+	loadHarnessState,
 	normalizeRefinementProposal,
 	type RefinementProposal,
+	saveHarnessState,
+	withHarnessStateLockAsync,
+	withoutObservedRecurrences,
 } from "../refinement/refinement.js";
 import { screenRefinementProposal } from "../refinement/skill-dry-run.js";
 import type { RunAgentHandler } from "../run-agent.js";
+import { toolforgeSrcRoots } from "../toolforge/ledger.js";
 import { type ArcRunner, createArcEvaluatorSuite } from "./arc-agi-evaluator.js";
 import { RavoArchive } from "./archive.js";
 import { failureOpponentFingerprint, isFailureOpponentId, normalizeAssistedRavoState } from "./authority.js";
+import { canonicalJson } from "./canonical-json.js";
 import type { BoundedContextView, ContextArchive, ContextAtom, ContextViewLimits } from "./context-view.js";
 import {
 	type ChildCall,
@@ -69,7 +79,9 @@ import {
 	refereeOpponentFingerprint,
 	refereeOpponentId,
 	refereeOpponentPassed,
+	refereeVerdictIsEvidence,
 	replayCaseOf,
+	skillImportsOf,
 } from "./referee.js";
 import { adjudicateFailureClaims } from "./referee-runner.js";
 import {
@@ -91,6 +103,15 @@ import {
  * claim by re-running the recorded replay case. The commit gate applies the proposal
  * to the harness state and persists the stepped reducer state into
  * `HarnessState.ravo`, so lineage and weights continue from Assisted RAVO.
+ * A local run reads and commits into the session store, a global run into the
+ * global store, where the read, apply and save hold the harness state lock.
+ * The commit keeps a regression recorded on the stored lineage meanwhile, and
+ * refuses, stopping the run as `stale_cas`, when anything else in the stored
+ * RAVO state changed since the run read it.
+ * Each evaluated proposal reports its final decision once through
+ * `logRefinementOutcome` with reason `ravo_run`; a commit is logged as
+ * addressing a failure only for claims the judge named and the certificate did
+ * not charge.
  */
 
 export interface RavoRunRequest {
@@ -135,12 +156,39 @@ export interface RavoRunServiceDeps {
 	harnessDir: string;
 	globalHarnessDir?: string;
 	model?: Model<any>;
-	loadState: () => Promise<HarnessState>;
-	saveState: (state: HarnessState) => Promise<void>;
+	/** Read the harness store of `scope`: the session store for a local run, the global store for a global one. */
+	loadState: (scope: HarnessScope) => HarnessState;
+	saveState: (scope: HarnessScope, state: HarnessState) => void;
+	/**
+	 * Run `fn` holding the cross-process lock of the `scope` store. The commit
+	 * gate reads, applies and saves inside one synchronous `fn`, so nothing
+	 * another writer saves lands between its read and its write.
+	 */
+	withStateLock: <T>(scope: HarnessScope, fn: () => T) => T | Promise<T>;
 	onUpdate: (status: RavoRunStatus) => void;
 	now?: () => number;
 	/** Runs the ARC-AGI-3 harness for `evaluator: { kind: "arc-agi" }`; tests inject a fake. Defaults to `uv run main.py`. */
 	arcRunner?: ArcRunner;
+}
+
+/**
+ * The harness stores a RAVO run reads and commits into: `localDir` for a local
+ * run, `globalDir` for a global one. Every session's ledger flush writes the
+ * global store under the harness state lock, so a global commit takes it too;
+ * the session store is left unlocked, as `/refine` leaves it.
+ */
+export function ravoRunHarnessStores(
+	localDir: string,
+	globalDir: string,
+): Pick<RavoRunServiceDeps, "loadState" | "saveState" | "withStateLock"> {
+	const dirOf = (scope: HarnessScope): string => (scope === "global" ? globalDir : localDir);
+	return {
+		loadState: (scope) => loadHarnessState(dirOf(scope), scope),
+		saveState: (scope, state) => {
+			saveHarnessState(dirOf(scope), state);
+		},
+		withStateLock: (scope, fn) => (scope === "global" ? withHarnessStateLockAsync(globalDir, fn) : fn()),
+	};
 }
 
 /** JSON object produced by the implement/repair children: a RefinementProposal plus `addressedFingerprints`. */
@@ -244,15 +292,19 @@ export class RavoRunService {
 		const runsDir = path.join(baseDir, "ravo", "runs");
 		const checkpointPath = path.join(runsDir, `${runId}.json`);
 		await mkdir(runsDir, { recursive: true });
-		const state = await deps.loadState();
+		const state = deps.loadState(scope);
 		const recurring = recurringFailures(state.failures ?? emptyFailureLedger());
 		const activeFailureIds = [...new Set(recurring.map((record) => failureOpponentId(record.fingerprint)))];
-		// A fingerprint that carries an executable reproduction gets a paired
-		// referee opponent, so a claim the replay case refutes misses two
-		// criteria and cannot slide through on epsilon.
+		// A fingerprint with a verified reproduction gets a paired referee
+		// opponent, so a claim the replay case refutes misses two criteria and
+		// cannot slide through on epsilon. The controller's pool is fixed for the
+		// run, so every candidate is added here; the commit gate keeps only the
+		// ones the committed proposal's verdicts actually adjudicated.
 		const refereeable = recurring.filter((record) => replayCaseOf(record) !== undefined);
 		const refereeIds = [...new Set(refereeable.map((record) => refereeOpponentId(record.fingerprint)))];
 		const baseRavo = normalizeAssistedRavoState(state.ravo);
+		const ravoBaseline = (ravo: RavoState<JsonValue>): string => canonicalJson(withoutObservedRecurrences(ravo));
+		const baseRavoBaseline = ravoBaseline(baseRavo);
 		const config = { ...RAVO_DEFAULT_CONFIG };
 		const arc = request.evaluator !== undefined && request.evaluator !== "judge" ? request.evaluator : undefined;
 		// The only place the service names a benchmark: everything past this
@@ -321,7 +373,33 @@ export class RavoRunService {
 				: structured(proposalSpec("repair")),
 		);
 
-		const judge = memoizedJudge(structured(judgeSpec(recurring, state, scopeOf("judge"))));
+		const recurringIds = recurring.map((record) => record.fingerprint.id);
+		const judgedClaims = new Map<string, string[]>();
+		const judge = memoizedJudge(structured(judgeSpec(recurring, state, scopeOf("judge"))), (proposal, verdict) => {
+			judgedClaims.set(
+				proposal.id,
+				judgedRavoRunClaims(proposal.artifact, recurringIds, verdict.addressedFingerprints),
+			);
+		});
+		const logOutcome = (
+			proposalId: string,
+			decision: RefineFinalDecision,
+			certificate: RavoGateCertificate,
+			cause: RefinementRejectionCause = ravoRunRejectionCause(decision, certificate),
+		): void => {
+			const claimed = judgedClaims.get(proposalId) ?? [];
+			logRefinementOutcome({
+				proposalId,
+				decision,
+				addressed: decision === "commit" ? creditedRavoRunClaims(claimed, certificate) : claimed,
+				deepScore: certificate.deep.score ?? 0,
+				missed: certificate.missedCriterionIds.length,
+				claimed: claimed.length,
+				reason: "ravo_run",
+				scope,
+				cause,
+			});
+		};
 		const hygieneIds = RAVO_SEED_CRITERIA.map((criterion) => criterion.id);
 		const hygieneOpponents: EvaluationAdapter<JsonValue>[] = suite
 			? [...suite.opponents, ...hygieneIds.map(notApplicableOpponent)]
@@ -369,11 +447,12 @@ export class RavoRunService {
 								status: "completed",
 								value: {
 									status: passed ? "pass" : "fail",
-									detail: verdict
-										? `${fingerprint}: ${verdict.detail}`
-										: claimed
-											? `proposal claims to address ${fingerprint}`
-											: `recurring failure ${fingerprint} is not addressed (set addressedFingerprints)`,
+									detail:
+										verdict && verdict.status !== "not_applicable"
+											? `${fingerprint}: ${verdict.detail}`
+											: claimed
+												? `proposal claims to address ${fingerprint}`
+												: `recurring failure ${fingerprint} is not addressed (set addressedFingerprints)`,
 								},
 								tokens: 0,
 							};
@@ -403,6 +482,12 @@ export class RavoRunService {
 					};
 				}),
 		];
+		// A persisted criterion this run has no evaluator for (an `arc:*` opponent
+		// on a judge run) would otherwise abstain and be charged on every proposal.
+		const observed = new Set(opponents.map((adapter) => adapter.criterionId ?? adapter.id));
+		for (const criterion of initialState.opponents.criteria) {
+			if (!observed.has(criterion.id)) opponents.push(dormantOpponent(criterion.id));
+		}
 		const fast: EvaluationAdapter<JsonValue> = suite
 			? suite.fast
 			: {
@@ -488,35 +573,70 @@ export class RavoRunService {
 					config,
 				);
 				if (!stepped.certificate.committed) {
+					logOutcome(proposal.id, certificateSummary(stepped.certificate).status, stepped.certificate);
 					return {
 						accepted: false,
 						detail: `reducer replay rejected (${stepped.certificate.rejection ?? "unknown"})`,
 					};
 				}
-				const current = await deps.loadState();
-				const result = applyRefinementProposal(current, refinement, {
-					id: proposal.id,
-					scope,
-					baselineState: state,
+				// Pool membership for a referee opponent follows the verdict, as in
+				// the assisted gate: one this run added whose verdict a replay did not
+				// adjudicate passed without evidence and is not persisted.
+				const verdicts = await referee(proposal, signal);
+				const persistedIds = new Set(baseRavo.opponents.criteria.map((criterion) => criterion.id));
+				const adjudicatedPool = {
+					criteria: stepped.state.opponents.criteria.filter(
+						(criterion) =>
+							!isRefereeOpponentId(criterion.id) ||
+							persistedIds.has(criterion.id) ||
+							refereeVerdictIsEvidence(verdicts.get(refereeOpponentFingerprint(criterion.id) ?? "")),
+					),
+				};
+				const claimedFingerprints = addressedFingerprintsOf(proposal.artifact).filter((fingerprint) =>
+					activeFailureIds.includes(failureOpponentId(fingerprint)),
+				);
+				// No await between the read and the save: a write that lands in between would be overwritten.
+				const applied = await deps.withStateLock(scope, () => {
+					const current = deps.loadState(scope);
+					// The certificate was earned against the lineage and weights read at run
+					// start; another refinement's commit or evaluation since then voids it.
+					if (ravoBaseline(normalizeAssistedRavoState(current.ravo)) !== baseRavoBaseline) {
+						return { stale: true, failed: [], edits: 0 };
+					}
+					const result = applyRefinementProposal(current, refinement, {
+						id: proposal.id,
+						scope,
+						baselineState: state,
+						reason: "ravo_run",
+					});
+					const failed = result.appliedEdits.filter((edit) => !edit.applied);
+					if (failed.length > 0) return { stale: false, failed, edits: 0 };
+					current.ravo = carryObservedRecurrences(
+						ravoMarkProvisional({ ...stepped.state, opponents: adjudicatedPool }, proposal.id, {
+							claimedFingerprints,
+						}),
+						current.ravo,
+					);
+					deps.saveState(scope, current);
+					return { stale: false, failed, edits: result.appliedEdits.length };
 				});
-				const failed = result.appliedEdits.filter((edit) => !edit.applied);
-				if (failed.length > 0) {
+				if (applied.stale) {
+					logOutcome(proposal.id, "reject_deep", stepped.certificate, "baseline_changed");
+					return { accepted: false, stale: true, detail: "the stored RAVO state changed during the run" };
+				}
+				if (applied.failed.length > 0) {
+					logOutcome(proposal.id, "partial", stepped.certificate);
 					return {
 						accepted: false,
-						detail: failed
+						detail: applied.failed
 							.map((edit) => `${edit.action} ${edit.kind}:${edit.id}: ${edit.error ?? "not applied"}`)
 							.join("; "),
 					};
 				}
-				if (suite) await suite.persistCommitted(baseDir, runId, proposal.artifact);
-				current.ravo = ravoMarkProvisional(stepped.state, proposal.id, {
-					claimedFingerprints: addressedFingerprintsOf(proposal.artifact).filter((fingerprint) =>
-						activeFailureIds.includes(failureOpponentId(fingerprint)),
-					),
-				});
-				await deps.saveState(current);
 				mirror = stepped.state;
-				return { accepted: true, detail: `applied ${result.appliedEdits.length} edits` };
+				logOutcome(proposal.id, "commit", stepped.certificate);
+				if (suite) await suite.persistCommitted(baseDir, runId, proposal.artifact);
+				return { accepted: true, detail: `applied ${applied.edits} edits` };
 			},
 			maxRounds: request.maxRounds ?? RAVO_RUN_DEFAULTS.maxRounds,
 			maxRepairs: request.maxRepairs ?? RAVO_RUN_DEFAULTS.maxRepairs,
@@ -533,6 +653,7 @@ export class RavoRunService {
 						...mirror,
 						evaluatedProposalIds: [...mirror.evaluatedProposalIds, event.proposalId],
 					};
+					logOutcome(event.proposalId, certificateSummary(event.certificate).status, event.certificate);
 				}
 				if (event.type === "stopped") {
 					this.#update({ lastEvent: event }, false);
@@ -656,7 +777,7 @@ function buildContextArchive(
 			kind: "constraint",
 			text: request.global
 				? "Scope: global. Only stable cross-session lessons, durable user preferences, reusable skills/subagents, or project-qualified facts."
-				: "Scope: local. Session progress, temporary blockers, and coordination facts for this session only.",
+				: "Scope: local. Session progress and coordination facts for this session only. Record a transient condition (an open blocker, a pending rename, a service not yet registered) only together with how to re-check it, and update or delete it once it changes.",
 		},
 		{
 			id: "harness-overview",
@@ -777,7 +898,7 @@ function proposalPrompt(
 
 const JUDGE_HEADER = `# RAVO judge
 You are the RAVO deep evaluator for Prime Agent's /refine subsystem. Score a proposed continual-harness refinement against the evidence. Judge the QUALITY OF THE RESULTING HARNESS STATE, not prose style.
-Each criterion below is an opponent; list the ids the proposal fails in "failedCriteria". A recurring failure counts as addressed only if the edits would plausibly prevent that exact failure from recurring; never list a fingerprint the proposal merely mentions. A fingerprint marked replay=verified is re-executed after you answer, so a claim on one whose failure has not actually stopped loses the gate.
+Each criterion below is an opponent; list the ids the proposal fails in "failedCriteria". A recurring failure counts as addressed only if the edits would plausibly prevent that exact failure from recurring; never list a fingerprint the proposal merely mentions, and never one whose failure is outside the harness's control (a provider outage, a user denial, a flaky network). A fingerprint marked replay=verified is re-executed after you answer when a skill the proposal writes imports the module its replay case probes, so a claim on one whose failure has not actually stopped loses the gate.
 "verdict" is your decision on the deep gate: "pass" if this candidate is at least as good a harness state as the current champion, "fail" if it is worse, "abstain" if the evidence given cannot decide. A non-pass verdict rejects the candidate whatever it scored.`;
 
 function judgeSpec(
@@ -874,9 +995,52 @@ export function addressedFingerprintsOf(artifact: JsonValue): string[] {
 	return stringList(objectRecord(artifact).addressedFingerprints);
 }
 
+/** Fingerprint ids a ravo.run proposal is logged as claiming: claimed by the proposal, recurring in this run's ledger, and named by the judge. */
+export function judgedRavoRunClaims(
+	artifact: JsonValue,
+	recurringFingerprintIds: readonly string[],
+	judgeAddressed: readonly string[],
+): string[] {
+	const recurring = new Set(recurringFingerprintIds);
+	// The judge sees recurring failures only as `failure:<fp>`.
+	const judged = new Set(judgeAddressed.map((id) => failureOpponentFingerprint(id) ?? id));
+	return [...new Set(addressedFingerprintsOf(artifact))]
+		.filter((id) => recurring.has(id) && judged.has(id))
+		.sort((left, right) => left.localeCompare(right));
+}
+
+/** The claims a certificate credited: none whose failure or referee criterion it counted as missed. */
+export function creditedRavoRunClaims(claimed: readonly string[], certificate: RavoGateCertificate): string[] {
+	const missed = new Set(certificate.missedCriterionIds);
+	return claimed.filter((id) => !missed.has(failureOpponentId(id)) && !missed.has(refereeOpponentId(id)));
+}
+
 function summaryOf(artifact: JsonValue): string {
 	const summary = objectRecord(artifact).summary;
 	return typeof summary === "string" ? summary : "(no summary)";
+}
+
+/** What decided a rejected ravo.run proposal: the screen, a deep evaluator that never answered, or the gate. */
+function ravoRunRejectionCause(
+	decision: RefineFinalDecision,
+	certificate: RavoGateCertificate,
+): RefinementRejectionCause {
+	if (decision === "reject_screen") return "screen";
+	return certificate.deep.status === "error" ? "judge_unavailable" : "gate";
+}
+
+/** A pool criterion no evaluator in this run observes passes and keeps its weight. */
+function dormantOpponent(criterionId: string): EvaluationAdapter<JsonValue> {
+	return {
+		id: `opponent:${criterionId}`,
+		kind: "opponent",
+		criterionId,
+		evaluate: async () => ({
+			status: "completed",
+			value: { status: "pass", detail: "dormant: not evaluated by this run" },
+			tokens: 0,
+		}),
+	};
 }
 
 /** Hygiene criteria judge harness prose; an external candidate has none, so they pass vacuously and keep their weights. */
@@ -895,8 +1059,10 @@ function notApplicableOpponent(criterionId: string): EvaluationAdapter<JsonValue
 
 /**
  * One referee pass per proposal, shared by the paired `failure:<fp>` and
- * `referee:<fp>` opponents: the replay cases are re-executed once and both
- * criteria read the same verdicts. Subprocesses cost no tokens.
+ * `referee:<fp>` opponents and the commit gate: the replay cases are
+ * re-executed once and every reader sees the same verdicts. Only cases probing
+ * a module a skill of the proposal imports are replayed, with the toolforge
+ * roots on the path. Subprocesses cost no tokens.
  */
 function memoizedReferee(
 	records: readonly FailureRecord[],
@@ -905,18 +1071,24 @@ function memoizedReferee(
 	return (proposal, signal) => {
 		let shared = pending.get(proposal.id);
 		if (!shared) {
-			shared = adjudicateFailureClaims(records, addressedFingerprintsOf(proposal.artifact), { signal }).then(
-				(verdicts) => new Map(verdicts.map((verdict) => [verdict.fingerprintId, verdict])),
-			);
+			shared = adjudicateFailureClaims(records, addressedFingerprintsOf(proposal.artifact), {
+				signal,
+				skillImports: skillImportsOf(proposalOf(proposal.artifact).edits),
+				sysPath: toolforgeSrcRoots(),
+			}).then((verdicts) => new Map(verdicts.map((verdict) => [verdict.fingerprintId, verdict])));
 			pending.set(proposal.id, shared);
 		}
 		return shared;
 	};
 }
 
-/** One judge call per proposal, shared by the deep gate and the hygiene opponents. Tokens are reported once. */
+/**
+ * One judge call per proposal, shared by the deep gate and the hygiene opponents. Tokens are reported once.
+ * `onCompleted` sees each completed verdict before any reader of the shared call resumes.
+ */
 function memoizedJudge(
 	call: ChildCall<JudgeInput, JudgeVerdict>,
+	onCompleted?: (proposal: ControllerProposal<JsonValue>, verdict: JudgeVerdict) => void,
 ): (
 	proposal: ControllerProposal<JsonValue>,
 	context: BoundedContextView,
@@ -926,12 +1098,19 @@ function memoizedJudge(
 	return async (proposal, context, options) => {
 		let shared = pending.get(proposal.id);
 		if (!shared) {
-			shared = call({ proposal, context }, options).then(
-				(result): SettledChildResult<JudgeVerdict> =>
-					result.status === "deferred"
-						? { status: "error", tokens: 0, error: "judge returned a deferred result" }
-						: result,
-			);
+			shared = call({ proposal, context }, options).then((result): SettledChildResult<JudgeVerdict> => {
+				if (result.status === "deferred") {
+					return { status: "error", tokens: 0, error: "judge returned a deferred result" };
+				}
+				if (result.status === "completed") {
+					try {
+						onCompleted?.(proposal, result.value);
+					} catch {
+						// Recording a claim never decides the gate.
+					}
+				}
+				return result;
+			});
 			pending.set(proposal.id, shared);
 			return shared;
 		}

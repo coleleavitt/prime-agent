@@ -91,7 +91,23 @@ runtime keeps serving. Closing stdin is equivalent to `shutdown`.
   adds `saved`, `skipped`, `pruned`, `bytes`; a restore `done` adds `restored`,
   `failed`; a `list_names` `done` adds `names`; a failed snapshot/restore adds
   `reason`. Restoring a missing file reports `status:"ok"` with empty
-  `restored`/`failed` lists and `reason:"snapshot not found"`.
+  `restored`/`failed` lists and `reason:"snapshot not found"`. An `execute`
+  `done` may add `bashCommands` (see below).
+
+`bashCommands` is optional and additive, so the protocol version stays `4` and
+a host that predates it ignores it. It is present only on an `execute` `done`,
+only when at least one `bash()` command started in the cell's context (the cell
+or a task it spawned) finished while the cell body was still running, and it is
+never sent empty. Each entry is
+`{"command":str,"exitCode":int,"startedAt":str,"endedAt":str,"commandTruncated"?:true}`:
+`command` is secret-redacted and cut at 300 characters, `commandTruncated` marks
+a cut (the text then names the command but is not what ran), and the timestamps
+are ISO 8601 UTC. Entries are in completion order, and only the newest 32 are
+kept. A command still running when the body ends is reported on no frame. The
+host (`parseKernelBashCommands` in `core/kernel/repl-manager.ts`) keeps the
+well-formed entries and exposes `command`, `exitCode` and `commandTruncated` on
+the `ipython` tool result's `details.bashCommands`, where Workspace Recall reads
+build claims from them.
 
 Before a cell's `done`, the runtime drains both channels: tagged Python-level
 writes ship synchronously from the writing thread, and the fd pipes are fenced

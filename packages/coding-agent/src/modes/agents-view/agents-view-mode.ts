@@ -15,6 +15,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { APP_TITLE, appendRotatingLog, getAgentDir, getClientErrorLogPath, VERSION } from "../../config.js";
 import type { AgentSessionRuntimeConfig } from "../../core/agent-session-config.js";
+import type { DreamRunStatus } from "../../core/dream/run-service.js";
 import { KeybindingsManager } from "../../core/keybindings.js";
 import type { RavoRunStatus } from "../../core/ravo/run-service.js";
 import { SessionManager } from "../../core/session-manager.js";
@@ -75,6 +76,7 @@ import {
 	type AgentsViewScopeKey,
 	type AgentsViewSection,
 	type AgentsViewSelectionKey,
+	attachDreamRunStatus,
 	attachRavoRunStatus,
 	attachUnifiedSessionSearchCorpus,
 	buildAgentsViewRows,
@@ -83,6 +85,7 @@ import {
 	createUnattachableChildOpenResult,
 	filterEmptyAgentsViewSessions,
 	filterUnifiedSessionsBySearchQuery,
+	formatDreamRunStatusLine,
 	formatHeartbeatBadge,
 	formatRavoRunStatusLine,
 	getAgentsViewSelectionKey,
@@ -184,6 +187,8 @@ export type AgentsViewPersistentState = {
 	heartbeats?: AgentConnectionHeartbeat[];
 	/** Latest live RAVO status per session id, valid for the current daemon connection. */
 	ravoStatusBySessionId?: Map<string, RavoRunStatus>;
+	/** Latest live Dream-RSI status per session id, valid for the current daemon connection. */
+	dreamStatusBySessionId?: Map<string, DreamRunStatus>;
 };
 
 type PromptCommand = Extract<DaemonCommand, { type: "prompt" }>;
@@ -450,6 +455,7 @@ export async function runAgentsViewMode(options: AgentsViewModeOptions): Promise
 		persistentState.rosterStore = undefined;
 		persistentState.rosterClient = undefined;
 		persistentState.ravoStatusBySessionId = undefined;
+		persistentState.dreamStatusBySessionId = undefined;
 	}
 }
 
@@ -659,6 +665,14 @@ function attachRavoRunStatuses(
 ): void {
 	if (!statuses) return;
 	for (const [sessionId, status] of statuses) attachRavoRunStatus(records, sessionId, status);
+}
+
+function attachDreamRunStatuses(
+	records: UnifiedSessionRecord[],
+	statuses: Map<string, DreamRunStatus> | undefined,
+): void {
+	if (!statuses) return;
+	for (const [sessionId, status] of statuses) attachDreamRunStatus(records, sessionId, status);
 }
 
 export class AgentsViewMode implements Component, Focusable {
@@ -887,6 +901,8 @@ export class AgentsViewMode implements Component, Focusable {
 			// capability set is not known yet when this listener is installed.
 			if (message.type === "ravo_run_update" && client.supportsServerCapability("ravo_run_updates"))
 				this.onRavoRunUpdate(message.sessionId, message.status);
+			if (message.type === "dream_run_update" && client.supportsServerCapability("dream_run_updates"))
+				this.onDreamRunUpdate(message.sessionId, message.status);
 		});
 		this.persistentState.rosterStore ??= new AgentsViewRosterStore();
 		this.rosterStore = this.persistentState.rosterStore;
@@ -2203,6 +2219,17 @@ export class AgentsViewMode implements Component, Focusable {
 		if (this.unifiedIndex.byKey.has(`session:${sessionId}`)) this.reconcileCatalogs();
 	}
 
+	private onDreamRunUpdate(sessionId: string, status: DreamRunStatus): void {
+		if (this.stopped) return;
+		this.persistentState.dreamStatusBySessionId ??= new Map();
+		const statuses = this.persistentState.dreamStatusBySessionId;
+		const previous = statuses.get(sessionId);
+		if (previous && previous.updatedAt > status.updatedAt) return;
+		statuses.set(sessionId, status);
+		// reconcileCatalogs rebuilds the records and re-attaches every retained status.
+		if (this.unifiedIndex.byKey.has(`session:${sessionId}`)) this.reconcileCatalogs();
+	}
+
 	private refreshSavedSessionsIfLoaded(): void {
 		if (this.persistentState.savedCatalogLoaded) void this.refreshSavedSessions({ preserveStatusOnError: true });
 	}
@@ -2226,6 +2253,7 @@ export class AgentsViewMode implements Component, Focusable {
 		this.lastVisibleSummaries = this.withPendingDeleteSession(visibleSessions);
 		this.unifiedRecords = reconcileUnifiedSessions(this.lastVisibleSummaries, this.savedSessions, this.heartbeats);
 		attachRavoRunStatuses(this.unifiedRecords, this.persistentState.ravoStatusBySessionId);
+		attachDreamRunStatuses(this.unifiedRecords, this.persistentState.dreamStatusBySessionId);
 		this.unifiedIndex = buildUnifiedSessionIndex(this.unifiedRecords);
 		// Reconcile builds fresh records, so previously fetched corpora must be reattached.
 		if (this.savedSearchCorpus.size > 0) {
@@ -2534,8 +2562,11 @@ export class AgentsViewMode implements Component, Focusable {
 				const heartbeatsRefreshed = await this.refreshHeartbeats({ duringReconnect: true });
 				if (!heartbeatsRefreshed) throw new Error("Heartbeat catalog did not refresh during reconnect");
 				const sessions = this.rosterStore.summaries();
-				// A reconnected daemon may have restarted; stale RAVO statuses are re-pushed by live runs.
-				if (this.persistentState) this.persistentState.ravoStatusBySessionId = undefined;
+				// A reconnected daemon may have restarted; stale RAVO/Dream statuses are re-pushed by live runs.
+				if (this.persistentState) {
+					this.persistentState.ravoStatusBySessionId = undefined;
+					this.persistentState.dreamStatusBySessionId = undefined;
+				}
 				this.daemonShutdownReceived = false;
 				this.reconnectTimedOut = false;
 				this.setStatusMessage("Daemon reconnected", { render: false });
@@ -2590,6 +2621,8 @@ export class AgentsViewMode implements Component, Focusable {
 				displayItems.push({ type: "row", row });
 				const ravo = row.kind === "agent" ? row.record?.ravo : undefined;
 				if (ravo) displayItems.push({ type: "ravo", row, status: ravo });
+				const dream = row.kind === "agent" ? row.record?.dream : undefined;
+				if (dream) displayItems.push({ type: "dream", row, status: dream });
 			}
 		}
 		if (displayItems.length === 0) {
@@ -2619,6 +2652,9 @@ export class AgentsViewMode implements Component, Focusable {
 			}
 			if (item.type === "ravo") {
 				return this.renderRavoRow(item.row, item.status, width);
+			}
+			if (item.type === "dream") {
+				return this.renderDreamRow(item.row, item.status, width);
 			}
 			return this.renderRow(item.row, width, layout);
 		});
@@ -2677,6 +2713,13 @@ export class AgentsViewMode implements Component, Focusable {
 	private renderRavoRow(row: AgentsViewRow, status: RavoRunStatus, width: number): string {
 		const indent = "  ".repeat(row.depth + 1);
 		const line = theme.fg("dim", formatRavoRunStatusLine(status));
+		return padLine(truncateToWidth(`${indent}${line}`, width, ""), width);
+	}
+
+	// One dim detail line under an agent row while the daemon reports a live Dream-RSI run for it.
+	private renderDreamRow(row: AgentsViewRow, status: DreamRunStatus, width: number): string {
+		const indent = "  ".repeat(row.depth + 1);
+		const line = theme.fg("dim", formatDreamRunStatusLine(status));
 		return padLine(truncateToWidth(`${indent}${line}`, width, ""), width);
 	}
 
@@ -2846,7 +2889,8 @@ type DisplayItem =
 	| { type: "spacer" }
 	| { type: "heading"; section: AgentsViewSection }
 	| { type: "row"; row: AgentsViewRow }
-	| { type: "ravo"; row: AgentsViewRow; status: RavoRunStatus };
+	| { type: "ravo"; row: AgentsViewRow; status: RavoRunStatus }
+	| { type: "dream"; row: AgentsViewRow; status: DreamRunStatus };
 
 // Nested rows (subagent summaries and expanded subagents) always render in
 // their top-level agent's section block, regardless of their own section.

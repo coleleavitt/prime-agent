@@ -195,3 +195,122 @@ mechanism is a designed no-op for the 25.5% of sessions that start in `/tmp`.
 *with* the relevant memory rendered every turn. Week-1 instrumentation must count how often a session that
 received a block still issues a workspace-shape cell in its first 10 cells. If that does not fall, the
 mechanism failed.
+
+**As built, and where it diverges from row 8** (uncommitted on `perf/session-catalog-resume`, 2026-09-16):
+
+- **Digest.** sha256 truncated to 128 bits, not blake2b-128: Node's crypto has no 128-bit blake2b. The mark
+  names it (`digestAlgorithm: "sha256-128"`) rather than claiming an algorithm it does not use.
+- **Trigger.** The mark is written on `agent_end`, not `turn_end`, under a `proper-lockfile` lock with the
+  workspace captured inside the lock, then temp file and rename.
+- **Mark.** `<agentDir>/recall/<basename>.<sha256(repoRoot)[:16]>.json`, keyed by the realpath of the git
+  toplevel. Beyond the row's fields it carries `schema`, `digestAlgorithm`, `repoRoot`, `writtenAt`,
+  `absentSkipWorktree` and `dirtyOverflow`. `absentSkipWorktree` names the skip-worktree entries missing on disk
+  (a sparse checkout's excluded paths) with a count and a digest of the names, and is part of the workspace
+  digest, so `git sparse-checkout set`, `add` or `disable`, or removing a skip-worktree file, expires a claim and
+  lists the paths that appeared or disappeared as changed. `dirtyOverflow` counts paths that needed a digest and
+  got none (dirty paths past the first 200, or every skip-worktree and assume-unchanged path not already dirty,
+  once there are more than 100 of those or more than 1000 skip-worktree entries), and the absent entries past
+  100, which the mark keeps only as a count and digest. A snapshot with overflow is not fully verifiable, so no
+  claim is `CURRENT` against it. A mark written before `absentSkipWorktree` existed leaves which paths were
+  absent unknown: no claim is `CURRENT` against it, and the changed and unchanged paths are not reported whole.
+- **Claims have a production source, gated on the runtime.** A claim is a `bash()` build or test command
+  (`isBuildClaimCommand`: an allowlist, `&&` chains and `cd` allowed, pipes, `||`, `;`, backgrounding and
+  substitutions refused) that exited 0 inside an `ipython` cell whose workspace digest was fully verifiable and
+  identical before and after the cell. The commands come from a new optional `bashCommands` field on the
+  kernel's `done` frame (`repl.py`, `bash.py`, `repl-manager.ts`, `tools/ipython.ts`), so the file list grew by
+  `recall/{claims,store}.ts`, those four, and `main.ts`. A kernel still running the committed runtime sends no
+  `bashCommands` and records no claim; the kernel venv has to be re-synced and live kernels restarted first.
+  A claim is `CURRENT` exactly when the current workspace digest equals `digestAtClaim` and the snapshot is
+  fully verifiable. The row's "no `agent-session.ts` change" held.
+- **Bounded cost.** Every git call has a 3 s timeout; each recall step on the tool path gives up after 1 s, and a
+  missed deadline skips that process's tool-path recall for the repo for 60 s. A git timeout skips the repo for
+  10 minutes in every process sharing the agent dir (`<repo-key>.skip.json`). RLM children, detected by header
+  depth, parent session or `sub-xxxxxxxx` session dir, write no mark and get no block, and `main.ts` leaves the
+  extension out of child runtimes. `PRIME_AGENT_WORKSPACE_RECALL=0` turns it off.
+- **Spans.** `recall.mark` (detached root carrying `trigger.trace_id`), `recall.witness` and `recall.digest`
+  (per build-shaped cell), not `recall.witness` alone.
+- **Exit test (c)** is skipped when the suite runs as root, where `chmod 000` does not deny a read.
+- **Not built:** the week-1 count above. Until it exists the caveat's falsification test cannot be read.
+
+---
+
+## 9. Amendment — five changes on rows 3, 6 and 7
+
+Built 2026-09-16, re-read against source 2026-09-18, still uncommitted on `perf/session-catalog-resume`, so every
+claim below is against the working tree and not a commit. Two close open rows, one hardens row 3, and two are defects
+found while closing the others. A-E are the five implementation lanes, kept as labels because the changelog fragments
+and the handoff notes use them.
+
+- **A — the trust debit can finally fire (row 6).** Row 6 shipped scores and dormancy but nothing that debited:
+  `settleHarnessTrust` had one caller and was handed no referee verdicts, so every window closed `clean` with `+5`
+  and trust was a one-way ratchet. A commit now records, per skill entry, the imports its edit wrote
+  (`skillImports` on the window). When a fingerprint that commit claimed recurs inside the window, and the
+  recurrence's own verified replay case probes one of those imports, the referee re-runs off the turn path under a
+  detached `harness.trust.adjudicate` → `ravo.referee` → `ravo.replay_case` root. `upheld` charges `-15` once to
+  that skill entry and faults the window; a recurrence with no upheld verdict closes it `contested` with no credit;
+  no recurrence still closes `clean`. Windows settle at every ledger flush and at refine apply
+  (`refinement/harness-trust.ts`, new `refinement/trust-adjudication.ts`). Row 6's exit test — 50 → 35 → 20, the
+  entry gone from the rendered prompt at 20 and still readable — passes in `test/harness-trust.test.ts`.
+  **Limits, by construction:** only a `skill` entry is ever debited (memory, prompt and subagent entries can lose
+  the credit but never take the charge); attribution requires the skill's imports to be unchanged since the commit,
+  so a later rewrite closes that window unattributed; and the whole mechanism is gated on the global ledger, so
+  `PRIME_AGENT_GLOBAL_LEDGER=0` restores the ratchet.
+- **B — a `ravo.run` commit now reaches the learning index (row 7), and a global run writes the global store.**
+  Row 7's cohort split keys on the `addressed` list of a `refinement.committed` line and a `ravo.run` wrote none, so
+  every proposal a run evaluated was invisible to `prime-agent learning`. Each evaluated proposal now reports once
+  through `logRefinementOutcome` with `reason: "ravo_run"`, and `learning-index.ts` does not filter on reason, so
+  those commits join the treated cohort. `addressed` is deliberately narrower than the proposal's own claim: only
+  fingerprints the judge also named (`<fp>` or `failure:<fp>`) and the certificate did not charge, so a self-claim
+  alone logs `applied_unmeasured`, and an `arc_agi` run — which has no judge — never logs `refinement.committed`.
+  Found while doing it: `ravo.run(global_=True)` read, gated against and committed into the *session* store while
+  stamping its edits `global`, so a global run was judged against the wrong lineage and the wrong failure ledger.
+  It now routes through `ravoRunHarnessStores(localDir, globalDir)` and does its read-apply-save in one synchronous
+  section under `withHarnessStateLock`.
+- **C — the ledger stores only probes the referee would itself run (row 3).** Row 3's replay case was one field of
+  open-ended source read back from a file and executed. Two probe kinds now survive, `import X` and
+  `importlib.metadata.version("d")`; a stored case of any retired kind (a module attribute, `from X import n`, an
+  executable), or with a denylisted or private module path, or whose source does not re-render exactly from the
+  probe it parses to, is dropped wherever the ledger builds a case list, and is never run, listed, made an opponent
+  or counted as evidence. A record keeps up to 8 distinct cases in `replayCases` and folds a legacy single
+  `replayCase` in on load.
+- **D — a rejection made on evidence the proposer never saw no longer spends the round.** Not in any row. Planning
+  takes a model call and the session keeps working meanwhile, so the judge could reject on messages the proposer
+  never had. The drift between the two reads is measured by message identity (`refinement/evidence-drift.ts`,
+  `refine.evidence_drift` and message counts on `refine.plan`), and a judge rejection made after the conversation
+  moved, with no referee verdict against the claim, is tagged `refine.stale_evidence` / `staleEvidence`. An
+  automatic, agent-requested or failure-repair refine then plans once more on the current conversation instead of
+  consuming its round (`replanOf`, `refine.replan_of`); a user `/refine` is tagged and left alone. A mechanical
+  verdict is never stale.
+- **E — the planner can see why its last proposal was rejected.** Not in any row, and the cheapest thing here
+  aimed at 409 → 1 directly: the planner re-derived proposals with no idea what the gate had already refused.
+  `historyForPrompt` now carries the gate decision, the judge's rationale and the missed criteria — never the
+  scores — with the judge's text stripped of markup and control characters, truncated, quoted and marked as
+  untrusted output. Rejections also became durable: every local refinement, applied or rejected, is appended to
+  `<agentDir>/harness/local-refinements/<sessionId>.jsonl`, which outlives a compacted transcript and is deleted
+  with the session and with its RLM children's logs. A refine triggered by a recurring or regressed failure also
+  sees up to three recent rejections from *other* sessions whose triggers intersect its own, bounded to the 50 most
+  recently modified logs, tail-read.
+
+**What is still not measured.**
+
+- **No observability rows.** None of the spans and attributes A-E added has a row in `docs/observability.md` —
+  `harness.trust.adjudicate`, `trust.*` on `harness.ledger.flush` and `refine.apply`, `referee.aborted`,
+  `refine.evidence_drift`, `refine.stale_evidence`, `refine.replan_of`, `refine.rejection_cause`,
+  `refine.history_record`, `refine.related_rejections`, and the `harness.trust.settled` / `harness.trust.adjusted`
+  records — and neither `FLOWCHART.md` nor `packages/coding-agent/docs/ravo-architecture.md` has been updated. Under
+  CLAUDE.md that is a contract violation, not a docs backlog item.
+- **No trace validation.** Nothing above was checked with `prime-agent trace`; every claim rests on unit and suite
+  tests. A detached root that never ends, or a child outliving its parent, would not have been caught.
+- **The wall number has not moved.** §6's single metric, re-counted on this machine 2026-09-18 across 124
+  `harness_state.json` files: **0 champions of 65 carry an `observedRecurrence`** (8 now carry
+  `claimedFingerprints`, up from 6). The pool grew from 49 to 65 and the metric is still exactly zero. A-E make the
+  debit and the outcome label *possible*; none of them is evidence that either has happened in a real session.
+- **The benchmark still shows no learning effect.** `evals/`: cold 4/6, warm 4/6, and the second cold control 4/6 —
+  task for task the same four pass and the same two fail (`git-checkpoint-preference`, `reuse-published-skill`), so
+  |C−A| = |A'−A| = 0 and the suite's own improvement criterion is not met. The two arms that do differ are hand-run
+  and they localise the break: `mem-off` 0/3 against `mem-on` 3/3 on `git-checkpoint-preference`, so a lesson that
+  is already global does change behaviour, and it is the study phase that fails to produce one. That is consistent
+  with the source — `autoRefineInstructions` (`agent-session.ts:1380`) tells an automatic refine "Do not promote
+  anything global unless explicitly requested" and no auto-refine call site passes a global flag, so the study
+  phase cannot write the entry `mem-on` proves would work. Fixing the gate does not fix this; it is the promotion
+  path, and no row above covers it.

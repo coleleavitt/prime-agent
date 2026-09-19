@@ -8,6 +8,7 @@ import { AGENT_MESSAGE_SKILL_NAME, type AgentSessionMessageController } from "..
 import { AGENT_OBSERVE_SKILL_NAME, type AgentObserveController } from "../src/core/agent-observe.js";
 import { createAgentSessionFromServices, createAgentSessionServices } from "../src/core/agent-session-services.js";
 import { AuthStorage } from "../src/core/auth-storage.js";
+import { WORKSPACE_RECALL_ENV } from "../src/core/extensions/builtin/workspace-recall.js";
 import { SessionManager } from "../src/core/session-manager.js";
 import { SettingsManager } from "../src/core/settings-manager.js";
 import { createSyntheticSourceInfo } from "../src/core/source-info.js";
@@ -55,6 +56,40 @@ describe("createAgentSessionFromServices", () => {
 			);
 			if ("authStorage" in options) expect(services.authStorage).toBe(injected);
 		}
+	});
+
+	it("registers the Workspace Recall builtin unless it or extensions are turned off", async () => {
+		vi.stubEnv(WORKSPACE_RECALL_ENV, "1");
+		const tempDir = join(tmpdir(), `pi-services-recall-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		mkdirSync(tempDir, { recursive: true });
+		cleanupPaths.push(tempDir);
+		const recallHandlerSets = async (options: {
+			noBuiltinWorkspaceRecall?: boolean;
+			noExtensions?: boolean;
+		}): Promise<string[][]> => {
+			const services = await createAgentSessionServices({
+				cwd: tempDir,
+				agentDir: tempDir,
+				noBuiltinHerdrReporter: true,
+				noBuiltinWorkspaceRecall: options.noBuiltinWorkspaceRecall,
+				telemetryDisabled: true,
+				resourceLoaderOptions: {
+					noExtensions: options.noExtensions,
+					noSkills: true,
+					noPromptTemplates: true,
+					noThemes: true,
+					noContextFiles: true,
+				},
+			});
+			return services.resourceLoader
+				.getExtensions()
+				.extensions.filter((extension) => extension.handlers.has("tool_result"))
+				.map((extension) => [...extension.handlers.keys()].sort());
+		};
+
+		expect(await recallHandlerSets({})).toEqual([["agent_end", "session_shutdown", "tool_call", "tool_result"]]);
+		expect(await recallHandlerSets({ noBuiltinWorkspaceRecall: true })).toEqual([]);
+		expect(await recallHandlerSets({ noExtensions: true })).toEqual([]);
 	});
 
 	it("shows the telemetry disclosure independently of the Herdr reporter", async () => {

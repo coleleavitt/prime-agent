@@ -224,6 +224,34 @@ export const COMMAND_SPECS: readonly CommandSpec[] = [
 		],
 		examples: ["learning", "learning --min-n 10 --json", "learning --no-seal --no-chart"],
 	},
+	{
+		path: ["dream"],
+		usage: "dream [rollout|replay|improve|loop|status|show] [--task <circle-packing|sum-difference>] [--n <26|32>] [--seed <n>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--iterations <n>] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]",
+		summary: "Run the Dream-RSI explore/replay/improve loop on a local scored task",
+		description:
+			"Grows a discovery tree with a fixed, serializable exploration policy, freezes each tree into a zero-cost replay simulator, and improves the policy by local search over its typed parameters. The default subcommand is loop and the default task is circle-packing (n=26). The local proposer and local policy search spend no model tokens and use no network. --llm-proposer and --llm-dreamer require an in-session agent handler and are rejected by the standalone CLI.",
+		options: [
+			"--task <name>     Scored task: circle-packing (default) or sum-difference",
+			"--n <26|32>       Circle count for circle-packing (default: 26)",
+			"--seed <n>        Seed for the injected RNG (default: 1)",
+			"--workers <n>     Max parallelism W, cells per round (default: 4)",
+			"--k1 <n>          Max online exploration rounds (default: 12)",
+			"--k2 <n>          Max replay rounds per policy simulation (default: 24)",
+			"--dreams <n>      Revised policies M per dreaming step (default: 16)",
+			"--iterations <n>  Explore/dream/redeploy iterations for loop (default: 3)",
+			"--tree <id>       Tree id for replay/show (default: latest)",
+			"--dir <path>      Dream store directory (default: <agent-dir>/dream)",
+			"--llm-proposer    Use the in-session LLM proposer (rejected by the CLI)",
+			"--llm-dreamer     Use the in-session LLM policy improver (rejected by the CLI)",
+			"--json            Print the result as JSON",
+		],
+		examples: [
+			"dream",
+			"dream rollout --task circle-packing --seed 7",
+			"dream loop --seed 7 --json",
+			"dream show --tree latest",
+		],
+	},
 ];
 
 export const PUBLIC_COMMAND_NAMES = new Set(

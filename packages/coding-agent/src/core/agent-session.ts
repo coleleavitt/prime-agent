@@ -44,6 +44,10 @@ import {
 	getSupportedThinkingLevels,
 	isContextOverflow,
 	modelsAreEqual,
+	runWithTraceContext,
+	type Span,
+	type SpanAttributes,
+	startSpan,
 	supportsFastMode,
 	type TraceContext,
 	withSpan,
@@ -137,6 +141,9 @@ import {
 import type { AgentCronJob, AgentRlmHeartbeatController, AgentRlmHeartbeatStatusUpdate } from "./cron-jobs.js";
 import { normalizeHeartbeatDeliveryMode } from "./cron-jobs.js";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
+import { type DreamRunRequest, DreamRunService, type DreamRunStatus } from "./dream/run-service.js";
+import { getDreamDir } from "./dream/store.js";
+import { isDreamTaskId } from "./dream/tasks/index.js";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.js";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.js";
 import {
@@ -255,61 +262,106 @@ import {
 } from "./ravo/authority.js";
 import { canonicalJson } from "./ravo/canonical-json.js";
 import {
+	applyReplayVerifications,
 	emptyFailureLedger,
 	extractFailures,
 	type FailureLedger,
 	type FailureObservation,
+	type FailureRecord,
 	findProvisionalRegressions,
 	fingerprintToolResultText,
 	formatRecurrenceRefineInstructions,
 	formatRegressionRefineInstructions,
 	globalFailureLedgerEnabled,
+	isActionableFailure,
 	mergeFailureObservations,
 	observationOrdinal,
 	type ProvisionalRegression,
+	type ReplayVerification,
 	recordProvisionalRegressions,
 	recurringFailures,
 	updateFailureLedger,
 } from "./ravo/failure-ledger.js";
-import type { JsonValue } from "./ravo/reducer.js";
+import type { JsonValue, RavoWindowClock } from "./ravo/reducer.js";
+import { type ReplayCase, verifiedReplayCasesOf } from "./ravo/referee.js";
+import { verifyObservedReplayCases } from "./ravo/referee-runner.js";
 import { createAgentSessionRetainedWorkerRuntime } from "./ravo/retained-worker-runtime.js";
-import { type RavoRunRequest, RavoRunService, type RavoRunStatus } from "./ravo/run-service.js";
+import { type RavoRunRequest, RavoRunService, type RavoRunStatus, ravoRunHarnessStores } from "./ravo/run-service.js";
+import {
+	hasOpenTrustWindows,
+	recordTrustWindowEvidence,
+	type TrustWindowEvidence,
+} from "./refinement/harness-trust.js";
 import {
 	type AutoRefineReason,
 	type AutoRefineReview,
-	appendGlobalRefinement,
 	applyRefinementProposal,
+	captureRefineEvidence,
+	carryObservedRecurrences,
 	formatHarnessStateForPrompt,
 	generateRefinementId,
 	getGlobalHarnessStateDir,
 	getLocalHarnessStateDir,
 	getRefinementHistory,
+	getRefinementHistoryPath,
+	getSessionRefinementHistoryPath,
 	type HarnessQueryTerms,
+	type HarnessScope,
 	type HarnessState,
 	harnessQueryTerms,
 	inferRefinementResultScope,
 	isRollbackableRefinement,
-	loadGlobalRefinementHistory,
+	isStaleEvidenceRejection,
 	loadHarnessState,
+	loadRefinementHistory,
+	loadRelatedRefinementRejections,
+	logHarnessTrustSettlement,
+	logRefinementOutcome,
+	measureRefineEvidenceDrift,
 	mergeHarnessStates,
 	mergeRefinementHistory,
 	normalizeRefinementProposal,
+	orderRefinementHistory,
 	planRefinement,
+	RAVO_BASELINE_CHANGED_RATIONALE,
 	RAVO_DEFAULT_CONFIG,
+	type RavoGateReport,
 	REFINE_SKILL_NAME,
+	type RefineEvidenceDrift,
+	type RefineEvidenceSnapshot,
+	type RefineFinalDecision,
+	type RefineKind,
 	type RefinementPlan,
 	type RefinementProposal,
 	type RefinementResult,
+	type RefineReason,
 	ravoEnabled,
 	ravoEvaluateProposal,
+	recordHarnessTrustEvidence,
+	recordRefinementHistory,
+	refineKindOf,
 	refinementBaselineView,
+	refinementOutcome,
+	refinementRejectionCause,
 	rejectedRefinementResult,
 	reviewAutoRefine,
 	saveHarnessState,
 	settleHarnessTrust,
+	trustSettlementSpanAttributes,
+	ungatedRefinementDecision,
 	withHarnessStateLock,
 } from "./refinement/index.js";
 import { screenRefinementProposal } from "./refinement/skill-dry-run.js";
+import {
+	type AwaitingTrustAdjudication,
+	adjudicateTrustRecurrences,
+	findTrustWindowRecurrences,
+	MAX_TRUST_ADJUDICATION_JOBS,
+	planTrustAdjudications,
+	releaseAwaitingTrustAdjudication,
+	type TrustAdjudicationJob,
+	trustAdjudicationKey,
+} from "./refinement/trust-adjudication.js";
 import { resolveConfigValue } from "./resolve-config-value.js";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.js";
 import { assessRlmChildSettlement } from "./rlm-child-settlement.js";
@@ -396,6 +448,7 @@ import {
 	BUILTIN_SLASH_COMMANDS,
 	findSlashCommandSuggestion,
 	isBuiltinSlashCommandName,
+	parseDreamCommandOptions,
 	parseRavoCommandOptions,
 	parseRefineCommandOptions,
 	parseSessionSlashCommand,
@@ -528,7 +581,8 @@ export type AgentSessionEvent =
 	  }
 	| { type: "refine_complete"; result: RefinementResult }
 	| { type: "refine_failed"; error: string }
-	| { type: "ravo_run_update"; status: RavoRunStatus };
+	| { type: "ravo_run_update"; status: RavoRunStatus }
+	| { type: "dream_run_update"; status: DreamRunStatus };
 
 export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
 
@@ -544,6 +598,11 @@ export class CompactionSkippedError extends Error {}
 
 /** Thrown when a session_before_refine extension skips the refinement round. */
 export class RefineSkippedError extends Error {}
+
+/** A refine an abort, a branch change or disposal cancelled before it could apply: dropped from the queue, or aborted while planning. */
+class RefineCancelledError extends Error {}
+
+const REFINE_CANCELLED_MESSAGE = "Refinement cancelled: the session was aborted or changed branch.";
 
 export interface AgentSessionConfig {
 	agent: Agent;
@@ -639,7 +698,7 @@ export type SerializedBackgroundPlanResult =
 	| {
 			status: "plan";
 			plan: RefinementPlan;
-			options: { instructions?: string; rollbackId?: string; global?: boolean };
+			options: RefineRequestOptions;
 			abort: AbortController;
 			branchVersion: number;
 			source: Exclude<RefinementSource, "user">;
@@ -649,9 +708,135 @@ export type SerializedBackgroundPlanResult =
 	| {
 			status: "failure";
 			explicit: boolean;
-			options: { instructions?: string; rollbackId?: string; global?: boolean };
+			options: RefineRequestOptions;
 			branchVersion: number;
 	  };
+
+/** A refine request as it travels from its trigger through planning and apply. */
+type RefineRequestOptions = {
+	instructions?: string;
+	rollbackId?: string;
+	global?: boolean;
+	reason?: RefineReason;
+	/** The gate kind when it is not the kind of `reason`: a merged request is `failure` only if every part was. */
+	kind?: RefineKind;
+	/** Fingerprints whose recurrence or regression queued the request; a failure refine is held to these. */
+	triggerFingerprintIds?: string[];
+	/** The stale-evidence rejection this request re-plans; a re-plan is never re-planned. */
+	replanOf?: string;
+};
+
+/** The one re-plan a stale-evidence rejection earns, until it settles or is dropped. */
+type StaleEvidenceReplan = {
+	options: RefineRequestOptions & { replanOf: string };
+	source: Exclude<RefinementSource, "user">;
+	/** The queue version at the rejection: an abort or branch change since cancels the re-plan. */
+	queueVersion: number;
+	run?: Promise<void>;
+};
+
+const REPLAY_VERIFICATION_DISPOSE_WAIT_MS = 2_000;
+
+const PENDING_REFINE_REASON_RANK: Partial<Record<RefineReason, number>> = {
+	manual: 1,
+	refine_run: 2,
+	recurrence: 3,
+	regression: 4,
+};
+
+/** The reason a merged pending refine runs under: regression > recurrence > refine_run > manual. */
+function dominantRefineReason(current: RefineReason | undefined, incoming: RefineReason): RefineReason {
+	if (current === undefined) return incoming;
+	return (PENDING_REFINE_REASON_RANK[incoming] ?? 0) > (PENDING_REFINE_REASON_RANK[current] ?? 0) ? incoming : current;
+}
+
+function refineReasonOf(options: RefineRequestOptions): RefineReason {
+	return options.rollbackId ? "rollback" : (options.reason ?? "manual");
+}
+
+function refineRequestKind(options: RefineRequestOptions): RefineKind {
+	return options.kind ?? refineKindOf(refineReasonOf(options));
+}
+
+/** Two queued requests of the same scope as one: instructions appended, the stronger reason, the union of triggers. */
+function mergeRefineRequests(previous: RefineRequestOptions, incoming: RefineRequestOptions): RefineRequestOptions {
+	const triggers = [
+		...new Set([...(previous.triggerFingerprintIds ?? []), ...(incoming.triggerFingerprintIds ?? [])]),
+	];
+	return {
+		instructions:
+			previous.instructions && incoming.instructions
+				? `${previous.instructions}\n\n${incoming.instructions}`
+				: (incoming.instructions ?? previous.instructions),
+		global: previous.global,
+		reason: dominantRefineReason(previous.reason, refineReasonOf(incoming)),
+		kind:
+			refineRequestKind(previous) === "failure" && refineRequestKind(incoming) === "failure"
+				? "failure"
+				: "directed",
+		...(triggers.length > 0 ? { triggerFingerprintIds: triggers } : {}),
+	};
+}
+
+/**
+ * An agent refine.run folded into a queued request of the same scope. A newer
+ * refine.run replaces earlier refine.run instructions, but a queued failure
+ * refine is deduped per fingerprint and not re-queued while it lives, so its failure list is
+ * kept and the new instructions appended. The agent asked for the result, so it
+ * is gated as directed whatever it carries.
+ */
+function withRefineRun(
+	previous: RefineRequestOptions | undefined,
+	instructions: string | undefined,
+	global: boolean,
+): RefineRequestOptions {
+	const keepFailureInstructions =
+		previous?.reason !== undefined &&
+		refineKindOf(previous.reason) === "failure" &&
+		previous.instructions !== undefined &&
+		instructions !== undefined;
+	return {
+		instructions: keepFailureInstructions
+			? `${previous.instructions}\n\n${instructions}`
+			: (instructions ?? previous?.instructions),
+		...(global ? { global: true } : {}),
+		reason: dominantRefineReason(previous?.reason, "refine_run"),
+		...(previous?.triggerFingerprintIds === undefined
+			? {}
+			: { kind: "directed" as const, triggerFingerprintIds: previous.triggerFingerprintIds }),
+	};
+}
+
+function ravoGateSpanAttributes(report: RavoGateReport): SpanAttributes {
+	return {
+		"ravo.decision": report.decision,
+		"ravo.fast_score": report.fastScore,
+		"ravo.deep_score": report.deepScore,
+		"ravo.missed": report.missedCriteria.length,
+		"ravo.missed_weight": report.missedWeight,
+		"ravo.claimed": report.addressedFingerprints.length,
+		"ravo.measurable": report.measurable,
+		"ravo.judge_error": report.judgeError !== undefined,
+		"referee.cleared": report.refereeCounts.cleared,
+		"referee.upheld": report.refereeCounts.upheld,
+		"referee.unverifiable": report.refereeCounts.unverifiable,
+		"referee.no_evidence": report.refereeCounts.no_evidence,
+		"referee.not_applicable": report.refereeCounts.not_applicable,
+	};
+}
+
+function evidenceDriftSpanAttributes(drift: RefineEvidenceDrift): SpanAttributes {
+	return {
+		"refine.evidence_drift": drift.kind,
+		"refine.snapshot_messages": drift.snapshotMessages,
+		"refine.judge_messages": drift.judgeMessages,
+		"refine.drift_messages": drift.appendedMessages,
+		"refine.drift_removed_messages": drift.removedMessages,
+		"refine.drift_chars": drift.appendedChars,
+		...(drift.snapshotLeafId === null ? {} : { "refine.snapshot_leaf_id": drift.snapshotLeafId }),
+		...(drift.judgeLeafId === null ? {} : { "refine.judge_leaf_id": drift.judgeLeafId }),
+	};
+}
 
 export type AutoRefineReviewer = (request: AutoRefineReviewRequest, signal?: AbortSignal) => Promise<AutoRefineReview>;
 
@@ -1314,6 +1499,63 @@ function parseRavoRunPayload(payload: Record<string, unknown>): RavoRunRequest {
 	};
 }
 
+const DREAM_SKILL_NAME = "dream";
+
+function dreamPositiveInteger(payload: Record<string, unknown>, key: string): number | undefined {
+	const value = payload[key];
+	if (value === undefined || value === null) return undefined;
+	if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+		throw new Error(`dream.run ${key} must be a positive integer when provided`);
+	}
+	return value;
+}
+
+function dreamNonNegativeInteger(payload: Record<string, unknown>, key: string): number | undefined {
+	const value = payload[key];
+	if (value === undefined || value === null) return undefined;
+	if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+		throw new Error(`dream.run ${key} must be a non-negative integer when provided`);
+	}
+	return value;
+}
+
+function dreamBoolean(payload: Record<string, unknown>, key: string): boolean | undefined {
+	const value = payload[key];
+	if (value === undefined || value === null) return undefined;
+	if (typeof value !== "boolean") {
+		throw new Error(`dream.run ${key} must be a boolean when provided`);
+	}
+	return value;
+}
+
+function parseDreamRunPayload(payload: Record<string, unknown>): DreamRunRequest {
+	const task = payload.task;
+	if (!isDreamTaskId(task)) {
+		throw new Error("dream.run task must be one of circle-packing, sum-difference, python-speedup");
+	}
+	const n = dreamPositiveInteger(payload, "n");
+	const seed = dreamNonNegativeInteger(payload, "seed");
+	const workers = dreamPositiveInteger(payload, "workers");
+	const k1 = dreamPositiveInteger(payload, "k1");
+	const k2 = dreamPositiveInteger(payload, "k2");
+	const dreams = dreamPositiveInteger(payload, "dreams");
+	const iterations = dreamPositiveInteger(payload, "iterations");
+	const llmProposer = dreamBoolean(payload, "llm_proposer");
+	const llmDreamer = dreamBoolean(payload, "llm_dreamer");
+	return {
+		task,
+		...(n === undefined ? {} : { n }),
+		...(seed === undefined ? {} : { seed }),
+		...(workers === undefined ? {} : { workers }),
+		...(k1 === undefined ? {} : { k1 }),
+		...(k2 === undefined ? {} : { k2 }),
+		...(dreams === undefined ? {} : { dreams }),
+		...(iterations === undefined ? {} : { iterations }),
+		...(llmProposer === true ? { llmProposer: true } : {}),
+		...(llmDreamer === true ? { llmDreamer: true } : {}),
+	};
+}
+
 const AUTONOMOUS_STATUS_NUMBER_FORMAT = new Intl.NumberFormat("en-US");
 
 const AUTONOMOUS_BUDGET_USAGE =
@@ -1645,7 +1887,9 @@ export class AgentSession {
 	private _overflowRecovery: "idle" | "attempted" | "reported" = "idle";
 	private _continueAfterThresholdCompaction = false;
 	private _pendingRequestedCompaction: { customInstructions?: string } | undefined;
-	private _pendingRequestedRefine: { instructions?: string; global?: boolean } | undefined;
+	private _pendingRequestedRefine: RefineRequestOptions | undefined;
+	/** Queued requests that could not merge into the pending one because their scope differs; they run after it. */
+	private _deferredRefineRequests: RefineRequestOptions[] = [];
 
 	private _branchSummaryAbortController: AbortController | undefined = undefined;
 	private _branchSummaryOperation: Promise<void> | undefined = undefined;
@@ -1794,23 +2038,46 @@ export class AgentSession {
 	private _failureLedger: FailureLedger | undefined;
 	private _failureLedgerDirty = false;
 	private _failureLedgerPendingRegressions: { regressions: ProvisionalRegression[]; turn: number }[] = [];
-	private _globalFailureLedger: FailureLedger | undefined;
 	private _globalFailureLedgerPending: FailureObservation[] = [];
+	private _globalFailureLedgerPendingRegressions: { regressions: ProvisionalRegression[]; turn: number }[] = [];
+	/** Replay self-checks run off the turn path; one batch at a time, results merged at the next flush. */
+	private _replayVerification: Promise<void> | undefined;
+	private _replayVerificationAbort: AbortController | undefined;
+	private _replayVerificationBacklog: FailureObservation[] = [];
+	private _replayVerificationBatch: readonly FailureObservation[] = [];
+	private readonly _replayCasesAttempted = new Set<string>();
+	private _pendingReplayVerifications: ReplayVerification[] = [];
+	private _globalPendingReplayVerifications: ReplayVerification[] = [];
+	/** Post-commit trust replays, run like the self-checks; their verdicts wait for the next flush or apply of their scope. */
+	private _trustAdjudication: Promise<void> | undefined;
+	private _trustAdjudicationAbort: AbortController | undefined;
+	private _trustAdjudicationBacklog: TrustAdjudicationJob[] = [];
+	/** Keys of jobs backlogged, running, or awaiting a self-check; none is planned twice. */
+	private readonly _trustAdjudicationsQueued = new Set<string>();
+	private readonly _trustAdjudicationsAwaiting = new Map<string, AwaitingTrustAdjudication>();
+	private _pendingTrustEvidence: TrustWindowEvidence[] = [];
+	private _globalPendingTrustEvidence: TrustWindowEvidence[] = [];
 	private readonly _failureRefineTriggered = new Set<string>();
+	/** Requests _consumePendingRequestedRefine launched that have not settled, the running one included. */
+	private readonly _launchedRefineRequests = new Set<RefineRequestOptions>();
+	/** Bumped by a user abort, a branch change and disposal, never by compaction: a launched refine from an older version never plans. */
+	private _refineQueueVersion = 0;
+	/** The manual compaction launched refines wait out before planning, published before its abort. */
+	private _queuedRefineCompaction: Promise<void> | undefined;
 	private _autoRefineBranchVersion = 0;
 	private _autoRefineReviewAbort?: AbortController;
 	private _refineAbortController?: AbortController;
 	private _ravoRunService?: RavoRunService;
+	private _dreamRunService?: DreamRunService;
 	private readonly _autoRefineReviewer?: AutoRefineReviewer;
 	private readonly _serializedRefine: boolean;
 	private _refineInFlight?: Promise<void>;
 	private _refinePlanInFlight?: Promise<void>;
 	private _serializedPlanInFlight?: Promise<SerializedBackgroundPlanResult | undefined>;
 	private _serializedPlanClaim?: Promise<void>;
-	private _serializedExplicitRefineOptions?: {
-		instructions?: string;
-		global?: boolean;
-	};
+	private _serializedExplicitRefineOptions?: RefineRequestOptions;
+	/** A refine rejected on evidence that moved while it planned; it plans once more and its outcome closes the round. */
+	private _staleEvidenceReplan: StaleEvidenceReplan | undefined;
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
@@ -3235,9 +3502,15 @@ export class AgentSession {
 	 * or agent.waitForIdle — all of which would deadlock or defer because
 	 * the agent loop still owns activeRun at this point. Instead it calls
 	 * _reviewAutoRefine, _planRefine, and _applyRefine directly with proper
-	 * in-flight guards and counter resets.
+	 * in-flight guards and counter resets. A refine the checkpoint rejected on
+	 * stale evidence plans once more before it returns.
 	 */
 	private async _runSerializedRefineCheckpoint(): Promise<void> {
+		await this._runSerializedRefineCheckpointSteps();
+		if (!this._disposed && !this._disposing) await this._runStaleEvidenceReplanNow();
+	}
+
+	private async _runSerializedRefineCheckpointSteps(): Promise<void> {
 		if (this._disposed || this._disposing) {
 			return;
 		}
@@ -3248,14 +3521,15 @@ export class AgentSession {
 		//    interval checks because background planning may have consumed
 		//    the pending request at message_end.
 		const branchVersion = this._autoRefineBranchVersion;
-		const bgConsumption = await this._consumeSerializedBackgroundPlan(async (bgResult) => {
+		const bgConsumption = await this._consumeSerializedBackgroundPlan(async (bgResult, explicit) => {
 			if (this._disposed || this._disposing) {
 				return true;
 			}
 
 			if (bgResult?.status === "plan") {
 				if (bgResult.branchVersion !== this._autoRefineBranchVersion) {
-					if (!this._pendingRequestedRefine) {
+					this._cancelSerializedExplicitRefine(explicit);
+					if (!this._hasPendingRefineRequest()) {
 						this._lastAutoRefineReviewAt = Date.now();
 						this._assistantTurnsSinceAutoRefine = 0;
 						return true;
@@ -3270,7 +3544,7 @@ export class AgentSession {
 					}
 					this._lastAutoRefineReviewAt = Date.now();
 					this._assistantTurnsSinceAutoRefine = 0;
-					if (!this._pendingRequestedRefine) {
+					if (!this._hasPendingRefineRequest()) {
 						return true;
 					}
 				}
@@ -3284,7 +3558,7 @@ export class AgentSession {
 				}
 				this._lastAutoRefineReviewAt = Date.now();
 				this._assistantTurnsSinceAutoRefine = 0;
-				if (!this._pendingRequestedRefine) {
+				if (!this._hasPendingRefineRequest()) {
 					return true;
 				}
 			}
@@ -3299,23 +3573,25 @@ export class AgentSession {
 				// but only when branchVersion is still current and no newer
 				// pending request has arrived since the background plan consumed
 				// the original one. A newer request retains priority; interval
-				// failures keep existing no-retry cooldown semantics.
-				if (
-					bgResult.explicit &&
-					bgResult.branchVersion === this._autoRefineBranchVersion &&
-					!this._pendingRequestedRefine
-				) {
+				// failures keep existing no-retry cooldown semantics. On a stale
+				// branch the explicit request was cancelled, not failed.
+				if (bgResult.branchVersion !== this._autoRefineBranchVersion) {
+					this._cancelSerializedExplicitRefine(explicit);
+				} else if (bgResult.explicit && !this._pendingRequestedRefine) {
 					this._pendingRequestedRefine = bgResult.options;
 				}
-				if (!this._pendingRequestedRefine) {
+				if (!this._hasPendingRefineRequest()) {
 					return true;
 				}
 			}
 
-			if (bgResult?.status === "invalidated" && !this._pendingRequestedRefine) {
-				this._lastAutoRefineReviewAt = Date.now();
-				this._assistantTurnsSinceAutoRefine = 0;
-				return true;
+			if (bgResult?.status === "invalidated") {
+				this._cancelSerializedExplicitRefine(explicit);
+				if (!this._hasPendingRefineRequest()) {
+					this._lastAutoRefineReviewAt = Date.now();
+					this._assistantTurnsSinceAutoRefine = 0;
+					return true;
+				}
 			}
 
 			await this._runSerializedRefineCheckpointAfterBackground(branchVersion);
@@ -3334,13 +3610,13 @@ export class AgentSession {
 		// 2. Agent-callable refine.run requests that were NOT consumed by
 		//    background planning (e.g. interval not reached at message_end,
 		//    or cooldown was active). Service them synchronously.
-		const pending = this._pendingRequestedRefine;
-		if (pending) {
-			this._pendingRequestedRefine = undefined;
-			try {
-				await this._runSerializedRefine(pending, "self");
-			} catch (error) {
-				this._emitRefineFailed(error);
+		if (this._hasPendingRefineRequest()) {
+			for (let pending = this._takePendingRefineRequest(); pending; pending = this._takePendingRefineRequest()) {
+				try {
+					await this._runSerializedRefine(pending, "self");
+				} catch (error) {
+					this._emitRefineFailed(error);
+				}
 			}
 			this._lastAutoRefineReviewAt = Date.now();
 			this._assistantTurnsSinceAutoRefine = 0;
@@ -3410,7 +3686,7 @@ export class AgentSession {
 				this._assistantTurnsSinceAutoRefine = 0;
 				return;
 			}
-			await this._runSerializedRefine({ instructions: autoRefineInstructions(reason, review) }, "auto");
+			await this._runSerializedRefine({ instructions: autoRefineInstructions(reason, review), reason }, "auto");
 			if (this._disposed || this._disposing || branchVersion !== this._autoRefineBranchVersion) {
 				return;
 			}
@@ -3437,10 +3713,15 @@ export class AgentSession {
 	/**
 	 * Claim and process the serialized background plan if one is in flight.
 	 * A concurrent caller waits for the claim holder's full processing callback
-	 * instead of resuming as soon as planning settles.
+	 * instead of resuming as soon as planning settles. The consumer is handed
+	 * the explicit request the plan still carries, taken off the session so
+	 * that only the consumer can report it cancelled.
 	 */
 	private async _consumeSerializedBackgroundPlan(
-		consume: (result: SerializedBackgroundPlanResult | undefined) => Promise<boolean>,
+		consume: (
+			result: SerializedBackgroundPlanResult | undefined,
+			explicit: RefineRequestOptions | undefined,
+		) => Promise<boolean>,
 	): Promise<"none" | "waited" | "continue" | "stop"> {
 		if (this._serializedPlanClaim) {
 			await this._serializedPlanClaim.catch(() => undefined);
@@ -3458,11 +3739,12 @@ export class AgentSession {
 		this._serializedPlanClaim = claim;
 		try {
 			const result = await planInFlight.catch(() => undefined);
+			let explicit: RefineRequestOptions | undefined;
 			if (this._serializedPlanInFlight === planInFlight) {
 				this._serializedPlanInFlight = undefined;
-				this._serializedExplicitRefineOptions = undefined;
+				explicit = this._takeSerializedExplicitRefine();
 			}
-			return (await consume(result)) ? "stop" : "continue";
+			return (await consume(result, explicit)) ? "stop" : "continue";
 		} finally {
 			releaseClaim();
 			if (this._serializedPlanClaim === claim) {
@@ -3505,8 +3787,13 @@ export class AgentSession {
 		if (!this._serializedRefine || this._disposed || this._disposing) {
 			return;
 		}
-		// Don't start if a plan is already in flight.
-		if (this._serializedPlanInFlight || this._refineInFlight || this._refinePlanInFlight) {
+		// Don't start if a plan is already in flight, or while a stale-evidence round waits for its re-plan.
+		if (
+			this._serializedPlanInFlight ||
+			this._refineInFlight ||
+			this._refinePlanInFlight ||
+			this._staleEvidenceReplan
+		) {
 			return;
 		}
 
@@ -3514,9 +3801,8 @@ export class AgentSession {
 		// refine.run request, so its plan is ready at the shouldStopAfterTurn
 		// boundary. The pending request is consumed (cleared) here so the
 		// boundary doesn't re-plan it. Explicit refine.run skips the review gate.
-		const pending = this._pendingRequestedRefine;
+		const pending = this._takePendingRefineRequest();
 		if (pending) {
-			this._pendingRequestedRefine = undefined;
 			this._serializedExplicitRefineOptions = pending;
 			const refineAbort = new AbortController();
 			this._refineAbortController = refineAbort;
@@ -3558,7 +3844,7 @@ export class AgentSession {
 	 * plan ("plan") and apply that exact plan without re-planning.
 	 */
 	private async _runBackgroundPlan(
-		options: { instructions?: string; rollbackId?: string; global?: boolean },
+		options: RefineRequestOptions,
 		refineAbort: AbortController,
 		branchVersion: number,
 		skipReview = false,
@@ -3583,11 +3869,17 @@ export class AgentSession {
 				}
 				planOptions = {
 					instructions: autoRefineInstructions("turn_interval", review),
+					reason: "turn_interval",
 				};
 			}
 			// For explicit refine.run (skipReview=true), plan directly with
 			// the user-provided options — no auto-review gate.
-			const plan = await this._planRefine(planOptions, refineAbort.signal, skipReview ? "manual" : "auto");
+			const plan = await this._planRefine(
+				planOptions,
+				refineAbort.signal,
+				skipReview ? "manual" : "auto",
+				skipReview ? "self" : "auto",
+			);
 			if (this._disposed || this._disposing || branchVersion !== this._autoRefineBranchVersion) {
 				return { status: "invalidated", branchVersion };
 			}
@@ -3627,15 +3919,11 @@ export class AgentSession {
 	 * is safe.
 	 */
 	private async _runSerializedRefine(
-		options: {
-			instructions?: string;
-			rollbackId?: string;
-			global?: boolean;
-		},
+		options: RefineRequestOptions,
 		source: Exclude<RefinementSource, "user">,
-	): Promise<void> {
+	): Promise<RefinementResult | undefined> {
 		if (this._disposed || this._disposing) {
-			return;
+			return undefined;
 		}
 		// Guard: serialize against concurrent _runSerializedRefine calls.
 		// _serializedPlanInFlight covers background planning; _refineInFlight
@@ -3651,13 +3939,13 @@ export class AgentSession {
 			}
 		}
 		if (this._disposed || this._disposing) {
-			return;
+			return undefined;
 		}
 
 		const refineAbort = new AbortController();
 		this._refineAbortController = refineAbort;
 
-		const planRun = this._planRefine(options, refineAbort.signal, source === "auto" ? "auto" : "manual");
+		const planRun = this._planRefine(options, refineAbort.signal, source === "auto" ? "auto" : "manual", source);
 		const planSettled = planRun.then(
 			() => undefined,
 			() => undefined,
@@ -3683,7 +3971,7 @@ export class AgentSession {
 				this._refineAbortController = undefined;
 			}
 			this._scheduleSessionInputPump();
-			return;
+			return undefined;
 		}
 
 		// Do NOT call agent.waitForIdle() — we are at the quiescent boundary
@@ -3694,7 +3982,7 @@ export class AgentSession {
 		});
 		this._refineInFlight = applySettled;
 		try {
-			await this._applyRefine(plan, options, refineAbort, source);
+			return await this._applyRefine(plan, options, refineAbort, source);
 		} finally {
 			resolveApplySettled();
 			if (this._refineInFlight === applySettled) {
@@ -4008,7 +4296,7 @@ export class AgentSession {
 		switch (type) {
 			case "refine.status": {
 				return {
-					pending: this._pendingRequestedRefine !== undefined,
+					pending: this._hasPendingRefineRequest(),
 					in_flight:
 						this._refineInFlight !== undefined ||
 						this._refinePlanInFlight !== undefined ||
@@ -4030,17 +4318,40 @@ export class AgentSession {
 						reason: "no active turn; refine can only be requested while a turn is running",
 					};
 				}
-				const previous = this._pendingRequestedRefine ?? this._serializedExplicitRefineOptions;
-				this._pendingRequestedRefine = {
-					instructions: instructions ?? previous?.instructions,
-					global: globalFlag ?? previous?.global,
-				};
+				// The refine skill leaves the key out for a local refine, so only an explicit flag is global.
+				const global = globalFlag === true;
+				const inFlight = this._serializedExplicitRefineOptions;
+				const previous = this._pendingRequestedRefine ?? inFlight;
+				// An in-flight interval plan always yields to the agent's request; an explicit one only
+				// when its request is folded into this one.
+				let supersedesInFlight = inFlight === undefined;
+				if (previous !== undefined && (previous.global === true) !== global) {
+					// A queued request never changes scope, so this one is parked and runs in its own.
+					const index = this._deferredRefineRequests.findIndex(
+						(deferred) => (deferred.global === true) === global,
+					);
+					const parked = withRefineRun(
+						index === -1 ? undefined : this._deferredRefineRequests[index],
+						instructions,
+						global,
+					);
+					if (index === -1) this._deferredRefineRequests.push(parked);
+					else this._deferredRefineRequests[index] = parked;
+				} else {
+					this._pendingRequestedRefine = withRefineRun(previous, instructions, global);
+					supersedesInFlight ||= previous === inFlight;
+				}
 				// In serialized mode, kick off background planning immediately
 				// (the primary response ended at message_end, tools are active).
 				// This lets planning overlap tool execution rather than waiting
-				// for the shouldStopAfterTurn boundary.
+				// for the shouldStopAfterTurn boundary. A plan in flight for another
+				// request is left to finish; this one runs after it at the checkpoint.
 				if (this._serializedRefine) {
-					if (this._serializedPlanInFlight) {
+					if (!this._serializedPlanInFlight) {
+						this._maybeStartSerializedBackgroundPlan();
+					} else if (supersedesInFlight) {
+						// An explicit request in flight lives on in the pending one, so dropping its plan cancels nothing.
+						this._serializedExplicitRefineOptions = undefined;
 						this._autoRefineBranchVersion++;
 						if (this._refineAbortController) {
 							this._refineAbortController.abort();
@@ -4050,8 +4361,6 @@ export class AgentSession {
 								branchVersion: this._autoRefineBranchVersion,
 							});
 						}
-					} else {
-						this._maybeStartSerializedBackgroundPlan();
 					}
 				}
 				return {
@@ -4072,16 +4381,14 @@ export class AgentSession {
 		if (this._ravoRunService) return this._ravoRunService;
 		const harnessDir = this._localHarnessStateDir();
 		if (!harnessDir || !this._autoRefineAllowedForSession()) return undefined;
+		const globalHarnessDir = getGlobalHarnessStateDir();
 		this._ravoRunService = new RavoRunService({
 			runAgent: this.runAgent,
 			retainedRuntime: createAgentSessionRetainedWorkerRuntime(this),
 			harnessDir,
-			globalHarnessDir: getGlobalHarnessStateDir(),
+			globalHarnessDir,
 			model: this.model,
-			loadState: async () => loadHarnessState(harnessDir, "local"),
-			saveState: async (state) => {
-				saveHarnessState(harnessDir, state);
-			},
+			...ravoRunHarnessStores(harnessDir, globalHarnessDir),
 			onUpdate: (status) => {
 				if (this._disposed) return;
 				this._emit({ type: "ravo_run_update", status });
@@ -4140,6 +4447,83 @@ export class AgentSession {
 			}
 			default:
 				throw new Error(`unknown ravo request type "${type}"`);
+		}
+	}
+
+	/**
+	 * The Dream-RSI run service for this session, created lazily. Gated on the
+	 * same self-improvement allowance as the dream.* host handlers and the
+	 * `dream` skill's visibility, so the surfaces stay in lockstep. The run store
+	 * is the shared dream directory; a run needs no harness state.
+	 */
+	private _dreamRunServiceForSession(): DreamRunService | undefined {
+		if (this._dreamRunService) return this._dreamRunService;
+		if (!this._autoRefineAllowedForSession()) return undefined;
+		this._dreamRunService = new DreamRunService({
+			runAgent: this.runAgent,
+			model: this.model,
+			dir: getDreamDir(),
+			onUpdate: (status) => {
+				if (this._disposed) return;
+				this._emit({ type: "dream_run_update", status });
+			},
+		});
+		return this._dreamRunService;
+	}
+
+	/**
+	 * Start a Dream-RSI run in the background. Returns as soon as the run is
+	 * admitted; the returned promise settles with the terminal status (or the
+	 * run error).
+	 */
+	private _startDreamRun(
+		request: DreamRunRequest,
+	): { started: true; runId: string; completion: Promise<DreamRunStatus> } | { started: false; reason: string } {
+		if (this._disposed) return { started: false, reason: "session is disposed" };
+		const service = this._dreamRunServiceForSession();
+		if (!service) return { started: false, reason: "Dream-RSI is not available in this session" };
+		if (service.running) {
+			const current = service.status();
+			return {
+				started: false,
+				reason: current
+					? `Dream-RSI run ${current.runId} is already in progress`
+					: "a Dream-RSI run is already in progress",
+			};
+		}
+		const completion = service.start(request);
+		// Observe the rejection here so a background failure is never an unhandled
+		// rejection; callers attach their own handlers.
+		completion.catch(() => {});
+		const runId = service.status()?.runId ?? "pending";
+		return { started: true, runId, completion };
+	}
+
+	/**
+	 * Handle a dream.* request from the bundled dream skill. dream.run starts the
+	 * Dream-RSI loop in the background and returns immediately; progress is
+	 * emitted as dream_run_update events and readable through dream.status.
+	 */
+	handleDreamHostRequest(type: string, payload: Record<string, unknown> = {}): Record<string, unknown> {
+		switch (type) {
+			case "dream.status": {
+				return this._dreamRunServiceForSession()?.status() ?? { phase: "idle" };
+			}
+			case "dream.cancel": {
+				return { cancelled: this._dreamRunServiceForSession()?.cancel() ?? false };
+			}
+			case "dream.run": {
+				const request = parseDreamRunPayload(payload);
+				const started = this._startDreamRun(request);
+				if (!started.started) return { started: false, reason: started.reason };
+				return {
+					started: true,
+					runId: started.runId,
+					note: "The Dream-RSI run continues in the background; check `dream.status` or the Agents View for progress. Continue working normally.",
+				};
+			}
+			default:
+				throw new Error(`unknown dream request type "${type}"`);
 		}
 	}
 
@@ -4779,6 +5163,7 @@ export class AgentSession {
 					if (!consumedRequestedRefine) {
 						this._scheduleAutoRefineAfterAgentEnd();
 					}
+					this._scheduleStaleEvidenceReplanLaunch();
 				}
 			}
 		}
@@ -5039,12 +5424,15 @@ export class AgentSession {
 				await new Promise<void>((resolve) => setTimeout(resolve, 0));
 			}
 		}
+		// Replay self-checks and trust replays that finish after the last turn boundary would otherwise end with
+		// the session; the last turn's are usually still running, since they start at its final message. The flush
+		// also writes observations whose boundary flush was skipped because a refine was in flight.
+		await this._awaitRefereeRuns(REPLAY_VERIFICATION_DISPOSE_WAIT_MS);
+		this._flushFailureLedger();
 		// Drain an agent-callable refine.run request that was scheduled but
 		// not yet consumed. Use the direct serialized path (no waitForIdle)
 		// since the agent may still own activeRun at the final agent_end.
-		if (this._pendingRequestedRefine) {
-			const pending = this._pendingRequestedRefine;
-			this._pendingRequestedRefine = undefined;
+		for (let pending = this._takePendingRefineRequest(); pending; pending = this._takePendingRefineRequest()) {
 			try {
 				await this._runSerializedRefine(pending, "self");
 			} catch {
@@ -5055,6 +5443,12 @@ export class AgentSession {
 			this._lastAutoRefineReviewAt = Date.now();
 			this._assistantTurnsSinceAutoRefine = 0;
 		}
+		// A refine that settled above may have scheduled its re-plan's launch; run it here instead.
+		for (const timer of this._scheduledAutoRefineTimers) {
+			clearTimeout(timer);
+		}
+		this._scheduledAutoRefineTimers.clear();
+		await this._runStaleEvidenceReplanNow();
 		// A serialized compaction can finish without another model turn. Drain its
 		// pending review here so disposal does not silently lose the trigger.
 		if (this._serializedRefine && this._compactAutoRefinePending && this._autoRefineAllowedForSession()) {
@@ -5179,7 +5573,14 @@ export class AgentSession {
 			// resolution cannot write harness state or re-subscribe handlers.
 			this._autoRefineReviewAbort?.abort();
 			this._refineAbortController?.abort();
+			this._replayVerificationAbort?.abort();
+			this._replayVerificationBacklog = [];
+			this._trustAdjudicationAbort?.abort();
+			this._trustAdjudicationBacklog = [];
+			this._trustAdjudicationsQueued.clear();
+			this._trustAdjudicationsAwaiting.clear();
 			this._ravoRunService?.cancel();
+			this._dreamRunService?.cancel();
 			for (const timer of this._scheduledAutoRefineTimers) {
 				clearTimeout(timer);
 			}
@@ -5187,8 +5588,10 @@ export class AgentSession {
 			this._disarmAutonomousSubagentKeepAlive();
 			this._serializedPlanInFlight = undefined;
 			this._serializedExplicitRefineOptions = undefined;
-			this._pendingRequestedRefine = undefined;
+			this._dropPendingRefineRequests(false);
+			this._dropStaleEvidenceReplan(false);
 			this._discardPendingAutoRefine({ cancelPostCompactionContinue: true });
+			this._refineQueueVersion++;
 			this._autoRefineBranchVersion++;
 			this._cancelActiveRlmChildRuns("Parent session disposed");
 			for (const unsubscribe of this._rlmChildUnsubscribes.values()) {
@@ -7494,6 +7897,25 @@ export class AgentSession {
 					this._reportRavoRunCompletion(started.runId, started.completion, input.command);
 					break;
 				}
+				case "dream": {
+					const options = parseDreamCommandOptions(input.command.args);
+					const started = this._startDreamRun({
+						task: options.task,
+						...(options.n === undefined ? {} : { n: options.n }),
+						...(options.seed === undefined ? {} : { seed: options.seed }),
+						...(options.workers === undefined ? {} : { workers: options.workers }),
+						...(options.k1 === undefined ? {} : { k1: options.k1 }),
+						...(options.k2 === undefined ? {} : { k2: options.k2 }),
+						...(options.dreams === undefined ? {} : { dreams: options.dreams }),
+						...(options.iterations === undefined ? {} : { iterations: options.iterations }),
+						...(options.llmProposer ? { llmProposer: true } : {}),
+						...(options.llmDreamer ? { llmDreamer: true } : {}),
+					});
+					if (!started.started) throw new Error(started.reason);
+					resultText = `Dream-RSI run ${started.runId} started: ${options.task}`;
+					this._reportDreamRunCompletion(started.runId, started.completion, input.command);
+					break;
+				}
 				case "goal":
 					await this._handleGoalSlashCommand(input.text, input.images);
 					resultText = this._goalState.objective
@@ -7560,6 +7982,45 @@ export class AgentSession {
 				try {
 					this._appendDurableSessionCommandMessage(
 						`Command failed: RAVO run ${runId} failed: ${this._asError(error).message}`,
+						command,
+						true,
+						true,
+					);
+				} catch {
+					// See above.
+				}
+			},
+		);
+	}
+
+	/**
+	 * Append the terminal row for a `/dream` run once its background promise
+	 * settles. The row is durable so a reload still shows how the run ended.
+	 */
+	private _reportDreamRunCompletion(
+		runId: string,
+		completion: Promise<DreamRunStatus>,
+		command: SessionSlashCommand,
+	): void {
+		void completion.then(
+			(status) => {
+				if (this._disposed) return;
+				try {
+					this._appendDurableSessionCommandMessage(
+						`Dream-RSI run ${runId} ${status.stopReason ?? "stopped"}`,
+						command,
+						true,
+						false,
+					);
+				} catch {
+					// The completion row is informational; a persist failure must not surface as a crash.
+				}
+			},
+			(error: unknown) => {
+				if (this._disposed) return;
+				try {
+					this._appendDurableSessionCommandMessage(
+						`Command failed: Dream-RSI run ${runId} failed: ${this._asError(error).message}`,
 						command,
 						true,
 						true,
@@ -8470,6 +8931,11 @@ export class AgentSession {
 	}
 
 	requestAbort(): void {
+		this._requestAbort(true);
+	}
+
+	/** `dropLaunchedRefines` is false only for a compaction, after which launched refines still waiting plan. */
+	private _requestAbort(dropLaunchedRefines: boolean): void {
 		for (const run of [...this._unsettledRlmChildRuns]) {
 			if (run.status === "cancelled") this._abandonRlmRunForQuiescence(run);
 		}
@@ -8491,7 +8957,11 @@ export class AgentSession {
 		this.abortCompaction();
 		this.abortBranchSummary();
 		this.abortBash();
-		this._pendingRequestedRefine = undefined;
+		this._dropPendingRefineRequests();
+		if (dropLaunchedRefines) this._dropStaleEvidenceReplan(true);
+		// The version bump below invalidates a serialized background plan, so its explicit request is cancelled now.
+		this._cancelSerializedExplicitRefine(this._takeSerializedExplicitRefine());
+		if (dropLaunchedRefines) this._refineQueueVersion++;
 		this._autoRefineBranchVersion++;
 		this._autoRefineReviewAbort?.abort();
 		this._refineAbortController?.abort();
@@ -8499,9 +8969,13 @@ export class AgentSession {
 	}
 
 	async abort(): Promise<void> {
+		await this._abort(true);
+	}
+
+	private async _abort(dropLaunchedRefines: boolean): Promise<void> {
 		const compactionOperation = this._compactionOperation;
 		const branchSummaryOperation = this._branchSummaryOperation;
-		this.requestAbort();
+		this._requestAbort(dropLaunchedRefines);
 		this._cancelActiveRlmChildRuns("Parent session aborted");
 		this._goalAbortInProgress = this._goalState.status === "active";
 		try {
@@ -8916,15 +9390,17 @@ export class AgentSession {
 		}
 		const hadPostCompactionContinue = this._postCompactionContinuationScheduled;
 		const continueAfterSessionInput = this._postCompactionContinuationSettlement?.continueAfterSessionInput ?? false;
-		this._disconnectFromAgent();
-		if (!options.skipAbort) await this.abort();
-		let didCompact = false;
-		const compactionAbort = new AbortController();
-		this._compactionAbortController = compactionAbort;
 		let resolveCompactionOperation: () => void = () => {};
 		const compactionOperation = new Promise<void>((resolve) => {
 			resolveCompactionOperation = resolve;
 		});
+		// Launched refines survive the abort below; published first so none starts planning before the compaction.
+		this._queuedRefineCompaction = compactionOperation;
+		this._disconnectFromAgent();
+		if (!options.skipAbort) await this._abort(false);
+		let didCompact = false;
+		const compactionAbort = new AbortController();
+		this._compactionAbortController = compactionAbort;
 		this._compactionOperation = compactionOperation;
 		this._emit({
 			type: "compaction_start",
@@ -8979,6 +9455,9 @@ export class AgentSession {
 			this._reconnectToAgent();
 			if (this._compactionOperation === compactionOperation) {
 				this._compactionOperation = undefined;
+			}
+			if (this._queuedRefineCompaction === compactionOperation) {
+				this._queuedRefineCompaction = undefined;
 			}
 			resolveCompactionOperation();
 			this._notifySessionInputCheckpointChange();
@@ -9246,17 +9725,22 @@ export class AgentSession {
 		this._autoRefineReviewAbort?.abort();
 		this._discardPendingAutoRefine({ cancelPostCompactionContinue: true });
 		this._assistantTurnsSinceAutoRefine = 0;
+		this._dropStaleEvidenceReplan(true);
 		// Increment branch version BEFORE aborting/awaiting the serialized plan.
 		// This invalidates the plan's branchVersion check at the boundary
 		// so even if the plan completes, the boundary will reject it
 		// (bgResult.branchVersion !== this._autoRefineBranchVersion).
 		this._autoRefineBranchVersion++;
+		this._refineQueueVersion++;
 		// Abort the in-flight refine/bplan controller so any pending
 		// _planRefine or _reviewAutoRefine call settles via signal abort
 		// rather than hanging forever.
 		this._refineAbortController?.abort();
 		if (this._serializedPlanInFlight) {
-			await this._consumeSerializedBackgroundPlan(async () => false);
+			await this._consumeSerializedBackgroundPlan(async (_result, explicit) => {
+				this._cancelSerializedExplicitRefine(explicit);
+				return false;
+			});
 		}
 		while (this._refinePlanInFlight) {
 			await this._refinePlanInFlight;
@@ -9281,17 +9765,34 @@ export class AgentSession {
 	/**
 	 * Scan session messages appended since the last scan for failures, update
 	 * the per-session failure ledger, and queue a deterministic refine when a
-	 * fingerprint crosses the recurrence threshold or a provisional champion's
+	 * fingerprint enters the recurring set (at or over the threshold and
+	 * actionable by the majority of its occurrences) or a provisional champion's
 	 * claimed fingerprint recurs inside its observation window. Both triggers
 	 * skip the auto-refine reviewer and cooldown (they ride the refine.run
-	 * channel) and are deduped per fingerprint per session. Best effort: the
+	 * channel) and are deduped per fingerprint per session, until an abort or a
+	 * branch change cancels the refine before it repairs anything. Best effort: the
 	 * ledger must never break the agent loop.
 	 *
-	 * With `PRIME_AGENT_GLOBAL_LEDGER=1` the same observations are also folded
-	 * into the global ledger, and recurrence is judged there instead: the local
-	 * ledger stays a per-session record (it owns the scan cursor), while the
-	 * global one is what lets a fingerprint first seen in an earlier session
-	 * cross the threshold here.
+	 * With the global ledger on (the default; `PRIME_AGENT_GLOBAL_LEDGER=0`
+	 * turns it off) the same observations are also folded into the global
+	 * ledger, and recurrence is judged there instead: the local ledger stays a
+	 * per-session record (it owns the scan cursor), while the global one is what
+	 * lets a fingerprint first seen in an earlier session cross the threshold
+	 * here. It is read from disk, so the ordinal the windows are checked at
+	 * includes what other sessions observed since this one last flushed.
+	 * Provisional windows are then checked in both lineages, so a global
+	 * champion committed by an earlier session can regress in this one. With the
+	 * flag off only the local lineage is checked. Every window is checked on its
+	 * own clock: `"ordinal"` windows at the global ordinal (only while the flag is
+	 * on, since nothing advances it otherwise), `"local-ordinal"` windows at the
+	 * local ledger's ordinal whatever the flag says now.
+	 *
+	 * A regression is repaired in the scope of the champion it regressed, so the
+	 * local and global repairs are queued as separate requests.
+	 *
+	 * Non-actionable observations (a provider outage, a user denial, the
+	 * network) are counted but never regress a champion, and a fingerprint most
+	 * of whose occurrences were non-actionable never triggers a refine.
 	 */
 	private _observeFailuresAtTurnBoundary(): void {
 		try {
@@ -9315,40 +9816,103 @@ export class AgentSession {
 
 			let effectiveLedger = updated.ledger;
 			let newlyRecurring = updated.newlyRecurring;
-			if (globalFailureLedgerEnabled()) {
-				const merged = mergeFailureObservations(this._loadGlobalFailureLedger(), observations);
-				this._globalFailureLedger = merged.ledger;
+			// Read after this batch was counted: the recurrence happened at these ordinals.
+			const localOrdinal = observationOrdinal(updated.ledger);
+			let globalOrdinal: number | undefined;
+			let globalRavo: HarnessState["ravo"];
+			let globalState: HarnessState | undefined;
+			if (globalFailureLedgerEnabled() && observations.length > 0) {
+				// One read of the global state serves the count, the clock, the global lineage and its trust windows.
+				globalState = loadHarnessState(getGlobalHarnessStateDir(), "global");
+				const merged = mergeFailureObservations(
+					this._freshGlobalFailureLedger(globalState.failures ?? emptyFailureLedger()),
+					observations,
+				);
 				this._globalFailureLedgerPending.push(...observations);
 				effectiveLedger = merged.ledger;
 				newlyRecurring = merged.newlyRecurring;
+				globalOrdinal = observationOrdinal(merged.ledger);
+				globalRavo = globalState.ravo;
 			}
+			this._startReplayVerification(observations, effectiveLedger);
 
-			const recurredIds = [...new Set(observations.map((observation) => observation.fingerprint.id))];
-			const regressions = findProvisionalRegressions(
-				this._loadLocalHarnessRavoState(localHarnessStateDir),
-				recurredIds,
-				turn,
-			);
-			if (regressions.length > 0) {
-				this._failureLedgerPendingRegressions.push({ regressions, turn });
+			const recurredIds = [
+				...new Set(
+					observations
+						// An occurrence recurs only when it is actionable itself (a denial is not a recurrence of
+						// what a champion fixed) and its fingerprint still is by the majority of its occurrences.
+						.filter(
+							(observation) =>
+								isActionableFailure(observation) &&
+								isActionableFailure(effectiveLedger.failures[observation.fingerprint.id] ?? observation),
+						)
+						.map((observation) => observation.fingerprint.id),
+				),
+			];
+			// Each window is checked on the clock it was stamped with. A local window stamped while the
+			// global ledger was off stays on the local ordinal, which advances whether the flag is on or not.
+			const localState = recurredIds.length > 0 ? loadHarnessState(localHarnessStateDir, "local") : undefined;
+			const localRavo = localState?.ravo;
+			const localOnLocalClock = findProvisionalRegressions(localRavo, recurredIds, localOrdinal, "local-ordinal");
+			const localOnGlobalClock =
+				globalOrdinal === undefined
+					? []
+					: findProvisionalRegressions(localRavo, recurredIds, globalOrdinal, "ordinal");
+			const localRegressions = [...localOnLocalClock, ...localOnGlobalClock];
+			const globalRegressions =
+				globalRavo && globalOrdinal !== undefined && recurredIds.length > 0
+					? findProvisionalRegressions(globalRavo, recurredIds, globalOrdinal, "ordinal")
+					: [];
+			if (localOnLocalClock.length > 0) {
+				this._failureLedgerPendingRegressions.push({ regressions: localOnLocalClock, turn: localOrdinal });
 			}
-			this._flushFailureLedger();
+			if (localOnGlobalClock.length > 0 && globalOrdinal !== undefined) {
+				this._failureLedgerPendingRegressions.push({ regressions: localOnGlobalClock, turn: globalOrdinal });
+			}
+			if (globalRegressions.length > 0 && globalOrdinal !== undefined) {
+				this._globalFailureLedgerPendingRegressions.push({ regressions: globalRegressions, turn: globalOrdinal });
+			}
+			if (globalOrdinal !== undefined && recurredIds.length > 0) {
+				this._observeTrustWindowRecurrences(
+					observations,
+					recurredIds,
+					globalOrdinal,
+					effectiveLedger,
+					localState,
+					globalState,
+				);
+			}
+			this._flushFailureLedger(globalOrdinal);
 
 			if (!this._autoRefineAllowedForSession() || !this.settingsManager.getAutoRefineSettings().enabled) {
 				return;
 			}
-			const regressed = regressions.filter((regression) =>
-				regression.fingerprints.some((id) => !this._failureRefineTriggered.has(`regression:${id}`)),
-			);
-			if (regressed.length > 0) {
-				for (const regression of regressed) {
-					for (const id of regression.fingerprints) this._failureRefineTriggered.add(`regression:${id}`);
-				}
-				const regressedIds = new Set(regressed.flatMap((regression) => regression.fingerprints));
-				const records = Object.values(effectiveLedger.failures).filter((record) =>
-					regressedIds.has(record.fingerprint.id),
+			const untriggered = (regressions: readonly ProvisionalRegression[]) =>
+				regressions.filter((regression) =>
+					regression.fingerprints.some((id) => !this._failureRefineTriggered.has(`regression:${id}`)),
 				);
-				this._queueFailureTriggeredRefine(formatRegressionRefineInstructions(regressed, records));
+			const repairs = [
+				{ regressed: untriggered(localRegressions), global: false },
+				{ regressed: untriggered(globalRegressions), global: true },
+			].filter((repair) => repair.regressed.length > 0);
+			if (repairs.length > 0) {
+				for (const { regressed } of repairs) {
+					for (const regression of regressed) {
+						for (const id of regression.fingerprints) this._failureRefineTriggered.add(`regression:${id}`);
+					}
+				}
+				for (const { regressed, global } of repairs) {
+					const regressedIds = [...new Set(regressed.flatMap((regression) => regression.fingerprints))];
+					const records = Object.values(effectiveLedger.failures).filter((record) =>
+						regressedIds.includes(record.fingerprint.id),
+					);
+					this._queueFailureTriggeredRefine(
+						formatRegressionRefineInstructions(regressed, records),
+						"regression",
+						regressedIds,
+						global,
+					);
+				}
 				return;
 			}
 			const recurring = newlyRecurring.filter(
@@ -9356,13 +9920,268 @@ export class AgentSession {
 			);
 			if (recurring.length === 0) return;
 			for (const record of recurring) this._failureRefineTriggered.add(`recurrence:${record.fingerprint.id}`);
-			this._queueFailureTriggeredRefine(formatRecurrenceRefineInstructions(recurring));
+			this._queueFailureTriggeredRefine(
+				formatRecurrenceRefineInstructions(recurring),
+				"recurrence",
+				recurring.map((record) => record.fingerprint.id),
+			);
 		} catch {
 			// Failure accounting is opportunistic; never interrupt the agent loop.
 		}
 	}
 
-	/** Turn number used by the failure ledger and provisional windows: assistant messages on the active branch. */
+	/**
+	 * Self-check the replay cases derived from fresh observations, off the turn
+	 * path. A case is evidence only once it has reproduced its recorded
+	 * exception; the results wait for the next ledger flush, which respects the
+	 * no-write-while-refining guard. One batch runs at a time, each
+	 * (fingerprint, source) at most once per session, and a case the ledger
+	 * already holds verified is not re-run.
+	 */
+	private _startReplayVerification(observations: readonly FailureObservation[], ledger: FailureLedger): void {
+		for (const observation of observations) {
+			const replay = observation.replayCase;
+			if (!replay || replay.verifiedAt) continue;
+			const key = `${observation.fingerprint.id}\u0000${replay.source}`;
+			if (this._replayCasesAttempted.has(key)) continue;
+			this._replayCasesAttempted.add(key);
+			const record = ledger.failures[observation.fingerprint.id];
+			if (record && verifiedReplayCasesOf(record).some((verified) => verified.source === replay.source)) continue;
+			this._replayVerificationBacklog.push(observation);
+		}
+		this._drainReplayVerificationBacklog();
+	}
+
+	private _drainReplayVerificationBacklog(): void {
+		if (this._replayVerification || this._replayVerificationBacklog.length === 0) return;
+		if (this._disposed || this._disposing) {
+			this._replayVerificationBacklog = [];
+			return;
+		}
+		const batch = this._replayVerificationBacklog;
+		this._replayVerificationBacklog = [];
+		const abort = new AbortController();
+		// The replays outlive the turn that observed the failures, so they are a root of their own.
+		const run: Promise<void> = runWithTraceContext(undefined, () =>
+			verifyObservedReplayCases(batch, { signal: abort.signal }),
+		)
+			.then((verifications) => {
+				if (abort.signal.aborted || this._disposed) return;
+				if (verifications.length > 0) {
+					this._pendingReplayVerifications.push(...verifications);
+					if (globalFailureLedgerEnabled()) this._globalPendingReplayVerifications.push(...verifications);
+					this._failureLedgerDirty = true;
+				}
+				this._releaseTrustAdjudications(verifications);
+			})
+			.catch(() => {
+				// A self-check that cannot run leaves its cases unverified, which is the conservative state. The
+				// trust replays awaiting it can no longer be released by it, so they give up their slots and keys.
+				if (abort.signal.aborted || this._disposed) return;
+				try {
+					this._releaseTrustAdjudications([]);
+				} catch {
+					// Trust accounting is opportunistic.
+				}
+			})
+			.finally(() => {
+				if (this._replayVerification !== run) return;
+				this._replayVerification = undefined;
+				this._replayVerificationAbort = undefined;
+				this._replayVerificationBatch = [];
+				this._drainReplayVerificationBacklog();
+			});
+		this._replayVerification = run;
+		this._replayVerificationAbort = abort;
+		this._replayVerificationBatch = batch;
+	}
+
+	/**
+	 * Record where a committed refinement's claimed failure recurred inside its
+	 * trust window, and plan the post-commit replays that recurrence warrants
+	 * (`planTrustAdjudications`), in the local and then the global scope. Runs
+	 * only with the global ledger on, since trust windows are measured on its
+	 * ordinal. The evidence waits for the next flush or apply of its scope. A
+	 * job whose observed case is still being self-checked waits for that check,
+	 * and is not kept when no check of it is pending.
+	 */
+	private _observeTrustWindowRecurrences(
+		observations: readonly FailureObservation[],
+		recurredIds: readonly string[],
+		ordinal: number,
+		ledger: FailureLedger,
+		localState: HarnessState | undefined,
+		globalState: HarnessState | undefined,
+	): void {
+		try {
+			if (this._disposed || this._disposing) return;
+			const recurring = new Set(recurredIds);
+			const recurred = new Map<string, ReplayCase[]>();
+			for (const observation of observations) {
+				const id = observation.fingerprint.id;
+				if (!recurring.has(id) || !isActionableFailure(observation)) continue;
+				const cases = recurred.get(id) ?? [];
+				if (observation.replayCase) cases.push(observation.replayCase);
+				recurred.set(id, cases);
+			}
+			const triggerTraceId = currentTraceContext()?.traceId;
+			const verifications = [...this._pendingReplayVerifications, ...this._globalPendingReplayVerifications];
+			const recordOf = (id: string): FailureRecord | undefined => {
+				const record = ledger.failures[id] ?? this._failureLedger?.failures[id];
+				if (!record) return undefined;
+				return applyReplayVerifications(
+					{ schema: 1, failures: { [id]: record }, lastScannedEntryIndex: 0 },
+					verifications,
+				).failures[id];
+			};
+			const scopes = [
+				{ scope: "local" as const, state: localState, pending: this._pendingTrustEvidence },
+				{ scope: "global" as const, state: globalState, pending: this._globalPendingTrustEvidence },
+			];
+			for (const { scope, state, pending } of scopes) {
+				if (!state) continue;
+				const windows = recordHarnessTrustEvidence(state, pending);
+				const recurrences = findTrustWindowRecurrences(windows, recurred, ordinal);
+				if (recurrences.length === 0) continue;
+				const evidence: TrustWindowEvidence[] = recurrences.map(({ proposalId, fingerprintId }) => ({
+					type: "recurrence",
+					proposalId,
+					fingerprintId,
+					ordinal,
+				}));
+				pending.push(...evidence);
+				const plan = planTrustAdjudications({
+					scope,
+					windows: recordTrustWindowEvidence(windows, evidence),
+					recurrences,
+					entries: state.entries,
+					recordOf,
+					...(triggerTraceId === undefined ? {} : { triggerTraceId }),
+				});
+				for (const job of plan.jobs) {
+					const key = trustAdjudicationKey(job);
+					if (this._trustAdjudicationsQueued.has(key)) continue;
+					if (this._trustAdjudicationBacklog.length >= MAX_TRUST_ADJUDICATION_JOBS) break;
+					this._trustAdjudicationBacklog.push(job);
+					this._trustAdjudicationsQueued.add(key);
+				}
+				for (const awaiting of plan.awaiting) {
+					const key = trustAdjudicationKey(awaiting.job);
+					if (this._trustAdjudicationsQueued.has(key)) continue;
+					if (this._trustAdjudicationsAwaiting.size >= MAX_TRUST_ADJUDICATION_JOBS) break;
+					if (!this._replayVerificationPending(awaiting, true)) continue;
+					this._trustAdjudicationsAwaiting.set(key, awaiting);
+					this._trustAdjudicationsQueued.add(key);
+				}
+			}
+			this._drainTrustAdjudicationBacklog();
+		} catch {
+			// Trust accounting is opportunistic; it must never cost the ledger flush or a refine trigger.
+		}
+	}
+
+	/** Whether a self-check of one of the awaited sources is still backlogged (or, with `running`, running). */
+	private _replayVerificationPending(awaiting: AwaitingTrustAdjudication, running: boolean): boolean {
+		const pending = running
+			? [...this._replayVerificationBatch, ...this._replayVerificationBacklog]
+			: this._replayVerificationBacklog;
+		return pending.some(
+			(observation) =>
+				observation.fingerprint.id === awaiting.job.fingerprintId &&
+				observation.replayCase !== undefined &&
+				awaiting.sources.includes(observation.replayCase.source),
+		);
+	}
+
+	/**
+	 * Hand the verifications a finished self-check batch landed to the trust
+	 * replays awaiting them. A released job joins the backlog while it has room;
+	 * an awaiting job whose sources this batch did not verify and no later batch
+	 * will check can never release, so it is dropped and may be planned again.
+	 */
+	private _releaseTrustAdjudications(verifications: readonly ReplayVerification[]): void {
+		for (const [key, awaiting] of this._trustAdjudicationsAwaiting) {
+			const released = releaseAwaitingTrustAdjudication(awaiting, verifications);
+			if (!released.matched && this._replayVerificationPending(awaiting, false)) continue;
+			this._trustAdjudicationsAwaiting.delete(key);
+			if (released.job && this._trustAdjudicationBacklog.length < MAX_TRUST_ADJUDICATION_JOBS) {
+				this._trustAdjudicationBacklog.push(released.job);
+			} else {
+				this._trustAdjudicationsQueued.delete(key);
+			}
+		}
+		this._drainTrustAdjudicationBacklog();
+	}
+
+	/**
+	 * Run the backlogged trust replays, one batch at a time, as a detached root
+	 * (`harness.trust.adjudicate`): they outlive the turn that observed the
+	 * recurrence. Their verdicts are routed to the pending evidence of their
+	 * scope. Global verdicts are flushed from inside the detached context, so
+	 * that flush is a root too. Local ones wait for the next local flush (turn
+	 * boundary, agent_end, refine apply or dispose): the kernel writes the local
+	 * state without a lock, and a batch usually lands while a cell runs. An
+	 * aborted batch records nothing.
+	 */
+	private _drainTrustAdjudicationBacklog(): void {
+		if (this._trustAdjudication || this._trustAdjudicationBacklog.length === 0) return;
+		if (this._disposed || this._disposing) {
+			this._trustAdjudicationBacklog = [];
+			this._trustAdjudicationsAwaiting.clear();
+			this._trustAdjudicationsQueued.clear();
+			return;
+		}
+		const batch = this._trustAdjudicationBacklog;
+		this._trustAdjudicationBacklog = [];
+		const abort = new AbortController();
+		const run: Promise<void> = runWithTraceContext(undefined, () =>
+			adjudicateTrustRecurrences(batch, { signal: abort.signal, sessionId: this.sessionId })
+				.then((evidence) => {
+					if (abort.signal.aborted || this._disposed || evidence.length === 0) return;
+					let global = false;
+					for (const { scope, ...item } of evidence) {
+						if (scope === "global") {
+							this._globalPendingTrustEvidence.push(item);
+							global = true;
+						} else {
+							this._pendingTrustEvidence.push(item);
+							this._failureLedgerDirty = true;
+						}
+					}
+					if (global) this._flushFailureLedger(undefined, "global");
+				})
+				.catch(() => {
+					// A replay that cannot run records no verdict, which never moves trust.
+				}),
+		).finally(() => {
+			for (const job of batch) this._trustAdjudicationsQueued.delete(trustAdjudicationKey(job));
+			if (this._trustAdjudication !== run) return;
+			this._trustAdjudication = undefined;
+			this._trustAdjudicationAbort = undefined;
+			this._drainTrustAdjudicationBacklog();
+		});
+		this._trustAdjudication = run;
+		this._trustAdjudicationAbort = abort;
+	}
+
+	/** Wait at most `timeoutMs` for the running replay self-checks and trust replays, including the batches they start. */
+	private async _awaitRefereeRuns(timeoutMs: number): Promise<void> {
+		const deadline = Date.now() + timeoutMs;
+		while (this._replayVerification || this._trustAdjudication) {
+			const remaining = deadline - Date.now();
+			if (remaining <= 0) return;
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			await Promise.race([
+				Promise.allSettled([this._replayVerification, this._trustAdjudication]),
+				new Promise<void>((resolve) => {
+					timer = setTimeout(resolve, remaining);
+				}),
+			]);
+			clearTimeout(timer);
+		}
+	}
+
+	/** Turn number used by the failure ledger: assistant messages on the active branch. */
 	private _failureLedgerTurn(): number {
 		let turn = 0;
 		for (const entry of this.sessionManager.getBranch()) {
@@ -9371,18 +10190,54 @@ export class AgentSession {
 		return turn;
 	}
 
-	private _loadLocalHarnessRavoState(localHarnessStateDir: string): HarnessState["ravo"] {
-		return loadHarnessState(localHarnessStateDir, "local").ravo;
-	}
-
 	/**
-	 * The ledger the RAVO gate judges recurrence against. With the global ledger
-	 * on it is the cross-session one, so a fingerprint carried in from an earlier
-	 * session still becomes an opponent the proposal has to address.
+	 * The recurring failures a proposal is held to. Recurrence is counted on
+	 * `ledger` (the global one when it is on), but a proposal answers only for
+	 * the failures it can be blamed for: a failure refine for the fingerprints
+	 * that queued it; any other refine for the fingerprints that queued a request
+	 * merged into it, plus the ones that recur in this session's own ledger and
+	 * were last seen within an observation window of turns. Charging every
+	 * fingerprint that recurs anywhere on the machine, or every one this session
+	 * ever saw, would reject every later refine for good, since both sets only
+	 * grow and the local ledger never evicts a record.
+	 *
+	 * A fingerprint that queued the request is charged on this session's own
+	 * record when it does not recur in `ledger`: one counted while the global
+	 * ledger was off recurs only locally, and its repair could otherwise never
+	 * claim it.
+	 *
+	 * Recency is read off `lastSeenTurn`. The local ledger is written only by this
+	 * session, so its turns are this session's assistant turns, the clock
+	 * `_failureLedgerTurn` reads. A record carries no observation ordinal, and
+	 * `lastSeenAt` is wall-clock, which would expire a failure while the operator
+	 * was away rather than after work that did not hit it. The ledger does not
+	 * track branches, so a record last seen at a later turn than the branch has
+	 * now (a rewind or tree navigation) was seen on another branch and is not
+	 * recent.
 	 */
-	private _recurringFailureLedger(baselineState: HarnessState): FailureLedger {
-		if (globalFailureLedgerEnabled()) return this._loadGlobalFailureLedger();
-		return baselineState.failures ?? emptyFailureLedger();
+	private _gateRecurringFailures(
+		ledger: FailureLedger,
+		options: RefineRequestOptions,
+		localState: HarnessState | undefined,
+	): FailureRecord[] {
+		const localRecurring = recurringFailures(this._failureLedger ?? localState?.failures ?? emptyFailureLedger());
+		const triggers = new Set(options.triggerFingerprintIds);
+		const charged = new Set(triggers);
+		if (refineRequestKind(options) !== "failure" || options.triggerFingerprintIds === undefined) {
+			const turn = this._failureLedgerTurn();
+			for (const record of localRecurring) {
+				const age = turn - record.lastSeenTurn;
+				if (age >= 0 && age <= DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS) charged.add(record.fingerprint.id);
+			}
+		}
+		const gated = recurringFailures(ledger).filter((record) => charged.has(record.fingerprint.id));
+		const gatedIds = new Set(gated.map((record) => record.fingerprint.id));
+		return [
+			...gated,
+			...localRecurring.filter(
+				(record) => triggers.has(record.fingerprint.id) && !gatedIds.has(record.fingerprint.id),
+			),
+		];
 	}
 
 	/**
@@ -9413,109 +10268,464 @@ export class AgentSession {
 	}
 
 	/**
-	 * The durable ordinal trust windows and provisional regressions are measured in.
+	 * The global ledger as it stands now: `onDisk` (read from the global harness
+	 * state when omitted) with this session's unflushed observations folded in.
+	 * Other sessions advance it, so a copy kept since this session's last flush
+	 * runs behind and would open windows that are already closed and check
+	 * recurrences against the wrong ordinal.
 	 *
-	 * Deliberately the *global* ledger even when the flag is off. With the flag
-	 * off nothing advances it, so a window simply never reaches its settle
-	 * point and no trust moves -- which is the fail-closed direction. Falling
-	 * back to the per-session assistant turn would silently reintroduce the bug
-	 * this replaces.
+	 * Trust windows are always measured on its ordinal, even with the flag off:
+	 * nothing advances it then, so a trust window never reaches its settle point
+	 * and no trust moves, which is the fail-closed direction.
 	 */
-	private _durableObservationOrdinal(): number {
-		return observationOrdinal(this._loadGlobalFailureLedger());
-	}
-
-	/** The cross-session ledger, read once per session and kept current by each flush. */
-	private _loadGlobalFailureLedger(): FailureLedger {
-		if (!this._globalFailureLedger) {
-			this._globalFailureLedger =
-				loadHarnessState(getGlobalHarnessStateDir(), "global").failures ?? emptyFailureLedger();
-		}
-		return this._globalFailureLedger;
+	private _freshGlobalFailureLedger(onDisk?: FailureLedger): FailureLedger {
+		const ledger = onDisk ?? loadHarnessState(getGlobalHarnessStateDir(), "global").failures ?? emptyFailureLedger();
+		const pending = this._globalFailureLedgerPending;
+		return pending.length > 0 ? mergeFailureObservations(ledger, pending).ledger : ledger;
 	}
 
 	/**
-	 * Persist the in-memory ledger (and any recorded provisional regressions)
-	 * into the LOCAL harness state. Skipped while a refine plan or apply is in
-	 * flight: the RAVO certificate binds the baseline state digest, so a write
-	 * during planning would turn the commit into a binding-mismatch rejection.
-	 * The in-memory ledger stays authoritative and is flushed at the next boundary.
+	 * The clock a gate opens a provisional window on, the same one the turn
+	 * boundary checks it against. With the global ledger on that is its ordinal
+	 * (`"ordinal"`). With it off, a local window runs on the local ledger's
+	 * ordinal (`"local-ordinal"`), which advances with every observation in this
+	 * session; a global window gets no clock, since nothing would ever advance
+	 * one, and is never checked.
 	 */
-	private _flushFailureLedger(): void {
+	private _provisionalWindowClock(
+		scope: HarnessScope,
+		globalLedger: FailureLedger | undefined,
+		localState: HarnessState | undefined,
+	): { turn: number; turnClock?: RavoWindowClock } {
+		if (globalLedger) return { turn: observationOrdinal(globalLedger), turnClock: "ordinal" };
+		if (scope === "local") {
+			return { turn: observationOrdinal(this._failureLedger ?? localState?.failures), turnClock: "local-ordinal" };
+		}
+		return { turn: observationOrdinal(this._freshGlobalFailureLedger()) };
+	}
+
+	/**
+	 * Persist the in-memory ledger, any recorded provisional regressions, and any
+	 * finished replay verifications into the LOCAL harness state. Skipped while a
+	 * refine plan or apply is in flight: the RAVO certificate binds the baseline
+	 * state digest, so a write during planning would turn the commit into a
+	 * binding-mismatch rejection. The in-memory ledger stays authoritative and is
+	 * flushed at the next boundary.
+	 *
+	 * Pending regressions, verifications and trust evidence are only dropped once
+	 * the write lands. A regression stays pending while the state has no lineage
+	 * to record it on, instead of being discarded unrecorded.
+	 *
+	 * Local trust windows settle here too, on the global observation ordinal:
+	 * `globalOrdinalHint` when the turn boundary already read it, and otherwise
+	 * read fresh.
+	 *
+	 * `scope: "global"` skips the local state, for a caller that may run while
+	 * this session's kernel runs a cell: the kernel writes the local state with
+	 * no lock, so the host writes it only where no cell runs (turn boundary,
+	 * agent_end, refine apply, dispose). Every session already writes the global
+	 * state at arbitrary times.
+	 */
+	private _flushFailureLedger(globalOrdinalHint?: number, scope: "all" | "global" = "all"): void {
 		if (this._refineInFlight || this._refinePlanInFlight || this._serializedPlanInFlight) return;
 		this._flushGlobalFailureLedger();
-		if (!this._failureLedgerDirty || !this._failureLedger) return;
+		if (scope === "global" || !this._failureLedgerDirty || !this._failureLedger) return;
 		const localHarnessStateDir = this._localHarnessStateDir();
 		if (!localHarnessStateDir) return;
 		try {
 			const state = loadHarnessState(localHarnessStateDir, "local");
-			state.failures = this._failureLedger;
+			const ledger = applyReplayVerifications(this._failureLedger, this._pendingReplayVerifications);
+			state.failures = ledger;
+			const recordsRegressions = state.ravo !== undefined;
 			if (state.ravo) {
 				for (const pending of this._failureLedgerPendingRegressions) {
 					state.ravo = recordProvisionalRegressions(state.ravo, pending.regressions, pending.turn);
 				}
 			}
-			this._failureLedgerPendingRegressions = [];
+			const trustEvidence = this._pendingTrustEvidence;
+			state.trustWindows = recordHarnessTrustEvidence(state, trustEvidence);
+			const trust =
+				hasOpenTrustWindows(state.trustWindows) || trustEvidence.length > 0
+					? settleHarnessTrust(state, {
+							turn: globalOrdinalHint ?? observationOrdinal(this._freshGlobalFailureLedger()),
+						})
+					: undefined;
 			saveHarnessState(localHarnessStateDir, state);
+			this._failureLedger = ledger;
+			this._pendingReplayVerifications = [];
+			this._pendingTrustEvidence = [];
+			if (recordsRegressions) this._failureLedgerPendingRegressions = [];
 			this._failureLedgerDirty = false;
+			if (trust) logHarnessTrustSettlement(trust, "local");
 		} catch {
 			// Leave the ledger dirty; the next boundary retries.
 		}
 	}
 
 	/**
-	 * Fold this session's not-yet-flushed observations into the GLOBAL failure
-	 * ledger so a fingerprint observed here still counts in the next session.
+	 * Fold this session's not-yet-flushed observations, provisional regressions
+	 * of global champions, replay verifications and trust evidence into the
+	 * GLOBAL harness state so a fingerprint observed here still counts in the
+	 * next session, and settle the global trust windows on the merged ordinal.
 	 * Read-modify-write under the harness state lock: two processes flushing at
-	 * once serialize, and neither loses the other's records. The pending list is
-	 * only cleared once the write lands, so a failed flush retries at the next
-	 * boundary instead of dropping observations.
+	 * once serialize, and neither loses the other's records. The pending lists
+	 * are only cleared once the write lands, so a failed flush retries at the
+	 * next boundary instead of dropping anything.
 	 */
 	private _flushGlobalFailureLedger(): void {
-		if (!globalFailureLedgerEnabled() || this._globalFailureLedgerPending.length === 0) return;
+		if (!globalFailureLedgerEnabled()) return;
 		const pending = this._globalFailureLedgerPending;
+		const regressions = this._globalFailureLedgerPendingRegressions;
+		const verifications = this._globalPendingReplayVerifications;
+		const trustEvidence = this._globalPendingTrustEvidence;
+		if (
+			pending.length === 0 &&
+			regressions.length === 0 &&
+			verifications.length === 0 &&
+			trustEvidence.length === 0
+		) {
+			return;
+		}
 		const globalHarnessStateDir = getGlobalHarnessStateDir();
 		try {
-			withSpan(
+			const { recorded: recordedRegressions, trust } = withSpan(
 				"harness.ledger.flush",
-				{ "session.id": this.sessionId, "ledger.scope": "global", "ledger.observations": pending.length },
-				(span) => {
+				{
+					"session.id": this.sessionId,
+					"ledger.scope": "global",
+					"ledger.observations": pending.length,
+					"ledger.regressions": regressions.length,
+					"ledger.verifications": verifications.length,
+					"trust.recurrences": trustEvidence.filter((item) => item.type === "recurrence").length,
+					"trust.adjudications": trustEvidence.filter((item) => item.type === "adjudication").length,
+				},
+				(span) =>
 					withHarnessStateLock(globalHarnessStateDir, () => {
 						const state = loadHarnessState(globalHarnessStateDir, "global");
 						const merged = mergeFailureObservations(state.failures ?? emptyFailureLedger(), pending);
-						state.failures = merged.ledger;
+						state.failures = applyReplayVerifications(merged.ledger, verifications);
+						const recorded = state.ravo !== undefined;
+						if (state.ravo) {
+							for (const regression of regressions) {
+								state.ravo = recordProvisionalRegressions(state.ravo, regression.regressions, regression.turn);
+							}
+						}
+						state.trustWindows = recordHarnessTrustEvidence(state, trustEvidence);
+						const trust = state.trustWindows
+							? settleHarnessTrust(state, { turn: observationOrdinal(state.failures) })
+							: undefined;
 						saveHarnessState(globalHarnessStateDir, state);
-						this._globalFailureLedger = merged.ledger;
-						span.setAttributes({ "ledger.fingerprints": Object.keys(merged.ledger.failures).length });
-					});
-				},
+						span.setAttributes({
+							"ledger.fingerprints": Object.keys(state.failures.failures).length,
+							...trustSettlementSpanAttributes(trust),
+						});
+						return { recorded, trust };
+					}),
 			);
 			this._globalFailureLedgerPending = [];
+			this._globalPendingReplayVerifications = [];
+			this._globalPendingTrustEvidence = [];
+			if (recordedRegressions) this._globalFailureLedgerPendingRegressions = [];
+			if (trust) logHarnessTrustSettlement(trust, "global");
 		} catch {
-			// Leave the observations pending; the next boundary retries.
+			// Leave everything pending; the next boundary retries.
 		}
 	}
 
 	/**
 	 * Queue a failure-triggered refine on the refine.run channel: serialized
 	 * sessions plan it in the background and apply at shouldStopAfterTurn,
-	 * interactive sessions consume it at agent_end. Existing pending
-	 * instructions are kept and the failure instructions appended.
+	 * interactive sessions consume it at agent_end. A pending request of the
+	 * same scope keeps its instructions and gets the failure instructions
+	 * appended; the merged request runs under the stronger reason and stays a
+	 * failure refine only if everything in it was one. A pending request of the
+	 * other scope is left alone and this one waits behind it: a local refine
+	 * cannot edit a global champion, and a global one must not publish a local
+	 * repair.
 	 */
-	private _queueFailureTriggeredRefine(instructions: string): void {
-		const previous = this._pendingRequestedRefine;
-		this._pendingRequestedRefine = {
-			instructions: previous?.instructions ? `${previous.instructions}\n\n${instructions}` : instructions,
-			global: previous?.global,
+	private _queueFailureTriggeredRefine(
+		instructions: string,
+		reason: "recurrence" | "regression",
+		fingerprintIds: readonly string[],
+		global = false,
+	): void {
+		const request: RefineRequestOptions = {
+			instructions,
+			reason,
+			kind: "failure",
+			triggerFingerprintIds: [...fingerprintIds],
+			...(global ? { global: true } : {}),
 		};
+		const previous = this._pendingRequestedRefine;
+		if (!previous) {
+			this._pendingRequestedRefine = request;
+		} else if ((previous.global === true) === global) {
+			this._pendingRequestedRefine = mergeRefineRequests(previous, request);
+		} else {
+			this._deferRefineRequest(request);
+		}
+	}
+
+	/** Park a request behind the pending one, merged into a parked request of the same scope when there is one. */
+	private _deferRefineRequest(request: RefineRequestOptions): void {
+		const index = this._deferredRefineRequests.findIndex(
+			(deferred) => (deferred.global === true) === (request.global === true),
+		);
+		if (index === -1) this._deferredRefineRequests.push(request);
+		else this._deferredRefineRequests[index] = mergeRefineRequests(this._deferredRefineRequests[index]!, request);
+	}
+
+	private _hasPendingRefineRequest(): boolean {
+		return this._pendingRequestedRefine !== undefined || this._deferredRefineRequests.length > 0;
+	}
+
+	/** The next queued request to run: the pending one, then the parked ones in order. */
+	private _takePendingRefineRequest(): RefineRequestOptions | undefined {
+		const pending = this._pendingRequestedRefine;
+		if (pending) {
+			this._pendingRequestedRefine = undefined;
+			return pending;
+		}
+		return this._deferredRefineRequests.shift();
+	}
+
+	/** Drop every queued request as cancelled; `report` is false only when the session is going away. */
+	private _dropPendingRefineRequests(report = true): void {
+		const dropped = [
+			...(this._pendingRequestedRefine ? [this._pendingRequestedRefine] : []),
+			...this._deferredRefineRequests,
+		];
+		this._pendingRequestedRefine = undefined;
+		this._deferredRefineRequests = [];
+		for (const request of dropped) {
+			this._releaseRefineTriggers(request);
+			if (report) this._emitRefineFailed(new RefineCancelledError(REFINE_CANCELLED_MESSAGE));
+		}
+	}
+
+	/**
+	 * A cancelled request repaired nothing, so the failures that queued it may
+	 * queue a repair again, except those another queued, launched or in-flight
+	 * request still carries.
+	 */
+	private _releaseRefineTriggers(request: RefineRequestOptions): void {
+		if (!request.triggerFingerprintIds) return;
+		const held = new Set(
+			[
+				this._pendingRequestedRefine,
+				...this._deferredRefineRequests,
+				...this._launchedRefineRequests,
+				this._serializedExplicitRefineOptions,
+				this._staleEvidenceReplan?.options,
+			].flatMap((live) => (live === undefined || live === request ? [] : (live.triggerFingerprintIds ?? []))),
+		);
+		for (const id of request.triggerFingerprintIds) {
+			if (held.has(id)) continue;
+			this._failureRefineTriggered.delete(`recurrence:${id}`);
+			this._failureRefineTriggered.delete(`regression:${id}`);
+		}
+	}
+
+	/** Take the explicit request off the serialized background plan in flight, so one path alone reports it. */
+	private _takeSerializedExplicitRefine(): RefineRequestOptions | undefined {
+		const request = this._serializedExplicitRefineOptions;
+		this._serializedExplicitRefineOptions = undefined;
+		return request;
+	}
+
+	/** An explicit request whose serialized background plan is discarded unapplied, reported like a dropped queued one. */
+	private _cancelSerializedExplicitRefine(request: RefineRequestOptions | undefined): void {
+		if (!request) return;
+		this._releaseRefineTriggers(request);
+		this._emitRefineFailed(new RefineCancelledError(REFINE_CANCELLED_MESSAGE));
 	}
 
 	private _consumePendingRequestedRefine(): boolean {
-		const pending = this._pendingRequestedRefine;
-		if (!pending) return false;
-		this._pendingRequestedRefine = undefined;
-		void this.refine(pending, { source: "self" }).catch((error) => this._emitRefineFailed(error));
+		let consumed = false;
+		// refine() serializes its own runs, so every queued request can start here. The ones that
+		// wait behind another belong to the queue version they were launched under, so an abort or
+		// a branch change while they wait drops them before they plan; a compaction does not.
+		const queueVersion = this._refineQueueVersion;
+		for (let pending = this._takePendingRefineRequest(); pending; pending = this._takePendingRefineRequest()) {
+			consumed = true;
+			const request = pending;
+			this._launchedRefineRequests.add(request);
+			void this.refine(
+				{ instructions: request.instructions, global: request.global },
+				{
+					source: "self",
+					reason: request.reason ?? "refine_run",
+					queueVersion,
+					...(request.kind === undefined ? {} : { kind: request.kind }),
+					...(request.triggerFingerprintIds === undefined
+						? {}
+						: { triggerFingerprintIds: request.triggerFingerprintIds }),
+				},
+			).then(
+				() => {
+					this._launchedRefineRequests.delete(request);
+				},
+				(error) => {
+					this._launchedRefineRequests.delete(request);
+					if (error instanceof RefineCancelledError) this._releaseRefineTriggers(request);
+					this._emitRefineFailed(error);
+				},
+			);
+		}
+		return consumed;
+	}
+
+	/**
+	 * Hold a round open for one re-plan after a stale-evidence rejection. A user
+	 * /refine already holds its result, a rollback is never gated, a re-plan is
+	 * never re-planned, and a second stale rejection while one waits is final.
+	 */
+	private _armStaleEvidenceReplan(planId: string, options: RefineRequestOptions, source: RefinementSource): boolean {
+		if (source === "user" || options.rollbackId !== undefined || options.replanOf !== undefined) return false;
+		if (this._staleEvidenceReplan || this._disposed || this._disposing || !this._autoRefineAllowedForSession()) {
+			return false;
+		}
+		if (source === "auto" && !this.settingsManager.getAutoRefineSettings().enabled) return false;
+		this._staleEvidenceReplan = {
+			options: { ...options, replanOf: planId },
+			source,
+			queueVersion: this._refineQueueVersion,
+		};
 		return true;
+	}
+
+	/** A cancelled re-plan repaired nothing, so the failures its round was queued for may queue a repair again. */
+	private _finishStaleEvidenceReplan(replan: StaleEvidenceReplan, cancelled: boolean): void {
+		if (this._staleEvidenceReplan === replan) this._staleEvidenceReplan = undefined;
+		if (cancelled) this._releaseRefineTriggers(replan.options);
+	}
+
+	/** Drop a re-plan that has not launched; a launched one is cancelled by the caller's version bump or abort. */
+	private _dropStaleEvidenceReplan(report: boolean): void {
+		const replan = this._staleEvidenceReplan;
+		if (!replan || replan.run) return;
+		this._finishStaleEvidenceReplan(replan, true);
+		if (report && replan.source === "self") {
+			this._emitRefineFailed(new RefineCancelledError(REFINE_CANCELLED_MESSAGE));
+		}
+	}
+
+	/**
+	 * Launch an armed re-plan as a queued refine, whenever an ordinary
+	 * auto-refine could start: it waits behind a refine in flight and out a
+	 * compaction, and an abort or branch change cancels it.
+	 */
+	private _launchStaleEvidenceReplan(): boolean {
+		const replan = this._staleEvidenceReplan;
+		if (!replan || replan.run || this._serializedRefine || this._disposed || this._disposing) return false;
+		if (this._shouldSkipAutoRefineForActiveAgent()) return false;
+		if (replan.source === "auto") {
+			if (this._autoRefineInProgress) return false;
+			if (!this._autoRefineAllowedForSession() || !this.settingsManager.getAutoRefineSettings().enabled) {
+				this._finishStaleEvidenceReplan(replan, true);
+				return false;
+			}
+		}
+		const { options, source } = replan;
+		const run = this.refine(
+			{ instructions: options.instructions, ...(options.global ? { global: true } : {}) },
+			{
+				trigger: source === "auto" ? "auto" : "manual",
+				source,
+				reason: refineReasonOf(options),
+				...(options.kind === undefined ? {} : { kind: options.kind }),
+				...(options.triggerFingerprintIds === undefined
+					? {}
+					: { triggerFingerprintIds: options.triggerFingerprintIds }),
+				replanOf: options.replanOf,
+				queueVersion: replan.queueVersion,
+			},
+		).then(
+			() => {
+				this._finishStaleEvidenceReplan(replan, false);
+				if (source === "auto") this._closeAutoRefineRound(refineReasonOf(options));
+				this._resumeAutoRefineAfterReplan();
+			},
+			(error) => {
+				this._finishStaleEvidenceReplan(replan, error instanceof RefineCancelledError);
+				if (source === "self") {
+					this._emitRefineFailed(error);
+				} else {
+					this._lastAutoRefineReviewAt = Date.now();
+					if (error instanceof RefineSkippedError) this._closeAutoRefineRound(refineReasonOf(options));
+				}
+				this._resumeAutoRefineAfterReplan();
+			},
+		);
+		replan.run = run;
+		this._autoRefineOperations.add(run);
+		void run.finally(() => this._autoRefineOperations.delete(run)).catch(() => undefined);
+		return true;
+	}
+
+	/**
+	 * An agent_end skips a review approved earlier while a re-plan holds the
+	 * round, so run it once the re-plan settles instead of at a later agent_end.
+	 */
+	private _resumeAutoRefineAfterReplan(): void {
+		const pending = this._pendingAutoRefineReview;
+		if (pending && !this._autoRefineInProgress && !this._shouldSkipAutoRefineForActiveAgent()) {
+			this._scheduleAutoRefine(pending.reason);
+			return;
+		}
+		this._scheduleDeferredAutoRefineIfIdle();
+	}
+
+	/** Stamp the cooldown and clear what an auto round of `reason` was pending on. */
+	private _closeAutoRefineRound(reason: RefineReason): void {
+		this._lastAutoRefineReviewAt = Date.now();
+		this._assistantTurnsSinceAutoRefine = 0;
+		this._pendingAutoRefineReview = undefined;
+		this._turnIntervalAutoRefinePending = false;
+		if (reason === "compact") this._compactAutoRefinePending = false;
+	}
+
+	private _scheduleStaleEvidenceReplanLaunch(): void {
+		const replan = this._staleEvidenceReplan;
+		if (!replan || replan.run || this._serializedRefine || this._disposed) return;
+		const timer = setTimeout(() => {
+			this._scheduledAutoRefineTimers.delete(timer);
+			this._launchStaleEvidenceReplan();
+		}, 0);
+		this._scheduledAutoRefineTimers.add(timer);
+	}
+
+	/**
+	 * Run an armed re-plan inline, at a serialized checkpoint or at disposal,
+	 * after any launched one settles. Nothing moves the conversation here, so it
+	 * cannot drift again; the cooldown is stamped after it either way.
+	 */
+	private async _runStaleEvidenceReplanNow(): Promise<void> {
+		const launched = this._staleEvidenceReplan?.run;
+		if (launched) await launched.catch(() => undefined);
+		const replan = this._staleEvidenceReplan;
+		if (!replan || replan.run || this._disposed || this._disposing) return;
+		const branchVersion = this._autoRefineBranchVersion;
+		const run = (async () => {
+			try {
+				const result = await this._runSerializedRefine(replan.options, replan.source);
+				this._finishStaleEvidenceReplan(replan, result === undefined);
+			} catch (error) {
+				const cancelled =
+					error instanceof RefineCancelledError ||
+					this._disposed ||
+					branchVersion !== this._autoRefineBranchVersion;
+				this._finishStaleEvidenceReplan(replan, cancelled);
+				if (replan.source === "self" || !(cancelled || error instanceof RefineSkippedError)) {
+					this._emitRefineFailed(error);
+				}
+			} finally {
+				this._lastAutoRefineReviewAt = Date.now();
+				this._assistantTurnsSinceAutoRefine = 0;
+			}
+		})();
+		replan.run = run;
+		await run;
 	}
 
 	private _scheduleAutoRefineAfterAgentEnd(): void {
@@ -9740,6 +10950,16 @@ export class AgentSession {
 			this._discardPendingAutoRefine();
 			return;
 		}
+		const replan = this._staleEvidenceReplan;
+		if (replan) {
+			// An open round is closed by its re-plan, never by a second review; a trigger for another reason waits for it.
+			if (reason !== refineReasonOf(replan.options)) {
+				if (reason === "compact") this._compactAutoRefinePending = true;
+				else this._turnIntervalAutoRefinePending = true;
+			}
+			this._launchStaleEvidenceReplan();
+			return;
+		}
 		if (this._autoRefineInProgress || this._shouldSkipAutoRefineForActiveAgent()) {
 			if (reason === "compact") {
 				this._compactAutoRefinePending = true;
@@ -9841,11 +11061,17 @@ export class AgentSession {
 	private async _runApprovedRefine(reason: AutoRefineReason, review: AutoRefineReview): Promise<void> {
 		this._autoRefineInProgress = true;
 		try {
-			await this.refine({ instructions: autoRefineInstructions(reason, review) }, { trigger: "auto" });
+			const result = await this.refine(
+				{ instructions: autoRefineInstructions(reason, review) },
+				{ trigger: "auto", reason },
+			);
 			this._pendingAutoRefineReview = undefined;
 			this._turnIntervalAutoRefinePending = false;
-			this._lastAutoRefineReviewAt = Date.now();
-			this._assistantTurnsSinceAutoRefine = 0;
+			// A stale-evidence rejection leaves the round open: its re-plan stamps the cooldown when it settles.
+			if (this._staleEvidenceReplan?.options.replanOf !== result.id) {
+				this._lastAutoRefineReviewAt = Date.now();
+				this._assistantTurnsSinceAutoRefine = 0;
+			}
 			if (reason === "compact") {
 				this._compactAutoRefinePending = false;
 			}
@@ -9864,6 +11090,7 @@ export class AgentSession {
 		} finally {
 			this._autoRefineInProgress = false;
 			this._scheduleDeferredAutoRefineIfIdle();
+			this._scheduleStaleEvidenceReplanLaunch();
 		}
 	}
 
@@ -10035,10 +11262,25 @@ export class AgentSession {
 		);
 	}
 
+	/** This session's durable local refinement log; none for an unpersisted session. */
+	private _sessionRefinementHistoryPath(): string | undefined {
+		return this.sessionManager.getSessionArtifactDir() === undefined
+			? undefined
+			: getSessionRefinementHistoryPath(this.sessionId);
+	}
+
+	/** Global log, then this session's durable log, then its transcript; later sources win an id, in planning order. */
 	private _loadRefinementHistory(): RefinementResult[] {
-		return mergeRefinementHistory(
-			loadGlobalRefinementHistory(getGlobalHarnessStateDir()),
-			getRefinementHistory(this.sessionManager.getEntries().filter((entry) => entry.type === "custom")),
+		const own = this._sessionRefinementHistoryPath();
+		const durable = mergeRefinementHistory(
+			loadRefinementHistory(getRefinementHistoryPath(getGlobalHarnessStateDir()), "global"),
+			own ? loadRefinementHistory(own, "local") : [],
+		);
+		return orderRefinementHistory(
+			mergeRefinementHistory(
+				durable,
+				getRefinementHistory(this.sessionManager.getEntries().filter((entry) => entry.type === "custom")),
+			),
 		);
 	}
 
@@ -10056,7 +11298,24 @@ export class AgentSession {
 			rollbackId?: string;
 			global?: boolean;
 		} = {},
-		internal: { skipAbort?: boolean; trigger?: "manual" | "auto"; source?: RefinementSource } = {},
+		internal: {
+			skipAbort?: boolean;
+			trigger?: "manual" | "auto";
+			source?: RefinementSource;
+			/** Defaults to `turn_interval` for an auto trigger and `manual` otherwise; a rollback is always `rollback`. */
+			reason?: RefineReason;
+			/** The gate kind when it differs from the kind of `reason` (a merged request). */
+			kind?: RefineKind;
+			/** Fingerprints whose recurrence or regression queued this refine. */
+			triggerFingerprintIds?: readonly string[];
+			/**
+			 * The queue version a queued request was launched under: a later one cancels it before
+			 * planning. A queued request also waits out a compaction, so it plans on the compacted session.
+			 */
+			queueVersion?: number;
+			/** The stale-evidence rejection this refine re-plans. */
+			replanOf?: string;
+		} = {},
 	): Promise<RefinementResult> {
 		// Queued /refine executes from the session-input pump between turns;
 		// refine never aborts the agent (planning is backgrounded and the apply
@@ -10069,11 +11328,15 @@ export class AgentSession {
 		// starting a new run. This serializes concurrent /refine calls so two
 		// planning phases cannot race into concurrent _applyRefine calls that
 		// overwrite harness state.
-		while (this._refineInFlight || this._refinePlanInFlight || this._serializedPlanInFlight) {
+		const queued = internal.queueVersion !== undefined;
+		const compaction = () => (queued ? (this._queuedRefineCompaction ?? this._compactionOperation) : undefined);
+		while (this._refineInFlight || this._refinePlanInFlight || this._serializedPlanInFlight || compaction()) {
 			if (this._refineInFlight) {
 				await this._refineInFlight;
 			} else if (this._refinePlanInFlight) {
 				await this._refinePlanInFlight;
+			} else if (!this._serializedPlanInFlight) {
+				await compaction();
 			} else {
 				// A serialized background plan is in flight (started during an
 				// active turn at message_end). Wait for planning and for the active
@@ -10088,15 +11351,29 @@ export class AgentSession {
 				// after idle so a later public refine cannot spin on it forever.
 				if (this._serializedPlanInFlight === serializedPlanInFlight) {
 					this._serializedPlanInFlight = undefined;
-					this._serializedExplicitRefineOptions = undefined;
+					this._cancelSerializedExplicitRefine(this._takeSerializedExplicitRefine());
 				}
 			}
+		}
+		if (queued && internal.queueVersion !== this._refineQueueVersion) {
+			throw new RefineCancelledError(REFINE_CANCELLED_MESSAGE);
 		}
 
 		const refineAbort = new AbortController();
 		this._refineAbortController = refineAbort;
 
-		const planRun = this._planRefine(options, refineAbort.signal, internal.trigger ?? "manual");
+		const trigger = internal.trigger ?? "manual";
+		const source = internal.source ?? (trigger === "auto" ? "auto" : "user");
+		const request: RefineRequestOptions = {
+			...options,
+			reason: internal.reason ?? (trigger === "auto" ? "turn_interval" : "manual"),
+			...(internal.kind === undefined ? {} : { kind: internal.kind }),
+			...(internal.triggerFingerprintIds === undefined
+				? {}
+				: { triggerFingerprintIds: [...internal.triggerFingerprintIds] }),
+			...(internal.replanOf === undefined ? {} : { replanOf: internal.replanOf }),
+		};
+		const planRun = this._planRefine(request, refineAbort.signal, trigger, source);
 		const planSettled = planRun.then(
 			() => undefined,
 			() => undefined,
@@ -10110,6 +11387,10 @@ export class AgentSession {
 				this._refineAbortController = undefined;
 			}
 			this._scheduleSessionInputPump();
+			// Whatever an aborted plan threw, a queued request was cancelled, not failed; its message is kept.
+			if (queued && refineAbort.signal.aborted && !(e instanceof RefineSkippedError)) {
+				throw new RefineCancelledError(e instanceof Error ? e.message : String(e));
+			}
 			throw e;
 		} finally {
 			if (this._refinePlanInFlight === planSettled) {
@@ -10147,14 +11428,10 @@ export class AgentSession {
 				}
 			}
 			if (this._disposed || refineAbort.signal.aborted) {
-				throw new Error("Refinement cancelled because the session was disposed.");
+				const message = "Refinement cancelled because the session was disposed.";
+				throw queued ? new RefineCancelledError(message) : new Error(message);
 			}
-			return await this._applyRefine(
-				plan,
-				options,
-				refineAbort,
-				internal.source ?? (internal.trigger === "auto" ? "auto" : "user"),
-			);
+			return await this._applyRefine(plan, request, refineAbort, source);
 		} finally {
 			resolveApplySettled();
 			if (this._refineInFlight === applySettled) {
@@ -10162,6 +11439,7 @@ export class AgentSession {
 			}
 			this._notifySessionInputCheckpointChange();
 			this._scheduleSessionInputPump();
+			this._scheduleStaleEvidenceReplanLaunch();
 		}
 	}
 
@@ -10181,14 +11459,63 @@ export class AgentSession {
 	}
 
 	/**
+	 * Run one refine phase in a root span of its own. Planning is fire-and-forget
+	 * from agent_end, timers, and the serialized checkpoint, so as a child it
+	 * would outlive the turn that triggered it; that turn's trace id is kept as
+	 * `trigger.trace_id` instead. An extension skip is an intentional non-round,
+	 * so it ends the span ok with `refine.skipped`.
+	 */
+	private async _inDetachedRefineSpan<T>(
+		name: string,
+		attrs: SpanAttributes,
+		fn: (span: Span) => Promise<T>,
+	): Promise<T> {
+		const triggerTraceId = currentTraceContext()?.traceId;
+		const span = runWithTraceContext(undefined, () =>
+			startSpan(name, { ...attrs, "trigger.trace_id": triggerTraceId }),
+		);
+		try {
+			const value = await runWithTraceContext(span.context, () => fn(span));
+			span.end();
+			return value;
+		} catch (error) {
+			if (error instanceof RefineSkippedError) span.setAttributes({ "refine.skipped": true });
+			else span.recordError(error);
+			span.end();
+			throw error;
+		}
+	}
+
+	/**
 	 * Background planning phase: runs the LLM planning call via `planRefinement`.
 	 * Does not disconnect from or abort the agent. Returns the plan without
 	 * applying anything.
 	 */
-	private async _planRefine(
-		options: { instructions?: string; rollbackId?: string; global?: boolean },
+	private _planRefine(
+		options: RefineRequestOptions,
 		signal: AbortSignal,
 		trigger: "manual" | "auto" = "manual",
+		source: RefinementSource = trigger === "auto" ? "auto" : "user",
+	): Promise<RefinementPlan> {
+		return this._inDetachedRefineSpan(
+			"refine.plan",
+			{
+				"refine.source": source,
+				"refine.reason": refineReasonOf(options),
+				"refine.kind": refineRequestKind(options),
+				"refine.scope": options.global ? "global" : "local",
+				"refine.rollback": options.rollbackId !== undefined,
+				...(options.replanOf === undefined ? {} : { "refine.replan_of": options.replanOf }),
+			},
+			(span) => this._planRefineInSpan(options, signal, trigger, span),
+		);
+	}
+
+	private async _planRefineInSpan(
+		options: RefineRequestOptions,
+		signal: AbortSignal,
+		trigger: "manual" | "auto",
+		span: Span,
 	): Promise<RefinementPlan> {
 		if (this._disposed) {
 			throw new Error("Cannot refine a disposed session.");
@@ -10229,13 +11556,17 @@ export class AgentSession {
 		if (!baselineHarnessStateDir) {
 			throw new Error("Local harness refinement requires a persisted session; use global refinement instead.");
 		}
+		span.setAttributes({ "refine.scope": baselineScope });
 		const baselineState = rollbackTarget
 			? loadHarnessState(baselineHarnessStateDir, baselineScope)
 			: baselineScope === "global"
 				? globalPlanningState
 				: localPlanningState!;
 		let extensionProposal: RefinementPlan | undefined;
+		// What the proposer read, so the judge's read can be measured against it.
+		let evidence: RefineEvidenceSnapshot | undefined;
 		if (!options.rollbackId && this._extensionRunner.hasHandlers("session_before_refine")) {
+			evidence = captureRefineEvidence(this.agent.state.messages, this.sessionManager.getLeafId());
 			const result = (await this._extensionRunner.emit({
 				type: "session_before_refine",
 				preparation: {
@@ -10244,7 +11575,7 @@ export class AgentSession {
 					scope: requestedScope,
 					planningState,
 					history,
-					conversationText: serializeConversation(convertToLlm(this.agent.state.messages)).slice(-80_000),
+					conversationText: serializeConversation(convertToLlm(evidence.messages)).slice(-80_000),
 				},
 				signal,
 			})) as SessionBeforeRefineResult | undefined;
@@ -10262,15 +11593,31 @@ export class AgentSession {
 				};
 			}
 		}
+		// A failure refine also sees what other sessions' proposals for the same failures were refused for.
+		const relatedTriggers = extensionProposal || options.rollbackId ? [] : (options.triggerFingerprintIds ?? []);
+		const relatedRejections =
+			relatedTriggers.length > 0
+				? await loadRelatedRefinementRejections(relatedTriggers, {
+						excludeSessionId: this.sessionId,
+						excludeProposalIds: new Set(history.map((item) => item.id)),
+					})
+				: [];
+		if (relatedTriggers.length > 0) {
+			span.setAttributes({ "refine.related_rejections": relatedRejections.length });
+		}
+		const proposerEvidence =
+			extensionProposal && evidence
+				? evidence
+				: captureRefineEvidence(this.agent.state.messages, this.sessionManager.getLeafId());
 		const plannedPlan =
 			extensionProposal ??
 			(await planRefinement(
-				this.agent.state.messages,
+				proposerEvidence.messages,
 				planningState,
 				history,
 				refinementModel.model,
 				refinementModel.apiKey,
-				{ ...options, retry: providerRetryPolicy(this.settingsManager) },
+				{ ...options, retry: providerRetryPolicy(this.settingsManager), relatedRejections },
 				refinementModel.headers,
 				signal,
 				this.thinkingLevel,
@@ -10285,27 +11632,49 @@ export class AgentSession {
 			...plannedPlan,
 			proposal: stripRefinementDisplayPrefixes(plannedPlan.proposal),
 		};
+		span.setAttributes({ "refinement.id": plan.id, "refine.edits": plan.proposal.edits.length });
 		// RAVO deep evaluation runs here in the background planning phase (one
 		// proposal, threaded through every gate); _applyRefine only reads the
 		// decision so the sync critical section stays LLM-free. Rollbacks are
 		// safety actions and bypass gating.
 		if (!options.rollbackId && ravoEnabled() && plan.proposal.edits.length > 0) {
+			const globalLedger = globalFailureLedgerEnabled() ? this._freshGlobalFailureLedger() : undefined;
+			const recurring = this._gateRecurringFailures(
+				globalLedger ?? baselineState.failures ?? emptyFailureLedger(),
+				options,
+				localPlanningState,
+			);
+			span.setAttributes({ "refine.recurring_failures": recurring.length });
+			const { validEdits } = await screenRefinementProposal(plan.proposal, { signal });
+			// The judge reads the live conversation. Measure it on the same tick, against what the proposer read.
+			const judgeMessages = this.agent.state.messages;
+			const evidenceDrift = measureRefineEvidenceDrift(
+				proposerEvidence,
+				judgeMessages,
+				this.sessionManager.getLeafId(),
+			);
+			span.setAttributes(evidenceDriftSpanAttributes(evidenceDrift));
 			const ravo = await ravoEvaluateProposal(plan.proposal, {
 				state: baselineState?.ravo ?? emptyAssistedRavoState(),
 				config: RAVO_DEFAULT_CONFIG,
-				validEdits: (await screenRefinementProposal(plan.proposal, { signal })).validEdits,
-				conversationText: serializeConversation(convertToLlm(this.agent.state.messages)).slice(-40_000),
+				validEdits,
+				conversationText: serializeConversation(convertToLlm(judgeMessages)).slice(-40_000),
 				harnessOverview: formatHarnessStateForPrompt(planningState, {
 					includeIpythonExamples: false,
 				}),
 				baseline: refinementBaselineView(baselineState),
 				proposalId: plan.id,
-				recurringFailures: recurringFailures(this._recurringFailureLedger(baselineState)),
-				turn: this._failureLedgerTurn(),
+				recurringFailures: recurring,
+				...this._provisionalWindowClock(baselineScope, globalLedger, localPlanningState),
+				refineKind: refineRequestKind(options),
 				model: refinementModel.model,
 				apiKey: refinementModel.apiKey,
 				headers: refinementModel.headers,
 				signal,
+			});
+			span.setAttributes({
+				...ravoGateSpanAttributes(ravo),
+				"refine.stale_evidence": isStaleEvidenceRejection(ravo, evidenceDrift),
 			});
 			if (this._disposed || signal.aborted) {
 				throw new Error("Refinement cancelled because the session was disposed.");
@@ -10334,7 +11703,7 @@ export class AgentSession {
 					certificateBlob,
 				});
 			}
-			return { ...plan, baselineState, ravo };
+			return { ...plan, baselineState, ravo, evidenceDrift };
 		}
 		return { ...plan, baselineState };
 	}
@@ -10371,15 +11740,36 @@ export class AgentSession {
 	 * in-flight agent run, applies the refinement plan to disk and memory, then
 	 * reconnects. This is the only phase that blocks turn entry points.
 	 */
-	private async _applyRefine(
+	private _applyRefine(
 		plan: RefinementPlan,
-		options: { instructions?: string; rollbackId?: string; global?: boolean },
+		options: RefineRequestOptions,
 		refineAbort: AbortController,
 		source: RefinementSource,
+	): Promise<RefinementResult> {
+		return this._inDetachedRefineSpan(
+			"refine.apply",
+			{ "refinement.id": plan.id, "refine.scope": plan.rollbackScope ?? (options.global ? "global" : "local") },
+			(span) => this._applyRefineInSpan(plan, options, refineAbort, source, span),
+		);
+	}
+
+	/**
+	 * The final decision is decided here, not at the gate: a gate commit can
+	 * still fail its binding check, apply partially, or apply without a claim.
+	 * It is reported once, through `refine.decision` and `logRefinementOutcome`,
+	 * as soon as it is durable; an apply that throws before then reports nothing.
+	 */
+	private async _applyRefineInSpan(
+		plan: RefinementPlan,
+		options: RefineRequestOptions,
+		refineAbort: AbortController,
+		source: RefinementSource,
+		span: Span,
 	): Promise<RefinementResult> {
 		if (this._disposed) {
 			throw new Error("Cannot refine a disposed session.");
 		}
+		const reason = refineReasonOf(options);
 		// The caller has already set _refineInFlight and waited for agent idle.
 		// Disconnect only for the brief apply + save + reconnect critical section.
 		this._disconnectFromAgent();
@@ -10410,47 +11800,143 @@ export class AgentSession {
 			if (!targetHarnessStateDir) {
 				throw new Error("Local harness refinement requires a persisted session; use global refinement instead.");
 			}
-			// Re-read the target state immediately before applying so concurrent kernel
-			// (`rlm.harness`) writes during the LLM pass are not clobbered.
-			const state = loadHarnessState(targetHarnessStateDir, targetScope);
+			span.setAttributes({ "refine.scope": targetScope });
 			const proposal = stripRefinementDisplayPrefixes(plan.proposal);
 			if (this._disposed || refineAbort.signal.aborted) {
 				throw new Error("Refinement cancelled because the session was disposed.");
 			}
-			// RAVO gate decision (computed during planning): rejected proposals apply
-			// no harness edits, but their consumed evaluation state is persisted so a
-			// proposal id cannot be evaluated twice.
-			const baselineView = refinementBaselineView(state);
-			const bindingMatches =
-				plan.ravo?.authorization !== undefined &&
-				assistedRavoBindingMatches(plan.ravo.authorization, proposal as unknown as JsonValue, baselineView);
-			const authorizationMatches =
-				plan.ravo?.authorization !== undefined &&
-				assistedRavoCertificateMatches(plan.ravo.authorization, proposal as unknown as JsonValue, baselineView);
-			if (plan.ravo && (plan.ravo.decision !== "commit" || !authorizationMatches)) {
-				const rejectedReport = bindingMatches
-					? plan.ravo
-					: {
-							...plan.ravo,
-							decision: "reject_deep" as const,
-							rationale:
-								"RAVO authorization no longer matches the complete proposal and current harness baseline; retry /refine",
-						};
-				const rejected = rejectedRefinementResult(proposal, rejectedReport, {
+			const stateDir = targetHarnessStateDir;
+			// Decided on the gate report, never on the apply-time binding downgrade.
+			const staleEvidence = plan.ravo !== undefined && isStaleEvidenceRejection(plan.ravo, plan.evidenceDrift);
+			const writeTarget = () => {
+				// Re-read the target state immediately before applying so concurrent kernel
+				// (`rlm.harness`) writes during the LLM pass are not clobbered.
+				const state = loadHarnessState(stateDir, targetScope);
+				// RAVO gate decision (computed during planning): rejected proposals apply
+				// no harness edits, but their consumed evaluation state is persisted so a
+				// proposal id cannot be evaluated twice.
+				const baselineView = refinementBaselineView(state);
+				const bindingMatches =
+					plan.ravo?.authorization !== undefined &&
+					assistedRavoBindingMatches(plan.ravo.authorization, proposal as unknown as JsonValue, baselineView);
+				const authorizationMatches =
+					plan.ravo?.authorization !== undefined &&
+					assistedRavoCertificateMatches(plan.ravo.authorization, proposal as unknown as JsonValue, baselineView);
+				if (plan.ravo && (plan.ravo.decision !== "commit" || !authorizationMatches)) {
+					// Only an approval can be lost here. A gate rejection keeps its own report
+					// and rationale whether or not the harness moved while it was planned.
+					const approvalLost = plan.ravo.decision === "commit";
+					const rejectedReport: RavoGateReport = approvalLost
+						? { ...plan.ravo, decision: "reject_deep", rationale: RAVO_BASELINE_CHANGED_RATIONALE }
+						: plan.ravo;
+					const rejected = rejectedRefinementResult(proposal, rejectedReport, {
+						id: plan.id,
+						scope: targetScope,
+						cause: refinementRejectionCause(rejectedReport, { approvalLost, evidenceDrift: staleEvidence }),
+					});
+					if (bindingMatches && plan.ravo.authorization) {
+						state.ravo = carryObservedRecurrences(plan.ravo.authorization.nextState, state.ravo);
+						rejected.harnessStatePath = saveHarnessState(stateDir, state);
+					}
+					return { outcome: "rejected" as const, rejected, rejectedReport };
+				}
+				// Trust is settled and claimed in the durable observation ordinal, not in
+				// per-session turns. Settling first means this commit's own claim cannot
+				// be credited by the window it is about to open. Evidence a skipped flush
+				// left pending is folded in first, so a recurred window never closes clean;
+				// it stays pending, since recording it again at the next flush is a no-op.
+				const observationTurn = observationOrdinal(
+					this._freshGlobalFailureLedger(
+						targetScope === "global" ? (state.failures ?? emptyFailureLedger()) : undefined,
+					),
+				);
+				state.trustWindows = recordHarnessTrustEvidence(
+					state,
+					targetScope === "global" ? this._globalPendingTrustEvidence : this._pendingTrustEvidence,
+				);
+				const trust = settleHarnessTrust(state, { turn: observationTurn });
+				const claimedFingerprints = plan.ravo?.addressedFingerprints ?? [];
+				const hadTrustWindow = state.trustWindows?.[plan.id] !== undefined;
+				const result = applyRefinementProposal(state, proposal, {
 					id: plan.id,
+					rollbackOf: plan.rollbackOf,
 					scope: targetScope,
+					baselineState: plan.baselineState,
+					reason,
+					...(claimedFingerprints.length > 0
+						? {
+								trustClaim: {
+									claimedFingerprints,
+									committedTurn: observationTurn,
+									untilTurn: observationTurn + DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS,
+								},
+							}
+						: {}),
 				});
-				if (bindingMatches && plan.ravo.authorization) {
-					state.ravo = plan.ravo.authorization.nextState;
-					rejected.harnessStatePath = saveHarnessState(targetHarnessStateDir, state);
+				const allApplied = result.appliedEdits.every((edit) => edit.applied);
+				if (plan.ravo?.authorization && allApplied) {
+					// A regression another session recorded while this one planned is not bound, so it must survive.
+					state.ravo = carryObservedRecurrences(plan.ravo.authorization.nextState, state.ravo);
+					result.ravo = plan.ravo;
 				}
-				// A rejection is evidence. It used to live only in the session JSONL, so
-				// every negative decision the gate made was discarded at session end and
-				// nothing downstream could ask why a proposal was refused twice.
-				// isRollbackableRefinement keeps it out of the rollback target set.
-				if (targetScope === "global") {
-					appendGlobalRefinement(globalHarnessStateDir, rejected);
-				}
+				result.harnessStatePath = saveHarnessState(stateDir, state);
+				return {
+					outcome: "applied" as const,
+					state,
+					result,
+					allApplied,
+					trustWindowOpened: !hadTrustWindow && state.trustWindows?.[plan.id] !== undefined,
+					trust,
+				};
+			};
+			// The global state is shared with every other session's ledger flush, which
+			// takes this lock; an unlocked load..save here would overwrite what it wrote.
+			const written = targetScope === "global" ? withHarnessStateLock(stateDir, writeTarget) : writeTarget();
+			const triggerFingerprintIds = options.triggerFingerprintIds?.length
+				? [...options.triggerFingerprintIds]
+				: undefined;
+			const historyPath =
+				targetScope === "global"
+					? getRefinementHistoryPath(globalHarnessStateDir)
+					: this._sessionRefinementHistoryPath();
+			if (written.outcome === "rejected") {
+				const { rejected, rejectedReport } = written;
+				// A stale-evidence rejection is recorded, and its round stays open for one re-plan.
+				const replanScheduled = staleEvidence && this._armStaleEvidenceReplan(plan.id, options, source);
+				if (staleEvidence) rejected.staleEvidence = true;
+				if (options.replanOf !== undefined) rejected.replanOf = options.replanOf;
+				if (triggerFingerprintIds) rejected.triggerFingerprintIds = triggerFingerprintIds;
+				const decision: RefineFinalDecision = rejectedReport.decision;
+				span.setAttributes({
+					"refine.decision": decision,
+					"refine.applied_edits": 0,
+					"refine.trust_window_opened": false,
+					"refine.stale_evidence": staleEvidence,
+					"refine.replan_scheduled": replanScheduled,
+					...(options.replanOf === undefined ? {} : { "refine.replan_of": options.replanOf }),
+					...(rejected.rejectionCause === undefined ? {} : { "refine.rejection_cause": rejected.rejectionCause }),
+				});
+				logRefinementOutcome(
+					refinementOutcome({
+						proposalId: plan.id,
+						decision,
+						report: rejectedReport,
+						reason,
+						scope: targetScope,
+						cause: rejected.rejectionCause,
+						staleEvidence,
+						driftKind: plan.evidenceDrift?.kind,
+						driftMessages: plan.evidenceDrift?.appendedMessages,
+						replanScheduled,
+						replanOf: options.replanOf,
+					}),
+				);
+				// A rejection is evidence: the next planner reads why it was refused from
+				// this log, which outlives a compacted transcript. isRollbackableRefinement
+				// keeps it out of the rollback target set.
+				span.setAttributes({
+					"refine.history_record": recordRefinementHistory(historyPath, rejected, targetScope),
+				});
 				let rejectedAuditAppendError: { error: unknown } | undefined;
 				try {
 					this.sessionManager.appendCustomEntry("prime-agent.refinement", rejected);
@@ -10470,33 +11956,37 @@ export class AgentSession {
 				}
 				return rejected;
 			}
-			// Trust is settled and claimed in the durable observation ordinal, not in
-			// per-session turns. Settling first means this commit's own claim cannot
-			// be credited by the window it is about to open.
-			const observationTurn = this._durableObservationOrdinal();
-			settleHarnessTrust(state, { turn: observationTurn });
-			const claimedFingerprints = plan.ravo?.addressedFingerprints ?? [];
-			const result = applyRefinementProposal(state, proposal, {
-				id: plan.id,
-				rollbackOf: plan.rollbackOf,
-				scope: targetScope,
-				baselineState: plan.baselineState,
-				...(claimedFingerprints.length > 0
-					? {
-							trustClaim: {
-								claimedFingerprints,
-								committedTurn: observationTurn,
-								untilTurn: observationTurn + DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS,
-							},
-						}
-					: {}),
+			const { state, result, allApplied } = written;
+			if (options.replanOf !== undefined) result.replanOf = options.replanOf;
+			if (triggerFingerprintIds) result.triggerFingerprintIds = triggerFingerprintIds;
+			const decision: RefineFinalDecision = !plan.ravo
+				? ungatedRefinementDecision(plan, result)
+				: !allApplied
+					? "partial"
+					: plan.ravo.measurable
+						? "commit"
+						: "commit_unmeasured";
+			span.setAttributes({
+				"refine.decision": decision,
+				"refine.applied_edits": result.appliedEdits.filter((edit) => edit.applied).length,
+				"refine.trust_window_opened": written.trustWindowOpened,
+				...trustSettlementSpanAttributes(written.trust),
+				...(plan.ravo === undefined ? {} : { "refine.stale_evidence": false, "refine.replan_scheduled": false }),
+				...(options.replanOf === undefined ? {} : { "refine.replan_of": options.replanOf }),
 			});
-			if (plan.ravo?.authorization && result.appliedEdits.every((edit) => edit.applied)) {
-				state.ravo = plan.ravo.authorization.nextState;
-				result.ravo = plan.ravo;
-			}
-			result.harnessStatePath = saveHarnessState(targetHarnessStateDir, state);
-			if (plan.ravo?.authorization && result.appliedEdits.every((edit) => edit.applied)) {
+			logRefinementOutcome(
+				refinementOutcome({
+					proposalId: plan.id,
+					decision,
+					report: plan.ravo,
+					reason,
+					scope: targetScope,
+					replanOf: options.replanOf,
+				}),
+			);
+			span.setAttributes({ "refine.history_record": recordRefinementHistory(historyPath, result, targetScope) });
+			logHarnessTrustSettlement(written.trust, targetScope);
+			if (plan.ravo?.authorization && allApplied) {
 				const artifactRoot = this.sessionManager.getSessionArtifactDir();
 				if (artifactRoot) {
 					const archive = new RavoArchive({
@@ -10516,9 +12006,6 @@ export class AgentSession {
 						actualStateDigest,
 					);
 				}
-			}
-			if (targetScope === "global") {
-				appendGlobalRefinement(globalHarnessStateDir, result);
 			}
 			let refinementAuditAppendError: { error: unknown } | undefined;
 			try {
@@ -10625,15 +12112,15 @@ export class AgentSession {
 			// at agent_end; serialized: the shouldStopAfterTurn checkpoint) never
 			// runs for an aborted turn, so a stale request would leak into the
 			// next turn or checkpoint.
-			this._pendingRequestedRefine = undefined;
+			this._dropPendingRefineRequests();
 			if (this._serializedPlanInFlight) {
 				const serializedPlanInFlight = this._serializedPlanInFlight;
 				this._autoRefineBranchVersion++;
 				this._refineAbortController?.abort();
+				this._cancelSerializedExplicitRefine(this._takeSerializedExplicitRefine());
 				await serializedPlanInFlight.catch(() => undefined);
 				if (this._serializedPlanInFlight === serializedPlanInFlight) {
 					this._serializedPlanInFlight = undefined;
-					this._serializedExplicitRefineOptions = undefined;
 				}
 			}
 			if (skipAbortedCheck) return false;
@@ -11412,7 +12899,10 @@ export class AgentSession {
 			skills = skills.filter((skill) => skill.name !== COMPACT_SKILL_NAME);
 		}
 		if (!this._autoRefineAllowedForSession()) {
-			skills = skills.filter((skill) => skill.name !== REFINE_SKILL_NAME && skill.name !== RAVO_SKILL_NAME);
+			skills = skills.filter(
+				(skill) =>
+					skill.name !== REFINE_SKILL_NAME && skill.name !== RAVO_SKILL_NAME && skill.name !== DREAM_SKILL_NAME,
+			);
 		}
 		if (!this._agentMessageController) {
 			skills = skills.filter((skill) => skill.name !== AGENT_MESSAGE_SKILL_NAME);
@@ -11588,6 +13078,9 @@ export class AgentSession {
 			}
 			for (const type of ["ravo.run", "ravo.status", "ravo.cancel"]) {
 				handlers[type] = async (payload) => this.handleRavoHostRequest(type, payload);
+			}
+			for (const type of ["dream.run", "dream.status", "dream.cancel"]) {
+				handlers[type] = async (payload) => this.handleDreamHostRequest(type, payload);
 			}
 		}
 		if (this._rlmHeartbeatController) {
@@ -12989,7 +14482,10 @@ export class AgentSession {
 					await runtime.session.disposeAsync();
 				}
 			} finally {
+				const refinementLog = runtime ? getSessionRefinementHistoryPath(runtime.session.sessionId) : undefined;
 				rmSync(sessionDir, { recursive: true, force: true });
+				// The child session is deleted with its directory; its refinement log goes with it.
+				if (refinementLog) rmSync(refinementLog, { force: true });
 			}
 		}
 	}

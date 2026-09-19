@@ -124,10 +124,11 @@ describe.skipIf(!enabled)("RavoRunService x ARC-AGI-3 end to end (ARC_SMOKE=1)",
 			const service = new RavoRunService({
 				runAgent,
 				harnessDir,
-				loadState: async () => structuredClone(state),
-				saveState: async (next) => {
+				loadState: () => structuredClone(state),
+				saveState: (_scope, next) => {
 					state = structuredClone(next);
 				},
+				withStateLock: (_scope, fn) => fn(),
 				onUpdate: (status) => updates.push(status),
 			});
 			const terminal = await service.start({

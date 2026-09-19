@@ -1,7 +1,8 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { type Context, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AgentSession } from "../../src/core/agent-session.js";
 import { createHarness, getMessageText, type Harness } from "./harness.js";
 
 type SerializedInternals = {
@@ -71,6 +72,8 @@ type SerializedInternals = {
 	_drainPendingRefinementForDisposal(): Promise<void>;
 	_autoRefineOperations: Set<Promise<void>>;
 };
+
+const REFINE_CANCELLED = "Refinement cancelled: the session was aborted or changed branch.";
 
 function emptyRefinementResult() {
 	return {
@@ -2574,6 +2577,10 @@ describe("P0 concurrency regressions", () => {
 		internals._serializedExplicitRefineOptions = { instructions: "stale", global: true };
 		vi.spyOn(internals, "_planRefine").mockResolvedValue({ id: "public-plan", proposal: { edits: [] } });
 		const apply = vi.spyOn(internals, "_applyRefine").mockResolvedValue(emptyRefinementResult());
+		const failed: string[] = [];
+		harness.session.subscribe((event) => {
+			if (event.type === "refine_failed") failed.push(event.error);
+		});
 
 		await expect(harness.session.refine({ instructions: "public after abort" })).resolves.toEqual(
 			emptyRefinementResult(),
@@ -2582,6 +2589,8 @@ describe("P0 concurrency regressions", () => {
 		expect(internals._serializedPlanInFlight).toBeUndefined();
 		expect(internals._serializedExplicitRefineOptions).toBeUndefined();
 		expect(apply).toHaveBeenCalledOnce();
+		// The dropped plan's request never ran, so it is reported cancelled.
+		expect(failed).toEqual([REFINE_CANCELLED]);
 	});
 
 	it("public refine waits for idle without aborting the session or child runs", async () => {
@@ -2602,5 +2611,233 @@ describe("P0 concurrency regressions", () => {
 		expect(requestAbort).not.toHaveBeenCalled();
 		expect(cancelChildRuns).not.toHaveBeenCalled();
 		expect(internals._goalAbortInProgress).toBe(false);
+	});
+});
+
+describe("Serialized failure repair cancellation", () => {
+	const harnesses: Harness[] = [];
+	const FINGERPRINT = "7efa6dc906b858c6";
+	const HELD = `regression:${FINGERPRINT}`;
+	const REPAIR = {
+		instructions: "repair the local champion",
+		reason: "regression",
+		kind: "failure",
+		triggerFingerprintIds: [FINGERPRINT],
+	};
+
+	type RepairInternals = SerializedInternals & {
+		_failureRefineTriggered: Set<string>;
+		_serializedExplicitRefineOptions?: object;
+		_queueFailureTriggeredRefine(instructions: string, reason: "regression", fingerprintIds: readonly string[]): void;
+		_invalidatePendingAutoRefineForBranchChange(): Promise<void>;
+	};
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		while (harnesses.length > 0) {
+			harnesses.pop()?.cleanup();
+		}
+	});
+
+	async function serializedSession(tools: AgentTool[] = []) {
+		const harness = await createHarness({
+			persistSession: true,
+			rlmDepth: 0,
+			serializedRefine: true,
+			tools,
+			settings: { autoRefine: { enabled: true, turnInterval: 25, cooldownMs: 20 * 60_000 } },
+		});
+		harnesses.push(harness);
+		const failed: string[] = [];
+		harness.session.subscribe((event) => {
+			if (event.type === "refine_failed") failed.push(event.error);
+		});
+		return { harness, internals: harness.session as unknown as RepairInternals, failed };
+	}
+
+	/** Queue a regression repair as the turn boundary does, marking its fingerprint as triggered. */
+	function queueRepair(internals: RepairInternals): void {
+		internals._failureRefineTriggered.add(HELD);
+		internals._queueFailureTriggeredRefine(REPAIR.instructions, "regression", [FINGERPRINT]);
+	}
+
+	/** Every plan runs until its request is aborted; returns the signals seen. */
+	function planUntilAborted(internals: RepairInternals): AbortSignal[] {
+		const signals: AbortSignal[] = [];
+		vi.spyOn(internals, "_planRefine").mockImplementation((_options, signal) => {
+			signals.push(signal);
+			return new Promise((_, reject) => {
+				signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
+			});
+		});
+		return signals;
+	}
+
+	function userText(context: Context): string {
+		return context.messages
+			.flatMap((message) =>
+				message.role !== "user"
+					? []
+					: typeof message.content === "string"
+						? [message.content]
+						: message.content.map((part) => (part.type === "text" ? part.text : "")),
+			)
+			.join("\n");
+	}
+
+	it("reports a repair a user abort cancels while it plans in the background, once, and frees its failure", async () => {
+		let session: AgentSession | undefined;
+		let releasePlan: () => void = () => {};
+		const planGate = new Promise<void>((resolve) => {
+			releasePlan = resolve;
+		});
+		const stopTool: AgentTool = {
+			name: "stop",
+			label: "Stop",
+			description: "The user presses escape",
+			parameters: Type.Object({}),
+			execute: async () => {
+				const internals = session as unknown as RepairInternals;
+				await vi.waitFor(() => expect(internals._serializedExplicitRefineOptions).toBeDefined());
+				session!.requestAbort();
+				releasePlan();
+				return { content: [{ type: "text", text: "stopped" }], details: {} };
+			},
+		};
+		const { harness, internals, failed } = await serializedSession([stopTool]);
+		session = harness.session;
+		queueRepair(internals);
+		const plans: string[] = [];
+		const turns = [fauxAssistantMessage(fauxToolCall("stop", {}), { stopReason: "toolUse" })];
+		harness.setResponses(
+			Array.from({ length: 8 }, () => async (context: Context) => {
+				const text = userText(context);
+				if (!text.includes("Requested refinement scope")) return turns.shift() ?? fauxAssistantMessage("idle");
+				plans.push(text);
+				await planGate;
+				return fauxAssistantMessage(
+					JSON.stringify({ summary: "s", rationale: "r", expectedOutcome: "o", edits: [] }),
+				);
+			}),
+		);
+
+		await harness.session.prompt("go");
+		await harness.session.waitForIdle();
+
+		expect(plans).toHaveLength(1);
+		expect(plans[0]).toContain(REPAIR.instructions);
+		expect(failed).toEqual([REFINE_CANCELLED]);
+		expect(internals._failureRefineTriggered.has(HELD)).toBe(false);
+
+		harness.session.resumeQueuedWork();
+		await harness.session.prompt("carry on");
+		await harness.session.waitForIdle();
+
+		// The next checkpoint discards the invalidated plan without reporting its request again.
+		expect(internals._serializedPlanInFlight).toBeUndefined();
+		expect(plans).toHaveLength(1);
+		expect(failed).toEqual([REFINE_CANCELLED]);
+	});
+
+	it("reports a repair a branch change cancels while it plans and frees its failure", async () => {
+		const { internals, failed } = await serializedSession();
+		const signals = planUntilAborted(internals);
+		const apply = vi.spyOn(internals, "_applyRefine").mockResolvedValue(emptyRefinementResult());
+		queueRepair(internals);
+		internals._maybeStartSerializedBackgroundPlan();
+		await vi.waitFor(() => expect(signals).toHaveLength(1));
+
+		await internals._invalidatePendingAutoRefineForBranchChange();
+
+		expect(signals[0]!.aborted).toBe(true);
+		expect(internals._serializedPlanInFlight).toBeUndefined();
+		expect(failed).toEqual([REFINE_CANCELLED]);
+		expect(internals._failureRefineTriggered.has(HELD)).toBe(false);
+		expect(apply).not.toHaveBeenCalled();
+	});
+
+	it("reports a repair an aborted turn drops while it plans and frees its failure", async () => {
+		const { internals, failed } = await serializedSession();
+		const signals = planUntilAborted(internals);
+		queueRepair(internals);
+		internals._maybeStartSerializedBackgroundPlan();
+		await vi.waitFor(() => expect(signals).toHaveLength(1));
+
+		const aborted = fauxAssistantMessage("aborted turn", { stopReason: "aborted" });
+		internals._lastAssistantMessage = aborted;
+		internals._handleAgentEvent({ type: "agent_end", messages: [aborted] });
+		await internals._agentEventQueue;
+		await vi.waitFor(() => expect(internals._serializedPlanInFlight).toBeUndefined());
+
+		expect(signals[0]!.aborted).toBe(true);
+		expect(failed).toEqual([REFINE_CANCELLED]);
+		expect(internals._failureRefineTriggered.has(HELD)).toBe(false);
+	});
+
+	it.each([
+		{ discarded: "an invalidated plan", result: (_version: number) => ({ status: "invalidated", branchVersion: 0 }) },
+		{
+			discarded: "a ready plan for an older branch",
+			result: (version: number) => ({
+				status: "plan",
+				plan: { id: "stale-plan", proposal: { edits: [] } },
+				options: REPAIR,
+				abort: new AbortController(),
+				branchVersion: version - 1,
+				source: "self",
+			}),
+		},
+		{
+			discarded: "a planning failure on an older branch",
+			result: (version: number) => ({
+				status: "failure",
+				explicit: true,
+				options: REPAIR,
+				branchVersion: version - 1,
+			}),
+		},
+	])("reports a repair the checkpoint discards as $discarded and frees its failure", async ({ result }) => {
+		const { internals, failed } = await serializedSession();
+		const apply = vi.spyOn(internals, "_applyRefine").mockResolvedValue(emptyRefinementResult());
+		internals._failureRefineTriggered.add(HELD);
+		internals._serializedExplicitRefineOptions = { ...REPAIR };
+		internals._serializedPlanInFlight = Promise.resolve(result(internals._autoRefineBranchVersion));
+
+		await internals._runSerializedRefineCheckpoint();
+
+		expect(failed).toEqual([REFINE_CANCELLED]);
+		expect(internals._failureRefineTriggered.has(HELD)).toBe(false);
+		expect(internals._pendingRequestedRefine).toBeUndefined();
+		expect(apply).not.toHaveBeenCalled();
+	});
+
+	it("does not report a repair the agent's refine.run folds in, and keeps its failure held while it runs", async () => {
+		const { harness, internals, failed } = await serializedSession();
+		const planned: object[] = [];
+		vi.spyOn(internals, "_planRefine").mockImplementation((options, signal) => {
+			planned.push(options);
+			if (planned.length > 1) return Promise.resolve({ id: "merged-plan", proposal: { edits: [] } });
+			return new Promise((_, reject) => {
+				signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
+			});
+		});
+		const apply = vi.spyOn(internals, "_applyRefine").mockResolvedValue(emptyRefinementResult());
+		queueRepair(internals);
+		internals._maybeStartSerializedBackgroundPlan();
+		await vi.waitFor(() => expect(planned).toHaveLength(1));
+
+		(harness.session.agent.state as { isStreaming: boolean }).isStreaming = true;
+		harness.session.handleRefineHostRequest("refine.run", { instructions: "and remember tabs" });
+		(harness.session.agent.state as { isStreaming: boolean }).isStreaming = false;
+		await internals._runSerializedRefineCheckpoint();
+
+		expect(planned[1]).toMatchObject({
+			reason: "regression",
+			kind: "directed",
+			triggerFingerprintIds: [FINGERPRINT],
+		});
+		expect(apply).toHaveBeenCalledOnce();
+		expect(failed).toEqual([]);
+		expect(internals._failureRefineTriggered.has(HELD)).toBe(true);
 	});
 });

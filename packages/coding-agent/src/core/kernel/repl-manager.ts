@@ -120,9 +120,52 @@ function writeFullySync(fd: number, data: Buffer): void {
 /** Runs a function inside the async context (trace span, log context) captured at admission. */
 type AsyncContextSnapshot = ReturnType<typeof AsyncLocalStorage.snapshot>;
 
-/** ExecuteResult plus the raw fields of the request's `done` event (state ops). */
-interface InternalExecuteResult extends ExecuteResult {
+/** One bash() command that finished inside a cell, as the runtime reports it on the cell's `done` frame. */
+export interface KernelBashCommand {
+	/** Secret-redacted command text, cut at the runtime's limit. */
+	command: string;
+	exitCode: number;
+	startedAt?: string;
+	endedAt?: string;
+	/** The runtime cut the text: it names the command but is not the command that ran. */
+	commandTruncated?: boolean;
+}
+
+/** What ReplKernelManager resolves an execution with; `bashCommands` is absent from runtimes that predate it. */
+export interface ReplExecuteResult extends ExecuteResult {
+	bashCommands?: KernelBashCommand[];
+}
+
+/** ReplExecuteResult plus the raw fields of the request's `done` event (state ops). */
+interface InternalExecuteResult extends ReplExecuteResult {
 	doneFields?: Record<string, unknown>;
+}
+
+const MAX_CELL_BASH_COMMANDS = 64;
+
+/** Parse a `done` frame's optional `bashCommands`, keeping the well-formed entries. */
+export function parseKernelBashCommands(value: unknown): KernelBashCommand[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const commands = value.slice(-MAX_CELL_BASH_COMMANDS).flatMap((entry): KernelBashCommand[] => {
+		if (!isRecord(entry)) return [];
+		const { command, exitCode, startedAt, endedAt, commandTruncated } = entry;
+		if (typeof command !== "string" || typeof exitCode !== "number" || !Number.isInteger(exitCode)) return [];
+		return [
+			{
+				command,
+				exitCode,
+				...(typeof startedAt === "string" ? { startedAt } : {}),
+				...(typeof endedAt === "string" ? { endedAt } : {}),
+				...(commandTruncated === true ? { commandTruncated } : {}),
+			},
+		];
+	});
+	return commands.length > 0 ? commands : undefined;
+}
+
+/** The bash() commands a cell reported, from any kernel client's result. */
+export function executedBashCommands(result: ExecuteResult): KernelBashCommand[] | undefined {
+	return "bashCommands" in result ? parseKernelBashCommands(result.bashCommands) : undefined;
 }
 
 interface ActiveExecution {
@@ -147,6 +190,7 @@ interface ActiveExecution {
 	error?: ExecuteResult["error"];
 	status: ExecuteResult["status"];
 	doneFields?: Record<string, unknown>;
+	bashCommands?: KernelBashCommand[];
 	settled: boolean;
 	/** Async context of the caller, so diagnostics about this request land in its trace and session. */
 	runInContext: AsyncContextSnapshot;
@@ -1108,6 +1152,7 @@ export class ReplKernelManager {
 			execution.status = "error";
 		} else if (type === "done") {
 			execution.doneFields = event;
+			execution.bashCommands = parseKernelBashCommands(event.bashCommands);
 			if (event.status !== "ok" && execution.status === "ok") {
 				execution.status = "error";
 				// State requests report failures as a done reason without an error event.
@@ -1119,7 +1164,7 @@ export class ReplKernelManager {
 		}
 	}
 
-	async execute(code: string, opts: ExecuteOptions = {}): Promise<ExecuteResult> {
+	async execute(code: string, opts: ExecuteOptions = {}): Promise<ReplExecuteResult> {
 		await this.waitForProtocolRepair(opts.signal);
 		const result = await this.enqueueExecute(code, opts);
 		// Refresh the on-disk snapshot after real work so a later resume (or a
@@ -1428,6 +1473,7 @@ export class ReplKernelManager {
 				status,
 				durationMs: Date.now() - execution.started,
 				doneFields: execution.doneFields,
+				...(execution.bashCommands ? { bashCommands: execution.bashCommands } : {}),
 			});
 		}
 		if (didClearActive) {

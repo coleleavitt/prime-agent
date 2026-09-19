@@ -197,6 +197,12 @@ export function buildRlmPrompt(options: RlmPromptOptions): string {
 				"When a harness change needs more than one focused edit and deserves its own evaluated search, use `await ravo.run(task)` to start the full RAVO loop (inspect, plan, implement, evaluate, diagnose, repair) over a continual harness mutation in the background; it returns immediately, progress is visible in the Agents View and via `await ravo.status()`, and `await ravo.cancel()` stops it.",
 			);
 		}
+		if (installedSkills.includes("dream")) {
+			parts.push(
+				"",
+				"Use `await dream.run(task=...)` to start the Dream-RSI loop (rollout, dream a no-worse exploration policy, redeploy) over a scored task in the background; the default is local and token-free, while `llm_proposer`/`llm_dreamer` spend tokens. It returns immediately, progress is visible in the Agents View and via `await dream.status()`, and `await dream.cancel()` stops it.",
+			);
+		}
 	}
 
 	return parts.join("\n");

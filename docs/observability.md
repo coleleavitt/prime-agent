@@ -54,12 +54,24 @@ the span so `grep withSpan`/`start_span` lands on it.
 | `session.load`        | `session.path`, `session.bytes`, `session.entries` | done | coding-agent `core/session-manager.ts` (`open`/`openAsync`) |
 | `bash.command`        | `bash.command`, `bash.pid`, `bash.exit_code`, `bash.signal`, `bash.killed`, `bash.output_bytes` | done | Python `rlm/bash.py` (the child's `TRACEPARENT` names this span; kernel shutdown ends it as error "kernel shutdown") |
 | `mcp.call`            | `mcp.server`, `mcp.tool`, `mcp.connected`, `mcp.tool_count` | done | Python `rlm/mcp.py` |
-| `ravo.run`            | `ravo.run_id`, `ravo.resumed`, `ravo.reason`, `ravo.rounds`, `ravo.repairs`, `ravo.spent_tokens`, `ravo.certificate_digest` | done | coding-agent `core/ravo/controller.ts` (deadline/budget/cancel are ok + reason) |
+| `ravo.run`            | `ravo.run_id`, `ravo.resumed`, `ravo.reason`, `ravo.rounds`, `ravo.repairs`, `ravo.spent_tokens`, `ravo.certificate_digest` | done | coding-agent `core/ravo/controller.ts` (deadline/budget/cancel are ok + reason; each evaluated proposal also logs one `refinement.*` record, see [Refinement outcome records](#refinement-outcome-records)) |
 | `ravo.round`          | `ravo.round`, `ravo.phase`, `ravo.outcome`, `ravo.reason` | done | coding-agent `core/ravo/controller.ts` |
 | `ravo.proposal`       | `ravo.round`, `ravo.kind`, `ravo.proposal_id`, `ravo.candidate_tokens` | done | coding-agent `core/ravo/controller.ts` (implement/repair child call) |
 | `ravo.evaluation`     | `ravo.proposal_id`, `ravo.evaluator`, `ravo.evaluator_kind`, `ravo.verdict`, `ravo.certificate_digest` | done | coding-agent `core/ravo/controller.ts` (each evaluator + the commit gate) |
-| `ravo.referee`        | `referee.claimed`, `referee.upheld`, `referee.cleared`, `referee.unverifiable`, `referee.no_evidence` | done | coding-agent `core/ravo/referee-runner.ts` (one per proposal that claims a recurring fingerprint) |
-| `ravo.replay_case`    | `referee.language`, `referee.timeout_ms`, `referee.python`, `referee.outcome`, `referee.exception_class` | done | coding-agent `core/ravo/referee-runner.ts` (the replay-case subprocess; `outcome: unrunnable` fails the gate closed) |
+| `ravo.referee`        | `referee.claimed`, `referee.skill_imports`, `referee.adjudicated`, `referee.upheld`, `referee.cleared`, `referee.unverifiable`, `referee.no_evidence`, `referee.not_applicable` | done | coding-agent `core/ravo/referee-runner.ts` (one per gate evaluation whose claim names a recurring fingerprint, or per post-commit trust replay; child of `refine.plan` for `/refine`, of `ravo.evaluation` for `ravo.run`, and of `harness.trust.adjudicate` for a trust replay. Only verified cases whose probe names a module or distribution that a skill create/update in the proposal imports are run; any other claim is `not_applicable`, and an applicable claim with no verified case is `no_evidence`, which fails closed) |
+| `ravo.replay_case`    | `referee.language`, `referee.timeout_ms`, `referee.environment` (`sanitized`/`skill-import`/`inherited`), `referee.python`, `referee.outcome`, `referee.exception_class` | done | coding-agent `core/ravo/referee-runner.ts` (the replay-case subprocess; child of `ravo.referee` (`skill-import`, at the gate or under `harness.trust.adjudicate`), `ravo.replay_verify` (`sanitized`) or `toolforge.gate` (`inherited`). On POSIX it leads its own process group, killed when the run ends or when the host exits or receives SIGINT, SIGTERM or SIGHUP; `outcome: unrunnable` fails the gate closed) |
+| `ravo.replay_verify`  | `referee.cases`, `referee.ran`, `referee.verified` | done | coding-agent `core/ravo/referee-runner.ts` (`verifyObservedReplayCases`, started as a detached root by `AgentSession._drainReplayVerificationBacklog`: the self-check of replay cases derived at a turn boundary. One batch runs at a time, each (fingerprint, source) at most once per session, and dispose aborts it; a case that reproduced is marked verified at the next ledger flush, and a trust replay waiting on one of its cases is released when the batch lands) |
+| `dream.run`           | `dream.task`, `dream.seed`, `dream.workers`, `dream.k1`, `dream.k2`, `dream.dreams`, `dream.iterations`, `dream.mode` (`local`/`llm`), `dream.stopped` (`aborted`, on cancel), `trigger.trace_id` (LLM path only) | done | coding-agent `core/dream/loop.ts` (`runDreamLoop`, sync local CLI: an in-turn root) and `core/dream/llm.ts` (`runDreamLoopWithAgent`, in-session: a detached root carrying the launching turn's `trigger.trace_id`, ended on success/abort/error). `DreamRunService` opens no span of its own |
+| `dream.explore`       | `dream.policy_id`, `dream.k1`, `dream.workers`, `dream.iteration`, `dream.tree_id` | done | coding-agent `core/dream/rollout.ts` (`runOnlineExploration` / `runOnlineExplorationWithAgent`; one per rollout) |
+| `dream.round`         | `dream.round`, `dream.batch_size`, `dream.revealed_count`, `dream.best_score` | done | coding-agent `core/dream/rollout.ts` (one per online round) |
+| `dream.attempt`       | `dream.node_id`, `dream.parent_id`, `dream.task` | done | coding-agent `core/dream/rollout.ts` (`commitAttempt`; one per generation+evaluation; the local proposer opens no span, so a local rollout's tree is byte-identical to a sync one) |
+| `dream.dream`         | `dream.candidates`, `dream.pool_size`, `dream.chosen_policy_id`, `dream.chosen_score`, `dream.current_score`, `dream.improved` | done | coding-agent `core/dream/improve.ts` (`runDreaming`; one per dreaming step) |
+| `dream.replay`        | `dream.policy_id`, `dream.simulations` | done | coding-agent `core/dream/improve.ts` (one coarse replay summary per dreaming step, not one per simulation) |
+| `dream.redeploy`      | `dream.policy_id`, `dream.k1`, `dream.workers`, `dream.iteration`, `dream.tree_id` | done | coding-agent `core/dream/loop.ts` / `core/dream/llm.ts` (wraps the redeploy rollout of a chosen policy) |
+| `dream.llm_propose`   | `dream.round`, `dream.tokens`, `dream.llm_fallback` | done | coding-agent `core/dream/llm.ts` (`createLlmProposer`; only on the `--llm-proposer` path, a child coding-agent call; `dream.llm_fallback` marks a fall back to the deterministic local proposer) |
+| `dream.llm_dream`     | `dream.candidates_requested`, `dream.candidates_kept`, `dream.tokens`, `dream.llm_fallback` | done | coding-agent `core/dream/llm.ts` (`proposePoliciesWithAgent`; only on the `--llm-dreamer` path; a call failure or all-dropped candidates falls back to the local search) |
+| `refine.plan`         | `refine.source` (`user`/`self`/`auto`), `refine.reason` (`manual`/`refine_run`/`recurrence`/`regression`/`turn_interval`/`compact`/`rollback`), `refine.kind` (`directed`/`checkpoint`/`failure`), `refine.scope`, `refine.rollback`, `refinement.id`, `refine.edits`, `trigger.trace_id`, `refine.skipped`, `refine.replan_of` (on a re-plan); only when the RAVO gate ran: `refine.recurring_failures`, `refine.evidence_drift` (`none`/`appended`/`rewritten`), `refine.snapshot_messages`, `refine.judge_messages`, `refine.drift_messages`, `refine.drift_removed_messages`, `refine.drift_chars`, `refine.snapshot_leaf_id`, `refine.judge_leaf_id`, `ravo.decision`, `ravo.fast_score`, `ravo.deep_score`, `ravo.missed`, `ravo.missed_weight`, `ravo.claimed`, `ravo.measurable`, `ravo.judge_error`, `referee.cleared`, `referee.upheld`, `referee.unverifiable`, `referee.no_evidence`, `referee.not_applicable`, `refine.stale_evidence` | done | coding-agent `core/agent-session.ts` (`_planRefine`; a detached root, see [Refinement outcome records](#refinement-outcome-records). `refine.scope` is corrected to the baseline scope once a rollback target resolves it. An extension skip ends ok with `refine.skipped`; a throw ends error. The judge always reads the live conversation: the `refine.drift_*` attributes are measured against the proposer's snapshot on the same tick as the judge call, never cancel it, and `refine.stale_evidence` is set once the judge has answered) |
+| `refine.apply`        | `refinement.id`, `refine.scope` (the target scope), `refine.decision` (`commit`/`commit_unmeasured`/`reject_screen`/`reject_deep`/`reject_criteria`/`reject_unclaimed`/`partial`/`rollback`/`no_edits`), `refine.applied_edits`, `refine.trust_window_opened`, `trigger.trace_id`, `refine.history_record` (`appended`/`failed`/`skipped`), `refine.replan_of` (on a re-plan); once the gate ran: `refine.stale_evidence`, `refine.replan_scheduled`; on a rejection `refine.rejection_cause` (`gate`/`screen`/`judge_unavailable`/`baseline_changed`/`stale_evidence`); on an apply `trust.faulted`, `trust.clean`, `trust.contested` | done | coding-agent `core/agent-session.ts` (`_applyRefine`; a detached root. The decision is final here, not at the gate: a gate commit whose certificate no longer matches the baseline becomes `reject_deep`, an incomplete apply `partial`, and a commit that claimed no fingerprint `commit_unmeasured`. `refine.history_record` is whether the result reached its scope's refinement history; `trust.*` count the trust windows this apply settled) |
 | `package.install` / `package.remove` / `package.update` / `package.check_updates` | `package.source`, `package.local`, `package.count`, `package.updates` | done | coding-agent `core/package-manager.ts` |
 | `package.command`     | `command` (program + first arg), `exit_code`, `signal` | done | coding-agent `core/package-manager.ts`, `package-manager-cli.ts` (nested git/npm child processes) |
 | `update.check`        | `update.current`, `update.latest`, `update.available`, `http.status` | done | coding-agent `utils/version-check.ts` |
@@ -67,7 +79,11 @@ the span so `grep withSpan`/`start_span` lands on it.
 | `tools.download` / `tools.release_lookup` | `tool`, `version`, `bytes`, `tool.repo`, `http.status` | done | coding-agent `utils/tools-manager.ts` |
 | `historian.run` / `historian.subagent` / `historian.validate` / `historian.publish` | `historian.session_id`, `historian.chunk_start/end`, `historian.model`, `historian.status` (run), `historian.pass`, `historian.outcome` (subagent), `historian.valid`, `historian.compartments`, `historian.facts`, `historian.failure_reason` | done | Magic Context `packages/pi-plugin/src/pi-historian-runner.ts` (via the optional pi-trace bridge) |
 | `auth.refresh` / `auth.catalog` / `auth.route` | `auth.reason`, `auth.account`, `auth.source`, `auth.outcome`, `http.status`, `catalog.models`, `catalog.cached`, `auth.pool_size`, `auth.selected` | done | anthropic-auth `packages/pi/src/{shared-refresh,index,stream}.ts` (via `trace-bridge.ts`) |
-| `harness.ledger.flush` | `session.id`, `ledger.scope`, `ledger.observations`, `ledger.fingerprints` | done | coding-agent `core/agent-session.ts` (global failure ledger read-modify-write under the cross-process harness state lock; only with `PRIME_AGENT_GLOBAL_LEDGER=1`) |
+| `harness.ledger.flush` | `session.id`, `ledger.scope`, `ledger.observations`, `ledger.regressions`, `ledger.verifications`, `ledger.fingerprints`, `trust.recurrences`, `trust.adjudications`, `trust.faulted`, `trust.clean`, `trust.contested` | done | coding-agent `core/agent-session.ts` (global failure ledger read-modify-write under the cross-process harness state lock, at an assistant turn boundary or `agent_end` when observations, regressions of global champions, replay verifications, or trust evidence are pending; skipped while a refine plan or apply is in flight. It settles the global trust windows on the merged ordinal, so `trust.*` count what this flush closed. A flush that writes the verdicts of a finished `harness.trust.adjudicate` batch is itself a root. On by default; `PRIME_AGENT_GLOBAL_LEDGER=0` keeps the ledger per-session and opens no flush span) |
+| `harness.trust.adjudicate` | `session.id`, `trigger.trace_id` (only when every job in the batch shares one), `trust.jobs`, `trust.windows`, `trust.ran`, `trust.upheld`, `trust.cleared`, `trust.unverifiable`, `trust.skipped`, `trust.aborted` | done | coding-agent `core/refinement/trust-adjudication.ts` (`adjudicateTrustRecurrences`: the post-commit replays, a detached root started by `AgentSession._drainTrustAdjudicationBacklog` when an actionable failure a committed refinement claimed recurs inside its trust window, the recurrence's own derived case probes an import the window's skill still has exactly as the commit recorded it, and the global ledger is on. One `ravo.referee` child per (window, skill entry, fingerprint); a job whose case has not reproduced yet waits for `ravo.replay_verify` and is dropped when no pending self-check can verify it. At most 8 jobs per batch, one batch at a time, at most 3 runs per (window, entry, fingerprint), and never re-run once upheld. Dispose aborts it and an aborted job records nothing; it ends ok whatever the verdicts) |
+| `recall.mark`         | `trigger.trace_id`, `recall.repo_key`, `recall.dirty_count`, `recall.claims`, `recall.unverifiable`, `recall.ms`, `recall.skipped`, `recall.skip_reason` (`git_timeout`/`git_unavailable`/`not_repo`/`lock_busy`/`write_failed`), `recall.negative_cache` | done | coding-agent `core/extensions/builtin/workspace-recall.ts` (a detached root opened on `agent_end` of a top-level session inside a git worktree; writes the repo's mark under a lock. `recall.dirty_count` and `recall.unverifiable` include the paths past the mark's limits; `write_failed` ends error) |
+| `recall.witness`      | `recall.repo_key`, `recall.has_mark`, `recall.changed`, `recall.changed_unknown`, `recall.unchanged` (absent when it cannot be established), `recall.unverifiable` (listed paths), `recall.uncompared` (paths that could not be compared, listed or not; a lower bound when a partial mark left paths unrecorded), `recall.claims_current`, `recall.claims_expired`, `recall.head_moved`, `recall.block_bytes`, `recall.skipped`, `recall.skip_reason` (`git_timeout`/`deadline`/`git_unavailable`/`not_repo`), `recall.negative_cache` | done | coding-agent `core/extensions/builtin/workspace-recall.ts` (child of the `tool_result` `extension.hooks`, on the first `ipython` result of a top-level session inside a git worktree; bounded by a 1 s deadline. `recall.block_bytes` is the size of the `<workspace_recall>` block appended to the result, at most 2048) |
+| `recall.digest`       | `recall.phase` (`tool_call`/`tool_result`), `recall.repo_key`, `recall.verifiable`, `recall.digest_matched`, `recall.ms`, `recall.skipped`, `recall.skip_reason` (`git_timeout`/`deadline`/`git_unavailable`/`not_repo`), `recall.negative_cache` | done | coding-agent `core/extensions/builtin/workspace-recall.ts` (the workspace digest a build claim is checked against: in the `tool_call` `extension.hooks` of an `ipython` cell whose source names a build or test command, and in its `tool_result` hooks only when the cell reported a qualifying `bash()` command that exited 0, with `recall.digest_matched`; bounded by the same 1 s deadline) |
 | `toolforge.publish`   | `toolforge.name`, `toolforge.import`, `toolforge.status`, `toolforge.installed`, `toolforge.gate_runs`, `toolforge.reason` | done | coding-agent `core/toolforge/publish.ts` (one per `rlm.toolforge.publish` host request; `status: rejected` carries the refusal reason) |
 | `toolforge.gate`      | `toolforge.name`, `toolforge.negative`, `toolforge.positive`, `toolforge.passed` | done | coding-agent `core/toolforge/publish.ts` (the double run; each half spawns a `ravo.replay_case` child, and a run that cannot be performed never passes) |
 
@@ -108,6 +124,120 @@ active context at emit time. Span completion is itself a log entry:
 Provider failures (`ai.provider` / `provider stream failure`) additionally
 log `baseUrl` so a mis-routed request is visible from the failure line
 alone.
+
+## Refinement outcome records
+
+A refinement reports its final decision once, at apply time, as one
+`coding-agent.refinement` log line. The gate's decision is never logged on its
+own, because the apply can still downgrade it. `AgentSession._applyRefine`,
+`refineHarness` and `RavoRunService` write these lines.
+
+| `msg` | fields | written for |
+|---|---|---|
+| `refinement.committed` | `proposalId`, `addressed`, `deepScore`, `missed`, `reason`, `scope` | a `commit` that claimed at least one fingerprint; the learning index's treated cohort |
+| `refinement.applied_unmeasured` | `proposalId`, `deepScore`, `reason`, `scope` | `commit_unmeasured`, `rollback`, and a `commit` with nothing addressed |
+| `refinement.rejected` | `proposalId`, `decision`, `deepScore`, `missed`, `claimed`, `reason`, `scope`, `cause` (`reject_*` only) | every `reject_*` decision, `partial`, and `no_edits` |
+| `refinement.history_append_failed` (warn) | `proposalId`, `scope`, `code` | the durable history append failed; the refine still reports its outcome |
+| `refinement.history_unreadable` (warn) | `scope`, `code` | a history file that exists but cannot be read, treated as empty |
+
+Every refinement result, applied or rejected, is also appended to a durable
+history: `<agentDir>/harness/refinements.jsonl` for a global refine, and
+`<agentDir>/harness/local-refinements/<sessionId>.jsonl` for a local one
+(`refine.history_record` is `skipped` when the session has no artifact dir).
+The next proposer reads a rejection's gate decision, the judge's cleaned and
+quoted rationale and its missed criteria ids, never its scores; for a refine
+that carries trigger fingerprints it also reads up to three recent rejections
+other sessions recorded for the same failures.
+
+Drift is measured by message identity against the copy of the conversation the
+proposer read: a readable message the proposer never saw is `appended`, and one
+it read that the live conversation no longer holds (a compaction, a rewind, a
+retry dropping a partial reply) is `rewritten`. Neither cancels the refine, and
+the judge reads the live conversation either way. A rejection counts as stale
+only when the drift is not `none`, the judge itself refused it (`reject_deep`,
+`reject_criteria` or `reject_unclaimed`, never the structural screen and never a
+judge error), and no referee verdict was `upheld`, `unverifiable` or
+`no_evidence` — a mechanical verdict holds whatever the conversation did. Such a
+line carries `staleEvidence`, `driftKind` and `driftMessages`, plus
+`replanScheduled` when its round stays open for one re-plan. That re-plan is a
+further `refine.plan`/`refine.apply` root pair, and every line and span of it
+carries `replanOf`/`refine.replan_of` naming the rejection it re-planned.
+
+A `ravo.run` (or `/ravo`) writes one record per evaluated proposal, with
+`reason` `ravo_run`: `refinement.rejected` when the gate rejects it (on its
+`ravo.round` span) or the commit gate refuses it (`partial` when its edits do
+not apply), and, once its state is saved, `refinement.committed` or
+`refinement.applied_unmeasured` (on the commit-gate `ravo.evaluation` span,
+whose `ravo.proposal_id` is the line's `proposalId`). Its `addressed` holds only
+fingerprints the proposal claimed, that recur in the ledger of the store it runs
+against, that the judge named (as `<fp>` or `failure:<fp>`), and whose
+`failure:`/`referee:` criteria the certificate did not count as missed, so a run
+with no judge (`arc_agi`) never logs `refinement.committed`. Its `missed` is the
+certificate's count, which is 0 when the proposal stopped at the screen or the
+deep gate, and a proposal a stopped run never evaluated logs nothing. No span
+attribute carries `ravo_run`.
+
+`refine.plan`, `refine.apply`, `ravo.replay_verify`, `harness.trust.adjudicate`
+and `recall.mark` are detached roots. Each runs after, or alongside, the turn
+that started it, so as a child it would outlive its parent. On `refine.plan`,
+`refine.apply`, `harness.trust.adjudicate` and `recall.mark`,
+`trigger.trace_id` names that turn's trace where one was active, and
+`refinement.id` joins a plan to its apply.
+
+Switches that change what these spans report. Each is on unless set to `0`,
+`off`, `false` or `no` (`PRIME_AGENT_RAVO` does not accept `no`):
+
+* `PRIME_AGENT_GLOBAL_LEDGER`: the failure ledger is also kept in the global
+  harness state, recurrence is counted there, and `harness.ledger.flush`
+  writes it. Off, the ledger stays per-session, a local provisional window runs
+  on the session ledger's ordinal (clock `local-ordinal`), and a global window
+  opened meanwhile has no clock and is never checked. Trust windows are measured
+  on the global ordinal, so a recurrence inside one is recorded and adjudicated
+  only while it is on; off, a session advances no ordinal and settles no window
+  of its own.
+* `PRIME_AGENT_RAVO`: off, `refine.plan` carries no `ravo.*`, `referee.*` or
+  `refine.recurring_failures` attributes, and a fully applied refine other than
+  a rollback records `commit_unmeasured`.
+* `PRIME_AGENT_WORKSPACE_RECALL`: off, no `recall.*` span is opened and no
+  mark is written. The extension is also left out of RLM child runtimes and of
+  runs started with `--no-extensions`.
+
+A Workspace Recall mark is `<agentDir>/recall/<repoKey>.json`, where `repoKey`
+(`recall.repo_key`) is the repo root's basename, with characters outside
+`[A-Za-z0-9._-]` replaced, a dot, and the first 16 hex characters of the sha256
+of the resolved root path. It holds digests (`digestAlgorithm: "sha256-128"`),
+paths, HEAD and build claims, never file content or command output.
+
+Workspace Recall keeps a negative cache per repo. A git call that times out
+(3 s) writes `<agentDir>/recall/<repoKey>.skip.json` with reason `git_timeout`
+for 10 minutes, and every process sharing the agent dir then skips marks,
+witnesses and digests for that repo with `recall.negative_cache=true`. A missed
+1 s tool-path deadline is never written there: it keeps only that runtime's
+witness and digests off the repo, in memory, for 60 s, and marks still run. A
+`deadline` entry found in the file is ignored.
+
+## Harness trust records
+
+Trust moves on measured outcomes only, and each move is one
+`coding-agent.harness-trust` log line. They are written where a trust window
+settles: at a failure ledger flush (local windows on the global observation
+ordinal, global windows under the harness state lock) and on the applied branch
+of `refine.apply`. The learning index reads neither.
+
+| `msg` | fields | written for |
+|---|---|---|
+| `harness.trust.settled` | `proposalId`, `scope`, `from`, `outcome` (`clean`/`contested`/`faulted`), `ordinal`, `fingerprints` | one per window this settlement closed |
+| `harness.trust.adjusted` | `proposalId`, `scope`, `entry` (`kind:id`), `reason` (`clean_window`/`measured_fault`), `delta`, `before`, `after`, `dormant`, `fingerprintId` (on a fault) | one per entry whose score moved |
+
+`fingerprints` is the upheld fingerprints for a `faulted` window, the recurred
+ones for a `contested` one, and every claimed one for a `clean` one. `delta` is
+`+5` for a clean window, charged to every entry the commit touched, and `-15`
+for a measured fault, charged once per window to the skill entry the replay ran
+for; `dormant` says the entry fell below the trust threshold and is no longer
+rendered into the prompt. A local ledger flush opens no span of its own, so its
+lines are stamped with whatever span was active where it ran (a turn boundary,
+`agent_end`, dispose); the global flush and `refine.apply` stamp theirs with
+their own span.
 
 ## Session records
 
@@ -303,7 +433,10 @@ the bound. `prime-agent trace` and `prime-agent health` read all retained genera
 
 Only long-running operations emit `span_start`, which makes a silent crash or hang
 visible without doubling all trace traffic. Successful `extension.hooks` spans
-under 25 ms are suppressed; failures and slow hooks remain visible.
+under 25 ms are suppressed; failures and slow hooks remain visible. A suppressed
+hook span still parents what ran inside it, so a child of a fast hook (a
+`recall.digest` skipped by the negative cache, say) appears under
+`(open span)` in `prime-agent trace`.
 
 ## Non-goals
 

@@ -1,0 +1,2 @@
+- Added `refine.plan` and `refine.apply` root spans, joined by `refinement.id` and carrying the triggering turn's `trigger.trace_id`, with the refine's source, reason, kind and scope, its RAVO gate scores and referee verdict counts when the gate ran, and its final decision at apply.
+- Added `refinement.rejected` and `refinement.applied_unmeasured` log records beside `refinement.committed`, so every `/refine` and automatic refine logs exactly one final decision when it applies, including apply-time downgrades, partial applies, rollbacks and empty proposals.

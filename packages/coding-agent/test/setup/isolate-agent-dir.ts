@@ -19,3 +19,10 @@ import { join } from "node:path";
 const agentDir = mkdtempSync(join(tmpdir(), "prime-agent-test-agentdir-"));
 process.env.PRIME_AGENT_CODING_AGENT_DIR = agentDir;
 process.env.PI_CODING_AGENT_DIR = agentDir;
+// Workspace Recall writes a per-repo mark on every agent_end and appends a block to the first ipython
+// result of a session. Off by default under test so session tests that happen to run inside a git
+// checkout stay byte-identical; the recall tests turn it back on for themselves.
+process.env.PRIME_AGENT_WORKSPACE_RECALL = "0";
+// The global failure ledger lives in the agent dir, which every session in one test file shares, so failures
+// counted by one test would cross the recurrence threshold in the next. The ledger suites turn it back on.
+process.env.PRIME_AGENT_GLOBAL_LEDGER = "0";

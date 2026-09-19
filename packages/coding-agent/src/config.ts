@@ -589,6 +589,18 @@ export function getResolutionStorePath(repoDir: string, agentDir: string = getAg
 	return join(getResolutionDir(agentDir), `${name}.${hash}.json`);
 }
 
+/** Root of Workspace Recall: one per-repo mark of digests, never content. */
+export function getRecallDir(agentDir: string = getAgentDir()): string {
+	return join(agentDir, "recall");
+}
+
+/** Mark file for one repo, keyed like the resolution store: readable basename plus a hash of the repo path. */
+export function getRecallMarkPath(repoDir: string, agentDir: string = getAgentDir()): string {
+	const hash = createHash("sha256").update(repoDir).digest("hex").slice(0, 16);
+	const name = basename(repoDir).replace(/[^A-Za-z0-9._-]/g, "_") || "repo";
+	return join(getRecallDir(agentDir), `${name}.${hash}.json`);
+}
+
 /**
  * Log file for a daemon. The basename keeps it readable; a hash of the full
  * socket path makes it unique so two sockets that share a basename (e.g.

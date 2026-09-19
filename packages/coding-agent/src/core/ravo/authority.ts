@@ -1,7 +1,21 @@
 import { canonicalJson, sha256 } from "./canonical-json.js";
 import { FAILURE_OPPONENT_PREFIX } from "./failure-ledger.js";
-import type { JsonValue, RavoGateCertificate, RavoOpponentPool, RavoState } from "./reducer.js";
-import { emptyRavoState, ravoExtendOpponents, ravoMarkProvisional, ravoStep, ravoW } from "./reducer.js";
+import type {
+	JsonValue,
+	RavoGateCertificate,
+	RavoOpponentPool,
+	RavoProvisionalWindow,
+	RavoState,
+	RavoWindowClock,
+} from "./reducer.js";
+import {
+	emptyRavoState,
+	isRavoWindowClock,
+	ravoExtendOpponents,
+	ravoMarkProvisional,
+	ravoStep,
+	ravoW,
+} from "./reducer.js";
 import {
 	failureOpponentPassed,
 	isRefereeOpponentId,
@@ -10,12 +24,26 @@ import {
 	refereeOpponentFingerprint,
 	refereeOpponentId,
 	refereeOpponentPassed,
+	refereeVerdictIsEvidence,
 } from "./referee.js";
 
 export const ASSISTED_RAVO_CRITERIA = ["evidence", "scope", "minimality", "contracts", "novelty"] as const;
 
 /** Default number of turns a committed champion stays provisional. */
 export const DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS = 20;
+
+/**
+ * How the authority treats a commit that claims no failure fingerprint.
+ *
+ * - `measured` (default): the reducer's step stands; lineage, champion and
+ *   weakness pressure all advance.
+ * - `unmeasured`: the edits are authorized, but `nextState` is the input state.
+ *   Nothing can later confirm or refute a commit that claimed nothing, so it
+ *   must not raise the deep-gate bar or pressure a criterion.
+ * - `reject`: the commit is refused with `rejection: "unclaimed"`; the
+ *   evaluation is consumed exactly as any other rejection.
+ */
+export type UnclaimedCommitPolicy = "measured" | "unmeasured" | "reject";
 
 export function isFailureOpponentId(criterionId: string): boolean {
 	return criterionId.startsWith(FAILURE_OPPONENT_PREFIX) && criterionId.length > FAILURE_OPPONENT_PREFIX.length;
@@ -64,12 +92,31 @@ export function emptyAssistedRavoState(): RavoState<JsonValue> {
 	});
 }
 
+/**
+ * A provisional window stamped with a clock this build does not know (written
+ * by another build) loses the stamp and reads as legacy, which never regresses.
+ * Left in place, `ravoW` would reject the whole state and the lineage, weights
+ * and evaluated ids would all be discarded for one field.
+ */
+function withKnownWindowClocks(state: RavoState<JsonValue>): RavoState<JsonValue> {
+	if (!Array.isArray(state.lineage)) return state;
+	return {
+		...state,
+		lineage: state.lineage.map((champion) => {
+			const window: unknown = champion?.provisional;
+			if (typeof window !== "object" || window === null || Array.isArray(window)) return champion;
+			const { clock, ...rest } = window as RavoProvisionalWindow;
+			return clock === undefined || isRavoWindowClock(clock) ? champion : { ...champion, provisional: rest };
+		}),
+	};
+}
+
 export function normalizeAssistedRavoState(value: unknown): RavoState<JsonValue> {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) return emptyAssistedRavoState();
 	const record = value as Record<string, unknown>;
 	if (Array.isArray(record.lineage) && Array.isArray(record.evaluatedProposalIds) && record.opponents) {
 		try {
-			const state = structuredClone(value) as RavoState<JsonValue>;
+			const state = withKnownWindowClocks(structuredClone(value) as RavoState<JsonValue>);
 			if (ravoW(state)) return state;
 		} catch {
 			// Fall through to legacy migration or an empty state.
@@ -133,31 +180,43 @@ export function ravoArtifactDigest(value: JsonValue): string {
 	return sha256(canonicalJson(normalized));
 }
 
+function isAssistedCriterion(criterionId: string): boolean {
+	return (ASSISTED_RAVO_CRITERIA as readonly string[]).includes(criterionId);
+}
+
 /**
  * Authorize one complete assisted edit set. The generic reducer is the sole
  * decision authority. Evaluation errors and abstentions are conservative
  * failures. The returned certificate is bound to both candidate and baseline.
+ *
+ * Pool criteria that /refine never observes (an `arc:*` criterion persisted by
+ * an external-evaluator run, say) are dormant passes: with no observation the
+ * reducer would count them as abstentions, and every later /refine would be
+ * charged for a criterion it cannot evaluate.
  *
  * Recurring failure fingerprints join the pool as opponents
  * (`ravoExtendOpponents`, seed weight 1) before the step, so they participate
  * in the epsilon gate exactly like the five assisted criteria and are
  * pressured like them when missed. A failure opponent named in
  * `failureOpponents` passes iff the judge listed its fingerprint in
- * `addressedFingerprints`, did not also list it as failed, AND the referee did
- * not refute the claim by re-running the recorded replay case. Failure
- * opponents already in the pool but absent from `failureOpponents` are
+ * `addressedFingerprints`, did not also list it as failed, AND the referee's
+ * verdict does not charge it (`failureOpponentPassed`: a claim a replay cannot
+ * speak to stands, a derivable failure with no reproduced case fails closed).
+ * Failure opponents already in the pool but absent from `failureOpponents` are
  * dormant (no longer recurring) and pass; their pressured weight is kept so a
  * later recurrence returns to the gate at full strength.
  *
- * Each adjudicated fingerprint also joins the pool as `referee:<fingerprint>`
- * (Rocq `Ravo.v` Section 16: the referee is one more opponent, which can only
- * tighten the gate). A claim the referee refutes therefore misses two
- * criteria, which is what carries it past epsilon; an unclaimed or
- * unadjudicated fingerprint is charged exactly what it was charged before.
+ * Each fingerprint a replay actually adjudicated (`refereeVerdictIsEvidence`)
+ * also joins the pool as `referee:<fingerprint>` (Rocq `Ravo.v` Section 16:
+ * the referee is one more opponent, which can only tighten the gate). A claim
+ * the referee refutes therefore misses two criteria, which is what carries it
+ * past epsilon; an unclaimed or unadjudicated fingerprint is charged exactly
+ * what it was charged before.
  *
- * A commit is provisional: the champion records the claimed fingerprints and
- * an observation window of `observationWindowTurns` turns starting at `turn`
- * (see `ravoObserveChampion`).
+ * A commit that claims fingerprints is provisional: the champion records them
+ * and an observation window of `observationWindowTurns` starting at `turn`,
+ * stamped with `turnClock`. A commit that claims nothing follows
+ * `unclaimedCommit`.
  */
 export function authorizeAssistedRavo(input: {
 	proposalId: string;
@@ -183,7 +242,10 @@ export function authorizeAssistedRavo(input: {
 	refereeVerdicts?: readonly RefereeVerdict[];
 	/** Turn at which the commit happens; enables the provisional window. */
 	turn?: number;
+	/** Clock `turn` is measured on; stamped on the provisional window. */
+	turnClock?: RavoWindowClock;
 	observationWindowTurns?: number;
+	unclaimedCommit?: UnclaimedCommitPolicy;
 }): AssistedRavoAuthorization {
 	const proposalDigest = ravoArtifactDigest(input.artifact);
 	const baselineDigest = ravoArtifactDigest(input.baseline);
@@ -192,14 +254,11 @@ export function authorizeAssistedRavo(input: {
 	const failureOpponents = (input.failureOpponents ?? []).filter(isFailureOpponentId);
 	const active = new Set(failureOpponents);
 	const verdicts = new Map((input.refereeVerdicts ?? []).map((verdict) => [verdict.fingerprintId, verdict]));
-	// Only a fingerprint the referee actually adjudicated joins the pool as a
-	// referee opponent; "no evidence" adds nothing that could ever fail.
+	// Only a fingerprint a replay actually adjudicated joins the pool as a
+	// referee opponent; no_evidence and not_applicable add no new criterion.
 	const adjudicated = failureOpponents
 		.map((id) => failureOpponentFingerprint(id) ?? "")
-		.filter((fingerprint) => {
-			const status = verdicts.get(fingerprint)?.status;
-			return status !== undefined && status !== "no_evidence";
-		})
+		.filter((fingerprint) => refereeVerdictIsEvidence(verdicts.get(fingerprint)))
 		.map((fingerprint) => refereeOpponentId(fingerprint));
 	const baseState = input.state ?? emptyAssistedRavoState();
 	const state: RavoState<JsonValue> = {
@@ -232,7 +291,7 @@ export function authorizeAssistedRavo(input: {
 				if (dormant) {
 					return { ...judged(criterion.id, true), detail: "dormant: fingerprint is not currently recurring" };
 				}
-				return verdict && verdict.status !== "no_evidence"
+				return verdict && verdict.status !== "not_applicable"
 					? { ...judged(criterion.id, passed), detail: verdict.detail }
 					: judged(criterion.id, passed);
 			}),
@@ -247,6 +306,14 @@ export function authorizeAssistedRavo(input: {
 					detail: refereeDetail(verdict, claimed),
 				};
 			}),
+		...state.opponents.criteria
+			.filter(
+				(criterion) =>
+					!isAssistedCriterion(criterion.id) &&
+					!isFailureOpponentId(criterion.id) &&
+					!isRefereeOpponentId(criterion.id),
+			)
+			.map((criterion) => ({ ...judged(criterion.id, true), detail: "dormant: not a /refine criterion" })),
 	];
 	const stepped = ravoStep(
 		state,
@@ -271,22 +338,39 @@ export function authorizeAssistedRavo(input: {
 		},
 	);
 	let nextState = stepped.state;
+	let certificate: RavoGateCertificate = stepped.certificate;
 	if (stepped.certificate.committed) {
 		const claimedFingerprints = failureOpponents
 			.map((id) => failureOpponentFingerprint(id) ?? "")
 			.filter((fingerprint) => addressed.has(fingerprint));
-		const turn = input.turn;
-		const windowTurns = input.observationWindowTurns ?? DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS;
-		nextState = ravoMarkProvisional(nextState, input.proposalId, {
-			claimedFingerprints,
-			...(turn !== undefined && Number.isSafeInteger(turn) && turn >= 0
-				? { window: { committedTurn: turn, untilTurn: turn + Math.max(0, windowTurns) } }
-				: {}),
-		});
+		const policy = claimedFingerprints.length > 0 ? "measured" : (input.unclaimedCommit ?? "measured");
+		if (policy === "reject") {
+			// The same consumed-evaluation state every other rejection leaves:
+			// the proposal id is spent, nothing is appended or pressured.
+			certificate = { ...stepped.certificate, committed: false, rejection: "unclaimed" };
+			nextState = { ...state, evaluatedProposalIds: [...state.evaluatedProposalIds, input.proposalId] };
+		} else if (policy === "unmeasured") {
+			nextState = baseState;
+		} else {
+			const turn = input.turn;
+			const windowTurns = input.observationWindowTurns ?? DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS;
+			nextState = ravoMarkProvisional(nextState, input.proposalId, {
+				claimedFingerprints,
+				...(turn !== undefined && Number.isSafeInteger(turn) && turn >= 0
+					? {
+							window: {
+								committedTurn: turn,
+								untilTurn: turn + Math.max(0, windowTurns),
+								...(input.turnClock === undefined ? {} : { clock: input.turnClock }),
+							},
+						}
+					: {}),
+			});
+		}
 	}
 	return {
-		authorized: stepped.certificate.committed,
-		certificate: { ...stepped.certificate, proposalDigest, baselineDigest },
+		authorized: certificate.committed,
+		certificate: { ...certificate, proposalDigest, baselineDigest },
 		proposalDigest,
 		baselineDigest,
 		nextState,

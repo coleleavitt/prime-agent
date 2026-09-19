@@ -1,1 +1,6 @@
-- Added an opt-in global failure ledger (`PRIME_AGENT_GLOBAL_LEDGER=1`) so a failure fingerprint first seen in one session still counts towards recurrence in the next, flushed under a cross-process lock and kept out of the baseline a refinement certificate binds.
+- Added a global failure ledger, on by default (`PRIME_AGENT_GLOBAL_LEDGER=0`, `off`, `false` or `no` keeps it per-session), so a failure fingerprint first seen in one session still counts towards recurrence in the next, flushed under a cross-process lock and kept out of the baseline a refinement certificate binds.
+- Added regression checks for global champions: a fix a global refine committed in an earlier session regresses when a claimed failure recurs inside its observation window in a later session, and queues a repair that runs as a global refine.
+- Fixed a long-lived session judging recurrence and opening observation windows against a copy of the global ledger read once at session start; the ledger is re-read from disk at each turn boundary and before planning.
+- Fixed provisional regressions being dropped when the ledger flush failed or the harness state had no RAVO lineage yet; they stay pending until a write records them.
+- Fixed a refine commit erasing a regression another session recorded on its champion while it planned, and a global refine overwriting a concurrent ledger flush from another session.
+- Changed `harness.ledger.flush` to also run when only regressions or replay verifications are pending, reporting them as `ledger.regressions` and `ledger.verifications`.

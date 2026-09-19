@@ -2071,6 +2071,11 @@ export class DaemonAgentConnection implements AgentConnection {
 			// status arrives through session_event, so it is not re-emitted here.
 			return;
 		}
+		if (message.type === "dream_run_update") {
+			// Fleet-level push for roster subscribers (agents view); this session's own
+			// status arrives through session_event, so it is not re-emitted here.
+			return;
+		}
 		if (!this.isMessageForActiveSession(message)) {
 			return;
 		}

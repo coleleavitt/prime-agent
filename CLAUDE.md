@@ -52,16 +52,40 @@ command part of startup without a capability gate.
 
 ## Current State
 
-Branch `perf/session-catalog-resume` on `ce2abeec3`. Live detail and handoff notes are in `MEMORY.md`.
+Branch `perf/session-catalog-resume` on `f4afe5b5d`. Live detail and handoff notes are in `MEMORY.md`.
 
-- **Uncommitted:** provider tool-capability support — `ModelRegistry.supportsTools(provider)` plus a new
-  `AgentLoopConfig.getRequestContext(context, model)` that supplies request-local `systemPrompt`/`tools` overrides
-  without mutating session context. Tests exist; `.changes/` fragments and `npm run check` are still owed.
+- **Uncommitted: the self-improvement gate and Workspace Recall.** 57 modified tracked files (coding-agent `src`,
+  `test`, `docs` and `.changes`, `prime-agent-runtime`, `FLOWCHART.md`, `docs/`), plus new `src/core/recall/`,
+  `extensions/builtin/workspace-recall.ts`, `ravo/python-environment.ts`, three test files and six fragments.
+  `evals/run.mjs`, `evals/results/` and `evals/tasks/study-git-correction*` are separate, unrelated work.
+  - Refines: `refine.plan` and `refine.apply` detached root spans, and one
+    `refinement.committed|rejected|applied_unmeasured` record per refine at apply time. A failure refine that claims
+    nothing is `reject_unclaimed`; any other claimless commit applies without touching RAVO state. A cancelled queued
+    or requested refine reports `refine_failed` and releases its triggers.
+  - Ledger: global by default (`PRIME_AGENT_GLOBAL_LEDGER=0` keeps it per-session). Provisional windows carry a clock
+    (`ordinal` or `local-ordinal`), a regressed champion is repaired in its own scope, and a fingerprint is
+    non-actionable (counted, never a trigger) when a strict majority of its occurrences were outages, denials,
+    network failures or timeouts.
+  - Referee: replays run only for skill create/update edits whose imports a verified missing-module or
+    missing-distribution probe names, in one sanitized environment shared with the skill dry-run. `not_applicable`
+    exists, `no_evidence` fails closed, and verification runs off the turn path (`ravo.replay_verify`).
+  - Workspace Recall: a per-repo digest mark on `agent_end`, a `<workspace_recall>` block on a session's first
+    `ipython` result, and build claims from the kernel `done` frame's new `bashCommands`.
+    `PRIME_AGENT_WORKSPACE_RECALL=0` turns it off.
+- **Open on that set:**
+  - `npm run check` passes, and 131 related vitest files and the Python runtime suite pass (2026-09-16). Heavy suites
+    (`test:kernel`, `test:process`, `test:ci`) and `prime-agent trace` runtime validation were not run.
+  - Build claims need the runtime reinstalled: a kernel on the committed `prime-agent-runtime` sends no `bashCommands`,
+    so nothing is claimed until the kernel venv re-syncs and live kernels restart.
+  - `ravo.run` commits are measured on that run's own evaluators, skip the claimless-commit rules by design, and log no
+    `refinement.*` record, so the learning index does not see them.
+  - Trust debits never fire: `settleHarnessTrust` has one caller, and it passes no referee verdicts.
 - **Known behaviour from the trace corpus** (157 374 real spans on this machine), useful as ground truth:
   `extension.hooks` is the hottest span at 46 721 occurrences; a single `context` hook has been observed taking 29 s;
   `kernel.host_request` for `agent_message.list_agents` has p50 ≈ 15 s; several span families show children outliving
   their parents. Treat these as measured facts, not guesses.
-- ~12 GB of untracked junk sits in the repo root (two core dumps, two session HTML exports). Do not commit it; do not
+- ~12 GB of untracked junk sits in the repo root (three core dumps, two session HTML exports), and ~34 GB more in
+  `packages/coding-agent/core.*` (node test-process dumps from 2026-09-16). Do not commit it; do not
   delete it without asking.
 
 ## Working Rules

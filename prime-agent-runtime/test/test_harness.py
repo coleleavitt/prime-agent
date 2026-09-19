@@ -1062,6 +1062,34 @@ class HarnessStateDurabilityTest(unittest.TestCase):
             self.assertEqual(after["trustWindows"], self.SEED["trustWindows"])
             self.assertTrue(after["entries"]["memory"])
 
+    def test_kernel_write_keeps_the_host_refinement_reason(self) -> None:
+        """The host filters its prompt listing on an event's `reason`; a kernel save must not strip it."""
+        event = {"trigger": "t", "evidence": "", "outcome": "", "created_at": "2026-09-16T00:00:00+00:00"}
+        seed = {
+            **self.SEED,
+            "refinements": [
+                {**event, "id": "refine_a", "changes": ["create memory:m"], "reason": "turn_interval"},
+                {**event, "id": "refine_b", "changes": ["create memory:n"]},
+                {**event, "id": "refine_c", "changes": [], "reason": 7},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "harness_state.json"
+            state_path.write_text(json.dumps(seed), encoding="utf-8")
+
+            state = HarnessState(state_path)
+            state.upsert("memory", title="t", content="c")
+            state.record_refinement("kernel trigger", ["create memory:t"])
+
+            after = json.loads(state_path.read_text(encoding="utf-8"))["refinements"]
+            self.assertEqual([item["id"] for item in after][:3], ["refine_a", "refine_b", "refine_c"])
+            self.assertEqual(after[0]["reason"], "turn_interval")
+            self.assertEqual(HarnessState(state_path).refinements[0].reason, "turn_interval")
+            # Events without a reason stay without one, and a malformed reason is dropped.
+            self.assertNotIn("reason", after[1])
+            self.assertNotIn("reason", after[2])
+            self.assertNotIn("reason", after[3])
+
     def test_write_preserves_file_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             state_path = Path(temp_dir) / "harness_state.json"

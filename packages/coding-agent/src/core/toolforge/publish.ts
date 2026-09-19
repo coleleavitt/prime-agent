@@ -43,7 +43,12 @@ import {
  * staged package, which MUST pass. "Fails without, passes with" is the whole
  * claim a new capability makes, and this is that claim made executable. A run
  * that could not be performed is never read as a pass (same polarity as
- * `refereeOpponentPassed`, opposite to the fast screen).
+ * `refereeOpponentPassed`, opposite to the fast screen). Unlike a referee
+ * probe, the exit test is capability code the model wrote to run where the
+ * user's own code runs, so both runs inherit this process's environment
+ * (proxies, certificates, the user's PYTHONPATH) with the package root first on
+ * the path; the scratch working directory, the process-group kill and the
+ * orphan process journal record still apply.
  *
  * Only then is the package promoted by rename into `<agentDir>/skills/<name>`,
  * where `collectAutoSkillEntries` finds it, `syncPythonSkills` editable-installs
@@ -314,6 +319,7 @@ async function runGatePhase(
 		timeoutMs: options.timeoutMs ?? DEFAULT_TOOLFORGE_GATE_TIMEOUT_MS,
 		...(options.signal ? { signal: options.signal } : {}),
 		cwd: path.dirname(srcPath),
+		environment: "inherited",
 	});
 	return {
 		phase,

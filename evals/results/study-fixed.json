@@ -1,0 +1,34 @@
+{
+ "phase": "study",
+ "startedAt": "2026-09-16T19:52:30.023Z",
+ "tasks": 1,
+ "results": [
+  {
+   "id": "study-git-correction-implicit",
+   "phase": "study",
+   "invalid": false,
+   "invalidReason": null,
+   "recoveredErrors": 0,
+   "pass": false,
+   "timedOut": false,
+   "wallMs": 13494,
+   "turns": 7,
+   "toolCalls": 5,
+   "tools": {
+    "ipython": 3
+   },
+   "tokensIn": 22,
+   "tokensOut": 1482,
+   "errors": 0,
+   "asks": 0,
+   "events": 252,
+   "stopReason": null,
+   "interventions": 1,
+   "humanInterventions": 1,
+   "verifyStdout": "FAIL: fix works but tree left dirty (no commit)",
+   "verifyStderr": "",
+   "agentExit": 0,
+   "rep": 0
+  }
+ ]
+}

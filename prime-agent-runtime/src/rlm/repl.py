@@ -51,10 +51,30 @@ _loop: asyncio.AbstractEventLoop | None = None
 _serve_task: asyncio.Task[Any] | None = None
 
 
+_CELL_BASH_COMMAND_LIMIT = 32
+
+
 class _CellExecution:
     def __init__(self) -> None:
         self.finished = asyncio.Event()
         self.owner: asyncio.Task[Any] | None = None
+        # bash() finalizes on watcher threads; None once the cell body has ended.
+        self._bash_lock = threading.Lock()
+        self._bash_commands: list[dict[str, Any]] | None = []
+
+    def record_bash_command(self, record: dict[str, Any]) -> None:
+        """Keep a command that finished while the cell body still ran; later ones are dropped."""
+        with self._bash_lock:
+            if self._bash_commands is None:
+                return
+            self._bash_commands.append(record)
+            if len(self._bash_commands) > _CELL_BASH_COMMAND_LIMIT:
+                del self._bash_commands[0]
+
+    def close_bash_commands(self) -> list[dict[str, Any]]:
+        with self._bash_lock:
+            records, self._bash_commands = self._bash_commands or [], None
+        return records
 
 
 # Asyncio tasks copy cell context at creation, so detached tasks retain their
@@ -128,6 +148,12 @@ def current_cell_completion_context() -> tuple[asyncio.Event, asyncio.Task[Any] 
     if execution is None:
         return None
     return execution.finished, execution.owner
+
+
+def current_cell_bash_recorder() -> Callable[[dict[str, Any]], None] | None:
+    """Where bash() reports a command that finishes inside the calling cell, or None outside a cell."""
+    execution = _current_cell_execution.get()
+    return None if execution is None else execution.record_bash_command
 
 
 def active_cell_task() -> asyncio.Task[Any] | None:
@@ -780,6 +806,7 @@ async def _handle_execute(req: dict[str, Any], ns: dict[str, Any]) -> None:
             task = _loop.create_task(_run_codes(codes, ns))
             execution.owner = task
             status, value, error = await _run_guarded(task, cell_id)
+            bash_commands = execution.close_bash_commands()
             result_text: str | None = None
             try:
                 if _consume_handoff_interrupt() and status == "ok":
@@ -804,8 +831,13 @@ async def _handle_execute(req: dict[str, Any], ns: dict[str, Any]) -> None:
             _send({"event": "result", "id": cell_id, "text": result_text})
         if error is not None:
             _send(error)
-        _send({"event": "done", "id": cell_id, "status": status})
+        done: dict[str, Any] = {"event": "done", "id": cell_id, "status": status}
+        if bash_commands:
+            # Optional: hosts that predate the field ignore it.
+            done["bashCommands"] = bash_commands
+        _send(done)
     finally:
+        execution.close_bash_commands()
         execution.owner = None
         execution.finished.set()
         _current_cell_execution.reset(execution_token)

@@ -3,9 +3,23 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type LogEntry, setLogSink } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { REFINEMENT_COMMITTED_MSG, REFINEMENT_LOG_COMPONENT } from "../src/core/learning-index.js";
 import { emptyFailureLedger, observationOrdinal } from "../src/core/ravo/failure-ledger.js";
-import { openTrustWindow, settleTrustWindows } from "../src/core/refinement/harness-trust.js";
-import { parseJudgeVerdict, type RavoGateReport } from "../src/core/refinement/ravo.js";
+import {
+	openTrustWindow,
+	recordTrustWindowEvidence,
+	settleTrustWindows,
+} from "../src/core/refinement/harness-trust.js";
+import {
+	logRefinementOutcome,
+	parseJudgeVerdict,
+	type RavoGateReport,
+	REFINEMENT_APPLIED_UNMEASURED_MSG,
+	REFINEMENT_REJECTED_MSG,
+	type RefineFinalDecision,
+	type RefineReason,
+	refineKindOf,
+} from "../src/core/refinement/ravo.js";
 import {
 	getHarnessStatePath,
 	isRollbackableRefinement,
@@ -27,6 +41,8 @@ function gateReport(decision: RavoGateReport["decision"]): RavoGateReport {
 		rationale: "",
 		addressedFingerprints: [],
 		failureOpponents: [],
+		measurable: decision === "commit",
+		refereeCounts: { cleared: 0, upheld: 0, unverifiable: 0, no_evidence: 0, not_applicable: 0 },
 	};
 }
 
@@ -95,6 +111,115 @@ describe("isRollbackableRefinement", () => {
 		expect(isRollbackableRefinement(refinementResult(gateReport("reject_deep")))).toBe(false);
 		expect(isRollbackableRefinement(refinementResult(gateReport("reject_screen")))).toBe(false);
 		expect(isRollbackableRefinement(refinementResult(gateReport("reject_criteria")))).toBe(false);
+		expect(isRollbackableRefinement(refinementResult(gateReport("reject_unclaimed")))).toBe(false);
+	});
+});
+
+describe("refine kinds", () => {
+	it("maps every reason to its kind", () => {
+		const kinds: Record<RefineReason, string> = {
+			manual: "directed",
+			refine_run: "directed",
+			rollback: "directed",
+			ravo_run: "directed",
+			recurrence: "failure",
+			regression: "failure",
+			turn_interval: "checkpoint",
+			compact: "checkpoint",
+		};
+		for (const [reason, kind] of Object.entries(kinds)) {
+			expect(refineKindOf(reason as RefineReason)).toBe(kind);
+		}
+	});
+});
+
+describe("logRefinementOutcome", () => {
+	let entries: LogEntry[];
+
+	beforeEach(() => {
+		entries = [];
+		setLogSink((entry) => entries.push(entry));
+	});
+
+	afterEach(() => {
+		setLogSink(undefined);
+	});
+
+	const refinementLines = () => entries.filter((entry) => entry.component === REFINEMENT_LOG_COMPONENT);
+	const outcome = (decision: RefineFinalDecision, addressed: string[] = []) => ({
+		proposalId: "refine_1",
+		decision,
+		addressed,
+		deepScore: 72,
+		missed: 1,
+		claimed: addressed.length,
+		reason: "recurrence" as const,
+		scope: "global" as const,
+	});
+
+	it("emits refinement.committed only for a commit that claimed fingerprints", () => {
+		logRefinementOutcome(outcome("commit", ["fp1", "fp2"]));
+		const lines = refinementLines();
+		expect(lines).toHaveLength(1);
+		expect(lines[0]).toMatchObject({
+			msg: REFINEMENT_COMMITTED_MSG,
+			proposalId: "refine_1",
+			addressed: ["fp1", "fp2"],
+			deepScore: 72,
+			missed: 1,
+			reason: "recurrence",
+			scope: "global",
+		});
+		expect(lines[0]).not.toHaveProperty("decision");
+		expect(lines[0]).not.toHaveProperty("claimed");
+	});
+
+	it("reports an unmeasured apply without a committed line", () => {
+		for (const decision of ["commit_unmeasured", "rollback"] as const) {
+			entries.length = 0;
+			logRefinementOutcome({ ...outcome(decision), reason: "turn_interval", scope: "local" });
+			const lines = refinementLines();
+			expect(lines).toHaveLength(1);
+			expect(lines[0]).toMatchObject({
+				msg: REFINEMENT_APPLIED_UNMEASURED_MSG,
+				proposalId: "refine_1",
+				deepScore: 72,
+				reason: "turn_interval",
+				scope: "local",
+			});
+			expect(lines[0]).not.toHaveProperty("addressed");
+		}
+		// A "commit" that claims nothing is not measurable either.
+		entries.length = 0;
+		logRefinementOutcome(outcome("commit"));
+		expect(refinementLines().map((entry) => entry.msg)).toEqual([REFINEMENT_APPLIED_UNMEASURED_MSG]);
+	});
+
+	it("reports every non-applying decision as refinement.rejected with its decision", () => {
+		const rejections: RefineFinalDecision[] = [
+			"reject_screen",
+			"reject_deep",
+			"reject_criteria",
+			"reject_unclaimed",
+			"partial",
+			"no_edits",
+		];
+		for (const decision of rejections) {
+			entries.length = 0;
+			logRefinementOutcome(outcome(decision, ["fp1"]));
+			const lines = refinementLines();
+			expect(lines).toHaveLength(1);
+			expect(lines[0]).toMatchObject({
+				msg: REFINEMENT_REJECTED_MSG,
+				proposalId: "refine_1",
+				decision,
+				deepScore: 72,
+				missed: 1,
+				claimed: 1,
+				reason: "recurrence",
+				scope: "global",
+			});
+		}
 	});
 });
 
@@ -230,19 +355,32 @@ describe("trust windows settle across a session boundary", () => {
 		expect(settled.windows.p1?.settledTurn).toBe(committedAt + 21);
 	});
 
-	it("faults on an upheld referee verdict regardless of the ordinal", () => {
-		const windows = openTrustWindow(undefined, {
-			proposalId: "p1",
-			touched: ["memory:m1"],
-			claimedFingerprints: ["fp1"],
-			committedTurn: 100,
-			untilTurn: 120,
-		});
-		const settled = settleTrustWindows(windows, lookup, {
-			turn: 101,
-			verdicts: [{ fingerprintId: "fp1", status: "upheld", detail: "replay reproduced the recorded exception" }],
-		});
+	it("faults on upheld evidence recorded for a touched skill whatever the ordinal at settle; never faults a memory-only window", () => {
+		const evidence = [
+			{
+				type: "adjudication" as const,
+				proposalId: "p1",
+				entry: "skill:s1",
+				fingerprintId: "fp1",
+				status: "upheld" as const,
+				ordinal: 101,
+				at: "2026-09-16T10:00:00.000Z",
+			},
+		];
+		const window = { proposalId: "p1", claimedFingerprints: ["fp1"], committedTurn: 100, untilTurn: 120 };
+		const skillWindows = recordTrustWindowEvidence(
+			openTrustWindow(undefined, { ...window, touched: ["skill:s1"], skillImports: { "skill:s1": ["pkg"] } }),
+			evidence,
+		);
+		const settled = settleTrustWindows(skillWindows, lookup, { turn: 500 });
 		expect(settled.windows.p1?.outcome).toBe("faulted");
 		expect(settled.windows.p1?.faultedFingerprints).toEqual(["fp1"]);
+
+		const memoryWindows = openTrustWindow(undefined, { ...window, touched: ["memory:m1"] });
+		expect(recordTrustWindowEvidence(memoryWindows, evidence)).toEqual(memoryWindows);
+		expect(
+			settleTrustWindows(recordTrustWindowEvidence(memoryWindows, evidence), lookup, { turn: 110 }).windows.p1
+				?.outcome,
+		).toBe("open");
 	});
 });

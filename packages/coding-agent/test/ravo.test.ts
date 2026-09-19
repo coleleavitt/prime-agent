@@ -1,9 +1,18 @@
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type * as PiAi from "@earendil-works/pi-ai";
 import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyAssistedRavoState } from "../src/core/ravo/authority.js";
-import { type FailureRecord, failureOpponentId } from "../src/core/ravo/failure-ledger.js";
-import { type JsonValue, ravoObserveChampion, ravoPressure as ravoPoolPressure } from "../src/core/ravo/reducer.js";
+import { type FailureRecord, failureOpponentId, findProvisionalRegressions } from "../src/core/ravo/failure-ledger.js";
+import {
+	type JsonValue,
+	type RavoWindowClock,
+	ravoObserveChampion,
+	ravoPressure as ravoPoolPressure,
+} from "../src/core/ravo/reducer.js";
 import type { RefinementProposal } from "../src/core/refinement/index.js";
 import {
 	countValidRefinementEdits,
@@ -11,6 +20,7 @@ import {
 	RAVO_DEFAULT_CONFIG,
 	type RavoGateReport,
 	type RavoHarnessState,
+	type RefineKind,
 	ravoBestScore,
 	ravoClears,
 	ravoCommit,
@@ -22,6 +32,7 @@ import {
 	ravoPressure,
 	rejectedRefinementResult,
 } from "../src/core/refinement/index.js";
+import { saveToolforgeLedger, toolforgeLedgerPath } from "../src/core/toolforge/ledger.js";
 
 const { completeSimpleMock } = vi.hoisted(() => ({
 	completeSimpleMock: vi.fn(),
@@ -53,6 +64,8 @@ function report(overrides: Partial<RavoGateReport> = {}): RavoGateReport {
 		rationale: "test",
 		addressedFingerprints: [],
 		failureOpponents: [],
+		measurable: false,
+		refereeCounts: { cleared: 0, upheld: 0, unverifiable: 0, no_evidence: 0, not_applicable: 0 },
 		...overrides,
 	};
 }
@@ -114,6 +127,29 @@ const judgedProposal: RefinementProposal = {
 	edits: [{ action: "create", kind: "memory", title: "websearch guard", content: "Check results key." }],
 };
 
+function skillProposal(importName: string, callable = "run"): RefinementProposal {
+	return {
+		...judgedProposal,
+		edits: [
+			{
+				action: "create",
+				kind: "skill",
+				title: `${importName} skill`,
+				content: `Call ${importName}.${callable}.`,
+				reference: { type: "python", import: importName, callable },
+				arguments: {},
+			},
+		],
+	};
+}
+
+function resolvePython(): string | undefined {
+	const probe = spawnSync("python3", ["-c", "import sys; sys.stdout.write(sys.executable)"], { encoding: "utf8" });
+	return probe.status === 0 && probe.stdout.trim() ? probe.stdout.trim() : undefined;
+}
+
+const PYTHON = resolvePython();
+
 async function evaluate(options: {
 	judge: Record<string, unknown>;
 	state?: ReturnType<typeof emptyAssistedRavoState>;
@@ -121,12 +157,16 @@ async function evaluate(options: {
 	observationWindowTurns?: number;
 	recurringFailures?: FailureRecord[];
 	proposalId?: string;
+	refineKind?: RefineKind;
+	turnClock?: RavoWindowClock;
+	proposal?: RefinementProposal;
 }): Promise<RavoGateReport> {
 	completeSimpleMock.mockResolvedValueOnce(assistantText(JSON.stringify(options.judge)));
-	return ravoEvaluateProposal(judgedProposal, {
+	const proposal = options.proposal ?? judgedProposal;
+	return ravoEvaluateProposal(proposal, {
 		state: options.state ?? emptyAssistedRavoState(),
 		config: RAVO_DEFAULT_CONFIG,
-		validEdits: countValidRefinementEdits(judgedProposal),
+		validEdits: countValidRefinementEdits(proposal),
 		conversationText: "conversation",
 		harnessOverview: "overview",
 		baseline: { entries: {} } as unknown as JsonValue,
@@ -136,6 +176,8 @@ async function evaluate(options: {
 		recurringFailures: options.recurringFailures ?? [recurringRecord],
 		turn: options.turn,
 		observationWindowTurns: options.observationWindowTurns,
+		...(options.refineKind ? { refineKind: options.refineKind } : {}),
+		...(options.turnClock ? { turnClock: options.turnClock } : {}),
 	});
 }
 
@@ -256,6 +298,7 @@ describe("ravo pure core", () => {
 		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
 		const request = completeSimpleMock.mock.calls[0][1] as { systemPrompt: string; messages: PiAi.Message[] };
 		expect(request.systemPrompt).toContain('"addressedFingerprints"');
+		expect(request.systemPrompt).toMatch(/outside the\s+harness's control/);
 		const userMessage = request.messages[0];
 		const text = userMessage.role === "user" && Array.isArray(userMessage.content) ? userMessage.content : [];
 		const prompt = text.map((part) => (part.type === "text" ? part.text : "")).join("\n");
@@ -375,6 +418,300 @@ describe("ravo pure core", () => {
 		if (!nextState) throw new Error("expected next state");
 		expect(ravoObserveChampion(nextState, "refine_1", [recurringRecord.fingerprint.id], 8).regression).toBe(false);
 		expect(ravoObserveChampion(nextState, "refine_2", [recurringRecord.fingerprint.id], 20).regression).toBe(true);
+	});
+
+	it("rejects a failure-triggered refine that claims nothing, and only that kind", async () => {
+		const passing = { verdict: "pass", score: 90, failedCriteria: [], addressedFingerprints: [] };
+		const failure = await evaluate({ judge: passing, recurringFailures: [], refineKind: "failure", turn: 5 });
+		expect(failure.decision).toBe("reject_unclaimed");
+		expect(failure.measurable).toBe(false);
+		expect(failure.authorization?.authorized).toBe(false);
+		expect(failure.authorization?.certificate).toMatchObject({ committed: false, rejection: "unclaimed" });
+		// Consumed like any rejection: the id is spent, nothing is appended.
+		expect(failure.authorization?.nextState.lineage).toEqual([]);
+		expect(failure.authorization?.nextState.evaluatedProposalIds).toEqual(["refine_1"]);
+
+		// A failure refine that ignores the listed failure is unclaimed, whatever
+		// the opponents gate would have said on its own.
+		const ignored = await evaluate({ judge: passing, refineKind: "failure", turn: 5 });
+		expect(ignored.decision).toBe("reject_unclaimed");
+		expect(ignored.authorization?.authorized).toBe(false);
+
+		for (const refineKind of ["directed", "checkpoint"] as const) {
+			const other = await evaluate({ judge: passing, recurringFailures: [], refineKind, turn: 5 });
+			expect(other.decision).toBe("commit");
+			expect(other.measurable).toBe(false);
+			expect(other.authorization?.authorized).toBe(true);
+		}
+
+		const claimed = await evaluate({
+			judge: { ...passing, addressedFingerprints: [recurringRecord.fingerprint.id] },
+			refineKind: "failure",
+			turn: 5,
+		});
+		expect(claimed.decision).toBe("commit");
+		expect(claimed.measurable).toBe(true);
+
+		completeSimpleMock.mockRejectedValueOnce(new Error("judge down"));
+		const errored = await ravoEvaluateProposal(judgedProposal, {
+			state: emptyAssistedRavoState(),
+			config: RAVO_DEFAULT_CONFIG,
+			validEdits: 1,
+			conversationText: "c",
+			harnessOverview: "o",
+			baseline: {} as unknown as JsonValue,
+			proposalId: "refine_err",
+			model: judgeModel,
+			apiKey: "key",
+			recurringFailures: [recurringRecord],
+			refineKind: "failure",
+		});
+		expect(errored.decision).toBe("reject_deep");
+	});
+
+	it("applies a claimless commit unmeasured and leaves the RAVO state exactly as it was", async () => {
+		const seeded = await evaluate({
+			judge: {
+				verdict: "pass",
+				score: 70,
+				failedCriteria: [],
+				addressedFingerprints: [recurringRecord.fingerprint.id],
+			},
+			turn: 4,
+			turnClock: "ordinal",
+		});
+		const state = seeded.authorization?.nextState;
+		if (!state) throw new Error("expected a seeded state");
+		const weights = state.opponents.criteria.map((criterion) => [criterion.id, criterion.currentWeight]);
+
+		// Misses one hygiene criterion within epsilon and outscores the champion:
+		// a measured commit would append, raise the bar, and pressure "novelty".
+		const unmeasured = await evaluate({
+			judge: { verdict: "pass", score: 95, failedCriteria: ["novelty"], addressedFingerprints: [] },
+			state,
+			recurringFailures: [],
+			refineKind: "checkpoint",
+			turn: 9,
+			turnClock: "ordinal",
+			proposalId: "refine_2",
+		});
+		expect(unmeasured.decision).toBe("commit");
+		expect(unmeasured.measurable).toBe(false);
+		expect(unmeasured.authorization?.authorized).toBe(true);
+		const next = unmeasured.authorization?.nextState;
+		expect(next).toBe(state);
+		expect(next?.lineage).toHaveLength(1);
+		expect(next?.championId).toBe("refine_1");
+		expect(Math.max(...(next?.lineage.map((entry) => entry.score) ?? []))).toBe(70);
+		expect(next?.opponents.criteria.map((criterion) => [criterion.id, criterion.currentWeight])).toEqual(weights);
+
+		const measured = await evaluate({
+			judge: {
+				verdict: "pass",
+				score: 95,
+				failedCriteria: ["novelty"],
+				addressedFingerprints: [recurringRecord.fingerprint.id],
+			},
+			state,
+			turn: 9,
+			turnClock: "ordinal",
+			proposalId: "refine_3",
+		});
+		expect(measured.measurable).toBe(true);
+		expect(measured.authorization?.nextState.lineage).toHaveLength(2);
+		expect(
+			measured.authorization?.nextState.opponents.criteria.find((criterion) => criterion.id === "novelty")
+				?.currentWeight,
+		).toBe(2);
+	});
+
+	it("stamps a measurable commit's window with the ordinal clock, and only such windows regress", async () => {
+		const fingerprint = recurringRecord.fingerprint.id;
+		const judge = { verdict: "pass", score: 80, failedCriteria: [], addressedFingerprints: [fingerprint] };
+		const ordinal = await evaluate({ judge, turn: 40, turnClock: "ordinal" });
+		const ordinalState = ordinal.authorization?.nextState;
+		expect(ordinalState?.lineage.at(-1)?.provisional).toEqual({ committedTurn: 40, untilTurn: 60, clock: "ordinal" });
+		expect(findProvisionalRegressions(ordinalState, [fingerprint], 45)).toEqual([
+			{ championId: "refine_1", fingerprints: [fingerprint], committedTurn: 40, untilTurn: 60 },
+		]);
+
+		const local = await evaluate({ judge, turn: 40, turnClock: "local-ordinal" });
+		const localState = local.authorization?.nextState;
+		expect(localState?.lineage.at(-1)?.provisional).toEqual({
+			committedTurn: 40,
+			untilTurn: 60,
+			clock: "local-ordinal",
+		});
+		expect(findProvisionalRegressions(localState, [fingerprint], 45, "ordinal")).toEqual([]);
+		expect(findProvisionalRegressions(localState, [fingerprint], 45, "local-ordinal")).toHaveLength(1);
+
+		const legacy = await evaluate({ judge, turn: 40 });
+		const legacyState = legacy.authorization?.nextState;
+		expect(legacyState?.lineage.at(-1)?.provisional).toEqual({ committedTurn: 40, untilTurn: 60 });
+		for (const clock of ["ordinal", "local-ordinal"] as const) {
+			expect(findProvisionalRegressions(legacyState, [fingerprint], 45, clock)).toEqual([]);
+		}
+	});
+
+	it("counts referee verdicts and keeps a replay-inapplicable claim out of the referee pool", async () => {
+		const verified: FailureRecord = {
+			...recurringRecord,
+			replayCases: [
+				{
+					language: "python",
+					source: "import prime_agent_absent",
+					exceptionClass: "ModuleNotFoundError",
+					verifiedAt: "2026-09-01T00:00:00.000Z",
+				},
+			],
+		};
+		// A memory-only proposal: no replay can observe its fix, so nothing runs.
+		const result = await evaluate({
+			judge: { verdict: "pass", score: 80, failedCriteria: [], addressedFingerprints: [verified.fingerprint.id] },
+			recurringFailures: [verified],
+		});
+		expect(result.refereeVerdicts?.map((verdict) => verdict.status)).toEqual(["not_applicable"]);
+		expect(result.refereeCounts).toEqual({
+			cleared: 0,
+			upheld: 0,
+			unverifiable: 0,
+			no_evidence: 0,
+			not_applicable: 1,
+		});
+		expect(result.decision).toBe("commit");
+		expect(result.authorization?.nextState.opponents.criteria.map((criterion) => criterion.id)).not.toContain(
+			`referee:${verified.fingerprint.id}`,
+		);
+
+		// A skill importing the probed module, on a derivable failure whose case
+		// never reproduced, fails closed on the failure opponent.
+		const unverified: FailureRecord = {
+			...recurringRecord,
+			replayCases: [{ language: "python", source: "import prime_agent_absent" }],
+		};
+		const skill = skillProposal("prime_agent_absent");
+		const noEvidence = await evaluate({
+			judge: { verdict: "pass", score: 80, failedCriteria: [], addressedFingerprints: [unverified.fingerprint.id] },
+			recurringFailures: [unverified],
+			proposal: skill,
+			proposalId: "refine_skill",
+		});
+		expect(noEvidence.refereeCounts.no_evidence).toBe(1);
+		expect(noEvidence.missedCriteria).toEqual([failureOpponentId(unverified.fingerprint)]);
+		expect(noEvidence.missedWeight).toBe(1);
+	});
+
+	it("does not replay a verified attribute probe for a memory note plus an unrelated skill, and commits", async () => {
+		const attribute: FailureRecord = {
+			...recurringRecord,
+			fingerprint: {
+				...recurringRecord.fingerprint,
+				exceptionClass: "AttributeError",
+				message: "module ? has no attribute ?",
+			},
+			excerpt: "AttributeError: module 'json' has no attribute 'load_string'",
+			replayCases: [
+				{
+					language: "python",
+					source: 'import json\ngetattr(json, "load_string")',
+					exceptionClass: "AttributeError",
+					verifiedAt: "2026-09-01T00:00:00.000Z",
+				},
+			],
+		};
+		const proposal: RefinementProposal = {
+			...judgedProposal,
+			edits: [...judgedProposal.edits, ...skillProposal("json", "loads").edits],
+		};
+		const result = await evaluate({
+			judge: { verdict: "pass", score: 80, failedCriteria: [], addressedFingerprints: [attribute.fingerprint.id] },
+			recurringFailures: [attribute],
+			proposal,
+		});
+		expect(result.refereeVerdicts?.map((verdict) => verdict.status)).toEqual(["not_applicable"]);
+		expect(result.decision).toBe("commit");
+		expect(result.missedCriteria).toEqual([]);
+		expect(result.measurable).toBe(true);
+	});
+
+	describe.skipIf(!PYTHON)("a skill claiming the module it imports", () => {
+		const importName = "prime_agent_ravo_gate_pkg";
+		const missing: FailureRecord = {
+			...recurringRecord,
+			fingerprint: {
+				...recurringRecord.fingerprint,
+				exceptionClass: "ModuleNotFoundError",
+				message: "no module named ?",
+			},
+			excerpt: `ModuleNotFoundError: No module named '${importName}'`,
+			replayCases: [
+				{
+					language: "python",
+					source: `import ${importName}`,
+					exceptionClass: "ModuleNotFoundError",
+					verifiedAt: "2026-09-01T00:00:00.000Z",
+				},
+			],
+		};
+		const previousPython = process.env.PRIME_AGENT_KERNEL_PYTHON;
+
+		beforeEach(() => {
+			process.env.PRIME_AGENT_KERNEL_PYTHON = PYTHON;
+		});
+
+		afterEach(() => {
+			if (previousPython === undefined) delete process.env.PRIME_AGENT_KERNEL_PYTHON;
+			else process.env.PRIME_AGENT_KERNEL_PYTHON = previousPython;
+			rmSync(toolforgeLedgerPath(), { force: true });
+		});
+
+		const claim = () =>
+			evaluate({
+				judge: { verdict: "pass", score: 80, failedCriteria: [], addressedFingerprints: [missing.fingerprint.id] },
+				recurringFailures: [missing],
+				proposal: skillProposal(importName),
+			});
+
+		it("upholds the failure while the module does not import, and rejects on both opponents", async () => {
+			const result = await claim();
+			expect(result.refereeVerdicts?.map((verdict) => verdict.status)).toEqual(["upheld"]);
+			expect(result.decision).toBe("reject_criteria");
+			expect(result.missedCriteria).toEqual([
+				failureOpponentId(missing.fingerprint),
+				`referee:${missing.fingerprint.id}`,
+			]);
+		});
+
+		it("clears the failure once the module imports from a toolforge source root, and commits", async () => {
+			const packagePath = mkdtempSync(join(tmpdir(), "ravo-toolforge-"));
+			mkdirSync(join(packagePath, "src", importName), { recursive: true });
+			writeFileSync(join(packagePath, "src", importName, "__init__.py"), "def run():\n    return 1\n");
+			saveToolforgeLedger({
+				schema: 1,
+				records: [
+					{
+						name: importName,
+						importName,
+						packagePath,
+						sourceSha: "",
+						exitTestSha: "",
+						status: "published",
+						gate: [],
+						installed: false,
+						at: "2026-09-01T00:00:00.000Z",
+						version: 1,
+					},
+				],
+			});
+			try {
+				const result = await claim();
+				expect(result.refereeVerdicts?.map((verdict) => verdict.status)).toEqual(["cleared"]);
+				expect(result.decision).toBe("commit");
+				expect(result.missedCriteria).toEqual([]);
+			} finally {
+				rmSync(packagePath, { recursive: true, force: true });
+			}
+		});
 	});
 
 	it("fails closed on judge errors and still reports the failure opponents", async () => {

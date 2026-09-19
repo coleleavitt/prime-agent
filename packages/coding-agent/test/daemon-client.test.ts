@@ -307,6 +307,57 @@ describe("DaemonClient", () => {
 		client.close();
 	});
 
+	it("does not depend on dream run updates from an old daemon without the capability", async () => {
+		const client = new DaemonClient("/tmp/prime-agent.sock");
+		const connect = client.connect();
+		const socket = netMock.sockets[0]!;
+		socket.emit("connect");
+		await connect;
+		emitHello(socket, DAEMON_PROTOCOL_VERSION, ["agent_roster"], DAEMON_SCHEMA_REVISION - 1);
+
+		expect(client.supportsServerCapability("dream_run_updates")).toBe(false);
+		expect(meetsDaemonCommandCompatibility(client.hello!, DAEMON_OUTBOUND_COMPATIBILITY.dream_run_update)).toBe(
+			false,
+		);
+		// The push is passive: the client never sends a subscription command for it.
+		expect(socket.writes).toEqual([]);
+		client.close();
+	});
+
+	it("delivers dream run updates from a capable daemon to message listeners", async () => {
+		const client = new DaemonClient("/tmp/prime-agent.sock");
+		const connect = client.connect();
+		const socket = netMock.sockets[0]!;
+		socket.emit("connect");
+		await connect;
+		emitHello(socket, DAEMON_PROTOCOL_VERSION, ["agent_roster", "dream_run_updates"], DAEMON_SCHEMA_REVISION);
+
+		expect(client.supportsServerCapability("dream_run_updates")).toBe(true);
+		expect(meetsDaemonCommandCompatibility(client.hello!, DAEMON_OUTBOUND_COMPATIBILITY.dream_run_update)).toBe(true);
+		const received: DaemonOutbound[] = [];
+		client.onMessage((message) => {
+			received.push(message);
+		});
+		const update = {
+			type: "dream_run_update",
+			sessionId: "session-1",
+			status: {
+				runId: "dream-1",
+				phase: "dreaming",
+				task: "circle-packing",
+				iteration: 1,
+				bestNodeScore: 0.5,
+				startedAt: 1,
+				updatedAt: 2,
+			},
+		};
+		socket.emit("data", `${JSON.stringify(update)}\n`);
+
+		expect(received).toEqual([update]);
+		expect(socket.writes).toEqual([]);
+		client.close();
+	});
+
 	it("rejects an old daemon before requesting session state", async () => {
 		const client = new DaemonClient("/tmp/prime-agent.sock");
 		const connect = client.connect();

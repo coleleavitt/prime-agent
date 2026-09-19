@@ -1,2 +1,9 @@
-- Added trust scores to continual harness entries: an entry a refinement wrote while claiming to fix a recurring failure loses trust when the referee later re-runs that failure and it still happens, gains trust when its observation window closes with nothing refuted, and drops out of the rendered system prompt below the trust threshold while staying fully readable and editable.
+- Added trust scores to continual harness entries: an entry below the trust threshold drops out of the rendered system prompt while staying fully readable and editable through continual harness CRUD.
+- Added a trust credit: every entry a refinement touched gains 5 trust when its observation window closes with nothing it claimed recurring.
+- Added a trust debit: a skill a refinement wrote while claiming to fix a recurring failure loses 15 trust when that skill's own import failure recurs inside the observation window and the referee reproduces it in a subprocess, and only a skill entry is ever charged.
+- Changed the trust debit to need the global failure ledger, which is on by default; with `PRIME_AGENT_GLOBAL_LEDGER=0` a window can still earn credit but never be faulted.
+- Changed trust windows that claim no failure fingerprint, including open windows written by earlier builds, to load settled as `unmeasured`, so they never earn credit.
+- Changed a trust window whose claimed failure recurred without a reproduced fault to close as contested, earning no credit. An older build reads a contested window as open and may still credit it.
+- Changed trust windows to settle at every failure ledger flush as well as at `/refine` apply.
+- Added the `harness.trust.adjudicate` span, `trust.*` attributes on `harness.ledger.flush` and `refine.apply`, a `referee.aborted` attribute on `ravo.referee` (a replay an abort cut short is no longer counted as unverifiable), and `harness.trust.settled` and `harness.trust.adjusted` log records.
 - Fixed continual harness updates dropping entry fields the writer does not model, so trust and any future per-entry state now survive an edit on both the TypeScript and the Python kernel side.

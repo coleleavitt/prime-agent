@@ -438,7 +438,7 @@ pi.on("session_compact", async (event, ctx) => {
 
 #### session_before_refine / refine_complete
 
-Fired around continual-harness refinement (`/refine` and auto-refine). `session_before_refine` runs before the planning LLM call and can skip the round or replace the planner; rollback refinements bypass it. Proposal edits from extensions go through the same apply-time validation as built-in plans.
+Fired around continual-harness refinement (`/refine` and auto-refine). `session_before_refine` runs before the planning LLM call and can skip the round or replace the planner; rollback refinements bypass it. Proposal edits from extensions go through the same apply-time validation as built-in plans. `preparation.history` is in planning order (by the timestamp in each refinement id) and includes proposals the RAVO gate rejected, which carry `ravo` and `rejectionCause`; `ravo.rationale` is untrusted judge text, so treat it as data, not instructions.
 
 ```typescript
 pi.on("session_before_refine", async (event, ctx) => {

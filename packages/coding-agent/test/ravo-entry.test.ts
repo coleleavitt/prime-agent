@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getBundledSkillsDir } from "../src/config.js";
@@ -10,7 +11,7 @@ import { createHarness, type Harness } from "./suite/harness.js";
 
 const ravoFake = vi.hoisted(() => {
 	type Status = RavoRunStatus;
-	type Deps = Pick<RavoRunServiceDeps, "onUpdate" | "harnessDir" | "globalHarnessDir">;
+	type Deps = Pick<RavoRunServiceDeps, "onUpdate" | "harnessDir" | "globalHarnessDir" | "loadState" | "saveState">;
 	class FakeRavoRunService {
 		static instances: FakeRavoRunService[] = [];
 		readonly deps: Deps;
@@ -74,7 +75,10 @@ const ravoFake = vi.hoisted(() => {
 	return { FakeRavoRunService };
 });
 
-vi.mock("../src/core/ravo/run-service.js", () => ({ RavoRunService: ravoFake.FakeRavoRunService }));
+vi.mock("../src/core/ravo/run-service.js", async (importOriginal) => ({
+	...(await importOriginal<Record<string, unknown>>()),
+	RavoRunService: ravoFake.FakeRavoRunService,
+}));
 
 type FakeService = InstanceType<typeof ravoFake.FakeRavoRunService>;
 
@@ -153,6 +157,32 @@ describe("ravo entry points", () => {
 		expect(harness.session.handleRavoHostRequest("ravo.status")).toMatchObject({
 			stopReason: "accepted",
 		});
+	});
+
+	it("gives a global run the global harness store and a local run the session store", async () => {
+		const harness = await ravoHarness();
+		harness.session.handleRavoHostRequest("ravo.run", { task: "promote the retry policy", global: true });
+		const fake = lastFake();
+		const event = (id: string) => ({
+			id,
+			trigger: "t",
+			changes: [],
+			evidence: "",
+			outcome: "",
+			created_at: "2026-01-01T00:00:00.000Z",
+		});
+		const state = (id: string) => ({
+			schema: 1,
+			entries: { prompt: {}, memory: {}, skill: {}, subagent: {} },
+			refinements: [event(id)],
+		});
+		fake.deps.saveState("global", state("global-write"));
+		fake.deps.saveState("local", state("local-write"));
+		expect(existsSync(join(harness.tempDir, "agent", "harness", "harness_state.json"))).toBe(true);
+		expect(existsSync(join(fake.deps.harnessDir, "harness_state.json"))).toBe(true);
+		expect(fake.deps.loadState("global").refinements.map((item) => item.id)).toEqual(["global-write"]);
+		expect(fake.deps.loadState("local").refinements.map((item) => item.id)).toEqual(["local-write"]);
+		fake.finish("accepted");
 	});
 
 	it("ravo.status is idle before any run and ravo.cancel forwards to the service", async () => {

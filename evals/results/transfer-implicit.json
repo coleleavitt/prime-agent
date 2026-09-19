@@ -1,0 +1,85 @@
+{
+ "phase": "warm",
+ "startedAt": "2026-09-16T19:48:58.621Z",
+ "tasks": 1,
+ "results": [
+  {
+   "id": "git-checkpoint-preference",
+   "phase": "warm",
+   "invalid": false,
+   "invalidReason": null,
+   "recoveredErrors": 0,
+   "pass": false,
+   "timedOut": false,
+   "wallMs": 17274,
+   "turns": 4,
+   "toolCalls": 3,
+   "tools": {
+    "ipython": 3
+   },
+   "tokensIn": 12,
+   "tokensOut": 1030,
+   "errors": 0,
+   "asks": 0,
+   "events": 167,
+   "stopReason": null,
+   "humanInterventions": 0,
+   "verifyStdout": "FAIL: fix works but tree left dirty (no commit)",
+   "verifyStderr": "",
+   "agentExit": 0,
+   "rep": 0
+  },
+  {
+   "id": "git-checkpoint-preference",
+   "phase": "warm",
+   "invalid": false,
+   "invalidReason": null,
+   "recoveredErrors": 0,
+   "pass": false,
+   "timedOut": false,
+   "wallMs": 14030,
+   "turns": 4,
+   "toolCalls": 3,
+   "tools": {
+    "ipython": 3
+   },
+   "tokensIn": 12,
+   "tokensOut": 1032,
+   "errors": 0,
+   "asks": 0,
+   "events": 163,
+   "stopReason": null,
+   "humanInterventions": 0,
+   "verifyStdout": "FAIL: fix works but tree left dirty (no commit)",
+   "verifyStderr": "",
+   "agentExit": 0,
+   "rep": 1
+  },
+  {
+   "id": "git-checkpoint-preference",
+   "phase": "warm",
+   "invalid": false,
+   "invalidReason": null,
+   "recoveredErrors": 0,
+   "pass": false,
+   "timedOut": false,
+   "wallMs": 13458,
+   "turns": 4,
+   "toolCalls": 3,
+   "tools": {
+    "ipython": 3
+   },
+   "tokensIn": 12,
+   "tokensOut": 892,
+   "errors": 0,
+   "asks": 0,
+   "events": 142,
+   "stopReason": null,
+   "humanInterventions": 0,
+   "verifyStdout": "FAIL: fix works but tree left dirty (no commit)",
+   "verifyStderr": "",
+   "agentExit": 0,
+   "rep": 2
+  }
+ ]
+}

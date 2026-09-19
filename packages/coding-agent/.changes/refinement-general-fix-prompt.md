@@ -1,0 +1,2 @@
+- Changed the refinement prompt to ask for a general fix for a failure's underlying cause, to say so in the rationale when a failure is outside the harness's control instead of targeting it, and to warn that claimed fixes are re-checked by replay and by whether the failure recurs.
+- Changed the RAVO judge instructions to never count a fingerprint whose failure is outside the harness's control (a provider outage, a user denial, a flaky network) as addressed.

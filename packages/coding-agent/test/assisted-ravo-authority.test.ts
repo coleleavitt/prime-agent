@@ -8,7 +8,9 @@ import {
 	DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS,
 	normalizeAssistedRavoState,
 } from "../src/core/ravo/authority.js";
-import { type JsonValue, ravoObserveChampion, ravoPressure, ravoW } from "../src/core/ravo/reducer.js";
+import { findProvisionalRegressions } from "../src/core/ravo/failure-ledger.js";
+import { type JsonValue, type RavoState, ravoObserveChampion, ravoPressure, ravoW } from "../src/core/ravo/reducer.js";
+import { type RefereeVerdict, refereeVerdict } from "../src/core/ravo/referee.js";
 import { applyRefinementProposal, loadHarnessState } from "../src/core/refinement/index.js";
 
 const artifact = {
@@ -48,6 +50,35 @@ describe("assisted RAVO authority", () => {
 		expect(assistedRavoCertificateMatches(result, artifact, baseline)).toBe(true);
 		expect(assistedRavoCertificateMatches(result, { changed: true }, baseline)).toBe(false);
 		expect(assistedRavoCertificateMatches(result, artifact, { changed: true })).toBe(false);
+	});
+
+	it("keeps the whole state when a provisional window carries a clock this build does not know", () => {
+		const committed = authorizeAssistedRavo({
+			proposalId: "p1",
+			artifact,
+			baseline,
+			fastScore: 100,
+			observation: { status: "pass", score: 90, failedCriteria: ["novelty"], addressedFingerprints: ["fpA"] },
+			failureOpponents: ["failure:fpA"],
+			turn: 3,
+			turnClock: "ordinal",
+		}).nextState;
+		const future = JSON.parse(JSON.stringify(committed)) as RavoState<JsonValue>;
+		(future.lineage[0].provisional as unknown as { clock: string }).clock = "wallclock";
+		expect(ravoW(future)).toBe(false);
+
+		const state = normalizeAssistedRavoState(future);
+		expect(state.championId).toBe("p1");
+		expect(state.evaluatedProposalIds).toEqual(["p1"]);
+		expect(state.opponents).toEqual(committed.opponents);
+		expect(state.lineage[0]).toMatchObject({ proposalId: "p1", claimedFingerprints: ["fpA"] });
+		// Read as a legacy window: kept, but it never regresses.
+		expect(state.lineage[0].provisional).toEqual({
+			committedTurn: 3,
+			untilTurn: 3 + DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS,
+		});
+		expect(findProvisionalRegressions(state, ["fpA"], 5)).toEqual([]);
+		expect(normalizeAssistedRavoState(JSON.parse(JSON.stringify(committed)))).toEqual(committed);
 	});
 
 	it("migrates the legacy refinement lineage and evaluator weights", () => {
@@ -232,6 +263,199 @@ describe("assisted RAVO authority", () => {
 		expect(outside.regression).toBe(false);
 		const other = ravoObserveChampion(committed.nextState, "p1", ["fpB"], 5);
 		expect(other.regression).toBe(false);
+	});
+
+	it("charges a claim whose evidence is missing and lets a claim no replay can speak to stand", () => {
+		const verdicts: RefereeVerdict[] = [
+			refereeVerdict("fpA", "no_evidence", "no_evidence: no replay case ever reproduced this failure"),
+			refereeVerdict("fpB", "not_applicable", "not_applicable: the proposal changes no skill"),
+		];
+		const result = authorizeAssistedRavo({
+			proposalId: "p1",
+			artifact,
+			baseline,
+			fastScore: 100,
+			observation: {
+				status: "pass",
+				score: 90,
+				detail: "judged",
+				failedCriteria: [],
+				addressedFingerprints: ["fpA", "fpB"],
+			},
+			failureOpponents: ["failure:fpA", "failure:fpB"],
+			refereeVerdicts: verdicts,
+			epsilon: 0,
+		});
+		expect(result.authorized).toBe(false);
+		expect(result.certificate.missedCriterionIds).toEqual(["failure:fpA"]);
+		const criteria = new Map(result.certificate.criteria.map((item) => [item.criterionId, item]));
+		expect(criteria.get("failure:fpA")?.detail).toBe(verdicts[0].detail);
+		expect(criteria.get("failure:fpB")).toMatchObject({ status: "pass", detail: "judged" });
+		// Neither verdict is replay evidence, so neither adds a referee opponent.
+		expect([...criteria.keys()].filter((id) => id.startsWith("referee:"))).toEqual([]);
+	});
+
+	it("fails a persisted referee criterion closed when the later claim has no evidence", () => {
+		const base = pass().nextState;
+		const state: RavoState<JsonValue> = {
+			...base,
+			opponents: {
+				criteria: [
+					...base.opponents.criteria,
+					{ id: "failure:fpA", seedWeight: 1, currentWeight: 1 },
+					{ id: "referee:fpA", seedWeight: 1, currentWeight: 1 },
+				],
+			},
+		};
+		const claim = (proposalId: string, verdict: RefereeVerdict) =>
+			authorizeAssistedRavo({
+				proposalId,
+				artifact,
+				baseline,
+				fastScore: 100,
+				observation: { status: "pass", score: 90, failedCriteria: [], addressedFingerprints: ["fpA"] },
+				state,
+				failureOpponents: ["failure:fpA"],
+				refereeVerdicts: [verdict],
+				epsilon: 1,
+			});
+		const missing = claim("p2", refereeVerdict("fpA", "no_evidence", "no_evidence: evidence is gone"));
+		expect(missing.authorized).toBe(false);
+		expect(missing.certificate.missedCriterionIds).toEqual(["failure:fpA", "referee:fpA"]);
+		expect(missing.certificate.missedCurrentWeight).toBe(2);
+
+		const inapplicable = claim("p3", refereeVerdict("fpA", "not_applicable", "not_applicable: memory fix"));
+		expect(inapplicable.authorized).toBe(true);
+		expect(inapplicable.certificate.missedCriterionIds).toEqual([]);
+	});
+
+	it("passes persisted criteria /refine never observes as dormant, keeping their weights", () => {
+		const base = pass().nextState;
+		const state: RavoState<JsonValue> = {
+			...base,
+			opponents: {
+				criteria: [
+					...base.opponents.criteria,
+					{ id: "arc:all-levels", seedWeight: 1, currentWeight: 2 },
+					{ id: "arc:no-crash", seedWeight: 1, currentWeight: 1 },
+				],
+			},
+		};
+		const result = authorizeAssistedRavo({
+			proposalId: "p2",
+			artifact,
+			baseline,
+			fastScore: 100,
+			observation: { status: "pass", score: 95, failedCriteria: [] },
+			state,
+			epsilon: 1,
+		});
+		expect(result.authorized).toBe(true);
+		expect(result.certificate.missedCriterionIds).toEqual([]);
+		expect(result.certificate.criteria.find((item) => item.criterionId === "arc:all-levels")).toMatchObject({
+			status: "pass",
+			countedAsMissed: false,
+			currentWeight: 2,
+			detail: "dormant: not a /refine criterion",
+		});
+		expect(result.nextState.opponents.criteria.find((criterion) => criterion.id === "arc:all-levels")).toEqual({
+			id: "arc:all-levels",
+			seedWeight: 1,
+			currentWeight: 2,
+		});
+	});
+
+	it("applies the unclaimed-commit policy only to a commit that claims nothing", () => {
+		const state = pass().nextState;
+		const decide = (proposalId: string, unclaimedCommit: "reject" | "unmeasured", addressed: string[]) =>
+			authorizeAssistedRavo({
+				proposalId,
+				artifact,
+				baseline,
+				fastScore: 100,
+				observation: { status: "pass", score: 95, failedCriteria: ["novelty"], addressedFingerprints: addressed },
+				state,
+				failureOpponents: ["failure:fpA"],
+				epsilon: 2,
+				turn: 30,
+				turnClock: "ordinal",
+				unclaimedCommit,
+			});
+
+		const rejected = decide("p2", "reject", []);
+		expect(rejected.authorized).toBe(false);
+		expect(rejected.certificate).toMatchObject({ committed: false, rejection: "unclaimed" });
+		expect(rejected.nextState.lineage).toEqual(state.lineage);
+		expect(rejected.nextState.evaluatedProposalIds).toEqual([...state.evaluatedProposalIds, "p2"]);
+		expect(rejected.nextState.opponents.criteria.find((criterion) => criterion.id === "novelty")?.currentWeight).toBe(
+			1,
+		);
+		expect(ravoW(rejected.nextState)).toBe(true);
+
+		const unmeasured = decide("p2", "unmeasured", []);
+		expect(unmeasured.authorized).toBe(true);
+		expect(unmeasured.nextState).toBe(state);
+
+		for (const policy of ["reject", "unmeasured"] as const) {
+			const claimed = decide("p3", policy, ["fpA"]);
+			expect(claimed.authorized).toBe(true);
+			expect(claimed.nextState.lineage.at(-1)).toMatchObject({
+				proposalId: "p3",
+				claimedFingerprints: ["fpA"],
+				provisional: { committedTurn: 30, untilTurn: 30 + DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS, clock: "ordinal" },
+			});
+			expect(ravoW(claimed.nextState)).toBe(true);
+			expect(findProvisionalRegressions(claimed.nextState, ["fpA"], 31)).toHaveLength(1);
+		}
+	});
+
+	it("stamps a window on the local ordinal that survives a reload and regresses only on that clock", () => {
+		const committed = authorizeAssistedRavo({
+			proposalId: "p1",
+			artifact,
+			baseline,
+			fastScore: 100,
+			observation: { status: "pass", score: 90, failedCriteria: [], addressedFingerprints: ["fpA"] },
+			failureOpponents: ["failure:fpA"],
+			turn: 2,
+			turnClock: "local-ordinal",
+		}).nextState;
+		const window = { committedTurn: 2, untilTurn: 2 + DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS, clock: "local-ordinal" };
+		expect(committed.lineage[0].provisional).toEqual(window);
+		expect(ravoW(committed)).toBe(true);
+
+		const reloaded = normalizeAssistedRavoState(JSON.parse(JSON.stringify(committed)));
+		expect(reloaded).toEqual(committed);
+		expect(findProvisionalRegressions(reloaded, ["fpA"], 5, "local-ordinal")).toHaveLength(1);
+		expect(findProvisionalRegressions(reloaded, ["fpA"], 5, "ordinal")).toEqual([]);
+	});
+
+	it("ignores a provisional window opened on the per-session clock", () => {
+		const committed = authorizeAssistedRavo({
+			proposalId: "p1",
+			artifact,
+			baseline,
+			fastScore: 100,
+			observation: { status: "pass", score: 90, failedCriteria: [], addressedFingerprints: ["fpA"] },
+			failureOpponents: ["failure:fpA"],
+			turn: 3,
+		});
+		expect(committed.nextState.lineage[0].provisional).toEqual({
+			committedTurn: 3,
+			untilTurn: 3 + DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS,
+		});
+		expect(findProvisionalRegressions(committed.nextState, ["fpA"], 5)).toEqual([]);
+		expect(
+			ravoW({
+				...committed.nextState,
+				lineage: [
+					{
+						...committed.nextState.lineage[0],
+						provisional: { committedTurn: 3, untilTurn: 9, clock: "session" as unknown as "ordinal" },
+					},
+				],
+			}),
+		).toBe(false);
 	});
 
 	it("compensates all successful edits when any proposed edit fails", () => {

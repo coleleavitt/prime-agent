@@ -20,6 +20,21 @@ export interface RavoOpponentPool {
 }
 
 /**
+ * Clock a provisional window is measured on. `"ordinal"` is the durable
+ * failure-observation ordinal of the global ledger, which carries across
+ * sessions. `"local-ordinal"` is the same count over one session's local
+ * ledger, which windows use while the global ledger is off. The two advance
+ * independently, so a window is only ever compared with an ordinal read off its
+ * own clock. A window without a clock was opened on a per-session turn count
+ * that restarts every session, so nothing compares against it.
+ */
+export type RavoWindowClock = "ordinal" | "local-ordinal";
+
+export function isRavoWindowClock(value: unknown): value is RavoWindowClock {
+	return value === "ordinal" || value === "local-ordinal";
+}
+
+/**
  * Observation window attached to a provisional commit. A champion that
  * claimed to address recurring failure fingerprints stays provisional until
  * `untilTurn`; a claimed fingerprint recurring inside the window is a measured
@@ -28,6 +43,7 @@ export interface RavoOpponentPool {
 export interface RavoProvisionalWindow {
 	committedTurn: number;
 	untilTurn: number;
+	clock?: RavoWindowClock;
 	observedRecurrence?: { turn: number; fingerprints: string[] };
 }
 
@@ -92,7 +108,11 @@ export interface RavoConfig {
 	deepTolerance?: number;
 }
 
-export type RavoRejection = "already_evaluated" | "invalid_input" | "screen" | "deep" | "opponents";
+/**
+ * `unclaimed` is never produced by `ravoStep`: the assisted authority issues it
+ * when a failure-triggered refine clears every gate while claiming no failure.
+ */
+export type RavoRejection = "already_evaluated" | "invalid_input" | "screen" | "deep" | "opponents" | "unclaimed";
 
 export interface RavoCriterionCertificate {
 	criterionId: string;
@@ -172,6 +192,7 @@ function validProvisionalWindow(window: RavoProvisionalWindow | undefined): bool
 	if (window === undefined) return true;
 	if (!isSafeNatural(window.committedTurn) || !isSafeNatural(window.untilTurn)) return false;
 	if (window.untilTurn < window.committedTurn) return false;
+	if (window.clock !== undefined && !isRavoWindowClock(window.clock)) return false;
 	const observed = window.observedRecurrence;
 	if (observed === undefined) return true;
 	return (
@@ -252,20 +273,28 @@ export function ravoExtendOpponents(pool: RavoOpponentPool, criterionIds: readon
 
 /**
  * Mark a committed champion provisional: record the fingerprints it claimed
- * to address and the observation window `[committedTurn, untilTurn]`. Unknown
- * champion ids and invalid windows are no-ops. Lineage order and scores are
- * never touched, so `ravoBestScore` monotonicity is unaffected.
+ * to address and the observation window `[committedTurn, untilTurn]`, stamped
+ * with the clock it is measured on. Unknown champion ids and invalid windows
+ * are no-ops. Lineage order and scores are never touched, so `ravoBestScore`
+ * monotonicity is unaffected.
  */
 export function ravoMarkProvisional<TArtifact extends JsonValue>(
 	state: RavoState<TArtifact>,
 	championId: string,
-	options: { claimedFingerprints: readonly string[]; window?: { committedTurn: number; untilTurn: number } },
+	options: {
+		claimedFingerprints: readonly string[];
+		window?: { committedTurn: number; untilTurn: number; clock?: RavoWindowClock };
+	},
 ): RavoState<TArtifact> {
 	const index = state.lineage.findIndex((champion) => champion.proposalId === championId);
 	if (index === -1) return state;
 	const claimedFingerprints = sortedUnique(options.claimedFingerprints.filter((id) => id.length > 0));
 	const provisional: RavoProvisionalWindow | undefined = options.window
-		? { committedTurn: options.window.committedTurn, untilTurn: options.window.untilTurn }
+		? {
+				committedTurn: options.window.committedTurn,
+				untilTurn: options.window.untilTurn,
+				...(options.window.clock === undefined ? {} : { clock: options.window.clock }),
+			}
 		: undefined;
 	if (!validProvisionalWindow(provisional)) return state;
 	const lineage = state.lineage.map((champion, position) =>

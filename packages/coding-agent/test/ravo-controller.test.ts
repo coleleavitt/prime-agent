@@ -210,6 +210,15 @@ describe("RAVO controller", () => {
 		expect(result.reason).toBe("accepted");
 		expect(options.repair).toHaveBeenCalledOnce();
 	});
+	it("stops as stale CAS without a repair when the commit gate reports its baseline moved", async () => {
+		const options = await base();
+		options.commitGate = vi.fn(async () => ({ accepted: false, stale: true, detail: "baseline moved" }));
+		const result = await runRavoController(options);
+		expect(result.reason).toBe("stale_cas");
+		expect(options.commitGate).toHaveBeenCalledOnce();
+		expect(options.repair).not.toHaveBeenCalled();
+		expect(result.checkpoint.state.championId).toBeNull();
+	});
 	it("orders inspect, plan, implement and checkpoints every transition", async () => {
 		const options = await base();
 		const order: string[] = [];

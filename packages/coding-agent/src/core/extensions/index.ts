@@ -10,6 +10,14 @@ export {
 	herdrAgentStateExtension,
 } from "./builtin/herdr-agent-state.js";
 export {
+	createWorkspaceRecallExtension,
+	isRecallChildSession,
+	isWorkspaceRecallEnabled,
+	WORKSPACE_RECALL_ENV,
+	type WorkspaceRecallExtensionOptions,
+	type WorkspaceRecallMarkOutcome,
+} from "./builtin/workspace-recall.js";
+export {
 	createExtensionRuntime,
 	discoverAndLoadExtensions,
 	loadExtensionFromFactory,

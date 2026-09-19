@@ -265,7 +265,9 @@ function accumulate(accumulators: Map<string, DayAccumulator>, entry: LogEntry, 
 
 	if (entry.msg === REFINEMENT_COMMITTED_MSG) {
 		const addressed = stringList(entry.addressed);
-		if (accumulator.commits.length < MAX_COMMITS_PER_DAY) {
+		// A commit that claimed nothing treats no fingerprint, so it is neither a
+		// commit nor a pivot. Older builds logged one for every gate commit.
+		if (addressed.length > 0 && accumulator.commits.length < MAX_COMMITS_PER_DAY) {
 			accumulator.commits.push({
 				at: String(entry.ts),
 				proposalId: typeof entry.proposalId === "string" ? entry.proposalId : "",
@@ -382,10 +384,13 @@ function normalizeDay(value: unknown): LearningDay | undefined {
 	for (const item of Array.isArray(raw.commits) ? raw.commits : []) {
 		if (typeof item !== "object" || item === null || Array.isArray(item)) continue;
 		const commit = item as Record<string, unknown>;
+		const addressed = stringList(commit.addressed);
+		// A day sealed before claimless commits were skipped still holds them.
+		if (addressed.length === 0) continue;
 		commits.push({
 			at: typeof commit.at === "string" ? commit.at : raw.day,
 			proposalId: typeof commit.proposalId === "string" ? commit.proposalId : "",
-			addressed: stringList(commit.addressed),
+			addressed,
 		});
 	}
 	return {
@@ -593,7 +598,10 @@ export function buildLearningReport(days: readonly LearningDay[], options: Learn
 	const minCohortN = Math.max(1, Math.trunc(options.minCohortN ?? DEFAULT_MIN_COHORT_N));
 	const sorted = [...days].sort((left, right) => left.day.localeCompare(right.day));
 	const generatedAt = new Date(options.nowMs ?? Date.now()).toISOString();
-	const commits = sorted.flatMap((day) => day.commits).sort((left, right) => left.at.localeCompare(right.at));
+	const commits = sorted
+		.flatMap((day) => day.commits)
+		.filter((commit) => commit.addressed.length > 0)
+		.sort((left, right) => left.at.localeCompare(right.at));
 	const base: LearningReport = {
 		schema: LEARNING_INDEX_SCHEMA,
 		generatedAt,

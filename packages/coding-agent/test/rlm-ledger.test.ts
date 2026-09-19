@@ -1271,7 +1271,7 @@ describe("rlm spawn ledger supervisor wiring", () => {
 			} as never);
 
 			await supervisor.seedRosterLedger();
-			const response = await supervisor.handleCommand({}, { type: "roster_subscribe" });
+			const response = await supervisor.handleCommand({ socket: { destroyed: true } }, { type: "roster_subscribe" });
 			if (!response?.success) throw new Error("Roster subscription failed");
 			const row = (response.data as { roster: AgentRosterEntry[] }).roster.find(
 				(entry) => entry.summary.sessionFile === canonicalSessionPath(child.file),
@@ -1319,7 +1319,7 @@ describe("rlm spawn ledger supervisor wiring", () => {
 				descriptor: { workerId: "worker-1", sessionFile: parentFile, createCommand: { type: "create" } },
 			} as never);
 			await supervisor.seedRosterLedger();
-			const seeded = await supervisor.handleCommand({}, { type: "roster_subscribe" });
+			const seeded = await supervisor.handleCommand({ socket: { destroyed: true } }, { type: "roster_subscribe" });
 			if (!seeded?.success) throw new Error("Roster subscription failed");
 			const seededRows = (seeded.data as { roster: AgentRosterEntry[] }).roster;
 			const missingRow = seededRows.find(
@@ -1358,7 +1358,7 @@ describe("rlm spawn ledger supervisor wiring", () => {
 			finishRead?.();
 			await apply;
 
-			const response = await supervisor.handleCommand({}, { type: "roster_subscribe" });
+			const response = await supervisor.handleCommand({ socket: { destroyed: true } }, { type: "roster_subscribe" });
 			if (!response?.success) throw new Error("Roster subscription failed");
 			expect((response.data as { roster: AgentRosterEntry[] }).roster).toEqual([
 				expect.objectContaining({ agentId: existingRow.agentId, workerId: "worker-1" }),

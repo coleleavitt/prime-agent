@@ -1,4 +1,6 @@
 import { APP_NAME } from "../config.js";
+import type { DreamTaskId } from "./dream/task.js";
+import { DREAM_TASK_IDS } from "./dream/tasks/index.js";
 import type { SourceInfo } from "./source-info.js";
 
 export type SlashCommandSource = "extension" | "prompt" | "skill";
@@ -10,7 +12,7 @@ export interface SlashCommandInfo {
 	sourceInfo: SourceInfo;
 }
 
-export const SESSION_SLASH_COMMAND_NAMES = ["compact", "refine", "ravo", "goal", "autonomous"] as const;
+export const SESSION_SLASH_COMMAND_NAMES = ["compact", "refine", "ravo", "dream", "goal", "autonomous"] as const;
 
 export type SessionSlashCommandName = (typeof SESSION_SLASH_COMMAND_NAMES)[number];
 
@@ -137,6 +139,120 @@ export function parseRavoCommandOptions(args: string): RavoCommandOptions {
 	};
 }
 
+export interface DreamCommandOptions {
+	task: DreamTaskId;
+	n?: number;
+	seed?: number;
+	workers?: number;
+	k1?: number;
+	k2?: number;
+	dreams?: number;
+	iterations?: number;
+	llmProposer: boolean;
+	llmDreamer: boolean;
+}
+
+const DREAM_USAGE =
+	"Usage: /dream [--task <circle-packing|sum-difference|python-speedup>] [--n N] [--seed N] [--workers N] [--k1 N] [--k2 N] [--dreams N] [--iterations N] [--llm-proposer] [--llm-dreamer]";
+
+function isDreamTaskIdValue(value: string | undefined): value is DreamTaskId {
+	return value !== undefined && (DREAM_TASK_IDS as readonly string[]).includes(value);
+}
+
+function parseDreamCount(flag: string, value: string | undefined): number {
+	if (value === undefined || !/^\d+$/.test(value) || Number(value) < 1) {
+		throw new Error(`${DREAM_USAGE} (${flag} expects a positive integer)`);
+	}
+	return Number(value);
+}
+
+function parseDreamSeed(value: string | undefined): number {
+	if (value === undefined || !/^\d+$/.test(value)) {
+		throw new Error(`${DREAM_USAGE} (--seed expects a non-negative integer)`);
+	}
+	return Number(value);
+}
+
+/**
+ * Parse `/dream` arguments. Every knob is a flag; the task is an enum defaulting
+ * to `circle-packing`. `--llm-proposer`/`--llm-dreamer` are the only paths that
+ * spend tokens. Unknown flags and stray non-flag tokens are a usage error.
+ */
+export function parseDreamCommandOptions(args: string): DreamCommandOptions {
+	const tokens = args
+		.trim()
+		.split(/[\t\p{Zs} ]+/u)
+		.filter(Boolean);
+	let task: DreamTaskId = "circle-packing";
+	let n: number | undefined;
+	let seed: number | undefined;
+	let workers: number | undefined;
+	let k1: number | undefined;
+	let k2: number | undefined;
+	let dreams: number | undefined;
+	let iterations: number | undefined;
+	let llmProposer = false;
+	let llmDreamer = false;
+	for (let index = 0; index < tokens.length; index++) {
+		const token = tokens[index];
+		if (token === "--llm-proposer") {
+			llmProposer = true;
+			continue;
+		}
+		if (token === "--llm-dreamer") {
+			llmDreamer = true;
+			continue;
+		}
+		const match = /^--(task|n|seed|workers|k1|k2|dreams|iterations)(?:=(.*))?$/.exec(token ?? "");
+		if (!match) throw new Error(DREAM_USAGE);
+		const flag = match[1];
+		let value = match[2];
+		if (value === undefined) {
+			value = tokens[index + 1];
+			index++;
+		}
+		switch (flag) {
+			case "task":
+				if (!isDreamTaskIdValue(value)) throw new Error(DREAM_USAGE);
+				task = value;
+				break;
+			case "n":
+				n = parseDreamCount("--n", value);
+				break;
+			case "seed":
+				seed = parseDreamSeed(value);
+				break;
+			case "workers":
+				workers = parseDreamCount("--workers", value);
+				break;
+			case "k1":
+				k1 = parseDreamCount("--k1", value);
+				break;
+			case "k2":
+				k2 = parseDreamCount("--k2", value);
+				break;
+			case "dreams":
+				dreams = parseDreamCount("--dreams", value);
+				break;
+			case "iterations":
+				iterations = parseDreamCount("--iterations", value);
+				break;
+		}
+	}
+	return {
+		task,
+		...(n === undefined ? {} : { n }),
+		...(seed === undefined ? {} : { seed }),
+		...(workers === undefined ? {} : { workers }),
+		...(k1 === undefined ? {} : { k1 }),
+		...(k2 === undefined ? {} : { k2 }),
+		...(dreams === undefined ? {} : { dreams }),
+		...(iterations === undefined ? {} : { iterations }),
+		llmProposer,
+		llmDreamer,
+	};
+}
+
 export interface BuiltinSlashCommand {
 	name: string;
 	description: string;
@@ -249,6 +365,14 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 		description:
 			"Run the full RAVO loop (inspect, plan, implement, evaluate, diagnose, repair) over a continual harness mutation for a task",
 		argumentHint: "[--global] [--rounds N] [--repairs N] [--arc-repo DIR --arc-game ID] <task>",
+		takesArgument: true,
+	},
+	{
+		name: "dream",
+		description:
+			"Run the Dream-RSI loop over a scored task; --llm-proposer/--llm-dreamer spend tokens, default is local and token-free",
+		argumentHint:
+			"[--task <id>] [--n N] [--seed N] [--iterations N] [--workers N] [--k1 N] [--k2 N] [--dreams N] [--llm-proposer] [--llm-dreamer]",
 		takesArgument: true,
 	},
 	{

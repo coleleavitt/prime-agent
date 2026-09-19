@@ -12,6 +12,7 @@ import type {
 	AgentHeartbeatManagementAction,
 	AgentHeartbeatUpdateAction,
 } from "../../core/cron-jobs.js";
+import type { DreamRunStatus } from "../../core/dream/run-service.js";
 import type { ReplayBuiltInToolName } from "../../core/extensions/index.js";
 import type { InputSource } from "../../core/extensions/types.js";
 import type { GoalState } from "../../core/goals.js";
@@ -632,7 +633,8 @@ export type AgentConnectionSessionEvent =
 	  }
 	| { type: "refine_complete"; result: RefinementResult }
 	| { type: "refine_failed"; error: string }
-	| { type: "ravo_run_update"; status: RavoRunStatus };
+	| { type: "ravo_run_update"; status: RavoRunStatus }
+	| { type: "dream_run_update"; status: DreamRunStatus };
 
 export type AgentConnectionEvent =
 	| { type: "session_event"; event: AgentConnectionSessionEvent }

@@ -21,6 +21,7 @@ import {
 	type KernelUnexpectedExit,
 	ReplKernelManager,
 } from "../kernel/index.js";
+import { executedBashCommands } from "../kernel/repl-manager.js";
 import { manifestPathIn, type RestoreResult, snapshotPathIn } from "../kernel/state-snapshot.js";
 import type { PythonSkillRuntimeInfo } from "../skills.js";
 import { createToolforgeHostHandlers } from "../toolforge/publish.js";
@@ -346,6 +347,14 @@ export interface IpythonKernelCrashDetails {
 	stderrTail: string;
 }
 
+/** A bash() command that finished while the cell ran. */
+export interface IpythonBashCommand {
+	command: string;
+	exitCode: number;
+	/** The kernel cut the command text, so it only names the command. */
+	commandTruncated?: boolean;
+}
+
 export interface IpythonToolDetails {
 	durationMs?: number;
 	status?: "ok" | "error" | "aborted" | "starting";
@@ -361,6 +370,8 @@ export interface IpythonToolDetails {
 	attachments?: KernelAttachment[];
 	/** Agent messages sent from this cell. */
 	sentAgentMessages?: KernelSentAgentMessage[];
+	/** bash() commands that finished inside this cell; absent when there were none or the kernel predates the field. */
+	bashCommands?: IpythonBashCommand[];
 	/** True when this result came after killing and restarting a busy kernel. */
 	kernelRestarted?: boolean;
 	/** Set when the kernel process died while running this cell; the next call gets a fresh kernel. */
@@ -858,6 +869,13 @@ export function createIpythonToolDefinition(
 				}
 
 				const imageBlocks = imageBlocksFromAttachments(r.attachments);
+				const bashCommands = executedBashCommands(r)?.map(
+					({ command, exitCode, commandTruncated }): IpythonBashCommand => ({
+						command,
+						exitCode,
+						...(commandTruncated ? { commandTruncated } : {}),
+					}),
+				);
 				const content: (TextContent | ImageContent)[] = [{ type: "text", text: text || "" }, ...imageBlocks];
 
 				return {
@@ -873,6 +891,7 @@ export function createIpythonToolDefinition(
 						diffs: r.diffs,
 						attachments: r.attachments,
 						sentAgentMessages: r.sentAgentMessages,
+						...(bashCommands ? { bashCommands } : {}),
 						kernelRestarted: run.kernelRestarted,
 						error: r.error,
 					},

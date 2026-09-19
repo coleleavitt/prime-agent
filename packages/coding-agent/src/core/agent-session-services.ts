@@ -10,7 +10,8 @@ import { AuthStorage } from "./auth-storage.js";
 import type { AgentAutonomousConfig } from "./autonomous.js";
 import type { AgentRlmHeartbeatController } from "./cron-jobs.js";
 import { createHerdrAgentStateExtension } from "./extensions/builtin/herdr-agent-state.js";
-import type { SessionStartEvent, ToolDefinition } from "./extensions/index.js";
+import { createWorkspaceRecallExtension } from "./extensions/builtin/workspace-recall.js";
+import type { ExtensionFactory, SessionStartEvent, ToolDefinition } from "./extensions/index.js";
 import { McpManager } from "./mcp/mcp-manager.js";
 import { ModelRegistry } from "./model-registry.js";
 import { DefaultResourceLoader, type DefaultResourceLoaderOptions, type ResourceLoader } from "./resource-loader.js";
@@ -43,6 +44,12 @@ export interface CreateAgentSessionServicesOptions {
 	 * would release the pane while the parent is still running.
 	 */
 	noBuiltinHerdrReporter?: boolean;
+	/**
+	 * Skip the built-in Workspace Recall extension. Set for RLM subagent
+	 * runtimes: a child shares its parent's workspace, so its mark and its
+	 * first-cell block would only repeat the parent's.
+	 */
+	noBuiltinWorkspaceRecall?: boolean;
 	telemetryDisabled?: true;
 }
 
@@ -174,9 +181,14 @@ export async function createAgentSessionServices(
 	// noExtensions is a full opt-out: it disables the built-in reporter too,
 	// not just discovered extension files.
 	const skipHerdrReporter = options.noBuiltinHerdrReporter || options.resourceLoaderOptions?.noExtensions;
-	const builtinExtensionFactories = skipHerdrReporter
-		? []
-		: [createHerdrAgentStateExtension(() => resourceLoader.getLoadedExtensionPaths())];
+	const skipWorkspaceRecall = options.noBuiltinWorkspaceRecall || options.resourceLoaderOptions?.noExtensions;
+	const builtinExtensionFactories: ExtensionFactory[] = [];
+	if (!skipHerdrReporter) {
+		builtinExtensionFactories.push(createHerdrAgentStateExtension(() => resourceLoader.getLoadedExtensionPaths()));
+	}
+	if (!skipWorkspaceRecall) {
+		builtinExtensionFactories.push(createWorkspaceRecallExtension({ agentDir }));
+	}
 	const resourceLoader: DefaultResourceLoader = new DefaultResourceLoader({
 		...(options.resourceLoaderOptions ?? {}),
 		extensionFactories: [...builtinExtensionFactories, ...userExtensionFactories],
