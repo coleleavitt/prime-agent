@@ -1,4 +1,5 @@
 import { APP_NAME } from "../config.js";
+import { type ExperimentArm, isExperimentArm } from "./dream/experiment.js";
 import type { DreamTaskId } from "./dream/task.js";
 import { DREAM_TASK_IDS } from "./dream/tasks/index.js";
 import type { SourceInfo } from "./source-info.js";
@@ -150,10 +151,16 @@ export interface DreamCommandOptions {
 	iterations?: number;
 	llmProposer: boolean;
 	llmDreamer: boolean;
+	/** `/dream experiment ...`: run the controlled comparison instead of a single loop. */
+	experiment?: true;
+	/** experiment: rollouts per arm. */
+	rounds?: number;
+	/** experiment: distinct arms in run order. */
+	arms?: ExperimentArm[];
 }
 
 const DREAM_USAGE =
-	"Usage: /dream [--task <circle-packing|sum-difference|python-speedup>] [--n N] [--seed N] [--workers N] [--k1 N] [--k2 N] [--dreams N] [--iterations N] [--llm-proposer] [--llm-dreamer]";
+	"Usage: /dream [experiment] [--task <circle-packing|sum-difference|python-speedup>] [--n N] [--seed N] [--workers N] [--k1 N] [--k2 N] [--dreams N] [--iterations N] [--rounds N] [--arms dream,fixed] [--llm-proposer] [--llm-dreamer]";
 
 function isDreamTaskIdValue(value: string | undefined): value is DreamTaskId {
 	return value !== undefined && (DREAM_TASK_IDS as readonly string[]).includes(value);
@@ -173,10 +180,30 @@ function parseDreamSeed(value: string | undefined): number {
 	return Number(value);
 }
 
+function parseDreamArms(value: string | undefined): ExperimentArm[] {
+	const names = (value ?? "")
+		.split(",")
+		.map((name) => name.trim())
+		.filter(Boolean);
+	if (names.length === 0) throw new Error(`${DREAM_USAGE} (--arms expects a comma-separated list of arms)`);
+	const arms: ExperimentArm[] = [];
+	for (const name of names) {
+		if (!isExperimentArm(name) || arms.includes(name)) {
+			throw new Error(
+				`${DREAM_USAGE} (--arms expects distinct arms out of dream, fixed, dream-guided, fixed-guided)`,
+			);
+		}
+		arms.push(name);
+	}
+	return arms;
+}
+
 /**
  * Parse `/dream` arguments. Every knob is a flag; the task is an enum defaulting
  * to `circle-packing`. `--llm-proposer`/`--llm-dreamer` are the only paths that
- * spend tokens. Unknown flags and stray non-flag tokens are a usage error.
+ * spend tokens. A leading `experiment` token selects the controlled comparison,
+ * which takes `--rounds` and `--arms` instead of `--iterations`. Unknown flags and
+ * stray non-flag tokens are a usage error.
  */
 export function parseDreamCommandOptions(args: string): DreamCommandOptions {
 	const tokens = args
@@ -191,10 +218,17 @@ export function parseDreamCommandOptions(args: string): DreamCommandOptions {
 	let k2: number | undefined;
 	let dreams: number | undefined;
 	let iterations: number | undefined;
+	let rounds: number | undefined;
+	let arms: ExperimentArm[] | undefined;
 	let llmProposer = false;
 	let llmDreamer = false;
+	let experiment = false;
 	for (let index = 0; index < tokens.length; index++) {
 		const token = tokens[index];
+		if (index === 0 && token === "experiment") {
+			experiment = true;
+			continue;
+		}
 		if (token === "--llm-proposer") {
 			llmProposer = true;
 			continue;
@@ -203,7 +237,7 @@ export function parseDreamCommandOptions(args: string): DreamCommandOptions {
 			llmDreamer = true;
 			continue;
 		}
-		const match = /^--(task|n|seed|workers|k1|k2|dreams|iterations)(?:=(.*))?$/.exec(token ?? "");
+		const match = /^--(task|n|seed|workers|k1|k2|dreams|iterations|rounds|arms)(?:=(.*))?$/.exec(token ?? "");
 		if (!match) throw new Error(DREAM_USAGE);
 		const flag = match[1];
 		let value = match[2];
@@ -237,7 +271,22 @@ export function parseDreamCommandOptions(args: string): DreamCommandOptions {
 			case "iterations":
 				iterations = parseDreamCount("--iterations", value);
 				break;
+			case "rounds":
+				rounds = parseDreamCount("--rounds", value);
+				break;
+			case "arms":
+				arms = parseDreamArms(value);
+				break;
 		}
+	}
+	if (experiment && iterations !== undefined) {
+		throw new Error(`${DREAM_USAGE} (experiment takes --rounds, not --iterations)`);
+	}
+	if (!experiment && (rounds !== undefined || arms !== undefined)) {
+		throw new Error(`${DREAM_USAGE} (--rounds and --arms belong to /dream experiment)`);
+	}
+	if (arms?.some((arm) => arm.endsWith("-guided")) && !llmProposer) {
+		throw new Error(`${DREAM_USAGE} (dream-guided/fixed-guided require --llm-proposer)`);
 	}
 	return {
 		task,
@@ -250,6 +299,9 @@ export function parseDreamCommandOptions(args: string): DreamCommandOptions {
 		...(iterations === undefined ? {} : { iterations }),
 		llmProposer,
 		llmDreamer,
+		...(experiment ? { experiment: true as const } : {}),
+		...(rounds === undefined ? {} : { rounds }),
+		...(arms === undefined ? {} : { arms }),
 	};
 }
 

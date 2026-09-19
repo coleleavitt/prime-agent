@@ -13,12 +13,19 @@ under `src/core/dream/`; the standalone `prime-agent dream` CLI
 A dreamed exploration policy is **data**, never code. The LLM dreamer emits a
 flat JSON policy that `parseExplorationPolicy` accepts only if every field is a
 known key of the right type and in range; `selectBestPolicy` returns the argmax
-of `{current} ∪ candidates` with the current policy winning ties, so a worse or
-malformed policy can never regress the deployed one. A proposed artifact is
-validated by `task.deserialize` before it enters the tree and re-scored by
-`task.evaluate`. Nothing evals, `Function`-constructs, or spawns any child
-output. Determinism flows through one injected `SeededRng` and one injected
-clock, so a recorded tree replays byte-identically.
+of `{current} ∪ candidates` over the candidates whose mean replay quality is no
+lower than the current policy's, with the current policy winning ties, so a
+worse, malformed or exploration-collapsing policy can never regress the
+deployed one. The replay objective is scale-invariant (quality normalized to
+the pool's score range, cost as a fraction of the `W * k1` probe budget,
+parallelism as batch fill; `docs/dream-rsi.md` has the derivation and the
+recorded regression that forced it). A proposed artifact is validated by
+`task.deserialize` before it enters the tree and re-scored by `task.evaluate`.
+Nothing evals, `Function`-constructs, or spawns any child output. Determinism
+flows through one injected `SeededRng` and one injected clock: every rng fork
+is labelled by seed, iteration, round, parent seq and child slot, never by an
+id, so a seed fixes every score and shape while the clock reaches only the
+on-disk ids, and a recorded tree replays byte-identically.
 
 Only the `--llm-proposer` / `--llm-dreamer` (kernel: `llm_proposer` /
 `llm_dreamer`) paths spend tokens by driving a child coding agent. The default
@@ -26,7 +33,7 @@ runs the local zero-token proposer and dreamer and touches no network.
 
 ## In-session invocation surfaces
 
-Beyond the CLI, Dream-RSI has three in-session surfaces, mirroring `/ravo`.
+Beyond the CLI, Dream-RSI has four in-session surfaces, mirroring `/ravo`.
 They are available only in a depth-0 session where self-improvement is allowed
 (a local harness state directory, not an RLM child), so the surfaces stay in
 lockstep with where the `dream.*` host handlers are registered.
@@ -52,6 +59,35 @@ lockstep with where the `dream.*` host handlers are registered.
    phase, iteration, best node score, and final policy score appear live in the
    Agents View. Each field of `DreamRunStatus` is a scalar.
 
+4. **Experiments (`dream.experiment`).** The kernel skill's `await
+   dream.experiment(task, rounds=4, arms=("dream", "fixed"), ...,
+   llm_proposer=False, llm_dreamer=False)` and the human `/dream experiment
+   [--rounds N] [--arms a,b] [--llm-proposer] [--llm-dreamer]` send a
+   `dream.experiment` host request that `DreamRunService.startExperiment` runs
+   in the background through `runExperimentWithAgent`
+   (`src/core/dream/experiment-llm.ts`): every listed arm from the same initial
+   policy, seed and per-round budget, the `fixed` arms never dreaming (the
+   paper's Recursive Fixed Exploration control) and the `-guided` arms carrying
+   the semantic-guidance ablation. Guided arms require `llm_proposer`; the
+   host rejects them otherwise before any call, as the skill's own validation
+   does. Round 1 is rolled out once and copied into every arm's store, so it is
+   identical across arms by construction. The result lands at
+   `<dream dir>/experiments/<experimentId>/result.json` (schema
+   `prime-agent.dream.experiment/1`) for `evals/dream/plot_experiment.py`; the
+   terminal durable row names that path. An experiment shares the single
+   per-session run slot, the cancel relay and the `dream_run_update` stream
+   with `dream.run`.
+
+   `DreamRunStatus` gains OPTIONAL scalars for it: `kind` (`run` /
+   `experiment`), `experimentId`, `arm`, `armIndex`, `armCount`, `round`,
+   `rounds`, `cumulativeProbes` and `resultPath`. This is a backward-compatible
+   additive change to the `dream_run_update` payload: the daemon forwards it
+   opaquely and the Agents View reads only the existing fields, so there is no
+   protocol version or schema revision bump. The standalone CLI's `dream
+   experiment` runs the local arms only, at zero tokens; every non-local arm
+   spends tokens. See `docs/dream-rsi.md` for the arms, the result schema and
+   the exact headline definitions.
+
 ## Spans
 
 `DreamRunService` opens no span of its own. `runDreamLoopWithAgent`
@@ -61,7 +97,23 @@ success, abort (`dream.stopped = aborted`), and error, so the loop outliving the
 turn is a detached root rather than a child that outlives its parent. Its
 children are the ordinary rollout/dream spans (`dream.explore`, `dream.round`,
 `dream.attempt`, `dream.dream`, `dream.redeploy`, and, on the LLM path,
-`dream.llm_propose` / `dream.llm_dream`). See `docs/observability.md`.
+`dream.llm_propose` / `dream.llm_dream` / `dream.llm_guidance`). `dream.run` and
+`dream.redeploy` carry `dream.fixed_policy` so a control arm's trace is
+recognisable without reading its records. See `docs/observability.md`.
+
+An experiment adds one level above that. `runExperimentWithAgent` mints
+`dream.experiment` as its own detached root (the same `startSpan` outside the
+ambient context plus `try/finally` as `dream.run`, carrying the launching turn's
+`trigger.trace_id`, ended with `dream.stopped = aborted` on cancel and
+`recordError` on failure), opens one `dream.experiment_arm` child per arm
+(`dream.arm`, `dream.fixed_policy`, `dream.guided`, and `dream.run_id` once the
+arm's loop has an id), and runs each arm inside the experiment's context, so
+every arm's `dream.run` is a detached root whose `trigger.trace_id` is the
+experiment's trace. The sync local `runExperiment` behind `prime-agent dream
+experiment` opens the same two spans as ordinary in-turn parents of each
+`dream.run`. The guided arms' `dream.llm_guidance` is one child call per
+iteration `>= 1`, with `dream.llm_fallback` marking a failed call that fell
+back to empty guidance.
 
 The per-phase `onProgress` callback threaded through `runDreamLoopWithAgent` is
 observability-only: it never touches the rng, tree, scoring, or persistence, so

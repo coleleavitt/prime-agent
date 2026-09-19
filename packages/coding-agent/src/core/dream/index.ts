@@ -10,8 +10,12 @@
  *
  * `./llm.js` now exists but stays omitted from this barrel BY DESIGN — adding it
  * here would leak the token-spending child-agent path into every plain import.
+ * `./experiment.js` (the fixed-exploration control and its runner core) IS here:
+ * it drives arms through `runDreamLoop` or an injected `ExperimentArmRunner` and
+ * never imports `./llm.js`; the LLM arm runner is an in-session caller's to build.
  */
 
+export * from "./experiment.js";
 export * from "./improve.js";
 export * from "./interpreter.js";
 export * from "./loop.js";

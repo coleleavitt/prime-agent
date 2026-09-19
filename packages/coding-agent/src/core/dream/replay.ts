@@ -19,7 +19,7 @@
 
 import { withSpan } from "@earendil-works/pi-ai";
 import { applyStopRule, interpretPolicy, type StopState } from "./interpreter.js";
-import { computeObjective, DEFAULT_OBJECTIVE, type ReplayObjectiveConfig } from "./objective.js";
+import { computeObjective, DEFAULT_OBJECTIVE, poolScoreScale, type ReplayObjectiveConfig } from "./objective.js";
 import { assertLegalBatch, type Cell, type ObservationView, type RevealedNode } from "./observation.js";
 import { type ExplorationPolicy, policyId } from "./policy.js";
 import type { SeededRng } from "./rng.js";
@@ -43,6 +43,11 @@ export interface ReplayResult {
 
 export interface ReplayConfig {
 	k2: number;
+}
+
+/** `ReplayConfig` plus the online round cap that fixes the objective's probe budget (`w * k1`). */
+export interface ReplayScoreConfig extends ReplayConfig {
+	k1: number;
 }
 
 function cellOf(node: NodeRecord): Cell {
@@ -263,12 +268,14 @@ export function simulatePolicy(
 
 /**
  * The standalone `dream replay` entry: one simulation wrapped in a `dream.replay`
- * root span carrying the result and its objective value.
+ * root span carrying the result and its objective value. With a single tree the
+ * pool is that tree, so `dream.v` is scored against its own score range and the
+ * budget `header.w * k1`.
  */
 export function simulatePolicyWithSpan(
 	recorded: RecordedTree,
 	policy: ExplorationPolicy,
-	cfg: ReplayConfig,
+	cfg: ReplayScoreConfig,
 	objective: ReplayObjectiveConfig = DEFAULT_OBJECTIVE,
 ): ReplayResult {
 	return withSpan(
@@ -279,7 +286,10 @@ export function simulatePolicyWithSpan(
 			span.setAttributes({
 				"dream.revealed_n": result.N,
 				"dream.rounds": result.rounds,
-				"dream.v": computeObjective(result, objective),
+				"dream.v": computeObjective(result, objective, poolScoreScale([recorded]), {
+					workers: recorded.header.w,
+					k1: cfg.k1,
+				}),
 				"dream.out_of_support": result.outOfSupportRounds,
 				"dream.simulations": 1,
 			});

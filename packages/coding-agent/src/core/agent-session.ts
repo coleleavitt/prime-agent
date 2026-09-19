@@ -148,7 +148,14 @@ import {
 	trajectoryClassForEntries,
 	trajectoryInternalizedFingerprints,
 } from "./distill/trajectory-index.js";
-import { type DreamRunRequest, DreamRunService, type DreamRunStatus } from "./dream/run-service.js";
+import { armSettings, type ExperimentArm, isExperimentArm } from "./dream/experiment.js";
+import { createAgentExperimentRunner } from "./dream/experiment-llm.js";
+import {
+	type DreamExperimentRequest,
+	type DreamRunRequest,
+	DreamRunService,
+	type DreamRunStatus,
+} from "./dream/run-service.js";
 import { getDreamDir } from "./dream/store.js";
 import { isDreamTaskId } from "./dream/tasks/index.js";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.js";
@@ -1511,29 +1518,37 @@ function parseRavoRunPayload(payload: Record<string, unknown>): RavoRunRequest {
 
 const DREAM_SKILL_NAME = "dream";
 
-function dreamPositiveInteger(payload: Record<string, unknown>, key: string): number | undefined {
+function dreamPositiveInteger(
+	payload: Record<string, unknown>,
+	key: string,
+	request = "dream.run",
+): number | undefined {
 	const value = payload[key];
 	if (value === undefined || value === null) return undefined;
 	if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
-		throw new Error(`dream.run ${key} must be a positive integer when provided`);
+		throw new Error(`${request} ${key} must be a positive integer when provided`);
 	}
 	return value;
 }
 
-function dreamNonNegativeInteger(payload: Record<string, unknown>, key: string): number | undefined {
+function dreamNonNegativeInteger(
+	payload: Record<string, unknown>,
+	key: string,
+	request = "dream.run",
+): number | undefined {
 	const value = payload[key];
 	if (value === undefined || value === null) return undefined;
 	if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
-		throw new Error(`dream.run ${key} must be a non-negative integer when provided`);
+		throw new Error(`${request} ${key} must be a non-negative integer when provided`);
 	}
 	return value;
 }
 
-function dreamBoolean(payload: Record<string, unknown>, key: string): boolean | undefined {
+function dreamBoolean(payload: Record<string, unknown>, key: string, request = "dream.run"): boolean | undefined {
 	const value = payload[key];
 	if (value === undefined || value === null) return undefined;
 	if (typeof value !== "boolean") {
-		throw new Error(`dream.run ${key} must be a boolean when provided`);
+		throw new Error(`${request} ${key} must be a boolean when provided`);
 	}
 	return value;
 }
@@ -1561,6 +1576,59 @@ function parseDreamRunPayload(payload: Record<string, unknown>): DreamRunRequest
 		...(k2 === undefined ? {} : { k2 }),
 		...(dreams === undefined ? {} : { dreams }),
 		...(iterations === undefined ? {} : { iterations }),
+		...(llmProposer === true ? { llmProposer: true } : {}),
+		...(llmDreamer === true ? { llmDreamer: true } : {}),
+	};
+}
+
+function parseDreamExperimentArms(payload: Record<string, unknown>): ExperimentArm[] | undefined {
+	const value = payload.arms;
+	if (value === undefined || value === null) return undefined;
+	if (!Array.isArray(value) || value.length === 0) {
+		throw new Error("dream.experiment arms must be a non-empty array of dream, fixed, dream-guided, fixed-guided");
+	}
+	const arms: ExperimentArm[] = [];
+	for (const arm of value) {
+		if (!isExperimentArm(arm)) {
+			throw new Error(
+				`dream.experiment arms must be one of dream, fixed, dream-guided, fixed-guided (got ${String(arm)})`,
+			);
+		}
+		if (arms.includes(arm)) throw new Error(`dream.experiment arms must be distinct (${arm} repeats)`);
+		arms.push(arm);
+	}
+	return arms;
+}
+
+function parseDreamExperimentPayload(payload: Record<string, unknown>): DreamExperimentRequest {
+	const request = "dream.experiment";
+	const task = payload.task;
+	if (!isDreamTaskId(task)) {
+		throw new Error(`${request} task must be one of circle-packing, sum-difference, python-speedup`);
+	}
+	const n = dreamPositiveInteger(payload, "n", request);
+	const seed = dreamNonNegativeInteger(payload, "seed", request);
+	const rounds = dreamPositiveInteger(payload, "rounds", request);
+	const arms = parseDreamExperimentArms(payload);
+	const workers = dreamPositiveInteger(payload, "workers", request);
+	const k1 = dreamPositiveInteger(payload, "k1", request);
+	const k2 = dreamPositiveInteger(payload, "k2", request);
+	const dreams = dreamPositiveInteger(payload, "dreams", request);
+	const llmProposer = dreamBoolean(payload, "llm_proposer", request);
+	const llmDreamer = dreamBoolean(payload, "llm_dreamer", request);
+	if (arms?.some((arm) => armSettings(arm).guided) && llmProposer !== true) {
+		throw new Error("dream-guided/fixed-guided require llm_proposer");
+	}
+	return {
+		task,
+		...(n === undefined ? {} : { n }),
+		...(seed === undefined ? {} : { seed }),
+		...(rounds === undefined ? {} : { rounds }),
+		...(arms === undefined ? {} : { arms }),
+		...(workers === undefined ? {} : { workers }),
+		...(k1 === undefined ? {} : { k1 }),
+		...(k2 === undefined ? {} : { k2 }),
+		...(dreams === undefined ? {} : { dreams }),
 		...(llmProposer === true ? { llmProposer: true } : {}),
 		...(llmDreamer === true ? { llmDreamer: true } : {}),
 	};
@@ -4481,6 +4549,7 @@ export class AgentSession {
 			runAgent: this.runAgent,
 			model: this.model,
 			dir: getDreamDir(),
+			llmExperimentRunner: createAgentExperimentRunner,
 			onUpdate: (status) => {
 				if (this._disposed) return;
 				this._emit({ type: "dream_run_update", status });
@@ -4497,6 +4566,22 @@ export class AgentSession {
 	private _startDreamRun(
 		request: DreamRunRequest,
 	): { started: true; runId: string; completion: Promise<DreamRunStatus> } | { started: false; reason: string } {
+		return this._startDreamBackground((service) => service.start(request));
+	}
+
+	/**
+	 * Start a Dream-RSI experiment (the dreaming arm against the fixed-exploration
+	 * control) in the same background slot a run uses.
+	 */
+	private _startDreamExperiment(
+		request: DreamExperimentRequest,
+	): { started: true; runId: string; completion: Promise<DreamRunStatus> } | { started: false; reason: string } {
+		return this._startDreamBackground((service) => service.startExperiment(request));
+	}
+
+	private _startDreamBackground(
+		launch: (service: DreamRunService) => Promise<DreamRunStatus>,
+	): { started: true; runId: string; completion: Promise<DreamRunStatus> } | { started: false; reason: string } {
 		if (this._disposed) return { started: false, reason: "session is disposed" };
 		const service = this._dreamRunServiceForSession();
 		if (!service) return { started: false, reason: "Dream-RSI is not available in this session" };
@@ -4509,7 +4594,7 @@ export class AgentSession {
 					: "a Dream-RSI run is already in progress",
 			};
 		}
-		const completion = service.start(request);
+		const completion = launch(service);
 		// Observe the rejection here so a background failure is never an unhandled
 		// rejection; callers attach their own handlers.
 		completion.catch(() => {});
@@ -4538,6 +4623,16 @@ export class AgentSession {
 					started: true,
 					runId: started.runId,
 					note: "The Dream-RSI run continues in the background; check `dream.status` or the Agents View for progress. Continue working normally.",
+				};
+			}
+			case "dream.experiment": {
+				const request = parseDreamExperimentPayload(payload);
+				const started = this._startDreamExperiment(request);
+				if (!started.started) return { started: false, reason: started.reason };
+				return {
+					started: true,
+					runId: started.runId,
+					note: "The Dream-RSI experiment continues in the background; check `dream.status` (resultPath on completion) or the Agents View for progress. Continue working normally.",
 				};
 			}
 			default:
@@ -7917,7 +8012,7 @@ export class AgentSession {
 				}
 				case "dream": {
 					const options = parseDreamCommandOptions(input.command.args);
-					const started = this._startDreamRun({
+					const shared = {
 						task: options.task,
 						...(options.n === undefined ? {} : { n: options.n }),
 						...(options.seed === undefined ? {} : { seed: options.seed }),
@@ -7925,9 +8020,23 @@ export class AgentSession {
 						...(options.k1 === undefined ? {} : { k1: options.k1 }),
 						...(options.k2 === undefined ? {} : { k2: options.k2 }),
 						...(options.dreams === undefined ? {} : { dreams: options.dreams }),
-						...(options.iterations === undefined ? {} : { iterations: options.iterations }),
 						...(options.llmProposer ? { llmProposer: true } : {}),
 						...(options.llmDreamer ? { llmDreamer: true } : {}),
+					};
+					if (options.experiment) {
+						const started = this._startDreamExperiment({
+							...shared,
+							...(options.rounds === undefined ? {} : { rounds: options.rounds }),
+							...(options.arms === undefined ? {} : { arms: options.arms }),
+						});
+						if (!started.started) throw new Error(started.reason);
+						resultText = `Dream-RSI experiment ${started.runId} started: ${options.task} (${(options.arms ?? ["dream", "fixed"]).join(",")})`;
+						this._reportDreamRunCompletion(started.runId, started.completion, input.command, "experiment");
+						break;
+					}
+					const started = this._startDreamRun({
+						...shared,
+						...(options.iterations === undefined ? {} : { iterations: options.iterations }),
 					});
 					if (!started.started) throw new Error(started.reason);
 					resultText = `Dream-RSI run ${started.runId} started: ${options.task}`;
@@ -8019,13 +8128,14 @@ export class AgentSession {
 		runId: string,
 		completion: Promise<DreamRunStatus>,
 		command: SessionSlashCommand,
+		kind: "run" | "experiment" = "run",
 	): void {
 		void completion.then(
 			(status) => {
 				if (this._disposed) return;
 				try {
 					this._appendDurableSessionCommandMessage(
-						`Dream-RSI run ${runId} ${status.stopReason ?? "stopped"}`,
+						`Dream-RSI ${kind} ${runId} ${status.stopReason ?? "stopped"}${status.resultPath ? ` (results ${status.resultPath})` : ""}`,
 						command,
 						true,
 						false,
@@ -8038,7 +8148,7 @@ export class AgentSession {
 				if (this._disposed) return;
 				try {
 					this._appendDurableSessionCommandMessage(
-						`Command failed: Dream-RSI run ${runId} failed: ${this._asError(error).message}`,
+						`Command failed: Dream-RSI ${kind} ${runId} failed: ${this._asError(error).message}`,
 						command,
 						true,
 						true,
@@ -13152,7 +13262,7 @@ export class AgentSession {
 			for (const type of ["ravo.run", "ravo.status", "ravo.cancel"]) {
 				handlers[type] = async (payload) => this.handleRavoHostRequest(type, payload);
 			}
-			for (const type of ["dream.run", "dream.status", "dream.cancel"]) {
+			for (const type of ["dream.run", "dream.experiment", "dream.status", "dream.cancel"]) {
 				handlers[type] = async (payload) => this.handleDreamHostRequest(type, payload);
 			}
 		}

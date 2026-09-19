@@ -4,7 +4,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_POLICY } from "../src/core/dream/policy.js";
 import { createSeededRng } from "../src/core/dream/rng.js";
-import { LlmProposerUnavailableError, runOnlineExploration } from "../src/core/dream/rollout.js";
+import {
+	attemptRngLabel,
+	type ExploreResult,
+	LlmProposerUnavailableError,
+	runOnlineExploration,
+} from "../src/core/dream/rollout.js";
 import type { DreamTaskId } from "../src/core/dream/task.js";
 import { resolveTask } from "../src/core/dream/tasks/index.js";
 import { createSumDifferenceTask } from "../src/core/dream/tasks/sum-difference.js";
@@ -32,20 +37,39 @@ afterEach(() => {
 	rmSync(dreamDir, { recursive: true, force: true });
 });
 
-function explore(dir: string, seed: number, task: DreamTaskId = "circle-packing", n: number | undefined = 26) {
+function explore(
+	dir: string,
+	seed: number,
+	task: DreamTaskId = "circle-packing",
+	n: number | undefined = 26,
+	clockMs: number = FIXED_CLOCK,
+) {
 	return runOnlineExploration({
 		task: resolveTask({ task, n }),
 		taskId: task,
 		n,
 		seed,
 		rng: createSeededRng(seed),
-		clock: () => FIXED_CLOCK,
+		clock: () => clockMs,
 		workers: 4,
 		k1: 12,
 		dir,
 		policy: DEFAULT_POLICY,
 		iteration: 0,
 	});
+}
+
+/** The clock-free shape of a grown tree: per node (parent seq, branch, round, score, valid), in seq order. */
+function shape(result: ExploreResult): [number | null, number, number, number, boolean][] {
+	return result.tree
+		.allNodes()
+		.map((node) => [
+			node.parentId === null ? null : result.tree.nodeById(node.parentId)!.seq,
+			node.branch,
+			node.round,
+			node.score,
+			node.valid,
+		]);
 }
 
 describe("runOnlineExploration (circle-packing)", () => {
@@ -102,6 +126,41 @@ describe("runOnlineExploration (circle-packing)", () => {
 			rmSync(dirA, { recursive: true, force: true });
 			rmSync(dirB, { recursive: true, force: true });
 		}
+	});
+
+	it("grows the same tree for the same seed under different clocks, with only the ids differing", () => {
+		const dirA = mkdtempSync(join(tmpdir(), "dream-clock-a-"));
+		const dirB = mkdtempSync(join(tmpdir(), "dream-clock-b-"));
+		const dirC = mkdtempSync(join(tmpdir(), "dream-clock-c-"));
+		try {
+			const a = explore(dirA, 7, "circle-packing", 26, 1_789_842_143_996);
+			const b = explore(dirB, 7, "circle-packing", 26, 1_789_842_143_997);
+			const c = explore(dirC, 7, "circle-packing", 26, 1);
+			expect(b.treeId).not.toBe(a.treeId);
+			expect(c.treeId).not.toBe(a.treeId);
+			expect(b.bestScore).toBe(a.bestScore);
+			expect(c.bestScore).toBe(a.bestScore);
+			expect(b.revealedCount).toBe(a.revealedCount);
+			expect(b.rounds).toBe(a.rounds);
+			expect(shape(b)).toEqual(shape(a));
+			expect(shape(c)).toEqual(shape(a));
+			// The blobs (artifacts) are clock-free too, so they are byte-identical.
+			const blobA = readFileSync(join(dirA, "trees", a.treeId, "blobs", `${a.tree.size - 1}.json`), "utf8");
+			const blobB = readFileSync(join(dirB, "trees", b.treeId, "blobs", `${b.tree.size - 1}.json`), "utf8");
+			expect(blobB).toBe(blobA);
+			// A different seed does change the tree.
+			const other = explore(mkdtempSync(join(tmpdir(), "dream-clock-d-")), 8, "circle-packing", 26, 1);
+			expect(shape(other)).not.toEqual(shape(a));
+		} finally {
+			rmSync(dirA, { recursive: true, force: true });
+			rmSync(dirB, { recursive: true, force: true });
+			rmSync(dirC, { recursive: true, force: true });
+		}
+	});
+
+	it("labels every attempt fork by round, parent seq and child slot, never by an id", () => {
+		expect(attemptRngLabel(3, 7, 1)).toBe("r3:p7:b1");
+		expect(attemptRngLabel(3, 7, 1)).not.toContain(String(FIXED_CLOCK));
 	});
 
 	it("refuses the LLM proposer flag without spending tokens or writing a tree", () => {

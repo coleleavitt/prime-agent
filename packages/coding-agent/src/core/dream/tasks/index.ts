@@ -5,7 +5,7 @@
 
 import type { DreamTaskId, ScoredTask } from "../task.js";
 import { createCirclePackingTask } from "./circle-packing.js";
-import { createPythonSpeedupTask } from "./python-speedup.js";
+import { createPythonSpeedupTask, PYTHON_SPEEDUP_PROMPT_CONTEXT } from "./python-speedup.js";
 import { createSumDifferenceTask } from "./sum-difference.js";
 
 export const DREAM_TASK_IDS = ["circle-packing", "sum-difference", "python-speedup"] as const;
@@ -43,4 +43,13 @@ export function resolveTask(spec: DreamTaskSpec): ScoredTask<unknown> {
 		case "python-speedup":
 			return createPythonSpeedupTask() as unknown as ScoredTask<unknown>;
 	}
+}
+
+/**
+ * The task-specific context an LLM proposer prompt carries (the public contract
+ * and examples, never hidden tests). Only python-speedup has one; the other
+ * tasks are fully described by their serialized candidate.
+ */
+export function taskPromptContext(taskId: DreamTaskId): string | undefined {
+	return taskId === "python-speedup" ? PYTHON_SPEEDUP_PROMPT_CONTEXT : undefined;
 }

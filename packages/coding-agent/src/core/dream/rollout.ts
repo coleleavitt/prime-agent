@@ -8,10 +8,15 @@
  * at most `workers`, never a node together with its child — and `assertLegalBatch`
  * re-checks it defensively.
  *
- * Everything is deterministic given the injected `SeededRng` and `DreamClock`:
- * the only randomness is the forked rng, the only clock-derived id is `treeId`
- * at the outer boundary, and node ids are `<treeId>-n<seq>`. With the default
- * local proposer a rollout spends zero model tokens and touches no network.
+ * The grown tree is a function of the seed alone: the only randomness is the
+ * forked rng, and every fork label (`root`, `select:<round>`, and the per-attempt
+ * `attemptRngLabel`) is built from round, parent seq and child slot, never from
+ * an id. The clock reaches only the on-disk identity — `treeId`
+ * (`<task>-s<seed>-i<iteration>-<ms>`), the node ids `<treeId>-n<seq>` and the
+ * `createdTs`/`ts` fields — so two rollouts of one seed at different wall times
+ * produce the same scores, shapes and reveal order under different ids. With
+ * the default local proposer a rollout spends zero model tokens and touches no
+ * network.
  *
  * The exploration policy is DATA, not code (see `policy.ts`): this driver only
  * ever hands it to `interpreter.ts`. The LLM proposer is an ASYNC path
@@ -229,6 +234,25 @@ export function beginRollout(options: ExploreOptions): RolloutState {
 }
 
 /**
+ * The per-attempt rng fork label. (round, parent seq, child slot) is unique per
+ * attempt within a tree — a cell is selected at most once per round — and it
+ * carries no id, so the stream depends on the seed and iteration alone. A label
+ * built from the node id would embed the tree id's clock milliseconds and make
+ * every proposal, and so the whole tree, differ from run to run.
+ */
+export function attemptRngLabel(round: number, parentSeq: number, branch: number): string {
+	return `r${round}:p${parentSeq}:b${branch}`;
+}
+
+/** The rng one attempt resumes `cell` with; shared by both drivers so their streams are identical. */
+export function attemptRng(state: RolloutState, cell: Cell, round: number): SeededRng {
+	const parent = state.tree.nodeById(cell.nodeId);
+	if (!parent) throw new Error(`attempt on unknown cell ${cell.nodeId}`);
+	const branch = state.tree.children(cell.nodeId).length;
+	return state.rng.fork(attemptRngLabel(round, parent.seq, branch));
+}
+
+/**
  * Interpret the policy over the live tree and return this round's legal batch.
  * An empty batch signals the round loop to stop. Uses the `select:${round}` fork
  * label, so the batch is identical for both drivers.
@@ -353,10 +377,8 @@ export function runOnlineExploration(options: ExploreOptions): ExploreResult {
 				},
 				() => {
 					for (const cell of cells) {
-						const branch = state.tree.children(cell.nodeId).length;
-						const attemptRng = state.rng.fork(`r${round}:${cell.nodeId}:b${branch}`);
 						const parentArtifact = state.artifacts.get(cell.nodeId) ?? null;
-						const outcome = proposer.propose(parentArtifact, state.params, attemptRng, round);
+						const outcome = proposer.propose(parentArtifact, state.params, attemptRng(state, cell, round), round);
 						const committed = commitAttempt(state, cell, round, outcome);
 						revealedThisRound.push(committed.node.id);
 						tokens += committed.tokens;

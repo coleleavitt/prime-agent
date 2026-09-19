@@ -1,7 +1,13 @@
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getBundledSkillsDir } from "../src/config.js";
-import type { DreamRunRequest, DreamRunServiceDeps, DreamRunStatus } from "../src/core/dream/run-service.js";
+import type {
+	DreamExperimentRequest,
+	DreamRunRequest,
+	DreamRunServiceDeps,
+	DreamRunStatus,
+} from "../src/core/dream/run-service.js";
 import { isSessionSlashCommandResultMessage } from "../src/core/messages.js";
 import { loadSkillsFromDir } from "../src/core/skills.js";
 import { parseDreamCommandOptions, parseSessionSlashCommand } from "../src/core/slash-commands.js";
@@ -14,6 +20,7 @@ const dreamFake = vi.hoisted(() => {
 		static instances: FakeDreamRunService[] = [];
 		readonly deps: Deps;
 		readonly startCalls: DreamRunRequest[] = [];
+		readonly experimentCalls: DreamExperimentRequest[] = [];
 		cancelCalls = 0;
 		current: Status | undefined;
 		private resolveStart: ((status: Status) => void) | undefined;
@@ -26,10 +33,20 @@ const dreamFake = vi.hoisted(() => {
 
 		start(request: DreamRunRequest): Promise<Status> {
 			this.startCalls.push(request);
+			return this.#launch(request.task, "run");
+		}
+
+		startExperiment(request: DreamExperimentRequest): Promise<Status> {
+			this.experimentCalls.push(request);
+			return this.#launch(request.task, "experiment");
+		}
+
+		#launch(task: DreamRunRequest["task"], kind: "run" | "experiment"): Promise<Status> {
 			this.current = {
-				runId: `run-${this.startCalls.length}`,
+				runId: `run-${this.startCalls.length + this.experimentCalls.length}`,
 				phase: "idle",
-				task: request.task,
+				task,
+				kind,
 				iteration: 0,
 				bestNodeScore: 0,
 				startedAt: 1,
@@ -61,8 +78,8 @@ const dreamFake = vi.hoisted(() => {
 			return this.current;
 		}
 
-		finish(stopReason: DreamRunStatus["stopReason"]): void {
-			const status = this.emit({ phase: "stopped", stopReason });
+		finish(stopReason: DreamRunStatus["stopReason"], extra: Partial<Status> = {}): void {
+			const status = this.emit({ phase: "stopped", stopReason, ...extra });
 			this.resolveStart?.(status);
 		}
 
@@ -146,6 +163,82 @@ describe("dream entry points", () => {
 		expect(harness.session.handleDreamHostRequest("dream.status")).toMatchObject({ stopReason: "completed" });
 	});
 
+	it("dream.experiment starts a background experiment and forwards its updates", async () => {
+		const harness = await dreamHarness();
+		const result = harness.session.handleDreamHostRequest("dream.experiment", {
+			task: "sum-difference",
+			rounds: 3,
+			arms: ["fixed", "dream"],
+			seed: 2,
+			k1: 4,
+		});
+		expect(result).toMatchObject({ started: true, runId: "run-1", note: expect.stringContaining("resultPath") });
+		const fake = lastFake();
+		expect(fake.startCalls).toHaveLength(0);
+		expect(fake.experimentCalls).toEqual([
+			{
+				task: "sum-difference",
+				rounds: 3,
+				arms: ["fixed", "dream"],
+				seed: 2,
+				k1: 4,
+			} satisfies DreamExperimentRequest,
+		]);
+		fake.emit({ phase: "rollout", arm: "fixed", armIndex: 0, armCount: 2, round: 1, cumulativeProbes: 9 });
+		const updates = harness.eventsOfType("dream_run_update");
+		expect(updates).toHaveLength(1);
+		expect(updates[0].status).toMatchObject({ kind: "experiment", arm: "fixed", round: 1, cumulativeProbes: 9 });
+		expect(harness.session.handleDreamHostRequest("dream.status")).toMatchObject({
+			kind: "experiment",
+			arm: "fixed",
+		});
+
+		// The slot is shared with runs.
+		expect(harness.session.handleDreamHostRequest("dream.run", { task: "circle-packing" })).toMatchObject({
+			started: false,
+			reason: expect.stringContaining("run-1"),
+		});
+		fake.finish("completed", { resultPath: "/x/experiments/e/result.json" });
+		await Promise.resolve();
+		expect(harness.session.handleDreamHostRequest("dream.status")).toMatchObject({
+			stopReason: "completed",
+			resultPath: "/x/experiments/e/result.json",
+		});
+		// Guided arms with llm_proposer pass the parser (the service decides whether it can serve them).
+		expect(
+			harness.session.handleDreamHostRequest("dream.experiment", {
+				task: "sum-difference",
+				arms: ["dream", "dream-guided"],
+				llm_proposer: true,
+			}),
+		).toMatchObject({ started: true });
+		expect(lastFake().experimentCalls.at(-1)).toEqual({
+			task: "sum-difference",
+			arms: ["dream", "dream-guided"],
+			llmProposer: true,
+		});
+		lastFake().finish("cancelled");
+	});
+
+	it("rejects malformed dream.experiment payloads", async () => {
+		const harness = await dreamHarness();
+		const request = (payload: Record<string, unknown>) =>
+			harness.session.handleDreamHostRequest("dream.experiment", payload);
+		expect(() => request({})).toThrow(/dream.experiment task must be one of/);
+		expect(() => request({ task: "sum-difference", rounds: 0 })).toThrow(/rounds must be a positive integer/);
+		expect(() => request({ task: "sum-difference", arms: ["bogus"] })).toThrow(/arms must be one of/);
+		expect(() => request({ task: "sum-difference", arms: [] })).toThrow(/non-empty array/);
+		expect(() => request({ task: "sum-difference", arms: "dream" })).toThrow(/non-empty array/);
+		expect(() => request({ task: "sum-difference", arms: ["dream", "dream"] })).toThrow(/distinct/);
+		expect(() => request({ task: "sum-difference", arms: ["fixed-guided"] })).toThrow(/require llm_proposer/);
+		expect(() => request({ task: "sum-difference", llm_dreamer: 1 })).toThrow(/llm_dreamer must be a boolean/);
+		expect(() => request({ task: "sum-difference", iterations: 2 })).not.toThrow();
+		const fakes = dreamFake.FakeDreamRunService.instances;
+		// Only the one legal request above reached the service.
+		expect(fakes.reduce((count, instance) => count + instance.experimentCalls.length, 0)).toBe(1);
+		lastFake().finish("cancelled");
+	});
+
 	it("dream.status is idle before any run and dream.cancel forwards to the service", async () => {
 		const harness = await dreamHarness();
 		expect(harness.session.handleDreamHostRequest("dream.status")).toEqual({ phase: "idle" });
@@ -210,6 +303,29 @@ describe("dream entry points", () => {
 		const rows = harness.session.messages.filter((message) => isSessionSlashCommandResultMessage(message));
 		expect(rows.every((row) => row.details.success)).toBe(true);
 		expect(rows.every((row) => row.details.command.name === "dream")).toBe(true);
+	});
+
+	it("/dream experiment starts an experiment and reports the result path in the terminal row", async () => {
+		const harness = await dreamHarness();
+		await harness.session.prompt("/dream experiment --task sum-difference --rounds 3 --arms fixed,dream --seed 4");
+		await harness.session.waitForIdle();
+
+		const fake = lastFake();
+		expect(fake.startCalls).toHaveLength(0);
+		expect(fake.experimentCalls).toEqual([
+			{ task: "sum-difference", seed: 4, rounds: 3, arms: ["fixed", "dream"] } satisfies DreamExperimentRequest,
+		]);
+		expect(commandResultTexts(harness)).toEqual(["Dream-RSI experiment run-1 started: sum-difference (fixed,dream)"]);
+
+		fake.finish("completed", { resultPath: "/tmp/d/experiments/e/result.json" });
+		await vi.waitFor(() =>
+			expect(commandResultTexts(harness)).toEqual([
+				"Dream-RSI experiment run-1 started: sum-difference (fixed,dream)",
+				"Dream-RSI experiment run-1 completed (results /tmp/d/experiments/e/result.json)",
+			]),
+		);
+		const rows = harness.session.messages.filter((message) => isSessionSlashCommandResultMessage(message));
+		expect(rows.every((row) => row.details.success)).toBe(true);
 	});
 
 	it("/dream reports a run failure as an error row", async () => {
@@ -287,6 +403,38 @@ describe("/dream argument parsing", () => {
 		expect(() => parseDreamCommandOptions("--seed -1")).toThrow("Usage: /dream");
 		expect(() => parseDreamCommandOptions("--iterations")).toThrow("--iterations expects a positive integer");
 	});
+
+	it("parses the experiment form with --rounds and --arms", () => {
+		expect(parseDreamCommandOptions("experiment")).toEqual({
+			task: "circle-packing",
+			llmProposer: false,
+			llmDreamer: false,
+			experiment: true,
+		});
+		expect(
+			parseDreamCommandOptions("experiment --task sum-difference --rounds 3 --arms=dream,fixed --seed 2"),
+		).toEqual({
+			task: "sum-difference",
+			seed: 2,
+			rounds: 3,
+			arms: ["dream", "fixed"],
+			llmProposer: false,
+			llmDreamer: false,
+			experiment: true,
+		});
+		expect(parseDreamCommandOptions("experiment --arms dream,dream-guided --llm-proposer").arms).toEqual([
+			"dream",
+			"dream-guided",
+		]);
+		expect(() => parseDreamCommandOptions("experiment --arms dream,dream-guided")).toThrow("require --llm-proposer");
+		expect(() => parseDreamCommandOptions("experiment --iterations 2")).toThrow("takes --rounds");
+		expect(() => parseDreamCommandOptions("--rounds 2")).toThrow("belong to /dream experiment");
+		expect(() => parseDreamCommandOptions("--arms dream")).toThrow("belong to /dream experiment");
+		expect(() => parseDreamCommandOptions("experiment --arms dream,bogus")).toThrow("Usage: /dream");
+		expect(() => parseDreamCommandOptions("experiment --arms dream,dream")).toThrow("Usage: /dream");
+		expect(() => parseDreamCommandOptions("experiment --rounds 0")).toThrow("--rounds expects a positive integer");
+		expect(() => parseDreamCommandOptions("--task sum-difference experiment")).toThrow("Usage: /dream");
+	});
 });
 
 describe("bundled dream skill", () => {
@@ -297,5 +445,17 @@ describe("bundled dream skill", () => {
 		expect(dream).toBeDefined();
 		expect(dream?.kind).toBe("python");
 		expect(dream?.kind === "python" && dream.python.importName).toBe("dream");
+	});
+
+	it("exposes experiment alongside run, status and cancel", () => {
+		const script = [
+			"import ast, sys",
+			"tree = ast.parse(open(sys.argv[1]).read())",
+			"print(','.join(sorted(n.name for n in tree.body if isinstance(n, ast.AsyncFunctionDef))))",
+		].join("\n");
+		const module = join(getBundledSkillsDir(), "dream", "src", "dream", "__init__.py");
+		const parsed = spawnSync("python3", ["-c", script, module], { encoding: "utf8" });
+		expect(parsed.status).toBe(0);
+		expect(parsed.stdout.trim()).toBe("cancel,experiment,run,status");
 	});
 });

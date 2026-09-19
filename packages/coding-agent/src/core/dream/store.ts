@@ -10,7 +10,16 @@
  * same store is idempotent.
  */
 
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+	appendFileSync,
+	chmodSync,
+	copyFileSync,
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { expandTildePath, getAgentDir } from "../../config.js";
 import { canonicalJson, sha256 } from "../ravo/canonical-json.js";
@@ -50,6 +59,68 @@ function blobDir(treeId: string, dir?: string): string {
 
 function blobPath(treeId: string, seq: number, dir?: string): string {
 	return join(blobDir(treeId, dir), `${seq}.json`);
+}
+
+/**
+ * Experiments live beside the pool, never in it: `<dir>/experiments/<id>/<arm>`
+ * is a complete dream store of its own (its trees under `.../trees`), so
+ * `listTrees`/`freezePool` on `<dir>` never see an experiment's trees and the
+ * arms never see each other's.
+ */
+export function experimentsDir(dir: string): string {
+	return join(dir, "experiments");
+}
+
+export function experimentDir(dir: string, experimentId: string): string {
+	return join(experimentsDir(dir), experimentId);
+}
+
+export function experimentArmDir(dir: string, experimentId: string, arm: string): string {
+	return join(experimentDir(dir, experimentId), arm);
+}
+
+export function experimentResultPath(dir: string, experimentId: string): string {
+	return join(experimentDir(dir, experimentId), "result.json");
+}
+
+/** Experiment ids (directory names under `<dir>/experiments`), sorted; `[]` when none. */
+export function listExperimentIds(dir: string): string[] {
+	try {
+		return readdirSync(experimentsDir(dir), { withFileTypes: true })
+			.filter((entry) => entry.isDirectory())
+			.map((entry) => entry.name)
+			.sort((a, b) => a.localeCompare(b));
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * Copy one recorded tree (its JSONL file and every blob) from one store to
+ * another, byte for byte, with the store's 0700/0600 modes. The experiment
+ * runner uses it to share a single round-1 rollout across every arm.
+ */
+export function copyTree(treeId: string, fromDir: string, toDir: string): void {
+	const source = treePath(treeId, fromDir);
+	if (!existsSync(source)) throw new DreamStoreError(`no tree ${treeId} in ${fromDir}`);
+	const target = treePath(treeId, toDir);
+	mkdirSync(dirname(target), { recursive: true, mode: DIR_MODE });
+	copyFileSync(source, target);
+	chmodSync(target, FILE_MODE);
+	const sourceBlobs = blobDir(treeId, fromDir);
+	let names: string[];
+	try {
+		names = readdirSync(sourceBlobs);
+	} catch {
+		return;
+	}
+	const targetBlobs = blobDir(treeId, toDir);
+	mkdirSync(targetBlobs, { recursive: true, mode: DIR_MODE });
+	for (const name of names) {
+		const targetBlob = join(targetBlobs, name);
+		copyFileSync(join(sourceBlobs, name), targetBlob);
+		chmodSync(targetBlob, FILE_MODE);
+	}
 }
 
 /** Append-only writer for one tree file plus its blobs. */

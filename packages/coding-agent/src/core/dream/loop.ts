@@ -2,19 +2,31 @@
  * The full Dream-RSI orchestrator (synchronous, local, zero-token).
  *
  * One `runDreamLoop` is a single `dream.run` span. Iteration 0 rolls out with the
- * default policy (`dream.explore`); each subsequent iteration freezes the current
+ * initial policy (`dream.explore`); each subsequent iteration freezes the current
  * tree pool, dreams a no-worse policy over it (`dream.dream`), and redeploys that
  * policy in a fresh rollout (`dream.redeploy` wrapping the rollout's own
  * `dream.explore`). Because `withSpan` restores the parent context when each sync
  * child returns, every child is a direct descendant of the still-open `dream.run`
  * — no detached roots, no child outliving its parent.
  *
- * The reported final policy is `selectBestPolicy` over {default} union every
+ * The reported final policy is `selectBestPolicy` over {initial} union every
  * policy the loop chose, scored on the final pool, so `finalPolicyScore` is
- * UNCONDITIONALLY at least `initialPolicyScore` (the default policy always wins a
- * tie). Everything is deterministic in the injected seed and clock: the rng is
- * forked per iteration and per dreaming step by label, and each rollout's tree id
- * is distinct by iteration, so a whole run is byte-reproducible.
+ * UNCONDITIONALLY at least `initialPolicyScore` and the final policy's mean
+ * replay quality is at least the initial one's (the initial policy always wins a
+ * tie and the quality guard excludes anything below it). Every score, tree
+ * shape, policy id and round table is a function of the seed alone: the rng is
+ * forked per iteration and per dreaming step by label, and every attempt fork is
+ * labelled by round, parent seq and child slot (`attemptRngLabel`), never by an
+ * id. The clock reaches only the on-disk identity (tree ids, node ids,
+ * `createdTs`/`ts`, the run id), so two runs of one seed at different wall times
+ * yield identical round tables under different ids, and one seed and one clock
+ * give a byte-reproducible run.
+ *
+ * `fixedPolicy` is the paper's "Recursive Fixed Exploration" control: the same
+ * loop, the same rollouts, the same growing pool, but no dreaming at all — every
+ * iteration redeploys the initial policy. Because the loop never draws from the
+ * root rng and every rollout forks by iteration label, a fixed-policy run and a
+ * dreaming run share a byte-identical iteration 0.
  *
  * The async in-session driver (`runDreamLoopWithAgent`), where dreaming runs past
  * the user turn and mints detached-root spans, lives in the flag-gated `llm.ts`.
@@ -54,6 +66,14 @@ export interface DreamLoopOptions {
 	objective?: ReplayObjectiveConfig;
 	/** Injected rng; defaults to a fresh seeded rng from `seed`. */
 	rng?: SeededRng;
+	/** The hand-written policy iteration 0 rolls out with and dreaming starts from; defaults to `DEFAULT_POLICY`. */
+	initialPolicy?: ExplorationPolicy;
+	/**
+	 * The fixed-exploration control: never dream. Every iteration redeploys
+	 * `initialPolicy`; the pool still grows and every rollout is unchanged, so the
+	 * control shares the dreaming run's iteration 0 byte for byte.
+	 */
+	fixedPolicy?: boolean;
 	/**
 	 * Optional injected candidate proposer (the flag-gated LLM dreamer), threaded
 	 * into `runDreaming`. It must return already-parsed, in-bounds policies; they
@@ -63,22 +83,65 @@ export interface DreamLoopOptions {
 	proposeCandidates?: (current: ExplorationPolicy, m: number, rng: SeededRng) => ExplorationPolicy[];
 }
 
+/** Actual `RunAgentHandler` invocations per role, retries included. All zero on the local path. */
+export interface DreamHandlerCalls {
+	proposer: number;
+	dreamer: number;
+	guidance: number;
+}
+
+/**
+ * One rollout of a loop, as the experiment runner records it. `probes` (revealed
+ * non-root nodes, `tree.size - 1`) is the discovery compute on every path; handler
+ * calls and tokens are cost and are never mixed into that axis. Collecting a
+ * record touches no rng, tree or persistence, so the trees a loop grows are
+ * byte-identical with and without the records.
+ */
+export interface DreamRoundRecord {
+	/** 0 is the initial rollout; the paper's round is `iteration + 1`. */
+	iteration: number;
+	treeId: string;
+	/** The policy that grew this tree. */
+	policyId: string;
+	/** `ExploreResult.bestScore`: the best valid node score of this rollout (0 when none). */
+	roundBest: number;
+	/** `ExploreResult.revealedCount` = `tree.size - 1`: evaluated attempts. */
+	probes: number;
+	/** `ExploreResult.rounds`: online decision rounds the policy took. */
+	decisionRounds: number;
+	/**
+	 * Trees in the pool the dreaming step froze before this rollout. On iteration 0
+	 * and on a fixed-policy iteration nothing is frozen, so it is the iteration
+	 * index, which equals the pool size in a fresh store.
+	 */
+	poolSize: number;
+	/** Child token usage per role; 0/0/0 on the local path. */
+	tokens: { rollout: number; dreamer: number; guidance: number };
+	handlerCalls: DreamHandlerCalls;
+	/** The dreaming step that chose this rollout's policy; null at iteration 0 and on every fixed-policy iteration. */
+	dreaming: { currentScore: number; chosenScore: number; improved: boolean; candidates: number } | null;
+}
+
 export interface DreamLoopResult {
 	runId: string;
 	task: DreamTaskId;
 	seed: number | string;
 	mode: DreamMode;
 	iterations: number;
+	/** True when the run was the fixed-exploration control and never dreamed. */
+	fixedPolicy: boolean;
 	/** Tree ids in rollout order (iteration 0 first). */
 	treeIds: string[];
+	/** One record per rollout, iteration 0 first (length `iterations + 1`). */
+	rounds: DreamRoundRecord[];
 	initialPolicyId: string;
-	/** The default policy's mean replay objective on the final pool. */
+	/** The initial policy's mean replay objective on the final pool. */
 	initialPolicyScore: number;
 	finalPolicy: ExplorationPolicy;
 	finalPolicyId: string;
 	/** The chosen policy's mean replay objective on the final pool; never below `initialPolicyScore`. */
 	finalPolicyScore: number;
-	/** True only when the chosen policy strictly beats the default on the final pool. */
+	/** True only when the chosen policy strictly beats the initial one on the final pool. */
 	improved: boolean;
 	/** Best valid node score across every rollout of the run. */
 	bestNodeScore: number;
@@ -98,7 +161,9 @@ export function runDreamLoop(options: DreamLoopOptions): DreamLoopResult {
 	const objective = options.objective ?? DEFAULT_OBJECTIVE;
 	const rng = options.rng ?? createSeededRng(options.seed);
 	const iterations = Math.max(0, Math.trunc(options.iterations));
-	const scoreCfg = { k2: options.k2, objective };
+	const scoreCfg = { k1: options.k1, k2: options.k2, objective };
+	const initialPolicy = options.initialPolicy ?? DEFAULT_POLICY;
+	const fixedPolicy = options.fixedPolicy === true;
 
 	return withSpan(
 		"dream.run",
@@ -111,9 +176,11 @@ export function runDreamLoop(options: DreamLoopOptions): DreamLoopResult {
 			"dream.dreams": options.dreams,
 			"dream.iterations": iterations,
 			"dream.mode": "local",
+			"dream.fixed_policy": fixedPolicy,
 		},
 		() => {
 			const treeIds: string[] = [];
+			const rounds: DreamRoundRecord[] = [];
 			const chosenPolicies: ExplorationPolicy[] = [];
 			let bestNodeScore = 0;
 			let seenBest = false;
@@ -134,32 +201,61 @@ export function runDreamLoop(options: DreamLoopOptions): DreamLoopResult {
 					iteration,
 				});
 
-			const noteBest = (score: number): void => {
-				if (!seenBest || score > bestNodeScore) {
-					bestNodeScore = score;
+			const record = (
+				result: ExploreResult,
+				policy: ExplorationPolicy,
+				iteration: number,
+				poolSize: number,
+				dreaming: DreamRoundRecord["dreaming"],
+			): void => {
+				treeIds.push(result.treeId);
+				tokens += result.tokens;
+				if (!seenBest || result.bestScore > bestNodeScore) {
+					bestNodeScore = result.bestScore;
 					seenBest = true;
 				}
+				rounds.push({
+					iteration,
+					treeId: result.treeId,
+					policyId: policyId(policy),
+					roundBest: result.bestScore,
+					probes: result.revealedCount,
+					decisionRounds: result.rounds,
+					poolSize,
+					tokens: { rollout: result.tokens, dreamer: 0, guidance: 0 },
+					handlerCalls: { proposer: 0, dreamer: 0, guidance: 0 },
+					dreaming,
+				});
 			};
 
-			const first = rollout(DEFAULT_POLICY, 0);
-			treeIds.push(first.treeId);
-			tokens += first.tokens;
-			noteBest(first.bestScore);
+			record(rollout(initialPolicy, 0), initialPolicy, 0, 0, null);
 
-			let current: ExplorationPolicy = DEFAULT_POLICY;
+			let current: ExplorationPolicy = initialPolicy;
 			for (let iteration = 1; iteration <= iterations; iteration++) {
-				const pool = freezePool(options.dir, taskId);
-				const dream = runDreaming({
-					current,
-					pool,
-					dreams: options.dreams,
-					k2: options.k2,
-					rng: rng.fork(`dream:${iteration}`),
-					objective,
-					...(options.proposeCandidates ? { proposeCandidates: options.proposeCandidates } : {}),
-				});
-				current = dream.chosenPolicy;
-				chosenPolicies.push(current);
+				let poolSize = iteration;
+				let dreaming: DreamRoundRecord["dreaming"] = null;
+				if (!fixedPolicy) {
+					const pool = freezePool(options.dir, taskId);
+					poolSize = pool.length;
+					const dream = runDreaming({
+						current,
+						pool,
+						dreams: options.dreams,
+						k1: options.k1,
+						k2: options.k2,
+						rng: rng.fork(`dream:${iteration}`),
+						objective,
+						...(options.proposeCandidates ? { proposeCandidates: options.proposeCandidates } : {}),
+					});
+					current = dream.chosenPolicy;
+					chosenPolicies.push(current);
+					dreaming = {
+						currentScore: dream.currentScore,
+						chosenScore: dream.chosenScore,
+						improved: dream.improved,
+						candidates: dream.candidatePolicyIds.length,
+					};
+				}
 				const redeployed = withSpan(
 					"dream.redeploy",
 					{
@@ -167,6 +263,7 @@ export function runDreamLoop(options: DreamLoopOptions): DreamLoopResult {
 						"dream.k1": options.k1,
 						"dream.workers": options.workers,
 						"dream.iteration": iteration,
+						"dream.fixed_policy": fixedPolicy,
 					},
 					(span) => {
 						const result = rollout(current, iteration);
@@ -174,21 +271,21 @@ export function runDreamLoop(options: DreamLoopOptions): DreamLoopResult {
 						return result;
 					},
 				);
-				treeIds.push(redeployed.treeId);
-				tokens += redeployed.tokens;
-				noteBest(redeployed.bestScore);
+				record(redeployed, current, iteration, poolSize, dreaming);
 			}
 
 			const finalPool = freezePool(options.dir, taskId);
-			const selection = selectBestPolicy(DEFAULT_POLICY, chosenPolicies, finalPool, scoreCfg);
+			const selection = selectBestPolicy(initialPolicy, chosenPolicies, finalPool, scoreCfg);
 			return {
 				runId: `${taskId}-s${options.seed}-r${options.clock()}`,
 				task: taskId,
 				seed: options.seed,
 				mode: "local" satisfies DreamMode,
 				iterations,
+				fixedPolicy,
 				treeIds,
-				initialPolicyId: policyId(DEFAULT_POLICY),
+				rounds,
+				initialPolicyId: policyId(initialPolicy),
 				initialPolicyScore: selection.currentScore,
 				finalPolicy: selection.chosenPolicy,
 				finalPolicyId: policyId(selection.chosenPolicy),

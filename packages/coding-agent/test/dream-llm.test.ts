@@ -14,19 +14,26 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { proposePolicies, runDreaming } from "../src/core/dream/improve.js";
 import { projectProposeParams } from "../src/core/dream/interpreter.js";
 import {
+	buildGuidanceInput,
 	createLlmProposer,
+	DREAMER_PROMPT_HEADER,
 	DreamAbortError,
 	type DreamLoopWithAgentOptions,
+	type DreamProgressEvent,
+	GUIDANCE_PROMPT_HEADER,
+	type GuidanceInput,
 	isDreamAbortError,
+	PROPOSER_PROMPT_HEADER,
 	proposePoliciesWithAgent,
 	runDreamLoopWithAgent,
 	runOnlineExplorationWithAgent,
 } from "../src/core/dream/llm.js";
+import type { DreamHandlerCalls } from "../src/core/dream/loop.js";
 import { DEFAULT_POLICY, type ExplorationPolicy, policyId } from "../src/core/dream/policy.js";
 import { asyncOf, createLocalProposer } from "../src/core/dream/proposer.js";
 import { createSeededRng } from "../src/core/dream/rng.js";
 import { runOnlineExploration } from "../src/core/dream/rollout.js";
-import { buildRecordedTree, type RecordedTree } from "../src/core/dream/store.js";
+import { buildRecordedTree, DreamStoreError, listTrees, type RecordedTree } from "../src/core/dream/store.js";
 import type { ScoredTask } from "../src/core/dream/task.js";
 import { resolveTask } from "../src/core/dream/tasks/index.js";
 import type { NodeRecord, TreeRecord } from "../src/core/dream/types.js";
@@ -90,24 +97,56 @@ function result(over: Partial<RunAgentResult> & Pick<RunAgentResult, "status">):
 	};
 }
 
-/** A stub RunAgentHandler that answers by role (proposer vs. dreamer) and tallies the tokens it reports. */
+type StubRole = keyof DreamHandlerCalls;
+type StubAnswer = { output?: string; status?: RunAgentResult["status"]; tokens?: number };
+const DEFAULT_INSIGHTS = "Sets with a wide spread of gaps scored higher; dense arithmetic runs scored lower.";
+
+/** Classify a child prompt by the role header `llm.ts` puts on its first line; anything else is a test failure. */
+function roleOf(prompt: string): StubRole {
+	if (prompt.startsWith(GUIDANCE_PROMPT_HEADER)) return "guidance";
+	if (prompt.startsWith(DREAMER_PROMPT_HEADER)) return "dreamer";
+	if (prompt.startsWith(PROPOSER_PROMPT_HEADER)) return "proposer";
+	throw new Error(`unclassified child prompt: ${prompt.slice(0, 60)}`);
+}
+
+/**
+ * A stub RunAgentHandler that answers by role (proposer, dreamer, guidance writer),
+ * records every prompt it saw, and tallies calls and the tokens it reports per role.
+ * It never spends a real token.
+ */
 function makeStub(opts: {
-	proposerOutput?: (call: number) => { output?: string; status?: RunAgentResult["status"]; tokens?: number };
-	dreamerOutput?: (call: number) => { output?: string; status?: RunAgentResult["status"]; tokens?: number };
-}): { handler: RunAgentHandler; totalTokens: () => number; calls: () => number } {
+	proposerOutput?: (call: number) => StubAnswer;
+	dreamerOutput?: (call: number) => StubAnswer;
+	guidanceOutput?: (call: number) => StubAnswer;
+}): {
+	handler: RunAgentHandler;
+	totalTokens: () => number;
+	calls: () => number;
+	roleCalls: DreamHandlerCalls;
+	roleTokens: DreamHandlerCalls;
+	prompts: Record<StubRole, string[]>;
+} {
 	let total = 0;
 	let calls = 0;
-	let proposerCalls = 0;
-	let dreamerCalls = 0;
+	const roleCalls: DreamHandlerCalls = { proposer: 0, dreamer: 0, guidance: 0 };
+	const roleTokens: DreamHandlerCalls = { proposer: 0, dreamer: 0, guidance: 0 };
+	const prompts: Record<StubRole, string[]> = { proposer: [], dreamer: [], guidance: [] };
 	const handler: RunAgentHandler = async (request) => {
 		calls += 1;
-		const isDreamer = request.prompt.includes("policy dreamer");
-		const spec = isDreamer ? opts.dreamerOutput?.(++dreamerCalls) : opts.proposerOutput?.(++proposerCalls);
+		const role = roleOf(request.prompt);
+		roleCalls[role] += 1;
+		prompts[role].push(request.prompt);
+		let spec: StubAnswer | undefined;
+		if (role === "dreamer") spec = opts.dreamerOutput?.(roleCalls.dreamer);
+		else if (role === "guidance") {
+			spec = opts.guidanceOutput?.(roleCalls.guidance) ?? { output: JSON.stringify({ insights: DEFAULT_INSIGHTS }) };
+		} else spec = opts.proposerOutput?.(roleCalls.proposer);
 		const tokens = spec?.tokens ?? 100;
 		total += tokens;
+		roleTokens[role] += tokens;
 		return result({ status: spec?.status ?? "completed", output: spec?.output ?? "", usage: usage(tokens) });
 	};
-	return { handler, totalTokens: () => total, calls: () => calls };
+	return { handler, totalTokens: () => total, calls: () => calls, roleCalls, roleTokens, prompts };
 }
 
 function liveController(): AbortController {
@@ -152,7 +191,7 @@ function synthPool(): RecordedTree[] {
 function policy(over: Partial<ExplorationPolicy>): ExplorationPolicy {
 	return { ...DEFAULT_POLICY, ...over };
 }
-const CFG = { k2: 10, objective: { beta1: 0.01, beta2: 0.02 } };
+const CFG = { k1: 5, k2: 10, objective: { beta1: 0.05, beta2: 0.05 } };
 const CURRENT = policy({ selectionRule: "explore-root", stopRule: "patience", beta: 1, batchSize: 1 });
 const WORSE = policy({ selectionRule: "best-first", stopRule: "never", batchSize: 1 });
 
@@ -327,6 +366,7 @@ describe("soundness: a bad LLM policy can never be deployed", () => {
 			current: CURRENT,
 			pool: synthPool(),
 			dreams: 1,
+			k1: CFG.k1,
 			k2: CFG.k2,
 			rng: createSeededRng(1),
 			objective: CFG.objective,
@@ -335,6 +375,36 @@ describe("soundness: a bad LLM policy can never be deployed", () => {
 		expect(selection.improved).toBe(false);
 		expect(selection.chosenPolicyId).toBe(policyId(CURRENT));
 		expect(selection.chosenScore).toBeGreaterThanOrEqual(selection.currentScore);
+		expect(selection.chosenQuality).toBeGreaterThanOrEqual(selection.currentQuality);
+	});
+
+	it("keeps the current policy when the dreamer returns one that collapses exploration to a lower best", async () => {
+		// On the synthetic tree a one-round policy reveals only the first child (0.5) while the current
+		// policy reaches 0.9; the quality guard rejects it before V is even compared.
+		const collapsing = policy({ selectionRule: "explore-root", stopRule: "fixed-rounds", beta: 1, batchSize: 1 });
+		const exploring = policy({ selectionRule: "explore-root", stopRule: "never", batchSize: 1 });
+		const dreamed = await proposePoliciesWithAgent(
+			makeStub({ dreamerOutput: () => ({ output: JSON.stringify([collapsing]), tokens: 5 }) }).handler,
+			exploring,
+			1,
+			{ scope: SCOPE, signal: liveController().signal, tokenBudget: 200_000, localFallbackRng: createSeededRng(1) },
+		);
+		expect(dreamed.candidates.map(policyId)).toEqual([policyId(collapsing)]);
+		const selection = runDreaming({
+			current: exploring,
+			pool: synthPool(),
+			dreams: 1,
+			k1: CFG.k1,
+			k2: CFG.k2,
+			rng: createSeededRng(1),
+			// A pathological beta1 that would make the cheaper policy win on V alone.
+			objective: { beta1: 5, beta2: 0 },
+			proposeCandidates: () => dreamed.candidates,
+		});
+		expect(selection.chosenPolicyId).toBe(policyId(exploring));
+		expect(selection.improved).toBe(false);
+		expect(selection.qualityRejected).toBe(1);
+		expect(selection.currentQuality).toBe(1);
 	});
 
 	it("drops a policy carrying an extra key on parse so it never reaches candidates", async () => {
@@ -456,6 +526,27 @@ describe("runDreamLoopWithAgent (end to end, stub handler)", () => {
 		expect(c.tokens).toBe(200 * c.iterations);
 	});
 
+	it("grows the same trees and round table for one seed under two clocks on the local-proposer path", async () => {
+		const run = (dir: string, clockMs: number) =>
+			runDreamLoopWithAgent(
+				loopOptions({
+					dir,
+					clock: () => clockMs,
+					useLlmProposer: false,
+					useLlmDreamer: false,
+					runAgent: makeStub({}).handler,
+				}),
+			);
+		const a = await run(scratch("dream-clock-a-"), 1_789_842_143_996);
+		const b = await run(scratch("dream-clock-b-"), 1);
+		expect(b.treeIds).not.toEqual(a.treeIds);
+		const clockFree = (result: typeof a) => result.rounds.map(({ treeId: _treeId, ...rest }) => rest);
+		expect(clockFree(b)).toEqual(clockFree(a));
+		expect(b.finalPolicyId).toBe(a.finalPolicyId);
+		expect(b.finalPolicyScore).toBe(a.finalPolicyScore);
+		expect(b.bestNodeScore).toBe(a.bestNodeScore);
+	});
+
 	it("stops promptly and records the abort when a child returns aborted", async () => {
 		const stub = makeStub({ proposerOutput: () => ({ status: "aborted", tokens: 10 }) });
 		const spans: SpanEndRecord[] = [];
@@ -498,5 +589,475 @@ describe("runDreamLoopWithAgent (end to end, stub handler)", () => {
 		expect(run!.attrs["dream.stopped"]).toBe("aborted");
 		// The local proposer never ran: no rollout tree was written.
 		expect(existsSync(join(dreamDir, "trees"))).toBe(false);
+	});
+});
+
+const ARTIFACT = JSON.stringify({ set: [0, 1, 2, 4, 9] });
+const REVISED = JSON.stringify([policy({ stopRule: "never" })]);
+const GUIDANCE_PREFIX = "Directional insights from prior trajectories";
+
+function sumRounds(
+	rounds: readonly {
+		tokens: { rollout: number; dreamer: number; guidance: number };
+		handlerCalls: DreamHandlerCalls;
+	}[],
+): { tokens: number; calls: DreamHandlerCalls } {
+	const calls: DreamHandlerCalls = { proposer: 0, dreamer: 0, guidance: 0 };
+	let tokens = 0;
+	for (const round of rounds) {
+		tokens += round.tokens.rollout + round.tokens.dreamer + round.tokens.guidance;
+		calls.proposer += round.handlerCalls.proposer;
+		calls.dreamer += round.handlerCalls.dreamer;
+		calls.guidance += round.handlerCalls.guidance;
+	}
+	return { tokens, calls };
+}
+
+async function captureSpans<T>(run: () => Promise<T>): Promise<{ value: T; spans: SpanEndRecord[] }> {
+	const spans: SpanEndRecord[] = [];
+	const unsubscribe = addSpanSink((record) => spans.push(record));
+	try {
+		return { value: await run(), spans };
+	} finally {
+		unsubscribe();
+	}
+}
+
+function agentOptions(over: Partial<DreamLoopWithAgentOptions>): DreamLoopWithAgentOptions {
+	return {
+		runAgent: makeStub({}).handler,
+		task: resolveTask({ task: "sum-difference" }),
+		taskId: "sum-difference",
+		seed: 7,
+		clock: () => FIXED_CLOCK,
+		workers: 3,
+		k1: 5,
+		k2: 10,
+		dreams: 4,
+		iterations: 2,
+		dir: dreamDir,
+		useLlmProposer: true,
+		useLlmDreamer: true,
+		scope: SCOPE,
+		signal: liveController().signal,
+		childTokenBudget: 500_000,
+		...over,
+	};
+}
+
+describe("runDreamLoopWithAgent: fixed policy, per-round records, shared round 1", () => {
+	it("fixedPolicy never dreams: no dreamer call, no dreaming spans or events, the initial policy every round", async () => {
+		const stub = makeStub({
+			proposerOutput: () => ({ output: ARTIFACT, tokens: 10 }),
+			dreamerOutput: () => ({ output: REVISED }),
+		});
+		const events: DreamProgressEvent[] = [];
+		const { value: run, spans } = await captureSpans(() =>
+			withSpan("test.turn", {}, () =>
+				runDreamLoopWithAgent(
+					agentOptions({ runAgent: stub.handler, fixedPolicy: true, onProgress: (event) => events.push(event) }),
+				),
+			),
+		);
+		expect(run.fixedPolicy).toBe(true);
+		expect(run.iterations).toBe(2);
+		expect(run.rounds).toHaveLength(3);
+		expect(run.treeIds).toHaveLength(3);
+		expect(run.finalPolicyId).toBe(run.initialPolicyId);
+		expect(run.finalPolicyId).toBe(policyId(DEFAULT_POLICY));
+		expect(run.improved).toBe(false);
+		expect(run.finalPolicyScore).toBe(run.initialPolicyScore);
+		expect(run.rounds.every((round) => round.dreaming === null)).toBe(true);
+		expect(run.rounds.every((round) => round.policyId === run.initialPolicyId)).toBe(true);
+		expect(run.rounds.map((round) => round.iteration)).toEqual([0, 1, 2]);
+		expect(run.rounds.map((round) => round.poolSize)).toEqual([0, 1, 2]);
+		expect(stub.roleCalls.dreamer).toBe(0);
+		expect(stub.roleCalls.guidance).toBe(0);
+		expect(run.rounds.every((round) => round.handlerCalls.dreamer === 0 && round.tokens.dreamer === 0)).toBe(true);
+		expect(events.some((event) => event.type === "phase" && event.phase === "dreaming")).toBe(false);
+		expect(events.filter((event) => event.type === "phase" && event.phase === "redeploying")).toHaveLength(2);
+
+		const dreamRun = spans.find((span) => span.name === "dream.run")!;
+		expect(dreamRun.attrs["dream.fixed_policy"]).toBe(true);
+		const trace = spans.filter((span) => span.traceId === dreamRun.traceId);
+		expect(trace.some((span) => span.name === "dream.llm_dream")).toBe(false);
+		expect(trace.some((span) => span.name === "dream.dream")).toBe(false);
+		expect(trace.some((span) => span.name === "dream.replay")).toBe(false);
+		const redeploys = trace.filter((span) => span.name === "dream.redeploy");
+		expect(redeploys).toHaveLength(2);
+		expect(redeploys.every((span) => span.attrs["dream.fixed_policy"] === true)).toBe(true);
+		expect(redeploys.every((span) => span.attrs["dream.policy_id"] === run.initialPolicyId)).toBe(true);
+	});
+
+	it("shares iteration 0 byte for byte between a fixed and a dreaming run and records dreaming only where it ran", async () => {
+		const proposerOutput = () => ({ output: ARTIFACT, tokens: 10 });
+		const fixedDir = scratch("dream-fixed-");
+		const dreamingDir = scratch("dream-dreaming-");
+		const fixed = await runDreamLoopWithAgent(
+			agentOptions({ dir: fixedDir, fixedPolicy: true, runAgent: makeStub({ proposerOutput }).handler }),
+		);
+		const dreaming = await runDreamLoopWithAgent(
+			agentOptions({
+				dir: dreamingDir,
+				runAgent: makeStub({ proposerOutput, dreamerOutput: () => ({ output: REVISED }) }).handler,
+			}),
+		);
+		expect(dreaming.fixedPolicy).toBe(false);
+		expect(dreaming.treeIds).toEqual(fixed.treeIds);
+		expect(readTreeFiles(dreamingDir, dreaming.treeIds[0]!)).toEqual(readTreeFiles(fixedDir, fixed.treeIds[0]!));
+		expect(dreaming.rounds[0]).toEqual(fixed.rounds[0]);
+		expect(dreaming.rounds[0]!.dreaming).toBeNull();
+		expect(dreaming.rounds[1]!.dreaming).not.toBeNull();
+		expect(dreaming.rounds[1]!.dreaming!.candidates).toBeGreaterThan(0);
+		expect(dreaming.rounds[1]!.handlerCalls.dreamer).toBe(1);
+		expect(dreaming.rounds[1]!.tokens.dreamer).toBe(100);
+		expect(fixed.rounds[1]!.handlerCalls.dreamer).toBe(0);
+	});
+
+	it("honours initialPolicy on every tree header and sums per-role tokens and calls to the run totals", async () => {
+		const custom = policy({ batchSize: 2, beta: 3, stopRule: "fixed-rounds" });
+		const stub = makeStub({
+			proposerOutput: () => ({ output: ARTIFACT, tokens: 7 }),
+			dreamerOutput: () => ({ output: REVISED, tokens: 300 }),
+		});
+		const run = await runDreamLoopWithAgent(agentOptions({ runAgent: stub.handler, initialPolicy: custom }));
+		expect(run.initialPolicyId).toBe(policyId(custom));
+		expect(run.rounds[0]!.policyId).toBe(policyId(custom));
+		expect(listTrees(dreamDir).map((tree) => tree.treeId)).toEqual([...run.treeIds].sort());
+		expect(listTrees(dreamDir).find((tree) => tree.iteration === 0)!.policyId).toBe(policyId(custom));
+		for (const [index, tree] of listTrees(dreamDir).entries()) {
+			const round = run.rounds.find((candidate) => candidate.treeId === tree.treeId)!;
+			expect(round, `round for tree ${index}`).toBeDefined();
+			expect(round.probes).toBe(tree.nodeCount - 1);
+			expect(round.roundBest).toBe(tree.bestScore);
+			expect(round.policyId).toBe(tree.policyId);
+		}
+		const totals = sumRounds(run.rounds);
+		expect(totals.tokens).toBe(run.tokens);
+		expect(run.tokens).toBe(stub.totalTokens());
+		expect(totals.calls).toEqual(stub.roleCalls);
+		expect(run.rounds.map((round) => round.tokens.dreamer)).toEqual([0, 300, 300]);
+		expect(run.rounds.every((round) => round.tokens.rollout === round.probes * 7)).toBe(true);
+		expect(run.rounds.every((round) => round.tokens.guidance === 0 && round.handlerCalls.guidance === 0)).toBe(true);
+	});
+
+	it("records the local path with zero calls and tokens, matching the persisted trees", async () => {
+		const stub = makeStub({});
+		const run = await runDreamLoopWithAgent(
+			agentOptions({ runAgent: stub.handler, useLlmProposer: false, useLlmDreamer: false }),
+		);
+		expect(stub.calls()).toBe(0);
+		expect(run.fixedPolicy).toBe(false);
+		expect(run.rounds.map((round) => round.treeId)).toEqual(run.treeIds);
+		expect(
+			run.rounds.every((round) => round.tokens.rollout + round.tokens.dreamer + round.tokens.guidance === 0),
+		).toBe(true);
+		expect(
+			run.rounds.every(
+				(round) => round.handlerCalls.proposer + round.handlerCalls.dreamer + round.handlerCalls.guidance === 0,
+			),
+		).toBe(true);
+		expect(run.rounds[0]!.dreaming).toBeNull();
+		expect(run.rounds[1]!.dreaming!.candidates).toBe(4);
+		expect(run.rounds[2]!.dreaming!.candidates).toBe(4);
+		expect(run.tokens).toBe(0);
+	});
+
+	it("counts retried handler invocations: one failing then one completing child is two proposer calls for one probe", async () => {
+		const stub = makeStub({
+			proposerOutput: (call) =>
+				call % 2 === 1 ? { status: "error", tokens: 3 } : { status: "completed", output: ARTIFACT, tokens: 5 },
+		});
+		const run = await runDreamLoopWithAgent(
+			agentOptions({ runAgent: stub.handler, iterations: 0, k1: 1, workers: 1, useLlmDreamer: false }),
+		);
+		expect(run.rounds).toHaveLength(1);
+		expect(run.rounds[0]!.probes).toBe(1);
+		expect(run.rounds[0]!.handlerCalls).toEqual({ proposer: 2, dreamer: 0, guidance: 0 });
+		expect(run.rounds[0]!.tokens.rollout).toBe(8);
+		expect(run.tokens).toBe(8);
+		expect(stub.roleCalls.proposer).toBe(2);
+	});
+
+	it("adopts a shared initialRollout: no round-1 rollout, its record copied, later rounds still counted", async () => {
+		const proposerOutput = () => ({ output: ARTIFACT, tokens: 10 });
+		const task = resolveTask({ task: "sum-difference" });
+		const seedStub = makeStub({ proposerOutput });
+		const shared = await runOnlineExplorationWithAgent(
+			{
+				task,
+				taskId: "sum-difference",
+				seed: 7,
+				rng: createSeededRng(7).fork("iter:0"),
+				clock: () => FIXED_CLOCK,
+				workers: 3,
+				k1: 5,
+				dir: dreamDir,
+				policy: DEFAULT_POLICY,
+				iteration: 0,
+			},
+			createLlmProposer(seedStub.handler, task, { scope: SCOPE, signal: liveController().signal, tokenBudget: 1 }),
+		);
+		const initialRollout = {
+			treeId: shared.treeId,
+			bestScore: shared.bestScore,
+			revealedCount: shared.revealedCount,
+			rounds: shared.rounds,
+			tokens: shared.tokens,
+			handlerCalls: { proposer: seedStub.roleCalls.proposer, dreamer: 0, guidance: 0 },
+		};
+		const stub = makeStub({ proposerOutput, dreamerOutput: () => ({ output: REVISED }) });
+		const events: DreamProgressEvent[] = [];
+		const run = await runDreamLoopWithAgent(
+			agentOptions({ runAgent: stub.handler, initialRollout, onProgress: (event) => events.push(event) }),
+		);
+		expect(run.treeIds[0]).toBe(shared.treeId);
+		expect(run.treeIds).toHaveLength(3);
+		expect(run.rounds[0]).toEqual({
+			iteration: 0,
+			treeId: shared.treeId,
+			policyId: policyId(DEFAULT_POLICY),
+			roundBest: shared.bestScore,
+			probes: shared.revealedCount,
+			decisionRounds: shared.rounds,
+			poolSize: 0,
+			tokens: { rollout: shared.tokens, dreamer: 0, guidance: 0 },
+			handlerCalls: initialRollout.handlerCalls,
+			dreaming: null,
+		});
+		// The loop's own stub saw only iterations 1 and 2.
+		expect(stub.roleCalls.proposer).toBe(run.rounds[1]!.handlerCalls.proposer + run.rounds[2]!.handlerCalls.proposer);
+		expect(stub.roleCalls.proposer).toBeGreaterThan(0);
+		expect(run.tokens).toBe(shared.tokens + stub.totalTokens());
+		const first = events[0];
+		expect(first?.type === "phase" && first.phase === "rollout" && first.treeId).toBe(shared.treeId);
+		// The pool the dreaming step froze at iteration 1 held exactly the shared tree.
+		expect(run.rounds[1]!.poolSize).toBe(1);
+		expect(listTrees(dreamDir)).toHaveLength(3);
+
+		// A shared rollout whose tree is not in the store is refused before any call.
+		const missing = makeStub({ proposerOutput });
+		await expect(
+			runDreamLoopWithAgent(
+				agentOptions({
+					runAgent: missing.handler,
+					dir: scratch("dream-missing-"),
+					initialRollout: { ...initialRollout, treeId: "nope" },
+				}),
+			),
+		).rejects.toBeInstanceOf(DreamStoreError);
+		expect(missing.calls()).toBe(0);
+	});
+});
+
+describe("runDreamLoopWithAgent: semantic guidance (the ablation)", () => {
+	it("rejects semanticGuidance without useLlmProposer before any span, call or tree file", async () => {
+		const stub = makeStub({});
+		const { spans } = await captureSpans(async () => {
+			await expect(
+				runDreamLoopWithAgent(
+					agentOptions({ runAgent: stub.handler, useLlmProposer: false, semanticGuidance: true }),
+				),
+			).rejects.toThrow(/semanticGuidance requires useLlmProposer/);
+		});
+		expect(stub.calls()).toBe(0);
+		expect(spans.some((span) => span.name === "dream.run")).toBe(false);
+		expect(existsSync(join(dreamDir, "trees"))).toBe(false);
+	});
+
+	it("leaves iteration 0's prompt byte-identical and inserts injected insights after the header from iteration 1", async () => {
+		const proposerOutput = () => ({ output: ARTIFACT, tokens: 10 });
+		const dreamerOutput = () => ({ output: REVISED });
+		const plain = makeStub({ proposerOutput, dreamerOutput });
+		const plainRun = await runDreamLoopWithAgent(
+			agentOptions({ runAgent: plain.handler, dir: scratch("dream-plain-") }),
+		);
+		const inputs: GuidanceInput[] = [];
+		const guided = makeStub({ proposerOutput, dreamerOutput });
+		const guidedRun = await runDreamLoopWithAgent(
+			agentOptions({
+				runAgent: guided.handler,
+				dir: scratch("dream-guided-"),
+				semanticGuidance: {
+					insights: async (input) => {
+						inputs.push(input);
+						return { text: `Iteration ${input.iteration}: ${DEFAULT_INSIGHTS}`, tokens: 0 };
+					},
+				},
+			}),
+		);
+		const firstRound = plainRun.rounds[0]!.handlerCalls.proposer;
+		expect(firstRound).toBeGreaterThan(0);
+		expect(guidedRun.rounds[0]!.handlerCalls.proposer).toBe(firstRound);
+		expect(guided.prompts.proposer.slice(0, firstRound)).toEqual(plain.prompts.proposer.slice(0, firstRound));
+		expect(plain.prompts.proposer.some((prompt) => prompt.includes(GUIDANCE_PREFIX))).toBe(false);
+		const later = guided.prompts.proposer.slice(firstRound);
+		expect(later.length).toBeGreaterThan(0);
+		for (const prompt of later) {
+			const header = prompt.indexOf(PROPOSER_PROMPT_HEADER);
+			const guidance = prompt.indexOf(GUIDANCE_PREFIX);
+			const body = prompt.indexOf("Improve the candidate below");
+			expect(header).toBe(0);
+			expect(guidance).toBeGreaterThan(header);
+			expect(body).toBeGreaterThan(guidance);
+			expect(prompt).toContain(DEFAULT_INSIGHTS);
+		}
+		expect(later.some((prompt) => prompt.includes("Iteration 1:"))).toBe(true);
+		expect(later.some((prompt) => prompt.includes("Iteration 2:"))).toBe(true);
+		// The injected writer replaced the child call: no guidance handler call, no guidance tokens.
+		expect(guided.roleCalls.guidance).toBe(0);
+		expect(guidedRun.rounds.every((round) => round.tokens.guidance === 0 && round.handlerCalls.guidance === 0)).toBe(
+			true,
+		);
+		expect(inputs.map((input) => [input.iteration, input.poolSize, input.taskId])).toEqual([
+			[1, 1, "sum-difference"],
+			[2, 2, "sum-difference"],
+		]);
+		expect(guidedRun.treeIds[0]).toBe(plainRun.treeIds[0]);
+	});
+
+	it("asks one guidance-writer child per iteration >= 1, spans it, and accounts its tokens and calls", async () => {
+		const stub = makeStub({
+			proposerOutput: () => ({ output: ARTIFACT, tokens: 10 }),
+			dreamerOutput: () => ({ output: REVISED, tokens: 20 }),
+			guidanceOutput: () => ({ output: JSON.stringify({ insights: DEFAULT_INSIGHTS }), tokens: 77 }),
+		});
+		const { value: run, spans } = await captureSpans(() =>
+			runDreamLoopWithAgent(agentOptions({ runAgent: stub.handler, semanticGuidance: true })),
+		);
+		expect(stub.roleCalls.guidance).toBe(2);
+		expect(stub.prompts.guidance.every((prompt) => prompt.startsWith(GUIDANCE_PROMPT_HEADER))).toBe(true);
+		expect(stub.prompts.guidance.every((prompt) => prompt.includes('"trees"'))).toBe(true);
+		expect(run.rounds.map((round) => round.handlerCalls.guidance)).toEqual([0, 1, 1]);
+		expect(run.rounds.map((round) => round.tokens.guidance)).toEqual([0, 77, 77]);
+		expect(run.tokens).toBe(stub.totalTokens());
+		const guidanceSpans = spans.filter((span) => span.name === "dream.llm_guidance");
+		expect(guidanceSpans).toHaveLength(2);
+		expect(guidanceSpans.map((span) => span.attrs["dream.iteration"])).toEqual([1, 2]);
+		expect(guidanceSpans.map((span) => span.attrs["dream.pool_size"])).toEqual([1, 2]);
+		expect(guidanceSpans.every((span) => span.attrs["dream.llm_fallback"] === false)).toBe(true);
+		expect(guidanceSpans.every((span) => span.attrs["dream.tokens"] === 77)).toBe(true);
+		const dreamRun = spans.find((span) => span.name === "dream.run")!;
+		expect(
+			guidanceSpans.every((span) => span.traceId === dreamRun.traceId && span.parentSpanId === dreamRun.spanId),
+		).toBe(true);
+		const firstRound = run.rounds[0]!.handlerCalls.proposer;
+		expect(stub.prompts.proposer.slice(firstRound).every((prompt) => prompt.includes(DEFAULT_INSIGHTS))).toBe(true);
+		expect(stub.prompts.proposer.slice(0, firstRound).some((prompt) => prompt.includes(GUIDANCE_PREFIX))).toBe(false);
+	});
+
+	it("falls back to empty guidance when the writer fails twice, and aborts the run when it is aborted", async () => {
+		const failing = makeStub({
+			proposerOutput: () => ({ output: ARTIFACT, tokens: 10 }),
+			dreamerOutput: () => ({ output: REVISED }),
+			guidanceOutput: () => ({ status: "error", tokens: 4 }),
+		});
+		const { value: run, spans } = await captureSpans(() =>
+			runDreamLoopWithAgent(agentOptions({ runAgent: failing.handler, semanticGuidance: true })),
+		);
+		expect(run.rounds).toHaveLength(3);
+		// One retry per iteration: two guidance calls, summed tokens, no guidance in any proposer prompt.
+		expect(run.rounds.map((round) => round.handlerCalls.guidance)).toEqual([0, 2, 2]);
+		expect(run.rounds.map((round) => round.tokens.guidance)).toEqual([0, 8, 8]);
+		expect(failing.prompts.proposer.some((prompt) => prompt.includes(GUIDANCE_PREFIX))).toBe(false);
+		const guidanceSpans = spans.filter((span) => span.name === "dream.llm_guidance");
+		expect(guidanceSpans).toHaveLength(2);
+		expect(guidanceSpans.every((span) => span.attrs["dream.llm_fallback"] === true)).toBe(true);
+		expect(guidanceSpans.every((span) => span.attrs["dream.tokens"] === 8)).toBe(true);
+
+		const aborting = makeStub({
+			proposerOutput: () => ({ output: ARTIFACT, tokens: 10 }),
+			guidanceOutput: () => ({ status: "aborted", tokens: 1 }),
+		});
+		const { value: caught, spans: abortSpans } = await captureSpans(async () => {
+			try {
+				await runDreamLoopWithAgent(agentOptions({ runAgent: aborting.handler, semanticGuidance: true }));
+				return undefined;
+			} catch (error) {
+				return error;
+			}
+		});
+		expect(isDreamAbortError(caught)).toBe(true);
+		expect(aborting.roleCalls.guidance).toBe(1);
+		expect(aborting.roleCalls.dreamer).toBe(0);
+		expect(abortSpans.find((span) => span.name === "dream.run")!.attrs["dream.stopped"]).toBe("aborted");
+	});
+
+	it("puts the role header on the first line of every child prompt", async () => {
+		const stub = makeStub({
+			proposerOutput: () => ({ output: ARTIFACT, tokens: 1 }),
+			dreamerOutput: () => ({ output: REVISED, tokens: 1 }),
+			guidanceOutput: () => ({ output: JSON.stringify({ insights: DEFAULT_INSIGHTS }), tokens: 1 }),
+		});
+		await runDreamLoopWithAgent(agentOptions({ runAgent: stub.handler, iterations: 1, semanticGuidance: true }));
+		expect(stub.prompts.proposer.length).toBeGreaterThan(0);
+		expect(stub.prompts.dreamer).toHaveLength(1);
+		expect(stub.prompts.guidance).toHaveLength(1);
+		expect(stub.prompts.proposer.every((prompt) => prompt.split("\n")[0]!.startsWith(PROPOSER_PROMPT_HEADER))).toBe(
+			true,
+		);
+		expect(stub.prompts.dreamer[0]!.split("\n")[0]).toBe(DREAMER_PROMPT_HEADER);
+		expect(stub.prompts.guidance[0]!.split("\n")[0]!.startsWith(GUIDANCE_PROMPT_HEADER)).toBe(true);
+		// The three headers are pairwise non-prefixes, so startsWith classification is unambiguous.
+		const headers = [PROPOSER_PROMPT_HEADER, DREAMER_PROMPT_HEADER, GUIDANCE_PROMPT_HEADER];
+		for (const a of headers) for (const b of headers) if (a !== b) expect(a.startsWith(b)).toBe(false);
+	});
+});
+
+describe("buildGuidanceInput", () => {
+	const blobs: Record<number, unknown> = {
+		0: { set: [0, 1] },
+		1: { set: [0, 1, 3] },
+		2: { set: [0, 2, 3] },
+		3: { set: [0, 1, 3, 7, 12, 20] },
+	};
+	const withFailure: TreeRecord[] = [
+		...SYNTH,
+		node({ id: "synth-n4", parentId: "synth-n1", seq: 4, round: 2, score: 0, valid: false, failClass: "degenerate" }),
+	];
+	const treeWithBlobs = (records: TreeRecord[]) => buildRecordedTree(records, (record) => blobs[record.seq] ?? null);
+
+	it("digests recorded artifacts and scalar scores deterministically, in tree-id order, bounded by topK and the char cap", () => {
+		const other: TreeRecord[] = withFailure.map((record) =>
+			record.type === "tree"
+				? { ...record, treeId: "alpha", policyId: "q" }
+				: record.type === "node"
+					? {
+							...record,
+							id: record.id.replace("synth", "alpha"),
+							parentId: record.parentId?.replace("synth", "alpha") ?? null,
+						}
+					: record,
+		);
+		const pool = [treeWithBlobs(withFailure), treeWithBlobs(other)];
+		const a = buildGuidanceInput(pool, "sum-difference", 3, 2, 16);
+		const b = buildGuidanceInput([...pool].reverse(), "sum-difference", 3, 2, 16);
+		expect(JSON.stringify(b)).toBe(JSON.stringify(a));
+		expect(a.taskId).toBe("sum-difference");
+		expect(a.iteration).toBe(3);
+		expect(a.poolSize).toBe(2);
+		expect(a.trees.map((tree) => tree.treeId)).toEqual(["alpha", "synth"]);
+		const synth = a.trees[1]!;
+		expect(synth.policyId).toBe("p");
+		expect(synth.bestScore).toBe(0.9);
+		expect(synth.attempts).toBe(4);
+		expect(synth.rounds).toBe(2);
+		expect(synth.failClasses).toEqual(["degenerate"]);
+		expect(synth.topNodes).toHaveLength(2);
+		expect(synth.topNodes.map((entry) => entry.score)).toEqual([0.9, 0.5]);
+		expect(synth.topNodes[0]!.artifactJson).toBe(`${JSON.stringify(blobs[3]).slice(0, 16)}...`);
+		expect(synth.topNodes[1]!.artifactJson).toBe(JSON.stringify(blobs[1]));
+		// Only serialized artifacts and scalars: no hidden test data can appear because a tree never holds any.
+		const serialized = JSON.stringify(a);
+		expect(serialized).not.toMatch(/hidden|expected|stdin/);
+		expect(buildGuidanceInput(pool, "sum-difference", 3, 0).trees.every((tree) => tree.topNodes.length === 0)).toBe(
+			true,
+		);
+	});
+
+	it("tolerates a tree without a blob loader by recording an empty artifact string", () => {
+		const digest = buildGuidanceInput([buildRecordedTree(SYNTH)], "sum-difference", 1);
+		expect(digest.trees[0]!.topNodes.map((entry) => entry.artifactJson)).toEqual(["", "", ""]);
+		expect(digest.trees[0]!.topNodes.map((entry) => entry.score)).toEqual([0.9, 0.5, 0.4]);
 	});
 });
