@@ -13,7 +13,13 @@ import {
 	withSpan,
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { type DreamCandidateLine, type DreamStepLine, dreamsPath, readDreamsLog } from "../src/core/dream/dreams.js";
+import {
+	type DreamCandidateLine,
+	type DreamProbationLine,
+	type DreamStepLine,
+	dreamsPath,
+	readDreamsLog,
+} from "../src/core/dream/dreams.js";
 import { proposePolicies, runDreaming, scorePolicyOnPool } from "../src/core/dream/improve.js";
 import { projectProposeParams } from "../src/core/dream/interpreter.js";
 import {
@@ -835,7 +841,8 @@ describe("the dreamer prompt (buildDreamerInput / buildDreamPrompt)", () => {
 		expect(input.iteration).toBe(2);
 		expect(input.budget).toEqual({ workers: 3, k1: 5, k2: 10 });
 		expect(input.pool.map((tree) => tree.treeId)).toEqual(pool.map((tree) => tree.header.treeId).sort());
-		const score = scorePolicyOnPool(DEFAULT_POLICY, pool, cfg);
+		// The digest shows the incumbent as the selection charges it: its raw spend, no horizon.
+		const score = scorePolicyOnPool(DEFAULT_POLICY, pool, cfg, "raw");
 		const meanV = input.pool.reduce((sum, tree) => sum + tree.value, 0) / input.pool.length;
 		expect(meanV).toBeCloseTo(score.value, 12);
 		expect(input.pool.reduce((sum, tree) => sum + tree.N, 0) / input.pool.length).toBeCloseTo(score.N, 12);
@@ -868,6 +875,9 @@ describe("the dreamer prompt (buildDreamerInput / buildDreamPrompt)", () => {
 				outOfSupportCells: 0,
 				inSupportMean: 1,
 				inSupportMin: 1,
+				chargedProbes: 10,
+				chargedRounds: 5,
+				evidenceTrees: 1,
 				eligible: true,
 				reason: "tie",
 			},
@@ -893,7 +903,16 @@ describe("the dreamer prompt (buildDreamerInput / buildDreamPrompt)", () => {
 		expect(prompt).toContain("beta1 = 0.05, beta2 = 0.1, beta3 = 0.25");
 		expect(prompt).toContain("W = 3 cells per round, online round cap k1 = 5, replay round cap k2 = 10");
 		expect(prompt).toContain("the current policy wins every tie, so only a STRICTLY higher mean V");
-		expect(prompt).toContain("mean q is below the current policy's is excluded");
+		expect(prompt).toContain("q is below the current policy's on ANY of these trees is excluded");
+		expect(prompt).toContain(
+			"stop-early credit (fewer charged probes, fewer rounds) is charged at the latest probe and round at which the same candidate was still improving on the OTHER recorded trees, so on a single tree there is none",
+		);
+		expect(prompt).toContain("the current policy is charged exactly what it spent");
+		expect(prompt).toContain("no-worse quality must hold on every tree");
+		// The probation rule: a replay win is not an online result.
+		expect(prompt).toContain(
+			"Probation: an adopted policy's first online rollout must reach at least the current policy's lowest recorded best on these trees, or the adoption is reverted and the policy is revoked for the rest of the run",
+		);
 		// Replay mechanics in two sentences.
 		expect(prompt).toContain("Replay mechanics: a candidate re-walks each recorded tree");
 		expect(prompt).toContain("out of support: it reveals nothing but is charged as a probe");
@@ -1129,6 +1148,94 @@ describe("runDreamLoopWithAgent (end to end, stub handler)", () => {
 		expect(b.finalPolicyId).toBe(a.finalPolicyId);
 		expect(b.finalPolicyScore).toBe(a.finalPolicyScore);
 		expect(b.bestNodeScore).toBe(a.bestNodeScore);
+	});
+
+	it("puts a dreamed winner on probation, reverts it when its rollout misses the floor, and tells the next dreamer", async () => {
+		// A scripted task (see test/dream-loop.test.ts): trees 0, 1 and 3 find 1.0 in round 1 and 0.5 later;
+		// tree 2, the probation rollout, finds 0.2 in round 1 and 0.9 from round 2 on. The stub dreamer keeps
+		// proposing run 3's collapse {fixed-rounds, beta 1}; with two incumbent trees vouching it wins at
+		// iteration 2, probes once online, scores 0.2 against a floor of 1.0 and is reverted.
+		let trees = 0;
+		const task: ScoredTask<unknown> = {
+			id: "sum-difference",
+			root: () => {
+				trees += 1;
+				return { v: 0 };
+			},
+			propose: (_parent, _params, _rng, round) =>
+				trees === 3 ? { v: round === 1 ? 0.2 : 0.9 } : { v: round === 1 ? 1 : 0.5 },
+			evaluate: (candidate) => ({ valid: true, score: (candidate as { v: number }).v }),
+			serialize: (candidate) => ({ v: (candidate as { v: number }).v }),
+			deserialize: (value) => {
+				if (typeof value !== "object" || value === null || typeof (value as { v?: unknown }).v !== "number") {
+					throw new TypeError("expected { v: number }");
+				}
+				return { v: (value as { v: number }).v };
+			},
+		};
+		const collapse = policy({ stopRule: "fixed-rounds", beta: 1 });
+		const stub = makeStub({ dreamerOutput: () => ({ output: JSON.stringify([collapse]), tokens: 50 }) });
+		const dir = scratch("dream-probation-");
+		const spans: SpanEndRecord[] = [];
+		const unsubscribe = addSpanSink((record) => spans.push(record));
+		let result: Awaited<ReturnType<typeof runDreamLoopWithAgent>>;
+		try {
+			result = await runDreamLoopWithAgent(
+				loopOptions({
+					dir,
+					task,
+					workers: 3,
+					k1: 4,
+					k2: 8,
+					dreams: 1,
+					iterations: 3,
+					useLlmProposer: false,
+					useLlmDreamer: true,
+					runAgent: stub.handler,
+				}),
+			);
+		} finally {
+			unsubscribe();
+		}
+		const initialId = policyId(DEFAULT_POLICY);
+		const collapseId = policyId(collapse);
+		expect(result.rounds.map((record) => record.policyId)).toEqual([initialId, initialId, collapseId, initialId]);
+		expect(result.rounds[1]!.dreaming!.candidateVerdicts![0]!.reason).toBe("worse");
+		expect(result.rounds[2]!.dreaming!.candidateVerdicts![0]!.reason).toBe("winner");
+		expect(result.rounds[2]!.dreaming!.probation).toMatchObject({
+			policyId: collapseId,
+			incumbentPolicyId: initialId,
+			roundBest: 0.2,
+			floor: 1,
+			chargedProbes: 1,
+			chargedRounds: 1,
+			incumbentChargedProbes: 6,
+			incumbentChargedRounds: 4,
+			evidenceTrees: 1,
+			reverted: true,
+		});
+		expect(result.rounds[3]!.dreaming!.candidateVerdicts![0]!.reason).toBe("revoked");
+		expect(result.rounds[3]!.dreaming!.probation).toBeUndefined();
+		expect(result.probationReverts).toBe(1);
+		expect(result.finalPolicyId).toBe(initialId);
+		expect(result.finalSelection!.map((verdict) => verdict.reason)).toEqual(["identical", "revoked", "identical"]);
+		// The third dreamer prompt shows the winner's revocation in its history.
+		expect(stub.prompts.dreamer).toHaveLength(3);
+		expect(stub.prompts.dreamer[2]).toContain(`iteration 2: ${collapseId} (llm; changed stopRule, beta)`);
+		expect(stub.prompts.dreamer[2]).toMatch(
+			new RegExp(`iteration 2: ${collapseId} .*: winner\n.*iteration 2: ${collapseId} .*: revoked`),
+		);
+		expect(stub.prompts.dreamer[1]).not.toContain("revoked\n");
+		// Dreams log and spans carry the judgement as on the sync path.
+		const probations = readDreamsLog(dreamsPath(dir, result.runId)).filter(
+			(line): line is DreamProbationLine => line.type === "probation",
+		);
+		expect(probations).toHaveLength(1);
+		expect(probations[0]).toMatchObject({ iteration: 2, policyId: collapseId, reverted: true });
+		const redeploys = spans.filter((span) => span.name === "dream.redeploy");
+		expect(redeploys.map((span) => span.attrs["dream.probation"])).toEqual([false, true, false]);
+		expect(redeploys[1]!.attrs["dream.reverted"]).toBe(true);
+		expect(redeploys[1]!.attrs["dream.probation_floor"]).toBe(1);
 	});
 
 	it("stops promptly and records the abort when a child returns aborted", async () => {

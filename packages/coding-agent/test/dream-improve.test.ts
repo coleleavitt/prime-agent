@@ -82,6 +82,24 @@ function pool(): RecordedTree[] {
 	return [buildRecordedTree(SYNTH)];
 }
 
+/** `records` under a second tree id, so a pool can hold two identical trees. */
+function twinOf(records: readonly TreeRecord[], treeId: string): RecordedTree {
+	const from = (records[0] as { treeId: string }).treeId;
+	return buildRecordedTree(
+		records.map((record) => JSON.parse(JSON.stringify(record).split(from).join(treeId)) as TreeRecord),
+	);
+}
+
+/**
+ * SYNTH twice. With two identical trees each policy's cross-tree spend horizon
+ * equals its own probes/rounds to best, which never exceeds its own spend, so
+ * every charged number equals the raw one; on SYNTH alone every policy would be
+ * charged the whole budget (10 probes, 5 rounds).
+ */
+function twinPool(): RecordedTree[] {
+	return [buildRecordedTree(SYNTH), twinOf(SYNTH, "synth2")];
+}
+
 /**
  * Two trees the fixed-exploration control grew on circle-packing (seed 7, W 4,
  * k1 12, n 26): rounds 1 and 2 of the recorded experiment
@@ -139,6 +157,7 @@ function replay(over: Partial<ReplayResult> & Pick<ReplayResult, "N" | "rounds" 
 		inSupport: selectedCells === 0 ? 1 : over.N / selectedCells,
 		bestSoFar: new Array<number>(selectedCells).fill(over.bestScore),
 		probesToBest: selectedCells === 0 ? 0 : 1,
+		roundsToBest: selectedCells === 0 ? 0 : 1,
 		...over,
 	};
 }
@@ -242,6 +261,33 @@ describe("computeObjective (quality, anytime, charged cost, rounds saved)", () =
 		expect(lateTerms.anytime).toBeLessThanOrEqual(on.anytime);
 		expect(lateTerms.value).toBeLessThan(on.value);
 	});
+
+	it("charges the spend at the evidence horizon when one is given, and the raw spend when none is", () => {
+		const cheap = replay({ N: 2, rounds: 1, bestScore: 0.9 });
+		const raw = computeObjectiveTerms(cheap, OBJECTIVE, SYNTH_SCALE, SYNTH_BUDGET);
+		expect(raw.chargedProbes).toBe(2);
+		expect(raw.chargedRounds).toBe(1);
+		expect(raw.cost).toBeCloseTo(0.2, 12);
+		expect(raw.roundsSaved).toBeCloseTo(0.8, 12);
+		// Another tree of the same policy was still improving at probe 7, round 4: charge that.
+		const backed = computeObjectiveTerms(cheap, OBJECTIVE, SYNTH_SCALE, SYNTH_BUDGET, { probes: 7, rounds: 4 });
+		expect(backed.chargedProbes).toBe(7);
+		expect(backed.chargedRounds).toBe(4);
+		expect(backed.cost).toBeCloseTo(0.7, 12);
+		expect(backed.roundsSaved).toBeCloseTo(0.2, 12);
+		// Quality and anytime never move: the horizon is a spend, not a reveal.
+		expect(backed.quality).toBe(raw.quality);
+		expect(backed.anytime).toBe(raw.anytime);
+		expect(raw.value - backed.value).toBeCloseTo(OBJECTIVE.beta1 * 0.5 + OBJECTIVE.beta2 * 0.6, 12);
+		// A horizon below the replay's own spend changes nothing (max, not replace).
+		const under = computeObjectiveTerms(cheap, OBJECTIVE, SYNTH_SCALE, SYNTH_BUDGET, { probes: 1, rounds: 0 });
+		expect(under).toEqual(raw);
+		// The whole budget as horizon (a single measured tree): cost 1, roundsSaved 0, V = q - beta1.
+		const alone = computeObjectiveTerms(cheap, OBJECTIVE, SYNTH_SCALE, SYNTH_BUDGET, { probes: 10, rounds: 5 });
+		expect(alone.cost).toBe(1);
+		expect(alone.roundsSaved).toBe(0);
+		expect(alone.value).toBeCloseTo(1 - OBJECTIVE.beta1, 12);
+	});
 });
 
 describe("normalizedQuality / poolScoreScale", () => {
@@ -286,15 +332,23 @@ describe("normalizedQuality / poolScoreScale", () => {
 describe("scorePolicyOnPool", () => {
 	it("is the mean replay objective and mean quality over the pool, on the pool's scale and budget", () => {
 		const trees = pool();
-		const terms = computeObjectiveTerms(
-			simulatePolicy(trees[0]!, CURRENT, { k2: CFG.k2 }),
-			OBJECTIVE,
-			poolScoreScale(trees),
-			{ workers: trees[0]!.header.w, k1: CFG.k1 },
-		);
+		// A lone tree has no other tree to vouch for stopping early, so the pool scorer charges the
+		// whole budget (10 probes, 5 rounds) where a bare replay would charge its own 2 probes, 2 rounds.
+		const replayed = simulatePolicy(trees[0]!, CURRENT, { k2: CFG.k2 });
+		const budget = { workers: trees[0]!.header.w, k1: CFG.k1 };
+		const terms = computeObjectiveTerms(replayed, OBJECTIVE, poolScoreScale(trees), budget, {
+			probes: 10,
+			rounds: 5,
+		});
 		const score = scorePolicyOnPool(CURRENT, trees, CFG);
 		expect(score.value).toBeCloseTo(terms.value, 12);
 		expect(score.quality).toBeCloseTo(terms.quality, 12);
+		expect(score.chargedProbes).toBe(10);
+		expect(score.chargedRounds).toBe(5);
+		expect(replayed.N).toBe(2);
+		expect(score.N).toBe(2);
+		const raw = computeObjectiveTerms(replayed, OBJECTIVE, poolScoreScale(trees), budget);
+		expect(raw.value - score.value).toBeCloseTo(OBJECTIVE.beta1 * (8 / 10) + OBJECTIVE.beta2 * (3 / 5), 12);
 	});
 
 	it("scores a policy that spends fewer probes differently from one that spends more", () => {
@@ -317,6 +371,8 @@ describe("scorePolicyOnPool", () => {
 			outOfSupportCells: 0,
 			inSupportMean: 1,
 			inSupportMin: 1,
+			chargedProbes: 0,
+			chargedRounds: 0,
 		});
 	});
 });
@@ -356,22 +412,34 @@ describe("selectBestPolicy", () => {
 
 	it("rejects a candidate that reaches a lower quality even when its V would be higher", () => {
 		// With a huge beta1 the one-probe policy would out-score BETTER on V; the
-		// quality guard removes it before the argmax.
+		// quality guard removes it before the argmax. On the twin pool the one probe
+		// is charged 1 (its own probesToBest on the other tree) against BETTER's 3, so
+		// V is 0.333 - 5 * 0.1 = -0.167 against 1 - 5 * 0.3 = -0.5; on SYNTH alone both
+		// would be charged the whole budget and BETTER would win on quality outright.
 		const oneProbe = policy({ selectionRule: "explore-root", stopRule: "fixed-rounds", beta: 1, batchSize: 1 });
 		const cfg: DreamingScoreConfig = { ...CFG, objective: { beta1: 5, beta2: 0, beta3: 0 } };
-		const better = scorePolicyOnPool(BETTER, pool(), cfg);
-		const cheap = scorePolicyOnPool(oneProbe, pool(), cfg);
+		const better = scorePolicyOnPool(BETTER, twinPool(), cfg);
+		const cheap = scorePolicyOnPool(oneProbe, twinPool(), cfg);
+		expect(cheap.chargedProbes).toBe(1);
+		expect(better.chargedProbes).toBe(3);
+		expect(cheap.value).toBeCloseTo(1 / 3 - 0.5, 12);
+		expect(better.value).toBeCloseTo(1 - 1.5, 12);
 		expect(cheap.value).toBeGreaterThan(better.value);
 		expect(cheap.quality).toBeLessThan(better.quality);
-		const selection = selectBestPolicy(BETTER, [oneProbe], pool(), cfg);
+		const selection = selectBestPolicy(BETTER, [oneProbe], twinPool(), cfg);
 		expect(selection.chosenPolicy).toBe(BETTER);
 		expect(selection.improved).toBe(false);
 		expect(selection.qualityRejected).toBe(1);
 		expect(selection.currentQuality).toBe(1);
+		expect(selection.evidenceTrees).toBe(1);
 		// qualityEps widens the floor and lets the same candidate through.
-		const relaxed = selectBestPolicy(BETTER, [oneProbe], pool(), { ...cfg, qualityEps: 1 });
+		const relaxed = selectBestPolicy(BETTER, [oneProbe], twinPool(), { ...cfg, qualityEps: 1 });
 		expect(relaxed.chosenPolicy).toBe(oneProbe);
 		expect(relaxed.qualityRejected).toBe(0);
+		// On the single tree the cheap policy is charged the full budget (10 probes) like BETTER.
+		const alone = scorePolicyOnPool(oneProbe, pool(), cfg);
+		expect(alone.chargedProbes).toBe(10);
+		expect(alone.value).toBeLessThan(scorePolicyOnPool(BETTER, pool(), cfg).value);
 	});
 });
 
@@ -535,6 +603,319 @@ describe("the recorded exploration collapse (circle-packing s7, fixed-arm rounds
 });
 
 /**
+ * The recorded run-3 collapse (autocorrelation n 64, seed 7, W 3, k1 13, k2 26,
+ * Sonnet-5 proposer and dreamer): the frozen pool at the first dreaming step
+ * was ONE 13-node tree whose best node was the FIRST probe, so the dreamed
+ * {fixed-rounds, beta 1} candidate (1 probe, 1 round) matched the incumbent's
+ * q 1.0 and anytime 1.0 and won purely on the stop-early credit (V 1.0910 vs
+ * 1.0295); deployed online it probed once per rollout and scored the uniform
+ * baseline. `RUN3_TREE` is that tree; `RUN2_TREES` are the four run-2 trees
+ * (same task and W, k1 6) the old objective found a real lever on.
+ */
+const RUN3_TREE = "autocorrelation-s7-i0-1789923274195.jsonl";
+const RUN2_TREES = [0, 1, 2, 3].map((index) => `autocorrelation-s7-i${index}-1789858196752.jsonl`);
+const RUN3_CFG: DreamingScoreConfig = { k1: 13, k2: 26, objective: DEFAULT_OBJECTIVE };
+const RUN2_CFG: DreamingScoreConfig = { k1: 6, k2: 12, objective: DEFAULT_OBJECTIVE };
+/** The dreamed winner of run 3's first step (`9edb7a5b887e861c`). */
+const RUN3_COLLAPSE = policy({ stopRule: "fixed-rounds", beta: 1 });
+/** The dreamer's other single-probe route: stop the moment the recorded best is in hand. */
+const RUN3_THRESHOLD = policy({ stopRule: "threshold", targetScore: 0.5247272682369769 });
+/** Run 3's second dreamed candidate (`a70474c08b2c78a1`): patience 2 at the default batch. */
+const RUN3_PATIENT = policy({ stopRule: "patience", beta: 2 });
+
+describe("the recorded run-3 collapse (autocorrelation s7, one 13-node tree whose best is the first probe)", () => {
+	it("reproduces the recorded step under raw terms: the one-probe candidate out-scores the incumbent on stop-early credit alone", () => {
+		const tree = loadFixture(RUN3_TREE);
+		expect(tree.header.w).toBe(3);
+		expect(policyId(RUN3_COLLAPSE)).toBe("9edb7a5b887e861c");
+		expect(policyId(RUN3_PATIENT)).toBe("a70474c08b2c78a1");
+		const incumbent = simulatePolicy(tree, EXPLORING, { k2: 26 });
+		expect(incumbent).toMatchObject({ N: 13, rounds: 7, outOfSupportCells: 0, probesToBest: 1, roundsToBest: 1 });
+		expect(incumbent.bestScore).toBeCloseTo(0.5247272682369769, 15);
+		const collapse = simulatePolicy(tree, RUN3_COLLAPSE, { k2: 26 });
+		expect(collapse).toMatchObject({ N: 1, rounds: 1, outOfSupportCells: 0, probesToBest: 1, roundsToBest: 1 });
+		expect(collapse.bestScore).toBe(incumbent.bestScore);
+		const scale = poolScoreScale([tree]);
+		const budget = { workers: 3, k1: 13 };
+		// Without evidence (a lone replay): q 1, anytime 1 for both; the incumbent pays cost 13/39 and earns
+		// roundsSaved 6/13 (1.029487), the collapse pays 1/39 and earns 12/13 (1.091026): the recorded step.
+		const incumbentRaw = computeObjectiveTerms(incumbent, DEFAULT_OBJECTIVE, scale, budget);
+		const collapseRaw = computeObjectiveTerms(collapse, DEFAULT_OBJECTIVE, scale, budget);
+		expect(incumbentRaw.quality).toBe(1);
+		expect(incumbentRaw.anytime).toBe(1);
+		expect(collapseRaw.anytime).toBe(1);
+		expect(incumbentRaw.value).toBeCloseTo(1.029487, 6);
+		expect(collapseRaw.value).toBeCloseTo(1.091026, 6);
+		expect(collapseRaw.value - incumbentRaw.value).toBeCloseTo(0.05 * (12 / 39) + 0.1 * (6 / 13), 12);
+	});
+
+	it("no longer lets either one-probe candidate beat the incumbent on the single tree: no evidence, no credit", () => {
+		const trees = [loadFixture(RUN3_TREE)];
+		const selection = selectBestPolicy(EXPLORING, [RUN3_COLLAPSE, RUN3_THRESHOLD], trees, RUN3_CFG);
+		expect(selection.improved).toBe(false);
+		expect(selection.chosenPolicy).toBe(EXPLORING);
+		expect(selection.measuredTrees).toBe(1);
+		expect(selection.evidenceTrees).toBe(0);
+		// The incumbent is charged what it spent (13 probes of B = 39, 7 rounds of 13): V = 1 - 0.05 * 13/39 +
+		// 0.1 * 6/13 = 1.029487, the recorded step's number. Every candidate is charged the whole budget
+		// (39 probes, 13 rounds, no other tree to vouch), so V = 1 - beta1 = 0.95 and both lose outright.
+		expect(selection.current.chargedProbes).toBe(13);
+		expect(selection.current.chargedRounds).toBe(7);
+		expect(selection.currentScore).toBeCloseTo(1.029487, 6);
+		expect(selection.currentMinBest).toBeCloseTo(0.5247272682369769, 15);
+		for (const verdict of selection.candidates) {
+			expect(verdict.reason).toBe("worse");
+			expect(verdict.eligible).toBe(true);
+			expect(verdict.N).toBe(1);
+			expect(verdict.rounds).toBe(1);
+			expect(verdict.chargedProbes).toBe(39);
+			expect(verdict.chargedRounds).toBe(13);
+			expect(verdict.evidenceTrees).toBe(0);
+			expect(verdict.value).toBeCloseTo(0.95, 12);
+		}
+		// The lever scan on that tree: the recorded 336 of 337 grid policies are still eligible, none has a lever.
+		const scan = runLeverScan(EXPLORING, trees, RUN3_CFG);
+		expect(scan.policies).toBe(337);
+		expect(scan.eligible).toBe(336);
+		expect(scan.gap).toBe(0);
+		expect(scan.bestPolicyId).toBe(policyId(EXPLORING));
+	});
+
+	it("charges a candidate that stops right after the best on one tree the probes and rounds it still needed on the other", () => {
+		const [a, b] = [loadFixture(RUN3_TREE), loadFixture(RUN2_TREES[0]!)];
+		expect(b!.header.w).toBe(3);
+		// The incumbent replays both in full support: best at probe 1 / round 1 on A, probe 8 / round 5 on B.
+		const incumbentA = simulatePolicy(a!, EXPLORING, { k2: 26 });
+		const incumbentB = simulatePolicy(b!, EXPLORING, { k2: 26 });
+		expect(incumbentA).toMatchObject({ N: 13, rounds: 7, outOfSupportCells: 0, probesToBest: 1, roundsToBest: 1 });
+		expect(incumbentB).toMatchObject({ N: 13, rounds: 6, outOfSupportCells: 0, probesToBest: 8, roundsToBest: 5 });
+		// RUN3_PATIENT stops after round 3 on A (4 probes, best at probe 1) and runs the full 6 rounds on B
+		// (13 probes, best at probe 8 / round 5), in support on both.
+		const patientA = simulatePolicy(a!, RUN3_PATIENT, { k2: 26 });
+		const patientB = simulatePolicy(b!, RUN3_PATIENT, { k2: 26 });
+		expect(patientA).toMatchObject({ N: 4, rounds: 3, outOfSupportCells: 0, probesToBest: 1, roundsToBest: 1 });
+		expect(patientB).toMatchObject({ N: 13, rounds: 6, outOfSupportCells: 0, probesToBest: 8, roundsToBest: 5 });
+		expect(patientA.bestScore).toBe(incumbentA.bestScore);
+		expect(patientB.bestScore).toBe(incumbentB.bestScore);
+		const selection = selectBestPolicy(EXPLORING, [RUN3_PATIENT, RUN3_COLLAPSE], [a!, b!], RUN3_CFG);
+		expect(selection.measuredTrees).toBe(2);
+		expect(selection.evidenceTrees).toBe(1);
+		const [patient, collapse] = selection.candidates;
+		// On A it is charged B's probesToBest 8 (not its own 4) and B's roundsToBest 5 (not its own 3);
+		// on B its own 13 and 6 exceed A's 1 and 1: means (8 + 13) / 2 and (5 + 6) / 2.
+		expect(patient!.inSupportMin).toBe(1);
+		expect(patient!.N).toBe(8.5);
+		expect(patient!.rounds).toBe(4.5);
+		expect(patient!.chargedProbes).toBe(10.5);
+		expect(patient!.chargedRounds).toBe(5.5);
+		expect(patient!.cost).toBeCloseTo((8 / 39 + 13 / 39) / 2, 12);
+		expect(patient!.roundsSaved).toBeCloseTo((1 - 5 / 13 + (1 - 6 / 13)) / 2, 12);
+		expect(patient!.evidenceTrees).toBe(1);
+		// The incumbent is charged its raw spend, 13 probes on each tree and 7 + 6 rounds (here the same numbers a
+		// cross-tree horizon would give: max(13, 8), max(13, 1) probes and max(7, 5), max(6, 1) rounds).
+		expect(selection.current.chargedProbes).toBe(13);
+		expect(selection.current.chargedRounds).toBe(6.5);
+		expect(selection.current).toEqual(scorePolicyOnPool(EXPLORING, [a!, b!], RUN3_CFG, "raw"));
+		// With B vouching for its stopping, the patient policy is a real same-best-for-less win over the incumbent.
+		expect(patient!.eligible).toBe(true);
+		expect(patient!.reason).toBe("winner");
+		expect(selection.improved).toBe(true);
+		// The collapse candidate now fails the per-tree guard: on B one probe reveals 0.3601 against a root of 0.5.
+		expect(collapse!.reason).toBe("quality-rejected");
+		expect(collapse!.eligible).toBe(false);
+		expect(simulatePolicy(b!, RUN3_COLLAPSE, { k2: 26 }).bestScore).toBe(0.5);
+	});
+
+	it("keeps the run-2 pool's lever under the evidence rule: +0.007109, the same winner, charged where the horizon exceeds its spend", () => {
+		const trees = RUN2_TREES.map(loadFixture);
+		const incumbent = scorePolicyOnPool(EXPLORING, trees, RUN2_CFG, "raw");
+		// The incumbent is charged its raw spend: per tree N 13, 12, 10, 12 (mean 11.75, cost 11.75/18) over
+		// 6 rounds each, V 0.842156. Under the cross-tree horizon (probesToBest 8, 11, 8, 8) tree i2's 10
+		// probes would have been charged at i1's 11, a mean charge of 12 and V 0.841462: that surcharge on
+		// the incumbent's own recorded trees is what the symmetric rule got wrong.
+		expect(incumbent.N).toBe(11.75);
+		expect(incumbent.chargedProbes).toBe(11.75);
+		expect(incumbent.chargedRounds).toBe(6);
+		expect(incumbent.quality).toBeCloseTo(0.883344, 6);
+		expect(incumbent.anytime).toBeCloseTo(0.849147, 6);
+		expect(incumbent.cost).toBeCloseTo(11.75 / 18, 12);
+		expect(incumbent.roundsSaved).toBe(0);
+		expect(incumbent.value).toBeCloseTo(0.842156, 6);
+		const surcharged = scorePolicyOnPool(EXPLORING, trees, RUN2_CFG, "evidence");
+		expect(surcharged.chargedProbes).toBe(12);
+		expect(surcharged.value).toBeCloseTo(0.841462, 6);
+		expect(incumbent.value - surcharged.value).toBeCloseTo(DEFAULT_OBJECTIVE.beta1 * (0.25 / 18), 12);
+		const scan = runLeverScan(EXPLORING, trees, RUN2_CFG);
+		expect(scan.policies).toBe(337);
+		expect(scan.eligible).toBe(84);
+		expect(scan.gap).toBeGreaterThan(0);
+		// 0.849265 - 0.842156: the symmetric rule's +0.007804 minus the quarter probe it surcharged the incumbent.
+		expect(scan.gap).toBeCloseTo(0.007109, 6);
+		expect(scan.gap).toBeCloseTo(0.007804 - DEFAULT_OBJECTIVE.beta1 * (0.25 / 18), 6);
+		const winner = policy({ selectionRule: "weighted", stopRule: "fixed-rounds", batchSize: 2, beta: 6 });
+		expect(scan.bestPolicyId).toBe(policyId(winner));
+		const winnerScore = scorePolicyOnPool(winner, trees, RUN2_CFG);
+		// The same best on every tree with N 10, 9, 8, 9 (probesToBest 7, 9, 7, 7): tree i2 is charged at
+		// i1's 9, so the candidate's mean charge is 9.25 against a mean N of 9.
+		expect(winnerScore.quality).toBeCloseTo(incumbent.quality, 12);
+		expect(winnerScore.N).toBe(9);
+		expect(winnerScore.chargedProbes).toBe(9.25);
+		expect(winnerScore.rounds).toBe(6);
+		expect(winnerScore.value).toBeCloseTo(0.849265, 6);
+		expect(winnerScore.value - incumbent.value).toBeCloseTo(scan.gap, 12);
+		const selection = selectBestPolicy(EXPLORING, [winner], trees, RUN2_CFG);
+		expect(selection.current).toEqual(incumbent);
+		expect(selection.chosenScore - selection.currentScore).toBeCloseTo(scan.gap, 12);
+	});
+});
+
+/**
+ * Two trees a best-first / patience 2 / batchSize 2 incumbent grew on
+ * sum-difference (W 2, k1 6; seeds 1 and 2 of a local rollout, scores to six
+ * decimals). FLIP_EARLY: the root is the best, two root children score below it,
+ * patience stops after round 2 (N 2, rounds 2, probesToBest 0). FLIP_LATE: the
+ * best (0.865302) is n5, probe 5 of 10, round 4 of 6. A symmetric evidence rule
+ * charged the incumbent 5 probes / 4 rounds on FLIP_EARLY where it spent 2 / 2
+ * (its own late tree as the horizon); the batch-1 chain FLIP_CHAIN, which reaches
+ * n5 by probe 4 on FLIP_LATE, then beat that surcharged incumbent while losing to
+ * its raw spend. This is the skeptic's attack (c) in two small trees.
+ */
+const FLIP_EARLY: TreeRecord[] = [
+	{
+		type: "tree",
+		version: 1,
+		treeId: "flip-early",
+		taskId: "synthetic",
+		w: 2,
+		seed: 1,
+		policyId: "p",
+		iteration: 0,
+		createdTs: 0,
+	},
+	node({ id: "flip-early-n0", parentId: null, seq: 0, round: 0, score: 0.798354 }),
+	node({ id: "flip-early-n1", parentId: "flip-early-n0", seq: 1, round: 1, score: 0.793301 }),
+	node({ id: "flip-early-n2", parentId: "flip-early-n0", seq: 2, round: 2, branch: 1, score: 0.763679 }),
+];
+const FLIP_LATE: TreeRecord[] = [
+	{
+		type: "tree",
+		version: 1,
+		treeId: "flip-late",
+		taskId: "synthetic",
+		w: 2,
+		seed: 2,
+		policyId: "p",
+		iteration: 0,
+		createdTs: 0,
+	},
+	node({ id: "flip-late-n0", parentId: null, seq: 0, round: 0, score: 0.802616 }),
+	node({ id: "flip-late-n1", parentId: "flip-late-n0", seq: 1, round: 1, score: 0.788096 }),
+	node({ id: "flip-late-n2", parentId: "flip-late-n0", seq: 2, round: 2, branch: 1, score: 0.820952 }),
+	node({ id: "flip-late-n3", parentId: "flip-late-n2", seq: 3, round: 3, score: 0.824312 }),
+	node({ id: "flip-late-n4", parentId: "flip-late-n1", seq: 4, round: 3, score: 0.788096 }),
+	node({ id: "flip-late-n5", parentId: "flip-late-n3", seq: 5, round: 4, score: 0.865302 }),
+	node({ id: "flip-late-n6", parentId: "flip-late-n0", seq: 6, round: 4, branch: 2, score: 0.800283 }),
+	node({ id: "flip-late-n7", parentId: "flip-late-n5", seq: 7, round: 5, score: 0.840815 }),
+	node({ id: "flip-late-n8", parentId: "flip-late-n0", seq: 8, round: 5, branch: 3, score: 0.828011 }),
+	node({ id: "flip-late-n9", parentId: "flip-late-n7", seq: 9, round: 6, score: 0.806434 }),
+	node({ id: "flip-late-n10", parentId: "flip-late-n8", seq: 10, round: 6, score: 0.802616 }),
+];
+const FLIP_CFG: DreamingScoreConfig = { k1: 6, k2: 12, objective: DEFAULT_OBJECTIVE };
+const FLIP_INCUMBENT = policy({ batchSize: 2, beta: 2 });
+const FLIP_CHAIN = policy({ batchSize: 1, beta: 2 });
+
+function flipPool(): RecordedTree[] {
+	return [buildRecordedTree(FLIP_EARLY), buildRecordedTree(FLIP_LATE)];
+}
+
+describe("(c) the incumbent is charged its raw spend, a candidate never below its own", () => {
+	it("replays the pair as recorded: the incumbent stops early on FLIP_EARLY and finds FLIP_LATE's best at probe 5", () => {
+		const [early, late] = flipPool();
+		expect(simulatePolicy(early!, FLIP_INCUMBENT, { k2: 12 })).toMatchObject({
+			N: 2,
+			rounds: 2,
+			outOfSupportCells: 0,
+			probesToBest: 0,
+			roundsToBest: 0,
+			bestScore: 0.798354,
+		});
+		expect(simulatePolicy(late!, FLIP_INCUMBENT, { k2: 12 })).toMatchObject({
+			N: 10,
+			rounds: 6,
+			outOfSupportCells: 0,
+			probesToBest: 5,
+			roundsToBest: 4,
+			bestScore: 0.865302,
+		});
+		// The chain walks the same two probes on FLIP_EARLY and reaches n5 in 4 probes on FLIP_LATE (root -> n2 -> n3 -> n5).
+		expect(simulatePolicy(early!, FLIP_CHAIN, { k2: 12 })).toMatchObject({ N: 2, rounds: 2, outOfSupportCells: 0 });
+		expect(simulatePolicy(late!, FLIP_CHAIN, { k2: 12 })).toMatchObject({
+			N: 6,
+			rounds: 6,
+			outOfSupportCells: 0,
+			probesToBest: 4,
+			roundsToBest: 4,
+			bestScore: 0.865302,
+		});
+	});
+
+	it("does not let the chain flip the selection by surcharging the incumbent's real early stop", () => {
+		const pool = flipPool();
+		const raw = scorePolicyOnPool(FLIP_INCUMBENT, pool, FLIP_CFG, "raw");
+		const surcharged = scorePolicyOnPool(FLIP_INCUMBENT, pool, FLIP_CFG, "evidence");
+		const chain = scorePolicyOnPool(FLIP_CHAIN, pool, FLIP_CFG);
+		// Raw: FLIP_EARLY charged 2 probes / 2 rounds, FLIP_LATE 10 / 6, mean 6 / 4. A cross-tree horizon would
+		// charge FLIP_EARLY at FLIP_LATE's probesToBest 5 / roundsToBest 4: mean 7.5 / 5, costing the incumbent
+		// beta1 * 3/12 + beta2 * 2/6 halved over the pool = 0.022917 in V.
+		expect(raw.chargedProbes).toBe(6);
+		expect(raw.chargedRounds).toBe(4);
+		expect(surcharged.chargedProbes).toBe(7.5);
+		expect(surcharged.chargedRounds).toBe(5);
+		expect(raw.value - surcharged.value).toBeCloseTo(
+			(DEFAULT_OBJECTIVE.beta1 * (3 / 12) + DEFAULT_OBJECTIVE.beta2 * (2 / 6)) / 2,
+			12,
+		);
+		// The chain's own horizon (FLIP_LATE's probe 4 / round 4) charges its FLIP_EARLY stop at 4 / 4: mean 5 / 5.
+		expect(chain.N).toBe(4);
+		expect(chain.chargedProbes).toBe(5);
+		expect(chain.chargedRounds).toBe(5);
+		expect(chain.quality).toBeCloseTo(raw.quality, 12);
+		// Below the raw incumbent, above the surcharged one: the flip the symmetric rule allowed.
+		expect(chain.value).toBeLessThan(raw.value);
+		expect(chain.value).toBeGreaterThan(surcharged.value);
+		// (0.659562 / 0.636645 / 0.651263 on the full-precision recorded trees; the literals hold six decimals.)
+		expect(raw.value).toBeCloseTo(0.659565, 6);
+		expect(surcharged.value).toBeCloseTo(0.636648, 6);
+		expect(chain.value).toBeCloseTo(0.651266, 6);
+		const selection = selectBestPolicy(FLIP_INCUMBENT, [FLIP_CHAIN], pool, FLIP_CFG);
+		expect(selection.improved).toBe(false);
+		expect(selection.current).toEqual(raw);
+		expect(selection.currentMinBest).toBe(0.798354);
+		expect(selection.candidates[0]!.reason).toBe("worse");
+		expect(selection.candidates[0]!.eligible).toBe(true);
+		expect(selection.candidates[0]!.chargedProbes).toBe(5);
+	});
+
+	it("holds across the whole lever-scan grid: no candidate is charged below its own spend, the incumbent never above it", () => {
+		for (const [current, pool, cfg] of [
+			[FLIP_INCUMBENT, flipPool(), FLIP_CFG],
+			[EXPLORING, RUN2_TREES.map(loadFixture), RUN2_CFG],
+			[INCUMBENT, exactPool(), EXACT_CFG],
+		] as const) {
+			const selection = selectBestPolicy(current, leverScanGrid(current, 4), pool, cfg);
+			const rawCurrent = scorePolicyOnPool(current, pool, cfg, "raw");
+			expect(selection.current.chargedProbes).toBe(rawCurrent.N + rawCurrent.outOfSupportCells);
+			expect(selection.current.chargedRounds).toBe(rawCurrent.rounds);
+			for (const verdict of selection.candidates) {
+				if (verdict.reason === "identical" || verdict.reason === "unmeasurable") continue;
+				expect(verdict.chargedProbes).toBeGreaterThanOrEqual(verdict.N + verdict.outOfSupportCells - 1e-12);
+				expect(verdict.chargedRounds).toBeGreaterThanOrEqual(verdict.rounds - 1e-12);
+			}
+		}
+	});
+});
+
+/**
  * A tree the incumbent `INCUMBENT` (best-first, fixed-rounds 3, batchSize 2, W 2)
  * replays exactly: round 1 root -> n1 (0.5), round 2 n1 -> n2 (0.9), round 3
  * {n2, root} -> n3 (0.8), n4 (0.4). The best (n2) is in hand after probe 2, so a
@@ -564,27 +945,86 @@ const INCUMBENT = policy({ selectionRule: "best-first", stopRule: "fixed-rounds"
 const FEWER_PROBES = policy({ ...INCUMBENT, batchSize: 1 });
 const FEWER_ROUNDS = policy({ ...INCUMBENT, beta: 2 });
 
-function exactPool(): RecordedTree[] {
+/** EXACT alone: no second tree can vouch for stopping early, so every policy is charged 6 probes and 3 rounds. */
+function exactTree(): RecordedTree[] {
 	return [buildRecordedTree(EXACT)];
+}
+
+/**
+ * EXACT and an identical twin. Each policy's cross-tree horizon is its own
+ * probes/rounds to best on the twin (INCUMBENT 2/2, FEWER_PROBES 2/2,
+ * FEWER_ROUNDS 2/2), never above its own spend, so every charged number below
+ * equals the raw one and the same-best-for-less arithmetic is unchanged from a
+ * single tree scored without evidence.
+ */
+function exactPool(): RecordedTree[] {
+	return [buildRecordedTree(EXACT), twinOf(EXACT, "exact2")];
 }
 
 describe("(a) same best for less now strictly wins where the incumbent replays exactly", () => {
 	it("replays the incumbent exactly and finds the same best with fewer probes or fewer rounds", () => {
-		const tree = exactPool()[0]!;
+		const tree = exactTree()[0]!;
 		const incumbent = simulatePolicy(tree, INCUMBENT, { k2: 6 });
 		expect(incumbent.revealedIds).toEqual(["exact-n0", "exact-n1", "exact-n2", "exact-n3", "exact-n4"]);
 		expect(incumbent.N).toBe(4);
 		expect(incumbent.rounds).toBe(3);
 		expect(incumbent.outOfSupportCells).toBe(0);
 		expect(incumbent.probesToBest).toBe(2);
+		expect(incumbent.roundsToBest).toBe(2);
 		const probes = simulatePolicy(tree, FEWER_PROBES, { k2: 6 });
 		expect(probes.bestScore).toBe(incumbent.bestScore);
 		expect(probes.N).toBe(3);
 		expect(probes.rounds).toBe(3);
+		expect(probes.probesToBest).toBe(2);
 		const rounds = simulatePolicy(tree, FEWER_ROUNDS, { k2: 6 });
 		expect(rounds.bestScore).toBe(incumbent.bestScore);
 		expect(rounds.N).toBe(2);
 		expect(rounds.rounds).toBe(2);
+		expect(rounds.roundsToBest).toBe(2);
+		// The twin replays identically under another id.
+		const twin = exactPool()[1]!;
+		expect(twin.header.treeId).toBe("exact2");
+		expect(simulatePolicy(twin, INCUMBENT, { k2: 6 }).revealedIds).toEqual(
+			incumbent.revealedIds.map((id) => id.replace("exact-", "exact2-")),
+		);
+	});
+
+	it("earns no stop-early credit on a single tree: both cheaper policies lose to the incumbent's raw spend", () => {
+		// With one measured tree a candidate's horizon is the budget itself: both are charged
+		// B = 2 * 3 = 6 probes and k1 = 3 rounds, so cost 1 and roundsSaved 0 and V collapses to
+		// (1 - beta3) q + beta3 anytime - beta1: q 1 and anytime (1/3 + 5) / 6 = 0.888889 (the best
+		// arrives at probe 2 of 6, after one probe at 0.5, normalized 1/3), so V = 0.75 + 0.222222 - 0.05
+		// = 0.922222. The incumbent is charged what it spent, 4 probes over 3 rounds: cost 4/6 and
+		// V = 0.972222 - 0.033333 = 0.938889, above both candidates by beta1 * 2/6 = 0.016667.
+		const current = scorePolicyOnPool(INCUMBENT, exactTree(), EXACT_CFG, "raw");
+		const probes = scorePolicyOnPool(FEWER_PROBES, exactTree(), EXACT_CFG);
+		const rounds = scorePolicyOnPool(FEWER_ROUNDS, exactTree(), EXACT_CFG);
+		for (const score of [probes, rounds]) {
+			expect(score.chargedProbes).toBe(6);
+			expect(score.chargedRounds).toBe(3);
+			expect(score.cost).toBe(1);
+			expect(score.roundsSaved).toBe(0);
+			expect(score.anytime).toBeCloseTo(16 / 18, 12);
+			expect(score.value).toBeCloseTo(0.75 + 0.25 * (16 / 18) - 0.05, 12);
+		}
+		expect(current.chargedProbes).toBe(4);
+		expect(current.chargedRounds).toBe(3);
+		expect(current.anytime).toBeCloseTo(16 / 18, 12);
+		expect(current.value).toBeCloseTo(0.75 + 0.25 * (16 / 18) - 0.05 * (4 / 6), 12);
+		expect(current.value - probes.value).toBeCloseTo(DEFAULT_OBJECTIVE.beta1 * (2 / 6), 12);
+		expect(probes.N).toBe(3);
+		expect(rounds.N).toBe(2);
+		expect(rounds.rounds).toBe(2);
+		const selection = selectBestPolicy(INCUMBENT, [FEWER_PROBES, FEWER_ROUNDS], exactTree(), EXACT_CFG);
+		expect(selection.improved).toBe(false);
+		expect(selection.chosenPolicy).toBe(INCUMBENT);
+		expect(selection.current).toEqual(current);
+		expect(selection.currentMinBest).toBe(0.9);
+		expect(selection.measuredTrees).toBe(1);
+		expect(selection.evidenceTrees).toBe(0);
+		expect(selection.candidates.map((candidate) => candidate.reason)).toEqual(["worse", "worse"]);
+		expect(selection.candidates.every((candidate) => candidate.evidenceTrees === 0)).toBe(true);
+		expect(runLeverScan(INCUMBENT, exactTree(), EXACT_CFG).gap).toBe(0);
 	});
 
 	it("scores fewer probes at equal rounds strictly higher (the old form scored this an exact tie)", () => {
@@ -595,6 +1035,9 @@ describe("(a) same best for less now strictly wins where the incumbent replays e
 		expect(probes.roundsSaved).toBe(current.roundsSaved);
 		expect(probes.cost).toBeCloseTo(3 / 6, 12);
 		expect(current.cost).toBeCloseTo(4 / 6, 12);
+		// The twin vouches: FEWER_PROBES reached the best at probe 2 there, below its own 3.
+		expect(probes.chargedProbes).toBe(3);
+		expect(current.chargedProbes).toBe(4);
 		expect(probes.value - current.value).toBeCloseTo(DEFAULT_OBJECTIVE.beta1 / 6, 12);
 		const selection = selectBestPolicy(INCUMBENT, [FEWER_PROBES], exactPool(), EXACT_CFG);
 		expect(selection.improved).toBe(true);
@@ -606,6 +1049,8 @@ describe("(a) same best for less now strictly wins where the incumbent replays e
 		const current = scorePolicyOnPool(INCUMBENT, exactPool(), EXACT_CFG);
 		const rounds = scorePolicyOnPool(FEWER_ROUNDS, exactPool(), EXACT_CFG);
 		expect(rounds.quality).toBe(current.quality);
+		expect(rounds.chargedProbes).toBe(2);
+		expect(rounds.chargedRounds).toBe(2);
 		expect(rounds.roundsSaved).toBeCloseTo(1 / 3, 12);
 		expect(rounds.value - current.value).toBeCloseTo(
 			DEFAULT_OBJECTIVE.beta1 * (2 / 6) + DEFAULT_OBJECTIVE.beta2 * (1 / 3),
@@ -752,10 +1197,20 @@ describe("the measured pool (trees the incumbent replays in full support)", () =
 		const selection = selectBestPolicy(PATIENT, [IMPATIENT], mixedPool(), MEASURED_CFG);
 		expect(selection.measuredTrees).toBe(1);
 		expect(selection.improved).toBe(false);
-		expect(selection.candidates[0]!.reason).toBe("tie");
-		expect(selection.candidates[0]!.value).toBe(selection.currentScore);
+		// On the one measured tree (OWN) both walk identically: N 4, 3 rounds. IMPATIENT, a candidate with
+		// no other tree to vouch for it, is charged the whole budget (6 probes, cost 1, roundsSaved 0);
+		// PATIENT, the incumbent, its raw 4 probes (cost 4/6), so the twin walk loses by beta1 * 2/6.
+		expect(selection.candidates[0]!.reason).toBe("worse");
 		expect(selection.candidates[0]!.rounds).toBe(3);
+		expect(selection.candidates[0]!.N).toBe(4);
+		expect(selection.candidates[0]!.chargedProbes).toBe(6);
 		expect(selection.candidates[0]!.roundsSaved).toBe(0);
+		expect(selection.current.chargedProbes).toBe(4);
+		expect(selection.current.roundsSaved).toBe(0);
+		expect(selection.currentScore - selection.candidates[0]!.value).toBeCloseTo(
+			DEFAULT_OBJECTIVE.beta1 * (2 / 6),
+			12,
+		);
 	});
 
 	it("measures nothing when the incumbent is off support on every tree: nothing eligible, every candidate unmeasurable", () => {
@@ -770,6 +1225,7 @@ describe("the measured pool (trees the incumbent replays in full support)", () =
 		expect(selection.improved).toBe(false);
 		expect(selection.chosenPolicy).toBe(OWNER);
 		expect(selection.currentScore).toBe(0);
+		expect(selection.currentMinBest).toBe(0);
 		expect(selection.candidates.map((candidate) => candidate.reason)).toEqual(["unmeasurable", "unmeasurable"]);
 		expect(selection.candidates.every((candidate) => !candidate.eligible)).toBe(true);
 		expect(selection.qualityRejected).toBe(0);
@@ -801,12 +1257,13 @@ describe("the measured pool (trees the incumbent replays in full support)", () =
 			mixedPool(),
 			MEASURED_CFG,
 		);
+		// PATIENT walks OWN exactly as OWNER does but, charged the whole budget against OWNER's raw 4 probes, is 'worse'.
 		expect(selection.candidates.map((candidate) => candidate.reason)).toEqual([
 			"identical",
 			"quality-rejected",
 			"duplicate",
 			"unmeasurable",
-			"tie",
+			"worse",
 		]);
 		// 2 (OWNER on own and foreign) + 1 (FOREIGN_FRIENDLY on own) + 1 (PATIENT on own, an identical walk).
 		expect(selection.simulations).toBe(4);
@@ -921,8 +1378,74 @@ describe("candidate verdicts", () => {
 			outOfSupportCells: 0,
 			inSupportMean: 1,
 			inSupportMin: 1,
+			chargedProbes: 3,
+			chargedRounds: 3,
+			evidenceTrees: 1,
 		});
 		expect(selection.current).toEqual(scorePolicyOnPool(INCUMBENT, exactPool(), EXACT_CFG));
+	});
+});
+
+describe("revoked candidates", () => {
+	it("labels a revoked id 'revoked': simulated for the record, never eligible, never the winner", () => {
+		const revoked = new Set([policyId(FEWER_ROUNDS)]);
+		const plain = selectBestPolicy(INCUMBENT, [FEWER_ROUNDS, FEWER_PROBES], exactPool(), EXACT_CFG);
+		expect(plain.candidates.map((candidate) => candidate.reason)).toEqual(["winner", "worse"]);
+		const selection = selectBestPolicy(
+			INCUMBENT,
+			[FEWER_ROUNDS, FEWER_PROBES, { ...FEWER_ROUNDS }],
+			exactPool(),
+			EXACT_CFG,
+			revoked,
+		);
+		expect(selection.candidates.map((candidate) => candidate.reason)).toEqual(["revoked", "winner", "duplicate"]);
+		const [reverted, winner] = selection.candidates;
+		expect(reverted!.eligible).toBe(false);
+		// Its numbers are real (the same replay as without the revocation), it just cannot be chosen.
+		expect(reverted!.value).toBe(plain.candidates[0]!.value);
+		expect(reverted!.value).toBeGreaterThan(winner!.value);
+		expect(selection.improved).toBe(true);
+		expect(selection.chosenPolicy).toBe(FEWER_PROBES);
+		expect(selection.simulations).toBe(plain.simulations);
+		expect(selection.qualityRejected).toBe(0);
+		// The current policy's own id is never 'revoked', even when listed.
+		const self = selectBestPolicy(
+			INCUMBENT,
+			[{ ...INCUMBENT }],
+			exactPool(),
+			EXACT_CFG,
+			new Set([policyId(INCUMBENT)]),
+		);
+		expect(self.candidates[0]!.reason).toBe("identical");
+	});
+
+	it("threads through runDreaming and the candidate span", () => {
+		const spans: SpanEndRecord[] = [];
+		const unsubscribe = addSpanSink((record) => spans.push(record));
+		let result: ReturnType<typeof runDreaming>;
+		try {
+			result = runDreaming({
+				current: INCUMBENT,
+				pool: exactPool(),
+				dreams: 1,
+				k1: EXACT_CFG.k1,
+				k2: EXACT_CFG.k2,
+				rng: createSeededRng(1),
+				proposeCandidates: () => [FEWER_ROUNDS],
+				revoked: new Set([policyId(FEWER_ROUNDS)]),
+				leverScan: false,
+			});
+		} finally {
+			unsubscribe();
+		}
+		expect(result.improved).toBe(false);
+		expect(result.chosenPolicyId).toBe(policyId(INCUMBENT));
+		expect(result.candidates[0]!.reason).toBe("revoked");
+		expect(result.current).toEqual(scorePolicyOnPool(INCUMBENT, exactPool(), EXACT_CFG, "raw"));
+		expect(result.currentMinBest).toBe(0.9);
+		const candidate = spans.find((span) => span.name === "dream.candidate")!;
+		expect(candidate.attrs["dream.reason"]).toBe("revoked");
+		expect(candidate.attrs["dream.eligible"]).toBe(false);
 	});
 });
 
@@ -1096,18 +1619,20 @@ describe("runDreaming", () => {
 		expect(dream.attrs["dream.lever_policies"]).toBe(result.leverScan!.policies);
 		expect(dream.attrs["dream.dreamer"]).toBe("mixed");
 		expect(dream.attrs["dream.unmeasurable"]).toBe(0);
-		expect(dream.attrs["dream.measured_trees"]).toBe(1);
+		expect(dream.attrs["dream.measured_trees"]).toBe(2);
+		expect(dream.attrs["dream.evidence_trees"]).toBe(1);
+		expect(result.evidenceTrees).toBe(1);
 		expect(dream.attrs["dream.simulations"]).toBe(result.simulations);
 		expect(dream.attrs["dream.lever_simulations"]).toBe(result.leverScan!.simulations);
 		expect(dream.attrs["dream.quality_rejected"]).toBe(0);
 		const replay = spans.find((span) => span.name === "dream.replay")!;
 		expect(replay.attrs["dream.iteration"]).toBe(3);
 		expect(replay.parentSpanId).toBe(dream.spanId);
-		// Exactly the simulations made: INCUMBENT on the one tree plus FEWER_PROBES; the identical candidate is skipped.
-		expect(replay.attrs["dream.simulations"]).toBe(2);
-		expect(result.simulations).toBe(2);
-		expect(result.measuredTrees).toBe(1);
-		expect(replay.attrs["dream.measured_trees"]).toBe(1);
+		// Exactly the simulations made: INCUMBENT on both trees plus FEWER_PROBES on both; the identical candidate is skipped.
+		expect(replay.attrs["dream.simulations"]).toBe(4);
+		expect(result.simulations).toBe(4);
+		expect(result.measuredTrees).toBe(2);
+		expect(replay.attrs["dream.measured_trees"]).toBe(2);
 		const candidates = spans.filter((span) => span.name === "dream.candidate");
 		expect(candidates).toHaveLength(2);
 		for (const span of candidates) {
@@ -1122,6 +1647,8 @@ describe("runDreaming", () => {
 			"dream.reason": "winner",
 			"dream.changed": "batchSize",
 			"dream.in_support_min": 1,
+			"dream.charged_probes": 3,
+			"dream.charged_rounds": 3,
 		});
 		expect(candidates[1]!.attrs["dream.reason"]).toBe("identical");
 	});

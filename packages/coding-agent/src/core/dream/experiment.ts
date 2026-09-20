@@ -634,6 +634,7 @@ function copyDreaming(dreaming: DreamRoundRecord["dreaming"]): DreamRoundRecord[
 		...(dreaming.leverScan === undefined || dreaming.leverScan === null
 			? {}
 			: { leverScan: { ...dreaming.leverScan } }),
+		...(dreaming.probation === undefined ? {} : { probation: { ...dreaming.probation } }),
 	};
 }
 

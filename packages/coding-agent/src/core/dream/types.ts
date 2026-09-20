@@ -46,11 +46,14 @@ export type DreamerKind = "llm" | "local" | "mixed";
  * step chose. `winner`: chosen and a strict improvement. `tie`: eligible, tied
  * the chosen value, lost the tie-break. `worse`: eligible, fully in support,
  * below the chosen value. `quality-rejected`: fully in support, failed the
- * quality guard. `unmeasurable`: differs from current only in replay-dead
+ * per-tree quality guard (below the incumbent's replay quality on at least one
+ * measured tree). `unmeasurable`: differs from current only in replay-dead
  * fields (`REPLAY_DEAD_FIELDS`), or selected an out-of-support cell on some
  * measured tree (its replay is biased and says nothing about it), or no tree was
  * measurable at all (the current policy is off support on every tree), and was
- * not the winner.
+ * not the winner. `revoked`: the id of a policy this run already adopted and
+ * reverted after its probation rollout (`loop.ts`); simulated for the record,
+ * never eligible again.
  * `identical`: the current policy's own id. `duplicate`: the same id as an
  * earlier candidate (`duplicateOf`). Identical and duplicate candidates are
  * simulated at most once and never enter the argmax.
@@ -61,6 +64,7 @@ export const CANDIDATE_REASONS = [
 	"worse",
 	"quality-rejected",
 	"unmeasurable",
+	"revoked",
 	"identical",
 	"duplicate",
 ] as const;
@@ -98,9 +102,55 @@ export interface CandidateVerdict {
 	outOfSupportCells: number;
 	inSupportMean: number;
 	inSupportMin: number;
-	/** Passed the quality guard and entered the argmax (never for identical/duplicate). */
+	/**
+	 * Mean selections the cost term charged per tree: `max(N + oos, H_probes)` with
+	 * `H_probes` the policy's latest `probesToBest` on the other measured trees, or
+	 * the whole budget `W * k1` when there is no other tree (`objective.ts`). The
+	 * incumbent is charged its raw spend instead (`PoolScore.chargedProbes` on
+	 * `PolicySelection.current`), so a candidate is never charged below its own
+	 * spend and the incumbent never above its real one.
+	 */
+	chargedProbes: number;
+	/** Mean rounds the roundsSaved term charged per tree: `max(rounds, H_rounds)`, `k1` with no other tree. */
+	chargedRounds: number;
+	/** Measured trees minus one (floor 0): the trees whose replays back this candidate's stop-early credit. */
+	evidenceTrees: number;
+	/** Passed the quality guard and entered the argmax (never for identical/duplicate/revoked). */
 	eligible: boolean;
 	reason: CandidateReason;
+}
+
+/**
+ * The probation rollout of an adopted policy (`loop.ts`, `llm.ts`). A replay win
+ * says only that a policy re-walked the recorded trees for less; it says nothing
+ * about the branches it would not open online (the out-of-support limit,
+ * `objective.ts`). So the first redeploy rollout of every adopted policy is a
+ * probation: when its best falls below the incumbent's lowest replay best over
+ * the measured pool (`floor`), the adoption is reverted, the incumbent is
+ * restored for the next step and the policy id is `revoked` for the rest of
+ * the run. Written to the dreams log and onto the round record either way.
+ */
+export interface DreamProbationRecord {
+	/** The adopted policy that rolled out on probation. */
+	policyId: string;
+	/** The policy it replaced, restored when `reverted`. */
+	incumbentPolicyId: string;
+	/** The probation rollout's tree. */
+	treeId: string;
+	/** The rollout's best valid score. */
+	roundBest: number;
+	/** The incumbent's lowest replay `bestScore` over the measured pool the policy won on. */
+	floor: number;
+	/** The winner's mean charged spend on that pool (its verdict's `chargedProbes` / `chargedRounds`). */
+	chargedProbes: number;
+	chargedRounds: number;
+	/** The incumbent's raw mean spend on the same pool. */
+	incumbentChargedProbes: number;
+	incumbentChargedRounds: number;
+	/** `measuredTrees - 1` of the step that adopted it. */
+	evidenceTrees: number;
+	/** True when `roundBest` fell below `floor` and the incumbent was restored. */
+	reverted: boolean;
 }
 
 /**

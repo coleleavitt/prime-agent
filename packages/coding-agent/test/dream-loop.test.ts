@@ -4,18 +4,27 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { addSpanSink, type SpanEndRecord } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
-import { type DreamCandidateLine, type DreamStepLine, dreamsPath, readDreamsLog } from "../src/core/dream/dreams.js";
+import {
+	type DreamCandidateLine,
+	type DreamProbationLine,
+	type DreamStepLine,
+	dreamsPath,
+	readDreamsLog,
+} from "../src/core/dream/dreams.js";
 import {
 	type DreamLoopOptions,
 	type DreamLoopResult,
 	type DreamRoundRecord,
 	dreamRunId,
+	judgeProbation,
 	mergedRoundCurve,
+	PROBATION_EPS,
 	primingTreeId,
 	runDreamLoop,
 } from "../src/core/dream/loop.js";
 import { DEFAULT_POLICY, type ExplorationPolicy, PRIMING_DIVERSE, policyId } from "../src/core/dream/policy.js";
 import { listTrees, readTree } from "../src/core/dream/store.js";
+import type { ScoredTask } from "../src/core/dream/task.js";
 import { resolveTask } from "../src/core/dream/tasks/index.js";
 
 /**
@@ -421,5 +430,186 @@ describe("runDreamLoop primingPolicies", () => {
 		expect(first.probesToRoundBest).toBe(expected.at(-1)!.probe);
 		expect(expected.at(-1)!.score).toBe(first.roundBest);
 		expect(mergedRoundCurve([])).toEqual({ probesToBest: 0, improvements: [] });
+	});
+});
+
+/**
+ * A scripted task for the probation: every artifact is a number, the root is 0,
+ * and a child's score depends only on the online round and on which rollout of
+ * the run grows it (counted by `root` calls, so the test double can stage what
+ * a fresh rollout finds). Trees 0, 1 and 3+: round 1 finds 1.0, later rounds
+ * 0.5, so a patience incumbent records its best at the first probe. Tree 2, the
+ * probation rollout of whatever the second dreaming step adopts: round 1 finds
+ * `probationFirst`, round 2 and later 0.9 (the improvement a one-round policy
+ * never sees online). Deterministic and rng-free by construction.
+ */
+function scriptedTask(probationFirst: number): ScoredTask<{ v: number }> {
+	let trees = 0;
+	const deserialize = (value: unknown): { v: number } => {
+		if (typeof value !== "object" || value === null || typeof (value as { v?: unknown }).v !== "number") {
+			throw new TypeError("expected { v: number }");
+		}
+		return { v: (value as { v: number }).v };
+	};
+	return {
+		id: "sum-difference",
+		root: () => {
+			trees += 1;
+			return { v: 0 };
+		},
+		propose: (_parent, _params, _rng, round) => {
+			if (trees === 3) return { v: round === 1 ? probationFirst : 0.9 };
+			return { v: round === 1 ? 1 : 0.5 };
+		},
+		evaluate: (candidate) => ({ valid: true, score: candidate.v }),
+		serialize: (candidate) => ({ v: candidate.v }),
+		deserialize,
+	};
+}
+
+/** Run 3's dreamed collapse: one round of one probe. */
+const COLLAPSE: ExplorationPolicy = { ...DEFAULT_POLICY, stopRule: "fixed-rounds", beta: 1 };
+
+function scriptedOptions(dir: string, probationFirst: number): DreamLoopOptions {
+	return options(dir, {
+		task: scriptedTask(probationFirst),
+		workers: 3,
+		k1: 4,
+		k2: 8,
+		dreams: 1,
+		iterations: 3,
+		proposeCandidates: () => [COLLAPSE],
+	});
+}
+
+describe("runDreamLoop probation", () => {
+	it("judges a probation rollout against the incumbent's lowest replay best", () => {
+		const step = {
+			chosenPolicyId: policyId(COLLAPSE),
+			candidates: [],
+			current: {
+				value: 0.9,
+				quality: 1,
+				anytime: 1,
+				cost: 0.5,
+				roundsSaved: 0,
+				N: 6,
+				rounds: 4,
+				outOfSupportCells: 0,
+				inSupportMean: 1,
+				inSupportMin: 1,
+				chargedProbes: 6,
+				chargedRounds: 4,
+			},
+			currentMinBest: 0.7,
+			evidenceTrees: 1,
+		};
+		const kept = judgeProbation(step, DEFAULT_POLICY, { treeId: "t", bestScore: 0.7 });
+		expect(kept).toEqual({
+			policyId: policyId(COLLAPSE),
+			incumbentPolicyId: policyId(DEFAULT_POLICY),
+			treeId: "t",
+			roundBest: 0.7,
+			floor: 0.7,
+			chargedProbes: 6,
+			chargedRounds: 4,
+			incumbentChargedProbes: 6,
+			incumbentChargedRounds: 4,
+			evidenceTrees: 1,
+			reverted: false,
+		});
+		expect(judgeProbation(step, DEFAULT_POLICY, { treeId: "t", bestScore: 0.7 - PROBATION_EPS / 2 }).reverted).toBe(
+			false,
+		);
+		expect(judgeProbation(step, DEFAULT_POLICY, { treeId: "t", bestScore: 0.7 - 2 * PROBATION_EPS }).reverted).toBe(
+			true,
+		);
+	});
+
+	it("reverts an adopted policy whose first rollout falls below the floor, revokes it, and logs the judgement", () => {
+		const dir = scratch();
+		const { result, spans } = captured(() => runDreamLoop(scriptedOptions(dir, 0.2)));
+		const initialId = policyId(DEFAULT_POLICY);
+		const collapseId = policyId(COLLAPSE);
+		expect(result.rounds.map((record) => record.policyId)).toEqual([initialId, initialId, collapseId, initialId]);
+		// Iteration 1: one measured tree, no evidence, the collapse is charged the whole budget and loses.
+		const first = result.rounds[1]!.dreaming!;
+		expect(first.improved).toBe(false);
+		expect(first.candidateVerdicts![0]!.reason).toBe("worse");
+		expect(first.probation).toBeUndefined();
+		// Iteration 2: two incumbent-grown trees whose best is the first probe vouch for stopping after
+		// round 1 (the run-3 collapse with evidenceTrees 1), so the collapse wins on replay and is deployed.
+		const second = result.rounds[2]!.dreaming!;
+		expect(second.improved).toBe(true);
+		expect(second.measuredTrees).toBe(2);
+		const winner = second.candidateVerdicts![0]!;
+		expect(winner.reason).toBe("winner");
+		expect(winner.chargedProbes).toBe(1);
+		expect(winner.chargedRounds).toBe(1);
+		// Its probation rollout found 0.2 in its one round; the incumbent's lowest recorded best is 1.0. The
+		// incumbent is charged its raw 6 probes over 4 rounds (reveals 1, 1, 2, 2: a batch never holds a node
+		// with its parent, so round 2 probes only n1 and rounds 3-4 the root plus one leaf).
+		expect(result.rounds[2]!.roundBest).toBe(0.2);
+		expect(result.rounds[2]!.probes).toBe(1);
+		expect(result.rounds[1]!.probes).toBe(6);
+		expect(second.probation).toEqual({
+			policyId: collapseId,
+			incumbentPolicyId: initialId,
+			treeId: result.rounds[2]!.treeId,
+			roundBest: 0.2,
+			floor: 1,
+			chargedProbes: 1,
+			chargedRounds: 1,
+			incumbentChargedProbes: 6,
+			incumbentChargedRounds: 4,
+			evidenceTrees: 1,
+			reverted: true,
+		});
+		// Iteration 3 dreams from the restored incumbent; the collapse is proposed again and is 'revoked'.
+		const third = result.rounds[3]!.dreaming!;
+		expect(third.improved).toBe(false);
+		expect(third.candidateVerdicts![0]!.reason).toBe("revoked");
+		expect(third.candidateVerdicts![0]!.eligible).toBe(false);
+		expect(third.probation).toBeUndefined();
+		expect(result.rounds[3]!.roundBest).toBe(1);
+		expect(result.probationReverts).toBe(1);
+		// The final selection never picks the revoked policy either.
+		expect(result.finalPolicyId).toBe(initialId);
+		expect(result.finalSelection!.map((verdict) => verdict.reason)).toEqual(["identical", "revoked", "identical"]);
+
+		const lines = readDreamsLog(dreamsPath(dir, result.runId));
+		const probations = lines.filter((line): line is DreamProbationLine => line.type === "probation");
+		expect(probations).toHaveLength(1);
+		expect(probations[0]).toEqual({ type: "probation", ts: FIXED_CLOCK, iteration: 2, ...second.probation });
+		// The probation line follows its step line and precedes the next step's candidates.
+		const order = lines.map((line) => `${line.type}:${line.iteration}`);
+		expect(order.indexOf("probation:2")).toBeGreaterThan(order.indexOf("step:2"));
+		expect(order.indexOf("probation:2")).toBeLessThan(order.indexOf("step:3"));
+
+		const redeploys = spans.filter((span) => span.name === "dream.redeploy");
+		expect(redeploys.map((span) => span.attrs["dream.probation"])).toEqual([false, true, false]);
+		expect(redeploys[1]!.attrs["dream.reverted"]).toBe(true);
+		expect(redeploys[1]!.attrs["dream.probation_floor"]).toBe(1);
+		expect(redeploys[0]!.attrs["dream.reverted"]).toBeUndefined();
+	});
+
+	it("keeps an adopted policy whose probation rollout reaches the floor", () => {
+		const dir = scratch();
+		const result = runDreamLoop(scriptedOptions(dir, 1));
+		const collapseId = policyId(COLLAPSE);
+		expect(result.rounds.map((record) => record.policyId)).toEqual([
+			policyId(DEFAULT_POLICY),
+			policyId(DEFAULT_POLICY),
+			collapseId,
+			collapseId,
+		]);
+		const probation = result.rounds[2]!.dreaming!.probation!;
+		expect(probation).toMatchObject({ policyId: collapseId, roundBest: 1, floor: 1, reverted: false });
+		expect(result.probationReverts).toBe(0);
+		// Iteration 3 dreams from the collapse; the same candidate is now 'identical'.
+		expect(result.rounds[3]!.dreaming!.candidateVerdicts![0]!.reason).toBe("identical");
+		const probations = readDreamsLog(dreamsPath(dir, result.runId)).filter((line) => line.type === "probation");
+		expect(probations).toHaveLength(1);
+		expect((probations[0] as DreamProbationLine).reverted).toBe(false);
 	});
 });

@@ -12,7 +12,27 @@
  * Every candidate is scored on the MEASURED pool by the mean replay objective
  * (`objective.ts`: quality, anytime, charged cost, rounds saved), and
  * `selectBestPolicy` returns the argmax of {current} ∪ candidates among the
- * candidates whose mean replay QUALITY is no lower than the current policy's.
+ * candidates whose replay QUALITY is no lower than the current policy's on
+ * EVERY measured tree. A candidate's spend terms are evidence-backed
+ * (`objective.ts`): on each measured tree it is charged at least the latest
+ * probe and round at which it was still improving on the OTHER measured trees,
+ * and the whole budget when there is no other tree, so a stop-early credit
+ * needs a second tree to vouch for it. The incumbent is charged its RAW spend:
+ * the measured trees are the ones it grew, so its recorded probes and rounds
+ * ARE its online behaviour and a horizon taken from its late trees would
+ * surcharge the early stops it really made (on a recorded circle-packing pool
+ * of one late-best and three patience-stopped trees the symmetric rule charged
+ * it 31 probes / 13 rounds where it spent 18/8, 15/7 and 19/8, and 106 grid
+ * candidates that lose to the raw incumbent won against the surcharged one
+ * while replaying identically under both rules). Asymmetric, a candidate is
+ * never charged below its own spend and the incumbent never above its real one.
+ * The recorded run 3 collapsed for want of a second tree (one 13-node tree
+ * whose best was the first probe; the fixture and regression are in
+ * `test/dream-improve.test.ts`). The rule closes that single-tree instance
+ * only: a pool whose trees all happened to saturate by round R cannot be told
+ * from a task that saturates by round R, so a fixed-rounds R candidate still
+ * wins on such a pool and its online check is the probation in `loop.ts`
+ * (`DreamProbationRecord`); a reverted policy's id comes back here as `revoked`.
  * The measured pool is the frozen pool minus every tree the current policy
  * replays out of support: on such a tree (one another policy grew — a priming
  * tree, or a tree from before a policy change) the incumbent's replay reveals
@@ -47,7 +67,10 @@ import { withSpan } from "@earendil-works/pi-ai";
 import {
 	computeObjectiveTerms,
 	DEFAULT_OBJECTIVE,
+	type ObjectiveEvidence,
 	type ObjectiveScale,
+	type ObjectiveTerms,
+	objectiveBudgetOf,
 	poolScoreScale,
 	type ReplayObjectiveConfig,
 } from "./objective.js";
@@ -135,9 +158,9 @@ export interface DreamingScoreConfig {
 	k2: number;
 	objective: ReplayObjectiveConfig;
 	/**
-	 * How far (in pool-range units, so scale-free) a candidate's mean replay
-	 * quality may fall below the current policy's and still be eligible. Default 0:
-	 * quality must not regress.
+	 * How far (in pool-range units, so scale-free) a candidate's replay quality
+	 * may fall below the current policy's on any measured tree and still be
+	 * eligible. Default 0: quality must not regress on any tree.
 	 */
 	qualityEps?: number;
 }
@@ -159,6 +182,10 @@ export interface PoolScore {
 	inSupportMean: number;
 	/** Min `ReplayResult.inSupport` over the pool (1 for an empty pool). */
 	inSupportMin: number;
+	/** Mean `ObjectiveTerms.chargedProbes` per tree (evidence-backed; see `objective.ts`). */
+	chargedProbes: number;
+	/** Mean `ObjectiveTerms.chargedRounds` per tree. */
+	chargedRounds: number;
 }
 
 function emptyPoolScore(): PoolScore {
@@ -173,6 +200,8 @@ function emptyPoolScore(): PoolScore {
 		outOfSupportCells: 0,
 		inSupportMean: 1,
 		inSupportMin: 1,
+		chargedProbes: 0,
+		chargedRounds: 0,
 	};
 }
 
@@ -184,31 +213,79 @@ function simulateOnPool(
 	return sorted.map((tree) => simulatePolicy(tree, policy, { k2: cfg.k2 }));
 }
 
-/** Aggregate one replay per tree (`replays[i]` is `sorted[i]`'s) into the pool means. */
-function aggregateReplays(
+/**
+ * The spend horizon tree `index` is charged against: the largest `probesToBest`
+ * and `roundsToBest` the same policy recorded on the OTHER trees of the pool,
+ * or the tree's whole budget (`W * k1` probes, `k1` rounds) when it is alone.
+ */
+function evidenceFor(
+	replays: readonly ReplayResult[],
+	index: number,
+	tree: RecordedTree,
+	cfg: DreamingScoreConfig,
+): ObjectiveEvidence {
+	if (replays.length <= 1) return objectiveBudgetOf({ workers: tree.header.w, k1: cfg.k1 });
+	let probes = 0;
+	let rounds = 0;
+	replays.forEach((other, otherIndex) => {
+		if (otherIndex === index) return;
+		if (other.probesToBest > probes) probes = other.probesToBest;
+		if (other.roundsToBest > rounds) rounds = other.roundsToBest;
+	});
+	return { probes, rounds };
+}
+
+/**
+ * How a policy's spend is charged on a pool: `evidence` (a candidate: each tree
+ * at least at the horizon its other replays establish, the whole budget when
+ * alone) or `raw` (the incumbent: exactly the probes and rounds it recorded).
+ */
+export type SpendCharge = "evidence" | "raw";
+
+/**
+ * The objective terms of one replay per tree (`replays[i]` is `sorted[i]`'s),
+ * each tree's spend charged per `charge`. The per-tree qualities feed the guard;
+ * the dreamer prompt digests the incumbent's `raw` numbers.
+ */
+export function termsOnPool(
 	replays: readonly ReplayResult[],
 	sorted: readonly RecordedTree[],
 	cfg: DreamingScoreConfig,
 	scale: ObjectiveScale,
-): PoolScore {
-	if (sorted.length === 0) return emptyPoolScore();
+	charge: SpendCharge,
+): ObjectiveTerms[] {
+	return sorted.map((tree, index) =>
+		computeObjectiveTerms(
+			replays[index]!,
+			cfg.objective,
+			scale,
+			{ workers: tree.header.w, k1: cfg.k1 },
+			charge === "evidence" ? evidenceFor(replays, index, tree, cfg) : undefined,
+		),
+	);
+}
+
+/** Aggregate one replay per tree and its terms into the pool means. */
+function aggregateReplays(replays: readonly ReplayResult[], terms: readonly ObjectiveTerms[]): PoolScore {
+	if (replays.length === 0) return emptyPoolScore();
 	const sum = emptyPoolScore();
 	sum.inSupportMean = 0;
-	sorted.forEach((tree, index) => {
-		const replay = replays[index]!;
-		const terms = computeObjectiveTerms(replay, cfg.objective, scale, { workers: tree.header.w, k1: cfg.k1 });
-		sum.value += terms.value;
-		sum.quality += terms.quality;
-		sum.anytime += terms.anytime;
-		sum.cost += terms.cost;
-		sum.roundsSaved += terms.roundsSaved;
+	replays.forEach((replay, index) => {
+		const term = terms[index]!;
+		sum.value += term.value;
+		sum.quality += term.quality;
+		sum.anytime += term.anytime;
+		sum.cost += term.cost;
+		sum.roundsSaved += term.roundsSaved;
+		sum.chargedProbes += term.chargedProbes;
+		sum.chargedRounds += term.chargedRounds;
 		sum.N += replay.N;
 		sum.rounds += replay.rounds;
 		sum.outOfSupportCells += replay.outOfSupportCells;
 		sum.inSupportMean += replay.inSupport;
 		if (replay.inSupport < sum.inSupportMin) sum.inSupportMin = replay.inSupport;
 	});
-	const count = sorted.length;
+	const count = replays.length;
 	return {
 		value: sum.value / count,
 		quality: sum.quality / count,
@@ -220,7 +297,26 @@ function aggregateReplays(
 		outOfSupportCells: sum.outOfSupportCells / count,
 		inSupportMean: sum.inSupportMean / count,
 		inSupportMin: sum.inSupportMin,
+		chargedProbes: sum.chargedProbes / count,
+		chargedRounds: sum.chargedRounds / count,
 	};
+}
+
+/** A policy's pool means plus its per-tree terms (in `sorted` order). */
+interface PoolTerms {
+	score: PoolScore;
+	terms: ObjectiveTerms[];
+}
+
+function poolTermsOf(
+	replays: readonly ReplayResult[],
+	sorted: readonly RecordedTree[],
+	cfg: DreamingScoreConfig,
+	scale: ObjectiveScale,
+	charge: SpendCharge,
+): PoolTerms {
+	const terms = termsOnPool(replays, sorted, cfg, scale, charge);
+	return { score: aggregateReplays(replays, terms), terms };
 }
 
 function scoreOnPool(
@@ -228,8 +324,14 @@ function scoreOnPool(
 	sorted: readonly RecordedTree[],
 	cfg: DreamingScoreConfig,
 	scale: ObjectiveScale,
-): PoolScore {
-	return aggregateReplays(simulateOnPool(policy, sorted, cfg), sorted, cfg, scale);
+	charge: SpendCharge,
+): PoolTerms {
+	return poolTermsOf(simulateOnPool(policy, sorted, cfg), sorted, cfg, scale, charge);
+}
+
+/** Measured trees minus one, floor 0: the trees that can vouch for a stop-early credit. */
+export function evidenceTreesOf(measuredTrees: number): number {
+	return Math.max(0, Math.trunc(measuredTrees) - 1);
 }
 
 function sortedPool(pool: readonly RecordedTree[]): RecordedTree[] {
@@ -240,16 +342,17 @@ function sortedPool(pool: readonly RecordedTree[]): RecordedTree[] {
  * Mean replay objective and mean normalized quality of a policy over the pool
  * AS GIVEN (no measured-pool exclusion: that is `selectBestPolicy`'s job), scored
  * against the pool's own score scale and evaluated on a deterministic treeId
- * ordering. Replay is rng-free, so `_rng` is accepted only to match the
- * documented surface and is not consulted. An empty pool scores 0.
+ * ordering. `charge` defaults to `evidence` (how a candidate is scored); pass
+ * `raw` for the incumbent's own numbers. Replay is rng-free. An empty pool
+ * scores 0.
  */
 export function scorePolicyOnPool(
 	policy: ExplorationPolicy,
 	pool: readonly RecordedTree[],
 	cfg: DreamingScoreConfig,
-	_rng?: SeededRng,
+	charge: SpendCharge = "evidence",
 ): PoolScore {
-	return scoreOnPool(policy, sortedPool(pool), cfg, poolScoreScale(pool));
+	return scoreOnPool(policy, sortedPool(pool), cfg, poolScoreScale(pool), charge).score;
 }
 
 /** The trees of a pool the current policy replays in full support, with the incumbent's replays and its mean in-support share over the whole pool. */
@@ -327,8 +430,14 @@ export interface PolicySelection {
 	chosenQuality: number;
 	/** Mean normalized replay quality of the current policy on the pool. */
 	currentQuality: number;
-	/** The current policy's full score on the measured pool. */
+	/** The current policy's full score on the measured pool (spend charged raw). */
 	current: PoolScore;
+	/**
+	 * The current policy's lowest replay `bestScore` over the measured trees (0
+	 * with none): the probation floor an adopted candidate's first online rollout
+	 * must reach (`loop.ts`).
+	 */
+	currentMinBest: number;
 	improved: boolean;
 	/** Policies scored: current plus every distinct, non-identical candidate (a replay-dead-only one is scored as current). */
 	scoredCount: number;
@@ -342,6 +451,8 @@ export interface PolicySelection {
 	poolSize: number;
 	/** Trees the current policy replays in full support; every score is a mean over these only. */
 	measuredTrees: number;
+	/** `measuredTrees - 1` (floor 0): the trees whose replays can vouch for a stop-early credit. */
+	evidenceTrees: number;
 	/** The current policy's mean in-support share over the WHOLE pool (1 for an empty pool). */
 	currentInSupport: number;
 	/** `simulatePolicy` calls this selection made: the current policy on every tree, then each simulated candidate on the measured trees. */
@@ -357,36 +468,56 @@ interface ScoredEntry {
 	identical: boolean;
 	/** Differs from current only in `REPLAY_DEAD_FIELDS`: scored as current, never simulated. */
 	replayDead: boolean;
+	/** An id this run already adopted and reverted: simulated for the record, never eligible. */
+	revoked: boolean;
 	score: PoolScore;
-	/** Simulated (not identical, duplicate or replay-dead) and passed the quality guard. */
+	/** Simulated (not identical, duplicate or replay-dead), not revoked, and passed the quality guard. */
 	eligible: boolean;
 	/** Simulated (not identical, duplicate or replay-dead) and failed the quality guard. */
 	qualityRejected: boolean;
 }
 
+/** True when `terms` is no lower in quality than `baseline` on EVERY tree, within `qualityEps + SELECT_EPS`. */
+function passesQualityGuard(
+	terms: readonly ObjectiveTerms[],
+	baseline: readonly ObjectiveTerms[],
+	qualityEps: number,
+): boolean {
+	const slack = Math.max(0, qualityEps) + SELECT_EPS;
+	return terms.every((term, index) => term.quality >= baseline[index]!.quality - slack);
+}
+
 /**
  * Score {current} ∪ candidates on the measured pool (`measurePool`: the trees
  * the current policy replays in full support) and return the argmax over the
- * ELIGIBLE entries: the current policy, plus every distinct candidate whose mean
- * quality is at least `current - qualityEps` (within `SELECT_EPS`). Ties in V
- * resolve to the current policy, then to the lowest policyId. The chosen policy
- * is therefore never worse than current in V and never lower in quality, and
- * `improved` is true only when an eligible candidate strictly beats current in V.
- * The result is identical to calling this on the measured trees alone; when no
- * tree is measured nothing is eligible and every simulated candidate is
- * `unmeasurable`.
+ * ELIGIBLE entries: the current policy, plus every distinct candidate whose
+ * replay quality on EVERY measured tree is at least the current policy's on
+ * that tree minus `qualityEps` (within `SELECT_EPS`). Ties in V resolve to the
+ * current policy, then to the lowest policyId. The chosen policy is therefore
+ * never worse than current in V and never lower in quality on any measured
+ * tree, and `improved` is true only when an eligible candidate strictly beats
+ * current in V. The result is identical to calling this on the measured trees
+ * alone; when no tree is measured nothing is eligible and every simulated
+ * candidate is `unmeasurable`. A candidate's spend is charged against the
+ * horizon its own replays on the other measured trees establish (`termsOnPool`
+ * with `evidence`), so with one measured tree no candidate earns a stop-early
+ * credit; the incumbent's spend is its raw recorded one (`raw`), never above
+ * what it really spent on the trees it grew.
  *
  * A candidate whose id equals the current's (`identical`) or an earlier
  * candidate's (`duplicate`) is not simulated again and never enters the argmax.
  * A candidate that differs from current only in replay-dead fields is scored
  * as current without a simulation (its replay is the same walk), kept out of
- * the argmax and reported `unmeasurable`.
+ * the argmax and reported `unmeasurable`. A candidate whose id is in `revoked`
+ * (a policy this run adopted and reverted after its probation rollout) is
+ * simulated so its verdict carries real numbers but is never eligible.
  */
 export function selectBestPolicy(
 	current: ExplorationPolicy,
 	candidates: CandidateList,
 	pool: readonly RecordedTree[],
 	cfg: DreamingScoreConfig,
+	revoked: ReadonlySet<string> = new Set<string>(),
 ): PolicySelection {
 	const inputs = normalizeCandidates(candidates);
 	const measuredPool = measurePool(current, pool, cfg);
@@ -394,11 +525,17 @@ export function selectBestPolicy(
 	const measurable = measured.length > 0;
 	const scale = poolScoreScale(measured);
 	const currentId = policyId(current);
-	const currentScore = aggregateReplays(measuredPool.replays, measured, cfg, scale);
-	const qualityFloor = currentScore.quality - Math.max(0, cfg.qualityEps ?? 0) - SELECT_EPS;
+	const currentTerms = poolTermsOf(measuredPool.replays, measured, cfg, scale, "raw");
+	const currentScore = currentTerms.score;
+	const currentMinBest = measuredPool.replays.reduce(
+		(min, replay) => (replay.bestScore < min ? replay.bestScore : min),
+		measurable ? Number.POSITIVE_INFINITY : 0,
+	);
+	const qualityEps = cfg.qualityEps ?? 0;
 	let simulations = measuredPool.sorted.length;
 
 	const entries: ScoredEntry[] = [];
+	const passed = new Map<number, boolean>();
 	const seen = new Map<string, number>();
 	inputs.forEach((input, index) => {
 		const id = policyId(input.policy);
@@ -407,15 +544,23 @@ export function selectBestPolicy(
 		const duplicateOf = identical ? null : (seen.get(id) ?? null);
 		if (!identical && duplicateOf === null) seen.set(id, index);
 		const replayDead = !identical && differsOnlyInReplayDeadFields(input.policy, current);
+		const isRevoked = !identical && revoked.has(id);
 		let score: PoolScore;
-		if (identical || replayDead) score = currentScore;
-		else if (duplicateOf !== null) score = entries[duplicateOf]!.score;
-		else {
-			score = scoreOnPool(input.policy, measured, cfg, scale);
+		let passes: boolean;
+		if (identical || replayDead) {
+			score = currentScore;
+			passes = measurable;
+		} else if (duplicateOf !== null) {
+			score = entries[duplicateOf]!.score;
+			passes = passed.get(duplicateOf) ?? false;
+		} else {
+			const scored = scoreOnPool(input.policy, measured, cfg, scale, "evidence");
 			simulations += measured.length;
+			score = scored.score;
+			passes = measurable && passesQualityGuard(scored.terms, currentTerms.terms, qualityEps);
 		}
+		passed.set(index, passes);
 		const simulated = !identical && duplicateOf === null && !replayDead;
-		const passes = measurable && score.quality >= qualityFloor;
 		entries.push({
 			input,
 			index,
@@ -424,8 +569,9 @@ export function selectBestPolicy(
 			duplicateOf,
 			identical,
 			replayDead,
+			revoked: isRevoked,
 			score,
-			eligible: simulated && passes,
+			eligible: simulated && passes && !isRevoked,
 			qualityRejected: simulated && measurable && !passes,
 		});
 	});
@@ -446,6 +592,7 @@ export function selectBestPolicy(
 		let reason: CandidateReason;
 		if (entry.identical) reason = "identical";
 		else if (entry.duplicateOf !== null) reason = "duplicate";
+		else if (entry.revoked) reason = "revoked";
 		else if (isChosen) reason = "winner";
 		else if (entry.replayDead || offSupport || !measurable) reason = "unmeasurable";
 		else if (entry.qualityRejected) reason = "quality-rejected";
@@ -468,6 +615,9 @@ export function selectBestPolicy(
 			outOfSupportCells: entry.score.outOfSupportCells,
 			inSupportMean: entry.score.inSupportMean,
 			inSupportMin: entry.score.inSupportMin,
+			chargedProbes: entry.score.chargedProbes,
+			chargedRounds: entry.score.chargedRounds,
+			evidenceTrees: evidenceTreesOf(measured.length),
 			eligible: entry.eligible,
 			reason,
 		};
@@ -480,6 +630,7 @@ export function selectBestPolicy(
 		chosenQuality: chosenScore.quality,
 		currentQuality: currentScore.quality,
 		current: currentScore,
+		currentMinBest,
 		improved,
 		scoredCount: 1 + entries.filter((entry) => !entry.identical && entry.duplicateOf === null).length,
 		qualityRejected: verdicts.filter((verdict) => verdict.reason === "quality-rejected").length,
@@ -488,6 +639,7 @@ export function selectBestPolicy(
 		dreamer: dreamerKindOf(inputs),
 		poolSize: measuredPool.sorted.length,
 		measuredTrees: measured.length,
+		evidenceTrees: evidenceTreesOf(measured.length),
 		currentInSupport: measuredPool.currentInSupport,
 		simulations,
 	};
@@ -580,6 +732,8 @@ export interface DreamingOptions {
 	proposeCandidates?: (current: ExplorationPolicy, m: number, rng: SeededRng) => CandidateList;
 	/** When false, skip the lever scan (it is deterministic and rng-free; on by default). */
 	leverScan?: boolean;
+	/** Policy ids this run adopted and reverted after probation (`loop.ts`): scored, reported `revoked`, never eligible. */
+	revoked?: ReadonlySet<string>;
 }
 
 export interface DreamResult {
@@ -589,6 +743,10 @@ export interface DreamResult {
 	currentScore: number;
 	chosenQuality: number;
 	currentQuality: number;
+	/** The current policy's full score on the measured pool (spend charged raw). */
+	current: PoolScore;
+	/** The current policy's lowest replay best over the measured trees: the probation floor (`loop.ts`). */
+	currentMinBest: number;
 	improved: boolean;
 	scoredCount: number;
 	qualityRejected: number;
@@ -601,6 +759,8 @@ export interface DreamResult {
 	poolSize: number;
 	/** Trees the current policy replays in full support: the pool every score is a mean over. */
 	measuredTrees: number;
+	/** `measuredTrees - 1` (floor 0): the trees that can vouch for a stop-early credit. */
+	evidenceTrees: number;
 	/** `simulatePolicy` calls the selection made (the lever scan's are on `leverScan.simulations`). */
 	simulations: number;
 	tokens: number;
@@ -624,6 +784,8 @@ export function candidateSpanAttrs(
 		"dream.cost": verdict.cost,
 		"dream.rounds_saved": verdict.roundsSaved,
 		"dream.in_support_min": verdict.inSupportMin,
+		"dream.charged_probes": verdict.chargedProbes,
+		"dream.charged_rounds": verdict.chargedRounds,
 		"dream.changed": verdict.changed.join(","),
 	};
 }
@@ -656,7 +818,7 @@ export function runDreaming(options: DreamingOptions): DreamResult {
 				"dream.replay",
 				{ "dream.policy_id": policyId(options.current), "dream.iteration": iteration },
 				(replaySpan) => {
-					const selected = selectBestPolicy(options.current, candidates, options.pool, cfg);
+					const selected = selectBestPolicy(options.current, candidates, options.pool, cfg, options.revoked);
 					replaySpan.setAttributes({
 						"dream.simulations": selected.simulations,
 						"dream.measured_trees": selected.measuredTrees,
@@ -680,6 +842,7 @@ export function runDreaming(options: DreamingOptions): DreamResult {
 				"dream.dreamer": selection.dreamer,
 				"dream.in_support_current": selection.currentInSupport,
 				"dream.measured_trees": selection.measuredTrees,
+				"dream.evidence_trees": selection.evidenceTrees,
 				"dream.simulations": selection.simulations,
 				...(leverScan
 					? {
@@ -696,6 +859,8 @@ export function runDreaming(options: DreamingOptions): DreamResult {
 				currentScore: selection.currentScore,
 				chosenQuality: selection.chosenQuality,
 				currentQuality: selection.currentQuality,
+				current: selection.current,
+				currentMinBest: selection.currentMinBest,
 				improved: selection.improved,
 				scoredCount: selection.scoredCount,
 				qualityRejected: selection.qualityRejected,
@@ -705,6 +870,7 @@ export function runDreaming(options: DreamingOptions): DreamResult {
 				leverScan,
 				poolSize: options.pool.length,
 				measuredTrees: selection.measuredTrees,
+				evidenceTrees: selection.evidenceTrees,
 				simulations: selection.simulations,
 				tokens: 0,
 			};

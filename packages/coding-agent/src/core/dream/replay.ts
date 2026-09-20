@@ -65,6 +65,8 @@ export interface ReplayResult {
 	bestSoFar: number[];
 	/** 1-based index of the first charged selection at which `bestScore` was reached; 0 when the root is best. */
 	probesToBest: number;
+	/** 1-based decision round in which `bestScore` was first reached; 0 when the root is best. */
+	roundsToBest: number;
 }
 
 export interface ReplayConfig {
@@ -259,6 +261,8 @@ export function simulatePolicy(
 	let rounds = 0;
 	let outOfSupport = 0;
 	const bestSoFar: number[] = [];
+	/** The 1-based round of each charged selection (parallel to `bestSoFar`). */
+	const selectionRound: number[] = [];
 	while (rounds < k2) {
 		if (sim.allRevealed()) break;
 		const view = sim.view();
@@ -277,6 +281,7 @@ export function simulatePolicy(
 				}
 			}
 			bestSoFar.push(seenValid ? runningBest : 0);
+			selectionRound.push(rounds + 1);
 		}
 		rounds++;
 		sim.advanceRound();
@@ -309,6 +314,7 @@ export function simulatePolicy(
 		const first = bestSoFar.findIndex((score) => score >= finalBest);
 		probesToBest = first < 0 ? 0 : first + 1;
 	}
+	const roundsToBest = probesToBest === 0 ? 0 : selectionRound[probesToBest - 1]!;
 	return {
 		policyId: policyId(policy),
 		treeId: recorded.header.treeId,
@@ -321,6 +327,7 @@ export function simulatePolicy(
 		inSupport: selectedCells === 0 ? 1 : N / selectedCells,
 		bestSoFar,
 		probesToBest,
+		roundsToBest,
 	};
 }
 

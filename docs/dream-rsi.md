@@ -81,8 +81,9 @@ probe budget and `rounds` the replay decision rounds:
 q            = clamp((max_{v in revealed} s_v − poolMin) / (poolMax − poolMin), 0, 1)
 q_p          = q of the running best after charged selection p          (p = 1..S)
 anytime      = ( Σ_{p=1..S} q_p  +  max(0, B − S) · q ) / max(B, S)
-cost         = S / B                                                     (not clamped)
-roundsSaved  = 1 − rounds / k1                                           (not capped)
+S_eff        = max(S, H_probes)          rounds_eff = max(rounds, H_rounds)   (evidence-backed spend, below)
+cost         = S_eff / B                                                 (not clamped)
+roundsSaved  = 1 − rounds_eff / k1                                       (not capped)
 V            = (1 − beta3) · q  +  beta3 · anytime  −  beta1 · cost  +  beta2 · roundsSaved
 ```
 
@@ -98,8 +99,64 @@ V            = (1 − beta3) · q  +  beta3 · anytime  −  beta1 · cost  +  b
   clamped: with `k2 > k1` a replay may charge more than one budget.
 - **roundsSaved** — uncapped, so a replay that runs past `k1` (which `k2 > k1` allows) goes
   negative and pays for it.
+- **evidence-backed spend** (`H_probes`, `H_rounds`) — a candidate's stop-early credit is only
+  ever earned against evidence that stopping was safe. When a candidate is scored on the measured
+  pool (`termsOnPool(..., "evidence")`, `improve.ts`) its per-tree replays are computed first; on
+  tree `t` the spend is then charged at `S_eff = max(S_t, H_probes(−t))` and
+  `rounds_eff = max(rounds_t, H_rounds(−t))`, where `H_probes(−t)` is the largest `probesToBest`
+  and `H_rounds(−t)` the largest `roundsToBest` (`ReplayResult`: the 1-based probe and decision
+  round at which the replay's best was first reached, 0 for the root) the SAME candidate recorded
+  on the OTHER measured trees — the latest point at which it was still improving somewhere else.
+  With no other measured tree `H_probes = B` and `H_rounds = k1`: on a single-tree pool no candidate
+  can earn a stop-early credit. `quality` and `anytime` are untouched (anytime's flat tail never
+  credits stopping). The **incumbent is charged its raw spend** (`termsOnPool(..., "raw")`): the
+  measured trees are the ones it grew, so its recorded probes and rounds are its online behaviour,
+  and a horizon taken from its own late trees surcharged the early stops it really made — on a
+  recorded circle-packing pool of one late-best tree (best at probe 31 / round 13) and three
+  patience-stopped ones the symmetric rule charged it 31 / 13 where it spent 18/8, 15/7 and 19/8,
+  and over 286 pairs and triples of 12 recorded incumbent trees 106 grid candidates in 43 pools
+  beat the surcharged incumbent while losing to its raw spend, their own numbers identical under
+  both rules (`test/dream-improve.test.ts` pins a two-tree instance: raw incumbent `V 0.659565`,
+  surcharged `0.636648`, the batch-1 chain `0.651266`). Asymmetric, a candidate is never charged
+  below its own spend and the incumbent never above its real one. A bare replay
+  (`computeObjectiveTerms` without the optional `evidence` argument, which is what `dream replay`
+  and `simulatePolicyWithSpan` report) charges its own `S` and `rounds`. `chargedProbes` and
+  `chargedRounds` on the terms, the pool score and every verdict show what was charged;
+  `evidenceTrees = measuredTrees − 1` (floor 0) on the selection, the verdicts, the step line and
+  `dream.dream` says how many trees could vouch.
 
-`ObjectiveTerms = { quality, anytime, cost, roundsSaved, value }`. The defaults are
+  This closes the single-tree instance of the recorded **run 3** (autocorrelation `n = 64`, seed 7,
+  `W = 3`, `k1 = 13`, `k2 = 26`, three rounds, Sonnet-5 proposer and dreamer). At its first
+  dreaming step the frozen pool was ONE 13-node tree whose best node was the FIRST probe (0.524727
+  against a root of 0.5), so the dreamed candidate {fixed-rounds, `beta 1`} (1 probe, 1 round) had
+  `q 1.0` and `anytime 1.0` exactly like the incumbent (13 probes, 7 rounds) and won purely on the
+  stop-early credit: `cost 0.026` vs `0.513`, `roundsSaved 0.923` vs `0`, `V 1.0910` vs `1.0295`;
+  the lever scan reported 336 of 337 grid policies eligible on that one tree. Deployed online it
+  probed once per rollout and scored the uniform baseline. Under this rule the candidate is charged
+  the whole budget (39 probes, 13 rounds) on that tree, `V 0.95` against the incumbent's raw
+  `1.0295`, it loses and the lever gap is 0; the tree is
+  `test/fixtures/dream/autocorrelation-s7-i0-1789923274195.jsonl` and `test/dream-improve.test.ts`
+  pins the collapse and the fix. With the run-2 tree `autocorrelation-s7-i0-1789858196752` beside
+  it (same `W`, `k1 13`), run 3's other dreamed candidate {patience, `beta 2`} stops after round 3
+  on the run-3 tree (4 probes, best at probe 1) but is charged the 8 probes and 5 rounds it still
+  needed on the run-2 tree, where it ran the full 6 rounds: mean charge 10.5 probes / 5.5 rounds
+  against its mean spend of 8.5 / 4.5. That is a same-best-for-less win on replay; the one-probe
+  candidate fails the per-tree guard there.
+
+  **What no frozen-pool rule closes.** The same collapse with two or more trees survives the
+  evidence rule: a fixed-rounds `R` candidate with `R` the largest `roundsToBest` in the pool spends
+  at least its own horizon on every tree, walks the incumbent's path (equal per-tree quality) and
+  wins on the spend it saves, and a pool of patience-stopped incumbent trees by construction never
+  holds the "still improving after `R`" evidence the rule asks for. Measured: over 220 of 220
+  circle-packing and 35 of 35 sum-difference pairs and triples of patience-stopped incumbent trees
+  (`W 3`, `k1 13`) fixed-rounds `R` was eligible and a strict winner (smallest gap 0.034615); on a
+  circle-packing pool of two trees (seeds 9 and 11, best at probe 2 on both) {fixed-rounds, `beta 2`}
+  won `V 0.794964` against `0.727656` with `evidenceTrees 1`, then rolled out on 60 fresh seeds at a
+  mean best of 1.052123 against the incumbent's 1.193393 (2.00 probes against 30.63, worse on 55 of
+  60). A pool whose trees all happened to saturate by round `R` cannot be told from a task that
+  saturates by round `R`. The online check is the **probation** below.
+
+`ObjectiveTerms = { quality, anytime, cost, roundsSaved, chargedProbes, chargedRounds, value }`. The defaults are
 `DEFAULT_OBJECTIVE = { beta1: 0.05, beta2: 0.10, beta3: 0.25 }`: `beta2 > beta1` so saving one
 round outweighs the at most `W` probes it could cost, and a quarter of the quality weight goes to
 earliness. The ordering the objective encodes is therefore rounds first, then probes, then
@@ -162,10 +219,18 @@ pins them). On the recorded fixtures (`test/fixtures/dream`, circle-packing seed
   0.10 keeps full batches preferred with a 2.7x margin.
 
 On the run-2 autocorrelation dream pool (4 trees, `W = 3`, `k1 = 6`) the incumbent scores
-`V 0.842156` (`q 0.883344`, `anytime 0.849147`, `cost 0.652778`, `roundsSaved 0`, mean `N` 11.75)
-and the lever-scan grid (337 policies, 84 eligible) opens a gap of `+0.007804` with
-weighted / fixed-rounds / `batchSize 2` (the same best, `N` 9, 6 rounds) — "the same best for fewer
-probes", which the old form scored as an exact tie.
+`V 0.842156` (`q 0.883344`, `anytime 0.849147`, `cost 11.75/18 = 0.652778`, `roundsSaved 0`: its
+raw mean `N` 11.75; a symmetric horizon would have charged its 10-probe tree at another tree's
+`probesToBest` 11 for `V 0.841462`) and the lever-scan grid (337 policies, 84 eligible) opens a gap
+of `+0.007109` with weighted / fixed-rounds / `batchSize 2` / `beta 6` (`V 0.849265`: the same best
+on every tree, `N` 9 charged at 9.25 because its 8-probe tree is charged at another tree's
+`probesToBest` 9, 6 rounds) — "the same best for fewer probes", which the old form scored as an
+exact tie (`0.842156` against `0.849960`). A positive gap is a replay statement, not an online one:
+on recorded pools of 2, 3 and 4 consecutive incumbent trees (circle-packing and sum-difference,
+`W 3`, `k1 13`, `evidenceTrees` 1 to 3) every adopted lever-scan winner — 22 of 22, gaps 0.000641
+to 0.064744 — rolled out with a lower mean best than the incumbent on 40 fresh seeds, from
+−0.003823 to −0.145939. That is why an adopted policy counts as an improvement only after its
+probation rollout (below) or the experiment headline, never on the gap.
 
 **History.** The paper tunes `beta1` per domain because its penalty is on raw scores. This
 codebase first shipped `V = best − 0.01 · N + 0.02 · N / rounds`: on circle-packing (pool range
@@ -180,8 +245,9 @@ literal and pins the recorded collapse regression on two of the recorded trees.
 
 A policy's pool score (`PoolScore`, `improve.ts`) is the arithmetic mean of every term over the
 recorded trees in a deterministic order (sorted by tree id): `value`, `quality`, `anytime`, `cost`,
-`roundsSaved`, plus the mean `N`, `rounds` and `outOfSupportCells` and the pool's `inSupportMean`
-and `inSupportMin` (`ReplayResult.inSupport` averaged and at its minimum; both 1 for an empty pool).
+`roundsSaved`, plus the mean `N`, `rounds`, `outOfSupportCells`, `chargedProbes` and
+`chargedRounds` (the evidence-backed spend above) and the pool's `inSupportMean` and
+`inSupportMin` (`ReplayResult.inSupport` averaged and at its minimum; both 1 for an empty pool).
 
 `selectBestPolicy(current, candidates, pool, cfg)` first splits the pool into the **measured pool**
 (`measurePool`: the trees the current policy replays with zero out-of-support cells) and the rest,
@@ -200,15 +266,24 @@ pool). When no tree is measured nothing is eligible and every simulated candidat
 measured tree is charged for it as before.
 
 It then scores `{current} ∪ candidates` and returns the
-argmax over the **eligible** entries: the current policy, plus every simulated candidate whose mean
-`quality` is at least the current policy's minus `qualityEps` (default 0) within `SELECT_EPS`
-(`1e-9`). Ties in `V` resolve to the current policy, then to the lowest policy id; `improved` is
-true only when an eligible candidate strictly beats current in `V`. Because `V` is a pure function
-of the frozen history, its scale and the budget, the chosen policy is provably **no worse than the
-current one on replay in `V` and never lower in quality**: a candidate cannot win by collapsing
-exploration, only by reaching at least the same best in fewer rounds, with fewer charged probes, or
-earlier. It is an off-policy estimate: a policy that would explore un-recorded branches is out of
-support there.
+argmax over the **eligible** entries: the current policy, plus every simulated candidate whose
+replay `quality` on EVERY measured tree is at least the current policy's replay quality on that
+tree minus `qualityEps` (default 0) within `SELECT_EPS` (`1e-9`) — the guard is per tree, not on
+the pool mean, so a gain on one tree can never cover a loss on another (`PoolScore.quality` still
+reports the mean). Ties in `V` resolve to the current policy, then to the lowest policy id;
+`improved` is true only when an eligible candidate strictly beats current in `V`. Because `V` is a
+pure function of the frozen history, its scale and the budget, the chosen policy is provably **no
+worse than the current one on replay in `V` and never lower in quality on any measured tree**: a
+candidate cannot win by collapsing exploration ON THE RECORDED TREES, only by reaching at least the
+same best in fewer rounds, with fewer charged probes, or earlier — and, since its spend is
+evidence-backed against the incumbent's raw spend, only when its replays on the other measured
+trees vouch that it was done improving by then. It is an off-policy estimate: a policy that would
+explore un-recorded branches is out of support there, and a policy that stops before the recording
+does is credited for the recorded best it walked past, which is why the win is then checked online
+(the probation). `selectBestPolicy` also takes a `revoked` id set (the policies the run reverted);
+a candidate with such an id is simulated and reported `revoked`, never eligible, and
+`PolicySelection.currentMinBest` is the incumbent's lowest replay best over the measured trees, the
+probation floor.
 
 Every candidate gets a `CandidateVerdict` (`types.ts`), returned as `PolicySelection.candidates`
 in input order:
@@ -216,8 +291,12 @@ in input order:
 ```
 { index, policyId, policy, origin: "llm" | "local", changed: string[], duplicateOf: number | null,
   value, quality, anytime, cost, roundsSaved, N, rounds, outOfSupportCells, inSupportMean,
-  inSupportMin, eligible: boolean, reason }
+  inSupportMin, chargedProbes, chargedRounds, evidenceTrees, eligible: boolean, reason }
 ```
+
+`chargedProbes` and `chargedRounds` are the means of what the cost terms actually charged per
+tree (`max(N + oos, H_probes)`, `max(rounds, H_rounds)`; the whole budget on a single measured
+tree) and `evidenceTrees` is `measuredTrees − 1` (floor 0).
 
 `changed` lists the fields differing from the current policy in schema order
 (`policyFieldsDiffering`). `reason` is one of `CANDIDATE_REASONS`, decided in this order:
@@ -227,8 +306,9 @@ in input order:
 | `identical` | the candidate's id equals the current policy's; never simulated, never in the argmax |
 | `duplicate` | the same id as an earlier candidate (`duplicateOf` is that index); scored once, excluded from the argmax and from `scoredCount` |
 | `winner` | the chosen policy: eligible and a strict improvement |
+| `revoked` | the id of a policy this run adopted and reverted after its probation rollout; simulated so its numbers are real, never eligible. Takes precedence over `winner` |
 | `unmeasurable` | not the winner and either differs from current only in `REPLAY_DEAD_FIELDS` (scored as current, without a simulation), or replayed out of support on some measured tree (`inSupportMin < 1`), or no tree was measurable: its replay is biased and says nothing about it. Takes precedence over `quality-rejected` |
-| `quality-rejected` | fully in support, simulated, failed the quality guard |
+| `quality-rejected` | fully in support, simulated, failed the per-tree quality guard (below the incumbent's replay quality on at least one measured tree) |
 | `tie` | eligible and within `SELECT_EPS` of the chosen value; lost the tie-break |
 | `worse` | eligible, fully in support, below the chosen value |
 
@@ -236,8 +316,7 @@ in input order:
 an off-support candidate can therefore be `eligible: true` with `reason: "unmeasurable"`, which
 means it competed but its number is not trusted. `scoredCount` is `1 +` the distinct,
 non-identical candidates; `qualityRejected` counts exactly the `quality-rejected` verdicts (an
-off-support quality failure is `unmeasurable` only, so the categories on `dream.dream` sum to the
-candidate count); `simulations` is the exact number of `simulatePolicy` calls the selection made
+off-support quality failure is `unmeasurable` only, so the eight reasons partition the candidates); `simulations` is the exact number of `simulatePolicy` calls the selection made
 (the current policy on every tree, then each simulated candidate on the measured trees; identical,
 duplicate and replay-dead-only candidates cost none). `selectBestPolicy` accepts either bare `ExplorationPolicy[]` (origin
 `local`) or `{ policy, origin }[]`, and `PolicySelection.dreamer` is `llm` when every candidate came
@@ -255,10 +334,41 @@ independently of what the dreamer proposed, so an inert step can be labelled "no
 pool" rather than "the dreamer proposed nothing better". `DreamingOptions.leverScan: false` skips
 it; it touches no rng, so trees are byte-identical with and without it.
 
-`runDreaming` (`improve.ts`) returns `DreamResult` with `candidates: CandidateVerdict[]`, `dreamer`
-and `leverScan` next to the chosen policy and scores. The loop copies these onto the round record:
-`DreamRoundDreaming.candidates` STAYS the proposed count (the result schema is additive-only) and
-the additive fields are `candidateVerdicts`, `dreamer`, `leverScan` and `measuredTrees`.
+`runDreaming` (`improve.ts`) returns `DreamResult` with `candidates: CandidateVerdict[]`, `dreamer`,
+`leverScan`, the incumbent's `current` pool score and `currentMinBest` next to the chosen policy and
+scores. The loop copies these onto the round record: `DreamRoundDreaming.candidates` STAYS the
+proposed count (the result schema is additive-only) and the additive fields are
+`candidateVerdicts`, `dreamer`, `leverScan`, `measuredTrees` and `probation`.
+
+#### Probation: the online check of every adoption
+
+A replay win is an in-support statement about the recorded trees and nothing more (the
+out-of-support limit above). So on both loops (`runDreamLoop`, `runDreamLoopWithAgent`) the first
+redeploy rollout of every policy a dreaming step adopts is a **probation** (`judgeProbation`,
+`loop.ts`): when the rollout's best valid score falls below the incumbent's lowest replay best over
+the measured pool the policy won on (`currentMinBest`, the floor; `PROBATION_EPS = 1e-9`), the
+adoption is reverted — the incumbent is restored as the current policy for the next step, the
+policy id is `revoked` for the rest of the run (its later verdicts, the final selection's included,
+are `revoked`), and on the LLM path the next dreamer prompt lists it as `revoked` in its history.
+The tree the probation grew stays in the pool as a recording. Either way the judgement is a
+`DreamProbationRecord` on the round record (`dreaming.probation`), a `probation` line in the dreams
+log, and `dream.probation` / `dream.probation_floor` / `dream.reverted` on the `dream.redeploy`
+span; `DreamLoopResult.probationReverts` counts the reverts.
+
+```
+DreamProbationRecord = { policyId, incumbentPolicyId, treeId, roundBest, floor,
+  chargedProbes, chargedRounds, incumbentChargedProbes, incumbentChargedRounds,
+  evidenceTrees, reverted: boolean }
+```
+
+The floor is a bound, not a proof: a pool whose lowest recorded best is already poor sets a low
+bar, and a probation rollout that clears it can still be worse in expectation (the 22 of 22 above
+were measured on 40 seeds, not one). What the probation guarantees is that the run-3 shape — a
+one-probe policy scoring the baseline every rollout — costs at most one rollout before the
+incumbent is back, and that a revoked policy cannot be re-adopted by the same pool.
+`test/dream-loop.test.ts` and `test/dream-llm.test.ts` script it end to end: two incumbent trees
+whose best is the first probe hand {fixed-rounds, `beta 1`} the win at `evidenceTrees 1`, its
+rollout scores 0.2 against a floor of 1.0, it is reverted, and its next proposal is `revoked`.
 
 #### The local dreamer
 
@@ -277,11 +387,14 @@ candidate ids changed.
 Every dreaming step is written to `<store dir>/dreams/<runId>.jsonl` (`dreams.ts`, mirroring
 `rejections.ts`; directory 0700, file 0600, created on the first step): one line per candidate,
 `{type:"candidate", ts, experimentId?, arm?, iteration, ...CandidateVerdict}`, then one step line
-`{type:"step", ts, experimentId?, arm?, iteration, poolSize, measuredTrees, currentValue,
-chosenPolicyId, improved, dreamer, leverScan}`. The arm-level post-hoc final selection (`selectBestPolicy` over
-`{initial} ∪ every chosen policy` on the final pool, which fixes `finalPolicyScore` and the
-experiment's `selectedPolicyId`) is logged the same way with `iteration −1`, and its verdicts are
-also `DreamLoopResult.finalSelection` / `ExperimentArmResult.finalSelection`. The log is written on
+`{type:"step", ts, experimentId?, arm?, iteration, poolSize, measuredTrees, evidenceTrees,
+currentValue, chosenPolicyId, improved, dreamer, leverScan}`, and, when the step adopted a policy,
+after its redeploy one probation line `{type:"probation", ts, experimentId?, arm?, iteration,
+...DreamProbationRecord}`. The arm-level post-hoc final selection (`selectBestPolicy` over
+`{initial} ∪ every chosen policy` on the final pool with the run's revoked ids, which fixes
+`finalPolicyScore` and the experiment's `selectedPolicyId`) is logged the same way with
+`iteration −1`, and its verdicts are also `DreamLoopResult.finalSelection` /
+`ExperimentArmResult.finalSelection`. The log is written on
 the local and the LLM path alike; a fixed-policy run's file holds only its `−1` step line.
 `readDreamsLog(path)` parses it (a missing file is an empty log). Before the log existed a run kept
 only a candidate count, and the twelve LLM candidates of run 2 were lost with the reason each lost.
@@ -424,7 +537,7 @@ betas, and `replay` and `improve` measure the cost term against `--k1` (the budg
 
 | subcommand | what it does | span opened |
 |---|---|---|
-| `loop` (default) | rollout → dream → redeploy for `--iterations`; prints per-round best score and probes (paper Fig. 6), initial vs final policy, best node score, tree ids, tokens (0 locally); header line carries `beta1 beta2 beta3` | `dream.run` wrapping `dream.explore` / `dream.dream` / `dream.redeploy` |
+| `loop` (default) | rollout → dream → redeploy for `--iterations`; prints per-round best score and probes (paper Fig. 6), one `probation <iteration>: policy <id> kept|REVERTED ...` line per adopted policy, initial vs final policy, best node score, tree ids, tokens (0 locally); header line carries `beta1 beta2 beta3` | `dream.run` wrapping `dream.explore` / `dream.dream` / `dream.redeploy` |
 | `experiment` (`compare`) | runs every `--arms` arm from the same initial policy, seed, clock and budget for `--rounds` rollouts each, the `fixed` arm never dreaming; prints a per-arm round table with provenance and dreaming lines and the headline card, writes `experiments/<id>/result.json` (see [Experiments](#experiments-the-fixed-exploration-control)) | `dream.experiment` wrapping one `dream.experiment_arm` → `dream.run` per arm |
 | `rollout` (`propose`) | one online exploration with the default policy; persists the tree; prints tree id, rounds, revealed count, best score, best node id | `dream.explore` |
 | `replay` (`simulate`) | loads a recorded tree (`--tree`), re-walks it with the default policy, prints `revealed N`, `rounds`, `best`, `out-of-support`, `in-support`, `probes to best` and `V` with the three betas and the budget; zero execution | `dream.replay` (root) |
@@ -446,7 +559,7 @@ Counts only, never a path or a clock (the two-clock byte-identity test in
     round | best | cum best | probes | agent | fallback | cum probes | policy
         1 | <best> | <cum> |     <p> |   <a> |      <f> |        <cp> | <policyId>
         2 | <best> | <cum> |     <p> |   <a> |      <f> |        <cp> | <policyId>  dreamed <current V> -> <chosen V> improved <bool>
-      dreaming: candidates <n>  eligible <e>  winner <policyId>|tie (current kept)  lever gap <+/-gap> (<P> policies, <E> eligible)  dreamer <llm|local|mixed>
+      dreaming: candidates <n>  eligible <e>  winner <policyId>|tie (current kept)  measured trees <m>/<pool>  lever gap <+/-gap> (<P> policies, <E> eligible)  dreamer <llm|local|mixed>  probation kept|REVERTED (rollout best <b> vs floor <f>)
     final policy <id>  changes <c>  selected policy <id>  own-pool score <initial> -> <final>  final best <b>  probes <n>  handler calls <n>  tokens <n>
     provenance: <n> probes = <a> agent-generated + <l> local (<f> fallbacks); local proposer, 0 LLM proposals
     dreaming: <k> phases  improved <i>/<k>  policy changes <c>

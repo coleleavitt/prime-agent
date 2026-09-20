@@ -92,8 +92,9 @@ describe("simulatePolicy", () => {
 		expect(result.inSupport).toBeCloseTo(0.75, 12);
 		expect(result.bestSoFar).toEqual([0.5, 0.7, 0.7, 0.7]);
 		expect(result.bestSoFar).toHaveLength(result.selectedCells);
-		// The best (0.7) arrived with the second charged selection.
+		// The best (0.7) arrived with the second charged selection, in round 2 (round 1: n1, round 2: n2).
 		expect(result.probesToBest).toBe(2);
+		expect(result.roundsToBest).toBe(2);
 	});
 
 	it("keeps probing an exhausted root out of support without revealing deeper nodes", () => {
@@ -107,7 +108,39 @@ describe("simulatePolicy", () => {
 		expect(result.inSupport).toBeCloseTo(0.2, 12);
 		expect(result.bestSoFar).toEqual([0.6, 0.6, 0.6, 0.6, 0.6]);
 		expect(result.probesToBest).toBe(1);
+		expect(result.roundsToBest).toBe(1);
 		expect(result.rounds).toBe(5);
+	});
+
+	it("reports roundsToBest as the round of the charged selection that first reached the best", () => {
+		// W 3, best-first, batchSize 3: round 1 reveals n1 (the root is the only cell); round 2 reveals n2
+		// from n1 alone (the root may not join its child n1 in a batch); round 3 selects the terminal n2
+		// (out of support, charged) and the root (n3). The best n2 is probe 2, round 2, of 3 rounds.
+		const wide: TreeRecord[] = [
+			{ ...header("t5"), w: 3 },
+			...T1_NODES.map((record) => ({
+				...record,
+				id: record.id.replace("t1-", "t5-"),
+				parentId: record.parentId?.replace("t1-", "t5-") ?? null,
+			})),
+		];
+		const result = simulatePolicy(
+			buildRecordedTree(wide),
+			policy({ selectionRule: "best-first", stopRule: "never", batchSize: 3 }),
+			{ k2: 4 },
+		);
+		expect(result.revealedIds).toEqual(["t5-n0", "t5-n1", "t5-n2", "t5-n3"]);
+		expect(result.bestSoFar).toEqual([0.5, 0.7, 0.7, 0.7]);
+		expect(result.probesToBest).toBe(2);
+		expect(result.roundsToBest).toBe(2);
+		expect(result.rounds).toBe(3);
+		// A later-round best: explore-root over the root's children 0.5 (round 1), 0.4 (round 2) with batch 1
+		// never reaches n2, so its best 0.5 is probe 1, round 1.
+		const shallow = simulatePolicy(buildRecordedTree(wide), EXPLORE_ROOT_NEVER, { k2: 2 });
+		expect(shallow.bestScore).toBe(0.5);
+		expect(shallow.probesToBest).toBe(1);
+		expect(shallow.roundsToBest).toBe(1);
+		expect(shallow.rounds).toBe(2);
 	});
 
 	it("reports probesToBest 0 and inSupport 1 when the root is the best and nothing is out of support", () => {
@@ -120,6 +153,7 @@ describe("simulatePolicy", () => {
 		const result = simulatePolicy(buildRecordedTree(rootBest), EXPLORE_ROOT_NEVER, { k2: 2 });
 		expect(result.bestScore).toBe(0.9);
 		expect(result.probesToBest).toBe(0);
+		expect(result.roundsToBest).toBe(0);
 		expect(result.outOfSupportCells).toBe(0);
 		expect(result.inSupport).toBe(1);
 		expect(result.bestSoFar).toEqual([0.9, 0.9]);
@@ -132,6 +166,8 @@ describe("simulatePolicy", () => {
 		expect(empty.selectedCells).toBe(0);
 		expect(empty.inSupport).toBe(1);
 		expect(empty.bestSoFar).toEqual([]);
+		expect(empty.probesToBest).toBe(0);
+		expect(empty.roundsToBest).toBe(0);
 	});
 
 	it("stops at k2", () => {

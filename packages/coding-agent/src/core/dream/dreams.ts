@@ -8,19 +8,22 @@
  * Layout mirrors `rejections.ts`: `<dreamDir>/dreams/<runKey>.jsonl`, beside
  * `trees/` (never inside it, so `listTrees` does not see it). Every field is a
  * scalar or the typed policy object. Written on BOTH the local and the LLM
- * path; the arm-level post-hoc final selection is logged with `iteration` -1.
+ * path; the arm-level post-hoc final selection is logged with `iteration` -1,
+ * and the probation rollout of an adopted policy (`DreamProbationRecord`) as a
+ * `probation` line on the iteration that redeployed it.
  * Writing touches no rng and no tree, so the trees a loop grows are byte-
  * identical with and without the log.
  */
 
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { PolicySelection } from "./improve.js";
+import { evidenceTreesOf, type PolicySelection } from "./improve.js";
 import { policyId } from "./policy.js";
 import {
 	type CandidateVerdict,
 	type DreamClock,
 	type DreamerKind,
+	type DreamProbationRecord,
 	isCandidateReason,
 	type LeverScanRecord,
 } from "./types.js";
@@ -51,6 +54,8 @@ export interface DreamStepLine extends DreamsLogContext {
 	poolSize: number;
 	/** Trees of the pool the current policy replayed in full support (the measured pool the scores are means over). */
 	measuredTrees: number;
+	/** `measuredTrees - 1` (floor 0): the trees whose replays could vouch for a stop-early credit this step. */
+	evidenceTrees: number;
 	currentValue: number;
 	chosenPolicyId: string;
 	improved: boolean;
@@ -58,7 +63,19 @@ export interface DreamStepLine extends DreamsLogContext {
 	leverScan: LeverScanRecord | null;
 }
 
-export type DreamsLogLine = DreamCandidateLine | DreamStepLine;
+/**
+ * The probation rollout of the policy a step adopted (`DreamProbationRecord`),
+ * written after the step's redeploy on the same iteration, whether or not it
+ * was reverted.
+ */
+export interface DreamProbationLine extends DreamProbationRecord, DreamsLogContext {
+	type: "probation";
+	ts: number;
+	/** Loop iteration whose redeploy was the probation rollout. */
+	iteration: number;
+}
+
+export type DreamsLogLine = DreamCandidateLine | DreamStepLine | DreamProbationLine;
 
 /** What one step contributes to the log: the selection's verdicts plus the step facts. */
 export interface DreamStepInput {
@@ -103,12 +120,22 @@ export class DreamsLog {
 			iteration: input.iteration,
 			poolSize: input.poolSize,
 			measuredTrees: input.selection.measuredTrees,
+			evidenceTrees: evidenceTreesOf(input.selection.measuredTrees),
 			currentValue: input.selection.currentScore,
 			chosenPolicyId: policyId(input.selection.chosenPolicy),
 			improved: input.selection.improved,
 			dreamer: input.selection.dreamer,
 			leverScan: input.leverScan,
 		});
+		this.write(lines);
+	}
+
+	/** Write the probation line of the policy a step adopted, after its redeploy rollout. */
+	recordProbation(iteration: number, record: DreamProbationRecord): void {
+		this.write([{ type: "probation", ts: this.clock(), ...this.context, iteration, ...record }]);
+	}
+
+	private write(lines: readonly DreamsLogLine[]): void {
 		mkdirSync(dirname(this.path), { recursive: true, mode: DIR_MODE });
 		appendFileSync(this.path, lines.map((line) => `${JSON.stringify(line)}\n`).join(""), { mode: FILE_MODE });
 	}
@@ -156,6 +183,16 @@ export function isDreamsLogLine(value: unknown): value is DreamsLogLine {
 			typeof record.chosenPolicyId === "string" &&
 			typeof record.improved === "boolean" &&
 			typeof record.dreamer === "string"
+		);
+	}
+	if (record.type === "probation") {
+		return (
+			typeof record.policyId === "string" &&
+			typeof record.incumbentPolicyId === "string" &&
+			typeof record.treeId === "string" &&
+			typeof record.roundBest === "number" &&
+			typeof record.floor === "number" &&
+			typeof record.reverted === "boolean"
 		);
 	}
 	return false;

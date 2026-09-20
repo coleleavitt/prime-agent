@@ -450,6 +450,13 @@ function runLoop(options: DreamCommandOptions, io: DreamCommandIo, storeDir: str
 			`  round ${round.iteration}: best ${fmtScore(round.bestScore)}  probes ${round.probes}  tree ${round.treeId}`,
 		);
 	}
+	for (const record of result.rounds) {
+		const probation = record.dreaming?.probation;
+		if (!probation) continue;
+		io.stdout(
+			`  probation ${record.iteration}: policy ${probation.policyId} ${probation.reverted ? "REVERTED" : "kept"}  rollout best ${fmtScore(probation.roundBest)}  floor ${fmtScore(probation.floor)}  charged ${probation.chargedProbes}/${probation.chargedRounds} vs incumbent ${probation.incumbentChargedProbes}/${probation.incumbentChargedRounds}  evidence trees ${probation.evidenceTrees}`,
+		);
+	}
 	io.stdout(`  initial policy ${result.initialPolicyId}  score ${fmtScore(result.initialPolicyScore)}`);
 	io.stdout(
 		`  final   policy ${result.finalPolicyId}  score ${fmtScore(result.finalPolicyScore)}  improved ${result.improved}`,
@@ -540,7 +547,10 @@ function dreamingLine(row: ExperimentRoundRow): string | undefined {
 	const dreamer = dreaming.dreamer ? `  dreamer ${dreaming.dreamer}` : "";
 	const measured =
 		dreaming.measuredTrees !== undefined ? `  measured trees ${dreaming.measuredTrees}/${row.poolSize}` : "";
-	return `dreaming: candidates ${verdicts.length}  eligible ${eligible}  ${winner ? `winner ${winner.policyId}` : "tie (current kept)"}${measured}${lever}${dreamer}`;
+	const probation = dreaming.probation
+		? `  probation ${dreaming.probation.reverted ? "REVERTED" : "kept"} (rollout best ${fmtScore(dreaming.probation.roundBest)} vs floor ${fmtScore(dreaming.probation.floor)})`
+		: "";
+	return `dreaming: candidates ${verdicts.length}  eligible ${eligible}  ${winner ? `winner ${winner.policyId}` : "tie (current kept)"}${measured}${lever}${dreamer}${probation}`;
 }
 
 /**
@@ -754,7 +764,7 @@ function runImprove(options: DreamCommandOptions, io: DreamCommandIo, storeDir: 
 	}
 	io.stdout(`dream improve  ${storeDir}`);
 	io.stdout(
-		`  pool ${result.poolSize}  measured trees ${result.measuredTrees}  candidates ${result.scoredCount}  simulations ${result.simulations}`,
+		`  pool ${result.poolSize}  measured trees ${result.measuredTrees}  evidence trees ${result.evidenceTrees}  candidates ${result.scoredCount}  simulations ${result.simulations}`,
 	);
 	io.stdout(
 		`  current policy ${policyId(DEFAULT_POLICY)}  current score ${fmtScore(result.currentScore)}  quality ${fmtScore(result.currentQuality)}`,

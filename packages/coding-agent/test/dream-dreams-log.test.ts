@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	type DreamCandidateLine,
+	type DreamProbationLine,
 	type DreamStepLine,
 	DreamsLog,
 	dreamsDir,
@@ -12,7 +13,7 @@ import {
 	readDreamsLog,
 } from "../src/core/dream/dreams.js";
 import { DEFAULT_POLICY, policyId } from "../src/core/dream/policy.js";
-import type { CandidateVerdict, LeverScanRecord } from "../src/core/dream/types.js";
+import type { CandidateVerdict, DreamProbationRecord, LeverScanRecord } from "../src/core/dream/types.js";
 
 /**
  * The dreams log: `<dir>/dreams/<runKey>.jsonl`, one candidate line per verdict
@@ -53,6 +54,9 @@ function verdict(over: Partial<CandidateVerdict> = {}): CandidateVerdict {
 		outOfSupportCells: 0,
 		inSupportMean: 1,
 		inSupportMin: 1,
+		chargedProbes: 3,
+		chargedRounds: 2,
+		evidenceTrees: 0,
 		eligible: true,
 		reason: "winner",
 		...over,
@@ -122,6 +126,7 @@ describe("DreamsLog.recordStep", () => {
 			iteration: 1,
 			poolSize: 1,
 			measuredTrees: 1,
+			evidenceTrees: 0,
 			currentValue: 0.4,
 			chosenPolicyId: policyId(OTHER),
 			improved: true,
@@ -200,6 +205,7 @@ describe("DreamsLog.recordStep", () => {
 				iteration: -1,
 				poolSize: 3,
 				measuredTrees: 3,
+				evidenceTrees: 2,
 				currentValue: 1,
 				chosenPolicyId: policyId(DEFAULT_POLICY),
 				improved: false,
@@ -230,6 +236,7 @@ describe("readDreamsLog", () => {
 			iteration: 2,
 			poolSize: 2,
 			measuredTrees: 1,
+			evidenceTrees: 0,
 			currentValue: 0.3,
 			chosenPolicyId: "abc",
 			improved: false,
@@ -238,6 +245,56 @@ describe("readDreamsLog", () => {
 		};
 		writeFileSync(path, `\n${JSON.stringify(step)}\n\n`);
 		expect(readDreamsLog(path)).toEqual([step]);
+	});
+});
+
+const PROBATION: DreamProbationRecord = {
+	policyId: policyId(OTHER),
+	incumbentPolicyId: policyId(DEFAULT_POLICY),
+	treeId: "tree-2",
+	roundBest: 0.2,
+	floor: 1,
+	chargedProbes: 1,
+	chargedRounds: 1,
+	incumbentChargedProbes: 6,
+	incumbentChargedRounds: 4,
+	evidenceTrees: 1,
+	reverted: true,
+};
+
+describe("DreamsLog.recordProbation", () => {
+	it("appends a probation line after the step, with the context and the injected clock", () => {
+		const dir = scratch();
+		let now = 10;
+		const log = new DreamsLog(dreamsPath(dir, "run"), () => now++, { experimentId: "exp", arm: "dream" });
+		log.recordStep({
+			iteration: 2,
+			poolSize: 2,
+			selection: {
+				candidates: [verdict()],
+				currentScore: 0.4,
+				chosenPolicy: OTHER,
+				improved: true,
+				dreamer: "local",
+				measuredTrees: 2,
+			},
+			leverScan: null,
+		});
+		log.recordProbation(2, PROBATION);
+		const lines = readDreamsLog(dreamsPath(dir, "run"));
+		expect(lines.map((line) => line.type)).toEqual(["candidate", "step", "probation"]);
+		const probation = lines[2] as DreamProbationLine;
+		expect(probation).toEqual({
+			type: "probation",
+			ts: 12,
+			experimentId: "exp",
+			arm: "dream",
+			iteration: 2,
+			...PROBATION,
+		});
+		expect(isDreamsLogLine(probation)).toBe(true);
+		expect(isDreamsLogLine({ ...probation, reverted: "yes" })).toBe(false);
+		expect(isDreamsLogLine({ type: "probation", ts: 1, iteration: 2 })).toBe(false);
 	});
 });
 

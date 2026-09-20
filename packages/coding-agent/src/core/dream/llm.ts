@@ -14,8 +14,12 @@
  *     (unknown key / wrong type / out-of-range is rejected), then scored and
  *     selected by `selectBestPolicy`, which returns the argmax of
  *     {current} ∪ candidates among the candidates whose replay quality is no
- *     lower than current's, with current winning ties — so a worse, malformed or
- *     exploration-collapsing LLM policy can NEVER regress the deployed one;
+ *     lower than current's on every measured tree, with current winning ties —
+ *     so a worse, malformed or exploration-collapsing LLM policy can never
+ *     regress the deployed one ON REPLAY; and its first online rollout is a
+ *     probation (`loop.ts` `judgeProbation`) that reverts and revokes it when
+ *     the rollout misses the incumbent's lowest recorded best, since a replay
+ *     win says nothing about branches the recording does not hold;
  *   - a proposed artifact is validated by `task.deserialize` before it enters the
  *     tree, then re-scored by `task.evaluate`;
  *   - semantic guidance (the paper's ablation) is advisory TEXT prefixed to the
@@ -56,23 +60,26 @@ import {
 } from "../ravo/runtime-adapter.js";
 import type { RunAgentHandler, RunAgentResult, RunAgentStatus } from "../run-agent.js";
 import { DreamsLog, type DreamsLogContext, dreamsPath } from "./dreams.js";
-import { type CandidateInput, dreamerKindOf, proposePolicies, runDreaming, selectBestPolicy } from "./improve.js";
+import {
+	type CandidateInput,
+	type DreamResult,
+	dreamerKindOf,
+	proposePolicies,
+	runDreaming,
+	selectBestPolicy,
+	termsOnPool,
+} from "./improve.js";
 import {
 	type DreamHandlerCalls,
 	type DreamLoopResult,
 	type DreamRoundRecord,
 	dreamRunId,
 	freezePool,
+	judgeProbation,
 	mergedRoundCurve,
 	primingTreeId,
 } from "./loop.js";
-import {
-	computeObjectiveTerms,
-	DEFAULT_OBJECTIVE,
-	type ObjectiveScale,
-	poolScoreScale,
-	type ReplayObjectiveConfig,
-} from "./objective.js";
+import { DEFAULT_OBJECTIVE, type ObjectiveScale, poolScoreScale, type ReplayObjectiveConfig } from "./objective.js";
 import {
 	DEFAULT_POLICY,
 	type ExplorationPolicy,
@@ -114,7 +121,14 @@ import {
 } from "./rollout.js";
 import { DreamStoreError, type RecordedTree, treePath } from "./store.js";
 import type { DreamTaskId, ProposeParams, ScoredTask } from "./task.js";
-import type { CandidateVerdict, DreamClock, DreamerKind, DreamMode, NodeRecord } from "./types.js";
+import type {
+	CandidateVerdict,
+	DreamClock,
+	DreamerKind,
+	DreamMode,
+	DreamProbationRecord,
+	NodeRecord,
+} from "./types.js";
 
 /** Per-attempt child token budget when a caller does not set one. */
 export const DEFAULT_CHILD_TOKEN_BUDGET = 200_000;
@@ -190,7 +204,7 @@ export interface DreamerPoolTreeDigest {
 	roundsSaved: number;
 }
 
-/** One earlier candidate's verdict, as the dreamer prompt shows it. */
+/** One earlier candidate's verdict, as the dreamer prompt shows it; a reverted adoption appears again as `revoked`. */
 export interface DreamHistoryEntry {
 	iteration: number;
 	policyId: string;
@@ -496,8 +510,10 @@ function poolWorkers(pool: readonly RecordedTree[]): number {
 /**
  * Digest the frozen pool for the dreamer: the CURRENT policy's replay on every
  * tree (tree-id order) under the same simulator and objective the selection
- * uses, so the child sees exactly the numbers its candidates must beat. Scalars
- * only; no artifact and never a hidden test. Rng-free and zero-token.
+ * uses, with the incumbent's spend charged raw as the selection charges it
+ * (`termsOnPool`), so the child sees exactly the numbers its candidates must
+ * beat. Scalars only; no artifact and never a hidden test. Rng-free and
+ * zero-token.
  */
 export function buildDreamerInput(
 	current: ExplorationPolicy,
@@ -510,9 +526,11 @@ export function buildDreamerInput(
 	const k1 = Math.max(1, Math.trunc(options.k1 ?? 1));
 	const k2 = Math.max(1, Math.trunc(options.k2 ?? k1));
 	const scale = poolScoreScale(pool);
-	const digest = pool.map((tree): DreamerPoolTreeDigest => {
-		const replay = simulatePolicy(tree, current, { k2 });
-		const terms = computeObjectiveTerms(replay, objective, scale, { workers: tree.header.w, k1 });
+	const replays = pool.map((tree) => simulatePolicy(tree, current, { k2 }));
+	const poolTerms = termsOnPool(replays, pool, { k1, k2, objective }, scale, "raw");
+	const digest = pool.map((tree, index): DreamerPoolTreeDigest => {
+		const replay = replays[index]!;
+		const terms = poolTerms[index]!;
 		return {
 			treeId: tree.header.treeId,
 			N: replay.N,
@@ -549,6 +567,27 @@ export function historyOf(iteration: number, verdicts: readonly CandidateVerdict
 		quality: verdict.quality,
 		reason: verdict.reason,
 	}));
+}
+
+/**
+ * The history entry a reverted adoption adds after its `winner` entry: the same
+ * policy, reason `revoked`, so the next prompt shows the probation outcome and
+ * the dreamer does not propose it again.
+ */
+export function revokedHistoryEntry(
+	iteration: number,
+	winner: CandidateVerdict,
+	probation: DreamProbationRecord,
+): DreamHistoryEntry {
+	return {
+		iteration,
+		policyId: probation.policyId,
+		origin: winner.origin,
+		changed: [...winner.changed],
+		value: winner.value,
+		quality: winner.quality,
+		reason: "revoked",
+	};
 }
 
 /**
@@ -1302,8 +1341,12 @@ async function dreamLoopBody(
 	options.onProgress?.({ type: "phase", phase: "rollout", iteration: 0, bestNodeScore, treeId: treeIds[0] });
 
 	let current: ExplorationPolicy = initialPolicy;
+	const revoked = new Set<string>();
+	let probationReverts = 0;
 	for (let iteration = 1; iteration <= iterations; iteration++) {
 		if (signal.aborted) throw new DreamAbortError("dream run aborted before iteration");
+		const incumbent = current;
+		let adopted: DreamResult | undefined;
 		let pool: RecordedTree[] | undefined;
 		let guidance = "";
 		if (guidanceOption) {
@@ -1351,6 +1394,7 @@ async function dreamLoopBody(
 				rng: rng.fork(`dream:${iteration}`),
 				objective,
 				iteration,
+				revoked,
 				...(resolved ? { proposeCandidates: () => resolved as CandidateInput[] } : {}),
 			});
 			dreamsLog.recordStep({
@@ -1369,6 +1413,7 @@ async function dreamLoopBody(
 			history.push(...historyOf(iteration, dream.candidates));
 			current = dream.chosenPolicy;
 			chosenPolicies.push(current);
+			if (dream.improved) adopted = dream;
 			dreaming = {
 				currentScore: dream.currentScore,
 				chosenScore: dream.chosenScore,
@@ -1381,34 +1426,54 @@ async function dreamLoopBody(
 			};
 		}
 		if (signal.aborted) throw new DreamAbortError("dream run aborted before redeploy");
+		const deployed = current;
 		const redeployed = await withSpan(
 			"dream.redeploy",
 			{
-				"dream.policy_id": policyId(current),
+				"dream.policy_id": policyId(deployed),
 				"dream.k1": options.k1,
 				"dream.workers": options.workers,
 				"dream.iteration": iteration,
 				"dream.fixed_policy": fixedPolicy,
+				"dream.probation": adopted !== undefined,
 			},
 			async (redeploySpan) => {
-				const result = await rollout(current, iteration, guidance);
+				const result = await rollout(deployed, iteration, guidance);
 				redeploySpan.setAttributes({ "dream.tree_id": result.treeId });
-				return result;
+				const probation = adopted ? judgeProbation(adopted, incumbent, result) : undefined;
+				if (probation) {
+					redeploySpan.setAttributes({
+						"dream.probation_floor": probation.floor,
+						"dream.reverted": probation.reverted,
+					});
+				}
+				return { result, probation };
 			},
 		);
-		roleTokens.rollout = redeployed.tokens;
-		record(redeployed, current, iteration, poolSize, dreaming);
+		if (redeployed.probation && dreaming && adopted) {
+			dreaming.probation = redeployed.probation;
+			dreamsLog.recordProbation(iteration, redeployed.probation);
+			if (redeployed.probation.reverted) {
+				revoked.add(redeployed.probation.policyId);
+				current = incumbent;
+				probationReverts += 1;
+				const winner = adopted.candidates.find((verdict) => verdict.reason === "winner");
+				if (winner) history.push(revokedHistoryEntry(iteration, winner, redeployed.probation));
+			}
+		}
+		roleTokens.rollout = redeployed.result.tokens;
+		record(redeployed.result, deployed, iteration, poolSize, dreaming);
 		options.onProgress?.({
 			type: "phase",
 			phase: "redeploying",
 			iteration,
 			bestNodeScore,
-			treeId: redeployed.treeId,
+			treeId: redeployed.result.treeId,
 		});
 	}
 
 	const finalPool = freezePool(dir, taskId);
-	const selection = selectBestPolicy(initialPolicy, chosenPolicies, finalPool, scoreCfg);
+	const selection = selectBestPolicy(initialPolicy, chosenPolicies, finalPool, scoreCfg, revoked);
 	dreamsLog.recordStep({ iteration: -1, poolSize: finalPool.length, selection, leverScan: null });
 	options.onProgress?.({
 		type: "completed",
@@ -1436,6 +1501,7 @@ async function dreamLoopBody(
 		tokens,
 		stoppedEarly,
 		finalSelection: selection.candidates,
+		probationReverts,
 	};
 }
 
@@ -1526,7 +1592,9 @@ function objectiveText(input: DreamChildInput): string {
 	return [
 		`How a candidate is judged. Each candidate is replayed on ${input.pool.length} recorded discovery tree${input.pool.length === 1 ? "" : "s"} (W = ${workers} cells per round, online round cap k1 = ${k1}, replay round cap k2 = ${k2}) and its mean V is compared with the current policy's mean V on the same trees. `,
 		`V = (1 - beta3) * q + beta3 * anytime - beta1 * S / (W * k1) + beta2 * (1 - rounds / k1), with q the best revealed score normalized to the pool's score range [${fmt6(input.scale.scoreMin)}, ${fmt6(input.scale.scoreMax)}], anytime the mean normalized best-so-far over the probe budget W * k1 (rewards reaching the best early), S the charged selections (revealed nodes plus out-of-support selections) and rounds the replay decision rounds; beta1 = ${beta1}, beta2 = ${beta2}, beta3 = ${beta3}. `,
-		"Selection rule: a candidate whose mean q is below the current policy's is excluded; among the rest the highest mean V wins, and the current policy wins every tie, so only a STRICTLY higher mean V on these recorded trees is accepted. ",
+		"Selection rule: a candidate whose q is below the current policy's on ANY of these trees is excluded; among the rest the highest mean V wins, and the current policy wins every tie, so only a STRICTLY higher mean V on these recorded trees is accepted. ",
+		"Evidence-backed spend: a candidate's stop-early credit (fewer charged probes, fewer rounds) is charged at the latest probe and round at which the same candidate was still improving on the OTHER recorded trees, so on a single tree there is none (a candidate is charged the full budget W * k1 and k1 rounds), the current policy is charged exactly what it spent, and no-worse quality must hold on every tree. ",
+		"Probation: an adopted policy's first online rollout must reach at least the current policy's lowest recorded best on these trees, or the adoption is reverted and the policy is revoked for the rest of the run; a replay win on recorded trees is not an online result. ",
 		"Replay mechanics: a candidate re-walks each recorded tree, selecting cells by its own rules and revealing the recorded child of each selected cell; nothing new is ever generated. A selected cell whose recorded children are all revealed is out of support: it reveals nothing but is charged as a probe.",
 	].join("");
 }
@@ -1550,7 +1618,9 @@ function historyText(input: DreamChildInput): string[] {
 		(entry) =>
 			`- iteration ${entry.iteration}: ${entry.policyId} (${entry.origin}; changed ${entry.changed.length > 0 ? entry.changed.join(", ") : "nothing"}) -> V ${fmt6(entry.value)}, q ${fmt6(entry.quality)}: ${entry.reason}`,
 	);
-	return [["Earlier candidates and their verdicts (do not repeat a losing one unchanged):", ...rows].join("\n")];
+	return [
+		["Earlier candidates and their verdicts (do not repeat a losing or revoked one unchanged):", ...rows].join("\n"),
+	];
 }
 
 /**
