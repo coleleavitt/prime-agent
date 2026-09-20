@@ -29,9 +29,18 @@
  *
  * `fixedPolicy` is the paper's "Recursive Fixed Exploration" control (see
  * `loop.ts`): the same loop and the same growing pool, but no dreaming at all.
- * `initialRollout` lets an experiment share one round-1 rollout across arms, and
- * the per-round `rounds` records count handler calls and tokens per role so an
- * experiment can report cost next to (never mixed into) the compute axis.
+ * `initialRollout` lets an experiment share one round-1 rollout (with its
+ * priming rollouts) across arms, and the per-round `rounds` records count
+ * handler calls and tokens per role so an experiment can report cost next to
+ * (never mixed into) the compute axis.
+ *
+ * Audit trail, identical to the sync loop's: the run id is `dreamRunId` (with
+ * the experiment's `runLabel`), every dreaming step is written to
+ * `<dir>/dreams/<runId>.jsonl` with one verdict per candidate and the post-hoc
+ * final selection as iteration -1, the proposer's AND the dreamer's rejected
+ * child results go to `<dir>/rejections/<runId>.jsonl` (the dreamer's with
+ * `role: "dreamer"`), and `dream.llm_dream`, `dream.dream`, `dream.replay` and
+ * `dream.candidate` all carry `dream.iteration`.
  */
 
 import { existsSync } from "node:fs";
@@ -46,9 +55,24 @@ import {
 	structuredChildRunOptions,
 } from "../ravo/runtime-adapter.js";
 import type { RunAgentHandler, RunAgentResult, RunAgentStatus } from "../run-agent.js";
-import { proposePolicies, runDreaming, selectBestPolicy } from "./improve.js";
-import { type DreamHandlerCalls, type DreamLoopResult, type DreamRoundRecord, freezePool } from "./loop.js";
-import { DEFAULT_OBJECTIVE, type ReplayObjectiveConfig } from "./objective.js";
+import { DreamsLog, type DreamsLogContext, dreamsPath } from "./dreams.js";
+import { type CandidateInput, dreamerKindOf, proposePolicies, runDreaming, selectBestPolicy } from "./improve.js";
+import {
+	type DreamHandlerCalls,
+	type DreamLoopResult,
+	type DreamRoundRecord,
+	dreamRunId,
+	freezePool,
+	mergedRoundCurve,
+	primingTreeId,
+} from "./loop.js";
+import {
+	computeObjectiveTerms,
+	DEFAULT_OBJECTIVE,
+	type ObjectiveScale,
+	poolScoreScale,
+	type ReplayObjectiveConfig,
+} from "./objective.js";
 import {
 	DEFAULT_POLICY,
 	type ExplorationPolicy,
@@ -56,6 +80,7 @@ import {
 	parseExplorationPolicy,
 	policyId,
 	RECOVERY_POLICIES,
+	REPLAY_DEAD_FIELDS,
 	SELECTION_RULES,
 	STOP_RULES,
 } from "./policy.js";
@@ -72,6 +97,7 @@ import {
 	zeroProposalTally,
 } from "./proposer.js";
 import { excerptOf, RejectionLog, rejectionsPath } from "./rejections.js";
+import { simulatePolicy } from "./replay.js";
 import { createSeededRng, type SeededRng } from "./rng.js";
 import {
 	applyRoundStop,
@@ -83,11 +109,12 @@ import {
 	exploreSpanAttrs,
 	finishRollout,
 	IMPROVE_EPS,
+	type ScoreImprovement,
 	selectRoundCells,
 } from "./rollout.js";
 import { DreamStoreError, type RecordedTree, treePath } from "./store.js";
 import type { DreamTaskId, ProposeParams, ScoredTask } from "./task.js";
-import type { DreamClock, DreamMode, NodeRecord } from "./types.js";
+import type { CandidateVerdict, DreamClock, DreamerKind, DreamMode, NodeRecord } from "./types.js";
 
 /** Per-attempt child token budget when a caller does not set one. */
 export const DEFAULT_CHILD_TOKEN_BUDGET = 200_000;
@@ -148,9 +175,48 @@ interface ProposeChildInput {
 	round: number;
 }
 
-interface DreamChildInput {
+/** One recorded tree's replay of the CURRENT policy, as the dreamer prompt shows it (scalars only). */
+export interface DreamerPoolTreeDigest {
+	treeId: string;
+	/** Revealed non-root nodes the current policy's replay spent. */
+	N: number;
+	rounds: number;
+	outOfSupportCells: number;
+	bestScore: number;
+	value: number;
+	quality: number;
+	anytime: number;
+	cost: number;
+	roundsSaved: number;
+}
+
+/** One earlier candidate's verdict, as the dreamer prompt shows it. */
+export interface DreamHistoryEntry {
+	iteration: number;
+	policyId: string;
+	origin: CandidateVerdict["origin"];
+	changed: string[];
+	value: number;
+	quality: number;
+	reason: CandidateVerdict["reason"];
+}
+
+/**
+ * Everything the dreamer child is told. Built by `buildDreamerInput`: the
+ * current policy, the count contract, the objective and budget, the current
+ * policy's per-tree replay on the frozen pool (scalars only) and the verdicts of
+ * every earlier step. Without a pool the replay block is empty and the prompt
+ * still states the rules.
+ */
+export interface DreamChildInput {
 	current: ExplorationPolicy;
 	m: number;
+	iteration: number;
+	objective: ReplayObjectiveConfig;
+	budget: { workers: number; k1: number; k2: number };
+	scale: ObjectiveScale;
+	pool: DreamerPoolTreeDigest[];
+	history: DreamHistoryEntry[];
 }
 
 export interface LlmProposerOptions {
@@ -210,8 +276,46 @@ export interface LlmDreamerOptions {
 	scope: ChildRuntimeScope;
 	signal: AbortSignal;
 	tokenBudget: number;
-	/** Explicit labelled fork used only when the LLM dreamer fails or yields no in-bounds policy. */
+	/**
+	 * Explicit labelled fork for the local mutator: the whole set when the child
+	 * fails or yields nothing usable, or the top-up that fills the `m` budget when
+	 * the child returned fewer distinct new policies than asked.
+	 */
 	localFallbackRng: SeededRng;
+	/** The loop iteration, stamped on the span, the prompt and any rejection line; defaults to 0. */
+	iteration?: number;
+	/** The frozen pool the candidates will be scored on; digested (scalars only) into the prompt. */
+	pool?: readonly RecordedTree[];
+	/** The scoring configuration the prompt states; defaults to `DEFAULT_OBJECTIVE`. */
+	objective?: ReplayObjectiveConfig;
+	/** Max parallelism W stated in the prompt (also the `batchSize` cap); defaults to the pool's max `header.w`, else 1. */
+	workers?: number;
+	k1?: number;
+	k2?: number;
+	/** Verdicts of earlier dreaming steps, shown to the child as history. */
+	history?: readonly DreamHistoryEntry[];
+	/** Where every rejected child result is written, as `role: "dreamer"` lines. */
+	rejections?: RejectionLog;
+}
+
+/** The outcome of one LLM dreaming call: the candidate set with provenance, plus what became of the child's output. */
+export interface DreamedCandidates {
+	/** In order: the child's kept entries (identical/duplicate ones included, so they are audited), then any local top-up. */
+	candidates: CandidateInput[];
+	tokens: number;
+	dreamer: DreamerKind;
+	/** Entries in the child's JSON array (0 when no array was parsed). */
+	returned: number;
+	/** Entries the strict parser dropped, with the reason. */
+	dropped: { index: number; reason: string }[];
+	/** Distinct policies, different from current, the child contributed (at most `m`). */
+	kept: number;
+	/** Child entries beyond the `m` distinct ones, not passed on. */
+	truncated: number;
+	/** Local candidates appended to fill the budget (`m - kept`). */
+	local: number;
+	/** True when the child produced nothing usable and the whole set is local. */
+	llmFallback: boolean;
 }
 
 /**
@@ -382,56 +486,212 @@ function errorText(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+/** Max `header.w` over a pool; 1 for an empty pool. */
+function poolWorkers(pool: readonly RecordedTree[]): number {
+	let workers = 1;
+	for (const tree of pool) if (tree.header.w > workers) workers = Math.trunc(tree.header.w);
+	return workers;
+}
+
 /**
- * The LLM dreamer: ask a child agent for `m` revised policies, keep only the ones
- * the STRICT `parseExplorationPolicy` accepts (dropping any with an unknown field,
- * wrong type, or out-of-range value), and fall back to the local `proposePolicies`
- * when the call fails or every candidate is dropped. The survivors are handed to
- * `runDreaming`, which scores and selects them under the same no-regression rule,
- * so a bad policy can never be deployed.
+ * Digest the frozen pool for the dreamer: the CURRENT policy's replay on every
+ * tree (tree-id order) under the same simulator and objective the selection
+ * uses, so the child sees exactly the numbers its candidates must beat. Scalars
+ * only; no artifact and never a hidden test. Rng-free and zero-token.
+ */
+export function buildDreamerInput(
+	current: ExplorationPolicy,
+	m: number,
+	options: Pick<LlmDreamerOptions, "iteration" | "pool" | "objective" | "workers" | "k1" | "k2" | "history">,
+): DreamChildInput {
+	const pool = [...(options.pool ?? [])].sort((a, b) => a.header.treeId.localeCompare(b.header.treeId));
+	const objective = options.objective ?? DEFAULT_OBJECTIVE;
+	const workers = Math.max(1, Math.trunc(options.workers ?? poolWorkers(pool)));
+	const k1 = Math.max(1, Math.trunc(options.k1 ?? 1));
+	const k2 = Math.max(1, Math.trunc(options.k2 ?? k1));
+	const scale = poolScoreScale(pool);
+	const digest = pool.map((tree): DreamerPoolTreeDigest => {
+		const replay = simulatePolicy(tree, current, { k2 });
+		const terms = computeObjectiveTerms(replay, objective, scale, { workers: tree.header.w, k1 });
+		return {
+			treeId: tree.header.treeId,
+			N: replay.N,
+			rounds: replay.rounds,
+			outOfSupportCells: replay.outOfSupportCells,
+			bestScore: replay.bestScore,
+			value: terms.value,
+			quality: terms.quality,
+			anytime: terms.anytime,
+			cost: terms.cost,
+			roundsSaved: terms.roundsSaved,
+		};
+	});
+	return {
+		current,
+		m: Math.max(0, Math.trunc(m)),
+		iteration: Math.max(0, Math.trunc(options.iteration ?? 0)),
+		objective,
+		budget: { workers, k1, k2 },
+		scale,
+		pool: digest,
+		history: [...(options.history ?? [])],
+	};
+}
+
+/** A `DreamHistoryEntry` per verdict of one finished dreaming step, for the next step's prompt. */
+export function historyOf(iteration: number, verdicts: readonly CandidateVerdict[]): DreamHistoryEntry[] {
+	return verdicts.map((verdict) => ({
+		iteration,
+		policyId: verdict.policyId,
+		origin: verdict.origin,
+		changed: [...verdict.changed],
+		value: verdict.value,
+		quality: verdict.quality,
+		reason: verdict.reason,
+	}));
+}
+
+/**
+ * The LLM dreamer. It asks a child agent for `m` revised policies with the
+ * scoring rule, the pool's replay of the current policy and the earlier steps'
+ * verdicts in the prompt, keeps only the entries the STRICT
+ * `parseExplorationPolicy` accepts (recording why each other one was dropped),
+ * takes the first `m` DISTINCT policies that differ from the current one (an
+ * identical or duplicate entry is passed on so the selection records it as such,
+ * but does not count toward `m`), and fills any shortfall from the local
+ * `proposePolicies` on the labelled fallback fork, so the step's `dreamer` is
+ * `llm`, `mixed` or `local`. A retryable rejection (`RETRYABLE_REJECTIONS`) gets
+ * one more child call; every rejected result is written to `options.rejections`
+ * as a `role: "dreamer"` line and put on the `dream.llm_dream` span; an abort
+ * throws `DreamAbortError`. The candidates are then scored and selected by
+ * `runDreaming` under the same no-regression rule, so a bad policy can never be
+ * deployed.
  */
 export async function proposePoliciesWithAgent(
 	runAgent: RunAgentHandler,
 	current: ExplorationPolicy,
 	m: number,
 	options: LlmDreamerOptions,
-): Promise<{ candidates: ExplorationPolicy[]; tokens: number }> {
+): Promise<DreamedCandidates> {
 	const requested = Math.max(0, Math.trunc(m));
-	const childCall = retrying(
-		createRunAgentChildCall<DreamChildInput, ExplorationPolicy[]>(runAgent, {
-			prompt: buildDreamPrompt,
-			validate: parseCandidateArray,
-			scope: options.scope,
-			extractJson: "array",
-		}),
-		1,
-	);
-	return withSpan("dream.llm_dream", { "dream.candidates_requested": requested }, async (span) => {
-		const result = await childCall(
-			{ current, m: requested },
-			{ signal: options.signal, tokenBudget: options.tokenBudget },
-		);
-		if (result.status === "deferred") {
-			throw new Error("dream LLM dreamer received an unexpected deferred child result");
+	const iteration = Math.max(0, Math.trunc(options.iteration ?? 0));
+	const input = buildDreamerInput(current, requested, options);
+	const prompt = buildDreamPrompt(input);
+	let parsed: ParsedCandidates | undefined;
+	const validate = (value: unknown): ParsedCandidates => {
+		parsed = parseCandidateArray(value);
+		if (parsed.kept.length === 0) {
+			throw new TypeError(
+				parsed.returned === 0
+					? "the array holds no policy object"
+					: `every entry was dropped: ${parsed.dropped.map((entry) => `[${entry.index}] ${entry.reason}`).join("; ")}`,
+			);
 		}
-		if (result.status === "completed" && result.value.length > 0) {
+		return parsed;
+	};
+	return withSpan(
+		"dream.llm_dream",
+		{ "dream.candidates_requested": requested, "dream.iteration": iteration },
+		async (span): Promise<DreamedCandidates> => {
+			let tokens = 0;
+			let attempts = 0;
+			let last: ChildOutcome<ParsedCandidates> | undefined;
+			const reject = (outcome: ChildOutcome<ParsedCandidates> & { status: "rejected" }, fellBack: boolean): void => {
+				options.rejections?.append({
+					role: "dreamer",
+					iteration,
+					round: 0,
+					attempt: attempts,
+					reason: outcome.reason,
+					status: outcome.childStatus,
+					fellBack,
+					tokens: outcome.tokens,
+					outputTokens: outcome.outputTokens,
+					...(outcome.stopReason === undefined ? {} : { stopReason: outcome.stopReason }),
+					...(outcome.error === undefined ? {} : { error: outcome.error }),
+					excerpt: outcome.excerpt,
+				});
+			};
+			if (requested > 0) {
+				for (;;) {
+					attempts += 1;
+					parsed = undefined;
+					last = await runStructuredChild(runAgent, prompt, options, "array", validate);
+					tokens += last.tokens;
+					if (last.status === "accepted") break;
+					const retry =
+						RETRYABLE_REJECTIONS.has(last.reason) && attempts <= PROPOSER_RETRIES && !options.signal.aborted;
+					if (!retry) break;
+					reject(last, false);
+				}
+			}
 			span.setAttributes({
-				"dream.candidates_kept": result.value.length,
-				"dream.llm_fallback": false,
-				"dream.tokens": result.tokens,
+				"dream.tokens": tokens,
+				"dream.llm_attempts": attempts,
+				"dream.candidates_returned": parsed?.returned ?? 0,
+				"dream.candidates_dropped": parsed?.dropped.length ?? 0,
 			});
-			return { candidates: result.value, tokens: result.tokens };
-		}
-		// The call failed, was aborted, or every candidate was dropped: fall back to the
-		// local search. runDreamLoopWithAgent's own signal checks stop an aborted run.
-		const candidates = proposePolicies(current, requested, options.localFallbackRng);
-		span.setAttributes({
-			"dream.candidates_kept": candidates.length,
-			"dream.llm_fallback": true,
-			"dream.tokens": result.tokens,
-		});
-		return { candidates, tokens: result.tokens };
-	});
+			if (last !== undefined && last.status === "rejected") {
+				span.setAttributes({
+					"dream.llm_status": last.childStatus,
+					"dream.llm_reject_reason": last.reason,
+					"dream.llm_reject_excerpt": last.excerpt,
+				});
+				if (last.reason === "aborted" || options.signal.aborted) {
+					reject(last, false);
+					span.setAttributes({ "dream.llm_fallback": false });
+					throw new DreamAbortError("dream dreamer child aborted");
+				}
+				reject(last, true);
+			} else if (last !== undefined) {
+				span.setAttributes({ "dream.llm_status": "completed" });
+			}
+			// Take the child's entries in order: the first `requested` DISTINCT new
+			// policies count toward the budget; an identical or duplicate entry rides
+			// along (the selection labels it) and anything past the budget is truncated.
+			const fromChild = last?.status === "accepted" ? last.value.kept : [];
+			const currentId = policyId(current);
+			const seen = new Set<string>();
+			const taken: CandidateInput[] = [];
+			let truncated = 0;
+			for (const policy of fromChild) {
+				if (seen.size >= requested) {
+					truncated += 1;
+					continue;
+				}
+				const id = policyId(policy);
+				if (id !== currentId) seen.add(id);
+				taken.push({ policy, origin: "llm" });
+			}
+			const kept = seen.size;
+			const shortfall = requested - kept;
+			const local = proposePolicies(current, shortfall, options.localFallbackRng).map(
+				(policy): CandidateInput => ({ policy, origin: "local" }),
+			);
+			const candidates = [...taken, ...local];
+			const llmFallback = kept === 0 && requested > 0;
+			const dreamer = dreamerKindOf(candidates);
+			span.setAttributes({
+				"dream.candidates_kept": kept,
+				"dream.candidates_truncated": truncated,
+				"dream.candidates_local": local.length,
+				"dream.candidates": candidates.length,
+				"dream.dreamer": dreamer,
+				"dream.llm_fallback": llmFallback,
+			});
+			return {
+				candidates,
+				tokens,
+				dreamer,
+				returned: parsed?.returned ?? 0,
+				dropped: parsed?.dropped ?? [],
+				kept,
+				truncated,
+				local: local.length,
+				llmFallback,
+			};
+		},
+	);
 }
 
 /** One recorded candidate in a guidance digest: its scalar score, round, and serialized artifact (truncated). */
@@ -673,15 +933,59 @@ export type DreamProgressEvent =
  */
 export interface DreamInitialRollout {
 	treeId: string;
+	/** The round's best valid score: max over the initial rollout and any priming rollouts. */
 	bestScore: number;
+	/** The initial rollout's revealed non-root nodes; priming probes are `primingProbes`. */
 	revealedCount: number;
-	/** `ExploreResult.agentGeneratedCount` of the shared rollout; absent reads as 0 (untracked), never as `revealedCount`. */
+	/** `ExploreResult.agentGeneratedCount` summed over the shared rollouts; absent reads as 0 (untracked), never as `revealedCount`. */
 	agentGeneratedCount?: number;
-	/** The shared rollout's proposer tally; absent reads as all zero. */
+	/** The shared rollouts' proposer tally; absent reads as all zero. */
 	proposals?: ProposalTally;
+	/** The initial rollout's online decision rounds. */
 	rounds: number;
 	tokens: number;
 	handlerCalls: DreamHandlerCalls;
+	/** The round-1 curve (`mergedRoundCurve` over the initial then each priming rollout); absent when the runner predates it. */
+	probesToBest?: number;
+	improvements?: ScoreImprovement[];
+	/** Priming rollouts shared with round 1, when the experiment primed the pool. */
+	primingTreeIds?: string[];
+	primingProbes?: number;
+}
+
+/**
+ * Fold the initial rollout and its priming rollouts into one round-1 record's
+ * facts, exactly as `runDreamLoop` charges them: probes and tokens summed,
+ * `bestScore` the max, `rounds` the initial rollout's, the curve merged over the
+ * concatenated probes. Shared by the in-loop priming path and the experiment's
+ * shared round 1, so both arms of an experiment record the same round 1.
+ */
+export function mergePrimedRollouts(
+	initial: ExploreResult,
+	primed: readonly ExploreResult[],
+): Omit<DreamInitialRollout, "handlerCalls" | "proposals"> {
+	const curve = mergedRoundCurve([initial, ...primed]);
+	let bestScore = initial.bestScore;
+	let primingProbes = 0;
+	let tokens = initial.tokens;
+	let agentGeneratedCount = initial.agentGeneratedCount;
+	for (const prime of primed) {
+		if (prime.bestScore > bestScore) bestScore = prime.bestScore;
+		primingProbes += prime.revealedCount;
+		tokens += prime.tokens;
+		agentGeneratedCount += prime.agentGeneratedCount;
+	}
+	return {
+		treeId: initial.treeId,
+		bestScore,
+		revealedCount: initial.revealedCount,
+		agentGeneratedCount,
+		rounds: initial.rounds,
+		tokens,
+		probesToBest: curve.probesToBest,
+		improvements: curve.improvements,
+		...(primed.length > 0 ? { primingTreeIds: primed.map((prime) => prime.treeId), primingProbes } : {}),
+	};
 }
 
 export interface DreamLoopWithAgentOptions {
@@ -734,6 +1038,20 @@ export interface DreamLoopWithAgentOptions {
 	childTokenBudget?: number;
 	/** Observability-only per-phase progress; never affects the grown tree or scoring. */
 	onProgress?: (event: DreamProgressEvent) => void;
+	/**
+	 * A clock-free label folded into the run id and every per-run log key
+	 * (`rejections/`, `dreams/`); the experiment runner passes `<experimentId>/<arm>`
+	 * so arms under one frozen clock no longer share a run id. See `dreamRunId`.
+	 */
+	runLabel?: string;
+	/** Experiment provenance stamped on every dreams-log line. */
+	dreamsLogContext?: DreamsLogContext;
+	/**
+	 * Policies rolled out once each at iteration 0 on forks `prime:<i>`, joining
+	 * the pool with their probes and tokens charged to round 1 (see `runDreamLoop`).
+	 * Ignored when `initialRollout` is set: a shared round 1 carries its own priming.
+	 */
+	primingPolicies?: readonly ExplorationPolicy[];
 }
 
 /**
@@ -759,6 +1077,7 @@ export async function runDreamLoopWithAgent(options: DreamLoopWithAgentOptions):
 	const taskId: DreamTaskId = options.taskId ?? options.task.id;
 	const iterations = Math.max(0, Math.trunc(options.iterations));
 	const fixedPolicy = options.fixedPolicy === true;
+	const priming = options.initialRollout ? [] : (options.primingPolicies ?? []);
 	const span = runWithTraceContext(undefined, () =>
 		startSpan("dream.run", {
 			"dream.task": taskId,
@@ -770,10 +1089,16 @@ export async function runDreamLoopWithAgent(options: DreamLoopWithAgentOptions):
 			"dream.iterations": iterations,
 			"dream.mode": "llm" satisfies DreamMode,
 			"dream.fixed_policy": fixedPolicy,
+			"dream.priming_policies": priming.length + (options.initialRollout?.primingTreeIds?.length ?? 0),
+			...(options.scope.model ? { "dream.child_model": options.scope.model } : {}),
+			...(options.scope.thinkingLevel ? { "dream.child_thinking": options.scope.thinkingLevel } : {}),
+			...(options.scope.maxOutputTokens === undefined
+				? {}
+				: { "dream.child_max_output_tokens": options.scope.maxOutputTokens }),
 			...(trigger ? { "trigger.trace_id": trigger } : {}),
 		}),
 	);
-	return runDreamRun(options, taskId, iterations, fixedPolicy, span);
+	return runDreamRun(options, taskId, iterations, fixedPolicy, priming, span);
 }
 
 async function runDreamRun(
@@ -781,11 +1106,12 @@ async function runDreamRun(
 	taskId: DreamTaskId,
 	iterations: number,
 	fixedPolicy: boolean,
+	priming: readonly ExplorationPolicy[],
 	span: Span,
 ): Promise<DreamLoopResult> {
 	try {
 		const value = await runWithTraceContext(span.context, () =>
-			dreamLoopBody(options, taskId, iterations, fixedPolicy),
+			dreamLoopBody(options, taskId, iterations, fixedPolicy, priming, span),
 		);
 		span.end();
 		return value;
@@ -813,6 +1139,8 @@ async function dreamLoopBody(
 	taskId: DreamTaskId,
 	iterations: number,
 	fixedPolicy: boolean,
+	priming: readonly ExplorationPolicy[],
+	runSpan: Span,
 ): Promise<DreamLoopResult> {
 	const objective = options.objective ?? DEFAULT_OBJECTIVE;
 	const rng = options.rng ?? createSeededRng(options.seed);
@@ -820,14 +1148,18 @@ async function dreamLoopBody(
 	const childTokenBudget = options.childTokenBudget ?? DEFAULT_CHILD_TOKEN_BUDGET;
 	const initialPolicy = options.initialPolicy ?? DEFAULT_POLICY;
 	const guidanceOption = options.semanticGuidance;
+	const k1 = Math.max(1, Math.trunc(options.k1));
 	const { runAgent, task, dir, signal } = options;
+	const runId = dreamRunId(taskId, options.seed, options.clock(), options.runLabel);
+	runSpan.setAttributes({ "dream.run_id": runId });
 
 	// Per-round accounting. The wrappers count every actual handler invocation of
 	// the current round by role (retries included, since `retrying` sits inside
 	// them); the proposer tallies every child result it examines; `record`
 	// snapshots and resets all three. Nothing here touches the rng, the tree or
-	// persistence. The rejection log exists only on the LLM-proposer path, so the
-	// local path writes nothing new and reads the clock no more than before.
+	// persistence. The rejection log exists only on the LLM path (proposer or
+	// dreamer), so the local path writes nothing new there; the dreams log is
+	// written on every path, one step at a time, and touches neither rng nor tree.
 	let calls = zeroCalls();
 	let roleTokens = zeroTokens();
 	let tally = zeroProposalTally();
@@ -840,9 +1172,11 @@ async function dreamLoopBody(
 	const proposerHandler = counting("proposer");
 	const dreamerHandler = counting("dreamer");
 	const guidanceHandler = counting("guidance");
-	const rejections = options.useLlmProposer
-		? new RejectionLog(rejectionsPath(dir, `${taskId}-s${options.seed}-r${options.clock()}`), options.clock)
-		: undefined;
+	const rejections =
+		options.useLlmProposer || options.useLlmDreamer
+			? new RejectionLog(rejectionsPath(dir, runId), options.clock)
+			: undefined;
+	const dreamsLog = new DreamsLog(dreamsPath(dir, runId), options.clock, options.dreamsLogContext);
 
 	const makeProposer = (guidance: string, iteration: number): AsyncProposer<unknown> =>
 		options.useLlmProposer
@@ -858,7 +1192,13 @@ async function dreamLoopBody(
 				})
 			: asyncOf(createLocalProposer(task));
 
-	const rollout = (policy: ExplorationPolicy, iteration: number, guidance: string): Promise<ExploreResult> => {
+	const rollout = (
+		policy: ExplorationPolicy,
+		iteration: number,
+		guidance: string,
+		fork = `iter:${iteration}`,
+		treeId?: string,
+	): Promise<ExploreResult> => {
 		if (signal.aborted) throw new DreamAbortError("dream run aborted before rollout");
 		return runOnlineExplorationWithAgent(
 			{
@@ -866,13 +1206,14 @@ async function dreamLoopBody(
 				taskId,
 				...(options.n !== undefined ? { n: options.n } : {}),
 				seed: options.seed,
-				rng: rng.fork(`iter:${iteration}`),
+				rng: rng.fork(fork),
 				clock: options.clock,
 				workers: options.workers,
 				k1: options.k1,
 				dir,
 				policy,
 				iteration,
+				...(treeId !== undefined ? { treeId } : {}),
 			},
 			makeProposer(guidance, iteration),
 			signal,
@@ -882,9 +1223,11 @@ async function dreamLoopBody(
 	const treeIds: string[] = [];
 	const rounds: DreamRoundRecord[] = [];
 	const chosenPolicies: ExplorationPolicy[] = [];
+	const history: DreamHistoryEntry[] = [];
 	let bestNodeScore = 0;
 	let seenBest = false;
 	let tokens = 0;
+	let stoppedEarly = 0;
 	const noteBest = (score: number): void => {
 		if (!seenBest || score > bestNodeScore) {
 			bestNodeScore = score;
@@ -892,7 +1235,7 @@ async function dreamLoopBody(
 		}
 	};
 	const record = (
-		result: Pick<ExploreResult, "treeId" | "bestScore" | "revealedCount" | "rounds" | "agentGeneratedCount">,
+		result: Omit<DreamInitialRollout, "handlerCalls" | "proposals" | "tokens">,
 		policy: ExplorationPolicy,
 		iteration: number,
 		poolSize: number,
@@ -901,39 +1244,60 @@ async function dreamLoopBody(
 		treeIds.push(result.treeId);
 		tokens += roleTokens.rollout + roleTokens.dreamer + roleTokens.guidance;
 		noteBest(result.bestScore);
+		if (result.rounds < k1) stoppedEarly += 1;
 		rounds.push({
 			iteration,
 			treeId: result.treeId,
 			policyId: policyId(policy),
 			roundBest: result.bestScore,
-			probes: result.revealedCount,
-			agentGeneratedCalls: result.agentGeneratedCount,
+			probes: result.revealedCount + (result.primingProbes ?? 0),
+			agentGeneratedCalls: result.agentGeneratedCount ?? 0,
 			proposals: addProposalTally(zeroProposalTally(), tally),
 			decisionRounds: result.rounds,
 			poolSize,
 			tokens: { ...roleTokens },
 			handlerCalls: { ...calls },
 			dreaming,
+			...(result.probesToBest === undefined ? {} : { probesToRoundBest: result.probesToBest }),
+			...(result.improvements === undefined ? {} : { improvements: [...result.improvements] }),
+			...(result.primingTreeIds === undefined
+				? {}
+				: { primingTreeIds: [...result.primingTreeIds], primingProbes: result.primingProbes ?? 0 }),
 		});
 		calls = zeroCalls();
 		roleTokens = zeroTokens();
 		tally = zeroProposalTally();
 	};
 
+	let primingCount = 0;
 	if (options.initialRollout) {
 		const shared = options.initialRollout;
 		if (!existsSync(treePath(shared.treeId, dir))) {
 			throw new DreamStoreError(`shared initial rollout ${shared.treeId} is not in the store ${dir}`);
 		}
+		for (const primeId of shared.primingTreeIds ?? []) {
+			if (!existsSync(treePath(primeId, dir))) {
+				throw new DreamStoreError(`shared priming rollout ${primeId} is not in the store ${dir}`);
+			}
+		}
 		if (signal.aborted) throw new DreamAbortError("dream run aborted before rollout");
+		primingCount = shared.primingTreeIds?.length ?? 0;
 		calls = { ...shared.handlerCalls };
 		roleTokens.rollout = shared.tokens;
 		tally = addProposalTally(zeroProposalTally(), shared.proposals ?? zeroProposalTally());
-		record({ ...shared, agentGeneratedCount: shared.agentGeneratedCount ?? 0 }, initialPolicy, 0, 0, null);
+		record(shared, initialPolicy, 0, 0, null);
 	} else {
 		const first = await rollout(initialPolicy, 0, "");
-		roleTokens.rollout = first.tokens;
-		record(first, initialPolicy, 0, 0, null);
+		const primed: ExploreResult[] = [];
+		for (const [index, policy] of priming.entries()) {
+			primed.push(
+				await rollout(policy, 0, "", `prime:${index}`, primingTreeId(taskId, options.seed, index, options.clock())),
+			);
+		}
+		primingCount = primed.length;
+		const merged = mergePrimedRollouts(first, primed);
+		roleTokens.rollout = merged.tokens;
+		record(merged, initialPolicy, 0, 0, null);
 	}
 	options.onProgress?.({ type: "phase", phase: "rollout", iteration: 0, bestNodeScore, treeId: treeIds[0] });
 
@@ -953,19 +1317,27 @@ async function dreamLoopBody(
 			guidance = produced.text;
 			roleTokens.guidance = produced.tokens;
 		}
-		let poolSize = pool ? pool.length : iteration;
+		let poolSize = pool ? pool.length : iteration + primingCount;
 		let dreaming: DreamRoundRecord["dreaming"] = null;
 		if (!fixedPolicy) {
 			options.onProgress?.({ type: "phase", phase: "dreaming", iteration, bestNodeScore });
 			pool ??= freezePool(dir, taskId);
 			poolSize = pool.length;
-			let resolved: ExplorationPolicy[] | undefined;
+			let resolved: CandidateInput[] | undefined;
 			if (options.useLlmDreamer) {
 				const dreamed = await proposePoliciesWithAgent(dreamerHandler, current, options.dreams, {
 					scope: options.scope,
 					signal,
 					tokenBudget: childTokenBudget,
 					localFallbackRng: rng.fork(`dream-fallback:${iteration}`),
+					iteration,
+					pool,
+					objective,
+					workers: options.workers,
+					k1: options.k1,
+					k2: options.k2,
+					history,
+					...(rejections ? { rejections } : {}),
 				});
 				resolved = dreamed.candidates;
 				roleTokens.dreamer = dreamed.tokens;
@@ -978,8 +1350,23 @@ async function dreamLoopBody(
 				k2: options.k2,
 				rng: rng.fork(`dream:${iteration}`),
 				objective,
-				...(resolved ? { proposeCandidates: () => resolved as ExplorationPolicy[] } : {}),
+				iteration,
+				...(resolved ? { proposeCandidates: () => resolved as CandidateInput[] } : {}),
 			});
+			dreamsLog.recordStep({
+				iteration,
+				poolSize,
+				selection: {
+					candidates: dream.candidates,
+					currentScore: dream.currentScore,
+					chosenPolicy: dream.chosenPolicy,
+					improved: dream.improved,
+					dreamer: dream.dreamer,
+					measuredTrees: dream.measuredTrees,
+				},
+				leverScan: dream.leverScan,
+			});
+			history.push(...historyOf(iteration, dream.candidates));
 			current = dream.chosenPolicy;
 			chosenPolicies.push(current);
 			dreaming = {
@@ -987,6 +1374,10 @@ async function dreamLoopBody(
 				chosenScore: dream.chosenScore,
 				improved: dream.improved,
 				candidates: dream.candidatePolicyIds.length,
+				candidateVerdicts: dream.candidates,
+				dreamer: dream.dreamer,
+				leverScan: dream.leverScan,
+				measuredTrees: dream.measuredTrees,
 			};
 		}
 		if (signal.aborted) throw new DreamAbortError("dream run aborted before redeploy");
@@ -1018,6 +1409,7 @@ async function dreamLoopBody(
 
 	const finalPool = freezePool(dir, taskId);
 	const selection = selectBestPolicy(initialPolicy, chosenPolicies, finalPool, scoreCfg);
+	dreamsLog.recordStep({ iteration: -1, poolSize: finalPool.length, selection, leverScan: null });
 	options.onProgress?.({
 		type: "completed",
 		iteration: iterations,
@@ -1026,7 +1418,7 @@ async function dreamLoopBody(
 		improved: selection.improved,
 	});
 	return {
-		runId: `${taskId}-s${options.seed}-r${options.clock()}`,
+		runId,
 		task: taskId,
 		seed: options.seed,
 		mode: "llm" satisfies DreamMode,
@@ -1042,25 +1434,37 @@ async function dreamLoopBody(
 		improved: selection.improved,
 		bestNodeScore,
 		tokens,
+		stoppedEarly,
+		finalSelection: selection.candidates,
 	};
 }
 
+/** The strict per-entry parse of a dreamer array: what survived and why each other entry was dropped. */
+export interface ParsedCandidates {
+	kept: ExplorationPolicy[];
+	dropped: { index: number; reason: string }[];
+	/** Entries in the array (0 for a non-array). */
+	returned: number;
+}
+
 /**
- * Map the returned JSON array through the STRICT policy parser per entry, dropping
- * any candidate the parser rejects. Never throws: a non-array yields `[]`, so the
- * caller falls back to the local search.
+ * Map the returned JSON array through the STRICT policy parser per entry,
+ * keeping every accepted policy and recording the parser's reason for every
+ * dropped one (unknown or missing field, wrong type, out-of-range value). Never
+ * throws: a non-array is zero entries.
  */
-function parseCandidateArray(value: unknown): ExplorationPolicy[] {
-	if (!Array.isArray(value)) return [];
-	const out: ExplorationPolicy[] = [];
-	for (const entry of value) {
+export function parseCandidateArray(value: unknown): ParsedCandidates {
+	if (!Array.isArray(value)) return { kept: [], dropped: [], returned: 0 };
+	const kept: ExplorationPolicy[] = [];
+	const dropped: { index: number; reason: string }[] = [];
+	value.forEach((entry, index) => {
 		try {
-			out.push(parseExplorationPolicy(entry));
-		} catch {
-			// Drop a candidate with an unknown field, a wrong type, or an out-of-range value.
+			kept.push(parseExplorationPolicy(entry));
+		} catch (error) {
+			dropped.push({ index, reason: errorText(error) });
 		}
-	}
-	return out;
+	});
+	return { kept, dropped, returned: value.length };
 }
 
 /** The guidance writer must return `{"insights": "<non-empty text>"}`; anything else is invalid output. */
@@ -1096,13 +1500,78 @@ function buildProposePrompt(
 		].join("\n\n");
 }
 
-function buildDreamPrompt(input: DreamChildInput): string {
+function fmt6(value: number): string {
+	return Number.isInteger(value) ? String(value) : value.toFixed(6);
+}
+
+/**
+ * The per-field semantics of a policy as the replay reads them, copied from
+ * `interpreter.ts` so the dreamer knows which fields can change a replay score,
+ * which are read only under one rule, and which replay never reads at all.
+ */
+function policySemanticsText(workers: number): string {
+	return [
+		"Field semantics (what replay reads):",
+		"- selectionRule ranks the eligible cells (the root plus every revealed leaf) each round: best-first by score descending; explore-root puts the root first, then the rest by score; round-robin by node id; weighted by score plus explorationBias for every cell scoring at least promisingThreshold times the current best.",
+		`- batchSize: cells probed per round, capped at W = ${workers} at runtime, so a value above ${workers} changes nothing. A batch never holds a node together with its parent.`,
+		"- stopRule: patience stops after beta consecutive rounds without improving the best score; fixed-rounds stops after beta rounds; threshold stops once the best score reaches targetScore; never runs to the round cap.",
+		"- beta is read only under patience and fixed-rounds; targetScore only under threshold; promisingThreshold and explorationBias only under weighted. Changing a field the current rules do not read changes nothing.",
+		`- ${REPLAY_DEAD_FIELDS.join(", ")} are never read by replay (they shape only how new candidates are generated online): a policy that differs from the current one only in them replays identically and cannot win. Keep them at the current values.`,
+	].join("\n");
+}
+
+function objectiveText(input: DreamChildInput): string {
+	const { beta1, beta2, beta3 } = input.objective;
+	const { workers, k1, k2 } = input.budget;
+	return [
+		`How a candidate is judged. Each candidate is replayed on ${input.pool.length} recorded discovery tree${input.pool.length === 1 ? "" : "s"} (W = ${workers} cells per round, online round cap k1 = ${k1}, replay round cap k2 = ${k2}) and its mean V is compared with the current policy's mean V on the same trees. `,
+		`V = (1 - beta3) * q + beta3 * anytime - beta1 * S / (W * k1) + beta2 * (1 - rounds / k1), with q the best revealed score normalized to the pool's score range [${fmt6(input.scale.scoreMin)}, ${fmt6(input.scale.scoreMax)}], anytime the mean normalized best-so-far over the probe budget W * k1 (rewards reaching the best early), S the charged selections (revealed nodes plus out-of-support selections) and rounds the replay decision rounds; beta1 = ${beta1}, beta2 = ${beta2}, beta3 = ${beta3}. `,
+		"Selection rule: a candidate whose mean q is below the current policy's is excluded; among the rest the highest mean V wins, and the current policy wins every tie, so only a STRICTLY higher mean V on these recorded trees is accepted. ",
+		"Replay mechanics: a candidate re-walks each recorded tree, selecting cells by its own rules and revealing the recorded child of each selected cell; nothing new is ever generated. A selected cell whose recorded children are all revealed is out of support: it reveals nothing but is charged as a probe.",
+	].join("");
+}
+
+function poolText(input: DreamChildInput): string {
+	if (input.pool.length === 0) return "Current policy on the pool: no recorded trees yet.";
+	const rows = input.pool.map(
+		(tree) =>
+			`- ${tree.treeId}: N ${tree.N}, rounds ${tree.rounds}, out-of-support ${tree.outOfSupportCells}, best ${fmt6(tree.bestScore)}, V ${fmt6(tree.value)} (q ${fmt6(tree.quality)}, anytime ${fmt6(tree.anytime)}, cost ${fmt6(tree.cost)}, rounds saved ${fmt6(tree.roundsSaved)})`,
+	);
+	const meanV = input.pool.reduce((sum, tree) => sum + tree.value, 0) / input.pool.length;
+	return [
+		`Current policy on the pool (its replay per tree; mean V ${fmt6(meanV)} is the value to beat):`,
+		...rows,
+	].join("\n");
+}
+
+function historyText(input: DreamChildInput): string[] {
+	if (input.history.length === 0) return [];
+	const rows = input.history.map(
+		(entry) =>
+			`- iteration ${entry.iteration}: ${entry.policyId} (${entry.origin}; changed ${entry.changed.length > 0 ? entry.changed.join(", ") : "nothing"}) -> V ${fmt6(entry.value)}, q ${fmt6(entry.quality)}: ${entry.reason}`,
+	);
+	return [["Earlier candidates and their verdicts (do not repeat a losing one unchanged):", ...rows].join("\n")];
+}
+
+/**
+ * The dreamer prompt. Its first line is `DREAMER_PROMPT_HEADER`; it then states
+ * the count contract, the policy schema, how V is computed and how the winner is
+ * selected (one paragraph), the replay mechanics (two sentences), the per-field
+ * semantics including the replay-dead fields and the `batchSize` cap at W, the
+ * current policy with its per-tree replay on the pool, the earlier steps'
+ * verdicts, and ends with the JSON-only instruction.
+ */
+export function buildDreamPrompt(input: DreamChildInput): string {
 	return [
 		DREAMER_PROMPT_HEADER,
-		`Propose ${input.m} revised exploration policies that should score better than the current one on replay. A policy is DATA: a flat JSON object with exactly these fields.`,
+		`Propose up to ${input.m} revised exploration policies that should score better than the current one on replay (dreaming step ${input.iteration}). A policy is DATA: a flat JSON object with exactly these fields.`,
 		policySchemaText(),
+		objectiveText(input),
+		policySemanticsText(input.budget.workers),
 		`Current policy:\n${JSON.stringify(input.current)}`,
-		`The array must hold ${input.m} policy objects. Any object with an unknown field, a wrong type, or an out-of-range value is discarded. ${JSON_ARRAY_ONLY}`,
+		poolText(input),
+		...historyText(input),
+		`Return at most ${input.m} policy objects that are pairwise distinct and each differ from the current policy in at least one field replay reads; a duplicate or a copy of the current policy is discarded, as is any object with an unknown or missing field, a wrong type, or an out-of-range value. ${JSON_ARRAY_ONLY}`,
 	].join("\n\n");
 }
 

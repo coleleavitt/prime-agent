@@ -25,11 +25,16 @@ const FILE_MODE = 0o600;
 export const REJECTION_EXCERPT_CHARS = 240;
 const EXCERPT_JOINER = " ... ";
 
+/** Which child role produced the rejected result; absent reads as `proposer` (every line predating the field). */
+export type RejectionRole = "proposer" | "dreamer";
+
 /** One rejected child result. */
 export interface ProposalRejection {
 	type: "rejection";
 	/** Injected clock reading when the rejection was recorded. */
 	ts: number;
+	/** The child role; the dreamer logs its fallback here too, with `round` 0. */
+	role?: RejectionRole;
 	/** Loop iteration whose rollout the attempt belongs to (the shared experiment round 1 is 0). */
 	iteration: number;
 	/** Online round of the rollout. */
@@ -112,6 +117,7 @@ export function isProposalRejection(value: unknown): value is ProposalRejection 
 	return (
 		record.type === "rejection" &&
 		typeof record.ts === "number" &&
+		(record.role === undefined || record.role === "proposer" || record.role === "dreamer") &&
 		typeof record.iteration === "number" &&
 		typeof record.round === "number" &&
 		typeof record.attempt === "number" &&

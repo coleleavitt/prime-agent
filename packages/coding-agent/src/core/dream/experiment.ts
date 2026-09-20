@@ -35,6 +35,16 @@
  * score. A result file without `selectedPolicyId` predates the split, and its
  * `finalPolicyId` is the selected policy.
  *
+ * Pooling and identity. A dreaming arm's replay pool is every tree in ITS store:
+ * it grows across rounds within the arm and never across arms (the control's
+ * trees are the control's compute; sharing them would hand the dream arm replay
+ * support it did not pay for) nor across seeds (a seed is an independent
+ * replicate, which is what the plotter's noise floor assumes). Round r has the
+ * SAME tree id in every arm by design — the shared round 1 on the LLM path is
+ * copied under that id — while each arm's run id and log keys carry
+ * `<experimentId>/<arm>` (`runLabel`), so arms under one frozen clock never share
+ * a run id, a rejections file or a dreams file.
+ *
  * Two drivers share one plan/record/headline core:
  *   - `runExperiment` is the synchronous local runner behind the standalone CLI:
  *     an in-turn `dream.experiment` root with one `dream.experiment_arm` child per
@@ -51,15 +61,18 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { currentTraceContext, runWithTraceContext, type Span, startSpan, withSpan } from "@earendil-works/pi-ai";
+import type { DreamsLogContext } from "./dreams.js";
 import { type DreamHandlerCalls, type DreamLoopResult, type DreamRoundRecord, runDreamLoop } from "./loop.js";
 import { DEFAULT_OBJECTIVE, type ReplayObjectiveConfig } from "./objective.js";
 import { DEFAULT_POLICY, type ExplorationPolicy, policyId } from "./policy.js";
 import { addProposalTally, type ProposalRejectReason, type ProposalTally, zeroProposalTally } from "./proposer.js";
+import type { ScoreImprovement } from "./rollout.js";
 import { DreamStoreError, experimentArmDir, experimentDir, experimentResultPath } from "./store.js";
 import type { DreamTaskId, ScoredTask } from "./task.js";
-import { DEFAULT_CIRCLE_PACKING_N, resolveTask } from "./tasks/index.js";
-import type { DreamClock, DreamMode } from "./types.js";
+import { resolveTask, resolveTaskN } from "./tasks/index.js";
+import type { CandidateVerdict, DreamClock, DreamMode } from "./types.js";
 
 export const EXPERIMENT_SCHEMA = "prime-agent.dream.experiment/1";
 export const EXPERIMENT_ARMS = ["dream", "fixed", "dream-guided", "fixed-guided"] as const;
@@ -104,6 +117,18 @@ export function timingScoringNote(taskId: DreamTaskId): string {
  */
 export const OBJECTIVE_NOTE = "objective: normalized (q in pool range, cost in budget fractions)";
 
+/**
+ * The note a result carries when the round cap k1 is at most the initial
+ * policy's `beta` under a `beta`-driven stop rule: the rule can then never fire
+ * before the cap, every rollout runs exactly k1 rounds, and the rounds-saved
+ * lever is unreachable (the regime that made run 2 inert). Undefined otherwise.
+ */
+export function k1StopRuleNote(k1: number, policy: ExplorationPolicy): string | undefined {
+	if (policy.stopRule !== "patience" && policy.stopRule !== "fixed-rounds") return undefined;
+	if (k1 > policy.beta) return undefined;
+	return `k1 ${k1} <= initialPolicy.beta ${policy.beta}: ${policy.stopRule} can never stop a rollout before the round cap, so every rollout runs exactly k1 rounds and replay cannot reward saving rounds`;
+}
+
 export interface ExperimentBudget {
 	workers: number;
 	k1: number;
@@ -113,7 +138,7 @@ export interface ExperimentBudget {
 
 export interface ExperimentSpec {
 	task: DreamTaskId;
-	/** Task size parameter (circle count); defaults to the paper's 26 for circle-packing. */
+	/** Task size parameter (circle count, autocorrelation bins); defaults to the task's own (`resolveTaskN`), which the result records. */
 	n?: number;
 	seed: number | string;
 	/** Rollouts per arm (N >= 1); the loop runs `N - 1` iterations. */
@@ -124,6 +149,12 @@ export interface ExperimentSpec {
 	objective?: ReplayObjectiveConfig;
 	/** The hand-written policy every arm starts from; defaults to `DEFAULT_POLICY`. */
 	initialPolicy?: ExplorationPolicy;
+	/**
+	 * Pool priming (see `DreamLoopOptions.primingPolicies`): rolled out once at
+	 * round 1 and charged to it in EVERY arm, so the arms stay a controlled pair.
+	 * On the LLM path the priming rollouts are part of the shared round 1.
+	 */
+	primingPolicies?: readonly ExplorationPolicy[];
 }
 
 export interface ExperimentRunOptions {
@@ -174,6 +205,17 @@ export interface ExperimentRoundRow {
 	tokens: number;
 	cumulativeTokens: number;
 	dreaming: DreamRoundRecord["dreaming"];
+	/**
+	 * `DreamRoundRecord.probesToRoundBest`: the 1-based probe (within this round's
+	 * charged probes; 0 for the root) at which `roundBest` was first reached.
+	 * Absent on a row whose loop did not record it.
+	 */
+	probesToRoundBest?: number;
+	/** `DreamRoundRecord.improvements`: the round's best-so-far curve at its improvements only. */
+	improvements?: ScoreImprovement[];
+	/** Round 1 only, when the pool was primed: the priming trees and the probes they spent (included in `probes`). */
+	primingTreeIds?: string[];
+	primingProbes?: number;
 }
 
 export interface ExperimentArmMode {
@@ -181,6 +223,10 @@ export interface ExperimentArmMode {
 	dreamer: DreamMode;
 	/** The child model selector on the LLM path. */
 	model?: string;
+	/** The child thinking level on the LLM path (`ChildRuntimeScope.thinkingLevel`). */
+	thinking?: ThinkingLevel;
+	/** The proposer's visible-answer cap on the LLM path (`ChildRuntimeScope.maxOutputTokens`). */
+	maxOutputTokens?: number;
 }
 
 export interface ExperimentArmResult {
@@ -206,6 +252,14 @@ export interface ExperimentArmResult {
 	policyChanges: number;
 	rounds: ExperimentRoundRow[];
 	totals: ExperimentArmTotals;
+	/**
+	 * `DreamLoopResult.stoppedEarly`: rollouts (priming excluded) whose stop rule
+	 * fired before the round cap k1. 0 on every row says the stop rule was never
+	 * live (see the `k1 <= beta` note). Absent when the loop did not record it.
+	 */
+	stoppedEarly?: number;
+	/** The post-hoc final selection's verdicts over {initial} and every dreamed policy (the dreams log's iteration -1). */
+	finalSelection?: CandidateVerdict[];
 }
 
 export interface ExperimentArmTotals {
@@ -238,6 +292,15 @@ export interface ExperimentHeadline {
 	scoreMultiplier: Record<string, number | null>;
 	/** finalBest[arm] - finalBest.fixed. */
 	deltaBest: Record<string, number>;
+	/**
+	 * The exact, probe-granular headline: per arm, `cumulativeProbes` before the
+	 * first rollout whose `improvements` curve reaches the target plus the probe
+	 * index of that improvement; null when never reached or when a round of the
+	 * arm lacks the curve (an older loop), which is "not recorded", not "not reached".
+	 */
+	probesToTargetExact: Record<string, number | null>;
+	/** probesToTargetExact.fixed / probesToTargetExact[arm]; null when either is null or the arm's is 0. */
+	callsMultiplierExact: Record<string, number | null>;
 }
 
 export interface ExperimentResult {
@@ -310,6 +373,11 @@ export interface ExperimentArmLoopOptions {
 	objective: ReplayObjectiveConfig;
 	initialPolicy: ExplorationPolicy;
 	fixedPolicy: boolean;
+	/** `<experimentId>/<arm>`: folded into the arm's run id and log keys so arms under one clock differ. */
+	runLabel: string;
+	/** `{ experimentId, arm }`, stamped on every dreams-log line of the arm. */
+	dreamsLogContext: DreamsLogContext;
+	primingPolicies?: readonly ExplorationPolicy[];
 }
 
 export interface ExperimentArmPlan {
@@ -336,6 +404,8 @@ export interface ExperimentPlan {
 	objective: ReplayObjectiveConfig;
 	initialPolicy: ExplorationPolicy;
 	initialPolicyId: string;
+	/** The priming policies every arm's round 1 rolls out (empty when none). */
+	primingPolicies: readonly ExplorationPolicy[];
 	/** The dream dir the experiment lives under. */
 	dir: string;
 	resultPath: string;
@@ -379,14 +449,18 @@ export function planExperiment(
 			`experiment ${experimentId} already exists at ${existing}; pass overwrite to replace it`,
 		);
 	}
-	const n = spec.n ?? (spec.task === "circle-packing" ? DEFAULT_CIRCLE_PACKING_N : undefined);
+	// The size the run is built with is the size the record carries, for every task that takes one.
+	const n = resolveTaskN({ task: spec.task, ...(spec.n !== undefined ? { n: spec.n } : {}) });
 	const task = resolveTask({ task: spec.task, ...(n !== undefined ? { n } : {}) });
 	const objective = spec.objective ?? DEFAULT_OBJECTIVE;
 	const initialPolicy = spec.initialPolicy ?? DEFAULT_POLICY;
 	const scoring = taskScoring(spec.task);
+	const primingPolicies = [...(spec.primingPolicies ?? [])];
 	const notes = [...(options.notes ?? [])];
 	if (scoring === "timing") notes.push(timingScoringNote(spec.task));
 	if (!spec.arms.includes("fixed")) notes.push(NO_FIXED_ARM_NOTE);
+	const k1Note = k1StopRuleNote(spec.budget.k1, initialPolicy);
+	if (k1Note !== undefined) notes.push(k1Note);
 	notes.push(OBJECTIVE_NOTE);
 	const arms = spec.arms.map((arm, index): ExperimentArmPlan => {
 		const settings = armSettings(arm);
@@ -412,6 +486,9 @@ export function planExperiment(
 				objective,
 				initialPolicy,
 				fixedPolicy: settings.fixedPolicy,
+				runLabel: `${experimentId}/${arm}`,
+				dreamsLogContext: { experimentId, arm },
+				...(primingPolicies.length > 0 ? { primingPolicies } : {}),
 			},
 		};
 	});
@@ -427,6 +504,7 @@ export function planExperiment(
 		objective,
 		initialPolicy,
 		initialPolicyId: policyId(initialPolicy),
+		primingPolicies,
 		dir: options.dir,
 		resultPath,
 		arms,
@@ -503,7 +581,13 @@ export function buildArmResult(
 			cumulativeHandlerCalls,
 			tokens,
 			cumulativeTokens,
-			dreaming: record.dreaming ? { ...record.dreaming } : null,
+			dreaming: copyDreaming(record.dreaming),
+			...(record.probesToRoundBest === undefined ? {} : { probesToRoundBest: record.probesToRoundBest }),
+			...(record.improvements === undefined
+				? {}
+				: { improvements: record.improvements.map((point) => ({ ...point })) }),
+			...(record.primingTreeIds === undefined ? {} : { primingTreeIds: [...record.primingTreeIds] }),
+			...(record.primingProbes === undefined ? {} : { primingProbes: record.primingProbes }),
 		};
 	});
 	return {
@@ -530,6 +614,26 @@ export function buildArmResult(
 			tokens: cumulativeTokens,
 			finalBest: cumulativeBest,
 		},
+		...(loop.stoppedEarly === undefined ? {} : { stoppedEarly: loop.stoppedEarly }),
+		...(loop.finalSelection === undefined ? {} : { finalSelection: loop.finalSelection.map(copyVerdict) }),
+	};
+}
+
+function copyVerdict(verdict: CandidateVerdict): CandidateVerdict {
+	return { ...verdict, policy: { ...verdict.policy }, changed: [...verdict.changed] };
+}
+
+/** A deep copy of a record's dreaming block, so a row never aliases the loop's verdict objects. */
+function copyDreaming(dreaming: DreamRoundRecord["dreaming"]): DreamRoundRecord["dreaming"] {
+	if (!dreaming) return null;
+	return {
+		...dreaming,
+		...(dreaming.candidateVerdicts === undefined
+			? {}
+			: { candidateVerdicts: dreaming.candidateVerdicts.map(copyVerdict) }),
+		...(dreaming.leverScan === undefined || dreaming.leverScan === null
+			? {}
+			: { leverScan: { ...dreaming.leverScan } }),
 	};
 }
 
@@ -539,9 +643,29 @@ function ratio(numerator: number | null, denominator: number | null): number | n
 }
 
 /**
+ * The exact probe count at which an arm first reached `target`: the probes spent
+ * before the reaching rollout plus the probe index of that rollout's first
+ * improvement at or above the target. Null when the target was never reached, or
+ * when any round lacks its `improvements` curve (not recorded is not "not reached").
+ */
+export function exactProbesToTarget(rows: readonly ExperimentRoundRow[], target: number): number | null {
+	if (rows.some((row) => row.improvements === undefined)) return null;
+	let before = 0;
+	for (const row of rows) {
+		for (const point of row.improvements ?? []) {
+			if (point.score >= target - TARGET_EPS) return before + point.probe;
+		}
+		before = row.cumulativeProbes;
+	}
+	return null;
+}
+
+/**
  * The headline comparison against the fixed-exploration control. Every number is
  * a plain double or null; nothing is clamped, so an arm that needed MORE compute
  * than the control shows a multiplier below 1. Returns null without a `fixed` arm.
+ * `probesToTarget` is rollout-granular (the reaching round's cumulative probes);
+ * `probesToTargetExact` is probe-granular from the rounds' improvement curves.
  */
 export function computeHeadline(
 	arms: readonly ExperimentArmResult[],
@@ -552,11 +676,13 @@ export function computeHeadline(
 	const target = control.totals.finalBest;
 	const equalBudget = Math.min(...arms.map((arm) => arm.totals.probes));
 	const probesToTarget: Record<string, number | null> = {};
+	const probesToTargetExact: Record<string, number | null> = {};
 	const bestAtBudget: Record<string, number | null> = {};
 	const deltaBest: Record<string, number> = {};
 	for (const arm of arms) {
 		const reached = arm.rounds.find((row) => row.cumulativeBest >= target - TARGET_EPS);
 		probesToTarget[arm.arm] = reached ? reached.cumulativeProbes : null;
+		probesToTargetExact[arm.arm] = exactProbesToTarget(arm.rounds, target);
 		let within: ExperimentRoundRow | undefined;
 		for (const row of arm.rounds) {
 			if (row.cumulativeProbes <= equalBudget) within = row;
@@ -565,9 +691,14 @@ export function computeHeadline(
 		deltaBest[arm.arm] = arm.totals.finalBest - target;
 	}
 	const callsMultiplier: Record<string, number | null> = {};
+	const callsMultiplierExact: Record<string, number | null> = {};
 	const scoreMultiplier: Record<string, number | null> = {};
 	for (const arm of arms) {
 		callsMultiplier[arm.arm] = ratio(probesToTarget[reference] ?? null, probesToTarget[arm.arm] ?? null);
+		callsMultiplierExact[arm.arm] = ratio(
+			probesToTargetExact[reference] ?? null,
+			probesToTargetExact[arm.arm] ?? null,
+		);
 		scoreMultiplier[arm.arm] = ratio(bestAtBudget[arm.arm] ?? null, bestAtBudget[reference] ?? null);
 	}
 	return {
@@ -579,6 +710,8 @@ export function computeHeadline(
 		bestAtBudget,
 		scoreMultiplier,
 		deltaBest,
+		probesToTargetExact,
+		callsMultiplierExact,
 	};
 }
 
@@ -741,15 +874,24 @@ export interface ExperimentArmProgress {
  */
 export interface ExperimentSharedRollout {
 	treeId: string;
+	/** The round's best: max over the initial rollout and any priming rollouts. */
 	bestScore: number;
+	/** The initial rollout's revealed non-root nodes; priming probes are `primingProbes`. */
 	revealedCount: number;
-	/** `ExploreResult.agentGeneratedCount`: probes a child agent generated. */
+	/** `ExploreResult.agentGeneratedCount` summed over the shared rollouts: probes a child agent generated. */
 	agentGeneratedCount?: number;
-	/** The shared rollout's proposer tally. */
+	/** The shared rollouts' proposer tally. */
 	proposals?: ProposalTally;
+	/** The initial rollout's online decision rounds. */
 	rounds: number;
 	tokens: number;
 	handlerCalls: DreamHandlerCalls;
+	/** The round-1 curve over the initial then each priming rollout (`mergedRoundCurve`); the exact headline needs it. */
+	probesToBest?: number;
+	improvements?: ScoreImprovement[];
+	/** The priming trees shared with round 1 (copied into every arm) and the probes they spent. */
+	primingTreeIds?: string[];
+	primingProbes?: number;
 }
 
 /**

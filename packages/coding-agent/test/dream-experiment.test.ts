@@ -10,6 +10,7 @@ import {
 	withSpan,
 } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import { type DreamCandidateLine, dreamsPath, readDreamsLog } from "../src/core/dream/dreams.js";
 import {
 	buildArmResult,
 	computeHeadline,
@@ -21,8 +22,10 @@ import {
 	type ExperimentResult,
 	type ExperimentRoundRow,
 	type ExperimentSpec,
+	exactProbesToTarget,
 	isExperimentAbortError,
 	isExperimentResult,
+	k1StopRuleNote,
 	OBJECTIVE_NOTE,
 	planExperiment,
 	readExperimentResult,
@@ -31,8 +34,14 @@ import {
 	taskScoring,
 	timingScoringNote,
 } from "../src/core/dream/experiment.js";
-import { type DreamLoopResult, type DreamRoundRecord, runDreamLoop } from "../src/core/dream/loop.js";
-import { DEFAULT_POLICY, policyId } from "../src/core/dream/policy.js";
+import {
+	type DreamLoopResult,
+	type DreamRoundRecord,
+	dreamRunId,
+	primingTreeId,
+	runDreamLoop,
+} from "../src/core/dream/loop.js";
+import { DEFAULT_POLICY, PRIMING_DIVERSE, policyId } from "../src/core/dream/policy.js";
 import {
 	addProposalTally,
 	PROPOSAL_REJECT_REASONS,
@@ -116,6 +125,46 @@ describe("runExperiment (local)", () => {
 		const dream = arm(result, "dream");
 		expect(fixed.rounds[0]).toEqual(dream.rounds[0]);
 		expect(fixed.rounds.map((row) => row.treeId)).toEqual(dream.rounds.map((row) => row.treeId));
+		// Same tree ids per round by design; distinct run ids per arm through the `<experimentId>/<arm>` label.
+		expect(fixed.runId).not.toBe(dream.runId);
+		expect(fixed.runId).toBe(dreamRunId("sum-difference", 7, FIXED_CLOCK, `${result.experimentId}/fixed`));
+		expect(dream.runId).toBe(`sum-difference-s7-r${FIXED_CLOCK}-${result.experimentId}_dream`);
+		// Every row carries its exact probe curve; every arm its stopped-early count and final selection.
+		for (const armResult of result.arms) {
+			expect(armResult.stoppedEarly).toBeDefined();
+			expect(armResult.finalSelection).toHaveLength(armResult.fixedPolicy ? 0 : result.rounds - 1);
+			for (const row of armResult.rounds) {
+				expect(row.probesToRoundBest).toBeLessThanOrEqual(row.probes);
+				expect(row.improvements!.at(-1)!.score).toBe(row.roundBest);
+				expect(row.primingTreeIds).toBeUndefined();
+			}
+		}
+		// The exact headline is probe-granular and never later than the rollout-granular one.
+		const headline = result.headline!;
+		for (const name of ["fixed", "dream"]) {
+			const exact = headline.probesToTargetExact[name];
+			const coarse = headline.probesToTarget[name];
+			expect(typeof exact).toBe("number");
+			expect(exact!).toBeLessThanOrEqual(coarse!);
+		}
+		expect(headline.callsMultiplierExact.fixed).toBe(1);
+		expect(headline.callsMultiplierExact.dream).toBe(
+			headline.probesToTargetExact.fixed! / headline.probesToTargetExact.dream!,
+		);
+		// The dreams log of each arm sits in its own store under its own run id, stamped with the arm.
+		for (const armResult of result.arms) {
+			const lines = readDreamsLog(dreamsPath(join(dir, armResult.storeDir), armResult.runId));
+			expect(lines.length).toBeGreaterThan(0);
+			expect(lines.every((line) => line.experimentId === result.experimentId && line.arm === armResult.arm)).toBe(
+				true,
+			);
+			const finalCandidates = lines.filter(
+				(line): line is DreamCandidateLine => line.type === "candidate" && line.iteration === -1,
+			);
+			expect(finalCandidates.map((line) => line.policyId)).toEqual(
+				armResult.finalSelection!.map((verdict) => verdict.policyId),
+			);
+		}
 
 		const fixedDir = experimentArmDir(dir, result.experimentId, "fixed");
 		const dreamDir = experimentArmDir(dir, result.experimentId, "dream");
@@ -194,8 +243,12 @@ describe("runExperiment (local)", () => {
 		expect(result.headline!.callsMultiplier.fixed).toBe(1);
 		expect(result.headline!.scoreMultiplier.fixed).toBe(1);
 		expect(result.headline!.deltaBest.fixed).toBe(0);
-		expect(result.notes).toEqual([OBJECTIVE_NOTE]);
-		expect(result.objective).toEqual({ beta1: 0.05, beta2: 0.05 });
+		// SPEC's k1 5 is at most DEFAULT_POLICY.beta 6, so the D-K1 note precedes the objective note.
+		expect(result.notes).toEqual([k1StopRuleNote(5, DEFAULT_POLICY), OBJECTIVE_NOTE]);
+		expect(result.notes[0]).toBe(
+			"k1 5 <= initialPolicy.beta 6: patience can never stop a rollout before the round cap, so every rollout runs exactly k1 rounds and replay cannot reward saving rounds",
+		);
+		expect(result.objective).toEqual({ beta1: 0.05, beta2: 0.1, beta3: 0.25 });
 	});
 
 	it("persists a result that round-trips, validates by schema, and refuses to be overwritten silently", () => {
@@ -290,14 +343,19 @@ describe("runExperiment (local)", () => {
 		const dir = scratch();
 		const onlyDream = planExperiment({ ...SPEC, arms: ["dream"] }, { dir, clock: () => FIXED_CLOCK });
 		expect(onlyDream.scoring).toBe("deterministic");
-		expect(onlyDream.notes).toEqual(["no fixed arm ran: the headline multipliers are undefined", OBJECTIVE_NOTE]);
+		const k1Note = k1StopRuleNote(5, DEFAULT_POLICY)!;
+		expect(onlyDream.notes).toEqual([
+			"no fixed arm ran: the headline multipliers are undefined",
+			k1Note,
+			OBJECTIVE_NOTE,
+		]);
 		expect(taskScoring("circle-packing")).toBe("deterministic");
 		expect(taskScoring("sum-difference")).toBe("deterministic");
 		expect(taskScoring("python-speedup")).toBe("timing");
 		// Planning never runs a task, so python-speedup is safe to plan here; it is never rolled out in a test.
 		const speedup = planExperiment({ ...SPEC, task: "python-speedup" }, { dir, clock: () => FIXED_CLOCK });
 		expect(speedup.scoring).toBe("timing");
-		expect(speedup.notes).toEqual([timingScoringNote("python-speedup"), OBJECTIVE_NOTE]);
+		expect(speedup.notes).toEqual([timingScoringNote("python-speedup"), k1Note, OBJECTIVE_NOTE]);
 		const note = speedup.notes[0]!;
 		expect(note.startsWith("python-speedup:")).toBe(true);
 		expect(note).toContain("wall-clock timed");
@@ -306,10 +364,10 @@ describe("runExperiment (local)", () => {
 		expect(speedup.notes.at(-1)).toBe(OBJECTIVE_NOTE);
 		// A caller's objective is recorded on the plan and the result.
 		const tuned = planExperiment(
-			{ ...SPEC, objective: { beta1: 0.2, beta2: 0.1 } },
+			{ ...SPEC, objective: { beta1: 0.2, beta2: 0.1, beta3: 0.25 } },
 			{ dir, clock: () => FIXED_CLOCK },
 		);
-		expect(tuned.objective).toEqual({ beta1: 0.2, beta2: 0.1 });
+		expect(tuned.objective).toEqual({ beta1: 0.2, beta2: 0.1, beta3: 0.25 });
 		expect(tuned.arms.every((arm) => arm.loop.objective.beta1 === 0.2)).toBe(true);
 		const result = runExperiment({ ...SPEC, arms: ["dream"] }, { dir, clock: () => FIXED_CLOCK });
 		expect(result.headline).toBeNull();
@@ -341,6 +399,67 @@ describe("runExperiment (local)", () => {
 		expect(result.headline!.callsMultiplier.dream).toBe(1);
 		expect(result.headline!.scoreMultiplier.dream).toBe(1);
 		expect(result.headline!.deltaBest.dream).toBe(0);
+		expect(result.headline!.callsMultiplierExact.dream).toBe(1);
+	});
+
+	it("labels every arm's loop with the experiment and arm, and threads the priming policies into the plan", () => {
+		const dir = scratch();
+		const plan = planExperiment({ ...SPEC, primingPolicies: PRIMING_DIVERSE }, { dir, clock: () => FIXED_CLOCK });
+		expect(plan.primingPolicies).toEqual([...PRIMING_DIVERSE]);
+		for (const armPlan of plan.arms) {
+			expect(armPlan.loop.runLabel).toBe(`${plan.experimentId}/${armPlan.arm}`);
+			expect(armPlan.loop.dreamsLogContext).toEqual({ experimentId: plan.experimentId, arm: armPlan.arm });
+			expect(armPlan.loop.primingPolicies).toEqual([...PRIMING_DIVERSE]);
+		}
+		const bare = planExperiment(SPEC, { dir: scratch(), clock: () => FIXED_CLOCK });
+		expect(bare.primingPolicies).toEqual([]);
+		expect(bare.arms.every((armPlan) => armPlan.loop.primingPolicies === undefined)).toBe(true);
+	});
+
+	it("primes every arm's round 1 identically and charges the priming probes to it", () => {
+		const dir = scratch();
+		const plain = runExperiment(SPEC, { dir: scratch(), clock: () => FIXED_CLOCK });
+		const result = runExperiment({ ...SPEC, primingPolicies: PRIMING_DIVERSE }, { dir, clock: () => FIXED_CLOCK });
+		const fixed = arm(result, "fixed");
+		const dream = arm(result, "dream");
+		expect(fixed.rounds[0]).toEqual(dream.rounds[0]);
+		const first = fixed.rounds[0]!;
+		const primingIds = PRIMING_DIVERSE.map((_, index) => primingTreeId("sum-difference", 7, index, FIXED_CLOCK));
+		expect(first.primingTreeIds).toEqual(primingIds);
+		expect(first.primingProbes).toBeGreaterThan(0);
+		expect(first.probes).toBe(arm(plain, "fixed").rounds[0]!.probes + first.primingProbes!);
+		expect(first.treeId).toBe(arm(plain, "fixed").rounds[0]!.treeId);
+		// The priming trees are in every arm's store, byte-identical, and count toward the dreaming pool.
+		for (const name of SPEC.arms) {
+			const files = treeFiles(experimentArmDir(dir, result.experimentId, name));
+			for (const treeId of primingIds) expect(files[`${treeId}.jsonl`]).toBeDefined();
+			expect(listTrees(experimentArmDir(dir, result.experimentId, name))).toHaveLength(3 + PRIMING_DIVERSE.length);
+		}
+		expect(treeFiles(experimentArmDir(dir, result.experimentId, "fixed"))).toEqual(
+			expect.objectContaining(
+				Object.fromEntries(
+					Object.entries(treeFiles(experimentArmDir(dir, result.experimentId, "dream"))).filter(([name]) =>
+						primingIds.some((treeId) => name.startsWith(treeId)),
+					),
+				),
+			),
+		);
+		expect(dream.rounds[1]!.poolSize).toBe(1 + PRIMING_DIVERSE.length);
+		expect(fixed.rounds[1]!.poolSize).toBe(1 + PRIMING_DIVERSE.length);
+		expect(fixed.rounds.slice(1).every((row) => row.primingTreeIds === undefined)).toBe(true);
+		expect(isExperimentResult(readExperimentResult(dir, result.experimentId))).toBe(true);
+	});
+});
+
+describe("k1StopRuleNote", () => {
+	it("notes a beta-driven stop rule that can never fire before the round cap, and nothing otherwise", () => {
+		expect(k1StopRuleNote(6, DEFAULT_POLICY)).toMatch(/^k1 6 <= initialPolicy.beta 6: patience can never stop/);
+		expect(k1StopRuleNote(7, DEFAULT_POLICY)).toBeUndefined();
+		expect(k1StopRuleNote(3, { ...DEFAULT_POLICY, stopRule: "fixed-rounds", beta: 4 })).toMatch(
+			/fixed-rounds can never stop a rollout before the round cap/,
+		);
+		expect(k1StopRuleNote(1, { ...DEFAULT_POLICY, stopRule: "never" })).toBeUndefined();
+		expect(k1StopRuleNote(1, { ...DEFAULT_POLICY, stopRule: "threshold" })).toBeUndefined();
 	});
 });
 
@@ -473,6 +592,61 @@ describe("computeHeadline", () => {
 		const free = syntheticArm("dream", [row({ round: 1, cumulativeBest: 0.5, probes: 0, cumulativeProbes: 0 })]);
 		expect(computeHeadline([zero, free])!.callsMultiplier.dream).toBeNull();
 		expect(computeHeadline([zero, free])!.probesToTarget.dream).toBe(0);
+	});
+
+	it("computes the exact probe-granular headline from the rounds' improvement curves, or leaves it unrecorded", () => {
+		// Fixed reaches 1.5 in round 2 at its 7th probe: 15 probes before + 7 = 22 exactly, 30 rollout-granular.
+		const exactFixed = syntheticArm("fixed", [
+			row({
+				round: 1,
+				cumulativeBest: 1.0,
+				cumulativeProbes: 15,
+				improvements: [
+					{ probe: 0, score: 0.2 },
+					{ probe: 3, score: 1.0 },
+				],
+			}),
+			row({ round: 2, cumulativeBest: 1.5, cumulativeProbes: 30, improvements: [{ probe: 7, score: 1.5 }] }),
+			row({ round: 3, cumulativeBest: 1.5, cumulativeProbes: 45, improvements: [] }),
+		]);
+		// Dream reaches it in round 1 at probe 11.
+		const exactDream = syntheticArm("dream", [
+			row({
+				round: 1,
+				cumulativeBest: 1.6,
+				cumulativeProbes: 15,
+				improvements: [
+					{ probe: 2, score: 1.1 },
+					{ probe: 11, score: 1.6 },
+				],
+			}),
+			row({ round: 2, cumulativeBest: 1.6, cumulativeProbes: 27, improvements: [] }),
+		]);
+		expect(exactProbesToTarget(exactFixed.rounds, 1.5)).toBe(22);
+		expect(exactProbesToTarget(exactDream.rounds, 1.5)).toBe(11);
+		expect(exactProbesToTarget(exactDream.rounds, 2)).toBeNull();
+		const headline = computeHeadline([exactFixed, exactDream])!;
+		expect(headline.probesToTarget).toEqual({ fixed: 30, dream: 15 });
+		expect(headline.probesToTargetExact).toEqual({ fixed: 22, dream: 11 });
+		expect(headline.callsMultiplier.dream).toBe(2);
+		expect(headline.callsMultiplierExact.fixed).toBe(1);
+		expect(headline.callsMultiplierExact.dream).toBe(2);
+		// A root that is the best from the start is probe 0 of round 1: exact 0, undefined ratio.
+		const rootBest = syntheticArm("dream", [
+			row({ round: 1, cumulativeBest: 1.5, cumulativeProbes: 15, improvements: [{ probe: 0, score: 1.5 }] }),
+		]);
+		expect(computeHeadline([exactFixed, rootBest])!.probesToTargetExact.dream).toBe(0);
+		expect(computeHeadline([exactFixed, rootBest])!.callsMultiplierExact.dream).toBeNull();
+		// A round without its curve makes the exact value "not recorded" (null), never a guess.
+		const partial = syntheticArm("dream", [
+			row({ round: 1, cumulativeBest: 1.0, cumulativeProbes: 15 }),
+			row({ round: 2, cumulativeBest: 1.6, cumulativeProbes: 27, improvements: [{ probe: 4, score: 1.6 }] }),
+		]);
+		const unrecorded = computeHeadline([exactFixed, partial])!;
+		expect(unrecorded.probesToTarget.dream).toBe(27);
+		expect(unrecorded.probesToTargetExact.dream).toBeNull();
+		expect(unrecorded.callsMultiplierExact.dream).toBeNull();
+		expect(computeHeadline([fixed, partial])!.probesToTargetExact).toEqual({ fixed: null, dream: null });
 	});
 
 	it("is null without a fixed arm and includes the guided arms when present", () => {

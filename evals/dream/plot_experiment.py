@@ -10,16 +10,44 @@ renders the paper's evidence figures for our fork:
     attempts.png     evaluated attempts per round per arm, policy changes marked (Fig 6b)
     proposals.png    LLM-proposal validity per round per arm: accepted vs rejected
                      by reason, with the local fallbacks the rejections caused
+    dreaming.png     the dreaming audit: every candidate's replay value per dreaming
+                     step (filled = eligible, hollow = not), the incumbent's value,
+                     the chosen policy, the lever gap and the support coverage
     headline.png     the multipliers against the "fixed" arm, or the literal words
-                     "not reached" / "not comparable" when a multiplier is undefined
-    report.html      the five figures with captions built from the result metadata
+                     "not reached" / "not comparable" when a multiplier is undefined,
+                     the noise floor across seeds and the verdict
+    report.html      the six figures with captions built from the result metadata
 
 Nothing here is illustrative: every series is read from the result files. Several
 files are treated as seeds of one experiment (same task, rounds, budget, objective
 and arms, distinct seeds) and reduced to mean/min/max per round; a single file is
 plotted as is. Files that disagree on any of those, the replay objective's
-``beta1``/``beta2`` included, are refused with the differing values named: seeds
-scored by different objectives are not one experiment.
+``beta1``/``beta2``/``beta3`` included, are refused with the differing values named:
+seeds scored by different objectives are not one experiment. Seeds are independent
+replicates: the pool a dreaming step replays grows across rounds within one arm
+only, never across arms or seeds, which is what makes the paired per-seed
+comparison below valid.
+
+Noise floor and verdict (honesty rule for the comparison): the fixed arm's final
+best and probes-to-target vary from seed to seed with nothing but the proposer's
+sampling, so their spread across seeds is the floor any dream-vs-fixed difference
+has to clear. Per non-fixed arm the page lists the paired per-seed delta of the
+final best (arm minus fixed, both arms sharing round 1 within a seed) and states
+one of: ``single seed: no verdict`` (one file: there is no floor to measure);
+``exceeds noise floor`` only when the absolute mean paired delta is larger than
+the fixed arm's min..max spread AND every seed's delta has the same sign;
+otherwise ``within noise floor``. When the dreaming arm's policy never changed in
+any seed there was no treatment, and the verdict is forced to ``within noise
+floor (dreaming inert)`` whatever the numbers say.
+
+Dreaming audit: a round record's ``dreaming`` block (the step that chose that
+round's policy) may carry ``candidateVerdicts`` (one record per candidate: value,
+quality, anytime, cost, roundsSaved, support coverage, eligibility and the reason
+it won, tied, lost or was not measurable), ``dreamer`` and a ``leverScan`` (the
+best value a fixed grid of local policies reached on the same pool, independent
+of what the dreamer proposed). A file written before the audit carries only
+``currentScore``/``chosenScore``/``improved``/``candidates``; the panel then
+draws those and says the per-candidate scores are not recorded.
 
 The data layer (``load_results``, ``series``, ``headline``, ``--check``) is stdlib
 only. matplotlib is imported inside ``render`` so ``--check`` works on any
@@ -53,6 +81,21 @@ Field names: the reader takes the file's names (``probes``, ``cumulativeProbes``
 ``deltaBest``) and tolerates the equivalent ``attemptsEvaluated`` /
 ``cumulativeCalls`` / ``callsToTarget`` / ``bestAtEqualBudget`` / ``multipliers``
 spelling of the same quantities.
+
+Exact headline: a round record may carry ``probesToRoundBest`` (the probe, in
+reveal order, at which the rollout found its best node) and ``improvements``
+(``[{probe, score}]``, the best-so-far curve at the probes where it rose), and the
+headline may carry ``probesToTargetExact`` / ``callsMultiplierExact``: the
+compute at the FIRST PROBE whose score reaches T, not the end of the round that
+contains it. The exact multiplier is shown beside the rollout-granular one, and
+recomputed from ``improvements`` when the file has the curve but not the number.
+A file without either reads ``exact probes to T not recorded``.
+
+Every field newer than the round/arm/headline core (``candidateVerdicts``,
+``dreamer``, ``leverScan``, ``probesToRoundBest``, ``improvements``,
+``primingTreeIds``/``primingProbes``, ``stoppedEarly``, ``probesToTargetExact``,
+``mode.thinking``/``mode.maxOutputTokens``, ``objective.beta3``) is optional:
+absent is "not recorded", never 0, and an older file plots exactly as before.
 
 Missing and undefined values: a multiplier the file leaves null (``not reached``,
 ``not comparable``) stays undefined all the way to the page; it is never clamped,
@@ -126,7 +169,16 @@ ABLATION_PAIRS = (("dream", "dream-guided"), ("fixed", "fixed-guided"))
 
 # PROPOSAL_REJECT_REASONS in core/dream/proposer.ts, in its order. A reason the file
 # carries that is not listed here is kept and printed, never dropped.
-REJECT_REASONS: tuple[str, ...] = ("parse", "shape", "invalid-candidate", "error", "length", "aborted", "turn-limit", "budget")
+REJECT_REASONS: tuple[str, ...] = (
+    "parse",
+    "shape",
+    "invalid-candidate",
+    "error",
+    "length",
+    "aborted",
+    "turn-limit",
+    "budget",
+)
 # Rejected segments are neutral ink (a wasted call has no identity of its own; the
 # arm hue is reserved for the candidates the agent generated). One fixed step per
 # reason, interleaved light/dark so reasons adjacent in the list stay apart in a
@@ -157,6 +209,52 @@ class SchemaError(ResultError):
 # consumer has to narrow it; nothing downstream assumes a field is present.
 
 
+class CandidateVerdict(TypedDict):
+    """One candidate of one dreaming step, as ``core/dream/improve.ts`` records it.
+
+    ``value`` is required (an entry without a numeric value is dropped); every other
+    field is None / ``?`` / empty when the file does not carry it.
+    """
+
+    index: int
+    policyId: str
+    origin: str
+    changed: list[str]
+    duplicateOf: int | None
+    value: float
+    quality: float | None
+    anytime: float | None
+    cost: float | None
+    roundsSaved: float | None
+    N: int | None
+    rounds: int | None
+    outOfSupportCells: int | None
+    inSupportMean: float | None
+    inSupportMin: float | None
+    eligible: bool
+    reason: str
+
+
+class LeverScan(TypedDict):
+    policies: int | None
+    eligible: int | None
+    bestValue: float | None
+    bestPolicyId: str
+    gap: float | None
+
+
+class DreamingRecord(TypedDict):
+    """The dreaming step that chose a round's policy; ``candidateVerdicts`` is None when the audit is not recorded."""
+
+    currentScore: float | None
+    chosenScore: float | None
+    improved: bool | None
+    candidates: int | None
+    candidateVerdicts: list[CandidateVerdict] | None
+    dreamer: str | None
+    leverScan: LeverScan | None
+
+
 class RoundRow(TypedDict):
     round: int
     treeId: str
@@ -174,12 +272,18 @@ class RoundRow(TypedDict):
     llmRejected: dict[str, int] | None
     handlerCalls: int
     cumulativeHandlerCalls: int
-    decisionRounds: int
+    decisionRounds: int | None
     tokens: int
     cumulativeTokens: int
     poolSize: int
     policyScoreOnReplay: float | None
-    dreaming: dict[str, object] | None
+    dreaming: DreamingRecord | None
+    # Exact headline inputs: None is "not recorded".
+    probesToRoundBest: int | None
+    improvements: list[tuple[int, float]] | None
+    # Pool priming (round 1 only): None is "not recorded" or "none".
+    primingTreeIds: list[str] | None
+    primingProbes: int | None
 
 
 class Arm(TypedDict):
@@ -189,10 +293,13 @@ class Arm(TypedDict):
     proposer: str
     dreamer: str
     model: str | None
+    thinking: str | None
+    maxOutputTokens: int | None
     storeDir: str
     runId: str
     initialPolicyId: str
     finalPolicyId: str
+    selectedPolicyId: str
     initialPolicyScore: float | None
     finalPolicyScore: float | None
     improved: bool
@@ -206,6 +313,8 @@ class Arm(TypedDict):
     totalLlmRejected: dict[str, int] | None
     totalHandlerCalls: int
     totalTokens: int
+    # Rollouts that stopped before k1: the file's count, else derived from decisionRounds < k1, else None.
+    stoppedEarly: int | None
     rounds: list[RoundRow]
 
 
@@ -229,6 +338,9 @@ class Headline(TypedDict):
     deltaBest: dict[str, float | None]
     deltaAtBudget: dict[str, float | None]
     ablation: list[AblationRow] | None
+    # The exact (per-probe) headline; None when neither the file nor its rounds carry it.
+    probesToTargetExact: dict[str, int | None] | None
+    callsMultiplierExact: dict[str, float | None] | None
 
 
 class Result(TypedDict):
@@ -242,6 +354,7 @@ class Result(TypedDict):
     budget: dict[str, object]
     objective: dict[str, object] | None
     initialPolicyId: str
+    initialPolicyBeta: float | None
     proposer: str
     dreamer: str
     model: str | None
@@ -274,12 +387,58 @@ class AblationSummary(TypedDict):
     median: float | None
 
 
+class SpreadStats(TypedDict):
+    values: list[float | None]
+    defined: int
+    min: float | None
+    max: float | None
+    spread: float | None
+    std: float | None
+
+
+class NoiseFloor(TypedDict):
+    """The reference arm's own seed-to-seed variation: the floor a paired delta has to clear."""
+
+    n: int
+    finalBest: SpreadStats
+    probesToTarget: SpreadStats
+    probesToTargetExact: SpreadStats | None
+
+
+class PairedEffect(TypedDict):
+    """One non-reference arm against the reference, seed by seed (both arms share round 1 within a seed)."""
+
+    arm: str
+    deltas: list[float | None]
+    deltasAtBudget: list[float | None]
+    callsDeltas: list[int | None]
+    callsDeltasExact: list[int | None] | None
+    mean: float | None
+    positive: int
+    negative: int
+    inertSeeds: int
+    verdict: str
+
+
+class DreamingSummary(TypedDict):
+    """One arm's dreaming in one seed: how often it ran, how often it accepted a candidate, whether it was inert."""
+
+    phases: int
+    improved: int
+    auditRecorded: int
+    policyChanges: int
+    inert: bool
+
+
 class HeadlineSummary(TypedDict):
     reference: str | None
     n: int
     perSeed: list[SeedHeadline]
     aggregate: dict[str, ArmAggregate]
     ablation: dict[str, AblationSummary]
+    noiseFloor: NoiseFloor | None
+    paired: dict[str, PairedEffect]
+    dreaming: dict[str, list[DreamingSummary]]
 
 
 # --------------------------------------------------------------------------- data
@@ -360,6 +519,131 @@ def _ratio(numerator: float | None, denominator: float | None) -> float | None:
     return numerator / denominator
 
 
+def _str_or(value: object, default: str) -> str:
+    return value if isinstance(value, str) else default
+
+
+def _opt_float(value: int | float | None) -> float | None:
+    return None if value is None else float(value)
+
+
+# CandidateVerdict.reason vocabulary of core/dream/improve.ts; the eligible set is the
+# candidates that competed in the argmax (the others never could, whatever their value).
+CANDIDATE_REASONS: tuple[str, ...] = (
+    "winner",
+    "tie",
+    "worse",
+    "quality-rejected",
+    "unmeasurable",
+    "identical",
+    "duplicate",
+)
+ELIGIBLE_REASONS = frozenset({"winner", "tie", "worse"})
+CANDIDATE_ORIGINS = ("llm", "local")
+DREAMERS = ("llm", "local", "mixed")
+
+
+def _candidate_verdict(raw: object, index: int) -> CandidateVerdict | None:
+    """One ``candidateVerdicts`` entry; None (dropped) when it is not an object with a numeric ``value``."""
+    if not isinstance(raw, dict):
+        return None
+    entry = _dict(raw)
+    value = _num(entry.get("value"))
+    if value is None:
+        return None
+    changed_raw = entry.get("changed")
+    changed = [str(c) for c in changed_raw] if isinstance(changed_raw, list) else []
+    reason = _str_or(entry.get("reason"), "?")
+    eligible_raw = entry.get("eligible")
+    eligible = eligible_raw if isinstance(eligible_raw, bool) else reason in ELIGIBLE_REASONS
+    origin_raw = entry.get("origin")
+    return {
+        "index": _int(entry.get("index"), index),
+        "policyId": _str_or(entry.get("policyId"), ""),
+        "origin": origin_raw if origin_raw in CANDIDATE_ORIGINS else "?",
+        "changed": changed,
+        "duplicateOf": _int_or_none(entry.get("duplicateOf")),
+        "value": value,
+        "quality": _num(entry.get("quality")),
+        "anytime": _num(entry.get("anytime")),
+        "cost": _num(entry.get("cost")),
+        "roundsSaved": _num(entry.get("roundsSaved")),
+        "N": _int_or_none(entry.get("N")),
+        "rounds": _int_or_none(entry.get("rounds")),
+        "outOfSupportCells": _int_or_none(entry.get("outOfSupportCells")),
+        "inSupportMean": _num(entry.get("inSupportMean")),
+        "inSupportMin": _num(entry.get("inSupportMin")),
+        "eligible": eligible,
+        "reason": reason,
+    }
+
+
+def _lever_scan(raw: object) -> LeverScan | None:
+    if not isinstance(raw, dict):
+        return None
+    scan = _dict(raw)
+    return {
+        "policies": _int_or_none(scan.get("policies")),
+        "eligible": _int_or_none(scan.get("eligible")),
+        "bestValue": _num(scan.get("bestValue")),
+        "bestPolicyId": _str_or(scan.get("bestPolicyId"), ""),
+        "gap": _num(scan.get("gap")),
+    }
+
+
+def _dreaming_record(raw: object) -> DreamingRecord | None:
+    """The round's ``dreaming`` block; None when absent or not an object (a fixed arm, round 1, or malformed).
+
+    ``candidates`` is the count the file has always written; ``candidateVerdicts`` is
+    the audit list, None when the file predates it. A file that (against the schema)
+    wrote a list under ``candidates`` is read as that list with its length as the count.
+    """
+    if not isinstance(raw, dict):
+        return None
+    block = _dict(raw)
+    verdicts_raw = block.get("candidateVerdicts")
+    candidates_raw = block.get("candidates")
+    if verdicts_raw is None and isinstance(candidates_raw, list):
+        verdicts_raw = candidates_raw
+    verdicts: list[CandidateVerdict] | None = None
+    if isinstance(verdicts_raw, list):
+        verdicts = [v for v in (_candidate_verdict(c, i) for i, c in enumerate(verdicts_raw)) if v is not None]
+    count = len(candidates_raw) if isinstance(candidates_raw, list) else _int_or_none(candidates_raw)
+    improved_raw = block.get("improved")
+    dreamer_raw = block.get("dreamer")
+    return {
+        "currentScore": _num(block.get("currentScore")),
+        "chosenScore": _num(block.get("chosenScore")),
+        "improved": improved_raw if isinstance(improved_raw, bool) else None,
+        "candidates": count,
+        "candidateVerdicts": verdicts,
+        "dreamer": dreamer_raw if dreamer_raw in DREAMERS else None,
+        "leverScan": _lever_scan(block.get("leverScan")),
+    }
+
+
+def _improvements(raw: object) -> list[tuple[int, float]] | None:
+    """``improvements: [{probe, score}]`` as (probe, score) pairs in probe order; None when absent or malformed."""
+    if not isinstance(raw, list):
+        return None
+    pairs: list[tuple[int, float]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            return None
+        probe = _int_or_none(entry.get("probe"))
+        score = _num(entry.get("score"))
+        if probe is None or score is None:
+            return None
+        pairs.append((probe, score))
+    return sorted(pairs)
+
+
+def _str_list(raw: object) -> list[str] | None:
+    if not isinstance(raw, list):
+        return None
+    return [str(v) for v in raw]
+
+
 def normalize_round(row: object, index: int, previous: RoundRow | None) -> RoundRow:
     """One round record into the internal shape (see the module docstring for the accepted names)."""
     if not isinstance(row, dict):
@@ -398,11 +682,10 @@ def normalize_round(row: object, index: int, previous: RoundRow | None) -> Round
     tokens = sum(_int(v) for v in tokens_raw.values()) if isinstance(tokens_raw, dict) else _int(tokens_raw)
     prev_tokens = previous["cumulativeTokens"] if previous else 0
     cumulative_tokens = _int(_get(row, "cumulativeTokens"), prev_tokens + tokens)
-    dreaming_raw = _get(row, "dreaming")
-    dreaming = _dict(dreaming_raw) if isinstance(dreaming_raw, dict) else None
+    dreaming = _dreaming_record(_get(row, "dreaming"))
     replay = _num(_get(row, "policyScoreOnReplay"))
     if replay is None and dreaming is not None:
-        replay = _num(dreaming.get("chosenScore"))
+        replay = dreaming["chosenScore"]
     return {
         "round": round_no,
         "treeId": str(_get(row, "treeId", default="")),
@@ -419,16 +702,30 @@ def normalize_round(row: object, index: int, previous: RoundRow | None) -> Round
         "llmRejected": _reject_counts(_get(row, "llmRejected")),
         "handlerCalls": handler_calls,
         "cumulativeHandlerCalls": cumulative_handler,
-        "decisionRounds": _int(_get(row, "decisionRounds")),
+        "decisionRounds": _int_or_none(_get(row, "decisionRounds")),
         "tokens": tokens,
         "cumulativeTokens": cumulative_tokens,
         "poolSize": _int(_get(row, "poolSize"), round_no - 1),
         "policyScoreOnReplay": replay,
         "dreaming": dreaming,
+        "probesToRoundBest": _int_or_none(_get(row, "probesToRoundBest")),
+        "improvements": _improvements(_get(row, "improvements")),
+        "primingTreeIds": _str_list(_get(row, "primingTreeIds")),
+        "primingProbes": _int_or_none(_get(row, "primingProbes")),
     }
 
 
-def normalize_arm(raw: object, index: int) -> Arm:
+def stopped_early_count(rounds: list[RoundRow], k1: int | None) -> int | None:
+    """Rollouts whose online decision rounds fell short of k1; None unless every round recorded them and k1 is known."""
+    if k1 is None:
+        return None
+    decisions = [row["decisionRounds"] for row in rounds]
+    if any(d is None for d in decisions):
+        return None
+    return sum(1 for d in decisions if d is not None and d < k1)
+
+
+def normalize_arm(raw: object, index: int, k1: int | None = None) -> Arm:
     if not isinstance(raw, dict):
         raise ResultError(f"arm {index} is not an object")
     name = raw.get("arm")
@@ -441,10 +738,14 @@ def normalize_arm(raw: object, index: int) -> Arm:
     for i, row in enumerate(rounds_raw):
         rounds.append(normalize_round(row, i, rounds[-1] if rounds else None))
     mode = raw.get("mode")
+    thinking: object = None
+    max_output_tokens: object = None
     if isinstance(mode, dict):
         proposer = _get(mode, "proposer", default="local")
         dreamer = _get(mode, "dreamer", default="local")
         model = mode.get("model")
+        thinking = mode.get("thinking")
+        max_output_tokens = mode.get("maxOutputTokens")
     else:
         proposer = _get(raw, "proposer", default=mode if isinstance(mode, str) else "local")
         dreamer = _get(raw, "dreamer", default=mode if isinstance(mode, str) else "local")
@@ -486,6 +787,10 @@ def normalize_arm(raw: object, index: int) -> Arm:
         per_round_rejected = [row["llmRejected"] for row in rounds]
         if all(d is not None for d in per_round_rejected):
             rejected_total = _sum_counts([d for d in per_round_rejected if d is not None])
+    stopped_early = _int_or_none(raw.get("stoppedEarly"))
+    if stopped_early is None:
+        stopped_early = stopped_early_count(rounds, k1)
+    final_policy_id = str(_get(raw, "finalPolicyId", default=last["policyId"]))
     return {
         "arm": name,
         "fixedPolicy": bool(_get(raw, "fixedPolicy", default=name.startswith("fixed"))),
@@ -493,10 +798,13 @@ def normalize_arm(raw: object, index: int) -> Arm:
         "proposer": str(proposer),
         "dreamer": str(dreamer),
         "model": model if isinstance(model, str) else None,
+        "thinking": thinking if isinstance(thinking, str) else None,
+        "maxOutputTokens": _int_or_none(max_output_tokens),
         "storeDir": str(_get(raw, "storeDir", default="")),
         "runId": str(_get(raw, "runId", default="")),
         "initialPolicyId": str(_get(raw, "initialPolicyId", default="")),
-        "finalPolicyId": str(_get(raw, "finalPolicyId", default="")),
+        "finalPolicyId": final_policy_id,
+        "selectedPolicyId": str(_get(raw, "selectedPolicyId", default=final_policy_id)),
         "initialPolicyScore": initial_score,
         "finalPolicyScore": final_score,
         "improved": improved,
@@ -514,8 +822,45 @@ def normalize_arm(raw: object, index: int) -> Arm:
             totals.get("handlerCalls"), _int(_get(raw, "totalOverheadCalls"), last["cumulativeHandlerCalls"])
         ),
         "totalTokens": _int(totals.get("tokens"), _int(_get(raw, "totalTokens"), last["cumulativeTokens"])),
+        "stoppedEarly": stopped_early,
         "rounds": rounds,
     }
+
+
+def improvements_recorded(arm: Arm) -> bool:
+    """Whether every round of this arm carries the ``improvements`` curve (the exact headline's input)."""
+    return all(row["improvements"] is not None for row in arm["rounds"])
+
+
+def exact_probes_to_target(arm: Arm, target: float) -> int | None:
+    """cumulativeProbes before the rollout + the probe of its first improvement reaching T; None when never reached.
+
+    Requires ``improvements`` on every round (``improvements_recorded``); the caller
+    checks that, because "not recorded" and "not reached" are different answers.
+    """
+    before = 0
+    for row in arm["rounds"]:
+        for probe, score in row["improvements"] or []:
+            if score >= target - EPS:
+                return before + probe
+        before = row["cumulativeProbes"]
+    return None
+
+
+def compute_exact_probes(arms: list[Arm], target: float) -> dict[str, int | None] | None:
+    """Per arm the exact probes-to-target from the rounds' ``improvements``; None unless every arm recorded them."""
+    if not all(improvements_recorded(a) for a in arms):
+        return None
+    return {a["arm"]: exact_probes_to_target(a, target) for a in arms}
+
+
+def exact_multipliers(
+    reference: str, arms: list[Arm], probes_exact: dict[str, int | None] | None
+) -> dict[str, float | None] | None:
+    if probes_exact is None:
+        return None
+    ref_exact = probes_exact.get(reference)
+    return {a["arm"]: _ratio(ref_exact, probes_exact.get(a["arm"])) for a in arms}
 
 
 def compute_headline(
@@ -532,6 +877,9 @@ def compute_headline(
     bestAtBudget(a) = cumulativeBest at the last round with cumulativeProbes <= B, else None.
     scoreMultiplier(a) = bestAtBudget(a) / bestAtBudget(ref); None when either is None or ref's is 0.
     deltaBest(a) = finalBest(a) - T. Nothing is clamped.
+    probesToTargetExact(a) = cumulativeProbes before the round + the probe of the first
+    improvement reaching T (from the rounds' ``improvements``); None as a whole when
+    any arm lacks the curve, so "not recorded" never reads as "not reached".
     """
     by_name = {a["arm"]: a for a in arms}
     ref = by_name.get(reference)
@@ -560,6 +908,7 @@ def compute_headline(
         calls_multiplier[name] = _ratio(ref_probes, p)
         score_multiplier[name] = _ratio(b, ref_best)
         delta_at_budget[name] = _diff(b, ref_best)
+    probes_exact = compute_exact_probes(arms, target_value)
     return {
         "reference": reference,
         "target": target_value,
@@ -572,6 +921,8 @@ def compute_headline(
         "deltaBest": delta_best,
         "deltaAtBudget": delta_at_budget,
         "ablation": ablation_rows(by_name, probes_to_target),
+        "probesToTargetExact": probes_exact,
+        "callsMultiplierExact": exact_multipliers(reference, arms, probes_exact),
     }
 
 
@@ -637,6 +988,25 @@ def normalize_headline(raw: object, arms: list[Arm]) -> Headline | None:
         probes_to_target[name] = None if value is None else int(value)
     best_at_budget: dict[str, float | None] = {n: _num(best.get(n)) for n in names}
     ref_best = best_at_budget.get(reference)
+    # The exact headline: the file's own numbers when it wrote them, else recomputed
+    # from the rounds' improvements when every arm has the curve, else not recorded.
+    exact_raw = raw.get("probesToTargetExact")
+    probes_exact: dict[str, int | None] | None
+    calls_exact: dict[str, float | None] | None
+    if isinstance(exact_raw, dict):
+        exact = _dict(exact_raw)
+        probes_exact = {}
+        for name in names:
+            value = _num(exact.get(name))
+            probes_exact[name] = None if value is None else int(value)
+        calls_exact_raw = _dict(raw.get("callsMultiplierExact"))
+        if calls_exact_raw:
+            calls_exact = {n: _num(calls_exact_raw.get(n)) for n in names}
+        else:
+            calls_exact = exact_multipliers(reference, arms, probes_exact)
+    else:
+        probes_exact = computed["probesToTargetExact"] if computed is not None else None
+        calls_exact = computed["callsMultiplierExact"] if computed is not None else None
     return {
         "reference": reference,
         "target": target,
@@ -649,6 +1019,8 @@ def normalize_headline(raw: object, arms: list[Arm]) -> Headline | None:
         "deltaBest": delta_best,
         "deltaAtBudget": {n: _diff(best_at_budget[n], ref_best) for n in names},
         "ablation": computed["ablation"] if computed is not None else None,
+        "probesToTargetExact": probes_exact,
+        "callsMultiplierExact": calls_exact,
     }
 
 
@@ -669,12 +1041,13 @@ def load_result(path_arg: str | os.PathLike[str]) -> Result:
     arms_raw = doc.get("arms")
     if not isinstance(arms_raw, list) or not arms_raw:
         raise ResultError(f"{path}: no arms")
-    arms = [normalize_arm(a, i) for i, a in enumerate(arms_raw)]
+    budget = _dict(doc.get("budget"))
+    k1 = _int_or_none(budget.get("k1"))
+    arms = [normalize_arm(a, i, k1) for i, a in enumerate(arms_raw)]
     rounds = _int(doc.get("rounds"), max(len(a["rounds"]) for a in arms))
     for arm in arms:
         if len(arm["rounds"]) != rounds:
             raise ResultError(f"{path}: arm {arm['arm']} has {len(arm['rounds'])} rounds, file says {rounds}")
-    budget = _dict(doc.get("budget"))
     notes_raw = doc.get("notes")
     notes = notes_raw if isinstance(notes_raw, list) else []
     seed_raw = doc.get("seed")
@@ -696,6 +1069,7 @@ def load_result(path_arg: str | os.PathLike[str]) -> Result:
         "budget": {k: budget.get(k) for k in ("workers", "k1", "k2", "dreams")},
         "objective": objective,
         "initialPolicyId": str(_get(doc, "initialPolicyId", default=arms[0]["initialPolicyId"])),
+        "initialPolicyBeta": _num(_dict(doc.get("initialPolicy")).get("beta")),
         "proposer": "/".join(sorted({a["proposer"] for a in arms})),
         "dreamer": "/".join(sorted({a["dreamer"] for a in arms})),
         "model": next((a["model"] for a in arms if a["model"]), None),
@@ -707,22 +1081,33 @@ def load_result(path_arg: str | os.PathLike[str]) -> Result:
     }
 
 
+# The two-term objective every file has; ``beta3`` (the anytime weight) joined it later
+# and is part of the pooling key when present, printed only when the file records it.
 OBJECTIVE_FIELDS = ("beta1", "beta2")
+OBJECTIVE_OPTIONAL_FIELDS = ("beta3",)
 
 
 def objective_key(objective: dict[str, object] | None) -> tuple[float | None, ...] | None:
-    """The replay objective as the tuple that must agree across seeds; None when the file recorded none."""
+    """The replay objective as the tuple that must agree across seeds; None when the file recorded none.
+
+    A file without ``beta3`` was scored by the two-term objective and does not pool
+    with one that carries a ``beta3``, whatever its value.
+    """
     if objective is None:
         return None
-    return tuple(_num(objective.get(field)) for field in OBJECTIVE_FIELDS)
+    return tuple(_num(objective.get(field)) for field in (*OBJECTIVE_FIELDS, *OBJECTIVE_OPTIONAL_FIELDS))
 
 
 def objective_text(objective: dict[str, object] | None) -> str:
-    """`beta1=0.05 beta2=0.05`, or `none recorded` when the file carries no objective."""
-    key = objective_key(objective)
-    if key is None:
+    """`beta1=0.05 beta2=0.05` (`beta3=0.25` appended when recorded), or `none recorded` when the file has none."""
+    if objective is None:
         return "none recorded"
-    return " ".join(f"{name}={'?' if v is None else f'{v:g}'}" for name, v in zip(OBJECTIVE_FIELDS, key, strict=True))
+    parts = [f"{name}={'?' if (v := _num(objective.get(name))) is None else f'{v:g}'}" for name in OBJECTIVE_FIELDS]
+    for name in OBJECTIVE_OPTIONAL_FIELDS:
+        value = _num(objective.get(name))
+        if value is not None:
+            parts.append(f"{name}={value:g}")
+    return " ".join(parts)
 
 
 def pool_key(r: Result) -> dict[str, tuple[object, str]]:
@@ -779,6 +1164,7 @@ SERIES_FIELDS = (
     "cumulativeHandlerCalls",
     "tokens",
     "cumulativeTokens",
+    "probesToRoundBest",
 )
 
 
@@ -836,12 +1222,96 @@ def _stat_lists(per_seed_values: list[list[float | None]], rounds: int) -> StatS
     }
 
 
+def dreaming_summary(arm: Arm) -> DreamingSummary:
+    """How this arm's dreaming went in one seed.
+
+    ``phases`` counts rounds with a dreaming record, ``improved`` those whose step
+    accepted a candidate, ``auditRecorded`` those carrying per-candidate verdicts.
+    ``inert`` is true for a dreaming (non-fixed) arm that ran more than one round
+    and never changed policy: whatever it dreamed, the control and this arm grew
+    every tree with the same policy, so their difference is sampling noise, not a
+    learned policy. A fixed-policy arm is never inert (it never dreams).
+    """
+    records = [row["dreaming"] for row in arm["rounds"] if row["dreaming"] is not None]
+    return {
+        "phases": len(records),
+        "improved": sum(1 for rec in records if rec["improved"] is True),
+        "auditRecorded": sum(1 for rec in records if rec["candidateVerdicts"] is not None),
+        "policyChanges": arm["policyChanges"],
+        "inert": not arm["fixedPolicy"] and len(arm["rounds"]) > 1 and arm["policyChanges"] == 0,
+    }
+
+
+def support_coverage(verdicts: list[CandidateVerdict]) -> float | None:
+    """The fraction of candidates replayed fully in support (inSupportMin >= 1); None when none recorded it."""
+    known = [v["inSupportMin"] for v in verdicts if v["inSupportMin"] is not None]
+    if not known:
+        return None
+    return sum(1 for m in known if m >= 1 - EPS) / len(known)
+
+
+def best_candidate_value(verdicts: list[CandidateVerdict]) -> float | None:
+    """The best replay value among the ELIGIBLE candidates; None when none was eligible."""
+    eligible = [v["value"] for v in verdicts if v["eligible"]]
+    return max(eligible) if eligible else None
+
+
+def _dreaming_series(per_seed: list[list[RoundRow]], rounds: int) -> dict[str, object]:
+    """Per round, across seeds: how many seeds dreamed / improved / recorded the audit, and the audit means."""
+    recorded = [0] * rounds
+    audit = [0] * rounds
+    improved = [0] * rounds
+    dreamers: list[set[str]] = [set() for _ in range(rounds)]
+
+    def stat(pick) -> StatSeries:
+        values: list[list[float | None]] = []
+        for rows in per_seed:
+            values.append([None if row["dreaming"] is None else pick(row["dreaming"]) for row in rows])
+        return _stat_lists(values, rounds)
+
+    for rows in per_seed:
+        for i, row in enumerate(rows):
+            rec = row["dreaming"]
+            if rec is None:
+                continue
+            recorded[i] += 1
+            if rec["candidateVerdicts"] is not None:
+                audit[i] += 1
+            if rec["improved"] is True:
+                improved[i] += 1
+            if rec["dreamer"] is not None:
+                dreamers[i].add(rec["dreamer"])
+
+    def from_verdicts(pick):
+        def inner(rec: DreamingRecord) -> float | None:
+            return None if rec["candidateVerdicts"] is None else pick(rec["candidateVerdicts"])
+
+        return inner
+
+    return {
+        "recorded": recorded,
+        "auditRecorded": audit,
+        "improved": improved,
+        "dreamers": ["/".join(sorted(kinds)) for kinds in dreamers],
+        "currentScore": stat(lambda rec: rec["currentScore"]),
+        "chosenScore": stat(lambda rec: rec["chosenScore"]),
+        "candidates": stat(lambda rec: None if rec["candidates"] is None else float(rec["candidates"])),
+        "eligible": stat(from_verdicts(lambda vs: float(sum(1 for v in vs if v["eligible"])))),
+        "bestCandidateValue": stat(from_verdicts(best_candidate_value)),
+        "supportCoverage": stat(from_verdicts(support_coverage)),
+        "leverGap": stat(lambda rec: None if rec["leverScan"] is None else rec["leverScan"]["gap"]),
+        "poolSize": _stat_lists([[float(row["poolSize"]) for row in rows] for rows in per_seed], rounds),
+    }
+
+
 def series(results: list[Result]):
     """Per arm, per round: each field across seeds as per-seed lists plus mean/min/max.
 
     A provenance field a seed did not record is None in its per-seed list and is left
     out of the mean (``provenanceRecorded`` says which seeds have it); it is never
     read as 0. ``llmRejected`` is one such series per reason (``reasons_seen``).
+    ``dreaming`` reduces the per-round dreaming records the same way
+    (``_dreaming_series``); ``policyNeverChanged`` and ``stoppedEarly`` are per seed.
     """
     out = {}
     rounds = results[0]["rounds"]
@@ -871,7 +1341,11 @@ def series(results: list[Result]):
         out[name] = {
             "rounds": list(range(1, rounds + 1)),
             "seeds": [r["seed"] for r in results],
+            "fixedPolicy": all(arm["fixedPolicy"] for arm in arms),
             "policyChanges": policy_changes,
+            "policyNeverChanged": [dreaming_summary(arm)["inert"] for arm in arms],
+            "stoppedEarly": [arm["stoppedEarly"] for arm in arms],
+            "primingProbes": [arm["rounds"][0]["primingProbes"] for arm in arms],
             "finalBest": [arm["finalBest"] for arm in arms],
             "totalProbes": [arm["totalProbes"] for arm in arms],
             "totalHandlerCalls": [arm["totalHandlerCalls"] for arm in arms],
@@ -882,6 +1356,7 @@ def series(results: list[Result]):
             "totalLlmProposals": [arm["totalLlmProposals"] for arm in arms],
             "totalLlmAccepted": [arm["totalLlmAccepted"] for arm in arms],
             "totalLlmRejected": [arm["totalLlmRejected"] for arm in arms],
+            "dreaming": _dreaming_series(per_seed, rounds),
             **fields,
         }
     return out
@@ -1010,12 +1485,130 @@ def _median(values: list[float | None]) -> float | None:
     return statistics.median(clean) if clean else None
 
 
+VERDICT_SINGLE = "single seed: no verdict"
+VERDICT_EXCEEDS = "exceeds noise floor"
+VERDICT_WITHIN = "within noise floor"
+VERDICT_INERT = "within noise floor (dreaming inert)"
+
+
+def spread_stats(values: list[float | None]) -> SpreadStats:
+    """min, max, spread (max - min) and sample std of the defined values; std needs two of them."""
+    clean = _defined(values)
+    return {
+        "values": values,
+        "defined": len(clean),
+        "min": min(clean) if clean else None,
+        "max": max(clean) if clean else None,
+        "spread": (max(clean) - min(clean)) if clean else None,
+        "std": statistics.stdev(clean) if len(clean) >= 2 else None,
+    }
+
+
+def noise_floor(results: list[Result]) -> NoiseFloor | None:
+    """The reference arm's final best and probes-to-target across seeds; None unless it ran in every seed.
+
+    Nothing but the proposer's sampling separates the reference arm's seeds (the
+    policy never changes), so this spread is the floor a paired delta has to clear.
+    """
+    heads = [r["headline"] for r in results]
+    if not results or any(h is None for h in heads):
+        return None
+    reference = heads[0]["reference"] if heads[0] is not None else REFERENCE_ARM
+    finals: list[float | None] = [arm_of(r, reference)["finalBest"] for r in results]
+    probes: list[float | None] = [None if h is None else _opt_float(h["probesToTarget"].get(reference)) for h in heads]
+    exact_lists = [h["probesToTargetExact"] for h in heads if h is not None]
+    exact: SpreadStats | None = None
+    if exact_lists and all(e is not None for e in exact_lists):
+        exact = spread_stats([None if e is None else _opt_float(e.get(reference)) for e in exact_lists])
+    return {
+        "n": len(results),
+        "finalBest": spread_stats(finals),
+        "probesToTarget": spread_stats(probes),
+        "probesToTargetExact": exact,
+    }
+
+
+def verdict(deltas: list[float | None], floor: NoiseFloor | None, n: int, inert_everywhere: bool) -> str:
+    """The comparison verdict (module docstring, "Noise floor and verdict").
+
+    One seed: no verdict, the words say so (and add that dreaming was inert when the
+    policy never changed, so the reader has both facts). Otherwise, inert in every
+    seed forces ``within noise floor (dreaming inert)``; else ``exceeds noise floor``
+    needs |mean paired delta| > the reference arm's min..max spread of final best AND
+    one sign across every seed; anything else is ``within noise floor``. A delta
+    undefined in some seed cannot exceed the floor either.
+    """
+    if n <= 1:
+        return VERDICT_SINGLE + (" (dreaming inert: the arms ran the same policy)" if inert_everywhere else "")
+    if inert_everywhere:
+        return VERDICT_INERT
+    defined = _defined(deltas)
+    if floor is None or floor["finalBest"]["spread"] is None or len(defined) < n:
+        return VERDICT_WITHIN + f" (paired delta defined in {len(defined)}/{n} seeds)"
+    mean = statistics.fmean(defined)
+    same_sign = all(d > EPS for d in defined) or all(d < -EPS for d in defined)
+    if abs(mean) > max(floor["finalBest"]["spread"], EPS) and same_sign:
+        return VERDICT_EXCEEDS
+    return VERDICT_WITHIN
+
+
+def paired_effects(
+    results: list[Result], floor: NoiseFloor | None, dreaming: dict[str, list[DreamingSummary]]
+) -> dict[str, PairedEffect]:
+    """Per non-reference arm: the paired per-seed deltas against the reference and the verdict."""
+    heads = [r["headline"] for r in results]
+    reference = next((h["reference"] for h in heads if h is not None), None)
+    out: dict[str, PairedEffect] = {}
+    if reference is None:
+        return out
+    n = len(results)
+    for name in arm_names(results):
+        if name == reference:
+            continue
+        deltas = [None if h is None else h["deltaBest"].get(name) for h in heads]
+        at_budget = [None if h is None else h["deltaAtBudget"].get(name) for h in heads]
+        calls: list[int | None] = []
+        calls_exact: list[int | None] = []
+        exact_everywhere = True
+        for h in heads:
+            if h is None:
+                calls.append(None)
+                calls_exact.append(None)
+                exact_everywhere = False
+                continue
+            mine, theirs = h["probesToTarget"].get(name), h["probesToTarget"].get(reference)
+            calls.append(None if mine is None or theirs is None else mine - theirs)
+            exact = h["probesToTargetExact"]
+            if exact is None:
+                exact_everywhere = False
+                calls_exact.append(None)
+            else:
+                mine_x, theirs_x = exact.get(name), exact.get(reference)
+                calls_exact.append(None if mine_x is None or theirs_x is None else mine_x - theirs_x)
+        defined = _defined(deltas)
+        inert_everywhere = bool(dreaming.get(name)) and all(s["inert"] for s in dreaming[name])
+        out[name] = {
+            "arm": name,
+            "deltas": deltas,
+            "deltasAtBudget": at_budget,
+            "callsDeltas": calls,
+            "callsDeltasExact": calls_exact if exact_everywhere else None,
+            "mean": statistics.fmean(defined) if defined else None,
+            "positive": sum(1 for d in defined if d > EPS),
+            "negative": sum(1 for d in defined if d < -EPS),
+            "inertSeeds": sum(1 for s in dreaming.get(name, []) if s["inert"]),
+            "verdict": verdict(deltas, floor, n, inert_everywhere),
+        }
+    return out
+
+
 def headline(results: list[Result]) -> HeadlineSummary:
     """Per-seed headline rows from the files plus median multipliers and reach counts.
 
     ``callsMultiplierDefined`` / ``scoreMultiplierDefined`` count the seeds whose
     ratio is defined; the medians are over those seeds only, and ``aggregate_text``
-    says so when that is fewer than all of them.
+    says so when that is fewer than all of them. ``noiseFloor``, ``paired`` and
+    ``dreaming`` carry the comparison verdict and what it rests on.
     """
     per_seed: list[SeedHeadline] = [
         {"seed": r["seed"], "experimentId": r["experimentId"], "headline": r["headline"]} for r in results
@@ -1041,12 +1634,17 @@ def headline(results: list[Result]) -> HeadlineSummary:
         for row in h["ablation"] or []:
             key = f"{row['unguidedArm']} vs {row['guidedArm']}"
             ablation.setdefault(key, []).append(row["guidedMinusUnguidedFinalBest"])
+    dreaming = {name: [dreaming_summary(arm_of(r, name)) for r in results] for name in names}
+    floor = noise_floor(results)
     return {
         "reference": heads[0]["reference"] if heads else None,
         "n": len(results),
         "perSeed": per_seed,
         "aggregate": aggregate,
         "ablation": {k: {"deltas": v, "median": statistics.median(v)} for k, v in ablation.items()},
+        "noiseFloor": floor,
+        "paired": paired_effects(results, floor, dreaming),
+        "dreaming": dreaming,
     }
 
 
@@ -1116,6 +1714,124 @@ def budget_text(head: Headline) -> str:
     return f"{head['reference']} total" if head["budgetIsReferenceTotal"] else "smallest arm total"
 
 
+EXACT_NOT_RECORDED = "exact probes to T not recorded"
+
+
+def exact_calls_value(head: Headline, arm: str) -> float | None:
+    """The exact calls multiplier: the file's when written, else probesToTargetExact(ref) / probesToTargetExact(arm)."""
+    exact = head["probesToTargetExact"]
+    if exact is None:
+        return None
+    mults = head["callsMultiplierExact"]
+    if mults is not None:
+        return mults.get(arm)
+    return _ratio(_opt_float(exact.get(head["reference"])), _opt_float(exact.get(arm)))
+
+
+def exact_calls_text(head: Headline, arm: str) -> str:
+    """The exact headline beside the rollout-granular one: `exact 1.40x MORE calls (35 vs 25)` or the words.
+
+    The exact count is the compute at the FIRST PROBE whose score reaches T (from the
+    rounds' ``improvements``), not the end of the round that contains it. A file
+    without the curve reads ``exact probes to T not recorded``: not recorded is not
+    "not reached".
+    """
+    exact = head["probesToTargetExact"]
+    if exact is None:
+        return EXACT_NOT_RECORDED
+    mine, theirs = exact.get(arm), exact.get(head["reference"])
+    value = exact_calls_value(head, arm)
+    if value is None:
+        return "exact: not reached" if mine is None else "exact: not comparable"
+    return f"exact {ratio_words('calls', value)} ({fmt(mine)} vs {fmt(theirs)})"
+
+
+def spread_text(stats: SpreadStats, digits: int = 4) -> str:
+    """`[1.3300, 1.3500] 1.3300..1.3500 (spread 0.0200, std 0.0141)`, with `over k/n seeds` when a seed left it undefined."""
+    n = len(stats["values"])
+    if stats["defined"] == 0:
+        return f"undefined in every seed (0/{n})"
+    values = ", ".join(fmt(v, digits) for v in stats["values"])
+    text = f"[{values}] {fmt(stats['min'], digits)}..{fmt(stats['max'], digits)} (spread {fmt(stats['spread'], digits)}"
+    if stats["std"] is not None:
+        text += f", std {fmt(stats['std'], digits)}"
+    text += ")"
+    if stats["defined"] < n:
+        text += f" over {stats['defined']}/{n} seeds"
+    return text
+
+
+def verdict_tone(effect: PairedEffect) -> str:
+    """ok/bad when the effect exceeds the floor (by the sign of the mean delta); warn for every other verdict."""
+    if effect["verdict"] == VERDICT_EXCEEDS:
+        return "ok" if (effect["mean"] or 0) > 0 else "bad"
+    return "warn"
+
+
+def dreaming_text(name: str, summaries: list[DreamingSummary]) -> list[tuple[str, str]]:
+    """(text, tone) rows: how the arm's dreaming went, totalled over seeds, then the inert flag when it applies."""
+    n = len(summaries)
+    phases = sum(s["phases"] for s in summaries)
+    improved = sum(s["improved"] for s in summaries)
+    changes = sum(s["policyChanges"] for s in summaries)
+    audit = sum(s["auditRecorded"] for s in summaries)
+    inert = sum(1 for s in summaries if s["inert"])
+    text = f"{name}: dreaming ran {phases} step(s), accepted a candidate in {improved}, policy changes {changes}"
+    if n > 1:
+        text += f" (totals over {n} seeds)"
+    if phases:
+        text += f"; per-candidate audit recorded in {audit}/{phases} steps"
+    lines = [(text, "muted")]
+    if inert:
+        lines.append(
+            (
+                f"{name}: policy never changed in {inert}/{n} seed(s): dreaming inert, the arms grew every tree "
+                "with one policy",
+                "warn",
+            )
+        )
+    return lines
+
+
+def comparison_lines(head: HeadlineSummary) -> list[tuple[str, str]]:
+    """(text, tone) rows for the noise floor, the paired per-seed deltas with their verdict, and the dreaming summary.
+
+    The rows never use the words "median", "calls" or "score", so they stay apart from
+    the across-seeds ratio block they follow.
+    """
+    lines: list[tuple[str, str]] = []
+    ref = head["reference"]
+    if ref is None:
+        return lines
+    n = head["n"]
+    floor = head["noiseFloor"]
+    if n <= 1:
+        lines.append((f"noise floor: one seed; the {ref} arm's seed-to-seed spread cannot be measured", "muted"))
+    elif floor is None:
+        lines.append((f"noise floor: not measurable (the {ref} arm has no headline in some seed)", "warn"))
+    else:
+        text = (
+            f"noise floor ({ref} arm across {n} seeds): final best {spread_text(floor['finalBest'])}; "
+            f"probes to T {spread_text(floor['probesToTarget'], 2)}"
+        )
+        if floor["probesToTargetExact"] is not None:
+            text += f"; exact probes to T {spread_text(floor['probesToTargetExact'], 2)}"
+        lines.append((text, "muted"))
+    for name, effect in head["paired"].items():
+        deltas = ", ".join("-" if d is None else f"{d:+.4f}" for d in effect["deltas"])
+        text = f"  {name}: paired delta final best vs {ref} per seed [{deltas}]"
+        if n > 1 and effect["mean"] is not None:
+            text += f", mean {effect['mean']:+.4f}"
+        text += f" ({effect['positive']} positive, {effect['negative']} negative)"
+        lines.append((text, "muted"))
+        lines.append((f"  {name}: verdict: {effect['verdict']}", verdict_tone(effect)))
+    for name, summaries in head["dreaming"].items():
+        if name == ref or not any(s["phases"] or s["inert"] for s in summaries):
+            continue
+        lines.extend((f"  {text}", tone) for text, tone in dreaming_text(name, summaries))
+    return lines
+
+
 def aggregate_text(kind: str, name: str, agg: ArmAggregate) -> tuple[str, str]:
     """(text, tone) for one arm's multiplier across seeds; the honesty rule of the module docstring.
 
@@ -1144,6 +1860,34 @@ def aggregate_text(kind: str, name: str, agg: ArmAggregate) -> tuple[str, str]:
     if defined == 1:
         return f"{name}: {count}; single-seed ratio {what} (not a median)", tone
     return f"{name}: {count}; median of the {defined} defined ratios {what}", tone
+
+
+def dreaming_table(name, s, n_seeds):
+    """--check rows for one arm's dreaming steps (``series()[arm]``); nothing for an arm that never dreamed.
+
+    Means are over the seeds that recorded the step; ``lever gap`` and ``in support``
+    read ``-`` when no seed's step carried the audit.
+    """
+    d = s["dreaming"]
+    recorded = d["recorded"]
+    if not any(recorded):
+        return []
+    steps, audit = sum(recorded), sum(d["auditRecorded"])
+    lines = [
+        f"  dreaming of {name} ({steps} step(s) over {n_seeds} seed(s); per-candidate audit recorded in {audit}/{steps}"
+        + ("; per-candidate scores not recorded (result predates the audit)" if audit == 0 else "")
+        + "): round | dreamer | candidates | eligible | current | chosen | improved (seeds) | lever gap | in support"
+    ]
+    for i, rnd in enumerate(s["rounds"]):
+        if not recorded[i]:
+            continue
+        lines.append(
+            f"  {rnd:>5} | {d['dreamers'][i] or '-':>7} | {fmt(d['candidates']['mean'][i]):>10} | "
+            f"{fmt(d['eligible']['mean'][i]):>8} | {fmt(d['currentScore']['mean'][i]):>7} | "
+            f"{fmt(d['chosenScore']['mean'][i]):>6} | {d['improved'][i]}/{recorded[i]} | "
+            f"{fmt(d['leverGap']['mean'][i]):>9} | {fmt(d['supportCoverage']['mean'][i], 2)}"
+        )
+    return lines
 
 
 def check_tables(results: list[Result]) -> str:
@@ -1202,6 +1946,8 @@ def check_tables(results: list[Result]) -> str:
                 f"  seed {r['seed']}: {provenance_text(arm)}; tally consistent (proposals = accepted + rejected): "
                 f"{'yes' if consistent else 'NO'}"
             )
+    for name, s in ser.items():
+        lines.extend(dreaming_table(name, s, len(results)))
     lines.append(compute_axis_text(results))
     lines.append("headline")
     if head["reference"] is None:
@@ -1217,7 +1963,7 @@ def check_tables(results: list[Result]) -> str:
         for name in arm_names(results):
             lines.append(
                 f"    {name:>13}: {multiplier_text('calls', h, name)}; {multiplier_text('score', h, name)}; "
-                f"{delta_text(h, name)}"
+                f"{delta_text(h, name)}; {exact_calls_text(h, name)}"
             )
     if head["reference"] is not None:
         lines.append(f"  across {head['n']} seed(s)")
@@ -1231,6 +1977,8 @@ def check_tables(results: list[Result]) -> str:
             f"  ablation {key}: guided minus unguided final best = {[fmt(d) for d in row['deltas']]} "
             f"(median {fmt(row['median'])})"
         )
+    for text, _tone in comparison_lines(head):
+        lines.append(f"  {text}")
     for r in results:
         h = r["headline"]
         if h is None:
@@ -1267,7 +2015,7 @@ def arm_color(name, index):
 
 
 def render(results, out_dir):
-    """Write the four PNGs and report.html into out_dir; returns their paths."""
+    """Write the six PNGs and report.html into out_dir; returns their paths."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -1544,6 +2292,25 @@ def render(results, out_dir):
     ax.margins(y=0.12)
     if len(names) >= 2:
         legend(ax, loc="upper right")
+    # The inert stamp: a dreaming arm whose policy never changed grew every tree with
+    # the control's policy, so its bars differ from the control's by sampling only.
+    stamp_y = 0.97
+    for name in names:
+        never = sum(1 for flag in ser[name]["policyNeverChanged"] if flag)
+        if not never:
+            continue
+        ax.text(
+            0.01,
+            stamp_y,
+            f"{name}: policy never changed in {never}/{n_seeds} seed(s): dreaming inert",
+            transform=ax.transAxes,
+            color=WARN,
+            fontsize=9,
+            ha="left",
+            va="top",
+            zorder=6,
+        )
+        stamp_y -= 0.07
     p_attempts = out / "attempts.png"
     fig.savefig(p_attempts, dpi=130, facecolor=BG)
     plt.close(fig)
@@ -1675,8 +2442,217 @@ def render(results, out_dir):
     fig.savefig(p_proposals, dpi=130, facecolor=BG)
     plt.close(fig)
 
+    # (f) dreaming audit -------------------------------------------------------------
+    # One panel per arm that dreamed. Per round (the step that chose that round's
+    # policy): every candidate's replay value as a point, filled when it competed in
+    # the argmax and hollow when not; llm candidates in the arm's hue, local ones
+    # grey; the incumbent as a tick, the chosen policy starred, the best lever-scan
+    # policy as a triangle, and the words improved / no change with the lever gap.
+    # The strip below is the share of candidates replayed fully in support. A file
+    # without candidateVerdicts falls back to the incumbent and chosen values it does
+    # carry and says the audit is not recorded.
+    dream_names = [name for name in names if any(ser[name]["dreaming"]["recorded"])]
+    audited = {name: sum(ser[name]["dreaming"]["auditRecorded"]) for name in dream_names}
+    dream_sub = [base_sub]
+    if dream_names:
+        dream_sub.append(
+            "point = one candidate's replay value on the frozen pool (filled: eligible for the argmax; hollow: "
+            "identical, duplicate, quality-rejected or unmeasurable) · llm candidates in the arm colour, local grey · "
+            "tick = incumbent · star = chosen · triangle = best lever-scan policy · strip = share of candidates "
+            "replayed fully in support"
+        )
+        if not any(audited.values()):
+            dream_sub.append(
+                "this result predates the per-candidate audit: only the incumbent's and the chosen value are recorded"
+            )
+        elif n_seeds > 1:
+            dream_sub.append("one column offset per seed; the words count the seeds whose step improved")
+    sub_lines = [wrapped for line in dream_sub for wrapped in (textwrap.wrap(line, 118) or [""])]
+    strip_in, panel_in, gap_in, bottom_in = 0.45, 2.1, 0.55, 0.5
+    header_in = 0.62 + line_in * len(sub_lines) + 0.4
+    n_panels = max(1, len(dream_names))
+    fig_h = header_in + n_panels * (panel_in + strip_in) + (n_panels - 1) * gap_in + bottom_in
+    fig = plt.figure(figsize=(9, fig_h), facecolor=BG)
+    fig.text(0.07, 1 - 0.3 / fig_h, "Dreaming audit per step", color=FG, fontsize=13, ha="left", va="top")
+    y_text = 1 - 0.62 / fig_h
+    for wrapped in sub_lines:
+        fig.text(0.07, y_text, wrapped, color=MUTED, fontsize=8.5, ha="left", va="top")
+        y_text -= line_in / fig_h
+    if not dream_names:
+        ax = fig.add_axes((0.09, bottom_in / fig_h, 0.86, (panel_in + strip_in) / fig_h))
+        style(ax, "")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.text(
+            0.5,
+            0.5,
+            "no dreaming step recorded in this result (every arm ran a fixed policy): nothing to audit",
+            transform=ax.transAxes,
+            color=WARN,
+            fontsize=9.5,
+            ha="center",
+            va="center",
+        )
+    offsets = [(k - (n_seeds - 1) / 2) * (0.7 / n_seeds) for k in range(n_seeds)]
+    for j, name in enumerate(dream_names):
+        s = ser[name]
+        d = s["dreaming"]
+        color = arm_color(name, names.index(name))
+        block_bottom = (bottom_in + (n_panels - 1 - j) * (panel_in + strip_in + gap_in)) / fig_h
+        ax_strip = fig.add_axes((0.09, block_bottom, 0.62, (strip_in - 0.15) / fig_h))
+        ax = fig.add_axes((0.09, block_bottom + strip_in / fig_h, 0.62, panel_in / fig_h), sharex=ax_strip)
+        for arm_rec, dx in zip((arm_of(r, name) for r in results), offsets, strict=True):
+            for i, row in enumerate(arm_rec["rounds"]):
+                rec = row["dreaming"]
+                if rec is None:
+                    continue
+                xx = x[i] + dx
+                for v in rec["candidateVerdicts"] or []:
+                    c = color if v["origin"] == "llm" else MUTED
+                    ax.plot(
+                        [xx],
+                        [v["value"]],
+                        marker="o",
+                        ms=6.5,
+                        mfc=c if v["eligible"] else BG,
+                        mec=c,
+                        mew=1.3,
+                        ls="none",
+                        zorder=3,
+                    )
+                if rec["currentScore"] is not None:
+                    ax.plot([xx], [rec["currentScore"]], marker="_", ms=16, mew=2.0, color=FG, ls="none", zorder=4)
+                if rec["chosenScore"] is not None:
+                    star = OK if rec["improved"] else FG
+                    ax.plot(
+                        [xx], [rec["chosenScore"]], marker="*", ms=11, mfc=star, mec=BG, mew=0.6, ls="none", zorder=5
+                    )
+                scan = rec["leverScan"]
+                if scan is not None and scan["bestValue"] is not None:
+                    ax.plot([xx], [scan["bestValue"]], marker="^", ms=7, mfc=BG, mec=ACC, mew=1.3, ls="none", zorder=4)
+        if ax.has_data():
+            lo, hi = ax.get_ylim()
+            span = max(hi - lo, 1e-6)
+            ax.set_ylim(lo - 0.08 * span, hi + 0.55 * span)
+        for i in range(rounds):
+            if not d["recorded"][i]:
+                if i == 0:
+                    ax.text(
+                        x[i],
+                        0.96,
+                        "no step\n(initial policy)",
+                        transform=ax.get_xaxis_transform(),
+                        color=MUTED,
+                        fontsize=7,
+                        ha="center",
+                        va="top",
+                    )
+                continue
+            imp, rec_n = d["improved"][i], d["recorded"][i]
+            word = "improved" if imp == rec_n else ("no change" if imp == 0 else f"improved {imp}/{rec_n}")
+            ax.text(
+                x[i],
+                0.96,
+                word,
+                transform=ax.get_xaxis_transform(),
+                color=OK if imp else MUTED,
+                fontsize=8,
+                ha="center",
+                va="top",
+                fontweight="bold" if imp else "normal",
+            )
+            gap = d["leverGap"]["mean"][i]
+            if gap is None:
+                gap_word, gap_color = "lever gap n/a" if d["auditRecorded"][i] else "lever gap not recorded", MUTED
+            elif gap > EPS:
+                gap_word, gap_color = f"lever gap +{gap:.4f}", ACC
+            else:
+                gap_word, gap_color = "lever gap 0: no lever", MUTED
+            ax.text(
+                x[i],
+                0.88,
+                gap_word,
+                transform=ax.get_xaxis_transform(),
+                color=gap_color,
+                fontsize=7,
+                ha="center",
+                va="top",
+            )
+        summaries = head["dreaming"].get(name, [])
+        phases = sum(sm["phases"] for sm in summaries)
+        improved_steps = sum(sm["improved"] for sm in summaries)
+        changes = sum(sm["policyChanges"] for sm in summaries)
+        inert = sum(1 for sm in summaries if sm["inert"])
+        title = f"{name} · steps {phases}, improved {improved_steps}, policy changes {changes}"
+        if inert:
+            title += f" · policy never changed in {inert}/{n_seeds} seed(s): dreaming inert"
+        style(ax, title, "", "replay value")
+        ax.set_xticks(x)
+        ax.set_xlim(0.5, rounds + 0.5)
+        ax.tick_params(labelbottom=False)
+        style(ax_strip, "", "round" if j == n_panels - 1 else "", "in support")
+        ax_strip.set_ylim(0, 1.3)
+        ax_strip.set_yticks([0, 1])
+        ax_strip.set_yticklabels(["0", "1"])
+        coverage = d["supportCoverage"]["mean"]
+        for i in range(rounds):
+            if not d["recorded"][i]:
+                continue
+            if coverage[i] is None:
+                ax_strip.text(x[i], 0.5, "n/a", color=MUTED, fontsize=7, ha="center", va="center")
+                continue
+            ax_strip.bar(x[i], coverage[i], width=0.6, color=color, edgecolor=BG, linewidth=1.0, zorder=3)
+            ax_strip.text(
+                x[i],
+                min(coverage[i] + 0.05, 1.05),
+                f"{coverage[i]:.0%}",
+                color=FG,
+                fontsize=7,
+                ha="center",
+                va="bottom",
+                zorder=4,
+            )
+        proxies = [
+            Line2D([], [], marker="o", ms=6.5, mfc=color, mec=color, ls="none", label="llm candidate, eligible"),
+            Line2D(
+                [],
+                [],
+                marker="o",
+                ms=6.5,
+                mfc=BG,
+                mec=color,
+                mew=1.3,
+                ls="none",
+                label="candidate not eligible (hollow)",
+            ),
+            Line2D([], [], marker="o", ms=6.5, mfc=MUTED, mec=MUTED, ls="none", label="local candidate"),
+            Line2D([], [], marker="_", ms=16, mew=2.0, color=FG, ls="none", label="incumbent value"),
+            Line2D([], [], marker="*", ms=11, mfc=FG, mec=BG, ls="none", label="chosen policy (green when improved)"),
+            Line2D([], [], marker="^", ms=7, mfc=BG, mec=ACC, mew=1.3, ls="none", label="best lever-scan policy"),
+        ]
+        ax.legend(
+            handles=proxies,
+            facecolor=BG,
+            edgecolor=GRID,
+            labelcolor=FG,
+            fontsize=8,
+            loc="upper left",
+            bbox_to_anchor=(1.01, 1.0),
+            borderaxespad=0.0,
+        )
+    p_dreaming = out / "dreaming.png"
+    fig.savefig(p_dreaming, dpi=130, facecolor=BG)
+    plt.close(fig)
+
     # (d) headline card ----------------------------------------------------------
-    card_lines = headline_lines(results, head) + provenance_lines(results)
+    # A row longer than the card is wrapped, its continuation indented; the
+    # monospace rows (10pt) fit ~92 characters on the 9in card, the muted ones ~108.
+    card_lines = []
+    for text, tone in headline_lines(results, head) + provenance_lines(results):
+        width = 108 if tone == "muted" else 92
+        indent = " " * (len(text) - len(text.lstrip(" ")) + 4)
+        wrapped = textwrap.wrap(text, width, subsequent_indent=indent) or [""]
+        card_lines.extend((part, tone) for part in wrapped)
     height = 1.3 + 0.36 * len(card_lines)
     fig = plt.figure(figsize=(9, height), facecolor=BG)
     fig.text(
@@ -1718,6 +2694,7 @@ def render(results, out_dir):
                 "compute": p_compute,
                 "attempts": p_attempts,
                 "proposals": p_proposals,
+                "dreaming": p_dreaming,
                 "headline": p_headline,
             },
         ),
@@ -1728,6 +2705,7 @@ def render(results, out_dir):
         "compute": p_compute,
         "attempts": p_attempts,
         "proposals": p_proposals,
+        "dreaming": p_dreaming,
         "headline": p_headline,
         "report": p_report,
     }
@@ -1778,6 +2756,8 @@ def headline_lines(results: list[Result], head: HeadlineSummary) -> list[tuple[s
             calls_tone = ratio_tone(h["callsMultiplier"].get(name))
             score_tone = ratio_tone(h["scoreMultiplier"].get(name))
             lines.append((f"  {name}: {multiplier_text('calls', h, name)}", calls_tone))
+            exact_tone = "muted" if h["probesToTargetExact"] is None else ratio_tone(exact_calls_value(h, name))
+            lines.append((f"  {name}: {exact_calls_text(h, name)}", exact_tone))
             lines.append((f"  {name}: {multiplier_text('score', h, name)}", score_tone))
             lines.append((f"  {name}: {delta_text(h, name)}", delta_tone(h["deltaBest"].get(name))))
         for row in h["ablation"] or []:
@@ -1803,6 +2783,7 @@ def headline_lines(results: list[Result], head: HeadlineSummary) -> list[tuple[s
             score_text, score_tone = aggregate_text("score", name, agg)
             lines.append((f"  {calls_text}", calls_tone))
             lines.append((f"  {score_text}", score_tone))
+    lines.extend(comparison_lines(head))
     return lines
 
 
@@ -1939,6 +2920,8 @@ def build_report(results, ser, head, pngs):
         f"Multipliers against the {REFERENCE_ARM} arm: fewer calls = probesToTarget({REFERENCE_ARM}) / "
         f"probesToTarget(arm), the compute at the first round reaching the {REFERENCE_ARM} arm's final best; "
         f"higher score = bestAtBudget(arm) / bestAtBudget({REFERENCE_ARM}) at the equal budget B. "
+        "The exact line beside it counts to the first PROBE whose score reaches T (from the rounds' improvements "
+        "curve), not the end of the round; a file without the curve reads exact probes to T not recorded. "
         "A ratio below 1 is written the right way round, as its inverse with the direction spelled out "
         "(1.20x MORE calls, 1.03x LOWER score), never as 0.83x fewer; the operands stay (arm vs reference). "
         "An undefined value is written out as not reached / not comparable, never clamped."
@@ -1949,6 +2932,62 @@ def build_report(results, ser, head, pngs):
             if n_seeds > 1
             else ""
         )
+        + " The verdict follows the noise-floor rule: one seed gives no verdict; with several, the paired per-seed "
+        f"delta of final best exceeds the noise floor only when its mean is larger than the {REFERENCE_ARM} arm's "
+        "own min..max spread of final best across seeds AND every seed's delta has the same sign; a dreaming arm "
+        "whose policy never changed in any seed is within the floor by construction (dreaming inert)."
+    )
+    dreaming_arms = [name for name in names if any(ser[name]["dreaming"]["recorded"])]
+    audit_recorded = any(sum(ser[name]["dreaming"]["auditRecorded"]) for name in dreaming_arms)
+    if dreaming_arms and audit_recorded:
+        caption_f = (
+            f"Every candidate a dreaming step scored, per round it chose the policy for{agg_note}: its mean replay "
+            "value on the frozen pool (filled when eligible for the argmax, hollow when identical, duplicate, "
+            "quality-rejected or unmeasurable), llm candidates in the arm colour and local ones grey, the "
+            "incumbent's value as a tick, the chosen policy starred (green when the step improved), and the best "
+            "lever-scan policy (a fixed grid of local policies scored on the same pool, independent of what the "
+            "dreamer proposed) as a triangle. The strip is the share of candidates replayed fully in support. "
+            "A lever gap of 0 means no grid policy beat the incumbent on that pool: dreaming had nothing to find "
+            "there, whatever the dreamer proposed."
+        )
+    elif dreaming_arms:
+        caption_f = (
+            "This result predates the per-candidate audit: its dreaming steps recorded only the incumbent's and the "
+            "chosen policy's value (tick and star) and whether the step improved. Per-candidate scores, eligibility, "
+            "the lever gap and the support coverage are not recorded, not 0, so the strip is empty and the words "
+            "say n/a."
+        )
+    else:
+        caption_f = (
+            "No arm dreamed in this result (every arm ran a fixed policy), so there is no dreaming step to audit."
+        )
+    dreaming_rows = []
+    for name in dreaming_arms:
+        s = ser[name]
+        d = s["dreaming"]
+        for i, rnd in enumerate(s["rounds"]):
+            if not d["recorded"][i]:
+                continue
+            cells = (
+                name,
+                rnd,
+                d["dreamers"][i] or "-",
+                fmt(d["candidates"]["mean"][i]),
+                fmt(d["eligible"]["mean"][i]),
+                fmt(d["currentScore"]["mean"][i]),
+                fmt(d["chosenScore"]["mean"][i]),
+                f"{d['improved'][i]}/{d['recorded'][i]}",
+                fmt(d["leverGap"]["mean"][i]),
+                fmt(d["supportCoverage"]["mean"][i], 2),
+            )
+            dreaming_rows.append("<tr>" + "".join(f"<td>{html.escape(str(v))}</td>" for v in cells) + "</tr>")
+    dreaming_table_html = (
+        "<table><tr><th>arm</th><th>round</th><th>dreamer</th><th>candidates</th><th>eligible</th><th>incumbent</th>"
+        "<th>chosen</th><th>improved (seeds)</th><th>lever gap</th><th>in support</th></tr>"
+        + "".join(dreaming_rows)
+        + "</table>"
+        if dreaming_rows
+        else '<p class="sub">no dreaming step recorded</p>'
     )
     honest = (
         "Every series on this page is measured from the result files; nothing is illustrative. Handler calls and "
@@ -1961,7 +3000,9 @@ def build_report(results, ser, head, pngs):
         )
         + "; the headline multipliers are on probes on every path. A provenance field a file does not carry is "
         "shown as not recorded, never as 0. The policy score on an arm's own pool is an in-arm replay estimate and "
-        "is never compared across arms."
+        "is never compared across arms. Seeds are independent replicates: a dreaming step's pool grows across "
+        "rounds within one arm only, never across arms or seeds, which is what makes the paired per-seed "
+        "comparison and its noise-floor verdict valid."
     )
     more = f" and {n_seeds - 1} more seed file(s)" if n_seeds > 1 else ""
     return f"""<!DOCTYPE html>
@@ -1999,6 +3040,9 @@ figcaption {{ color: var(--muted); font-size: 12.5px; margin-top: 6px; }}
 <figure>{img(pngs["attempts"])}<figcaption>{html.escape(caption_c)}</figcaption></figure>
 <h2>LLM-proposal validity per round</h2>
 <figure>{img(pngs["proposals"])}<figcaption>{html.escape(caption_e)}</figcaption></figure>
+<h2>Dreaming audit per step</h2>
+<figure>{img(pngs["dreaming"])}<figcaption>{html.escape(caption_f)}</figcaption></figure>
+{dreaming_table_html}
 <h2>Table{html.escape(agg_note)}</h2>
 <p class="sub">Provenance columns (agent-generated through rejected) read - when the file did not record them.</p>
 <table><tr><th>arm</th><th>round</th><th>round best</th><th>cum best</th><th>probes</th><th>cum probes</th><th>agent-generated</th><th>cum agent-generated</th><th>local fallbacks</th><th>LLM proposals</th><th>accepted</th><th>rejected by reason</th><th>handler calls (cost)</th><th>tokens (cost)</th><th>policy changed</th></tr>{"".join(table_rows)}</table>

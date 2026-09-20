@@ -2,11 +2,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { interpretPolicy } from "../src/core/dream/interpreter.js";
+import { IMPROVE_EPS, interpretPolicy } from "../src/core/dream/interpreter.js";
 import { assertLegalBatch, LegalBatchError, type ObservationView } from "../src/core/dream/observation.js";
 import { DEFAULT_POLICY, type ExplorationPolicy } from "../src/core/dream/policy.js";
 import { createReplaySimulator, simulatePolicy } from "../src/core/dream/replay.js";
+import { createSeededRng } from "../src/core/dream/rng.js";
+import { runOnlineExploration } from "../src/core/dream/rollout.js";
 import { buildRecordedTree, DreamStoreError, readTree, TreeWriter } from "../src/core/dream/store.js";
+import type { ScoredTask } from "../src/core/dream/task.js";
 import type { NodeRecord, TreeHeaderRecord, TreeRecord } from "../src/core/dream/types.js";
 
 function header(treeId: string): TreeHeaderRecord {
@@ -79,10 +82,18 @@ describe("simulatePolicy", () => {
 		expect(result.rounds).toBe(3);
 	});
 
-	it("counts a legally-selected exhausted cell as out of support and reveals nothing", () => {
-		// Selecting the terminal leaf n2 alongside the root reveals nothing for n2.
+	it("counts a legally-selected exhausted cell as out of support, charges it, and repeats the running best", () => {
+		// Round 3 selects the terminal leaf n2 alongside the root: n2 reveals nothing
+		// (charged, best repeated), the root reveals n3.
 		const result = simulatePolicy(buildRecordedTree(T1), BEST_FIRST, { k2: 10 });
-		expect(result.outOfSupportRounds).toBe(1);
+		expect(result.outOfSupportCells).toBe(1);
+		expect(result.selectedCells).toBe(4);
+		expect(result.N).toBe(3);
+		expect(result.inSupport).toBeCloseTo(0.75, 12);
+		expect(result.bestSoFar).toEqual([0.5, 0.7, 0.7, 0.7]);
+		expect(result.bestSoFar).toHaveLength(result.selectedCells);
+		// The best (0.7) arrived with the second charged selection.
+		expect(result.probesToBest).toBe(2);
 	});
 
 	it("keeps probing an exhausted root out of support without revealing deeper nodes", () => {
@@ -91,8 +102,36 @@ describe("simulatePolicy", () => {
 		const result = simulatePolicy(buildRecordedTree(T2), EXPLORE_ROOT_NEVER, { k2: 5 });
 		expect(result.revealedIds).toEqual(["t2-n0", "t2-n1"]);
 		expect(result.revealedIds).not.toContain("t2-n2");
-		expect(result.outOfSupportRounds).toBeGreaterThan(0);
+		expect(result.outOfSupportCells).toBe(4);
+		expect(result.selectedCells).toBe(5);
+		expect(result.inSupport).toBeCloseTo(0.2, 12);
+		expect(result.bestSoFar).toEqual([0.6, 0.6, 0.6, 0.6, 0.6]);
+		expect(result.probesToBest).toBe(1);
 		expect(result.rounds).toBe(5);
+	});
+
+	it("reports probesToBest 0 and inSupport 1 when the root is the best and nothing is out of support", () => {
+		const rootBest: TreeRecord[] = [
+			header("t3"),
+			node({ id: "t3-n0", parentId: null, seq: 0, score: 0.9 }),
+			node({ id: "t3-n1", parentId: "t3-n0", seq: 1, branch: 0, score: 0.5 }),
+			node({ id: "t3-n2", parentId: "t3-n0", seq: 2, branch: 1, score: 0.4 }),
+		];
+		const result = simulatePolicy(buildRecordedTree(rootBest), EXPLORE_ROOT_NEVER, { k2: 2 });
+		expect(result.bestScore).toBe(0.9);
+		expect(result.probesToBest).toBe(0);
+		expect(result.outOfSupportCells).toBe(0);
+		expect(result.inSupport).toBe(1);
+		expect(result.bestSoFar).toEqual([0.9, 0.9]);
+		// A replay that selected nothing has inSupport 1 by definition.
+		const empty = simulatePolicy(
+			buildRecordedTree([header("t4"), node({ id: "t4-n0", parentId: null, seq: 0, score: 0.1 })]),
+			BEST_FIRST,
+			{ k2: 3 },
+		);
+		expect(empty.selectedCells).toBe(0);
+		expect(empty.inSupport).toBe(1);
+		expect(empty.bestSoFar).toEqual([]);
 	});
 
 	it("stops at k2", () => {
@@ -114,6 +153,82 @@ describe("simulatePolicy", () => {
 		expect(patience.rounds).toBe(2);
 		expect(never.rounds).toBe(12);
 		expect(patience).not.toEqual(never);
+	});
+});
+
+/**
+ * A synthetic task whose first child beats the root by `delta` and whose deeper
+ * children improve by a full 0.4, so the patience rule's verdict on round 1
+ * hinges on whether `delta` clears `IMPROVE_EPS`.
+ */
+function nearTieTask(delta: number): ScoredTask<{ value: number; depth: number }> {
+	return {
+		id: "sum-difference",
+		root: () => ({ value: 0.5, depth: 0 }),
+		propose: (parent) =>
+			parent === null
+				? { value: 0.5, depth: 0 }
+				: { value: parent.value + (parent.depth === 0 ? delta : 0.4), depth: parent.depth + 1 },
+		evaluate: (candidate) => ({ valid: true, score: candidate.value }),
+		serialize: (candidate) => candidate,
+		deserialize: (value) => value as { value: number; depth: number },
+	};
+}
+
+describe("replay improvement epsilon matches the online driver", () => {
+	const PATIENCE_ONE = policy({ selectionRule: "best-first", stopRule: "patience", beta: 1, batchSize: 1 });
+	const NEVER = policy({ selectionRule: "best-first", stopRule: "never", batchSize: 1 });
+	const dirs: string[] = [];
+
+	afterEach(() => {
+		for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+	});
+
+	function online(delta: number, grow: ExplorationPolicy) {
+		const dir = mkdtempSync(join(tmpdir(), "dream-eps-"));
+		dirs.push(dir);
+		const result = runOnlineExploration({
+			task: nearTieTask(delta),
+			taskId: "sum-difference",
+			seed: 1,
+			rng: createSeededRng(1),
+			clock: () => 1,
+			workers: 1,
+			k1: 4,
+			dir,
+			policy: grow,
+			iteration: 0,
+		});
+		return { result, recorded: readTree(result.treeId, dir) };
+	}
+
+	it("stops on the same round online and in replay when a child beats the root by less than IMPROVE_EPS", () => {
+		// The full chain (grown with `never`) holds four probes; only the first is a sub-epsilon gain.
+		const chain = online(IMPROVE_EPS / 10, NEVER);
+		expect(chain.result.revealedCount).toBe(4);
+		// Online with patience 1: the sub-epsilon gain is not an improvement, so the rule fires after round 1.
+		const patient = online(IMPROVE_EPS / 10, PATIENCE_ONE);
+		expect(patient.result.rounds).toBe(1);
+		expect(patient.result.revealedCount).toBe(1);
+		// Replaying the patience policy over the full chain must stop on the same round with the same probes,
+		// even though three more (much better) nodes are in support.
+		const replay = simulatePolicy(chain.recorded, PATIENCE_ONE, { k2: 8 });
+		expect(replay.rounds).toBe(patient.result.rounds);
+		expect(replay.N).toBe(patient.result.revealedCount);
+		expect(replay.bestScore).toBe(patient.result.bestScore);
+	});
+
+	it("keeps going on the same round online and in replay when the gain clears IMPROVE_EPS", () => {
+		const chain = online(IMPROVE_EPS * 10, NEVER);
+		const patient = online(IMPROVE_EPS * 10, PATIENCE_ONE);
+		expect(patient.result.rounds).toBe(4);
+		expect(patient.result.revealedCount).toBe(4);
+		const replay = simulatePolicy(chain.recorded, PATIENCE_ONE, { k2: 8 });
+		expect(replay.rounds).toBe(patient.result.rounds);
+		expect(replay.N).toBe(patient.result.revealedCount);
+		expect(replay.bestScore).toBe(patient.result.bestScore);
+		expect(replay.probesToBest).toBe(patient.result.probesToBest);
+		expect(replay.revealedIds).toEqual(chain.result.tree.allNodes().map((node) => node.id));
 	});
 });
 

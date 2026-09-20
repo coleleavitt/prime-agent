@@ -8,8 +8,23 @@
  * generates — the recorded child of each selected cell. The root reveals its
  * earliest-seq unrevealed child; a non-root leaf reveals its single unrevealed
  * child. A legally-selected cell with no unrevealed recorded child is OUT OF
- * SUPPORT: it reveals nothing and is counted, which is the off-policy penalty
- * for a policy that would explore branches the online run never recorded.
+ * SUPPORT: it reveals nothing but is CHARGED as a probe (`selectedCells`,
+ * `bestSoFar`), which is the off-policy penalty for a policy that would explore
+ * branches the online run never recorded. Improvement detection uses the same
+ * `IMPROVE_EPS` as the online drivers, so the patience rule fires on the same
+ * round online and in replay.
+ *
+ * A round whose every selected cell is out of support reveals nothing and leaves
+ * the observation unchanged, so the deterministic interpreter selects the same
+ * dead cells next round: from there the replay only burns cells and rounds until
+ * the stop rule fires or `k2` is reached, and with `k2 > k1` that can carry
+ * `rounds` past the online cap. Those rounds are counted on purpose: they are the
+ * off-policy penalty a CANDIDATE pays for a walk the recording cannot support
+ * (the chain-versus-full-batch case in `test/dream-improve.test.ts` depends on
+ * it). They are never a penalty on the incumbent, because the selection
+ * (`improve.ts` `measurePool`) scores only trees the incumbent replays with zero
+ * out-of-support cells, and a policy replaying the tree it grew reveals it
+ * exactly and stops at `allRevealed`.
  *
  * Replay uses NO rng and no clock, so thousands of policies are scored at zero
  * cost and every result is byte-reproducible. `simulatePolicy` opens no span so
@@ -18,7 +33,7 @@
  */
 
 import { withSpan } from "@earendil-works/pi-ai";
-import { applyStopRule, interpretPolicy, type StopState } from "./interpreter.js";
+import { applyStopRule, IMPROVE_EPS, interpretPolicy, type StopState } from "./interpreter.js";
 import { computeObjective, DEFAULT_OBJECTIVE, poolScoreScale, type ReplayObjectiveConfig } from "./objective.js";
 import { assertLegalBatch, type Cell, type ObservationView, type RevealedNode } from "./observation.js";
 import { type ExplorationPolicy, policyId } from "./policy.js";
@@ -37,8 +52,19 @@ export interface ReplayResult {
 	rounds: number;
 	/** Best valid score over the revealed prefix (0 when nothing valid). */
 	bestScore: number;
-	/** Legal selections that revealed nothing because the recorded branch was exhausted. */
-	outOfSupportRounds: number;
+	/** Legal selections (cells) that revealed nothing because the recorded branch was exhausted. */
+	outOfSupportCells: number;
+	/** Charged selections: `N + outOfSupportCells`. */
+	selectedCells: number;
+	/** `N / selectedCells`; 1 when nothing was selected. */
+	inSupport: number;
+	/**
+	 * Running best valid score after each CHARGED selection (length `selectedCells`);
+	 * an out-of-support selection repeats the running best. 0 while nothing valid.
+	 */
+	bestSoFar: number[];
+	/** 1-based index of the first charged selection at which `bestScore` was reached; 0 when the root is best. */
+	probesToBest: number;
 }
 
 export interface ReplayConfig {
@@ -219,10 +245,20 @@ export function simulatePolicy(
 ): ReplayResult {
 	const sim = new ReplaySimulatorImpl(recorded);
 	const k2 = Math.max(1, Math.trunc(cfg.k2));
-	let bestScore = bestOverRevealed(recorded, sim.revealedSet());
+	const root = recorded.nodeById(recorded.rootId);
+	let runningBest = 0;
+	let seenValid = false;
+	if (root?.valid) {
+		runningBest = root.score;
+		seenValid = true;
+	}
+	// `bestScore` lags the true running max by up to IMPROVE_EPS, exactly as the
+	// online driver's does; the stop rule reads it, the result reports the true max.
+	let bestScore = seenValid ? runningBest : 0;
 	let roundsSinceImprovement = 0;
 	let rounds = 0;
 	let outOfSupport = 0;
+	const bestSoFar: number[] = [];
 	while (rounds < k2) {
 		if (sim.allRevealed()) break;
 		const view = sim.view();
@@ -230,12 +266,22 @@ export function simulatePolicy(
 		if (batch.length === 0) break;
 		assertLegalBatch(view, batch);
 		for (const cell of batch) {
-			if (sim.revealFor(cell) === undefined) outOfSupport++;
+			const revealedId = sim.revealFor(cell);
+			if (revealedId === undefined) {
+				outOfSupport++;
+			} else {
+				const node = recorded.nodeById(revealedId);
+				if (node?.valid && (!seenValid || node.score > runningBest)) {
+					runningBest = node.score;
+					seenValid = true;
+				}
+			}
+			bestSoFar.push(seenValid ? runningBest : 0);
 		}
 		rounds++;
 		sim.advanceRound();
 		const newBest = bestOverRevealed(recorded, sim.revealedSet());
-		if (newBest > bestScore) {
+		if (newBest > bestScore + IMPROVE_EPS) {
 			bestScore = newBest;
 			roundsSinceImprovement = 0;
 		} else {
@@ -255,14 +301,26 @@ export function simulatePolicy(
 		if (applyStopRule(policy, state)) break;
 	}
 	const revealedIds = sim.revealedIds();
+	const finalBest = bestOverRevealed(recorded, sim.revealedSet());
+	const N = revealedIds.length - 1;
+	const selectedCells = N + outOfSupport;
+	let probesToBest = 0;
+	if (seenValid && !(root?.valid && root.score >= finalBest)) {
+		const first = bestSoFar.findIndex((score) => score >= finalBest);
+		probesToBest = first < 0 ? 0 : first + 1;
+	}
 	return {
 		policyId: policyId(policy),
 		treeId: recorded.header.treeId,
 		revealedIds,
-		N: revealedIds.length - 1,
+		N,
 		rounds,
-		bestScore,
-		outOfSupportRounds: outOfSupport,
+		bestScore: finalBest,
+		outOfSupportCells: outOfSupport,
+		selectedCells,
+		inSupport: selectedCells === 0 ? 1 : N / selectedCells,
+		bestSoFar,
+		probesToBest,
 	};
 }
 
@@ -290,7 +348,9 @@ export function simulatePolicyWithSpan(
 					workers: recorded.header.w,
 					k1: cfg.k1,
 				}),
-				"dream.out_of_support": result.outOfSupportRounds,
+				"dream.out_of_support": result.outOfSupportCells,
+				"dream.in_support": result.inSupport,
+				"dream.probes_to_best": result.probesToBest,
 				"dream.simulations": 1,
 			});
 			return result;

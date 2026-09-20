@@ -99,6 +99,46 @@ describe("agent-session Dream-RSI entry points (faux provider)", () => {
 		expect(updates.at(-1)?.status).toMatchObject({ phase: "stopped", stopReason: "cancelled" });
 	});
 
+	it("dream.experiment with seeds runs every seed under one run id at zero tokens and lists every result path", async () => {
+		const harness = await dreamHarness();
+		const started = harness.session.handleDreamHostRequest("dream.experiment", {
+			task: "sum-difference",
+			seeds: [5, 6],
+			rounds: 2,
+			arms: ["dream", "fixed"],
+			workers: 1,
+			k1: 2,
+			k2: 4,
+			dreams: 1,
+		});
+		expect(started).toMatchObject({ started: true, seeds: 2 });
+		const runId = (started as { runId: string }).runId;
+		await vi.waitFor(() => {
+			const status = harness.session.handleDreamHostRequest("dream.status") as { stopReason?: string };
+			expect(status.stopReason).toBe("completed");
+		});
+		const status = harness.session.handleDreamHostRequest("dream.status") as {
+			runId: string;
+			seedIndex: number;
+			seedCount: number;
+			resultPath: string;
+			resultPaths: string[];
+			tokens?: number;
+		};
+		expect(status.runId).toBe(runId);
+		expect(status.seedCount).toBe(2);
+		expect(status.seedIndex).toBe(1);
+		expect(status.resultPaths).toHaveLength(2);
+		expect(status.resultPaths[0]).toMatch(/sum-difference-s5-n2-\d+\/result\.json$/);
+		expect(status.resultPaths[1]).toMatch(/sum-difference-s6-n2-\d+\/result\.json$/);
+		expect(status.resultPath).toBe(status.resultPaths[1]);
+		expect(status.tokens).toBeUndefined();
+		expect(harness.faux.state.callCount).toBe(0);
+		const updates = harness.eventsOfType("dream_run_update");
+		expect(updates.every((update) => update.status.runId === runId)).toBe(true);
+		expect(new Set(updates.map((update) => update.status.seedIndex))).toEqual(new Set([0, 1]));
+	});
+
 	it("dream.status is idle before any run, dream.cancel is false, and malformed payloads are rejected", async () => {
 		const harness = await dreamHarness();
 		expect(harness.session.handleDreamHostRequest("dream.status")).toEqual({ phase: "idle" });

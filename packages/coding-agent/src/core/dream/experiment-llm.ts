@@ -47,13 +47,16 @@ import {
 	createLlmProposer,
 	DEFAULT_CHILD_TOKEN_BUDGET,
 	DreamAbortError,
+	mergePrimedRollouts,
 	runDreamLoopWithAgent,
 	runOnlineExplorationWithAgent,
 } from "./llm.js";
-import type { DreamLoopResult } from "./loop.js";
+import { type DreamLoopResult, primingTreeId } from "./loop.js";
+import type { ExplorationPolicy } from "./policy.js";
 import { asyncOf, createLocalProposer, zeroProposalTally } from "./proposer.js";
 import { RejectionLog, rejectionsPath } from "./rejections.js";
 import { createSeededRng } from "./rng.js";
+import type { ExploreOptions, ExploreResult } from "./rollout.js";
 import type { DreamExperimentLlmContext } from "./run-service.js";
 import { copyTree } from "./store.js";
 import { resolveTaskN, taskPromptContext } from "./tasks/index.js";
@@ -97,6 +100,8 @@ export function createAgentExperimentRunner(context: AgentExperimentRunnerOption
 			proposer: useLlmProposer ? "llm" : "local",
 			dreamer: useLlmDreamer ? "llm" : "local",
 			...(scope.model ? { model: scope.model } : {}),
+			...(scope.thinkingLevel === undefined ? {} : { thinking: scope.thinkingLevel }),
+			...(scope.maxOutputTokens === undefined ? {} : { maxOutputTokens: scope.maxOutputTokens }),
 		}),
 		prepare: async (plan: ExperimentPlan): Promise<ExperimentSharedRollout | undefined> => {
 			assertGuidedArmsServed(
@@ -147,11 +152,13 @@ interface SharedRolloutOptions {
 /**
  * Round 1, once. The rollout is exactly what each arm's loop would perform for
  * iteration 0 (same policy, rng fork label, clock, budget and tree id), grown into
- * the first arm's store and copied to the others. Its proposer handler calls are
- * counted (retries included) and reported on every arm's round-1 record, since
- * every arm shares that cost; so are its provenance (`agentGeneratedCount`, the
- * proposer tally), and its rejections are logged under the first arm's store as
- * `<experimentId>-shared`.
+ * the first arm's store and copied to the others; so is each priming rollout
+ * (`plan.primingPolicies`, forks `prime:<i>`, ids `primingTreeId`), which every
+ * arm's round 1 is then charged with. The proposer handler calls are counted
+ * (retries included) and reported on every arm's round-1 record, since every arm
+ * shares that cost; so are the provenance (`agentGeneratedCount`, the proposer
+ * tally) and the merged round-1 curve, and the rejections are logged under the
+ * first arm's store as `<experimentId>-shared`.
  */
 async function sharedInitialRollout(
 	plan: ExperimentPlan,
@@ -176,34 +183,45 @@ async function sharedInitialRollout(
 				...(options.promptContext ? { promptContext: options.promptContext } : {}),
 			})
 		: asyncOf(createLocalProposer(plan.task));
-	const explore = await runOnlineExplorationWithAgent(
-		{
-			task: plan.task,
-			taskId: plan.taskId,
-			...(plan.n !== undefined ? { n: plan.n } : {}),
-			seed: plan.seed,
-			rng: createSeededRng(plan.seed).fork("iter:0"),
-			clock: first.loop.clock,
-			workers: plan.budget.workers,
-			k1: plan.budget.k1,
-			dir: first.dir,
-			policy: plan.initialPolicy,
-			iteration: 0,
-		},
-		proposer,
-		options.signal,
-	);
-	// A local-proposer rollout stops early on abort instead of throwing; never share a truncated round 1.
+	const base: Omit<ExploreOptions, "rng" | "policy"> = {
+		task: plan.task,
+		taskId: plan.taskId,
+		...(plan.n !== undefined ? { n: plan.n } : {}),
+		seed: plan.seed,
+		clock: first.loop.clock,
+		workers: plan.budget.workers,
+		k1: plan.budget.k1,
+		dir: first.dir,
+		iteration: 0,
+	};
+	const rollout = (policy: ExplorationPolicy, fork: string, treeId?: string): Promise<ExploreResult> =>
+		runOnlineExplorationWithAgent(
+			{
+				...base,
+				rng: createSeededRng(plan.seed).fork(fork),
+				policy,
+				...(treeId !== undefined ? { treeId } : {}),
+			},
+			proposer,
+			options.signal,
+		);
+	const explore = await rollout(plan.initialPolicy, "iter:0");
+	const primed: ExploreResult[] = [];
+	for (const [index, policy] of plan.primingPolicies.entries()) {
+		// A local-proposer rollout stops early on abort instead of throwing; never share a truncated round 1.
+		if (options.signal.aborted) throw new DreamAbortError("dream experiment aborted during the shared rollout");
+		primed.push(
+			await rollout(policy, `prime:${index}`, primingTreeId(plan.taskId, plan.seed, index, first.loop.clock())),
+		);
+	}
 	if (options.signal.aborted) throw new DreamAbortError("dream experiment aborted during the shared rollout");
-	for (const arm of plan.arms.slice(1)) copyTree(explore.treeId, first.dir, arm.dir);
+	for (const arm of plan.arms.slice(1)) {
+		copyTree(explore.treeId, first.dir, arm.dir);
+		for (const prime of primed) copyTree(prime.treeId, first.dir, arm.dir);
+	}
 	return {
-		treeId: explore.treeId,
-		bestScore: explore.bestScore,
-		revealedCount: explore.revealedCount,
-		agentGeneratedCount: explore.agentGeneratedCount,
+		...mergePrimedRollouts(explore, primed),
 		proposals: tally,
-		rounds: explore.rounds,
-		tokens: explore.tokens,
 		handlerCalls: { proposer: proposerCalls, dreamer: 0, guidance: 0 },
 	};
 }

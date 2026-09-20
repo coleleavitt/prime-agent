@@ -1,8 +1,10 @@
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { APP_NAME } from "../config.js";
 import { type ExperimentArm, isExperimentArm } from "./dream/experiment.js";
 import type { DreamTaskId } from "./dream/task.js";
 import { DREAM_TASK_IDS } from "./dream/tasks/index.js";
 import type { SourceInfo } from "./source-info.js";
+import { THINKING_LEVELS } from "./thinking-levels.js";
 
 export type SlashCommandSource = "extension" | "prompt" | "skill";
 
@@ -140,6 +142,9 @@ export function parseRavoCommandOptions(args: string): RavoCommandOptions {
 	};
 }
 
+/** The pool-priming choice `/dream --priming` selects; `none` is the default and byte-identical to no flag. */
+export type DreamPrimingOption = "none" | "diverse";
+
 export interface DreamCommandOptions {
 	task: DreamTaskId;
 	n?: number;
@@ -157,10 +162,22 @@ export interface DreamCommandOptions {
 	rounds?: number;
 	/** experiment: distinct arms in run order. */
 	arms?: ExperimentArm[];
+	/** experiment: several seeds run sequentially under one run id; exclusive with `--seed`. */
+	seeds?: number[];
+	/** Child model selector (`provider/id`) for the proposer, dreamer and guidance children. */
+	model?: string;
+	/** Child thinking level; the run service defaults to `off`. */
+	thinking?: ThinkingLevel;
+	/** Visible-answer cap for every child role, in output tokens. */
+	maxOutputTokens?: number;
+	/** Pool priming; only `diverse` is recorded (`none` is the default). */
+	priming?: DreamPrimingOption;
 }
 
-const DREAM_USAGE =
-	"Usage: /dream [experiment] [--task <circle-packing|sum-difference|python-speedup>] [--n N] [--seed N] [--workers N] [--k1 N] [--k2 N] [--dreams N] [--iterations N] [--rounds N] [--arms dream,fixed] [--llm-proposer] [--llm-dreamer]";
+export const DREAM_USAGE = `Usage: /dream [experiment] [--task <${DREAM_TASK_IDS.join("|")}>] [--n N] [--seed N] [--seeds a,b,c] [--workers N] [--k1 N] [--k2 N] [--dreams N] [--iterations N] [--rounds N] [--arms dream,fixed] [--priming none|diverse] [--model provider/id] [--thinking <${THINKING_LEVELS.join("|")}>] [--max-output-tokens N] [--llm-proposer] [--llm-dreamer]`;
+
+/** The most seeds `/dream experiment --seeds` accepts; mirrors `DREAM_MAX_SEEDS` without importing the LLM path. */
+const DREAM_SLASH_MAX_SEEDS = 16;
 
 function isDreamTaskIdValue(value: string | undefined): value is DreamTaskId {
 	return value !== undefined && (DREAM_TASK_IDS as readonly string[]).includes(value);
@@ -178,6 +195,46 @@ function parseDreamSeed(value: string | undefined): number {
 		throw new Error(`${DREAM_USAGE} (--seed expects a non-negative integer)`);
 	}
 	return Number(value);
+}
+
+function parseDreamSeeds(value: string | undefined): number[] {
+	const parts = (value ?? "")
+		.split(",")
+		.map((part) => part.trim())
+		.filter(Boolean);
+	if (parts.length === 0) throw new Error(`${DREAM_USAGE} (--seeds expects a comma-separated list of seeds)`);
+	if (parts.length > DREAM_SLASH_MAX_SEEDS) {
+		throw new Error(`${DREAM_USAGE} (--seeds lists at most ${DREAM_SLASH_MAX_SEEDS} seeds)`);
+	}
+	const seeds: number[] = [];
+	for (const part of parts) {
+		if (!/^\d+$/.test(part) || seeds.includes(Number(part))) {
+			throw new Error(`${DREAM_USAGE} (--seeds expects distinct non-negative integers)`);
+		}
+		seeds.push(Number(part));
+	}
+	return seeds;
+}
+
+function parseDreamThinking(value: string | undefined): ThinkingLevel {
+	const level = value?.trim().toLowerCase();
+	if (level === undefined || !THINKING_LEVELS.includes(level as ThinkingLevel)) {
+		throw new Error(`${DREAM_USAGE} (--thinking expects one of ${THINKING_LEVELS.join(", ")})`);
+	}
+	return level as ThinkingLevel;
+}
+
+function parseDreamModel(value: string | undefined): string {
+	const model = value?.trim();
+	if (!model) throw new Error(`${DREAM_USAGE} (--model expects a provider/id selector)`);
+	return model;
+}
+
+function parseDreamPriming(value: string | undefined): DreamPrimingOption {
+	if (value !== "none" && value !== "diverse") {
+		throw new Error(`${DREAM_USAGE} (--priming expects none or diverse)`);
+	}
+	return value;
 }
 
 function parseDreamArms(value: string | undefined): ExperimentArm[] {
@@ -220,6 +277,11 @@ export function parseDreamCommandOptions(args: string): DreamCommandOptions {
 	let iterations: number | undefined;
 	let rounds: number | undefined;
 	let arms: ExperimentArm[] | undefined;
+	let seeds: number[] | undefined;
+	let model: string | undefined;
+	let thinking: ThinkingLevel | undefined;
+	let maxOutputTokens: number | undefined;
+	let priming: DreamPrimingOption | undefined;
 	let llmProposer = false;
 	let llmDreamer = false;
 	let experiment = false;
@@ -237,7 +299,10 @@ export function parseDreamCommandOptions(args: string): DreamCommandOptions {
 			llmDreamer = true;
 			continue;
 		}
-		const match = /^--(task|n|seed|workers|k1|k2|dreams|iterations|rounds|arms)(?:=(.*))?$/.exec(token ?? "");
+		const match =
+			/^--(task|n|seed|seeds|workers|k1|k2|dreams|iterations|rounds|arms|priming|model|thinking|max-output-tokens)(?:=(.*))?$/.exec(
+				token ?? "",
+			);
 		if (!match) throw new Error(DREAM_USAGE);
 		const flag = match[1];
 		let value = match[2];
@@ -277,13 +342,31 @@ export function parseDreamCommandOptions(args: string): DreamCommandOptions {
 			case "arms":
 				arms = parseDreamArms(value);
 				break;
+			case "seeds":
+				seeds = parseDreamSeeds(value);
+				break;
+			case "priming":
+				priming = parseDreamPriming(value);
+				break;
+			case "model":
+				model = parseDreamModel(value);
+				break;
+			case "thinking":
+				thinking = parseDreamThinking(value);
+				break;
+			case "max-output-tokens":
+				maxOutputTokens = parseDreamCount("--max-output-tokens", value);
+				break;
 		}
 	}
 	if (experiment && iterations !== undefined) {
 		throw new Error(`${DREAM_USAGE} (experiment takes --rounds, not --iterations)`);
 	}
-	if (!experiment && (rounds !== undefined || arms !== undefined)) {
-		throw new Error(`${DREAM_USAGE} (--rounds and --arms belong to /dream experiment)`);
+	if (!experiment && (rounds !== undefined || arms !== undefined || seeds !== undefined)) {
+		throw new Error(`${DREAM_USAGE} (--rounds, --arms and --seeds belong to /dream experiment)`);
+	}
+	if (seeds !== undefined && seed !== undefined) {
+		throw new Error(`${DREAM_USAGE} (--seed and --seeds are exclusive)`);
 	}
 	if (arms?.some((arm) => arm.endsWith("-guided")) && !llmProposer) {
 		throw new Error(`${DREAM_USAGE} (dream-guided/fixed-guided require --llm-proposer)`);
@@ -302,6 +385,12 @@ export function parseDreamCommandOptions(args: string): DreamCommandOptions {
 		...(experiment ? { experiment: true as const } : {}),
 		...(rounds === undefined ? {} : { rounds }),
 		...(arms === undefined ? {} : { arms }),
+		...(seeds === undefined ? {} : { seeds }),
+		...(model === undefined ? {} : { model }),
+		...(thinking === undefined ? {} : { thinking }),
+		...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
+		// `none` is the default and is not recorded, so `--priming none` parses byte-identically to no flag.
+		...(priming === "diverse" ? { priming } : {}),
 	};
 }
 
@@ -424,7 +513,7 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 		description:
 			"Run the Dream-RSI loop over a scored task; --llm-proposer/--llm-dreamer spend tokens, default is local and token-free",
 		argumentHint:
-			"[--task <id>] [--n N] [--seed N] [--iterations N] [--workers N] [--k1 N] [--k2 N] [--dreams N] [--llm-proposer] [--llm-dreamer]",
+			"[experiment] [--task <id>] [--n N] [--seed N] [--seeds a,b,c] [--iterations N] [--rounds N] [--arms dream,fixed] [--workers N] [--k1 N] [--k2 N] [--dreams N] [--priming none|diverse] [--model provider/id] [--thinking <level>] [--max-output-tokens N] [--llm-proposer] [--llm-dreamer]",
 		takesArgument: true,
 	},
 	{

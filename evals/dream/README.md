@@ -19,7 +19,23 @@ In-session, with the LLM proposer (spends tokens; needed for the guided ablation
 
 ```
 /dream experiment --task python-speedup --rounds 4 --arms dream,fixed,dream-guided --llm-proposer
+/dream experiment --task autocorrelation --rounds 4 --seeds 1,2,3 --llm-proposer --llm-dreamer
 ```
+
+`--seeds` runs the seeds one after another under one run and writes one `result.json` per seed
+(each seed is its own experiment directory); pass all of them to the plotter for the noise floor.
+In-session the list is capped at 16 seeds, since every LLM seed is a full experiment's spend.
+
+`--priming diverse` (CLI and `/dream`; `priming="diverse"` in the skill) rolls out the fixed
+`PRIMING_DIVERSE` pair at round 1 in every arm and charges its probes to round 1 (`primingTreeIds`,
+`primingProbes` on the row); `--beta3` sets the anytime weight next to `--beta1` / `--beta2`; an
+in-session run also takes `--model`, `--thinking` and `--max-output-tokens` for the child agents
+(defaults: thinking off; caps 4096 for the proposer, 8192 on python-speedup, 4096 dreamer, 2048
+guidance), recorded on each arm's `mode`. Beside every arm's `trees/` the runner writes
+`dreams/<runId>.jsonl` (one verdict per candidate per dreaming step, the arm's post-hoc final
+selection as iteration `-1`) and, on the LLM path, `rejections/<runId>.jsonl`; `result.json`
+carries the same verdicts as each round's `dreaming.candidateVerdicts`, which is what `dreaming.png`
+reads. `docs/dream-rsi.md` defines every field.
 
 or from the kernel:
 
@@ -51,18 +67,26 @@ Output (default `plots/` next to the first result file):
 |---|---|---|
 | `round_best.png` | 6a | round-best points per seed and the cumulative-best step per arm vs round |
 | `compute.png` | 3b / 5 | cumulative best vs cumulative discovery compute per arm, with the fixed arm's final best `T` and the equal-budget line `B`; the compute axis is agent-generated calls (bold) with probes as the thin secondary series when the files record provenance, else probes, and the subtitle says which |
-| `attempts.png` | 6b | evaluated attempts per round per arm; `Δ k/n` marks a policy change in k of n seeds (adaptivity) |
+| `attempts.png` | 6b | evaluated attempts per round per arm; `Δ k/n` marks a policy change in k of n seeds (adaptivity); a dreaming arm whose policy never changed is stamped `policy never changed in k/n seed(s): dreaming inert` |
 | `proposals.png` | validity | child proposer results per round per arm: accepted (arm colour) stacked with rejected by reason (grey), and the local fallbacks those rejections caused as the x-marked line; the words `not recorded` when the file predates origin tracking |
-| `headline.png` | the multipliers | `X.XXx fewer calls (a vs b)` and `Y.YYx higher score at budget B (a vs b)` per arm, read the right way round below 1 (`1.20x MORE calls (72 vs 60)`, `1.03x LOWER score`), or the literal words `not reached` / `not comparable`; then each arm's provenance totals (`47 probes = 2 agent-generated + 45 local (45 fallbacks)`) |
-| `report.html` | all five | self-contained page with captions built from the result metadata and the per-round table, provenance columns included |
+| `dreaming.png` | the audit | one panel per arm that dreamed: every candidate's replay value per step (filled = eligible for the argmax, hollow = identical / duplicate / quality-rejected / unmeasurable; llm candidates in the arm colour, local grey), the incumbent as a tick, the chosen policy starred, the best lever-scan policy as a triangle, the words `improved` / `no change` with the lever gap, and a strip with the share of candidates replayed fully in support; a file written before the audit shows the incumbent and chosen values only and says so |
+| `headline.png` | the multipliers | `X.XXx fewer calls (a vs b)` and `Y.YYx higher score at budget B (a vs b)` per arm, read the right way round below 1 (`1.20x MORE calls (72 vs 60)`, `1.03x LOWER score`), or the literal words `not reached` / `not comparable`; the exact (first-probe) calls line beside it; the noise floor across seeds, the paired per-seed deltas and the verdict; the dreaming summary; then each arm's provenance totals (`47 probes = 2 agent-generated + 45 local (45 fallbacks)`) |
+| `report.html` | all six | self-contained page with captions built from the result metadata, the per-step dreaming table and the per-round table, provenance columns included |
 
 Several files are treated as seeds of one experiment (same task, rounds, budget, replay objective
 and arms; distinct seeds) and reduced to mean / min / max per round, with the median of the defined
 multipliers and "reached T in k/n seeds". A single file is plotted as is. Files that disagree are
 refused, and the message names the field and both values, e.g.
 `s2/result.json: objective differ from s1/result.json (objective beta1=0.05 beta2=0.05 vs beta1=0.01 beta2=0.02); plot one experiment at a time`:
-seeds scored by different `beta1`/`beta2` are not one experiment, and a file that records no
-objective does not pool with one that does.
+seeds scored by different `beta1`/`beta2`/`beta3` are not one experiment, a file that records no
+objective does not pool with one that does, and a file without `beta3` (the two-term objective)
+does not pool with one that has it.
+
+Seeds are independent replicates. The pool a dreaming step replays grows across rounds within
+one arm only, never across arms (the control never sees the dream arm's trees, and vice versa)
+or seeds; that is what makes the paired per-seed comparison below valid, and there is no
+cross-store pooling to switch on. The tree ids collide across arms of one seed on purpose:
+round 1 is shared by construction, and the arms' stores are separate directories.
 
 ## What the numbers mean
 
@@ -102,6 +126,45 @@ objective does not pool with one that does.
   in (arm vs reference) order. The colour follows the raw ratio (below 1 is bad). Across seeds an
   aggregate below 1 prints the inverse of the median ratio (`median 1.50x MORE calls`).
 - **delta final best** = `deltaBest(arm) = finalBest(arm) - T`, printed with its sign.
+- **Exact headline.** A round record may carry `probesToRoundBest` (the probe, in reveal order,
+  at which the rollout found its best node) and `improvements` (`[{probe, score}]`, the
+  best-so-far curve at the probes where it rose); the headline may carry `probesToTargetExact`
+  and `callsMultiplierExact`. The exact count is the compute at the FIRST PROBE whose score
+  reaches `T`, not the end of the round that contains it, and it is printed beside the
+  rollout-granular line as `exact 1.16x fewer calls (19 vs 22)`. The file's own numbers win;
+  without them the count is recomputed from `improvements` when every arm has the curve; a file
+  without either reads `exact probes to T not recorded` (not recorded is not `not reached`).
+- **Noise floor and verdict.** The fixed arm's final best and probes-to-target vary from seed to
+  seed with nothing but the proposer's sampling, so their spread across seeds (`min..max`,
+  `spread`, sample `std`) is the floor any dream-vs-fixed difference has to clear. Per non-fixed
+  arm the card lists the paired per-seed delta of final best (arm minus fixed; both arms share
+  round 1 within a seed), its mean and sign counts, and one verdict: `single seed: no verdict`
+  (one file: there is no floor to measure); `exceeds noise floor` only when the absolute mean
+  paired delta is larger than the fixed arm's `min..max` spread AND every seed's delta has the
+  same sign (ok-toned when positive, bad when negative); otherwise `within noise floor`. When the
+  dreaming arm's policy never changed in every seed there was no treatment, and the verdict is
+  forced to `within noise floor (dreaming inert)` whatever the numbers say; `attempts.png` carries
+  the same stamp. With one seed the words add `(dreaming inert: the arms ran the same policy)` so
+  the reader has both facts.
+- **Dreaming audit.** A round's `dreaming` block (the step that chose that round's policy) has
+  always carried `currentScore`, `chosenScore`, `improved` and `candidates` (a count). It may now
+  also carry `candidateVerdicts` (one record per candidate: `value`, `quality`, `anytime`, `cost`,
+  `roundsSaved`, `N`, `rounds`, `outOfSupportCells`, `inSupportMean`, `inSupportMin`, `origin`
+  `llm`/`local`, `changed`, `duplicateOf`, `eligible` and the `reason` it won, tied, lost, was
+  quality-rejected, unmeasurable, identical to the incumbent or a duplicate), `dreamer`
+  (`llm`/`local`/`mixed`) and `leverScan` (`policies`, `eligible`, `bestValue`, `bestPolicyId`,
+  `gap`: the best a fixed grid of local policies reached on the same pool, independent of what the
+  dreamer proposed; a gap of 0 means the pool had no lever, whatever was proposed). The card prints
+  per arm `dreaming ran k step(s), accepted a candidate in i, policy changes c` and the inert flag;
+  `--check` prints a per-step table (dreamer, candidates, eligible, incumbent, chosen, improved,
+  lever gap, share in support); `dreaming.png` draws it. A file written before the audit reads
+  `per-candidate scores not recorded (result predates the audit)` and its panel shows the
+  incumbent and chosen values only.
+- **Other optional fields** (`stoppedEarly` per arm, else derived from `decisionRounds < k1` when
+  every round recorded it; `primingTreeIds` / `primingProbes` on round 1; `mode.thinking` /
+  `mode.maxOutputTokens`; `initialPolicy.beta`; a note when `k1 <= beta` so patience can never
+  stop a rollout before the round cap) are read when present. Absent is "not recorded", never 0,
+  and an older file plots exactly as before.
 - **Ablation**: for each (unguided, guided) pair that ran, guided minus unguided final best; the
   paper's claim (semantic guidance is worse) holds only when the sign is negative, and the sign is
   printed either way.
@@ -140,7 +203,7 @@ objective does not pool with one that does.
 
 ```sh
 python3 -m unittest evals/dream/test_plot_experiment.py                                  # data layer; render test skips
-~/Documents/AISpecies/.venv/bin/python -m unittest evals/dream/test_plot_experiment.py   # renders the four PNGs and the report
+~/Documents/AISpecies/.venv/bin/python -m unittest evals/dream/test_plot_experiment.py   # renders the six PNGs and the report
 ```
 
 The tests use a synthetic result set (three arms, three rounds, two seeds, including a `not
@@ -150,8 +213,13 @@ and no `0.83x fewer` anywhere on the page), the refusal to pool files with diffe
 headline naming a reference arm that did not run, a file whose optional fields are all
 malformed, and the provenance cases (a file carrying the per-round provenance fields, a legacy
 file without them, the two pooled, a local-path file recording all zeros, an unlisted reject
-reason, a tally that does not add up, and malformed provenance fields); the render tests are
-skipped, not failed, where matplotlib is missing. `basedpyright evals/dream/plot_experiment.py`
+reason, a tally that does not add up, and malformed provenance fields), the noise-floor verdict
+(one seed, exceeds, mixed signs, a mean inside the spread, negative, inert in every seed and in
+one seed), the dreaming audit (verdicts, dreamer and lever scan read; an older file's fallback;
+malformed entries; pooled with an older seed), the exact headline (recomputed from
+`improvements`, the file's numbers winning, not recorded vs not reached, the exact noise floor)
+and the other optional fields; the render tests are skipped, not failed, where matplotlib is
+missing. `basedpyright evals/dream/plot_experiment.py`
 reports no errors when run with an interpreter that has matplotlib
 (`--pythonpath ~/Documents/AISpecies/.venv/bin/python`). The files are formatted with
 `ruff format --line-length 120`.

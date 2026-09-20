@@ -11,8 +11,13 @@ from typing import Any
 
 from rlm import host_request
 
-_TASKS = ("circle-packing", "sum-difference", "python-speedup")
+# Mirrors DREAM_TASK_IDS (core/dream/tasks/index.ts); the host re-validates.
+_TASKS = ("circle-packing", "sum-difference", "python-speedup", "autocorrelation")
 _ARMS = ("dream", "fixed", "dream-guided", "fixed-guided")
+_THINKING = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
+_PRIMING = ("none", "diverse")
+# Mirrors DREAM_MAX_SEEDS (core/dream/run-service.ts): every LLM seed is a full experiment's spend.
+_MAX_SEEDS = 16
 
 
 def _check_count(name: str, value: int | None) -> None:
@@ -29,6 +34,47 @@ def _check_seed(value: int | None) -> None:
         raise TypeError(f"seed must be a non-negative int or None, got {value!r}")
 
 
+def _check_seeds(value: Any) -> list[int] | None:
+    if value is None:
+        return None
+    if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)) or len(value) == 0:
+        raise TypeError(f"seeds must be a non-empty list or tuple of ints, got {value!r}")
+    if len(value) > _MAX_SEEDS:
+        raise TypeError(f"seeds must list at most {_MAX_SEEDS} seeds, got {len(value)}")
+    seeds: list[int] = []
+    for seed in value:
+        if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
+            raise TypeError(f"seeds must be non-negative ints, got {seed!r}")
+        if seed in seeds:
+            raise TypeError(f"seeds must be distinct, {seed!r} repeats")
+        seeds.append(seed)
+    return seeds
+
+
+def _child_options(
+    model: str | None, thinking: str | None, max_output_tokens: int | None, priming: str | None
+) -> dict[str, Any]:
+    """Validate the child-agent knobs shared by run() and experiment() into payload keys."""
+    payload: dict[str, Any] = {}
+    if model is not None:
+        if not isinstance(model, str) or not model.strip():
+            raise TypeError(f"model must be a non-empty 'provider/id' string or None, got {model!r}")
+        payload["model"] = model.strip()
+    if thinking is not None:
+        if not isinstance(thinking, str) or thinking.strip().lower() not in _THINKING:
+            raise TypeError(f"thinking must be one of {', '.join(_THINKING)} or None, got {thinking!r}")
+        payload["thinking"] = thinking.strip().lower()
+    _check_count("max_output_tokens", max_output_tokens)
+    if max_output_tokens is not None:
+        payload["max_output_tokens"] = max_output_tokens
+    if priming is not None:
+        if priming not in _PRIMING:
+            raise TypeError(f"priming must be one of {', '.join(_PRIMING)} or None, got {priming!r}")
+        if priming != "none":
+            payload["priming"] = priming
+    return payload
+
+
 async def status() -> dict[str, Any]:
     """Read the current Dream-RSI run status.
 
@@ -36,7 +82,10 @@ async def status() -> dict[str, Any]:
     `bestNodeScore`, `finalPolicyScore`, `improved`, `stopReason`, ...) or
     `{"phase": "idle"}` when no run is active. An experiment additionally
     reports `kind="experiment"`, `experimentId`, `arm`, `armIndex`, `armCount`,
-    `round`, `rounds`, `cumulativeProbes` and, once complete, `resultPath`.
+    `round`, `rounds`, `cumulativeProbes` and, once complete, `resultPath`. A
+    multi-seed experiment adds `seed`, `seedIndex`, `seedCount`, `resultPaths`
+    (every completed seed's result.json) and, on the LLM path, `tokens` (the
+    last completed seed's total).
     """
     return await host_request("dream.status")
 
@@ -52,6 +101,10 @@ async def run(
     iterations: int | None = None,
     llm_proposer: bool = False,
     llm_dreamer: bool = False,
+    model: str | None = None,
+    thinking: str | None = None,
+    max_output_tokens: int | None = None,
+    priming: str | None = None,
 ) -> dict[str, Any]:
     """Start the Dream-RSI loop over a scored task.
 
@@ -59,9 +112,14 @@ async def run(
     background; this returns `{"started": True, "runId": ...}` right away, or
     `{"started": False, "reason": ...}` when a run is already in progress.
     Progress is visible in the Agents View and via `status()`. `task` must be one
-    of circle-packing, sum-difference, python-speedup. The default is the local
-    zero-token proposer and dreamer; set `llm_proposer=True` or `llm_dreamer=True`
-    to spend tokens on a child-agent proposer/dreamer.
+    of circle-packing, sum-difference, python-speedup, autocorrelation. The
+    default is the local zero-token proposer and dreamer; set `llm_proposer=True`
+    or `llm_dreamer=True` to spend tokens on a child-agent proposer/dreamer.
+    `model` ('provider/id'), `thinking` (default off) and `max_output_tokens`
+    (the child's visible-answer cap; per-role defaults otherwise) apply to the
+    proposer, dreamer and guidance children. `priming="diverse"` rolls out two
+    extra fixed policies at iteration 0 so the pool has replay support the
+    default policy would not create; charged to round 1.
     """
     if task not in _TASKS:
         raise TypeError(f"task must be one of {', '.join(_TASKS)}, got {task!r}")
@@ -95,6 +153,7 @@ async def run(
         payload["llm_proposer"] = True
     if llm_dreamer:
         payload["llm_dreamer"] = True
+    payload.update(_child_options(model, thinking, max_output_tokens, priming))
     return await host_request("dream.run", payload)
 
 
@@ -110,6 +169,11 @@ async def experiment(
     dreams: int | None = None,
     llm_proposer: bool = False,
     llm_dreamer: bool = False,
+    seeds: Any = None,
+    model: str | None = None,
+    thinking: str | None = None,
+    max_output_tokens: int | None = None,
+    priming: str | None = None,
 ) -> dict[str, Any]:
     """Start a controlled Dream-RSI experiment: the dreaming arm against the
     fixed-exploration control.
@@ -127,7 +191,13 @@ async def experiment(
     `{"started": False, "reason": ...}` when a run is already in progress.
     `status()` reports `arm`, `round`, `cumulativeProbes` while it runs and
     `resultPath` (`.../experiments/<id>/result.json`, the input to
-    `evals/dream/plot_experiment.py`) once it completes.
+    `evals/dream/plot_experiment.py`) once it completes. `seeds` (a list of
+    1..16 distinct non-negative ints, exclusive with `seed`) runs one
+    independent experiment per seed sequentially under one run id, one
+    result.json each (`experiments/<task>-s<seed>-...`; `status()` lists them
+    in `resultPaths`); pass all of them to the plotter for a noise floor.
+    `model`, `thinking` (default off), `max_output_tokens` and `priming` are as
+    in `run()`; priming trees are part of every arm's shared round 1.
     """
     if task not in _TASKS:
         raise TypeError(f"task must be one of {', '.join(_TASKS)}, got {task!r}")
@@ -149,6 +219,9 @@ async def experiment(
         arm_list.append(arm)
     _check_count("n", n)
     _check_seed(seed)
+    seed_list = _check_seeds(seeds)
+    if seed is not None and seed_list is not None:
+        raise TypeError("pass either seed or seeds, not both")
     _check_count("workers", workers)
     _check_count("k1", k1)
     _check_count("k2", k2)
@@ -166,6 +239,8 @@ async def experiment(
         payload["n"] = n
     if seed is not None:
         payload["seed"] = seed
+    if seed_list is not None:
+        payload["seeds"] = seed_list
     if workers is not None:
         payload["workers"] = workers
     if k1 is not None:
@@ -178,6 +253,7 @@ async def experiment(
         payload["llm_proposer"] = True
     if llm_dreamer:
         payload["llm_dreamer"] = True
+    payload.update(_child_options(model, thinking, max_output_tokens, priming))
     return await host_request("dream.experiment", payload)
 
 

@@ -374,10 +374,35 @@ export function attachDreamRunStatus(
 	return record;
 }
 
-/** One-line Dream-RSI status summary for a row: phase and score while running, stop reason once finished. */
+/**
+ * One-line Dream-RSI status summary for a row: phase and score while running,
+ * stop reason once finished. An experiment names its seed, arm and round
+ * (`seed i/n arm r/rounds`) and, on the LLM path, the last completed seed's
+ * token total, so a multi-seed run spending real money is distinguishable from
+ * a single local loop.
+ */
 export function formatDreamRunStatusLine(status: DreamRunStatus): string {
-	if (status.stopReason) return `dream ${status.stopReason}`;
-	if (status.error) return "dream error";
+	const kind = status.kind === "experiment" ? "dream experiment" : "dream";
+	if (status.stopReason) {
+		const results = status.resultPaths?.length ?? (status.resultPath ? 1 : 0);
+		const suffix =
+			status.kind === "experiment" && results > 0 ? ` (${results} result file${results === 1 ? "" : "s"})` : "";
+		return `${kind} ${status.stopReason}${suffix}`;
+	}
+	if (status.error) return `${kind} error`;
+	if (status.kind === "experiment") {
+		const seed =
+			status.seedCount !== undefined && status.seedIndex !== undefined
+				? ` seed ${status.seedIndex + 1}/${status.seedCount}`
+				: "";
+		const arm =
+			status.arm !== undefined
+				? ` ${status.arm}${status.armIndex !== undefined && status.armCount !== undefined ? ` ${status.armIndex + 1}/${status.armCount}` : ""}`
+				: "";
+		const round = status.rounds !== undefined ? ` r${status.round ?? 0}/${status.rounds}` : "";
+		const tokens = status.tokens !== undefined ? ` tokens ${status.tokens}` : "";
+		return `${kind}${seed}${arm}${round} ${status.phase} best ${status.bestNodeScore.toFixed(4)}${tokens}`;
+	}
 	const suffix =
 		status.finalPolicyScore !== undefined
 			? ` final ${status.finalPolicyScore.toFixed(4)} improved ${status.improved}`

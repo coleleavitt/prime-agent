@@ -22,7 +22,13 @@ ratio below 1 (``1.20x MORE calls (72 vs 60)``, never ``0.83x fewer``), and
 ``localFallbacks``, ``llmProposals``, ``llmAccepted``, ``llmRejected`` by reason):
 a file that carries them puts agent-generated calls on the compute axis and gets
 the validity panel; a file written before origin tracking reads as "not recorded",
-never 0, and pools with a newer seed without inventing zeros for it.
+never 0, and pools with a newer seed without inventing zeros for it. ``Verdict``
+pins the noise-floor rule (one seed: no verdict; exceeds only when the mean paired
+delta clears the fixed arm's spread with one sign in every seed; forced within when
+dreaming was inert), ``DreamingAudit`` the ``candidateVerdicts`` / ``dreamer`` /
+``leverScan`` reader and its fallback on an older file, ``ExactHeadline`` the
+first-probe headline from ``improvements``, and ``NewFields`` ``stoppedEarly``,
+priming, the child mode fields and ``beta3``.
 """
 
 from __future__ import annotations
@@ -33,6 +39,7 @@ import io
 import json
 import os
 import re
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -336,8 +343,139 @@ def seed_local_with_provenance(seed: int) -> dict[str, Any]:
     return payload
 
 
+def seed_paired(seed: int, fixed_final: float, dream_final: float, changes: bool = True) -> dict[str, Any]:
+    """Two arms whose final bests are set directly: the fixed arm reaches its own T at round 2 (30 probes).
+
+    With ``changes`` the dream arm switches to POLICY_B at round 2 (its dreaming step
+    improved); without it the arm keeps POLICY_A throughout and never dreams a change:
+    the inert case.
+    """
+    policies = [POLICY_A, POLICY_B, POLICY_B] if changes else [POLICY_A] * 3
+    dream_rows = rows([1.30, 1.31, dream_final], [15, 10, 10], policies)
+    if not changes:
+        for row in dream_rows[1:]:
+            row["dreaming"] = {"currentScore": 1.0, "chosenScore": 1.0, "improved": False, "candidates": 4}
+    return result(
+        seed,
+        [
+            arm("fixed", rows([1.30, fixed_final, 1.31], [15, 15, 15], [POLICY_A] * 3), fixed=True),
+            arm("dream", dream_rows),
+        ],
+    )
+
+
+def verdict(
+    index: int,
+    policy_id: str,
+    origin: str,
+    value: float,
+    quality: float,
+    reason: str,
+    in_support_min: float = 1.0,
+    duplicate_of: int | None = None,
+) -> dict[str, Any]:
+    """One CandidateVerdict as core/dream/improve.ts records it."""
+    return {
+        "index": index,
+        "policyId": policy_id,
+        "policy": {"selectionRule": "best-first", "beta": 6},
+        "origin": origin,
+        "changed": ["beta"] if reason != "identical" else [],
+        "duplicateOf": duplicate_of,
+        "value": value,
+        "quality": quality,
+        "anytime": quality - 0.01,
+        "cost": 0.5,
+        "roundsSaved": 0.2,
+        "N": 12,
+        "rounds": 5,
+        "outOfSupportCells": 0 if in_support_min >= 1 else 2,
+        "inSupportMean": 1.0 if in_support_min >= 1 else 0.9,
+        "inSupportMin": in_support_min,
+        "eligible": reason in ("winner", "tie", "worse"),
+        "reason": reason,
+    }
+
+
+ROUND2_VERDICTS = [
+    verdict(0, POLICY_B, "llm", 1.26, 1.27, "winner"),
+    verdict(1, "c1c1c1c1c1c1c1c1", "local", 1.18, 1.19, "worse"),
+    verdict(2, "c2c2c2c2c2c2c2c2", "llm", 1.30, 0.90, "quality-rejected"),
+    verdict(3, POLICY_B, "llm", 1.26, 1.27, "duplicate", duplicate_of=0),
+]
+ROUND3_VERDICTS = [
+    verdict(0, POLICY_B, "llm", 1.25, 1.26, "identical"),
+    verdict(1, "c4c4c4c4c4c4c4c4", "llm", 1.22, 1.23, "worse"),
+    verdict(2, "c5c5c5c5c5c5c5c5", "local", 1.24, 1.25, "tie"),
+    verdict(3, "c6c6c6c6c6c6c6c6", "llm", 1.28, 1.29, "unmeasurable", in_support_min=0.5),
+]
+
+
+def seed_audited(seed: int) -> dict[str, Any]:
+    """The dream arm of seed_reaching_early with the per-candidate audit on both dreaming steps.
+
+    Round 2's step accepted the llm winner (1.26 over the incumbent's 1.20; the lever
+    scan found 1.27, a gap of 0.07); round 3's step kept the incumbent (no eligible
+    candidate beat 1.25; lever gap 0; one candidate left the support).
+    """
+    payload = seed_reaching_early(seed)
+    dream_rows = payload["arms"][1]["rounds"]
+    dream_rows[1]["dreaming"] = {
+        "currentScore": 1.2,
+        "chosenScore": 1.26,
+        "improved": True,
+        "candidates": 4,
+        "candidateVerdicts": ROUND2_VERDICTS,
+        "dreamer": "mixed",
+        "leverScan": {
+            "policies": 40,
+            "eligible": 30,
+            "bestValue": 1.27,
+            "bestPolicyId": "1e1e1e1e1e1e1e1e",
+            "gap": 0.07,
+        },
+    }
+    dream_rows[2]["dreaming"] = {
+        "currentScore": 1.25,
+        "chosenScore": 1.25,
+        "improved": False,
+        "candidates": 4,
+        "candidateVerdicts": ROUND3_VERDICTS,
+        "dreamer": "llm",
+        "leverScan": {"policies": 40, "eligible": 28, "bestValue": 1.25, "bestPolicyId": POLICY_B, "gap": 0},
+    }
+    return payload
+
+
+def with_improvements(payload: dict[str, Any], curves: dict[str, list[list[tuple[int, float]]]]) -> dict[str, Any]:
+    """Attach ``improvements`` / ``probesToRoundBest`` per round per arm (the exact headline's inputs)."""
+    for a in payload["arms"]:
+        for row, curve in zip(a["rounds"], curves[a["arm"]], strict=True):
+            row["improvements"] = [{"probe": p, "score": s} for p, s in curve]
+            row["probesToRoundBest"] = curve[-1][0] if curve else 0
+    return payload
+
+
+def seed_exact(seed: int) -> dict[str, Any]:
+    """seed_reaching_early with improvement curves: T = 1.35 is reached by fixed at probe 15 + 7 = 22 and by dream
+    at 15 + 4 = 19 (the rollout-granular counts are 30 and 25)."""
+    return with_improvements(
+        seed_reaching_early(seed),
+        {
+            "fixed": [[(1, 1.30)], [(3, 1.33), (7, 1.35)], [(2, 1.32)]],
+            "dream": [[(1, 1.30)], [(4, 1.36)], []],
+        },
+    )
+
+
 # A ratio below 1 written as `0.83x fewer` / `0.97x higher`; the caption's own "never as 0.83x fewer" is allowed.
 INVERTED_WORDING = re.compile(r"(?<!never as )\b0\.\d+x (fewer|higher)")
+
+
+def num(value: float | None) -> float:
+    """Narrow an optional number the fixture is known to define (``or 0`` would turn a real 0.0 into the default)."""
+    assert value is not None
+    return value
 
 
 def write(dir_: str, name: str, payload: dict[str, Any]) -> str:
@@ -419,13 +557,26 @@ class DataLayer(unittest.TestCase):
         self.assertEqual(len(both), 2, "two files that both record no objective are still one experiment")
         self.assertEqual(pe.objective_text(both[0]["objective"]), "none recorded")
 
-    def test_objective_key_only_looks_at_beta1_and_beta2(self):
-        self.assertEqual(pe.objective_key({"beta1": 0.05, "beta2": 0.05}), (0.05, 0.05))
-        self.assertEqual(pe.objective_key({"beta1": 0.05, "beta2": 0.05, "note": "x"}), (0.05, 0.05))
-        self.assertEqual(pe.objective_key({"beta1": "0.05"}), (None, None))
+    def test_objective_key_looks_at_beta1_beta2_and_the_optional_beta3(self):
+        # beta3 (the anytime weight) joined the objective later: a file without it was
+        # scored by the two-term objective, so its key carries None there and it does
+        # not pool with a file that has one, whatever the value.
+        self.assertEqual(pe.objective_key({"beta1": 0.05, "beta2": 0.05}), (0.05, 0.05, None))
+        self.assertEqual(pe.objective_key({"beta1": 0.05, "beta2": 0.05, "note": "x"}), (0.05, 0.05, None))
+        self.assertEqual(pe.objective_key({"beta1": 0.05, "beta2": 0.1, "beta3": 0.25}), (0.05, 0.1, 0.25))
+        self.assertEqual(pe.objective_key({"beta1": "0.05"}), (None, None, None))
         self.assertIsNone(pe.objective_key(None))
         self.assertEqual(pe.objective_text({"beta1": 0.05, "beta2": 1e-5}), "beta1=0.05 beta2=1e-05")
         self.assertEqual(pe.objective_text({"beta2": 0.05}), "beta1=? beta2=0.05")
+        self.assertEqual(
+            pe.objective_text({"beta1": 0.05, "beta2": 0.1, "beta3": 0.25}), "beta1=0.05 beta2=0.1 beta3=0.25"
+        )
+        three_term = seed2()
+        three_term["objective"] = {"beta1": 0.01, "beta2": 0.02, "beta3": 0.25}
+        path = write(self.tmp.name, "beta3.json", three_term)
+        with self.assertRaises(pe.ResultError) as ctx:
+            pe.load_results([self.p1, path])
+        self.assertIn("objective beta1=0.01 beta2=0.02 beta3=0.25 vs beta1=0.01 beta2=0.02", str(ctx.exception))
 
     def test_check_header_names_the_objective(self):
         text = pe.check_tables(pe.load_results([self.p1, self.p2]))
@@ -1074,6 +1225,496 @@ class Provenance(unittest.TestCase):
         self.assertIn("3 accepted + 32 rejected (parse 24, shape 6, error 2)", proc.stdout)
 
 
+class Verdict(unittest.TestCase):
+    """The noise-floor rule: the fixed arm's own seed-to-seed spread is the floor a paired delta must clear."""
+
+    tmp: tempfile.TemporaryDirectory[str]
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def load(self, *payloads):
+        paths = [write(self.tmp.name, f"s{p['seed']}.json", p) for p in payloads]
+        return pe.load_results(paths)
+
+    def test_one_seed_gives_no_verdict_and_says_so_everywhere(self):
+        results = self.load(seed_paired(1, 1.35, 1.40))
+        head = pe.headline(results)
+        effect = head["paired"]["dream"]
+        self.assertEqual(effect["verdict"], pe.VERDICT_SINGLE)
+        self.assertEqual(len(effect["deltas"]), 1)
+        self.assertAlmostEqual(num(effect["deltas"][0]), 0.05)
+        self.assertEqual((effect["positive"], effect["negative"], effect["inertSeeds"]), (1, 0, 0))
+        floor = head["noiseFloor"]
+        assert floor is not None
+        self.assertEqual(floor["n"], 1)
+        self.assertIsNone(floor["finalBest"]["std"], "a sample std needs two seeds")
+        self.assertAlmostEqual(num(floor["finalBest"]["spread"]), 0.0)
+        card = pe.headline_lines(results, head)
+        tones = {text.strip(): tone for text, tone in card}
+        self.assertEqual(tones["dream: verdict: single seed: no verdict"], "warn")
+        self.assertIn("noise floor: one seed; the fixed arm's seed-to-seed spread cannot be measured", tones)
+        self.assertNotIn("across", "\n".join(text for text, _tone in card))
+        check = pe.check_tables(results)
+        self.assertIn("dream: verdict: single seed: no verdict", check)
+        self.assertIn("dream: paired delta final best vs fixed per seed [+0.0500] (1 positive, 0 negative)", check)
+        self.assertIn("dream: dreaming ran 2 step(s), accepted a candidate in 2, policy changes 1", check)
+
+    def test_exceeds_needs_the_mean_delta_above_the_spread_and_one_sign_in_every_seed(self):
+        # fixed finals 1.35 / 1.36 / 1.34: spread 0.02, sample std 0.01; dream = fixed + 0.05 in every seed.
+        results = self.load(seed_paired(1, 1.35, 1.40), seed_paired(2, 1.36, 1.41), seed_paired(3, 1.34, 1.39))
+        head = pe.headline(results)
+        floor = head["noiseFloor"]
+        assert floor is not None
+        self.assertEqual(floor["n"], 3)
+        self.assertEqual(floor["finalBest"]["values"], [1.35, 1.36, 1.34])
+        self.assertAlmostEqual(num(floor["finalBest"]["min"]), 1.34)
+        self.assertAlmostEqual(num(floor["finalBest"]["max"]), 1.36)
+        self.assertAlmostEqual(num(floor["finalBest"]["spread"]), 0.02)
+        self.assertAlmostEqual(num(floor["finalBest"]["std"]), statistics.stdev([1.35, 1.36, 1.34]))
+        self.assertEqual(floor["probesToTarget"]["values"], [30.0, 30.0, 30.0])
+        self.assertAlmostEqual(num(floor["probesToTarget"]["spread"]), 0.0)
+        self.assertIsNone(floor["probesToTargetExact"], "no improvements curve: the exact floor is not recorded")
+        effect = head["paired"]["dream"]
+        for d in effect["deltas"]:
+            self.assertAlmostEqual(num(d), 0.05)
+        self.assertAlmostEqual(num(effect["mean"]), 0.05)
+        self.assertEqual((effect["positive"], effect["negative"]), (3, 0))
+        self.assertEqual(effect["callsDeltas"], [5, 5, 5], "dream reaches T at 35 probes, fixed at 30, in every seed")
+        self.assertEqual(effect["verdict"], pe.VERDICT_EXCEEDS)
+        self.assertEqual(pe.verdict_tone(effect), "ok")
+        check = pe.check_tables(results)
+        self.assertIn(
+            "noise floor (fixed arm across 3 seeds): final best [1.3500, 1.3600, 1.3400] 1.3400..1.3600 "
+            "(spread 0.0200, std 0.0100); probes to T [30, 30, 30] 30..30 (spread 0, std 0)",
+            check,
+        )
+        self.assertIn(
+            "dream: paired delta final best vs fixed per seed [+0.0500, +0.0500, +0.0500], mean +0.0500", check
+        )
+        self.assertIn("dream: verdict: exceeds noise floor", check)
+        card = pe.headline_lines(results, head)
+        tones = {text.strip(): tone for text, tone in card}
+        self.assertEqual(tones["dream: verdict: exceeds noise floor"], "ok")
+
+    def test_a_negative_effect_that_exceeds_the_floor_is_bad_toned(self):
+        results = self.load(seed_paired(1, 1.40, 1.35), seed_paired(2, 1.41, 1.36))
+        effect = pe.headline(results)["paired"]["dream"]
+        self.assertAlmostEqual(num(effect["mean"]), -0.05)
+        self.assertEqual(effect["verdict"], pe.VERDICT_EXCEEDS)
+        self.assertEqual(pe.verdict_tone(effect), "bad")
+        self.assertEqual(effect["callsDeltas"], [None, None], "dream never reaches T: the calls delta is undefined")
+
+    def test_mixed_signs_are_within_the_floor_whatever_the_mean(self):
+        results = self.load(seed_paired(1, 1.35, 1.45), seed_paired(2, 1.36, 1.46), seed_paired(3, 1.34, 1.32))
+        effect = pe.headline(results)["paired"]["dream"]
+        self.assertGreater(abs(num(effect["mean"])), 0.02, "the mean clears the spread, the sign does not")
+        self.assertEqual((effect["positive"], effect["negative"]), (2, 1))
+        self.assertEqual(effect["verdict"], pe.VERDICT_WITHIN)
+        self.assertEqual(pe.verdict_tone(effect), "warn")
+
+    def test_a_mean_delta_inside_the_spread_is_within_the_floor(self):
+        # deltas +0.01 in every seed against a fixed spread of 0.02.
+        results = self.load(seed_paired(1, 1.35, 1.36), seed_paired(2, 1.36, 1.37), seed_paired(3, 1.34, 1.35))
+        effect = pe.headline(results)["paired"]["dream"]
+        self.assertEqual((effect["positive"], effect["negative"]), (3, 0))
+        self.assertAlmostEqual(num(effect["mean"]), 0.01)
+        self.assertEqual(effect["verdict"], pe.VERDICT_WITHIN)
+
+    def test_inert_dreaming_forces_within_the_floor_whatever_the_numbers_say(self):
+        results = self.load(seed_paired(1, 1.35, 1.45, changes=False), seed_paired(2, 1.36, 1.46, changes=False))
+        head = pe.headline(results)
+        summaries = head["dreaming"]["dream"]
+        self.assertEqual([s["inert"] for s in summaries], [True, True])
+        self.assertEqual([s["phases"] for s in summaries], [2, 2])
+        self.assertEqual([s["improved"] for s in summaries], [0, 0])
+        self.assertEqual([s["auditRecorded"] for s in summaries], [0, 0])
+        self.assertEqual([s["inert"] for s in head["dreaming"]["fixed"]], [False, False], "a fixed arm is never inert")
+        effect = head["paired"]["dream"]
+        self.assertAlmostEqual(num(effect["mean"]), 0.10, msg="the numbers alone would exceed the floor")
+        self.assertEqual(effect["inertSeeds"], 2)
+        self.assertEqual(effect["verdict"], pe.VERDICT_INERT)
+        card = pe.headline_lines(results, head)
+        tones = {text.strip(): tone for text, tone in card}
+        self.assertEqual(tones["dream: verdict: within noise floor (dreaming inert)"], "warn")
+        self.assertEqual(
+            tones[
+                "dream: policy never changed in 2/2 seed(s): dreaming inert, the arms grew every tree with one policy"
+            ],
+            "warn",
+        )
+        ser = pe.series(results)
+        self.assertEqual(ser["dream"]["policyNeverChanged"], [True, True])
+        self.assertEqual(ser["fixed"]["policyNeverChanged"], [False, False])
+        check = pe.check_tables(results)
+        self.assertIn("dream: verdict: within noise floor (dreaming inert)", check)
+        self.assertIn("dreaming of dream (4 step(s) over 2 seed(s); per-candidate audit recorded in 0/4", check)
+        self.assertIn("per-candidate scores not recorded (result predates the audit)", check)
+
+    def test_inert_in_one_seed_only_is_reported_but_not_forced(self):
+        results = self.load(seed_paired(1, 1.35, 1.45, changes=False), seed_paired(2, 1.36, 1.46))
+        head = pe.headline(results)
+        effect = head["paired"]["dream"]
+        self.assertEqual(effect["inertSeeds"], 1)
+        self.assertEqual(effect["verdict"], pe.VERDICT_EXCEEDS)
+        texts = [text.strip() for text, _tone in pe.headline_lines(results, head)]
+        self.assertIn(
+            "dream: policy never changed in 1/2 seed(s): dreaming inert, the arms grew every tree with one policy",
+            texts,
+        )
+
+    def test_no_reference_arm_means_no_verdict_lines(self):
+        only_dream = result(3, [arm("dream", rows([1.0, 1.1, 1.2], [5, 5, 5], [POLICY_A, POLICY_B, POLICY_B]))])
+        results = self.load(only_dream)
+        head = pe.headline(results)
+        self.assertIsNone(head["noiseFloor"])
+        self.assertEqual(head["paired"], {})
+        self.assertEqual(pe.comparison_lines(head), [])
+
+    def test_spread_text_words(self):
+        self.assertEqual(pe.spread_text(pe.spread_stats([None, None])), "undefined in every seed (0/2)")
+        self.assertEqual(pe.spread_text(pe.spread_stats([1.35])), "[1.3500] 1.3500..1.3500 (spread 0)")
+        self.assertEqual(
+            pe.spread_text(pe.spread_stats([30.0, None, 32.0]), 2),
+            "[30, -, 32] 30..32 (spread 2, std 1.41) over 2/3 seeds",
+        )
+
+
+class DreamingAudit(unittest.TestCase):
+    """The per-candidate audit of a dreaming step is read when present and reads as not recorded when absent."""
+
+    tmp: tempfile.TemporaryDirectory[str]
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def load(self, *payloads):
+        paths = [write(self.tmp.name, f"s{p['seed']}.json", p) for p in payloads]
+        return pe.load_results(paths)
+
+    def test_candidate_verdicts_dreamer_and_lever_scan_are_read(self):
+        results = self.load(seed_audited(1))
+        dream = pe.arm_of(results[0], "dream")
+        self.assertIsNone(dream["rounds"][0]["dreaming"])
+        r2 = dream["rounds"][1]["dreaming"]
+        assert r2 is not None
+        self.assertEqual(r2["candidates"], 4, "the count stays the number the file has always written")
+        self.assertEqual(r2["dreamer"], "mixed")
+        self.assertEqual((r2["currentScore"], r2["chosenScore"], r2["improved"]), (1.2, 1.26, True))
+        verdicts = r2["candidateVerdicts"]
+        assert verdicts is not None
+        self.assertEqual([v["reason"] for v in verdicts], ["winner", "worse", "quality-rejected", "duplicate"])
+        self.assertEqual([v["eligible"] for v in verdicts], [True, True, False, False])
+        self.assertEqual([v["origin"] for v in verdicts], ["llm", "local", "llm", "llm"])
+        self.assertEqual(verdicts[3]["duplicateOf"], 0)
+        self.assertEqual(verdicts[0]["changed"], ["beta"])
+        self.assertEqual((verdicts[0]["N"], verdicts[0]["rounds"], verdicts[0]["outOfSupportCells"]), (12, 5, 0))
+        self.assertAlmostEqual(num(verdicts[0]["anytime"]), 1.26)
+        scan = r2["leverScan"]
+        assert scan is not None
+        self.assertEqual((scan["policies"], scan["eligible"], scan["bestValue"], scan["gap"]), (40, 30, 1.27, 0.07))
+        self.assertEqual(pe.best_candidate_value(verdicts), 1.26, "the quality-rejected 1.30 never competed")
+        self.assertEqual(pe.support_coverage(verdicts), 1.0)
+        r3 = dream["rounds"][2]["dreaming"]
+        assert r3 is not None and r3["candidateVerdicts"] is not None
+        self.assertEqual(pe.support_coverage(r3["candidateVerdicts"]), 0.75, "one of four left the support")
+        self.assertEqual(
+            pe.best_candidate_value(r3["candidateVerdicts"]), 1.24, "tie and worse are eligible, the rest not"
+        )
+        summary = pe.dreaming_summary(dream)
+        self.assertEqual(summary, {"phases": 2, "improved": 1, "auditRecorded": 2, "policyChanges": 1, "inert": False})
+        ser = pe.series(results)["dream"]["dreaming"]
+        self.assertEqual(ser["recorded"], [0, 1, 1])
+        self.assertEqual(ser["auditRecorded"], [0, 1, 1])
+        self.assertEqual(ser["improved"], [0, 1, 0])
+        self.assertEqual(ser["dreamers"], ["", "mixed", "llm"])
+        self.assertEqual(ser["candidates"]["mean"], [None, 4.0, 4.0])
+        self.assertEqual(ser["eligible"]["mean"], [None, 2.0, 2.0])
+        self.assertEqual(ser["bestCandidateValue"]["mean"], [None, 1.26, 1.24])
+        self.assertEqual(ser["supportCoverage"]["mean"], [None, 1.0, 0.75])
+        self.assertEqual(ser["leverGap"]["mean"], [None, 0.07, 0.0])
+        self.assertEqual(ser["currentScore"]["mean"], [None, 1.2, 1.25])
+        check = pe.check_tables(results)
+        self.assertIn("dreaming of dream (2 step(s) over 1 seed(s); per-candidate audit recorded in 2/2)", check)
+        self.assertNotIn("predates the audit", check)
+        self.assertIn("|   mixed |          4 |        2 |  1.2000 | 1.2600 | 1/1 |    0.0700 | 1", check)
+        self.assertIn("|     llm |          4 |        2 |  1.2500 | 1.2500 | 0/1 |         0 | 0.75", check)
+        self.assertIn(
+            "dream: dreaming ran 2 step(s), accepted a candidate in 1, policy changes 1; per-candidate audit recorded in 2/2 steps",
+            check,
+        )
+        self.assertNotIn("dreaming of fixed", check, "the fixed arm never dreams")
+
+    def test_an_older_file_reads_as_audit_not_recorded_never_empty(self):
+        results = self.load(seed1())
+        dream = pe.arm_of(results[0], "dream")
+        r2 = dream["rounds"][1]["dreaming"]
+        assert r2 is not None
+        self.assertEqual(r2["candidates"], 4)
+        self.assertIsNone(r2["candidateVerdicts"])
+        self.assertIsNone(r2["dreamer"])
+        self.assertIsNone(r2["leverScan"])
+        self.assertEqual(pe.dreaming_summary(dream)["auditRecorded"], 0)
+        ser = pe.series(results)["dream"]["dreaming"]
+        self.assertEqual(ser["auditRecorded"], [0, 0, 0])
+        self.assertEqual(ser["eligible"]["mean"], [None, None, None])
+        self.assertEqual(ser["leverGap"]["mean"], [None, None, None])
+        self.assertEqual(ser["supportCoverage"]["mean"], [None, None, None])
+        check = pe.check_tables(results)
+        self.assertIn(
+            "per-candidate audit recorded in 0/2; per-candidate scores not recorded (result predates the audit)", check
+        )
+        self.assertIn("| 1/1 |         - | -", check)
+
+    def test_malformed_and_partial_audit_entries(self):
+        payload = seed_audited(1)
+        block = payload["arms"][1]["rounds"][1]["dreaming"]
+        block["candidateVerdicts"] = [
+            {"policyId": "p", "value": 1.1, "reason": "worse"},  # eligible derived from the reason
+            {"policyId": "q", "value": "x"},  # no numeric value: dropped
+            "not an object",  # dropped
+            {"policyId": "r", "value": 1.0, "reason": "made-up", "origin": "elsewhere", "eligible": "yes"},
+        ]
+        block["dreamer"] = "oracle"
+        block["leverScan"] = "none"
+        payload["arms"][1]["rounds"][2]["dreaming"]["candidates"] = [{"value": 1.0, "reason": "tie"}]
+        del payload["arms"][1]["rounds"][2]["dreaming"]["candidateVerdicts"]
+        results = self.load(payload)
+        dream = pe.arm_of(results[0], "dream")
+        r2 = dream["rounds"][1]["dreaming"]
+        assert r2 is not None and r2["candidateVerdicts"] is not None
+        self.assertEqual(len(r2["candidateVerdicts"]), 2)
+        first, last = r2["candidateVerdicts"]
+        self.assertEqual((first["index"], first["origin"], first["eligible"], first["changed"]), (0, "?", True, []))
+        self.assertIsNone(first["quality"])
+        self.assertEqual((last["index"], last["origin"], last["eligible"], last["reason"]), (3, "?", False, "made-up"))
+        self.assertIsNone(r2["dreamer"])
+        self.assertIsNone(r2["leverScan"])
+        self.assertIsNone(pe.support_coverage(r2["candidateVerdicts"]), "no entry recorded its support")
+        r3 = dream["rounds"][2]["dreaming"]
+        assert r3 is not None and r3["candidateVerdicts"] is not None
+        self.assertEqual(r3["candidates"], 1, "a list under candidates is read as the audit, its length as the count")
+        self.assertEqual(r3["candidateVerdicts"][0]["reason"], "tie")
+        pe.check_tables(results)
+
+    def test_audit_pools_across_seeds_with_an_older_seed(self):
+        results = self.load(seed_audited(1), seed_reaching_early(2))
+        ser = pe.series(results)["dream"]["dreaming"]
+        self.assertEqual(ser["recorded"], [0, 2, 2])
+        self.assertEqual(ser["auditRecorded"], [0, 1, 1])
+        self.assertEqual(ser["leverGap"]["perSeed"], [[None, 0.07, 0.0], [None, None, None]])
+        self.assertEqual(ser["leverGap"]["mean"], [None, 0.07, 0.0], "the mean is over the seed that recorded it")
+        self.assertEqual(ser["dreamers"], ["", "mixed", "llm"])
+        check = pe.check_tables(results)
+        self.assertIn("dreaming of dream (4 step(s) over 2 seed(s); per-candidate audit recorded in 2/4)", check)
+        self.assertIn(
+            "dream: dreaming ran 4 step(s), accepted a candidate in 3, policy changes 2 (totals over 2 seeds); per-candidate audit recorded in 2/4 steps",
+            check,
+        )
+
+
+class ExactHeadline(unittest.TestCase):
+    """probesToTargetExact counts to the first PROBE reaching T; a file without the curve reads not recorded."""
+
+    tmp: tempfile.TemporaryDirectory[str]
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def load(self, *payloads):
+        paths = [write(self.tmp.name, f"s{p['seed']}.json", p) for p in payloads]
+        return pe.load_results(paths)
+
+    def test_exact_probes_are_recomputed_from_the_improvements_curve(self):
+        results = self.load(seed_exact(1))
+        r = results[0]
+        fixed, dream = pe.arm_of(r, "fixed"), pe.arm_of(r, "dream")
+        self.assertEqual(
+            [row["improvements"] for row in fixed["rounds"]], [[(1, 1.30)], [(3, 1.33), (7, 1.35)], [(2, 1.32)]]
+        )
+        self.assertEqual([row["probesToRoundBest"] for row in dream["rounds"]], [1, 4, 0])
+        self.assertTrue(pe.improvements_recorded(fixed))
+        h = r["headline"]
+        assert h is not None
+        self.assertEqual(h["probesToTarget"], {"fixed": 30, "dream": 25}, "the rollout-granular headline is unchanged")
+        self.assertEqual(h["probesToTargetExact"], {"fixed": 22, "dream": 19})
+        assert h["callsMultiplierExact"] is not None
+        self.assertAlmostEqual(num(h["callsMultiplierExact"]["dream"]), 22 / 19)
+        self.assertEqual(h["callsMultiplierExact"]["fixed"], 1.0)
+        self.assertEqual(pe.exact_calls_text(h, "dream"), "exact 1.16x fewer calls (19 vs 22)")
+        self.assertEqual(pe.multiplier_text("calls", h, "dream"), "1.20x fewer calls (25 vs 30)")
+        check = pe.check_tables(results)
+        self.assertIn(
+            "1.20x fewer calls (25 vs 30); 1.01x higher score at budget 35 (1.3600 vs 1.3500); "
+            "+0.0100 delta final best vs fixed (T = 1.3500); exact 1.16x fewer calls (19 vs 22)",
+            check,
+        )
+        tones = {text.strip(): tone for text, tone in pe.headline_lines(results, pe.headline(results))}
+        self.assertEqual(tones["dream: exact 1.16x fewer calls (19 vs 22)"], "ok")
+        ser = pe.series(results)
+        self.assertEqual(ser["dream"]["probesToRoundBest"]["mean"], [1.0, 4.0, 0.0])
+
+    def test_the_files_own_exact_numbers_win_over_the_recomputation(self):
+        payload = seed_exact(1)
+        payload["headline"]["probesToTargetExact"] = {"fixed": 22, "dream": 20}
+        payload["headline"]["callsMultiplierExact"] = {"fixed": 1, "dream": 1.1}
+        h = self.load(payload)[0]["headline"]
+        assert h is not None
+        self.assertEqual(h["probesToTargetExact"], {"fixed": 22, "dream": 20})
+        assert h["callsMultiplierExact"] is not None
+        self.assertEqual(h["callsMultiplierExact"]["dream"], 1.1)
+        self.assertEqual(pe.exact_calls_text(h, "dream"), "exact 1.10x fewer calls (20 vs 22)")
+        without_ratio = seed_exact(2)
+        without_ratio["headline"]["probesToTargetExact"] = {"fixed": 22, "dream": None}
+        h2 = self.load(without_ratio)[0]["headline"]
+        assert h2 is not None
+        self.assertEqual(h2["probesToTargetExact"], {"fixed": 22, "dream": None})
+        assert h2["callsMultiplierExact"] is not None
+        self.assertIsNone(h2["callsMultiplierExact"]["dream"])
+        self.assertEqual(pe.exact_calls_text(h2, "dream"), "exact: not reached")
+        self.assertEqual(h2["callsMultiplierExact"]["fixed"], 1.0, "recomputed from the file's exact counts")
+
+    def test_a_file_without_the_curve_reads_not_recorded_not_not_reached(self):
+        results = self.load(seed_reaching_early(1))
+        h = results[0]["headline"]
+        assert h is not None
+        self.assertIsNone(h["probesToTargetExact"])
+        self.assertIsNone(h["callsMultiplierExact"])
+        self.assertEqual(pe.exact_calls_text(h, "dream"), pe.EXACT_NOT_RECORDED)
+        tones = {text.strip(): tone for text, tone in pe.headline_lines(results, pe.headline(results))}
+        self.assertEqual(tones["dream: exact probes to T not recorded"], "muted")
+        self.assertIn("exact probes to T not recorded", pe.check_tables(results))
+        partial = seed_exact(2)
+        for row in partial["arms"][1]["rounds"]:
+            del row["improvements"]
+        h2 = self.load(partial)[0]["headline"]
+        assert h2 is not None
+        self.assertIsNone(h2["probesToTargetExact"], "one arm without the curve: the exact headline is not recorded")
+        malformed = seed_exact(3)
+        malformed["arms"][0]["rounds"][1]["improvements"] = [{"probe": "3", "score": 1.33}]
+        h3 = self.load(malformed)[0]["headline"]
+        assert h3 is not None
+        self.assertIsNone(h3["probesToTargetExact"], "a malformed curve is not recorded")
+
+    def test_never_reaching_t_is_not_reached_in_the_exact_headline_too(self):
+        payload = with_improvements(
+            seed_never_reaching(1),
+            {"fixed": [[(1, 1.30)], [(7, 1.35)], [(2, 1.32)]], "dream": [[(1, 1.30)], [(4, 1.31)], [(3, 1.32)]]},
+        )
+        h = self.load(payload)[0]["headline"]
+        assert h is not None
+        self.assertEqual(h["probesToTargetExact"], {"fixed": 22, "dream": None})
+        self.assertEqual(pe.exact_calls_text(h, "dream"), "exact: not reached")
+
+    def test_exact_noise_floor_and_paired_calls_deltas_across_seeds(self):
+        results = self.load(seed_exact(1), seed_exact(2))
+        head = pe.headline(results)
+        floor = head["noiseFloor"]
+        assert floor is not None and floor["probesToTargetExact"] is not None
+        self.assertEqual(floor["probesToTargetExact"]["values"], [22.0, 22.0])
+        effect = head["paired"]["dream"]
+        self.assertEqual(effect["callsDeltas"], [-5, -5])
+        self.assertEqual(effect["callsDeltasExact"], [-3, -3])
+        self.assertIn("exact probes to T [22, 22] 22..22 (spread 0, std 0)", pe.check_tables(results))
+        mixed_head = pe.headline(self.load(seed_exact(3), seed_reaching_early(4)))
+        self.assertIsNone(
+            mixed_head["paired"]["dream"]["callsDeltasExact"], "one seed without the curve: no exact deltas"
+        )
+        mixed_floor = mixed_head["noiseFloor"]
+        assert mixed_floor is not None
+        self.assertIsNone(mixed_floor["probesToTargetExact"])
+
+
+class NewFields(unittest.TestCase):
+    """stoppedEarly, pool priming, the child mode fields and the k1 note: read when present, None when not."""
+
+    tmp: tempfile.TemporaryDirectory[str]
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def load(self, *payloads):
+        paths = [write(self.tmp.name, f"s{p['seed']}.json", p) for p in payloads]
+        return pe.load_results(paths)
+
+    def test_stopped_early_is_the_files_count_else_derived_from_decision_rounds(self):
+        derived = self.load(seed1())[0]
+        self.assertEqual([a["stoppedEarly"] for a in derived["arms"]], [0, 0, 0], "decisionRounds 5 against k1 5")
+        payload = seed1()
+        payload["arms"][1]["rounds"][1]["decisionRounds"] = 3
+        payload["arms"][0]["stoppedEarly"] = 2
+        r = self.load(payload)[0]
+        self.assertEqual(pe.arm_of(r, "dream")["stoppedEarly"], 1)
+        self.assertEqual(pe.arm_of(r, "fixed")["stoppedEarly"], 2, "the file's count is taken as written")
+        self.assertEqual(pe.series([r])["dream"]["stoppedEarly"], [1])
+        no_k1 = seed1()
+        del no_k1["budget"]["k1"]
+        self.assertIsNone(self.load(no_k1)[0]["arms"][1]["stoppedEarly"])
+        no_decisions = seed1()
+        del no_decisions["arms"][1]["rounds"][2]["decisionRounds"]
+        r = self.load(no_decisions)[0]
+        self.assertIsNone(pe.arm_of(r, "dream")["stoppedEarly"])
+        self.assertIsNone(pe.arm_of(r, "dream")["rounds"][2]["decisionRounds"])
+        self.assertEqual(pe.arm_of(r, "fixed")["stoppedEarly"], 0)
+
+    def test_priming_fields_are_read_on_round_one_only(self):
+        payload = seed1()
+        first = payload["arms"][1]["rounds"][0]
+        first["primingTreeIds"] = ["t-p0", "t-p1"]
+        first["primingProbes"] = 10
+        r = self.load(payload)[0]
+        dream = pe.arm_of(r, "dream")
+        self.assertEqual(dream["rounds"][0]["primingTreeIds"], ["t-p0", "t-p1"])
+        self.assertEqual(dream["rounds"][0]["primingProbes"], 10)
+        self.assertIsNone(dream["rounds"][1]["primingTreeIds"])
+        self.assertIsNone(dream["rounds"][1]["primingProbes"])
+        self.assertIsNone(pe.arm_of(r, "fixed")["rounds"][0]["primingProbes"])
+        ser = pe.series([r])
+        self.assertEqual(ser["dream"]["primingProbes"], [10])
+        self.assertEqual(ser["fixed"]["primingProbes"], [None])
+
+    def test_child_mode_fields_initial_policy_beta_and_the_k1_note(self):
+        payload = seed1()
+        payload["arms"][1]["mode"] = {
+            "proposer": "llm",
+            "dreamer": "llm",
+            "model": "m",
+            "thinking": "off",
+            "maxOutputTokens": 4096,
+        }
+        payload["initialPolicy"] = {"beta": 6}
+        payload["notes"] = [NOTE, "k1 5 <= beta 6: patience can never stop a rollout before the round cap"]
+        r = self.load(payload)[0]
+        dream = pe.arm_of(r, "dream")
+        self.assertEqual((dream["thinking"], dream["maxOutputTokens"]), ("off", 4096))
+        self.assertEqual((pe.arm_of(r, "fixed")["thinking"], pe.arm_of(r, "fixed")["maxOutputTokens"]), (None, None))
+        self.assertEqual(r["initialPolicyBeta"], 6.0)
+        self.assertIsNone(self.load(seed1())[0]["initialPolicyBeta"])
+        self.assertIn(
+            "note: k1 5 <= beta 6: patience can never stop a rollout before the round cap", pe.check_tables([r])
+        )
+
+    def test_selected_policy_id_defaults_to_the_final_one(self):
+        r = self.load(seed1())[0]
+        dream = pe.arm_of(r, "dream")
+        self.assertEqual(dream["selectedPolicyId"], POLICY_B)
+        payload = seed1()
+        payload["arms"][1]["selectedPolicyId"] = POLICY_A
+        self.assertEqual(pe.arm_of(self.load(payload)[0], "dream")["selectedPolicyId"], POLICY_A)
+
+
 @unittest.skipUnless(HAS_MPL, "matplotlib not installed for this interpreter")
 class Render(unittest.TestCase):
     def setUp(self):
@@ -1107,13 +1748,13 @@ class Render(unittest.TestCase):
         paths = pe.render(pe.load_results([path]), out)
         report = paths["report"].read_text(encoding="utf-8")
         self.assertIn("no control", report)
-        for key in ("round_best", "compute", "attempts", "proposals", "headline"):
+        for key in ("round_best", "compute", "attempts", "proposals", "dreaming", "headline"):
             self.assertGreater(paths[key].stat().st_size, 0, key)
 
-    def test_render_writes_five_pngs_and_a_report(self):
+    def test_render_writes_six_pngs_and_a_report(self):
         out = Path(self.tmp.name) / "plots"
         paths = pe.render(pe.load_results([self.p1, self.p2]), out)
-        for key in ("round_best", "compute", "attempts", "proposals", "headline", "report"):
+        for key in ("round_best", "compute", "attempts", "proposals", "dreaming", "headline", "report"):
             self.assertTrue(paths[key].exists(), key)
             self.assertGreater(paths[key].stat().st_size, 0, key)
         report = paths["report"].read_text(encoding="utf-8")
@@ -1194,6 +1835,67 @@ class Render(unittest.TestCase):
         self.assertIn("recorded in 2/4 arm records only, so they are not on this axis", report)
         self.assertIn("seed 2 dream: 35 probes = 3 agent-generated + 32 local (32 fallbacks)", report)
         self.assertGreater(paths["proposals"].stat().st_size, 0)
+
+    def test_render_audited_file_draws_the_dreaming_panel_and_its_table(self):
+        paths_in = [write(self.tmp.name, f"a{p['seed']}.json", p) for p in (seed_audited(1), seed_audited(2))]
+        out = Path(self.tmp.name) / "audited"
+        paths = pe.render(pe.load_results(paths_in), out)
+        self.assertGreater(paths["dreaming"].stat().st_size, 0)
+        report = paths["report"].read_text(encoding="utf-8")
+        self.assertIn("<h2>Dreaming audit per step</h2>", report)
+        self.assertIn("Every candidate a dreaming step scored", report)
+        self.assertIn("<th>lever gap</th><th>in support</th>", report)
+        self.assertIn(
+            "<td>dream</td><td>2</td><td>mixed</td><td>4</td><td>2</td><td>1.2000</td><td>1.2600</td><td>2/2</td><td>0.0700</td><td>1</td>",
+            report,
+        )
+        self.assertIn(
+            "<td>dream</td><td>3</td><td>llm</td><td>4</td><td>2</td><td>1.2500</td><td>1.2500</td><td>0/2</td><td>0</td><td>0.75</td>",
+            report,
+        )
+        self.assertNotIn("predates the per-candidate audit", report)
+        # Two byte-identical seeds: the fixed spread is 0, so the +0.01 delta clears it with one sign.
+        self.assertIn('<div class="line ok">  dream: verdict: exceeds noise floor</div>', report)
+        self.assertIn("The verdict follows the noise-floor rule", report)
+
+    def test_render_legacy_file_says_the_audit_is_not_recorded(self):
+        out = Path(self.tmp.name) / "legacy-audit"
+        paths = pe.render(pe.load_results([self.p1]), out)
+        self.assertGreater(paths["dreaming"].stat().st_size, 0, "the panel is written with the fallback, not skipped")
+        report = paths["report"].read_text(encoding="utf-8")
+        self.assertIn("This result predates the per-candidate audit", report)
+        self.assertIn(
+            "<td>dream</td><td>2</td><td>-</td><td>4</td><td>-</td><td>1.2000</td><td>1.2500</td><td>1/1</td><td>-</td><td>-</td>",
+            report,
+        )
+        self.assertIn("dream: verdict: single seed: no verdict", report)
+        self.assertIn("dream: exact probes to T not recorded", report)
+
+    def test_render_fixed_only_and_inert_results(self):
+        fixed_only = result(9, [arm("fixed", rows([1.3, 1.35, 1.33], [15, 15, 15], [POLICY_A] * 3), fixed=True)])
+        path = write(self.tmp.name, "fixed-only.json", fixed_only)
+        paths = pe.render(pe.load_results([path]), Path(self.tmp.name) / "fixed-only")
+        report = paths["report"].read_text(encoding="utf-8")
+        self.assertIn("No arm dreamed in this result", report)
+        self.assertIn("no dreaming step recorded", report)
+        inert = [
+            write(self.tmp.name, f"i{p['seed']}.json", p)
+            for p in (seed_paired(1, 1.35, 1.45, changes=False), seed_paired(2, 1.36, 1.46, changes=False))
+        ]
+        paths = pe.render(pe.load_results(inert), Path(self.tmp.name) / "inert")
+        report = paths["report"].read_text(encoding="utf-8")
+        self.assertIn('<div class="line warn">  dream: verdict: within noise floor (dreaming inert)</div>', report)
+        self.assertIn("policy never changed in 2/2 seed(s): dreaming inert", report)
+        self.assertGreater(paths["attempts"].stat().st_size, 0)
+
+    def test_render_exact_headline_beside_the_rollout_granular_one(self):
+        paths_in = [write(self.tmp.name, f"e{p['seed']}.json", p) for p in (seed_exact(1), seed_exact(2))]
+        paths = pe.render(pe.load_results(paths_in), Path(self.tmp.name) / "exact")
+        report = paths["report"].read_text(encoding="utf-8")
+        self.assertIn('<div class="line ok">  dream: 1.20x fewer calls (25 vs 30)</div>', report)
+        self.assertIn('<div class="line ok">  dream: exact 1.16x fewer calls (19 vs 22)</div>', report)
+        self.assertIn("exact probes to T [22, 22] 22..22 (spread 0, std 0)", report)
+        self.assertIn("The exact line beside it counts to the first PROBE whose score reaches T", report)
 
 
 if __name__ == "__main__":

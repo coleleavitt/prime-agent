@@ -1,3 +1,4 @@
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Usage } from "@earendil-works/pi-ai";
 import type {
 	RunAgentHandler,
@@ -15,6 +16,10 @@ export interface ChildRuntimeScope {
 	tokenBudget?: number;
 	/** Worker role label (`implement`, `repair`); retained runtimes use it to name the child session. */
 	role?: string;
+	/** Child thinking level (`RunAgentRequest.thinkingLevel`); absent, the child inherits the parent's. */
+	thinkingLevel?: ThinkingLevel;
+	/** Visible-answer cap per model call (`RunAgentOptions.maxOutputTokens`). */
+	maxOutputTokens?: number;
 }
 
 /** The top-level JSON container a lenient extraction looks for. */
@@ -94,12 +99,16 @@ export function createRunAgentChildCall<TInput, TOutput>(
 	};
 }
 
-/** The `RunAgentRequest` a structured child is prompted with: the prompt plus the scope's model, when any. */
+/** The `RunAgentRequest` a structured child is prompted with: the prompt plus the scope's model and thinking level, when any. */
 export function structuredChildRequest(prompt: string, scope: ChildRuntimeScope | undefined): RunAgentRequest {
-	return { prompt, ...(scope?.model ? { model: scope.model } : {}) };
+	return {
+		prompt,
+		...(scope?.model ? { model: scope.model } : {}),
+		...(scope?.thinkingLevel === undefined ? {} : { thinkingLevel: scope.thinkingLevel }),
+	};
 }
 
-/** The `RunAgentOptions` a structured child runs under: the scope's tools and turn cap, and the bounded token budget. */
+/** The `RunAgentOptions` a structured child runs under: the scope's tools, turn and output caps, and the bounded token budget. */
 export function structuredChildRunOptions(
 	scope: ChildRuntimeScope | undefined,
 	options: RavoChildCallOptions,
@@ -222,6 +231,7 @@ function runOptions(scope: ChildRuntimeScope | undefined, options: RavoChildCall
 		signal: options.signal,
 		...(scope?.maxTurns === undefined ? {} : { maxTurns: scope.maxTurns }),
 		tokenBudget: boundedTokenBudget(scope?.tokenBudget, options.tokenBudget),
+		...(scope?.maxOutputTokens === undefined ? {} : { maxOutputTokens: scope.maxOutputTokens }),
 	};
 }
 

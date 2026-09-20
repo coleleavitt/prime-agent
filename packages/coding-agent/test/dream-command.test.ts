@@ -135,15 +135,31 @@ describe("parseDreamCommandArgs", () => {
 		]);
 	});
 
-	it("parses --beta1/--beta2 as finite non-negative numbers and defaults them to the objective defaults", () => {
-		expect(parseDreamCommandArgs([]).objective).toEqual({ beta1: 0.05, beta2: 0.05 });
-		expect(parseDreamCommandArgs(["--beta1", "0.2", "--beta2=0"]).objective).toEqual({ beta1: 0.2, beta2: 0 });
+	it("parses --beta1/--beta2/--beta3 as finite non-negative numbers and defaults them to the objective defaults", () => {
+		// DEFAULT_OBJECTIVE: beta2 > beta1 (one saved round outweighs the <= W probes it can cost), beta3 = 0.25.
+		expect(parseDreamCommandArgs([]).objective).toEqual({ beta1: 0.05, beta2: 0.1, beta3: 0.25 });
+		expect(parseDreamCommandArgs(["--beta1", "0.2", "--beta2=0"]).objective).toEqual({
+			beta1: 0.2,
+			beta2: 0,
+			beta3: 0.25,
+		});
+		expect(parseDreamCommandArgs(["--beta3", "0"]).objective.beta3).toBe(0);
+		expect(parseDreamCommandArgs(["--beta3=1"]).objective.beta3).toBe(1);
+		expect(() => parseDreamCommandArgs(["--beta3", "1.5"])).toThrow(/\[0, 1\]/);
 		expect(parseDreamCommandArgs(["experiment", "--beta1", "1e-3"]).objective.beta1).toBe(0.001);
 		expect(() => parseDreamCommandArgs(["--beta1", "-0.1"])).toThrow(DreamCommandUsageError);
 		expect(() => parseDreamCommandArgs(["--beta2", "nan"])).toThrow(DreamCommandUsageError);
 		expect(() => parseDreamCommandArgs(["--beta1", "Infinity"])).toThrow(DreamCommandUsageError);
 		expect(() => parseDreamCommandArgs(["--beta1", ""])).toThrow(DreamCommandUsageError);
 		expect(() => parseDreamCommandArgs(["--beta1"])).toThrow(DreamCommandUsageError);
+	});
+
+	it("parses --priming as none (the default) or diverse", () => {
+		expect(parseDreamCommandArgs([]).priming).toBe("none");
+		expect(parseDreamCommandArgs(["--priming", "none"]).priming).toBe("none");
+		expect(parseDreamCommandArgs(["experiment", "--priming=diverse"]).priming).toBe("diverse");
+		expect(() => parseDreamCommandArgs(["--priming", "lots"])).toThrow(/none or diverse/);
+		expect(() => parseDreamCommandArgs(["--priming"])).toThrow(DreamCommandUsageError);
 	});
 
 	it("rejects malformed experiment options", () => {
@@ -159,10 +175,23 @@ describe("parseDreamCommandArgs", () => {
 		expect(parseDreamCommandArgs(["loop", "--iterations", "2"]).iterations).toBe(2);
 	});
 
-	it("rejects an unknown flag, a bad subcommand, an out-of-range --n, and a non-integer count", () => {
+	it("threads --n to every task that takes a size and rejects a size the task does not accept", () => {
+		// The task decides the accepted sizes: circle-packing takes any integer >= 2 (as /dream
+		// does), autocorrelation only its bin counts; the parser turns the task's RangeError into
+		// a usage error so a bad size never reaches a run.
+		expect(parseDreamCommandArgs(["--n", "10"]).n).toBe(10);
+		expect(parseDreamCommandArgs(["experiment", "--task", "autocorrelation", "--n", "32"]).n).toBe(32);
+		expect(parseDreamCommandArgs(["--n", "128", "--task", "autocorrelation"]).n).toBe(128);
+		expect(() => parseDreamCommandArgs(["--task", "autocorrelation", "--n", "10"])).toThrow(/--n: autocorrelation/);
+		expect(() => parseDreamCommandArgs(["--task", "autocorrelation", "--n", "10"])).toThrow(DreamCommandUsageError);
+		expect(() => parseDreamCommandArgs(["--n", "1"])).toThrow(/--n: circle-packing/);
+		expect(() => parseDreamCommandArgs(["--n", "0"])).toThrow(DreamCommandUsageError);
+		expect(() => parseDreamCommandArgs(["--n", "2.5"])).toThrow(DreamCommandUsageError);
+	});
+
+	it("rejects an unknown flag, a bad subcommand, and a non-integer count", () => {
 		expect(() => parseDreamCommandArgs(["--nope"])).toThrow(DreamCommandUsageError);
 		expect(() => parseDreamCommandArgs(["frobnicate"])).toThrow(DreamCommandUsageError);
-		expect(() => parseDreamCommandArgs(["--n", "10"])).toThrow(DreamCommandUsageError);
 		expect(() => parseDreamCommandArgs(["--task", "banana"])).toThrow(DreamCommandUsageError);
 		expect(() => parseDreamCommandArgs(["--iterations", "1.5"])).toThrow(DreamCommandUsageError);
 		expect(() => parseDreamCommandArgs(["--workers", "0"])).toThrow(DreamCommandUsageError);
@@ -189,6 +218,8 @@ describe("dream usage and help", () => {
 		expect([...rowFlags].sort()).toEqual([...usageFlags].sort());
 		expect(rowFlags).toContain("--beta1");
 		expect(rowFlags).toContain("--beta2");
+		expect(rowFlags).toContain("--beta3");
+		expect(rowFlags).toContain("--priming");
 		expect(rowFlags).toContain("--seeds");
 		expect(rowFlags).toContain("--overwrite");
 		for (const taskId of DREAM_TASK_IDS) {
@@ -278,9 +309,25 @@ describe("runDreamCommand experiment", () => {
 		expect(text).toContain("task sum-difference  scoring deterministic  seed 1");
 		expect(text).toContain("arm dream ");
 		expect(text).toContain("arm fixed ");
-		expect(text).toContain("round | best | cum best | probes | cum probes | policy");
+		expect(text).toContain("round | best | cum best | probes | agent | fallback | cum probes | policy");
 		expect(text).toContain("headline vs fixed");
 		expect(text).toContain("delta best");
+		// Provenance is counts only: on the local path every probe is local and no LLM proposal exists.
+		const provenance = out.filter((line) => line.includes("provenance:"));
+		expect(provenance).toHaveLength(2);
+		for (const line of provenance) {
+			const match = line.match(
+				/^ {4}provenance: (\d+) probes = 0 agent-generated \+ (\d+) local \(0 fallbacks\); local proposer, 0 LLM proposals$/,
+			);
+			expect(match, line).not.toBeNull();
+			expect(match![1]).toBe(match![2]);
+		}
+		// The dream arm dreamed on rounds 2 and 3; the fixed arm never dreams and prints no dreaming summary.
+		const dreamingLines = out.filter((line) => /^ {4}dreaming: /.test(line));
+		expect(dreamingLines).toHaveLength(1);
+		expect(dreamingLines[0]).toMatch(/^ {4}dreaming: 2 phases {2}improved [0-2]\/2 {2}policy changes \d+/);
+		const changes = Number(dreamingLines[0]!.match(/policy changes (\d+)/)![1]);
+		expect(dreamingLines[0]!.includes("INERT")).toBe(changes === 0);
 		// The final-policy line names the last row's policy, so it can never contradict the table above it.
 		const finalLines = out.filter((line) => line.includes("final policy"));
 		expect(finalLines).toHaveLength(2);
@@ -288,7 +335,7 @@ describe("runDreamCommand experiment", () => {
 			const match = line.match(/final policy (\S+) {2}changes (\d+) {2}selected policy (\S+) {2}own-pool score/);
 			expect(match, line).not.toBeNull();
 			const rows = out.slice(0, out.indexOf(line)).filter((row) => /^ {4}\s*[123] \|/.test(row));
-			const lastRowPolicy = rows.at(-1)!.split(" | ")[5]!.split("  ")[0];
+			const lastRowPolicy = rows.at(-1)!.split(" | ")[7]!.split("  ")[0];
 			expect(match![1]).toBe(lastRowPolicy);
 		}
 		expect(text).toMatch(/results .*\/experiments\/sum-difference-s1-n3-\d+\/result\.json/);
@@ -334,27 +381,63 @@ describe("runDreamCommand experiment", () => {
 		expect(existsSync(join(dirA, "experiments", result.experimentId, "result.json"))).toBe(true);
 	});
 
+	it("builds an autocorrelation run with --n and records the size on the result, the trees and the header line", () => {
+		const dir = scratch();
+		const args = [
+			"experiment",
+			"--task",
+			"autocorrelation",
+			"--rounds",
+			"1",
+			"--workers",
+			"2",
+			"--k1",
+			"2",
+			"--k2",
+			"4",
+		];
+		const sized = makeIo();
+		expect(runDreamCommand([...args, "--n", "32", "--dreams", "1", "--arms", "fixed", "--dir", dir], sized.io)).toBe(
+			0,
+		);
+		expect(sized.out[1]).toContain("task autocorrelation n 32 ");
+		const resultPath = join(dir, "experiments", readdirSync(join(dir, "experiments"))[0]!, "result.json");
+		const result = JSON.parse(readFileSync(resultPath, "utf-8")) as { n?: number; experimentId: string };
+		expect(result.n).toBe(32);
+		const trees = treeFiles(join(dir, "experiments", result.experimentId, "fixed"));
+		for (const text of Object.values(trees)) {
+			expect((JSON.parse(text.split("\n")[0]!) as { n?: number }).n).toBe(32);
+		}
+		// Without --n the record still names the size the run was built with (the task default).
+		const defaulted = makeIo();
+		const dirB = scratch();
+		expect(
+			runDreamCommand([...args, "--dreams", "1", "--arms", "fixed", "--dir", dirB, "--json"], defaulted.io),
+		).toBe(0);
+		expect((JSON.parse(defaulted.out.join("\n")) as { n?: number }).n).toBe(64);
+	});
+
 	it("records --beta1/--beta2 on the result and scores the dreaming step with them", () => {
 		const dir = scratch();
 		const { io, out } = makeIo();
 		const args = ["experiment", ...EXPERIMENT_ARGS, "--beta1", "0.2", "--beta2", "0.1", "--dir", dir, "--json"];
 		expect(runDreamCommand(args, io)).toBe(0);
 		const result = JSON.parse(out.join("\n"));
-		expect(result.objective).toEqual({ beta1: 0.2, beta2: 0.1 });
+		expect(result.objective).toEqual({ beta1: 0.2, beta2: 0.1, beta3: 0.25 });
 		const persisted = JSON.parse(readFileSync(join(dir, "experiments", result.experimentId, "result.json"), "utf8"));
-		expect(persisted.objective).toEqual({ beta1: 0.2, beta2: 0.1 });
+		expect(persisted.objective).toEqual({ beta1: 0.2, beta2: 0.1, beta3: 0.25 });
 		expect(persisted.notes).toContain("objective: normalized (q in pool range, cost in budget fractions)");
 		// The printed header names the betas too.
 		const printed = makeIo();
 		expect(
 			runDreamCommand(["experiment", ...EXPERIMENT_ARGS, "--beta1", "0.2", "--dir", scratch()], printed.io),
 		).toBe(0);
-		expect(printed.out.join("\n")).toContain("beta1 0.2  beta2 0.05");
+		expect(printed.out.join("\n")).toContain("beta1 0.2  beta2 0.1  beta3 0.25");
 		// A different objective changes the dreaming step's scores but never the shared round 1.
 		const defaults = makeIo();
 		expect(runDreamCommand(["experiment", ...EXPERIMENT_ARGS, "--dir", scratch(), "--json"], defaults.io)).toBe(0);
 		const base = JSON.parse(defaults.out.join("\n"));
-		expect(base.objective).toEqual({ beta1: 0.05, beta2: 0.05 });
+		expect(base.objective).toEqual({ beta1: 0.05, beta2: 0.1, beta3: 0.25 });
 		expect(result.arms[0].rounds[0].roundBest).toBe(base.arms[0].rounds[0].roundBest);
 		const dream = (r: { arms: { arm: string; rounds: { dreaming: { currentScore: number } | null }[] }[] }) =>
 			r.arms.find((arm) => arm.arm === "dream")!.rounds[1]!.dreaming!.currentScore;
@@ -405,6 +488,19 @@ describe("runDreamCommand experiment", () => {
 		const status = makeIo();
 		expect(runDreamCommand(["status", "--dir", dir], status.io)).toBe(0);
 		expect(status.out.join("\n")).toContain("experiments 2");
+	});
+
+	it("--priming none is byte-identical to no flag", () => {
+		const plain = makeIo();
+		const none = makeIo();
+		expect(runDreamCommand(["experiment", ...EXPERIMENT_ARGS, "--dir", scratch(), "--json"], plain.io)).toBe(0);
+		expect(
+			runDreamCommand(
+				["experiment", ...EXPERIMENT_ARGS, "--priming", "none", "--dir", scratch(), "--json"],
+				none.io,
+			),
+		).toBe(0);
+		expect(none.out).toEqual(plain.out);
 	});
 
 	it("refuses to overwrite an existing experiment unless asked", () => {
@@ -480,8 +576,24 @@ describe("runDreamCommand read subcommands and rejections", () => {
 		expect(Number.isFinite(replayResult.v)).toBe(true);
 		expect(replayResult.N).toBeGreaterThanOrEqual(0);
 
+		const replayText = makeIo();
+		expect(runDreamCommand(["replay", "--tree", "latest", "--dir", dir], replayText.io)).toBe(0);
+		expect(replayText.out.join("\n")).toMatch(/out-of-support \d+ {2}in-support \d\.\d{6} {2}probes to best \d+/);
+		expect(replayText.out.join("\n")).toContain("beta3 0.25");
+
 		const show = makeIo();
 		expect(runDreamCommand(["inspect", "--tree", "latest", "--dir", dir], show.io)).toBe(0);
-		expect(show.out.join("\n")).toContain("dream tree");
+		const shown = show.out.join("\n");
+		expect(shown).toContain("dream tree");
+		// Every node prints its origin; a local rollout has no agent-generated node.
+		expect(shown).toMatch(/ {2}agent-generated 0\/\d+/);
+		const nodeLines = show.out.filter((line) => /^ {2}\S+ {2}parent /.test(line));
+		expect(nodeLines.length).toBeGreaterThan(1);
+		expect(
+			nodeLines.every(
+				(line) => / {2}origin (root|local)$/.test(line) || / {2}origin (root|local) {2}fail /.test(line),
+			),
+		).toBe(true);
+		expect(nodeLines.filter((line) => line.includes("origin root"))).toHaveLength(1);
 	});
 });

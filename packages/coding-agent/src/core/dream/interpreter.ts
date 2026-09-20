@@ -17,6 +17,13 @@ import type { ProposeParams } from "./task.js";
 /** Base perturbation size a policy's `branchWidth` scales. */
 export const BASE_STEP = 0.1;
 
+/**
+ * A round improves the best score only when it beats it by more than this.
+ * Shared by the online drivers (`rollout.ts`, `llm.ts`) and the replay simulator
+ * so the patience rule fires on the same round online and in replay.
+ */
+export const IMPROVE_EPS = 1e-12;
+
 /** Project a policy's knobs onto the parameters a single generation attempt takes. */
 export function projectProposeParams(policy: ExplorationPolicy): ProposeParams {
 	return {

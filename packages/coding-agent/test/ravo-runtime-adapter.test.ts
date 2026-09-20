@@ -70,6 +70,29 @@ describe("RAVO runtime adapters", () => {
 		);
 	});
 
+	it("threads the scope's thinking level onto the request and its output cap onto the options, and omits both when unset", async () => {
+		const runAgent = vi.fn<RunAgentHandler>(async () => result('{"answer":1}'));
+		const call = createRunAgentChildCall(runAgent, {
+			prompt: () => "capped child",
+			validate: validateAnswer,
+			scope: { model: "faux/child", tools: "none", maxTurns: 8, thinkingLevel: "off", maxOutputTokens: 4096 },
+		});
+		await call({}, callOptions(200_000));
+		expect(runAgent).toHaveBeenCalledWith(
+			{ prompt: "capped child", model: "faux/child", thinkingLevel: "off" },
+			{ tools: "none", signal: expect.any(AbortSignal), maxTurns: 8, tokenBudget: 200_000, maxOutputTokens: 4096 },
+		);
+		// Without the knobs neither key appears, so older callers' exact-equality assertions still hold.
+		const plain = vi.fn<RunAgentHandler>(async () => result('{"answer":1}'));
+		await createRunAgentChildCall(plain, {
+			prompt: () => "plain",
+			validate: validateAnswer,
+			scope: { tools: "none" },
+		})({}, callOptions(10));
+		expect(plain.mock.calls[0]![0]).toEqual({ prompt: "plain" });
+		expect(plain.mock.calls[0]![1]).not.toHaveProperty("maxOutputTokens");
+	});
+
 	it("rejects prose, fenced JSON, and schema-invalid output instead of scraping it", async () => {
 		for (const output of ['result: {"answer":42}', '```json\n{"answer":42}\n```', '{"answer":"42"}']) {
 			const call = createRunAgentChildCall(async () => result(output), {

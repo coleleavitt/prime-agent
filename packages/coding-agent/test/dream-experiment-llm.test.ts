@@ -11,6 +11,7 @@ import {
 	withSpan,
 } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import { type DreamCandidateLine, type DreamStepLine, dreamsPath, readDreamsLog } from "../src/core/dream/dreams.js";
 import {
 	type ExperimentArm,
 	type ExperimentArmResult,
@@ -31,8 +32,8 @@ import {
 	isDreamAbortError,
 	PROPOSER_PROMPT_HEADER,
 } from "../src/core/dream/llm.js";
-import type { DreamHandlerCalls } from "../src/core/dream/loop.js";
-import { DEFAULT_POLICY, type ExplorationPolicy, policyId } from "../src/core/dream/policy.js";
+import { type DreamHandlerCalls, dreamRunId, primingTreeId } from "../src/core/dream/loop.js";
+import { DEFAULT_POLICY, type ExplorationPolicy, PRIMING_DIVERSE, policyId } from "../src/core/dream/policy.js";
 import { totalRejected, zeroProposalTally } from "../src/core/dream/proposer.js";
 import { readRejections, rejectionsPath } from "../src/core/dream/rejections.js";
 import { experimentArmDir, experimentResultPath, listTrees, readTree } from "../src/core/dream/store.js";
@@ -234,15 +235,24 @@ describe("runExperimentWithAgent (stub handler, four arms)", () => {
 		expect(result.headline?.reference).toBe("fixed");
 		expect(existsSync(join(dir, "trees"))).toBe(false);
 
-		// Round 1: one record, one tree, copied byte for byte into every arm's store.
+		// Round 1: one record, one tree, copied byte for byte into every arm's store, with its exact curve.
 		const first = result.arms[0]!.rounds[0]!;
 		const firstFiles = treeFiles(experimentArmDir(dir, result.experimentId, "dream"), first.treeId);
 		expect(Object.keys(firstFiles).length).toBeGreaterThan(1);
+		expect(first.probesToRoundBest).toBeLessThanOrEqual(first.probes);
+		expect(first.improvements!.at(-1)!.score).toBe(first.roundBest);
+		expect(first.primingTreeIds).toBeUndefined();
 		for (const a of result.arms) {
 			expect(a.rounds[0]).toEqual(first);
 			expect(treeFiles(experimentArmDir(dir, result.experimentId, a.arm), first.treeId)).toEqual(firstFiles);
 			expect(listTrees(experimentArmDir(dir, result.experimentId, a.arm))).toHaveLength(2);
+			expect(a.rounds[1]!.improvements).toBeDefined();
+			expect(a.stoppedEarly).toBeDefined();
 		}
+		// Distinct run ids per arm under the one frozen clock; the exact headline is recorded for every arm.
+		expect(new Set(result.arms.map((a) => a.runId)).size).toBe(result.arms.length);
+		expect(result.arms.every((a) => a.runId.endsWith(`-${result.experimentId}_${a.arm}`))).toBe(true);
+		for (const a of result.arms) expect(typeof result.headline!.probesToTargetExact[a.arm]).toBe("number");
 		const shared = stub.tallies.get(SHARED)!;
 		expect(shared.calls).toEqual({ proposer: first.handlerCalls.proposer, dreamer: 0, guidance: 0 });
 		expect(shared.calls.proposer).toBe(first.probes);
@@ -378,10 +388,9 @@ describe("runExperimentWithAgent (stub handler, four arms)", () => {
 			expect(a.totals.localFallbacks).toBe(first.localFallbacks + second.localFallbacks);
 			expect(a.totals.llmProposals).toBe(first.llmProposals + second.llmProposals);
 			expect(a.totals.agentGeneratedCalls).toBeLessThan(a.totals.probes);
-			// The arm's own loop logs its later rounds under its run key, in its own store.
-			const armLog = readRejections(
-				rejectionsPath(experimentArmDir(dir, result.experimentId, a.arm), `sum-difference-s7-r${FIXED_CLOCK}`),
-			);
+			// The arm's own loop logs its later rounds under its labelled run key, in its own store.
+			expect(a.runId).toBe(dreamRunId("sum-difference", 7, FIXED_CLOCK, `${result.experimentId}/${a.arm}`));
+			const armLog = readRejections(rejectionsPath(experimentArmDir(dir, result.experimentId, a.arm), a.runId));
 			expect(armLog).toHaveLength(totalRejected(second));
 			expect(armLog.every((record) => record.iteration === 1)).toBe(true);
 			// The persisted trees carry the same split.
@@ -635,6 +644,158 @@ describe("runExperimentWithAgent (stub handler, four arms)", () => {
 		expect(midRuns).toHaveLength(2);
 		expect(midRuns.map((span) => span.attrs["dream.stopped"])).toEqual([undefined, "aborted"]);
 		expect(existsSync(experimentResultPath(mid, `sum-difference-s7-n2-${FIXED_CLOCK}`))).toBe(false);
+	});
+});
+
+describe("runExperimentWithAgent: priming, verdicts and the dreams log", () => {
+	it("shares the priming rollouts with round 1 of every arm and charges their probes and calls to it", async () => {
+		const dir = scratch();
+		const plainDir = scratch();
+		const spec: ExperimentSpec = { ...SPEC, arms: ["fixed", "dream"] };
+		const plainStub = makeArmStub(llmAnswers());
+		const plain = await runExperimentWithAgent(spec, {
+			dir: plainDir,
+			clock: () => FIXED_CLOCK,
+			runAgent: plainStub.handler,
+			scope: SCOPE,
+			signal: new AbortController().signal,
+			useLlmProposer: true,
+			useLlmDreamer: true,
+			onProgress: plainStub.onProgress,
+		});
+		const stub = makeArmStub(llmAnswers());
+		const result = await runExperimentWithAgent(
+			{ ...spec, primingPolicies: PRIMING_DIVERSE },
+			{
+				dir,
+				clock: () => FIXED_CLOCK,
+				runAgent: stub.handler,
+				scope: SCOPE,
+				signal: new AbortController().signal,
+				useLlmProposer: true,
+				useLlmDreamer: true,
+				onProgress: stub.onProgress,
+			},
+		);
+		const first = result.arms[0]!.rounds[0]!;
+		const primingIds = PRIMING_DIVERSE.map((_, index) => primingTreeId("sum-difference", 7, index, FIXED_CLOCK));
+		expect(first.treeId).toBe(plain.arms[0]!.rounds[0]!.treeId);
+		expect(first.primingTreeIds).toEqual(primingIds);
+		expect(first.primingProbes).toBeGreaterThan(0);
+		expect(first.probes).toBe(plain.arms[0]!.rounds[0]!.probes + first.primingProbes!);
+		// Every stub answer was accepted: the shared round's calls and agent-generated probes cover the priming too.
+		const shared = stub.tallies.get(SHARED)!;
+		expect(shared.calls.proposer).toBe(first.probes);
+		expect(first.handlerCalls.proposer).toBe(first.probes);
+		expect(first.agentGeneratedCalls).toBe(first.probes);
+		expect(first.llmAccepted).toBe(first.probes);
+		expect(first.tokens).toBe(first.probes * 10);
+		expect(first.improvements!.at(-1)!.score).toBe(first.roundBest);
+		expect(first.roundBest).toBeGreaterThanOrEqual(plain.arms[0]!.rounds[0]!.roundBest);
+		for (const a of result.arms) {
+			expect(a.rounds[0]).toEqual(first);
+			const armDir = experimentArmDir(dir, result.experimentId, a.arm);
+			expect(
+				listTrees(armDir)
+					.map((tree) => tree.treeId)
+					.sort(),
+			).toEqual([first.treeId, ...primingIds, a.rounds[1]!.treeId].sort());
+			for (const treeId of primingIds) {
+				expect(treeFiles(armDir, treeId)).toEqual(
+					treeFiles(experimentArmDir(dir, result.experimentId, "fixed"), treeId),
+				);
+			}
+			// The dreaming arm's first pool held the shared tree and both priming trees.
+			expect(a.rounds[1]!.poolSize).toBe(1 + PRIMING_DIVERSE.length);
+			expect(a.totals.probes).toBe(first.probes + a.rounds[1]!.probes);
+		}
+		expect(stub.tallies.get("dream")!.calls.dreamer).toBe(1);
+	});
+
+	it("runs autocorrelation n=32 with a stub handler, recording candidate verdicts, the final selection and a dreams log", async () => {
+		const dir = scratch();
+		const weights = Array.from({ length: 32 }, (_, index) => 1 + 0.05 * Math.abs(16 - index));
+		const revised = JSON.stringify([
+			{ ...DEFAULT_POLICY, stopRule: "never" } satisfies ExplorationPolicy,
+			{ ...DEFAULT_POLICY, selectionRule: "explore-root" } satisfies ExplorationPolicy,
+		]);
+		const stub = makeArmStub({
+			proposer: () => ({ output: JSON.stringify({ n: 32, weights }), tokens: 12 }),
+			dreamer: () => ({ output: revised, tokens: 300 }),
+		});
+		const spec: ExperimentSpec = {
+			task: "autocorrelation",
+			n: 32,
+			seed: 7,
+			rounds: 2,
+			budget: { workers: 3, k1: 6, k2: 12, dreams: 4 },
+			arms: ["fixed", "dream"],
+		};
+		const result = await runExperimentWithAgent(spec, {
+			dir,
+			clock: () => FIXED_CLOCK,
+			runAgent: stub.handler,
+			scope: SCOPE,
+			signal: new AbortController().signal,
+			useLlmProposer: true,
+			useLlmDreamer: true,
+			onProgress: stub.onProgress,
+		});
+		expect(result.task).toBe("autocorrelation");
+		expect(result.n).toBe(32);
+		expect(result.notes.some((note) => note.startsWith("k1 6 <= initialPolicy.beta 6"))).toBe(true);
+		expect(isExperimentResult(readExperimentResult(dir, result.experimentId))).toBe(true);
+		// The proposer's prompt carries the exact bin count; every stub answer was accepted.
+		const prompts = [...stub.tallies.values()].flatMap((tally) => tally.prompts.proposer);
+		expect(prompts.every((prompt) => prompt.includes("exactly 32 weights"))).toBe(true);
+		expect(result.arms.every((a) => a.totals.localFallbacks === 0)).toBe(true);
+
+		const dream = arm(result, "dream");
+		const step = dream.rounds[1]!.dreaming!;
+		// Two child policies plus two local top-ups fill M = 4: a mixed step with one verdict per candidate.
+		expect(step.candidates).toBe(4);
+		expect(step.dreamer).toBe("mixed");
+		expect(step.candidateVerdicts).toHaveLength(4);
+		expect(step.candidateVerdicts!.map((verdict) => verdict.origin)).toEqual(["llm", "llm", "local", "local"]);
+		expect(step.candidateVerdicts!.map((verdict) => verdict.index)).toEqual([0, 1, 2, 3]);
+		expect(
+			step.candidateVerdicts!.every((verdict) => typeof verdict.value === "number" && verdict.changed.length > 0),
+		).toBe(true);
+		expect(step.candidateVerdicts!.filter((verdict) => verdict.reason === "winner")).toHaveLength(
+			step.improved ? 1 : 0,
+		);
+		expect(step.leverScan).not.toBeNull();
+		expect(step.leverScan!.gap).toBeGreaterThanOrEqual(0);
+		expect(dream.finalSelection).toHaveLength(1);
+		expect(dream.finalSelection![0]!.policyId).toBe(dream.rounds[1]!.policyId);
+		expect(dream.stoppedEarly).toBe(0);
+		expect(arm(result, "fixed").finalSelection).toEqual([]);
+		expect(arm(result, "fixed").rounds.every((row) => row.dreaming === null)).toBe(true);
+
+		// The dreams log of the dream arm: four candidate lines and a step line for iteration 1, then the final selection.
+		const dreamDir = experimentArmDir(dir, result.experimentId, "dream");
+		const lines = readDreamsLog(dreamsPath(dreamDir, dream.runId));
+		expect(lines.map((line) => [line.type, line.iteration])).toEqual([
+			["candidate", 1],
+			["candidate", 1],
+			["candidate", 1],
+			["candidate", 1],
+			["step", 1],
+			["candidate", -1],
+			["step", -1],
+		]);
+		expect(lines.every((line) => line.experimentId === result.experimentId && line.arm === "dream")).toBe(true);
+		const stepLine = lines[4] as DreamStepLine;
+		expect(stepLine.dreamer).toBe("mixed");
+		expect(stepLine.poolSize).toBe(1);
+		expect(stepLine.chosenPolicyId).toBe(dream.rounds[1]!.policyId);
+		expect(stepLine.improved).toBe(step.improved);
+		expect((lines[0] as DreamCandidateLine).policyId).toBe(step.candidateVerdicts![0]!.policyId);
+		// The fixed arm never dreamed: its log holds only the post-hoc final selection over {initial}.
+		const fixedLines = readDreamsLog(
+			dreamsPath(experimentArmDir(dir, result.experimentId, "fixed"), arm(result, "fixed").runId),
+		);
+		expect(fixedLines.map((line) => [line.type, line.iteration])).toEqual([["step", -1]]);
 	});
 });
 

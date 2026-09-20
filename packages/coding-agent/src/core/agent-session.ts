@@ -150,14 +150,17 @@ import {
 } from "./distill/trajectory-index.js";
 import { armSettings, type ExperimentArm, isExperimentArm } from "./dream/experiment.js";
 import { createAgentExperimentRunner } from "./dream/experiment-llm.js";
+import { PRIMING_DIVERSE } from "./dream/policy.js";
 import {
+	DREAM_MAX_SEEDS,
+	type DreamChildOptions,
 	type DreamExperimentRequest,
 	type DreamRunRequest,
 	DreamRunService,
 	type DreamRunStatus,
 } from "./dream/run-service.js";
 import { getDreamDir } from "./dream/store.js";
-import { isDreamTaskId } from "./dream/tasks/index.js";
+import { DREAM_TASK_IDS, isDreamTaskId } from "./dream/tasks/index.js";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.js";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.js";
 import {
@@ -1553,11 +1556,45 @@ function dreamBoolean(payload: Record<string, unknown>, key: string, request = "
 	return value;
 }
 
+/** The pool-priming choice a dream request may carry: `none` (default) or the fixed `PRIMING_DIVERSE` set. */
+export type DreamPrimingChoice = "none" | "diverse";
+
+export function isDreamPrimingChoice(value: unknown): value is DreamPrimingChoice {
+	return value === "none" || value === "diverse";
+}
+
+/** The priming policies a choice selects; `none` selects nothing (byte-identical to an unprimed run). */
+export function dreamPrimingPolicies(choice: DreamPrimingChoice | undefined): Pick<DreamRunRequest, "primingPolicies"> {
+	return choice === "diverse" ? { primingPolicies: [...PRIMING_DIVERSE] } : {};
+}
+
+function dreamPriming(payload: Record<string, unknown>, request: string): DreamPrimingChoice | undefined {
+	const value = payload.priming;
+	if (value === undefined || value === null) return undefined;
+	if (!isDreamPrimingChoice(value)) throw new Error(`${request} priming must be "none" or "diverse" when provided`);
+	return value;
+}
+
+/** The child-agent knobs (`model`, `thinking`, `max_output_tokens`) shared by dream.run and dream.experiment payloads. */
+function parseDreamChildOptions(payload: Record<string, unknown>, request: string): DreamChildOptions {
+	const model = normalizeRequestedRlmSubagentModel(payload.model ?? undefined, request);
+	const thinking = normalizeRequestedRlmSubagentThinkingLevel(payload.thinking ?? undefined, request);
+	const maxOutputTokens = dreamPositiveInteger(payload, "max_output_tokens", request);
+	return {
+		...(model === undefined ? {} : { model }),
+		...(thinking === undefined ? {} : { thinking }),
+		...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
+	};
+}
+
+function dreamTaskError(request: string): Error {
+	return new Error(`${request} task must be one of ${DREAM_TASK_IDS.join(", ")}`);
+}
+
 function parseDreamRunPayload(payload: Record<string, unknown>): DreamRunRequest {
+	const request = "dream.run";
 	const task = payload.task;
-	if (!isDreamTaskId(task)) {
-		throw new Error("dream.run task must be one of circle-packing, sum-difference, python-speedup");
-	}
+	if (!isDreamTaskId(task)) throw dreamTaskError(request);
 	const n = dreamPositiveInteger(payload, "n");
 	const seed = dreamNonNegativeInteger(payload, "seed");
 	const workers = dreamPositiveInteger(payload, "workers");
@@ -1567,6 +1604,7 @@ function parseDreamRunPayload(payload: Record<string, unknown>): DreamRunRequest
 	const iterations = dreamPositiveInteger(payload, "iterations");
 	const llmProposer = dreamBoolean(payload, "llm_proposer");
 	const llmDreamer = dreamBoolean(payload, "llm_dreamer");
+	const priming = dreamPriming(payload, request);
 	return {
 		task,
 		...(n === undefined ? {} : { n }),
@@ -1578,7 +1616,31 @@ function parseDreamRunPayload(payload: Record<string, unknown>): DreamRunRequest
 		...(iterations === undefined ? {} : { iterations }),
 		...(llmProposer === true ? { llmProposer: true } : {}),
 		...(llmDreamer === true ? { llmDreamer: true } : {}),
+		...parseDreamChildOptions(payload, request),
+		...dreamPrimingPolicies(priming),
 	};
+}
+
+/**
+ * `seeds`: a non-empty array of at most `DREAM_MAX_SEEDS` distinct non-negative
+ * integers. The cap exists because every LLM seed is a full experiment's spend.
+ */
+function parseDreamExperimentSeeds(payload: Record<string, unknown>): number[] | undefined {
+	const value = payload.seeds;
+	if (value === undefined || value === null) return undefined;
+	const invalid = "dream.experiment seeds must be a non-empty array of distinct non-negative integers";
+	if (!Array.isArray(value) || value.length === 0) throw new Error(invalid);
+	if (value.length > DREAM_MAX_SEEDS) {
+		throw new Error(`dream.experiment seeds must list at most ${DREAM_MAX_SEEDS} seeds (got ${value.length})`);
+	}
+	const seeds: number[] = [];
+	for (const seed of value) {
+		if (typeof seed !== "number" || !Number.isInteger(seed) || seed < 0 || seeds.includes(seed)) {
+			throw new Error(invalid);
+		}
+		seeds.push(seed);
+	}
+	return seeds;
 }
 
 function parseDreamExperimentArms(payload: Record<string, unknown>): ExperimentArm[] | undefined {
@@ -1603,11 +1665,11 @@ function parseDreamExperimentArms(payload: Record<string, unknown>): ExperimentA
 function parseDreamExperimentPayload(payload: Record<string, unknown>): DreamExperimentRequest {
 	const request = "dream.experiment";
 	const task = payload.task;
-	if (!isDreamTaskId(task)) {
-		throw new Error(`${request} task must be one of circle-packing, sum-difference, python-speedup`);
-	}
+	if (!isDreamTaskId(task)) throw dreamTaskError(request);
 	const n = dreamPositiveInteger(payload, "n", request);
 	const seed = dreamNonNegativeInteger(payload, "seed", request);
+	const seeds = parseDreamExperimentSeeds(payload);
+	if (seed !== undefined && seeds !== undefined) throw new Error(`${request} takes either seed or seeds, not both`);
 	const rounds = dreamPositiveInteger(payload, "rounds", request);
 	const arms = parseDreamExperimentArms(payload);
 	const workers = dreamPositiveInteger(payload, "workers", request);
@@ -1616,6 +1678,7 @@ function parseDreamExperimentPayload(payload: Record<string, unknown>): DreamExp
 	const dreams = dreamPositiveInteger(payload, "dreams", request);
 	const llmProposer = dreamBoolean(payload, "llm_proposer", request);
 	const llmDreamer = dreamBoolean(payload, "llm_dreamer", request);
+	const priming = dreamPriming(payload, request);
 	if (arms?.some((arm) => armSettings(arm).guided) && llmProposer !== true) {
 		throw new Error("dream-guided/fixed-guided require llm_proposer");
 	}
@@ -1623,6 +1686,7 @@ function parseDreamExperimentPayload(payload: Record<string, unknown>): DreamExp
 		task,
 		...(n === undefined ? {} : { n }),
 		...(seed === undefined ? {} : { seed }),
+		...(seeds === undefined ? {} : { seeds }),
 		...(rounds === undefined ? {} : { rounds }),
 		...(arms === undefined ? {} : { arms }),
 		...(workers === undefined ? {} : { workers }),
@@ -1631,6 +1695,8 @@ function parseDreamExperimentPayload(payload: Record<string, unknown>): DreamExp
 		...(dreams === undefined ? {} : { dreams }),
 		...(llmProposer === true ? { llmProposer: true } : {}),
 		...(llmDreamer === true ? { llmDreamer: true } : {}),
+		...parseDreamChildOptions(payload, request),
+		...dreamPrimingPolicies(priming),
 	};
 }
 
@@ -4632,7 +4698,8 @@ export class AgentSession {
 				return {
 					started: true,
 					runId: started.runId,
-					note: "The Dream-RSI experiment continues in the background; check `dream.status` (resultPath on completion) or the Agents View for progress. Continue working normally.",
+					...(request.seeds ? { seeds: request.seeds.length } : {}),
+					note: `The Dream-RSI experiment${request.seeds ? ` (${request.seeds.length} seeds, run sequentially)` : ""} continues in the background; check \`dream.status\` (resultPath/resultPaths on completion) or the Agents View for progress. Continue working normally.`,
 				};
 			}
 			default:
@@ -8022,15 +8089,21 @@ export class AgentSession {
 						...(options.dreams === undefined ? {} : { dreams: options.dreams }),
 						...(options.llmProposer ? { llmProposer: true } : {}),
 						...(options.llmDreamer ? { llmDreamer: true } : {}),
+						...(options.model === undefined ? {} : { model: options.model }),
+						...(options.thinking === undefined ? {} : { thinking: options.thinking }),
+						...(options.maxOutputTokens === undefined ? {} : { maxOutputTokens: options.maxOutputTokens }),
+						...dreamPrimingPolicies(options.priming),
 					};
 					if (options.experiment) {
 						const started = this._startDreamExperiment({
 							...shared,
+							...(options.seeds === undefined ? {} : { seeds: options.seeds }),
 							...(options.rounds === undefined ? {} : { rounds: options.rounds }),
 							...(options.arms === undefined ? {} : { arms: options.arms }),
 						});
 						if (!started.started) throw new Error(started.reason);
-						resultText = `Dream-RSI experiment ${started.runId} started: ${options.task} (${(options.arms ?? ["dream", "fixed"]).join(",")})`;
+						const seedText = options.seeds ? `, ${options.seeds.length} seeds` : "";
+						resultText = `Dream-RSI experiment ${started.runId} started: ${options.task} (${(options.arms ?? ["dream", "fixed"]).join(",")}${seedText})`;
 						this._reportDreamRunCompletion(started.runId, started.completion, input.command, "experiment");
 						break;
 					}
@@ -8134,8 +8207,13 @@ export class AgentSession {
 			(status) => {
 				if (this._disposed) return;
 				try {
+					const paths = status.resultPaths?.length
+						? status.resultPaths
+						: status.resultPath
+							? [status.resultPath]
+							: [];
 					this._appendDurableSessionCommandMessage(
-						`Dream-RSI ${kind} ${runId} ${status.stopReason ?? "stopped"}${status.resultPath ? ` (results ${status.resultPath})` : ""}`,
+						`Dream-RSI ${kind} ${runId} ${status.stopReason ?? "stopped"}${paths.length > 0 ? ` (results ${paths.join(", ")})` : ""}`,
 						command,
 						true,
 						false,
@@ -14595,22 +14673,38 @@ export class AgentSession {
 		// from the trace alone: the span records the requested model, the
 		// terminal status and any thrown error (e.g. model resolution or the
 		// authentication preflight failing before a child session exists).
-		withSpan("rlm.run_agent", { "rlm.requested_model": request.model }, async (span) => {
-			try {
-				const result = await this._runExtensionAgentInner(request, options);
-				span.setAttributes({ "rlm.status": result.status, "rlm.model": result.model, "rlm.turns": result.turns });
-				if (result.status === "error") span.recordError(result.error ?? "run-agent error");
-				return result;
-			} catch (error) {
-				runAgentLog.warn("runAgent failed before completion", {
-					requestedModel: request.model,
-					error: error instanceof Error ? error.message : String(error),
-				});
-				throw error;
-			}
-		});
+		withSpan(
+			"rlm.run_agent",
+			{
+				"rlm.requested_model": request.model,
+				"rlm.requested_thinking": request.thinkingLevel,
+				"rlm.max_output_tokens": options?.maxOutputTokens,
+			},
+			async (span) => {
+				try {
+					const result = await this._runExtensionAgentInner(request, options, span);
+					span.setAttributes({
+						"rlm.status": result.status,
+						"rlm.model": result.model,
+						"rlm.turns": result.turns,
+					});
+					if (result.status === "error") span.recordError(result.error ?? "run-agent error");
+					return result;
+				} catch (error) {
+					runAgentLog.warn("runAgent failed before completion", {
+						requestedModel: request.model,
+						error: error instanceof Error ? error.message : String(error),
+					});
+					throw error;
+				}
+			},
+		);
 
-	private async _runExtensionAgentInner(request: RunAgentRequest, options?: RunAgentOptions): Promise<RunAgentResult> {
+	private async _runExtensionAgentInner(
+		request: RunAgentRequest,
+		options?: RunAgentOptions,
+		span?: Span,
+	): Promise<RunAgentResult> {
 		if (!request.prompt.trim()) throw new Error("runAgent prompt must not be empty");
 		if (this._disposed || this._disposing) throw new Error("Cannot run an agent after its parent was disposed");
 		if (this._rlmDepth >= this._rlmMaxDepth) {
@@ -14619,12 +14713,22 @@ export class AgentSession {
 			);
 		}
 		const { model } = await this._resolveRlmSubagentModel(request.model);
+		if (request.thinkingLevel !== undefined) {
+			const supported = getSupportedThinkingLevels(model) as ThinkingLevel[];
+			if (!supported.includes(request.thinkingLevel)) {
+				throw new Error(
+					`Requested thinking level "${request.thinkingLevel}" is not supported by model "${model.provider}/${model.id}"; supported levels: ${supported.join(", ")}`,
+				);
+			}
+		}
 		const auth = await this._modelRegistry.getApiKeyAndHeaders(model);
 		if (!auth.ok) {
 			throw new Error(`Requested agent model "${model.provider}/${model.id}" failed authentication preflight`);
 		}
 		const id = `run-agent-${randomUUID()}`;
 		const sessionDir = mkdtempSync(join(tmpdir(), "pi-run-agent-"));
+		// The level goes in at child construction: `setThinkingLevel` on the child
+		// would persist it as the user's settings default through the shared manager.
 		const runtimeOptions: CreateRlmSubagentRuntimeOptions = {
 			...this._createRlmSubagentRuntimeOptions({
 				id,
@@ -14632,10 +14736,12 @@ export class AgentSession {
 				sessionName: id,
 				sessionDir,
 				model,
+				...(request.thinkingLevel === undefined ? {} : { thinkingLevel: request.thinkingLevel }),
 			}),
 			activeToolNames: this._resolveRunAgentTools(options?.tools),
 			ephemeral: true,
 		};
+		span?.setAttributes({ "rlm.thinking": runtimeOptions.thinkingLevel });
 		let runtime: RlmSubagentRuntime | undefined;
 		let releaseStatus: "done" | "error" | "cancelled" = "error";
 		const parentSignal = this.agent.signal;

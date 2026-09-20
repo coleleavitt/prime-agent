@@ -20,26 +20,40 @@ await dream.run("python-speedup", iterations=2, seed=7)
 await dream.run("circle-packing", llm_dreamer=True)  # spends tokens
 await dream.experiment("sum-difference", rounds=4)  # dream vs fixed, local
 await dream.experiment("python-speedup", rounds=5, arms=("dream", "fixed", "dream-guided"), llm_proposer=True)  # spends tokens
+await dream.experiment("autocorrelation", rounds=4, seeds=(7, 8, 9), llm_proposer=True, llm_dreamer=True)  # 3 independent seeds, one run
+await dream.experiment("autocorrelation", rounds=4, priming="diverse", model="anthropic/claude-sonnet-5", thinking="off", max_output_tokens=4096, llm_proposer=True)
 await dream.cancel()
 ```
 
 ## API
 
 - `await dream.run(task, n=None, seed=None, workers=None, k1=None, k2=None,
-  dreams=None, iterations=None, llm_proposer=False, llm_dreamer=False)` — start
+  dreams=None, iterations=None, llm_proposer=False, llm_dreamer=False,
+  model=None, thinking=None, max_output_tokens=None, priming=None)` — start
   a run. Returns `{"started": True, "runId": ...}` immediately, or
   `{"started": False, "reason": ...}` when a run is already in progress or
   Dream-RSI is not available in this session. `task` must be one of
-  `circle-packing`, `sum-difference`, `python-speedup`. `n` is the task size
+  `circle-packing`, `sum-difference`, `python-speedup`, `autocorrelation`
+  (the host's `DREAM_TASK_IDS`). `n` is the task size
   (e.g. circle count) when the task takes one. `seed` seeds the deterministic
   RNG. `workers`, `k1`, `k2`, `dreams`, `iterations` size the search. With
   `llm_proposer=True` each generation attempt is produced by a child agent, and
   with `llm_dreamer=True` each dreaming step's candidate policies come from a
   child agent; both spend tokens. The default (both False) runs the local
-  zero-token proposer and dreamer and touches no network.
+  zero-token proposer and dreamer and touches no network. `model`
+  (`provider/id`), `thinking` (default `off`; the measured regime, see
+  `docs/dream-rsi.md`) and `max_output_tokens` (the child's visible-answer
+  cap; defaults per role: proposer 4096, 8192 for python-speedup, dreamer 4096,
+  guidance 2048) apply to every child the run spawns. `priming="diverse"`
+  additionally rolls out two fixed policies at iteration 0 so the frozen pool
+  has replay support the default policy would never create; their probes are
+  charged to round 1. `priming="none"` (the default) is byte-identical to
+  leaving it out.
 - `await dream.experiment(task, rounds=None, arms=("dream", "fixed"), n=None,
   seed=None, workers=None, k1=None, k2=None, dreams=None, llm_proposer=False,
-  llm_dreamer=False)` — start the paper's controlled comparison. Every arm
+  llm_dreamer=False, seeds=None, model=None, thinking=None,
+  max_output_tokens=None, priming=None)` — start the paper's controlled
+  comparison. Every arm
   starts from the same hand-written policy, seed and per-round budget and
   grows its own pool; the `fixed` arm (Recursive Fixed Exploration) never
   dreams, so round 1 is identical by construction and every later difference
@@ -53,12 +67,22 @@ await dream.cancel()
   `prime-agent.dream.experiment/1`: per-round rows per arm, the headline
   multipliers against `fixed`), which `evals/dream/plot_experiment.py` turns
   into the round-best, compute and attempts plots. `status()` reports
-  `resultPath` when it completes.
+  `resultPath` when it completes. `seeds` (1..16 distinct non-negative ints,
+  exclusive with `seed`) runs one independent experiment per seed, sequentially
+  under ONE run id and one progress stream, one `result.json` each under
+  `experiments/<task>-s<seed>-...`; `status()` lists them in `resultPaths`
+  (`resultPath` stays the last completed one). Seeds are independent
+  replicates and are never pooled; pass every result path to the plotter for
+  the noise floor. Every LLM seed costs a full experiment, so the count is
+  capped at 16. `model`, `thinking`, `max_output_tokens` and `priming` are as in
+  `run()`; priming trees are part of every arm's shared round 1.
 - `await dream.status()` — current run status as a dict (`runId`, `phase`,
   `task`, `iteration`, `bestNodeScore`, `finalPolicyScore`, `improved`,
   `stopReason`, ...) or `{"phase": "idle"}` when nothing is running. An
   experiment adds `kind`, `experimentId`, `arm`, `armIndex`, `armCount`,
-  `round`, `rounds`, `cumulativeProbes` and, on completion, `resultPath`.
+  `round`, `rounds`, `cumulativeProbes` and, on completion, `resultPath`; a
+  multi-seed one adds `seed`, `seedIndex`, `seedCount`, `resultPaths` and, on
+  the LLM path, `tokens` (the last completed seed's total).
 - `await dream.cancel()` — request cancellation. Returns `{"cancelled": bool}`.
 
 ## Rules
@@ -80,5 +104,6 @@ await dream.cancel()
 
 The Dream-RSI architecture and its three in-session invocation surfaces (this
 kernel skill, the human `/dream` command, and the live `dream_run_update`
-progress in the Agents View) are documented in
-`packages/coding-agent/docs/dream-rsi.md`.
+progress in the Agents View) are documented in `docs/dream-rsi.md` at the
+repository root; `evals/dream/README.md` covers the plotter and what the
+result fields mean.

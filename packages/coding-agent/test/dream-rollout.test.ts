@@ -9,6 +9,8 @@ import { createSeededRng } from "../src/core/dream/rng.js";
 import {
 	attemptRngLabel,
 	type ExploreResult,
+	IMPROVE_EPS,
+	improvementsOf,
 	LlmProposerUnavailableError,
 	runOnlineExploration,
 } from "../src/core/dream/rollout.js";
@@ -118,6 +120,39 @@ describe("runOnlineExploration (circle-packing)", () => {
 		// Nothing on the local path is agent-generated.
 		expect(result.agentGeneratedCount).toBe(0);
 		expect(result.tree.originCounts()).toEqual({ root: 1, local: result.revealedCount, llm: 0 });
+	});
+
+	it("reports the probe at which the best arrived and the best-so-far curve at its improvements", () => {
+		const result = explore(dreamDir, 5);
+		const best = result.tree.bestNode()!;
+		expect(result.probesToBest).toBe(best.seq);
+		expect(result.probesToBest).toBeGreaterThan(0);
+		expect(result.probesToBest).toBeLessThanOrEqual(result.revealedCount);
+		const curve = result.improvements;
+		expect(curve.length).toBeGreaterThan(1);
+		expect(curve[0]).toEqual({ probe: 0, score: result.rootScore });
+		expect(curve.at(-1)).toEqual({ probe: best.seq, score: result.bestScore });
+		for (let index = 1; index < curve.length; index++) {
+			expect(curve[index]!.probe).toBeGreaterThan(curve[index - 1]!.probe);
+			expect(curve[index]!.score).toBeGreaterThan(curve[index - 1]!.score);
+		}
+		// Every improvement is a real node reached in reveal order, and nothing in between beat it.
+		const nodes = result.tree.allNodes();
+		for (const point of curve) expect(nodes[point.probe]!.score).toBe(point.score);
+		expect(improvementsOf(nodes)).toEqual(curve);
+		// A curve over an all-invalid list is empty; the root counts as probe 0 when it is valid.
+		expect(improvementsOf([{ seq: 0, score: 1, valid: false }])).toEqual([]);
+		expect(
+			improvementsOf([
+				{ seq: 0, score: 0.2, valid: true },
+				{ seq: 1, score: 0.1, valid: true },
+				{ seq: 2, score: 0.3, valid: true },
+			]),
+		).toEqual([
+			{ probe: 0, score: 0.2 },
+			{ probe: 2, score: 0.3 },
+		]);
+		expect(IMPROVE_EPS).toBe(1e-12);
 	});
 
 	it("persists origin on every node line: root, then local for the whole local path", () => {

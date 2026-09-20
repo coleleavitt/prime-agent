@@ -1,16 +1,21 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { addSpanSink, type SpanEndRecord } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import { type DreamCandidateLine, type DreamStepLine, dreamsPath, readDreamsLog } from "../src/core/dream/dreams.js";
 import {
 	type DreamLoopOptions,
 	type DreamLoopResult,
 	type DreamRoundRecord,
+	dreamRunId,
+	mergedRoundCurve,
+	primingTreeId,
 	runDreamLoop,
 } from "../src/core/dream/loop.js";
-import { DEFAULT_POLICY, type ExplorationPolicy, policyId } from "../src/core/dream/policy.js";
-import { listTrees } from "../src/core/dream/store.js";
+import { DEFAULT_POLICY, type ExplorationPolicy, PRIMING_DIVERSE, policyId } from "../src/core/dream/policy.js";
+import { listTrees, readTree } from "../src/core/dream/store.js";
 import { resolveTask } from "../src/core/dream/tasks/index.js";
 
 /**
@@ -215,5 +220,206 @@ describe("runDreamLoop determinism across clocks", () => {
 		const first = runDreamLoop(options(scratch(), { seed: 7 }));
 		const second = runDreamLoop(options(scratch(), { seed: 8 }));
 		expect(second.rounds.map(clockFree)).not.toEqual(first.rounds.map(clockFree));
+	});
+});
+
+/**
+ * sha256 of the sorted tree files (header/node/reveal lines and blobs) of a store.
+ * The pinned digests below were produced by the loop at `15768af87`, BEFORE the
+ * objective, verdict, lever-scan, dreams-log, runLabel and priming changes, for
+ * exactly the `options()` configuration; a plain loop must still grow them.
+ */
+function treeDigest(dir: string): string {
+	return createHash("sha256")
+		.update(JSON.stringify(treeFiles(dir)))
+		.digest("hex");
+}
+const PRE_CHANGE_TREE_DIGEST = "ef7ed6f1f3279f829d89a1ef60ec03d89930b505aefc35d00f2d2865cd51ff6b";
+
+describe("runDreamLoop byte identity with the pre-change loop", () => {
+	it("grows byte-identical tree files without runLabel or primingPolicies, dreaming or fixed", () => {
+		for (const fixedPolicy of [true, false]) {
+			const dir = scratch();
+			const result = runDreamLoop(options(dir, { fixedPolicy }));
+			expect(Object.keys(treeFiles(dir))).toHaveLength(34);
+			expect(treeDigest(dir)).toBe(PRE_CHANGE_TREE_DIGEST);
+			// The bare run id form and no priming trees.
+			expect(result.runId).toBe(`sum-difference-s7-r${FIXED_CLOCK}`);
+			expect(result.rounds[0]!.primingTreeIds).toBeUndefined();
+			expect(result.rounds[0]!.primingProbes).toBeUndefined();
+			// The dreams log lives beside trees/, never inside it, so the pool is unchanged.
+			expect(listTrees(dir)).toHaveLength(3);
+			expect(readdirSync(join(dir, "trees")).every((entry) => !entry.includes("dreams"))).toBe(true);
+		}
+	});
+});
+
+describe("runDreamLoop round curves, stoppedEarly and the dreaming record", () => {
+	it("records the exact probe curve of every round and how many rollouts stopped before k1", () => {
+		const dir = scratch();
+		const result = runDreamLoop(options(dir));
+		expect(result.stoppedEarly).toBe(result.rounds.filter((record) => record.decisionRounds < 5).length);
+		for (const record of result.rounds) {
+			const tree = readTree(record.treeId, dir);
+			const bestSeq = tree.nodes
+				.filter((node) => node.valid)
+				.sort((a, b) => b.score - a.score || a.seq - b.seq)[0]!.seq;
+			expect(record.probesToRoundBest).toBe(bestSeq);
+			expect(record.improvements!.at(-1)).toEqual({ probe: bestSeq, score: record.roundBest });
+			expect(record.improvements!.map((point) => point.score)).toEqual(
+				[...record.improvements!.map((point) => point.score)].sort((a, b) => a - b),
+			);
+			expect(record.probesToRoundBest).toBeLessThanOrEqual(record.probes);
+		}
+	});
+
+	it("fills the additive dreaming fields on every dreaming round", () => {
+		const dir = scratch();
+		const result = runDreamLoop(options(dir));
+		for (const record of result.rounds.slice(1)) {
+			const dreaming = record.dreaming!;
+			expect(typeof dreaming.candidates).toBe("number");
+			expect(dreaming.candidateVerdicts).toHaveLength(dreaming.candidates);
+			expect(dreaming.dreamer).toBe("local");
+			expect(dreaming.leverScan).not.toBeNull();
+			expect(dreaming.leverScan!.gap).toBeGreaterThanOrEqual(0);
+			expect(dreaming.candidateVerdicts!.every((verdict) => verdict.origin === "local")).toBe(true);
+			const winners = dreaming.candidateVerdicts!.filter((verdict) => verdict.reason === "winner");
+			expect(winners.length).toBe(dreaming.improved ? 1 : 0);
+		}
+		expect(result.finalSelection).toHaveLength(result.iterations);
+	});
+});
+
+describe("runDreamLoop dreams log", () => {
+	it("writes one candidate line per candidate per step plus a step line, and the final selection as iteration -1", () => {
+		const dir = scratch();
+		const result = runDreamLoop(options(dir, { dreamsLogContext: { experimentId: "exp-1", arm: "dream" } }));
+		const path = dreamsPath(dir, result.runId);
+		expect(path).toBe(join(dir, "dreams", `${result.runId}.jsonl`));
+		expect(existsSync(path)).toBe(true);
+		const lines = readDreamsLog(path);
+		const steps = lines.filter((line): line is DreamStepLine => line.type === "step");
+		const candidates = lines.filter((line): line is DreamCandidateLine => line.type === "candidate");
+		expect(steps.map((step) => step.iteration)).toEqual([1, 2, -1]);
+		expect(candidates.filter((line) => line.iteration === 1)).toHaveLength(4);
+		expect(candidates.filter((line) => line.iteration === 2)).toHaveLength(4);
+		expect(candidates.filter((line) => line.iteration === -1)).toHaveLength(2);
+		for (const line of lines) {
+			expect(line.ts).toBe(FIXED_CLOCK);
+			expect(line.experimentId).toBe("exp-1");
+			expect(line.arm).toBe("dream");
+		}
+		for (const step of steps.slice(0, 2)) {
+			const record = result.rounds[step.iteration]!.dreaming!;
+			expect(step.currentValue).toBe(record.currentScore);
+			expect(step.improved).toBe(record.improved);
+			expect(step.chosenPolicyId).toBe(result.rounds[step.iteration]!.policyId);
+			expect(step.leverScan).toEqual(record.leverScan);
+			expect(step.dreamer).toBe("local");
+			expect(step.poolSize).toBe(record === result.rounds[1]!.dreaming ? 1 : 2);
+		}
+		const final = steps[2]!;
+		expect(final.chosenPolicyId).toBe(result.finalPolicyId);
+		expect(final.improved).toBe(result.improved);
+		expect(final.leverScan).toBeNull();
+		expect(final.poolSize).toBe(3);
+		// A fixed-policy run never dreams, so it logs only the final selection (with no candidates).
+		const fixedDir = scratch();
+		const fixed = runDreamLoop(options(fixedDir, { fixedPolicy: true }));
+		const fixedLines = readDreamsLog(dreamsPath(fixedDir, fixed.runId));
+		expect(fixedLines).toHaveLength(1);
+		expect(fixedLines[0]).toMatchObject({ type: "step", iteration: -1, improved: false });
+	});
+});
+
+describe("runDreamLoop runLabel", () => {
+	it("folds a clock-free label into the run id and the dreams-log key so arms under one clock differ", () => {
+		const dreamDir = scratch();
+		const fixedDir = scratch();
+		const dream = runDreamLoop(options(dreamDir, { runLabel: "exp-1/dream" }));
+		const fixed = runDreamLoop(options(fixedDir, { runLabel: "exp-1/fixed", fixedPolicy: true }));
+		expect(dream.runId).toBe(`sum-difference-s7-r${FIXED_CLOCK}-exp-1_dream`);
+		expect(fixed.runId).toBe(`sum-difference-s7-r${FIXED_CLOCK}-exp-1_fixed`);
+		expect(dream.runId).not.toBe(fixed.runId);
+		expect(existsSync(dreamsPath(dreamDir, dream.runId))).toBe(true);
+		expect(existsSync(dreamsPath(fixedDir, fixed.runId))).toBe(true);
+		// The label never reaches a tree: ids and files are those of the unlabelled loop.
+		expect(dream.treeIds).toEqual(runDreamLoop(options(scratch())).treeIds);
+		expect(treeDigest(dreamDir)).toBe(PRE_CHANGE_TREE_DIGEST);
+		expect(dreamRunId("sum-difference", 7, 5, "a b/c")).toBe("sum-difference-s7-r5-a_b_c");
+		expect(dreamRunId("sum-difference", 7, 5)).toBe("sum-difference-s7-r5");
+		expect(dreamRunId("sum-difference", 7, 5, "")).toBe("sum-difference-s7-r5");
+	});
+});
+
+describe("runDreamLoop primingPolicies", () => {
+	it("rolls out each priming policy at iteration 0, pools the trees and charges them to round 1", () => {
+		const dir = scratch();
+		const plainDir = scratch();
+		const plain = runDreamLoop(options(plainDir));
+		const result = runDreamLoop(options(dir, { primingPolicies: PRIMING_DIVERSE }));
+		const first = result.rounds[0]!;
+		const primingIds = PRIMING_DIVERSE.map((_, index) => primingTreeId("sum-difference", 7, index, FIXED_CLOCK));
+		expect(first.primingTreeIds).toEqual(primingIds);
+		expect(primingIds).toEqual(["sum-difference-s7-i0p0-1700000000000", "sum-difference-s7-i0p1-1700000000000"]);
+		// The initial rollout is unchanged: same tree id and file as the plain loop.
+		expect(result.treeIds).toEqual(plain.treeIds);
+		const initialFile = `${plain.treeIds[0]}.jsonl`;
+		expect(treeFiles(dir)[initialFile]).toBe(treeFiles(plainDir)[initialFile]);
+		// Later rollouts differ once the pool holds priming trees only if dreaming chose another policy.
+		expect(result.rounds[0]!.policyId).toBe(plain.rounds[0]!.policyId);
+		const summaries = new Map(listTrees(dir).map((summary) => [summary.treeId, summary]));
+		expect(summaries.size).toBe(3 + PRIMING_DIVERSE.length);
+		let primingProbes = 0;
+		primingIds.forEach((treeId, index) => {
+			const summary = summaries.get(treeId)!;
+			expect(summary.iteration).toBe(0);
+			expect(summary.policyId).toBe(policyId(PRIMING_DIVERSE[index]!));
+			primingProbes += summary.nodeCount - 1;
+		});
+		expect(first.primingProbes).toBe(primingProbes);
+		expect(first.probes).toBe(plain.rounds[0]!.probes + primingProbes);
+		expect(first.roundBest).toBe(
+			Math.max(plain.rounds[0]!.roundBest, ...primingIds.map((id) => summaries.get(id)!.bestScore)),
+		);
+		expect(first.probesToRoundBest).toBeLessThanOrEqual(first.probes);
+		expect(first.improvements!.at(-1)!.score).toBe(first.roundBest);
+		// Priming rollouts are not counted as stopped-early rollouts and their tokens are zero here.
+		expect(result.stoppedEarly).toBeLessThanOrEqual(result.rounds.length);
+		expect(first.tokens.rollout).toBe(0);
+		// The pool the first dreaming step froze holds the priming trees.
+		expect(result.rounds[1]!.poolSize).toBe(1 + PRIMING_DIVERSE.length);
+		expect(result.rounds[1]!.dreaming!.candidateVerdicts).toHaveLength(4);
+		// The fixed control charges the same priming to round 1 and reports the same pool size.
+		const fixed = runDreamLoop(options(scratch(), { primingPolicies: PRIMING_DIVERSE, fixedPolicy: true }));
+		expect(fixed.rounds[0]).toEqual(first);
+		expect(fixed.rounds[1]!.poolSize).toBe(1 + PRIMING_DIVERSE.length);
+	});
+
+	it("merges the round-1 curve over the initial rollout and then each priming tree", () => {
+		const dir = scratch();
+		const result = runDreamLoop(options(dir, { primingPolicies: PRIMING_DIVERSE, iterations: 0 }));
+		const first = result.rounds[0]!;
+		const trees = [result.treeIds[0]!, ...first.primingTreeIds!].map((treeId) => readTree(treeId, dir));
+		// Every root (each rollout seeds its own) is known before the first probe: the best valid one is probe 0.
+		const roots = trees.flatMap((tree) => tree.nodes.filter((node) => node.parentId === null && node.valid));
+		let best = Math.max(...roots.map((node) => node.score));
+		const expected: { probe: number; score: number }[] = [{ probe: 0, score: best }];
+		let offset = 0;
+		for (const tree of trees) {
+			for (const node of tree.nodes) {
+				if (!node.valid || node.parentId === null) continue;
+				if (node.score > best) {
+					best = node.score;
+					expected.push({ probe: offset + node.seq, score: node.score });
+				}
+			}
+			offset += tree.nodes.length - 1;
+		}
+		expect(first.improvements).toEqual(expected);
+		expect(first.probesToRoundBest).toBe(expected.at(-1)!.probe);
+		expect(expected.at(-1)!.score).toBe(first.roundBest);
+		expect(mergedRoundCurve([])).toEqual({ probesToBest: 0, improvements: [] });
 	});
 });

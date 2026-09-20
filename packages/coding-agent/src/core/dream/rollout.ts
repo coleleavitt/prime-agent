@@ -28,7 +28,7 @@
 
 import { withSpan } from "@earendil-works/pi-ai";
 import { canonicalJson, sha256 } from "../ravo/canonical-json.js";
-import { applyStopRule, interpretPolicy, projectProposeParams } from "./interpreter.js";
+import { applyStopRule, IMPROVE_EPS, interpretPolicy, projectProposeParams } from "./interpreter.js";
 import type { Cell, ObservationView, RevealedNode } from "./observation.js";
 import { assertLegalBatch } from "./observation.js";
 import { type ExplorationPolicy, policyId } from "./policy.js";
@@ -39,8 +39,7 @@ import type { DreamTaskId, ProposeParams, ScoredTask } from "./task.js";
 import { createTree, type DiscoveryNode, type DiscoveryTree, nodeRecordOf } from "./tree.js";
 import type { DreamClock, TreeHeaderRecord } from "./types.js";
 
-/** A round improves the best score only when it beats it by more than this. Shared by both drivers. */
-export const IMPROVE_EPS = 1e-12;
+export { IMPROVE_EPS };
 
 export interface ExploreOptions {
 	task: ScoredTask<unknown>;
@@ -91,8 +90,41 @@ export interface ExploreResult {
 	agentGeneratedCount: number;
 	bestScore: number;
 	bestNodeId: string;
+	/** `seq` of the best valid node (seq is reveal order), so the probe count at which the best was found; 0 when the root is best. */
+	probesToBest: number;
+	/**
+	 * The best-so-far curve at its improvements only: `probe` is the node seq
+	 * (0 for the root when it is valid), `score` the running best after it.
+	 */
+	improvements: ScoreImprovement[];
 	rootScore: number;
 	tokens: number;
+}
+
+/** One point of a best-so-far curve: the probe index at which the running best rose to `score`. */
+export interface ScoreImprovement {
+	probe: number;
+	score: number;
+}
+
+/**
+ * The improvements of a best-so-far curve over `nodes` in seq order: every
+ * node whose valid score strictly beats the running best (the root first, when
+ * valid). Empty when nothing is valid.
+ */
+export function improvementsOf(nodes: readonly Pick<DiscoveryNode, "seq" | "score" | "valid">[]): ScoreImprovement[] {
+	const out: ScoreImprovement[] = [];
+	let best = 0;
+	let seen = false;
+	for (const node of nodes) {
+		if (!node.valid) continue;
+		if (!seen || node.score > best) {
+			best = node.score;
+			seen = true;
+			out.push({ probe: node.seq, score: node.score });
+		}
+	}
+	return out;
 }
 
 /** Thrown when the synchronous rollout is asked for the LLM proposer it cannot run. */
@@ -325,6 +357,7 @@ export function applyRoundStop(
 /** Summarize the grown tree into an `ExploreResult`. */
 export function finishRollout(state: RolloutState, rounds: number, tokens: number): ExploreResult {
 	const best = state.tree.bestNode() ?? state.tree.nodeById(state.tree.rootId)!;
+	const improvements = improvementsOf(state.tree.allNodes());
 	return {
 		treeId: state.treeId,
 		tree: state.tree,
@@ -333,6 +366,8 @@ export function finishRollout(state: RolloutState, rounds: number, tokens: numbe
 		agentGeneratedCount: state.tree.originCounts().llm,
 		bestScore: best.score,
 		bestNodeId: best.id,
+		probesToBest: improvements.at(-1)?.probe ?? 0,
+		improvements,
 		rootScore: state.tree.nodeById(state.tree.rootId)!.score,
 		tokens,
 	};

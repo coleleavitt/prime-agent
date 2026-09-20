@@ -13,9 +13,12 @@ import {
 	withSpan,
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { proposePolicies, runDreaming } from "../src/core/dream/improve.js";
+import { type DreamCandidateLine, type DreamStepLine, dreamsPath, readDreamsLog } from "../src/core/dream/dreams.js";
+import { proposePolicies, runDreaming, scorePolicyOnPool } from "../src/core/dream/improve.js";
 import { projectProposeParams } from "../src/core/dream/interpreter.js";
 import {
+	buildDreamerInput,
+	buildDreamPrompt,
 	buildGuidanceInput,
 	createLlmProposer,
 	DREAMER_PROMPT_HEADER,
@@ -24,15 +27,30 @@ import {
 	type DreamProgressEvent,
 	GUIDANCE_PROMPT_HEADER,
 	type GuidanceInput,
+	historyOf,
 	isDreamAbortError,
+	mergePrimedRollouts,
 	PROPOSER_JSON_ONLY,
 	PROPOSER_PROMPT_HEADER,
+	parseCandidateArray,
 	proposePoliciesWithAgent,
 	runDreamLoopWithAgent,
 	runOnlineExplorationWithAgent,
 } from "../src/core/dream/llm.js";
-import type { DreamHandlerCalls, DreamRoundRecord } from "../src/core/dream/loop.js";
-import { DEFAULT_POLICY, type ExplorationPolicy, policyId } from "../src/core/dream/policy.js";
+import {
+	type DreamHandlerCalls,
+	type DreamRoundRecord,
+	dreamRunId,
+	primingTreeId,
+	runDreamLoop,
+} from "../src/core/dream/loop.js";
+import {
+	DEFAULT_POLICY,
+	type ExplorationPolicy,
+	PRIMING_DIVERSE,
+	policyId,
+	REPLAY_DEAD_FIELDS,
+} from "../src/core/dream/policy.js";
 import {
 	asyncOf,
 	createLocalProposer,
@@ -40,7 +58,7 @@ import {
 	totalRejected,
 	zeroProposalTally,
 } from "../src/core/dream/proposer.js";
-import { RejectionLog, readRejections, rejectionsPath } from "../src/core/dream/rejections.js";
+import { excerptOf, RejectionLog, readRejections, rejectionsPath } from "../src/core/dream/rejections.js";
 import { createSeededRng } from "../src/core/dream/rng.js";
 import { runOnlineExploration } from "../src/core/dream/rollout.js";
 import { buildRecordedTree, DreamStoreError, listTrees, type RecordedTree, readTree } from "../src/core/dream/store.js";
@@ -231,7 +249,7 @@ function synthPool(): RecordedTree[] {
 function policy(over: Partial<ExplorationPolicy>): ExplorationPolicy {
 	return { ...DEFAULT_POLICY, ...over };
 }
-const CFG = { k1: 5, k2: 10, objective: { beta1: 0.05, beta2: 0.05 } };
+const CFG = { k1: 5, k2: 10, objective: { beta1: 0.05, beta2: 0.05, beta3: 0 } };
 const CURRENT = policy({ selectionRule: "explore-root", stopRule: "patience", beta: 1, batchSize: 1 });
 const WORSE = policy({ selectionRule: "best-first", stopRule: "never", batchSize: 1 });
 
@@ -556,8 +574,13 @@ describe("runOnlineExplorationWithAgent", () => {
 	});
 });
 
+/** The policy ids of a dreamed candidate list. */
+function idsOf(candidates: readonly { policy: ExplorationPolicy }[]): string[] {
+	return candidates.map((candidate) => policyId(candidate.policy));
+}
+
 describe("proposePoliciesWithAgent (LLM dreamer)", () => {
-	it("keeps only the strictly in-bounds candidates and drops the rest", async () => {
+	it("keeps the in-bounds candidates with their drop reasons, tops the budget up locally and reports a mixed dreamer", async () => {
 		const candidatesJson = JSON.stringify([
 			policy({ stopRule: "never" }), // valid
 			policy({ branchWidth: 999 }), // out of range
@@ -565,29 +588,108 @@ describe("proposePoliciesWithAgent (LLM dreamer)", () => {
 			policy({ selectionRule: "nope" as ExplorationPolicy["selectionRule"] }), // non-literal rule
 		]);
 		const stub = makeStub({ dreamerOutput: () => ({ output: candidatesJson, tokens: 500 }) });
-		const dreamed = await proposePoliciesWithAgent(stub.handler, DEFAULT_POLICY, 4, {
-			scope: SCOPE,
-			signal: liveController().signal,
-			tokenBudget: 200_000,
-			localFallbackRng: createSeededRng(1),
-		});
-		expect(dreamed.candidates).toHaveLength(1);
-		expect(dreamed.candidates[0]!.stopRule).toBe("never");
+		const { value: dreamed, spans } = await captureSpans(() =>
+			proposePoliciesWithAgent(stub.handler, DEFAULT_POLICY, 4, {
+				scope: SCOPE,
+				signal: liveController().signal,
+				tokenBudget: 200_000,
+				localFallbackRng: createSeededRng(1),
+				iteration: 2,
+			}),
+		);
+		expect(stub.calls()).toBe(1);
 		expect(dreamed.tokens).toBe(500);
+		expect(dreamed.returned).toBe(4);
+		expect(dreamed.dropped.map((entry) => entry.index)).toEqual([1, 2, 3]);
+		expect(dreamed.dropped[0]!.reason).toMatch(/branchWidth must be within/);
+		expect(dreamed.dropped[1]!.reason).toMatch(/unknown policy field: sneaky/);
+		expect(dreamed.dropped[2]!.reason).toMatch(/selectionRule must be one of/);
+		expect(dreamed.kept).toBe(1);
+		expect(dreamed.truncated).toBe(0);
+		expect(dreamed.local).toBe(3);
+		expect(dreamed.llmFallback).toBe(false);
+		expect(dreamed.dreamer).toBe("mixed");
+		// The child's survivor first, then the local top-up on the fallback fork (`cand:0..2`).
+		expect(dreamed.candidates).toHaveLength(4);
+		expect(dreamed.candidates[0]).toEqual({ policy: policy({ stopRule: "never" }), origin: "llm" });
+		expect(dreamed.candidates.slice(1).every((candidate) => candidate.origin === "local")).toBe(true);
+		expect(idsOf(dreamed.candidates.slice(1))).toEqual(
+			proposePolicies(DEFAULT_POLICY, 3, createSeededRng(1)).map(policyId),
+		);
+		const span = spans.find((record) => record.name === "dream.llm_dream")!;
+		expect(span.attrs).toMatchObject({
+			"dream.iteration": 2,
+			"dream.candidates_requested": 4,
+			"dream.candidates_returned": 4,
+			"dream.candidates_dropped": 3,
+			"dream.candidates_kept": 1,
+			"dream.candidates_truncated": 0,
+			"dream.candidates_local": 3,
+			"dream.candidates": 4,
+			"dream.dreamer": "mixed",
+			"dream.llm_fallback": false,
+			"dream.llm_status": "completed",
+			"dream.llm_attempts": 1,
+			"dream.tokens": 500,
+		});
+		expect(span.attrs["dream.llm_reject_reason"]).toBeUndefined();
 	});
 
-	it("falls back to the local proposer when every candidate is dropped or the call fails", async () => {
+	it("falls back to the local mutator when every candidate is dropped (after one retry) or the call fails, logging role dreamer", async () => {
 		const allJunk = JSON.stringify([{ ...DEFAULT_POLICY, sneaky: 1 }, policy({ beta: -5 })]);
-		const dropped = await proposePoliciesWithAgent(
-			makeStub({ dreamerOutput: () => ({ output: allJunk, tokens: 300 }) }).handler,
-			DEFAULT_POLICY,
-			4,
-			{ scope: SCOPE, signal: liveController().signal, tokenBudget: 200_000, localFallbackRng: createSeededRng(1) },
+		const junkStub = makeStub({ dreamerOutput: () => ({ output: allJunk, tokens: 300 }) });
+		const logPath = rejectionsPath(dreamDir, "dreamer-unit");
+		const { value: dropped, spans } = await captureSpans(() =>
+			proposePoliciesWithAgent(junkStub.handler, DEFAULT_POLICY, 4, {
+				scope: SCOPE,
+				signal: liveController().signal,
+				tokenBudget: 200_000,
+				localFallbackRng: createSeededRng(1),
+				iteration: 3,
+				rejections: new RejectionLog(logPath, () => FIXED_CLOCK),
+			}),
 		);
+		// An all-dropped array is a `shape` rejection: retried once like the proposer's, then the whole set is local.
+		expect(junkStub.calls()).toBe(2);
+		expect(dropped.tokens).toBe(600);
+		expect(dropped.returned).toBe(2);
+		expect(dropped.dropped.map((entry) => entry.reason)).toEqual([
+			expect.stringMatching(/unknown policy field: sneaky/),
+			expect.stringMatching(/beta must be within/),
+		]);
+		expect(dropped.kept).toBe(0);
+		expect(dropped.local).toBe(4);
+		expect(dropped.llmFallback).toBe(true);
+		expect(dropped.dreamer).toBe("local");
 		expect(dropped.candidates).toHaveLength(4);
-		expect(dropped.tokens).toBe(300);
-		const expected = proposePolicies(DEFAULT_POLICY, 4, createSeededRng(1)).map(policyId);
-		expect(dropped.candidates.map(policyId)).toEqual(expected);
+		expect(dropped.candidates.every((candidate) => candidate.origin === "local")).toBe(true);
+		expect(idsOf(dropped.candidates)).toEqual(proposePolicies(DEFAULT_POLICY, 4, createSeededRng(1)).map(policyId));
+		const span = spans.find((record) => record.name === "dream.llm_dream")!;
+		expect(span.attrs).toMatchObject({
+			"dream.iteration": 3,
+			"dream.llm_fallback": true,
+			"dream.llm_status": "completed",
+			"dream.llm_reject_reason": "shape",
+			"dream.llm_reject_excerpt": excerptOf(allJunk),
+			"dream.llm_attempts": 2,
+			"dream.candidates_returned": 2,
+			"dream.candidates_dropped": 2,
+			"dream.candidates_kept": 0,
+			"dream.candidates_local": 4,
+			"dream.dreamer": "local",
+		});
+		const logged = readRejections(logPath);
+		expect(logged).toHaveLength(2);
+		expect(
+			logged.map((record) => [record.role, record.iteration, record.round, record.attempt, record.fellBack]),
+		).toEqual([
+			["dreamer", 3, 0, 1, false],
+			["dreamer", 3, 0, 2, true],
+		]);
+		expect(logged.every((record) => record.reason === "shape" && record.status === "completed")).toBe(true);
+		expect(logged[0]!.error).toMatch(
+			/every entry was dropped: \[0\] unknown policy field: sneaky; \[1\] beta must be within/,
+		);
 
 		const failed = await proposePoliciesWithAgent(
 			makeStub({ dreamerOutput: () => ({ status: "error", tokens: 20 }) }).handler,
@@ -597,9 +699,237 @@ describe("proposePoliciesWithAgent (LLM dreamer)", () => {
 		);
 		// One retry on error -> two calls -> summed tokens; still a full local fallback set.
 		expect(failed.tokens).toBe(40);
-		expect(failed.candidates.map(policyId)).toEqual(
-			proposePolicies(DEFAULT_POLICY, 3, createSeededRng(2)).map(policyId),
+		expect(failed.returned).toBe(0);
+		expect(failed.llmFallback).toBe(true);
+		expect(idsOf(failed.candidates)).toEqual(proposePolicies(DEFAULT_POLICY, 3, createSeededRng(2)).map(policyId));
+
+		// A turn limit is terminal: one call, local set.
+		const limited = makeStub({ dreamerOutput: () => ({ status: "turn_limit", tokens: 5 }) });
+		const capped = await proposePoliciesWithAgent(limited.handler, DEFAULT_POLICY, 2, {
+			scope: SCOPE,
+			signal: liveController().signal,
+			tokenBudget: 200_000,
+			localFallbackRng: createSeededRng(2),
+		});
+		expect(limited.calls()).toBe(1);
+		expect(capped.local).toBe(2);
+	});
+
+	it("counts only distinct new policies toward m, passes identical and duplicate entries through and truncates the rest", async () => {
+		const a = policy({ stopRule: "never" });
+		const b = policy({ selectionRule: "round-robin" });
+		const c = policy({ batchSize: 1 });
+		const stub = makeStub({
+			dreamerOutput: () => ({ output: JSON.stringify([a, DEFAULT_POLICY, a, b, c]), tokens: 9 }),
+		});
+		const dreamed = await proposePoliciesWithAgent(stub.handler, DEFAULT_POLICY, 2, {
+			scope: SCOPE,
+			signal: liveController().signal,
+			tokenBudget: 200_000,
+			localFallbackRng: createSeededRng(1),
+		});
+		expect(dreamed.returned).toBe(5);
+		expect(dreamed.dropped).toEqual([]);
+		expect(dreamed.kept).toBe(2);
+		expect(dreamed.truncated).toBe(1);
+		expect(dreamed.local).toBe(0);
+		expect(dreamed.dreamer).toBe("llm");
+		expect(idsOf(dreamed.candidates)).toEqual([policyId(a), policyId(DEFAULT_POLICY), policyId(a), policyId(b)]);
+		expect(dreamed.candidates.every((candidate) => candidate.origin === "llm")).toBe(true);
+		// The selection labels the pass-throughs without simulating them again.
+		const selection = runDreaming({
+			current: DEFAULT_POLICY,
+			pool: synthPool(),
+			dreams: 2,
+			k1: CFG.k1,
+			k2: CFG.k2,
+			rng: createSeededRng(1),
+			objective: CFG.objective,
+			proposeCandidates: () => dreamed.candidates,
+		});
+		expect(selection.candidates.map((verdict) => verdict.reason)).toEqual([
+			expect.not.stringMatching(/identical|duplicate/),
+			"identical",
+			"duplicate",
+			expect.not.stringMatching(/identical|duplicate/),
+		]);
+		expect(selection.candidates[2]!.duplicateOf).toBe(0);
+		expect(selection.scoredCount).toBe(3);
+		expect(selection.dreamer).toBe("llm");
+	});
+
+	it("makes no child call for m = 0 and surfaces an aborted child as DreamAbortError", async () => {
+		const idle = makeStub({ dreamerOutput: () => ({ output: REVISED, tokens: 1 }) });
+		const none = await proposePoliciesWithAgent(idle.handler, DEFAULT_POLICY, 0, {
+			scope: SCOPE,
+			signal: liveController().signal,
+			tokenBudget: 200_000,
+			localFallbackRng: createSeededRng(1),
+		});
+		expect(idle.calls()).toBe(0);
+		expect(none.candidates).toEqual([]);
+		expect(none.tokens).toBe(0);
+		expect(none.llmFallback).toBe(false);
+
+		const aborting = makeStub({ dreamerOutput: () => ({ status: "aborted", tokens: 2 }) });
+		const logPath = rejectionsPath(dreamDir, "dreamer-abort");
+		await expect(
+			proposePoliciesWithAgent(aborting.handler, DEFAULT_POLICY, 2, {
+				scope: SCOPE,
+				signal: liveController().signal,
+				tokenBudget: 200_000,
+				localFallbackRng: createSeededRng(1),
+				rejections: new RejectionLog(logPath, () => FIXED_CLOCK),
+			}),
+		).rejects.toBeInstanceOf(DreamAbortError);
+		expect(aborting.calls()).toBe(1);
+		const logged = readRejections(logPath);
+		expect(logged).toHaveLength(1);
+		expect(logged[0]).toMatchObject({ role: "dreamer", reason: "aborted", status: "aborted", fellBack: false });
+	});
+
+	it("parseCandidateArray keeps every accepted entry and names the reason for every dropped one", () => {
+		expect(parseCandidateArray("nope")).toEqual({ kept: [], dropped: [], returned: 0 });
+		const parsed = parseCandidateArray([DEFAULT_POLICY, { ...DEFAULT_POLICY, beta: 1.5 }, 7]);
+		expect(parsed.returned).toBe(3);
+		expect(parsed.kept).toEqual([DEFAULT_POLICY]);
+		expect(parsed.dropped).toEqual([
+			{ index: 1, reason: expect.stringMatching(/beta must be an integer/) },
+			{ index: 2, reason: expect.stringMatching(/policy must be a JSON object/) },
+		]);
+	});
+});
+
+describe("the dreamer prompt (buildDreamerInput / buildDreamPrompt)", () => {
+	function growPool(seed: number): RecordedTree[] {
+		const task = resolveTask({ task: "sum-difference" });
+		for (const iteration of [0, 1]) {
+			runOnlineExploration({
+				task,
+				taskId: "sum-difference",
+				seed,
+				rng: createSeededRng(seed).fork(`iter:${iteration}`),
+				clock: () => FIXED_CLOCK,
+				workers: 3,
+				k1: 5,
+				dir: dreamDir,
+				policy: DEFAULT_POLICY,
+				iteration,
+			});
+		}
+		return listTrees(dreamDir).map((summary) => readTree(summary.treeId, dreamDir));
+	}
+
+	it("digests the pool as the current policy's per-tree replay under the selection's own scoring", () => {
+		const pool = growPool(7);
+		const cfg = { k1: 5, k2: 10, objective: CFG.objective };
+		const input = buildDreamerInput(DEFAULT_POLICY, 4, {
+			pool,
+			iteration: 2,
+			objective: cfg.objective,
+			workers: 3,
+			k1: 5,
+			k2: 10,
+		});
+		expect(input.m).toBe(4);
+		expect(input.iteration).toBe(2);
+		expect(input.budget).toEqual({ workers: 3, k1: 5, k2: 10 });
+		expect(input.pool.map((tree) => tree.treeId)).toEqual(pool.map((tree) => tree.header.treeId).sort());
+		const score = scorePolicyOnPool(DEFAULT_POLICY, pool, cfg);
+		const meanV = input.pool.reduce((sum, tree) => sum + tree.value, 0) / input.pool.length;
+		expect(meanV).toBeCloseTo(score.value, 12);
+		expect(input.pool.reduce((sum, tree) => sum + tree.N, 0) / input.pool.length).toBeCloseTo(score.N, 12);
+		expect(input.history).toEqual([]);
+		// Without a pool the digest is empty and the budget falls back to W 1.
+		const bare = buildDreamerInput(DEFAULT_POLICY, 2, {});
+		expect(bare.pool).toEqual([]);
+		expect(bare.budget.workers).toBe(1);
+		expect(bare.scale).toEqual({ scoreMin: 0, scoreMax: 0 });
+	});
+
+	it("states the objective, the selection rule, the replay mechanics, the field semantics, the pool and the history", () => {
+		const pool = growPool(7);
+		const earlier = policy({ selectionRule: "weighted" });
+		const history = historyOf(1, [
+			{
+				index: 0,
+				policyId: policyId(earlier),
+				policy: earlier,
+				origin: "llm",
+				changed: ["selectionRule"],
+				duplicateOf: null,
+				value: 0.5,
+				quality: 1,
+				anytime: 0.9,
+				cost: 0.5,
+				roundsSaved: 0,
+				N: 10,
+				rounds: 5,
+				outOfSupportCells: 0,
+				inSupportMean: 1,
+				inSupportMin: 1,
+				eligible: true,
+				reason: "tie",
+			},
+		]);
+		const input = buildDreamerInput(DEFAULT_POLICY, 4, {
+			pool,
+			iteration: 2,
+			objective: { beta1: 0.05, beta2: 0.1, beta3: 0.25 },
+			workers: 3,
+			k1: 5,
+			k2: 10,
+			history,
+		});
+		const prompt = buildDreamPrompt(input);
+		const lines = prompt.split("\n");
+		expect(lines[0]).toBe(DREAMER_PROMPT_HEADER);
+		expect(prompt).toContain("Propose up to 4 revised exploration policies");
+		expect(prompt).toContain("dreaming step 2");
+		// The V formula, its constants and the selection rule in one paragraph.
+		expect(prompt).toContain(
+			"V = (1 - beta3) * q + beta3 * anytime - beta1 * S / (W * k1) + beta2 * (1 - rounds / k1)",
 		);
+		expect(prompt).toContain("beta1 = 0.05, beta2 = 0.1, beta3 = 0.25");
+		expect(prompt).toContain("W = 3 cells per round, online round cap k1 = 5, replay round cap k2 = 10");
+		expect(prompt).toContain("the current policy wins every tie, so only a STRICTLY higher mean V");
+		expect(prompt).toContain("mean q is below the current policy's is excluded");
+		// Replay mechanics in two sentences.
+		expect(prompt).toContain("Replay mechanics: a candidate re-walks each recorded tree");
+		expect(prompt).toContain("out of support: it reveals nothing but is charged as a probe");
+		// Field semantics, the replay-dead fields and the batchSize cap.
+		expect(prompt).toContain(`${REPLAY_DEAD_FIELDS.join(", ")} are never read by replay`);
+		expect(prompt).toContain("capped at W = 3 at runtime");
+		expect(prompt).toContain("beta is read only under patience and fixed-rounds");
+		expect(prompt).toContain("patience stops after beta consecutive rounds without improving");
+		// The pool digest names every tree and the value to beat.
+		for (const tree of pool) expect(prompt).toContain(`- ${tree.header.treeId}: N `);
+		expect(prompt).toContain("mean V ");
+		expect(prompt).toContain("is the value to beat");
+		// The history and the count contract; the JSON-only instruction is last.
+		expect(prompt).toContain("Earlier candidates and their verdicts");
+		expect(prompt).toContain(
+			`- iteration 1: ${policyId(earlier)} (llm; changed selectionRule) -> V 0.500000, q 1: tie`,
+		);
+		expect(prompt).toContain("Return at most 4 policy objects that are pairwise distinct");
+		expect(lines.at(-1)).toMatch(/Return exactly one JSON array and nothing else/);
+		const schema = prompt.indexOf("Named-rule fields");
+		const objective = prompt.indexOf("How a candidate is judged");
+		const semantics = prompt.indexOf("Field semantics");
+		const current = prompt.indexOf("Current policy:");
+		const poolBlock = prompt.indexOf("Current policy on the pool");
+		const historyBlock = prompt.indexOf("Earlier candidates");
+		expect(schema).toBeGreaterThan(0);
+		expect(objective).toBeGreaterThan(schema);
+		expect(semantics).toBeGreaterThan(objective);
+		expect(current).toBeGreaterThan(semantics);
+		expect(poolBlock).toBeGreaterThan(current);
+		expect(historyBlock).toBeGreaterThan(poolBlock);
+		// No history block and an empty pool line when there is nothing to show.
+		const empty = buildDreamPrompt(buildDreamerInput(DEFAULT_POLICY, 1, {}));
+		expect(empty).not.toContain("Earlier candidates");
+		expect(empty).toContain("no recorded trees yet");
+		expect(empty.split("\n")[0]).toBe(DREAMER_PROMPT_HEADER);
 	});
 });
 
@@ -611,7 +941,8 @@ describe("soundness: a bad LLM policy can never be deployed", () => {
 			1,
 			{ scope: SCOPE, signal: liveController().signal, tokenBudget: 200_000, localFallbackRng: createSeededRng(1) },
 		);
-		expect(dreamed.candidates.map(policyId)).toEqual([policyId(WORSE)]);
+		expect(idsOf(dreamed.candidates)).toEqual([policyId(WORSE)]);
+		expect(dreamed.dreamer).toBe("llm");
 		const selection = runDreaming({
 			current: CURRENT,
 			pool: synthPool(),
@@ -639,7 +970,7 @@ describe("soundness: a bad LLM policy can never be deployed", () => {
 			1,
 			{ scope: SCOPE, signal: liveController().signal, tokenBudget: 200_000, localFallbackRng: createSeededRng(1) },
 		);
-		expect(dreamed.candidates.map(policyId)).toEqual([policyId(collapsing)]);
+		expect(idsOf(dreamed.candidates)).toEqual([policyId(collapsing)]);
 		const selection = runDreaming({
 			current: exploring,
 			pool: synthPool(),
@@ -648,7 +979,7 @@ describe("soundness: a bad LLM policy can never be deployed", () => {
 			k2: CFG.k2,
 			rng: createSeededRng(1),
 			// A pathological beta1 that would make the cheaper policy win on V alone.
-			objective: { beta1: 5, beta2: 0 },
+			objective: { beta1: 5, beta2: 0, beta3: 0 },
 			proposeCandidates: () => dreamed.candidates,
 		});
 		expect(selection.chosenPolicyId).toBe(policyId(exploring));
@@ -667,7 +998,10 @@ describe("soundness: a bad LLM policy can never be deployed", () => {
 			{ scope: SCOPE, signal: liveController().signal, tokenBudget: 200_000, localFallbackRng: createSeededRng(3) },
 		);
 		// The malformed candidate is rejected on parse; the fallback set is local-only.
-		expect(dreamed.candidates.map(policyId)).toEqual(proposePolicies(CURRENT, 1, createSeededRng(3)).map(policyId));
+		expect(idsOf(dreamed.candidates)).toEqual(proposePolicies(CURRENT, 1, createSeededRng(3)).map(policyId));
+		expect(dreamed.candidates.every((candidate) => candidate.origin === "local")).toBe(true);
+		expect(dreamed.dreamer).toBe("local");
+		expect(dreamed.dropped[0]!.reason).toMatch(/unknown policy field: exfiltrate/);
 	});
 });
 
@@ -1120,6 +1454,8 @@ describe("runDreamLoopWithAgent: fixed policy, per-round records, shared round 1
 			rounds: shared.rounds,
 			tokens: shared.tokens,
 			handlerCalls: { proposer: seedStub.roleCalls.proposer, dreamer: 0, guidance: 0 },
+			probesToBest: shared.probesToBest,
+			improvements: shared.improvements,
 		};
 		expect(shared.agentGeneratedCount).toBe(shared.revealedCount);
 		expect(seedTally.llmAccepted).toBe(shared.revealedCount);
@@ -1143,7 +1479,12 @@ describe("runDreamLoopWithAgent: fixed policy, per-round records, shared round 1
 			tokens: { rollout: shared.tokens, dreamer: 0, guidance: 0 },
 			handlerCalls: initialRollout.handlerCalls,
 			dreaming: null,
+			probesToRoundBest: shared.probesToBest,
+			improvements: shared.improvements,
 		} satisfies DreamRoundRecord);
+		expect(run.rounds[0]!.improvements!.at(-1)!.score).toBe(shared.bestScore);
+		// A shared round 1 that ran to the cap is not a stopped-early rollout; the redeploys are counted.
+		expect(run.stoppedEarly).toBe(run.rounds.filter((round) => round.decisionRounds < 5).length);
 		// The copied tally is a snapshot: later rounds start from zero.
 		expect(run.rounds[1]!.proposals!.llmAccepted).toBe(run.rounds[1]!.handlerCalls.proposer);
 		expect(run.rounds[1]!.agentGeneratedCalls).toBe(run.rounds[1]!.probes);
@@ -1169,6 +1510,242 @@ describe("runDreamLoopWithAgent: fixed policy, per-round records, shared round 1
 			),
 		).rejects.toBeInstanceOf(DreamStoreError);
 		expect(missing.calls()).toBe(0);
+	});
+});
+
+describe("runDreamLoopWithAgent: dreams log, verdicts, run id and priming", () => {
+	it("fills the additive dreaming fields, writes the dreams log, stamps dream.iteration and emits candidate spans", async () => {
+		const stub = makeStub({
+			proposerOutput: () => ({ output: ARTIFACT, tokens: 10 }),
+			dreamerOutput: () => ({ output: REVISED, tokens: 20 }),
+		});
+		const { value: run, spans } = await captureSpans(() =>
+			runDreamLoopWithAgent(agentOptions({ runAgent: stub.handler })),
+		);
+		expect(run.runId).toBe(`sum-difference-s7-r${FIXED_CLOCK}`);
+		expect(run.stoppedEarly).toBeDefined();
+		expect(run.finalSelection).toHaveLength(run.iterations);
+		for (const round of run.rounds.slice(1)) {
+			const dreaming = round.dreaming!;
+			// REVISED holds one policy and M is 4: the child's one plus three local top-ups.
+			expect(dreaming.candidates).toBe(4);
+			expect(dreaming.candidateVerdicts).toHaveLength(4);
+			expect(dreaming.candidateVerdicts!.map((verdict) => verdict.origin)).toEqual([
+				"llm",
+				"local",
+				"local",
+				"local",
+			]);
+			expect(dreaming.candidateVerdicts![0]!.policyId).toBe(policyId(policy({ stopRule: "never" })));
+			expect(dreaming.dreamer).toBe("mixed");
+			expect(dreaming.leverScan).not.toBeNull();
+			expect(dreaming.leverScan!.policies).toBeGreaterThan(1);
+			expect(round.probesToRoundBest).toBeLessThanOrEqual(round.probes);
+			expect(round.improvements!.at(-1)!.score).toBe(round.roundBest);
+		}
+		// The dreams log under the run key: candidate lines then a step line per step, the final selection as -1.
+		const lines = readDreamsLog(dreamsPath(dreamDir, run.runId));
+		const steps = lines.filter((line): line is DreamStepLine => line.type === "step");
+		expect(steps.map((line) => line.iteration)).toEqual([1, 2, -1]);
+		expect(steps.map((line) => line.dreamer)).toEqual(["mixed", "mixed", "local"]);
+		expect(steps[0]!.poolSize).toBe(1);
+		expect(steps[2]!.poolSize).toBe(3);
+		expect(steps[2]!.leverScan).toBeNull();
+		const candidates = lines.filter((line): line is DreamCandidateLine => line.type === "candidate");
+		expect(candidates.filter((line) => line.iteration === 1)).toHaveLength(4);
+		expect(candidates.filter((line) => line.iteration === -1)).toHaveLength(run.iterations);
+		expect(candidates.every((line) => line.ts === FIXED_CLOCK && !("experimentId" in line))).toBe(true);
+		expect(candidates.filter((line) => line.iteration === 1).map((line) => line.policyId)).toEqual(
+			run.rounds[1]!.dreaming!.candidateVerdicts!.map((verdict) => verdict.policyId),
+		);
+		// Spans: dream.iteration on dream.llm_dream, dream.dream and dream.replay; one dream.candidate per verdict.
+		const dreamRun = spans.find((span) => span.name === "dream.run")!;
+		expect(dreamRun.attrs["dream.run_id"]).toBe(run.runId);
+		expect(dreamRun.attrs["dream.priming_policies"]).toBe(0);
+		const trace = spans.filter((span) => span.traceId === dreamRun.traceId);
+		const byName = (name: string) => trace.filter((span) => span.name === name);
+		expect(byName("dream.llm_dream").map((span) => span.attrs["dream.iteration"])).toEqual([1, 2]);
+		expect(byName("dream.dream").map((span) => span.attrs["dream.iteration"])).toEqual([1, 2]);
+		expect(byName("dream.replay").map((span) => span.attrs["dream.iteration"])).toEqual([1, 2]);
+		expect(byName("dream.dream").every((span) => typeof span.attrs["dream.lever_gap"] === "number")).toBe(true);
+		const candidateSpans = byName("dream.candidate");
+		expect(candidateSpans).toHaveLength(8);
+		const dreamSpanIds = new Set(byName("dream.dream").map((span) => span.spanId));
+		expect(candidateSpans.every((span) => dreamSpanIds.has(span.parentSpanId!))).toBe(true);
+		expect(candidateSpans.filter((span) => span.attrs["dream.iteration"] === 1)).toHaveLength(4);
+		expect(candidateSpans.map((span) => span.attrs["dream.origin"])).toEqual([
+			"llm",
+			"local",
+			"local",
+			"local",
+			"llm",
+			"local",
+			"local",
+			"local",
+		]);
+		// The dreamer prompt carries the pool and, from the second step, the earlier verdicts: never byte-identical twice.
+		expect(stub.prompts.dreamer).toHaveLength(2);
+		expect(stub.prompts.dreamer[0]).not.toBe(stub.prompts.dreamer[1]);
+		expect(stub.prompts.dreamer[0]).not.toContain("Earlier candidates");
+		expect(stub.prompts.dreamer[1]).toContain("Earlier candidates");
+		expect(stub.prompts.dreamer[1]).toContain(`- iteration 1: ${policyId(policy({ stopRule: "never" }))} (llm;`);
+		expect(stub.prompts.dreamer[0]).toContain(`- ${run.treeIds[0]}: N `);
+		expect(stub.prompts.dreamer[1]).toContain(`- ${run.treeIds[1]}: N `);
+	});
+
+	it("folds runLabel into the run id and the log keys, and puts the child scope on dream.run", async () => {
+		const bad = '{"n": 4, "weights": [1, 2]}';
+		const stub = makeStub({
+			proposerOutput: (call) => ({ output: call % 2 === 1 ? '{"n": 4, "weights": [3, 1, 1, 3]}' : bad, tokens: 1 }),
+			dreamerOutput: () => ({ output: "no array here", tokens: 2 }),
+		});
+		const { value: run, spans } = await captureSpans(() =>
+			runDreamLoopWithAgent(
+				agentOptions({
+					runAgent: stub.handler,
+					task: n4Task(),
+					taskId: "autocorrelation",
+					n: 4,
+					iterations: 1,
+					runLabel: "exp 1/dream",
+					dreamsLogContext: { experimentId: "exp 1", arm: "dream" },
+					scope: { ...SCOPE, model: "faux/child", thinkingLevel: "off", maxOutputTokens: 4096 },
+				}),
+			),
+		);
+		const runId = dreamRunId("autocorrelation", 7, FIXED_CLOCK, "exp 1/dream");
+		expect(run.runId).toBe(runId);
+		expect(runId).toBe(`autocorrelation-s7-r${FIXED_CLOCK}-exp_1_dream`);
+		// Proposer and dreamer rejections share the run's rejection log; the dreamer's carry its role.
+		const rejections = readRejections(rejectionsPath(dreamDir, runId));
+		expect(rejections.some((record) => record.role === undefined && record.reason === "shape")).toBe(true);
+		const dreamerLines = rejections.filter((record) => record.role === "dreamer");
+		expect(dreamerLines.map((record) => [record.iteration, record.attempt, record.reason, record.fellBack])).toEqual([
+			[1, 1, "parse", false],
+			[1, 2, "parse", true],
+		]);
+		expect(run.rounds[1]!.dreaming!.dreamer).toBe("local");
+		expect(run.rounds[1]!.dreaming!.candidateVerdicts!.every((verdict) => verdict.origin === "local")).toBe(true);
+		// The dreams log lives under the same key and every line names the experiment and arm.
+		const lines = readDreamsLog(dreamsPath(dreamDir, runId));
+		expect(lines.length).toBeGreaterThan(0);
+		expect(lines.every((line) => line.experimentId === "exp 1" && line.arm === "dream")).toBe(true);
+		const dreamRun = spans.find((span) => span.name === "dream.run")!;
+		expect(dreamRun.attrs["dream.run_id"]).toBe(runId);
+		expect(dreamRun.attrs["dream.child_model"]).toBe("faux/child");
+		expect(dreamRun.attrs["dream.child_thinking"]).toBe("off");
+		expect(dreamRun.attrs["dream.child_max_output_tokens"]).toBe(4096);
+		const llmDream = spans.find((span) => span.name === "dream.llm_dream")!;
+		expect(llmDream.attrs["dream.llm_fallback"]).toBe(true);
+		expect(llmDream.attrs["dream.llm_reject_reason"]).toBe("parse");
+		expect(llmDream.attrs["dream.llm_status"]).toBe("completed");
+		expect(llmDream.attrs["dream.llm_reject_excerpt"]).toBe("no array here");
+	});
+
+	it("rolls priming policies out at iteration 0 exactly like the sync loop and charges them to round 1", async () => {
+		const syncDir = scratch("dream-prime-sync-");
+		const task = resolveTask({ task: "sum-difference" });
+		const base = {
+			task,
+			taskId: "sum-difference" as const,
+			seed: 7,
+			clock: () => FIXED_CLOCK,
+			workers: 3,
+			k1: 5,
+			k2: 10,
+			dreams: 4,
+			iterations: 2,
+			primingPolicies: PRIMING_DIVERSE,
+		};
+		const expected = runDreamLoop({ ...base, dir: syncDir });
+		const { value: run, spans } = await captureSpans(() =>
+			runDreamLoopWithAgent(
+				agentOptions({
+					...base,
+					dir: dreamDir,
+					runAgent: makeStub({}).handler,
+					useLlmProposer: false,
+					useLlmDreamer: false,
+				}),
+			),
+		);
+		expect(run.runId).toBe(expected.runId);
+		expect(run.treeIds).toEqual(expected.treeIds);
+		expect(JSON.stringify(run.rounds)).toBe(JSON.stringify(expected.rounds));
+		expect(run.stoppedEarly).toBe(expected.stoppedEarly);
+		expect(JSON.stringify(run.finalSelection)).toBe(JSON.stringify(expected.finalSelection));
+		const first = run.rounds[0]!;
+		const primingIds = PRIMING_DIVERSE.map((_, index) => primingTreeId("sum-difference", 7, index, FIXED_CLOCK));
+		expect(first.primingTreeIds).toEqual(primingIds);
+		expect(first.primingProbes).toBeGreaterThan(0);
+		expect(listTrees(dreamDir)).toHaveLength(3 + PRIMING_DIVERSE.length);
+		for (const treeId of primingIds) expect(readTreeFiles(dreamDir, treeId)).toEqual(readTreeFiles(syncDir, treeId));
+		expect(run.rounds[1]!.poolSize).toBe(1 + PRIMING_DIVERSE.length);
+		expect(spans.find((span) => span.name === "dream.run")!.attrs["dream.priming_policies"]).toBe(2);
+		// The explore spans of iteration 0: the initial rollout plus one per priming policy.
+		const explores = spans.filter((span) => span.name === "dream.explore" && span.attrs["dream.iteration"] === 0);
+		expect(explores.map((span) => span.attrs["dream.tree_id"])).toEqual([run.treeIds[0], ...primingIds]);
+		// The fixed control charges the same priming and reports the same pool size without freezing a pool.
+		const fixed = await runDreamLoopWithAgent(
+			agentOptions({
+				...base,
+				dir: scratch("dream-prime-fixed-"),
+				runAgent: makeStub({}).handler,
+				useLlmProposer: false,
+				useLlmDreamer: false,
+				fixedPolicy: true,
+			}),
+		);
+		expect(fixed.rounds[0]).toEqual(first);
+		expect(fixed.rounds[1]!.poolSize).toBe(1 + PRIMING_DIVERSE.length);
+	});
+
+	it("mergePrimedRollouts sums probes, tokens and agent calls, takes the max best and merges the curve", async () => {
+		const task = resolveTask({ task: "sum-difference" });
+		const explore = (policy: ExplorationPolicy, fork: string, treeId?: string) =>
+			runOnlineExplorationWithAgent(
+				{
+					task,
+					taskId: "sum-difference",
+					seed: 3,
+					rng: createSeededRng(3).fork(fork),
+					clock: () => FIXED_CLOCK,
+					workers: 3,
+					k1: 4,
+					dir: dreamDir,
+					policy,
+					iteration: 0,
+					...(treeId ? { treeId } : {}),
+				},
+				createLlmProposer(makeStub({ proposerOutput: () => ({ output: ARTIFACT, tokens: 5 }) }).handler, task, {
+					scope: SCOPE,
+					signal: liveController().signal,
+					tokenBudget: 1,
+				}),
+			);
+		const initial = await explore(DEFAULT_POLICY, "iter:0");
+		const primed = [
+			await explore(PRIMING_DIVERSE[0]!, "prime:0", "p0"),
+			await explore(PRIMING_DIVERSE[1]!, "prime:1", "p1"),
+		];
+		const merged = mergePrimedRollouts(initial, primed);
+		expect(merged.treeId).toBe(initial.treeId);
+		expect(merged.revealedCount).toBe(initial.revealedCount);
+		expect(merged.primingTreeIds).toEqual(["p0", "p1"]);
+		expect(merged.primingProbes).toBe(primed[0]!.revealedCount + primed[1]!.revealedCount);
+		expect(merged.tokens).toBe(initial.tokens + primed[0]!.tokens + primed[1]!.tokens);
+		expect(merged.agentGeneratedCount).toBe(initial.revealedCount + merged.primingProbes!);
+		expect(merged.bestScore).toBe(Math.max(initial.bestScore, primed[0]!.bestScore, primed[1]!.bestScore));
+		expect(merged.rounds).toBe(initial.rounds);
+		expect(merged.improvements!.at(-1)!.score).toBe(merged.bestScore);
+		expect(merged.probesToBest).toBe(merged.improvements!.at(-1)!.probe);
+		expect(merged.probesToBest).toBeLessThanOrEqual(initial.revealedCount + merged.primingProbes!);
+		// Without priming the merge is the rollout's own curve and no priming fields.
+		const alone = mergePrimedRollouts(initial, []);
+		expect(alone.improvements).toEqual(initial.improvements);
+		expect(alone.probesToBest).toBe(initial.probesToBest);
+		expect(alone.primingTreeIds).toBeUndefined();
+		expect(alone.primingProbes).toBeUndefined();
 	});
 });
 

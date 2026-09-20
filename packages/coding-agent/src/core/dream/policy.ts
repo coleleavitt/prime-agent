@@ -90,6 +90,53 @@ export const DEFAULT_POLICY: ExplorationPolicy = {
 	explorationBias: 0.25,
 };
 
+/**
+ * Fields the replay simulator never reads. `branchWidth` and `refineDepth`
+ * shape every ONLINE proposal (`projectProposeParams`), and `recoveryPolicy` is
+ * read nowhere, so a candidate that differs from the current policy only in
+ * these fields replays identically and can never be measured by dreaming.
+ */
+export const REPLAY_DEAD_FIELDS: readonly (keyof ExplorationPolicy)[] = [
+	"branchWidth",
+	"refineDepth",
+	"recoveryPolicy",
+];
+
+const POLICY_FIELD_ORDER: readonly (keyof ExplorationPolicy)[] = [
+	"selectionRule",
+	"recoveryPolicy",
+	"stopRule",
+	"branchWidth",
+	"refineDepth",
+	"batchSize",
+	"beta",
+	"promisingThreshold",
+	"targetScore",
+	"explorationBias",
+];
+
+/** The fields on which two policies differ, in schema order. */
+export function policyFieldsDiffering(a: ExplorationPolicy, b: ExplorationPolicy): (keyof ExplorationPolicy)[] {
+	return POLICY_FIELD_ORDER.filter((field) => a[field] !== b[field]);
+}
+
+/** True when `candidate` differs from `current` and every differing field is replay-dead. */
+export function differsOnlyInReplayDeadFields(candidate: ExplorationPolicy, current: ExplorationPolicy): boolean {
+	const changed = policyFieldsDiffering(candidate, current);
+	return changed.length > 0 && changed.every((field) => REPLAY_DEAD_FIELDS.includes(field));
+}
+
+/**
+ * The fixed `--priming diverse` set: two hand-written policies whose rollouts
+ * open branches the default policy never would (breadth at the root, and one
+ * greedy chain), so a frozen pool has replay support the incumbent did not
+ * create. `batchSize` is clamped by W at runtime by the interpreter.
+ */
+export const PRIMING_DIVERSE: readonly ExplorationPolicy[] = [
+	{ ...DEFAULT_POLICY, selectionRule: "explore-root", stopRule: "never", batchSize: 8 },
+	{ ...DEFAULT_POLICY, selectionRule: "best-first", stopRule: "never", batchSize: 1 },
+];
+
 export class PolicyValidationError extends Error {}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

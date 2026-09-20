@@ -1,5 +1,5 @@
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, Model, Usage } from "@earendil-works/pi-ai";
+import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { AssistantMessage, Model, ModelThinkingLevel, Usage } from "@earendil-works/pi-ai";
 import type { AgentSession, AgentSessionEvent } from "./agent-session.js";
 import type { CustomMessage } from "./messages.js";
 
@@ -7,6 +7,12 @@ export interface RunAgentRequest {
 	prompt: string;
 	/** Authenticated model selector (`provider/id`). Defaults to the current model. */
 	model?: string;
+	/**
+	 * The child's thinking level, validated against the child model's supported
+	 * levels. Absent, the child inherits the parent session's level clamped to its
+	 * model. Applied at child construction; it never touches the user's settings.
+	 */
+	thinkingLevel?: ThinkingLevel;
 }
 
 export type RunAgentToolSelection = "none" | "active" | { allow: string[] };
@@ -20,7 +26,41 @@ export interface RunAgentOptions {
 	maxTurns?: number;
 	/** Stop after assistant usage reaches this many total tokens. */
 	tokenBudget?: number;
+	/**
+	 * Hard cap on the visible answer of every model call the child makes, in
+	 * output tokens (the stream `maxTokens`). When the child thinks, the level's
+	 * thinking allowance (`THINKING_ALLOWANCE`) is added on top, so the cap keeps
+	 * meaning the answer even on models whose `max_tokens` covers thinking too.
+	 */
+	maxOutputTokens?: number;
 	onProgress?: (progress: RunAgentProgress) => void;
+}
+
+/**
+ * Output tokens reserved for thinking at each level when a `maxOutputTokens`
+ * cap is in force; mirrors the provider's default thinking budgets.
+ */
+export const THINKING_ALLOWANCE: Readonly<Record<Exclude<ModelThinkingLevel, "off">, number>> = {
+	minimal: 1024,
+	low: 2048,
+	medium: 8192,
+	high: 16384,
+	xhigh: 16384,
+	max: 16384,
+};
+
+/** The stream `maxTokens` a `maxOutputTokens` cap allows at a given effective thinking level. */
+export function cappedMaxTokens(cap: number, reasoning: ModelThinkingLevel | undefined): number {
+	return reasoning === undefined || reasoning === "off" ? cap : cap + THINKING_ALLOWANCE[reasoning];
+}
+
+/** Wrap a stream function so every call carries `maxTokens = min(existing, cap + thinking allowance)`. */
+export function capStreamFn(inner: StreamFn, cap: number): StreamFn {
+	return (model, context, options) => {
+		const allowed = cappedMaxTokens(cap, options?.reasoning);
+		const maxTokens = options?.maxTokens === undefined ? allowed : Math.min(options.maxTokens, allowed);
+		return inner(model, context, { ...options, maxTokens });
+	};
 }
 
 export type RunAgentProgress =
@@ -104,6 +144,13 @@ export async function runAgentSession(input: RunAgentSessionInput): Promise<RunA
 	const { session, model, request, options, promptMessage } = input;
 	validateLimit(options?.maxTurns, "maxTurns");
 	validateLimit(options?.tokenBudget, "tokenBudget");
+	validateLimit(options?.maxOutputTokens, "maxOutputTokens");
+	// The wrap is applied in place and never restored: a caller passing the cap
+	// owns a single-use child (runAgent disposes it after this run). Retained
+	// workers, which reuse a session across turns, never pass it.
+	if (options?.maxOutputTokens !== undefined) {
+		session.agent.streamFn = capStreamFn(session.agent.streamFn, options.maxOutputTokens);
+	}
 	let turns = 0;
 	let toolCalls = 0;
 	let limitReached = false;

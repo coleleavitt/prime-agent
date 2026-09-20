@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentTool, StreamFn } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRunAgentChildCall } from "../../../src/core/ravo/runtime-adapter.js";
@@ -16,9 +16,12 @@ afterEach(() => {
 	for (const harness of harnesses.splice(0)) harness.cleanup();
 });
 
+type StreamCall = Parameters<StreamFn>[2];
+
 async function createParent(options?: { tools?: AgentTool[]; response?: string }) {
 	let child: Harness | undefined;
 	let creation: CreateRlmSubagentRuntimeOptions | undefined;
+	const streamCalls: StreamCall[] = [];
 	const release = vi.fn(async () => {});
 	const host: SubagentRuntimeHost = {
 		async createRlmSubagentRuntime(runtimeOptions): Promise<RlmSubagentRuntime> {
@@ -31,6 +34,13 @@ async function createParent(options?: { tools?: AgentTool[]; response?: string }
 			harnesses.push(child);
 			child.session.setActiveToolsByName(runtimeOptions.activeToolNames);
 			child.setResponses([fauxAssistantMessage(options?.response ?? "structured child result")]);
+			// Record what the child Agent hands its provider, so a cap injected by
+			// runAgentSession (which wraps this function) is observable at the boundary.
+			const inner = child.session.agent.streamFn;
+			child.session.agent.streamFn = (model, context, streamOptions) => {
+				streamCalls.push(streamOptions);
+				return inner(model, context, streamOptions);
+			};
 			return { session: child.session };
 		},
 		releaseRlmSubagentRuntime: release,
@@ -51,6 +61,7 @@ async function createParent(options?: { tools?: AgentTool[]; response?: string }
 		get creation() {
 			return creation;
 		},
+		streamCalls,
 	};
 }
 
@@ -106,6 +117,33 @@ describe("extension runAgent regression", () => {
 			}),
 		).rejects.toThrow("unavailable, unauthenticated, or expired");
 		expect(runtime.child).toBeUndefined();
+	});
+
+	it("applies a requested thinking level at child construction and caps the child's stream maxTokens", async () => {
+		const runtime = await createParent();
+		const parentLevel = runtime.parent.session.thinkingLevel;
+		const result = await runtime.parent.session.runAgent(
+			{ prompt: "propose", thinkingLevel: "off" },
+			{ maxOutputTokens: 4096 },
+		);
+		expect(result.status).toBe("completed");
+		// The level went in through the runtime options, never through child.setThinkingLevel.
+		expect(runtime.creation?.thinkingLevel).toBe("off");
+		expect(runtime.streamCalls).toHaveLength(1);
+		expect(runtime.streamCalls[0]?.maxTokens).toBe(4096);
+		expect(runtime.streamCalls[0]?.reasoning).toBe("off");
+		// The parent's own level is untouched.
+		expect(runtime.parent.session.thinkingLevel).toBe(parentLevel);
+	});
+
+	it("rejects a thinking level the child model does not support before creating a child", async () => {
+		const runtime = await createParent();
+		// The faux model has reasoning: false, so only "off" is supported.
+		await expect(runtime.parent.session.runAgent({ prompt: "task", thinkingLevel: "high" })).rejects.toThrow(
+			/thinking level "high" is not supported by model .*supported levels: off/,
+		);
+		expect(runtime.child).toBeUndefined();
+		expect(runtime.creation).toBeUndefined();
 	});
 
 	it("contains progress callback failures", async () => {

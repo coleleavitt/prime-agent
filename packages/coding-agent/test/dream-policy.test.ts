@@ -2,11 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
 	clampPolicy,
 	DEFAULT_POLICY,
+	differsOnlyInReplayDeadFields,
 	type ExplorationPolicy,
 	POLICY_BOUNDS,
 	PolicyValidationError,
+	PRIMING_DIVERSE,
 	parseExplorationPolicy,
+	policyFieldsDiffering,
 	policyId,
+	REPLAY_DEAD_FIELDS,
 	SELECTION_RULES,
 	STOP_RULES,
 } from "../src/core/dream/policy.js";
@@ -138,5 +142,47 @@ describe("policyId", () => {
 			policyId(DEFAULT_POLICY),
 		);
 		expect(policyId({ ...DEFAULT_POLICY, selectionRule: "round-robin" })).not.toBe(policyId(DEFAULT_POLICY));
+	});
+});
+
+describe("replay-dead fields", () => {
+	it("names exactly the fields the interpreter never reads", () => {
+		expect([...REPLAY_DEAD_FIELDS]).toEqual(["branchWidth", "refineDepth", "recoveryPolicy"]);
+	});
+
+	it("lists differing fields in schema order", () => {
+		expect(policyFieldsDiffering(DEFAULT_POLICY, DEFAULT_POLICY)).toEqual([]);
+		expect(
+			policyFieldsDiffering(
+				{ ...DEFAULT_POLICY, beta: 3, selectionRule: "weighted", refineDepth: 1 },
+				DEFAULT_POLICY,
+			),
+		).toEqual(["selectionRule", "refineDepth", "beta"]);
+	});
+
+	it("flags a candidate that differs from current only in replay-dead fields, and nothing else", () => {
+		expect(differsOnlyInReplayDeadFields(DEFAULT_POLICY, DEFAULT_POLICY)).toBe(false);
+		expect(differsOnlyInReplayDeadFields({ ...DEFAULT_POLICY, branchWidth: 5 }, DEFAULT_POLICY)).toBe(true);
+		expect(
+			differsOnlyInReplayDeadFields({ ...DEFAULT_POLICY, recoveryPolicy: "widen", refineDepth: 0 }, DEFAULT_POLICY),
+		).toBe(true);
+		expect(differsOnlyInReplayDeadFields({ ...DEFAULT_POLICY, branchWidth: 5, beta: 2 }, DEFAULT_POLICY)).toBe(false);
+		expect(differsOnlyInReplayDeadFields({ ...DEFAULT_POLICY, stopRule: "never" }, DEFAULT_POLICY)).toBe(false);
+	});
+});
+
+describe("PRIMING_DIVERSE", () => {
+	it("is two parseable, distinct policies that differ from the default in replay-live fields", () => {
+		expect(PRIMING_DIVERSE).toHaveLength(2);
+		const ids = new Set(PRIMING_DIVERSE.map(policyId));
+		expect(ids.size).toBe(2);
+		expect(ids.has(policyId(DEFAULT_POLICY))).toBe(false);
+		for (const policy of PRIMING_DIVERSE) {
+			expect(() => parseExplorationPolicy(policy)).not.toThrow();
+			expect(differsOnlyInReplayDeadFields(policy, DEFAULT_POLICY)).toBe(false);
+			expect(policy.stopRule).toBe("never");
+		}
+		expect(PRIMING_DIVERSE[0]).toMatchObject({ selectionRule: "explore-root", batchSize: 8 });
+		expect(PRIMING_DIVERSE[1]).toMatchObject({ selectionRule: "best-first", batchSize: 1 });
 	});
 });
