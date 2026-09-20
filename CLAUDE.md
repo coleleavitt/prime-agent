@@ -75,7 +75,10 @@ junk. Live detail and handoff notes are in `MEMORY.md`. Installed build: `0.9.4-
     winners adopted on pools of 2 to 4 incumbent-grown trees scored lower online than the incumbent on 40 fresh
     seeds. Replay on a small frozen pool is not predictive; a positive lever gap means a replay-better policy exists,
     not that dreaming helps. Probation is the operative safeguard.
-  - Run 4 (3 seeds, 5 rounds, k1 13) was launched on `1d3debb6` on 2026-09-20; see `MEMORY.md` for its outcome.
+  - Run 4 (3 seeds, 5 rounds, k1 13, build `1d3debb6`, ~$3): verdict **within noise floor**. Paired deltas +0.0104,
+    -0.0079, +0.0090 against a control spread of 0.014; the dream arm used 19% fewer probes for comparable quality;
+    5 adoptions, 1 reverted by probation, one seed drifted to 2-probe rollouts through adoptions that passed the
+    floor narrowly. Mechanism works end to end; improvement unproven at this scale. Details in `MEMORY.md`.
 - **Open:**
   - `release:pack` does not build. Run `npm run build` in `packages/coding-agent` first or the tarball ships the old
     `dist/` under a new version stamp.
