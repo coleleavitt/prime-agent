@@ -52,44 +52,46 @@ command part of startup without a capability gate.
 
 ## Current State
 
-Branch `perf/session-catalog-resume` on `15768af87`, 50 commits ahead of `main`, working tree clean apart from local
-junk. Live detail and handoff notes are in `MEMORY.md`. Installed build: `0.9.4-fork.15768af8`.
+Branch `perf/session-catalog-resume` on `1d3debb66`, 53 commits ahead of `main`, working tree clean apart from local
+junk. Live detail and handoff notes are in `MEMORY.md`. Installed build: `0.9.4-fork.1d3debb6`.
 
-- **Committed since `f4afe5b5d` (five commits):** the measurable self-improvement gate (refine spans and
-  `refinement.*` records, global-by-default ledger, referee replays, retired replay-case pruning, trust debits,
-  `ravo.run` logging, stale-evidence re-plan, rejection history), Workspace Recall, the Engineer Trajectory Index
-  (`core/distill/trajectory-index.ts`, `learning trajectory`, `PRIME_AGENT_TRAJECTORY_INDEX=0` off), auto-refine
-  scope global by default (only an explicit `"local"` stays session-scoped), and Dream-RSI in full: `core/dream/`,
-  `/dream` + the `dream` skill, `DreamRunService`, the capability-gated `dream_run_update` daemon event (schema
-  revision 32), four tasks (`circle-packing`, `sum-difference`, `python-speedup`, `autocorrelation`), the
-  dream-vs-fixed experiment with LLM and guidance arms, `evals/dream/plot_experiment.py`, `docs/dream-rsi.md`.
-- **Dream-RSI, measured honestly.** The replay objective is scale-invariant (`q` normalized to the pool range,
-  β1 = β2 = 0.05, quality guard) and seeds are deterministic; on circle-packing the dream arm ties the fixed arm at
-  equal budget with fewer probes. Replay can only reward spending less, never finding more (out-of-support limit), so
-  the LLM proposer is the only lever for quality gains. The first real-token run (Sonnet-5, autocorrelation, $1.70)
-  was null because 81 of 83 LLM proposals fell back to the local proposer; `15768af87` fixes the output contract and
-  persists every rejection (`<dream dir>/rejections/<run>.jsonl`, `dream.llm_reject_reason`, node `origin`). A
-  re-run on that build is the open measurement.
+- **Committed since `f4afe5b5d`:** the measurable self-improvement gate, Workspace Recall, the Engineer Trajectory
+  Index (`PRIME_AGENT_TRAJECTORY_INDEX=0` off), auto-refine scope global by default, and Dream-RSI in full
+  (`core/dream/`, `/dream` + the `dream` skill, `DreamRunService`, capability-gated `dream_run_update`, four tasks,
+  the dream-vs-fixed experiment, `evals/dream/plot_experiment.py`, `docs/dream-rsi.md`).
+- **Dream-RSI, what four real-token runs established** (Sonnet-5, autocorrelation n=64, isolated agent dir):
+  - Run 1: 2 of 83 LLM proposals valid. Fixed in `15768af87` (output contract, rejection log, node `origin`).
+  - Run 2: 82 of 88 proposals valid; dreaming inert because the objective was mathematically inert: with
+    `beta1 == beta2` and `rounds == k1` the cost and parallelism terms cancel exactly. `706fc14f6` replaced V with
+    `(1-b3) quality + b3 anytime - b1 (N+oos)/(W k1) + b2 (1 - rounds/k1)`, charged out-of-support cells, added
+    per-candidate verdicts, a dreams log, a per-step lever scan, in-session `--seeds`, child `maxOutputTokens` and
+    `thinkingLevel`, the plotter's noise floor and dreaming audit.
+  - Run 3: collapsed at the first dreaming step. On a one-tree pool whose best was the first probe, `{fixed-rounds,
+    beta 1}` won on stop-early credit alone and did one probe per rollout online. `1d3debb66` charges stop-early
+    credit at the latest probe/round the same policy was still improving on the OTHER measured trees (none on a
+    single tree), guards quality per tree, and adds an online probation that reverts an adopted policy whose first
+    redeploy falls below the incumbent's lowest replay best. The run-3 tree is a fixture.
+  - The adversarial pass on that fix found the deeper limit and it is documented, not hidden: 22 of 22 replay
+    winners adopted on pools of 2 to 4 incumbent-grown trees scored lower online than the incumbent on 40 fresh
+    seeds. Replay on a small frozen pool is not predictive; a positive lever gap means a replay-better policy exists,
+    not that dreaming helps. Probation is the operative safeguard.
+  - Run 4 (3 seeds, 5 rounds, k1 13) was launched on `1d3debb6` on 2026-09-20; see `MEMORY.md` for its outcome.
 - **Open:**
   - `release:pack` does not build. Run `npm run build` in `packages/coding-agent` first or the tarball ships the old
-    `dist/` under a new version stamp (this happened once; the install was repeated).
-  - Child agents have no hard output cap or thinking override (`RunAgentOptions` has only `maxTurns`, `tokenBudget`);
-    a proposer that writes 30k tokens of prose stops on `length`. Documented in `docs/dream-rsi.md`.
-  - `dream.propose`/`dream.llm_propose` records only the last rejection reason of a retried attempt; the earlier one
-    lives only in the rejection log.
+    `dist/` under a new version stamp.
+  - Cost figures in `scratchpad/realrun2/plots/verdict.html` used Opus rates; Sonnet-5 is $2/$10 per M (cache read
+    $0.20, write $2.50), so run 2 cost $0.34 to $0.91 and run 3 (aborted) $0.54 to $1.46.
   - Heavy suites last ran 2026-09-18: `test:kernel` 15/15, `test:process` 12 passed, `test:ci` 7581 passed with 4
-    failures — two in `daemon-supervisor-monitor.test.ts` that pass in isolation (111/111, load-flaky) and one each in
-    `stdin-guard-cold-cli.test.ts` and `regressions/4603-worker-recovery.test.ts` that fail identically on the base
-    commit (pre-existing). `npm run check` and the dream/refinement/ETI vitest files pass on `15768af87`.
-  - The harness benchmark (`evals/`) cannot show learning yet: cold 4/6, warm 4/6. `mem-off` 0/3 vs `mem-on` 3/3
-    shows retrieval works once a lesson is global; whether auto-refine now writes one is unmeasured.
+    failures (two load-flaky in `daemon-supervisor-monitor.test.ts`, two pre-existing on the base commit).
+    `npm run check` and 397 dream/refinement/ETI vitest tests pass on `1d3debb66`.
+  - The harness benchmark (`evals/`) cannot show learning yet: cold 4/6, warm 4/6; whether auto-refine now writes a
+    global lesson is unmeasured.
 - **Known behaviour from the trace corpus** (157 374 real spans on this machine), useful as ground truth:
   `extension.hooks` is the hottest span at 46 721 occurrences; a single `context` hook has been observed taking 29 s;
-  `kernel.host_request` for `agent_message.list_agents` has p50 ≈ 15 s; several span families show children outliving
+  `kernel.host_request` for `agent_message.list_agents` has p50 ~ 15 s; several span families show children outliving
   their parents. Treat these as measured facts, not guesses.
 - Untracked junk: five core dumps in the repo root (`core.5176` 6.2 GB, `core.889387` 5.8 GB, three ~10 MB), plus
-  `.cortexkit/`, `.jython_cache/`, `.pi/`. The `packages/coding-agent/core.*` dumps and session HTML exports are gone.
-  Do not commit any of it; do not delete it without asking.
+  `.cortexkit/`, `.jython_cache/`, `.pi/`. Do not commit any of it; do not delete it without asking.
 
 ## Working Rules
 
