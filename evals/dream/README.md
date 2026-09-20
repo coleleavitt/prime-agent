@@ -70,7 +70,7 @@ Output (default `plots/` next to the first result file):
 | `attempts.png` | 6b | evaluated attempts per round per arm; `Δ k/n` marks a policy change in k of n seeds (adaptivity); a dreaming arm whose policy never changed is stamped `policy never changed in k/n seed(s): dreaming inert` |
 | `proposals.png` | validity | child proposer results per round per arm: accepted (arm colour) stacked with rejected by reason (grey), and the local fallbacks those rejections caused as the x-marked line; the words `not recorded` when the file predates origin tracking |
 | `dreaming.png` | the audit | one panel per arm that dreamed: every candidate's replay value per step (filled = eligible for the argmax, hollow = identical / duplicate / quality-rejected / unmeasurable; llm candidates in the arm colour, local grey), the incumbent as a tick, the chosen policy starred, the best lever-scan policy as a triangle, the words `improved` / `no change` with the lever gap, and a strip with the share of candidates replayed fully in support; a file written before the audit shows the incumbent and chosen values only and says so |
-| `headline.png` | the multipliers | `X.XXx fewer calls (a vs b)` and `Y.YYx higher score at budget B (a vs b)` per arm, read the right way round below 1 (`1.20x MORE calls (72 vs 60)`, `1.03x LOWER score`), or the literal words `not reached` / `not comparable`; the exact (first-probe) calls line beside it; the noise floor across seeds, the paired per-seed deltas and the verdict; the dreaming summary; then each arm's provenance totals (`47 probes = 2 agent-generated + 45 local (45 fallbacks)`) |
+| `headline.png` | the multipliers | `X.XXx fewer calls (a vs b)` and `Y.YYx higher score at budget B (a vs b)` per arm, read the right way round below 1 (`1.20x MORE calls (72 vs 60)`, `1.03x LOWER score`), or the literal words `not reached` / `not comparable`; the exact (first-probe) calls line beside it; the noise floor across seeds, the paired per-seed deltas and the quality verdict; per arm the paired probes-to-T deltas, the efficiency verdict and the `spend (not a verdict)` line with best-at-B per seed; the dreaming summary; then each arm's provenance totals (`47 probes = 2 agent-generated + 45 local (45 fallbacks)`) |
 | `report.html` | all six | self-contained page with captions built from the result metadata, the per-step dreaming table and the per-round table, provenance columns included |
 
 Several files are treated as seeds of one experiment (same task, rounds, budget, replay objective
@@ -146,6 +146,25 @@ round 1 is shared by construction, and the arms' stores are separate directories
   forced to `within noise floor (dreaming inert)` whatever the numbers say; `attempts.png` carries
   the same stamp. With one seed the words add `(dreaming inert: the arms ran the same policy)` so
   the reader has both facts.
+- **Efficiency verdict and spend.** The quality verdict says nothing about compute, and a dreaming
+  arm's effect may be there, so each non-fixed arm gets a second, paired verdict
+  (`efficiency_effects`) on probes-to-T, T being the fixed arm's final best. The card lists the
+  paired per-seed delta of probes-to-T (arm minus fixed), rollout-granular and exact. The verdict
+  reads the exact count when every file records it and the rollout-granular one otherwise, and the
+  line says which: `efficiency verdict (exact probes to T): ...`. A seed in which the arm never
+  reached T is written `not reached`; it is never clamped to the arm's total, imputed, or dropped
+  from a mean (no mean is printed unless every seed has a delta). The rule: `single seed: no
+  verdict` with one file; `no verdict: target not reached in k/n seeds` unless the arm reached T
+  in EVERY seed, because an arm that spends less and never reaches the control's best has not
+  demonstrated efficiency; `within noise floor (dreaming inert)` when the policy never changed in
+  any seed; `exceeds noise floor` only when every seed's delta has the same sign (a delta of 0 is
+  no sign) AND the absolute mean delta is larger than the fixed arm's own `min..max` spread of
+  probes-to-T on the same basis (ok-toned when fewer probes, bad when more); otherwise `within
+  noise floor`. Below it, the `spend (not a verdict)` line gives total probes per arm per seed,
+  their paired delta, its mean and the ratio of the summed totals, and the next line says why it
+  is not a verdict: fewer total probes is only an efficiency gain if quality at equal compute is
+  not lower, citing `bestAtBudget` of the arm and of the fixed arm per seed and in how many seeds
+  the arm is lower (warn-toned when any). A file without a fixed arm gets none of these lines.
 - **Dreaming audit.** A round's `dreaming` block (the step that chose that round's policy) has
   always carried `currentScore`, `chosenScore`, `improved` and `candidates` (a count). It may now
   also carry `candidateVerdicts` (one record per candidate: `value`, `quality`, `anytime`, `cost`,
@@ -215,7 +234,10 @@ malformed, and the provenance cases (a file carrying the per-round provenance fi
 file without them, the two pooled, a local-path file recording all zeros, an unlisted reject
 reason, a tally that does not add up, and malformed provenance fields), the noise-floor verdict
 (one seed, exceeds, mixed signs, a mean inside the spread, negative, inert in every seed and in
-one seed), the dreaming audit (verdicts, dreamer and lever scan read; an older file's fallback;
+one seed), the efficiency verdict (one seed, target not reached in one of three seeds, one
+sign with a mean above and inside the fixed spread, more probes in every seed, mixed signs, a zero
+delta, exact vs rollout-granular selection, not reached on the exact basis, inert, no reference
+arm), the dreaming audit (verdicts, dreamer and lever scan read; an older file's fallback;
 malformed entries; pooled with an older seed), the exact headline (recomputed from
 `improvements`, the file's numbers winning, not recorded vs not reached, the exact noise floor)
 and the other optional fields; the render tests are skipped, not failed, where matplotlib is

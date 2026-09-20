@@ -25,7 +25,10 @@ the validity panel; a file written before origin tracking reads as "not recorded
 never 0, and pools with a newer seed without inventing zeros for it. ``Verdict``
 pins the noise-floor rule (one seed: no verdict; exceeds only when the mean paired
 delta clears the fixed arm's spread with one sign in every seed; forced within when
-dreaming was inert), ``DreamingAudit`` the ``candidateVerdicts`` / ``dreamer`` /
+dreaming was inert), ``Efficiency`` the same rule on probes-to-T (the arm must reach T
+in every seed; a seed that never did is ``not reached``, never clamped; the exact
+count is used only when every file records it; the spend line is not a verdict),
+``DreamingAudit`` the ``candidateVerdicts`` / ``dreamer`` /
 ``leverScan`` reader and its fallback on an older file, ``ExactHeadline`` the
 first-probe headline from ``improvements``, and ``NewFields`` ``stoppedEarly``,
 priming, the child mode fields and ``beta3``.
@@ -1383,6 +1386,236 @@ class Verdict(unittest.TestCase):
         )
 
 
+class Efficiency(unittest.TestCase):
+    """The efficiency verdict: the noise-floor rule on probes-to-T, with "not reached" never clamped or imputed."""
+
+    tmp: tempfile.TemporaryDirectory[str]
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def load(self, *payloads):
+        paths = [write(self.tmp.name, f"s{p['seed']}.json", p) for p in payloads]
+        return pe.load_results(paths)
+
+    @staticmethod
+    def seed_eff(seed: int, fixed_probes: list[int], dream_probes: list[int], dream_best: float = 1.36):
+        """fixed reaches its final best 1.35 at round 2; dream reaches ``dream_best`` at round 2."""
+        return result(
+            seed,
+            [
+                arm("fixed", rows([1.30, 1.35, 1.33], fixed_probes, [POLICY_A] * 3), fixed=True),
+                arm("dream", rows([1.30, dream_best, 1.31], dream_probes, [POLICY_A, POLICY_B, POLICY_B])),
+            ],
+        )
+
+    def test_one_seed_gives_no_efficiency_verdict(self):
+        results = self.load(seed_reaching_early(1))
+        head = pe.headline(results)
+        effect = head["efficiency"]["dream"]
+        self.assertEqual(effect["verdict"], pe.VERDICT_SINGLE)
+        self.assertEqual(effect["basis"], pe.BASIS_ROLLOUT)
+        self.assertEqual(effect["targetDeltas"], [-5])
+        self.assertIsNone(effect["targetDeltasExact"])
+        self.assertEqual(
+            (effect["totalProbes"], effect["referenceTotalProbes"], effect["totalDeltas"]), ([35], [45], [-10])
+        )
+        self.assertEqual(pe.efficiency_tone(effect), "warn")
+        check = pe.check_tables(results)
+        self.assertIn("dream: efficiency verdict (rollout-granular probes to T): single seed: no verdict", check)
+        self.assertIn(
+            "dream: paired delta probes to T vs fixed per seed [-5]; exact probes to T not recorded "
+            "(1 fewer, 0 more; reached T in 1/1 seeds)",
+            check,
+        )
+        self.assertIn(
+            "dream: spend (not a verdict): total probes per seed dream [35] vs fixed [45], paired delta [-10]; "
+            "ratio 0.78 of the fixed arm's spend (35 vs 45)",
+            check,
+        )
+
+    def test_target_not_reached_in_one_seed_gives_no_verdict_and_is_never_clamped(self):
+        # The realrun4 shape: equal in one seed, fewer probes in another, and a seed where the arm spends
+        # far less (35 vs 45) but never reaches the control's best.
+        equal = self.seed_eff(7, [15, 15, 15], [15, 15, 15])
+        results = self.load(equal, seed_never_reaching(11), seed_reaching_early(13))
+        head = pe.headline(results)
+        effect = head["efficiency"]["dream"]
+        self.assertEqual(effect["probesToTarget"], [30, None, 25])
+        self.assertEqual(effect["targetDeltas"], [0, None, -5], "not reached stays None: never the arm's total")
+        self.assertEqual(effect["reached"], 2)
+        self.assertIsNone(effect["mean"], "no mean over the seeds that happened to reach T")
+        self.assertEqual((effect["fewer"], effect["more"]), (1, 0))
+        self.assertEqual(effect["verdict"], "no verdict: target not reached in 1/3 seeds")
+        self.assertEqual(pe.efficiency_tone(effect), "warn")
+        self.assertEqual(effect["totalDeltas"], [0, -10, -10])
+        self.assertAlmostEqual(num(effect["totalMean"]), -20 / 3)
+        self.assertAlmostEqual(num(effect["spendRatio"]), 115 / 135)
+        # Quality at equal compute: in the seed that never reached T the arm is LOWER inside B = 35.
+        self.assertEqual(effect["bestAtBudget"][1], 1.32)
+        self.assertEqual(effect["referenceBestAtBudget"][1], 1.35)
+        self.assertAlmostEqual(num(effect["deltasAtBudget"][1]), -0.03)
+        self.assertEqual(effect["lowerAtBudget"], 1)
+        self.assertEqual(head["paired"]["dream"]["callsDeltas"], [0, None, -5])
+        card = pe.headline_lines(results, head)
+        tones = {text.strip(): tone for text, tone in card}
+        self.assertEqual(
+            tones[
+                "dream: efficiency verdict (rollout-granular probes to T): no verdict: target not reached in 1/3 seeds"
+            ],
+            "warn",
+        )
+        check = pe.check_tables(results)
+        self.assertIn(
+            "dream: paired delta probes to T vs fixed per seed [0, not reached, -5]; exact probes to T not recorded "
+            "(1 fewer, 0 more; reached T in 2/3 seeds)",
+            check,
+        )
+        self.assertIn(
+            "dream: spend (not a verdict): total probes per seed dream [45, 35, 35] vs fixed [45, 45, 45], "
+            "paired delta [0, -10, -10], mean -6.67; ratio 0.85 of the fixed arm's spend (115 vs 135)",
+            check,
+        )
+        self.assertIn(
+            "dream: fewer total probes is only an efficiency gain if quality at equal compute is not lower: "
+            "best at B per seed, dream vs fixed [1.3600 vs 1.3500 (+0.0100), 1.3200 vs 1.3500 (-0.0300), "
+            "1.3600 vs 1.3500 (+0.0100)]; lower in 1/3 seed(s)",
+            check,
+        )
+        quality_line = next(t for t in tones if t.startswith("dream: fewer total probes"))
+        self.assertEqual(tones[quality_line], "warn")
+
+    def test_exceeds_needs_one_sign_in_every_seed_and_a_mean_above_the_fixed_spread(self):
+        # fixed reaches T at 30 / 31 / 29 probes (spread 2); dream at 25 in every seed: deltas -5, -6, -4.
+        results = self.load(
+            self.seed_eff(1, [15, 15, 15], [15, 10, 10]),
+            self.seed_eff(2, [15, 16, 15], [15, 10, 10]),
+            self.seed_eff(3, [15, 14, 15], [15, 10, 10]),
+        )
+        head = pe.headline(results)
+        effect = head["efficiency"]["dream"]
+        self.assertEqual(effect["targetDeltas"], [-5, -6, -4])
+        self.assertAlmostEqual(num(effect["mean"]), -5.0)
+        self.assertAlmostEqual(num(effect["floorSpread"]), 2.0)
+        self.assertEqual((effect["reached"], effect["fewer"], effect["more"]), (3, 3, 0))
+        self.assertEqual(effect["verdict"], pe.VERDICT_EXCEEDS)
+        self.assertEqual(pe.efficiency_tone(effect), "ok")
+        check = pe.check_tables(results)
+        self.assertIn(
+            "dream: paired delta probes to T vs fixed per seed [-5, -6, -4]; exact probes to T not recorded; "
+            "mean -5.00 on the rollout basis (3 fewer, 0 more; reached T in 3/3 seeds)",
+            check,
+        )
+        self.assertIn(
+            "dream: efficiency verdict (rollout-granular probes to T): exceeds noise floor "
+            "(fixed arm's own spread 2 probes)",
+            check,
+        )
+
+    def test_one_sign_inside_the_fixed_spread_is_within_the_floor(self):
+        # fixed reaches T at 30 / 40 / 30 (spread 10); deltas -5, -15, -5: mean -8.33 does not clear 10.
+        results = self.load(
+            self.seed_eff(1, [15, 15, 15], [15, 10, 10]),
+            self.seed_eff(2, [15, 25, 15], [15, 10, 10]),
+            self.seed_eff(3, [15, 15, 15], [15, 10, 10]),
+        )
+        effect = pe.headline(results)["efficiency"]["dream"]
+        self.assertEqual(effect["targetDeltas"], [-5, -15, -5])
+        self.assertEqual((effect["fewer"], effect["more"]), (3, 0))
+        self.assertEqual(effect["verdict"], pe.VERDICT_WITHIN)
+
+    def test_more_probes_in_every_seed_exceeds_the_floor_bad_toned(self):
+        results = self.load(seed_more_calls(1), seed_more_calls(2))
+        effect = pe.headline(results)["efficiency"]["dream"]
+        self.assertEqual(effect["targetDeltas"], [12, 12])
+        self.assertEqual(effect["verdict"], pe.VERDICT_EXCEEDS)
+        self.assertEqual(pe.efficiency_tone(effect), "bad")
+
+    def test_mixed_signs_are_within_the_floor_whatever_the_mean(self):
+        # -5, -5 and +15 against a fixed spread of 0: the mean clears it, the sign does not.
+        results = self.load(seed_reaching_early(1), seed_reaching_early(2), seed_reaching_late(3))
+        effect = pe.headline(results)["efficiency"]["dream"]
+        self.assertEqual(effect["targetDeltas"], [-5, -5, 15])
+        self.assertEqual((effect["reached"], effect["fewer"], effect["more"]), (3, 2, 1))
+        self.assertGreater(abs(num(effect["mean"])), num(effect["floorSpread"]))
+        self.assertEqual(effect["verdict"], pe.VERDICT_WITHIN)
+        self.assertEqual(pe.efficiency_tone(effect), "warn")
+
+    def test_a_zero_delta_is_no_sign(self):
+        results = self.load(self.seed_eff(1, [15, 15, 15], [15, 15, 15]), seed_reaching_early(2))
+        effect = pe.headline(results)["efficiency"]["dream"]
+        self.assertEqual(effect["targetDeltas"], [0, -5])
+        self.assertEqual(effect["verdict"], pe.VERDICT_WITHIN)
+
+    def test_the_exact_count_is_used_only_when_every_file_records_it(self):
+        # Exact: fixed 22 vs dream 19 (-3) in seed 1; fixed 17 vs dream 19 (+2) in seed 2. Rollout-granular: -5, -5.
+        second = with_improvements(
+            seed_reaching_early(2),
+            {
+                "fixed": [[(1, 1.30)], [(2, 1.35)], [(2, 1.32)]],
+                "dream": [[(1, 1.30)], [(4, 1.36)], []],
+            },
+        )
+        results = self.load(seed_exact(1), second)
+        head = pe.headline(results)
+        effect = head["efficiency"]["dream"]
+        self.assertEqual(effect["basis"], pe.BASIS_EXACT)
+        self.assertEqual(effect["targetDeltas"], [-5, -5])
+        self.assertEqual(effect["targetDeltasExact"], [-3, 2])
+        self.assertEqual(effect["probesToTargetExact"], [19, 19])
+        self.assertAlmostEqual(num(effect["floorSpread"]), 5.0, msg="the exact floor: fixed at 22 and 17")
+        self.assertEqual(effect["verdict"], pe.VERDICT_WITHIN, "mixed signs on the exact basis")
+        check = pe.check_tables(results)
+        self.assertIn("dream: paired delta probes to T vs fixed per seed [-5, -5]; exact [-3, +2]; mean -0.50", check)
+        self.assertIn("dream: efficiency verdict (exact probes to T): within noise floor", check)
+        # One file without the curve: the exact count is not recorded everywhere, so the rollout-granular one is used.
+        mixed = self.load(seed_exact(3), seed_reaching_early(4))
+        effect = pe.headline(mixed)["efficiency"]["dream"]
+        self.assertEqual(effect["basis"], pe.BASIS_ROLLOUT)
+        self.assertIsNone(effect["targetDeltasExact"])
+        self.assertIsNone(effect["probesToTargetExact"])
+        self.assertEqual(effect["targetDeltas"], [-5, -5])
+        self.assertEqual(effect["verdict"], pe.VERDICT_EXCEEDS)
+        check = pe.check_tables(mixed)
+        self.assertIn("exact probes to T not recorded; mean -5.00 on the rollout basis", check)
+        self.assertIn("dream: efficiency verdict (rollout-granular probes to T): exceeds noise floor", check)
+
+    def test_not_reached_on_the_exact_basis_gives_no_verdict(self):
+        never = with_improvements(
+            seed_never_reaching(2),
+            {
+                "fixed": [[(1, 1.30)], [(7, 1.35)], [(2, 1.32)]],
+                "dream": [[(1, 1.30)], [(3, 1.31)], [(5, 1.32)]],
+            },
+        )
+        effect = pe.headline(self.load(seed_exact(1), never))["efficiency"]["dream"]
+        self.assertEqual(effect["basis"], pe.BASIS_EXACT)
+        self.assertEqual(effect["targetDeltasExact"], [-3, None])
+        self.assertEqual(effect["verdict"], "no verdict: target not reached in 1/2 seeds")
+
+    def test_inert_dreaming_forces_within_the_floor(self):
+        results = self.load(seed_paired(1, 1.30, 1.45, changes=False), seed_paired(2, 1.30, 1.46, changes=False))
+        effect = pe.headline(results)["efficiency"]["dream"]
+        self.assertEqual(effect["reached"], 2)
+        self.assertEqual(effect["verdict"], pe.VERDICT_INERT)
+
+    def test_no_reference_arm_means_no_efficiency_lines(self):
+        only_dream = result(3, [arm("dream", rows([1.0, 1.1, 1.2], [5, 5, 5], [POLICY_A, POLICY_B, POLICY_B]))])
+        head = pe.headline(self.load(only_dream))
+        self.assertEqual(head["efficiency"], {})
+        self.assertEqual(pe.comparison_lines(head), [])
+
+    def test_the_rows_stay_apart_from_the_ratio_block(self):
+        results = self.load(seed_reaching_early(1), seed_never_reaching(2))
+        head = pe.headline(results)
+        for text, _tone in pe.efficiency_lines("dream", "fixed", head["efficiency"]["dream"]):
+            for word in ("median", "calls", "score"):
+                self.assertNotIn(word, text)
+
+
 class DreamingAudit(unittest.TestCase):
     """The per-candidate audit of a dreaming step is read when present and reads as not recorded when absent."""
 
@@ -1772,6 +2005,13 @@ class Render(unittest.TestCase):
         self.assertIsNone(INVERTED_WORDING.search(report), "no `0.83x fewer` anywhere on the page")
         self.assertIn("never as 0.83x fewer", report)
         self.assertIn("inverse of the median ratio", report)
+        self.assertIn(
+            '<div class="line warn">  dream: efficiency verdict (rollout-granular probes to T): '
+            "no verdict: target not reached in 1/2 seeds</div>",
+            report,
+        )
+        self.assertIn("dream: spend (not a verdict): total probes per seed dream [39, 35] vs fixed [45, 45]", report)
+        self.assertIn("The spend line (total probes per arm per seed and their ratio) is not a verdict", report)
         self.assertIn("<th>replay objective</th><td>beta1=0.01 beta2=0.02</td>", report)
 
     def test_render_single_seed_and_short_run(self):

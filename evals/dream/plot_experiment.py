@@ -40,6 +40,24 @@ otherwise ``within noise floor``. When the dreaming arm's policy never changed i
 any seed there was no treatment, and the verdict is forced to ``within noise
 floor (dreaming inert)`` whatever the numbers say.
 
+Efficiency verdict (the same honesty rule, for compute): the quality verdict
+above says nothing about compute, and a dreaming arm's effect may be there. Per
+non-fixed arm ``efficiency_effects`` lists the paired per-seed delta of
+probes-to-T (arm minus fixed; T = the fixed arm's final best), on the exact count
+when every file records it and on the rollout-granular one otherwise, and the
+line says which. A seed in which the arm never reached T is ``not reached``: it
+is never clamped to the arm's total, imputed or dropped from a mean. The verdict
+is ``single seed: no verdict`` with one file; ``no verdict: target not reached in
+k/n seeds`` unless the arm reached T in EVERY seed (an arm that spends less and
+never reaches the control's best has not demonstrated efficiency); ``within noise
+floor (dreaming inert)`` when the policy never changed in any seed; ``exceeds
+noise floor`` only when every seed's delta has the same sign AND the absolute
+mean delta is larger than the fixed arm's own min..max spread of probes-to-T;
+otherwise ``within noise floor``. The ``spend`` line beside it (total probes per
+arm per seed, their paired delta and ratio) is NOT a verdict: fewer total probes
+is only an efficiency gain if quality at equal compute is not lower, so the line
+cites ``bestAtBudget`` of both arms per seed.
+
 Dreaming audit: a round record's ``dreaming`` block (the step that chose that
 round's policy) may carry ``candidateVerdicts`` (one record per candidate: value,
 quality, anytime, cost, roundsSaved, support coverage, eligibility and the reason
@@ -420,6 +438,40 @@ class PairedEffect(TypedDict):
     verdict: str
 
 
+class EfficiencyEffect(TypedDict):
+    """One non-reference arm's compute against the reference, seed by seed.
+
+    ``targetDeltas`` / ``targetDeltasExact`` are arm minus reference probes-to-T; a
+    seed where the arm (or the reference) never reached T is None, "not reached",
+    never clamped to the arm's total or imputed. ``basis`` names the list the
+    verdict was read from: ``exact`` when every file records the exact count, else
+    ``rollout``. ``totalDeltas`` and ``spendRatio`` are SPEND, not a verdict.
+    """
+
+    arm: str
+    n: int
+    totalProbes: list[int]
+    referenceTotalProbes: list[int]
+    totalDeltas: list[int]
+    totalMean: float | None
+    spendRatio: float | None
+    probesToTarget: list[int | None]
+    probesToTargetExact: list[int | None] | None
+    targetDeltas: list[int | None]
+    targetDeltasExact: list[int | None] | None
+    basis: str
+    reached: int
+    mean: float | None
+    fewer: int
+    more: int
+    floorSpread: float | None
+    bestAtBudget: list[float | None]
+    referenceBestAtBudget: list[float | None]
+    deltasAtBudget: list[float | None]
+    lowerAtBudget: int
+    verdict: str
+
+
 class DreamingSummary(TypedDict):
     """One arm's dreaming in one seed: how often it ran, how often it accepted a candidate, whether it was inert."""
 
@@ -438,6 +490,7 @@ class HeadlineSummary(TypedDict):
     ablation: dict[str, AblationSummary]
     noiseFloor: NoiseFloor | None
     paired: dict[str, PairedEffect]
+    efficiency: dict[str, EfficiencyEffect]
     dreaming: dict[str, list[DreamingSummary]]
 
 
@@ -1602,6 +1655,124 @@ def paired_effects(
     return out
 
 
+BASIS_EXACT = "exact"
+BASIS_ROLLOUT = "rollout"
+VERDICT_NOT_REACHED = "no verdict: target not reached in {k}/{n} seeds"
+
+
+def efficiency_verdict(
+    probes: list[int | None], deltas: list[int | None], floor_spread: float | None, inert_everywhere: bool
+) -> str:
+    """The efficiency verdict on probes-to-T (module docstring, "Efficiency verdict").
+
+    ``probes`` is the arm's own probes-to-T per seed and ``deltas`` the paired arm
+    minus reference difference, both on one basis. One seed: no verdict. The arm must
+    reach T in EVERY seed: an arm that spends less and never reaches the control's
+    best has not demonstrated efficiency, so a missing seed is ``no verdict: target
+    not reached in k/n seeds`` and is never clamped to the arm's total or left out
+    of a mean. Then, inert in every seed forces ``within noise floor (dreaming
+    inert)``; else ``exceeds noise floor`` needs every seed's delta to have the same
+    sign AND |mean delta| > the reference arm's own min..max spread of probes-to-T;
+    anything else is ``within noise floor``.
+    """
+    n = len(probes)
+    if n <= 1:
+        return VERDICT_SINGLE + (" (dreaming inert: the arms ran the same policy)" if inert_everywhere else "")
+    missing = sum(1 for p in probes if p is None)
+    if missing:
+        return VERDICT_NOT_REACHED.format(k=missing, n=n)
+    if inert_everywhere:
+        return VERDICT_INERT
+    defined = [float(d) for d in deltas if d is not None]
+    if floor_spread is None or len(defined) < n:
+        return VERDICT_WITHIN + f" (paired delta defined in {len(defined)}/{n} seeds)"
+    mean = statistics.fmean(defined)
+    same_sign = all(d > EPS for d in defined) or all(d < -EPS for d in defined)
+    if abs(mean) > max(floor_spread, EPS) and same_sign:
+        return VERDICT_EXCEEDS
+    return VERDICT_WITHIN
+
+
+def efficiency_effects(
+    results: list[Result], floor: NoiseFloor | None, dreaming: dict[str, list[DreamingSummary]]
+) -> dict[str, EfficiencyEffect]:
+    """Per non-reference arm: paired compute deltas against the reference, the spend, and the efficiency verdict.
+
+    (a) total probes, arm minus reference, per seed: SPEND, never a verdict.
+    (b) probes-to-T and exact probes-to-T, arm minus reference, per seed; None where
+        either side never reached T. The verdict reads the exact list when every
+        file records it, else the rollout-granular one (``basis``).
+    (c) bestAtBudget of the arm and of the reference per seed: quality at equal
+        compute, the pair that says whether spending less cost quality.
+    """
+    heads = [r["headline"] for r in results]
+    reference = next((h["reference"] for h in heads if h is not None), None)
+    out: dict[str, EfficiencyEffect] = {}
+    if reference is None or any(reference not in {a["arm"] for a in r["arms"]} for r in results):
+        return out
+    n = len(results)
+    exact_everywhere = all(h is not None and h["probesToTargetExact"] is not None for h in heads)
+    basis = BASIS_EXACT if exact_everywhere else BASIS_ROLLOUT
+    floor_stats = None
+    if floor is not None:
+        floor_stats = floor["probesToTargetExact"] if exact_everywhere else floor["probesToTarget"]
+    # The floor is the reference arm's spread over ALL seeds; one it never reached T in leaves no floor.
+    floor_spread = floor_stats["spread"] if floor_stats is not None and floor_stats["defined"] == n else None
+    ref_totals = [arm_of(r, reference)["totalProbes"] for r in results]
+    for name in arm_names(results):
+        if name == reference:
+            continue
+        totals = [arm_of(r, name)["totalProbes"] for r in results]
+        total_deltas = [mine - theirs for mine, theirs in zip(totals, ref_totals, strict=True)]
+        rollout = [None if h is None else h["probesToTarget"].get(name) for h in heads]
+        rollout_ref = [None if h is None else h["probesToTarget"].get(reference) for h in heads]
+        exact: list[int | None] | None = None
+        exact_deltas: list[int | None] | None = None
+        if exact_everywhere:
+            maps = [h["probesToTargetExact"] or {} for h in heads if h is not None]
+            exact = [m.get(name) for m in maps]
+            exact_deltas = [
+                None if mine is None or (theirs := m.get(reference)) is None else mine - theirs
+                for mine, m in zip(exact, maps, strict=True)
+            ]
+        rollout_deltas = [
+            None if mine is None or theirs is None else mine - theirs
+            for mine, theirs in zip(rollout, rollout_ref, strict=True)
+        ]
+        used_probes = exact if exact is not None else rollout
+        used_deltas = exact_deltas if exact_deltas is not None else rollout_deltas
+        defined = [float(d) for d in used_deltas if d is not None]
+        best = [None if h is None else h["bestAtBudget"].get(name) for h in heads]
+        best_ref = [None if h is None else h["bestAtBudget"].get(reference) for h in heads]
+        at_budget = [_diff(mine, theirs) for mine, theirs in zip(best, best_ref, strict=True)]
+        inert_everywhere = bool(dreaming.get(name)) and all(s["inert"] for s in dreaming[name])
+        out[name] = {
+            "arm": name,
+            "n": n,
+            "totalProbes": totals,
+            "referenceTotalProbes": ref_totals,
+            "totalDeltas": total_deltas,
+            "totalMean": statistics.fmean(total_deltas) if total_deltas else None,
+            "spendRatio": _ratio(float(sum(totals)), float(sum(ref_totals))),
+            "probesToTarget": rollout,
+            "probesToTargetExact": exact,
+            "targetDeltas": rollout_deltas,
+            "targetDeltasExact": exact_deltas,
+            "basis": basis,
+            "reached": sum(1 for v in used_probes if v is not None),
+            "mean": statistics.fmean(defined) if len(defined) == n and defined else None,
+            "fewer": sum(1 for d in defined if d < -EPS),
+            "more": sum(1 for d in defined if d > EPS),
+            "floorSpread": floor_spread,
+            "bestAtBudget": best,
+            "referenceBestAtBudget": best_ref,
+            "deltasAtBudget": at_budget,
+            "lowerAtBudget": sum(1 for d in at_budget if d is not None and d < -EPS),
+            "verdict": efficiency_verdict(used_probes, used_deltas, floor_spread, inert_everywhere),
+        }
+    return out
+
+
 def headline(results: list[Result]) -> HeadlineSummary:
     """Per-seed headline rows from the files plus median multipliers and reach counts.
 
@@ -1644,6 +1815,7 @@ def headline(results: list[Result]) -> HeadlineSummary:
         "ablation": {k: {"deltas": v, "median": statistics.median(v)} for k, v in ablation.items()},
         "noiseFloor": floor,
         "paired": paired_effects(results, floor, dreaming),
+        "efficiency": efficiency_effects(results, floor, dreaming),
         "dreaming": dreaming,
     }
 
@@ -1768,6 +1940,74 @@ def verdict_tone(effect: PairedEffect) -> str:
     return "warn"
 
 
+def efficiency_tone(effect: EfficiencyEffect) -> str:
+    """ok/bad when probes-to-T exceeds the floor (fewer probes is ok); warn for every other verdict."""
+    if effect["verdict"] == VERDICT_EXCEEDS:
+        return "ok" if (effect["mean"] or 0) < 0 else "bad"
+    return "warn"
+
+
+def _int_deltas(values: list[int | None] | list[int], missing: str = "not reached") -> str:
+    return ", ".join(missing if v is None else ("0" if v == 0 else f"{v:+d}") for v in values)
+
+
+def _counts(values: list[int | None] | list[int], missing: str = "not reached") -> str:
+    return ", ".join(missing if v is None else str(v) for v in values)
+
+
+def efficiency_lines(name: str, ref: str, effect: EfficiencyEffect) -> list[tuple[str, str]]:
+    """(text, tone) rows for one arm's compute: the paired probes-to-T deltas, the efficiency verdict, the spend.
+
+    A seed where the arm never reached T prints the words ``not reached`` in the list
+    and no mean is printed over the rest. The spend rows are muted and say they are
+    not a verdict. Like ``comparison_lines`` the rows avoid "median", "calls" and
+    "score".
+    """
+    n = effect["n"]
+    lines: list[tuple[str, str]] = []
+    text = f"  {name}: paired delta probes to T vs {ref} per seed [{_int_deltas(effect['targetDeltas'])}]"
+    if effect["targetDeltasExact"] is not None:
+        text += f"; exact [{_int_deltas(effect['targetDeltasExact'])}]"
+    else:
+        text += f"; {EXACT_NOT_RECORDED}"
+    if n > 1 and effect["mean"] is not None:
+        text += f"; mean {effect['mean']:+.2f} on the {effect['basis']} basis"
+    text += f" ({effect['fewer']} fewer, {effect['more']} more; reached T in {effect['reached']}/{n} seeds)"
+    lines.append((text, "muted"))
+    basis = "exact probes to T" if effect["basis"] == BASIS_EXACT else "rollout-granular probes to T"
+    detail = ""
+    if n > 1 and effect["floorSpread"] is not None and effect["reached"] == n:
+        detail = f" ({ref} arm's own spread {fmt(effect['floorSpread'], 2)} probes)"
+    lines.append((f"  {name}: efficiency verdict ({basis}): {effect['verdict']}{detail}", efficiency_tone(effect)))
+    spend = (
+        f"  {name}: spend (not a verdict): total probes per seed {name} [{_counts(effect['totalProbes'])}] vs "
+        f"{ref} [{_counts(effect['referenceTotalProbes'])}], paired delta [{_int_deltas(effect['totalDeltas'])}]"
+    )
+    if n > 1 and effect["totalMean"] is not None:
+        spend += f", mean {effect['totalMean']:+.2f}"
+    if effect["spendRatio"] is not None:
+        spend += (
+            f"; ratio {ratio_fmt(effect['spendRatio'])} of the {ref} arm's spend "
+            f"({sum(effect['totalProbes'])} vs {sum(effect['referenceTotalProbes'])})"
+        )
+    lines.append((spend, "muted"))
+    pairs = ", ".join(
+        "not comparable" if mine is None or theirs is None or d is None else f"{fmt(mine)} vs {fmt(theirs)} ({d:+.4f})"
+        for mine, theirs, d in zip(
+            effect["bestAtBudget"], effect["referenceBestAtBudget"], effect["deltasAtBudget"], strict=True
+        )
+    )
+    lower = effect["lowerAtBudget"]
+    lines.append(
+        (
+            f"  {name}: fewer total probes is only an efficiency gain if quality at equal compute is not lower: "
+            f"best at B per seed, {name} vs {ref} [{pairs}]; lower in {lower}/{n} seed(s)",
+            "warn" if lower else "muted",
+        )
+    )
+    return lines
+
+
 def dreaming_text(name: str, summaries: list[DreamingSummary]) -> list[tuple[str, str]]:
     """(text, tone) rows: how the arm's dreaming went, totalled over seeds, then the inert flag when it applies."""
     n = len(summaries)
@@ -1795,6 +2035,9 @@ def dreaming_text(name: str, summaries: list[DreamingSummary]) -> list[tuple[str
 
 def comparison_lines(head: HeadlineSummary) -> list[tuple[str, str]]:
     """(text, tone) rows for the noise floor, the paired per-seed deltas with their verdict, and the dreaming summary.
+
+    Each arm gets its quality verdict (final best) and then ``efficiency_lines``: the
+    efficiency verdict (probes to T) and the spend, which is not a verdict.
 
     The rows never use the words "median", "calls" or "score", so they stay apart from
     the across-seeds ratio block they follow.
@@ -1825,6 +2068,9 @@ def comparison_lines(head: HeadlineSummary) -> list[tuple[str, str]]:
         text += f" ({effect['positive']} positive, {effect['negative']} negative)"
         lines.append((text, "muted"))
         lines.append((f"  {name}: verdict: {effect['verdict']}", verdict_tone(effect)))
+        efficiency = head["efficiency"].get(name)
+        if efficiency is not None:
+            lines.extend(efficiency_lines(name, ref, efficiency))
     for name, summaries in head["dreaming"].items():
         if name == ref or not any(s["phases"] or s["inert"] for s in summaries):
             continue
@@ -2936,6 +3182,16 @@ def build_report(results, ser, head, pngs):
         f"delta of final best exceeds the noise floor only when its mean is larger than the {REFERENCE_ARM} arm's "
         "own min..max spread of final best across seeds AND every seed's delta has the same sign; a dreaming arm "
         "whose policy never changed in any seed is within the floor by construction (dreaming inert)."
+        " The efficiency verdict applies the same rule to compute: the paired per-seed delta of probes to T (the "
+        "exact count when every file records it, else the rollout-granular one; the line says which). The arm must "
+        f"reach T in every seed: a seed where it never reached the {REFERENCE_ARM} arm's final best is written not "
+        "reached, never clamped to the arm's total or imputed, and gives no verdict: target not reached in k/n "
+        "seeds, because an arm that spends less and never reaches the control's best has not demonstrated "
+        "efficiency. With T reached everywhere it exceeds the noise floor only when every seed's delta has the same "
+        f"sign AND the absolute mean delta is larger than the {REFERENCE_ARM} arm's own min..max spread of probes "
+        "to T across seeds. The spend line (total probes per arm per seed and their ratio) is not a verdict: fewer "
+        "total probes is only an efficiency gain if quality at equal compute is not lower, which is what the best "
+        "at B pair per seed beside it shows."
     )
     dreaming_arms = [name for name in names if any(ser[name]["dreaming"]["recorded"])]
     audit_recorded = any(sum(ser[name]["dreaming"]["auditRecorded"]) for name in dreaming_arms)
