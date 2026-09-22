@@ -4,6 +4,7 @@ import { Box, Container, Markdown, type MarkdownTheme, Spacer, Text } from "@ear
 import type { MessageRenderer } from "../../../core/extensions/types.js";
 import type { CustomMessage } from "../../../core/messages.js";
 import { getMarkdownTheme, theme } from "../theme/theme.js";
+import type { MermaidMarkdownTransform } from "./mermaid.js";
 
 export class CustomMessageComponent extends Container {
 	private message: CustomMessage<unknown>;
@@ -11,17 +12,20 @@ export class CustomMessageComponent extends Container {
 	private box: Box;
 	private customComponent?: Component;
 	private markdownTheme: MarkdownTheme;
+	private mermaidTransform?: MermaidMarkdownTransform;
 	private _expanded = false;
 
 	constructor(
 		message: CustomMessage<unknown>,
 		customRenderer?: MessageRenderer,
 		markdownTheme: MarkdownTheme = getMarkdownTheme(),
+		mermaidTransform?: MermaidMarkdownTransform,
 	) {
 		super();
 		this.message = message;
 		this.customRenderer = customRenderer;
 		this.markdownTheme = markdownTheme;
+		this.mermaidTransform = mermaidTransform;
 
 		this.addChild(new Spacer(1));
 
@@ -79,10 +83,18 @@ export class CustomMessageComponent extends Container {
 				.join("\n");
 		}
 
+		const mermaidTransform = this.mermaidTransform;
 		this.box.addChild(
-			new Markdown(text, 0, 0, this.markdownTheme, {
-				color: (text: string) => theme.fg("customMessageText", text),
-			}),
+			new Markdown(
+				text,
+				0,
+				0,
+				this.markdownTheme,
+				{
+					color: (text: string) => theme.fg("customMessageText", text),
+				},
+				{ transform: mermaidTransform && ((md, availableWidth) => mermaidTransform(md, availableWidth, false)) },
+			),
 		);
 	}
 }

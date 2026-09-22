@@ -8,6 +8,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { type AgentSessionMessage, formatAgentMessageParticipant } from "../../../core/agent-messages.js";
 import { getMarkdownTheme, theme } from "../theme/theme.js";
+import type { MermaidTextRenderer } from "./mermaid.js";
 
 /** `◆ <label> · <participant>[ · <preview>]` summary line shared by received and sent agent-message UI. */
 export function agentMessageSummaryLine(label: string, participant: string, preview?: string): string {
@@ -19,13 +20,19 @@ export function agentMessageSummaryLine(label: string, participant: string, prev
 }
 
 /** `╰─`-guttered message body lines shared by received and sent agent-message UI. */
-export function agentMessageBodyLines(message: string, width: number): string[] {
+export function agentMessageBodyLines(message: string, width: number, renderMermaid?: MermaidTextRenderer): string[] {
 	const safeWidth = Math.max(1, width);
 	const textWidth = Math.max(1, safeWidth - 4);
-	const bodyLines = message.split("\n").flatMap((line) => {
-		const wrapped = wrapTextWithAnsi(line, textWidth);
-		return wrapped.length > 0 ? wrapped : [""];
-	});
+	const wrapText = (text: string) =>
+		text.split("\n").flatMap((line) => {
+			const wrapped = wrapTextWithAnsi(line, textWidth);
+			return wrapped.length > 0 ? wrapped : [""];
+		});
+	const segments = renderMermaid?.(message, textWidth);
+	// Diagram rows already fit textWidth and must not be re-wrapped.
+	const bodyLines = segments
+		? segments.flatMap((segment) => (segment.kind === "rows" ? segment.rows : wrapText(segment.text)))
+		: wrapText(message);
 	return bodyLines.map((line, index) => {
 		const prefix = index === 0 ? theme.fg("dim", "╰─ ") : "   ";
 		return truncateToWidth(` ${prefix}${theme.fg("customMessageText", line)}`, safeWidth, "");
@@ -33,10 +40,13 @@ export function agentMessageBodyLines(message: string, width: number): string[] 
 }
 
 class AgentMessageBodyComponent implements Component {
-	constructor(private readonly message: string) {}
+	constructor(
+		private readonly message: string,
+		private readonly renderMermaid?: MermaidTextRenderer,
+	) {}
 
 	render(width: number): string[] {
-		return agentMessageBodyLines(this.message, width);
+		return agentMessageBodyLines(this.message, width, this.renderMermaid);
 	}
 
 	invalidate(): void {}
@@ -46,15 +56,17 @@ export class AgentMessageComponent extends Container {
 	private readonly content = new Container();
 	private readonly header = new Text("", 1, 0);
 	private readonly shouldAddLeadingSpace?: (expanded: boolean) => boolean;
+	private readonly renderMermaid?: MermaidTextRenderer;
 	private expanded = false;
 
 	constructor(
 		private readonly message: AgentSessionMessage,
 		_markdownTheme: MarkdownTheme = getMarkdownTheme(),
-		options: { shouldAddLeadingSpace?: (expanded: boolean) => boolean } = {},
+		options: { shouldAddLeadingSpace?: (expanded: boolean) => boolean; renderMermaid?: MermaidTextRenderer } = {},
 	) {
 		super();
 		this.shouldAddLeadingSpace = options.shouldAddLeadingSpace;
+		this.renderMermaid = options.renderMermaid;
 		this.addChild(this.content);
 		this.updateDisplay();
 	}
@@ -83,7 +95,7 @@ export class AgentMessageComponent extends Container {
 		this.header.setText(this.headerText());
 		this.content.addChild(this.header);
 		if (this.expanded) {
-			this.content.addChild(new AgentMessageBodyComponent(this.message.details.message));
+			this.content.addChild(new AgentMessageBodyComponent(this.message.details.message, this.renderMermaid));
 		}
 	}
 

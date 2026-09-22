@@ -1,6 +1,7 @@
 import { Box, type Component, Markdown, Text, visibleWidth } from "@earendil-works/pi-tui";
 import type { AgentConnectionSideQuestionEvent } from "../../agent-connection/types.js";
 import { getMarkdownTheme, theme } from "../theme/theme.js";
+import type { MermaidMarkdownTransform } from "./mermaid.js";
 
 interface SideQuestionTurnState {
 	kind: "turn";
@@ -19,11 +20,13 @@ interface SideQuestionBashState {
 
 export class SideQuestionComponent implements Component {
 	private readonly paddingX: number;
+	private readonly mermaidTransform?: MermaidMarkdownTransform;
 	private readonly entries: (SideQuestionTurnState | SideQuestionBashState)[] = [];
 	private expanded = false;
 
-	constructor(event: AgentConnectionSideQuestionEvent, paddingX = 2) {
+	constructor(event: AgentConnectionSideQuestionEvent, paddingX = 2, mermaidTransform?: MermaidMarkdownTransform) {
 		this.paddingX = Math.max(2, paddingX);
+		this.mermaidTransform = mermaidTransform;
 		this.addTurn(event);
 	}
 
@@ -39,11 +42,24 @@ export class SideQuestionComponent implements Component {
 				}),
 			);
 		}
-		const answer = new Markdown("", this.paddingX, 0, getMarkdownTheme(), {
-			color: (content: string) => theme.fg("userMessageText", content),
-		});
+		const mermaidTransform = this.mermaidTransform;
+		const answer = new Markdown(
+			"",
+			this.paddingX,
+			0,
+			getMarkdownTheme(),
+			{
+				color: (content: string) => theme.fg("userMessageText", content),
+			},
+			{
+				transform:
+					mermaidTransform &&
+					((md, availableWidth) => mermaidTransform(md, availableWidth, turn.event.status === "running")),
+			},
+		);
 		answer.setText(event.answer);
-		this.entries.push({ kind: "turn", event, questionBubble, answer });
+		const turn: SideQuestionTurnState = { kind: "turn", event, questionBubble, answer };
+		this.entries.push(turn);
 	}
 
 	addBash(component: SideQuestionBashState["component"]): void {
@@ -75,6 +91,7 @@ export class SideQuestionComponent implements Component {
 			return;
 		}
 		turn.event = event;
+		// setText drops the rendered cache even for unchanged text, so the Mermaid transform re-runs with the new status.
 		turn.answer.setText(event.answer);
 	}
 

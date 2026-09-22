@@ -11,6 +11,7 @@ import { type Theme, theme } from "../theme/theme.js";
 import { getWorkingPulseFrame, workingIconFrame } from "../theme/working-icon.js";
 import { getIpythonCodeFromArgs, IPythonCellComponent } from "./ipython-cell.js";
 import { expandCollapseHint } from "./keybinding-hints.js";
+import type { MermaidTextRenderer } from "./mermaid.js";
 import {
 	type BackgroundShellHandle,
 	readAssignedShellCommand,
@@ -24,6 +25,8 @@ export interface ToolExecutionOptions {
 	showImages?: boolean;
 	/** Whether image metadata may parse dimensions from base64 data. */
 	includeImageDimensions?: boolean;
+	/** Draws Mermaid blocks in agent messages sent from Python cells. */
+	renderMermaid?: MermaidTextRenderer;
 }
 
 export interface ToolExecutionRendererDefinition {
@@ -91,6 +94,7 @@ export class ToolExecutionComponent extends Container {
 	private showImages: boolean;
 	private includeImageDimensions: boolean;
 	private readonly shouldAddLeadingSpace?: () => boolean;
+	private readonly renderMermaid?: MermaidTextRenderer;
 	private isPartial = true;
 	private toolDefinition?: ToolExecutionDefinition;
 	private builtInToolDefinition?: ToolDefinition<any, any>;
@@ -127,6 +131,7 @@ export class ToolExecutionComponent extends Container {
 		this.showImages = options.showImages ?? true;
 		this.includeImageDimensions = options.includeImageDimensions ?? true;
 		this.shouldAddLeadingSpace = options.shouldAddLeadingSpace;
+		this.renderMermaid = options.renderMermaid;
 		this.ui = ui;
 		this.cwd = cwd;
 
@@ -419,6 +424,7 @@ export class ToolExecutionComponent extends Container {
 					showExpandHint: this.showExpandHint,
 					showImages: this.showImages,
 					cwd: this.cwd,
+					renderMermaid: this.renderMermaid,
 				};
 				if (!this.ipythonCellComponent) {
 					this.ipythonCellComponent = new IPythonCellComponent(state);

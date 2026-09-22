@@ -15,6 +15,7 @@ import { agentMessageBodyLines, agentMessageSummaryLine } from "./agent-message.
 import { normalizeErrorDetails, summarizeErrorDetails } from "./collapsible-error.js";
 import { renderDiffSeparator, renderRichDiff } from "./diff.js";
 import { countChangedLines, FILE_CHANGE_DIFF_INDENT, formatFileChangeSummaryLine } from "./edit-summary.js";
+import type { MermaidTextRenderer } from "./mermaid.js";
 import type { BackgroundShellHandle, ShellCompletion } from "./shell-completion.js";
 
 export interface IPythonCellContentBlock {
@@ -41,6 +42,7 @@ export interface IPythonCellState {
 	showImages?: boolean;
 	/** Session cwd — edit paths nested under it render relative, else absolute. */
 	cwd?: string;
+	renderMermaid?: MermaidTextRenderer;
 }
 
 interface DiffDisplay {
@@ -675,7 +677,8 @@ export class IPythonCellComponent implements Component {
 			if (this.state.expanded) this.addBlank(lines, width);
 			this.addPlain(lines, truncateToWidth(agentMessageSummaryLine(label, recipient), Math.max(1, width - 1), "…"));
 			if (this.state.expanded) {
-				for (const line of agentMessageBodyLines(message.message, width)) lines.push(line);
+				for (const line of agentMessageBodyLines(message.message, width, this.state.renderMermaid))
+					lines.push(line);
 			}
 		}
 	}

@@ -22,6 +22,7 @@ import {
 } from "./compaction-outcome-message.js";
 import { InjectedPromptMessageComponent, isInjectedPromptMessage } from "./injected-prompt-message.js";
 import { IPythonCellComponent } from "./ipython-cell.js";
+import type { MermaidMarkdownTransform, MermaidTextRenderer } from "./mermaid.js";
 import {
 	MalformedRefinementOutcomeMessageComponent,
 	RefinementOutcomeMessageComponent,
@@ -47,6 +48,8 @@ export interface ConversationComponentsOptions {
 	toolsExpanded?: boolean;
 	editDiffsExpanded?: boolean;
 	isRecognizedSlashCommand?: (name: string) => boolean;
+	mermaidTransform?: MermaidMarkdownTransform;
+	renderMermaid?: MermaidTextRenderer;
 }
 
 export function isCompactAgentMessageNeighbor(component: Component | undefined): boolean {
@@ -172,6 +175,7 @@ export function buildConversationComponents(
 					cwd: options.cwd,
 					expanded,
 					precededByToolActivity: createConversationSpacing(components).precededByToolActivity,
+					mermaidTransform: options.mermaidTransform,
 				}),
 			);
 			for (const content of message.content) {
@@ -241,6 +245,7 @@ export function buildConversationComponents(
 		} else if (isAgentSessionMessage(message) && message.display) {
 			const component = new AgentMessageComponent(message, options.markdownTheme, {
 				shouldAddLeadingSpace: createConversationSpacing(components).shouldAddLeadingSpace,
+				renderMermaid: options.renderMermaid,
 			});
 			component.setExpanded(expanded);
 			components.push(component);

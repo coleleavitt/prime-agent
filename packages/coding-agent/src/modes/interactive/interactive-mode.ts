@@ -243,7 +243,7 @@ import {
 	keyText,
 	rawKeyHint,
 } from "./components/keybinding-hints.js";
-import { createMermaidMarkdownTransform } from "./components/mermaid.js";
+import { createMermaidMarkdownTransform, createMermaidTextRenderer } from "./components/mermaid.js";
 import type { AuthSelectorProvider } from "./components/oauth-selector.js";
 import { PrimeOnboardingSplashComponent } from "./components/prime-onboarding-splash.js";
 import { PromptContextLine } from "./components/prompt-context-line.js";
@@ -1084,6 +1084,10 @@ export class InteractiveMode {
 
 	private hideThinkingBlock = true;
 	private readonly mermaidMarkdownTransform = createMermaidMarkdownTransform({
+		getMode: () => this.settingsManager.getMermaidRenderingMode(),
+		theme,
+	});
+	private readonly mermaidTextRenderer = createMermaidTextRenderer({
 		getMode: () => this.settingsManager.getMermaidRenderingMode(),
 		theme,
 	});
@@ -3151,6 +3155,7 @@ export class InteractiveMode {
 				{
 					showImages: this.settingsManager.getShowImages(),
 					shouldAddLeadingSpace: () => spacing.shouldAddLeadingSpace(true),
+					renderMermaid: this.mermaidTextRenderer,
 				},
 				toolDefinition,
 				this.ui,
@@ -4513,7 +4518,11 @@ export class InteractiveMode {
 		if (this.sideQuestionComponent) {
 			this.sideQuestionComponent.addTurn(event);
 		} else {
-			this.sideQuestionComponent = new SideQuestionComponent(event, this.settingsManager.getEditorPaddingX());
+			this.sideQuestionComponent = new SideQuestionComponent(
+				event,
+				this.settingsManager.getEditorPaddingX(),
+				this.mermaidMarkdownTransform,
+			);
 			this.sideQuestionComponent.setExpanded(this.toolOutputExpanded);
 			this.sideQuestionContainer.addChild(new Spacer(1));
 			this.sideQuestionContainer.addChild(this.sideQuestionComponent);
@@ -6448,6 +6457,7 @@ export class InteractiveMode {
 		if (isAgentSessionMessage(message)) {
 			return new AgentMessageComponent(message, this.getMarkdownThemeWithSettings(), {
 				shouldAddLeadingSpace: createConversationSpacing(this.chatContainer.children).shouldAddLeadingSpace,
+				renderMermaid: this.mermaidTextRenderer,
 			});
 		}
 		const shellCompletion = createShellCompletionComponent(message, this.chatContainer.children);
@@ -6461,6 +6471,7 @@ export class InteractiveMode {
 				? this.getLocalSessionHost().getExtensionRunner().getMessageRenderer(message.customType)
 				: undefined,
 			this.getMarkdownThemeWithSettings(),
+			this.mermaidMarkdownTransform,
 		);
 	}
 
@@ -6708,6 +6719,7 @@ export class InteractiveMode {
 									showImages: this.settingsManager.getShowImages(),
 									includeImageDimensions: false,
 									shouldAddLeadingSpace: () => spacing.shouldAddLeadingSpace(true),
+									renderMermaid: this.mermaidTextRenderer,
 								},
 								this.getCachedToolDefinition(content.name),
 								this.ui,
