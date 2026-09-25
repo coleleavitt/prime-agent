@@ -523,6 +523,35 @@ describe("skills", () => {
 				rmSync(tempDir, { recursive: true, force: true });
 			}
 		});
+
+		it("dedupes byte-identical skills across roots but still warns on real conflicts", () => {
+			const rootA = mkdtempSync(join(tmpdir(), "prime-agent-skills-a-"));
+			const rootB = mkdtempSync(join(tmpdir(), "prime-agent-skills-b-"));
+			const write = (root: string, name: string, body: string) => {
+				mkdirSync(join(root, name), { recursive: true });
+				writeFileSync(join(root, name, "SKILL.md"), `---\nname: ${name}\ndescription: ${body}\n---\n${body}\n`);
+			};
+			try {
+				write(rootA, "same-skill", "identical");
+				write(rootB, "same-skill", "identical");
+				write(rootA, "diff-skill", "version a");
+				write(rootB, "diff-skill", "version b");
+
+				const { skills, diagnostics } = loadSkills({
+					agentDir: emptyAgentDir,
+					cwd: emptyCwd,
+					skillPaths: [rootA, rootB],
+					includeDefaults: false,
+				});
+
+				expect(skills.map((skill) => skill.name).sort()).toEqual(["diff-skill", "same-skill"]);
+				const collisions = diagnostics.filter((d: ResourceDiagnostic) => d.type === "collision");
+				expect(collisions.map((d) => d.collision?.name)).toEqual(["diff-skill"]);
+			} finally {
+				rmSync(rootA, { recursive: true, force: true });
+				rmSync(rootB, { recursive: true, force: true });
+			}
+		});
 	});
 
 	describe("collision handling", () => {

@@ -510,6 +510,14 @@ function resolveSkillPath(p: string, cwd: string): string {
  * Load skills from all configured locations.
  * Returns skills and any validation diagnostics.
  */
+function hasIdenticalContent(a: string, b: string): boolean {
+	try {
+		return readFileSync(a).equals(readFileSync(b));
+	} catch {
+		return false;
+	}
+}
+
 export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 	const { cwd, agentDir, skillPaths, includeDefaults } = options;
 
@@ -532,6 +540,10 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 			}
 
 			const existing = skillMap.get(skill.name);
+			if (existing && hasIdenticalContent(existing.filePath, skill.filePath)) {
+				// Same skill installed in two roots (e.g. ~/.claude/skills and ~/.agents/skills): not a conflict.
+				continue;
+			}
 			if (existing) {
 				collisionDiagnostics.push({
 					type: "collision",
