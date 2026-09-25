@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { homedir, tmpdir } from "os";
 import { join, resolve } from "path";
 import { describe, expect, it } from "vitest";
@@ -289,6 +289,25 @@ describe("skills", () => {
 				},
 			]);
 			expect(diagnostics).toHaveLength(0);
+		});
+
+		it("should detect Python skills that use the flat package layout", () => {
+			const fixture = join(fixturesDir, "python-skill");
+			const root = mkdtempSync(join(tmpdir(), "prime-agent-skills-flat-"));
+			const skillDir = join(root, "python-skill");
+			try {
+				mkdirSync(join(skillDir, "python_skill"), { recursive: true });
+				for (const f of ["SKILL.md", "pyproject.toml"]) {
+					writeFileSync(join(skillDir, f), readFileSync(join(fixture, f)));
+				}
+				writeFileSync(join(skillDir, "python_skill", "__init__.py"), "");
+				const { skills, diagnostics } = loadSkillsFromDir({ dir: root, source: "test" });
+				expect(diagnostics).toHaveLength(0);
+				expect(skills).toHaveLength(1);
+				expect(skills[0].kind).toBe("python");
+			} finally {
+				rmSync(root, { recursive: true, force: true });
+			}
 		});
 
 		it("should warn and keep metadata-only skills when Python package files are missing", () => {

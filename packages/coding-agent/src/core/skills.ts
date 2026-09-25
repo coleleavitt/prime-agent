@@ -227,17 +227,19 @@ function detectPythonSkill(
 		return null;
 	}
 
-	const packageInitPath = join(skillDir, "src", importName, "__init__.py");
-	try {
-		if (!statSync(packageInitPath).isFile()) {
-			diagnostics.push({
-				type: "warning",
-				message: `python skill package src/${importName}/__init__.py not found`,
-				path: pyprojectPath,
-			});
-			return null;
+	// Accept both the src layout (src/<pkg>/__init__.py) and the flat layout
+	// (<pkg>/__init__.py); `uv pip install --editable <skillDir>` handles either.
+	const isFile = (p: string): boolean => {
+		try {
+			return statSync(p).isFile();
+		} catch {
+			return false;
 		}
-	} catch {
+	};
+	if (
+		!isFile(join(skillDir, "src", importName, "__init__.py")) &&
+		!isFile(join(skillDir, importName, "__init__.py"))
+	) {
 		diagnostics.push({
 			type: "warning",
 			message: `python skill package src/${importName}/__init__.py not found`,
