@@ -633,6 +633,11 @@ impl Worker {
                                 self.emit_custom_row(&value);
                             }
                         }
+                        crate::user_bash::emit_session_event_frame(
+                            &self.core,
+                            &self.events,
+                            crate::worker::refine_complete_event(&result),
+                        );
                     }
                     Ok(None) => {}
                     Err(error) => {
@@ -662,7 +667,10 @@ impl Worker {
             let idle = self.idle_notify.notified();
             {
                 let core = self.core.lock().unwrap();
-                if !core.busy && core.steering.is_empty() && core.follow_up.is_empty() {
+                if !core.busy
+                    && (core.steering.is_empty() && core.follow_up.is_empty()
+                        || self.input_pauses.paused())
+                {
                     return;
                 }
             }
