@@ -220,14 +220,21 @@ class OpenCommandTests(unittest.TestCase):
         from computer_use import apps
 
         for spec, expected in (
-            ("com.example.app", ["open", "-g", "-b", "com.example.app"]),
-            ("Slack", ["open", "-g", "-a", "Slack"]),
             ({"bundle_id": "com.example.app"}, ["open", "-g", "-b", "com.example.app"]),
             ({"name": "Slack"}, ["open", "-g", "-a", "Slack"]),
             ({"path": "/Applications/Slack.app"}, ["open", "-g", "/Applications/Slack.app"]),
         ):
             with self.subTest(spec=spec):
                 self.assertEqual(apps._open_command(spec), expected)
+
+    def test_open_command_refuses_an_unresolved_string_spec(self) -> None:
+        # Binding launches only the gate-resolved one-key dict: a raw string
+        # would need the name-vs-bundle-id heuristic ("Acme 1.0").
+        from computer_use import apps
+
+        with self.assertRaises(errors.ComputerUseError) as caught:
+            apps._open_command("com.example.app")
+        self.assertEqual(caught.exception.code, "INVALID_ARGUMENT")
 
 
 class AppFrontmostTests(AppTestCase):
@@ -250,11 +257,10 @@ class ActionSettleTests(AppTestCase):
     async def test_one_action_settles_after_the_dispatch(self) -> None:
         env = self.make_env()
         app = await env.get_app()
-        started = time.perf_counter()
+        env.fingerprint_values = [("Main", 1), ("Main", 1)]
         await app.press_key("a")
-        elapsed = time.perf_counter() - started
         self.assertEqual(env.recorder.calls_named("press_key"), [{"pid": env.pid, "key": "a"}])
-        self.assertGreaterEqual(elapsed, 0.10)  # loose bound below the ~0.12s settle
+        self.assertGreaterEqual(env.fingerprint_reads, 2)  # polled until two reads agreed
 
     async def test_failed_action_does_not_settle(self) -> None:
         env = self.make_env()
@@ -263,6 +269,7 @@ class ActionSettleTests(AppTestCase):
         with self.assertRaises(errors.ComputerUseError):
             await app.click(999)  # stale index fails inside the dispatch
         self.assertLess(time.perf_counter() - started, 0.10)
+        self.assertEqual(env.fingerprint_reads, 0)
 
 
 if __name__ == "__main__":
