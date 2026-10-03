@@ -27,6 +27,18 @@ struct AgentMessageAdmission {
     child_reply: Option<String>,
 }
 
+/// The outcome of one delivery admission: queued on a push lane (the
+/// caller checkpoints and finishes it), or stored in the digest inbox
+/// (the inbox append is already durable and the batch notice already
+/// queued; the caller answers the `digest` receipt).
+enum AgentMessageLaneOutcome {
+    Queued(Box<AgentMessageAdmission>),
+    Digested {
+        receipt: Value,
+        child_reply: Option<String>,
+    },
+}
+
 impl Worker {
     pub(crate) async fn handle_prompt(&self, payload: &Value, wait: bool) -> DaemonResponse {
         if let Err(response) = self.require_created("prompt") {
@@ -296,8 +308,19 @@ impl Worker {
         {
             return self.handle_worker_deliver_cloud_message(payload, request_id);
         }
-        let admission = match self.admit_agent_message_into_lane(payload) {
-            Ok(admission) => admission,
+        let admission = match self.admit_agent_message_into_lane(payload, true) {
+            Ok(AgentMessageLaneOutcome::Queued(admission)) => *admission,
+            Ok(AgentMessageLaneOutcome::Digested {
+                receipt,
+                child_reply,
+            }) => {
+                // A digested reply from a child is still the child's
+                // reply (TS marks it before the lane decision).
+                if let Some(child) = &child_reply {
+                    self.engine.mark_child_reply(child);
+                }
+                return response_success(None, "worker_deliver_message", Some(receipt));
+            }
             Err(response) => return response,
         };
         // The local path's reply mark lands at admission (TS
@@ -377,8 +400,15 @@ impl Worker {
         let pause_id = self
             .input_pauses
             .acquire_internal(&self.config.active_session_id, request_id);
-        let admission = match self.admit_agent_message_into_lane(payload) {
-            Ok(admission) => admission,
+        // The keyed path never takes the digest lane: its idempotence
+        // rides the queue checkpoint (the request id commits with the
+        // lanes snapshot), and the digest append checkpoints its batch
+        // notice under the recovery lock this section already holds.
+        let admission = match self.admit_agent_message_into_lane(payload, false) {
+            Ok(AgentMessageLaneOutcome::Queued(admission)) => *admission,
+            Ok(AgentMessageLaneOutcome::Digested { .. }) => {
+                unreachable!("the keyed delivery admits with the digest lane disabled")
+            }
             Err(response) => {
                 self.input_pauses.release_internal(
                     &pause_id,
@@ -485,7 +515,8 @@ impl Worker {
     fn admit_agent_message_into_lane(
         &self,
         payload: &Value,
-    ) -> Result<AgentMessageAdmission, DaemonResponse> {
+        digest_lane: bool,
+    ) -> Result<AgentMessageLaneOutcome, DaemonResponse> {
         let message = payload
             .get("message")
             .and_then(Value::as_str)
@@ -548,6 +579,56 @@ impl Worker {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             sender_is_child_of(&sender, &core).then_some(AgentFamilyRelationship::Child)
         };
+        // The digest inbox lane (swarm PR C/D): the receiving worker owns
+        // the lane. The daemon-side controller (hysteresis over per-session
+        // counters) decides before each delivery; senders never choose. On
+        // the digest lane the payload lands in the durable inbox and one
+        // coalesced notice per batch wakes the recipient — the receipt
+        // answers `digest`. Parent-to-child instructions always stay push.
+        let message_id =
+            pa_core::session_engine::agent_messaging::create_agent_session_message_id();
+        let routed = if digest_lane {
+            self.agent_digest.route_inbound_message(
+                &message_id,
+                message,
+                &sender,
+                from_relationship.map(|relationship| relationship.as_str()),
+            )
+        } else {
+            Ok(None)
+        };
+        match routed {
+            Ok(Some(digest)) => {
+                let mut receipt = json!({
+                    "id": message_id,
+                    "source": AGENT_MESSAGE_SOURCE,
+                    "target": digest.get("target").cloned().unwrap_or(Value::Null),
+                    "message": message,
+                    "deliveryMode": "steer",
+                    "deliveryStatus": "digest",
+                    "digestAt": digest.get("digestAt").cloned().unwrap_or(Value::Null),
+                });
+                if !sender.is_null() {
+                    receipt["from"] = json!(sender);
+                }
+                return Ok(AgentMessageLaneOutcome::Digested {
+                    receipt,
+                    child_reply,
+                });
+            }
+            // A failed durable append answers the delivery failure (TS
+            // `appendCustomEntryWithRollback` throws): the message was NOT
+            // digested and must not vanish on restart.
+            Err(error) => {
+                return Err(response_failure(
+                    None,
+                    "worker_deliver_message",
+                    &error.to_string(),
+                    None,
+                ))
+            }
+            Ok(None) => {}
+        }
         let prompt = pa_core::session_engine::agent_messaging::create_agent_session_message_prompt(
             &AgentMessagePromptPayload {
                 message: message.to_string(),
@@ -569,6 +650,10 @@ impl Worker {
                     DEFAULT_AGENT_MESSAGE_MAX_PENDING_PER_SESSION,
                 )
             {
+                // A rejected delivery records no arrival: the queue-cap
+                // retries must not pin the controller's pending-pressure
+                // EMA above the recovery half-threshold (an auto session
+                // would stay flipped to digest while every send fails).
                 drop(core);
                 return Err(response_failure(
                     None,
@@ -577,7 +662,7 @@ impl Worker {
                     None,
                 ));
             }
-            let id = pa_core::session_engine::agent_messaging::create_agent_session_message_id();
+            let id = message_id;
             let queued = core.busy;
             let summary = self.summary_locked(&core);
             // The receiving session's endpoint (TS
@@ -643,6 +728,13 @@ impl Worker {
             let snapshot = Self::snapshot_locked(&core);
             (id, queued, snapshot, target)
         };
+        // The push lane's ACCEPTED arrival records here — after the
+        // queue-cap admission above — and outside the core lock (the
+        // controller's evaluate takes counters-then-core; taking the
+        // counters mutex while holding the core lock would invert that
+        // order). The checkpoint, projection push, and runner wake are
+        // the callers' (the keyed path commits them durably first).
+        self.agent_digest.record_arrival(crate::util::now_ms());
         let timestamp = crate::util::now_iso();
         let mut receipt = json!({
             "id": id,
@@ -663,15 +755,17 @@ impl Worker {
         if !sender.is_null() {
             receipt["from"] = json!(sender);
         }
-        Ok(AgentMessageAdmission {
-            operation: match lane {
-                Lane::Steering => "steer_queued",
-                Lane::FollowUp => "follow_up_queued",
+        Ok(AgentMessageLaneOutcome::Queued(Box::new(
+            AgentMessageAdmission {
+                operation: match lane {
+                    Lane::Steering => "steer_queued",
+                    Lane::FollowUp => "follow_up_queued",
+                },
+                snapshot,
+                receipt,
+                child_reply,
             },
-            snapshot,
-            receipt,
-            child_reply,
-        })
+        )))
     }
 
     /// The post-checkpoint delivery tail: the queue-projection push, the
