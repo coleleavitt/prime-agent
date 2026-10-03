@@ -1,0 +1,1 @@
+- Fixed a failed OAuth refresh reaching the provider with no key and failing as "No API key for provider": the turn now reports an authentication failure, and in a session started with `--no-extensions` says that an extension that normally handles the provider is not loaded.

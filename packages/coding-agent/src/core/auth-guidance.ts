@@ -37,9 +37,19 @@ export function formatNoApiKeyFoundMessage(provider: string): string {
 	return `No API key found for ${providerDisplay}.\n\n${getProviderLoginHelp()}`;
 }
 
-export function formatAuthenticationFailedMessage(provider: string): string {
+export function formatAuthenticationFailedMessage(
+	provider: string,
+	options: { extensionsDisabled?: boolean } = {},
+): string {
+	// With extensions off, a provider an extension normally overrides (its
+	// stream and its OAuth refresh) falls back to the built-in one, which can
+	// hold credentials the extension no longer uses.
+	const extensionsHint = options.extensionsDisabled
+		? `This session runs without extensions (--no-extensions), so an extension that normally handles "${provider}" is not loaded; start a session with extensions to use it.\n\n`
+		: "";
 	return (
 		`Authentication failed for "${provider}". Credentials may have expired or network is unavailable.\n\n` +
+		extensionsHint +
 		LOGIN_RECOVERY_MESSAGE
 	);
 }

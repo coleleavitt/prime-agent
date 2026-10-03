@@ -4,7 +4,7 @@ import { clampThinkingLevel, type Message, type Model, streamSimple, supportsFas
 import { getAgentDir } from "../config.js";
 import { AgentSession } from "./agent-session.js";
 import type { AgentSessionCreationOptions } from "./agent-session-services.js";
-import { formatNoModelsAvailableMessage } from "./auth-guidance.js";
+import { formatAuthenticationFailedMessage, formatNoModelsAvailableMessage } from "./auth-guidance.js";
 import { AuthStorage } from "./auth-storage.js";
 import type { AgentAutonomousConfig } from "./autonomous.js";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
@@ -304,6 +304,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			const auth = await modelRegistry.getApiKeyAndHeaders(model, options?.headers);
 			if (!auth.ok) {
 				throw new Error(auth.error);
+			}
+			// A stored OAuth credential that yields no key is a failed refresh, not
+			// a keyless provider: say so here instead of letting the provider fail
+			// later with "No API key for provider".
+			if (!auth.apiKey && modelRegistry.isUsingOAuth(model)) {
+				throw new Error(
+					formatAuthenticationFailedMessage(model.provider, {
+						extensionsDisabled: resourceLoader.getExtensions().extensions.length === 0,
+					}),
+				);
 			}
 			const providerRetrySettings = settingsManager.getProviderRetrySettings();
 			const requestModel = auth.requestModel ?? model;
