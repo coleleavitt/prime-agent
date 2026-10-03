@@ -446,6 +446,7 @@ impl Supervisor {
             })?;
         #[cfg(unix)]
         socket_lease.assert_held()?;
+        socket::bind_capture_gap().await;
         // Capture the bound file's identity before anything can replace
         // it (TS daemon-supervisor.ts:879, between `listen` and
         // `restrictDaemonSocketPath`): the exit cleanup below compares
@@ -547,9 +548,13 @@ impl Supervisor {
 
         #[cfg(unix)]
         socket_lease.assert_held()?;
+        // The accept loop OWNS the listener, so its return closes it (TS
+        // daemon-supervisor.ts:7436-7491 awaits the "daemon server" close
+        // step before the "daemon socket" cleanup step); on a compromised
+        // lease the dropped serve future closes it the same way.
         #[cfg(unix)]
         let serving = tokio::select! {
-            result = accept_loop::serve(&self, &*listener) => result,
+            result = accept_loop::serve(&self, listener) => result,
             () = socket_lease.wait_compromised() => {
                 self.shutting_down.store(true, Ordering::SeqCst);
                 self.accept_exit.store(true, Ordering::SeqCst);
@@ -559,18 +564,19 @@ impl Supervisor {
             }
         };
         #[cfg(not(unix))]
-        let serving = accept_loop::serve(&self, &*listener).await;
-        drop(listener);
+        let serving = accept_loop::serve(&self, listener).await;
+        // With the owner's listener provably closed, the path is unlinked
+        // only when it still holds a dead socket of ours: a successor's live
+        // socket at the path survives even a poisoned bind-time capture, and
+        // on unix only while this supervisor still holds the socket lease.
+        let expected_identity = self.bound_socket_identity.lock().unwrap().clone();
         #[cfg(unix)]
-        socket_lease.cleanup_socket_path(
-            &self.options.socket_path,
-            self.bound_socket_identity.lock().unwrap().clone(),
-        );
+        if pa_types::platform::transport::unix_listener_definitely_closed(&self.options.socket_path)
+        {
+            socket_lease.cleanup_socket_path(&self.options.socket_path, expected_identity);
+        }
         #[cfg(not(unix))]
-        socket::cleanup_socket_path(
-            &self.options.socket_path,
-            self.bound_socket_identity.lock().unwrap().clone(),
-        );
+        socket::cleanup_socket_path_after_close(&self.options.socket_path, expected_identity);
         self.flush_telemetry_on_exit().await;
         serving
     }
