@@ -1311,6 +1311,7 @@ impl TurnRunner {
             QueueCheckpoint::Settle {
                 operation: "turn_end",
             },
+            None,
         );
         let _ = self.emit_action_update(&snapshot);
         self.idle_notify.notify_waiters();
