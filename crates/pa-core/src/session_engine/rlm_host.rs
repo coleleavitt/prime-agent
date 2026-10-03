@@ -900,6 +900,9 @@ mod tests {
             fn prime_team_id(&self) -> Option<String> {
                 None
             }
+            fn prime_context(&self) -> Option<String> {
+                None
+            }
             fn ambient_identity_material(&self, _provider: &str) -> String {
                 String::new()
             }
