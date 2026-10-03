@@ -89,6 +89,9 @@ async fn supervisor_with_resident(
     std::fs::create_dir_all(&agent_dir).unwrap();
     let supervisor = Arc::new(
         Supervisor::new(SupervisorOptions {
+            tcp_port: None,
+            tcp_bind_host: None,
+            remote_agent_mesh: None,
             socket_path: dir.join("daemon.sock"),
             agent_dir: agent_dir.clone(),
         })
@@ -186,6 +189,9 @@ async fn run_silent_peer_auth(cancel_connect: bool) {
     std::fs::create_dir_all(&agent_dir).unwrap();
     let supervisor = Arc::new(
         Supervisor::new(SupervisorOptions {
+            tcp_port: None,
+            tcp_bind_host: None,
+            remote_agent_mesh: None,
             socket_path: dir.path().join("daemon.sock"),
             agent_dir,
         })
@@ -469,6 +475,9 @@ async fn a_lost_worker_connection_fails_its_in_flight_route() {
     std::fs::create_dir_all(&agent_dir).unwrap();
     let supervisor = Arc::new(
         Supervisor::new(SupervisorOptions {
+            tcp_port: None,
+            tcp_bind_host: None,
+            remote_agent_mesh: None,
             socket_path: dir.join("daemon.sock"),
             agent_dir,
         })
