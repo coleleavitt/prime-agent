@@ -453,7 +453,7 @@ fn handle_frame(server: &Arc<GuestProtocolServer>, client: &ClientHandle, frame:
             server,
             client,
             submit.generation,
-            submit.command_id,
+            &submit.command_id,
             &submit.request,
         ),
         CloudMessage::GetCommand(get) => handle_get_command(server, client, &get),
@@ -537,7 +537,7 @@ fn handle_submit(
     server: &Arc<GuestProtocolServer>,
     client: &ClientHandle,
     generation: u64,
-    command_id: String,
+    command_id: &str,
     request: &CloudCommandRequest,
 ) -> bool {
     if !client.authenticated() {
@@ -555,7 +555,7 @@ fn handle_submit(
         server.write_line(client, frame);
     };
     server
-        .admit_submit(&command_id, &request_value, &write_frame)
+        .admit_submit(command_id, &request_value, &write_frame)
         .is_some()
 }
 

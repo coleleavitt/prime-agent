@@ -64,31 +64,31 @@ pub enum GuestEventInput {
 impl GuestEventInput {
     /// The composed event with `sequence` assigned (the outbox owns
     /// sequence assignment).
-    fn compose(&self, sequence: u64) -> CloudEvent {
+    fn compose(self, sequence: u64) -> CloudEvent {
         match self {
             Self::CommandAccepted {
                 recorded_at,
                 receipt,
             } => CloudEvent::CommandAccepted {
                 sequence,
-                recorded_at: recorded_at.clone(),
-                receipt: receipt.clone(),
+                recorded_at,
+                receipt,
             },
             Self::CommandState {
                 recorded_at,
                 receipt,
             } => CloudEvent::CommandState {
                 sequence,
-                recorded_at: recorded_at.clone(),
-                receipt: receipt.clone(),
+                recorded_at,
+                receipt,
             },
             Self::SessionStatus {
                 recorded_at,
                 status,
             } => CloudEvent::SessionStatus {
                 sequence,
-                recorded_at: recorded_at.clone(),
-                status: *status,
+                recorded_at,
+                status,
             },
         }
     }

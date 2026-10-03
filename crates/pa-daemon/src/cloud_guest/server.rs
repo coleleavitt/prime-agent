@@ -291,7 +291,7 @@ impl GuestProtocolServer {
     /// walks the stopping/stopped transition and stops the server (TS
     /// `settleCommand` + `release`). A settle that cannot journal stays
     /// visible through the honest uncertain path after a restore.
-    pub async fn settle(&self, command_id: &str, outcome: &GuestDispatchOutcome, release: bool) {
+    pub fn settle(&self, command_id: &str, outcome: &GuestDispatchOutcome, release: bool) {
         let receipt = {
             let mut journal = self
                 .journal
@@ -425,6 +425,10 @@ impl GuestProtocolServer {
 
     /// Record a non-fatal dispatch/delivery error for honest
     /// diagnostics (TS `onDispatchError`).
+    #[expect(
+        clippy::unused_self,
+        reason = "the per-server diagnostics hook (TS onDispatchError); stderr is today's sink"
+    )]
     pub fn record_dispatch_error(&self, message: &str) {
         eprintln!("cloud guest: {message}");
     }
