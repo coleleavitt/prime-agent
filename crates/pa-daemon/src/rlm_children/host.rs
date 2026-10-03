@@ -10,7 +10,7 @@ use super::{
     RlmCreateSessionHandle, RlmCreateSessionRequest, RlmDeleteSubagentResult, RlmHostFuture,
     RlmSpawnHandle, RlmSpawnRequest, RlmSubagentEntry, RlmSubagentHost, SpawnNameReservationGuard,
     SupervisorChildSessions, SupervisorChildSessionsInner, Value, KILL_TIMEOUT_MS,
-    RENAME_TIMEOUT_MS,
+    RENAME_TIMEOUT_MS, WATCH_SETTLE_GRACE_MS,
 };
 
 /// Resolve the child model with the daemon `allowedModels` allowlist
@@ -54,6 +54,21 @@ async fn resolve_child_model_allowlisted(
             Err(error)
         }
     }
+}
+
+/// Whether the collect's stability grace may re-clear the settle verdict it
+/// watched land: only a verdict no terminal claim has taken. The settle
+/// funnel (the watcher's notice claim plus its `settled` latch), a cancel,
+/// a delete, and a parent close each claim the record and own their
+/// verdict — a busy-again child after any of them is a follow-up turn
+/// (delayed messaging) that keeps the settled result, and un-setting it
+/// would leave a `running` record no watcher owns, quiescence still
+/// settled, and a parent already told the run completed (TS never un-settles
+/// a run after its task's `finally`). Only the unclaimed verdict — the
+/// admission-to-run hand-off misread the grace exists to un-settle — is
+/// re-cleared for re-reading.
+pub(super) fn collect_grace_may_reclear(record: &ChildRecord) -> bool {
+    !record.settled && !record.notice_delivered
 }
 
 impl RlmSubagentHost for SupervisorChildSessions {
@@ -496,6 +511,12 @@ impl RlmSubagentHost for SupervisorChildSessions {
             let deadline = Instant::now() + Duration::from_millis(timeout_ms);
             let mut results = Vec::with_capacity(records.len());
             for record in &records {
+                // Whether the record was already settled when this collect
+                // began: only a settle that happens INSIDE this collect (it
+                // was running on entry) gets the stability grace below —
+                // records settled on a previous collect keep their result
+                // (TS completed children stay readable until deleted).
+                let settled_on_entry = record.lock().await.settled_status.is_some();
                 this.refresh_record(record).await;
                 // A settled child that is busy again runs a follow-up turn
                 // (delayed messaging): re-arm usage observation — the
@@ -514,6 +535,67 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     let remaining = deadline.saturating_duration_since(Instant::now());
                     let active_session_id = record.lock().await.active_session_id.clone();
                     this.wait_for_child(&active_session_id, remaining).await;
+                    this.refresh_record(record).await;
+                }
+                // Stability re-check, the watcher's own defense — but only
+                // for a settle that happened inside THIS collect (records
+                // that were settled on entry keep their result; TS
+                // completed children stay readable until deleted). A prompt
+                // admitted to an idle worker can read idle once between the
+                // admission and the turn pop (the queue snapshot and the
+                // busy flag change under different locks on the far side of
+                // a socket). The watcher re-checks with a short grace
+                // before settling; a collect that settles the same record
+                // inside that window must not report it either — the
+                // factory executor (and any `rlm.collect` reader) would
+                // consume a `done` result with no captured answer and lose
+                // the child's output forever (the record recovers, the
+                // caller never re-reads). A child that went busy again
+                // inside the grace keeps waiting inside the shared budget;
+                // one that stays idle is really settled. A settle a
+                // terminal claim already owns stays final (the funnel's
+                // notice delivered and the watcher retired at its settle,
+                // or a cancel, delete, or close claimed the row): the busy
+                // child is a follow-up turn that keeps the settled result,
+                // and only the unclaimed misread re-clears
+                // (`collect_grace_may_reclear`).
+                if !settled_on_entry && record.lock().await.settled_status.is_some() {
+                    let active_session_id = record.lock().await.active_session_id.clone();
+                    tokio::time::sleep(Duration::from_millis(WATCH_SETTLE_GRACE_MS)).await;
+                    let busy_again = matches!(this.child_busy(&active_session_id).await, Ok(true));
+                    // The gate and the re-clear commit at ONE hold of the
+                    // record lock. Two acquisitions left a hand-off gap
+                    // where a claim already queued on the lock (the settle
+                    // funnel's notice claim, its `settled` latch, a
+                    // cancel) ran in between: the gate read the verdict as
+                    // unclaimed, the claim took it, and the clear still
+                    // stripped it — the funnel latched a record reading
+                    // `running`, quiescence saw the latch, the parent held
+                    // the terminal notice, and no watcher was left to
+                    // re-settle. A claim queued behind this hold lands
+                    // after the clear and aborts at its own commit (the
+                    // tail's notice claim keeps watching a re-cleared
+                    // verdict), so the record is consistent at every
+                    // interleave: claimed verdicts keep their status,
+                    // unclaimed misreads re-clear.
+                    let recleared = {
+                        let mut record = record.lock().await;
+                        let may = busy_again && collect_grace_may_reclear(&record);
+                        if may {
+                            record.settled_status = None;
+                        }
+                        may
+                    };
+                    if recleared {
+                        let remaining = deadline.saturating_duration_since(Instant::now());
+                        if !remaining.is_zero() {
+                            this.wait_for_child(&active_session_id, remaining).await;
+                        }
+                    }
+                    // Refresh again after the grace whatever the busy
+                    // re-check said: an answer that landed inside the grace
+                    // must ride this collect's result (the refresh
+                    // re-captures a `None` preview).
                     this.refresh_record(record).await;
                 }
                 let result = {
