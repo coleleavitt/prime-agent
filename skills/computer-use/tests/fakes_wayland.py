@@ -417,10 +417,10 @@ def fake_wayland(
         mock.patch.object(_wayland.subprocess, "run", script),
         mock.patch.object(_wayland, "_TOOL_PATHS", {}),
         mock.patch.object(_wayland.shutil, "which", lambda name: f"/usr/bin/{name}" if name in tools else None),
-        mock.patch.object(_wlinput, "click", recorder.click),
-        mock.patch.object(_wlinput, "drag", recorder.drag),
-        mock.patch.object(_wlinput, "scroll", recorder.scroll),
-        mock.patch.object(_wlinput, "send_keys", recorder.send_keys),
+        mock.patch.object(_wlinput, "_click", recorder.click),
+        mock.patch.object(_wlinput, "_drag", recorder.drag),
+        mock.patch.object(_wlinput, "_scroll", recorder.scroll),
+        mock.patch.object(_wlinput, "_send_keys", recorder.send_keys),
         mock.patch.object(_wlinput, "_available", recorder.available),
     ]
     for patcher in patchers:

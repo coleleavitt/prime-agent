@@ -397,7 +397,7 @@ class _PointerDevice:
             self._connection.send(self._id, _POINTER_FRAME)
 
 
-def click(target: PointerTarget, point: tuple[float, float], button: str, count: int) -> None:
+def _click(target: PointerTarget, point: tuple[float, float], button: str, count: int) -> None:
     """Move to point (target-logical) and click button count times."""
     code = BUTTONS[button]
     with _pointer(target) as pointer:
@@ -407,7 +407,7 @@ def click(target: PointerTarget, point: tuple[float, float], button: str, count:
             pointer.button(code, False)
 
 
-def drag(target: PointerTarget, start: tuple[float, float], end: tuple[float, float], steps: int = 12) -> None:
+def _drag(target: PointerTarget, start: tuple[float, float], end: tuple[float, float], steps: int = 12) -> None:
     """Press at start, move through intermediate points to end, release."""
     code = BUTTONS["left"]
     with _pointer(target) as pointer:
@@ -419,7 +419,7 @@ def drag(target: PointerTarget, start: tuple[float, float], end: tuple[float, fl
         pointer.button(code, False)
 
 
-def scroll(target: PointerTarget, point: tuple[float, float] | None, direction: str, clicks: int) -> None:
+def _scroll(target: PointerTarget, point: tuple[float, float] | None, direction: str, clicks: int) -> None:
     """Optionally move to point, then send discrete wheel clicks."""
     with _pointer(target) as pointer:
         if point is not None:
@@ -457,7 +457,7 @@ def _keymap_fd(text: str) -> tuple[int, int]:
     return fd, len(data)
 
 
-def keysym_for_char(character: str) -> str:
+def _keysym_for_char(character: str) -> str:
     """Name the keysym that types one character (newline is Return, tab is Tab)."""
     if character == "\n":
         return "Return"
@@ -482,7 +482,7 @@ class KeyStroke(NamedTuple):
     modifiers: int = 0
 
 
-def send_keys(strokes: list[KeyStroke]) -> None:
+def _send_keys(strokes: list[KeyStroke]) -> None:
     """Deliver key strokes to whatever surface holds keyboard focus.
 
     The strokes are grouped so each uploaded keymap binds at most

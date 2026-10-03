@@ -969,7 +969,7 @@ class WireClientTests(unittest.TestCase):
     def test_click_creates_a_pointer_on_the_named_output_and_clicks(self) -> None:
         compositor = self.compositor()
         with mock.patch.object(_wlinput, "_now_ms", return_value=7):
-            _wlinput.click(_wlinput.PointerTarget("HDMI-A-1", 2560, 1440), (112.4, 73.0), "right", 2)
+            _wlinput._click(_wlinput.PointerTarget("HDMI-A-1", 2560, 1440), (112.4, 73.0), "right", 2)
         manager = compositor.calls("zwlr_virtual_pointer_manager_v1")
         seat_id = next(i for i, name in compositor.objects.items() if name == "wl_seat")
         hdmi_id = sorted(i for i, name in compositor.objects.items() if name == "wl_output")[1]
@@ -995,7 +995,7 @@ class WireClientTests(unittest.TestCase):
     def test_scroll_sends_discrete_wheel_frames(self) -> None:
         compositor = self.compositor()
         with mock.patch.object(_wlinput, "_now_ms", return_value=1):
-            _wlinput.scroll(_wlinput.PointerTarget("eDP-1", 1920, 1200), (5.0, 6.0), "up", 1)
+            _wlinput._scroll(_wlinput.PointerTarget("eDP-1", 1920, 1200), (5.0, 6.0), "up", 1)
         requests = compositor.calls("zwlr_virtual_pointer_v1")
         self.assertEqual(requests[0], (1, (1, 5, 6, 1920, 1200)))
         self.assertEqual(requests[2], (5, (0,)))
@@ -1008,7 +1008,7 @@ class WireClientTests(unittest.TestCase):
         compositor = self.compositor()
         K = _wlinput.KeyStroke
         with mock.patch.object(_wlinput, "_now_ms", return_value=3):
-            _wlinput.send_keys([K("s", 4), K("U00E9"), K("s", 4)])
+            _wlinput._send_keys([K("s", 4), K("U00E9"), K("s", 4)])
         keymap = compositor.keymaps[0].decode()
         self.assertTrue(compositor.keymaps[0].endswith(b"\x00"))
         self.assertIn("key <K0> {[ s ]};", keymap)
@@ -1035,7 +1035,7 @@ class WireClientTests(unittest.TestCase):
     def test_missing_globals_refuse_naming_the_protocol(self) -> None:
         self.compositor([("wl_seat", 9), ("wl_output", 4)])
         with self.assertRaises(ComputerUseError) as pointer:
-            _wlinput.click(_wlinput.PointerTarget("eDP-1", 1920, 1200), (1.0, 1.0), "left", 1)
+            _wlinput._click(_wlinput.PointerTarget("eDP-1", 1920, 1200), (1.0, 1.0), "left", 1)
         self.assertEqual(pointer.exception.code, "ACTION_UNSUPPORTED")
         self.assertIn("zwlr_virtual_pointer_manager_v1", pointer.exception.message)
 
@@ -1045,20 +1045,20 @@ class WireClientTests(unittest.TestCase):
         self.assertEqual(_wlinput._available(), {"pointer": True, "keyboard": False})
         self.compositor(globals_)  # every session is its own connection
         with self.assertRaises(ComputerUseError) as keyboard:
-            _wlinput.send_keys([_wlinput.KeyStroke("a")])
+            _wlinput._send_keys([_wlinput.KeyStroke("a")])
         self.assertIn("zwp_virtual_keyboard_manager_v1", keyboard.exception.message)
 
     def test_unknown_output_refuses(self) -> None:
         self.compositor()
         with self.assertRaises(ComputerUseError) as caught:
-            _wlinput.click(_wlinput.PointerTarget("DP-9", 100, 100), (1.0, 1.0), "left", 1)
+            _wlinput._click(_wlinput.PointerTarget("DP-9", 100, 100), (1.0, 1.0), "left", 1)
         self.assertEqual(caught.exception.code, "ACTION_UNSUPPORTED")
         self.assertIn("DP-9", caught.exception.message)
 
     def test_a_protocol_error_is_injection_failed(self) -> None:
         self.compositor(error_on=("zwlr_virtual_pointer_v1", 2))
         with self.assertRaises(ComputerUseError) as caught:
-            _wlinput.click(_wlinput.PointerTarget("eDP-1", 1920, 1200), (1.0, 1.0), "left", 1)
+            _wlinput._click(_wlinput.PointerTarget("eDP-1", 1920, 1200), (1.0, 1.0), "left", 1)
         self.assertEqual(caught.exception.code, "INJECTION_FAILED")
         self.assertIn("bad request", caught.exception.message)
 
@@ -1076,12 +1076,12 @@ class WireClientTests(unittest.TestCase):
 class KeymapTests(unittest.TestCase):
     def test_keysym_names(self) -> None:
         self.assertEqual(
-            [_wlinput.keysym_for_char(c) for c in "aZ9 !\n\té😀"],
+            [_wlinput._keysym_for_char(c) for c in "aZ9 !\n\té😀"],
             ["a", "Z", "9", "U0020", "U0021", "Return", "Tab", "U00E9", "U1F600"],
         )
         for character in ("\x1b", "\r", "\x7f"):
             with self.subTest(character=character), self.assertRaises(ComputerUseError) as caught:
-                _wlinput.keysym_for_char(character)
+                _wlinput._keysym_for_char(character)
             self.assertEqual(caught.exception.code, "INVALID_ARGUMENT")
 
     def test_groups_split_at_the_keymap_size(self) -> None:
@@ -1100,7 +1100,7 @@ class KeymapTests(unittest.TestCase):
         library.xkb_keymap_unref.argtypes = [ctypes.c_void_p]
         library.xkb_context_unref.argtypes = [ctypes.c_void_p]
         context = library.xkb_context_new(0)
-        keysyms = [_wlinput.keysym_for_char(c) for c in "aZ1 !\n\té€"] + ["BackSpace", "Prior", "F12", "Escape"]
+        keysyms = [_wlinput._keysym_for_char(c) for c in "aZ1 !\n\té€"] + ["BackSpace", "Prior", "F12", "Escape"]
         keymap = library.xkb_keymap_new_from_string(context, _wlinput._keymap_text(keysyms).encode(), 1, 0)
         try:
             self.assertTrue(keymap)

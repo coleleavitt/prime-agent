@@ -855,7 +855,7 @@ def _click(window_id: int, point: tuple[float, float], button: str = "left", cou
     _pointer_point(window_id, point)  # refuse an unmappable point before moving focus
     _focus_window(window_id)
     target, local = _pointer_point(window_id, point)
-    _wlinput.click(target, local, button, count)
+    _wlinput._click(target, local, button, count)
 
 
 def _drag(window_id: int, start: tuple[float, float], end: tuple[float, float]) -> None:
@@ -866,7 +866,7 @@ def _drag(window_id: int, start: tuple[float, float], end: tuple[float, float]) 
     _focus_window(window_id)
     target, local_start = _pointer_point(window_id, start)
     _target, local_end = _pointer_point(window_id, end)
-    _wlinput.drag(target, local_start, local_end)
+    _wlinput._drag(target, local_start, local_end)
 
 
 def _scroll(window_id: int, direction: str, pages: int = 1, point: tuple[float, float] | None = None) -> None:
@@ -887,12 +887,12 @@ def _scroll(window_id: int, direction: str, pages: int = 1, point: tuple[float, 
     _pointer_point(window_id, point)
     _focus_window(window_id)
     target, local = _pointer_point(window_id, point)
-    _wlinput.scroll(target, local, direction, pages * _WHEEL_CLICKS_PER_PAGE)
+    _wlinput._scroll(target, local, direction, pages * _WHEEL_CLICKS_PER_PAGE)
 
 
 def _chord_stroke(chord: ParsedChord) -> _wlinput.KeyStroke:
     """Translate one parsed chord into a keysym plus a modifier mask for our keymap."""
-    keysym = _KEYSYMS.get(chord.key) or _wlinput.keysym_for_char(chord.key)
+    keysym = _KEYSYMS.get(chord.key) or _wlinput._keysym_for_char(chord.key)
     mask = 0
     for modifier in _MODIFIER_ORDER:
         if modifier in chord.modifiers:
@@ -910,7 +910,7 @@ def _press_key(window_id: int, key: str) -> None:
     stroke = _chord_stroke(_parse_chord(key))
     _focus_window(window_id)
     _refuse_secure_live(window_id)
-    _wlinput.send_keys([stroke])
+    _wlinput._send_keys([stroke])
 
 
 def _type_text(window_id: int, text: str) -> None:
@@ -927,10 +927,10 @@ def _type_text(window_id: int, text: str) -> None:
         )
     if not text:
         return
-    strokes = [_wlinput.KeyStroke(_wlinput.keysym_for_char(character)) for character in text]
+    strokes = [_wlinput.KeyStroke(_wlinput._keysym_for_char(character)) for character in text]
     _focus_window(window_id)
     _refuse_secure_live(window_id)
-    _wlinput.send_keys(strokes)
+    _wlinput._send_keys(strokes)
 
 
 # --- screenshots, lock state, capabilities ------------------------------------
