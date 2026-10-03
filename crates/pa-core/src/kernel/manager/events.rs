@@ -61,7 +61,7 @@ impl Inner {
                     let _ = tx.send(Ok(protocol));
                 }
             }
-            Event::HostRequest { id, data } => self.start_host_request(&id, data),
+            Event::HostRequest { id, data } => self.start_host_request(&id, &data),
             Event::Trace { fields } => {
                 tracing::debug!(target: "pa_core::kernel::trace", event = %fields, "kernel span");
             }
