@@ -5,6 +5,13 @@ get_app binds one app and returns an App whose element-indexed actions
 re-observe the accessibility tree. Apps must be on the user-edited allowlist
 in the settings file; every binding and every action re-checks the allowlist
 gate and the locked screen.
+
+The App layer runs the macOS modules by default and dispatches to the Linux
+X11 backend (computer_use._linux, loaded through _compat.require_linux) when
+backend() reports linux; the mac path is unchanged. On Linux the app identity
+is the WM_CLASS (the policy gate's bundle id), the bound window id keys every
+backend seam, and paste, set_value, select_text, and secondary actions have
+no X11 backing (ACTION_UNSUPPORTED).
 """
 
 from __future__ import annotations
@@ -14,10 +21,11 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 from . import apps, ax, diff, errors
-from ._compat import _backend, _require_mac
+from ._compat import _backend, _require_linux, _require_mac
 from .errors import ComputerUseError
 
 __all__ = ["App", "ComputerUseError", "get_app", "get_state", "list_apps", "permissions_status"]
@@ -34,6 +42,75 @@ _session_started: bool = False
 _bound_apps: dict[str, App] = {}
 _instruction_shown: set[str] = set()
 
+_LINUX_PASTE_HINT = "type the text with type_text instead"
+_LINUX_SET_VALUE_HINT = "set it with click and type_text instead"
+_LINUX_SELECT_HINT = "select by dragging instead"
+_LINUX_SECONDARY_HINT = "click the element instead"
+_LINUX_FOCUS_GAP = (
+    "focus control is not available on the linux X11 backend yet; keyboard flows that "
+    "need app focus are unsupported there"
+)
+
+
+def _linux_backend() -> ModuleType | None:
+    """Return the Linux X11 backend module when it is the active backend, else None.
+
+    On mac hosts this returns None without touching require_linux, so the
+    dispatch checks are pure no-ops there; on linux hosts the module import
+    is cached by Python after the first call.
+    """
+    if _backend() != "linux":
+        return None
+    return _require_linux()
+
+
+def _permissions_status() -> dict[str, Any]:
+    """Report the permissions status: the Linux note on linux, the TCC probes on mac.
+
+    Linux has no TCC analog, so both grants read as unknown with a help note
+    naming what the Linux backend actually needs.
+    """
+    if _linux_backend() is not None:
+        return {
+            "accessibility": "unknown",
+            "screen_recording": "unknown",
+            "help": [
+                "Linux: no macOS TCC grants apply; the X11 backend needs DISPLAY set "
+                "and the xdotool, xwininfo, and maim (or scrot) tools on PATH"
+            ],
+        }
+    from . import permissions
+
+    return permissions._status()
+
+
+def _refuse_linux_action(action: str, hint: str) -> None:
+    """Raise ACTION_UNSUPPORTED for an App action with no X11 backing on linux.
+
+    No-op on mac, so the mac path never changes behavior; the raise lands
+    inside the guarded dispatch closure so the action telemetry reports it.
+    """
+    if _linux_backend() is None:
+        return
+    raise ComputerUseError(
+        "ACTION_UNSUPPORTED",
+        f"{action} is not available on the Linux X11 backend: X11 exposes no clipboard or "
+        f"element-value API for it; {hint}",
+        {"action": action, "platform": "linux"},
+    )
+
+
+def _refuse_linux_focus() -> None:
+    """Raise ACTION_UNSUPPORTED for a focus-control action on linux (no-op on mac).
+
+    activate and is_frontmost read or move the mac key window; the linux X11
+    backend has no focus seam yet, so both name the gap instead of failing
+    through the mac path.
+    """
+    if _linux_backend() is None:
+        return
+    raise ComputerUseError("ACTION_UNSUPPORTED", _LINUX_FOCUS_GAP, {"platform": "linux"})
+
 
 async def get_state(emit: bool = True) -> dict[str, Any]:
     """Assemble the discovery snapshot: apps, permissions, allowlist, platform.
@@ -44,7 +121,7 @@ async def get_state(emit: bool = True) -> dict[str, Any]:
     """
     global _session_started
     started = time.perf_counter()
-    from . import policy, permissions
+    from . import policy
 
     apps_list: list[dict[str, Any]] = []
     try:
@@ -52,7 +129,7 @@ async def get_state(emit: bool = True) -> dict[str, Any]:
     except ComputerUseError as error:
         if error.code != "TRANSPORT_ERROR":
             raise
-    status = permissions._status()
+    status = _permissions_status()
     state: dict[str, Any] = {
         "apps": apps_list,
         "permissions": status,
@@ -72,6 +149,9 @@ async def get_state(emit: bool = True) -> dict[str, Any]:
 
 async def list_apps() -> list[dict[str, Any]]:
     """List the running apps as {"id", "name", "running"} dicts."""
+    linux = _linux_backend()
+    if linux is not None:
+        return linux._list_apps()
     return apps._list_apps()
 
 
@@ -80,9 +160,11 @@ async def get_app(app: str | dict[str, str]) -> App:
 
     Runs the allowlist gate, checks the locked screen and the macOS grants,
     launches the app when it is not running, and loads the first accessibility
-    state. Raises ComputerUseError TRANSPORT_ERROR without a backend,
-    SCREEN_LOCKED, APP_NOT_ALLOWED, AMBIGUOUS_APP, APP_LAUNCH_FAILED,
-    APP_NOT_RUNNING, PERMISSIONS_NOT_GRANTED, or INVALID_ARGUMENT.
+    state. On Linux the spec matches a running window's WM_CLASS (resolution
+    only; there is no launch story) and the bound window id keys the backend.
+    Raises ComputerUseError TRANSPORT_ERROR without a backend, SCREEN_LOCKED,
+    APP_NOT_ALLOWED, AMBIGUOUS_APP, APP_LAUNCH_FAILED, APP_NOT_RUNNING,
+    PERMISSIONS_NOT_GRANTED, or INVALID_ARGUMENT.
     """
     from . import permissions, policy
 
@@ -96,6 +178,9 @@ async def get_app(app: str | dict[str, str]) -> App:
             "SCREEN_LOCKED",
             "the screen is locked; ask the user to unlock it before driving apps",
         )
+    linux = _linux_backend()
+    if linux is not None:
+        return await _get_app_linux(linux, app)
     candidates = apps._resolve(app)
     allowed: list[apps.RunningApp] = []
     gate_errors: list[ComputerUseError] = []
@@ -142,10 +227,47 @@ async def get_app(app: str | dict[str, str]) -> App:
 
 
 async def permissions_status() -> dict[str, Any]:
-    """Report the macOS accessibility and screen-recording grants with help text."""
-    from . import permissions
+    """Report the accessibility and screen-recording grants with help text.
 
-    return permissions._status()
+    Linux reports both as unknown with a note: no TCC grants apply there.
+    """
+    return _permissions_status()
+
+
+async def _get_app_linux(linux: ModuleType, app: str | dict[str, str]) -> App:
+    """Bind one Linux app by WM_CLASS through the linux backend (resolution only).
+
+    X11 has no launch story: the spec must match a running window's WM_CLASS
+    casefolded, and a spec with no window raises APP_NOT_RUNNING telling the
+    user to start the app themselves. The allowlist gate keys on the raw
+    WM_CLASS (exactly what list_apps reports as the id); several windows of
+    the same class are one app and the first window in tree order (the
+    topmost) binds, its id keying every backend seam. There is no
+    AMBIGUOUS_APP case: one spec matches one class. The bound App carries the
+    window id in its pid slot (see App.pid).
+    """
+    from . import policy
+
+    windows = linux._resolve_app(app)
+    if not windows:
+        raise ComputerUseError(
+            "APP_NOT_RUNNING",
+            f"{str(app)[:64]!r} has no window on the linux desktop; start the app yourself "
+            "and call get_app again",
+            {"spec": str(app)[:64]},
+        )
+    wm_class = windows[0].wm_class
+    result = policy._gate_app(wm_class)
+    if not result.allowed:
+        raise ComputerUseError("APP_NOT_ALLOWED", result.reason, {"bundle_id": wm_class})
+    window_id = windows[0].window_id
+    existing = _bound_apps.get(wm_class)
+    if existing is not None and existing.pid == window_id:
+        return existing
+    instance = App(wm_class, wm_class, window_id)
+    await instance._refresh(diff_on=False)
+    _bound_apps[wm_class] = instance
+    return instance
 
 
 def _launch_and_gate(spec: str | dict[str, str]) -> apps.RunningApp:
@@ -374,11 +496,17 @@ class App:
 
     Every action re-checks the allowlist gate and the locked screen before it
     dispatches; element indices come from the last get_ax_state snapshot and a
-    stale index raises ELEMENT_STALE.
+    stale index raises ELEMENT_STALE. On Linux the App dispatches every
+    observation, input, and capture call to the linux backend, keyed by the
+    bound window id (carried in the pid slot; see pid).
     """
 
     def __init__(self, bundle_id: str, name: str, pid: int) -> None:
-        """Bind one app process; get_app loads the first state."""
+        """Bind one app process; get_app loads the first state.
+
+        On Linux pid carries the bound X11 window id, which keys every linux
+        backend seam (macOS uses the process identifier as-is).
+        """
         self._bundle_id = bundle_id
         self._name = name
         self._pid = pid
@@ -404,7 +532,7 @@ class App:
 
     @property
     def pid(self) -> int:
-        """The bound app's process identifier."""
+        """The bound app's process identifier, or the X11 window id on Linux."""
         return self._pid
 
     @property
@@ -434,11 +562,18 @@ class App:
         Returns {"path", "width", "height"}; attach=False skips the context
         attach. Raises ComputerUseError PERMISSIONS_NOT_GRANTED without the
         Screen Recording grant, TRANSPORT_ERROR when no window is observed,
-        and APP_NOT_RUNNING when the window is gone.
+        and APP_NOT_RUNNING when the window is gone. Linux skips the mac
+        grant check (no TCC there) and captures through the linux backend.
         """
         self._guard()
         from . import capture, permissions
 
+        linux = _linux_backend()
+        if linux is not None:
+            result = linux._screenshot_window(self._pid)
+            if attach:
+                await capture._attach_image_if_available(str(result["path"]))
+            return result
         status = permissions._status()
         if status.get("screen_recording") != "ok":
             raise ComputerUseError(
@@ -485,11 +620,21 @@ class App:
         The non-vision screen-reading path: regions carry text, confidence,
         and window-screenshot-relative pixel coordinates, so click targets
         can be derived directly. attach=True also attaches the screenshot
-        for vision-capable models. Same guards as get_screenshot.
+        for vision-capable models. Same guards as get_screenshot. On Linux
+        this raises ACTION_UNSUPPORTED naming the gap: the OCR
+        screen-reading path is macOS-only so far.
         """
         self._guard()
         from . import capture, ocr, permissions
 
+        linux = _linux_backend()
+        if linux is not None:
+            raise ComputerUseError(
+                "ACTION_UNSUPPORTED",
+                "get_text_regions is not available on the Linux X11 backend yet: the OCR "
+                "screen-reading path is macOS-only; use get_ax_state or get_screenshot instead",
+                {"action": "get_text_regions", "platform": "linux"},
+            )
         status = permissions._status()
         if status.get("screen_recording") != "ok":
             raise ComputerUseError(
@@ -557,6 +702,19 @@ class App:
             )
 
         def dispatch() -> None:
+            linux = _linux_backend()
+            if linux is not None:
+                if isinstance(target, int) and not isinstance(target, bool):
+                    linux._click(self._pid, self._linux_element_center(target), button=button, count=count)
+                elif isinstance(target, tuple):
+                    linux._click(self._pid, self._linux_point(target), button=button, count=count)
+                else:
+                    raise ComputerUseError(
+                        "INVALID_ARGUMENT",
+                        f"target must be an element index or an (x, y) tuple, got {type(target).__name__}",
+                        {"target": type(target).__name__},
+                    )
+                return
             if isinstance(target, int) and not isinstance(target, bool):
                 element, ref = self._element(target)
                 actions = element.get("actions") or []
@@ -580,6 +738,10 @@ class App:
         from . import inject
 
         def dispatch() -> None:
+            linux = _linux_backend()
+            if linux is not None:
+                linux._drag(self._pid, self._linux_point(from_), self._linux_point(to))
+                return
             inject._drag(self._pid, self._window_point(from_), self._window_point(to))
 
         await self._action("drag", dispatch, settle=True)
@@ -605,8 +767,22 @@ class App:
             )
 
         def dispatch() -> None:
+            linux = _linux_backend()
+            if linux is not None:
+                if isinstance(target, int) and not isinstance(target, bool):
+                    point: tuple[float, float] | None = self._linux_element_center(target)
+                elif isinstance(target, tuple):
+                    point = self._linux_point(target)
+                else:
+                    raise ComputerUseError(
+                        "INVALID_ARGUMENT",
+                        f"target must be an element index or an (x, y) tuple, got {type(target).__name__}",
+                        {"target": type(target).__name__},
+                    )
+                linux._scroll(self._pid, direction, pages=pages, point=point)
+                return
             if isinstance(target, int) and not isinstance(target, bool):
-                point: tuple[float, float] | None = self._element_center(target)
+                point = self._element_center(target)
             elif isinstance(target, tuple):
                 point = self._window_point(target)
             else:
@@ -631,6 +807,10 @@ class App:
 
         def dispatch() -> None:
             self._refuse_secure_focus()
+            linux = _linux_backend()
+            if linux is not None:
+                linux._press_key(self._pid, key)
+                return
             inject._press_key(self._pid, key)
 
         await self._action("press_key", dispatch, settle=True)
@@ -645,6 +825,10 @@ class App:
 
         def dispatch() -> None:
             self._refuse_secure_focus()
+            linux = _linux_backend()
+            if linux is not None:
+                linux._type_text(self._pid, text)
+                return
             inject._type_text(self._pid, text)
 
         await self._action("type_text", dispatch, settle=True)
@@ -655,7 +839,13 @@ class App:
         The live focus wins: a post-snapshot focus change onto a secure field
         is still refused, and an unreadable live focus fails closed — the
         last snapshot never approves typing into a field it cannot verify.
+        On Linux this cannot refuse anything: X11 window metadata has no
+        secure-input role, so the linux probe always reads unknown and linux
+        observations never mark secure fields - a documented platform gap
+        (failing closed there would refuse every keystroke).
         """
+        if _linux_backend() is not None:
+            return
         focused_secure = ax._focused_is_secure(self._pid)
         if focused_secure is None:
             raise ComputerUseError(
@@ -686,6 +876,7 @@ class App:
             )
 
         def dispatch() -> None:
+            _refuse_linux_action("set_value", _LINUX_SET_VALUE_HINT)
             element, ref = self._element(element_index)
             live_secure = ax._live_is_secure(ref)
             if ax._is_secure_field(element) or live_secure:
@@ -735,6 +926,7 @@ class App:
             )
 
         def dispatch() -> None:
+            _refuse_linux_action("select_text", _LINUX_SELECT_HINT)
             element, ref = self._element(element_index)
             live_secure = ax._live_is_secure(ref)
             if ax._is_secure_field(element) or live_secure:
@@ -791,6 +983,7 @@ class App:
         """
 
         def dispatch() -> None:
+            _refuse_linux_action("perform_secondary_action", _LINUX_SECONDARY_HINT)
             element, ref = self._element(element_index)
             actions = element.get("actions") or []
             if action not in actions:
@@ -828,6 +1021,7 @@ class App:
             )
 
         def dispatch() -> None:
+            _refuse_linux_action("paste", _LINUX_PASTE_HINT)
             from . import inject
 
             self._refuse_secure_focus()
@@ -882,18 +1076,34 @@ class App:
         App-scoped keyboard shortcuts (menus, quick switchers) only fire
         while the app is key, so call this before shortcut-driven flows;
         it replaces the `open -a`/osascript detours the model would
-        otherwise improvise from bash.
+        otherwise improvise from bash. On Linux this raises
+        ACTION_UNSUPPORTED: focus control is not available on the linux
+        X11 backend yet.
         """
-        await self._action("activate", lambda: apps._activate(self._pid), settle=True)
+
+        def dispatch() -> None:
+            _refuse_linux_focus()
+            apps._activate(self._pid)
+
+        await self._action("activate", dispatch, settle=True)
 
     def is_frontmost(self) -> bool:
-        """Report whether the app is the frontmost (key) application."""
+        """Report whether the app is the frontmost (key) application.
+
+        On Linux this raises ACTION_UNSUPPORTED: focus control is not
+        available on the linux X11 backend yet.
+        """
+        _refuse_linux_focus()
         return apps._frontmost_pid() == self._pid
 
     async def _refresh(self, diff_on: bool = True) -> str:
         """Observe the app and store the new snapshot, returning its text."""
+        linux = _linux_backend()
         # the walk can take up to its deadline on an unresponsive app
-        observation = await asyncio.to_thread(ax._observe, self._pid)
+        if linux is not None:
+            observation = await asyncio.to_thread(linux._observe, self._pid)
+        else:
+            observation = await asyncio.to_thread(ax._observe, self._pid)
         lines = diff._serialize(observation.tree)
         full = self._render_full(observation, lines)
         if diff_on and self._lines is not None:
@@ -958,42 +1168,61 @@ class App:
         changing by then, and a churning app is given up on at the cap
         instead of stalling the action.
         """
+        linux = _linux_backend()
+
+        def fingerprint(timeout_seconds: float) -> tuple[Any, ...] | None:
+            if linux is not None:
+                return linux._window_fingerprint(self._pid)
+            return ax._window_fingerprint(self._pid, timeout_seconds=timeout_seconds)
+
         deadline = time.monotonic() + _SETTLE_MAX_SECONDS
-        previous = ax._window_fingerprint(self._pid, timeout_seconds=_SETTLE_MAX_SECONDS)
+        previous = fingerprint(_SETTLE_MAX_SECONDS)
         if previous is None:
             return
         while time.monotonic() < deadline:
             time.sleep(_SETTLE_POLL_SECONDS)
-            current = ax._window_fingerprint(self._pid, timeout_seconds=max(deadline - time.monotonic(), 0.05))
+            current = fingerprint(max(deadline - time.monotonic(), 0.05))
             if current is None or current == previous:
                 return
             previous = current
 
     def _guard(self) -> None:
-        """Re-validate the pid, the allowlist gate, the locked screen, and the grants.
+        """Re-validate the binding, the allowlist gate, the locked screen, and the grants.
 
         A reused pid now owned by another process (or nothing at all) fails
         closed: APP_NOT_RUNNING when no app owns it, APP_NOT_ALLOWED when a
-        different bundle owns it. A grant revoked mid-session fails with
-        PERMISSIONS_NOT_GRANTED so the model is told to stop and re-grant
-        instead of chasing INJECTION_FAILED.
+        different bundle owns it. On Linux the bound window must still belong
+        to the bound WM_CLASS or the action fails closed with APP_NOT_RUNNING.
+        A grant revoked mid-session fails with PERMISSIONS_NOT_GRANTED so the
+        model is told to stop and re-grant instead of chasing INJECTION_FAILED.
         """
         from . import permissions, policy
 
-        running_bundle = apps._running_bundle_id(self._pid)
-        if running_bundle is None:
-            raise ComputerUseError(
-                "APP_NOT_RUNNING",
-                f"pid {self._pid} is no longer a running app; call get_app again to re-bind it",
-                {"pid": self._pid},
-            )
-        if running_bundle != self._bundle_id:
-            raise ComputerUseError(
-                "APP_NOT_ALLOWED",
-                f"pid {self._pid} now belongs to {running_bundle}, not the bound {self._bundle_id}; "
-                "call get_app again to re-bind the app you want",
-                {"pid": self._pid, "running_bundle_id": running_bundle},
-            )
+        linux = _linux_backend()
+        if linux is not None:
+            windows = linux._resolve_app(self._bundle_id)
+            if self._pid not in {window.window_id for window in windows}:
+                raise ComputerUseError(
+                    "APP_NOT_RUNNING",
+                    f"window {self._pid} is no longer one of {self._bundle_id}'s windows; "
+                    "call get_app again to re-bind it",
+                    {"pid": self._pid, "bundle_id": self._bundle_id},
+                )
+        else:
+            running_bundle = apps._running_bundle_id(self._pid)
+            if running_bundle is None:
+                raise ComputerUseError(
+                    "APP_NOT_RUNNING",
+                    f"pid {self._pid} is no longer a running app; call get_app again to re-bind it",
+                    {"pid": self._pid},
+                )
+            if running_bundle != self._bundle_id:
+                raise ComputerUseError(
+                    "APP_NOT_ALLOWED",
+                    f"pid {self._pid} now belongs to {running_bundle}, not the bound {self._bundle_id}; "
+                    "call get_app again to re-bind the app you want",
+                    {"pid": self._pid, "running_bundle_id": running_bundle},
+                )
         result = policy._gate_app(self._bundle_id)
         if not result.allowed:
             raise ComputerUseError("APP_NOT_ALLOWED", result.reason, {"bundle_id": self._bundle_id})
@@ -1002,7 +1231,8 @@ class App:
                 "SCREEN_LOCKED",
                 "the screen is locked; ask the user to unlock it before driving apps",
             )
-        status = permissions._status()
+        # The Accessibility grant is macOS TCC state; X11 has no equivalent.
+        status = permissions._status() if linux is None else {"accessibility": "ok"}
         if status.get("accessibility") != "ok":
             raise ComputerUseError(
                 "PERMISSIONS_NOT_GRANTED",
@@ -1028,7 +1258,11 @@ class App:
                 {"element_index": element_index},
             )
         element = ax._flatten(self._observation.tree)[element_index]
-        live_role, live_title = ax._live_fingerprint(refs[element_index])
+        linux = _linux_backend()
+        if linux is not None:
+            live_role, live_title = linux._live_fingerprint(refs[element_index])
+        else:
+            live_role, live_title = ax._live_fingerprint(refs[element_index])
         if live_role != element.get("role") or live_title != element.get("title"):
             raise ComputerUseError(
                 "ELEMENT_STALE",
@@ -1128,6 +1362,49 @@ class App:
                 {"point": repr(point)[:64]},
             )
         return (rect[0] + float(point[0]), rect[1] + float(point[1]))
+
+    def _linux_point(self, point: tuple[float, float]) -> tuple[float, float]:
+        """Validate one window-relative (x, y) point for linux input, without translating it.
+
+        Linux input takes window-relative coordinates (xdotool mousemove
+        --window), so the point is bounds-checked against the observed window
+        and returned as-is instead of being translated into screen space.
+        """
+        if (
+            not isinstance(point, tuple)
+            or len(point) != 2
+            or not all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in point)
+        ):
+            raise ComputerUseError(
+                "INVALID_ARGUMENT",
+                f"point must be an (x, y) pair of numbers, got {point!r}",
+                {"point": repr(point)[:64]},
+            )
+        rect = self._observation.window_rect if self._observation is not None else None
+        if rect is None:
+            raise ComputerUseError(
+                "TRANSPORT_ERROR",
+                "no focused window observed; call get_ax_state() first",
+            )
+        if not 0 <= float(point[0]) < float(rect[2]) or not 0 <= float(point[1]) < float(rect[3]):
+            raise ComputerUseError(
+                "INVALID_ARGUMENT",
+                f"point {point!r} is outside the observed window "
+                f"({float(rect[2]):.0f}x{float(rect[3]):.0f}); use coordinates from its screenshot",
+                {"point": repr(point)[:64]},
+            )
+        return (float(point[0]), float(point[1]))
+
+    def _linux_element_center(self, element_index: int) -> tuple[float, float]:
+        """Compute one element's center in window-relative coordinates for linux input."""
+        center = self._element_center(element_index)
+        rect = self._observation.window_rect if self._observation is not None else None
+        if rect is None:
+            raise ComputerUseError(
+                "TRANSPORT_ERROR",
+                "no focused window observed; call get_ax_state() first",
+            )
+        return (center[0] - float(rect[0]), center[1] - float(rect[1]))
 
 
 async def run() -> str:
