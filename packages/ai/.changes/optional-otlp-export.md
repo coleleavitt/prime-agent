@@ -1,1 +1,0 @@
-- Added optional bounded OTLP/HTTP span export with derived count, error, and duration metrics.

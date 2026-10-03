@@ -9,7 +9,9 @@ Execution still belongs to Prime Agent's TypeScript host and the existing
 
 from __future__ import annotations
 
+import copy
 import json
+import math
 import os
 import re
 import stat
@@ -20,7 +22,9 @@ from pathlib import Path
 from uuid import uuid4
 from typing import Any, Literal
 
-HarnessKind = Literal["prompt", "memory", "skill", "subagent"]
+from .factory import require_factory_enabled, validate_factory_spec
+
+HarnessKind = Literal["prompt", "memory", "skill", "subagent", "factory"]
 HarnessScope = Literal["local", "global"]
 
 _DEFAULT_FILE_NAME = "harness_state.json"
@@ -28,7 +32,7 @@ _DEFAULT_HARNESS_DIR_NAME = "harness"
 # Written by the kernel, gated by nothing. The host stamps "refine" on entries
 # that cleared the RAVO gate, so the two are distinguishable on disk.
 KERNEL_ENTRY_SOURCE = "kernel"
-_KINDS: tuple[HarnessKind, ...] = ("prompt", "memory", "skill", "subagent")
+_KINDS: tuple[HarnessKind, ...] = ("prompt", "memory", "skill", "subagent", "factory")
 _state_cache: dict[tuple[Path, HarnessScope], "HarnessState"] = {}
 
 
@@ -239,17 +243,175 @@ def _refinement_payload(event: RefinementEvent) -> dict[str, Any]:
     return data
 
 
-def _validate_python_skill_reference(reference: dict[str, Any] | None) -> dict[str, Any]:
+def _validate_python_skill_reference(reference: dict[str, Any] | None, entry_name: str = "") -> dict[str, Any]:
+    # Rejections name the entry so the caller can repair the right skill; the
+    # suffix keeps the historical message text greppable.
+    prefix = f"skill entry {entry_name!r} rejected: " if entry_name else ""
+
+    def reject(message: str) -> None:
+        raise ValueError(f"{prefix}{message}")
+
     if not isinstance(reference, dict):
-        raise ValueError("skill entries require a Python reference")
+        reject("skill entries require a Python reference")
     normalized = dict(reference)
     if normalized.get("type") != "python":
-        raise ValueError("skill reference.type must be 'python'")
+        reject("skill reference.type must be 'python'")
     if not any(isinstance(normalized.get(key), str) and normalized[key] for key in ("import", "python_import")):
-        raise ValueError("skill reference requires a Python import")
+        reject("skill reference requires a Python import")
     if not any(isinstance(normalized.get(key), str) and normalized[key] for key in ("callable", "call_pattern")):
-        raise ValueError("skill reference requires a callable or call_pattern")
+        reject("skill reference requires a callable or call_pattern")
     return normalized
+
+
+def _type_name(value: Any) -> str:
+    if isinstance(value, list):
+        return "a list"
+    if value == "":
+        return "an empty string"
+    return type(value).__name__
+
+
+def _describe_entry(id: Any, title: Any) -> str:
+    """Best available entry name for rejection messages."""
+    if isinstance(id, str) and id:
+        return id
+    if isinstance(title, str) and title:
+        return title
+    return "<unnamed>"
+
+
+def _require_text(kind: str, entry_name: str, field: str, value: Any) -> None:
+    if not isinstance(value, str) or not value:
+        raise ValueError(
+            f"{kind} entry {entry_name!r} rejected: {field} must be a non-empty string, got {_type_name(value)}"
+        )
+
+
+def _require_optional_text(kind: str, entry_name: str, field: str, value: Any) -> None:
+    if value is not None:
+        _require_text(kind, entry_name, field, value)
+
+
+def _require_optional_record(kind: str, entry_name: str, field: str, value: Any) -> None:
+    if value is not None and not isinstance(value, dict):
+        raise ValueError(
+            f"{kind} entry {entry_name!r} rejected: {field} must be a dict when provided, got {_type_name(value)}"
+        )
+
+
+def _factory_spec_argument(
+    dag: Any, machine: Any
+) -> "tuple[Any, Literal['dag', 'machine']]":
+    """Pick the factory spec payload and its arguments key from the call.
+
+    Supplying both forms at once is an error. A bare ``dag=None,
+    machine=None`` passes ``None`` through in the dag slot so the write-time
+    validation rejects it with the standard wording.
+    """
+    if dag is not None and machine is not None:
+        raise ValueError("pass either dag or machine, not both")
+    if machine is not None:
+        return machine, "machine"
+    return dag, "dag"
+
+
+def _validate_factory_arguments(entry_name: str, arguments: dict[str, Any]) -> None:
+    """Shared-path dry run for every factory write.
+
+    ``create_factory``/``update_factory`` validate their own spec, but a
+    generic ``create``/``update`` (or a refinement edit) writes
+    ``arguments`` directly; an invalid spec must never reach the store
+    through any writer, so the spec found in ``arguments`` is validated
+    here too.
+    """
+    dag, machine = arguments.get("dag"), arguments.get("machine")
+    if dag is not None and machine is not None:
+        raise ValueError(f"factory entry {entry_name!r} rejected: pass either dag or machine, not both")
+    spec = machine if machine is not None else dag
+    if not isinstance(spec, dict):
+        raise ValueError(
+            f"factory entry {entry_name!r} rejected: factory entries require a dag or machine object in arguments"
+        )
+    errors = validate_factory_spec(spec)
+    if errors:
+        raise ValueError(f"factory entry {entry_name!r} rejected: {'; '.join(errors)}")
+
+
+def _validate_entry_shape(
+    kind: str,
+    entry_id: Any,
+    title: Any,
+    content: Any,
+    *,
+    path: Any,
+    reference: Any,
+    arguments: Any,
+    metadata: Any,
+    source: Any,
+    existing: "HarnessEntry | None",
+) -> None:
+    """Reject an invalid harness entry before anything is persisted.
+
+    Every create/update/upsert write funnels through here, so a malformed
+    entry (content as a list, title as a number) fails with an actionable
+    error naming the entry and the field instead of being saved and later
+    crashing the host digest that renders every session's system prompt.
+    """
+    entry_name = _describe_entry(entry_id, title)
+    _require_text(kind, entry_name, "id", entry_id)
+    _require_text(kind, entry_name, "title", title)
+    _require_text(kind, entry_name, "content", content)
+    _require_optional_text(kind, entry_name, "path", path)
+    _require_optional_record(kind, entry_name, "reference", reference)
+    _require_optional_record(kind, entry_name, "arguments", arguments)
+    _require_optional_record(kind, entry_name, "metadata", metadata)
+    _require_text(kind, entry_name, "source", source)
+    if kind == "skill":
+        if reference is None:
+            # A new skill without a Python reference is invalid; an update that
+            # omits it preserves the existing reference instead.
+            if existing is None:
+                raise ValueError(f"skill entry {entry_name!r} rejected: skill entries require a Python reference")
+        else:
+            _validate_python_skill_reference(reference, entry_name)
+    if kind == "factory":
+        # Every factory writer funnels through here, so the opt-in gate and
+        # the spec dry run cover them all: create_factory validates, and the
+        # generic create/update path (a refinement edit) gets the same
+        # treatment. The gate comes first: while `factory.enabled` is off
+        # (the default) every factory write refuses with the one disabled
+        # message, before any spec work. A
+        # NEW factory requires its spec (an arguments-less factory would
+        # store an unusable entry that run() later rejects); an update that
+        # omits arguments (None) preserves the stored spec and skips
+        # validation, exactly like update_skill treats reference.
+        require_factory_enabled()
+        if arguments is None and existing is None:
+            raise ValueError(
+                f"factory entry {entry_name!r} rejected: factory entries require a dag or machine object in arguments"
+            )
+        if arguments is not None:
+            _validate_factory_arguments(entry_name, arguments)
+
+
+def _validate_refinement_event(trigger: Any, changes: Any, *, evidence: Any, outcome: Any) -> None:
+    """Reject a refinement event whose persisted shape would break the digest."""
+    if not isinstance(trigger, str) or not trigger:
+        raise ValueError(f"refinement event rejected: trigger must be a non-empty string, got {_type_name(trigger)}")
+    if isinstance(changes, str):
+        if not changes:
+            raise ValueError("refinement event rejected: changes must be a non-empty string or a list of strings")
+    elif isinstance(changes, list):
+        if not all(isinstance(change, str) and change for change in changes):
+            raise ValueError("refinement event rejected: changes must be a list of non-empty strings")
+    else:
+        raise ValueError(
+            f"refinement event rejected: changes must be a string or a list of strings, got {_type_name(changes)}"
+        )
+    if not isinstance(evidence, str):
+        raise ValueError(f"refinement event rejected: evidence must be a string when provided, got {_type_name(evidence)}")
+    if not isinstance(outcome, str):
+        raise ValueError(f"refinement event rejected: outcome must be a string when provided, got {_type_name(outcome)}")
 
 
 class HarnessState:
@@ -510,8 +672,27 @@ class HarnessState:
         if kind not in self.entries:
             raise ValueError(f"unknown harness kind {kind!r}; expected one of {_KINDS}")
 
+        # Guard before the id slug and the dict lookup: a non-string title or a
+        # non-string id (falsy ids included, which the slug fallback would
+        # silently collapse) must fail with a clear rejection, not an
+        # AttributeError inside slug normalization or a TypeError from the lookup.
+        _require_text(kind, _describe_entry(id, title), "title", title)
+        if id is not None:
+            _require_text(kind, _describe_entry(id, title), "id", id)
         entry_id = id or _slug(title, kind)
         existing = self.entries[kind].get(entry_id)
+        _validate_entry_shape(
+            kind,
+            entry_id,
+            title,
+            content,
+            path=path,
+            reference=reference,
+            arguments=arguments,
+            metadata=metadata,
+            source=source,
+            existing=existing,
+        )
         if existing:
             existing.title = title
             existing.content = content
@@ -524,7 +705,10 @@ class HarnessState:
             if reference is not None:
                 existing.reference = dict(reference)
             if arguments is not None:
-                existing.arguments = dict(arguments)
+                # Factory specs are deep-copied: the nested dag/machine object
+                # is caller-owned, and a later mutation must never change the
+                # stored (validated) spec without a write-time dry run.
+                existing.arguments = copy.deepcopy(arguments) if kind == "factory" else dict(arguments)
             if metadata is not None:
                 existing.metadata = dict(metadata)
             existing.source = source
@@ -540,7 +724,7 @@ class HarnessState:
                 path=path if path is not None else "general",
                 scope=self.scope,
                 reference=dict(reference or {}),
-                arguments=dict(arguments or {}),
+                arguments=copy.deepcopy(arguments or {}) if kind == "factory" else dict(arguments or {}),
                 metadata=dict(metadata or {}),
                 source=source,
             )
@@ -615,6 +799,9 @@ class HarnessState:
         self._sync_from_disk()
         if kind not in self.entries:
             raise ValueError(f"unknown harness kind {kind!r}; expected one of {_KINDS}")
+        _require_text(kind, _describe_entry(id, title), "title", title)
+        if id is not None:
+            _require_text(kind, _describe_entry(id, title), "id", id)
         entry_id = id or _slug(title, kind)
         if entry_id in self.entries[kind]:
             raise ValueError(f"{kind} entry {entry_id!r} already exists")
@@ -662,6 +849,7 @@ class HarnessState:
         self._sync_from_disk()
         if kind not in self.entries:
             raise ValueError(f"unknown harness kind {kind!r}; expected one of {_KINDS}")
+        _require_text(kind, _describe_entry(id, title), "id", id)
         if id not in self.entries[kind]:
             raise ValueError(f"{kind} entry {id!r} does not exist")
         return self._upsert(
@@ -753,7 +941,7 @@ class HarnessState:
             content,
             id=id,
             path=path,
-            reference=_validate_python_skill_reference(reference),
+            reference=_validate_python_skill_reference(reference, _describe_entry(id, title)),
             arguments=arguments,
             metadata=metadata,
             global_=global_,
@@ -776,7 +964,9 @@ class HarnessState:
         # Only validate a reference when one is supplied; omitting it preserves the
         # existing reference (see _upsert) rather than forcing every title/content-only
         # update to re-send the full Python reference.
-        validated_reference = _validate_python_skill_reference(reference) if reference is not None else None
+        validated_reference = (
+            _validate_python_skill_reference(reference, _describe_entry(id, title)) if reference is not None else None
+        )
         return self.update(
             "skill",
             id,
@@ -822,6 +1012,85 @@ class HarnessState:
     def delete_subagent(self, id: str, *, global_: bool = False, **kwargs: Any) -> bool:
         return self.delete("subagent", id, global_=global_, **kwargs)
 
+    def create_factory(
+        self,
+        title: str,
+        content: str,
+        *,
+        id: str | None = None,
+        path: str = "general",
+        dag: dict[str, Any] | None = None,
+        machine: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        global_: bool = False,
+        **kwargs: Any,
+    ) -> HarnessEntry:
+        # The opt-in gate precedes the dry run, so a disabled factory
+        # refuses with the one disabled message whatever the spec looks like.
+        require_factory_enabled()
+        # Write-time dry run: an invalid spec (either form) never reaches the
+        # store. The spec is deep-copied before storing: mutating the caller's
+        # dict after creation must not change the live entry (a later update
+        # that omits both forms would preserve the mutated, unvalidated spec).
+        spec, key = _factory_spec_argument(dag, machine)
+        errors = validate_factory_spec(spec)
+        if errors:
+            raise ValueError("; ".join(errors))
+        return self.create(
+            "factory",
+            title,
+            content,
+            id=id,
+            path=path,
+            arguments={key: copy.deepcopy(spec)},
+            metadata=metadata,
+            global_=global_,
+            **kwargs,
+        )
+
+    def update_factory(
+        self,
+        id: str,
+        title: str,
+        content: str,
+        *,
+        path: str | None = None,
+        dag: dict[str, Any] | None = None,
+        machine: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        global_: bool = False,
+        **kwargs: Any,
+    ) -> HarnessEntry:
+        # The opt-in gate precedes the spec and existence checks, so a
+        # disabled factory refuses with the one disabled message whatever the
+        # update carries.
+        require_factory_enabled()
+        # Only validate a spec when one is supplied; omitting both preserves the
+        # stored arguments (see _upsert) rather than forcing every title/content
+        # update to re-send the full spec, exactly like update_skill treats reference.
+        if dag is not None or machine is not None:
+            spec, key = _factory_spec_argument(dag, machine)
+            errors = validate_factory_spec(spec)
+            if errors:
+                raise ValueError("; ".join(errors))
+            arguments = {key: copy.deepcopy(spec)}
+        else:
+            arguments = None
+        return self.update(
+            "factory",
+            id,
+            title,
+            content,
+            path=path,
+            arguments=arguments,
+            metadata=metadata,
+            global_=global_,
+            **kwargs,
+        )
+
+    def delete_factory(self, id: str, *, global_: bool = False, **kwargs: Any) -> bool:
+        return self.delete("factory", id, global_=global_, **kwargs)
+
     def record_refinement(
         self,
         trigger: str,
@@ -837,6 +1106,11 @@ class HarnessState:
             return target.record_refinement(trigger, changes, evidence=evidence, outcome=outcome, id=id)
         self._ensure_local_writable()
         self._sync_from_disk()
+        _validate_refinement_event(trigger, changes, evidence=evidence, outcome=outcome)
+        if id is not None and (not isinstance(id, str) or not id):
+            raise ValueError(
+                f"refinement event rejected: id must be a non-empty string when provided, got {_type_name(id)}"
+            )
         event_id = id or f"refine_{len(self.refinements) + 1:04d}"
         normalized_changes = [changes] if isinstance(changes, str) else list(changes)
         event = RefinementEvent(
@@ -881,6 +1155,12 @@ class HarnessState:
             "files; children reply with await agent_message.send(message, receiver_role='parent'). Use "
             "await rlm.list_subagents() to recover direct child handles and await agent_message.send(..., "
             "receiver_role='child', receiver_name=handle.name) for follow-ups.",
+            "Factory entries declare validated state-machine workflows of subagent states in arguments['machine'] "
+            "(the original DAG sugar in arguments['dag'] compiles to machine form): manage them with "
+            "create_factory/update_factory/delete_factory (create_factory validates either form at write time); run "
+            "them with await rlm.factory.run(\"<id>\"), watch with await rlm.factory.status(run_id), stop with "
+            "await rlm.factory.stop(run_id), and resume an escalate-paused run with "
+            "await rlm.factory.resume(run_id).",
         ]
         for kind in _KINDS:
             records = self.list(kind)[:max_entries_per_kind]
@@ -928,7 +1208,10 @@ class HarnessState:
         """Return harness entries ranked by weighted term overlap with *query*.
 
         Terms are scored against an entry's title, content, path, and id;
-        matches in more distinct fields count more.
+        matches in more distinct fields count more. Each matched term is
+        discounted by its document frequency across the ranked corpus
+        (tf-idf style, ``weight * log(1 + N / df)``), so a rare,
+        distinctive term outranks terms present in most entries.
         """
         if target := self._global_target(global_, kwargs):
             return target.search(query, kind=kind, limit=limit)
@@ -941,20 +1224,37 @@ class HarnessState:
         if not terms:
             return []
 
+        entries = self.list(kind, **kwargs) if kind is not None else self.list(None, **kwargs)
+
+        # Document frequency per term over the ranked corpus: a term in
+        # every entry weighs log(2), a term in one entry of N weighs
+        # log(1 + N), so rare distinctive terms outrank ubiquitous ones.
+        matches: dict[str, int] = {term: 0 for term in terms}
+        for entry in entries:
+            title = entry.title.lower()
+            content = entry.content.lower()
+            path_and_id = f"{entry.path} {entry.id}".lower()
+            for term in terms:
+                if term in title or term in content or term in path_and_id:
+                    matches[term] += 1
+        term_idf = {
+            term: math.log(1 + len(entries) / count)
+            for term, count in matches.items()
+            if count > 0
+        }
+
         def score(entry: HarnessEntry) -> float:
             title = entry.title.lower()
             content = entry.content.lower()
             path_and_id = f"{entry.path} {entry.id}".lower()
             total = 0.0
-            for term in terms:
+            for term, idf in term_idf.items():
                 fields = (1 if term in title else 0) + (1 if term in content else 0) + (
                     1 if term in path_and_id else 0
                 )
                 if fields:
-                    total += 1 + (fields - 1) * 0.5
+                    total += idf * (1 + (fields - 1) * 0.5)
             return total
-
-        entries = self.list(kind, **kwargs) if kind is not None else self.list(None, **kwargs)
 
         def recency(entry: HarnessEntry) -> str:
             return entry.updated_at if isinstance(entry.updated_at, str) else ""

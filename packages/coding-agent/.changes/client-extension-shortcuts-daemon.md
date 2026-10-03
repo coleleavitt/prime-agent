@@ -1,1 +1,0 @@
-- Fixed extension keyboard shortcuts being unavailable in daemon-backed interactive sessions.

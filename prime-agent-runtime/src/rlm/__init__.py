@@ -10,6 +10,7 @@ from typing import Any
 
 from . import toolforge, trace
 from .bash import BashHandle, BashResult, active_bash_commands, bash
+from .factory import FACTORY_HELP, resume_factory, run_factory, status_factory, stop_factory
 from .harness import HarnessEntry, HarnessScope, HarnessState, RefinementEvent, get_harness_state
 from .toolforge import ToolforgeRejected, ToolforgeSkill
 
@@ -43,6 +44,12 @@ class RLMModel:
 
 
 @dataclass(frozen=True)
+class RLMSubagentActivity:
+    kind: str
+    tool_name: str | None = None
+
+
+@dataclass(frozen=True)
 class RLMSubagent:
     rlm_child_id: str
     active_session_id: str | None
@@ -50,6 +57,21 @@ class RLMSubagent:
     session_name: str
     session_dir: Path
     status: str
+    activity: RLMSubagentActivity | None = None
+    tool_use_count: int | None = None
+    duration_ms: int | None = None
+    answer_preview: str | None = None
+    replied_since_task: bool | None = None
+    progress_note: str | None = None
+    label: str | None = None
+    last_activity_at: float | None = None
+    activity_stale_ms: float | None = None
+
+
+@dataclass(frozen=True)
+class RLMProgressNoteResult:
+    accepted: bool
+    retry_after_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -217,6 +239,48 @@ async def find_models(query: str = "", limit: int = 8) -> list[RLMModel]:
     return [_model_from_payload(model) for model in models]
 
 
+def _optional_str_field(payload: dict[str, Any], field: str, operation: str) -> str | None:
+    value = payload.get(field)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise RuntimeError(f"{operation} entry has invalid {field}")
+    return value
+
+
+def _optional_int_field(payload: dict[str, Any], field: str, operation: str) -> int | None:
+    value = payload.get(field)
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise RuntimeError(f"{operation} entry has invalid {field}")
+    return value
+
+
+def _optional_bool_field(payload: dict[str, Any], field: str, operation: str) -> bool | None:
+    value = payload.get(field)
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise RuntimeError(f"{operation} entry has invalid {field}")
+    return value
+
+
+def _optional_activity_field(payload: dict[str, Any], operation: str) -> RLMSubagentActivity | None:
+    value = payload.get("activity")
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise RuntimeError(f"{operation} entry has invalid activity")
+    kind = value.get("kind")
+    if kind not in {"waiting", "writing", "executing"}:
+        raise RuntimeError(f"{operation} entry has invalid activity kind")
+    tool_name = value.get("tool_name")
+    if tool_name is not None and not isinstance(tool_name, str):
+        raise RuntimeError(f"{operation} entry has invalid activity tool_name")
+    return RLMSubagentActivity(kind=kind, tool_name=tool_name)
+
+
 def _subagent_from_payload(payload: Any, operation: str = "rlm.list_subagents") -> RLMSubagent:
     if not isinstance(payload, dict):
         raise RuntimeError(f"{operation} returned an invalid subagent entry")
@@ -245,6 +309,15 @@ def _subagent_from_payload(payload: Any, operation: str = "rlm.list_subagents") 
         session_name=session_name,
         session_dir=Path(session_dir),
         status=status,
+        activity=_optional_activity_field(payload, operation),
+        tool_use_count=_optional_int_field(payload, "tool_use_count", operation),
+        duration_ms=_optional_int_field(payload, "duration_ms", operation),
+        answer_preview=_optional_str_field(payload, "answer_preview", operation),
+        replied_since_task=_optional_bool_field(payload, "replied_since_task", operation),
+        progress_note=_optional_str_field(payload, "progress_note", operation),
+        label=_optional_str_field(payload, "label", operation),
+        last_activity_at=_optional_int_field(payload, "last_activity_at", operation),
+        activity_stale_ms=_optional_int_field(payload, "activity_stale_ms", operation),
     )
 
 
@@ -354,6 +427,38 @@ async def collect(
     return [_child_result_from_payload(entry) for entry in results]
 
 
+RLM_PROGRESS_NOTE_MAX_LENGTH = 512
+
+
+async def progress_note(message: str) -> RLMProgressNoteResult:
+    """Report brief in-flight progress to the parent orchestrator.
+
+    The note (at most 512 UTF-16 code units, about one per 10 seconds) reaches the
+    parent's child snapshots and roster entries without steering the parent
+    or requiring an explicit reply. A throttled note returns
+    ``accepted=False`` with a ``retry_after_ms`` hint instead of raising.
+    """
+    if not isinstance(message, str):
+        raise TypeError(f"message must be str, got {type(message).__name__}")
+    stripped = message.strip()
+    if not stripped:
+        raise ValueError("message must not be empty")
+    # The host measures message.length in UTF-16 code units, so 512 astral
+    # characters are 1024 units there and would fail its check after Python
+    # accepted them. Measure the stripped message the same way; surrogatepass
+    # counts a lone surrogate as one unit, matching the host's length.
+    if len(stripped.encode("utf-16-le", "surrogatepass")) // 2 > RLM_PROGRESS_NOTE_MAX_LENGTH:
+        raise ValueError(f"message must be at most {RLM_PROGRESS_NOTE_MAX_LENGTH} characters")
+    payload = await host_request("rlm.progress.note", {"message": stripped})
+    accepted = payload.get("accepted")
+    if not isinstance(accepted, bool):
+        raise RuntimeError("rlm.progress.note returned an invalid accepted flag")
+    retry_after_ms = payload.get("retry_after_ms")
+    if retry_after_ms is not None and (not isinstance(retry_after_ms, int) or isinstance(retry_after_ms, bool)):
+        raise RuntimeError("rlm.progress.note returned an invalid retry_after_ms")
+    return RLMProgressNoteResult(accepted=accepted, retry_after_ms=retry_after_ms)
+
+
 async def delete_subagent(target: str | RLMSubagent | RLMSpawnHandle) -> RLMSubagent:
     """Delete one running or retained direct child from the current parent session.
 
@@ -425,6 +530,52 @@ class _HarnessProxy:
 _harness_state = _HarnessProxy()
 
 
+class _RLMFactoryNamespace:
+    """Run stored state-machine factories: rlm.factory.run/status/stop/resume.
+
+    ``run('<spec_id>')`` validates a stored factory entry (machine form, or
+    dag sugar that compiles to one), enters the entry states up to the
+    spec's max_parallel, and returns immediately; a kernel asyncio task
+    continues the run (nonblocking control loop). Runs live in kernel
+    memory only; children stay supervisor-owned. Every call is async, so
+    always await it: ``await rlm.factory.run('<id>')``.
+
+    When no stored entry carries the id, ``run`` falls back to the machine
+    library: the bundled seeds ship inside the runtime (the personal
+    library lives under the agent dir), and the template runs directly
+    without creating a harness entry:
+    ``await rlm.factory.run('review-sweep')``.
+    ``prime-agent factory list | import | export`` manages the library (a
+    broken machine names its exact errors; a missing one lists what the
+    library has).
+
+    The factory is opt-in: while the ``factory.enabled`` setting is off (the
+    default; the user turns it on with ``/factory on``), every call above
+    refuses with one clean message and only ``help()`` answers, so the
+    guide stays readable before opting in.
+
+    ``help()`` returns the full embedded authoring reference and API guide
+    (states, ports, guards, joins, foreach, budgets, the machine library,
+    and the API with worked examples): ``rlm.factory.help()``.
+    """
+
+    async def run(self, spec_id: str, *, name: str | None = None) -> dict[str, Any]:
+        return await run_factory(spec_id, name=name)
+
+    async def status(self, run_id: str) -> dict[str, Any]:
+        return await status_factory(run_id)
+
+    async def stop(self, run_id: str) -> dict[str, Any]:
+        return await stop_factory(run_id)
+
+    async def resume(self, run_id: str) -> dict[str, Any]:
+        return await resume_factory(run_id)
+
+    def help(self) -> str:
+        """Return the embedded factory authoring reference and API guide."""
+        return FACTORY_HELP
+
+
 class _RLMNamespace:
     harness = _harness_state
     toolforge = toolforge
@@ -456,11 +607,16 @@ class _RLMNamespace:
     async def list_subagents(self) -> list[RLMSubagent]:
         return await list_subagents()
 
+    async def progress_note(self, message: str) -> RLMProgressNoteResult:
+        return await progress_note(message)
+
     async def delete_subagent(self, target: str | RLMSubagent | RLMSpawnHandle) -> RLMSubagent:
         return await delete_subagent(target)
 
     async def collect(self, targets: Any = None, *, timeout_ms: int = 0) -> list[RLMChildResult]:
         return await collect(targets, timeout_ms=timeout_ms)
+
+    factory = _RLMFactoryNamespace()
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         raise TypeError(_NOT_CALLABLE_MESSAGE)
@@ -489,11 +645,15 @@ __all__ = [
     "HarnessEntry",
     "HarnessScope",
     "HarnessState",
+    "McpIntegration",
     "McpToolError",
+    "NotEnabled",
     "RLMCreateSessionHandle",
     "RLMModel",
+    "RLMProgressNoteResult",
     "RLMSpawnHandle",
     "RLMSubagent",
+    "RLMSubagentActivity",
     "create_session",
     "RefinementEvent",
     "ToolforgeRejected",
@@ -507,6 +667,7 @@ __all__ = [
     "harness",
     "host_request",
     "list_subagents",
+    "progress_note",
     "rlm",
     "spawn",
     "toolforge",
@@ -515,9 +676,9 @@ __all__ = [
     "workflow_v2",
 ]
 
-# Lazily re-export the generic MCP error type. Kept lazy so `import rlm` never
-# requires the optional `mcp` SDK — only modules that call into it do.
-_LAZY_MCP = {"McpToolError"}
+# Lazily re-export the MCP base class. Kept lazy so `import rlm` never requires
+# the optional `mcp` SDK — only integration packages that subclass it do.
+_LAZY_MCP = {"McpIntegration", "McpToolError", "NotEnabled"}
 _LAZY_MODULES = {"workflow", "workflow_v2"}
 
 
@@ -526,9 +687,9 @@ def __getattr__(name: str) -> Any:  # noqa: D401 - module-level lazy attr hook
         import importlib
         return importlib.import_module(f"{__name__}.{name}")
     if name in _LAZY_MCP:
-        from . import mcp
+        from . import mcp_base
 
-        return getattr(mcp, name)
+        return getattr(mcp_base, name)
     if name == "run":
         raise AttributeError(_RENAMED_RUN_MESSAGE)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

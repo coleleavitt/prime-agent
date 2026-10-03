@@ -46,6 +46,71 @@ def _win_spawn(procs=None, resume=True):
 
 
 class BashTest(unittest.IsolatedAsyncioTestCase):
+    async def test_activity_handles_are_scoped_and_tail_is_bounded(self):
+        handle = bash("printf 'first\nsecond\n'; sleep 20")
+        from rlm.bash import activity_request
+
+        activity_id = handle._activity_id
+        rows = activity_request("list")["activities"]
+        listed = next(row for row in rows if row["id"] == activity_id)
+        self.assertEqual(listed["pid"], handle.pid)
+        self.assertIsNone(listed["exitCode"])
+        self.assertIn("T", listed["startedAt"])
+        for _ in range(100):
+            if "second" in activity_request("tail", activity_id, 1)["tail"]:
+                break
+            await asyncio.sleep(0.01)
+        self.assertEqual(activity_request("tail", activity_id, 1)["tail"], "second")
+        self.assertEqual(activity_request("kill", activity_id)["killed"], True)
+        await handle
+        finished = next(
+            row for row in activity_request("list")["activities"] if row["id"] == activity_id
+        )
+        self.assertEqual(finished["status"], "finished")
+        self.assertIsInstance(finished["exitCode"], int)
+        with self.assertRaises(KeyError):
+            activity_request("kill", "not-a-handle")
+        with self.assertRaises(ValueError):
+            activity_request("tail", activity_id, 201)
+        self.assertFalse(activity_request("kill", activity_id)["killed"])
+
+    async def test_activity_tail_frame_stays_under_the_wire_cap(self):
+        # json escaping can expand one byte to six (\uXXXX), so the cap
+        # must hold on the serialized frame, not the decoded slice.
+        handle = bash('python3 -c "print(chr(0) * 20000)"')
+        await handle
+        from rlm.bash import activity_request
+
+        activity_id = handle._activity_id
+        tail = activity_request("tail", activity_id, 200)["tail"]
+        self.assertGreater(len(tail), 0)
+        self.assertLessEqual(len(json.dumps({"tail": tail})), 16_384)
+
+    async def test_activity_list_frame_stays_under_the_wire_cap(self):
+        handles = [bash("sleep 3 # " + str(index) * 80) for index in range(30)]
+        try:
+            from rlm.bash import activity_request
+
+            rows = activity_request("list")["activities"]
+            self.assertGreater(len(rows), 1)
+            self.assertLessEqual(len(json.dumps({"activities": rows})), 16_384)
+            self.assertTrue(all(len(row["command"]) <= 512 for row in rows))
+        finally:
+            for handle in handles:
+                handle.kill()
+
+    async def test_activity_tail_keeps_the_newest_output_under_the_cap(self):
+        # Escaped output shrinks from the oldest end: the newest line is
+        # always the surviving one.
+        handle = bash('python3 -c "print(chr(0) * 20000); print(chr(65) * 8)"')
+        await handle
+        from rlm.bash import activity_request
+
+        activity_id = handle._activity_id
+        tail = activity_request("tail", activity_id, 200)["tail"]
+        self.assertTrue(tail.endswith("AAAAAAAA"), tail[-60:])
+        self.assertLessEqual(len(json.dumps({"tail": tail})), 16_384)
+
     async def test_await_returns_result(self):
         result = await bash("echo hi")
         self.assertEqual(result.exit_code, 0)
@@ -1222,17 +1287,11 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(bash_module.os, "killpg", side_effect=OSError):
             self.assertFalse(bash_module._signal_group(1234567, signal.SIGKILL))
 
-    async def test_journal_configured_but_unwritable_kills_child_and_raises(self):
+    async def test_journal_configured_but_unwritable_runs_untracked(self):
+        # Best-effort tracking: a journal that cannot be written (here a
+        # directory) leaves the command untracked; it never fails the spawn.
         with tempfile.TemporaryDirectory() as tmp:
             marker = os.path.join(tmp, "marker")
-            pids: list[int] = []
-            real_popen = subprocess.Popen
-
-            def capturing_popen(*args, **kwargs):
-                proc = real_popen(*args, **kwargs)
-                pids.append(proc.pid)
-                return proc
-
             with mock.patch.dict(
                 os.environ,
                 {
@@ -1240,14 +1299,9 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
                     "PRIME_AGENT_KERNEL_OWNER_PID": str(os.getpid()),
                 },
             ):
-                with mock.patch.object(bash_module.subprocess, "Popen", capturing_popen):
-                    with self.assertRaises(RuntimeError):
-                        bash(f"touch {marker}")
-            await _poll_group_dead(pids[0])
-            await asyncio.sleep(0.2)
-            self.assertFalse(os.path.exists(marker))
-            with bash_module._live_lock:
-                self.assertFalse(bash_module._live_handles)
+                result = await bash(f"touch {marker}")
+            self.assertEqual(result.exit_code, 0)
+            self.assertTrue(os.path.exists(marker))
 
     async def test_journal_bad_owner_pid_rejects(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1262,7 +1316,9 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(RuntimeError):
                     bash("echo hi")
 
-    async def test_missing_start_id_rejects_when_configured(self):
+    async def test_missing_start_id_still_spawns_and_records_without_it(self):
+        # Identity-free records are valid: a missing process start id never
+        # fails the spawn, and the record simply omits processStartId.
         with tempfile.TemporaryDirectory() as tmp:
             journal = os.path.join(tmp, "journal.jsonl")
             with mock.patch.dict(
@@ -1273,12 +1329,16 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
                 },
             ):
                 with mock.patch.object(bash_module, "_process_start_id", return_value=None):
-                    with self.assertRaises(RuntimeError):
-                        bash("sleep 30")
+                    result = await bash("echo ok")
+            self.assertEqual(result.exit_code, 0)
+            with open(journal, encoding="utf-8") as f:
+                records = [json.loads(line) for line in f if line.strip()]
+            self.assertTrue(records)
+            self.assertTrue(all("processStartId" not in r for r in records))
 
-    async def test_journal_short_write_rejects_when_configured(self):
-        # A partial os.write would leave a truncated JSON line the host
-        # discards; enrollment must treat it as failure.
+    async def test_journal_short_write_is_dropped_not_fatal(self):
+        # A write that makes no progress drops the record (the host would
+        # discard a truncated line) but tracking stays best-effort: True.
         with tempfile.TemporaryDirectory() as tmp:
             journal = os.path.join(tmp, "journal.jsonl")
 
@@ -1293,7 +1353,8 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
                 },
             ):
                 with mock.patch.object(bash_module.os, "write", short_write):
-                    self.assertFalse(bash_module._record_journal(os.getpid(), active=False))
+                    self.assertTrue(bash_module._record_journal(os.getpid(), active=False))
+            self.assertFalse(os.path.exists(journal) and os.path.getsize(journal) > 0)
 
     async def test_journal_partial_writes_complete_the_record(self):
         with tempfile.TemporaryDirectory() as tmp:

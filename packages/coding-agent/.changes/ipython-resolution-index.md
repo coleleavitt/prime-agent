@@ -1,1 +1,0 @@
-- Added a per-session resolution index that remembers which Python cell fixed a failure, so when the same failure recurs the ipython result carries the cell that resolved it last time.

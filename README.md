@@ -13,7 +13,7 @@ Prime Agent: A Self-Improving RLM Harness
 </h3>
 
 <p align="center">
-  <a href="packages/coding-agent/docs/index.md">Documentation</a> &bull;
+  <a href="#install">Documentation</a> &bull;
   <a href="https://github.com/PrimeIntellect-ai/verifiers">Verifiers</a> &bull;
   <a href="https://github.com/PrimeIntellect-ai/prime-rl">PRIME-RL</a>
 </p>
@@ -21,12 +21,6 @@ Prime Agent: A Self-Improving RLM Harness
 <p align="center">
   <a href="https://github.com/PrimeIntellect-ai/prime-agent/actions/workflows/ci.yml">
     <img src="https://github.com/PrimeIntellect-ai/prime-agent/actions/workflows/ci.yml/badge.svg" alt="CI" />
-  </a>
-  <a href="https://github.com/PrimeIntellect-ai/prime-agent/actions/workflows/build-binaries.yml">
-    <img src="https://github.com/PrimeIntellect-ai/prime-agent/actions/workflows/build-binaries.yml/badge.svg" alt="Build Binaries" />
-  </a>
-  <a href="https://codecov.io/gh/PrimeIntellect-ai/prime-agent">
-    <img src="https://codecov.io/gh/PrimeIntellect-ai/prime-agent/graph/badge.svg" alt="Codecov" />
   </a>
   <a href="https://arxiv.org/abs/2608.23552">
     <img src="https://img.shields.io/badge/arXiv-2608.23552-b31b1b.svg" alt="arXiv" />
@@ -44,6 +38,22 @@ Prime Agent is an open-source coding and research agent for general and long-run
 - The **[Recursive Language Model (RLM)](https://www.primeintellect.ai/blog/rlm)** treats context as variables (*prompt-as-a-variable*) and tools like recursive subagents as function calls (*programmatic tool /sub-agent calling*) inside a persistent REPL.
 - The **[Continual Harness](https://arxiv.org/abs/2605.09998)** stores supplemental prompts, memories, skill descriptions, and reusable subagent specifications as durable state that Prime Agent can refine through small, evidence-backed updates, local to the session by default.
 
+## Install
+
+Install the latest stable version with the one-command installer:
+
+```bash
+curl -fsSL https://app.primeintellect.ai/prime-agent/install.sh | sh
+```
+
+On Windows, install from PowerShell:
+
+```powershell
+irm https://app.primeintellect.ai/prime-agent/install.ps1 | iex
+```
+
+## Why Prime Agent
+
 Prime Agent combines a persistent Python control environment with durable harness state, so useful working context and reusable operating patterns can outlive a single chat window.
 
 - **Everything is programmatic:** a persistent Python REPL is the built-in model tool; file operations, shell commands, tool use, subagents, and context management happen through code.
@@ -56,14 +66,6 @@ Prime Agent combines a persistent Python control environment with durable harnes
 
 ## Getting Started
 
-Install the latest stable release on macOS or Linux:
-
-```bash
-curl --proto '=https' --proto-redir '=https' -fsSL https://app.primeintellect.ai/prime-agent/install.sh | sh
-```
-
-The installer requires HTTPS for release downloads, checks the selected archive against the release origin's SHA-256 inventory, installs the `prime-agent` command, and can prepare the Python runtime used by the agent. The checksum detects corruption or an inconsistent transfer; because the inventory and archive come from the same origin, HTTPS is the authenticity boundary.
-
 Start Prime Agent from the repository or directory you want it to work in:
 
 ```bash
@@ -74,7 +76,7 @@ prime-agent
 On first launch, run `/login` to choose a subscription or API-key provider. Prime Agent works in the current directory and can run commands and modify files there. Use a disposable clone, clean worktree, or another checkpoint you can inspect and restore.
 
 > [!WARNING]
-> Prime Agent executes model-generated Python and project commands with your user permissions. Its worker and kernel processes improve lifecycle isolation and recovery; they are **not** a security sandbox. Review changes and use trusted repositories, instructions, skills, and extensions only. Run untrusted code or instructions in an external sandbox or restricted environment.
+> Prime Agent executes model-generated Python and project commands with your user permissions. Its worker and kernel processes improve lifecycle isolation and recovery; they are **not** a security sandbox. Review changes and use trusted repositories, instructions, and skills only. Run untrusted code or instructions in an external sandbox or restricted environment.
 
 Useful commands:
 
@@ -98,28 +100,9 @@ Prime Agent is built for long-running work, especially for evaluations in resear
 - **Persistent goals:** `/goal` keeps an objective and its progress active across turns until it is completed, paused, or cleared.
 - **Bounded autonomous mode:** `/autonomous` continues within configured turn, token, and time budgets and can run user-defined quality gates. A passed gate checks only what that gate verifies; reaching a limit does not imply task success.
 
-## Documentation
-
-- [Quickstart](packages/coding-agent/docs/quickstart.md) — install, authenticate, and run a first session
-- [Usage and CLI reference](packages/coding-agent/docs/usage.md) — commands, sessions, autonomous limits, and output modes
-- [Long-running and background agents](packages/coding-agent/docs/long-running-agents.md) — detach and reattach, goals, heartbeats, and schedules
-- [RLM programming model](packages/coding-agent/docs/rlm.md) — the persistent Python REPL, subagents, skills, and the trust model
-- [JSON mode](packages/coding-agent/docs/json.md) and [RPC mode](packages/coding-agent/docs/rpc.md) — headless automation and integrations
-- [Skills](packages/coding-agent/docs/skills.md) — install and create reusable capabilities
-- [Provider setup](packages/coding-agent/docs/providers.md) — subscription and API-key providers
-- [Architecture overview](packages/coding-agent/docs/architecture.md) — daemon, worker, kernel, and persistence boundaries
-- [Development](packages/coding-agent/docs/development.md) — build and run from source
-- [Coverage](docs/coverage.md) — local commands, CI artifacts, and Codecov gates
-
 ## Contributing
 
 Start with a GitHub Discussion for [general questions](https://github.com/PrimeIntellect-ai/prime-agent/discussions/categories/general), [bug reports](https://github.com/PrimeIntellect-ai/prime-agent/discussions/categories/bug-reports), and [feature requests](https://github.com/PrimeIntellect-ai/prime-agent/discussions/categories/feature-requests). Maintainers promote accepted work into Issues, and pull requests are reviewed from maintainers and vouched contributors.
-
-Read the [contribution guidelines](CONTRIBUTING.md) for the full process. Report security vulnerabilities privately by following the [security policy](SECURITY.md).
-
-## Acknowledgements
-
-Our agent and TUI is built on top of [`pi`](https://github.com/earendil-works/pi). We thank the authors of `pi` for their valuable work.
 
 ## License
 

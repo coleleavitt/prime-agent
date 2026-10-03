@@ -19,6 +19,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from collections import deque
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
@@ -53,6 +54,9 @@ _CARGO_BUILD_LOCK_TEXT = b"Blocking waiting for file lock on build directory"
 _ACTIVE_INVENTORY_LIMIT = 100
 _COMPLETION_NOTICE_COMMAND_CAP = 1000
 _CELL_COMMAND_CAP = 300
+# Display MIME the host aggregates into a per-cell summary of the bash()
+# commands the cell ran (first capped command, count, line total).
+_BASH_COMMAND_MIME = "application/vnd.prime-agent.bash-command+json"
 _ASYNCIO_WRAPPER_CALLBACKS = {
     ("asyncio.tasks", "gather.<locals>._done_callback"),
     ("asyncio.tasks", "shield.<locals>._inner_done_callback"),
@@ -62,6 +66,10 @@ _ASYNCIO_WRAPPER_CALLBACKS = {
 }
 
 _live_handles: set["BashHandle"] = set()
+# Kernel-owned opaque IDs: retained results are bounded, never resolved by PID.
+_activity_handles: dict[str, "BashHandle"] = {}
+_activity_order: deque[str] = deque()
+_ACTIVITY_HISTORY_CAP = 64
 _live_lock = threading.Lock()
 _hook_installed = False
 _hook_lock = threading.Lock()
@@ -95,6 +103,12 @@ def _consume_notice_task(task: asyncio.Task[None]) -> None:
     """Retrieve detached notifier failures so they never become loop warnings."""
     if not task.cancelled():
         task.exception()
+
+
+def _capped(command: str) -> str:
+    if len(command) > _COMPLETION_NOTICE_COMMAND_CAP:
+        return command[:_COMPLETION_NOTICE_COMMAND_CAP] + "\n... [command truncated]"
+    return command
 
 
 def _completion_reaches(
@@ -274,6 +288,7 @@ class BashHandle:
         self._span_lock = threading.Lock()
         self._span_context = contextvars.copy_context()
         self._killed = False
+        self._activity_id = secrets.token_hex(16)
         completion_context = _current_cell_completion_context()
         self._creating_cell_finished = completion_context[0] if completion_context else None
         self._creating_cell_task = completion_context[1] if completion_context else None
@@ -401,6 +416,7 @@ class BashHandle:
         self._released = False
         with _live_lock:
             _live_handles.add(self)
+            _activity_handles[self._activity_id] = self
         enrolled = _record_journal(self._pid, active=True)
         if not enrolled:
             # Fail closed: a configured journal that cannot enroll the pid must
@@ -671,6 +687,9 @@ class BashHandle:
         self._warning_stop.set()
         with _live_lock:
             _live_handles.discard(self)
+            _activity_order.append(self._activity_id)
+            while len(_activity_order) > _ACTIVITY_HISTORY_CAP:
+                _activity_handles.pop(_activity_order.popleft(), None)
 
     def _reap_group(self) -> bool:
         # Group liveness, not leader death, gates the inactive record: members
@@ -865,7 +884,7 @@ class BashHandle:
             return
         from . import repl
 
-        activity = {"id": secrets.token_hex(16), "pid": self._pid, "active": True}
+        activity = {"id": self._activity_id, "pid": self._pid, "active": True}
         # Publish synchronously before bash() returns and the creating cell can end.
         repl.emit({"application/vnd.prime-agent.bash-activity+json": activity})
         notice = self._notify_background_completion(cell_finished, activity)
@@ -891,9 +910,7 @@ class BashHandle:
             await cell_finished.wait()
             if self._awaited_by_creating_cell or self._result_consumed or not repl.is_active():
                 return
-            command = self.command
-            if len(command) > _COMPLETION_NOTICE_COMMAND_CAP:
-                command = command[:_COMPLETION_NOTICE_COMMAND_CAP] + "\n... [command truncated]"
+            command = _capped(self.command)
             reply = await repl.host_request(
                 {
                     "type": "bash.completed",
@@ -920,17 +937,7 @@ class BashHandle:
 
     def _arm_consumed_notice(self, command: str) -> None:
         # Armed only post-acceptance: the withdrawal can never overtake its notice.
-        loop = asyncio.get_running_loop()
-
-        def dispatch() -> None:
-            def start() -> None:
-                task = loop.create_task(self._notify_result_consumed(command))
-                task.add_done_callback(_consume_notice_task)
-
-            try:
-                loop.call_soon_threadsafe(start)
-            except RuntimeError:
-                pass  # notifying loop already closed
+        dispatch = functools.partial(self._notify_result_consumed, command)
 
         with self._callback_lock:
             if not self._result_consumed:
@@ -938,17 +945,29 @@ class BashHandle:
                 return
         dispatch()
 
-    async def _notify_result_consumed(self, command: str) -> None:
+    def _notify_result_consumed(self, command: str) -> None:
+        """Ship the withdrawal inside the read, ahead of the cell's done event.
+
+        The host delivers a queued notice at the reading cell's turn boundary,
+        which begins when that cell's done event is processed: a withdrawal
+        frame that leaves the kernel after done arrives too late, and the stale
+        notice wakes the model anyway. Reads happen inside a live cell, so
+        writing the frame right here puts it ahead of done on the wire, where
+        the host must withdraw before it can dispatch. The reply never matters
+        (unknown reply ids are dropped), so the request is fire-and-forget:
+        no future to await, no event-loop hop that could run after the cell.
+        """
         from . import repl
 
         if not repl.is_active():
             return
-        try:
-            await repl.host_request(
-                {"type": "bash.consumed", "pid": self._pid, "command": command}
-            )
-        except (OSError, RuntimeError):
-            return  # bridge closed at teardown; old hosts error-reply — both fine
+        repl._send(
+            {
+                "event": "host_request",
+                "id": uuid.uuid4().hex,
+                "data": {"type": "bash.consumed", "pid": self._pid, "command": command},
+            }
+        )
 
     async def _wait_reaped(self) -> None:
         loop = asyncio.get_running_loop()
@@ -1089,6 +1108,7 @@ class BashHandle:
         self._warning_stop.set()
         with _live_lock:
             _live_handles.discard(self)
+            _activity_handles.pop(self._activity_id, None)
         if delivered:
             _record_journal(self._pid, active=False)
 
@@ -1141,7 +1161,18 @@ def bash(command: str) -> BashHandle:
     if not isinstance(command, str) or not command:
         raise TypeError("command must be a non-empty str")
     _install_shutdown_hook()
-    return BashHandle(command)
+    handle = BashHandle(command)
+    from . import repl
+
+    repl.emit(
+        {
+            _BASH_COMMAND_MIME: {
+                "command": _capped(command),
+                "lines": sum(1 for line in command.splitlines() if line.strip()),
+            }
+        }
+    )
+    return handle
 
 
 def _shell() -> str:
@@ -1377,8 +1408,16 @@ def _process_start_id(pid: int) -> str | None:
         # macOS has no /proc; /bin/ps is always present there, so use the
         # absolute path (bare `ps` stays only as the exotic-POSIX last resort).
         ps = "/bin/ps" if sys.platform == "darwin" else "ps"
+        # `lstart` renders in the subprocess timezone and locale, so pin both
+        # for a durable identity (TS getPsProcessStartId; the Rust host reads
+        # the same pinned values - an unpinned match would drift on non-UTC
+        # hosts and the identity comparison would never agree).
         out = subprocess.run(
-            [ps, "-p", str(pid), "-o", "lstart="], capture_output=True, text=True, timeout=5
+            [ps, "-p", str(pid), "-o", "lstart="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            env={**os.environ, "LC_ALL": "C", "LC_TIME": "C", "LANG": "C", "TZ": "UTC"},
         ).stdout.strip()
         return f"ps:{out}" if out else None
     except (OSError, subprocess.SubprocessError):
@@ -1386,9 +1425,10 @@ def _process_start_id(pid: int) -> str | None:
 
 
 def _record_journal(pid: int, active: bool) -> bool:
-    # Returns False only when the journal is configured but enrollment failed;
-    # active-record callers must then fail closed. Active records always carry
-    # a processStartId so host reaping stays identity-verified.
+    # Best-effort per the TS (core/orphan-process-journal.ts): journaling
+    # failures never fail the spawn - a misconfigured owner pid is the only
+    # hard False. Identity-free records (no processStartId) are valid and
+    # still safely reaped on POSIX (the group-scoped kill).
     path = os.environ.get("PRIME_AGENT_INTERNAL_ORPHAN_PROCESS_JOURNAL")
     owner = os.environ.get("PRIME_AGENT_KERNEL_OWNER_PID")
     if not path or not owner:
@@ -1398,8 +1438,6 @@ def _record_journal(pid: int, active: bool) -> bool:
     except ValueError:
         return False
     start_id = _process_start_id(pid) if active else None
-    if active and start_id is None:
-        return False
     record: dict[str, Any] = {
         "version": 1,
         "pid": pid,
@@ -1411,22 +1449,25 @@ def _record_journal(pid: int, active: bool) -> bool:
         "recordedAt": datetime.now(timezone.utc).isoformat(),
     }
     data = (json.dumps(record) + "\n").encode()
+    # TS parity (core/orphan-process-journal.ts): process tracking must not
+    # make a successfully spawned command fail - a journal that cannot be
+    # written (a vanished dir, a full disk) means the command runs untracked,
+    # never that the spawn dies. The short-write guard still drops truncated
+    # lines (the host discards them) but returns True: the command is alive.
     try:
         fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
         try:
-            # Complete-write loop: a short write would leave a truncated JSON
-            # line that the host discards, which must count as failure.
             view = memoryview(data)
             while view:
                 written = os.write(fd, view)
                 if written <= 0:
-                    return False
+                    break
                 view = view[written:]
             os.fsync(fd)
         finally:
             os.close(fd)
     except OSError:
-        return False
+        pass
     return True
 
 
@@ -1470,3 +1511,60 @@ def _install_shutdown_hook() -> None:
             return
         _hook_installed = True
     atexit.register(_kill_live_handles)
+
+
+def activity_request(action: str, activity_id: str | None = None, lines: int = 50) -> dict[str, Any]:
+    """Inspect/stop only handles created by this kernel; called off the cell queue."""
+    with _live_lock:
+        if action == "list":
+            handles = list(_activity_handles.items())
+        else:
+            handle = _activity_handles.get(activity_id or "")
+            if handle is None:
+                raise KeyError("Unknown kernel bash activity")
+    if action == "list":
+        rows = [
+            {
+                "id": key,
+                "command": handle.command[:512],
+                "pid": handle._pid,
+                "startedAt": handle._started_at.isoformat(),
+                "durationMs": int((handle._result.duration if handle._result else time.monotonic() - handle._started) * 1000),
+                "status": "finished" if handle._reaped else "running",
+                "exitCode": handle._result.exit_code if handle._result else None,
+            }
+            for key, handle in handles
+        ]
+        # The serialized list frame stays under the same 16 KiB cap as the
+        # tail: long commands are truncated per row first, then rows drop
+        # until the response fits - finished rows drop before running ones,
+        # so live processes never fall off the activity list while they
+        # are still the ones the user can act on.
+        while len(json.dumps({"activities": rows})) > 16_384 and len(rows) > 1:
+            victim = next(
+                (index for index, row in enumerate(rows) if row["status"] != "running"),
+                0,
+            )
+            rows.pop(victim)
+        return {"activities": rows}
+    if action == "tail":
+        if isinstance(lines, bool) or not isinstance(lines, int) or not 1 <= lines <= 200:
+            raise ValueError("lines must be an integer between 1 and 200")
+        # Each retained buffer is bounded, and the response has a further byte cap.
+        tail = "\n".join(handle._buffer.text().splitlines()[-lines:])
+        payload = tail.encode("utf-8")[-16_384:].decode("utf-8", errors="replace")
+        # json escaping can expand one character to six bytes, so a
+        # byte-slice of the decoded text cannot bound the serialized size
+        # alone. Trim the wrapped payload from the oldest end; the repl
+        # handler enforces the same cap on the complete response frame.
+        while len(json.dumps({"tail": payload})) > 16_384:
+            excess = len(json.dumps({"tail": payload})) - 16_384
+            keep = max(1, len(payload) - excess // 6 - 1)
+            payload = payload[-keep:]
+        return {"activityId": activity_id, "tail": payload}
+    if action == "kill":
+        if handle._reaped:
+            return {"activityId": activity_id, "killed": False}
+        handle.kill()
+        return {"activityId": activity_id, "killed": True}
+    raise ValueError("Unknown kernel bash action")

@@ -1,5 +1,0 @@
-- Fixed provisional observation windows and harness trust windows never settling across sessions: they are measured in a durable failure-observation ordinal (the failure ledger's total occurrence count) instead of per-session assistant turns, which restart at 0 every session.
-- Changed provisional windows to record the clock they were opened on, the global ledger ordinal or, for a local champion while the global ledger is off, the session ledger ordinal, and to be checked only on that clock, so toggling `PRIME_AGENT_GLOBAL_LEDGER` can never reopen or mismatch a window.
-- Changed a provisional window with no clock, including every window written before clocks and any clock this build does not recognise, to never regress.
-- Changed `/refine` to settle the trust windows the current ordinal can decide before opening a new claim, so a commit's own window can never credit it.
-- Changed kernel-authored harness entries to be stamped `source: "kernel"` instead of `"agent"`; rows with no recorded source still load as `"agent"`.

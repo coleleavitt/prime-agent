@@ -10,6 +10,9 @@ Two surfaces, one module:
   ``describe_tool`` (live tool metadata). Inventory calls are bounded and never
   return credentials; live tool schemas and results are passed through
   unmodified.
+- Host view: ``status(servers, timeout_ms)`` feeds the daemon's MCP
+  connections view (one bounded per-server listing, errors reported per
+  server).
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from . import host_request, trace
+from .mcp_base import McpToolError
 
 __all__ = [
     "McpCredentialsUnavailable",
@@ -78,9 +82,6 @@ _SECRET_KEY_PATTERN = re.compile(r"token|secret|password|credential|authorizatio
 class McpStartupError(RuntimeError):
     """A stdio server failed while completing the MCP startup handshake."""
 
-
-class McpToolError(RuntimeError):
-    """Raised when an MCP tool call returns a result flagged as an error."""
 
 
 class McpDiscoveryError(RuntimeError):
@@ -598,6 +599,34 @@ async def list_tools(server: str) -> list[dict[str, Any]]:
         return tools
 
 
+async def status(servers: list[str], timeout_ms: float) -> list[dict[str, Any]]:
+    """Per-server tool listing for the host's MCP connections view.
+
+    Each requested server is listed concurrently, bounded by `timeout_ms`
+    per server; a server that fails or times out reports its error instead
+    of failing the whole request. Opening a not-yet-connected server is
+    intended: the view exists to show what each connection offers.
+    """
+    timeout = max(timeout_ms, 1.0) / 1000.0
+
+    async def _one(server: str) -> dict[str, Any]:
+        try:
+            tools = await asyncio.wait_for(list_tools(server), timeout=timeout)
+        except BaseException as exc:  # noqa: BLE001 - one broken server reports alone
+            return {"server": server, "tools": None, "error": f"{type(exc).__name__}: {exc}"}
+        return {
+            "server": server,
+            "tools": [
+                {"name": tool.get("name"), "description": tool.get("description") or ""}
+                for tool in tools
+            ],
+            "error": None,
+        }
+
+    results = await asyncio.gather(*(_one(server) for server in servers))
+    return list(results)
+
+
 async def call_tool(server: str, tool: str, arguments: dict[str, Any] | None = None) -> Any:
     with trace.start_span("mcp.call", **_span_attrs(server, tool)):
         _validate_name(tool, "tool")
@@ -906,6 +935,13 @@ def _credentials_unavailable(server: str) -> McpCredentialsUnavailable:
 
 
 async def _auth_identity(server: str, config: dict[str, Any]) -> str:
+    if config.get("credentialSource") == "static-token":
+        # A pasted static token has no refresh concept: it either resolves from
+        # the bound stored credential or the connection fails closed.
+        token = _static_token(server, config)
+        if not token:
+            raise _credentials_unavailable(server)
+        return hashlib.sha256(token.encode()).hexdigest()
     env_name = config.get("bearerTokenEnvVar")
     token = os.environ.get(env_name, "").strip() if isinstance(env_name, str) else ""
     if config.get("oauth") is True and not token:
@@ -926,12 +962,32 @@ async def _auth_identity(server: str, config: dict[str, Any]) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def _static_token(server: str, config: dict[str, Any]) -> str:
+    """The pasted static token for a ``static-token`` connection.
+
+    Only the endpoint-BOUND stored credential counts (``_bound_auth``): a token
+    pasted for another endpoint never attaches here. The bearer is a literal
+    pasted value — never resolved as an env-var name or a ``!command``.
+    """
+    cred = _bound_auth(f"mcp:{server}", config)
+    bearer = (cred or {}).get("bearer")
+    if not isinstance(bearer, str):
+        return ""
+    return bearer.strip()
+
+
 async def _headers(server: str, config: dict[str, Any]) -> dict[str, str]:
     raw = config.get("headers", {})
     if not isinstance(raw, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in raw.items()):
         raise ValueError("MCP HTTP headers must contain strings")
     headers = dict(raw)
     if config.get("credentialSource") == "acp":
+        return headers
+    if config.get("credentialSource") == "static-token":
+        token = _static_token(server, config)
+        if not token:
+            raise _credentials_unavailable(server)
+        headers["Authorization"] = f"Bearer {token}"
         return headers
     env_name = config.get("bearerTokenEnvVar")
     token = os.environ.get(env_name, "").strip() if isinstance(env_name, str) else ""

@@ -1,1 +1,0 @@
-- Fixed the daemon supervisor exiting and dropping every live session when a busy worker failed to answer during background recovery.

@@ -1,2 +1,0 @@
-- Fixed tool spans never carrying the `failure.fingerprint` attribute the learning index reads, which left its treated cohort empty.
-- Fixed kernel-side span errors reaching the structured log without their error text, so `prime-agent trace` now shows why a failed Python span failed.

@@ -1,1 +1,0 @@
-- Fixed agent messages being refused when a session's queue was full of unrelated work; only pending agent messages now count against the agent message cap.

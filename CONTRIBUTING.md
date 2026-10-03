@@ -14,7 +14,7 @@ Choose the category that best matches what you want to share:
 
 Search existing Discussions before creating a new one. Include enough detail for someone else to understand and reproduce the problem, but do not share API keys, tokens, private prompts, or other sensitive information.
 
-For security vulnerabilities, follow [SECURITY.md](SECURITY.md) instead of posting publicly.
+For security vulnerabilities, report them privately to the maintainers instead of posting publicly.
 
 ## Issues
 
@@ -38,15 +38,6 @@ If a maintainer has invited a pull request:
 4. Run the relevant checks locally and describe the validation in the pull request.
 5. Avoid unrelated refactors or dependency changes.
 
-Development setup and commands are documented in the [development guide](packages/coding-agent/docs/development.md).
-
-## Changelog entries
-
-Do not edit `packages/*/CHANGELOG.md` directly. Instead, add one fragment
-file per PR per touched package: `packages/<pkg>/.changes/<slug>.md`, where `<slug>` is a kebab-case name
-derived from your branch or ticket (e.g. `eng-1234-fix-resize.md`). The file contains exactly the bullet
-line(s) that describe the change, e.g. `- Fixed the frobnicator dropping input on resize.`. The release
-script aggregates fragments into the release section and deletes them. PRs that change `packages/<pkg>/src`
-without a fragment fail CI; apply the `no-changelog` label to opt out.
+Development rules, setup, and commands for this branch are documented in [AGENTS.md](AGENTS.md) and the Makefile gate targets (`make check`, `make deny`, `make windows-cross`).
 
 Maintainers may close a pull request that changes scope, cannot be validated safely, or no longer fits the project roadmap.

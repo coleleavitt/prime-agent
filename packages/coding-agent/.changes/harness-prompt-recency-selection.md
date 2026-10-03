@@ -1,1 +1,0 @@
-- Changed the continual harness overview in the system prompt to rank the most recently updated entry at each path first, so recent lessons are no longer crowded out by older alphabetically earlier duplicates.

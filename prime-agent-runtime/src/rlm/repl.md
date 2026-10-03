@@ -52,9 +52,11 @@ event.
 | `snapshot` | `{"type":"snapshot","id":str,"path":str,"manifest_path":str,"max_bytes"?:int,"max_variable_bytes"?:int,"prune_oversized"?:bool}` |
 | `restore` | `{"type":"restore","id":str,"path":str}` |
 | `list_names` | `{"type":"list_names","id":str}` |
+| `mcp_status` | `{"type":"mcp_status","id":str,"servers":[str,...],"timeout_ms"?:number}` — host-side view query: per-server tool listing (opens each server on demand, bounded by `timeout_ms` per server; default 10s); the `done` frame carries `connections: [{server, tools: [{name, description}] | null, error: str | null}]` |
+| `bash_activity` | `{"type":"bash_activity","id":str,"action":"list"|"tail"|"kill","activityId"?:str,"lines"?:int}` — out-of-band even during a running cell; tail lines 1–200, response capped at 16 KiB; opaque IDs resolve only against this kernel’s handles |
 | `shutdown` | `{"type":"shutdown","id"?:str}` |
 
-Requests other than `interrupt` and `host_reply` run strictly in order, one at
+Requests other than `interrupt`, `host_reply`, and `bash_activity` run strictly in order, one at
 a time. A malformed line
 produces `{"event":"error","id":null,"ename":"ProtocolError",...}` and the
 runtime keeps serving. Closing stdin is equivalent to `shutdown`.
@@ -68,29 +70,48 @@ runtime keeps serving. Closing stdin is equivalent to `shutdown`.
   tasks inherit the spawning cell's id (even after that cell finished). `null`
   for user threads, raw fd writes (`os.write`, C extensions, subprocesses),
   and anything else without provable ownership — bytes read from the fd pipes
-  are never attributed to a cell.
+  are never attributed to a cell. A Python-level write ships at most 64 Ki
+  characters per frame; a larger write arrives as multiple events in order.
 - `{"event":"result","id":str,"text":str}` — `repr` of the cell's trailing
   expression when the body ends in an expression whose value is not `None`.
-  The value is also bound to `_` in the namespace.
+  The value is also bound to `_` in the namespace. The `repr` content is capped
+  at 1,048,576 characters; a longer `repr` is truncated to the cap and a trailing
+  truncation marker is appended after it, so the total `text` can exceed the cap
+  by the marker's length.
 - `{"event":"display","id":str|null,"data":{mime:payload,...}}` — one dict of
-  MIME type to JSON payload, shipped verbatim from `emit()`. `id` rides task
+  MIME type to JSON payload, shipped verbatim from `emit()`. A payload whose
+  JSON encoding exceeds 16 Mi characters is refused: `emit()` raises
+  `ValueError` in the calling cell. `id` rides task
   context: an asyncio task spawned by a cell keeps that cell's id even after
   the cell finishes; user threads emit `null`.
 - `{"event":"host_request","id":str,"data":{...},"traceparent":str}` — one
   typed request from runtime code to the host; the host answers with a
   `host_reply` request carrying the same id. `traceparent` is the runtime's
   `kernel.host_request` client span (see Trace context below).
+  `data` is subject to the same encoding cap as a `display` payload:
+  `host_request()` raises `ValueError` in the calling cell instead of sending
+  an oversized request.
 - `{"event":"host_cancel","id":str}` — cancellation for that exact in-flight
   host request. The host still sends its terminal `host_reply` after settlement.
 - `{"event":"trace","id":str|null,"msg":"span_start"|"span_end","name":str,"traceId":str,"spanId":str,"parentSpanId"?:str,"attrs":{...}}`
   — one span lifecycle event. `span_end` also carries `durationMs` and `status`. `id` is the request whose handling produced it (task
   context, like `display`); `null` from user threads.
 - `{"event":"error","id":str|null,"ename":str,"evalue":str,"traceback":[str,...]}`
+  — `evalue` and each `traceback` entry are capped like `result` text (same
+  cap, same trailing marker).
 - `{"event":"done","id":str,"status":"ok"|"error"}` — exactly one per id'd
   request, always after all of that request's other events. A snapshot `done`
   adds `saved`, `skipped`, `pruned`, `bytes`; a restore `done` adds `restored`,
   `failed`; a `list_names` `done` adds `names`; a failed snapshot/restore adds
-  `reason`. Restoring a missing file reports `status:"ok"` with empty
+  `reason`. Bash activity `done` carries `activities` (list), `tail` (tail),
+  or `killed` (kill); `status:"error"` with `reason` on unknown IDs.
+  The daemon advertises `kernel_bash_activity`; clients poll `list_kernel_bash`
+  for updates (no push events). Each row contains opaque `id`, `command`,
+  `pid`, `durationMs`, and `status` (`running` or `finished`). Finished rows
+  are retained for the latest 64 completions within a live kernel only; restart
+  invalidates all IDs. `tail_kernel_bash` returns `{id,tail}`, and
+  `kill_kernel_bash` returns `{id,killed}`. Neither action accepts a PID.
+  Restoring a missing file reports `status:"ok"` with empty
   `restored`/`failed` lists and `reason:"snapshot not found"`. An `execute`
   `done` may add `bashCommands` (see below).
 

@@ -1,1 +1,0 @@
-- Fixed the daemon supervisor exiting and dropping every live session when a busy worker stalled a request past its timeout.

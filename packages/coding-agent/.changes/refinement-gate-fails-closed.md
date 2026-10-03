@@ -1,3 +1,0 @@
-- Fixed the RAVO deep gate passing a candidate whose judge omitted or garbled its verdict; only an explicit pass passes, and anything else abstains.
-- Changed RAVO rejections of global refines to be kept in the global refinement history, outside the rollback targets, instead of only in the session transcript.
-- Added a `harness.state.corrupt` warning when a harness state file is unreadable or not a JSON object, instead of silently loading it as empty.

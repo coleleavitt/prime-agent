@@ -1,1 +1,0 @@
-- Changed harness prompt selection so behavioural preferences rank ahead of episodic project notes; recency alone buried the only durable rule below the render limit within a day.
