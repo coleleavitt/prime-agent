@@ -1618,7 +1618,7 @@ import sys
 base = os.path.dirname(os.path.abspath(__file__))
 with open(os.path.join(base, "starts"), "a") as f:
     f.write("x")
-print(json.dumps({"event": "ready", "protocol": 3, "python": "3.13.0"}), flush=True)
+print(json.dumps({"event": "ready", "protocol": 4, "python": "3.13.0"}), flush=True)
 for line in sys.stdin:
     try:
         req = json.loads(line)
