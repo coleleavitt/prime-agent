@@ -292,47 +292,6 @@ mod unix_tests {
         let _ = std::fs::remove_file(&file);
         let _ = std::fs::remove_dir(&dir);
     }
-}
-
-#[cfg(all(test, windows))]
-mod windows_tests {
-    use super::*;
-
-    /// The probes a Windows runner must verify: the restriction helpers
-    /// are no-ops (inherited ACLs) that never break access, and the
-    /// readability checks are open probes.
-    #[test]
-    fn restriction_is_a_no_op_and_probes_match_open_semantics() {
-        let dir = std::env::temp_dir().join(format!("pa-perms-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("temp dir");
-        let file = dir.join("probe.txt");
-        std::fs::write(&file, "x").expect("write");
-        assert!(restrict_file(&file).is_ok());
-        assert!(restrict_dir(&dir).is_ok());
-        assert!(is_readable_writable(&file));
-        assert!(is_readable(&file).is_ok());
-        let _ = std::fs::remove_file(&file);
-        let _ = std::fs::remove_dir(&dir);
-    }
-
-    /// The ownership probes fail closed: no ownership is claimed from
-    /// inherited ACLs, and there is no uid-style probe on this platform.
-    #[test]
-    fn ownership_probes_fail_closed() {
-        let dir = std::env::temp_dir().join(format!("pa-perms-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("temp dir");
-        assert_eq!(effective_uid(), None);
-        assert!(
-            !owned_by_effective_user(&dir),
-            "inherited ACLs are not an ownership proof"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
-
-#[cfg(all(test, unix))]
-mod unix_tests {
-    use super::*;
 
     /// The exact surface the private-journal contract enforces with: the
     /// effective-uid probe, the ownership probe (own paths true,
@@ -377,6 +336,42 @@ mod unix_tests {
             "the created file is private"
         );
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    /// The probes a Windows runner must verify: the restriction helpers
+    /// are no-ops (inherited ACLs) that never break access, and the
+    /// readability checks are open probes.
+    #[test]
+    fn restriction_is_a_no_op_and_probes_match_open_semantics() {
+        let dir = std::env::temp_dir().join(format!("pa-perms-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let file = dir.join("probe.txt");
+        std::fs::write(&file, "x").expect("write");
+        assert!(restrict_file(&file).is_ok());
+        assert!(restrict_dir(&dir).is_ok());
+        assert!(is_readable_writable(&file));
+        assert!(is_readable(&file).is_ok());
+        let _ = std::fs::remove_file(&file);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    /// The ownership probes fail closed: no ownership is claimed from
+    /// inherited ACLs, and there is no uid-style probe on this platform.
+    #[test]
+    fn ownership_probes_fail_closed() {
+        let dir = std::env::temp_dir().join(format!("pa-perms-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        assert_eq!(effective_uid(), None);
+        assert!(
+            !owned_by_effective_user(&dir),
+            "inherited ACLs are not an ownership proof"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

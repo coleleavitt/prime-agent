@@ -29,7 +29,6 @@
 //! uses, and a receipt exists only after the target admitted the
 //! message.
 
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use pa_types::daemon::cloud::{CloudAgentMessageReceipt, CloudFamilyRow, CloudFamilyRowStatus};
@@ -65,10 +64,10 @@ impl LocalFamilyDelivery {
     /// # Errors
     ///
     /// Returns an error when the inbox journal cannot be opened.
-    pub fn new(supervisor: Arc<Supervisor>, inbox_path: PathBuf) -> anyhow::Result<Self> {
+    pub fn new(supervisor: Arc<Supervisor>, inbox_path: &Path) -> anyhow::Result<Self> {
         Ok(Self {
             supervisor,
-            inbox: Mutex::new(CloudInboxLog::open(&inbox_path)?),
+            inbox: Mutex::new(CloudInboxLog::open(inbox_path)?),
         })
     }
 
@@ -268,49 +267,6 @@ impl LocalFamilyDelivery {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
-}
-
-impl CloudFamilyDelivery for LocalFamilyDelivery {
-    async fn deliver_agent_message(
-        &self,
-        message: IncomingCloudMessage,
-    ) -> Result<CloudAgentMessageReceipt, CloudDeliveryError> {
-        self.deliver_idempotent(&message).await
-    }
-
-    /// The reconciliation lookup: the recorded receipt answers
-    /// `Admitted`; an admitted-without-receipt request (a crash
-    /// interrupted the first handling) is re-driven — safe, because the
-    /// receiver inbox dedupes by request id — and its fresh receipt
-    /// answers `Admitted`; a request this seam never admitted answers
-    /// `Unknown` (provably never attempted — the seam admits durably
-    /// BEFORE any delivery); an admitted request whose outcome the
-    /// re-drive could not resolve answers `Uncertain` — the receiver
-    /// may already hold the message, so nothing downstream may record a
-    /// negative answer from that state.
-    async fn lookup_agent_message(&self, request_id: &str) -> AgentMessageLookup {
-        let (admission, receipt) = {
-            let inbox = self.locked_inbox();
-            (inbox.admission(request_id), inbox.receipt(request_id))
-        };
-        if let Some(receipt) = receipt {
-            return AgentMessageLookup::Admitted(receipt);
-        }
-        let Some(message) = admission else {
-            return AgentMessageLookup::Unknown;
-        };
-        match self.deliver_idempotent(&message).await {
-            Ok(receipt) => AgentMessageLookup::Admitted(receipt),
-            // The re-drive failed (the target is gone, the reach is now
-            // refused): the request WAS durably admitted at this seam,
-            // so the receiver may already hold the message. Answer
-            // `Uncertain` — never `Unknown` (which reads as
-            // never-attempted and would let the wiring re-drive into a
-            // durable negative answer for a delivered message) and never
-            // a fabricated receipt.
-            Err(_) => AgentMessageLookup::Uncertain,
-        }
-    }
 
     /// The TS `cloudFamilyRowsFor` port over the real roster: the
     /// requesting remote session's own row, its parent (through the
@@ -318,10 +274,7 @@ impl CloudFamilyDelivery for LocalFamilyDelivery {
     /// same depth). A session without a parent edge answers its own row
     /// alone (TS returns early); a resolution failure degrades to empty
     /// rows.
-    async fn family_roster(
-        &self,
-        for_remote_session_id: &str,
-    ) -> Result<Vec<CloudFamilyRow>, String> {
+    fn family_rows_for(&self, for_remote_session_id: &str) -> Result<Vec<CloudFamilyRow>, String> {
         let Some(source_summary) = self.remote_summary(for_remote_session_id) else {
             return Ok(Vec::new());
         };
@@ -398,6 +351,58 @@ impl CloudFamilyDelivery for LocalFamilyDelivery {
             rows.push(family_row_from_summary(&summary));
         }
         Ok(rows)
+    }
+}
+
+impl CloudFamilyDelivery for LocalFamilyDelivery {
+    async fn deliver_agent_message(
+        &self,
+        message: IncomingCloudMessage,
+    ) -> Result<CloudAgentMessageReceipt, CloudDeliveryError> {
+        self.deliver_idempotent(&message).await
+    }
+
+    /// The reconciliation lookup: the recorded receipt answers
+    /// `Admitted`; an admitted-without-receipt request (a crash
+    /// interrupted the first handling) is re-driven — safe, because the
+    /// receiver inbox dedupes by request id — and its fresh receipt
+    /// answers `Admitted`; a request this seam never admitted answers
+    /// `Unknown` (provably never attempted — the seam admits durably
+    /// BEFORE any delivery); an admitted request whose outcome the
+    /// re-drive could not resolve answers `Uncertain` — the receiver
+    /// may already hold the message, so nothing downstream may record a
+    /// negative answer from that state.
+    async fn lookup_agent_message(&self, request_id: &str) -> AgentMessageLookup {
+        let (admission, receipt) = {
+            let inbox = self.locked_inbox();
+            (inbox.admission(request_id), inbox.receipt(request_id))
+        };
+        if let Some(receipt) = receipt {
+            return AgentMessageLookup::Admitted(receipt);
+        }
+        let Some(message) = admission else {
+            return AgentMessageLookup::Unknown;
+        };
+        match self.deliver_idempotent(&message).await {
+            Ok(receipt) => AgentMessageLookup::Admitted(receipt),
+            // The re-drive failed (the target is gone, the reach is now
+            // refused): the request WAS durably admitted at this seam,
+            // so the receiver may already hold the message. Answer
+            // `Uncertain` — never `Unknown` (which reads as
+            // never-attempted and would let the wiring re-drive into a
+            // durable negative answer for a delivered message) and never
+            // a fabricated receipt.
+            Err(_) => AgentMessageLookup::Uncertain,
+        }
+    }
+
+    fn family_roster(
+        &self,
+        for_remote_session_id: &str,
+    ) -> impl std::future::Future<Output = Result<Vec<CloudFamilyRow>, String>> + Send {
+        // The roster resolves from in-memory and on-disk state with no
+        // await point; the trait's future is immediately ready.
+        std::future::ready(self.family_rows_for(for_remote_session_id))
     }
 }
 

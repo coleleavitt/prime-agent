@@ -2,6 +2,9 @@
 // proof: the family logs' private-parent validator fails closed on
 // platforms without the owner/mode probes.
 #![cfg(unix)]
+// The delivery and submitter doubles answer from in-memory maps: their
+// async trait methods have nothing to await by design.
+#![expect(clippy::unused_async_trait_impl)]
 
 //! Cloud family messaging substrate verifier: the journaled request/response
 //! exchange over real durable logs, with the honesty contracts the design

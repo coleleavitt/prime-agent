@@ -137,6 +137,9 @@ impl SupervisorChildSessionsInner {
                 request.thinking.as_deref(),
                 &cwd,
                 &child_dir,
+                // The delegation is the turn's own model call, not a
+                // kernel `rlm.spawn`: no parent request anchors it.
+                None,
                 Some(runtime_metadata),
                 &identity,
             )
@@ -160,6 +163,7 @@ impl SupervisorChildSessionsInner {
             active_session_id: created.active_session_id.clone(),
             session_id: created.session_id.clone(),
             session_dir: created.session_dir.clone(),
+            model: request.model.clone(),
             label: rlm_child_label(&request.prompt),
             started_at_ms: now_ms(),
             settled_status: None,
@@ -172,10 +176,11 @@ impl SupervisorChildSessionsInner {
             error: None,
             closed_by_parent: false,
             session_file: created.session_file.clone(),
-            attributed_rows: 0,
+            attributed_rows: Some(0),
             usage_watch_live: false,
             usage_rearm: false,
             emit_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+            last_emitted_status: None,
         }));
         self.children.lock().await.push(Arc::clone(&record));
         self.refresh_running().await;

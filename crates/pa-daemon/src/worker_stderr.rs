@@ -216,9 +216,12 @@ fn elide_backtraces(text: &str, mid_file: bool) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut lines = text.lines().peekable();
     if mid_file {
-        let leading: Vec<&str> = std::iter::from_fn(|| lines.next_if(|line| is_frame_line(line)))
-            .collect();
-        if leading.iter().any(|line| line.trim_start().starts_with("at ")) {
+        let leading: Vec<&str> =
+            std::iter::from_fn(|| lines.next_if(|line| is_frame_line(line))).collect();
+        if leading
+            .iter()
+            .any(|line| line.trim_start().starts_with("at "))
+        {
             out.push(marker(leading.len()));
         } else {
             out.extend(leading.into_iter().map(str::to_string));
@@ -257,7 +260,10 @@ fn last_whole_lines(text: &str, max_bytes: u64) -> &str {
     }
     let cut = text.len() - max;
     // `\n` is ASCII, so the byte after it is always a char boundary.
-    if let Some(newline) = text.as_bytes()[cut..].iter().position(|byte| *byte == b'\n') {
+    if let Some(newline) = text.as_bytes()[cut..]
+        .iter()
+        .position(|byte| *byte == b'\n')
+    {
         return &text[cut + newline + 1..];
     }
     let start = (cut..=text.len())
@@ -356,10 +362,18 @@ mod tests {
             writeln!(contents, "             at ./src/main.rs:{frame}:5").expect("write location");
         }
         let path = write_log(dir.path(), "worker-a.stderr.log", &contents);
-        let tail = read_tail(&path).expect("read tail").expect("non-empty tail");
+        let tail = read_tail(&path)
+            .expect("read tail")
+            .expect("non-empty tail");
         assert!(tail.len() <= TAIL_BYTES as usize);
-        assert!(tail.starts_with("Error: prepare worker socket dir"), "{tail}");
-        assert!(tail.contains("    1: Not a directory (os error 20)"), "causes kept: {tail}");
+        assert!(
+            tail.starts_with("Error: prepare worker socket dir"),
+            "{tail}"
+        );
+        assert!(
+            tail.contains("    1: Not a directory (os error 20)"),
+            "causes kept: {tail}"
+        );
         assert!(
             tail.ends_with("Stack backtrace:\n  [backtrace: 400 lines elided; the full trace is in the log file]"),
             "{tail}"
