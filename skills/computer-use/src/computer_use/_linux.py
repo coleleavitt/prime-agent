@@ -47,8 +47,8 @@ the tree.
 
 Platform gaps this backend documents (each also noted at its seam): X11
 window metadata has no secure-input role (no AXSecureTextField equivalent),
-there is no session-lock probe (the mac policy check fails open as False on
-linux), no TCC grants apply, there is no app-launch story (binding resolves
+the session lock is logind's LockedHint (shared with the Wayland backend;
+an unreadable state reads as locked), no TCC grants apply, there is no app-launch story (binding resolves
 running windows only), and there is no clipboard or per-element value API
 (paste, set_value, select_text, and secondary actions have no X11 backing).
 """

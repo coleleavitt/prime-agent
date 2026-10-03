@@ -928,3 +928,17 @@ class LiveLinuxSmokes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class X11ScreenLockTests(unittest.TestCase):
+    """The X11 backend reads the session lock from logind, never the mac probe."""
+
+    def test_x11_lock_check_routes_to_logind(self) -> None:
+        from unittest import mock
+
+        from computer_use import _compat, _wayland, policy
+
+        with mock.patch.object(_compat, "_backend", lambda: "linux"), mock.patch.object(
+            _wayland, "_screen_locked", lambda: False
+        ), mock.patch.object(_compat, "_require_mac", side_effect=AssertionError("mac probe on x11")):
+            self.assertFalse(policy._screen_locked())

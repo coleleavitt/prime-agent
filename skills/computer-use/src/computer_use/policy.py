@@ -156,19 +156,22 @@ def _locked_from_session(session: object) -> bool:
 
 
 def _screen_locked() -> bool:
-    """Report whether the session screen is locked, failing open when unavailable.
+    """Report whether the session screen is locked, failing closed when unavailable.
 
     The allowlist is the hard gate, but the lock check protects the same
     thing the rest of the safety model protects: the user watching their
     desktop while it is driven. A session that cannot be read is treated as
     locked, so binding and input injection stop with SCREEN_LOCKED instead
-    of proceeding on an unverifiable desktop. Under the Wayland (niri)
-    backend the state is logind's LockedHint, which niri maintains.
+    of proceeding on an unverifiable desktop. Under the Linux backends (X11
+    and Wayland/niri) the state is logind's LockedHint, which niri and the
+    common X11 lockers maintain.
     """
     try:
         from computer_use import _compat
 
-        if _compat._backend() == "wayland":
+        if _compat._backend() in ("wayland", "linux"):
+            # logind's LockedHint covers X11 sessions as well as niri's; the
+            # mac session dictionary below exists only on darwin.
             from computer_use import _wayland
 
             return _wayland._screen_locked()
