@@ -1,8 +1,9 @@
 //! The telemetry unit battery (moved with its concerns): the scripted
-//! run state machine, the outcome/provider/model/error categories, and the
-//! session-end finalize surface.
+//! run state machine, the outcome/provider/model/error categories, the
+//! session-end finalize surface, and the kernel `telemetry.emit` bridge.
 use std::time::Duration;
 
+use crate::kernel::shared::{HostRequestHandlers, HostRequestPayload};
 use pa_agent::stream::AssistantMessageEvent;
 use pa_agent::types::{
     AgentMessage, AssistantContent, Message as LoopMessage, StopReason, TextContent,
@@ -289,7 +290,7 @@ async fn emits_aggregate_metrics_without_content() {
         serde_json::json!("0197d0a0-8f5c-7f2a-b0e3-2d7e0d2b3b1a")
     );
     assert_eq!(run["execution_mode"], serde_json::json!("interactive"));
-    assert_eq!(run["schema_version"], serde_json::json!(2));
+    assert_eq!(run["schema_version"], serde_json::json!(3));
 
     // Privacy: no private prompt/tool/assistant text anywhere.
     let all = serde_json::to_string(&fixture.mock.events()).unwrap();
@@ -1489,4 +1490,103 @@ async fn a_run_active_when_telemetry_turns_off_is_severed_not_merged() {
         serde_json::json!(0),
         "the off-period tool end never counts"
     );
+}
+
+/// The kernel `telemetry.emit` bridge: the registered handler serves the
+/// host-request registry the kernel manager dispatches through, emits
+/// catalogued events through the wiring's client (`MockSink` end-to-end),
+/// and never errors on uncatalogued or malformed requests.
+#[tokio::test]
+async fn kernel_telemetry_bridge_round_trips_through_the_registry() {
+    let mock = std::sync::Arc::new(MockSink::new());
+    let switch_on = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let switch_probe = std::sync::Arc::clone(&switch_on);
+    let wiring = TelemetryWiring {
+        client: client_for(&mock),
+        execution_mode: None,
+        now: None,
+        telemetry_enabled: Some(RecordingSwitch::test(std::sync::Arc::new(move || {
+            switch_probe.load(std::sync::atomic::Ordering::SeqCst)
+        }))),
+    };
+    let mut handlers = HostRequestHandlers::default();
+    wiring.register_kernel_bridge(&mut handlers);
+    let emit = handlers.get("telemetry.emit").expect("registered").clone();
+
+    // A catalogued event emits through the wiring's client.
+    let response = emit(HostRequestPayload {
+        // The kernel manager tags every host request with the spawning
+        // cell's source; the bridge must ignore the extra key.
+        data: serde_json::json!({
+            "type": "telemetry.emit",
+            "cellSourceCode": "await telemetry(...)\n",
+            "name": "computer_use_session_started",
+            "properties": { "platform": "mac" }
+        }),
+        cell_source_code: None,
+    })
+    .await
+    .unwrap();
+    assert_eq!(response, serde_json::json!({ "emitted": true }));
+    wiring.client.flush().await.unwrap();
+    let events = mock.events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].name, "computer_use_session_started");
+    assert_eq!(
+        events[0].properties.get("platform"),
+        Some(&serde_json::json!("mac"))
+    );
+    assert_eq!(
+        events[0].properties.get("execution_mode"),
+        Some(&serde_json::json!("unknown"))
+    );
+
+    // An uncatalogued name and a catalogued name outside the bridge's
+    // vocabulary (`agent error`'s free-text `error_message` must never
+    // ride the bridge) stay Ok, never error.
+    let response = emit(HostRequestPayload {
+        data: serde_json::json!({
+            "type": "telemetry.emit",
+            "name": "not a catalogued event",
+            "properties": {}
+        }),
+        cell_source_code: None,
+    })
+    .await
+    .unwrap();
+    assert_eq!(response, serde_json::json!({ "emitted": false }));
+    let response = emit(HostRequestPayload {
+        data: serde_json::json!({
+            "type": "telemetry.emit",
+            "name": "agent error",
+            "properties": { "error_message": "private screen text" }
+        }),
+        cell_source_code: None,
+    })
+    .await
+    .unwrap();
+    assert_eq!(response, serde_json::json!({ "emitted": false }));
+    let response = emit(HostRequestPayload {
+        data: serde_json::json!({ "type": "telemetry.emit" }),
+        cell_source_code: None,
+    })
+    .await
+    .unwrap();
+    assert_eq!(response, serde_json::json!({ "emitted": false }));
+    // The live opt-out: a valid bridge event while the switch reads off
+    // queues nothing.
+    switch_on.store(false, std::sync::atomic::Ordering::SeqCst);
+    let response = emit(HostRequestPayload {
+        data: serde_json::json!({
+            "type": "telemetry.emit",
+            "name": "computer_use_session_started",
+            "properties": { "platform": "linux" }
+        }),
+        cell_source_code: None,
+    })
+    .await
+    .unwrap();
+    assert_eq!(response, serde_json::json!({ "emitted": false }));
+    wiring.client.flush().await.unwrap();
+    assert_eq!(mock.events().len(), 1, "nothing else emitted");
 }

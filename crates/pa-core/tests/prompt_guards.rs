@@ -157,15 +157,22 @@ fn cached_prefix_is_stable_across_sessions() {
 // ---------------------------------------------------------------------
 
 /// Host-request types that are host-internal plumbing, not model-facing
-/// programmatic tools (the prompt must not document them). `bash.consumed`
-/// is the kernel's own notice that a cell read a background command's
-/// result, shipped ahead of that cell's `done`; no model code calls it.
+/// programmatic tools (the prompt must not document them). The mcp
+/// sidecar's and turn-boundary runtime's requests are never model-called;
+/// `bash.consumed` is the kernel's own notice that a cell read a background
+/// command's result, shipped ahead of that cell's `done`. `telemetry.emit`
+/// IS reachable from model-authored kernel code (`host_request` is
+/// importable), so its classification is "restricted to a fixed skill event
+/// vocabulary with typed properties" — the handler's allowlist admits only
+/// the two computer-use events and refuses everything else — which keeps it
+/// out of the prompt's documented programmatic surface.
 const INTERNAL_HOST_REQUESTS: &[&str] = &[
     "model.info",
     "mcp.config",
     "mcp.refresh",
     "mcp.begin_login",
     "bash.consumed",
+    "telemetry.emit",
 ];
 
 /// Map one registered host-request type to the prompt token that documents
@@ -522,7 +529,9 @@ fn core_layer_documents_the_real_tool_surface() {
 /// The packaged skill set at TS tip `f62dae4d0`
 /// (`packages/coding-agent/skills/`): 12 skills — the generic `mcp` doc
 /// skill in, the per-service linear/notion pair out (TS removed theirs
-/// when the generic MCP surface landed).
+/// when the generic MCP surface landed). `system-router` is the one
+/// addition since: the System 1 / System 2 harness router (TS PR #2484)
+/// ported as a bundled kernel skill.
 const TS_PACKAGED_SKILL_SET: &[&str] = &[
     "agent-message",
     "agent-observe",
@@ -535,6 +544,7 @@ const TS_PACKAGED_SKILL_SET: &[&str] = &[
     "refine",
     "rlm-heartbeat",
     "skill-creator",
+    "system-router",
     "websearch",
 ];
 

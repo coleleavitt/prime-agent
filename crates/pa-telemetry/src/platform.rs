@@ -17,7 +17,10 @@ const UNKNOWN: &str = "unknown";
 const MAX_VERSION_LENGTH: usize = 64;
 
 /// The catalog's property-rule revision (additive rule changes bump it).
-pub const SCHEMA_REVISION: u64 = 3;
+/// Bumped to 4 when the kernel telemetry bridge's skill events shipped new
+/// property rules - a rule-set change without a bump would make this
+/// counter lie about the sanitize behavior.
+pub const SCHEMA_REVISION: u64 = 4;
 
 /// The `cpu_baseline` values.
 const CPU_AVX2: &str = "avx2";
@@ -282,12 +285,13 @@ mod tests {
     #[test]
     fn base_properties_carry_schema_and_platform() {
         let properties = base_properties("interactive");
-        // The #2117 vocabulary bumped the catalog to schema version 2.
+        // The #2117 vocabulary bumped the catalog to v2; the kernel
+        // telemetry bridge's skill-event vocabulary bumped it to v3.
         assert_eq!(
             properties.get("schema_version"),
             Some(&Value::from(SCHEMA_VERSION))
         );
-        assert_eq!(properties.get("schema_version"), Some(&Value::from(2u64)));
+        assert_eq!(properties.get("schema_version"), Some(&Value::from(3u64)));
         assert_eq!(
             properties.get("schema_revision"),
             Some(&Value::from(SCHEMA_REVISION))
