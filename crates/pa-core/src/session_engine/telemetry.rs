@@ -30,8 +30,11 @@ use pa_telemetry::{
 };
 use serde_json::Value;
 
+use crate::kernel::shared::{host_handler, HostRequestHandlers};
+
 use super::auto_retry::AutoRetryEvent;
 use super::error_classify::classify_error_message;
+use super::host_requests::handle_telemetry_emit_host_request;
 
 // The one-shot daemon/worker event trackers (the `daemon event` and
 // `model refused` one-shot surfaces the supervisor notes/adoption/sessions
@@ -111,6 +114,46 @@ pub struct TelemetryWiring {
     /// client drops captures queued while the switch is off. `None` is
     /// always on (tests and one-shot paths).
     pub telemetry_enabled: Option<RecordingSwitch>,
+}
+
+impl TelemetryWiring {
+    /// Register the kernel `telemetry.emit` host request onto the handler
+    /// map: the generic, best-effort bridge Python-backed skills call to
+    /// emit catalogued events through this wiring's client. Skills on
+    /// telemetry-opt-out hosts never see it registered — their
+    /// `host_request` fails and the skill-side bridge no-ops. The live
+    /// opt-out switch is asked per request (skill events have no turn
+    /// boundary to cache it at): while it reads off, nothing is queued. The
+    /// handler never errors: malformed payloads, uncatalogued names, and
+    /// opted-out requests answer `{"emitted": false}`.
+    pub fn register_kernel_bridge(&self, handlers: &mut HostRequestHandlers) {
+        let client = self.client.clone();
+        let execution_mode = self
+            .execution_mode
+            .clone()
+            .unwrap_or_else(|| EXECUTION_MODE_UNKNOWN.to_string());
+        let telemetry_enabled = self.telemetry_enabled.clone();
+        handlers.register(
+            "telemetry.emit",
+            host_handler(move |payload| {
+                let client = client.clone();
+                let execution_mode = execution_mode.clone();
+                let enabled = telemetry_enabled
+                    .as_ref()
+                    .is_none_or(|switch| (switch.enabled)());
+                Box::pin(async move {
+                    if !enabled {
+                        return Ok(serde_json::json!({ "emitted": false }));
+                    }
+                    Ok(handle_telemetry_emit_host_request(
+                        &payload.data,
+                        &client,
+                        &execution_mode,
+                    ))
+                })
+            }),
+        );
+    }
 }
 
 /// Installed session telemetry: the event subscription plus the in-memory

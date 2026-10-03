@@ -371,6 +371,12 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     {
         session_counters.set_telemetry_enabled(telemetry_switch.enabled.clone());
     }
+    // The kernel telemetry bridge: `telemetry.emit` lets Python-backed
+    // skills emit their bridge-vocabulary events through the session's
+    // client; telemetry-opt-out sessions never register it.
+    if let Some(telemetry) = &config.telemetry {
+        telemetry.register_kernel_bridge(&mut handlers);
+    }
     // The `mcp.*` host requests (config/refresh/begin_login) the kernel's
     // generic MCP registry sends while listing or calling generic servers.
     // Telemetry counts connector use (never the server name) when the
