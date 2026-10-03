@@ -10,6 +10,15 @@
 //! the script, then reports what landed; every install/uninstall decision
 //! stays in the script the installer-takeover lane owns, so the two
 //! surfaces can never drift from it.
+//!
+//! The Windows exception to "run it, then report" is the payload handoff
+//! ([`RunOutcome::Handoff`]): on Windows a running executable keeps its own
+//! directory un-renameable, and the running CLI is exactly the payload
+//! binary the installer replaces — so a spawn-and-wait funnel can never let
+//! the installer's publish (the rename of `<prefix>/share/prime-agent`)
+//! happen. When the caller IS that payload binary, the funnel spawns the
+//! installer detached (never waited on) and tells the caller to exit; the
+//! publish lands once the process is gone.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -41,6 +50,12 @@ pub const OFFICIAL_INSTALLER_URL: &str = "https://app.primeintellect.ai/prime-ag
 /// The nightly installer's file under the download base (the domain only
 /// forwards `install.sh`, so nightly updates fetch it from the base).
 pub const BETA_INSTALLER_FILE: &str = "install-beta.sh";
+
+/// The line both update surfaces print for the Windows payload handoff
+/// (see [`RunOutcome::Handoff`]): the installer owns the rest of the run
+/// from here, so the window can close and the new build answers once it
+/// finishes.
+pub const HANDOFF_LINE: &str = "the update continues in a separate installer process — this window can close; run `prime-agent --version` to see the new build once it finishes";
 
 /// `install-rust.sh` as this build shipped it. The local operations
 /// (`prime-agent update --rollback` and `--archive`) run this copy: they
@@ -179,6 +194,23 @@ pub struct Installed {
     pub version: Option<String>,
 }
 
+/// One installer run's outcome: the completed install's report, or the
+/// Windows payload handoff.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunOutcome {
+    /// The installer ran to completion; [`Installed`] is the launcher
+    /// probe's report.
+    Installed(Installed),
+    /// THE WINDOWS PAYLOAD HANDOFF: the funnel's own process was the
+    /// install's payload binary, so the installer was spawned detached
+    /// and is never waited on — Windows keeps a running executable's
+    /// directory un-renameable, so the installer's publish (the rename of
+    /// `<prefix>/share/prime-agent`) can only happen once this process
+    /// exits. The calling surface prints [`HANDOFF_LINE`] and exits
+    /// immediately (the unix funnel never produces this outcome).
+    Handoff,
+}
+
 /// Why an update run failed: the actionable message the surfaces print
 /// (the CLI as its `Error:` line, the TUI as the error row).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -193,11 +225,12 @@ pub struct UpdateFailure {
 ///
 /// # Errors
 /// Returns the failure message for every non-installing outcome (see
-/// [`run_installer_from`]).
+/// [`run_installer_from`]); [`RunOutcome::Handoff`] reports the Windows
+/// payload handoff instead of a failure.
 pub async fn run_installer(
     channel: Option<&'static str>,
     output: InstallerOutput,
-) -> std::result::Result<Installed, UpdateFailure> {
+) -> std::result::Result<RunOutcome, UpdateFailure> {
     let prefix = install_prefix();
     let channel = channel.or_else(|| installed_channel(&prefix));
     run_installer_from(&installer_script_url(channel), &prefix, channel, output).await
@@ -211,7 +244,9 @@ pub async fn run_installer(
 /// `~/.prime/agent` preserve). On success the
 /// launcher's `--version` answers the new version; on failure the
 /// previous install is kept (the script's own rollback covers a
-/// mid-publish crash).
+/// mid-publish crash). On Windows, when the caller IS the install's
+/// payload binary, the run hands off instead of waiting (see
+/// [`RunOutcome::Handoff`]).
 ///
 /// # Errors
 /// Returns the failure message for every non-installing outcome: an
@@ -222,16 +257,78 @@ pub async fn run_installer_from(
     prefix: &Path,
     channel: Option<&'static str>,
     output: InstallerOutput,
-) -> std::result::Result<Installed, UpdateFailure> {
+) -> std::result::Result<RunOutcome, UpdateFailure> {
     current_target().map_err(|error| UpdateFailure {
         message: format!("{error:#}"),
     })?;
     let script = fetch_script(url).await.map_err(|error| UpdateFailure {
         message: format!("could not download the installer from {url}: {error:#}"),
     })?;
+    // THE WINDOWS HANDOFF (the update path's half of the rename rule the
+    // bundled local modes already honor): when this process IS the
+    // install's payload binary, a waited-on installer could never publish
+    // (Windows keeps a running image's directory un-renameable), so the
+    // installer runs detached and the caller exits. The handoff never
+    // reaches the probe: the publish has not run yet, and the launcher
+    // still answers the previous version until the installer finishes.
+    #[cfg(windows)]
+    if caller_owns_payload(prefix) {
+        spawn_handoff(&script, prefix, channel, &[])?;
+        return Ok(RunOutcome::Handoff);
+    }
     execute_script(&script, &[], prefix, channel, output).await?;
     let version = launcher_version(prefix).await;
-    Ok(Installed { version })
+    Ok(RunOutcome::Installed(Installed { version }))
+}
+
+/// Spawn the installer detached for the Windows payload handoff and return
+/// without waiting (see [`RunOutcome::Handoff`]). The script rides the
+/// child's stdin (`bash -s --`, the curl|sh one-liner's own invocation
+/// form), so its temp file is removed as soon as the child holds the
+/// handle; nothing of this run outlives the caller, not even on a failed
+/// spawn.
+///
+/// # Errors
+/// Returns the failure when the script cannot be opened, no trusted shell
+/// resolves, or the spawn fails.
+#[cfg(windows)]
+fn spawn_handoff(
+    script: &Path,
+    prefix: &Path,
+    channel: Option<&'static str>,
+    args: &[&std::ffi::OsStr],
+) -> std::result::Result<(), UpdateFailure> {
+    let file = std::fs::File::open(script).map_err(|error| {
+        let _ = std::fs::remove_file(script);
+        UpdateFailure {
+            message: format!("could not run the installer: {error}"),
+        }
+    })?;
+    let shell = trusted_shell().inspect_err(|_| {
+        let _ = std::fs::remove_file(script);
+    })?;
+    let mut command = installer_child(&shell, prefix, channel);
+    command
+        .arg("-s")
+        .arg("--")
+        .args(args)
+        .stdin(std::process::Stdio::from(file));
+    // THE PROCESS-CONTROL WALL (the in-house detached-spawn wrapper:
+    // CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_NO_WINDOW,
+    // the product's own detached-survives-parent mapping): a console-
+    // attached child dies with the caller's terminal close (the
+    // CTRL_CLOSE broadcast) — mid-publish, exactly when the handoff
+    // exists to let it finish — and Ctrl+C at the caller's terminal
+    // must not reach the installer either. The inherited stdio
+    // handles keep the installer's own steps printing to the
+    // caller's window for as long as that window lives.
+    crate::platform::process::set_new_process_group(command.as_std_mut());
+    let spawned = command.spawn();
+    let _ = std::fs::remove_file(script);
+    spawned.map_err(|error| UpdateFailure {
+        message: format!("could not run the installer: {error}"),
+    })?;
+    Ok(())
 }
 
 /// Run the bundled `install-rust.sh` with `args` (`--rollback`, or `--archive
@@ -284,36 +381,7 @@ pub async fn run_bundled_installer(
             let _ = std::fs::remove_file(&script);
             return Err(error);
         }
-        let file = std::fs::File::open(&script).map_err(|error| {
-            let _ = std::fs::remove_file(&script);
-            UpdateFailure {
-                message: format!("could not run the installer: {error}"),
-            }
-        })?;
-        let shell = trusted_shell().inspect_err(|_| {
-            let _ = std::fs::remove_file(&script);
-        })?;
-        let mut command = installer_child(&shell, prefix, None);
-        command
-            .arg("-s")
-            .arg("--")
-            .args(args)
-            .stdin(std::process::Stdio::from(file));
-        // THE PROCESS-CONTROL WALL (the in-house detached-spawn wrapper:
-        // CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_NO_WINDOW,
-        // the product's own detached-survives-parent mapping): a console-
-        // attached child dies with the caller's terminal close (the
-        // CTRL_CLOSE broadcast) — mid-publish, exactly when the handoff
-        // exists to let it finish — and Ctrl+C at the caller's terminal
-        // must not reach the installer either. The inherited stdio
-        // handles keep the installer's own steps printing to the
-        // caller's window for as long as that window lives.
-        crate::platform::process::set_new_process_group(command.as_std_mut());
-        let spawned = command.spawn();
-        let _ = std::fs::remove_file(&script);
-        spawned.map_err(|error| UpdateFailure {
-            message: format!("could not run the installer: {error}"),
-        })?;
+        spawn_handoff(&script, prefix, None, args)?;
         return Ok(Installed { version: None });
     }
     let result = execute_script(&script, args, prefix, None, InstallerOutput::Inherit).await;
@@ -945,6 +1013,18 @@ chmod 0755 "${PRIME_AGENT_RUST_PREFIX}/bin/prime-agent-rust"
 echo "installed: 9.9.8-continuous.fedcba9876543210"
 "#;
 
+    /// The completed install's report: the unix funnel never hands off, so
+    /// every unix test run unwraps the Installed arm (its callers are the
+    /// unix-gated funnel tests).
+    #[cfg(unix)]
+    fn installed(result: std::result::Result<RunOutcome, UpdateFailure>) -> Installed {
+        match result {
+            Ok(RunOutcome::Installed(installed)) => installed,
+            Ok(RunOutcome::Handoff) => panic!("the unix funnel never hands off"),
+            Err(failure) => panic!("the funnel install failed: {}", failure.message),
+        }
+    }
+
     fn sandbox() -> (tempfile::TempDir, Preserve, PathBuf) {
         let root = tempfile::tempdir().expect("sandbox root");
         let preserve = Preserve::new(root.path());
@@ -1086,14 +1166,15 @@ echo "installed: 9.9.8-continuous.fedcba9876543210"
     #[cfg(unix)]
     async fn the_funnel_runs_the_downloaded_installer_and_preserves_the_session_store() {
         let (root, preserve, prefix) = sandbox();
-        let installed = run_installer_from(
-            &serve(MOCK_INSTALLER),
-            &prefix,
-            None,
-            InstallerOutput::Capture,
-        )
-        .await
-        .expect("the funnel installs the mock build");
+        let installed = installed(
+            run_installer_from(
+                &serve(MOCK_INSTALLER),
+                &prefix,
+                None,
+                InstallerOutput::Capture,
+            )
+            .await,
+        );
         assert_eq!(
             installed.version.as_deref(),
             Some("9.9.9-continuous.0123456789abcdef"),
@@ -1111,14 +1192,15 @@ echo "installed: 9.9.8-continuous.fedcba9876543210"
     #[cfg(unix)]
     async fn the_probe_still_reads_a_pre_takeover_launchers_version() {
         let (root, _preserve, prefix) = sandbox();
-        let installed = run_installer_from(
-            &serve(LEGACY_INSTALLER),
-            &prefix,
-            None,
-            InstallerOutput::Capture,
-        )
-        .await
-        .expect("the funnel installs the legacy-named build");
+        let installed = installed(
+            run_installer_from(
+                &serve(LEGACY_INSTALLER),
+                &prefix,
+                None,
+                InstallerOutput::Capture,
+            )
+            .await,
+        );
         assert_eq!(
             installed.version.as_deref(),
             Some("9.9.8-continuous.fedcba9876543210"),
