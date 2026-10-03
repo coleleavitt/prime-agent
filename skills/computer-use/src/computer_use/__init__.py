@@ -12,6 +12,13 @@ backend() reports linux; the mac path is unchanged. On Linux the app identity
 is the WM_CLASS (the policy gate's bundle id), the bound window id keys every
 backend seam, and paste, set_value, select_text, and secondary actions have
 no X11 backing (ACTION_UNSUPPORTED).
+
+Under a niri Wayland session backend() reports wayland and the App dispatches
+to computer_use._wayland (loaded through _compat.require_wayland): the app
+identity is the Wayland app_id, niri's window id is the bound id, observation
+and element actions run over AT-SPI (which mirrors the ax seam names), and
+pointer/keyboard input runs over the compositor's virtual-input protocols
+after focusing the bound window.
 """
 
 from __future__ import annotations
@@ -24,8 +31,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-from . import apps, ax, diff, errors
-from ._compat import _backend, _require_linux, _require_mac
+from . import apps, ax, diff, errors  # noqa: F401 - errors is part of the module surface
+from ._compat import _backend, _require_linux, _require_mac, _require_wayland
 from .errors import ComputerUseError
 
 __all__ = ["App", "ComputerUseError", "get_app", "get_state", "list_apps", "permissions_status"]
@@ -64,12 +71,33 @@ def _linux_backend() -> ModuleType | None:
     return _require_linux()
 
 
+def _wayland_backend() -> ModuleType | None:
+    """Return the Wayland (niri) backend module when it is the active backend, else None."""
+    if _backend() != "wayland":
+        return None
+    return _require_wayland()
+
+
+def _refuse_wayland_action(action: str, reason: str) -> None:
+    """Raise ACTION_UNSUPPORTED for an App action with no Wayland backing (no-op elsewhere)."""
+    if _wayland_backend() is None:
+        return
+    raise ComputerUseError(
+        "ACTION_UNSUPPORTED",
+        f"{action} is not available on the Wayland backend: {reason}",
+        {"action": action, "platform": "wayland"},
+    )
+
+
 def _permissions_status() -> dict[str, Any]:
     """Report the permissions status: the Linux note on linux, the TCC probes on mac.
 
     Linux has no TCC analog, so both grants read as unknown with a help note
     naming what the Linux backend actually needs.
     """
+    wayland = _wayland_backend()
+    if wayland is not None:
+        return wayland._status()
     if _linux_backend() is not None:
         return {
             "accessibility": "unknown",
@@ -149,6 +177,9 @@ async def get_state(emit: bool = True) -> dict[str, Any]:
 
 async def list_apps() -> list[dict[str, Any]]:
     """List the running apps as {"id", "name", "running"} dicts."""
+    wayland = _wayland_backend()
+    if wayland is not None:
+        return wayland._list_apps()
     linux = _linux_backend()
     if linux is not None:
         return linux._list_apps()
@@ -171,13 +202,17 @@ async def get_app(app: str | dict[str, str]) -> App:
     if _backend() is None:
         raise ComputerUseError(
             "TRANSPORT_ERROR",
-            "computer use backend unavailable: no macOS frameworks and no Linux X11 tools on this host",
+            "computer use backend unavailable: no macOS frameworks, no niri Wayland session, "
+            "and no Linux X11 tools on this host",
         )
     if policy._screen_locked():
         raise ComputerUseError(
             "SCREEN_LOCKED",
             "the screen is locked; ask the user to unlock it before driving apps",
         )
+    wayland = _wayland_backend()
+    if wayland is not None:
+        return await _get_app_wayland(wayland, app)
     linux = _linux_backend()
     if linux is not None:
         return await _get_app_linux(linux, app)
@@ -267,6 +302,38 @@ async def _get_app_linux(linux: ModuleType, app: str | dict[str, str]) -> App:
     instance = App(wm_class, wm_class, window_id)
     await instance._refresh(diff_on=False)
     _bound_apps[wm_class] = instance
+    return instance
+
+
+async def _get_app_wayland(wayland: ModuleType, app: str | dict[str, str]) -> App:
+    """Bind one Wayland app by app_id through niri IPC (resolution only, no launch).
+
+    The spec matches a niri window's app_id casefolded; the focused (else the
+    most recently focused) matching window binds and its niri window id keys
+    every backend seam (carried in App.pid like the X11 window id). The
+    allowlist gate keys on the raw app_id, exactly what list_apps reports.
+    """
+    from . import policy
+
+    windows = wayland._resolve_app(app)
+    if not windows:
+        raise ComputerUseError(
+            "APP_NOT_RUNNING",
+            f"{str(app)[:64]!r} has no window in the niri session; start the app yourself "
+            "and call get_app again",
+            {"spec": str(app)[:64]},
+        )
+    app_id = windows[0]["app_id"]
+    result = policy._gate_app(app_id)
+    if not result.allowed:
+        raise ComputerUseError("APP_NOT_ALLOWED", result.reason, {"bundle_id": app_id})
+    window_id = windows[0]["id"]
+    existing = _bound_apps.get(app_id)
+    if existing is not None and existing.pid == window_id:
+        return existing
+    instance = App(app_id, app_id, window_id)
+    await instance._refresh(diff_on=False)
+    _bound_apps[app_id] = instance
     return instance
 
 
@@ -362,6 +429,11 @@ def _print_missing_grants(status: dict[str, Any]) -> None:
     """Print the first-run guidance when macOS grants are missing."""
     missing = [name for name in ("accessibility", "screen_recording") if status.get(name) == "missing"]
     if not missing:
+        return
+    if "input" in status:  # the Wayland backend reports its own pieces, not macOS grants
+        print("Prime Agent computer use is missing Wayland backend pieces:")
+        for line in status.get("help") or []:
+            print(line)
         return
     print("Prime Agent computer use needs macOS permissions before it can drive apps:")
     for line in status.get("help") or []:
@@ -563,11 +635,23 @@ class App:
         attach. Raises ComputerUseError PERMISSIONS_NOT_GRANTED without the
         Screen Recording grant, TRANSPORT_ERROR when no window is observed,
         and APP_NOT_RUNNING when the window is gone. Linux skips the mac
-        grant check (no TCC there) and captures through the linux backend.
+        grant check (no TCC there) and captures through the linux backend;
+        Wayland captures the window's on-screen rect with grim and refuses
+        (ACTION_UNSUPPORTED) when niri does not expose it or another window
+        overlaps it.
         """
         self._guard()
         from . import capture, permissions
 
+        wayland = _wayland_backend()
+        if wayland is not None:
+            result, rect = await asyncio.to_thread(wayland._screenshot_window, self._pid)
+            self._shot_size = (float(result["width"]), float(result["height"]))
+            self._shot_rect = rect
+            self._shot_window_id = self._pid
+            if attach:
+                await capture._attach_image_if_available(str(result["path"]))
+            return result
         linux = _linux_backend()
         if linux is not None:
             result = linux._screenshot_window(self._pid)
@@ -627,6 +711,10 @@ class App:
         self._guard()
         from . import capture, ocr, permissions
 
+        _refuse_wayland_action(
+            "get_text_regions",
+            "the OCR screen-reading path is macOS-only; use get_ax_state or get_screenshot instead",
+        )
         linux = _linux_backend()
         if linux is not None:
             raise ComputerUseError(
@@ -702,6 +790,24 @@ class App:
             )
 
         def dispatch() -> None:
+            wayland = _wayland_backend()
+            if wayland is not None:
+                if isinstance(target, int) and not isinstance(target, bool):
+                    element, ref = self._element(target)
+                    press = wayland._press_action(element.get("actions") or [])
+                    if button == "left" and count == 1 and press is not None:
+                        wayland._perform_action(ref, press)
+                        return
+                    wayland._click(self._pid, self._element_center(target), button=button, count=count)
+                elif isinstance(target, tuple):
+                    wayland._click(self._pid, self._wayland_point(target), button=button, count=count)
+                else:
+                    raise ComputerUseError(
+                        "INVALID_ARGUMENT",
+                        f"target must be an element index or an (x, y) tuple, got {type(target).__name__}",
+                        {"target": type(target).__name__},
+                    )
+                return
             linux = _linux_backend()
             if linux is not None:
                 if isinstance(target, int) and not isinstance(target, bool):
@@ -738,6 +844,10 @@ class App:
         from . import inject
 
         def dispatch() -> None:
+            wayland = _wayland_backend()
+            if wayland is not None:
+                wayland._drag(self._pid, self._wayland_point(from_), self._wayland_point(to))
+                return
             linux = _linux_backend()
             if linux is not None:
                 linux._drag(self._pid, self._linux_point(from_), self._linux_point(to))
@@ -767,6 +877,20 @@ class App:
             )
 
         def dispatch() -> None:
+            wayland = _wayland_backend()
+            if wayland is not None:
+                if isinstance(target, int) and not isinstance(target, bool):
+                    wayland_point = self._element_center(target)
+                elif isinstance(target, tuple):
+                    wayland_point = self._wayland_point(target)
+                else:
+                    raise ComputerUseError(
+                        "INVALID_ARGUMENT",
+                        f"target must be an element index or an (x, y) tuple, got {type(target).__name__}",
+                        {"target": type(target).__name__},
+                    )
+                wayland._scroll(self._pid, direction, pages=pages, point=wayland_point)
+                return
             linux = _linux_backend()
             if linux is not None:
                 if isinstance(target, int) and not isinstance(target, bool):
@@ -807,6 +931,10 @@ class App:
 
         def dispatch() -> None:
             self._refuse_secure_focus()
+            wayland = _wayland_backend()
+            if wayland is not None:
+                wayland._press_key(self._pid, key)
+                return
             linux = _linux_backend()
             if linux is not None:
                 linux._press_key(self._pid, key)
@@ -825,6 +953,10 @@ class App:
 
         def dispatch() -> None:
             self._refuse_secure_focus()
+            wayland = _wayland_backend()
+            if wayland is not None:
+                wayland._type_text(self._pid, text)
+                return
             linux = _linux_backend()
             if linux is not None:
                 linux._type_text(self._pid, text)
@@ -842,11 +974,14 @@ class App:
         On Linux this cannot refuse anything: X11 window metadata has no
         secure-input role, so the linux probe always reads unknown and linux
         observations never mark secure fields - a documented platform gap
-        (failing closed there would refuse every keystroke).
+        (failing closed there would refuse every keystroke). The Wayland
+        backend reads the live AT-SPI focus and keeps the mac fail-closed
+        semantics (unknown refuses); its input seams re-check after focusing
+        the window.
         """
         if _linux_backend() is not None:
             return
-        focused_secure = ax._focused_is_secure(self._pid)
+        focused_secure = self._ax()._focused_is_secure(self._pid)
         if focused_secure is None:
             raise ComputerUseError(
                 "ACTION_UNSUPPORTED",
@@ -878,7 +1013,8 @@ class App:
         def dispatch() -> None:
             _refuse_linux_action("set_value", _LINUX_SET_VALUE_HINT)
             element, ref = self._element(element_index)
-            live_secure = ax._live_is_secure(ref)
+            backend = self._ax()
+            live_secure = backend._live_is_secure(ref)
             if ax._is_secure_field(element) or live_secure:
                 raise ComputerUseError(
                     "ACTION_UNSUPPORTED",
@@ -892,13 +1028,13 @@ class App:
                     "ask the user to enter the value themselves",
                     {"element_index": element_index},
                 )
-            if not ax._is_settable(ref, "AXValue"):
+            if not backend._is_settable(ref, "AXValue"):
                 raise ComputerUseError(
                     "ACTION_UNSUPPORTED",
                     f"element {element_index} does not accept value writes; it is not editable text",
                     {"element_index": element_index},
                 )
-            ax._set_value(ref, value)
+            backend._set_value(ref, value)
 
         await self._action("set_value", dispatch)
 
@@ -928,7 +1064,8 @@ class App:
         def dispatch() -> None:
             _refuse_linux_action("select_text", _LINUX_SELECT_HINT)
             element, ref = self._element(element_index)
-            live_secure = ax._live_is_secure(ref)
+            backend = self._ax()
+            live_secure = backend._live_is_secure(ref)
             if ax._is_secure_field(element) or live_secure:
                 raise ComputerUseError(
                     "ACTION_UNSUPPORTED",
@@ -942,7 +1079,7 @@ class App:
                     "ask the user to enter the value themselves",
                     {"element_index": element_index},
                 )
-            value = ax._current_value(ref)
+            value = backend._current_value(ref)
             if not isinstance(value, str):
                 raise ComputerUseError(
                     "ACTION_UNSUPPORTED",
@@ -972,7 +1109,7 @@ class App:
                     f"{text!r} occurs {len(starts)} times; disambiguate it with prefix and suffix",
                     {"element_index": element_index, "occurrences": len(starts)},
                 )
-            ax._select_text_range(ref, starts[0], len(text))
+            backend._select_text_range(ref, starts[0], len(text))
 
         await self._action("select_text", dispatch)
 
@@ -993,7 +1130,7 @@ class App:
                     f"element {element_index} exposes {exposed}, not {action}",
                     {"element_index": element_index, "action": str(action)[:32]},
                 )
-            ax._perform_action(ref, action)
+            self._ax()._perform_action(ref, action)
 
         await self._action("secondary", dispatch, settle=True)
 
@@ -1022,6 +1159,11 @@ class App:
 
         def dispatch() -> None:
             _refuse_linux_action("paste", _LINUX_PASTE_HINT)
+            _refuse_wayland_action(
+                "paste",
+                "the clipboard save/restore transaction is macOS-only; set the text with set_value "
+                "or type it with type_text instead",
+            )
             from . import inject
 
             self._refuse_secure_focus()
@@ -1078,11 +1220,17 @@ class App:
         it replaces the `open -a`/osascript detours the model would
         otherwise improvise from bash. On Linux this raises
         ACTION_UNSUPPORTED: focus control is not available on the linux
-        X11 backend yet.
+        X11 backend yet. On Wayland (niri) it focuses the bound window
+        through niri IPC and fails with INJECTION_FAILED if focus does not
+        land.
         """
 
         def dispatch() -> None:
             _refuse_linux_focus()
+            wayland = _wayland_backend()
+            if wayland is not None:
+                wayland._focus_window(self._pid)
+                return
             apps._activate(self._pid)
 
         await self._action("activate", dispatch, settle=True)
@@ -1091,16 +1239,23 @@ class App:
         """Report whether the app is the frontmost (key) application.
 
         On Linux this raises ACTION_UNSUPPORTED: focus control is not
-        available on the linux X11 backend yet.
+        available on the linux X11 backend yet. On Wayland it compares
+        niri's focused window with the bound window.
         """
         _refuse_linux_focus()
+        wayland = _wayland_backend()
+        if wayland is not None:
+            return bool(wayland._is_frontmost(self._pid))
         return apps._frontmost_pid() == self._pid
 
     async def _refresh(self, diff_on: bool = True) -> str:
         """Observe the app and store the new snapshot, returning its text."""
         linux = _linux_backend()
+        wayland = _wayland_backend()
         # the walk can take up to its deadline on an unresponsive app
-        if linux is not None:
+        if wayland is not None:
+            observation = await asyncio.to_thread(wayland._observe, self._pid)
+        elif linux is not None:
             observation = await asyncio.to_thread(linux._observe, self._pid)
         else:
             observation = await asyncio.to_thread(ax._observe, self._pid)
@@ -1169,8 +1324,11 @@ class App:
         instead of stalling the action.
         """
         linux = _linux_backend()
+        wayland = _wayland_backend()
 
         def fingerprint(timeout_seconds: float) -> tuple[Any, ...] | None:
+            if wayland is not None:
+                return wayland._window_fingerprint(self._pid)
             if linux is not None:
                 return linux._window_fingerprint(self._pid)
             return ax._window_fingerprint(self._pid, timeout_seconds=timeout_seconds)
@@ -1199,7 +1357,17 @@ class App:
         from . import permissions, policy
 
         linux = _linux_backend()
-        if linux is not None:
+        wayland = _wayland_backend()
+        if wayland is not None:
+            window = wayland._window(self._pid)
+            if window is None or window.get("app_id") != self._bundle_id:
+                raise ComputerUseError(
+                    "APP_NOT_RUNNING",
+                    f"window {self._pid} is no longer one of {self._bundle_id}'s windows; "
+                    "call get_app again to re-bind it",
+                    {"pid": self._pid, "bundle_id": self._bundle_id},
+                )
+        elif linux is not None:
             windows = linux._resolve_app(self._bundle_id)
             if self._pid not in {window.window_id for window in windows}:
                 raise ComputerUseError(
@@ -1231,8 +1399,8 @@ class App:
                 "SCREEN_LOCKED",
                 "the screen is locked; ask the user to unlock it before driving apps",
             )
-        # The Accessibility grant is macOS TCC state; X11 has no equivalent.
-        status = permissions._status() if linux is None else {"accessibility": "ok"}
+        # The Accessibility grant is macOS TCC state; X11 and Wayland have no equivalent.
+        status = permissions._status() if linux is None and wayland is None else {"accessibility": "ok"}
         if status.get("accessibility") != "ok":
             raise ComputerUseError(
                 "PERMISSIONS_NOT_GRANTED",
@@ -1262,7 +1430,7 @@ class App:
         if linux is not None:
             live_role, live_title = linux._live_fingerprint(refs[element_index])
         else:
-            live_role, live_title = ax._live_fingerprint(refs[element_index])
+            live_role, live_title = self._ax()._live_fingerprint(refs[element_index])
         if live_role != element.get("role") or live_title != element.get("title"):
             raise ComputerUseError(
                 "ELEMENT_STALE",
@@ -1271,6 +1439,44 @@ class App:
                 {"element_index": element_index},
             )
         return element, refs[element_index]
+
+    def _ax(self) -> ModuleType:
+        """The module behind the element seams: computer_use._wayland (AT-SPI) on Wayland, else ax."""
+        wayland = _wayland_backend()
+        return wayland if wayland is not None else ax
+
+    def _wayland_point(self, point: tuple[float, float]) -> tuple[float, float]:
+        """Turn one window-screenshot (x, y) point into a window-relative logical point.
+
+        A screenshot of this window (grim captures at the output scale) scales
+        its pixels back to the window's logical size, and the point must lie
+        inside it; without one the point is taken as logical already. The
+        backend bounds-checks the result against the live window size.
+        """
+        if (
+            not isinstance(point, tuple)
+            or len(point) != 2
+            or not all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in point)
+        ):
+            raise ComputerUseError(
+                "INVALID_ARGUMENT",
+                f"point must be an (x, y) pair of numbers, got {point!r}",
+                {"point": repr(point)[:64]},
+            )
+        shot = self._shot_size
+        if shot is None or self._shot_rect is None or self._shot_window_id != self._pid:
+            return (float(point[0]), float(point[1]))
+        if not 0 <= float(point[0]) < shot[0] or not 0 <= float(point[1]) < shot[1]:
+            raise ComputerUseError(
+                "INVALID_ARGUMENT",
+                f"point {point!r} is outside the captured image "
+                f"({shot[0]:.0f}x{shot[1]:.0f}); use coordinates from its screenshot",
+                {"point": repr(point)[:64]},
+            )
+        return (
+            float(point[0]) * float(self._shot_rect[2]) / shot[0],
+            float(point[1]) * float(self._shot_rect[3]) / shot[1],
+        )
 
     def _element_center(self, element_index: int) -> tuple[float, float]:
         """Compute one element's center in screen space from its AX bounds."""

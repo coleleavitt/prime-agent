@@ -171,6 +171,39 @@ modes: hand off to the user, confirm at action time, accept the user's
 explicit pre-approval, and no confirmation. Confirm at the last moment,
 stating the risk and the exact action about to happen.
 
+## Linux: Wayland (niri)
+
+Under a niri session (`WAYLAND_DISPLAY` plus a live `NIRI_SOCKET`),
+`get_state()` reports `"platform": "wayland"` and the skill runs on niri
+IPC, AT-SPI, and the compositor's virtual-input protocols. Differences
+from macOS:
+
+- Bind by Wayland `app_id` (what `list_apps()` reports; the allowlist keys
+  on it). Binding attaches to a running window only; there is no launch.
+- The AX text is the AT-SPI tree. Apps must be on the accessibility bus:
+  GTK and Qt are; Firefox needs accessibility enabled; Chromium/Electron
+  need `--force-renderer-accessibility`. An app that is not on the bus
+  observes as an empty tree, and typing into it is refused (its focus
+  cannot be checked for password fields). Element positions are
+  window-relative.
+- Element actions work in the background without moving focus: `click(i)`
+  on an element exposing `click`/`press`/`activate` runs that action, and
+  `set_value`, `select_text`, and `perform_secondary_action` go through
+  AT-SPI. Prefer them.
+- `press_key`, `type_text`, and coordinate `click`/`drag`/`scroll` need
+  keyboard focus: they focus the bound window first (a visible takeover —
+  say so before you do it) and fail with `INJECTION_FAILED` if focus did
+  not land. Password fields (`password text`) are refused, and an
+  unverifiable focus is refused too.
+- niri reports screen positions only for floating windows, so coordinate
+  input and `get_screenshot()` work only on a floating window on a visible
+  workspace; on a tiled window they raise `ACTION_UNSUPPORTED`. Use element
+  indices instead, or ask the user to float the window.
+- `paste` and `get_text_regions` are not available (`ACTION_UNSUPPORTED`).
+- `permissions_status()` reports AT-SPI as `accessibility`, grim as
+  `screen_recording`, and the virtual pointer/keyboard as `input`, with
+  fix-it lines in `help`.
+
 ## References
 
 - [API reference](references/api.md) — every signature, parameter, and

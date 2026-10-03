@@ -149,10 +149,14 @@ class LockProbeNoneSessionTests(unittest.TestCase):
             compat._require_mac = lambda: types.SimpleNamespace(
                 quartz=types.SimpleNamespace(CGSessionCopyCurrentDictionary=NullSessionQuartz.CGSessionCopyCurrentDictionary)
             )
+            original_backend = compat._backend
+            # the mac lock probe lane, even on a host whose own session is Wayland
+            compat._backend = lambda: "mac"
             try:
                 self.assertTrue(policy._screen_locked())
             finally:
                 compat._require_mac = original
+                compat._backend = original_backend
         finally:
             policy._locked_from_session = saved_locked
 

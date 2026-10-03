@@ -27,6 +27,8 @@ _ELLIPSIS = "…"
 
 _SECURE_ROLE = "AXTextField"
 _SECURE_SUBROLE = "AXSecureTextField"
+# The Wayland backend renders AT-SPI ROLE_PASSWORD_TEXT elements with this role.
+_ATSPI_SECURE_ROLE = "password text"
 _WINDOW_ID_ATTRIBUTE = "_AXWindowID"
 
 _SKILL_ROOT = Path(__file__).resolve().parents[2]
@@ -55,8 +57,13 @@ class Observation(NamedTuple):
 
 
 def _is_secure_field(element: dict[str, Any]) -> bool:
-    """Report whether one element is a secure text field (password input)."""
-    return element.get("role") == _SECURE_ROLE and element.get("subrole") == _SECURE_SUBROLE
+    """Report whether one element is a secure text field (password input).
+
+    macOS marks it AXTextField/AXSecureTextField; the Wayland backend's
+    AT-SPI password fields carry the "password text" role.
+    """
+    role = element.get("role")
+    return (role == _SECURE_ROLE and element.get("subrole") == _SECURE_SUBROLE) or role == _ATSPI_SECURE_ROLE
 
 
 def _flatten(tree: list[dict[str, Any]]) -> list[dict[str, Any]]:

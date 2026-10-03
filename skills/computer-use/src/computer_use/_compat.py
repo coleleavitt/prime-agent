@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import shutil
+import stat
 import sys
 from functools import cache
 from importlib import import_module
@@ -21,13 +23,34 @@ class MacFrameworks(NamedTuple):
 
 
 def _backend() -> str | None:
-    """Report the available backend: "mac" on darwin, "linux" when the xdotool
-    tool is on PATH, otherwise None."""
+    """Report the available backend: "mac" on darwin, "wayland" under a niri
+    Wayland session, "linux" (X11) when the xdotool tool is on PATH, otherwise
+    None.
+
+    The Wayland check runs ahead of the X11 one: a niri session usually also
+    exports DISPLAY through xwayland-satellite, but its native windows are not
+    X11 windows, so X11 tooling would see only the XWayland clients.
+    """
     if sys.platform == "darwin":
         return "mac"
+    if _niri_session():
+        return "wayland"
     if shutil.which("xdotool") is not None:
         return "linux"
     return None
+
+
+def _niri_session() -> bool:
+    """Report whether this process runs under niri: WAYLAND_DISPLAY plus a live NIRI_SOCKET."""
+    if not os.environ.get("WAYLAND_DISPLAY"):
+        return False
+    path = os.environ.get("NIRI_SOCKET") or ""
+    if not path:
+        return False
+    try:
+        return stat.S_ISSOCK(os.stat(path).st_mode)
+    except OSError:
+        return False
 
 
 @cache
@@ -74,3 +97,19 @@ def _require_linux() -> ModuleType:
             "computer use backend unavailable: the Linux _backend module is not installed yet",
         ) from error
     return _linux
+
+
+def _require_wayland() -> ModuleType:
+    """Import the Wayland (niri) backend module lazily for the Wayland lane.
+
+    Raises ComputerUseError TRANSPORT_ERROR outside a niri Wayland session.
+    """
+    if _backend() != "wayland":
+        raise ComputerUseError(
+            "TRANSPORT_ERROR",
+            "computer use backend unavailable: the Wayland _backend needs a niri session "
+            "(WAYLAND_DISPLAY and a live NIRI_SOCKET)",
+        )
+    from . import _wayland
+
+    return _wayland

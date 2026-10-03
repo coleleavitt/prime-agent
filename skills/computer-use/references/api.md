@@ -11,10 +11,10 @@ complete module surface; [safety.md](safety.md) governs *when* to act.
 | `await get_state(emit: bool = True)` | `dict` | Grants, app inventory, allowlist, platform. Prints fix-it guidance when a macOS grant is missing. The first call per process also emits the `computer_use_session_started` telemetry event; `emit=False` skips it. Discovery calls do not raise `TRANSPORT_ERROR` off darwin: `get_state` reports `"platform": None` and `permissions_status` reports `unknown` grants — read those fields to detect a missing backend; the *action* calls are the ones that raise. |
 | `await list_apps()` | `list[dict]` | One `{"id": bundle_id, "name": display, "running": bool}` record per app. Use it to resolve names and check `running` before binding. Unlike `get_state`/`permissions_status`, it *does* raise `TRANSPORT_ERROR` off darwin (reading the workspace needs the backend). |
 | `await get_app(app: str \| dict)` | `App` | Binds by display name or bundle id; dicts: `{"bundle_id": ...}`, `{"path": ...}`, `{"name": ...}`. Returns the app with its first AX state already loaded (`app.state`). |
-| `await permissions_status()` | `dict` | `{"accessibility": ..., "screen_recording": ..., "help": [lines]}`; each status is `ok`, `missing`, or `unknown`. |
+| `await permissions_status()` | `dict` | `{"accessibility": ..., "screen_recording": ..., "help": [lines]}`; each status is `ok`, `missing`, or `unknown`. On Wayland it also carries `"input"` (see Platforms). |
 
 `get_state()` returns `{"apps": [...], "permissions": {...}, "allowlist":
-{...}, "platform": "mac" | None}`. `apps` carries the `list_apps()`
+{...}, "platform": "mac" | "wayland" | "linux" | None}`. `apps` carries the `list_apps()`
 records; `permissions` mirrors `permissions_status()`.
 
 `get_app` raises `APP_NOT_ALLOWED` (allowlist gate), `PERMISSIONS_NOT_GRANTED`,
@@ -137,8 +137,51 @@ Emission is best-effort and never raises; properties are primitives only.
 
 ## Platforms
 
-`backend()` resolves `"mac"` on macOS and `None` otherwise — in which case
+`backend()` resolves, in order: `"mac"` on macOS; `"wayland"` under a niri
+session (`WAYLAND_DISPLAY` set and `NIRI_SOCKET` naming a live socket);
+`"linux"` (X11) when `xdotool` is on PATH; otherwise `None`, in which case
 API calls raise `TRANSPORT_ERROR` ("computer use backend unavailable:
-\<reason\>"). macOS is the v1 platform; the Linux backend ships in a
-follow-up release and is not advertised until its module lands, so
-`get_state()` never reports a platform this skill cannot drive.
+\<reason\>"). The Wayland check runs before the X11 one because a niri
+session usually also exports an XWayland `DISPLAY` that sees only XWayland
+clients.
+
+### Wayland (niri)
+
+| Piece | Source | Notes |
+|---|---|---|
+| Apps and windows | niri IPC (`NIRI_SOCKET`, JSON lines) | The app identity is the Wayland `app_id` (the allowlist key); `App.pid` carries niri's window id. Binding picks the focused, else most recently focused, window of the app. No launch: a spec without a window raises `APP_NOT_RUNNING`. Every action re-checks that the window still exists with the bound `app_id`. |
+| AX text | AT-SPI (libatspi via PyGObject) | The app is found on the accessibility bus by the window's pid, its frame by the window title. Elements carry the AT-SPI role name (`push button`, `entry`, ...), `title` (name), `value` (text or numeric value), `description`, `actions` (AT-SPI action names), and WINDOW-relative `position`/`size`. Only showing elements are walked (same 1500/12/3 s bounds). |
+| Secure fields | AT-SPI `ROLE_PASSWORD_TEXT` | Rendered as role `password text` with `[secure]`; their value is never read. `type_text`/`press_key` read the live focus and refuse a password field, and refuse when the focus cannot be verified (app not on the bus, search bounds hit) — the macOS fail-closed rule. |
+| Element actions | AT-SPI | `click(i)` (left, single) runs the element's `click`/`press`/`activate`/`jump`/`toggle`/`open` action; `set_value` uses EditableText; `select_text` uses Text selections; `perform_secondary_action` runs any listed action. None of these move focus. |
+| Keyboard | `zwp_virtual_keyboard_v1` | Focus-bound: the window is focused through niri first and the input is refused (`INJECTION_FAILED`) if niri does not report it focused. Text is typed with an uploaded keymap holding one keysym per character, so it does not depend on the user's layout. `cmd` maps to Super. |
+| Pointer | `zwlr_virtual_pointer_v1` | Pixel-exact in logical coordinates, mapped onto the window's output; focus as above. Needs the window's screen position, which niri reports only for floating windows on an active workspace; tiled windows raise `ACTION_UNSUPPORTED`. |
+| Screenshots | `grim -g` (wlr-screencopy) | Captures the window's logical rect into the same hardened directory; the PNG is at the output scale (2x on a 2x output) and `(x, y)` targets scale back automatically. Refused for tiled windows and when another floating window overlaps an unfocused bound window. |
+| Locked screen | logind `LockedHint` + `Active` (via `loginctl`) | niri maintains `LockedHint`; an unreadable or inactive session counts as locked. |
+
+`permissions_status()` on Wayland returns `{"accessibility", "screen_recording",
+"input": {"pointer", "keyboard"}, "help"}` — AT-SPI, grim, and the two
+virtual-input managers, each `ok`, `missing`, or `unknown`.
+
+Setup the user may need: PyGObject with the Atspi 2.0 typelib importable by
+the kernel's Python (a venv created with `--system-site-packages`, or
+PyGObject installed into it), at-spi2-core running, `grim` on PATH, and apps
+exposing AT-SPI (Firefox: accessibility enabled; Chromium/Electron:
+`--force-renderer-accessibility`). The virtual-input protocols need no
+setup: niri offers them to every client outside a sandboxed security context.
+
+Known gaps on Wayland:
+
+- Coordinate input and screenshots need a floating window: niri's IPC does
+  not expose the scrolling layout's view offset, so a tiled window's screen
+  position is unknown.
+- Input is focus-bound, not window-targeted: there is a short race between
+  the focus check and delivery if the user changes focus in between.
+- Pointer clicks land on whatever surface is topmost at the point
+  (layer-shell bars and notifications are not checked); screenshots of the
+  rect include such overlays.
+- AT-SPI WINDOW coordinates of client-side-decorated apps can be offset by
+  their shadow margins relative to niri's window geometry.
+- `paste` (clipboard transaction) and `get_text_regions` (OCR) are
+  macOS-only; ydotool is deliberately not used (its socket lets any process
+  type as the user, its absolute motion is not pixel-accurate, and its
+  typing is US-ASCII only).

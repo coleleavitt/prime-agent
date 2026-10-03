@@ -162,11 +162,16 @@ def _screen_locked() -> bool:
     thing the rest of the safety model protects: the user watching their
     desktop while it is driven. A session that cannot be read is treated as
     locked, so binding and input injection stop with SCREEN_LOCKED instead
-    of proceeding on an unverifiable desktop.
+    of proceeding on an unverifiable desktop. Under the Wayland (niri)
+    backend the state is logind's LockedHint, which niri maintains.
     """
     try:
         from computer_use import _compat
 
+        if _compat._backend() == "wayland":
+            from computer_use import _wayland
+
+            return _wayland._screen_locked()
         # pyobjc binds CGSessionCopyCurrentDictionary with no arguments; a
         # NULL session dictionary comes back as None without raising.
         session = _compat._require_mac().quartz.CGSessionCopyCurrentDictionary()
