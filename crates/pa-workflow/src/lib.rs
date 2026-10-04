@@ -10,6 +10,7 @@
 //! host-request error, which the runtime reports as `CapabilityUnavailable`.
 
 pub mod v1;
+pub mod v2;
 
 use pa_core::features::{SessionFeature, SessionFeatureContext};
 use pa_core::kernel::shared::HostRequestHandlers;
