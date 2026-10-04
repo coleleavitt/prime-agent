@@ -6,8 +6,10 @@ description: >-
   panic anywhere while the guard is held poisons the lock, and every later
   acquisition through `unwrap` then panics too: in the daemon, the supervisor
   or a session worker one bad turn takes the whole long-lived process down.
-  The repo's convention is the poison-tolerant `lock()` helper or
-  `.unwrap_or_else(PoisonError::into_inner)`.
+  The repo's convention is `pa_types::sync::{MutexExt::lock_or_recover,
+  RwLockExt::read_or_recover, RwLockExt::write_or_recover}`; the leaf crates
+  without a pa-types dependency (pa-agent, pa-telemetry, pa-mermaid) spell
+  it `.unwrap_or_else(PoisonError::into_inner)`.
 severity: medium
 tags: [panic, poisoning, availability]
 language: rust
@@ -29,10 +31,12 @@ check-patterns:
         regex: "^\\(\\s*\\)$"
       - enclosing-function:
           is-test: false
-message: "`.{acquire}().{unwrap}()` panics on a poisoned lock outside tests"
+message: "`.{acquire}().{unwrap}()` panics on a poisoned lock outside tests; use `.{acquire}_or_recover()`"
 review:
   - Is this code reached from the daemon/supervisor/worker/kernel manager (a long-lived process)?
-  - Could anything panic while another holder has this guard? Then use the poison-tolerant helper.
+  - Use `lock_or_recover()` / `read_or_recover()` / `write_or_recover()` (`pa_types::sync`).
+  - Keep the unwrap only if a panicking holder can leave the guarded value half-updated and
+    unsafe to read; say so in a comment at the site and list it in codegraph-rules/README.md.
 examples:
   bad:
     - |
@@ -43,6 +47,10 @@ examples:
     - |
       fn bump(state: &Mutex<u32>) { *state.lock().unwrap_or_else(PoisonError::into_inner) += 1; }
     - |
+      fn bump(state: &Mutex<u32>) { *state.lock_or_recover() += 1; }
+    - |
+      fn read(state: &RwLock<Vec<u8>>) -> usize { state.read_or_recover().len() }
+    - |
       #[test]
       fn bumps() { let m = Mutex::new(1); assert_eq!(*m.lock().unwrap(), 1); }
     - |
@@ -50,8 +58,9 @@ examples:
 ---
 id: pa-std-guard-across-await
 description: >-
-  A synchronous lock guard (std/parking_lot `Mutex`/`RwLock`, or the repo's
-  `lock(&m)` helper that returns a std `MutexGuard`) is bound with `let` in an
+  A synchronous lock guard (std/parking_lot `Mutex`/`RwLock`, the repo's
+  `lock(&m)` helper that returns a std `MutexGuard`, or the
+  `pa_types::sync` `lock_or_recover()`/`read_or_recover()`/`write_or_recover()`) is bound with `let` in an
   async function and a later statement of the same block awaits. Holding a
   std guard across `.await` blocks the executor thread and deadlocks when the
   task resumes on another thread that wants the same lock.
@@ -73,7 +82,7 @@ check-patterns:
       - capture: value
         # The binding IS the guard: the acquisition ends the expression (a
         # `lock(..).clone()` or `{ *m.lock().unwrap() }` drops it at the `;`).
-        regex: "((^|[^\\w.])lock\\([^()]*(\\([^()]*\\))?[^()]*\\)|\\.lock\\(\\)|\\.(read|write)\\(\\))(\\s*\\.(unwrap|expect|unwrap_or_else)\\((\\([^()]*\\)|[^()])*\\))?\\s*$"
+        regex: "((^|[^\\w.])lock\\([^()]*(\\([^()]*\\))?[^()]*\\)|\\.lock\\(\\)|\\.(read|write)\\(\\)|\\.(lock|read|write)_or_recover\\(\\))(\\s*\\.(unwrap|expect|unwrap_or_else)\\((\\([^()]*\\)|[^()])*\\))?\\s*$"
       - capture: value
         not-regex: "^\\{"
       # tokio's guards are awaited, and they are fine across `.await`.
@@ -105,6 +114,11 @@ examples:
       async fn f(inner: &Inner) {
           let g = lock(&inner.guarded);
           inner.write_line(&g.frame).await;
+      }
+    - |
+      async fn f(state: &Mutex<u32>, tx: &Sender<u32>) {
+          let guard = state.lock_or_recover();
+          tx.send(*guard).await;
       }
   good:
     - |
