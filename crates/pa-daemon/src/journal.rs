@@ -322,6 +322,28 @@ pub(crate) fn append_record_at(parent: &File, leaf: &str, record: &Value) -> Res
     Ok(())
 }
 
+/// Off-unix arms of [`append_record_at`] / [`rewrite_records_at`]: the
+/// private-journal contract has no platform ACL proof there, so the family
+/// logs never open and every leaf write fails closed with the same reason.
+///
+/// # Errors
+///
+/// Always: the request outbox requires a platform-proven private parent.
+#[cfg(not(unix))]
+pub(crate) fn append_record_at(_parent: &File, _leaf: &str, _record: &Value) -> Result<()> {
+    anyhow::bail!("the request outbox requires a platform-proven private parent")
+}
+
+/// See the off-unix [`append_record_at`].
+///
+/// # Errors
+///
+/// Always: the request outbox requires a platform-proven private parent.
+#[cfg(not(unix))]
+pub(crate) fn rewrite_records_at(_parent: &File, _leaf: &str, _records: &[Value]) -> Result<()> {
+    anyhow::bail!("the request outbox requires a platform-proven private parent")
+}
+
 /// [`rewrite_records`] relative to the pinned parent handle: the temp is
 /// created through `openat` (`O_NOFOLLOW`, owner-only) and renamed with
 /// `renameat` — no path resolution anywhere in the swap.
@@ -1297,7 +1319,7 @@ impl WorkerRecoveryJournal {
         self.quarantined || self.pending_sync_fd.is_some()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn fail_next_cloud_sync(&mut self) {
         self.fail_next_cloud_sync = true;
     }

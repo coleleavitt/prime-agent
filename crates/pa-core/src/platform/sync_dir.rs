@@ -28,6 +28,10 @@ pub fn sync_dir(dir: &Path) -> io::Result<()> {
 /// durability story stays the atomic-write + rename-retry contract, and
 /// this strengthening is Unix-only (disclosed like the atomic-write
 /// audit instead of silently pretending parity).
+///
+/// # Errors
+///
+/// Never on this platform; the `Result` matches the unix arm.
 #[cfg(not(unix))]
 #[allow(clippy::unnecessary_wraps)]
 pub fn sync_dir(_dir: &Path) -> io::Result<()> {

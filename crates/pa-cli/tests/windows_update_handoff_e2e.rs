@@ -14,7 +14,7 @@
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -36,7 +36,7 @@ const POLL: Duration = Duration::from_millis(250);
 
 /// The mock installer: it sleeps first (it must still be running when the
 /// CLI exits) and then lands its side-effect file — the publish's rename
-/// semantics are the install e2e's lane (test_windows_install.ps1); this
+/// semantics are the install e2e's lane (`test_windows_install.ps1`); this
 /// e2e proves the handoff's own contract: the spawn is detached, the
 /// caller exits, and the installer survives and finishes.
 const MOCK_INSTALLER: &str = r#"#!/bin/sh

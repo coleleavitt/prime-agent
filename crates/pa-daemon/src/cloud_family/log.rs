@@ -12,6 +12,11 @@
 //! port; this slice is append + replay with a fixed generation, bounded by
 //! the TS record cap, so an unacked full log stalls exactly like TS.
 
+// Off unix the family logs never open (the private-journal contract fails
+// closed without a platform ACL proof), so their load/rewrite internals are
+// unreachable there by design.
+#![cfg_attr(not(unix), allow(dead_code, clippy::unused_self))]
+
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
@@ -24,6 +29,7 @@ use pa_types::daemon::cloud::{
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
+#[cfg(unix)]
 use super::DEFAULT_OUTBOX_RECORDS;
 use crate::util::now_iso;
 
@@ -94,6 +100,7 @@ impl FamilyRequestLog {
         }
         #[cfg(not(unix))]
         {
+            let _ = (session_id, max_records);
             let events_path = directory.join(EVENTS_FILE);
             crate::journal::validate_private_journal_parent(&events_path)?;
             anyhow::bail!("the request outbox requires a platform-proven private parent")

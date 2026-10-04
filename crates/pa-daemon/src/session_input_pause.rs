@@ -124,7 +124,7 @@ impl InputPauseTable {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn internal_pause_id(&self) -> Option<String> {
         self.pauses
             .lock()

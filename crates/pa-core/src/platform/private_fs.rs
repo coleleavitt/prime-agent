@@ -139,12 +139,20 @@ pub fn open_dir_no_follow_at(parent: &File, name: &std::ffi::OsStr) -> io::Resul
 
 /// Windows arm of [`open_dir_no_follow`]: no mode bits or uid-style
 /// probes for this discipline — callers fail closed upstream.
+///
+/// # Errors
+///
+/// Always `Unsupported`: off unix this discipline has no platform proof.
 #[cfg(not(unix))]
 pub fn open_dir_no_follow(_path: &Path) -> io::Result<File> {
     Err(unsupported())
 }
 
 /// Windows arm of [`open_dir_no_follow_at`]: see the module note.
+///
+/// # Errors
+///
+/// Always `Unsupported`: off unix this discipline has no platform proof.
 #[cfg(not(unix))]
 pub fn open_dir_no_follow_at(_parent: &File, _name: &std::ffi::OsStr) -> io::Result<File> {
     Err(unsupported())
@@ -170,30 +178,50 @@ pub fn create_dir_private_at(parent: &File, name: &std::ffi::OsStr) -> io::Resul
 }
 
 /// Windows arm of [`create_dir_private_at`]: see the module note.
+///
+/// # Errors
+///
+/// Always `Unsupported`: off unix this discipline has no platform proof.
 #[cfg(not(unix))]
 pub fn create_dir_private_at(_parent: &File, _name: &std::ffi::OsStr) -> io::Result<()> {
     Err(unsupported())
 }
 
 /// Windows arm of [`open_append_at`]: see the module note.
+///
+/// # Errors
+///
+/// Always `Unsupported`: off unix this discipline has no platform proof.
 #[cfg(not(unix))]
 pub fn open_append_at(_parent: &File, _leaf: &str) -> io::Result<File> {
     Err(unsupported())
 }
 
 /// Windows arm of [`open_read_at`]: see the module note.
+///
+/// # Errors
+///
+/// Always `Unsupported`: off unix this discipline has no platform proof.
 #[cfg(not(unix))]
 pub fn open_read_at(_parent: &File, _leaf: &str) -> io::Result<File> {
     Err(unsupported())
 }
 
 /// Windows arm of [`create_replace_at`]: see the module note.
+///
+/// # Errors
+///
+/// Always `Unsupported`: off unix this discipline has no platform proof.
 #[cfg(not(unix))]
 pub fn create_replace_at(_parent: &File, _leaf: &str) -> io::Result<File> {
     Err(unsupported())
 }
 
 /// Windows arm of [`rename_at`]: see the module note.
+///
+/// # Errors
+///
+/// Always `Unsupported`: off unix this discipline has no platform proof.
 #[cfg(not(unix))]
 pub fn rename_at(_parent: &File, _from: &str, _to: &str) -> io::Result<()> {
     Err(unsupported())

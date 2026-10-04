@@ -131,6 +131,7 @@ pub fn is_owned_by_current_user(metadata: &std::fs::Metadata) -> bool {
 /// compare (the prime CLI skips the check there too), so every file counts
 /// as owned.
 #[cfg(not(unix))]
+#[must_use]
 pub fn is_owned_by_current_user(_metadata: &std::fs::Metadata) -> bool {
     true
 }
