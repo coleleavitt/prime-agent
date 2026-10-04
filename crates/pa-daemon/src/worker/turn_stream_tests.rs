@@ -58,6 +58,7 @@ fn burst_runner(engine: Arc<dyn SessionEngine>) -> TurnRunner {
         agent_message_digest_mode: false,
         agent_message_digest_pin: crate::worker::digest::DigestLanePin::Auto,
         active_action: None,
+        feature_status: serde_json::Map::new(),
         running_tool_calls: std::collections::HashSet::new(),
         running_admission_ids: std::collections::HashSet::new(),
     }));

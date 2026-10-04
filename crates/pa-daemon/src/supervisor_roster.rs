@@ -586,6 +586,7 @@ fn passivated_summary(summary: Value) -> Value {
     for key in [
         "activeSessionId",
         "directAttachedClients",
+        "featureStatus",
         "hasActiveHeartbeat",
         "hasRegisteredHeartbeat",
         "hasRegisteredCronJob",

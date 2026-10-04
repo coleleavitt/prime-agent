@@ -448,6 +448,7 @@ pub(crate) fn session_summary(
         unfinished_action_count: Some(0),
         anthropic_warning_shown: store
             .map(crate::session_store::SessionFile::anthropic_warning_shown),
+        feature_status: (!core.feature_status.is_empty()).then(|| core.feature_status.clone()),
     }
 }
 

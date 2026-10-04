@@ -106,6 +106,9 @@ pub(crate) struct SessionCore {
     /// the snapshot (TS #2063 `compactRlmText(queuedAgentMessagePreview(
     /// active))`: the delivery's labeled preview, else the message text).
     pub(crate) active_action: Option<crate::types::SessionActionActive>,
+    /// Installed features' latest live status, keyed by feature name
+    /// (`{line, status}`): the roster summary's `featureStatus`.
+    pub(crate) feature_status: serde_json::Map<String, serde_json::Value>,
 }
 
 impl SessionCore {
@@ -160,6 +163,7 @@ impl SessionCore {
             agent_message_digest_mode: false,
             agent_message_digest_pin: super::digest::DigestLanePin::default(),
             active_action: None,
+            feature_status: serde_json::Map::new(),
         }
     }
 }

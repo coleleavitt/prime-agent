@@ -584,6 +584,15 @@ impl AgentsViewMode {
             .cloned()
             .unwrap_or_default();
         line.push(theme.fg(ThemeColor::Dim, details));
+        // Installed features' live status (the roster summary's
+        // `featureStatus`): after the fixed columns, clipped by the row.
+        if let Some(status) = feature_status_text(&row.summary) {
+            line.push(crate::Span::styled(
+                "  ".to_string(),
+                ratatui::style::Style::default(),
+            ));
+            line.push(theme.fg(ThemeColor::Accent, status));
+        }
         finish_session_row(theme, line, selected, hovered, width)
     }
 
@@ -1066,5 +1075,51 @@ impl Renderer {
             }
             Renderer::Headless { frames, .. } => frames,
         }
+    }
+}
+
+/// The row's feature status lines (`featureStatus.<feature>.line`, by
+/// feature name), joined; `None` when no feature published one.
+pub(crate) fn feature_status_text(summary: &Value) -> Option<String> {
+    let statuses = summary.get("featureStatus")?.as_object()?;
+    let mut lines: Vec<(&String, &str)> = statuses
+        .iter()
+        .filter_map(|(feature, entry)| {
+            entry
+                .get("line")
+                .and_then(Value::as_str)
+                .filter(|line| !line.trim().is_empty())
+                .map(|line| (feature, line))
+        })
+        .collect();
+    lines.sort_by(|a, b| a.0.cmp(b.0));
+    (!lines.is_empty()).then(|| {
+        lines
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect::<Vec<_>>()
+            .join(" \u{b7} ")
+    })
+}
+
+#[cfg(test)]
+mod feature_status_tests {
+    use serde_json::json;
+
+    use super::feature_status_text;
+
+    #[test]
+    fn feature_status_lines_join_by_feature_name_and_skip_cleared_ones() {
+        assert_eq!(feature_status_text(&json!({})), None);
+        assert_eq!(
+            feature_status_text(
+                &json!({ "featureStatus": { "zeta": { "line": "z" }, "alpha": { "line": "a running" }, "gone": { "line": null } } })
+            ),
+            Some("a running \u{b7} z".to_string())
+        );
+        assert_eq!(
+            feature_status_text(&json!({ "featureStatus": { "gone": { "line": null } } })),
+            None
+        );
     }
 }

@@ -130,6 +130,7 @@ impl AgentSessionEngine {
             mcp,
             published_goal: std::sync::Mutex::new(None),
             late_agent_message_sink: std::sync::Mutex::new(None),
+            feature_status_sink: std::sync::Mutex::new(None),
             goal_runtime: std::sync::Mutex::new(None),
             pending_goal_continuation: std::sync::Mutex::new(None),
             goal_budget_crossed: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -991,6 +992,14 @@ impl AgentSessionEngine {
         })
         .await
         .inspect(|engine| {
+            if let Some(sink) = self
+                .feature_status_sink
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+            {
+                engine.set_feature_status_sink(sink);
+            }
             // A queue-mode switch that landed mid-build wrote only the live slot: re-apply the
             // modes so the first build never serves a stale one.
             let (steering_mode, follow_up_mode) = {

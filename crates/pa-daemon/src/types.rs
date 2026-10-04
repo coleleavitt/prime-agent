@@ -141,6 +141,11 @@ pub struct SessionSummary {
     /// session is still initializing (older workers never emit it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anthropic_warning_shown: Option<bool>,
+    /// Installed features' live status lines, keyed by feature name
+    /// (`{line, status}`); absent when no feature published one. Additive:
+    /// older clients ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature_status: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 /// The session action snapshot (TS `SessionActionSnapshot`).

@@ -165,6 +165,59 @@ impl std::fmt::Debug for FeatureCommandOutcome {
     }
 }
 
+/// A feature's live status for one session: what a session-event surface
+/// (the daemon's `feature_status` event and roster summary, the agents view)
+/// shows. Replaces the feature's previous status for that session.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FeatureStatus {
+    /// The publishing feature (`SessionFeature::name`).
+    pub feature: String,
+    /// A one-line human summary the agents view shows; `None` clears it.
+    pub line: Option<String>,
+    /// The feature's own structured status (opaque to native code).
+    pub status: serde_json::Value,
+}
+
+/// Where a session's feature statuses go (the embedding's event surface).
+pub type FeatureStatusSink = Arc<dyn Fn(FeatureStatus) + Send + Sync>;
+
+type StatusSinks = std::sync::Mutex<
+    std::collections::HashMap<String, std::sync::Weak<dyn Fn(FeatureStatus) + Send + Sync>>,
+>;
+
+fn status_sinks() -> &'static StatusSinks {
+    static SINKS: OnceLock<StatusSinks> = OnceLock::new();
+    SINKS.get_or_init(StatusSinks::default)
+}
+
+/// Route session `session_id`'s feature statuses to `sink` while the caller
+/// keeps it alive (the registry holds it weakly); replaces an earlier sink.
+pub fn register_feature_status_sink(session_id: &str, sink: &FeatureStatusSink) {
+    let mut sinks = status_sinks()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    sinks.retain(|_, sink| sink.strong_count() > 0);
+    sinks.insert(session_id.to_string(), Arc::downgrade(sink));
+}
+
+/// Publish a feature's status for a session; `false` when the session has
+/// no live sink (an embedding without an event surface, or a closed
+/// session). Never blocks on the surface beyond the sink's own call.
+pub fn publish_feature_status(session_id: &str, status: FeatureStatus) -> bool {
+    let sink = status_sinks()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(session_id)
+        .and_then(std::sync::Weak::upgrade);
+    match sink {
+        Some(sink) => {
+            sink(status);
+            true
+        }
+        None => false,
+    }
+}
+
 /// One optional capability. Implementations live in their own crates and
 /// are installed by the composition root; every method has a no-op default
 /// so a feature implements only the seams it uses. Hooks receive the
@@ -806,5 +859,25 @@ mod tests {
         assert_eq!(refused.err(), Some("stub refused".to_string()));
         assert_eq!(CommandStub.slash_commands()[0].name, "stub-command");
         assert!(Stub.slash_commands().is_empty());
+    }
+
+    /// A session's statuses reach the sink registered for it while the
+    /// sink lives; none reach a dropped or unregistered one.
+    #[test]
+    fn feature_statuses_reach_the_sessions_live_sink() {
+        let seen: Arc<std::sync::Mutex<Vec<FeatureStatus>>> = Arc::default();
+        let recorder = Arc::clone(&seen);
+        let sink: FeatureStatusSink = Arc::new(move |status| recorder.lock().unwrap().push(status));
+        register_feature_status_sink("status-session-1", &sink);
+        let status = FeatureStatus {
+            feature: "stub".to_string(),
+            line: Some("stub: running".to_string()),
+            status: serde_json::json!({ "phase": "running" }),
+        };
+        assert!(publish_feature_status("status-session-1", status.clone()));
+        assert!(!publish_feature_status("status-session-2", status.clone()));
+        drop(sink);
+        assert!(!publish_feature_status("status-session-1", status.clone()));
+        assert_eq!(*seen.lock().unwrap(), vec![status]);
     }
 }

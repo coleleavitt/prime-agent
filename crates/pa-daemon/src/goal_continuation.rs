@@ -49,6 +49,13 @@ impl AgentSessionEngine {
         }));
     }
 
+    pub(crate) fn set_feature_status_sink(&self, sink: pa_core::features::FeatureStatusSink) {
+        *self
+            .feature_status_sink
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(sink);
+    }
+
     pub(crate) fn set_late_agent_message_sink(&self, sink: pa_core::LateSentAgentMessageHandler) {
         *self
             .late_agent_message_sink

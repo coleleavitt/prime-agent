@@ -125,6 +125,9 @@ pub struct SessionEngine {
     /// What installed features know about this session (the seam's
     /// per-session context, shared with their hooks).
     pub(crate) feature_context: Arc<crate::features::SessionFeatureContext>,
+    /// The embedding's feature-status sink, held here so the process
+    /// registry's weak entry lives exactly as long as the engine.
+    feature_status_sink: std::sync::Mutex<Option<crate::features::FeatureStatusSink>>,
 }
 
 /// Skill overrides for built-in integrations the user is not logged into,
@@ -818,10 +821,21 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         rlm: wiring.rlm,
         provisioner,
         feature_context,
+        feature_status_sink: std::sync::Mutex::new(None),
     })
 }
 
 impl SessionEngine {
+    /// Route the installed features' status for this session to `sink` (the
+    /// embedding's event surface) for as long as the engine lives.
+    pub fn set_feature_status_sink(&self, sink: crate::features::FeatureStatusSink) {
+        crate::features::register_feature_status_sink(&self.feature_context.session_id, &sink);
+        *self
+            .feature_status_sink
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(sink);
+    }
+
     /// After a model switch, the `model.info` handler and the usage
     /// estimate's context window follow the model the session now runs.
     pub fn update_model_facts(&self, model: &pa_types::ai::Model) {
