@@ -1,0 +1,800 @@
+{
+  "result": {
+    "runId": "circle-packing-s7-r1700000000000",
+    "task": "circle-packing",
+    "seed": 7,
+    "mode": "local",
+    "iterations": 2,
+    "fixedPolicy": false,
+    "treeIds": [
+      "circle-packing-s7-i0-1700000000000",
+      "circle-packing-s7-i1-1700000000000",
+      "circle-packing-s7-i2-1700000000000"
+    ],
+    "rounds": [
+      {
+        "iteration": 0,
+        "treeId": "circle-packing-s7-i0-1700000000000",
+        "policyId": "1be99d403b0405a3",
+        "roundBest": 0.5442952231641506,
+        "probes": 25,
+        "agentGeneratedCalls": 0,
+        "proposals": {
+          "llmProposals": 0,
+          "llmAccepted": 0,
+          "llmRejected": {
+            "parse": 0,
+            "shape": 0,
+            "invalid-candidate": 0,
+            "error": 0,
+            "length": 0,
+            "aborted": 0,
+            "turn-limit": 0,
+            "budget": 0
+          },
+          "localFallbacks": 0
+        },
+        "decisionRounds": 6,
+        "poolSize": 0,
+        "tokens": {
+          "rollout": 0,
+          "dreamer": 0,
+          "guidance": 0
+        },
+        "handlerCalls": {
+          "proposer": 0,
+          "dreamer": 0,
+          "guidance": 0
+        },
+        "dreaming": null,
+        "probesToRoundBest": 24,
+        "improvements": [
+          {
+            "probe": 0,
+            "score": 0.48148225930068356
+          },
+          {
+            "probe": 20,
+            "score": 0.4971689806230818
+          },
+          {
+            "probe": 24,
+            "score": 0.5442952231641506
+          }
+        ],
+        "primingTreeIds": [
+          "circle-packing-s7-i0p0-1700000000000",
+          "circle-packing-s7-i0p1-1700000000000"
+        ],
+        "primingProbes": 12
+      },
+      {
+        "iteration": 1,
+        "treeId": "circle-packing-s7-i1-1700000000000",
+        "policyId": "1be99d403b0405a3",
+        "roundBest": 0.6442482533507891,
+        "probes": 12,
+        "agentGeneratedCalls": 0,
+        "proposals": {
+          "llmProposals": 0,
+          "llmAccepted": 0,
+          "llmRejected": {
+            "parse": 0,
+            "shape": 0,
+            "invalid-candidate": 0,
+            "error": 0,
+            "length": 0,
+            "aborted": 0,
+            "turn-limit": 0,
+            "budget": 0
+          },
+          "localFallbacks": 0
+        },
+        "decisionRounds": 6,
+        "poolSize": 3,
+        "tokens": {
+          "rollout": 0,
+          "dreamer": 0,
+          "guidance": 0
+        },
+        "handlerCalls": {
+          "proposer": 0,
+          "dreamer": 0,
+          "guidance": 0
+        },
+        "dreaming": {
+          "currentScore": 0.8861775177674608,
+          "chosenScore": 0.8861775177674608,
+          "improved": false,
+          "candidates": 6,
+          "candidateVerdicts": [
+            {
+              "index": 0,
+              "policyId": "88750a0917e520d1",
+              "policy": {
+                "selectionRule": "best-first",
+                "recoveryPolicy": "retry-best",
+                "stopRule": "patience",
+                "branchWidth": 2,
+                "refineDepth": 2,
+                "batchSize": 4,
+                "beta": 3,
+                "promisingThreshold": 0.616246765333762,
+                "targetScore": 1000000,
+                "explorationBias": 0.25
+              },
+              "origin": "local",
+              "changed": [
+                "beta",
+                "promisingThreshold"
+              ],
+              "duplicateOf": null,
+              "value": 0.8722886288785718,
+              "quality": 1,
+              "anytime": 0.6891545155142875,
+              "cost": 1,
+              "roundsSaved": 0,
+              "N": 13,
+              "rounds": 6,
+              "outOfSupportCells": 0,
+              "inSupportMean": 1,
+              "inSupportMin": 1,
+              "chargedProbes": 18,
+              "chargedRounds": 6,
+              "evidenceTrees": 0,
+              "eligible": true,
+              "reason": "worse"
+            },
+            {
+              "index": 1,
+              "policyId": "4957620c9fb75684",
+              "policy": {
+                "selectionRule": "best-first",
+                "recoveryPolicy": "retry-best",
+                "stopRule": "patience",
+                "branchWidth": 2,
+                "refineDepth": 2,
+                "batchSize": 4,
+                "beta": 6,
+                "promisingThreshold": 0.5,
+                "targetScore": 1000000,
+                "explorationBias": 0.031155413329017945
+              },
+              "origin": "local",
+              "changed": [
+                "explorationBias"
+              ],
+              "duplicateOf": null,
+              "value": 0.8722886288785718,
+              "quality": 1,
+              "anytime": 0.6891545155142875,
+              "cost": 1,
+              "roundsSaved": 0,
+              "N": 13,
+              "rounds": 6,
+              "outOfSupportCells": 0,
+              "inSupportMean": 1,
+              "inSupportMin": 1,
+              "chargedProbes": 18,
+              "chargedRounds": 6,
+              "evidenceTrees": 0,
+              "eligible": true,
+              "reason": "worse"
+            },
+            {
+              "index": 2,
+              "policyId": "6980e1cff01c702b",
+              "policy": {
+                "selectionRule": "best-first",
+                "recoveryPolicy": "retry-best",
+                "stopRule": "patience",
+                "branchWidth": 2,
+                "refineDepth": 2,
+                "batchSize": 4,
+                "beta": 6,
+                "promisingThreshold": 0.5,
+                "targetScore": 1000000,
+                "explorationBias": 0.44199263718705073
+              },
+              "origin": "local",
+              "changed": [
+                "explorationBias"
+              ],
+              "duplicateOf": null,
+              "value": 0.8722886288785718,
+              "quality": 1,
+              "anytime": 0.6891545155142875,
+              "cost": 1,
+              "roundsSaved": 0,
+              "N": 13,
+              "rounds": 6,
+              "outOfSupportCells": 0,
+              "inSupportMean": 1,
+              "inSupportMin": 1,
+              "chargedProbes": 18,
+              "chargedRounds": 6,
+              "evidenceTrees": 0,
+              "eligible": true,
+              "reason": "worse"
+            },
+            {
+              "index": 3,
+              "policyId": "62da4fad9d6bea42",
+              "policy": {
+                "selectionRule": "best-first",
+                "recoveryPolicy": "retry-best",
+                "stopRule": "patience",
+                "branchWidth": 2,
+                "refineDepth": 2,
+                "batchSize": 3,
+                "beta": 6,
+                "promisingThreshold": 0.5,
+                "targetScore": 1000000,
+                "explorationBias": 0.25
+              },
+              "origin": "local",
+              "changed": [
+                "batchSize"
+              ],
+              "duplicateOf": null,
+              "value": 0.8722886288785718,
+              "quality": 1,
+              "anytime": 0.6891545155142875,
+              "cost": 1,
+              "roundsSaved": 0,
+              "N": 13,
+              "rounds": 6,
+              "outOfSupportCells": 0,
+              "inSupportMean": 1,
+              "inSupportMin": 1,
+              "chargedProbes": 18,
+              "chargedRounds": 6,
+              "evidenceTrees": 0,
+              "eligible": true,
+              "reason": "worse"
+            },
+            {
+              "index": 4,
+              "policyId": "5f1cda1197b11fcd",
+              "policy": {
+                "selectionRule": "best-first",
+                "recoveryPolicy": "retry-best",
+                "stopRule": "patience",
+                "branchWidth": 2,
+                "refineDepth": 2,
+                "batchSize": 7,
+                "beta": 6,
+                "promisingThreshold": 0.431067929980093,
+                "targetScore": 1000000,
+                "explorationBias": 0.25
+              },
+              "origin": "local",
+              "changed": [
+                "batchSize",
+                "promisingThreshold"
+              ],
+              "duplicateOf": null,
+              "value": 0.8722886288785718,
+              "quality": 1,
+              "anytime": 0.6891545155142875,
+              "cost": 1,
+              "roundsSaved": 0,
+              "N": 13,
+              "rounds": 6,
+              "outOfSupportCells": 0,
+              "inSupportMean": 1,
+              "inSupportMin": 1,
+              "chargedProbes": 18,
+              "chargedRounds": 6,
+              "evidenceTrees": 0,
+              "eligible": true,
+              "reason": "worse"
+            },
+            {
+              "index": 5,
+              "policyId": "2b1d71c7dbf08c6f",
+              "policy": {
+                "selectionRule": "weighted",
+                "recoveryPolicy": "retry-best",
+                "stopRule": "patience",
+                "branchWidth": 2,
+                "refineDepth": 2,
+                "batchSize": 4,
+                "beta": 6,
+                "promisingThreshold": 0.5,
+                "targetScore": 1000000,
+                "explorationBias": 0.25
+              },
+              "origin": "local",
+              "changed": [
+                "selectionRule"
+              ],
+              "duplicateOf": null,
+              "value": 0.8722886288785718,
+              "quality": 1,
+              "anytime": 0.6891545155142875,
+              "cost": 1,
+              "roundsSaved": 0,
+              "N": 13,
+              "rounds": 6,
+              "outOfSupportCells": 0,
+              "inSupportMean": 1,
+              "inSupportMin": 1,
+              "chargedProbes": 18,
+              "chargedRounds": 6,
+              "evidenceTrees": 0,
+              "eligible": true,
+              "reason": "worse"
+            }
+          ],
+          "dreamer": "local",
+          "leverScan": {
+            "policies": 337,
+            "eligible": 46,
+            "bestValue": 0.8861775177674608,
+            "bestPolicyId": "1be99d403b0405a3",
+            "gap": 0,
+            "simulations": 339
+          },
+          "measuredTrees": 1
+        },
+        "probesToRoundBest": 10,
+        "improvements": [
+          {
+            "probe": 0,
+            "score": 0.41414617054227487
+          },
+          {
+            "probe": 1,
+            "score": 0.533489183026344
+          },
+          {
+            "probe": 2,
+            "score": 0.6114064723895459
+          },
+          {
+            "probe": 10,
+            "score": 0.6442482533507891
+          }
+        ]
+      },
+      {
+        "iteration": 2,
+        "treeId": "circle-packing-s7-i2-1700000000000",
+        "policyId": "1be99d403b0405a3",
+        "roundBest": 0.6508324410539075,
+        "probes": 12,
+        "agentGeneratedCalls": 0,
+        "proposals": {
+          "llmProposals": 0,
+          "llmAccepted": 0,
+          "llmRejected": {
+            "parse": 0,
+            "shape": 0,
+            "invalid-candidate": 0,
+            "error": 0,
+            "length": 0,
+            "aborted": 0,
+            "turn-limit": 0,
+            "budget": 0
+          },
+          "localFallbacks": 0
+        },
+        "decisionRounds": 6,
+        "poolSize": 4,
+        "tokens": {
+          "rollout": 0,
+          "dreamer": 0,
+          "guidance": 0
+        },
+        "handlerCalls": {
+          "proposer": 0,
+          "dreamer": 0,
+          "guidance": 0
+        },
+        "dreaming": {
+          "currentScore": 0.6807477878063238,
+          "chosenScore": 0.6807477878063238,
+          "improved": false,
+          "candidates": 6,
+          "candidateVerdicts": [
+            {
+              "index": 0,
+              "policyId": "ad7ddb1acf473b64",
+              "policy": {
+                "selectionRule": "best-first",
+                "recoveryPolicy": "retry-best",
+                "stopRule": "patience",
+                "branchWidth": 2,
+                "refineDepth": 2,
+                "batchSize": 4,
+                "beta": 6,
+                "promisingThreshold": 0.5,
+                "targetScore": 1000000,
+                "explorationBias": 0.3573213667498792
+              },
+              "origin": "local",
+              "changed": [
+                "explorationBias"
+              ],
+              "duplicateOf": null,
+              "value": 0.6807477878063238,
+              "quality": 0.7360463285799272,
+              "anytime": 0.6537410543744028,
+              "cost": 0.6944444444444444,
+              "roundsSaved": 0,
+              "N": 12.5,
+              "rounds": 6,
+              "outOfSupportCells": 0,
+              "inSupportMean": 1,
+              "inSupportMin": 1,
+              "chargedProbes": 12.5,
+              "chargedRounds": 6,
+              "evidenceTrees": 1,
+              "eligible": true,
+              "reason": "tie"
+            },
+            {
+              "index": 1,
+              "policyId": "a22bcb43e51bcb66",
+              "policy": {
+                "selectionRule": "best-first",
+                "recoveryPolicy": "retry-best",
+                "stopRule": "patience",
+                "branchWidth": 2,
+                "refineDepth": 2,
+                "batchSize": 4,
+                "beta": 6,
+                "promisingThreshold": 0.5,
+                "targetScore": 1000000,
+                "explorationBias": 0
+              },
+              "origin": "local",
+              "changed": [
+                "explorationBias"
+              ],
+              "duplicateOf": null,
+              "value": 0.6807477878063238,
+              "quality": 0.7360463285799272,
+              "anytime": 0.6537410543744028,
+              "cost": 0.6944444444444444,
+              "roundsSaved": 0,
+              "N": 12.5,
+              "rounds": 6,
+              "outOfSupportCells": 0,
+              "inSupportMean": 1,
+              "inSupportMin": 1,
+              "chargedProbes": 12.5,
+              "chargedRounds": 6,
+              "evidenceTrees": 1,
+              "eligible": true,
+              "reason": "tie"
+            },
+            {
+              "index": 2,
+              "policyId": "898f856bd8e970de",
+              "policy": {
+                "selectionRule": "best-first",
+                "recoveryPolicy": "retry-best",
+                "stopRule": "patience",
+                "branchWidth": 2,
+                "refineDepth": 2,
+                "batchSize": 4,
+                "beta": 6,
+                "promisingThreshold": 0.7328575845308932,
+                "targetScore": 1000000,
+                "explorationBias": 0.25
+              },
+              "origin": "local",
+              "changed": [
+                "promisingThreshold"
+              ],
+              "duplicateOf": null,
+              "value": 0.6807477878063238,
+              "quality": 0.7360463285799272,
+              "anytime": 0.6537410543744028,
+              "cost": 0.6944444444444444,
+              "roundsSaved": 0,
+              "N": 12.5,
+              "rounds": 6,
+              "outOfSupportCells": 0,
+              "inSupportMean": 1,
+              "inSupportMin": 1,
+              "chargedProbes": 12.5,
+              "chargedRounds": 6,
+              "evidenceTrees": 1,
+              "eligible": true,
+              "reason": "tie"
+            },
+            {
+              "index": 3,
+              "policyId": "178fed26aaae670c",
+              "policy": {
+                "selectionRule": "best-first",
+                "recoveryPolicy": "retry-best",
+                "stopRule": "patience",
+                "branchWidth": 2,
+                "refineDepth": 2,
+                "batchSize": 4,
+                "beta": 6,
+                "promisingThreshold": 0.5,
+                "targetScore": 1000000,
+                "explorationBias": 0.22405627294527317
+              },
+              "origin": "local",
+              "changed": [
+                "explorationBias"
+              ],
+              "duplicateOf": null,
+              "value": 0.6807477878063238,
+              "quality": 0.7360463285799272,
+              "anytime": 0.6537410543744028,
+              "cost": 0.6944444444444444,
+              "roundsSaved": 0,
+              "N": 12.5,
+              "rounds": 6,
+              "outOfSupportCells": 0,
+              "inSupportMean": 1,
+              "inSupportMin": 1,
+              "chargedProbes": 12.5,
+              "chargedRounds": 6,
+              "evidenceTrees": 1,
+              "eligible": true,
+              "reason": "tie"
+            },
+            {
+              "index": 4,
+              "policyId": "d1f2dbc332d6f90f",
+              "policy": {
+                "selectionRule": "best-first",
+                "recoveryPolicy": "retry-best",
+                "stopRule": "patience",
+                "branchWidth": 2,
+                "refineDepth": 2,
+                "batchSize": 4,
+                "beta": 6,
+                "promisingThreshold": 0.5147751108322771,
+                "targetScore": 1000000,
+                "explorationBias": 0.25
+              },
+              "origin": "local",
+              "changed": [
+                "promisingThreshold"
+              ],
+              "duplicateOf": null,
+              "value": 0.6807477878063238,
+              "quality": 0.7360463285799272,
+              "anytime": 0.6537410543744028,
+              "cost": 0.6944444444444444,
+              "roundsSaved": 0,
+              "N": 12.5,
+              "rounds": 6,
+              "outOfSupportCells": 0,
+              "inSupportMean": 1,
+              "inSupportMin": 1,
+              "chargedProbes": 12.5,
+              "chargedRounds": 6,
+              "evidenceTrees": 1,
+              "eligible": true,
+              "reason": "tie"
+            },
+            {
+              "index": 5,
+              "policyId": "00ff53e8069d440a",
+              "policy": {
+                "selectionRule": "best-first",
+                "recoveryPolicy": "retry-best",
+                "stopRule": "patience",
+                "branchWidth": 2,
+                "refineDepth": 2,
+                "batchSize": 4,
+                "beta": 6,
+                "promisingThreshold": 0.5,
+                "targetScore": 1000000,
+                "explorationBias": 0.3968802344634226
+              },
+              "origin": "local",
+              "changed": [
+                "explorationBias"
+              ],
+              "duplicateOf": null,
+              "value": 0.6807477878063238,
+              "quality": 0.7360463285799272,
+              "anytime": 0.6537410543744028,
+              "cost": 0.6944444444444444,
+              "roundsSaved": 0,
+              "N": 12.5,
+              "rounds": 6,
+              "outOfSupportCells": 0,
+              "inSupportMean": 1,
+              "inSupportMin": 1,
+              "chargedProbes": 12.5,
+              "chargedRounds": 6,
+              "evidenceTrees": 1,
+              "eligible": true,
+              "reason": "tie"
+            }
+          ],
+          "dreamer": "local",
+          "leverScan": {
+            "policies": 337,
+            "eligible": 42,
+            "bestValue": 0.6807477878063238,
+            "bestPolicyId": "1be99d403b0405a3",
+            "gap": 0,
+            "simulations": 676
+          },
+          "measuredTrees": 2
+        },
+        "probesToRoundBest": 10,
+        "improvements": [
+          {
+            "probe": 0,
+            "score": 0.47520856517196336
+          },
+          {
+            "probe": 1,
+            "score": 0.6421059172448648
+          },
+          {
+            "probe": 10,
+            "score": 0.6508324410539075
+          }
+        ]
+      }
+    ],
+    "initialPolicyId": "1be99d403b0405a3",
+    "initialPolicyScore": 0.7668621619545077,
+    "finalPolicy": {
+      "selectionRule": "best-first",
+      "recoveryPolicy": "retry-best",
+      "stopRule": "patience",
+      "branchWidth": 2,
+      "refineDepth": 2,
+      "batchSize": 4,
+      "beta": 6,
+      "promisingThreshold": 0.5,
+      "targetScore": 1000000,
+      "explorationBias": 0.25
+    },
+    "finalPolicyId": "1be99d403b0405a3",
+    "finalPolicyScore": 0.7668621619545077,
+    "improved": false,
+    "bestNodeScore": 0.6508324410539075,
+    "tokens": 0,
+    "stoppedEarly": 0,
+    "finalSelection": [
+      {
+        "index": 0,
+        "policyId": "1be99d403b0405a3",
+        "policy": {
+          "selectionRule": "best-first",
+          "recoveryPolicy": "retry-best",
+          "stopRule": "patience",
+          "branchWidth": 2,
+          "refineDepth": 2,
+          "batchSize": 4,
+          "beta": 6,
+          "promisingThreshold": 0.5,
+          "targetScore": 1000000,
+          "explorationBias": 0.25
+        },
+        "origin": "local",
+        "changed": [],
+        "duplicateOf": null,
+        "value": 0.7668621619545077,
+        "quality": 0.8155558422546036,
+        "anytime": 0.7578181580912569,
+        "cost": 0.6851851851851851,
+        "roundsSaved": 0,
+        "N": 12.333333333333334,
+        "rounds": 6,
+        "outOfSupportCells": 0,
+        "inSupportMean": 1,
+        "inSupportMin": 1,
+        "chargedProbes": 12.333333333333334,
+        "chargedRounds": 6,
+        "evidenceTrees": 2,
+        "eligible": false,
+        "reason": "identical"
+      },
+      {
+        "index": 1,
+        "policyId": "1be99d403b0405a3",
+        "policy": {
+          "selectionRule": "best-first",
+          "recoveryPolicy": "retry-best",
+          "stopRule": "patience",
+          "branchWidth": 2,
+          "refineDepth": 2,
+          "batchSize": 4,
+          "beta": 6,
+          "promisingThreshold": 0.5,
+          "targetScore": 1000000,
+          "explorationBias": 0.25
+        },
+        "origin": "local",
+        "changed": [],
+        "duplicateOf": null,
+        "value": 0.7668621619545077,
+        "quality": 0.8155558422546036,
+        "anytime": 0.7578181580912569,
+        "cost": 0.6851851851851851,
+        "roundsSaved": 0,
+        "N": 12.333333333333334,
+        "rounds": 6,
+        "outOfSupportCells": 0,
+        "inSupportMean": 1,
+        "inSupportMin": 1,
+        "chargedProbes": 12.333333333333334,
+        "chargedRounds": 6,
+        "evidenceTrees": 2,
+        "eligible": false,
+        "reason": "identical"
+      }
+    ],
+    "probationReverts": 0
+  },
+  "files": {
+    "dreams/circle-packing-s7-r1700000000000.jsonl": "9b5d80c20498d445cc51d9dc8c02389ca01bd5faf8b7c2723655ccbf952a1891",
+    "trees/circle-packing-s7-i0-1700000000000.jsonl": "dbd78940f6e34e9087673e6e0343eb4bc3a63809afb2b0c42d6a7cf4969eeedc",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/0.json": "8def4219012d8f430d299b4959e2bcbe7b4894767f21e4f98bf4586fe854c4dc",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/1.json": "58602c9cd5eb01bc65c99bd8668996e2061b8232df69bd345f6db6293e4f4aca",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/10.json": "5e6169f117b0aa6156a018d8b47ba214654e610f6074118fcca59e866f09a215",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/11.json": "9e8917c5f555343e2d512b83c9076b0722a5eb6e1281f5f44f0d706381859fe3",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/12.json": "3ac0014e2b3931136341228183100a283faf35780ce7ab7b8bdea968462a9334",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/13.json": "9f7825ef0f7d4f92d78ed25926d7cc383b6970eb8530a9bf08d6fbe31dcbd1fa",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/2.json": "b4085dcb184a92d77f2ca6d9413f8fca873633207c6538cf46c6bc93d5fc0283",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/3.json": "63c869b75f5e2339e06981d7fe91085cd90f7276ccd98e1bc0ca5b7008120a64",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/4.json": "2fe1fdd94606fb433fb1a4380ec0bb12ae2185b23b24486d08cfe5d29d665b08",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/5.json": "4469b81712d9b1fa23ee7a4e8777b9ca75ee6d286d2d1822be2a6ddfc8027bbf",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/6.json": "8fc610d2373ef86a2d3957edbc92e301103f812afcf3745a00350e45874e502a",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/7.json": "ab30c0894923f4a9b38239c219f9dedb47a35f68d93236b67982641ddedc7bf1",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/8.json": "8f18a51eef8be67a894dc64bb88c0e41b93190efef940275cf44f23d437549d1",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/9.json": "ccab15069767af307bbcff690c3176158c2f85463230286d71f7066a7cce786f",
+    "trees/circle-packing-s7-i0p0-1700000000000.jsonl": "99d15868a9f9f8b6821451b8e47589ffa16c155b0f9bf25bff363cb9ac9a0107",
+    "trees/circle-packing-s7-i0p0-1700000000000/blobs/0.json": "c76b288e62999211534a38c6f5324aa4f4fa20f65dd78a4ea450c1e77581d8b2",
+    "trees/circle-packing-s7-i0p0-1700000000000/blobs/1.json": "bb58e1c995431cc3f9ae5bd91857bfcc0e81117008191fd37b750253546f2be9",
+    "trees/circle-packing-s7-i0p0-1700000000000/blobs/2.json": "2291b7a3115c662df9630acc86cf89cc063bb848dcd169b69af747af563b919f",
+    "trees/circle-packing-s7-i0p0-1700000000000/blobs/3.json": "e432e2f6e1bd3edb4ff5c96f5add43d35a7741f833c7dcfd036cdc43061f9195",
+    "trees/circle-packing-s7-i0p0-1700000000000/blobs/4.json": "c61e6aff777128145c0a3f970e7a32c63882a43af49c7442155293c3f5d51a4b",
+    "trees/circle-packing-s7-i0p0-1700000000000/blobs/5.json": "5cec5d7c2cda54b2393090ab829462e7f1241fde5452b4ae8099b066d77e7370",
+    "trees/circle-packing-s7-i0p0-1700000000000/blobs/6.json": "3887faa6072b717b4ef7c812e487ae5b37dc718c207c292777ba80f345dce766",
+    "trees/circle-packing-s7-i0p1-1700000000000.jsonl": "ecd3126afbf8732ee5a71299a5c39a7c86f45c09d06950405daea055ff50bbee",
+    "trees/circle-packing-s7-i0p1-1700000000000/blobs/0.json": "c50dd9f75ac5e24e51cc5dc5bf6426f49321380d10910a92de324f5ffae7dabe",
+    "trees/circle-packing-s7-i0p1-1700000000000/blobs/1.json": "47475d7e1d20c9a19de1463f433833fec4a6cb92ffefdcbe7f1bcf8ed56fdfd5",
+    "trees/circle-packing-s7-i0p1-1700000000000/blobs/2.json": "f07d540175bf5eb306e36660428c7ec88b0b2abc11bbc62936c48fc66fd7893a",
+    "trees/circle-packing-s7-i0p1-1700000000000/blobs/3.json": "7b1efe157fce50272e32e514909db0b02d129371154b910c656d8b72870cffa8",
+    "trees/circle-packing-s7-i0p1-1700000000000/blobs/4.json": "80ec8bdcb1affbb25f1981562b49800c282f20b18073b0fb7d89ec95967aa60e",
+    "trees/circle-packing-s7-i0p1-1700000000000/blobs/5.json": "04303fa31be6a439c32ecac37f86c142f42169368c35a3b3e9b09f29a90765a4",
+    "trees/circle-packing-s7-i0p1-1700000000000/blobs/6.json": "cbb1a62b2cd7d203a0bc134a0356ce0b7aedc90069cc973a12c73b0d59298e40",
+    "trees/circle-packing-s7-i1-1700000000000.jsonl": "81411242e8a6378b0d3bcebba114c77ef00944edb21d8f22dc60d707e5ef095d",
+    "trees/circle-packing-s7-i1-1700000000000/blobs/0.json": "9b3ca13def51f641ab390cfb2c51a5ddaa66fb54dbd086b11b9e479dd3451e17",
+    "trees/circle-packing-s7-i1-1700000000000/blobs/1.json": "e68654c3bc6c76ab6d4af1a728909bf55b7204b56ac0213eddbc9d280113f2c8",
+    "trees/circle-packing-s7-i1-1700000000000/blobs/10.json": "9d4ec919c851cd7d6982faa8608df54cb77046e12aea669c935d7996fd1cd8fc",
+    "trees/circle-packing-s7-i1-1700000000000/blobs/11.json": "987796aef02047f2e9d80a2684e4ecd569b833e29055568baf75c35deb43b892",
+    "trees/circle-packing-s7-i1-1700000000000/blobs/12.json": "e5625b8426083f3ec452509f2a28b68ba92b5c42bd81fe0c468286d2f4e99622",
+    "trees/circle-packing-s7-i1-1700000000000/blobs/2.json": "7415f029aa9f35aa608fcc37a85be911898d9f53cc4f8020ba9251c9a959ca8f",
+    "trees/circle-packing-s7-i1-1700000000000/blobs/3.json": "9e4c369ad24960afe5e40735667cb3cd91179656512b46d3c2e8fa3074572056",
+    "trees/circle-packing-s7-i1-1700000000000/blobs/4.json": "5657c0b01bd4357286db238b16d93133498bec4dbb640ec91751bf68c975e86f",
+    "trees/circle-packing-s7-i1-1700000000000/blobs/5.json": "c1c28a53243747765032c9c6d2c6a5de6d40cb603d7ffa6bac791637d95457ff",
+    "trees/circle-packing-s7-i1-1700000000000/blobs/6.json": "30c3f4803a8bae36aee8f6a181f74aa683f57fcee4c240827b0461127e11c1ac",
+    "trees/circle-packing-s7-i1-1700000000000/blobs/7.json": "bf52c5f4fc0fdb6d26c94a77c112b1d45e52ee5bb688e3eeadfc3b85d1fbb511",
+    "trees/circle-packing-s7-i1-1700000000000/blobs/8.json": "ca93cb028c7190fb9891650710f9e61a8fbad3cb0dd2c6c590e0d6dfdf5d8e73",
+    "trees/circle-packing-s7-i1-1700000000000/blobs/9.json": "c9becee36bb78d4a7efec73bbc26bd6ae743111427a8b981b8cba7a7e57e9e98",
+    "trees/circle-packing-s7-i2-1700000000000.jsonl": "19ce61a2ff9b0a076e051a3e85bd2497ebbf7813035a06dc17f03886f64463bc",
+    "trees/circle-packing-s7-i2-1700000000000/blobs/0.json": "f3b816301beea2263dbd3bfe646755ce99ec3d0c4dd678f74c40da75d0681eea",
+    "trees/circle-packing-s7-i2-1700000000000/blobs/1.json": "2ff97dd4732e0f0c2e029f1b7231362d6f606d23812f40ce9ab9da8e377ea520",
+    "trees/circle-packing-s7-i2-1700000000000/blobs/10.json": "150446b78af07ab3a966d24910ce1087e4d76fcd1f1b50a4a51d8305eb2f8d79",
+    "trees/circle-packing-s7-i2-1700000000000/blobs/11.json": "82b6356bbab5c6a2840e77ee1f441f29c0824a8fceda09f90bb9893ccbfc9dce",
+    "trees/circle-packing-s7-i2-1700000000000/blobs/12.json": "ce8dc428793900f7d6ddd44272d9e6f5cca4c08231a47981bee5ba3b1e846ffc",
+    "trees/circle-packing-s7-i2-1700000000000/blobs/2.json": "fb1ba9f7b3357991945adaeef508607c5f6d493dcdbf8e7d3ebe2649599564a3",
+    "trees/circle-packing-s7-i2-1700000000000/blobs/3.json": "e7ad296c432f0bf8fe5244ea3aa6ac56d79a2f01dc7d33e775a4ee8c34594740",
+    "trees/circle-packing-s7-i2-1700000000000/blobs/4.json": "7a6de05ed36e999fb2c033c06d13c4ac1a20d6c370e86675fbffa4511f7c4ba7",
+    "trees/circle-packing-s7-i2-1700000000000/blobs/5.json": "d0b63fed2e7a72df0c35327bf7997c957fdd554482dc94deb48d28d60bbb8b2e",
+    "trees/circle-packing-s7-i2-1700000000000/blobs/6.json": "17f9887268393f6af919209f3d9d81e179246754a0b214f6682138542157fd17",
+    "trees/circle-packing-s7-i2-1700000000000/blobs/7.json": "060a43bf41f9f904964a9fa6999bfe340d436c60f3b54dd3af7eec2ae2893853",
+    "trees/circle-packing-s7-i2-1700000000000/blobs/8.json": "167019408f306e8e158192812f5bfbe0675f20af79e9c134cce00ce301d46c89",
+    "trees/circle-packing-s7-i2-1700000000000/blobs/9.json": "98784dd52f82b2759937d2adddb5b9342ea598476ed51ec9f83ce64df840f18c"
+  }
+}

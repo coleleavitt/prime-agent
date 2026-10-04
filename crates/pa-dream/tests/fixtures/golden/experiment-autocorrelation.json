@@ -1,0 +1,1150 @@
+{
+  "result": {
+    "schema": "prime-agent.dream.experiment/1",
+    "experimentId": "autocorrelation-s7-n3-1700000000000",
+    "task": "autocorrelation",
+    "scoring": "deterministic",
+    "n": 32,
+    "seed": 7,
+    "rounds": 3,
+    "budget": {
+      "workers": 3,
+      "k1": 6,
+      "k2": 12,
+      "dreams": 6
+    },
+    "objective": {
+      "beta1": 0.05,
+      "beta2": 0.1,
+      "beta3": 0.25
+    },
+    "initialPolicyId": "1be99d403b0405a3",
+    "initialPolicy": {
+      "selectionRule": "best-first",
+      "recoveryPolicy": "retry-best",
+      "stopRule": "patience",
+      "branchWidth": 2,
+      "refineDepth": 2,
+      "batchSize": 4,
+      "beta": 6,
+      "promisingThreshold": 0.5,
+      "targetScore": 1000000,
+      "explorationBias": 0.25
+    },
+    "arms": [
+      {
+        "arm": "dream",
+        "fixedPolicy": false,
+        "guided": false,
+        "mode": {
+          "proposer": "local",
+          "dreamer": "local"
+        },
+        "storeDir": "experiments/autocorrelation-s7-n3-1700000000000/dream",
+        "runId": "autocorrelation-s7-r1700000000000-autocorrelation-s7-n3-1700000000000_dream",
+        "initialPolicyId": "1be99d403b0405a3",
+        "finalPolicyId": "1be99d403b0405a3",
+        "selectedPolicyId": "1be99d403b0405a3",
+        "policyScoreOnOwnPool": {
+          "initial": 0.7009244089178414,
+          "final": 0.7009244089178414
+        },
+        "policyChanges": 0,
+        "rounds": [
+          {
+            "round": 1,
+            "treeId": "autocorrelation-s7-i0-1700000000000",
+            "policyId": "1be99d403b0405a3",
+            "roundBest": 0.5004083648707792,
+            "cumulativeBest": 0.5004083648707792,
+            "probes": 11,
+            "cumulativeProbes": 11,
+            "agentGeneratedCalls": 0,
+            "cumulativeAgentGeneratedCalls": 0,
+            "localFallbacks": 0,
+            "llmProposals": 0,
+            "llmAccepted": 0,
+            "llmRejected": {
+              "parse": 0,
+              "shape": 0,
+              "invalid-candidate": 0,
+              "error": 0,
+              "length": 0,
+              "aborted": 0,
+              "turn-limit": 0,
+              "budget": 0
+            },
+            "decisionRounds": 6,
+            "poolSize": 0,
+            "handlerCalls": {
+              "proposer": 0,
+              "dreamer": 0,
+              "guidance": 0
+            },
+            "cumulativeHandlerCalls": 0,
+            "tokens": 0,
+            "cumulativeTokens": 0,
+            "dreaming": null,
+            "probesToRoundBest": 7,
+            "improvements": [
+              {
+                "probe": 0,
+                "score": 0.5
+              },
+              {
+                "probe": 1,
+                "score": 0.5000194521538286
+              },
+              {
+                "probe": 2,
+                "score": 0.5000893024955364
+              },
+              {
+                "probe": 3,
+                "score": 0.5001046481518524
+              },
+              {
+                "probe": 7,
+                "score": 0.5004083648707792
+              }
+            ]
+          },
+          {
+            "round": 2,
+            "treeId": "autocorrelation-s7-i1-1700000000000",
+            "policyId": "1be99d403b0405a3",
+            "roundBest": 0.5005568022671667,
+            "cumulativeBest": 0.5005568022671667,
+            "probes": 12,
+            "cumulativeProbes": 23,
+            "agentGeneratedCalls": 0,
+            "cumulativeAgentGeneratedCalls": 0,
+            "localFallbacks": 0,
+            "llmProposals": 0,
+            "llmAccepted": 0,
+            "llmRejected": {
+              "parse": 0,
+              "shape": 0,
+              "invalid-candidate": 0,
+              "error": 0,
+              "length": 0,
+              "aborted": 0,
+              "turn-limit": 0,
+              "budget": 0
+            },
+            "decisionRounds": 6,
+            "poolSize": 1,
+            "handlerCalls": {
+              "proposer": 0,
+              "dreamer": 0,
+              "guidance": 0
+            },
+            "cumulativeHandlerCalls": 0,
+            "tokens": 0,
+            "cumulativeTokens": 0,
+            "dreaming": {
+              "currentScore": 0.9040467073861461,
+              "chosenScore": 0.9040467073861461,
+              "improved": false,
+              "candidates": 6,
+              "candidateVerdicts": [
+                {
+                  "index": 0,
+                  "policyId": "88750a0917e520d1",
+                  "policy": {
+                    "selectionRule": "best-first",
+                    "recoveryPolicy": "retry-best",
+                    "stopRule": "patience",
+                    "branchWidth": 2,
+                    "refineDepth": 2,
+                    "batchSize": 4,
+                    "beta": 3,
+                    "promisingThreshold": 0.616246765333762,
+                    "targetScore": 1000000,
+                    "explorationBias": 0.25
+                  },
+                  "origin": "local",
+                  "changed": [
+                    "beta",
+                    "promisingThreshold"
+                  ],
+                  "duplicateOf": null,
+                  "value": 0.8846022629417016,
+                  "quality": 1,
+                  "anytime": 0.7384090517668068,
+                  "cost": 1,
+                  "roundsSaved": 0,
+                  "N": 11,
+                  "rounds": 6,
+                  "outOfSupportCells": 0,
+                  "inSupportMean": 1,
+                  "inSupportMin": 1,
+                  "chargedProbes": 18,
+                  "chargedRounds": 6,
+                  "evidenceTrees": 0,
+                  "eligible": true,
+                  "reason": "worse"
+                },
+                {
+                  "index": 1,
+                  "policyId": "4957620c9fb75684",
+                  "policy": {
+                    "selectionRule": "best-first",
+                    "recoveryPolicy": "retry-best",
+                    "stopRule": "patience",
+                    "branchWidth": 2,
+                    "refineDepth": 2,
+                    "batchSize": 4,
+                    "beta": 6,
+                    "promisingThreshold": 0.5,
+                    "targetScore": 1000000,
+                    "explorationBias": 0.031155413329017945
+                  },
+                  "origin": "local",
+                  "changed": [
+                    "explorationBias"
+                  ],
+                  "duplicateOf": null,
+                  "value": 0.8846022629417016,
+                  "quality": 1,
+                  "anytime": 0.7384090517668068,
+                  "cost": 1,
+                  "roundsSaved": 0,
+                  "N": 11,
+                  "rounds": 6,
+                  "outOfSupportCells": 0,
+                  "inSupportMean": 1,
+                  "inSupportMin": 1,
+                  "chargedProbes": 18,
+                  "chargedRounds": 6,
+                  "evidenceTrees": 0,
+                  "eligible": true,
+                  "reason": "worse"
+                },
+                {
+                  "index": 2,
+                  "policyId": "6980e1cff01c702b",
+                  "policy": {
+                    "selectionRule": "best-first",
+                    "recoveryPolicy": "retry-best",
+                    "stopRule": "patience",
+                    "branchWidth": 2,
+                    "refineDepth": 2,
+                    "batchSize": 4,
+                    "beta": 6,
+                    "promisingThreshold": 0.5,
+                    "targetScore": 1000000,
+                    "explorationBias": 0.44199263718705073
+                  },
+                  "origin": "local",
+                  "changed": [
+                    "explorationBias"
+                  ],
+                  "duplicateOf": null,
+                  "value": 0.8846022629417016,
+                  "quality": 1,
+                  "anytime": 0.7384090517668068,
+                  "cost": 1,
+                  "roundsSaved": 0,
+                  "N": 11,
+                  "rounds": 6,
+                  "outOfSupportCells": 0,
+                  "inSupportMean": 1,
+                  "inSupportMin": 1,
+                  "chargedProbes": 18,
+                  "chargedRounds": 6,
+                  "evidenceTrees": 0,
+                  "eligible": true,
+                  "reason": "worse"
+                },
+                {
+                  "index": 3,
+                  "policyId": "62da4fad9d6bea42",
+                  "policy": {
+                    "selectionRule": "best-first",
+                    "recoveryPolicy": "retry-best",
+                    "stopRule": "patience",
+                    "branchWidth": 2,
+                    "refineDepth": 2,
+                    "batchSize": 3,
+                    "beta": 6,
+                    "promisingThreshold": 0.5,
+                    "targetScore": 1000000,
+                    "explorationBias": 0.25
+                  },
+                  "origin": "local",
+                  "changed": [
+                    "batchSize"
+                  ],
+                  "duplicateOf": null,
+                  "value": 0.8846022629417016,
+                  "quality": 1,
+                  "anytime": 0.7384090517668068,
+                  "cost": 1,
+                  "roundsSaved": 0,
+                  "N": 11,
+                  "rounds": 6,
+                  "outOfSupportCells": 0,
+                  "inSupportMean": 1,
+                  "inSupportMin": 1,
+                  "chargedProbes": 18,
+                  "chargedRounds": 6,
+                  "evidenceTrees": 0,
+                  "eligible": true,
+                  "reason": "worse"
+                },
+                {
+                  "index": 4,
+                  "policyId": "5f1cda1197b11fcd",
+                  "policy": {
+                    "selectionRule": "best-first",
+                    "recoveryPolicy": "retry-best",
+                    "stopRule": "patience",
+                    "branchWidth": 2,
+                    "refineDepth": 2,
+                    "batchSize": 7,
+                    "beta": 6,
+                    "promisingThreshold": 0.431067929980093,
+                    "targetScore": 1000000,
+                    "explorationBias": 0.25
+                  },
+                  "origin": "local",
+                  "changed": [
+                    "batchSize",
+                    "promisingThreshold"
+                  ],
+                  "duplicateOf": null,
+                  "value": 0.8846022629417016,
+                  "quality": 1,
+                  "anytime": 0.7384090517668068,
+                  "cost": 1,
+                  "roundsSaved": 0,
+                  "N": 11,
+                  "rounds": 6,
+                  "outOfSupportCells": 0,
+                  "inSupportMean": 1,
+                  "inSupportMin": 1,
+                  "chargedProbes": 18,
+                  "chargedRounds": 6,
+                  "evidenceTrees": 0,
+                  "eligible": true,
+                  "reason": "worse"
+                },
+                {
+                  "index": 5,
+                  "policyId": "2b1d71c7dbf08c6f",
+                  "policy": {
+                    "selectionRule": "weighted",
+                    "recoveryPolicy": "retry-best",
+                    "stopRule": "patience",
+                    "branchWidth": 2,
+                    "refineDepth": 2,
+                    "batchSize": 4,
+                    "beta": 6,
+                    "promisingThreshold": 0.5,
+                    "targetScore": 1000000,
+                    "explorationBias": 0.25
+                  },
+                  "origin": "local",
+                  "changed": [
+                    "selectionRule"
+                  ],
+                  "duplicateOf": null,
+                  "value": 0.8846022629417016,
+                  "quality": 1,
+                  "anytime": 0.7384090517668068,
+                  "cost": 1,
+                  "roundsSaved": 0,
+                  "N": 11,
+                  "rounds": 6,
+                  "outOfSupportCells": 0,
+                  "inSupportMean": 1,
+                  "inSupportMin": 1,
+                  "chargedProbes": 18,
+                  "chargedRounds": 6,
+                  "evidenceTrees": 0,
+                  "eligible": true,
+                  "reason": "worse"
+                }
+              ],
+              "dreamer": "local",
+              "leverScan": {
+                "policies": 337,
+                "eligible": 138,
+                "bestValue": 0.9052616686091055,
+                "bestPolicyId": "2f6fe597fc7082c5",
+                "gap": 0.0012149612229593876,
+                "simulations": 337
+              },
+              "measuredTrees": 1
+            },
+            "probesToRoundBest": 10,
+            "improvements": [
+              {
+                "probe": 0,
+                "score": 0.5
+              },
+              {
+                "probe": 1,
+                "score": 0.5000032218922388
+              },
+              {
+                "probe": 2,
+                "score": 0.5002936724011046
+              },
+              {
+                "probe": 3,
+                "score": 0.500370870757245
+              },
+              {
+                "probe": 5,
+                "score": 0.5005560576572656
+              },
+              {
+                "probe": 10,
+                "score": 0.5005568022671667
+              }
+            ]
+          },
+          {
+            "round": 3,
+            "treeId": "autocorrelation-s7-i2-1700000000000",
+            "policyId": "1be99d403b0405a3",
+            "roundBest": 0.5007340245600518,
+            "cumulativeBest": 0.5007340245600518,
+            "probes": 12,
+            "cumulativeProbes": 35,
+            "agentGeneratedCalls": 0,
+            "cumulativeAgentGeneratedCalls": 0,
+            "localFallbacks": 0,
+            "llmProposals": 0,
+            "llmAccepted": 0,
+            "llmRejected": {
+              "parse": 0,
+              "shape": 0,
+              "invalid-candidate": 0,
+              "error": 0,
+              "length": 0,
+              "aborted": 0,
+              "turn-limit": 0,
+              "budget": 0
+            },
+            "decisionRounds": 6,
+            "poolSize": 2,
+            "handlerCalls": {
+              "proposer": 0,
+              "dreamer": 0,
+              "guidance": 0
+            },
+            "cumulativeHandlerCalls": 0,
+            "tokens": 0,
+            "cumulativeTokens": 0,
+            "dreaming": {
+              "currentScore": 0.7959089811684218,
+              "chosenScore": 0.7959089811684218,
+              "improved": false,
+              "candidates": 6,
+              "candidateVerdicts": [
+                {
+                  "index": 0,
+                  "policyId": "ad7ddb1acf473b64",
+                  "policy": {
+                    "selectionRule": "best-first",
+                    "recoveryPolicy": "retry-best",
+                    "stopRule": "patience",
+                    "branchWidth": 2,
+                    "refineDepth": 2,
+                    "batchSize": 4,
+                    "beta": 6,
+                    "promisingThreshold": 0.5,
+                    "targetScore": 1000000,
+                    "explorationBias": 0.3573213667498792
+                  },
+                  "origin": "local",
+                  "changed": [
+                    "explorationBias"
+                  ],
+                  "duplicateOf": null,
+                  "value": 0.7959089811684218,
+                  "quality": 0.8667054669669303,
+                  "anytime": 0.7112973015506737,
+                  "cost": 0.6388888888888888,
+                  "roundsSaved": 0,
+                  "N": 11.5,
+                  "rounds": 6,
+                  "outOfSupportCells": 0,
+                  "inSupportMean": 1,
+                  "inSupportMin": 1,
+                  "chargedProbes": 11.5,
+                  "chargedRounds": 6,
+                  "evidenceTrees": 1,
+                  "eligible": true,
+                  "reason": "tie"
+                },
+                {
+                  "index": 1,
+                  "policyId": "a22bcb43e51bcb66",
+                  "policy": {
+                    "selectionRule": "best-first",
+                    "recoveryPolicy": "retry-best",
+                    "stopRule": "patience",
+                    "branchWidth": 2,
+                    "refineDepth": 2,
+                    "batchSize": 4,
+                    "beta": 6,
+                    "promisingThreshold": 0.5,
+                    "targetScore": 1000000,
+                    "explorationBias": 0
+                  },
+                  "origin": "local",
+                  "changed": [
+                    "explorationBias"
+                  ],
+                  "duplicateOf": null,
+                  "value": 0.7959089811684218,
+                  "quality": 0.8667054669669303,
+                  "anytime": 0.7112973015506737,
+                  "cost": 0.6388888888888888,
+                  "roundsSaved": 0,
+                  "N": 11.5,
+                  "rounds": 6,
+                  "outOfSupportCells": 0,
+                  "inSupportMean": 1,
+                  "inSupportMin": 1,
+                  "chargedProbes": 11.5,
+                  "chargedRounds": 6,
+                  "evidenceTrees": 1,
+                  "eligible": true,
+                  "reason": "tie"
+                },
+                {
+                  "index": 2,
+                  "policyId": "898f856bd8e970de",
+                  "policy": {
+                    "selectionRule": "best-first",
+                    "recoveryPolicy": "retry-best",
+                    "stopRule": "patience",
+                    "branchWidth": 2,
+                    "refineDepth": 2,
+                    "batchSize": 4,
+                    "beta": 6,
+                    "promisingThreshold": 0.7328575845308932,
+                    "targetScore": 1000000,
+                    "explorationBias": 0.25
+                  },
+                  "origin": "local",
+                  "changed": [
+                    "promisingThreshold"
+                  ],
+                  "duplicateOf": null,
+                  "value": 0.7959089811684218,
+                  "quality": 0.8667054669669303,
+                  "anytime": 0.7112973015506737,
+                  "cost": 0.6388888888888888,
+                  "roundsSaved": 0,
+                  "N": 11.5,
+                  "rounds": 6,
+                  "outOfSupportCells": 0,
+                  "inSupportMean": 1,
+                  "inSupportMin": 1,
+                  "chargedProbes": 11.5,
+                  "chargedRounds": 6,
+                  "evidenceTrees": 1,
+                  "eligible": true,
+                  "reason": "tie"
+                },
+                {
+                  "index": 3,
+                  "policyId": "178fed26aaae670c",
+                  "policy": {
+                    "selectionRule": "best-first",
+                    "recoveryPolicy": "retry-best",
+                    "stopRule": "patience",
+                    "branchWidth": 2,
+                    "refineDepth": 2,
+                    "batchSize": 4,
+                    "beta": 6,
+                    "promisingThreshold": 0.5,
+                    "targetScore": 1000000,
+                    "explorationBias": 0.22405627294527317
+                  },
+                  "origin": "local",
+                  "changed": [
+                    "explorationBias"
+                  ],
+                  "duplicateOf": null,
+                  "value": 0.7959089811684218,
+                  "quality": 0.8667054669669303,
+                  "anytime": 0.7112973015506737,
+                  "cost": 0.6388888888888888,
+                  "roundsSaved": 0,
+                  "N": 11.5,
+                  "rounds": 6,
+                  "outOfSupportCells": 0,
+                  "inSupportMean": 1,
+                  "inSupportMin": 1,
+                  "chargedProbes": 11.5,
+                  "chargedRounds": 6,
+                  "evidenceTrees": 1,
+                  "eligible": true,
+                  "reason": "tie"
+                },
+                {
+                  "index": 4,
+                  "policyId": "d1f2dbc332d6f90f",
+                  "policy": {
+                    "selectionRule": "best-first",
+                    "recoveryPolicy": "retry-best",
+                    "stopRule": "patience",
+                    "branchWidth": 2,
+                    "refineDepth": 2,
+                    "batchSize": 4,
+                    "beta": 6,
+                    "promisingThreshold": 0.5147751108322771,
+                    "targetScore": 1000000,
+                    "explorationBias": 0.25
+                  },
+                  "origin": "local",
+                  "changed": [
+                    "promisingThreshold"
+                  ],
+                  "duplicateOf": null,
+                  "value": 0.7959089811684218,
+                  "quality": 0.8667054669669303,
+                  "anytime": 0.7112973015506737,
+                  "cost": 0.6388888888888888,
+                  "roundsSaved": 0,
+                  "N": 11.5,
+                  "rounds": 6,
+                  "outOfSupportCells": 0,
+                  "inSupportMean": 1,
+                  "inSupportMin": 1,
+                  "chargedProbes": 11.5,
+                  "chargedRounds": 6,
+                  "evidenceTrees": 1,
+                  "eligible": true,
+                  "reason": "tie"
+                },
+                {
+                  "index": 5,
+                  "policyId": "00ff53e8069d440a",
+                  "policy": {
+                    "selectionRule": "best-first",
+                    "recoveryPolicy": "retry-best",
+                    "stopRule": "patience",
+                    "branchWidth": 2,
+                    "refineDepth": 2,
+                    "batchSize": 4,
+                    "beta": 6,
+                    "promisingThreshold": 0.5,
+                    "targetScore": 1000000,
+                    "explorationBias": 0.3968802344634226
+                  },
+                  "origin": "local",
+                  "changed": [
+                    "explorationBias"
+                  ],
+                  "duplicateOf": null,
+                  "value": 0.7959089811684218,
+                  "quality": 0.8667054669669303,
+                  "anytime": 0.7112973015506737,
+                  "cost": 0.6388888888888888,
+                  "roundsSaved": 0,
+                  "N": 11.5,
+                  "rounds": 6,
+                  "outOfSupportCells": 0,
+                  "inSupportMean": 1,
+                  "inSupportMin": 1,
+                  "chargedProbes": 11.5,
+                  "chargedRounds": 6,
+                  "evidenceTrees": 1,
+                  "eligible": true,
+                  "reason": "tie"
+                }
+              ],
+              "dreamer": "local",
+              "leverScan": {
+                "policies": 337,
+                "eligible": 138,
+                "bestValue": 0.8211094762842268,
+                "bestPolicyId": "2f6fe597fc7082c5",
+                "gap": 0.02520049511580502,
+                "simulations": 674
+              },
+              "measuredTrees": 2
+            },
+            "probesToRoundBest": 7,
+            "improvements": [
+              {
+                "probe": 0,
+                "score": 0.5
+              },
+              {
+                "probe": 1,
+                "score": 0.5000477426853294
+              },
+              {
+                "probe": 2,
+                "score": 0.5001045946155365
+              },
+              {
+                "probe": 3,
+                "score": 0.5001883273912618
+              },
+              {
+                "probe": 6,
+                "score": 0.5007294136996892
+              },
+              {
+                "probe": 7,
+                "score": 0.5007340245600518
+              }
+            ]
+          }
+        ],
+        "totals": {
+          "probes": 35,
+          "agentGeneratedCalls": 0,
+          "localFallbacks": 0,
+          "llmProposals": 0,
+          "llmAccepted": 0,
+          "llmRejected": {
+            "parse": 0,
+            "shape": 0,
+            "invalid-candidate": 0,
+            "error": 0,
+            "length": 0,
+            "aborted": 0,
+            "turn-limit": 0,
+            "budget": 0
+          },
+          "handlerCalls": 0,
+          "tokens": 0,
+          "finalBest": 0.5007340245600518
+        },
+        "stoppedEarly": 0,
+        "finalSelection": [
+          {
+            "index": 0,
+            "policyId": "1be99d403b0405a3",
+            "policy": {
+              "selectionRule": "best-first",
+              "recoveryPolicy": "retry-best",
+              "stopRule": "patience",
+              "branchWidth": 2,
+              "refineDepth": 2,
+              "batchSize": 4,
+              "beta": 6,
+              "promisingThreshold": 0.5,
+              "targetScore": 1000000,
+              "explorationBias": 0.25
+            },
+            "origin": "local",
+            "changed": [],
+            "duplicateOf": null,
+            "value": 0.7009244089178414,
+            "quality": 0.7716325358731106,
+            "anytime": 0.6184296576816628,
+            "cost": 0.648148148148148,
+            "roundsSaved": 0,
+            "N": 11.666666666666666,
+            "rounds": 6,
+            "outOfSupportCells": 0,
+            "inSupportMean": 1,
+            "inSupportMin": 1,
+            "chargedProbes": 11.666666666666666,
+            "chargedRounds": 6,
+            "evidenceTrees": 2,
+            "eligible": false,
+            "reason": "identical"
+          },
+          {
+            "index": 1,
+            "policyId": "1be99d403b0405a3",
+            "policy": {
+              "selectionRule": "best-first",
+              "recoveryPolicy": "retry-best",
+              "stopRule": "patience",
+              "branchWidth": 2,
+              "refineDepth": 2,
+              "batchSize": 4,
+              "beta": 6,
+              "promisingThreshold": 0.5,
+              "targetScore": 1000000,
+              "explorationBias": 0.25
+            },
+            "origin": "local",
+            "changed": [],
+            "duplicateOf": null,
+            "value": 0.7009244089178414,
+            "quality": 0.7716325358731106,
+            "anytime": 0.6184296576816628,
+            "cost": 0.648148148148148,
+            "roundsSaved": 0,
+            "N": 11.666666666666666,
+            "rounds": 6,
+            "outOfSupportCells": 0,
+            "inSupportMean": 1,
+            "inSupportMin": 1,
+            "chargedProbes": 11.666666666666666,
+            "chargedRounds": 6,
+            "evidenceTrees": 2,
+            "eligible": false,
+            "reason": "identical"
+          }
+        ]
+      },
+      {
+        "arm": "fixed",
+        "fixedPolicy": true,
+        "guided": false,
+        "mode": {
+          "proposer": "local",
+          "dreamer": "local"
+        },
+        "storeDir": "experiments/autocorrelation-s7-n3-1700000000000/fixed",
+        "runId": "autocorrelation-s7-r1700000000000-autocorrelation-s7-n3-1700000000000_fixed",
+        "initialPolicyId": "1be99d403b0405a3",
+        "finalPolicyId": "1be99d403b0405a3",
+        "selectedPolicyId": "1be99d403b0405a3",
+        "policyScoreOnOwnPool": {
+          "initial": 0.7009244089178414,
+          "final": 0.7009244089178414
+        },
+        "policyChanges": 0,
+        "rounds": [
+          {
+            "round": 1,
+            "treeId": "autocorrelation-s7-i0-1700000000000",
+            "policyId": "1be99d403b0405a3",
+            "roundBest": 0.5004083648707792,
+            "cumulativeBest": 0.5004083648707792,
+            "probes": 11,
+            "cumulativeProbes": 11,
+            "agentGeneratedCalls": 0,
+            "cumulativeAgentGeneratedCalls": 0,
+            "localFallbacks": 0,
+            "llmProposals": 0,
+            "llmAccepted": 0,
+            "llmRejected": {
+              "parse": 0,
+              "shape": 0,
+              "invalid-candidate": 0,
+              "error": 0,
+              "length": 0,
+              "aborted": 0,
+              "turn-limit": 0,
+              "budget": 0
+            },
+            "decisionRounds": 6,
+            "poolSize": 0,
+            "handlerCalls": {
+              "proposer": 0,
+              "dreamer": 0,
+              "guidance": 0
+            },
+            "cumulativeHandlerCalls": 0,
+            "tokens": 0,
+            "cumulativeTokens": 0,
+            "dreaming": null,
+            "probesToRoundBest": 7,
+            "improvements": [
+              {
+                "probe": 0,
+                "score": 0.5
+              },
+              {
+                "probe": 1,
+                "score": 0.5000194521538286
+              },
+              {
+                "probe": 2,
+                "score": 0.5000893024955364
+              },
+              {
+                "probe": 3,
+                "score": 0.5001046481518524
+              },
+              {
+                "probe": 7,
+                "score": 0.5004083648707792
+              }
+            ]
+          },
+          {
+            "round": 2,
+            "treeId": "autocorrelation-s7-i1-1700000000000",
+            "policyId": "1be99d403b0405a3",
+            "roundBest": 0.5005568022671667,
+            "cumulativeBest": 0.5005568022671667,
+            "probes": 12,
+            "cumulativeProbes": 23,
+            "agentGeneratedCalls": 0,
+            "cumulativeAgentGeneratedCalls": 0,
+            "localFallbacks": 0,
+            "llmProposals": 0,
+            "llmAccepted": 0,
+            "llmRejected": {
+              "parse": 0,
+              "shape": 0,
+              "invalid-candidate": 0,
+              "error": 0,
+              "length": 0,
+              "aborted": 0,
+              "turn-limit": 0,
+              "budget": 0
+            },
+            "decisionRounds": 6,
+            "poolSize": 1,
+            "handlerCalls": {
+              "proposer": 0,
+              "dreamer": 0,
+              "guidance": 0
+            },
+            "cumulativeHandlerCalls": 0,
+            "tokens": 0,
+            "cumulativeTokens": 0,
+            "dreaming": null,
+            "probesToRoundBest": 10,
+            "improvements": [
+              {
+                "probe": 0,
+                "score": 0.5
+              },
+              {
+                "probe": 1,
+                "score": 0.5000032218922388
+              },
+              {
+                "probe": 2,
+                "score": 0.5002936724011046
+              },
+              {
+                "probe": 3,
+                "score": 0.500370870757245
+              },
+              {
+                "probe": 5,
+                "score": 0.5005560576572656
+              },
+              {
+                "probe": 10,
+                "score": 0.5005568022671667
+              }
+            ]
+          },
+          {
+            "round": 3,
+            "treeId": "autocorrelation-s7-i2-1700000000000",
+            "policyId": "1be99d403b0405a3",
+            "roundBest": 0.5007340245600518,
+            "cumulativeBest": 0.5007340245600518,
+            "probes": 12,
+            "cumulativeProbes": 35,
+            "agentGeneratedCalls": 0,
+            "cumulativeAgentGeneratedCalls": 0,
+            "localFallbacks": 0,
+            "llmProposals": 0,
+            "llmAccepted": 0,
+            "llmRejected": {
+              "parse": 0,
+              "shape": 0,
+              "invalid-candidate": 0,
+              "error": 0,
+              "length": 0,
+              "aborted": 0,
+              "turn-limit": 0,
+              "budget": 0
+            },
+            "decisionRounds": 6,
+            "poolSize": 2,
+            "handlerCalls": {
+              "proposer": 0,
+              "dreamer": 0,
+              "guidance": 0
+            },
+            "cumulativeHandlerCalls": 0,
+            "tokens": 0,
+            "cumulativeTokens": 0,
+            "dreaming": null,
+            "probesToRoundBest": 7,
+            "improvements": [
+              {
+                "probe": 0,
+                "score": 0.5
+              },
+              {
+                "probe": 1,
+                "score": 0.5000477426853294
+              },
+              {
+                "probe": 2,
+                "score": 0.5001045946155365
+              },
+              {
+                "probe": 3,
+                "score": 0.5001883273912618
+              },
+              {
+                "probe": 6,
+                "score": 0.5007294136996892
+              },
+              {
+                "probe": 7,
+                "score": 0.5007340245600518
+              }
+            ]
+          }
+        ],
+        "totals": {
+          "probes": 35,
+          "agentGeneratedCalls": 0,
+          "localFallbacks": 0,
+          "llmProposals": 0,
+          "llmAccepted": 0,
+          "llmRejected": {
+            "parse": 0,
+            "shape": 0,
+            "invalid-candidate": 0,
+            "error": 0,
+            "length": 0,
+            "aborted": 0,
+            "turn-limit": 0,
+            "budget": 0
+          },
+          "handlerCalls": 0,
+          "tokens": 0,
+          "finalBest": 0.5007340245600518
+        },
+        "stoppedEarly": 0,
+        "finalSelection": []
+      }
+    ],
+    "headline": {
+      "reference": "fixed",
+      "target": 0.5007340245600518,
+      "probesToTarget": {
+        "dream": 35,
+        "fixed": 35
+      },
+      "callsMultiplier": {
+        "dream": 1,
+        "fixed": 1
+      },
+      "equalBudget": 35,
+      "bestAtBudget": {
+        "dream": 0.5007340245600518,
+        "fixed": 0.5007340245600518
+      },
+      "scoreMultiplier": {
+        "dream": 1,
+        "fixed": 1
+      },
+      "deltaBest": {
+        "dream": 0,
+        "fixed": 0
+      },
+      "probesToTargetExact": {
+        "dream": 30,
+        "fixed": 30
+      },
+      "callsMultiplierExact": {
+        "dream": 1,
+        "fixed": 1
+      }
+    },
+    "sharedInitialRollout": false,
+    "createdTs": 1700000000000,
+    "notes": [
+      "k1 6 <= initialPolicy.beta 6: patience can never stop a rollout before the round cap, so every rollout runs exactly k1 rounds and replay cannot reward saving rounds",
+      "objective: normalized (q in pool range, cost in budget fractions)"
+    ]
+  },
+  "files": {
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/dreams/autocorrelation-s7-r1700000000000-autocorrelation-s7-n3-1700000000000_dream.jsonl": "02f6139f3dd77652a344d46acd70bbb0259ff4314f9b9160a956552e9b5320c3",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i0-1700000000000.jsonl": "565069d169c113f0fded99e40350025f00f5fe2d06b8b4da9df5c470c889b85e",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i0-1700000000000/blobs/0.json": "64f63ef47e8064fa370da1997b0cf83e4161bc44fcd215fcb69a5e6f3b6cc6b8",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i0-1700000000000/blobs/1.json": "3b3f28d59afeb9b653f7f6ef68ba478e0007a1fe110699aa76477c606aae401e",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i0-1700000000000/blobs/10.json": "5f454d66a8633b04a51d27c6906d3c5526e164b2ea17a3b7d4aff8a07579f004",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i0-1700000000000/blobs/11.json": "0389b0ec89b0f356fd7c6909c1399067e653898e235c91ac7b3bcb321e4f14cc",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i0-1700000000000/blobs/2.json": "9a68adeb4a0b24dcc3c2a3cef217e0cdbcfce2748538e56abaf25f1cef89458a",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i0-1700000000000/blobs/3.json": "015b24d9a2913fd7484f698f1ae348133131344e786ceb94f278cd350d728ce6",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i0-1700000000000/blobs/4.json": "64f63ef47e8064fa370da1997b0cf83e4161bc44fcd215fcb69a5e6f3b6cc6b8",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i0-1700000000000/blobs/5.json": "b927d757a82ecfebfb82410219ef8bbe96de8c3986a0a5278154815eda18b49b",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i0-1700000000000/blobs/6.json": "7eea1b76a8190c2c14d85ef0bc45bc4116bad76800e7e68cd75b3f04a97811ac",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i0-1700000000000/blobs/7.json": "f8afed57a3b1100270df43cbd94b04f88af2f4cc27fdc8ec7b86c528f0d201c1",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i0-1700000000000/blobs/8.json": "d7f0bf1595244e5ccabeb1fc49a954fc0dd83d553f43746992d88198668c362a",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i0-1700000000000/blobs/9.json": "fcd0318fe167b7691675cacc43c697d89194c294bef8ad129737ecfa1748222b",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i1-1700000000000.jsonl": "26496b772f36270076e8a4f3e28bd0b7cd4deda8689d2c6de202f07785a072c3",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i1-1700000000000/blobs/0.json": "64f63ef47e8064fa370da1997b0cf83e4161bc44fcd215fcb69a5e6f3b6cc6b8",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i1-1700000000000/blobs/1.json": "b2e08f46145a7a839e6c69c1b6ef207f936f317922c42d27ccfa01dba420f4d3",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i1-1700000000000/blobs/10.json": "b908cdeb9c2ec11aa0f4b7653d5aa0abda2e56030b1152041bcc919124fb7e51",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i1-1700000000000/blobs/11.json": "1c5165658eba06dd30de788cc48ef4bb7a4fd94f300e9ede766fd4088487f7ce",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i1-1700000000000/blobs/12.json": "e911461e505df1a9cb49ac8e195af79dc15bdc7cacc93c36fb742722fac3feca",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i1-1700000000000/blobs/2.json": "b40088e731826b703625cb07e8819ee96ef95926d8f4d685de78f05e264b7e02",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i1-1700000000000/blobs/3.json": "37f1b8d92de3988361b8f89448cd8c3de40c9a417f02391e7bbba13c7e8db33d",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i1-1700000000000/blobs/4.json": "64f63ef47e8064fa370da1997b0cf83e4161bc44fcd215fcb69a5e6f3b6cc6b8",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i1-1700000000000/blobs/5.json": "ab035ca8f45be63f198080f5aaecca290941194607a998b01c975bd23c64299c",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i1-1700000000000/blobs/6.json": "b0b74b71e8be9b4df4cfaa800f700088a318656f4d643963238face085e4f414",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i1-1700000000000/blobs/7.json": "f54d63298dc6ee2f59bb3601c152e4df0b37e798e0c0419ce836a907bec1a15b",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i1-1700000000000/blobs/8.json": "228bb9c7dffec902504e822d0cd3ef3c3b83b1f3c932d14b28f3cb36710ea4c1",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i1-1700000000000/blobs/9.json": "7c8cfb637124495409c634a9302124495a678ae8881bec56f6093729b25aa9a6",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i2-1700000000000.jsonl": "0e9de36f559a5727a8e109c838c6133024910097c81ee93bd87855c29fec66c0",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i2-1700000000000/blobs/0.json": "64f63ef47e8064fa370da1997b0cf83e4161bc44fcd215fcb69a5e6f3b6cc6b8",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i2-1700000000000/blobs/1.json": "e7468927bf8a4a19042b6ccc4e201402e9f74b795823b67dc4a5376bbe1149ff",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i2-1700000000000/blobs/10.json": "22db5d9c438527871380d93c7d0a8d6eb39affbd8b46e1f8191df0fe5abccc22",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i2-1700000000000/blobs/11.json": "0f8a5c5fdc26cfa13ad7ec974136e3b6e8e9bafc7df00e23c2bee08781016f8f",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i2-1700000000000/blobs/12.json": "1b342b6327c0eaef252e3110d36d3b1a46038cb7314d0e9103e98ae63a302111",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i2-1700000000000/blobs/2.json": "0d1650d515f1ab2ee6bf1806b179f6a6501e6f05ad0362de2fbdea1ca6fc670d",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i2-1700000000000/blobs/3.json": "da370cf77a024cd8062cccc408fb773a88012d749a322384c45c349cfd5c6808",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i2-1700000000000/blobs/4.json": "5ee9d079c40109694253dcbd03790b35a42e3175e223883e5c6b9721810f10c3",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i2-1700000000000/blobs/5.json": "8d26ed329f7d55e69cc5ddbc004340bd1b3819e7c79374dda9d0bde7b7aee7d6",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i2-1700000000000/blobs/6.json": "5948f1931ca6f07524bfcd2134dd7b74ea3129426dd4f502dde7fd267f2e1082",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i2-1700000000000/blobs/7.json": "25c6eebe73cfc92bc66dcb3da7cfe30dc677d042e3e5c24b0a575eb27bbbc6b3",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i2-1700000000000/blobs/8.json": "f0fbd268299fc896b97022140a529229fc18c3985d0f860af808a95a8eea178b",
+    "experiments/autocorrelation-s7-n3-1700000000000/dream/trees/autocorrelation-s7-i2-1700000000000/blobs/9.json": "32ce8bb244ea3fe24e37f8b331acabd70af07d68b20e2b82e7478c7614540822",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/dreams/autocorrelation-s7-r1700000000000-autocorrelation-s7-n3-1700000000000_fixed.jsonl": "e3f0ffb2182b3d5092d92e2b39b3f7267d68270eec6708c92d3540b98ba0e98d",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i0-1700000000000.jsonl": "565069d169c113f0fded99e40350025f00f5fe2d06b8b4da9df5c470c889b85e",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i0-1700000000000/blobs/0.json": "64f63ef47e8064fa370da1997b0cf83e4161bc44fcd215fcb69a5e6f3b6cc6b8",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i0-1700000000000/blobs/1.json": "3b3f28d59afeb9b653f7f6ef68ba478e0007a1fe110699aa76477c606aae401e",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i0-1700000000000/blobs/10.json": "5f454d66a8633b04a51d27c6906d3c5526e164b2ea17a3b7d4aff8a07579f004",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i0-1700000000000/blobs/11.json": "0389b0ec89b0f356fd7c6909c1399067e653898e235c91ac7b3bcb321e4f14cc",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i0-1700000000000/blobs/2.json": "9a68adeb4a0b24dcc3c2a3cef217e0cdbcfce2748538e56abaf25f1cef89458a",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i0-1700000000000/blobs/3.json": "015b24d9a2913fd7484f698f1ae348133131344e786ceb94f278cd350d728ce6",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i0-1700000000000/blobs/4.json": "64f63ef47e8064fa370da1997b0cf83e4161bc44fcd215fcb69a5e6f3b6cc6b8",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i0-1700000000000/blobs/5.json": "b927d757a82ecfebfb82410219ef8bbe96de8c3986a0a5278154815eda18b49b",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i0-1700000000000/blobs/6.json": "7eea1b76a8190c2c14d85ef0bc45bc4116bad76800e7e68cd75b3f04a97811ac",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i0-1700000000000/blobs/7.json": "f8afed57a3b1100270df43cbd94b04f88af2f4cc27fdc8ec7b86c528f0d201c1",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i0-1700000000000/blobs/8.json": "d7f0bf1595244e5ccabeb1fc49a954fc0dd83d553f43746992d88198668c362a",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i0-1700000000000/blobs/9.json": "fcd0318fe167b7691675cacc43c697d89194c294bef8ad129737ecfa1748222b",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i1-1700000000000.jsonl": "26496b772f36270076e8a4f3e28bd0b7cd4deda8689d2c6de202f07785a072c3",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i1-1700000000000/blobs/0.json": "64f63ef47e8064fa370da1997b0cf83e4161bc44fcd215fcb69a5e6f3b6cc6b8",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i1-1700000000000/blobs/1.json": "b2e08f46145a7a839e6c69c1b6ef207f936f317922c42d27ccfa01dba420f4d3",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i1-1700000000000/blobs/10.json": "b908cdeb9c2ec11aa0f4b7653d5aa0abda2e56030b1152041bcc919124fb7e51",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i1-1700000000000/blobs/11.json": "1c5165658eba06dd30de788cc48ef4bb7a4fd94f300e9ede766fd4088487f7ce",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i1-1700000000000/blobs/12.json": "e911461e505df1a9cb49ac8e195af79dc15bdc7cacc93c36fb742722fac3feca",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i1-1700000000000/blobs/2.json": "b40088e731826b703625cb07e8819ee96ef95926d8f4d685de78f05e264b7e02",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i1-1700000000000/blobs/3.json": "37f1b8d92de3988361b8f89448cd8c3de40c9a417f02391e7bbba13c7e8db33d",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i1-1700000000000/blobs/4.json": "64f63ef47e8064fa370da1997b0cf83e4161bc44fcd215fcb69a5e6f3b6cc6b8",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i1-1700000000000/blobs/5.json": "ab035ca8f45be63f198080f5aaecca290941194607a998b01c975bd23c64299c",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i1-1700000000000/blobs/6.json": "b0b74b71e8be9b4df4cfaa800f700088a318656f4d643963238face085e4f414",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i1-1700000000000/blobs/7.json": "f54d63298dc6ee2f59bb3601c152e4df0b37e798e0c0419ce836a907bec1a15b",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i1-1700000000000/blobs/8.json": "228bb9c7dffec902504e822d0cd3ef3c3b83b1f3c932d14b28f3cb36710ea4c1",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i1-1700000000000/blobs/9.json": "7c8cfb637124495409c634a9302124495a678ae8881bec56f6093729b25aa9a6",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i2-1700000000000.jsonl": "0e9de36f559a5727a8e109c838c6133024910097c81ee93bd87855c29fec66c0",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i2-1700000000000/blobs/0.json": "64f63ef47e8064fa370da1997b0cf83e4161bc44fcd215fcb69a5e6f3b6cc6b8",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i2-1700000000000/blobs/1.json": "e7468927bf8a4a19042b6ccc4e201402e9f74b795823b67dc4a5376bbe1149ff",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i2-1700000000000/blobs/10.json": "22db5d9c438527871380d93c7d0a8d6eb39affbd8b46e1f8191df0fe5abccc22",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i2-1700000000000/blobs/11.json": "0f8a5c5fdc26cfa13ad7ec974136e3b6e8e9bafc7df00e23c2bee08781016f8f",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i2-1700000000000/blobs/12.json": "1b342b6327c0eaef252e3110d36d3b1a46038cb7314d0e9103e98ae63a302111",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i2-1700000000000/blobs/2.json": "0d1650d515f1ab2ee6bf1806b179f6a6501e6f05ad0362de2fbdea1ca6fc670d",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i2-1700000000000/blobs/3.json": "da370cf77a024cd8062cccc408fb773a88012d749a322384c45c349cfd5c6808",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i2-1700000000000/blobs/4.json": "5ee9d079c40109694253dcbd03790b35a42e3175e223883e5c6b9721810f10c3",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i2-1700000000000/blobs/5.json": "8d26ed329f7d55e69cc5ddbc004340bd1b3819e7c79374dda9d0bde7b7aee7d6",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i2-1700000000000/blobs/6.json": "5948f1931ca6f07524bfcd2134dd7b74ea3129426dd4f502dde7fd267f2e1082",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i2-1700000000000/blobs/7.json": "25c6eebe73cfc92bc66dcb3da7cfe30dc677d042e3e5c24b0a575eb27bbbc6b3",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i2-1700000000000/blobs/8.json": "f0fbd268299fc896b97022140a529229fc18c3985d0f860af808a95a8eea178b",
+    "experiments/autocorrelation-s7-n3-1700000000000/fixed/trees/autocorrelation-s7-i2-1700000000000/blobs/9.json": "32ce8bb244ea3fe24e37f8b331acabd70af07d68b20e2b82e7478c7614540822",
+    "experiments/autocorrelation-s7-n3-1700000000000/result.json": "e43db983d0cd42da04abf7bf7c5d0ed98316f495257445099ad3a8ca22f2c428"
+  }
+}

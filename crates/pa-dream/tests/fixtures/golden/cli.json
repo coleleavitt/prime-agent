@@ -1,0 +1,697 @@
+[
+  {
+    "args": [
+      "status",
+      "--dir",
+      "<DIR>/store"
+    ],
+    "exit": 2,
+    "stdout": [],
+    "stderr": [
+      "Error: dream store is empty (<DIR>/store)"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--seed",
+      "3",
+      "--workers",
+      "3",
+      "--k1",
+      "6",
+      "--k2",
+      "12",
+      "--dreams",
+      "8",
+      "--iterations",
+      "2",
+      "--dir",
+      "<DIR>/store"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/store",
+      "  task sum-difference  seed 3  mode local  W 3  k1 6  k2 12  M 8  beta1 0.05  beta2 0.1  beta3 0.25  iterations 2",
+      "  round 0: best 0.832991  probes 12  tree sum-difference-s3-i0-1700000000000",
+      "  round 1: best 0.818068  probes 12  tree sum-difference-s3-i1-1700000000000",
+      "  round 2: best 0.884054  probes 12  tree sum-difference-s3-i2-1700000000000",
+      "  initial policy 1be99d403b0405a3  score 0.562933",
+      "  final   policy 1be99d403b0405a3  score 0.562933  improved false",
+      "  best node score 0.884054  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "status",
+      "--dir",
+      "<DIR>/store"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream store  <DIR>/store",
+      "  trees 3  best node score 0.884054",
+      "    sum-difference: 3",
+      "  last policy 1be99d403b0405a3",
+      "  experiments 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "status",
+      "--json",
+      "--dir",
+      "<DIR>/store"
+    ],
+    "exit": 0,
+    "stdout": [
+      "{\n  \"dir\": \"<DIR>/store\",\n  \"treeCount\": 3,\n  \"taskCounts\": {\n    \"sum-difference\": 3\n  },\n  \"bestNodeScore\": 0.8840540602928197,\n  \"lastPolicyId\": \"1be99d403b0405a3\",\n  \"experimentCount\": 0,\n  \"experimentIds\": []\n}"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "show",
+      "--dir",
+      "<DIR>/store"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream tree  sum-difference-s3-i2-1700000000000",
+      "  task sum-difference  W 3  seed 3  policy 1be99d403b0405a3  iteration 2  agent-generated 0/12",
+      "  round 1: reveal sum-difference-s3-i2-1700000000000-n1",
+      "  round 2: reveal sum-difference-s3-i2-1700000000000-n2",
+      "  round 3: reveal sum-difference-s3-i2-1700000000000-n3, sum-difference-s3-i2-1700000000000-n4",
+      "  round 4: reveal sum-difference-s3-i2-1700000000000-n5, sum-difference-s3-i2-1700000000000-n6",
+      "  round 5: reveal sum-difference-s3-i2-1700000000000-n7, sum-difference-s3-i2-1700000000000-n8, sum-difference-s3-i2-1700000000000-n9",
+      "  round 6: reveal sum-difference-s3-i2-1700000000000-n10, sum-difference-s3-i2-1700000000000-n11, sum-difference-s3-i2-1700000000000-n12",
+      "  sum-difference-s3-i2-1700000000000-n0  parent -  branch 0  seq 0  round 0  score 0.805434  valid true  origin root",
+      "  sum-difference-s3-i2-1700000000000-n1  parent sum-difference-s3-i2-1700000000000-n0  branch 0  seq 1  round 1  score 0.836919  valid true  origin local",
+      "  sum-difference-s3-i2-1700000000000-n2  parent sum-difference-s3-i2-1700000000000-n1  branch 0  seq 2  round 2  score 0.858390  valid true  origin local",
+      "  sum-difference-s3-i2-1700000000000-n3  parent sum-difference-s3-i2-1700000000000-n2  branch 0  seq 3  round 3  score 0.836919  valid true  origin local",
+      "  sum-difference-s3-i2-1700000000000-n4  parent sum-difference-s3-i2-1700000000000-n0  branch 1  seq 4  round 3  score 0.818068  valid true  origin local",
+      "  sum-difference-s3-i2-1700000000000-n5  parent sum-difference-s3-i2-1700000000000-n3  branch 0  seq 5  round 4  score 0.805434  valid true  origin local",
+      "  sum-difference-s3-i2-1700000000000-n6  parent sum-difference-s3-i2-1700000000000-n4  branch 0  seq 6  round 4  score 0.818068  valid true  origin local",
+      "  sum-difference-s3-i2-1700000000000-n7  parent sum-difference-s3-i2-1700000000000-n6  branch 0  seq 7  round 5  score 0.805434  valid true  origin local",
+      "  sum-difference-s3-i2-1700000000000-n8  parent sum-difference-s3-i2-1700000000000-n0  branch 2  seq 8  round 5  score 0.793301  valid true  origin local",
+      "  sum-difference-s3-i2-1700000000000-n9  parent sum-difference-s3-i2-1700000000000-n5  branch 0  seq 9  round 5  score 0.805434  valid true  origin local",
+      "  sum-difference-s3-i2-1700000000000-n10  parent sum-difference-s3-i2-1700000000000-n0  branch 3  seq 10  round 6  score 0.884054  valid true  origin local",
+      "  sum-difference-s3-i2-1700000000000-n11  parent sum-difference-s3-i2-1700000000000-n7  branch 0  seq 11  round 6  score 0.793301  valid true  origin local",
+      "  sum-difference-s3-i2-1700000000000-n12  parent sum-difference-s3-i2-1700000000000-n9  branch 0  seq 12  round 6  score 0.812356  valid true  origin local"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "show",
+      "--json",
+      "--tree",
+      "sum-difference-s3-i1-1700000000000",
+      "--dir",
+      "<DIR>/store"
+    ],
+    "exit": 0,
+    "stdout": [
+      "{\n  \"header\": {\n    \"type\": \"tree\",\n    \"version\": 1,\n    \"treeId\": \"sum-difference-s3-i1-1700000000000\",\n    \"taskId\": \"sum-difference\",\n    \"w\": 3,\n    \"seed\": 3,\n    \"policyId\": \"1be99d403b0405a3\",\n    \"iteration\": 1,\n    \"createdTs\": 1700000000000\n  },\n  \"nodes\": [\n    {\n      \"type\": \"node\",\n      \"id\": \"sum-difference-s3-i1-1700000000000-n0\",\n      \"parentId\": null,\n      \"branch\": 0,\n      \"seq\": 0,\n      \"round\": 0,\n      \"score\": 0.7811117521099321,\n      \"valid\": true,\n      \"origin\": \"root\",\n      \"artifactRef\": \"1a974c3053fe0846ebd2cc6e94276f14bd28eef38d3905a08f61bdb1bfbef723\",\n      \"tokens\": 0,\n      \"ts\": 1700000000000\n    },\n    {\n      \"type\": \"node\",\n      \"id\": \"sum-difference-s3-i1-1700000000000-n1\",\n      \"parentId\": \"sum-difference-s3-i1-1700000000000-n0\",\n      \"branch\": 0,\n      \"seq\": 1,\n      \"round\": 1,\n      \"score\": 0.8026155325712659,\n      \"valid\": true,\n      \"origin\": \"local\",\n      \"artifactRef\": \"0704107e063c51776a3d01115ea353c3eb466a4f37de59c3010e62add570fc5e\",\n      \"tokens\": 0,\n      \"ts\": 1700000000000\n    },\n    {\n      \"type\": \"node\",\n      \"id\": \"sum-difference-s3-i1-1700000000000-n2\",\n      \"parentId\": \"sum-difference-s3-i1-1700000000000-n1\",\n      \"branch\": 0,\n      \"seq\": 2,\n      \"round\": 2,\n      \"score\": 0.792385260872085,\n      \"valid\": true,\n      \"origin\": \"local\",\n      \"artifactRef\": \"e079f0a98bbf8225fe1abc66f43b8e1400f4636312b6ee479f56ed049201f273\",\n      \"tokens\": 0,\n      \"ts\": 1700000000000\n    },\n    {\n      \"type\": \"node\",\n      \"id\": \"sum-difference-s3-i1-1700000000000-n3\",\n      \"parentId\": \"sum-difference-s3-i1-1700000000000-n2\",\n      \"branch\": 0,\n      \"seq\": 3,\n      \"round\": 3,\n      \"score\": 0.8064336081125472,\n      \"valid\": true,\n      \"origin\": \"local\",\n      \"artifactRef\": \"44dcb754ae1ebc6ae582044e816303b0d10a82c0668779819efb0003051bf245\",\n      \"tokens\": 0,\n      \"ts\": 1700000000000\n    },\n    {\n      \"type\": \"node\",\n      \"id\": \"sum-difference-s3-i1-1700000000000-n4\",\n      \"parentId\": \"sum-difference-s3-i1-1700000000000-n0\",\n      \"branch\": 1,\n      \"seq\": 4,\n      \"round\": 3,\n      \"score\": 0.8002830349846194,\n      \"valid\": true,\n      \"origin\": \"local\",\n      \"artifactRef\": \"76c796a1ab2986ff1ba41915224dbe6f3cb7dc3b945d84f9dcb0461fb8391750\",\n      \"tokens\": 0,\n      \"ts\": 1700000000000\n    },\n    {\n      \"type\": \"node\",\n      \"id\": \"sum-difference-s3-i1-1700000000000-n5\",\n      \"parentId\": \"sum-difference-s3-i1-1700000000000-n3\",\n      \"branch\": 0,\n      \"seq\": 5,\n      \"round\": 4,\n      \"score\": 0.8123558270856199,\n      \"valid\": true,\n      \"origin\": \"local\",\n      \"artifactRef\": \"2dcf5d3da73ce6d2937526f7103fde565d504cd09dfcb50de5a5e8bc327cb82b\",\n      \"tokens\": 0,\n      \"ts\": 1700000000000\n    },\n    {\n      \"type\": \"node\",\n      \"id\": \"sum-difference-s3-i1-1700000000000-n6\",\n      \"parentId\": \"sum-difference-s3-i1-1700000000000-n4\",\n      \"branch\": 0,\n      \"seq\": 6,\n      \"round\": 4,\n      \"score\": 0.8026155325712659,\n      \"valid\": true,\n      \"origin\": \"local\",\n      \"artifactRef\": \"0d6b0ad8d8b1be526e690bec45ce6c2d0af209f8b2cccbbeb0c4a1c1fda8fa1b\",\n      \"tokens\": 0,\n      \"ts\": 1700000000000\n    },\n    {\n      \"type\": \"node\",\n      \"id\": \"sum-difference-s3-i1-1700000000000-n7\",\n      \"parentId\": \"sum-difference-s3-i1-1700000000000-n5\",\n      \"branch\": 0,\n      \"seq\": 7,\n      \"round\": 5,\n      \"score\": 0.8171892621009542,\n      \"valid\": true,\n      \"origin\": \"local\",\n      \"artifactRef\": \"187dbd5de467e20e909f710cbc2741a0573531d7eb70a6b18a6497067cba2055\",\n      \"tokens\": 0,\n      \"ts\": 1700000000000\n    },\n    {\n      \"type\": \"node\",\n      \"id\": \"sum-difference-s3-i1-1700000000000-n8\",\n      \"parentId\": \"sum-difference-s3-i1-1700000000000-n6\",\n      \"branch\": 0,\n      \"seq\": 8,\n      \"round\": 5,\n      \"score\": 0.8153072441183078,\n      \"valid\": true,\n      \"origin\": \"local\",\n      \"artifactRef\": \"827132d3f63ee4e48ac33350ea7e983c8473f73c77a455b5022a68a8e031b1f2\",\n      \"tokens\": 0,\n      \"ts\": 1700000000000\n    },\n    {\n      \"type\": \"node\",\n      \"id\": \"sum-difference-s3-i1-1700000000000-n9\",\n      \"parentId\": \"sum-difference-s3-i1-1700000000000-n0\",\n      \"branch\": 2,\n      \"seq\": 9,\n      \"round\": 5,\n      \"score\": 0.788096258565042,\n      \"valid\": true,\n      \"origin\": \"local\",\n      \"artifactRef\": \"80795230d873c5b6bf66c9eb83f18071e7f944267eea7bfd830fb2c65b458d7e\",\n      \"tokens\": 0,\n      \"ts\": 1700000000000\n    },\n    {\n      \"type\": \"node\",\n      \"id\": \"sum-difference-s3-i1-1700000000000-n10\",\n      \"parentId\": \"sum-difference-s3-i1-1700000000000-n7\",\n      \"branch\": 0,\n      \"seq\": 10,\n      \"round\": 6,\n      \"score\": 0.8180678991012515,\n      \"valid\": true,\n      \"origin\": \"local\",\n      \"artifactRef\": \"34f3580712a6a29623534948b8ada158c02145a5999ec0a0b3f8150e9ee52e64\",\n      \"tokens\": 0,\n      \"ts\": 1700000000000\n    },\n    {\n      \"type\": \"node\",\n      \"id\": \"sum-difference-s3-i1-1700000000000-n11\",\n      \"parentId\": \"sum-difference-s3-i1-1700000000000-n8\",\n      \"branch\": 0,\n      \"seq\": 11,\n      \"round\": 6,\n      \"score\": 0.8153072441183078,\n      \"valid\": true,\n      \"origin\": \"local\",\n      \"artifactRef\": \"133be8a6cb09fea37d317c932265fa0ca32ef1607c47448b795ff9124a27d984\",\n      \"tokens\": 0,\n      \"ts\": 1700000000000\n    },\n    {\n      \"type\": \"node\",\n      \"id\": \"sum-difference-s3-i1-1700000000000-n12\",\n      \"parentId\": \"sum-difference-s3-i1-1700000000000-n9\",\n      \"branch\": 0,\n      \"seq\": 12,\n      \"round\": 6,\n      \"score\": 0.8076983389496231,\n      \"valid\": true,\n      \"origin\": \"local\",\n      \"artifactRef\": \"a444deee10e84760d65270025d6f5ff7641b014b7b2cd257190389023dd680ef\",\n      \"tokens\": 0,\n      \"ts\": 1700000000000\n    }\n  ],\n  \"reveals\": [\n    {\n      \"type\": \"reveal\",\n      \"round\": 1,\n      \"ids\": [\n        \"sum-difference-s3-i1-1700000000000-n1\"\n      ]\n    },\n    {\n      \"type\": \"reveal\",\n      \"round\": 2,\n      \"ids\": [\n        \"sum-difference-s3-i1-1700000000000-n2\"\n      ]\n    },\n    {\n      \"type\": \"reveal\",\n      \"round\": 3,\n      \"ids\": [\n        \"sum-difference-s3-i1-1700000000000-n3\",\n        \"sum-difference-s3-i1-1700000000000-n4\"\n      ]\n    },\n    {\n      \"type\": \"reveal\",\n      \"round\": 4,\n      \"ids\": [\n        \"sum-difference-s3-i1-1700000000000-n5\",\n        \"sum-difference-s3-i1-1700000000000-n6\"\n      ]\n    },\n    {\n      \"type\": \"reveal\",\n      \"round\": 5,\n      \"ids\": [\n        \"sum-difference-s3-i1-1700000000000-n7\",\n        \"sum-difference-s3-i1-1700000000000-n8\",\n        \"sum-difference-s3-i1-1700000000000-n9\"\n      ]\n    },\n    {\n      \"type\": \"reveal\",\n      \"round\": 6,\n      \"ids\": [\n        \"sum-difference-s3-i1-1700000000000-n10\",\n        \"sum-difference-s3-i1-1700000000000-n11\",\n        \"sum-difference-s3-i1-1700000000000-n12\"\n      ]\n    }\n  ]\n}"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "replay",
+      "--dir",
+      "<DIR>/store",
+      "--k1",
+      "6",
+      "--k2",
+      "12"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream replay  sum-difference-s3-i2-1700000000000",
+      "  policy 1be99d403b0405a3",
+      "  revealed N 12  rounds 6  best 0.884054  out-of-support 0  in-support 1.000000  probes to best 10",
+      "  V 0.928032  (beta1 0.05  beta2 0.1  beta3 0.25  budget 3x6)"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "replay",
+      "--json",
+      "--dir",
+      "<DIR>/store",
+      "--k1",
+      "6",
+      "--k2",
+      "12"
+    ],
+    "exit": 0,
+    "stdout": [
+      "{\n  \"policyId\": \"1be99d403b0405a3\",\n  \"treeId\": \"sum-difference-s3-i2-1700000000000\",\n  \"revealedIds\": [\n    \"sum-difference-s3-i2-1700000000000-n0\",\n    \"sum-difference-s3-i2-1700000000000-n1\",\n    \"sum-difference-s3-i2-1700000000000-n2\",\n    \"sum-difference-s3-i2-1700000000000-n3\",\n    \"sum-difference-s3-i2-1700000000000-n4\",\n    \"sum-difference-s3-i2-1700000000000-n5\",\n    \"sum-difference-s3-i2-1700000000000-n6\",\n    \"sum-difference-s3-i2-1700000000000-n7\",\n    \"sum-difference-s3-i2-1700000000000-n8\",\n    \"sum-difference-s3-i2-1700000000000-n9\",\n    \"sum-difference-s3-i2-1700000000000-n10\",\n    \"sum-difference-s3-i2-1700000000000-n11\",\n    \"sum-difference-s3-i2-1700000000000-n12\"\n  ],\n  \"N\": 12,\n  \"rounds\": 6,\n  \"bestScore\": 0.8840540602928197,\n  \"outOfSupportCells\": 0,\n  \"selectedCells\": 12,\n  \"inSupport\": 1,\n  \"bestSoFar\": [\n    0.8369185667429339,\n    0.8583900166540128,\n    0.8583900166540128,\n    0.8583900166540128,\n    0.8583900166540128,\n    0.8583900166540128,\n    0.8583900166540128,\n    0.8583900166540128,\n    0.8583900166540128,\n    0.8840540602928197,\n    0.8840540602928197,\n    0.8840540602928197\n  ],\n  \"probesToBest\": 10,\n  \"roundsToBest\": 6,\n  \"v\": 0.9280317550584637\n}"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "improve",
+      "--task",
+      "sum-difference",
+      "--dir",
+      "<DIR>/store",
+      "--dreams",
+      "5",
+      "--k1",
+      "6",
+      "--k2",
+      "12"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream improve  <DIR>/store",
+      "  pool 3  measured trees 3  evidence trees 2  candidates 6  simulations 18",
+      "  current policy 1be99d403b0405a3  current score 0.562933  quality 0.620987",
+      "  chosen  policy 1be99d403b0405a3  chosen score 0.562933  quality 0.620987  improved false  quality-rejected 0",
+      "    candidate f513891f8860ba00",
+      "    candidate 3b6746c900060e26",
+      "    candidate fa25a006f356d04b",
+      "    candidate 335eb9088127c068",
+      "    candidate a76af02603338c69"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "improve",
+      "--json",
+      "--task",
+      "sum-difference",
+      "--dir",
+      "<DIR>/store",
+      "--dreams",
+      "3",
+      "--k1",
+      "6",
+      "--k2",
+      "12"
+    ],
+    "exit": 0,
+    "stdout": [
+      "{\n  \"chosenPolicy\": {\n    \"selectionRule\": \"best-first\",\n    \"recoveryPolicy\": \"retry-best\",\n    \"stopRule\": \"patience\",\n    \"branchWidth\": 2,\n    \"refineDepth\": 2,\n    \"batchSize\": 4,\n    \"beta\": 6,\n    \"promisingThreshold\": 0.5,\n    \"targetScore\": 1000000,\n    \"explorationBias\": 0.25\n  },\n  \"chosenPolicyId\": \"1be99d403b0405a3\",\n  \"chosenScore\": 0.5629328702640234,\n  \"currentScore\": 0.5629328702640234,\n  \"chosenQuality\": 0.6209870384119925,\n  \"currentQuality\": 0.6209870384119925,\n  \"current\": {\n    \"value\": 0.5629328702640234,\n    \"quality\": 0.6209870384119925,\n    \"anytime\": 0.5221036991534495,\n    \"cost\": 0.6666666666666666,\n    \"roundsSaved\": 0,\n    \"N\": 12,\n    \"rounds\": 6,\n    \"outOfSupportCells\": 0,\n    \"inSupportMean\": 1,\n    \"inSupportMin\": 1,\n    \"chargedProbes\": 12,\n    \"chargedRounds\": 6\n  },\n  \"currentMinBest\": 0.8180678991012515,\n  \"improved\": false,\n  \"scoredCount\": 4,\n  \"qualityRejected\": 0,\n  \"candidatePolicyIds\": [\n    \"f513891f8860ba00\",\n    \"3b6746c900060e26\",\n    \"fa25a006f356d04b\"\n  ],\n  \"candidates\": [\n    {\n      \"index\": 0,\n      \"policyId\": \"f513891f8860ba00\",\n      \"policy\": {\n        \"selectionRule\": \"best-first\",\n        \"recoveryPolicy\": \"retry-best\",\n        \"stopRule\": \"patience\",\n        \"branchWidth\": 2,\n        \"refineDepth\": 2,\n        \"batchSize\": 4,\n        \"beta\": 6,\n        \"promisingThreshold\": 0.44651206937967836,\n        \"targetScore\": 941888.3280154862,\n        \"explorationBias\": 0.25\n      },\n      \"origin\": \"local\",\n      \"changed\": [\n        \"promisingThreshold\",\n        \"targetScore\"\n      ],\n      \"duplicateOf\": null,\n      \"value\": 0.5629328702640234,\n      \"quality\": 0.6209870384119925,\n      \"anytime\": 0.5221036991534495,\n      \"cost\": 0.6666666666666666,\n      \"roundsSaved\": 0,\n      \"N\": 12,\n      \"rounds\": 6,\n      \"outOfSupportCells\": 0,\n      \"inSupportMean\": 1,\n      \"inSupportMin\": 1,\n      \"chargedProbes\": 12,\n      \"chargedRounds\": 6,\n      \"evidenceTrees\": 2,\n      \"eligible\": true,\n      \"reason\": \"tie\"\n    },\n    {\n      \"index\": 1,\n      \"policyId\": \"3b6746c900060e26\",\n      \"policy\": {\n        \"selectionRule\": \"best-first\",\n        \"recoveryPolicy\": \"retry-best\",\n        \"stopRule\": \"patience\",\n        \"branchWidth\": 2,\n        \"refineDepth\": 2,\n        \"batchSize\": 4,\n        \"beta\": 6,\n        \"promisingThreshold\": 0.5,\n        \"targetScore\": 812938.9550402071,\n        \"explorationBias\": 0.25\n      },\n      \"origin\": \"local\",\n      \"changed\": [\n        \"targetScore\"\n      ],\n      \"duplicateOf\": null,\n      \"value\": 0.5629328702640234,\n      \"quality\": 0.6209870384119925,\n      \"anytime\": 0.5221036991534495,\n      \"cost\": 0.6666666666666666,\n      \"roundsSaved\": 0,\n      \"N\": 12,\n      \"rounds\": 6,\n      \"outOfSupportCells\": 0,\n      \"inSupportMean\": 1,\n      \"inSupportMin\": 1,\n      \"chargedProbes\": 12,\n      \"chargedRounds\": 6,\n      \"evidenceTrees\": 2,\n      \"eligible\": true,\n      \"reason\": \"tie\"\n    },\n    {\n      \"index\": 2,\n      \"policyId\": \"fa25a006f356d04b\",\n      \"policy\": {\n        \"selectionRule\": \"best-first\",\n        \"recoveryPolicy\": \"retry-best\",\n        \"stopRule\": \"patience\",\n        \"branchWidth\": 2,\n        \"refineDepth\": 2,\n        \"batchSize\": 2,\n        \"beta\": 12,\n        \"promisingThreshold\": 0.5,\n        \"targetScore\": 1000000,\n        \"explorationBias\": 0.25\n      },\n      \"origin\": \"local\",\n      \"changed\": [\n        \"batchSize\",\n        \"beta\"\n      ],\n      \"duplicateOf\": null,\n      \"value\": 0.4691150503353554,\n      \"quality\": 0.6209870384119925,\n      \"anytime\": 0.53942501203137,\n      \"cost\": 1.0740740740740742,\n      \"roundsSaved\": -0.7777777777777777,\n      \"N\": 10.666666666666666,\n      \"rounds\": 10.666666666666666,\n      \"outOfSupportCells\": 8.666666666666666,\n      \"inSupportMean\": 0.5887445887445887,\n      \"inSupportMin\": 0.45454545454545453,\n      \"chargedProbes\": 19.333333333333332,\n      \"chargedRounds\": 10.666666666666666,\n      \"evidenceTrees\": 2,\n      \"eligible\": true,\n      \"reason\": \"unmeasurable\"\n    }\n  ],\n  \"dreamer\": \"local\",\n  \"leverScan\": {\n    \"policies\": 337,\n    \"eligible\": 84,\n    \"bestValue\": 0.5705540101861996,\n    \"bestPolicyId\": \"4615a272269513b3\",\n    \"gap\": 0.007621139922176168,\n    \"simulations\": 1011\n  },\n  \"poolSize\": 3,\n  \"measuredTrees\": 3,\n  \"evidenceTrees\": 2,\n  \"simulations\": 12,\n  \"tokens\": 0,\n  \"currentPolicyId\": \"1be99d403b0405a3\",\n  \"dir\": \"<DIR>/store\"\n}"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "improve",
+      "--dir",
+      "<DIR>/store"
+    ],
+    "exit": 2,
+    "stdout": [],
+    "stderr": [
+      "Error: no recorded circle-packing trees in <DIR>/store; run \"dream rollout\" first"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--json",
+      "--task",
+      "circle-packing",
+      "--n",
+      "6",
+      "--seed",
+      "2",
+      "--workers",
+      "2",
+      "--k1",
+      "4",
+      "--k2",
+      "8",
+      "--dreams",
+      "4",
+      "--iterations",
+      "1",
+      "--priming",
+      "diverse",
+      "--beta1",
+      "0.1",
+      "--dir",
+      "<DIR>/loopjson"
+    ],
+    "exit": 0,
+    "stdout": [
+      "{\n  \"runId\": \"circle-packing-s2-r1700000000000\",\n  \"task\": \"circle-packing\",\n  \"seed\": 2,\n  \"mode\": \"local\",\n  \"iterations\": 1,\n  \"fixedPolicy\": false,\n  \"treeIds\": [\n    \"circle-packing-s2-i0-1700000000000\",\n    \"circle-packing-s2-i1-1700000000000\"\n  ],\n  \"rounds\": [\n    {\n      \"iteration\": 0,\n      \"treeId\": \"circle-packing-s2-i0-1700000000000\",\n      \"bestScore\": 0.5002540865165839,\n      \"probes\": 14\n    },\n    {\n      \"iteration\": 1,\n      \"treeId\": \"circle-packing-s2-i1-1700000000000\",\n      \"bestScore\": 0.48347893357568805,\n      \"probes\": 6\n    }\n  ],\n  \"initialPolicyId\": \"1be99d403b0405a3\",\n  \"initialPolicyScore\": 0.6298875446527922,\n  \"finalPolicy\": {\n    \"selectionRule\": \"best-first\",\n    \"recoveryPolicy\": \"retry-best\",\n    \"stopRule\": \"patience\",\n    \"branchWidth\": 2,\n    \"refineDepth\": 2,\n    \"batchSize\": 4,\n    \"beta\": 6,\n    \"promisingThreshold\": 0.5,\n    \"targetScore\": 1000000,\n    \"explorationBias\": 0.25\n  },\n  \"finalPolicyId\": \"1be99d403b0405a3\",\n  \"finalPolicyScore\": 0.6298875446527922,\n  \"improved\": false,\n  \"bestNodeScore\": 0.5002540865165839,\n  \"tokens\": 0,\n  \"stoppedEarly\": 0,\n  \"finalSelection\": [\n    {\n      \"index\": 0,\n      \"policyId\": \"1be99d403b0405a3\",\n      \"policy\": {\n        \"selectionRule\": \"best-first\",\n        \"recoveryPolicy\": \"retry-best\",\n        \"stopRule\": \"patience\",\n        \"branchWidth\": 2,\n        \"refineDepth\": 2,\n        \"batchSize\": 4,\n        \"beta\": 6,\n        \"promisingThreshold\": 0.5,\n        \"targetScore\": 1000000,\n        \"explorationBias\": 0.25\n      },\n      \"origin\": \"local\",\n      \"changed\": [],\n      \"duplicateOf\": null,\n      \"value\": 0.6298875446527922,\n      \"quality\": 0.7176137291679723,\n      \"anytime\": 0.6667089911072518,\n      \"cost\": 0.75,\n      \"roundsSaved\": 0,\n      \"N\": 6,\n      \"rounds\": 4,\n      \"outOfSupportCells\": 0,\n      \"inSupportMean\": 1,\n      \"inSupportMin\": 1,\n      \"chargedProbes\": 6,\n      \"chargedRounds\": 4,\n      \"evidenceTrees\": 1,\n      \"eligible\": false,\n      \"reason\": \"identical\"\n    }\n  ],\n  \"probationReverts\": 0,\n  \"dir\": \"<DIR>/loopjson\"\n}"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "experiment",
+      "--task",
+      "autocorrelation",
+      "--n",
+      "32",
+      "--rounds",
+      "3",
+      "--workers",
+      "3",
+      "--k1",
+      "6",
+      "--k2",
+      "12",
+      "--dreams",
+      "6",
+      "--seed",
+      "7",
+      "--dir",
+      "<DIR>/exp"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream experiment  autocorrelation-s7-n3-1700000000000",
+      "  task autocorrelation n 32  scoring deterministic  seed 7  rounds 3  W 3  k1 6  k2 12  M 6  beta1 0.05  beta2 0.1  beta3 0.25  arms dream,fixed",
+      "  initial policy 1be99d403b0405a3",
+      "  arm dream  proposer local  dreamer local  fixed false  guided false  run autocorrelation-s7-r1700000000000-autocorrelation-s7-n3-1700000000000_dream",
+      "    round | best | cum best | probes | agent | fallback | cum probes | policy",
+      "        1 | 0.500408 | 0.500408 |     11 |     0 |        0 |         11 | 1be99d403b0405a3",
+      "        2 | 0.500557 | 0.500557 |     12 |     0 |        0 |         23 | 1be99d403b0405a3  dreamed 0.904047 -> 0.904047 improved false",
+      "      dreaming: candidates 6  eligible 6  tie (current kept)  measured trees 1/1  lever gap +0.001215 (337 policies, 138 eligible)  dreamer local",
+      "        3 | 0.500734 | 0.500734 |     12 |     0 |        0 |         35 | 1be99d403b0405a3  dreamed 0.795909 -> 0.795909 improved false",
+      "      dreaming: candidates 6  eligible 6  tie (current kept)  measured trees 2/2  lever gap +0.025200 (337 policies, 138 eligible)  dreamer local",
+      "    final policy 1be99d403b0405a3  changes 0  selected policy 1be99d403b0405a3  own-pool score 0.700924 -> 0.700924  final best 0.500734  probes 35  handler calls 0  tokens 0",
+      "    provenance: 35 probes = 0 agent-generated + 35 local (0 fallbacks); local proposer, 0 LLM proposals",
+      "    dreaming: 2 phases  improved 0/2  policy changes 0  -> INERT (the arm ran its initial policy throughout)",
+      "  arm fixed  proposer local  dreamer local  fixed true  guided false  run autocorrelation-s7-r1700000000000-autocorrelation-s7-n3-1700000000000_fixed",
+      "    round | best | cum best | probes | agent | fallback | cum probes | policy",
+      "        1 | 0.500408 | 0.500408 |     11 |     0 |        0 |         11 | 1be99d403b0405a3",
+      "        2 | 0.500557 | 0.500557 |     12 |     0 |        0 |         23 | 1be99d403b0405a3",
+      "        3 | 0.500734 | 0.500734 |     12 |     0 |        0 |         35 | 1be99d403b0405a3",
+      "    final policy 1be99d403b0405a3  changes 0  selected policy 1be99d403b0405a3  own-pool score 0.700924 -> 0.700924  final best 0.500734  probes 35  handler calls 0  tokens 0",
+      "    provenance: 35 probes = 0 agent-generated + 35 local (0 fallbacks); local proposer, 0 LLM proposals",
+      "  headline vs fixed: target 0.500734 reached at 35 probes; equal budget 35 probes",
+      "    dream: target at 35 probes -> 1.00x fewer calls; at equal budget: 0.500734 vs 0.500734 -> 1.00x score; delta best +0.000000",
+      "  exact headline (probe-granular): target reached by fixed at probe 30",
+      "    dream: target at probe 30 -> 1.00x fewer calls",
+      "  note: k1 6 <= initialPolicy.beta 6: patience can never stop a rollout before the round cap, so every rollout runs exactly k1 rounds and replay cannot reward saving rounds",
+      "  note: objective: normalized (q in pool range, cost in budget fractions)",
+      "  store <DIR>/exp",
+      "  results <DIR>/exp/experiments/autocorrelation-s7-n3-1700000000000/result.json"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "experiment",
+      "--task",
+      "autocorrelation",
+      "--n",
+      "32",
+      "--rounds",
+      "3",
+      "--workers",
+      "3",
+      "--k1",
+      "6",
+      "--k2",
+      "12",
+      "--dreams",
+      "6",
+      "--seed",
+      "7",
+      "--dir",
+      "<DIR>/exp"
+    ],
+    "exit": 2,
+    "stdout": [],
+    "stderr": [
+      "Error: experiment autocorrelation-s7-n3-1700000000000 already exists at <DIR>/exp/experiments/autocorrelation-s7-n3-1700000000000; pass overwrite to replace it"
+    ]
+  },
+  {
+    "args": [
+      "compare",
+      "--json",
+      "--overwrite",
+      "--task",
+      "sum-difference",
+      "--rounds",
+      "2",
+      "--workers",
+      "3",
+      "--k1",
+      "5",
+      "--k2",
+      "10",
+      "--dreams",
+      "4",
+      "--seeds",
+      "1,2",
+      "--dir",
+      "<DIR>/exp"
+    ],
+    "exit": 0,
+    "stdout": [
+      "[\n  {\n    \"schema\": \"prime-agent.dream.experiment/1\",\n    \"experimentId\": \"sum-difference-s1-n2-1700000000000\",\n    \"task\": \"sum-difference\",\n    \"scoring\": \"deterministic\",\n    \"seed\": 1,\n    \"rounds\": 2,\n    \"budget\": {\n      \"workers\": 3,\n      \"k1\": 5,\n      \"k2\": 10,\n      \"dreams\": 4\n    },\n    \"objective\": {\n      \"beta1\": 0.05,\n      \"beta2\": 0.1,\n      \"beta3\": 0.25\n    },\n    \"initialPolicyId\": \"1be99d403b0405a3\",\n    \"initialPolicy\": {\n      \"selectionRule\": \"best-first\",\n      \"recoveryPolicy\": \"retry-best\",\n      \"stopRule\": \"patience\",\n      \"branchWidth\": 2,\n      \"refineDepth\": 2,\n      \"batchSize\": 4,\n      \"beta\": 6,\n      \"promisingThreshold\": 0.5,\n      \"targetScore\": 1000000,\n      \"explorationBias\": 0.25\n    },\n    \"arms\": [\n      {\n        \"arm\": \"dream\",\n        \"fixedPolicy\": false,\n        \"guided\": false,\n        \"mode\": {\n          \"proposer\": \"local\",\n          \"dreamer\": \"local\"\n        },\n        \"storeDir\": \"experiments/sum-difference-s1-n2-1700000000000/dream\",\n        \"runId\": \"sum-difference-s1-r1700000000000-sum-difference-s1-n2-1700000000000_dream\",\n        \"initialPolicyId\": \"1be99d403b0405a3\",\n        \"finalPolicyId\": \"1be99d403b0405a3\",\n        \"selectedPolicyId\": \"1be99d403b0405a3\",\n        \"policyScoreOnOwnPool\": {\n          \"initial\": 0.7646803125147138,\n          \"final\": 0.7646803125147138\n        },\n        \"policyChanges\": 0,\n        \"rounds\": [\n          {\n            \"round\": 1,\n            \"treeId\": \"sum-difference-s1-i0-1700000000000\",\n            \"policyId\": \"1be99d403b0405a3\",\n            \"roundBest\": 0.8270058552445605,\n            \"cumulativeBest\": 0.8270058552445605,\n            \"probes\": 8,\n            \"cumulativeProbes\": 8,\n            \"agentGeneratedCalls\": 0,\n            \"cumulativeAgentGeneratedCalls\": 0,\n            \"localFallbacks\": 0,\n            \"llmProposals\": 0,\n            \"llmAccepted\": 0,\n            \"llmRejected\": {\n              \"parse\": 0,\n              \"shape\": 0,\n              \"invalid-candidate\": 0,\n              \"error\": 0,\n              \"length\": 0,\n              \"aborted\": 0,\n              \"turn-limit\": 0,\n              \"budget\": 0\n            },\n            \"decisionRounds\": 5,\n            \"poolSize\": 0,\n            \"handlerCalls\": {\n              \"proposer\": 0,\n              \"dreamer\": 0,\n              \"guidance\": 0\n            },\n            \"cumulativeHandlerCalls\": 0,\n            \"tokens\": 0,\n            \"cumulativeTokens\": 0,\n            \"dreaming\": null,\n            \"probesToRoundBest\": 2,\n            \"improvements\": [\n              {\n                \"probe\": 0,\n                \"score\": 0.8002830349846194\n              },\n              {\n                \"probe\": 1,\n                \"score\": 0.8243123493114272\n              },\n              {\n                \"probe\": 2,\n                \"score\": 0.8270058552445605\n              }\n            ]\n          },\n          {\n            \"round\": 2,\n            \"treeId\": \"sum-difference-s1-i1-1700000000000\",\n            \"policyId\": \"1be99d403b0405a3\",\n            \"roundBest\": 0.8081229318311594,\n            \"cumulativeBest\": 0.8270058552445605,\n            \"probes\": 8,\n            \"cumulativeProbes\": 16,\n            \"agentGeneratedCalls\": 0,\n            \"cumulativeAgentGeneratedCalls\": 0,\n            \"localFallbacks\": 0,\n            \"llmProposals\": 0,\n            \"llmAccepted\": 0,\n            \"llmRejected\": {\n              \"parse\": 0,\n              \"shape\": 0,\n              \"invalid-candidate\": 0,\n              \"error\": 0,\n              \"length\": 0,\n              \"aborted\": 0,\n              \"turn-limit\": 0,\n              \"budget\": 0\n            },\n            \"decisionRounds\": 5,\n            \"poolSize\": 1,\n            \"handlerCalls\": {\n              \"proposer\": 0,\n              \"dreamer\": 0,\n              \"guidance\": 0\n            },\n            \"cumulativeHandlerCalls\": 0,\n            \"tokens\": 0,\n            \"cumulativeTokens\": 0,\n            \"dreaming\": {\n              \"currentScore\": 0.9723551735592871,\n              \"chosenScore\": 0.9723551735592871,\n              \"improved\": false,\n              \"candidates\": 4,\n              \"candidateVerdicts\": [\n                {\n                  \"index\": 0,\n                  \"policyId\": \"6ced8c2f10d3aa5f\",\n                  \"policy\": {\n                    \"selectionRule\": \"best-first\",\n                    \"recoveryPolicy\": \"retry-best\",\n                    \"stopRule\": \"patience\",\n                    \"branchWidth\": 2,\n                    \"refineDepth\": 2,\n                    \"batchSize\": 4,\n                    \"beta\": 6,\n                    \"promisingThreshold\": 0.5,\n                    \"targetScore\": 858240.6820311496,\n                    \"explorationBias\": 0.2967812351720812\n                  },\n                  \"origin\": \"local\",\n                  \"changed\": [\n                    \"targetScore\",\n                    \"explorationBias\"\n                  ],\n                  \"duplicateOf\": null,\n                  \"value\": 0.9490218402259537,\n                  \"quality\": 1,\n                  \"anytime\": 0.996087360903815,\n                  \"cost\": 1,\n                  \"roundsSaved\": 0,\n                  \"N\": 8,\n                  \"rounds\": 5,\n                  \"outOfSupportCells\": 0,\n                  \"inSupportMean\": 1,\n                  \"inSupportMin\": 1,\n                  \"chargedProbes\": 15,\n                  \"chargedRounds\": 5,\n                  \"evidenceTrees\": 0,\n                  \"eligible\": true,\n                  \"reason\": \"worse\"\n                },\n                {\n                  \"index\": 1,\n                  \"policyId\": \"b613a0654234a6e8\",\n                  \"policy\": {\n                    \"selectionRule\": \"best-first\",\n                    \"recoveryPolicy\": \"retry-best\",\n                    \"stopRule\": \"patience\",\n                    \"branchWidth\": 2,\n                    \"refineDepth\": 2,\n                    \"batchSize\": 4,\n                    \"beta\": 6,\n                    \"promisingThreshold\": 0.36446764866104564,\n                    \"targetScore\": 917907.1688146086,\n                    \"explorationBias\": 0.25\n                  },\n                  \"origin\": \"local\",\n                  \"changed\": [\n                    \"promisingThreshold\",\n                    \"targetScore\"\n                  ],\n                  \"duplicateOf\": null,\n                  \"value\": 0.9490218402259537,\n                  \"quality\": 1,\n                  \"anytime\": 0.996087360903815,\n                  \"cost\": 1,\n                  \"roundsSaved\": 0,\n                  \"N\": 8,\n                  \"rounds\": 5,\n                  \"outOfSupportCells\": 0,\n                  \"inSupportMean\": 1,\n                  \"inSupportMin\": 1,\n                  \"chargedProbes\": 15,\n                  \"chargedRounds\": 5,\n                  \"evidenceTrees\": 0,\n                  \"eligible\": true,\n                  \"reason\": \"worse\"\n                },\n                {\n                  \"index\": 2,\n                  \"policyId\": \"5345d412beed520e\",\n                  \"policy\": {\n                    \"selectionRule\": \"best-first\",\n                    \"recoveryPolicy\": \"retry-best\",\n                    \"stopRule\": \"patience\",\n                    \"branchWidth\": 2,\n                    \"refineDepth\": 2,\n                    \"batchSize\": 4,\n                    \"beta\": 1,\n                    \"promisingThreshold\": 0.5,\n                    \"targetScore\": 1000000,\n                    \"explorationBias\": 0.25\n                  },\n                  \"origin\": \"local\",\n                  \"changed\": [\n                    \"beta\"\n                  ],\n                  \"duplicateOf\": null,\n                  \"value\": 0.9490218402259537,\n                  \"quality\": 1,\n                  \"anytime\": 0.996087360903815,\n                  \"cost\": 1,\n                  \"roundsSaved\": 0,\n                  \"N\": 4,\n                  \"rounds\": 3,\n                  \"outOfSupportCells\": 0,\n                  \"inSupportMean\": 1,\n                  \"inSupportMin\": 1,\n                  \"chargedProbes\": 15,\n                  \"chargedRounds\": 5,\n                  \"evidenceTrees\": 0,\n                  \"eligible\": true,\n                  \"reason\": \"worse\"\n                },\n                {\n                  \"index\": 3,\n                  \"policyId\": \"2d63a1012876b4b9\",\n                  \"policy\": {\n                    \"selectionRule\": \"best-first\",\n                    \"recoveryPolicy\": \"retry-best\",\n                    \"stopRule\": \"patience\",\n                    \"branchWidth\": 2,\n                    \"refineDepth\": 2,\n                    \"batchSize\": 4,\n                    \"beta\": 6,\n                    \"promisingThreshold\": 0.5,\n                    \"targetScore\": 1000000,\n                    \"explorationBias\": 0.08805509220567462\n                  },\n                  \"origin\": \"local\",\n                  \"changed\": [\n                    \"explorationBias\"\n                  ],\n                  \"duplicateOf\": null,\n                  \"value\": 0.9490218402259537,\n                  \"quality\": 1,\n                  \"anytime\": 0.996087360903815,\n                  \"cost\": 1,\n                  \"roundsSaved\": 0,\n                  \"N\": 8,\n                  \"rounds\": 5,\n                  \"outOfSupportCells\": 0,\n                  \"inSupportMean\": 1,\n                  \"inSupportMin\": 1,\n                  \"chargedProbes\": 15,\n                  \"chargedRounds\": 5,\n                  \"evidenceTrees\": 0,\n                  \"eligible\": true,\n                  \"reason\": \"worse\"\n                }\n              ],\n              \"dreamer\": \"local\",\n              \"leverScan\": {\n                \"policies\": 337,\n                \"eligible\": 162,\n                \"bestValue\": 0.9723551735592871,\n                \"bestPolicyId\": \"1be99d403b0405a3\",\n                \"gap\": 0,\n                \"simulations\": 337\n              },\n              \"measuredTrees\": 1\n            },\n            \"probesToRoundBest\": 6,\n            \"improvements\": [\n              {\n                \"probe\": 0,\n                \"score\": 0.8002830349846194\n              },\n              {\n                \"probe\": 1,\n                \"score\": 0.805434075815364\n              },\n              {\n                \"probe\": 6,\n                \"score\": 0.8081229318311594\n              }\n            ]\n          }\n        ],\n        \"totals\": {\n          \"probes\": 16,\n          \"agentGeneratedCalls\": 0,\n          \"localFallbacks\": 0,\n          \"llmProposals\": 0,\n          \"llmAccepted\": 0,\n          \"llmRejected\": {\n            \"parse\": 0,\n            \"shape\": 0,\n            \"invalid-candidate\": 0,\n            \"error\": 0,\n            \"length\": 0,\n            \"aborted\": 0,\n            \"turn-limit\": 0,\n            \"budget\": 0\n          },\n          \"handlerCalls\": 0,\n          \"tokens\": 0,\n          \"finalBest\": 0.8270058552445605\n        },\n        \"stoppedEarly\": 0,\n        \"finalSelection\": [\n          {\n            \"index\": 0,\n            \"policyId\": \"1be99d403b0405a3\",\n            \"policy\": {\n              \"selectionRule\": \"best-first\",\n              \"recoveryPolicy\": \"retry-best\",\n              \"stopRule\": \"patience\",\n              \"branchWidth\": 2,\n              \"refineDepth\": 2,\n              \"batchSize\": 4,\n              \"beta\": 6,\n              \"promisingThreshold\": 0.5,\n              \"targetScore\": 1000000,\n              \"explorationBias\": 0.25\n            },\n            \"origin\": \"local\",\n            \"changed\": [],\n            \"duplicateOf\": null,\n            \"value\": 0.7646803125147138,\n            \"quality\": 0.7942772369033022,\n            \"anytime\": 0.782556206015615,\n            \"cost\": 0.5333333333333333,\n            \"roundsSaved\": 0,\n            \"N\": 8,\n            \"rounds\": 5,\n            \"outOfSupportCells\": 0,\n            \"inSupportMean\": 1,\n            \"inSupportMin\": 1,\n            \"chargedProbes\": 8,\n            \"chargedRounds\": 5,\n            \"evidenceTrees\": 1,\n            \"eligible\": false,\n            \"reason\": \"identical\"\n          }\n        ]\n      },\n      {\n        \"arm\": \"fixed\",\n        \"fixedPolicy\": true,\n        \"guided\": false,\n        \"mode\": {\n          \"proposer\": \"local\",\n          \"dreamer\": \"local\"\n        },\n        \"storeDir\": \"experiments/sum-difference-s1-n2-1700000000000/fixed\",\n        \"runId\": \"sum-difference-s1-r1700000000000-sum-difference-s1-n2-1700000000000_fixed\",\n        \"initialPolicyId\": \"1be99d403b0405a3\",\n        \"finalPolicyId\": \"1be99d403b0405a3\",\n        \"selectedPolicyId\": \"1be99d403b0405a3\",\n        \"policyScoreOnOwnPool\": {\n          \"initial\": 0.7646803125147138,\n          \"final\": 0.7646803125147138\n        },\n        \"policyChanges\": 0,\n        \"rounds\": [\n          {\n            \"round\": 1,\n            \"treeId\": \"sum-difference-s1-i0-1700000000000\",\n            \"policyId\": \"1be99d403b0405a3\",\n            \"roundBest\": 0.8270058552445605,\n            \"cumulativeBest\": 0.8270058552445605,\n            \"probes\": 8,\n            \"cumulativeProbes\": 8,\n            \"agentGeneratedCalls\": 0,\n            \"cumulativeAgentGeneratedCalls\": 0,\n            \"localFallbacks\": 0,\n            \"llmProposals\": 0,\n            \"llmAccepted\": 0,\n            \"llmRejected\": {\n              \"parse\": 0,\n              \"shape\": 0,\n              \"invalid-candidate\": 0,\n              \"error\": 0,\n              \"length\": 0,\n              \"aborted\": 0,\n              \"turn-limit\": 0,\n              \"budget\": 0\n            },\n            \"decisionRounds\": 5,\n            \"poolSize\": 0,\n            \"handlerCalls\": {\n              \"proposer\": 0,\n              \"dreamer\": 0,\n              \"guidance\": 0\n            },\n            \"cumulativeHandlerCalls\": 0,\n            \"tokens\": 0,\n            \"cumulativeTokens\": 0,\n            \"dreaming\": null,\n            \"probesToRoundBest\": 2,\n            \"improvements\": [\n              {\n                \"probe\": 0,\n                \"score\": 0.8002830349846194\n              },\n              {\n                \"probe\": 1,\n                \"score\": 0.8243123493114272\n              },\n              {\n                \"probe\": 2,\n                \"score\": 0.8270058552445605\n              }\n            ]\n          },\n          {\n            \"round\": 2,\n            \"treeId\": \"sum-difference-s1-i1-1700000000000\",\n            \"policyId\": \"1be99d403b0405a3\",\n            \"roundBest\": 0.8081229318311594,\n            \"cumulativeBest\": 0.8270058552445605,\n            \"probes\": 8,\n            \"cumulativeProbes\": 16,\n            \"agentGeneratedCalls\": 0,\n            \"cumulativeAgentGeneratedCalls\": 0,\n            \"localFallbacks\": 0,\n            \"llmProposals\": 0,\n            \"llmAccepted\": 0,\n            \"llmRejected\": {\n              \"parse\": 0,\n              \"shape\": 0,\n              \"invalid-candidate\": 0,\n              \"error\": 0,\n              \"length\": 0,\n              \"aborted\": 0,\n              \"turn-limit\": 0,\n              \"budget\": 0\n            },\n            \"decisionRounds\": 5,\n            \"poolSize\": 1,\n            \"handlerCalls\": {\n              \"proposer\": 0,\n              \"dreamer\": 0,\n              \"guidance\": 0\n            },\n            \"cumulativeHandlerCalls\": 0,\n            \"tokens\": 0,\n            \"cumulativeTokens\": 0,\n            \"dreaming\": null,\n            \"probesToRoundBest\": 6,\n            \"improvements\": [\n              {\n                \"probe\": 0,\n                \"score\": 0.8002830349846194\n              },\n              {\n                \"probe\": 1,\n                \"score\": 0.805434075815364\n              },\n              {\n                \"probe\": 6,\n                \"score\": 0.8081229318311594\n              }\n            ]\n          }\n        ],\n        \"totals\": {\n          \"probes\": 16,\n          \"agentGeneratedCalls\": 0,\n          \"localFallbacks\": 0,\n          \"llmProposals\": 0,\n          \"llmAccepted\": 0,\n          \"llmRejected\": {\n            \"parse\": 0,\n            \"shape\": 0,\n            \"invalid-candidate\": 0,\n            \"error\": 0,\n            \"length\": 0,\n            \"aborted\": 0,\n            \"turn-limit\": 0,\n            \"budget\": 0\n          },\n          \"handlerCalls\": 0,\n          \"tokens\": 0,\n          \"finalBest\": 0.8270058552445605\n        },\n        \"stoppedEarly\": 0,\n        \"finalSelection\": []\n      }\n    ],\n    \"headline\": {\n      \"reference\": \"fixed\",\n      \"target\": 0.8270058552445605,\n      \"probesToTarget\": {\n        \"dream\": 8,\n        \"fixed\": 8\n      },\n      \"callsMultiplier\": {\n        \"dream\": 1,\n        \"fixed\": 1\n      },\n      \"equalBudget\": 16,\n      \"bestAtBudget\": {\n        \"dream\": 0.8270058552445605,\n        \"fixed\": 0.8270058552445605\n      },\n      \"scoreMultiplier\": {\n        \"dream\": 1,\n        \"fixed\": 1\n      },\n      \"deltaBest\": {\n        \"dream\": 0,\n        \"fixed\": 0\n      },\n      \"probesToTargetExact\": {\n        \"dream\": 2,\n        \"fixed\": 2\n      },\n      \"callsMultiplierExact\": {\n        \"dream\": 1,\n        \"fixed\": 1\n      }\n    },\n    \"sharedInitialRollout\": false,\n    \"createdTs\": 1700000000000,\n    \"notes\": [\n      \"k1 5 <= initialPolicy.beta 6: patience can never stop a rollout before the round cap, so every rollout runs exactly k1 rounds and replay cannot reward saving rounds\",\n      \"objective: normalized (q in pool range, cost in budget fractions)\"\n    ]\n  },\n  {\n    \"schema\": \"prime-agent.dream.experiment/1\",\n    \"experimentId\": \"sum-difference-s2-n2-1700000000000\",\n    \"task\": \"sum-difference\",\n    \"scoring\": \"deterministic\",\n    \"seed\": 2,\n    \"rounds\": 2,\n    \"budget\": {\n      \"workers\": 3,\n      \"k1\": 5,\n      \"k2\": 10,\n      \"dreams\": 4\n    },\n    \"objective\": {\n      \"beta1\": 0.05,\n      \"beta2\": 0.1,\n      \"beta3\": 0.25\n    },\n    \"initialPolicyId\": \"1be99d403b0405a3\",\n    \"initialPolicy\": {\n      \"selectionRule\": \"best-first\",\n      \"recoveryPolicy\": \"retry-best\",\n      \"stopRule\": \"patience\",\n      \"branchWidth\": 2,\n      \"refineDepth\": 2,\n      \"batchSize\": 4,\n      \"beta\": 6,\n      \"promisingThreshold\": 0.5,\n      \"targetScore\": 1000000,\n      \"explorationBias\": 0.25\n    },\n    \"arms\": [\n      {\n        \"arm\": \"dream\",\n        \"fixedPolicy\": false,\n        \"guided\": false,\n        \"mode\": {\n          \"proposer\": \"local\",\n          \"dreamer\": \"local\"\n        },\n        \"storeDir\": \"experiments/sum-difference-s2-n2-1700000000000/dream\",\n        \"runId\": \"sum-difference-s2-r1700000000000-sum-difference-s2-n2-1700000000000_dream\",\n        \"initialPolicyId\": \"1be99d403b0405a3\",\n        \"finalPolicyId\": \"1be99d403b0405a3\",\n        \"selectedPolicyId\": \"1be99d403b0405a3\",\n        \"policyScoreOnOwnPool\": {\n          \"initial\": 0.7755465895945317,\n          \"final\": 0.7755465895945317\n        },\n        \"policyChanges\": 0,\n        \"rounds\": [\n          {\n            \"round\": 1,\n            \"treeId\": \"sum-difference-s2-i0-1700000000000\",\n            \"policyId\": \"1be99d403b0405a3\",\n            \"roundBest\": 0.850400709972885,\n            \"cumulativeBest\": 0.850400709972885,\n            \"probes\": 9,\n            \"cumulativeProbes\": 9,\n            \"agentGeneratedCalls\": 0,\n            \"cumulativeAgentGeneratedCalls\": 0,\n            \"localFallbacks\": 0,\n            \"llmProposals\": 0,\n            \"llmAccepted\": 0,\n            \"llmRejected\": {\n              \"parse\": 0,\n              \"shape\": 0,\n              \"invalid-candidate\": 0,\n              \"error\": 0,\n              \"length\": 0,\n              \"aborted\": 0,\n              \"turn-limit\": 0,\n              \"budget\": 0\n            },\n            \"decisionRounds\": 5,\n            \"poolSize\": 0,\n            \"handlerCalls\": {\n              \"proposer\": 0,\n              \"dreamer\": 0,\n              \"guidance\": 0\n            },\n            \"cumulativeHandlerCalls\": 0,\n            \"tokens\": 0,\n            \"cumulativeTokens\": 0,\n            \"dreaming\": null,\n            \"probesToRoundBest\": 7,\n            \"improvements\": [\n              {\n                \"probe\": 0,\n                \"score\": 0.7811117521099321\n              },\n              {\n                \"probe\": 1,\n                \"score\": 0.7944066885269438\n              },\n              {\n                \"probe\": 2,\n                \"score\": 0.8121141751215963\n              },\n              {\n                \"probe\": 3,\n                \"score\": 0.8151327308077277\n              },\n              {\n                \"probe\": 5,\n                \"score\": 0.8450152409677041\n              },\n              {\n                \"probe\": 7,\n                \"score\": 0.850400709972885\n              }\n            ]\n          },\n          {\n            \"round\": 2,\n            \"treeId\": \"sum-difference-s2-i1-1700000000000\",\n            \"policyId\": \"1be99d403b0405a3\",\n            \"roundBest\": 0.8267767437249727,\n            \"cumulativeBest\": 0.850400709972885,\n            \"probes\": 9,\n            \"cumulativeProbes\": 18,\n            \"agentGeneratedCalls\": 0,\n            \"cumulativeAgentGeneratedCalls\": 0,\n            \"localFallbacks\": 0,\n            \"llmProposals\": 0,\n            \"llmAccepted\": 0,\n            \"llmRejected\": {\n              \"parse\": 0,\n              \"shape\": 0,\n              \"invalid-candidate\": 0,\n              \"error\": 0,\n              \"length\": 0,\n              \"aborted\": 0,\n              \"turn-limit\": 0,\n              \"budget\": 0\n            },\n            \"decisionRounds\": 5,\n            \"poolSize\": 1,\n            \"handlerCalls\": {\n              \"proposer\": 0,\n              \"dreamer\": 0,\n              \"guidance\": 0\n            },\n            \"cumulativeHandlerCalls\": 0,\n            \"tokens\": 0,\n            \"cumulativeTokens\": 0,\n            \"dreaming\": {\n              \"currentScore\": 0.9277644456746865,\n              \"chosenScore\": 0.9277644456746865,\n              \"improved\": false,\n              \"candidates\": 4,\n              \"candidateVerdicts\": [\n                {\n                  \"index\": 0,\n                  \"policyId\": \"6b5d176430839841\",\n                  \"policy\": {\n                    \"selectionRule\": \"best-first\",\n                    \"recoveryPolicy\": \"retry-best\",\n                    \"stopRule\": \"patience\",\n                    \"branchWidth\": 2,\n                    \"refineDepth\": 2,\n                    \"batchSize\": 4,\n                    \"beta\": 6,\n                    \"promisingThreshold\": 0.5,\n                    \"targetScore\": 1000000,\n                    \"explorationBias\": 0.2752496271317664\n                  },\n                  \"origin\": \"local\",\n                  \"changed\": [\n                    \"explorationBias\"\n                  ],\n                  \"duplicateOf\": null,\n                  \"value\": 0.9077644456746865,\n                  \"quality\": 1,\n                  \"anytime\": 0.8310577826987462,\n                  \"cost\": 1,\n                  \"roundsSaved\": 0,\n                  \"N\": 9,\n                  \"rounds\": 5,\n                  \"outOfSupportCells\": 0,\n                  \"inSupportMean\": 1,\n                  \"inSupportMin\": 1,\n                  \"chargedProbes\": 15,\n                  \"chargedRounds\": 5,\n                  \"evidenceTrees\": 0,\n                  \"eligible\": true,\n                  \"reason\": \"worse\"\n                },\n                {\n                  \"index\": 1,\n                  \"policyId\": \"bef9e8183ab2e7a9\",\n                  \"policy\": {\n                    \"selectionRule\": \"best-first\",\n                    \"recoveryPolicy\": \"retry-best\",\n                    \"stopRule\": \"patience\",\n                    \"branchWidth\": 2,\n                    \"refineDepth\": 2,\n                    \"batchSize\": 4,\n                    \"beta\": 6,\n                    \"promisingThreshold\": 0.5,\n                    \"targetScore\": 1000000,\n                    \"explorationBias\": 0.41435001202687993\n                  },\n                  \"origin\": \"local\",\n                  \"changed\": [\n                    \"explorationBias\"\n                  ],\n                  \"duplicateOf\": null,\n                  \"value\": 0.9077644456746865,\n                  \"quality\": 1,\n                  \"anytime\": 0.8310577826987462,\n                  \"cost\": 1,\n                  \"roundsSaved\": 0,\n                  \"N\": 9,\n                  \"rounds\": 5,\n                  \"outOfSupportCells\": 0,\n                  \"inSupportMean\": 1,\n                  \"inSupportMin\": 1,\n                  \"chargedProbes\": 15,\n                  \"chargedRounds\": 5,\n                  \"evidenceTrees\": 0,\n                  \"eligible\": true,\n                  \"reason\": \"worse\"\n                },\n                {\n                  \"index\": 2,\n                  \"policyId\": \"5345d412beed520e\",\n                  \"policy\": {\n                    \"selectionRule\": \"best-first\",\n                    \"recoveryPolicy\": \"retry-best\",\n                    \"stopRule\": \"patience\",\n                    \"branchWidth\": 2,\n                    \"refineDepth\": 2,\n                    \"batchSize\": 4,\n                    \"beta\": 1,\n                    \"promisingThreshold\": 0.5,\n                    \"targetScore\": 1000000,\n                    \"explorationBias\": 0.25\n                  },\n                  \"origin\": \"local\",\n                  \"changed\": [\n                    \"beta\"\n                  ],\n                  \"duplicateOf\": null,\n                  \"value\": 0.9077644456746865,\n                  \"quality\": 1,\n                  \"anytime\": 0.8310577826987462,\n                  \"cost\": 1,\n                  \"roundsSaved\": 0,\n                  \"N\": 9,\n                  \"rounds\": 5,\n                  \"outOfSupportCells\": 0,\n                  \"inSupportMean\": 1,\n                  \"inSupportMin\": 1,\n                  \"chargedProbes\": 15,\n                  \"chargedRounds\": 5,\n                  \"evidenceTrees\": 0,\n                  \"eligible\": true,\n                  \"reason\": \"worse\"\n                },\n                {\n                  \"index\": 3,\n                  \"policyId\": \"5c3b5f595b9d7154\",\n                  \"policy\": {\n                    \"selectionRule\": \"best-first\",\n                    \"recoveryPolicy\": \"retry-best\",\n                    \"stopRule\": \"patience\",\n                    \"branchWidth\": 2,\n                    \"refineDepth\": 2,\n                    \"batchSize\": 4,\n                    \"beta\": 6,\n                    \"promisingThreshold\": 0.49446616970327373,\n                    \"targetScore\": 1000000,\n                    \"explorationBias\": 0.25\n                  },\n                  \"origin\": \"local\",\n                  \"changed\": [\n                    \"promisingThreshold\"\n                  ],\n                  \"duplicateOf\": null,\n                  \"value\": 0.9077644456746865,\n                  \"quality\": 1,\n                  \"anytime\": 0.8310577826987462,\n                  \"cost\": 1,\n                  \"roundsSaved\": 0,\n                  \"N\": 9,\n                  \"rounds\": 5,\n                  \"outOfSupportCells\": 0,\n                  \"inSupportMean\": 1,\n                  \"inSupportMin\": 1,\n                  \"chargedProbes\": 15,\n                  \"chargedRounds\": 5,\n                  \"evidenceTrees\": 0,\n                  \"eligible\": true,\n                  \"reason\": \"worse\"\n                }\n              ],\n              \"dreamer\": \"local\",\n              \"leverScan\": {\n                \"policies\": 337,\n                \"eligible\": 144,\n                \"bestValue\": 0.9277644456746865,\n                \"bestPolicyId\": \"1be99d403b0405a3\",\n                \"gap\": 0,\n                \"simulations\": 337\n              },\n              \"measuredTrees\": 1\n            },\n            \"probesToRoundBest\": 7,\n            \"improvements\": [\n              {\n                \"probe\": 0,\n                \"score\": 0.7983535327824169\n              },\n              {\n                \"probe\": 1,\n                \"score\": 0.8153072441183078\n              },\n              {\n                \"probe\": 2,\n                \"score\": 0.8243123493114272\n              },\n              {\n                \"probe\": 7,\n                \"score\": 0.8267767437249727\n              }\n            ]\n          }\n        ],\n        \"totals\": {\n          \"probes\": 18,\n          \"agentGeneratedCalls\": 0,\n          \"localFallbacks\": 0,\n          \"llmProposals\": 0,\n          \"llmAccepted\": 0,\n          \"llmRejected\": {\n            \"parse\": 0,\n            \"shape\": 0,\n            \"invalid-candidate\": 0,\n            \"error\": 0,\n            \"length\": 0,\n            \"aborted\": 0,\n            \"turn-limit\": 0,\n            \"budget\": 0\n          },\n          \"handlerCalls\": 0,\n          \"tokens\": 0,\n          \"finalBest\": 0.850400709972885\n        },\n        \"stoppedEarly\": 0,\n        \"finalSelection\": [\n          {\n            \"index\": 0,\n            \"policyId\": \"1be99d403b0405a3\",\n            \"policy\": {\n              \"selectionRule\": \"best-first\",\n              \"recoveryPolicy\": \"retry-best\",\n              \"stopRule\": \"patience\",\n              \"branchWidth\": 2,\n              \"refineDepth\": 2,\n              \"batchSize\": 4,\n              \"beta\": 6,\n              \"promisingThreshold\": 0.5,\n              \"targetScore\": 1000000,\n              \"explorationBias\": 0.25\n            },\n            \"origin\": \"local\",\n            \"changed\": [],\n            \"duplicateOf\": null,\n            \"value\": 0.7755465895945317,\n            \"quality\": 0.8295257500146105,\n            \"anytime\": 0.7336091083342956,\n            \"cost\": 0.6,\n            \"roundsSaved\": 0,\n            \"N\": 9,\n            \"rounds\": 5,\n            \"outOfSupportCells\": 0,\n            \"inSupportMean\": 1,\n            \"inSupportMin\": 1,\n            \"chargedProbes\": 9,\n            \"chargedRounds\": 5,\n            \"evidenceTrees\": 1,\n            \"eligible\": false,\n            \"reason\": \"identical\"\n          }\n        ]\n      },\n      {\n        \"arm\": \"fixed\",\n        \"fixedPolicy\": true,\n        \"guided\": false,\n        \"mode\": {\n          \"proposer\": \"local\",\n          \"dreamer\": \"local\"\n        },\n        \"storeDir\": \"experiments/sum-difference-s2-n2-1700000000000/fixed\",\n        \"runId\": \"sum-difference-s2-r1700000000000-sum-difference-s2-n2-1700000000000_fixed\",\n        \"initialPolicyId\": \"1be99d403b0405a3\",\n        \"finalPolicyId\": \"1be99d403b0405a3\",\n        \"selectedPolicyId\": \"1be99d403b0405a3\",\n        \"policyScoreOnOwnPool\": {\n          \"initial\": 0.7755465895945317,\n          \"final\": 0.7755465895945317\n        },\n        \"policyChanges\": 0,\n        \"rounds\": [\n          {\n            \"round\": 1,\n            \"treeId\": \"sum-difference-s2-i0-1700000000000\",\n            \"policyId\": \"1be99d403b0405a3\",\n            \"roundBest\": 0.850400709972885,\n            \"cumulativeBest\": 0.850400709972885,\n            \"probes\": 9,\n            \"cumulativeProbes\": 9,\n            \"agentGeneratedCalls\": 0,\n            \"cumulativeAgentGeneratedCalls\": 0,\n            \"localFallbacks\": 0,\n            \"llmProposals\": 0,\n            \"llmAccepted\": 0,\n            \"llmRejected\": {\n              \"parse\": 0,\n              \"shape\": 0,\n              \"invalid-candidate\": 0,\n              \"error\": 0,\n              \"length\": 0,\n              \"aborted\": 0,\n              \"turn-limit\": 0,\n              \"budget\": 0\n            },\n            \"decisionRounds\": 5,\n            \"poolSize\": 0,\n            \"handlerCalls\": {\n              \"proposer\": 0,\n              \"dreamer\": 0,\n              \"guidance\": 0\n            },\n            \"cumulativeHandlerCalls\": 0,\n            \"tokens\": 0,\n            \"cumulativeTokens\": 0,\n            \"dreaming\": null,\n            \"probesToRoundBest\": 7,\n            \"improvements\": [\n              {\n                \"probe\": 0,\n                \"score\": 0.7811117521099321\n              },\n              {\n                \"probe\": 1,\n                \"score\": 0.7944066885269438\n              },\n              {\n                \"probe\": 2,\n                \"score\": 0.8121141751215963\n              },\n              {\n                \"probe\": 3,\n                \"score\": 0.8151327308077277\n              },\n              {\n                \"probe\": 5,\n                \"score\": 0.8450152409677041\n              },\n              {\n                \"probe\": 7,\n                \"score\": 0.850400709972885\n              }\n            ]\n          },\n          {\n            \"round\": 2,\n            \"treeId\": \"sum-difference-s2-i1-1700000000000\",\n            \"policyId\": \"1be99d403b0405a3\",\n            \"roundBest\": 0.8267767437249727,\n            \"cumulativeBest\": 0.850400709972885,\n            \"probes\": 9,\n            \"cumulativeProbes\": 18,\n            \"agentGeneratedCalls\": 0,\n            \"cumulativeAgentGeneratedCalls\": 0,\n            \"localFallbacks\": 0,\n            \"llmProposals\": 0,\n            \"llmAccepted\": 0,\n            \"llmRejected\": {\n              \"parse\": 0,\n              \"shape\": 0,\n              \"invalid-candidate\": 0,\n              \"error\": 0,\n              \"length\": 0,\n              \"aborted\": 0,\n              \"turn-limit\": 0,\n              \"budget\": 0\n            },\n            \"decisionRounds\": 5,\n            \"poolSize\": 1,\n            \"handlerCalls\": {\n              \"proposer\": 0,\n              \"dreamer\": 0,\n              \"guidance\": 0\n            },\n            \"cumulativeHandlerCalls\": 0,\n            \"tokens\": 0,\n            \"cumulativeTokens\": 0,\n            \"dreaming\": null,\n            \"probesToRoundBest\": 7,\n            \"improvements\": [\n              {\n                \"probe\": 0,\n                \"score\": 0.7983535327824169\n              },\n              {\n                \"probe\": 1,\n                \"score\": 0.8153072441183078\n              },\n              {\n                \"probe\": 2,\n                \"score\": 0.8243123493114272\n              },\n              {\n                \"probe\": 7,\n                \"score\": 0.8267767437249727\n              }\n            ]\n          }\n        ],\n        \"totals\": {\n          \"probes\": 18,\n          \"agentGeneratedCalls\": 0,\n          \"localFallbacks\": 0,\n          \"llmProposals\": 0,\n          \"llmAccepted\": 0,\n          \"llmRejected\": {\n            \"parse\": 0,\n            \"shape\": 0,\n            \"invalid-candidate\": 0,\n            \"error\": 0,\n            \"length\": 0,\n            \"aborted\": 0,\n            \"turn-limit\": 0,\n            \"budget\": 0\n          },\n          \"handlerCalls\": 0,\n          \"tokens\": 0,\n          \"finalBest\": 0.850400709972885\n        },\n        \"stoppedEarly\": 0,\n        \"finalSelection\": []\n      }\n    ],\n    \"headline\": {\n      \"reference\": \"fixed\",\n      \"target\": 0.850400709972885,\n      \"probesToTarget\": {\n        \"dream\": 9,\n        \"fixed\": 9\n      },\n      \"callsMultiplier\": {\n        \"dream\": 1,\n        \"fixed\": 1\n      },\n      \"equalBudget\": 18,\n      \"bestAtBudget\": {\n        \"dream\": 0.850400709972885,\n        \"fixed\": 0.850400709972885\n      },\n      \"scoreMultiplier\": {\n        \"dream\": 1,\n        \"fixed\": 1\n      },\n      \"deltaBest\": {\n        \"dream\": 0,\n        \"fixed\": 0\n      },\n      \"probesToTargetExact\": {\n        \"dream\": 7,\n        \"fixed\": 7\n      },\n      \"callsMultiplierExact\": {\n        \"dream\": 1,\n        \"fixed\": 1\n      }\n    },\n    \"sharedInitialRollout\": false,\n    \"createdTs\": 1700000000000,\n    \"notes\": [\n      \"k1 5 <= initialPolicy.beta 6: patience can never stop a rollout before the round cap, so every rollout runs exactly k1 rounds and replay cannot reward saving rounds\",\n      \"objective: normalized (q in pool range, cost in budget fractions)\"\n    ]\n  }\n]"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "experiment",
+      "--task",
+      "circle-packing",
+      "--n",
+      "5",
+      "--rounds",
+      "2",
+      "--workers",
+      "2",
+      "--k1",
+      "4",
+      "--k2",
+      "8",
+      "--dreams",
+      "3",
+      "--arms",
+      "dream",
+      "--dir",
+      "<DIR>/exp"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream experiment  circle-packing-s1-n2-1700000000000",
+      "  task circle-packing n 5  scoring deterministic  seed 1  rounds 2  W 2  k1 4  k2 8  M 3  beta1 0.05  beta2 0.1  beta3 0.25  arms dream",
+      "  initial policy 1be99d403b0405a3",
+      "  arm dream  proposer local  dreamer local  fixed false  guided false  run circle-packing-s1-r1700000000000-circle-packing-s1-n2-1700000000000_dream",
+      "    round | best | cum best | probes | agent | fallback | cum probes | policy",
+      "        1 | 0.423185 | 0.423185 |      4 |     0 |        0 |          4 | 1be99d403b0405a3",
+      "        2 | 0.322047 | 0.423185 |      5 |     0 |        0 |          9 | 1be99d403b0405a3  dreamed 0.975000 -> 0.975000 improved false",
+      "      dreaming: candidates 3  eligible 3  tie (current kept)  measured trees 1/1  lever gap +0.000000 (225 policies, 224 eligible)  dreamer local",
+      "    final policy 1be99d403b0405a3  changes 0  selected policy 1be99d403b0405a3  own-pool score 0.696188 -> 0.696188  final best 0.423185  probes 9  handler calls 0  tokens 0",
+      "    provenance: 9 probes = 0 agent-generated + 9 local (0 fallbacks); local proposer, 0 LLM proposals",
+      "    dreaming: 1 phases  improved 0/1  policy changes 0  -> INERT (the arm ran its initial policy throughout)",
+      "  headline: not comparable (no fixed arm)",
+      "  note: no fixed arm ran: the headline multipliers are undefined",
+      "  note: k1 4 <= initialPolicy.beta 6: patience can never stop a rollout before the round cap, so every rollout runs exactly k1 rounds and replay cannot reward saving rounds",
+      "  note: objective: normalized (q in pool range, cost in budget fractions)",
+      "  store <DIR>/exp",
+      "  results <DIR>/exp/experiments/circle-packing-s1-n2-1700000000000/result.json"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "status",
+      "--dir",
+      "<DIR>/exp"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream store  <DIR>/exp",
+      "  trees 0  best node score 0.000000",
+      "  last policy -",
+      "  experiments 4",
+      "    autocorrelation-s7-n3-1700000000000",
+      "    circle-packing-s1-n2-1700000000000",
+      "    sum-difference-s1-n2-1700000000000",
+      "    sum-difference-s2-n2-1700000000000"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "rollout",
+      "--task",
+      "circle-packing",
+      "--seed",
+      "5",
+      "--dir",
+      "<DIR>/r"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream rollout  <DIR>/r",
+      "  tree circle-packing-s5-i0-1700000000000  task circle-packing n 26  policy 1be99d403b0405a3",
+      "  rounds 12  revealed 36  best 1.211756  best node circle-packing-s5-i0-1700000000000-n17  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "rollout",
+      "--json",
+      "--task",
+      "autocorrelation",
+      "--seed",
+      "5",
+      "--workers",
+      "2",
+      "--k1",
+      "3",
+      "--dir",
+      "<DIR>/r"
+    ],
+    "exit": 0,
+    "stdout": [
+      "{\n  \"treeId\": \"autocorrelation-s5-i0-1700000000000\",\n  \"policyId\": \"1be99d403b0405a3\",\n  \"rounds\": 3,\n  \"revealedCount\": 3,\n  \"bestScore\": 0.5,\n  \"bestNodeId\": \"autocorrelation-s5-i0-1700000000000-n0\",\n  \"rootScore\": 0.5,\n  \"tokens\": 0,\n  \"dir\": \"<DIR>/r\"\n}"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "show",
+      "--dir",
+      "<DIR>/r"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream tree  circle-packing-s5-i0-1700000000000",
+      "  task circle-packing n 26  W 4  seed 5  policy 1be99d403b0405a3  iteration 0  agent-generated 0/36",
+      "  round 1: reveal circle-packing-s5-i0-1700000000000-n1",
+      "  round 2: reveal circle-packing-s5-i0-1700000000000-n2",
+      "  round 3: reveal circle-packing-s5-i0-1700000000000-n3, circle-packing-s5-i0-1700000000000-n4",
+      "  round 4: reveal circle-packing-s5-i0-1700000000000-n5, circle-packing-s5-i0-1700000000000-n6",
+      "  round 5: reveal circle-packing-s5-i0-1700000000000-n7, circle-packing-s5-i0-1700000000000-n8, circle-packing-s5-i0-1700000000000-n9",
+      "  round 6: reveal circle-packing-s5-i0-1700000000000-n10, circle-packing-s5-i0-1700000000000-n11, circle-packing-s5-i0-1700000000000-n12",
+      "  round 7: reveal circle-packing-s5-i0-1700000000000-n13, circle-packing-s5-i0-1700000000000-n14, circle-packing-s5-i0-1700000000000-n15, circle-packing-s5-i0-1700000000000-n16",
+      "  round 8: reveal circle-packing-s5-i0-1700000000000-n17, circle-packing-s5-i0-1700000000000-n18, circle-packing-s5-i0-1700000000000-n19, circle-packing-s5-i0-1700000000000-n20",
+      "  round 9: reveal circle-packing-s5-i0-1700000000000-n21, circle-packing-s5-i0-1700000000000-n22, circle-packing-s5-i0-1700000000000-n23, circle-packing-s5-i0-1700000000000-n24",
+      "  round 10: reveal circle-packing-s5-i0-1700000000000-n25, circle-packing-s5-i0-1700000000000-n26, circle-packing-s5-i0-1700000000000-n27, circle-packing-s5-i0-1700000000000-n28",
+      "  round 11: reveal circle-packing-s5-i0-1700000000000-n29, circle-packing-s5-i0-1700000000000-n30, circle-packing-s5-i0-1700000000000-n31, circle-packing-s5-i0-1700000000000-n32",
+      "  round 12: reveal circle-packing-s5-i0-1700000000000-n33, circle-packing-s5-i0-1700000000000-n34, circle-packing-s5-i0-1700000000000-n35, circle-packing-s5-i0-1700000000000-n36",
+      "  circle-packing-s5-i0-1700000000000-n0  parent -  branch 0  seq 0  round 0  score 0.937364  valid true  origin root",
+      "  circle-packing-s5-i0-1700000000000-n1  parent circle-packing-s5-i0-1700000000000-n0  branch 0  seq 1  round 1  score 1.060376  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n2  parent circle-packing-s5-i0-1700000000000-n1  branch 0  seq 2  round 2  score 1.116452  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n3  parent circle-packing-s5-i0-1700000000000-n2  branch 0  seq 3  round 3  score 1.065029  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n4  parent circle-packing-s5-i0-1700000000000-n0  branch 1  seq 4  round 3  score 1.018838  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n5  parent circle-packing-s5-i0-1700000000000-n3  branch 0  seq 5  round 4  score 1.058529  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n6  parent circle-packing-s5-i0-1700000000000-n4  branch 0  seq 6  round 4  score 1.003336  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n7  parent circle-packing-s5-i0-1700000000000-n5  branch 0  seq 7  round 5  score 0.977647  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n8  parent circle-packing-s5-i0-1700000000000-n6  branch 0  seq 8  round 5  score 1.003127  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n9  parent circle-packing-s5-i0-1700000000000-n0  branch 2  seq 9  round 5  score 0.980488  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n10  parent circle-packing-s5-i0-1700000000000-n8  branch 0  seq 10  round 6  score 1.123029  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n11  parent circle-packing-s5-i0-1700000000000-n9  branch 0  seq 11  round 6  score 0.950685  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n12  parent circle-packing-s5-i0-1700000000000-n7  branch 0  seq 12  round 6  score 1.000484  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n13  parent circle-packing-s5-i0-1700000000000-n10  branch 0  seq 13  round 7  score 1.183593  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n14  parent circle-packing-s5-i0-1700000000000-n12  branch 0  seq 14  round 7  score 1.053920  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n15  parent circle-packing-s5-i0-1700000000000-n11  branch 0  seq 15  round 7  score 1.037508  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n16  parent circle-packing-s5-i0-1700000000000-n0  branch 3  seq 16  round 7  score 1.049160  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n17  parent circle-packing-s5-i0-1700000000000-n13  branch 0  seq 17  round 8  score 1.211756  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n18  parent circle-packing-s5-i0-1700000000000-n14  branch 0  seq 18  round 8  score 1.095591  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n19  parent circle-packing-s5-i0-1700000000000-n16  branch 0  seq 19  round 8  score 1.030693  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n20  parent circle-packing-s5-i0-1700000000000-n15  branch 0  seq 20  round 8  score 1.056888  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n21  parent circle-packing-s5-i0-1700000000000-n17  branch 0  seq 21  round 9  score 1.142795  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n22  parent circle-packing-s5-i0-1700000000000-n18  branch 0  seq 22  round 9  score 1.071050  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n23  parent circle-packing-s5-i0-1700000000000-n20  branch 0  seq 23  round 9  score 0.984199  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n24  parent circle-packing-s5-i0-1700000000000-n19  branch 0  seq 24  round 9  score 1.051015  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n25  parent circle-packing-s5-i0-1700000000000-n21  branch 0  seq 25  round 10  score 1.183852  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n26  parent circle-packing-s5-i0-1700000000000-n22  branch 0  seq 26  round 10  score 1.089763  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n27  parent circle-packing-s5-i0-1700000000000-n24  branch 0  seq 27  round 10  score 1.009593  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n28  parent circle-packing-s5-i0-1700000000000-n23  branch 0  seq 28  round 10  score 1.027442  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n29  parent circle-packing-s5-i0-1700000000000-n25  branch 0  seq 29  round 11  score 1.172074  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n30  parent circle-packing-s5-i0-1700000000000-n26  branch 0  seq 30  round 11  score 1.090485  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n31  parent circle-packing-s5-i0-1700000000000-n28  branch 0  seq 31  round 11  score 0.951830  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n32  parent circle-packing-s5-i0-1700000000000-n27  branch 0  seq 32  round 11  score 1.052388  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n33  parent circle-packing-s5-i0-1700000000000-n29  branch 0  seq 33  round 12  score 1.118419  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n34  parent circle-packing-s5-i0-1700000000000-n30  branch 0  seq 34  round 12  score 1.077955  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n35  parent circle-packing-s5-i0-1700000000000-n32  branch 0  seq 35  round 12  score 1.052901  valid true  origin local",
+      "  circle-packing-s5-i0-1700000000000-n36  parent circle-packing-s5-i0-1700000000000-n31  branch 0  seq 36  round 12  score 0.987918  valid true  origin local"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "--task",
+      "autocorrelation",
+      "--n",
+      "5"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --n: autocorrelation requires n in {32, 64, 128} (got 5)",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "--llm-proposer"
+    ],
+    "exit": 2,
+    "stdout": [],
+    "stderr": [
+      "LLM proposer/dreamer run only in-session, where an agent handler exists: start them with /dream --llm-proposer or /dream --llm-dreamer. The standalone CLI has no handler, so it runs the default local proposer at zero tokens."
+    ]
+  },
+  {
+    "args": [
+      "experiment",
+      "--arms",
+      "dream,dream-guided",
+      "--dir",
+      "<DIR>/exp"
+    ],
+    "exit": 2,
+    "stdout": [],
+    "stderr": [
+      "dream-guided/fixed-guided need the in-session LLM proposer; run dream.experiment(...) from the kernel skill or /dream experiment --llm-proposer"
+    ]
+  },
+  {
+    "args": [
+      "experiment",
+      "--iterations",
+      "2"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: experiment takes --rounds (rollouts per arm), not --iterations.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "bogus"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: Unknown dream subcommand: bogus",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "--seed",
+      "-1"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --seed requires a value.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "--beta3",
+      "2"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --beta3 must be in [0, 1].",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "--k1=0"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --k1 requires a positive integer.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "--arms",
+      "dream,dream"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --arms lists dream twice.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "--seeds",
+      "1,1"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --seeds must be distinct.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "replay"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: dream takes a single subcommand: unexpected replay",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "--frobnicate"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: Unknown option for dream: --frobnicate",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "--task"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --task requires a value.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "replay",
+      "--tree",
+      "nope",
+      "--dir",
+      "<DIR>/store"
+    ],
+    "exit": 2,
+    "stdout": [],
+    "stderr": [
+      "Error: no tree nope in <DIR>/store"
+    ]
+  }
+]

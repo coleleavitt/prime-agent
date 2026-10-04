@@ -10,6 +10,7 @@ members = [
     "crates/pa-core",
     "crates/pa-daemon",
     "crates/pa-tui",
+    "crates/pa-dream",
     "crates/pa-cli",
 ]
 

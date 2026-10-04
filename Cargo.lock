@@ -1349,6 +1349,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pa-dream"
+version = "0.9.8"
+dependencies = [
+ "pa-types",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "pa-models"
 version = "0.9.8"
 dependencies = [

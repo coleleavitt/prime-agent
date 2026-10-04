@@ -1,0 +1,31 @@
+//! # pa-dream
+//!
+//! Dream-RSI (Zheng et al., 2026): grow a discovery tree over a scored task,
+//! freeze each tree into a zero-cost replay simulator, and improve a typed,
+//! serializable exploration policy by searching over it on replay, with an
+//! online probation for every adoption. This crate is the standalone,
+//! zero-token runner behind `prime-agent dream`; the in-session LLM proposer,
+//! dreamer and run service plug in later through [`proposer::Proposer`],
+//! [`improve::CandidateSource`] and [`experiment::ExperimentArmRunner`].
+//! See `README.md` for scope, files owned and telemetry.
+
+pub mod collate;
+pub mod command;
+pub mod dream_loop;
+pub mod dreams;
+pub mod experiment;
+pub mod improve;
+pub mod interpreter;
+pub mod js_math;
+pub mod json;
+pub mod objective;
+pub mod policy;
+pub mod proposer;
+pub mod records;
+pub mod replay;
+pub mod rng;
+pub mod rollout;
+pub mod store;
+pub mod task;
+pub mod tasks;
+pub mod tree;

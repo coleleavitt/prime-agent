@@ -1,0 +1,20 @@
+[package]
+name = "pa-dream"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Dream-RSI: discovery trees, frozen replay, exploration-policy improvement, and the zero-token `prime-agent dream` runner."
+
+[dependencies]
+pa-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
