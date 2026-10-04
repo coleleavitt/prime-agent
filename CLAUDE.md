@@ -43,6 +43,9 @@ API. Precedence when they disagree: explicit user instruction → `AGENTS.md` �
 `computer-use`, `factory`, `system-router`), `install-rust.sh` (installer; its platform map is pinned by
 `crates/pa-cli/tests/installer_platform_map.rs`), `docs/` (mostly the fork's TS-era design docs — see Current State).
 
+**Fork features live in removable crates** (`docs/fork-feature-crates.md`): one `pa-<feature>` crate each, wired
+only in `pa-cli` behind a Cargo feature; `pa-cli --no-default-features` is upstream's native product.
+
 **Extension points, outermost first:** a skill (`skills/<name>/`, Python, no Rust change) → an `rlm` runtime function
 backed by a host request → a session-engine hook → core surgery.
 
