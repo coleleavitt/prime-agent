@@ -267,6 +267,10 @@ impl IpythonKernelProvisioner for KernelProvisioner {
             this.kill();
         })
     }
+
+    fn take_unreported_exit(&self) -> Option<crate::kernel::shared::KernelUnexpectedExit> {
+        KernelProvisioner::take_unreported_exit(self)
+    }
 }
 
 /// Adapts the kernel manager to the ipython tool's executor contract.
@@ -300,7 +304,12 @@ impl KernelExecutor for KernelManagerExecutor {
                     },
                 )
                 .await
-                .map_err(KernelExecError::Other)?;
+                .map_err(|error| {
+                    match error.downcast::<crate::kernel::shared::KernelExitedError>() {
+                        Ok(exited) => KernelExecError::KernelExited(exited),
+                        Err(error) => KernelExecError::Other(error),
+                    }
+                })?;
             Ok(convert_execute_result(result))
         })
     }

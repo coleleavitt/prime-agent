@@ -25,6 +25,7 @@ impl AuthStorage {
                         api_key: Some(api_key),
                         source_token: Self::token_for(provider_id, &candidate),
                         credential_type: Some("api_key"),
+                        oauth_refresh_failed: false,
                     };
                 }
             }
@@ -41,6 +42,7 @@ impl AuthStorage {
                         api_key: Some(api_key),
                         source_token: Self::token_for(provider_id, &candidate),
                         credential_type: Some("api_key"),
+                        oauth_refresh_failed: false,
                     };
                 }
             }
@@ -56,6 +58,7 @@ impl AuthStorage {
                     api_key: self.directory_context_api_key(),
                     source_token: Self::token_for(provider_id, candidate),
                     credential_type: Some("api_key"),
+                    oauth_refresh_failed: false,
                 };
             }
         }
@@ -81,6 +84,7 @@ impl AuthStorage {
                                 api_key,
                                 source_token: Self::token_for(provider_id, &candidate),
                                 credential_type: Some("api_key"),
+                                oauth_refresh_failed: false,
                             };
                         }
                         AuthCredential::Oauth { expires, .. } => {
@@ -95,16 +99,23 @@ impl AuthStorage {
                                         source_token: candidate
                                             .and_then(|c| Self::token_for(provider_id, &c)),
                                         credential_type: Some("oauth"),
+                                        oauth_refresh_failed: false,
                                     };
                                 }
                                 // Refresh failed: keep credentials for a
-                                // later retry; discovery skips the provider.
-                                return AuthApiKeyResult::default();
+                                // later retry; the caller reports the
+                                // failed refresh, not a missing key.
+                                return AuthApiKeyResult {
+                                    credential_type: Some("oauth"),
+                                    oauth_refresh_failed: true,
+                                    ..AuthApiKeyResult::default()
+                                };
                             }
                             return AuthApiKeyResult {
                                 api_key: self.oauth.api_key_for(provider_id, &credential),
                                 source_token: Self::token_for(provider_id, &candidate),
                                 credential_type: Some("oauth"),
+                                oauth_refresh_failed: false,
                             };
                         }
                         // A pasted MCP static token IS the api key for its
@@ -114,6 +125,7 @@ impl AuthStorage {
                                 api_key: Some(bearer.clone()),
                                 source_token: Self::token_for(provider_id, &candidate),
                                 credential_type: Some("mcp_static_token"),
+                                oauth_refresh_failed: false,
                             };
                         }
                     }
@@ -129,6 +141,7 @@ impl AuthStorage {
                         api_key: Some(api_key),
                         source_token: Self::token_for(provider_id, &candidate),
                         credential_type: None,
+                        oauth_refresh_failed: false,
                     };
                 }
             }
@@ -146,6 +159,7 @@ impl AuthStorage {
                         api_key,
                         source_token: Self::token_for(provider_id, &candidate),
                         credential_type: None,
+                        oauth_refresh_failed: false,
                     };
                 }
             }

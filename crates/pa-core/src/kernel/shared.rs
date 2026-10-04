@@ -187,6 +187,64 @@ pub struct KernelError {
     pub traceback: Vec<String>,
 }
 
+/// Facts about a kernel process that died outside any host-owned teardown
+/// (a native `exit()` in a cell, an abort, an OOM kill).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KernelUnexpectedExit {
+    pub exit_code: Option<i32>,
+    pub signal: Option<i32>,
+    /// The request the kernel was serving when it died, if any.
+    pub request_id: Option<String>,
+    /// That request's protocol type (`execute`, `snapshot`, ...).
+    pub request_type: Option<&'static str>,
+    /// Bounded tail of the kernel's stderr and host diagnostics.
+    pub stderr_tail: String,
+    /// Epoch milliseconds of the exit.
+    pub at_ms: u64,
+}
+
+impl KernelUnexpectedExit {
+    /// `exit code N` / `signal N` (`exit code unknown` when neither is known).
+    #[must_use]
+    pub fn cause(&self) -> String {
+        match (self.signal, self.exit_code) {
+            (Some(signal), _) => format!("signal {signal}"),
+            (None, Some(code)) => format!("exit code {code}"),
+            (None, None) => "exit code unknown".to_string(),
+        }
+    }
+}
+
+/// The kernel process died while serving a request. The provisioner serves
+/// a fresh kernel on the next call (namespace revived from the last
+/// snapshot, runtime re-bootstrapped); the dead kernel's live state is gone.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{}", kernel_exited_message(.exit))]
+pub struct KernelExitedError {
+    pub exit: KernelUnexpectedExit,
+}
+
+fn kernel_exited_message(exit: &KernelUnexpectedExit) -> String {
+    let cause = match exit.signal {
+        Some(signal) => format!("killed by signal {signal}"),
+        None => exit.cause(),
+    };
+    let during = match (exit.request_type, exit.request_id.as_deref()) {
+        (Some(kind), Some(id)) => format!(" while serving {kind} request {id}"),
+        (Some(kind), None) => format!(" while serving {kind} request"),
+        (None, _) => String::new(),
+    };
+    let tail = exit.stderr_tail.trim();
+    let tail = if tail.is_empty() {
+        String::new()
+    } else {
+        format!("\nKernel stderr tail:\n{tail}")
+    };
+    format!(
+        "Kernel process exited unexpectedly ({cause}){during}. A fresh kernel starts on the next call: variables come back from the last snapshot, imports and live handles (bash, rlm, skills) are re-bootstrapped; background tasks and open resources are lost.{tail}"
+    )
+}
+
 /// Result of executing one cell.
 #[derive(Debug, Clone)]
 pub struct ExecuteResult {

@@ -128,6 +128,9 @@ impl Default for KernelBusyAfterInterruptError {
 pub enum KernelExecError {
     /// The kernel is busy with a previously interrupted cell.
     BusyAfterInterrupt(KernelBusyAfterInterruptError),
+    /// The kernel process died running the cell; the next call gets a
+    /// fresh kernel.
+    KernelExited(crate::kernel::shared::KernelExitedError),
     /// Any other kernel failure.
     Other(anyhow::Error),
 }
@@ -144,6 +147,7 @@ impl KernelExecError {
     pub fn message(&self) -> String {
         match self {
             KernelExecError::BusyAfterInterrupt(err) => err.message.clone(),
+            KernelExecError::KernelExited(err) => err.to_string(),
             // The full context chain, not just the outermost layer: a bare
             // top-level message hides the actual cause of kernel failures.
             KernelExecError::Other(err) => format!("{err:#}"),
@@ -191,6 +195,13 @@ pub trait IpythonKernelProvisioner: Send + Sync {
 
     /// Kill the kernel immediately, losing all in-memory state.
     fn kill(&self) -> Pin<Box<dyn Future<Output = ()> + Send>>;
+
+    /// The unexpected exit of a kernel that was replaced by a fresh one and
+    /// not yet reported, handed out once (the one-time restart notice).
+    /// Provisioners whose kernels cannot die on their own keep the default.
+    fn take_unreported_exit(&self) -> Option<crate::kernel::shared::KernelUnexpectedExit> {
+        None
+    }
 }
 
 // Busy-kernel choice UI
@@ -205,6 +216,17 @@ pub fn busy_kernel_prompt() -> String {
         "Waiting preserves the current kernel state. Killing restarts the kernel and loses in-memory variables, imports, and running tasks.",
     ]
     .join("\n")
+}
+
+/// The one-time notice on the first cell after the kernel died on its own
+/// and was replaced (TS `kernelCrashRecoveryNotice`).
+#[must_use]
+pub fn kernel_crash_recovery_notice(exit: &crate::kernel::shared::KernelUnexpectedExit) -> String {
+    format!(
+        "<ipython_kernel_reset>\nThe Python kernel was restarted after it exited unexpectedly ({}) at {}; variables were revived from the last snapshot, but imports, live handles, open resources, and background tasks from before are gone.\n</ipython_kernel_reset>",
+        exit.cause(),
+        crate::session::manager::format_iso(i64::try_from(exit.at_ms).unwrap_or(i64::MAX)),
+    )
 }
 
 pub fn kernel_restart_notice() -> &'static str {
@@ -272,8 +294,8 @@ async fn execute_with_busy_kernel_choice(
     execute: KernelExecuteOptions<'_>,
     on_working_message: &(dyn Fn(Option<&str>) + Send + Sync),
     ui: Option<&Arc<dyn IpythonToolUi>>,
-) -> Result<(ExecuteResult, bool), KernelExecError> {
-    let mut kernel_restarted = false;
+    kernel_restarted: &mut bool,
+) -> Result<ExecuteResult, KernelExecError> {
     loop {
         let manager = provisioner
             .ensure(
@@ -293,7 +315,7 @@ async fn execute_with_busy_kernel_choice(
             )
             .await;
         match result {
-            Ok(result) => return Ok((result, kernel_restarted)),
+            Ok(result) => return Ok(result),
             Err(err) => {
                 let aborted = execute
                     .signal
@@ -320,7 +342,7 @@ async fn execute_with_busy_kernel_choice(
                     Some(BUSY_KERNEL_KILL_CHOICE) => {
                         on_working_message(Some("Restarting Python kernel..."));
                         provisioner.kill().await;
-                        kernel_restarted = true;
+                        *kernel_restarted = true;
                     }
                     _ => return Err(err),
                 }
@@ -400,6 +422,8 @@ pub async fn execute_ipython(
         }
     };
 
+    let started = std::time::Instant::now();
+    let mut kernel_restarted = false;
     let result = execute_with_busy_kernel_choice(
         options.provisioner.as_ref(),
         &report_startup_progress,
@@ -413,12 +437,22 @@ pub async fn execute_ipython(
             set_tool_working_message(message);
         },
         options.ui.as_ref(),
+        &mut kernel_restarted,
     )
     .await;
 
     set_tool_working_message(None);
 
-    let (r, kernel_restarted) = result.map_err(|err| anyhow::anyhow!("{}", err.message()))?;
+    let r = match result {
+        Ok(r) => r,
+        // The interpreter died running this cell. Never re-run the cell (a
+        // cell that crashes the interpreter would loop); the provisioner
+        // serves a fresh kernel on the next call, so say what happened.
+        Err(KernelExecError::KernelExited(error)) => {
+            return Ok(kernel_crash_result(&error, started, kernel_restarted));
+        }
+        Err(err) => return Err(anyhow::anyhow!("{}", err.message())),
+    };
 
     let mut text = format_execute_text(&r, r.background_output.as_deref());
     if kernel_restarted {
@@ -426,6 +460,14 @@ pub async fn execute_ipython(
             kernel_restart_notice().to_string()
         } else {
             format!("{}\n\n{}", kernel_restart_notice(), text)
+        };
+    }
+    if let Some(exit) = options.provisioner.take_unreported_exit() {
+        let notice = kernel_crash_recovery_notice(&exit);
+        text = if text.is_empty() {
+            notice
+        } else {
+            format!("{notice}\n\n{text}")
         };
     }
 
@@ -484,6 +526,33 @@ pub async fn execute_ipython(
         details: Some(details),
         is_error: r.status == ExecuteStatus::Error || r.status == ExecuteStatus::Aborted,
     })
+}
+
+/// The tool result for a cell whose kernel died: the exit (code/signal,
+/// request, stderr tail) as an error the model reads, plus the structured
+/// `kernelCrashed` details (TS `kernelCrashDetails`).
+fn kernel_crash_result(
+    error: &crate::kernel::shared::KernelExitedError,
+    started: std::time::Instant,
+    kernel_restarted: bool,
+) -> ToolExecutionResult {
+    let exit = &error.exit;
+    ToolExecutionResult {
+        content: vec![ToolContentBlock::text(error.to_string())],
+        details: Some(json!({
+            "durationMs": u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            "status": "error",
+            "errorEname": "KernelExitedError",
+            "kernelRestarted": kernel_restarted,
+            "kernelCrashed": {
+                "exitCode": exit.exit_code,
+                "signal": exit.signal,
+                "requestId": exit.request_id,
+                "stderrTail": exit.stderr_tail,
+            },
+        })),
+        is_error: true,
+    }
 }
 
 /// The `ipython` tool definition: exact name, schema, and description.
@@ -583,6 +652,137 @@ mod tests {
                 "deliveryStatus": "queued",
                 "target": { "activeSessionId": "a1", "sessionId": "s1" },
             })
+        );
+    }
+
+    /// Serves scripted cell outcomes; a crash outcome "replaces" the
+    /// kernel, leaving its exit unreported like the real provisioner.
+    struct CrashingProvisioner {
+        outcomes: std::sync::Mutex<
+            std::collections::VecDeque<
+                Result<ExecuteResult, crate::kernel::shared::KernelExitedError>,
+            >,
+        >,
+        unreported: Arc<std::sync::Mutex<Option<crate::kernel::shared::KernelUnexpectedExit>>>,
+    }
+
+    struct ScriptedExecutor(Result<ExecuteResult, crate::kernel::shared::KernelExitedError>);
+
+    impl KernelExecutor for ScriptedExecutor {
+        fn execute(&self, _code: &str, _options: KernelExecuteOptions<'_>) -> ExecuteCellFuture {
+            Box::pin(std::future::ready(
+                self.0.clone().map_err(KernelExecError::KernelExited),
+            ))
+        }
+    }
+
+    impl IpythonKernelProvisioner for CrashingProvisioner {
+        fn ensure(
+            &self,
+            _on_progress: Option<BootstrapProgressHandler>,
+            _signal: Option<AbortSignal>,
+        ) -> EnsureFuture {
+            let outcome = self
+                .outcomes
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("scripted outcome");
+            if let Err(crashed) = &outcome {
+                *self.unreported.lock().unwrap() = Some(crashed.exit.clone());
+            }
+            let executor: Box<dyn KernelExecutor> = Box::new(ScriptedExecutor(outcome));
+            Box::pin(std::future::ready(Ok(executor)))
+        }
+
+        fn kill(&self) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+            Box::pin(std::future::ready(()))
+        }
+
+        fn take_unreported_exit(&self) -> Option<crate::kernel::shared::KernelUnexpectedExit> {
+            self.unreported.lock().unwrap().take()
+        }
+    }
+
+    fn printed(stdout: &str) -> ExecuteResult {
+        ExecuteResult {
+            stdout: stdout.to_string(),
+            ..ExecuteResult::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_kernel_crash_reports_the_exit_and_the_next_cell_carries_a_one_time_notice() {
+        let exit = crate::kernel::shared::KernelUnexpectedExit {
+            exit_code: Some(7),
+            signal: None,
+            request_id: Some("req-1".to_string()),
+            request_type: Some("execute"),
+            stderr_tail: "boom\n".to_string(),
+            // 2026-01-02T03:04:05.006Z
+            at_ms: 1_767_323_045_006,
+        };
+        let options = IpythonToolOptions {
+            provisioner: Arc::new(CrashingProvisioner {
+                outcomes: std::sync::Mutex::new(
+                    [
+                        Err(crate::kernel::shared::KernelExitedError { exit: exit.clone() }),
+                        Ok(printed("after\n")),
+                        Ok(printed("again\n")),
+                    ]
+                    .into(),
+                ),
+                unreported: Arc::default(),
+            }),
+            ui: None,
+            on_late_sent_agent_message: None,
+        };
+
+        let crashed = execute_ipython(&options, "import os; os._exit(7)", None, None, None)
+            .await
+            .unwrap();
+        let mut details = crashed.details.clone().unwrap();
+        details.as_object_mut().unwrap().remove("durationMs");
+        assert_eq!(
+            (crashed.content, details, crashed.is_error),
+            (
+                vec![ToolContentBlock::text(
+                    "Kernel process exited unexpectedly (exit code 7) while serving execute request req-1. A fresh kernel starts on the next call: variables come back from the last snapshot, imports and live handles (bash, rlm, skills) are re-bootstrapped; background tasks and open resources are lost.\nKernel stderr tail:\nboom"
+                        .to_string()
+                )],
+                json!({
+                    "status": "error",
+                    "errorEname": "KernelExitedError",
+                    "kernelRestarted": false,
+                    "kernelCrashed": {
+                        "exitCode": 7,
+                        "signal": null,
+                        "requestId": "req-1",
+                        "stderrTail": "boom\n",
+                    },
+                }),
+                true,
+            )
+        );
+
+        let after = execute_ipython(&options, "print('after')", None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            after.content,
+            vec![ToolContentBlock::text(
+                "<ipython_kernel_reset>\nThe Python kernel was restarted after it exited unexpectedly (exit code 7) at 2026-01-02T03:04:05.006Z; variables were revived from the last snapshot, but imports, live handles, open resources, and background tasks from before are gone.\n</ipython_kernel_reset>\n\nafter\n"
+                    .to_string()
+            )]
+        );
+
+        // One time only.
+        let again = execute_ipython(&options, "print('again')", None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            again.content,
+            vec![ToolContentBlock::text("again\n".to_string())]
         );
     }
 }

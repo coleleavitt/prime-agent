@@ -9,6 +9,25 @@ use super::{
     READY_TIMEOUT_MS, REPL_PROTOCOL_VERSION,
 };
 
+/// Env prefixes of the daemon worker identity (`PRIME_AGENT_INTERNAL_DAEMON_*`:
+/// role, token, supervisor socket, recovery journal, ...) and of the session
+/// lease only the worker process owns. The kernel and everything it spawns
+/// through `bash()` must not inherit them: a `prime-agent` run started from a
+/// cell would otherwise present the live worker's token to the supervisor
+/// and believe it is a worker. The orphan-process journal
+/// (`PRIME_AGENT_INTERNAL_ORPHAN_PROCESS_JOURNAL`) is kept: `bash()` enrolls
+/// its process groups there.
+const DAEMON_WORKER_IDENTITY_ENV_PREFIXES: [&str; 2] = [
+    "PRIME_AGENT_INTERNAL_DAEMON_",
+    "PRIME_AGENT_INTERNAL_SESSION_LEASE",
+];
+
+/// Bound on waiting for a dead kernel's stderr pipe to drain before its
+/// exit is described.
+const UNEXPECTED_EXIT_STDERR_DRAIN_MS: u64 = 500;
+/// Stderr characters an unexpected-exit report carries.
+const UNEXPECTED_EXIT_STDERR_TAIL_CHARS: usize = 2048;
+
 impl Inner {
     /// True when a teardown (or newer start) superseded the start that
     /// captured `generation`.
@@ -22,6 +41,56 @@ impl Inner {
         let chars: Vec<char> = stderr.chars().collect();
         let start = chars.len().saturating_sub(limit);
         chars[start..].iter().collect()
+    }
+
+    /// Record how a live kernel died (diagnostic line included) and fail the request it was serving
+    /// with the typed [`KernelExitedError`](crate::kernel::shared::KernelExitedError)
+    /// (code/signal, request, stderr tail) instead of the generic teardown
+    /// rejection. The final stderr chunks can still be in flight: the
+    /// drained pipe is awaited, bounded (a `bash()` grandchild can hold the
+    /// pipe open).
+    async fn record_unexpected_exit(&self, exit: ExitInfo) {
+        let drained = async {
+            loop {
+                let notified = self.stderr_closed.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                if self.stderr_closed_flag.load(Ordering::SeqCst) {
+                    return;
+                }
+                notified.await;
+            }
+        };
+        let _ = tokio::time::timeout(
+            Duration::from_millis(UNEXPECTED_EXIT_STDERR_DRAIN_MS),
+            drained,
+        )
+        .await;
+        self.append_diagnostic(&format!(
+            "unexpected exit code={} signal={}",
+            exit.code.map_or("null".to_string(), |c| c.to_string()),
+            exit.signal.map_or("null".to_string(), |s| s.to_string()),
+        ));
+        let stderr_tail = self.stderr_tail(UNEXPECTED_EXIT_STDERR_TAIL_CHARS);
+        let unexpected = {
+            let mut g = lock(&self.guarded);
+            let active = g.active_execution.as_ref();
+            let unexpected = crate::kernel::shared::KernelUnexpectedExit {
+                exit_code: exit.code,
+                signal: exit.signal,
+                request_id: active.map(|execution| execution.request_id.clone()),
+                request_type: active.map(|execution| execution.request_type),
+                stderr_tail,
+                at_ms: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |elapsed| elapsed.as_millis() as u64),
+            };
+            g.unexpected_exit = Some(unexpected.clone());
+            unexpected
+        };
+        self.reject_active_execution_with(anyhow::Error::new(
+            crate::kernel::shared::KernelExitedError { exit: unexpected },
+        ));
     }
 
     /// Append raw kernel stderr text to the diagnostics tail (last 8 KiB).
@@ -165,7 +234,15 @@ impl Inner {
 
         // bash.py journals its process groups under this pid so the host can
         // reap them if the runtime dies without running its shutdown hook.
-        let mut env: HashMap<String, String> = std::env::vars().collect();
+        // The daemon worker's identity never reaches the kernel or what it
+        // spawns (see `DAEMON_WORKER_IDENTITY_ENV_PREFIXES`).
+        let mut env: HashMap<String, String> = std::env::vars()
+            .filter(|(key, _)| {
+                !DAEMON_WORKER_IDENTITY_ENV_PREFIXES
+                    .iter()
+                    .any(|prefix| key.starts_with(prefix))
+            })
+            .collect();
         for (key, value) in &self.options.env {
             env.insert(key.clone(), value.clone());
         }
@@ -452,11 +529,7 @@ impl Inner {
                 was_live
             };
             if was_live {
-                inner.append_diagnostic(&format!(
-                    "unexpected exit code={} signal={}",
-                    exit.code.map_or("null".to_string(), |c| c.to_string()),
-                    exit.signal.map_or("null".to_string(), |s| s.to_string()),
-                ));
+                inner.record_unexpected_exit(exit).await;
             }
             live_kernels::remove(&inner);
             // This exit is part of an in-flight graceful shutdown(): that call owns

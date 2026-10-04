@@ -1,0 +1,1 @@
+- The same skill installed byte-for-byte in two skill roots is no longer reported as a name collision; skills that share a name but differ still are.
