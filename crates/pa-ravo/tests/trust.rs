@@ -15,9 +15,7 @@ use std::time::Duration;
 use pa_core::features::{SessionFeature, SessionFeatureContext};
 use pa_core::refinement::executor::RefinerFn;
 use pa_core::refinement::gate::RefinementGating;
-use pa_core::refinement::ranking::{
-    format_harness_state_for_prompt, HarnessRenderFilters, HarnessStatePromptOptions,
-};
+use pa_core::refinement::ranking::{format_harness_state_for_prompt, HarnessStatePromptOptions};
 use pa_core::refinement::RefinementResult;
 use pa_core::session::manager::SessionManager;
 use pa_core::session_engine::refine::{
@@ -430,10 +428,10 @@ async fn with_the_global_ledger_off_no_trust_moves() {
 #[test]
 fn a_dormant_entry_leaves_the_rendered_harness() {
     let session = session(true);
-    let filter = session
+    let hook = session
         .ravo
-        .harness_render_filter(&session.context)
-        .expect("the feature filters the harness");
+        .harness_prompt_hook(&session.context)
+        .expect("the feature adjusts the harness digest");
     let mut state = pa_core::refinement::empty_harness_state();
     for (id, score) in [("kept", 30), ("dormant", 29), ("untrusted", 50)] {
         let mut entry: pa_core::refinement::HarnessEntry = serde_json::from_value(json!({
@@ -458,7 +456,7 @@ fn a_dormant_entry_leaves_the_rendered_harness() {
         &state,
         &HarnessStatePromptOptions {
             include_ipython_examples: Some(false),
-            render_filters: HarnessRenderFilters(vec![filter]),
+            adjustment: Some(hook.adjust(&state)),
             ..HarnessStatePromptOptions::default()
         },
     );

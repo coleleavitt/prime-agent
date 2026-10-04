@@ -120,8 +120,9 @@ on `perf/session-catalog-resume`, and `docs/ravo-architecture.md` there.
 - `RefinementGateVerdict::prepare_application`: an admitted refine records the pending trust evidence of its target
   store and settles its windows on the re-read store before the edits apply; `record_application` gives the written
   entries their trust record and opens the commit's window.
-- `SessionFeature::harness_render_filter` → `pa_core::refinement::ranking::HarnessRenderFilter`: dormant entries leave
-  the rendered harness digest (and its fingerprint marks them).
+- `SessionFeature::harness_prompt_hook` → `pa_core::refinement::prompt_hook::HarnessPromptHook`: dormant entries are a
+  `withheld` group (label `dormant`, note `below trust threshold; still readable and editable`), so they leave the
+  rendered harness digest; the judge's and `ravo.run`'s overviews apply the same adjustment.
 - `pa_ledger::LedgerObserver::wants_local_flush` / `wants_global_flush` (pending trust evidence), `on_flush` (records
   evidence and settles the windows of the document being written; the global flush's span gets `trust.recurrences`,
   `trust.adjudications`, `trust.faulted`, `trust.clean`, `trust.contested`), `LedgerHandle::request_global_flush`

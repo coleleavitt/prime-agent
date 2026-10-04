@@ -29,10 +29,7 @@ use pa_core::refinement::planner::{
     apply_refinement_proposal, count_valid_refinement_edits, normalize_refinement_proposal,
     ApplyOptions, RefinementProposal,
 };
-use pa_core::refinement::ranking::{
-    format_harness_state_for_prompt, HarnessRenderFilter, HarnessRenderFilters,
-    HarnessStatePromptOptions,
-};
+use pa_core::refinement::ranking::{format_harness_state_for_prompt, HarnessStatePromptOptions};
 use pa_core::refinement::{
     load_harness_state, save_harness_state, HarnessScope, HarnessState, RefinementAction,
 };
@@ -552,13 +549,12 @@ fn new_run_id(now_millis: u64) -> String {
 /// The dormant entries leave the run's harness overview too (TS
 /// `formatHarnessStateForPrompt`).
 fn overview(state: &HarnessState) -> String {
-    let filter: Arc<dyn HarnessRenderFilter> = Arc::new(crate::feature::DormantEntries);
     format_harness_state_for_prompt(
         state,
         &HarnessStatePromptOptions {
             include_ipython_examples: Some(false),
             include_shell_examples: false,
-            render_filters: HarnessRenderFilters(vec![filter]),
+            adjustment: Some(crate::feature::dormant_adjustment(state)),
             ..HarnessStatePromptOptions::default()
         },
     )

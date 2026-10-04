@@ -11,12 +11,12 @@ use pa_core::refinement::gate::{
     GateAdmission, RefineGuard, RefinementGate, RefinementGateRequest, RefinementGateVerdict,
 };
 use pa_core::refinement::planner::{refused_refinement_edits, RefinementProposal};
-use pa_core::refinement::ranking::{
-    format_harness_state_for_prompt, HarnessRenderFilter, HarnessRenderFilters,
-    HarnessStatePromptOptions,
+use pa_core::refinement::prompt_hook::{
+    HarnessPromptAdjustment, HarnessPromptHook, WithheldHarnessEntries,
 };
+use pa_core::refinement::ranking::{format_harness_state_for_prompt, HarnessStatePromptOptions};
 use pa_core::refinement::{
-    HarnessEntry, HarnessScope, HarnessState, RefinementAction, RefinementKind, RefinementResult,
+    HarnessScope, HarnessState, RefinementAction, RefinementKind, RefinementResult,
 };
 use pa_core::session_engine::refine::RefinementSource;
 use pa_core::session_engine::turn_boundary::{PendingRefine, RefineRequester};
@@ -319,10 +319,10 @@ impl SessionFeature for RavoFeature {
 
     /// Dormant entries leave the rendered harness (TS
     /// `formatHarnessStateForPrompt`).
-    fn harness_render_filter(
+    fn harness_prompt_hook(
         &self,
         _context: &Arc<SessionFeatureContext>,
-    ) -> Option<Arc<dyn HarnessRenderFilter>> {
+    ) -> Option<Arc<dyn HarnessPromptHook>> {
         Some(Arc::new(DormantEntries))
     }
 
@@ -338,18 +338,43 @@ impl SessionFeature for RavoFeature {
     }
 }
 
-/// Withholds entries whose measured trust fell below the threshold.
+/// Withholds entries whose measured trust fell below the threshold,
+/// announced as `- +<n> dormant <kind> entries (below trust threshold;
+/// still readable and editable)`.
 pub(crate) struct DormantEntries;
 
-impl HarnessRenderFilter for DormantEntries {
-    fn withholds(&self, entry: &HarnessEntry) -> bool {
-        is_dormant_trust(normalize_entry_trust(entry.extensions.get(TRUST_KEY)).as_ref())
+/// The render adjustment withholding `state`'s dormant entries.
+pub(crate) fn dormant_adjustment(state: &HarnessState) -> HarnessPromptAdjustment {
+    let entries = state
+        .entries
+        .iter()
+        .flat_map(|(kind, records)| {
+            records
+                .iter()
+                .filter(|(_, entry)| {
+                    is_dormant_trust(
+                        normalize_entry_trust(entry.extensions.get(TRUST_KEY)).as_ref(),
+                    )
+                })
+                .map(move |(id, _)| (*kind, id.clone()))
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    if entries.is_empty() {
+        return HarnessPromptAdjustment::default();
     }
+    HarnessPromptAdjustment {
+        withheld: vec![WithheldHarnessEntries {
+            label: "dormant".to_string(),
+            note: "below trust threshold; still readable and editable".to_string(),
+            entries,
+        }],
+        ..HarnessPromptAdjustment::default()
+    }
+}
 
-    fn withheld_line(&self, kind: &str, count: usize) -> String {
-        format!(
-            "- +{count} dormant {kind} entries (below trust threshold; still readable and editable)"
-        )
+impl HarnessPromptHook for DormantEntries {
+    fn adjust(&self, state: &HarnessState) -> HarnessPromptAdjustment {
+        dormant_adjustment(state)
     }
 }
 
@@ -571,7 +596,7 @@ impl RefinementGate for SessionGate {
                         &request.planning_state,
                         &HarnessStatePromptOptions {
                             include_ipython_examples: Some(false),
-                            render_filters: HarnessRenderFilters(vec![Arc::new(DormantEntries)]),
+                            adjustment: Some(dormant_adjustment(&request.planning_state)),
                             ..HarnessStatePromptOptions::default()
                         },
                     ),
