@@ -205,6 +205,7 @@ async fn a_ravo_command_runs_reports_its_end_and_publishes_its_status() {
     let harness = harness("command", 0, true);
     harness.script();
     let feature = feature();
+    assert!(feature.session_skill_visible(&harness.context, pa_ravo::RAVO_SKILL));
     let outcome = ravo(&feature, &harness.context, "--rounds 2 note  the tactic")
         .await
         .unwrap();
@@ -339,6 +340,16 @@ async fn sessions_without_refine_get_no_ravo_surface() {
         harness.script();
         let feature = feature();
         assert!(harness.handlers(&feature).is_empty(), "{name}");
+        // The bundled skill is hidden where its requests are not
+        // registered; other skills are not this feature's to hide.
+        assert!(
+            !feature.session_skill_visible(&harness.context, pa_ravo::RAVO_SKILL),
+            "{name}"
+        );
+        assert!(
+            feature.session_skill_visible(&harness.context, "refine"),
+            "{name}"
+        );
         assert_eq!(
             ravo(&feature, &harness.context, "note it")
                 .await

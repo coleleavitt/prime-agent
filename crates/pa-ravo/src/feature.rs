@@ -342,6 +342,12 @@ impl SessionFeature for RavoFeature {
         vec![RAVO_SKILL]
     }
 
+    /// The bundled skill only where its `ravo.*` requests register
+    /// ([`crate::ravo_run_allowed`]; TS `_modelVisibleSkills`).
+    fn session_skill_visible(&self, context: &SessionFeatureContext, skill_name: &str) -> bool {
+        skill_name != RAVO_SKILL || crate::run_host::ravo_run_allowed(context)
+    }
+
     /// Stop every running `ravo.run` at its next boundary (TS cancelled it
     /// on dispose), then let running replay self-checks finish, so the
     /// ledger's exit flush (installed after this feature) writes what they

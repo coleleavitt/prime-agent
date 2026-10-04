@@ -519,6 +519,12 @@ impl SessionFeature for DreamFeature {
         vec![DREAM_SKILL]
     }
 
+    /// The bundled skill only where its `dream.*` requests register
+    /// ([`dream_allowed`]; TS `_modelVisibleSkills`).
+    fn session_skill_visible(&self, context: &SessionFeatureContext, skill_name: &str) -> bool {
+        skill_name != DREAM_SKILL || dream_allowed(context)
+    }
+
     fn flush(&self, _deadline: std::time::Instant) {
         // The process is exiting: stop every run at its next boundary.
         for service in self
