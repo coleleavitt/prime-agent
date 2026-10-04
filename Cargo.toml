@@ -11,6 +11,7 @@ members = [
     "crates/pa-recall",
     "crates/pa-daemon",
     "crates/pa-tui",
+    "crates/pa-dream",
     "crates/pa-cli",
     "crates/pa-toolforge",
     "crates/pa-workflow",

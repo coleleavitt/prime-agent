@@ -320,6 +320,16 @@ and prints the per-layer breakdown (cached static layers, then the dynamic tail)
         "--cwd <dir>         Assemble for this working directory (default: current)",
         "--json              Print segments and prompt as JSON",
     ]),
+    // The fork's Dream-RSI runner (pa-dream), present only with its feature.
+    #[cfg(feature = "dream")]
+    CommandSpec::new(
+        &["dream"],
+        pa_dream::command::DREAM_USAGE,
+        pa_dream::command::DREAM_SUMMARY,
+    )
+    .description(pa_dream::command::DREAM_DESCRIPTION)
+    .options(pa_dream::command::DREAM_OPTIONS)
+    .examples(pa_dream::command::DREAM_EXAMPLES),
 ];
 
 /// Command names that once existed and now print removal guidance.

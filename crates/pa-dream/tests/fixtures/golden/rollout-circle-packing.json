@@ -1,0 +1,90 @@
+{
+  "result": {
+    "treeId": "circle-packing-s7-i0-1700000000000",
+    "rounds": 12,
+    "revealedCount": 37,
+    "bestScore": 1.0893070644481146,
+    "bestNodeId": "circle-packing-s7-i0-1700000000000-n15",
+    "probesToBest": 15,
+    "improvements": [
+      {
+        "probe": 0,
+        "score": 0.8412199194725927
+      },
+      {
+        "probe": 1,
+        "score": 0.919182884067657
+      },
+      {
+        "probe": 2,
+        "score": 0.9823800785517808
+      },
+      {
+        "probe": 3,
+        "score": 0.9858473419889185
+      },
+      {
+        "probe": 5,
+        "score": 0.9958218667119231
+      },
+      {
+        "probe": 8,
+        "score": 1.0070959517769675
+      },
+      {
+        "probe": 10,
+        "score": 1.0529183142803844
+      },
+      {
+        "probe": 14,
+        "score": 1.0672810788069833
+      },
+      {
+        "probe": 15,
+        "score": 1.0893070644481146
+      }
+    ],
+    "rootScore": 0.8412199194725927
+  },
+  "files": {
+    "trees/circle-packing-s7-i0-1700000000000.jsonl": "ff593248200ff0830bfc88d1b1efa89a2732e953e8e358cff0835f0963b3937c",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/0.json": "13cf5ef94a3f1a5c47a6147e6428b418624bc5e18df8bc9627895e523b22d53e",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/1.json": "3b5c675e4cb9ddef7d064ea473380ded37ddcb206fde57ecf081b1b564bc7647",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/10.json": "4d775d0ce6f39d01ce7036a05fa6eb4c5c669c4137f80b5c9f8f6da484c0903a",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/11.json": "5cdc495900767ea876f4314852aec2e7c2e7538fb1dc166888d99fbbded51429",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/12.json": "cd0a64991bc3b16fd3397cf9961211d3170e98604d00c5872cf131232e4daf92",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/13.json": "f5edeb0c942ab578c19716526b219c1b0dbfe52a2dcacd653b2e42cff8584775",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/14.json": "bfe55b01c5eae34498bb1c4f05a749a0db56f8dd96c5fb395014f5f95030f8d8",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/15.json": "9e0704909813aa48e68051f5f78e860c1989ea2682cc75cb62e860d86223c8e3",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/16.json": "54cc4dc24a4e98aec95c0594f53dc45cbb48b44131466a9415d2a5f97a1bad96",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/17.json": "cc1cd541fb5780be382fa665cd3f51bea3b3938e8c0ef6dea554214476f7eb77",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/18.json": "1470110d74153ff074ddc54b1b12378709466c6df1a3241e663d209684e54eda",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/19.json": "a7cc1485c0a20432f4304cf9f276f4f5c746c018e40c3b7b25b1082ef5140acb",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/2.json": "38bde5572ace3bc3e7e81b14ddc6cea8549004a0287c91ddb7b9fcbf28543a5d",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/20.json": "b9896700f6f14cab84e4b82519000becca76f95637c81915a0a663757ea473dd",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/21.json": "6532faa5040ea18d3a3bc8e4af8fff6b04638538ee66a9d7eae0c077a5d9cbe3",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/22.json": "20b906f3329b7da2c9b9be5c101833932b08ba4263e121caadd02cab83abaaf3",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/23.json": "2e461288c8c22ab04d50c717657883d3876894c30e4a74bc12643e765a1328d3",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/24.json": "1c6a812beb8b2c61aa298782ed3726def275f74af3856cbd64ec0737c7d7a1de",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/25.json": "a9c18f1fc2d564a2c69fe26f3684763ad883c1eb9ec3675f2b301039da502786",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/26.json": "2fef0d237b94a9b009b685f58e2e1276fd2a6597b710c07943671d865ec0fc39",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/27.json": "2cd6104bff2e57185bf61997c67b6d0413074adb996f3d9951d5d624024bf011",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/28.json": "5a2abce6fc36b3ffa0cba5b061f2779ca92ed22469b7498db4593a428f142a3b",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/29.json": "b78822be5d5c6781e7b23b7c1d2485ddb6435e2ebfd21f467a4546f0d4b59e29",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/3.json": "ef4d80127c79888fc63829957d245350e8afd113e293b625ed2cf456d1cbb5a7",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/30.json": "63959e2df6eac3b03b82bc05852d6fb2895505ec68c515f84280775630a74ac6",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/31.json": "d0f93bc6d3c19d986c484efdb16f73c52324a735bf6490e2589be6a4d2bbd0bc",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/32.json": "cc67c1660b336987823f203f5e9b7b62cc2e835d973720e2d9453570ce905739",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/33.json": "9a3eed9c41f76156ae2537a3e7641536f1ac44d8a6eee7aba1760539b34c09c7",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/34.json": "ad28e666a274a827a5ef1fa11f4c46936c2becfcc035c2001ca9a29cead478d2",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/35.json": "3913e0876cadbc753348501c43f65564189883149b1242a2ac5d46705d920ba4",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/36.json": "d376d8a68bbe532e5c9a0160343b9c2bf89b743e832f5115374c712d2b7e2fe7",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/37.json": "2b072af7793d939af067ac761bd703a3302723f8bc15362804e7a4c8cc0181a7",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/4.json": "868f8e2f3c72010db152551472568132be8046a145e342ab744539ef2ad466a5",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/5.json": "e9d2e90e811900a634ac6714b276ec134d755de2e7c0e06e8765f4fd89e8eb11",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/6.json": "d2416074e22fb1889576b6e2fdfb6774e55aedd557c85700aa78bbd4e905ae5d",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/7.json": "b1a9bc6321cc67c661b5b46619d666bb792d2b8fa52a707cc58673eb0ed4e074",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/8.json": "ef634a36c34d6eb998546ac9bd03be19e3a5ee5e7dce69bccf3539d2e050e5bd",
+    "trees/circle-packing-s7-i0-1700000000000/blobs/9.json": "d4422ce39ac9f7a439ab7b6b1314f1ac35cf6d1feddf3048a6c42d54bcabc080"
+  }
+}

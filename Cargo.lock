@@ -1269,6 +1269,7 @@ dependencies = [
  "pa-ai",
  "pa-core",
  "pa-daemon",
+ "pa-dream",
  "pa-recall",
  "pa-telemetry",
  "pa-toolforge",
@@ -1349,6 +1350,19 @@ dependencies = [
  "tokio-util",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "pa-dream"
+version = "0.9.8"
+dependencies = [
+ "pa-types",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tracing",
 ]
 
 [[package]]
