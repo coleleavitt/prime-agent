@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::abort::AbortSignal;
 use crate::types::{
     AgentContext, AgentEvent, AgentTool, AgentToolResult, AssistantMessage, ToolCall,
-    ToolExecutionMode, ToolResultMessage,
+    ToolExecutionMode, ToolResultContent, ToolResultMessage,
 };
 
 use super::run::clone_context;
@@ -102,27 +102,16 @@ async fn execute_tool_calls_sequential(
             signal,
         )
         .await;
-        let finalized = match preparation {
-            Preparation::Immediate { result, is_error } => FinalizedToolCallOutcome {
-                tool_call: tool_call.clone(),
-                result,
-                is_error,
-            },
-            Preparation::Prepared(prepared) => {
-                let executed = execute_prepared_tool_call(&prepared, signal, emit).await;
-                finalize_executed_tool_call(
-                    current_context,
-                    assistant_message,
-                    &prepared,
-                    executed,
-                    config,
-                    signal,
-                )
-                .await?
-            }
-        };
-
-        emit_tool_execution_end(&finalized, emit).await?;
+        let finalized = complete_tool_call(
+            current_context,
+            assistant_message,
+            tool_call,
+            preparation,
+            config,
+            signal,
+            emit,
+        )
+        .await?;
         let tool_result_message = create_tool_result_message(&finalized);
         emit_tool_result_message(&tool_result_message, emit).await?;
         messages.push(tool_result_message);
@@ -177,13 +166,17 @@ async fn execute_tool_calls_parallel(
         )
         .await;
         match preparation {
-            Preparation::Immediate { result, is_error } => {
-                let finalized = FinalizedToolCallOutcome {
-                    tool_call: tool_call.clone(),
-                    result,
-                    is_error,
-                };
-                emit_tool_execution_end(&finalized, emit).await?;
+            Preparation::Immediate { .. } => {
+                let finalized = complete_tool_call(
+                    current_context,
+                    assistant_message,
+                    tool_call,
+                    preparation,
+                    config,
+                    signal,
+                    emit,
+                )
+                .await?;
                 entries.push(TaskOrOutcome::Outcome(Box::new(finalized)));
             }
             Preparation::Prepared(prepared) => {
@@ -192,26 +185,25 @@ async fn execute_tool_calls_parallel(
                 let context = clone_context(current_context);
                 let config = config.clone();
                 let signal = signal.cloned().unwrap_or_default();
+                let tool_call = tool_call.clone();
                 let prepared = PreparedToolCall {
                     tool_call: prepared.tool_call.clone(),
                     tool: Arc::clone(&prepared.tool),
                     args: prepared.args.clone(),
                 };
-                let handle = tokio::spawn(async move {
-                    let executed =
-                        execute_prepared_tool_call(&prepared, Some(&signal), &sink).await;
-                    let finalized = finalize_executed_tool_call(
+                // The task keeps the turn's span so its `tool.execute` nests under it.
+                let handle = tokio::spawn(tracing::Instrument::in_current_span(async move {
+                    complete_tool_call(
                         &context,
                         &assistant_message,
-                        &prepared,
-                        executed,
+                        &tool_call,
+                        Preparation::Prepared(prepared),
                         &config,
                         Some(&signal),
+                        &sink,
                     )
-                    .await?;
-                    emit_tool_execution_end(&finalized, &sink).await?;
-                    Ok(finalized)
-                });
+                    .await
+                }));
                 entries.push(TaskOrOutcome::Task(handle));
             }
         }
@@ -242,6 +234,67 @@ async fn execute_tool_calls_parallel(
         messages,
         terminate: should_terminate_tool_batch(&ordered_finalized_calls),
     })
+}
+
+/// Execute a prepared tool call (or surface an immediate outcome such as an
+/// unknown or blocked tool) and emit `tool_execution_end`, all inside a
+/// `tool.execute` span. Preparation stays outside the span on both the
+/// sequential and the parallel path, so the span always means the same thing.
+/// An error result marks the span failed with the result's text; an abort is
+/// reported as `tool.aborted` since it is not a failure of the tool.
+#[tracing::instrument(
+    level = "info",
+    name = "tool.execute",
+    skip_all,
+    fields(
+        tool.name = tool_call.name.as_str(),
+        tool.call_id = tool_call.id.as_str(),
+        tool.aborted = tracing::field::Empty,
+        error = tracing::field::Empty,
+    )
+)]
+async fn complete_tool_call(
+    current_context: &AgentContext,
+    assistant_message: &AssistantMessage,
+    tool_call: &ToolCall,
+    preparation: Preparation,
+    config: &AgentLoopConfig,
+    signal: Option<&AbortSignal>,
+    emit: &AgentEventSink,
+) -> anyhow::Result<FinalizedToolCallOutcome> {
+    let finalized = match preparation {
+        Preparation::Immediate { result, is_error } => FinalizedToolCallOutcome {
+            tool_call: tool_call.clone(),
+            result,
+            is_error,
+        },
+        Preparation::Prepared(prepared) => {
+            let executed = execute_prepared_tool_call(&prepared, signal, emit).await;
+            finalize_executed_tool_call(
+                current_context,
+                assistant_message,
+                &prepared,
+                executed,
+                config,
+                signal,
+            )
+            .await?
+        }
+    };
+    if finalized.is_error {
+        let span = tracing::Span::current();
+        if signal.is_some_and(AbortSignal::is_aborted) {
+            span.record("tool.aborted", true);
+        } else {
+            let text = finalized.result.content.iter().find_map(|part| match part {
+                ToolResultContent::Text(text) if !text.text.is_empty() => Some(text.text.as_str()),
+                ToolResultContent::Text(_) | ToolResultContent::Image(_) => None,
+            });
+            span.record("error", text.unwrap_or("tool execution failed"));
+        }
+    }
+    emit_tool_execution_end(&finalized, emit).await?;
+    Ok(finalized)
 }
 
 pub(crate) enum Preparation {
