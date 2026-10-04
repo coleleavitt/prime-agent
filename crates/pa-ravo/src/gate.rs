@@ -29,6 +29,7 @@ use crate::referee::{
     referee_verdict_is_evidence, skill_imports_of, RefereeVerdict, RefereeVerdictStatus,
     ReplayRunner,
 };
+use crate::trust::TRUST_KEY;
 
 /// The harness state key RAVO owns.
 pub const RAVO_KEY: &str = "ravo";
@@ -329,9 +330,6 @@ pub fn proposal_artifact(proposal: &RefinementProposal) -> Value {
         "edits": edits,
     })
 }
-
-/// The per-entry key of trust bookkeeping (TS `HarnessEntry.trust`).
-pub const TRUST_KEY: &str = "trust";
 
 /// The stored RAVO state of a harness state, normalized; `None` when the
 /// key is absent.

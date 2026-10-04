@@ -1416,6 +1416,7 @@ name = "pa-ravo"
 version = "0.9.8"
 dependencies = [
  "anyhow",
+ "indexmap",
  "pa-agent",
  "pa-core",
  "pa-ledger",

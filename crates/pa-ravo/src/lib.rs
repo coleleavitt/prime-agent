@@ -10,6 +10,7 @@ mod reducer;
 mod referee;
 mod runner;
 mod trigger;
+mod trust;
 mod verification;
 
 pub use authority::*;
@@ -22,3 +23,4 @@ pub use js::{canonical_json, locale_compare, sha256_hex};
 pub use reducer::*;
 pub use referee::*;
 pub use runner::{PythonReplayRunner, DEFAULT_REPLAY_TIMEOUT};
+pub use trust::*;
