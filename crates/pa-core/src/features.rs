@@ -147,6 +147,24 @@ impl FeatureTelemetry {
     }
 }
 
+/// What a feature slash command produced.
+pub struct FeatureCommandOutcome {
+    /// The command's durable result row.
+    pub text: String,
+    /// Background work whose settlement is reported as a later result row
+    /// (`Ok` text as a success row, `Err` as `Command failed: <message>`).
+    pub completion: Option<FeatureFuture<Result<String, String>>>,
+}
+
+impl std::fmt::Debug for FeatureCommandOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FeatureCommandOutcome")
+            .field("text", &self.text)
+            .field("completion", &self.completion.is_some())
+            .finish()
+    }
+}
+
 /// One optional capability. Implementations live in their own crates and
 /// are installed by the composition root; every method has a no-op default
 /// so a feature implements only the seams it uses. Hooks receive the
@@ -232,6 +250,33 @@ pub trait SessionFeature: Send + Sync {
         None
     }
 
+    /// Session slash commands this feature contributes (`/name args`). The
+    /// composition root's [`install`] registers them in the shared
+    /// `pa_types::slash_commands` registry, so every surface (TUI
+    /// autocomplete and dispatch, daemon and print-mode admission) treats
+    /// them as session commands; a name a builtin owns is dropped. Read once,
+    /// at install.
+    fn slash_commands(&self) -> Vec<pa_types::slash_commands::BuiltinSlashCommand> {
+        Vec::new()
+    }
+
+    /// Execute one of this feature's slash commands in a session; `None`
+    /// when `name` is not this feature's. The outcome's text is the
+    /// command's durable result row; its `completion`, when given, is
+    /// awaited in the background and its text (or error) appended as a
+    /// second durable result row when it settles (a command that starts
+    /// background work reports how the work ended). An `Err` is the
+    /// command's failure (`Command failed: <message>`).
+    fn execute_slash_command(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+        name: &str,
+        args: &str,
+    ) -> Option<FeatureFuture<Result<FeatureCommandOutcome, String>>> {
+        let _ = (context, name, args);
+        None
+    }
+
     /// Built-in skills this feature contributes: directory names under the
     /// bundled skills directory's hidden feature directory
     /// (`skills/.features/<name>/`, see
@@ -261,7 +306,15 @@ static INSTALLED: OnceLock<Vec<Arc<dyn SessionFeature>>> = OnceLock::new();
 /// once, before any session starts; later calls are ignored and return
 /// `false`.
 pub fn install(features: Vec<Arc<dyn SessionFeature>>) -> bool {
-    INSTALLED.set(features).is_ok()
+    let commands: Vec<_> = features
+        .iter()
+        .flat_map(|feature| feature.slash_commands())
+        .collect();
+    let installed = INSTALLED.set(features).is_ok();
+    if installed && !commands.is_empty() {
+        pa_types::slash_commands::register_feature_slash_commands(commands);
+    }
+    installed
 }
 
 /// The installed features, empty when none were installed.
@@ -278,6 +331,19 @@ pub fn installed_bundled_skills() -> Vec<String> {
         .flat_map(|feature| feature.bundled_skills())
         .map(str::to_string)
         .collect()
+}
+
+/// Run the installed feature that owns slash command `name`; `None` when
+/// none does.
+pub(crate) fn execute_feature_slash_command(
+    features: &[Arc<dyn SessionFeature>],
+    context: &Arc<SessionFeatureContext>,
+    name: &str,
+    args: &str,
+) -> Option<FeatureFuture<Result<FeatureCommandOutcome, String>>> {
+    features
+        .iter()
+        .find_map(|feature| feature.execute_slash_command(context, name, args))
 }
 
 /// Let every installed feature register its handlers for one session.
@@ -667,5 +733,78 @@ mod tests {
         assert!(session_refinement_gate(&[], &context).is_none());
         let features: Vec<Arc<dyn SessionFeature>> = vec![Arc::new(Stub), Arc::new(Gating)];
         assert!(session_refinement_gate(&features, &context).is_some());
+    }
+
+    struct CommandStub;
+
+    impl SessionFeature for CommandStub {
+        fn name(&self) -> &'static str {
+            "command-stub"
+        }
+
+        fn slash_commands(&self) -> Vec<pa_types::slash_commands::BuiltinSlashCommand> {
+            vec![pa_types::slash_commands::BuiltinSlashCommand {
+                name: "stub-command",
+                description: "A stub command",
+                execution: pa_types::slash_commands::SlashCommandExecution::Session,
+                argument_hint: None,
+                aliases: &[],
+                takes_argument: true,
+            }]
+        }
+
+        fn execute_slash_command(
+            &self,
+            context: &Arc<SessionFeatureContext>,
+            name: &str,
+            args: &str,
+        ) -> Option<FeatureFuture<Result<FeatureCommandOutcome, String>>> {
+            if name != "stub-command" {
+                return None;
+            }
+            let text = format!("{} ran {args}", context.session_id);
+            let fail = args == "fail";
+            Some(Box::pin(async move {
+                if fail {
+                    return Err("stub refused".to_string());
+                }
+                Ok(FeatureCommandOutcome {
+                    text,
+                    completion: Some(Box::pin(async { Ok("stub finished".to_string()) })),
+                })
+            }))
+        }
+    }
+
+    /// The owning feature runs a slash command; nobody owns an unknown one.
+    #[tokio::test]
+    async fn a_feature_runs_its_own_slash_command() {
+        let context = Arc::new(SessionFeatureContext {
+            agent_dir: PathBuf::from("/agent"),
+            cwd: PathBuf::from("/work"),
+            session_id: "s1".to_string(),
+            python_skill_import_names: Vec::new(),
+            model: stub_model(),
+            telemetry: None,
+            rlm_depth: 0,
+            session_artifact_dir: None,
+        });
+        let features: Vec<Arc<dyn SessionFeature>> = vec![Arc::new(Stub), Arc::new(CommandStub)];
+        assert!(execute_feature_slash_command(&features, &context, "nope", "").is_none());
+        let outcome = execute_feature_slash_command(&features, &context, "stub-command", "x")
+            .expect("owned")
+            .await
+            .expect("ran");
+        assert_eq!(outcome.text, "s1 ran x");
+        assert_eq!(
+            outcome.completion.expect("background work").await,
+            Ok("stub finished".to_string())
+        );
+        let refused = execute_feature_slash_command(&features, &context, "stub-command", "fail")
+            .expect("owned")
+            .await;
+        assert_eq!(refused.err(), Some("stub refused".to_string()));
+        assert_eq!(CommandStub.slash_commands()[0].name, "stub-command");
+        assert!(Stub.slash_commands().is_empty());
     }
 }

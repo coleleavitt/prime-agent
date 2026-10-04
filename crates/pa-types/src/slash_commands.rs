@@ -12,9 +12,66 @@ pub const SESSION_SLASH_COMMAND_NAMES: [&str; 4] = ["compact", "refine", "goal",
 pub const SESSION_SLASH_COMMAND_CUSTOM_TYPE: &str = "session_slash_command";
 pub const SESSION_SLASH_COMMAND_RESULT_CUSTOM_TYPE: &str = "session_slash_command_result";
 
+/// Whether `value` names a session-executed command: a native one, or one an
+/// installed feature registered ([`register_feature_slash_commands`]).
 #[must_use]
 pub fn is_session_slash_command_name(value: &str) -> bool {
     SESSION_SLASH_COMMAND_NAMES.contains(&value)
+        || feature_slash_commands()
+            .iter()
+            .any(|command| command.name == value)
+}
+
+static FEATURE_SLASH_COMMANDS: std::sync::OnceLock<&'static [BuiltinSlashCommand]> =
+    std::sync::OnceLock::new();
+
+/// Register the session slash commands the process's installed features
+/// contribute, once, before any registry is built (the composition root's
+/// feature install does it). Every command is forced to session execution
+/// and takes an argument; a name or alias a builtin already owns is dropped.
+/// Returns `false` when commands were already registered.
+pub fn register_feature_slash_commands(commands: Vec<BuiltinSlashCommand>) -> bool {
+    let builtin = SlashCommandRegistry::with_commands(CANONICAL_BUILTIN_SLASH_COMMANDS);
+    let mut accepted: Vec<BuiltinSlashCommand> = Vec::new();
+    for command in commands {
+        let taken = |name: &str| {
+            builtin.is_builtin(name)
+                || accepted
+                    .iter()
+                    .any(|other| other.name == name || other.aliases.contains(&name))
+        };
+        if taken(command.name) || command.aliases.iter().any(|alias| taken(alias)) {
+            continue;
+        }
+        accepted.push(BuiltinSlashCommand {
+            execution: SlashCommandExecution::Session,
+            takes_argument: true,
+            ..command
+        });
+    }
+    FEATURE_SLASH_COMMANDS
+        .set(Box::leak(accepted.into_boxed_slice()))
+        .is_ok()
+}
+
+/// The registered feature slash commands (empty in the native product).
+#[must_use]
+pub fn feature_slash_commands() -> &'static [BuiltinSlashCommand] {
+    FEATURE_SLASH_COMMANDS.get().copied().unwrap_or(&[])
+}
+
+/// The builtin table followed by the feature commands, built once.
+fn all_slash_commands() -> &'static [BuiltinSlashCommand] {
+    static ALL: std::sync::OnceLock<&'static [BuiltinSlashCommand]> = std::sync::OnceLock::new();
+    let features = feature_slash_commands();
+    if features.is_empty() {
+        return CANONICAL_BUILTIN_SLASH_COMMANDS;
+    }
+    ALL.get_or_init(|| {
+        let mut all = CANONICAL_BUILTIN_SLASH_COMMANDS.to_vec();
+        all.extend_from_slice(features);
+        Box::leak(all.into_boxed_slice())
+    })
 }
 
 /// Where a command executes.
@@ -91,18 +148,25 @@ pub struct SlashCommandRegistry {
 }
 
 impl SlashCommandRegistry {
+    /// The builtin commands plus any registered feature commands.
     #[must_use]
     pub fn builtin() -> Self {
+        Self::with_commands(all_slash_commands())
+    }
+
+    /// A registry over an explicit command table.
+    #[must_use]
+    pub fn with_commands(commands: &'static [BuiltinSlashCommand]) -> Self {
         let mut by_name = HashMap::new();
         let mut alias_to_name = HashMap::new();
-        for command in CANONICAL_BUILTIN_SLASH_COMMANDS {
+        for command in commands {
             by_name.insert(command.name, command);
             for alias in command.aliases {
                 alias_to_name.insert(*alias, command.name);
             }
         }
         Self {
-            commands: CANONICAL_BUILTIN_SLASH_COMMANDS,
+            commands,
             by_name,
             alias_to_name,
         }

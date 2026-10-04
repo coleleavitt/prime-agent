@@ -39,8 +39,15 @@ fn reply_autocomplete_provider(
     fallback_cwd: &std::path::Path,
 ) -> Box<dyn crate::autocomplete::AutocompleteProvider + Send> {
     let registry = SlashCommandRegistry::builtin_cached();
+    // The session builtins, then any session commands installed features
+    // registered (none in the native product).
+    let feature_names = pa_types::slash_commands::feature_slash_commands()
+        .iter()
+        .map(|command| command.name);
     let mut commands: Vec<crate::autocomplete::SlashCommandEntry> = SESSION_SLASH_COMMAND_NAMES
         .iter()
+        .copied()
+        .chain(feature_names)
         .filter_map(|name| registry.get(name))
         .map(|command| crate::autocomplete::SlashCommandEntry {
             name: command.name.to_string(),

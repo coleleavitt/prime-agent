@@ -122,6 +122,9 @@ pub struct SessionEngine {
     /// loops the graph and keeps a dropped session's kernel process alive
     /// until the process exits.
     pub(crate) provisioner: std::sync::Arc<crate::kernel::provisioner::IpythonKernelProvisioner>,
+    /// What installed features know about this session (the seam's
+    /// per-session context, shared with their hooks).
+    pub(crate) feature_context: Arc<crate::features::SessionFeatureContext>,
 }
 
 /// Skill overrides for built-in integrations the user is not logged into,
@@ -814,6 +817,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         factory_host,
         rlm: wiring.rlm,
         provisioner,
+        feature_context,
     })
 }
 
