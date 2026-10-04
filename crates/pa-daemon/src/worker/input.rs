@@ -6,6 +6,7 @@ use super::{
     QueuePriority, QueuedItem, TurnPolicy, Worker, AGENT_MESSAGE_SOURCE,
     DEFAULT_AGENT_MESSAGE_MAX_PENDING_PER_SESSION, QUEUED_INPUT_SUSPENDED,
 };
+use pa_types::sync::MutexExt;
 
 use serde_json::Value;
 
@@ -78,7 +79,7 @@ impl Worker {
         // (TS `_prompt`'s `_resumeSessionInputAdmission()` +
         // `_assertSessionActionAdmissionAvailable()` pair).
         {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             if core.queued_input_suspended && !core.busy {
                 if streaming_behavior.is_none() {
                     drop(core);
@@ -106,7 +107,7 @@ impl Worker {
         let (done_tx, done_rx) = oneshot::channel();
         let done = if wait { Some(done_tx) } else { None };
         let (snapshot, queued_behind_work) = {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             // TS commits before accepting the prompt into its action queue.
             // Hold the queue lock across this transition and enqueue so a
             // cancellation cannot mistake an accepted prompt for waiting.
@@ -222,7 +223,7 @@ impl Worker {
                 }
             }
         }
-        let mut core = self.core.lock().unwrap();
+        let mut core = self.core.lock_or_recover();
         let images = parse_prompt_images(payload);
         let item = QueuedItem {
             priority: if custom_message.is_some() {
@@ -474,7 +475,7 @@ impl Worker {
             "steer_queued" => Lane::Steering,
             _ => Lane::FollowUp,
         };
-        let mut core = self.core.lock().unwrap();
+        let mut core = self.core.lock_or_recover();
         let item_is_delivery = |item: &QueuedItem| {
             item.custom_message.as_ref().is_some_and(|row| {
                 row.get("customType").and_then(Value::as_str)
@@ -527,7 +528,7 @@ impl Worker {
         // admission error as a plain prompt, and only the busy carve-out
         // (`_isBusyForSessionInput`) queues it parked.
         {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             if core.queued_input_suspended && !core.busy && !core.compacting {
                 drop(core);
                 return Err(response_failure(
@@ -628,7 +629,7 @@ impl Worker {
             Lane::Steering
         };
         let (id, queued, snapshot, target) = {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             let pending = core.steering.len() + core.follow_up.len();
             if let Err(error) =
                 pa_core::session_engine::agent_messaging::assert_agent_message_queue_capacity(

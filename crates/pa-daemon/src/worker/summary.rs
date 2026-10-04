@@ -7,6 +7,7 @@ use super::{
     DaemonSessionClosedReason, EventPump, Map, Mutex, OutboundFrame, QueueCheckpoint, QueueLanes,
     QueuedItem, Result, SessionActionSnapshot, SessionCore, SessionEngine, Value, Worker,
 };
+use pa_types::sync::MutexExt;
 
 use crate::types::SessionSummary;
 
@@ -115,7 +116,7 @@ impl Worker {
     /// releasing the core lock: `record_recovery` takes the locks in
     /// the opposite order.
     pub(crate) fn persist_queue_snapshot(&self, active_session_id: &str, lanes: &QueueLanes) {
-        let mut guard = self.recovery.lock().unwrap();
+        let mut guard = self.recovery.lock_or_recover();
         let Some(journal) = guard.as_mut() else {
             return;
         };
@@ -129,11 +130,11 @@ impl Worker {
     }
 
     pub(crate) fn record_recovery(&self, busy: bool, operation: &str) -> Result<()> {
-        let mut guard = self.recovery.lock().unwrap();
+        let mut guard = self.recovery.lock_or_recover();
         let Some(journal) = guard.as_mut() else {
             return Ok(());
         };
-        let core = self.core.lock().unwrap();
+        let core = self.core.lock_or_recover();
         let store = core.store.as_ref();
         journal.record(
             &core.active_session_id,
@@ -156,7 +157,7 @@ impl Worker {
     /// pair (rows the session appends outside a turn).
     pub(crate) fn emit_custom_row(&self, message: &Value) {
         {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             persist_custom_row(&mut core, message);
         }
         self.broadcast_custom_row(message);
@@ -173,7 +174,7 @@ impl Worker {
 
     /// Sequence and broadcast one `session_event` for the queue projection.
     pub(crate) fn emit_action_update(&self, snapshot: &SessionActionSnapshot) -> Result<()> {
-        let mut core = self.core.lock().unwrap();
+        let mut core = self.core.lock_or_recover();
         // TS `_emitQueueUpdate`: an unchanged projection stays silent (an
         // empty queue before and after a turn is not an update).
         if core.last_action_snapshot.as_ref() == Some(snapshot) {
@@ -205,7 +206,7 @@ impl Worker {
         active_session_id: &str,
         reason: DaemonSessionClosedReason,
     ) -> Result<()> {
-        let mut core = self.core.lock().unwrap();
+        let mut core = self.core.lock_or_recover();
         let sequence = core.last_event_sequence + 1;
         core.last_event_sequence = sequence;
         let meta = create_daemon_event_meta(
@@ -256,7 +257,7 @@ pub(crate) fn emit_worker_event_with(
     events: &Arc<EventPump>,
     event: Value,
 ) {
-    let mut core = core.lock().unwrap();
+    let mut core = core.lock_or_recover();
     let sequence = core.last_event_sequence + 1;
     core.last_event_sequence = sequence;
     let meta = create_daemon_event_meta(
@@ -302,9 +303,9 @@ pub(crate) fn push_roster_delta(context: &RosterPushContext) {
     // The push-order lock holds the snapshot and its sequence stamp
     // together: an older snapshot must never carry the newer sequence
     // (the supervisor would keep the stale row and drop the fresh one).
-    let _order = context.roster_push_order.lock().unwrap();
+    let _order = context.roster_push_order.lock_or_recover();
     let mut summary = {
-        let core = context.core.lock().unwrap();
+        let core = context.core.lock_or_recover();
         session_summary(
             &core,
             &context

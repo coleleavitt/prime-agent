@@ -10,6 +10,7 @@ use super::{
     QuotaParkState, SessionCommandExecution, SessionCommandParams, SessionEngineConfig,
     SupervisorChildSessions, Value,
 };
+use pa_types::sync::{MutexExt, RwLockExt};
 
 /// The instruction the floor appends to a bare skill invocation: ask what
 /// the user wants first, never an imperative to execute.
@@ -23,10 +24,6 @@ impl AgentSessionEngine {
     /// # Errors
     ///
     /// Returns an error when the multi-thread runtime cannot be built.
-    ///
-    /// # Panics
-    ///
-    /// The MCP closures here panic on a poisoned engine cwd lock.
     pub fn new(config: AgentEngineConfig) -> anyhow::Result<Self> {
         let runtime = crate::async_safe_runtime::AsyncSafeRuntime::new_multi_thread()?;
         let session_file = std::sync::Mutex::new(config.session_file.clone());
@@ -77,7 +74,7 @@ impl AgentSessionEngine {
             get_user_servers: Box::new(move || {
                 // The live cwd slot, not the construction-time cwd: the rebind must reach the MCP
                 // settings discovery.
-                let mcp_cwd = mcp_cwd.read().expect("engine cwd lock").clone();
+                let mcp_cwd = mcp_cwd.read_or_recover().clone();
                 let settings = pa_core::settings::SettingsManager::create(&mcp_cwd, &mcp_agent_dir);
                 Some(
                     settings
@@ -101,7 +98,7 @@ impl AgentSessionEngine {
             agent_dir: Some(agent_dir),
             get_catalog_sources: Some(Box::new(move || {
                 // Declared local service-catalog sources, re-read per resolve.
-                let catalog_cwd = catalog_cwd.read().expect("engine cwd lock").clone();
+                let catalog_cwd = catalog_cwd.read_or_recover().clone();
                 let settings =
                     pa_core::settings::SettingsManager::create(&catalog_cwd, &catalog_agent_dir);
                 settings
@@ -197,24 +194,17 @@ impl AgentSessionEngine {
     }
 
     /// Replace the autonomous continuation policy. Call before the first admitted turn.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the autonomous-driver lock is poisoned.
     pub fn set_autonomous_driver(
         &self,
         driver: std::sync::Arc<dyn pa_core::autonomous::AutonomousDriver>,
     ) {
         self.autonomous_driver_default
             .store(false, std::sync::atomic::Ordering::Relaxed);
-        *self
-            .autonomous_driver
-            .write()
-            .expect("autonomous driver lock") = driver;
+        *self.autonomous_driver.write_or_recover() = driver;
     }
 
     pub(crate) fn cwd(&self) -> std::path::PathBuf {
-        self.cwd.read().expect("engine cwd lock").clone()
+        self.cwd.read_or_recover().clone()
     }
 
     /// Expand a `/skill:<name>` submission against the core session
@@ -263,33 +253,22 @@ impl AgentSessionEngine {
     }
 
     /// Install the worker's live compaction summary-delta sink: every built session adopts it.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the sink slot's mutex is poisoned.
     pub fn set_compaction_summary_sink(
         &self,
         sink: pa_core::session_engine::compaction_exec::SummaryDeltaSink,
     ) {
-        *self
-            .compaction_summary_sink
-            .lock()
-            .expect("compaction summary sink lock") = Some(sink);
+        *self.compaction_summary_sink.lock_or_recover() = Some(sink);
     }
 
     /// The stale-row guard's deferred durable write: the terminal row
     /// lands AFTER the context adoption, so the active row stops being
     /// rediscovered.
     pub(crate) async fn flush_pending_stale_goal_terminal(&self) {
-        let terminal = self
-            .stale_goal_terminal_pending
-            .lock()
-            .expect("stale terminal pending lock")
-            .take();
+        let terminal = self.stale_goal_terminal_pending.lock_or_recover().take();
         let Some(terminal) = terminal else {
             return;
         };
-        let Some(handles) = self.goal_runtime.lock().expect("goal runtime lock").clone() else {
+        let Some(handles) = self.goal_runtime.lock_or_recover().clone() else {
             return;
         };
         let mut session = handles.session.lock().await;
@@ -312,20 +291,12 @@ impl AgentSessionEngine {
 
     async fn adopt_built_session(&self, built: &CoreSessionEngine) -> anyhow::Result<()> {
         self.mirror_goal_runtime(built).await;
-        if let Some(sink) = self
-            .compaction_summary_sink
-            .lock()
-            .expect("compaction summary sink lock")
-            .clone()
-        {
+        if let Some(sink) = self.compaction_summary_sink.lock_or_recover().clone() {
             built.session.set_compaction_summary_sink(sink);
         }
         // The in-run consult's mirror: the session mutex is held across
         // compaction turns, and the consult runs inside one.
-        *self
-            .autonomous_boundary
-            .lock()
-            .expect("autonomous boundary lock") =
+        *self.autonomous_boundary.lock_or_recover() =
             Some(crate::autonomous_continuation::AutonomousBoundaryMirror {
                 turn_boundary: std::sync::Arc::clone(&built.turn_boundary),
                 agent: std::sync::Arc::clone(built.session.agent()),
@@ -334,10 +305,7 @@ impl AgentSessionEngine {
         // The background-bash liveness probe: a deadlock-free read over the
         // build's provisioner.
         let provisioner = built.kernel_provisioner_weak();
-        *self
-            .background_bash_probe
-            .lock()
-            .expect("background bash probe lock") = Some(std::sync::Arc::new(move || {
+        *self.background_bash_probe.lock_or_recover() = Some(std::sync::Arc::new(move || {
             provisioner
                 .upgrade()
                 .and_then(|provisioner| provisioner.manager())
@@ -347,10 +315,7 @@ impl AgentSessionEngine {
         // kernel without taking the session mutex (a dead weak reference
         // releases nothing).
         let release_provisioner = built.kernel_provisioner_weak();
-        *self
-            .kernel_release_probe
-            .lock()
-            .expect("kernel release probe lock") = Some(std::sync::Arc::new(move || {
+        *self.kernel_release_probe.lock_or_recover() = Some(std::sync::Arc::new(move || {
             let provisioner = release_provisioner.clone();
             Box::pin(async move {
                 if let Some(provisioner) = provisioner.upgrade() {
@@ -369,28 +334,22 @@ impl AgentSessionEngine {
         // adopt those registrations before the new sink observes, or the first post-swap
         // report drops against a producer that never saw the spawn.
         if let Some(children) = &self.children {
-            let retired = self
-                .usage_producer
-                .lock()
-                .expect("usage producer lock")
-                .take();
+            let retired = self.usage_producer.lock_or_recover().take();
             if let Some(retired) = retired {
                 built.rlm_usage.adopt_registrations(&retired).await;
             }
             children.set_usage_sink(std::sync::Arc::new(ProducerUsageSink(
                 std::sync::Arc::clone(&built.rlm_usage),
             )));
-            *self.usage_producer.lock().expect("usage producer lock") =
-                Some(std::sync::Arc::clone(&built.rlm_usage));
+            *self.usage_producer.lock_or_recover() = Some(std::sync::Arc::clone(&built.rlm_usage));
             // The semantic-edge handoff (the same per-build pattern): the
             // settle watcher records a returned child's last committed
             // request into this recorder.
             children.set_semantic_edges(built.session.semantic_edges());
         }
-        *self.turn_agent.lock().expect("turn agent lock") =
-            Some(std::sync::Arc::clone(built.session.agent()));
+        *self.turn_agent.lock_or_recover() = Some(std::sync::Arc::clone(built.session.agent()));
         {
-            let handles = self.goal_runtime.lock().expect("goal runtime lock").clone();
+            let handles = self.goal_runtime.lock_or_recover().clone();
             if let Some(handles) = handles {
                 let mut manager = handles.session.lock().await;
                 self.flush_pending_max_depth(&mut manager);
@@ -473,28 +432,25 @@ impl AgentSessionEngine {
                     last_error: Some(error),
                     ..state.clone()
                 };
-                let handles = self.goal_runtime.lock().expect("goal runtime lock").clone();
+                let handles = self.goal_runtime.lock_or_recover().clone();
                 if let Some(handles) = handles {
                     let mut driver = handles.driver.lock().await;
                     driver.restore_from_persisted(terminal.clone());
                     drop(driver);
                 }
-                *self
-                    .stale_goal_terminal_pending
-                    .lock()
-                    .expect("stale terminal pending lock") = Some(terminal);
+                *self.stale_goal_terminal_pending.lock_or_recover() = Some(terminal);
                 // The published baseline keeps the RAW row: the first
                 // `goal_update_if_changed` EMITS — the worker's durable
                 // mirror is the ONE path the terminal row reaches the file.
-                *self.published_goal.lock().expect("published goal lock") = Some(state);
+                *self.published_goal.lock_or_recover() = Some(state);
             } else {
-                let handles = self.goal_runtime.lock().expect("goal runtime lock").clone();
+                let handles = self.goal_runtime.lock_or_recover().clone();
                 if let Some(handles) = handles {
                     let mut driver = handles.driver.lock().await;
                     driver.restore_from_persisted(state.clone());
                     drop(driver);
                 }
-                *self.published_goal.lock().expect("published goal lock") = Some(state);
+                *self.published_goal.lock_or_recover() = Some(state);
             }
         }
         if let Some(entries) = pending_branch {
@@ -599,24 +555,15 @@ impl AgentSessionEngine {
             .quota_park
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-        *self.goal_runtime.lock().expect("goal runtime lock") = None;
-        *self.turn_agent.lock().expect("turn agent lock") = None;
-        *self
-            .autonomous_boundary
-            .lock()
-            .expect("autonomous boundary lock") = None;
-        *self
-            .background_bash_probe
-            .lock()
-            .expect("background bash probe lock") = None;
-        *self
-            .kernel_release_probe
-            .lock()
-            .expect("kernel release probe lock") = None;
-        *self.published_goal.lock().expect("published goal lock") = None;
+        *self.goal_runtime.lock_or_recover() = None;
+        *self.turn_agent.lock_or_recover() = None;
+        *self.autonomous_boundary.lock_or_recover() = None;
+        *self.background_bash_probe.lock_or_recover() = None;
+        *self.kernel_release_probe.lock_or_recover() = None;
+        *self.published_goal.lock_or_recover() = None;
         // The retired session's provider target goes with it: a pre-build demand seam resolves the
         // CURRENT model.
-        *self.provider_target.write().expect("provider target lock") = None;
+        *self.provider_target.write_or_recover() = None;
         if let Some(engine) = built {
             // The teardown drops the compact-trigger state with a version bump: an in-flight
             // review round never applies its edits.
@@ -641,26 +588,13 @@ impl AgentSessionEngine {
 
     /// Mark the session closed and retire the closed runtime's continuation
     /// mirrors — a stopped session never continues.
-    ///
-    /// # Panics
-    ///
-    /// Panics when an internal mutex is poisoned.
     pub fn mark_session_closed(&self) {
         self.session_closed
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        *self.goal_runtime.lock().expect("goal runtime lock") = None;
-        *self
-            .autonomous_boundary
-            .lock()
-            .expect("autonomous boundary lock") = None;
-        *self
-            .background_bash_probe
-            .lock()
-            .expect("background bash probe lock") = None;
-        *self
-            .kernel_release_probe
-            .lock()
-            .expect("kernel release probe lock") = None;
+        *self.goal_runtime.lock_or_recover() = None;
+        *self.autonomous_boundary.lock_or_recover() = None;
+        *self.background_bash_probe.lock_or_recover() = None;
+        *self.kernel_release_probe.lock_or_recover() = None;
     }
 
     /// The create path's live reset: a fresh (or replaced) session starts live.
@@ -761,7 +695,7 @@ impl AgentSessionEngine {
     /// process fallback). `pub(crate)`: the image-route probe reads the
     /// create-config key pin.
     pub(crate) fn current_selection(&self) -> EngineModelSelection {
-        self.selection.read().expect("model selection lock").clone()
+        self.selection.read_or_recover().clone()
     }
 
     /// Kernel host-request handlers for messaging and observation,
@@ -830,17 +764,13 @@ impl AgentSessionEngine {
         // The live queue-delivery modes: read under a scoped lock (a std
         // guard must never ride the awaits below).
         let (steering_mode, follow_up_mode) = {
-            let delivery_modes = self.queue_modes.lock().expect("queue modes");
+            let delivery_modes = self.queue_modes.lock_or_recover();
             (
                 delivery_modes.0.as_deref().and_then(Self::queue_mode),
                 delivery_modes.1.as_deref().and_then(Self::queue_mode),
             )
         };
-        let create_resources = self
-            .create_resources
-            .read()
-            .expect("create resources lock")
-            .clone();
+        let create_resources = self.create_resources.read_or_recover().clone();
 
         // The session's stream reads its target from the live slot:
         // `set_model` swaps it so the built session follows without a
@@ -848,9 +778,9 @@ impl AgentSessionEngine {
         let stream_fn = switchable_stream_fn(std::sync::Arc::clone(&self.provider_target));
         {
             let (api_key, headers) = self.resolve_request_key_and_headers(model);
-            let mut target = self.provider_target.write().expect("provider target lock");
+            let mut target = self.provider_target.write_or_recover();
             *target = Some(ProviderTarget {
-                service_tier: *self.service_tier.read().expect("service tier lock"),
+                service_tier: *self.service_tier.read_or_recover(),
                 api_key,
                 model: model.clone(),
                 headers,
@@ -908,40 +838,23 @@ impl AgentSessionEngine {
         });
         // Bound before the awaited build: the purge-clone must not hold the lock guard across the
         // await.
-        let queued_goal_context_purge = self
-            .goal_queue_purge
-            .lock()
-            .expect("goal queue purge lock")
-            .clone();
+        let queued_goal_context_purge = self.goal_queue_purge.lock_or_recover().clone();
         // The kernel's last live background `bash()` handle settling
         // (or a mid-run teardown) retries the owed continuations. No
         // registered arc wires nothing.
-        let on_background_work_settled = self
-            .self_weak
-            .lock()
-            .expect("engine self weak lock")
-            .clone()
-            .map(|weak| {
-                std::sync::Arc::new(move || {
-                    if let Some(engine) = weak.upgrade() {
-                        engine.retry_owed_goal_continuation();
-                        engine.retry_owed_autonomous_continuation();
-                    }
-                }) as pa_core::kernel::shared::BackgroundWorkSettledCallback
-            });
+        let on_background_work_settled = self.self_weak.lock_or_recover().clone().map(|weak| {
+            std::sync::Arc::new(move || {
+                if let Some(engine) = weak.upgrade() {
+                    engine.retry_owed_goal_continuation();
+                    engine.retry_owed_autonomous_continuation();
+                }
+            }) as pa_core::kernel::shared::BackgroundWorkSettledCallback
+        });
         // The semantic-edge identity stamped by `configure_rlm_identity`
         // (the create's provenance): every build's recorder reopens the
         // same ledger, so a rebuild replays instead of re-registering.
-        let semantic_edges = self
-            .semantic_identity
-            .lock()
-            .expect("semantic identity lock")
-            .clone();
-        let on_late_sent_agent_message = self
-            .late_agent_message_sink
-            .lock()
-            .expect("late agent message sink lock")
-            .clone();
+        let semantic_edges = self.semantic_identity.lock_or_recover().clone();
+        let on_late_sent_agent_message = self.late_agent_message_sink.lock_or_recover().clone();
         pa_core::session_engine::engine::create_session(SessionEngineConfig {
             on_late_sent_agent_message,
             semantic_edges,
@@ -1003,7 +916,7 @@ impl AgentSessionEngine {
             // A queue-mode switch that landed mid-build wrote only the live slot: re-apply the
             // modes so the first build never serves a stale one.
             let (steering_mode, follow_up_mode) = {
-                let delivery_modes = self.queue_modes.lock().expect("queue modes");
+                let delivery_modes = self.queue_modes.lock_or_recover();
                 (
                     delivery_modes.0.as_deref().and_then(Self::queue_mode),
                     delivery_modes.1.as_deref().and_then(Self::queue_mode),

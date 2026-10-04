@@ -5,6 +5,7 @@ use super::{
     QueueCheckpoint, QueuedItem, Result, SessionFile, TurnSettle, VecDeque, Worker,
     PROMPT_ABORTED_BEFORE_DELIVERY, SIDE_QUESTION_SETTLE_TIMEOUT,
 };
+use pa_types::sync::MutexExt;
 
 use serde_json::Value;
 
@@ -34,16 +35,14 @@ impl Worker {
                 | "export_jsonl"
         ) && self
             .core
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .store
             .as_ref()
             .is_some_and(|store| store.window.is_some())
         {
             let path = self
                 .core
-                .lock()
-                .unwrap()
+                .lock_or_recover()
                 .store
                 .as_ref()
                 .unwrap()
@@ -56,7 +55,7 @@ impl Worker {
                 .and_then(|result| result);
             match hydrated {
                 Ok(full) => {
-                    let mut core = self.core.lock().unwrap();
+                    let mut core = self.core.lock_or_recover();
                     if let Some(store) = core.store.as_mut().filter(|store| store.path == path) {
                         store.install_full_history(full);
                     }
@@ -226,7 +225,7 @@ impl Worker {
     // error channel here carries the whole response, so allow the large-err lint.
     #[allow(clippy::result_large_err)]
     pub(crate) fn require_created(&self, command_type: &str) -> Result<(), DaemonResponse> {
-        let core = self.core.lock().unwrap();
+        let core = self.core.lock_or_recover();
         if !core.created {
             return Err(response_failure(
                 None,
@@ -287,7 +286,7 @@ impl Worker {
             .unwrap_or_default();
         // The agent cannot adopt a different MCP tool list mid-turn (TS
         // `session.isStreaming` guard).
-        if !servers.is_empty() && self.core.lock().unwrap().busy {
+        if !servers.is_empty() && self.core.lock_or_recover().busy {
             return response_failure(
                 None,
                 "replace_acp_mcp_servers",
@@ -301,7 +300,7 @@ impl Worker {
             .engine
             .acp_mcp_manager()
             .unwrap_or_else(|| std::sync::Arc::clone(&self.acp_mcp));
-        let manager = manager.lock().unwrap();
+        let manager = manager.lock_or_recover();
         match manager.replace_acp_servers(&servers, owner_id) {
             // An unchanged list (same owner, identical servers) is a
             // no-op success.
@@ -321,7 +320,7 @@ impl Worker {
     /// items deliver as ONE batched turn at the next boundary, even under queue
     /// mode "one-at-a-time". Returns whether anything armed.
     pub(crate) fn arm_forced_all_steering(&self) -> bool {
-        let mut core = self.core.lock().unwrap();
+        let mut core = self.core.lock_or_recover();
         let armable = |item: &QueuedItem| {
             item.queue_visible && item.agent_message.is_none() && item.custom_message.is_none()
         };
@@ -347,7 +346,7 @@ impl Worker {
         // TS `canResume`: no admission pause held — the arm only
         // fires in the send arm.
         let can_resume =
-            !self.input_pauses.paused() && !self.core.lock().unwrap().shutdown_requested;
+            !self.input_pauses.paused() && !self.core.lock_or_recover().shutdown_requested;
         if !can_resume {
             self.request_abort();
             return false;
@@ -359,7 +358,7 @@ impl Worker {
         // The resumed pump — not this funnel — owns the delivery at
         // the settled turn's boundary.
         let queued_work = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             !core.steering.is_empty() || !core.follow_up.is_empty()
         };
         if !queued_work {
@@ -374,7 +373,7 @@ impl Worker {
     /// compaction, and cancel the running turn.
     fn request_abort(&self) {
         {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             core.abort_requested = true;
             // The queue parks and a plain prompt is rejected until a
             // resume site fires.
@@ -385,7 +384,7 @@ impl Worker {
         // response, not park it behind the suspension forever. Queue-visible lanes
         // survive parked — the suspension defers the pump, it never drops the queue.
         {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             let cancel = |lane: &mut VecDeque<QueuedItem>| {
                 let mut kept = VecDeque::new();
                 while let Some(item) = lane.pop_front() {
@@ -432,7 +431,7 @@ impl Worker {
         if let Err(response) = self.require_created("get_state") {
             return response;
         }
-        let core = self.core.lock().unwrap();
+        let core = self.core.lock_or_recover();
         let summary = self.summary_locked(&core);
         response_success(
             None,
@@ -447,7 +446,7 @@ impl Worker {
         if let Err(response) = self.require_created("get_session_header") {
             return response;
         }
-        let core = self.core.lock().unwrap();
+        let core = self.core.lock_or_recover();
         let Some(store) = core.store.as_ref() else {
             return response_failure(
                 None,
@@ -469,7 +468,7 @@ impl Worker {
         if let Err(response) = self.require_created("get_session_stats") {
             return response;
         }
-        let core = self.core.lock().unwrap();
+        let core = self.core.lock_or_recover();
         let Some(store) = core.store.as_ref() else {
             return response_failure(
                 None,
@@ -486,7 +485,7 @@ impl Worker {
         if let Err(response) = self.require_created("get_messages") {
             return response;
         }
-        let core = self.core.lock().unwrap();
+        let core = self.core.lock_or_recover();
         let messages: Vec<Value> = core
             .store
             .as_ref()
@@ -499,7 +498,7 @@ impl Worker {
         if let Err(response) = self.require_created("get_queue") {
             return response;
         }
-        let core = self.core.lock().unwrap();
+        let core = self.core.lock_or_recover();
         // The labeled preview when the delivery carries one, else the
         // message text.
         response_success(
@@ -516,7 +515,7 @@ impl Worker {
         if let Err(response) = self.require_created("clear_queue") {
             return response;
         }
-        let mut core = self.core.lock().unwrap();
+        let mut core = self.core.lock_or_recover();
         let drain_lane = |lane: &mut VecDeque<QueuedItem>| -> Vec<String> {
             lane.drain(..)
                 .map(|item| {
@@ -549,7 +548,7 @@ impl Worker {
         if !cleared.success {
             return cleared;
         }
-        let mut core = self.core.lock().unwrap();
+        let mut core = self.core.lock_or_recover();
         core.abort_requested = true;
         // The same TS `requestAbort()` suspension as the bare `abort`.
         core.queued_input_suspended = true;
@@ -563,7 +562,7 @@ impl Worker {
         if let Err(response) = self.require_created("get_last_assistant_text") {
             return response;
         }
-        let core = self.core.lock().unwrap();
+        let core = self.core.lock_or_recover();
         let text = core.store.as_ref().and_then(|store| {
             store
                 .messages()
@@ -615,7 +614,7 @@ impl Worker {
         // The guard rides a block, not an explicit drop: a `drop(core)` does not
         // end the guard's slot in an async generator (the awaits need Send).
         {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             // `shutdown` keeps the resume entry, so its file stays
             // live on disk; the killed and replaced closes archive.
             if reason != KillCloseReason::Shutdown {
@@ -635,7 +634,7 @@ impl Worker {
         // awaits settle on an already-cancelled turn. The cancel sweep must land
         // before the close clears the lanes.
         {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             core.abort_requested = true;
             core.steering.clear();
             core.follow_up.clear();
@@ -656,13 +655,12 @@ impl Worker {
         if let Some(agent_engine) = &self.agent_engine {
             agent_engine.dispose_kernel().await;
         }
-        let active_session_id = self.core.lock().unwrap().active_session_id.clone();
+        let active_session_id = self.core.lock_or_recover().active_session_id.clone();
         let _ = self.emit_session_closed(&active_session_id, reason.session_closed_reason());
         let _ = self.record_recovery(false, reason.recovery_operation());
         let lease = self
             .core
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .store
             .as_mut()
             .and_then(|store| store.lease.take());
@@ -673,7 +671,7 @@ impl Worker {
         // first (swapped to the disabled no-op) so a later attach can
         // adopt the pane again; the taken handle's release is the
         // release of the session this kill stopped.
-        let reporter = std::mem::take(&mut *self.herdr.lock().unwrap());
+        let reporter = std::mem::take(&mut *self.herdr.lock_or_recover());
         reporter.release().await;
         response_success(None, "kill", None)
     }
@@ -690,7 +688,7 @@ impl Worker {
         if let Err(response) = self.require_created(NAME) {
             return response;
         }
-        let mut core = self.core.lock().unwrap();
+        let mut core = self.core.lock_or_recover();
         let Some(store) = core.store.as_mut() else {
             return response_failure(None, NAME, "Session is still initializing", None);
         };
@@ -711,7 +709,7 @@ impl Worker {
         if name.trim().is_empty() {
             return response_failure(None, command, "Session name cannot be empty", None);
         }
-        let mut core = self.core.lock().unwrap();
+        let mut core = self.core.lock_or_recover();
         let previous = core
             .store
             .as_ref()

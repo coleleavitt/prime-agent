@@ -7,6 +7,7 @@ mod env;
 mod session_core;
 
 pub(crate) use config::WorkerConfig;
+use pa_types::sync::MutexExt;
 // KillCloseReason is read only by the commands module (via `use super::*`), so allow the unused
 // import.
 #[allow(unused_imports)]
@@ -283,10 +284,6 @@ fn sender_parent_edge_is(
 
 impl Worker {
     /// Build the worker: core, engine, and the sink/hook wiring between them.
-    ///
-    /// # Panics
-    ///
-    /// The wired closures panic on a poisoned session-core mutex.
     pub fn new(config: WorkerConfig, registration: Option<RegistrationHandle>) -> Self {
         let events = Arc::new(EventPump::new());
         let supervisor_claims = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -489,7 +486,7 @@ impl Worker {
                 let autonomous_purge: std::sync::Arc<dyn Fn() + Send + Sync> =
                     std::sync::Arc::new(move || {
                         {
-                            let mut core = purge_core.lock().unwrap();
+                            let mut core = purge_core.lock_or_recover();
                             core.follow_up.retain(|item| {
                                 item.queue_key.as_deref() != Some(AUTONOMOUS_QUEUE_KEY)
                             });
@@ -512,7 +509,7 @@ impl Worker {
                 concrete.set_autonomous_queue_purge(autonomous_purge);
                 let probe_core = Arc::clone(&core);
                 let probe: crate::engine::SessionInputProbe = Arc::new(move || {
-                    let core = probe_core.lock().unwrap();
+                    let core = probe_core.lock_or_recover();
                     core.queued_input_suspended
                         || !core.steering.is_empty()
                         || !core.follow_up.is_empty()
@@ -554,7 +551,7 @@ impl Worker {
                 let purge_recovery = Arc::clone(&recovery);
                 let queue_purge: std::sync::Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
                     {
-                        let mut core = purge_core.lock().unwrap();
+                        let mut core = purge_core.lock_or_recover();
                         core.steering.retain(|item| !is_goal_context_item(item));
                         core.follow_up.retain(|item| !is_goal_context_item(item));
                     }
@@ -857,7 +854,7 @@ impl Worker {
         {
             self.listener_closed.notified().await;
         }
-        let expected_identity = self.bound_socket_identity.lock().unwrap().clone();
+        let expected_identity = self.bound_socket_identity.lock_or_recover().clone();
         crate::socket::cleanup_socket_path_after_close(&self.config.socket_path, expected_identity);
     }
 
@@ -912,7 +909,7 @@ fn emit_refinement_row(
     message: &Value,
 ) -> bool {
     {
-        let mut core = core.lock().unwrap();
+        let mut core = core.lock_or_recover();
         let Some(store) = core.store.as_mut() else {
             return false;
         };

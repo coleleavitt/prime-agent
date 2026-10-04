@@ -7,6 +7,7 @@ use super::{
     QueueCheckpoint, QueuedItem, Result, SessionActionSnapshot, SessionCore, SessionEngine,
     TurnSettle, Value, WorkerRecoveryJournal, ABORTED_TURN_SETTLE_ERROR,
 };
+use pa_types::sync::MutexExt;
 
 use std::sync::{Arc, Mutex};
 
@@ -50,7 +51,7 @@ impl TurnRunner {
         loop {
             let engine = self.engine.clone();
             let item: Option<Vec<QueuedItem>> = {
-                let mut core = self.core.lock().unwrap();
+                let mut core = self.core.lock_or_recover();
                 if core.shutdown_requested {
                     drop(core);
                     // The shutdown handler waits on the idle notify before
@@ -98,7 +99,7 @@ impl TurnRunner {
                 let visible_index = items.iter().position(|item| item.queue_visible);
                 let anchor = visible_index.map(|index| &items[index]);
                 {
-                    let mut core = self.core.lock().unwrap();
+                    let mut core = self.core.lock_or_recover();
                     if let Some(anchor) = anchor {
                         core.active_action = Some(crate::types::SessionActionActive {
                             kind: "turn".to_string(),
@@ -119,7 +120,7 @@ impl TurnRunner {
                 // Every park re-stamps the activity end: the idle-eviction
                 // window measures from the TRUE last activity.
                 {
-                    let mut core = self.core.lock().unwrap();
+                    let mut core = self.core.lock_or_recover();
                     core.last_activity_ms = crate::util::now_ms();
                 }
                 // A parked parent-owned child releases its kernel with
@@ -152,7 +153,7 @@ impl TurnRunner {
     /// remaining gates. Failure leaves the kernel resident.
     async fn maybe_release_settled_child_kernel(&self) {
         let release = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             core.rlm_depth > 0
                 && core.attached_client_ids.is_empty()
                 && !core.compacting
@@ -179,7 +180,7 @@ impl TurnRunner {
     /// arm.
     pub(super) fn idle_passivation_window(&self) -> Option<std::time::Duration> {
         let (attached, compacting, shutdown, queued, last_activity, cwd) = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             (
                 core.attached_client_ids.is_empty(),
                 core.compacting,
@@ -223,7 +224,7 @@ impl TurnRunner {
     /// for the graceful stop. A failed request leaves the worker resident.
     pub(super) async fn maybe_request_idle_passivation(&self) {
         let (attached, compacting, shutdown, queued, last_activity, cwd) = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             (
                 core.attached_client_ids.is_empty(),
                 core.compacting,
@@ -273,7 +274,7 @@ impl TurnRunner {
         // started in the window keeps the worker resident exactly like
         // the pre-gate check.
         {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             if core.compacting
                 || core.shutdown_requested
                 || core.queued_input_suspended
@@ -324,10 +325,10 @@ impl TurnRunner {
         self.emit_turn_event(json!({ "type": "agent_start" }));
         self.emit_turn_event(json!({ "type": "turn_start" }));
         // The pane reporter's run boundary (TS `agent_start`): working.
-        self.herdr.lock().unwrap().run_started();
+        self.herdr.lock_or_recover().run_started();
 
         let prompt_index = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             core.store
                 .as_ref()
                 .map_or(0, crate::session_store::SessionFile::message_count)
@@ -351,7 +352,7 @@ impl TurnRunner {
         // out direct, flushing the parked update first (wire order matches
         // event-sequence order).
         let coalescer = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             Arc::new(crate::streaming::TurnStreamCoalescer::new(
                 core.active_session_id.clone(),
                 core.generation.clone(),
@@ -379,7 +380,7 @@ impl TurnRunner {
         // a branch move or replacement swaps the store mid-review.
         let review_engine = std::sync::Arc::clone(&engine);
         let review_session_id = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             core.store
                 .as_ref()
                 .map(|store| store.session_id().to_string())
@@ -486,7 +487,7 @@ impl TurnRunner {
                         | EngineEvent::Done(_)
                         | EngineEvent::DoneAborted
                 );
-                let mut core = core.lock().unwrap();
+                let mut core = core.lock_or_recover();
                 if core.abort_requested {
                     // The sighting arms the fallback's silence only when
                     // load-bearing: a sighting on a run that completed on its own
@@ -523,7 +524,7 @@ impl TurnRunner {
                 // run.
                 match &event {
                     EngineEvent::AgentStart => {
-                        herdr.lock().unwrap().run_started();
+                        herdr.lock_or_recover().run_started();
                         // A later run in the same turn (the retry, the
                         // continuation) re-opens its own end: the settle
                         // fallback keys on the flag, so a run start must
@@ -535,13 +536,12 @@ impl TurnRunner {
                     EngineEvent::AgentEnd { messages } => {
                         let more_queued = !core.steering.is_empty() || !core.follow_up.is_empty();
                         herdr
-                            .lock()
-                            .unwrap()
+                            .lock_or_recover()
                             .run_ended(crate::herdr::error_hold_message(messages), more_queued);
                         herdr_run_end_seen.store(true, std::sync::atomic::Ordering::SeqCst);
                     }
                     EngineEvent::AutoRetryStart { .. } => {
-                        herdr.lock().unwrap().retry_started();
+                        herdr.lock_or_recover().retry_started();
                         // The retry re-runs the turn body: its end (when
                         // the abort gate lets it through) re-sets the
                         // flag; clearing here lets a swallowed retry end
@@ -856,8 +856,7 @@ impl TurnRunner {
                     }
                     EngineEvent::Done(Err(error)) if !engine_turn_ended => {
                         herdr_settle_error_seen
-                            .lock()
-                            .unwrap()
+                            .lock_or_recover()
                             .replace(error.clone());
                         vec![json!({ "type": "turn_end", "error": error })]
                     }
@@ -993,7 +992,7 @@ impl TurnRunner {
                 // The waiting response must observe the frames'
                 // sequences and resolves only after the idle flip.
                 if let Some(result) = done_result {
-                    *turn_outcome_slot.lock().unwrap() = Some(result);
+                    *turn_outcome_slot.lock_or_recover() = Some(result);
                 }
                 true
             };
@@ -1002,12 +1001,12 @@ impl TurnRunner {
                 // `abort_retry` stops an in-flight retry without
                 // aborting the turn itself.
                 move || {
-                    core.lock().unwrap().abort_requested
-                        || core.lock().unwrap().retry_abort_requested
+                    core.lock_or_recover().abort_requested
+                        || core.lock_or_recover().retry_abort_requested
                 }
             };
             let parked = {
-                let mut core = core.lock().unwrap();
+                let mut core = core.lock_or_recover();
                 std::mem::take(&mut core.pending_next_turn)
             };
             emitting_prefix_rows.set(!parked.is_empty());
@@ -1026,7 +1025,7 @@ impl TurnRunner {
         flusher.abort();
 
         {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             core.busy = false;
             core.active_action = None;
             core.running_admission_ids.clear();
@@ -1071,21 +1070,20 @@ impl TurnRunner {
             // holding items keep the settle debounced so the next pickup
             // cancels the idle flip.
             let (error_hold, more_queued) = {
-                let core = self.core.lock().unwrap();
+                let core = self.core.lock_or_recover();
                 (
-                    herdr_settle_error.lock().unwrap().take(),
+                    herdr_settle_error.lock_or_recover().take(),
                     !core.steering.is_empty() || !core.follow_up.is_empty(),
                 )
             };
             if !herdr_run_end.load(std::sync::atomic::Ordering::SeqCst) {
                 self.herdr
-                    .lock()
-                    .unwrap()
+                    .lock_or_recover()
                     .run_ended(error_hold, more_queued);
             }
         }
         let snapshot = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             Self::snapshot_from(&core)
         };
         // The settle checkpoint: the idle flip precedes it, so an unclean
@@ -1106,7 +1104,7 @@ impl TurnRunner {
         }
         // The turn is fully unwound: the waiting prompt now resolves, so
         // a client's next request always observes the idle session.
-        let settled_outcome = turn_outcome.lock().unwrap().take();
+        let settled_outcome = turn_outcome.lock_or_recover().take();
         if let Some(result) = settled_outcome {
             for done in items_done {
                 let _ = done.send(result.clone());
@@ -1184,7 +1182,7 @@ impl TurnRunner {
     /// The post-turn queue projection: an unchanged snapshot stays
     /// silent.
     fn emit_action_update(&self, snapshot: &SessionActionSnapshot) -> Result<()> {
-        let mut core = self.core.lock().unwrap();
+        let mut core = self.core.lock_or_recover();
         if core.last_action_snapshot.as_ref() == Some(snapshot) {
             return Ok(());
         }
@@ -1214,7 +1212,7 @@ impl TurnRunner {
     }
 
     fn emit_turn_event(&self, event: Value) {
-        let mut core = self.core.lock().unwrap();
+        let mut core = self.core.lock_or_recover();
         let sequence = core.last_event_sequence + 1;
         core.last_event_sequence = sequence;
         let meta = create_daemon_event_meta(

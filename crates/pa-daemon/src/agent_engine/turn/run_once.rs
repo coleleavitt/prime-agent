@@ -2,6 +2,7 @@
 //! selection and the wire-shape serializers for stream events, tool
 //! results, and agent messages.
 use crate::engine::{session_wire_value, AssistantSnapshot};
+use pa_types::sync::{MutexExt, RwLockExt};
 
 use super::{
     json, json_round_trip, AgentSessionEngine, DaemonAllowlist, EngineEvent, TurnOnce, TurnPrompt,
@@ -73,7 +74,7 @@ impl AgentSessionEngine {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<EngineEvent>();
         // Goal usage accounting at the message_end hook: each settled non-error
         // assistant message records its token delta, from the engine mirror.
-        let goal_runtime = self.goal_runtime.lock().expect("goal runtime lock").clone();
+        let goal_runtime = self.goal_runtime.lock_or_recover().clone();
         let goal_budget_crossed = std::sync::Arc::clone(&self.goal_budget_crossed);
         // The run-opening boundary frames are the worker's own for the
         // item's first run; this subscription forwards them only once a
@@ -83,12 +84,8 @@ impl AgentSessionEngine {
             let tx = tx.clone();
             let boundary_passed = std::sync::Arc::clone(&boundary_passed);
             let autonomous_state = std::sync::Arc::clone(&self.autonomous);
-            let autonomous_driver = std::sync::Arc::clone(
-                &*self
-                    .autonomous_driver
-                    .read()
-                    .expect("autonomous driver lock"),
-            );
+            let autonomous_driver =
+                std::sync::Arc::clone(&*self.autonomous_driver.read_or_recover());
             agent
                 .subscribe(move |event, _signal| {
                     let tx = tx.clone();

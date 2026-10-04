@@ -5,6 +5,7 @@ use super::{
     retry_event_to_engine_event, AgentSessionEngine, EngineEvent, ProviderTarget, StopReason,
     TurnAdmission, TurnOnce, TurnPrompt, TurnResult,
 };
+use pa_types::sync::RwLockExt;
 
 impl AgentSessionEngine {
     /// Drive one admitted prompt through the retry-driver model loop and
@@ -103,15 +104,14 @@ impl AgentSessionEngine {
                     };
                 }
                 if resolved.ok {
-                    if let Some(target) = self
-                        .provider_target
-                        .write()
-                        .expect("provider target lock")
-                        .as_mut()
-                        .filter(|target| {
-                            target.model.provider == preflight_model.provider
-                                && target.model.id == preflight_model.id
-                        })
+                    if let Some(target) =
+                        self.provider_target
+                            .write_or_recover()
+                            .as_mut()
+                            .filter(|target| {
+                                target.model.provider == preflight_model.provider
+                                    && target.model.id == preflight_model.id
+                            })
                     {
                         target.api_key = resolved.api_key;
                         target.headers = resolved.headers;
@@ -136,21 +136,19 @@ impl AgentSessionEngine {
         // target keeps its model: only the request auth moves.
         let serving = self
             .provider_target
-            .read()
-            .expect("provider target lock")
+            .read_or_recover()
             .as_ref()
             .map(|target| target.model.clone())
             .filter(|serving| serving.provider == pa_core::auth::PRIME_INFERENCE_PROVIDER_ID);
         if let Some(serving) = serving {
             let (api_key, headers) = self.resolve_request_key_and_headers(&serving);
-            if let Some(target) = self
-                .provider_target
-                .write()
-                .expect("provider target lock")
-                .as_mut()
-                .filter(|target| {
-                    target.model.provider == serving.provider && target.model.id == serving.id
-                })
+            if let Some(target) =
+                self.provider_target
+                    .write_or_recover()
+                    .as_mut()
+                    .filter(|target| {
+                        target.model.provider == serving.provider && target.model.id == serving.id
+                    })
             {
                 target.api_key = api_key;
                 target.headers = headers;
@@ -364,19 +362,14 @@ impl AgentSessionEngine {
                             // A routed episode keeps serving the route's
                             // target across the failover switch.
                             if let Some(route) = self.armed_image_route() {
-                                let mut target =
-                                    self.provider_target.write().expect("provider target lock");
+                                let mut target = self.provider_target.write_or_recover();
                                 *target = Some(route.target);
                             } else {
                                 let (api_key, headers) =
                                     self.resolve_request_key_and_headers(&next);
-                                let mut target =
-                                    self.provider_target.write().expect("provider target lock");
+                                let mut target = self.provider_target.write_or_recover();
                                 *target = Some(ProviderTarget {
-                                    service_tier: *self
-                                        .service_tier
-                                        .read()
-                                        .expect("service tier lock"),
+                                    service_tier: *self.service_tier.read_or_recover(),
                                     api_key,
                                     model: next.clone(),
                                     headers,
@@ -409,16 +402,12 @@ impl AgentSessionEngine {
                         let agent_model = json_round_trip(&primary_model)
                             .ok_or_else(|| anyhow::anyhow!("model conversion failed"))?;
                         {
-                            let mut target =
-                                self.provider_target.write().expect("provider target lock");
+                            let mut target = self.provider_target.write_or_recover();
                             if let Some(route) = self.armed_image_route() {
                                 *target = Some(route.target);
                             } else {
                                 *target = Some(ProviderTarget {
-                                    service_tier: *self
-                                        .service_tier
-                                        .read()
-                                        .expect("service tier lock"),
+                                    service_tier: *self.service_tier.read_or_recover(),
                                     api_key: primary_api_key,
                                     model: primary_model.clone(),
                                     headers: primary_headers,
