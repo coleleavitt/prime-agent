@@ -21,6 +21,7 @@ use crate::code_preview::{
 };
 use crate::custom_message::AgentMessageDirection;
 use crate::error_summary::{normalize_error_details, summarize_error_details};
+use crate::markdown::MermaidMode;
 use crate::theme::{Theme, ThemeColor};
 use crate::width::{str_width, truncate_line, wrap_line};
 use crate::{Line, Span};
@@ -110,8 +111,37 @@ pub fn render(
     width: usize,
     show_images: bool,
 ) -> Vec<Line> {
+    render_in(
+        card,
+        frame,
+        detail,
+        theme,
+        width,
+        show_images,
+        MermaidMode::Off,
+    )
+}
+
+/// [`render`] under the `markdown.mermaid` setting (sent agent-message bodies).
+#[must_use]
+pub(super) fn render_in(
+    card: &ToolCallCard,
+    frame: usize,
+    detail: Detail,
+    theme: &Theme,
+    width: usize,
+    show_images: bool,
+    mermaid: MermaidMode,
+) -> Vec<Line> {
     let mut lines = RowOutput::paint();
-    layout(card, frame, detail, theme, width, show_images, &mut lines);
+    let shell = Shell {
+        frame,
+        detail,
+        width,
+        show_images,
+        mermaid,
+    };
+    layout(card, &shell, theme, &mut lines);
     lines.into_lines()
 }
 
@@ -122,21 +152,39 @@ pub(super) fn count(
     theme: &Theme,
     width: usize,
     show_images: bool,
+    mermaid: MermaidMode,
 ) -> usize {
     let mut lines = RowOutput::count();
-    layout(card, frame, detail, theme, width, show_images, &mut lines);
+    let shell = Shell {
+        frame,
+        detail,
+        width,
+        show_images,
+        mermaid,
+    };
+    layout(card, &shell, theme, &mut lines);
     lines.len()
 }
 
-fn layout(
-    card: &ToolCallCard,
+/// The render inputs a card shares between painting and counting.
+#[derive(Clone, Copy)]
+struct Shell {
     frame: usize,
     detail: Detail,
-    theme: &Theme,
     width: usize,
     show_images: bool,
-    lines: &mut RowOutput,
-) {
+    /// The `markdown.mermaid` setting, for the sent agent messages' bodies.
+    mermaid: MermaidMode,
+}
+
+fn layout(card: &ToolCallCard, shell: &Shell, theme: &Theme, lines: &mut RowOutput) {
+    let Shell {
+        frame,
+        detail,
+        width,
+        show_images,
+        mermaid,
+    } = *shell;
     let code = cell_code(card).trim_end();
     let details = card.result.as_ref().map_or_else(
         || IpythonDetails::parse(&Value::Null),
@@ -161,11 +209,11 @@ fn layout(
     // TS renders the sent-message receipt rows even when the cell is
     // collapsed; the body opens up only when expanded.
     if !detail.tool_output_expanded() {
-        render_sent_agent_messages(lines, &details, false, theme, width);
+        render_sent_agent_messages(lines, &details, false, theme, width, mermaid);
         return;
     }
     let has_code = render_code(lines, code, theme, width);
-    render_sent_agent_messages(lines, &details, true, theme, width);
+    render_sent_agent_messages(lines, &details, true, theme, width, mermaid);
     render_output(card, &details, lines, has_code, show_images, theme, width);
     // Image blocks render below the card when shown (TS adds these rows
     // for every tool shell).
@@ -467,6 +515,7 @@ fn render_sent_agent_messages(
     expanded: bool,
     theme: &Theme,
     width: usize,
+    mermaid: MermaidMode,
 ) {
     for sent in &details.sent_agent_messages {
         let Some(sent) = parse_sent_agent_message(sent) else {
@@ -500,12 +549,17 @@ fn render_sent_agent_messages(
             if lines.is_counting() {
                 lines.add_count(crate::custom_message::agent_message_body_count(
                     &sent.message,
+                    theme,
                     width,
+                    mermaid,
                 ));
             } else {
-                for row in
-                    crate::custom_message::render::agent_message_body(&sent.message, theme, width)
-                {
+                for row in crate::custom_message::render::agent_message_body(
+                    &sent.message,
+                    theme,
+                    width,
+                    mermaid,
+                ) {
                     lines.push(|| row);
                 }
             }

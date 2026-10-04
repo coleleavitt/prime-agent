@@ -1275,6 +1275,7 @@ dependencies = [
  "pa-dream",
  "pa-learning",
  "pa-ledger",
+ "pa-mermaid",
  "pa-ravo",
  "pa-recall",
  "pa-session-index",
@@ -1415,6 +1416,15 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "pa-mermaid"
+version = "0.9.8"
+dependencies = [
+ "serde_json",
+ "unicode-segmentation",
+ "unicode-width 0.2.0",
 ]
 
 [[package]]

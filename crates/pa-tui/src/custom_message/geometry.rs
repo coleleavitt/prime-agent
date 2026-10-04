@@ -25,7 +25,15 @@ pub(super) fn agent_body_width(width: usize) -> usize {
     width.max(1).saturating_sub(4).max(1)
 }
 
-pub(crate) fn agent_message_body_count(message: &str, width: usize) -> usize {
+pub(crate) fn agent_message_body_count(
+    message: &str,
+    theme: &Theme,
+    width: usize,
+    mermaid: crate::markdown::MermaidMode,
+) -> usize {
+    if let Some(rows) = super::render::agent_body_diagram_rows(message, theme, width, mermaid) {
+        return rows.len().max(1);
+    }
     message
         .split('\n')
         .map(|source| wrapped_text_count(source, agent_body_width(width)))
@@ -39,12 +47,13 @@ pub(crate) fn agent_message_row_count(
     theme: &Theme,
     width: usize,
     leading: bool,
+    mermaid: crate::markdown::MermaidMode,
 ) -> usize {
     let header = super::render::agent_message_summary_line(row.direction, &row.counterpart, theme);
     usize::from(leading)
         + wrapped_line_count(&header, width.saturating_sub(2).max(1))
         + if detail.tool_output_expanded() {
-            agent_message_body_count(&row.message, width)
+            agent_message_body_count(&row.message, theme, width, mermaid)
         } else {
             0
         }
@@ -65,13 +74,20 @@ pub(crate) fn shell_completion_row_count(
         }
 }
 
-pub(crate) fn custom_panel_row_count(row: &CustomPanelRow, theme: &Theme, width: usize) -> usize {
+pub(crate) fn custom_panel_row_count(
+    row: &CustomPanelRow,
+    theme: &Theme,
+    width: usize,
+    mermaid: crate::markdown::MermaidMode,
+) -> usize {
+    let mut md = markdown_style(ThemeColor::CustomMessageText, theme);
+    md.mermaid = crate::diagram::surface_render(
+        crate::diagram::DiagramSurface::CustomMessage,
+        mermaid,
+        false,
+    );
     1 + text_row_count(
         &vec![super::render::custom_message_label(&row.custom_type, theme)],
         width,
-    ) + branch_markdown_count(
-        &row.content,
-        &markdown_style(ThemeColor::CustomMessageText, theme),
-        width,
-    )
+    ) + branch_markdown_count(&row.content, &md, width)
 }

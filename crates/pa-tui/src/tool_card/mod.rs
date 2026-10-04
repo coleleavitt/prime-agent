@@ -124,8 +124,31 @@ pub fn render_tool_card(
     width: usize,
     show_images: bool,
 ) -> Vec<Line> {
+    render_tool_card_in(
+        card,
+        frame,
+        detail,
+        theme,
+        width,
+        show_images,
+        crate::markdown::MermaidMode::Off,
+    )
+}
+
+/// [`render_tool_card`] under the `markdown.mermaid` setting, which an installed diagram
+/// renderer ([`crate::diagram`]) honours in the agent messages an ipython cell sent.
+#[must_use]
+pub(crate) fn render_tool_card_in(
+    card: &ToolCallCard,
+    frame: usize,
+    detail: Detail,
+    theme: &Theme,
+    width: usize,
+    show_images: bool,
+    mermaid: crate::markdown::MermaidMode,
+) -> Vec<Line> {
     match card.name.as_str() {
-        "ipython" => ipython::render(card, frame, detail, theme, width, show_images),
+        "ipython" => ipython::render_in(card, frame, detail, theme, width, show_images, mermaid),
         "bash" => bash::render(card, frame, detail, theme, width, show_images),
         _ => generic::render(card, frame, detail, theme, width, show_images),
     }
@@ -371,9 +394,10 @@ pub(crate) fn count_tool_card(
     theme: &Theme,
     width: usize,
     show_images: bool,
+    mermaid: crate::markdown::MermaidMode,
 ) -> usize {
     match card.name.as_str() {
-        "ipython" => ipython::count(card, frame, detail, theme, width, show_images),
+        "ipython" => ipython::count(card, frame, detail, theme, width, show_images, mermaid),
         "bash" => bash::count(card, frame, detail, theme, width, show_images),
         _ => generic::count(card, frame, detail, theme, width, show_images),
     }

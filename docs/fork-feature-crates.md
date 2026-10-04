@@ -7,7 +7,7 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
 ## Rules
 
 1. **One feature, one crate.** Name `pa-<feature>` (`pa-trace`, `pa-recall`, `pa-toolforge`, `pa-dream`,
-   `pa-workflow`, `pa-ledger`, `pa-ravo`, `pa-learning`). The crate's `README.md` states scope, non-goals, public API,
+   `pa-workflow`, `pa-ledger`, `pa-ravo`, `pa-learning`, `pa-mermaid`). The crate's `README.md` states scope, non-goals, public API,
    the seams it plugs into, the files it owns, and its telemetry events.
 2. **Dependencies point down only.** A feature crate may depend on `pa-types`, `pa-telemetry`, `pa-agent`, `pa-ai`,
    `pa-models`, `pa-core`, and on other feature crates listed as its prerequisites. It never depends on `pa-daemon`,
@@ -51,6 +51,12 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
      `pa_core::refinement::executor::AutoRefinePolicy` (the review's prompt texts and what an approval runs; the
      review's whole reply is on `AutoRefineReview::reply`);
    - harness entries keep the keys pa-core does not model (`HarnessEntry::extensions`), as the state keeps its own.
+   - TUI diagrams: `pa_tui::diagram::install_diagram_renderer` takes a process-wide `DiagramRenderer` (once,
+     before the first frame; `pa-cli` installs it from `features::install_tui_features`) that lays out every
+     `mermaid` fence instead of the built-in renderer — drawn rows or the kept source, each with notice lines, the
+     paragraph closed after them — and may opt into custom messages, agent messages, and `/btw` answers
+     (`draws_on`), all under the `markdown.mermaid` mode. Without one nothing changes. `pa-tui` stays unaware of the
+     feature crates, so `pa-cli` adapts a crate's layout onto the seam's types.
   Seams to add as features need them: system-prompt layer providers, turn-start observers, feature-contributed
   bundled skills, feature slash commands, feature daemon events.
 5. **Data ownership.** A crate owns its files under `~/.prime/agent/<feature>/` (or the session artifact dir) and its
@@ -83,6 +89,6 @@ plus the windows-gnu clippy lane, `cargo deny` for any new dependency, and the c
 | 2 | `pa-recall`, `pa-toolforge`, `pa-dream` (standalone zero-token runner), `pa-workflow` (v1) | `pa-trace` (spans) |
 | 3 | `pa-ledger` (failure ledger, resolution index) → `pa-ravo` (gate, referee, trust, run service) | `pa-trace`, `pa-ledger` |
 | 4 | `pa-learning` (learning index, trajectory index) → in-session Dream in `pa-dream` | `pa-trace`, `pa-ravo` |
-| 5 | Workflow V2 in `pa-workflow`, persisted session-catalog index, Mermaid rendering | per item |
+| 5 | Workflow V2 in `pa-workflow`, persisted session-catalog index, Mermaid rendering (`pa-mermaid`) | per item |
 
 The inventory behind this table (sizes, TS paths, key commits) is kept with the porting work.

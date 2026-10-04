@@ -906,7 +906,12 @@ mod tests {
             ),
             (
                 None,
-                render::render_custom_panel(&panel, &theme, 60),
+                render::render_custom_panel(
+                    &panel,
+                    &theme,
+                    60,
+                    crate::markdown::MermaidMode::default(),
+                ),
                 vec!["", " [notice]"],
             ),
             (

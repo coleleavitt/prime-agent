@@ -6,6 +6,7 @@ use super::{
     AgentMessageDirection, AgentMessageRow, CustomPanelRow, ShellCompletionRow, AGENT_MESSAGE_LABEL,
 };
 use crate::chat::Detail;
+use crate::markdown::MermaidMode;
 use crate::theme::{Theme, ThemeColor};
 use crate::width::{pad_line, str_width, truncate_line, wrap_line, wrap_text};
 use crate::{Line, Span};
@@ -80,6 +81,7 @@ pub(crate) fn render_agent_message(
     theme: &Theme,
     width: usize,
     leading: bool,
+    mermaid: MermaidMode,
 ) -> Vec<Line> {
     let mut out = Vec::new();
     if leading {
@@ -88,24 +90,86 @@ pub(crate) fn render_agent_message(
     let header = agent_message_summary_line(row.direction, &row.counterpart, theme);
     out.extend(text_rows(&header, width));
     if detail.tool_output_expanded() {
-        out.extend(agent_message_body(&row.message, theme, width));
+        out.extend(agent_message_body(&row.message, theme, width, mermaid));
     }
     out
 }
 
+/// The body rows of a message an installed diagram renderer draws into (TS
+/// `createMermaidTextRenderer`): prose re-wrapped at the body width, drawn rows as they
+/// are, notices in their level's color. `None` when no renderer draws agent messages, the
+/// mode is off, or nothing was drawn — the body keeps its plain rendering.
+pub(crate) fn agent_body_diagram_rows(
+    message: &str,
+    theme: &Theme,
+    width: usize,
+    mermaid: MermaidMode,
+) -> Option<Vec<Line>> {
+    if !crate::diagram::mode_active(mermaid, false) {
+        return None;
+    }
+    let renderer = crate::diagram::installed()
+        .filter(|renderer| renderer.draws_on(crate::diagram::DiagramSurface::AgentMessage))?;
+    let text_width = super::geometry::agent_body_width(width);
+    let segments = crate::diagram::text_segments(message, text_width, renderer)?;
+    let palette = crate::markdown::MermaidPalette::from_theme(theme);
+    let body = theme.fg_style(ThemeColor::CustomMessageText);
+    let mut lines: Vec<Line> = Vec::new();
+    for segment in segments {
+        match segment {
+            crate::diagram::TextSegment::Rows(rows) => lines.extend(
+                rows.iter()
+                    .map(|row| crate::markdown::drawn_spans(row, &palette, |_| body)),
+            ),
+            crate::diagram::TextSegment::Text(text_lines) => {
+                for fragments in text_lines {
+                    let line: Line = fragments
+                        .into_iter()
+                        .map(|(text, level)| {
+                            let style = level.map_or(body, |level| {
+                                crate::markdown::notice_style(level, &palette)
+                            });
+                            Span::styled(text, style)
+                        })
+                        .collect();
+                    let wrapped = wrap_line(&line, text_width);
+                    if wrapped.is_empty() {
+                        lines.push(Vec::new());
+                    }
+                    lines.extend(wrapped);
+                }
+            }
+        }
+    }
+    Some(lines)
+}
+
 /// Each source line wraps at `width - 4`: the first rendered line carries
-/// the `╰─ ` gutter, the rest three spaces, all in `customMessageText`.
-pub(crate) fn agent_message_body(message: &str, theme: &Theme, width: usize) -> Vec<Line> {
+/// the `╰─ ` gutter, the rest three spaces, all in `customMessageText` (diagram rows and
+/// notices an installed renderer draws keep their own colors).
+pub(crate) fn agent_message_body(
+    message: &str,
+    theme: &Theme,
+    width: usize,
+    mermaid: MermaidMode,
+) -> Vec<Line> {
     let safe_width = width.max(1);
     let text_width = super::geometry::agent_body_width(width);
     let body = theme.fg_style(ThemeColor::CustomMessageText);
-    let mut lines: Vec<Line> = Vec::new();
-    for source in message.split('\n') {
-        let wrapped = wrap_text(source, text_width);
-        for line in wrapped {
-            lines.push(line);
+    let lines = agent_body_diagram_rows(message, theme, width, mermaid).unwrap_or_else(|| {
+        let mut lines: Vec<Line> = Vec::new();
+        for source in message.split('\n') {
+            for line in wrap_text(source, text_width) {
+                lines.push(
+                    line.into_iter()
+                        .map(|span| Span::styled(span.content, body))
+                        .collect(),
+                );
+            }
         }
-    }
+        lines
+    });
+    let mut lines = lines;
     if lines.is_empty() {
         lines.push(Vec::new());
     }
@@ -122,9 +186,7 @@ pub(crate) fn agent_message_body(message: &str, theme: &Theme, width: usize) -> 
             } else {
                 row.push(Span::raw("   "));
             }
-            for span in line {
-                row.push(Span::styled(span.content, body));
-            }
+            row.extend(line);
             truncate_line(&row, safe_width, "")
         })
         .collect()
@@ -192,8 +254,18 @@ pub(crate) fn pad_with(mut line: Line, width: usize, base: Style) -> Line {
 
 /// One generic custom row: a leading blank, the bold `[<customType>]` label, then the
 /// always-shown markdown body in `customMessageText` under the branch gutter.
-pub(crate) fn render_custom_panel(row: &CustomPanelRow, theme: &Theme, width: usize) -> Vec<Line> {
-    let md = super::geometry::markdown_style(ThemeColor::CustomMessageText, theme);
+pub(crate) fn render_custom_panel(
+    row: &CustomPanelRow,
+    theme: &Theme,
+    width: usize,
+    mermaid: MermaidMode,
+) -> Vec<Line> {
+    let mut md = super::geometry::markdown_style(ThemeColor::CustomMessageText, theme);
+    md.mermaid = crate::diagram::surface_render(
+        crate::diagram::DiagramSurface::CustomMessage,
+        mermaid,
+        false,
+    );
     let mut out = vec![spacer()];
     out.extend(text_rows(
         &vec![custom_message_label(&row.custom_type, theme)],
@@ -230,7 +302,14 @@ mod tests {
             counterpart: "model-probe".to_string(),
             message: "ready".to_string(),
         };
-        let rows = render_agent_message(&row, Detail::Overview, &theme(), 60, true);
+        let rows = render_agent_message(
+            &row,
+            Detail::Overview,
+            &theme(),
+            60,
+            true,
+            MermaidMode::default(),
+        );
         assert_eq!(rows.len(), 2, "{rows:?}");
         assert!(rows[0].is_empty());
         let header = flat(&rows[1]);
@@ -263,7 +342,14 @@ mod tests {
                 counterpart: "root".to_string(),
                 message,
             };
-            let rows = render_agent_message(&row, Detail::Overview, &theme(), 60, false);
+            let rows = render_agent_message(
+                &row,
+                Detail::Overview,
+                &theme(),
+                60,
+                false,
+                MermaidMode::default(),
+            );
             assert_eq!(rows.len(), 1, "one header row: {rows:?}");
             let header = flat(&rows[0]).trim_end().to_string();
             assert_eq!(header, " \u{2709} Agent message \u{b7} \u{2193} root");
@@ -285,7 +371,14 @@ mod tests {
                 counterpart: "worker".to_string(),
                 message: "ping".to_string(),
             };
-            let rows = render_agent_message(&row, Detail::Overview, &theme(), 80, false);
+            let rows = render_agent_message(
+                &row,
+                Detail::Overview,
+                &theme(),
+                80,
+                false,
+                MermaidMode::default(),
+            );
             let header = flat(&rows[0]);
             assert!(
                 header.contains(&format!("\u{2709} Agent message \u{b7} {arrow} worker")),
@@ -305,7 +398,14 @@ mod tests {
             counterpart: "root".to_string(),
             message: "line one\nline two".to_string(),
         };
-        let rows = render_agent_message(&row, Detail::All, &theme(), 60, false);
+        let rows = render_agent_message(
+            &row,
+            Detail::All,
+            &theme(),
+            60,
+            false,
+            MermaidMode::default(),
+        );
         assert_eq!(rows.len(), 3, "{rows:?}");
         assert_eq!(flat(&rows[1]), " \u{2570}\u{2500} line one");
         assert_eq!(flat(&rows[2]), "    line two");
@@ -321,6 +421,64 @@ mod tests {
         assert!(rows[1]
             .iter()
             .any(|span| span.content == "line one" && span.style == body));
+    }
+
+    /// No diagram renderer is installed in this binary: agent-message bodies and custom
+    /// panels keep their `mermaid` fences as text, as the native product renders them.
+    #[test]
+    fn without_an_installed_renderer_message_bodies_keep_their_fences() {
+        let fence = "Plan:\n```mermaid\nflowchart LR\n  A --> B\n```";
+        let row = AgentMessageRow {
+            direction: AgentMessageDirection::Received,
+            counterpart: "lane".to_string(),
+            message: fence.to_string(),
+        };
+        let rows = render_agent_message(
+            &row,
+            Detail::All,
+            &theme(),
+            60,
+            false,
+            MermaidMode::Streaming,
+        );
+        let text: Vec<String> = rows
+            .iter()
+            .map(|r| flat(r).trim_end().to_string())
+            .collect();
+        assert_eq!(
+            text[1..],
+            [
+                " ╰─ Plan:",
+                "    ```mermaid",
+                "    flowchart LR",
+                "      A --> B",
+                "    ```",
+            ]
+        );
+        assert_eq!(
+            crate::custom_message::geometry::agent_message_row_count(
+                &row,
+                Detail::All,
+                &theme(),
+                60,
+                false,
+                MermaidMode::Streaming,
+            ),
+            rows.len()
+        );
+        let panel = CustomPanelRow {
+            custom_type: "note".to_string(),
+            content: fence.to_string(),
+        };
+        let panel_text: Vec<String> =
+            render_custom_panel(&panel, &theme(), 60, MermaidMode::Streaming)
+                .iter()
+                .map(|r| flat(r).trim_end().to_string())
+                .collect();
+        assert!(
+            panel_text.iter().any(|r| r.ends_with("flowchart LR")),
+            "{panel_text:?}"
+        );
     }
 
     #[test]
@@ -389,7 +547,7 @@ mod tests {
             custom_type: "autonomous_status".to_string(),
             content: "[autonomous-status: on]".to_string(),
         };
-        let rows = render_custom_panel(&row, &theme(), 40);
+        let rows = render_custom_panel(&row, &theme(), 40, MermaidMode::default());
         // No box background anywhere on the row.
         assert_eq!(
             rows[1][1],

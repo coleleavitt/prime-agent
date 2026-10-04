@@ -1,0 +1,17 @@
+[package]
+name = "pa-mermaid"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The fork's Mermaid diagrams: a port of lovely-mermaid 0.3.3 and the wide-diagram policy (axis flip, width notes, warnings beside the art)."
+
+[dependencies]
+# Grapheme clusters are the unit of measuring and painting (the versions pa-tui resolves).
+unicode-segmentation = "1"
+unicode-width = "0.2"
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

@@ -2,7 +2,7 @@
 //! holds, per case, the markdown TS rewrote the assistant text into and the block structure
 //! marked lexed from it (`scripts/mermaid-goldens.mjs`).
 
-use super::mermaid_blocks::{apply, ArtRow, MermaidMode, MermaidRender};
+use super::mermaid_blocks::{apply, apply_with, ArtRow, MermaidMode, MermaidRender};
 use super::*;
 use crate::theme::{ColorMode, Theme, ThemeColor};
 use serde_json::Value;
@@ -40,6 +40,9 @@ fn block_shape(block: &Block) -> Value {
                     ArtRow::Art(spans) if spans.is_empty() => "\u{a0}".to_owned(),
                     ArtRow::Art(spans) => spans.iter().map(|s| s.text.as_str()).collect(),
                     ArtRow::Warning { text, trailing } => format!("{text}{trailing}"),
+                    ArtRow::Drawn(spans) if spans.is_empty() => "\u{a0}".to_owned(),
+                    ArtRow::Drawn(spans) => spans.iter().map(|s| s.text.as_str()).collect(),
+                    ArtRow::Notice(notice) => notice.text.clone(),
                 })
                 .collect(),
         ),
@@ -245,5 +248,235 @@ fn the_row_count_matches_the_painted_rows() {
             "{} (cached)",
             case["name"]
         );
+    }
+}
+
+// ------------------------------------------------------------ installed renderer
+
+pub(crate) mod installed {
+    use super::*;
+    use crate::diagram::{
+        DiagramLayout, DiagramNotice, DiagramRenderer, DiagramRole, DiagramSpan, NoticeLevel,
+    };
+    use std::collections::HashMap;
+
+    const DIAGRAM_GOLDENS: &str = include_str!("diagram_transform_goldens.json");
+
+    /// A layout recorded in a golden file (`scripts/lovely-mermaid-goldens.mjs`).
+    pub(crate) fn layout_of(value: &Value) -> DiagramLayout {
+        let notices = value["notices"]
+            .as_array()
+            .expect("notices")
+            .iter()
+            .map(|n| DiagramNotice {
+                level: match n["level"].as_str().expect("level") {
+                    "info" => NoticeLevel::Info,
+                    "warning" => NoticeLevel::Warning,
+                    other => panic!("unknown level {other}"),
+                },
+                text: n["text"].as_str().expect("text").to_owned(),
+            })
+            .collect();
+        match value["kind"].as_str().expect("kind") {
+            "art" => DiagramLayout::Rows {
+                rows: value["rows"]
+                    .as_array()
+                    .expect("rows")
+                    .iter()
+                    .map(|row| {
+                        row.as_array()
+                            .expect("row")
+                            .iter()
+                            .map(|run| DiagramSpan {
+                                role: match run[0].as_str().expect("role") {
+                                    "border" => DiagramRole::Border,
+                                    "text" => DiagramRole::Text,
+                                    "edge" => DiagramRole::Edge,
+                                    "edgeLabel" => DiagramRole::EdgeLabel,
+                                    "title" => DiagramRole::Title,
+                                    "none" => DiagramRole::None,
+                                    other => panic!("unknown role {other}"),
+                                },
+                                text: run[1].as_str().expect("text").to_owned(),
+                            })
+                            .collect()
+                    })
+                    .collect(),
+                notices,
+            },
+            "source" => DiagramLayout::Source { notices },
+            other => panic!("unknown layout kind {other}"),
+        }
+    }
+
+    /// A renderer replaying the layouts a golden case recorded, by fence source, width,
+    /// and streaming state.
+    pub(crate) struct Replay(HashMap<(String, usize, bool), DiagramLayout>);
+
+    impl Replay {
+        pub(crate) fn of(case: &Value) -> Self {
+            Self(
+                case["fences"]
+                    .as_array()
+                    .expect("fences")
+                    .iter()
+                    .map(|f| {
+                        (
+                            (
+                                f["src"].as_str().expect("src").to_owned(),
+                                f["width"].as_u64().expect("width") as usize,
+                                f["streaming"].as_bool().expect("streaming"),
+                            ),
+                            layout_of(&f["layout"]),
+                        )
+                    })
+                    .collect(),
+            )
+        }
+    }
+
+    impl DiagramRenderer for Replay {
+        fn layout(&self, source: &str, available_width: usize, streaming: bool) -> DiagramLayout {
+            self.0
+                .get(&(source.to_owned(), available_width, streaming))
+                .cloned()
+                .unwrap_or_else(|| {
+                    panic!("no recorded layout for {source:?} at {available_width} ({streaming})")
+                })
+        }
+    }
+
+    /// Every case's blocks match what marked lexes from the fork's TS-rewritten markdown
+    /// (`createMermaidMarkdownTransform`, `a358fd19e`) given the same layouts: drawn rows,
+    /// notices, kept fences, and the paragraph closed after them.
+    ///
+    /// One deliberate divergence stays out of the corpus: TS appends the notices to a kept
+    /// fence's raw text, so under a fence that never closed (a settled message cut off
+    /// mid-diagram) its re-lex reads them as more code, backticks and all. Here they sit
+    /// under the fence as for a closed one (`an_unclosed_kept_fence_keeps_its_notices_under_it`).
+    #[test]
+    fn fence_rewrite_matches_the_fork_ts_transform() {
+        let cases: Vec<Value> = serde_json::from_str(DIAGRAM_GOLDENS).expect("goldens parse");
+        assert!(cases.len() >= 30, "the corpus is loaded");
+        let mut mismatches = Vec::new();
+        for case in &cases {
+            let text = case["text"].as_str().expect("text");
+            let width = case["width"].as_u64().expect("width") as usize;
+            let streaming = case["streaming"].as_bool().expect("streaming");
+            let replay = Replay::of(case);
+            let blocks = apply_with(
+                parse_blocks(text),
+                width,
+                &style(mode_of(case), streaming),
+                Some(&replay),
+            );
+            let actual = Value::Array(blocks.iter().map(block_shape).collect());
+            if actual != case["blocks"] {
+                mismatches.push(format!(
+                    "{}\n  expected: {}\n  actual:   {actual}",
+                    case["name"], case["blocks"]
+                ));
+            }
+        }
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    }
+
+    #[test]
+    fn an_unclosed_kept_fence_keeps_its_notices_under_it() {
+        let replay = Replay(HashMap::from([(
+            ("flowchart TD\n  ((( ".to_owned(), 80, false),
+            DiagramLayout::Source {
+                notices: vec![DiagramNotice {
+                    level: NoticeLevel::Warning,
+                    text: "Mermaid diagram not drawn: no statement could be parsed".to_owned(),
+                }],
+            },
+        )]));
+        let blocks = apply_with(
+            parse_blocks("Look:\n\n```mermaid\nflowchart TD\n  ((( "),
+            80,
+            &style(MermaidMode::Streaming, false),
+            Some(&replay),
+        );
+        assert_eq!(
+            Value::Array(blocks.iter().map(block_shape).collect()),
+            serde_json::json!([
+                ["paragraph", false, ["Look:"]],
+                ["code", true, ["flowchart TD", "  ((( "]],
+                [
+                    "paragraph",
+                    false,
+                    ["Mermaid diagram not drawn: no statement could be parsed"]
+                ],
+            ])
+        );
+    }
+
+    /// A stub renderer: one fixed row and one notice for any fence.
+    struct Stub;
+
+    impl DiagramRenderer for Stub {
+        fn layout(&self, source: &str, available_width: usize, streaming: bool) -> DiagramLayout {
+            DiagramLayout::Rows {
+                rows: vec![vec![DiagramSpan {
+                    text: format!("[{}|{available_width}|{streaming}]", source.len()),
+                    role: DiagramRole::Edge,
+                }]],
+                notices: vec![DiagramNotice {
+                    level: NoticeLevel::Info,
+                    text: "note".to_owned(),
+                }],
+            }
+        }
+    }
+
+    #[test]
+    fn a_stub_renderer_draws_its_rows_and_notices_and_closes_the_paragraph() {
+        let md = style(MermaidMode::Streaming, true);
+        let rows = row_texts(&render_markdown_with(
+            "Before\n```mermaid\nflowchart LR\n```\nAfter",
+            40,
+            &md,
+            &Stub,
+        ));
+        assert_eq!(rows, ["Before", "[12|40|true]", "note", "", "After"]);
+    }
+
+    #[test]
+    fn the_mode_still_gates_an_installed_renderer() {
+        let text = "```mermaid\nflowchart LR\n```";
+        let off = row_texts(&render_markdown_with(
+            text,
+            40,
+            &style(MermaidMode::Off, false),
+            &Stub,
+        ));
+        let final_streaming = row_texts(&render_markdown_with(
+            text,
+            40,
+            &style(MermaidMode::Final, true),
+            &Stub,
+        ));
+        assert_eq!(off, ["  flowchart LR"]);
+        assert_eq!(final_streaming, off);
+    }
+
+    /// Render through the hook with an explicit renderer (the global one stays unset in
+    /// unit tests).
+    fn render_markdown_with(
+        text: &str,
+        width: usize,
+        style: &MarkdownStyle,
+        renderer: &dyn DiagramRenderer,
+    ) -> Vec<Line> {
+        let blocks = apply_with(parse_blocks(text), width, style, Some(renderer));
+        let mut lines = Vec::new();
+        for (i, block) in blocks.iter().enumerate() {
+            if block.sep_blank {
+                lines.push(Vec::new());
+            }
+            render_block(block, blocks.get(i + 1), width, style, &mut lines);
+        }
+        lines
     }
 }

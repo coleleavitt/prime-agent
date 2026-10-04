@@ -1,0 +1,4 @@
+- Fixed Mermaid flowcharts wider than the terminal silently showing their source: they are now redrawn on the other axis to fit, or keep the source with a note giving the columns needed.
+- Changed Mermaid diagrams with unreadable statements to draw what parsed and list the skipped statements, instead of showing only the source.
+- Added Mermaid diagram rendering to agent messages, custom messages and /btw answers.
+- Changed the Mermaid renderer to a port of lovely-mermaid 0.3.3 (formerly grok-mermaid), which fixes several flowchart, state and class diagram parsing bugs and draws pie, mindmap, timeline and gitGraph diagrams.

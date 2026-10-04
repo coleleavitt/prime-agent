@@ -138,7 +138,8 @@ impl SideQuestionPane {
     }
 
     /// Render the pane: blank surfaced row, the turns, and the dim hint row, every row painted with
-    /// the popup background and padded to the full width.
+    /// the popup background and padded to the full width. `mermaid` (the `markdown.mermaid`
+    /// setting) applies to answers when an installed diagram renderer draws there.
     #[must_use]
     pub fn render(
         &self,
@@ -147,6 +148,7 @@ impl SideQuestionPane {
         expanded: bool,
         cancel_hint: &str,
         width: usize,
+        mermaid: crate::markdown::MermaidMode,
     ) -> Vec<crate::Line> {
         let bg = theme.bg_style(ThemeBg::ToolPanelBg);
         let user_text = theme.fg_style(ThemeColor::UserMessageText);
@@ -186,6 +188,11 @@ impl SideQuestionPane {
             // The plain text renders in the user-message color, not the markdown
             // body color.
             style.body = theme.fg_style(ThemeColor::UserMessageText);
+            style.mermaid = crate::diagram::surface_render(
+                crate::diagram::DiagramSurface::SideAnswer,
+                mermaid,
+                turn.status == "running",
+            );
             let content_width = width.saturating_sub(PADDING_X).max(1);
             let mut rendered = if turn.answer.is_empty() {
                 Vec::new()
@@ -308,6 +315,7 @@ fn render_bubble(text: &str, theme: &Theme, width: usize) -> Vec<crate::Line> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::markdown::MermaidMode;
 
     fn turn(id: &str, status: &str, answer: &str) -> SideQuestionTurn {
         SideQuestionTurn {
@@ -375,7 +383,7 @@ mod tests {
         let mut bash = PaneBash::new_running("echo hi", true);
         bash.output = "hi\n".to_string();
         pane.bash = Some(bash);
-        let rows = pane.render(&theme, 0, false, "Esc/Ctrl+C", 80);
+        let rows = pane.render(&theme, 0, false, "Esc/Ctrl+C", 80, MermaidMode::default());
         let text =
             |line: &crate::Line| -> String { line.iter().map(|s| s.content.as_str()).collect() };
         let joined: Vec<String> = rows.iter().map(&text).collect();
@@ -397,7 +405,7 @@ mod tests {
         pane.bash.as_mut().unwrap().running = false;
         pane.bash.as_mut().unwrap().exit_code = Some(3);
         let joined: Vec<String> = pane
-            .render(&theme, 0, false, "Esc/Ctrl+C", 80)
+            .render(&theme, 0, false, "Esc/Ctrl+C", 80, MermaidMode::default())
             .iter()
             .map(&text)
             .collect();
@@ -422,7 +430,7 @@ mod tests {
         let theme = crate::theme::Theme::builtin("prime", crate::theme::ColorMode::Color256);
         let mut pane = SideQuestionPane::default();
         pane.upsert(turn("a", "complete", "the answer"));
-        let rows = pane.render(&theme, 0, false, "Esc/Ctrl+C", 80);
+        let rows = pane.render(&theme, 0, false, "Esc/Ctrl+C", 80, MermaidMode::default());
         let text =
             |line: &crate::Line| -> String { line.iter().map(|s| s.content.as_str()).collect() };
         let joined: Vec<String> = rows.iter().map(&text).collect();
@@ -437,7 +445,7 @@ mod tests {
             .any(|row| row.contains("reply to follow up · esc to return to session")));
         // A running turn swaps the hint.
         pane.upsert(turn("b", "running", ""));
-        let rows = pane.render(&theme, 0, false, "Esc/Ctrl+C", 80);
+        let rows = pane.render(&theme, 0, false, "Esc/Ctrl+C", 80, MermaidMode::default());
         let joined: Vec<String> = rows.iter().map(&text).collect();
         assert!(joined
             .iter()
@@ -448,7 +456,7 @@ mod tests {
             answer: String::new(),
             ..turn("b", "cancelled", "")
         });
-        let rows = pane.render(&theme, 0, false, "Esc/Ctrl+C", 80);
+        let rows = pane.render(&theme, 0, false, "Esc/Ctrl+C", 80, MermaidMode::default());
         let joined: Vec<String> = rows.iter().map(&text).collect();
         assert!(joined.iter().any(|row| row.contains("Cancelled")));
     }
