@@ -30,10 +30,10 @@ pub use fingerprint::{
     ParsedTraceback, FAILURE_FINGERPRINT_ATTR, FAILURE_OPPONENT_PREFIX,
 };
 pub use harness::{
-    global_failure_ledger_enabled, global_failure_ledger_enabled_from_env,
-    global_harness_state_dir, harness_state_path, local_harness_state_dir, with_harness_state_lock,
-    HarnessDocument, HarnessStateError, FAILURES_KEY, GLOBAL_FAILURE_LEDGER_ENV,
-    HARNESS_STATE_DIR_NAME, HARNESS_STATE_FILE_NAME,
+    acquire_harness_state_lock, global_failure_ledger_enabled,
+    global_failure_ledger_enabled_from_env, global_harness_state_dir, harness_state_path,
+    local_harness_state_dir, with_harness_state_lock, HarnessDocument, HarnessStateError,
+    FAILURES_KEY, GLOBAL_FAILURE_LEDGER_ENV, HARNESS_STATE_DIR_NAME, HARNESS_STATE_FILE_NAME,
 };
 pub use js::{iso_from_millis, now_iso, now_millis};
 pub use ledger::{

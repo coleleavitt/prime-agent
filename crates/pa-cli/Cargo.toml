@@ -11,6 +11,7 @@ description = "The prime-agent binary."
 default = [
     "dream",
     "ledger",
+    "ravo",
     "recall",
     "session-index",
     "toolforge",
@@ -21,6 +22,9 @@ default = [
 dream = ["dep:pa-dream"]
 # The failure ledger and the ipython resolution index (crates/pa-ledger).
 ledger = ["dep:pa-ledger"]
+# RAVO: the gate on harness refinements, its lineage and provisional-regression
+# recording (crates/pa-ravo); it observes the failure ledger.
+ravo = ["ledger", "dep:pa-ravo"]
 # Workspace Recall (crates/pa-recall).
 recall = ["dep:pa-recall"]
 # The persisted saved-session catalog index, session-index.ndjson (crates/pa-session-index).
@@ -48,6 +52,7 @@ pa-dream = { path = "../pa-dream", optional = true }
 pa-trace = { path = "../pa-trace", optional = true }
 pa-ledger = { path = "../pa-ledger", optional = true }
 pa-session-index = { path = "../pa-session-index", optional = true }
+pa-ravo = { path = "../pa-ravo", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }
 tokio = { workspace = true }
 anyhow = { workspace = true }

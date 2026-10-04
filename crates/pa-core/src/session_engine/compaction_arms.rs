@@ -324,18 +324,22 @@ impl AgentSession {
         api_key: Option<String>,
         global_harness_dir: std::path::PathBuf,
     ) -> anyhow::Result<crate::refinement::RefinementResult> {
-        self.refine_with_refiner(
+        self.refine_with_calls(
             options,
             source,
             model,
-            refine::default_refiner_call(api_key),
+            refine::default_refiner_call(api_key.clone()),
+            Some(refine::default_refiner_call(api_key)),
             global_harness_dir,
         )
         .await
     }
 
     /// [`Self::refine`] with an injected refiner call: the seam the parity
-    /// tests use to drive the refinement without a provider.
+    /// tests use to drive the refinement without a provider. It gives an
+    /// installed refinement gate no model call, so the refinement runs
+    /// ungated.
+    #[cfg(test)]
     pub(crate) async fn refine_with_refiner(
         &self,
         options: &refine::RefineOptions,
@@ -344,6 +348,37 @@ impl AgentSession {
         refine_call: crate::refinement::executor::RefinerFn,
         global_harness_dir: std::path::PathBuf,
     ) -> anyhow::Result<crate::refinement::RefinementResult> {
+        self.refine_with_calls(
+            options,
+            source,
+            model,
+            refine_call,
+            None,
+            global_harness_dir,
+        )
+        .await
+    }
+
+    /// [`Self::refine`] with injected model calls: `refine_call` plans, and
+    /// `gate_call` is the one call the session's refinement gate (when a
+    /// feature installed one) may make; without it the gate is not
+    /// consulted.
+    pub(crate) async fn refine_with_calls(
+        &self,
+        options: &refine::RefineOptions,
+        source: refine::RefinementSource,
+        model: &pa_types::ai::Model,
+        refine_call: crate::refinement::executor::RefinerFn,
+        gate_call: Option<crate::refinement::executor::RefinerFn>,
+        global_harness_dir: std::path::PathBuf,
+    ) -> anyhow::Result<crate::refinement::RefinementResult> {
+        let gating = match (&self.refinement_gate, gate_call) {
+            (Some(gate), Some(model_call)) => Some(crate::refinement::gate::RefinementGating {
+                gate: std::sync::Arc::clone(gate),
+                model_call,
+            }),
+            _ => None,
+        };
         // The transcript's consumed artifacts are extracted under this first
         // lock straight from the retained rows: no second clone of the rows.
         let parts = self.session.lock().await.refine_transcript_parts();
@@ -363,7 +398,7 @@ impl AgentSession {
             // deciding on a snapshot the request made stale. A session
             // without a wired agent dir keeps the fail-closed disabled
             // default.
-            refine::execute_refinement_with_rows(
+            refine::execute_refinement_gated(
                 &mut session,
                 refine::RefinementTranscript {
                     messages: &messages,
@@ -375,6 +410,7 @@ impl AgentSession {
                 source,
                 refine_call,
                 self.agent_dir.as_deref(),
+                gating,
             )
             .await?
         };

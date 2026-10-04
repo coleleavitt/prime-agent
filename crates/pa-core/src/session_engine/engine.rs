@@ -663,6 +663,18 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     .await?;
     session.set_auto_refine(auto_refine_allowed, auto_refine_gates);
     session.set_agent_dir(config.agent_dir.clone());
+    let refinement_gate =
+        crate::features::session_refinement_gate(crate::features::installed(), &feature_context);
+    if let Some(gate) = &refinement_gate {
+        // A feature's own refine requests ride the same gates as the
+        // session's automatic refines.
+        if auto_refine_allowed && auto_refine_gates.enabled {
+            gate.attach_refine_requester(super::turn_boundary::RefineRequester::new(
+                &turn_boundary,
+            ));
+        }
+    }
+    session.set_refinement_gate(refinement_gate);
     // Every compaction path reads the session's resolved compaction
     // settings (TS `getCompactionSettings`): `/compact` matches the
     // `compact.*` turn-boundary tool's `keepRecentTokens`/`reserveTokens`.

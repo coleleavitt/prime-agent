@@ -14,16 +14,43 @@ use pa_core::features::SessionFeature;
 // not stable); with every feature compiled out nothing is pushed.
 #[allow(unused_mut, clippy::vec_init_then_push)]
 pub fn enabled_features() -> Vec<Arc<dyn SessionFeature>> {
-    vec![
+    let mut features: Vec<Arc<dyn SessionFeature>> = vec![
         #[cfg(feature = "recall")]
         Arc::new(pa_recall::WorkspaceRecall::default()),
         #[cfg(feature = "toolforge")]
         Arc::new(pa_toolforge::ToolforgeFeature::new()),
         #[cfg(feature = "workflow")]
         Arc::new(pa_workflow::WorkflowFeature),
-        #[cfg(feature = "ledger")]
-        Arc::new(pa_ledger::FailureLedgerFeature::default()),
-    ]
+    ];
+    #[cfg(feature = "ledger")]
+    features.extend(ledger_features());
+    features
+}
+
+/// The failure ledger, and (feature `ravo`, which implies `ledger`) RAVO
+/// observing it: the ledger reports to RAVO's observer, and RAVO reads the
+/// ledger through its handle. RAVO is installed first, so at exit its
+/// replay self-checks finish before the ledger's flush writes them.
+#[cfg(feature = "ledger")]
+fn ledger_features() -> Vec<Arc<dyn SessionFeature>> {
+    #[cfg(feature = "ravo")]
+    {
+        let ravo = pa_ravo::RavoFeature::new(pa_ravo::RavoOptions {
+            enabled: None,
+            runner: Arc::new(pa_ravo::PythonReplayRunner::default()),
+            replay_sys_path: Vec::new(),
+        });
+        let ledger = pa_ledger::FailureLedgerFeature::with_observers(
+            pa_ledger::LedgerOptions::default(),
+            vec![ravo.ledger_observer()],
+        );
+        ravo.attach_ledger(ledger.handle());
+        vec![Arc::new(ravo), Arc::new(ledger)]
+    }
+    #[cfg(not(feature = "ravo"))]
+    {
+        vec![Arc::new(pa_ledger::FailureLedgerFeature::default())]
+    }
 }
 
 /// What the enabled features keep running for the life of the process; the
@@ -188,6 +215,8 @@ mod tests {
             "toolforge",
             #[cfg(feature = "workflow")]
             "workflow",
+            #[cfg(feature = "ravo")]
+            "ravo",
             #[cfg(feature = "ledger")]
             "ledger",
         ];

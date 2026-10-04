@@ -264,6 +264,7 @@ async fn execute_refine(
         global: options.global,
         instructions: options.instructions,
         rollback_id: options.rollback_id,
+        trigger: None,
     };
     let result = match engine
         .session

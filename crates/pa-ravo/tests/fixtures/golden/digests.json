@@ -1,0 +1,57 @@
+[
+  {
+    "value": {
+      "b": 1,
+      "a": [
+        true,
+        null,
+        "x"
+      ],
+      "é": {
+        "z": 0.1,
+        "y": 0
+      },
+      "A": 1e+21,
+      "c": 1.5e-7,
+      "d": 200000000000000000000,
+      "e": 0.0000012
+    },
+    "canonical": "{\"A\":1e+21,\"a\":[true,null,\"x\"],\"b\":1,\"c\":1.5e-7,\"d\":200000000000000000000,\"e\":0.0000012,\"é\":{\"y\":0,\"z\":0.1}}",
+    "sha256": "d83570383d8e3c65f63645c27c1ebfc4320e5b75fc059004deb6e8d542a2bbb1",
+    "artifactDigest": "d83570383d8e3c65f63645c27c1ebfc4320e5b75fc059004deb6e8d542a2bbb1"
+  },
+  {
+    "value": "plain   text \u0007",
+    "canonical": "\"plain   text \\u0007\"",
+    "sha256": "2e49ab04e73fbd26b464f63be686448ec9b9e385482f3a6fb7c9c6682043885a",
+    "artifactDigest": "2e49ab04e73fbd26b464f63be686448ec9b9e385482f3a6fb7c9c6682043885a"
+  },
+  {
+    "value": [
+      1,
+      2.5,
+      {
+        "k": "v"
+      }
+    ],
+    "canonical": "[1,2.5,{\"k\":\"v\"}]",
+    "sha256": "c01309f0a22e2f5980222502784377c329ac7a6d0d463f344be46f758cbd933c",
+    "artifactDigest": "c01309f0a22e2f5980222502784377c329ac7a6d0d463f344be46f758cbd933c"
+  },
+  {
+    "value": {
+      "summary": "s",
+      "rationale": "r",
+      "expectedOutcome": "e",
+      "edits": [
+        {
+          "action": "create",
+          "kind": "memory"
+        }
+      ]
+    },
+    "canonical": "{\"edits\":[{\"action\":\"create\",\"kind\":\"memory\"}],\"expectedOutcome\":\"e\",\"rationale\":\"r\",\"summary\":\"s\"}",
+    "sha256": "a582a99084801ef52b3ee4cd14f20bf75f4c8ae9a93eb7a8291caf7943d6d9e4",
+    "artifactDigest": "a582a99084801ef52b3ee4cd14f20bf75f4c8ae9a93eb7a8291caf7943d6d9e4"
+  }
+]

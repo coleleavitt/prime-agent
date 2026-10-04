@@ -17,6 +17,7 @@ members = [
     "crates/pa-trace",
     "crates/pa-workflow",
     "crates/pa-ledger",
+    "crates/pa-ravo",
     "crates/pa-session-index",
 ]
 

@@ -24,11 +24,58 @@ pub struct PendingCompaction {
     pub instructions: Option<String>,
 }
 
-/// A scheduled refinement (kernel `refine.run`).
+/// A scheduled refinement (kernel `refine.run`, or a feature's request
+/// through a [`RefineRequester`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PendingRefine {
     pub instructions: Option<String>,
     pub global: bool,
+    /// Why a feature asked for it; `None` for the agent's own request.
+    pub trigger: Option<RefineTrigger>,
+}
+
+/// A feature's own record of why it requested a refinement, carried with
+/// the request to the session's refinement gate untouched.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RefineTrigger {
+    pub data: Value,
+    /// The agent's `refine.run` joined the request after the feature
+    /// queued it.
+    pub joined_by_agent: bool,
+}
+
+/// A feature's handle onto one session's pending refinement: what it
+/// queues runs at the next serviced turn boundary like the agent's
+/// `refine.run`. Holds the session weakly.
+#[derive(Clone)]
+pub struct RefineRequester {
+    requests: std::sync::Weak<TurnBoundaryRequests>,
+}
+
+impl RefineRequester {
+    /// The requester of the session `requests` serves.
+    #[must_use]
+    pub fn new(requests: &Arc<TurnBoundaryRequests>) -> Self {
+        Self {
+            requests: Arc::downgrade(requests),
+        }
+    }
+
+    /// Replace the pending refinement with what `update` makes of it, in
+    /// one step; `false` when the session is gone. Blocking: call it from a
+    /// feature's own thread, never on the async runtime.
+    pub fn update(
+        &self,
+        update: impl FnOnce(Option<PendingRefine>) -> Option<PendingRefine>,
+    ) -> bool {
+        let Some(requests) = self.requests.upgrade() else {
+            return false;
+        };
+        let mut slot = requests.refine.blocking_lock();
+        let next = update(slot.take());
+        *slot = next;
+        true
+    }
 }
 
 /// The model facts `model.info` reports (TS answers nulls when the session
@@ -350,14 +397,32 @@ impl TurnBoundaryRequests {
                     }
                     let mut slot = requests.refine.lock().await;
                     let merged = match slot.as_ref() {
+                        // A feature's request keeps its instructions and
+                        // gets the agent's appended.
+                        Some(current @ PendingRefine {
+                            trigger: Some(trigger),
+                            ..
+                        }) => PendingRefine {
+                            instructions: match (&current.instructions, instructions) {
+                                (Some(queued), Some(asked)) => Some(format!("{queued}\n\n{asked}")),
+                                (queued, asked) => asked.or_else(|| queued.clone()),
+                            },
+                            global: global.unwrap_or(current.global),
+                            trigger: Some(RefineTrigger {
+                                joined_by_agent: true,
+                                ..trigger.clone()
+                            }),
+                        },
                         Some(current) => PendingRefine {
                             instructions: instructions
                                 .or_else(|| current.instructions.clone()),
                             global: global.unwrap_or(current.global),
+                            trigger: None,
                         },
                         None => PendingRefine {
                             instructions,
                             global: global.unwrap_or(false),
+                            trigger: None,
                         },
                     };
                     *slot = Some(merged);
@@ -419,6 +484,7 @@ impl SessionEngine {
             global: pending.global,
             instructions: pending.instructions,
             rollback_id: None,
+            trigger: pending.trigger,
         };
         Some(
             self.session

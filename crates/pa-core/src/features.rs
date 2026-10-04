@@ -22,6 +22,7 @@ use pa_agent::types::{AfterToolCallResult, AgentMessage, Message, ToolResultCont
 use pa_telemetry::{base_properties, lookup, Properties, TelemetryClient};
 
 use crate::kernel::shared::HostRequestHandlers;
+use crate::refinement::gate::RefinementGate;
 use crate::session_engine::telemetry::TelemetryWiring;
 
 /// A feature hook's boxed future: hooks run inline on the session's tool
@@ -217,6 +218,18 @@ pub trait SessionFeature: Send + Sync {
     fn flush(&self, deadline: Instant) {
         let _ = deadline;
     }
+
+    /// The gate this feature judges the session's refinements with (see
+    /// [`crate::refinement::gate`]); `None`, the default, leaves them
+    /// ungated. Called once, on the session-creation path; the first
+    /// installed feature that returns a gate is the session's gate.
+    fn refinement_gate(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+    ) -> Option<Arc<dyn RefinementGate>> {
+        let _ = context;
+        None
+    }
 }
 
 static INSTALLED: OnceLock<Vec<Arc<dyn SessionFeature>>> = OnceLock::new();
@@ -333,6 +346,17 @@ pub(crate) fn tool_call_hooks(
         })
     };
     (Some(before), Some(after))
+}
+
+/// The first refinement gate `features` offer the session; `None` when no
+/// feature judges refinements.
+pub(crate) fn session_refinement_gate(
+    features: &[Arc<dyn SessionFeature>],
+    context: &Arc<SessionFeatureContext>,
+) -> Option<Arc<dyn RefinementGate>> {
+    features
+        .iter()
+        .find_map(|feature| feature.refinement_gate(context))
 }
 
 /// Tell `features` a session was created with `history`; nothing happens
@@ -501,5 +525,52 @@ mod tests {
         });
         let (before, after) = tool_call_hooks(&[], &context);
         assert!(before.is_none() && after.is_none());
+    }
+
+    struct GateStub;
+
+    impl crate::refinement::gate::RefinementGate for GateStub {
+        fn evaluate(
+            &self,
+            _request: crate::refinement::gate::RefinementGateRequest,
+        ) -> FeatureFuture<
+            anyhow::Result<Option<Box<dyn crate::refinement::gate::RefinementGateVerdict>>>,
+        > {
+            Box::pin(async { Ok(None) })
+        }
+    }
+
+    struct Gating;
+
+    impl SessionFeature for Gating {
+        fn name(&self) -> &'static str {
+            "gating"
+        }
+
+        fn refinement_gate(
+            &self,
+            _context: &Arc<SessionFeatureContext>,
+        ) -> Option<Arc<dyn RefinementGate>> {
+            Some(Arc::new(GateStub))
+        }
+    }
+
+    /// No feature offers a gate in the native product; with features
+    /// installed, the first one that offers a gate is the session's.
+    #[test]
+    fn the_first_offered_refinement_gate_is_the_sessions() {
+        let context = Arc::new(SessionFeatureContext {
+            agent_dir: PathBuf::from("/agent"),
+            cwd: PathBuf::from("/work"),
+            session_id: "s1".to_string(),
+            python_skill_import_names: Vec::new(),
+            model: stub_model(),
+            telemetry: None,
+            rlm_depth: 0,
+            session_artifact_dir: None,
+        });
+        assert!(session_refinement_gate(&[], &context).is_none());
+        let features: Vec<Arc<dyn SessionFeature>> = vec![Arc::new(Stub), Arc::new(Gating)];
+        assert!(session_refinement_gate(&features, &context).is_some());
     }
 }

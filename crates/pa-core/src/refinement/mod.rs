@@ -317,6 +317,10 @@ pub struct RefinementResult {
     pub rollback_of: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<HarnessScope>,
+    /// Keys this crate does not model (a refinement gate's report, written
+    /// by an installed feature), carried through untouched.
+    #[serde(flatten)]
+    pub extensions: serde_json::Map<String, serde_json::Value>,
 }
 
 /// One applied (or failed) edit with before/after snapshots: the TS
@@ -544,6 +548,7 @@ fn scope_prefix(scope: HarnessScope, id: &str) -> String {
 }
 
 pub mod executor;
+pub mod gate;
 pub mod planner;
 pub mod ranking;
 
@@ -772,6 +777,7 @@ mod tests {
             harness_state_path: get_harness_state_path(&dir).display().to_string(),
             rollback_of: None,
             scope: None,
+            extensions: serde_json::Map::new(),
         };
         append_global_refinement(&dir, &result).unwrap();
         let loaded = load_global_refinement_history(&dir);
@@ -817,6 +823,7 @@ mod tests {
             harness_state_path: String::new(),
             rollback_of: None,
             scope: None,
+            extensions: serde_json::Map::new(),
         };
         let body = format_refinement_notice_body(&result);
         assert!(body.starts_with("created a memory about the flaky test"));

@@ -276,6 +276,7 @@ async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
         Some(PendingRefine {
             instructions: Some("persist the kernel round-trip contract observation".to_string()),
             global: true,
+            trigger: None,
         })
     );
     assert!(

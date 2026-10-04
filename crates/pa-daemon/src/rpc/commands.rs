@@ -470,6 +470,7 @@ async fn refine(state: &Arc<RpcState>, payload: &Value) -> Result<ResponseData, 
             .get("rollbackId")
             .and_then(Value::as_str)
             .map(str::to_string),
+        trigger: None,
     };
     // The handle guard stays held through the refinement: no replacement
     // or `set_model` interleaves before the file writes.

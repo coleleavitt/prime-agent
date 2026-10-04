@@ -1,0 +1,662 @@
+[
+  {
+    "input": null,
+    "output": {
+      "lineage": [],
+      "championId": null,
+      "opponents": {
+        "criteria": [
+          {
+            "id": "evidence",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "scope",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "minimality",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "contracts",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "novelty",
+            "seedWeight": 1,
+            "currentWeight": 1
+          }
+        ]
+      },
+      "evaluatedProposalIds": []
+    }
+  },
+  {
+    "input": [],
+    "output": {
+      "lineage": [],
+      "championId": null,
+      "opponents": {
+        "criteria": [
+          {
+            "id": "evidence",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "scope",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "minimality",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "contracts",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "novelty",
+            "seedWeight": 1,
+            "currentWeight": 1
+          }
+        ]
+      },
+      "evaluatedProposalIds": []
+    }
+  },
+  {
+    "input": "x",
+    "output": {
+      "lineage": [],
+      "championId": null,
+      "opponents": {
+        "criteria": [
+          {
+            "id": "evidence",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "scope",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "minimality",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "contracts",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "novelty",
+            "seedWeight": 1,
+            "currentWeight": 1
+          }
+        ]
+      },
+      "evaluatedProposalIds": []
+    }
+  },
+  {
+    "input": {
+      "lineage": [],
+      "evaluatedProposalIds": [],
+      "opponents": null
+    },
+    "output": {
+      "lineage": [],
+      "championId": null,
+      "opponents": {
+        "criteria": [
+          {
+            "id": "evidence",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "scope",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "minimality",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "contracts",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "novelty",
+            "seedWeight": 1,
+            "currentWeight": 1
+          }
+        ]
+      },
+      "evaluatedProposalIds": []
+    }
+  },
+  {
+    "input": {
+      "lineage": [
+        {
+          "id": "r1",
+          "score": 60,
+          "missedCriteria": [
+            "scope",
+            3
+          ],
+          "summary": "first",
+          "created_at": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "id": "",
+          "score": 70
+        },
+        {
+          "id": "r2",
+          "score": -1
+        },
+        {
+          "id": "r3",
+          "score": 75
+        }
+      ],
+      "evaluator": {
+        "criteria": [
+          {
+            "id": "scope",
+            "weight": 4,
+            "description": "d"
+          },
+          {
+            "id": "evidence",
+            "weight": 0
+          },
+          {
+            "id": "novelty",
+            "weight": 2.5
+          }
+        ]
+      }
+    },
+    "output": {
+      "lineage": [
+        {
+          "proposalId": "r1",
+          "parentId": null,
+          "score": 60,
+          "artifact": null,
+          "missedCriterionIds": [
+            "scope"
+          ]
+        },
+        {
+          "proposalId": "r3",
+          "parentId": "r1",
+          "score": 75,
+          "artifact": null,
+          "missedCriterionIds": []
+        }
+      ],
+      "championId": "r3",
+      "opponents": {
+        "criteria": [
+          {
+            "id": "evidence",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "scope",
+            "seedWeight": 1,
+            "currentWeight": 4
+          },
+          {
+            "id": "minimality",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "contracts",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "novelty",
+            "seedWeight": 1,
+            "currentWeight": 1
+          }
+        ]
+      },
+      "evaluatedProposalIds": [
+        "r1",
+        "r3"
+      ]
+    }
+  },
+  {
+    "input": {
+      "lineage": [
+        {
+          "proposalId": "a2",
+          "parentId": null,
+          "score": 80,
+          "artifact": {
+            "summary": "s",
+            "rationale": "r",
+            "expectedOutcome": "e",
+            "edits": [
+              {
+                "action": "create",
+                "kind": "memory"
+              }
+            ]
+          },
+          "missedCriterionIds": [
+            "failure:f2"
+          ],
+          "claimedFingerprints": [
+            "f1"
+          ],
+          "provisional": {
+            "committedTurn": 40,
+            "untilTurn": 60,
+            "clock": "ordinal"
+          }
+        }
+      ],
+      "championId": "a2",
+      "opponents": {
+        "criteria": [
+          {
+            "id": "evidence",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "scope",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "minimality",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "contracts",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "novelty",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "failure:f1",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "failure:f2",
+            "seedWeight": 1,
+            "currentWeight": 2
+          }
+        ]
+      },
+      "evaluatedProposalIds": [
+        "a2"
+      ]
+    },
+    "output": {
+      "lineage": [
+        {
+          "proposalId": "a2",
+          "parentId": null,
+          "score": 80,
+          "artifact": {
+            "summary": "s",
+            "rationale": "r",
+            "expectedOutcome": "e",
+            "edits": [
+              {
+                "action": "create",
+                "kind": "memory"
+              }
+            ]
+          },
+          "missedCriterionIds": [
+            "failure:f2"
+          ],
+          "claimedFingerprints": [
+            "f1"
+          ],
+          "provisional": {
+            "committedTurn": 40,
+            "untilTurn": 60,
+            "clock": "ordinal"
+          }
+        }
+      ],
+      "championId": "a2",
+      "opponents": {
+        "criteria": [
+          {
+            "id": "evidence",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "scope",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "minimality",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "contracts",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "novelty",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "failure:f1",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "failure:f2",
+            "seedWeight": 1,
+            "currentWeight": 2
+          }
+        ]
+      },
+      "evaluatedProposalIds": [
+        "a2"
+      ]
+    }
+  },
+  {
+    "input": {
+      "lineage": [
+        {
+          "proposalId": "a2",
+          "parentId": null,
+          "score": 80,
+          "artifact": {
+            "summary": "s",
+            "rationale": "r",
+            "expectedOutcome": "e",
+            "edits": [
+              {
+                "action": "create",
+                "kind": "memory"
+              }
+            ]
+          },
+          "missedCriterionIds": [
+            "failure:f2"
+          ],
+          "claimedFingerprints": [
+            "f1"
+          ],
+          "provisional": {
+            "committedTurn": 40,
+            "untilTurn": 60,
+            "clock": "wall-clock"
+          }
+        }
+      ],
+      "championId": "a2",
+      "opponents": {
+        "criteria": [
+          {
+            "id": "evidence",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "scope",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "minimality",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "contracts",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "novelty",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "failure:f1",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "failure:f2",
+            "seedWeight": 1,
+            "currentWeight": 2
+          }
+        ]
+      },
+      "evaluatedProposalIds": [
+        "a2"
+      ]
+    },
+    "output": {
+      "lineage": [
+        {
+          "proposalId": "a2",
+          "parentId": null,
+          "score": 80,
+          "artifact": {
+            "summary": "s",
+            "rationale": "r",
+            "expectedOutcome": "e",
+            "edits": [
+              {
+                "action": "create",
+                "kind": "memory"
+              }
+            ]
+          },
+          "missedCriterionIds": [
+            "failure:f2"
+          ],
+          "claimedFingerprints": [
+            "f1"
+          ],
+          "provisional": {
+            "committedTurn": 40,
+            "untilTurn": 60
+          }
+        }
+      ],
+      "championId": "a2",
+      "opponents": {
+        "criteria": [
+          {
+            "id": "evidence",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "scope",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "minimality",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "contracts",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "novelty",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "failure:f1",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "failure:f2",
+            "seedWeight": 1,
+            "currentWeight": 2
+          }
+        ]
+      },
+      "evaluatedProposalIds": [
+        "a2"
+      ]
+    }
+  },
+  {
+    "input": {
+      "lineage": [
+        {
+          "proposalId": "a2",
+          "parentId": null,
+          "score": 80,
+          "artifact": {
+            "summary": "s",
+            "rationale": "r",
+            "expectedOutcome": "e",
+            "edits": [
+              {
+                "action": "create",
+                "kind": "memory"
+              }
+            ]
+          },
+          "missedCriterionIds": [
+            "failure:f2"
+          ],
+          "claimedFingerprints": [
+            "f1"
+          ],
+          "provisional": {
+            "committedTurn": 40,
+            "untilTurn": 60,
+            "clock": "ordinal"
+          }
+        }
+      ],
+      "championId": "nobody",
+      "opponents": {
+        "criteria": [
+          {
+            "id": "evidence",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "scope",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "minimality",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "contracts",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "novelty",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "failure:f1",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "failure:f2",
+            "seedWeight": 1,
+            "currentWeight": 2
+          }
+        ]
+      },
+      "evaluatedProposalIds": [
+        "a2"
+      ]
+    },
+    "output": {
+      "lineage": [],
+      "championId": null,
+      "opponents": {
+        "criteria": [
+          {
+            "id": "evidence",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "scope",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "minimality",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "contracts",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "novelty",
+            "seedWeight": 1,
+            "currentWeight": 1
+          }
+        ]
+      },
+      "evaluatedProposalIds": []
+    }
+  }
+]

@@ -1274,6 +1274,7 @@ dependencies = [
  "pa-daemon",
  "pa-dream",
  "pa-ledger",
+ "pa-ravo",
  "pa-recall",
  "pa-session-index",
  "pa-telemetry",
@@ -1409,6 +1410,25 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "pa-ravo"
+version = "0.9.8"
+dependencies = [
+ "anyhow",
+ "pa-agent",
+ "pa-core",
+ "pa-ledger",
+ "pa-telemetry",
+ "pa-types",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
