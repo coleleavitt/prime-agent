@@ -1,0 +1,2500 @@
+{
+  "normalizeTrust": [
+    {
+      "output": null
+    },
+    {
+      "input": null,
+      "output": null
+    },
+    {
+      "input": [],
+      "output": null
+    },
+    {
+      "input": {
+        "score": "50"
+      },
+      "output": null
+    },
+    {
+      "input": {
+        "score": 42.5,
+        "updated_at": 7,
+        "events": "no"
+      },
+      "output": {
+        "score": 43,
+        "updated_at": "",
+        "events": []
+      }
+    },
+    {
+      "input": {
+        "score": 140,
+        "updated_at": "t",
+        "events": []
+      },
+      "output": {
+        "score": 100,
+        "updated_at": "t",
+        "events": []
+      }
+    },
+    {
+      "input": {
+        "score": -3.5,
+        "updated_at": "t",
+        "events": [
+          {
+            "reason": "nope",
+            "delta": 1,
+            "score": 1
+          }
+        ]
+      },
+      "output": {
+        "score": 0,
+        "updated_at": "t",
+        "events": []
+      }
+    },
+    {
+      "input": {
+        "score": 35,
+        "updated_at": "t",
+        "events": [
+          {
+            "reason": "clean_window",
+            "delta": 5,
+            "score": 40,
+            "at": "a0",
+            "proposalId": "p0",
+            "fingerprintId": "f0"
+          },
+          {
+            "reason": "measured_fault",
+            "delta": -15.5,
+            "score": 41,
+            "at": "a1",
+            "proposalId": "p1"
+          },
+          {
+            "reason": "clean_window",
+            "delta": 5,
+            "score": 42,
+            "at": "a2",
+            "proposalId": "p2"
+          },
+          {
+            "reason": "measured_fault",
+            "delta": -15.5,
+            "score": 43,
+            "at": "a3",
+            "proposalId": "p3",
+            "fingerprintId": "f3"
+          },
+          {
+            "reason": "clean_window",
+            "delta": 5,
+            "score": 44,
+            "at": "a4",
+            "proposalId": "p4",
+            "fingerprintId": ""
+          },
+          {
+            "reason": "measured_fault",
+            "delta": -15.5,
+            "score": 45,
+            "at": "a5",
+            "proposalId": "p5"
+          },
+          {
+            "reason": "clean_window",
+            "delta": 5,
+            "score": 46,
+            "at": "a6",
+            "proposalId": "p6",
+            "fingerprintId": "f6"
+          },
+          {
+            "reason": "measured_fault",
+            "delta": -15.5,
+            "score": 47,
+            "at": "a7",
+            "proposalId": "p7"
+          },
+          {
+            "reason": "clean_window",
+            "delta": 5,
+            "score": 48,
+            "at": "a8",
+            "proposalId": "p8"
+          },
+          {
+            "reason": "measured_fault",
+            "delta": -15.5,
+            "score": 49,
+            "at": "a9",
+            "proposalId": "p9",
+            "fingerprintId": "f9"
+          },
+          {
+            "reason": "clean_window",
+            "delta": 5,
+            "score": 50,
+            "at": "a10",
+            "proposalId": "p10"
+          },
+          {
+            "reason": "measured_fault",
+            "delta": -15.5,
+            "score": 51,
+            "at": "a11",
+            "proposalId": "p11"
+          },
+          {
+            "reason": "clean_window",
+            "delta": 5,
+            "score": 52,
+            "at": "a12",
+            "proposalId": "p12",
+            "fingerprintId": "f12"
+          },
+          {
+            "reason": "measured_fault",
+            "delta": -15.5,
+            "score": 53,
+            "at": "a13",
+            "proposalId": "p13"
+          },
+          {
+            "reason": "clean_window",
+            "delta": 5,
+            "score": 54,
+            "at": "a14",
+            "proposalId": "p14"
+          },
+          {
+            "reason": "measured_fault",
+            "delta": -15.5,
+            "score": 55,
+            "at": "a15",
+            "proposalId": "p15",
+            "fingerprintId": "f15"
+          },
+          {
+            "reason": "clean_window",
+            "delta": 5,
+            "score": 56,
+            "at": "a16",
+            "proposalId": "p16"
+          },
+          {
+            "reason": "measured_fault",
+            "delta": -15.5,
+            "score": 57,
+            "at": "a17",
+            "proposalId": "p17"
+          },
+          {
+            "reason": "clean_window",
+            "delta": 5,
+            "score": 58,
+            "at": "a18",
+            "proposalId": "p18",
+            "fingerprintId": "f18"
+          },
+          {
+            "reason": "measured_fault",
+            "delta": -15.5,
+            "score": 59,
+            "at": "a19",
+            "proposalId": "p19"
+          },
+          {
+            "reason": "clean_window",
+            "delta": 5,
+            "score": 60,
+            "at": "a20",
+            "proposalId": "p20"
+          },
+          {
+            "reason": "measured_fault",
+            "delta": -15.5,
+            "score": 61,
+            "at": "a21",
+            "proposalId": "p21",
+            "fingerprintId": "f21"
+          },
+          {
+            "reason": "clean_window",
+            "delta": null,
+            "score": 1
+          }
+        ]
+      },
+      "output": {
+        "score": 35,
+        "updated_at": "t",
+        "events": [
+          {
+            "reason": "clean_window",
+            "delta": 5,
+            "score": 42,
+            "at": "a2",
+            "proposalId": "p2"
+          },
+          {
+            "reason": "measured_fault",
+            "delta": -15,
+            "score": 43,
+            "at": "a3",
+            "proposalId": "p3",
+            "fingerprintId": "f3"
+          },
+          {
+            "reason": "clean_window",
+            "delta": 5,
+            "score": 44,
+            "at": "a4",
+            "proposalId": "p4"
+          },
+          {
+            "reason": "measured_fault",
+            "delta": -15,
+            "score": 45,
+            "at": "a5",
+            "proposalId": "p5"
+          },
+          {
+            "reason": "clean_window",
+            "delta": 5,
+            "score": 46,
+            "at": "a6",
+            "proposalId": "p6",
+            "fingerprintId": "f6"
+          },
+          {
+            "reason": "measured_fault",
+            "delta": -15,
+            "score": 47,
+            "at": "a7",
+            "proposalId": "p7"
+          },
+          {
+            "reason": "clean_window",
+            "delta": 5,
+            "score": 48,
+            "at": "a8",
+            "proposalId": "p8"
+          },
+          {
+            "reason": "measured_fault",
+            "delta": -15,
+            "score": 49,
+            "at": "a9",
+            "proposalId": "p9",
+            "fingerprintId": "f9"
+          },
+          {
+            "reason": "clean_window",
+            "delta": 5,
+            "score": 50,
+            "at": "a10",
+            "proposalId": "p10"
+          },
+          {
+            "reason": "measured_fault",
+            "delta": -15,
+            "score": 51,
+            "at": "a11",
+            "proposalId": "p11"
+          },
+          {
+            "reason": "clean_window",
+            "delta": 5,
+            "score": 52,
+            "at": "a12",
+            "proposalId": "p12",
+            "fingerprintId": "f12"
+          },
+          {
+            "reason": "measured_fault",
+            "delta": -15,
+            "score": 53,
+            "at": "a13",
+            "proposalId": "p13"
+          },
+          {
+            "reason": "clean_window",
+            "delta": 5,
+            "score": 54,
+            "at": "a14",
+            "proposalId": "p14"
+          },
+          {
+            "reason": "measured_fault",
+            "delta": -15,
+            "score": 55,
+            "at": "a15",
+            "proposalId": "p15",
+            "fingerprintId": "f15"
+          },
+          {
+            "reason": "clean_window",
+            "delta": 5,
+            "score": 56,
+            "at": "a16",
+            "proposalId": "p16"
+          },
+          {
+            "reason": "measured_fault",
+            "delta": -15,
+            "score": 57,
+            "at": "a17",
+            "proposalId": "p17"
+          },
+          {
+            "reason": "clean_window",
+            "delta": 5,
+            "score": 58,
+            "at": "a18",
+            "proposalId": "p18",
+            "fingerprintId": "f18"
+          },
+          {
+            "reason": "measured_fault",
+            "delta": -15,
+            "score": 59,
+            "at": "a19",
+            "proposalId": "p19"
+          },
+          {
+            "reason": "clean_window",
+            "delta": 5,
+            "score": 60,
+            "at": "a20",
+            "proposalId": "p20"
+          },
+          {
+            "reason": "measured_fault",
+            "delta": -15,
+            "score": 61,
+            "at": "a21",
+            "proposalId": "p21",
+            "fingerprintId": "f21"
+          }
+        ]
+      }
+    }
+  ],
+  "normalizeWindows": [
+    {
+      "input": null,
+      "output": null
+    },
+    {
+      "input": [],
+      "output": null
+    },
+    {
+      "input": {
+        "legacy": {
+          "proposalId": "legacy",
+          "touched": [
+            "memory:m"
+          ],
+          "committedTurn": 3,
+          "untilTurn": 23,
+          "outcome": "success"
+        },
+        "keyed-by-name": {
+          "touched": [
+            "skill:s"
+          ],
+          "claimedFingerprints": [
+            "f1"
+          ],
+          "committedTurn": 1.5,
+          "untilTurn": -2
+        },
+        "": {
+          "touched": []
+        },
+        "notAnObject": 4,
+        "malformed": {
+          "proposalId": "malformed",
+          "touched": [
+            "skill:s",
+            "memory:m",
+            3,
+            "",
+            "skill:t"
+          ],
+          "claimedFingerprints": [
+            "f2",
+            "f1",
+            "f2",
+            7
+          ],
+          "committedTurn": 10,
+          "untilTurn": 30,
+          "outcome": "faulted",
+          "settledTurn": -4,
+          "faultedFingerprints": [
+            "f1",
+            ""
+          ],
+          "faultedEntries": [
+            "skill:t",
+            "memory:m",
+            "skill:zz",
+            "skill:s",
+            "skill:t"
+          ],
+          "skillImports": {
+            "skill:s": [
+              "b",
+              "a",
+              "b",
+              ""
+            ],
+            "memory:m": [
+              "x"
+            ],
+            "skill:t": [],
+            "skill:zz": [
+              "q"
+            ],
+            "skill:x": 1
+          },
+          "recurrences": {
+            "f1": 12,
+            "f2": 31,
+            "f3": 12,
+            "f9": 9.5
+          },
+          "adjudications": [
+            {
+              "entry": "skill:s",
+              "fingerprintId": "f1",
+              "status": "cleared",
+              "ordinal": 12,
+              "runs": [
+                "r3",
+                "r1"
+              ]
+            },
+            {
+              "entry": "skill:s",
+              "fingerprintId": "f1",
+              "status": "upheld",
+              "ordinal": 11,
+              "runs": [
+                "r2",
+                "r4",
+                "r1"
+              ]
+            },
+            {
+              "entry": "skill:t",
+              "fingerprintId": "f2",
+              "status": "unverifiable",
+              "ordinal": 15,
+              "runs": [
+                "r9"
+              ]
+            },
+            {
+              "entry": "memory:m",
+              "fingerprintId": "f1",
+              "status": "upheld",
+              "ordinal": 12,
+              "runs": [
+                "r1"
+              ]
+            },
+            {
+              "entry": "skill:s",
+              "fingerprintId": "f3",
+              "status": "upheld",
+              "ordinal": 12,
+              "runs": [
+                "r1"
+              ]
+            },
+            {
+              "entry": "skill:s",
+              "fingerprintId": "f1",
+              "status": "maybe",
+              "ordinal": 12,
+              "runs": [
+                "r1"
+              ]
+            },
+            {
+              "entry": "skill:s",
+              "fingerprintId": "f2",
+              "status": "upheld",
+              "ordinal": 40,
+              "runs": [
+                "r1"
+              ]
+            },
+            {
+              "entry": "skill:s",
+              "fingerprintId": "f2",
+              "status": "upheld",
+              "ordinal": 12,
+              "runs": []
+            },
+            {
+              "entry": "skill:s",
+              "fingerprintId": "f2",
+              "status": "upheld",
+              "ordinal": 12,
+              "runs": [
+                "r1",
+                ""
+              ]
+            },
+            {
+              "entry": "skill:s",
+              "fingerprintId": "f2",
+              "status": "cleared",
+              "ordinal": 13,
+              "runs": [
+                "r5"
+              ]
+            }
+          ]
+        },
+        "contested": {
+          "proposalId": "contested",
+          "touched": [
+            "skill:s"
+          ],
+          "claimedFingerprints": [
+            "f1"
+          ],
+          "committedTurn": 1,
+          "untilTurn": 2,
+          "outcome": "contested",
+          "settledTurn": 4,
+          "faultedEntries": [
+            "skill:s"
+          ]
+        }
+      },
+      "output": {
+        "legacy": {
+          "proposalId": "legacy",
+          "touched": [
+            "memory:m"
+          ],
+          "claimedFingerprints": [],
+          "committedTurn": 3,
+          "untilTurn": 23,
+          "outcome": "unmeasured"
+        },
+        "keyed-by-name": {
+          "proposalId": "keyed-by-name",
+          "touched": [
+            "skill:s"
+          ],
+          "claimedFingerprints": [
+            "f1"
+          ],
+          "committedTurn": 0,
+          "untilTurn": 0,
+          "outcome": "open"
+        },
+        "malformed": {
+          "proposalId": "malformed",
+          "touched": [
+            "skill:s",
+            "memory:m",
+            "skill:t"
+          ],
+          "claimedFingerprints": [
+            "f2",
+            "f1",
+            "f2"
+          ],
+          "committedTurn": 10,
+          "untilTurn": 30,
+          "outcome": "faulted",
+          "settledTurn": 0,
+          "faultedFingerprints": [
+            "f1"
+          ],
+          "faultedEntries": [
+            "skill:s",
+            "skill:t"
+          ],
+          "skillImports": {
+            "skill:s": [
+              "a",
+              "b"
+            ]
+          },
+          "recurrences": {
+            "f1": 12
+          },
+          "adjudications": [
+            {
+              "entry": "skill:s",
+              "fingerprintId": "f1",
+              "status": "upheld",
+              "ordinal": 11,
+              "runs": [
+                "r1",
+                "r2",
+                "r3"
+              ]
+            },
+            {
+              "entry": "skill:s",
+              "fingerprintId": "f2",
+              "status": "cleared",
+              "ordinal": 13,
+              "runs": [
+                "r5"
+              ]
+            },
+            {
+              "entry": "skill:t",
+              "fingerprintId": "f2",
+              "status": "unverifiable",
+              "ordinal": 15,
+              "runs": [
+                "r9"
+              ]
+            }
+          ]
+        },
+        "contested": {
+          "proposalId": "contested",
+          "touched": [
+            "skill:s"
+          ],
+          "claimedFingerprints": [
+            "f1"
+          ],
+          "committedTurn": 1,
+          "untilTurn": 2,
+          "outcome": "contested",
+          "settledTurn": 4
+        }
+      }
+    }
+  ],
+  "trace": [
+    {
+      "step": {
+        "open": {
+          "proposalId": "p1",
+          "touched": [
+            "skill:probe",
+            "memory:note",
+            "skill:probe",
+            "prompt:policy",
+            "skill:other"
+          ],
+          "claimedFingerprints": [
+            "fb",
+            "fa",
+            "fb"
+          ],
+          "committedTurn": 10,
+          "untilTurn": 30,
+          "skillImports": {
+            "skill:probe": [
+              "absent_module"
+            ],
+            "skill:other": [
+              "other_module",
+              "other_module"
+            ],
+            "memory:note": [
+              "x"
+            ]
+          }
+        }
+      },
+      "windows": {
+        "p1": {
+          "proposalId": "p1",
+          "touched": [
+            "memory:note",
+            "prompt:policy",
+            "skill:other",
+            "skill:probe"
+          ],
+          "claimedFingerprints": [
+            "fa",
+            "fb"
+          ],
+          "committedTurn": 10,
+          "untilTurn": 30,
+          "outcome": "open",
+          "skillImports": {
+            "skill:probe": [
+              "absent_module"
+            ],
+            "skill:other": [
+              "other_module"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "open": {
+          "proposalId": "p2",
+          "touched": [
+            "memory:note"
+          ],
+          "claimedFingerprints": [
+            "fa"
+          ],
+          "committedTurn": 12,
+          "untilTurn": 14
+        }
+      },
+      "windows": {
+        "p1": {
+          "proposalId": "p1",
+          "touched": [
+            "memory:note",
+            "prompt:policy",
+            "skill:other",
+            "skill:probe"
+          ],
+          "claimedFingerprints": [
+            "fa",
+            "fb"
+          ],
+          "committedTurn": 10,
+          "untilTurn": 30,
+          "outcome": "open",
+          "skillImports": {
+            "skill:probe": [
+              "absent_module"
+            ],
+            "skill:other": [
+              "other_module"
+            ]
+          }
+        },
+        "p2": {
+          "proposalId": "p2",
+          "touched": [
+            "memory:note"
+          ],
+          "claimedFingerprints": [
+            "fa"
+          ],
+          "committedTurn": 12,
+          "untilTurn": 14,
+          "outcome": "open"
+        }
+      }
+    },
+    {
+      "step": {
+        "open": {
+          "proposalId": "p3",
+          "touched": [
+            "prompt:policy",
+            "skill:other"
+          ],
+          "claimedFingerprints": [
+            "fc"
+          ],
+          "committedTurn": 5,
+          "untilTurn": 9
+        }
+      },
+      "windows": {
+        "p1": {
+          "proposalId": "p1",
+          "touched": [
+            "memory:note",
+            "prompt:policy",
+            "skill:other",
+            "skill:probe"
+          ],
+          "claimedFingerprints": [
+            "fa",
+            "fb"
+          ],
+          "committedTurn": 10,
+          "untilTurn": 30,
+          "outcome": "open",
+          "skillImports": {
+            "skill:probe": [
+              "absent_module"
+            ],
+            "skill:other": [
+              "other_module"
+            ]
+          }
+        },
+        "p2": {
+          "proposalId": "p2",
+          "touched": [
+            "memory:note"
+          ],
+          "claimedFingerprints": [
+            "fa"
+          ],
+          "committedTurn": 12,
+          "untilTurn": 14,
+          "outcome": "open"
+        },
+        "p3": {
+          "proposalId": "p3",
+          "touched": [
+            "prompt:policy",
+            "skill:other"
+          ],
+          "claimedFingerprints": [
+            "fc"
+          ],
+          "committedTurn": 5,
+          "untilTurn": 9,
+          "outcome": "open"
+        }
+      }
+    },
+    {
+      "step": {
+        "open": {
+          "proposalId": "p4",
+          "touched": [
+            "skill:other"
+          ],
+          "claimedFingerprints": [
+            "fd"
+          ],
+          "committedTurn": 20,
+          "untilTurn": 40
+        }
+      },
+      "windows": {
+        "p1": {
+          "proposalId": "p1",
+          "touched": [
+            "memory:note",
+            "prompt:policy",
+            "skill:other",
+            "skill:probe"
+          ],
+          "claimedFingerprints": [
+            "fa",
+            "fb"
+          ],
+          "committedTurn": 10,
+          "untilTurn": 30,
+          "outcome": "open",
+          "skillImports": {
+            "skill:probe": [
+              "absent_module"
+            ],
+            "skill:other": [
+              "other_module"
+            ]
+          }
+        },
+        "p2": {
+          "proposalId": "p2",
+          "touched": [
+            "memory:note"
+          ],
+          "claimedFingerprints": [
+            "fa"
+          ],
+          "committedTurn": 12,
+          "untilTurn": 14,
+          "outcome": "open"
+        },
+        "p3": {
+          "proposalId": "p3",
+          "touched": [
+            "prompt:policy",
+            "skill:other"
+          ],
+          "claimedFingerprints": [
+            "fc"
+          ],
+          "committedTurn": 5,
+          "untilTurn": 9,
+          "outcome": "open"
+        },
+        "p4": {
+          "proposalId": "p4",
+          "touched": [
+            "skill:other"
+          ],
+          "claimedFingerprints": [
+            "fd"
+          ],
+          "committedTurn": 20,
+          "untilTurn": 40,
+          "outcome": "open"
+        }
+      }
+    },
+    {
+      "step": {
+        "record": [
+          {
+            "type": "recurrence",
+            "proposalId": "p2",
+            "fingerprintId": "fa",
+            "ordinal": 13
+          },
+          {
+            "type": "recurrence",
+            "proposalId": "p1",
+            "fingerprintId": "fa",
+            "ordinal": 15
+          },
+          {
+            "type": "recurrence",
+            "proposalId": "p1",
+            "fingerprintId": "fa",
+            "ordinal": 12
+          },
+          {
+            "type": "recurrence",
+            "proposalId": "p1",
+            "fingerprintId": "fz",
+            "ordinal": 12
+          },
+          {
+            "type": "recurrence",
+            "proposalId": "p1",
+            "fingerprintId": "fa",
+            "ordinal": 31
+          },
+          {
+            "type": "recurrence",
+            "proposalId": "nope",
+            "fingerprintId": "fa",
+            "ordinal": 12
+          },
+          {
+            "type": "adjudication",
+            "proposalId": "p1",
+            "entry": "memory:note",
+            "fingerprintId": "fa",
+            "status": "upheld",
+            "ordinal": 12,
+            "at": "r0"
+          },
+          {
+            "type": "adjudication",
+            "proposalId": "p1",
+            "entry": "skill:probe",
+            "fingerprintId": "fb",
+            "status": "cleared",
+            "ordinal": 16,
+            "at": "r2"
+          },
+          {
+            "type": "adjudication",
+            "proposalId": "p4",
+            "entry": "skill:other",
+            "fingerprintId": "fd",
+            "status": "unverifiable",
+            "ordinal": 21,
+            "at": "r1"
+          }
+        ]
+      },
+      "windows": {
+        "p1": {
+          "proposalId": "p1",
+          "touched": [
+            "memory:note",
+            "prompt:policy",
+            "skill:other",
+            "skill:probe"
+          ],
+          "claimedFingerprints": [
+            "fa",
+            "fb"
+          ],
+          "committedTurn": 10,
+          "untilTurn": 30,
+          "outcome": "open",
+          "skillImports": {
+            "skill:probe": [
+              "absent_module"
+            ],
+            "skill:other": [
+              "other_module"
+            ]
+          },
+          "recurrences": {
+            "fa": 12,
+            "fb": 16
+          },
+          "adjudications": [
+            {
+              "entry": "skill:probe",
+              "fingerprintId": "fb",
+              "status": "cleared",
+              "ordinal": 16,
+              "runs": [
+                "r2"
+              ]
+            }
+          ]
+        },
+        "p2": {
+          "proposalId": "p2",
+          "touched": [
+            "memory:note"
+          ],
+          "claimedFingerprints": [
+            "fa"
+          ],
+          "committedTurn": 12,
+          "untilTurn": 14,
+          "outcome": "open",
+          "recurrences": {
+            "fa": 13
+          }
+        },
+        "p3": {
+          "proposalId": "p3",
+          "touched": [
+            "prompt:policy",
+            "skill:other"
+          ],
+          "claimedFingerprints": [
+            "fc"
+          ],
+          "committedTurn": 5,
+          "untilTurn": 9,
+          "outcome": "open"
+        },
+        "p4": {
+          "proposalId": "p4",
+          "touched": [
+            "skill:other"
+          ],
+          "claimedFingerprints": [
+            "fd"
+          ],
+          "committedTurn": 20,
+          "untilTurn": 40,
+          "outcome": "open"
+        }
+      }
+    },
+    {
+      "step": {
+        "settle": 14
+      },
+      "windows": {
+        "p1": {
+          "proposalId": "p1",
+          "touched": [
+            "memory:note",
+            "prompt:policy",
+            "skill:other",
+            "skill:probe"
+          ],
+          "claimedFingerprints": [
+            "fa",
+            "fb"
+          ],
+          "committedTurn": 10,
+          "untilTurn": 30,
+          "outcome": "open",
+          "skillImports": {
+            "skill:probe": [
+              "absent_module"
+            ],
+            "skill:other": [
+              "other_module"
+            ]
+          },
+          "recurrences": {
+            "fa": 12,
+            "fb": 16
+          },
+          "adjudications": [
+            {
+              "entry": "skill:probe",
+              "fingerprintId": "fb",
+              "status": "cleared",
+              "ordinal": 16,
+              "runs": [
+                "r2"
+              ]
+            }
+          ]
+        },
+        "p2": {
+          "proposalId": "p2",
+          "touched": [
+            "memory:note"
+          ],
+          "claimedFingerprints": [
+            "fa"
+          ],
+          "committedTurn": 12,
+          "untilTurn": 14,
+          "outcome": "open",
+          "recurrences": {
+            "fa": 13
+          }
+        },
+        "p3": {
+          "proposalId": "p3",
+          "touched": [
+            "prompt:policy",
+            "skill:other"
+          ],
+          "claimedFingerprints": [
+            "fc"
+          ],
+          "committedTurn": 5,
+          "untilTurn": 9,
+          "outcome": "clean",
+          "settledTurn": 14
+        },
+        "p4": {
+          "proposalId": "p4",
+          "touched": [
+            "skill:other"
+          ],
+          "claimedFingerprints": [
+            "fd"
+          ],
+          "committedTurn": 20,
+          "untilTurn": 40,
+          "outcome": "open"
+        }
+      },
+      "adjustments": [
+        {
+          "kind": "prompt",
+          "id": "policy",
+          "reason": "clean_window",
+          "delta": 5,
+          "before": 98,
+          "after": 100,
+          "trust": {
+            "score": 100,
+            "updated_at": "2026-09-14T08:00:00.000Z",
+            "events": [
+              {
+                "reason": "clean_window",
+                "delta": 5,
+                "score": 100,
+                "at": "2026-09-14T08:00:00.000Z",
+                "proposalId": "p3"
+              }
+            ]
+          },
+          "proposalId": "p3"
+        },
+        {
+          "kind": "skill",
+          "id": "other",
+          "reason": "clean_window",
+          "delta": 5,
+          "before": 22,
+          "after": 27,
+          "trust": {
+            "score": 27,
+            "updated_at": "2026-09-14T08:00:00.000Z",
+            "events": [
+              {
+                "reason": "clean_window",
+                "delta": 5,
+                "score": 27,
+                "at": "2026-09-14T08:00:00.000Z",
+                "proposalId": "p3"
+              }
+            ]
+          },
+          "proposalId": "p3"
+        }
+      ],
+      "settled": [
+        {
+          "proposalId": "p3",
+          "from": "open",
+          "outcome": "clean",
+          "turn": 14,
+          "fingerprints": [
+            "fc"
+          ]
+        }
+      ],
+      "entries": {
+        "skill": {
+          "probe": {
+            "reference": {
+              "import": "absent_module"
+            }
+          },
+          "other": {
+            "reference": {
+              "import": "other_module"
+            },
+            "trust": {
+              "score": 27,
+              "updated_at": "2026-09-14T08:00:00.000Z",
+              "events": [
+                {
+                  "reason": "clean_window",
+                  "delta": 5,
+                  "score": 27,
+                  "at": "2026-09-14T08:00:00.000Z",
+                  "proposalId": "p3"
+                }
+              ]
+            }
+          }
+        },
+        "memory": {
+          "note": {}
+        },
+        "prompt": {
+          "policy": {
+            "trust": {
+              "score": 100,
+              "updated_at": "2026-09-14T08:00:00.000Z",
+              "events": [
+                {
+                  "reason": "clean_window",
+                  "delta": 5,
+                  "score": 100,
+                  "at": "2026-09-14T08:00:00.000Z",
+                  "proposalId": "p3"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "settle": 15
+      },
+      "windows": {
+        "p1": {
+          "proposalId": "p1",
+          "touched": [
+            "memory:note",
+            "prompt:policy",
+            "skill:other",
+            "skill:probe"
+          ],
+          "claimedFingerprints": [
+            "fa",
+            "fb"
+          ],
+          "committedTurn": 10,
+          "untilTurn": 30,
+          "outcome": "open",
+          "skillImports": {
+            "skill:probe": [
+              "absent_module"
+            ],
+            "skill:other": [
+              "other_module"
+            ]
+          },
+          "recurrences": {
+            "fa": 12,
+            "fb": 16
+          },
+          "adjudications": [
+            {
+              "entry": "skill:probe",
+              "fingerprintId": "fb",
+              "status": "cleared",
+              "ordinal": 16,
+              "runs": [
+                "r2"
+              ]
+            }
+          ]
+        },
+        "p2": {
+          "proposalId": "p2",
+          "touched": [
+            "memory:note"
+          ],
+          "claimedFingerprints": [
+            "fa"
+          ],
+          "committedTurn": 12,
+          "untilTurn": 14,
+          "outcome": "contested",
+          "recurrences": {
+            "fa": 13
+          },
+          "settledTurn": 15
+        },
+        "p3": {
+          "proposalId": "p3",
+          "touched": [
+            "prompt:policy",
+            "skill:other"
+          ],
+          "claimedFingerprints": [
+            "fc"
+          ],
+          "committedTurn": 5,
+          "untilTurn": 9,
+          "outcome": "clean",
+          "settledTurn": 14
+        },
+        "p4": {
+          "proposalId": "p4",
+          "touched": [
+            "skill:other"
+          ],
+          "claimedFingerprints": [
+            "fd"
+          ],
+          "committedTurn": 20,
+          "untilTurn": 40,
+          "outcome": "open"
+        }
+      },
+      "adjustments": [],
+      "settled": [
+        {
+          "proposalId": "p2",
+          "from": "open",
+          "outcome": "contested",
+          "turn": 15,
+          "fingerprints": [
+            "fa"
+          ]
+        }
+      ],
+      "entries": {
+        "skill": {
+          "probe": {
+            "reference": {
+              "import": "absent_module"
+            }
+          },
+          "other": {
+            "reference": {
+              "import": "other_module"
+            },
+            "trust": {
+              "score": 27,
+              "updated_at": "2026-09-14T08:00:00.000Z",
+              "events": [
+                {
+                  "reason": "clean_window",
+                  "delta": 5,
+                  "score": 27,
+                  "at": "2026-09-14T08:00:00.000Z",
+                  "proposalId": "p3"
+                }
+              ]
+            }
+          }
+        },
+        "memory": {
+          "note": {}
+        },
+        "prompt": {
+          "policy": {
+            "trust": {
+              "score": 100,
+              "updated_at": "2026-09-14T08:00:00.000Z",
+              "events": [
+                {
+                  "reason": "clean_window",
+                  "delta": 5,
+                  "score": 100,
+                  "at": "2026-09-14T08:00:00.000Z",
+                  "proposalId": "p3"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "record": [
+          {
+            "type": "adjudication",
+            "proposalId": "p1",
+            "entry": "skill:probe",
+            "fingerprintId": "fb",
+            "status": "upheld",
+            "ordinal": 18,
+            "at": "r1"
+          },
+          {
+            "type": "adjudication",
+            "proposalId": "p1",
+            "entry": "skill:probe",
+            "fingerprintId": "fa",
+            "status": "upheld",
+            "ordinal": 19,
+            "at": "r3"
+          },
+          {
+            "type": "adjudication",
+            "proposalId": "p1",
+            "entry": "skill:probe",
+            "fingerprintId": "fb",
+            "status": "cleared",
+            "ordinal": 17,
+            "at": "r4"
+          },
+          {
+            "type": "adjudication",
+            "proposalId": "p1",
+            "entry": "skill:probe",
+            "fingerprintId": "fb",
+            "status": "cleared",
+            "ordinal": 17,
+            "at": "r5"
+          }
+        ]
+      },
+      "windows": {
+        "p1": {
+          "proposalId": "p1",
+          "touched": [
+            "memory:note",
+            "prompt:policy",
+            "skill:other",
+            "skill:probe"
+          ],
+          "claimedFingerprints": [
+            "fa",
+            "fb"
+          ],
+          "committedTurn": 10,
+          "untilTurn": 30,
+          "outcome": "open",
+          "skillImports": {
+            "skill:probe": [
+              "absent_module"
+            ],
+            "skill:other": [
+              "other_module"
+            ]
+          },
+          "recurrences": {
+            "fa": 12,
+            "fb": 16
+          },
+          "adjudications": [
+            {
+              "entry": "skill:probe",
+              "fingerprintId": "fa",
+              "status": "upheld",
+              "ordinal": 19,
+              "runs": [
+                "r3"
+              ]
+            },
+            {
+              "entry": "skill:probe",
+              "fingerprintId": "fb",
+              "status": "upheld",
+              "ordinal": 16,
+              "runs": [
+                "r1",
+                "r2",
+                "r4"
+              ]
+            }
+          ]
+        },
+        "p2": {
+          "proposalId": "p2",
+          "touched": [
+            "memory:note"
+          ],
+          "claimedFingerprints": [
+            "fa"
+          ],
+          "committedTurn": 12,
+          "untilTurn": 14,
+          "outcome": "contested",
+          "recurrences": {
+            "fa": 13
+          },
+          "settledTurn": 15
+        },
+        "p3": {
+          "proposalId": "p3",
+          "touched": [
+            "prompt:policy",
+            "skill:other"
+          ],
+          "claimedFingerprints": [
+            "fc"
+          ],
+          "committedTurn": 5,
+          "untilTurn": 9,
+          "outcome": "clean",
+          "settledTurn": 14
+        },
+        "p4": {
+          "proposalId": "p4",
+          "touched": [
+            "skill:other"
+          ],
+          "claimedFingerprints": [
+            "fd"
+          ],
+          "committedTurn": 20,
+          "untilTurn": 40,
+          "outcome": "open"
+        }
+      }
+    },
+    {
+      "step": {
+        "settle": 20
+      },
+      "windows": {
+        "p1": {
+          "proposalId": "p1",
+          "touched": [
+            "memory:note",
+            "prompt:policy",
+            "skill:other",
+            "skill:probe"
+          ],
+          "claimedFingerprints": [
+            "fa",
+            "fb"
+          ],
+          "committedTurn": 10,
+          "untilTurn": 30,
+          "outcome": "faulted",
+          "skillImports": {
+            "skill:probe": [
+              "absent_module"
+            ],
+            "skill:other": [
+              "other_module"
+            ]
+          },
+          "recurrences": {
+            "fa": 12,
+            "fb": 16
+          },
+          "adjudications": [
+            {
+              "entry": "skill:probe",
+              "fingerprintId": "fa",
+              "status": "upheld",
+              "ordinal": 19,
+              "runs": [
+                "r3"
+              ]
+            },
+            {
+              "entry": "skill:probe",
+              "fingerprintId": "fb",
+              "status": "upheld",
+              "ordinal": 16,
+              "runs": [
+                "r1",
+                "r2",
+                "r4"
+              ]
+            }
+          ],
+          "settledTurn": 20,
+          "faultedFingerprints": [
+            "fa",
+            "fb"
+          ],
+          "faultedEntries": [
+            "skill:probe"
+          ]
+        },
+        "p2": {
+          "proposalId": "p2",
+          "touched": [
+            "memory:note"
+          ],
+          "claimedFingerprints": [
+            "fa"
+          ],
+          "committedTurn": 12,
+          "untilTurn": 14,
+          "outcome": "contested",
+          "recurrences": {
+            "fa": 13
+          },
+          "settledTurn": 15
+        },
+        "p3": {
+          "proposalId": "p3",
+          "touched": [
+            "prompt:policy",
+            "skill:other"
+          ],
+          "claimedFingerprints": [
+            "fc"
+          ],
+          "committedTurn": 5,
+          "untilTurn": 9,
+          "outcome": "clean",
+          "settledTurn": 14
+        },
+        "p4": {
+          "proposalId": "p4",
+          "touched": [
+            "skill:other"
+          ],
+          "claimedFingerprints": [
+            "fd"
+          ],
+          "committedTurn": 20,
+          "untilTurn": 40,
+          "outcome": "open"
+        }
+      },
+      "adjustments": [
+        {
+          "kind": "skill",
+          "id": "probe",
+          "reason": "measured_fault",
+          "delta": -15,
+          "before": 50,
+          "after": 35,
+          "trust": {
+            "score": 35,
+            "updated_at": "2026-09-14T08:00:00.000Z",
+            "events": [
+              {
+                "reason": "measured_fault",
+                "delta": -15,
+                "score": 35,
+                "at": "2026-09-14T08:00:00.000Z",
+                "proposalId": "p1",
+                "fingerprintId": "fa"
+              }
+            ]
+          },
+          "proposalId": "p1",
+          "fingerprintId": "fa"
+        }
+      ],
+      "settled": [
+        {
+          "proposalId": "p1",
+          "from": "open",
+          "outcome": "faulted",
+          "turn": 20,
+          "fingerprints": [
+            "fa",
+            "fb"
+          ]
+        }
+      ],
+      "entries": {
+        "skill": {
+          "probe": {
+            "reference": {
+              "import": "absent_module"
+            },
+            "trust": {
+              "score": 35,
+              "updated_at": "2026-09-14T08:00:00.000Z",
+              "events": [
+                {
+                  "reason": "measured_fault",
+                  "delta": -15,
+                  "score": 35,
+                  "at": "2026-09-14T08:00:00.000Z",
+                  "proposalId": "p1",
+                  "fingerprintId": "fa"
+                }
+              ]
+            }
+          },
+          "other": {
+            "reference": {
+              "import": "other_module"
+            },
+            "trust": {
+              "score": 27,
+              "updated_at": "2026-09-14T08:00:00.000Z",
+              "events": [
+                {
+                  "reason": "clean_window",
+                  "delta": 5,
+                  "score": 27,
+                  "at": "2026-09-14T08:00:00.000Z",
+                  "proposalId": "p3"
+                }
+              ]
+            }
+          }
+        },
+        "memory": {
+          "note": {}
+        },
+        "prompt": {
+          "policy": {
+            "trust": {
+              "score": 100,
+              "updated_at": "2026-09-14T08:00:00.000Z",
+              "events": [
+                {
+                  "reason": "clean_window",
+                  "delta": 5,
+                  "score": 100,
+                  "at": "2026-09-14T08:00:00.000Z",
+                  "proposalId": "p3"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "record": [
+          {
+            "type": "recurrence",
+            "proposalId": "p1",
+            "fingerprintId": "fa",
+            "ordinal": 11
+          },
+          {
+            "type": "adjudication",
+            "proposalId": "p1",
+            "entry": "skill:other",
+            "fingerprintId": "fa",
+            "status": "upheld",
+            "ordinal": 21,
+            "at": "r6"
+          },
+          {
+            "type": "adjudication",
+            "proposalId": "p1",
+            "entry": "skill:probe",
+            "fingerprintId": "fa",
+            "status": "upheld",
+            "ordinal": 21,
+            "at": "r7"
+          },
+          {
+            "type": "adjudication",
+            "proposalId": "p4",
+            "entry": "skill:other",
+            "fingerprintId": "fd",
+            "status": "upheld",
+            "ordinal": 22,
+            "at": "r8"
+          }
+        ]
+      },
+      "windows": {
+        "p1": {
+          "proposalId": "p1",
+          "touched": [
+            "memory:note",
+            "prompt:policy",
+            "skill:other",
+            "skill:probe"
+          ],
+          "claimedFingerprints": [
+            "fa",
+            "fb"
+          ],
+          "committedTurn": 10,
+          "untilTurn": 30,
+          "outcome": "faulted",
+          "skillImports": {
+            "skill:probe": [
+              "absent_module"
+            ],
+            "skill:other": [
+              "other_module"
+            ]
+          },
+          "recurrences": {
+            "fa": 12,
+            "fb": 16
+          },
+          "adjudications": [
+            {
+              "entry": "skill:other",
+              "fingerprintId": "fa",
+              "status": "upheld",
+              "ordinal": 21,
+              "runs": [
+                "r6"
+              ]
+            },
+            {
+              "entry": "skill:probe",
+              "fingerprintId": "fa",
+              "status": "upheld",
+              "ordinal": 19,
+              "runs": [
+                "r3"
+              ]
+            },
+            {
+              "entry": "skill:probe",
+              "fingerprintId": "fb",
+              "status": "upheld",
+              "ordinal": 16,
+              "runs": [
+                "r1",
+                "r2",
+                "r4"
+              ]
+            }
+          ],
+          "settledTurn": 20,
+          "faultedFingerprints": [
+            "fa",
+            "fb"
+          ],
+          "faultedEntries": [
+            "skill:probe"
+          ]
+        },
+        "p2": {
+          "proposalId": "p2",
+          "touched": [
+            "memory:note"
+          ],
+          "claimedFingerprints": [
+            "fa"
+          ],
+          "committedTurn": 12,
+          "untilTurn": 14,
+          "outcome": "contested",
+          "recurrences": {
+            "fa": 13
+          },
+          "settledTurn": 15
+        },
+        "p3": {
+          "proposalId": "p3",
+          "touched": [
+            "prompt:policy",
+            "skill:other"
+          ],
+          "claimedFingerprints": [
+            "fc"
+          ],
+          "committedTurn": 5,
+          "untilTurn": 9,
+          "outcome": "clean",
+          "settledTurn": 14
+        },
+        "p4": {
+          "proposalId": "p4",
+          "touched": [
+            "skill:other"
+          ],
+          "claimedFingerprints": [
+            "fd"
+          ],
+          "committedTurn": 20,
+          "untilTurn": 40,
+          "outcome": "open"
+        }
+      }
+    },
+    {
+      "step": {
+        "settle": 22
+      },
+      "windows": {
+        "p1": {
+          "proposalId": "p1",
+          "touched": [
+            "memory:note",
+            "prompt:policy",
+            "skill:other",
+            "skill:probe"
+          ],
+          "claimedFingerprints": [
+            "fa",
+            "fb"
+          ],
+          "committedTurn": 10,
+          "untilTurn": 30,
+          "outcome": "faulted",
+          "skillImports": {
+            "skill:probe": [
+              "absent_module"
+            ],
+            "skill:other": [
+              "other_module"
+            ]
+          },
+          "recurrences": {
+            "fa": 12,
+            "fb": 16
+          },
+          "adjudications": [
+            {
+              "entry": "skill:other",
+              "fingerprintId": "fa",
+              "status": "upheld",
+              "ordinal": 21,
+              "runs": [
+                "r6"
+              ]
+            },
+            {
+              "entry": "skill:probe",
+              "fingerprintId": "fa",
+              "status": "upheld",
+              "ordinal": 19,
+              "runs": [
+                "r3"
+              ]
+            },
+            {
+              "entry": "skill:probe",
+              "fingerprintId": "fb",
+              "status": "upheld",
+              "ordinal": 16,
+              "runs": [
+                "r1",
+                "r2",
+                "r4"
+              ]
+            }
+          ],
+          "settledTurn": 20,
+          "faultedFingerprints": [
+            "fa",
+            "fb"
+          ],
+          "faultedEntries": [
+            "skill:other",
+            "skill:probe"
+          ]
+        },
+        "p2": {
+          "proposalId": "p2",
+          "touched": [
+            "memory:note"
+          ],
+          "claimedFingerprints": [
+            "fa"
+          ],
+          "committedTurn": 12,
+          "untilTurn": 14,
+          "outcome": "contested",
+          "recurrences": {
+            "fa": 13
+          },
+          "settledTurn": 15
+        },
+        "p3": {
+          "proposalId": "p3",
+          "touched": [
+            "prompt:policy",
+            "skill:other"
+          ],
+          "claimedFingerprints": [
+            "fc"
+          ],
+          "committedTurn": 5,
+          "untilTurn": 9,
+          "outcome": "clean",
+          "settledTurn": 14
+        },
+        "p4": {
+          "proposalId": "p4",
+          "touched": [
+            "skill:other"
+          ],
+          "claimedFingerprints": [
+            "fd"
+          ],
+          "committedTurn": 20,
+          "untilTurn": 40,
+          "outcome": "open"
+        }
+      },
+      "adjustments": [
+        {
+          "kind": "skill",
+          "id": "other",
+          "reason": "measured_fault",
+          "delta": -15,
+          "before": 27,
+          "after": 12,
+          "trust": {
+            "score": 12,
+            "updated_at": "2026-09-14T08:00:00.000Z",
+            "events": [
+              {
+                "reason": "clean_window",
+                "delta": 5,
+                "score": 27,
+                "at": "2026-09-14T08:00:00.000Z",
+                "proposalId": "p3"
+              },
+              {
+                "reason": "measured_fault",
+                "delta": -15,
+                "score": 12,
+                "at": "2026-09-14T08:00:00.000Z",
+                "proposalId": "p1",
+                "fingerprintId": "fa"
+              }
+            ]
+          },
+          "proposalId": "p1",
+          "fingerprintId": "fa"
+        }
+      ],
+      "settled": [],
+      "entries": {
+        "skill": {
+          "probe": {
+            "reference": {
+              "import": "absent_module"
+            },
+            "trust": {
+              "score": 35,
+              "updated_at": "2026-09-14T08:00:00.000Z",
+              "events": [
+                {
+                  "reason": "measured_fault",
+                  "delta": -15,
+                  "score": 35,
+                  "at": "2026-09-14T08:00:00.000Z",
+                  "proposalId": "p1",
+                  "fingerprintId": "fa"
+                }
+              ]
+            }
+          },
+          "other": {
+            "reference": {
+              "import": "other_module"
+            },
+            "trust": {
+              "score": 12,
+              "updated_at": "2026-09-14T08:00:00.000Z",
+              "events": [
+                {
+                  "reason": "clean_window",
+                  "delta": 5,
+                  "score": 27,
+                  "at": "2026-09-14T08:00:00.000Z",
+                  "proposalId": "p3"
+                },
+                {
+                  "reason": "measured_fault",
+                  "delta": -15,
+                  "score": 12,
+                  "at": "2026-09-14T08:00:00.000Z",
+                  "proposalId": "p1",
+                  "fingerprintId": "fa"
+                }
+              ]
+            }
+          }
+        },
+        "memory": {
+          "note": {}
+        },
+        "prompt": {
+          "policy": {
+            "trust": {
+              "score": 100,
+              "updated_at": "2026-09-14T08:00:00.000Z",
+              "events": [
+                {
+                  "reason": "clean_window",
+                  "delta": 5,
+                  "score": 100,
+                  "at": "2026-09-14T08:00:00.000Z",
+                  "proposalId": "p3"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "settle": 41
+      },
+      "windows": {
+        "p1": {
+          "proposalId": "p1",
+          "touched": [
+            "memory:note",
+            "prompt:policy",
+            "skill:other",
+            "skill:probe"
+          ],
+          "claimedFingerprints": [
+            "fa",
+            "fb"
+          ],
+          "committedTurn": 10,
+          "untilTurn": 30,
+          "outcome": "faulted",
+          "skillImports": {
+            "skill:probe": [
+              "absent_module"
+            ],
+            "skill:other": [
+              "other_module"
+            ]
+          },
+          "recurrences": {
+            "fa": 12,
+            "fb": 16
+          },
+          "adjudications": [
+            {
+              "entry": "skill:other",
+              "fingerprintId": "fa",
+              "status": "upheld",
+              "ordinal": 21,
+              "runs": [
+                "r6"
+              ]
+            },
+            {
+              "entry": "skill:probe",
+              "fingerprintId": "fa",
+              "status": "upheld",
+              "ordinal": 19,
+              "runs": [
+                "r3"
+              ]
+            },
+            {
+              "entry": "skill:probe",
+              "fingerprintId": "fb",
+              "status": "upheld",
+              "ordinal": 16,
+              "runs": [
+                "r1",
+                "r2",
+                "r4"
+              ]
+            }
+          ],
+          "settledTurn": 20,
+          "faultedFingerprints": [
+            "fa",
+            "fb"
+          ],
+          "faultedEntries": [
+            "skill:other",
+            "skill:probe"
+          ]
+        },
+        "p2": {
+          "proposalId": "p2",
+          "touched": [
+            "memory:note"
+          ],
+          "claimedFingerprints": [
+            "fa"
+          ],
+          "committedTurn": 12,
+          "untilTurn": 14,
+          "outcome": "contested",
+          "recurrences": {
+            "fa": 13
+          },
+          "settledTurn": 15
+        },
+        "p3": {
+          "proposalId": "p3",
+          "touched": [
+            "prompt:policy",
+            "skill:other"
+          ],
+          "claimedFingerprints": [
+            "fc"
+          ],
+          "committedTurn": 5,
+          "untilTurn": 9,
+          "outcome": "clean",
+          "settledTurn": 14
+        },
+        "p4": {
+          "proposalId": "p4",
+          "touched": [
+            "skill:other"
+          ],
+          "claimedFingerprints": [
+            "fd"
+          ],
+          "committedTurn": 20,
+          "untilTurn": 40,
+          "outcome": "clean",
+          "settledTurn": 41
+        }
+      },
+      "adjustments": [
+        {
+          "kind": "skill",
+          "id": "other",
+          "reason": "clean_window",
+          "delta": 5,
+          "before": 12,
+          "after": 17,
+          "trust": {
+            "score": 17,
+            "updated_at": "2026-09-14T08:00:00.000Z",
+            "events": [
+              {
+                "reason": "clean_window",
+                "delta": 5,
+                "score": 27,
+                "at": "2026-09-14T08:00:00.000Z",
+                "proposalId": "p3"
+              },
+              {
+                "reason": "measured_fault",
+                "delta": -15,
+                "score": 12,
+                "at": "2026-09-14T08:00:00.000Z",
+                "proposalId": "p1",
+                "fingerprintId": "fa"
+              },
+              {
+                "reason": "clean_window",
+                "delta": 5,
+                "score": 17,
+                "at": "2026-09-14T08:00:00.000Z",
+                "proposalId": "p4"
+              }
+            ]
+          },
+          "proposalId": "p4"
+        }
+      ],
+      "settled": [
+        {
+          "proposalId": "p4",
+          "from": "open",
+          "outcome": "clean",
+          "turn": 41,
+          "fingerprints": [
+            "fd"
+          ]
+        }
+      ],
+      "entries": {
+        "skill": {
+          "probe": {
+            "reference": {
+              "import": "absent_module"
+            },
+            "trust": {
+              "score": 35,
+              "updated_at": "2026-09-14T08:00:00.000Z",
+              "events": [
+                {
+                  "reason": "measured_fault",
+                  "delta": -15,
+                  "score": 35,
+                  "at": "2026-09-14T08:00:00.000Z",
+                  "proposalId": "p1",
+                  "fingerprintId": "fa"
+                }
+              ]
+            }
+          },
+          "other": {
+            "reference": {
+              "import": "other_module"
+            },
+            "trust": {
+              "score": 17,
+              "updated_at": "2026-09-14T08:00:00.000Z",
+              "events": [
+                {
+                  "reason": "clean_window",
+                  "delta": 5,
+                  "score": 27,
+                  "at": "2026-09-14T08:00:00.000Z",
+                  "proposalId": "p3"
+                },
+                {
+                  "reason": "measured_fault",
+                  "delta": -15,
+                  "score": 12,
+                  "at": "2026-09-14T08:00:00.000Z",
+                  "proposalId": "p1",
+                  "fingerprintId": "fa"
+                },
+                {
+                  "reason": "clean_window",
+                  "delta": 5,
+                  "score": 17,
+                  "at": "2026-09-14T08:00:00.000Z",
+                  "proposalId": "p4"
+                }
+              ]
+            }
+          }
+        },
+        "memory": {
+          "note": {}
+        },
+        "prompt": {
+          "policy": {
+            "trust": {
+              "score": 100,
+              "updated_at": "2026-09-14T08:00:00.000Z",
+              "events": [
+                {
+                  "reason": "clean_window",
+                  "delta": 5,
+                  "score": 100,
+                  "at": "2026-09-14T08:00:00.000Z",
+                  "proposalId": "p3"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "pruned": [
+    "open",
+    "s11",
+    "s22",
+    "s33",
+    "s44",
+    "s55",
+    "s66",
+    "s07",
+    "s18",
+    "s29",
+    "s310",
+    "s411",
+    "s512",
+    "s613",
+    "s014",
+    "s115",
+    "s216",
+    "s317",
+    "s418",
+    "s519",
+    "s620",
+    "s021",
+    "s122",
+    "s223",
+    "s324",
+    "s425",
+    "s526",
+    "s627",
+    "s028",
+    "s129",
+    "s230",
+    "s331",
+    "s432",
+    "s533",
+    "s634",
+    "s136",
+    "s237",
+    "s338",
+    "s439",
+    "s540",
+    "s641",
+    "s042",
+    "s143",
+    "s244",
+    "s345",
+    "s446",
+    "s547",
+    "s648",
+    "s049",
+    "s150",
+    "s251",
+    "s352",
+    "s453",
+    "s554",
+    "s655",
+    "s056",
+    "s157",
+    "s258",
+    "s359",
+    "s460",
+    "s561",
+    "s662",
+    "s063",
+    "s164",
+    "s265",
+    "s366",
+    "s467",
+    "s568",
+    "s669",
+    "s070",
+    "s171",
+    "s272",
+    "s373",
+    "s474",
+    "s575",
+    "s676",
+    "s077",
+    "s178",
+    "s279",
+    "s380",
+    "s481",
+    "s582",
+    "s683",
+    "s084",
+    "s185",
+    "s286",
+    "s387",
+    "s488",
+    "s589",
+    "s690",
+    "s091",
+    "s192",
+    "s293",
+    "s394",
+    "s495",
+    "s596",
+    "s697",
+    "s098",
+    "s199",
+    "s2100",
+    "s3101",
+    "last"
+  ]
+}

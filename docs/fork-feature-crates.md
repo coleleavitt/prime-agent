@@ -38,6 +38,8 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
      (`lock_store`); in a session that may auto-refine (with auto-refine on) the gate also gets a
      `pa_core::session_engine::turn_boundary::RefineRequester`, through which its feature queues refines of its own
      (carrying a `RefineTrigger` to the gate) that run at the next serviced turn boundary like the agent's `refine.run`.
+     A verdict may also `prepare_application` (update the re-read store before the edits apply), and a requester may
+     listen `on_dropped` for a pending refine an aborted turn drops unserviced.
    - harness digest: `SessionFeature::harness_prompt_hook` hands the session a
      `pa_core::refinement::prompt_hook::HarnessPromptHook` that, at every render of the merged harness state into the
      digest, answers a `HarnessPromptAdjustment`: a lead sort key per entry id (ahead of the native relevance/path order),
@@ -45,7 +47,12 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
      sections rendered after the entries (heading, then sanitized one-line bullets). Every installed feature's hook
      applies (ranks add, groups and sections append); an empty adjustment renders the native digest byte for byte, a
      non-empty one is folded into the digest's state fingerprint.
-   Seams to add as features need them: system-prompt layer providers, turn-start observers.
+   - automatic refine: `SessionFeature::auto_refine_policy` hands the session a
+     `pa_core::refinement::executor::AutoRefinePolicy` (the review's prompt texts and what an approval runs; the
+     review's whole reply is on `AutoRefineReview::reply`);
+   - harness entries keep the keys pa-core does not model (`HarnessEntry::extensions`), as the state keeps its own.
+  Seams to add as features need them: system-prompt layer providers, turn-start observers, feature-contributed
+  bundled skills, feature slash commands, feature daemon events.
 5. **Data ownership.** A crate owns its files under `~/.prime/agent/<feature>/` (or the session artifact dir) and its
    key in `harness_state.json` (`HarnessState::extensions["<feature>"]`). It never rewrites another crate's data.
    Formats stay byte-compatible with the fork's TS files where those already exist on disk.

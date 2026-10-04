@@ -395,6 +395,7 @@ async fn execute_compaction_attaches_harness_digest_snapshot() {
                 created_at: "2026-09-07T00:00:00.000Z".to_string(),
                 updated_at: "2026-09-07T00:00:00.000Z".to_string(),
                 version: 1,
+                extensions: serde_json::Map::new(),
             },
         );
     crate::refinement::save_harness_state(&local_dir, &state).unwrap();

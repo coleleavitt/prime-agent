@@ -316,6 +316,71 @@ pub struct AutoRefineReview {
     pub should_refine: bool,
     pub rationale: String,
     pub instructions: Option<String>,
+    /// The reviewer's whole JSON reply, for a policy that reads more of it
+    /// (see [`AutoRefinePolicy`]).
+    pub reply: serde_json::Map<String, serde_json::Value>,
+}
+
+/// The closing guidance of the native review prompt.
+pub const AUTO_REFINE_REVIEW_GUIDANCE: &str = "Return shouldRefine=true when the trajectory contains evidence useful to this session's future turns. Prefer local harness edits for current task progress, temporary blockers, and current-run coordination. Ask for global refinement only for durable cross-session lessons or explicitly project-qualified lessons likely to be reused in future sessions.";
+
+/// The refine an approved automatic review runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutoRefineRun {
+    /// Refine the global store (else the session's local one).
+    pub global: bool,
+    pub instructions: String,
+}
+
+/// How a session's automatic refine reviews ask and what an approval runs
+/// (installed through
+/// [`crate::features::SessionFeature::auto_refine_policy`]). Every method
+/// defaults to the native behaviour, which [`NativeAutoRefinePolicy`] is.
+pub trait AutoRefinePolicy: Send + Sync {
+    /// The review's system prompt.
+    fn review_system_prompt(&self) -> &'static str {
+        AUTO_REFINE_REVIEW_SYSTEM_PROMPT
+    }
+
+    /// The closing guidance paragraph of the review's prompt.
+    fn review_guidance(&self) -> &'static str {
+        AUTO_REFINE_REVIEW_GUIDANCE
+    }
+
+    /// The refine an approved `review` (triggered by `reason`) runs: a
+    /// local one, natively.
+    fn approved_refine(&self, reason: &str, review: &AutoRefineReview) -> AutoRefineRun {
+        AutoRefineRun {
+            global: false,
+            instructions: native_auto_refine_instructions(reason, review),
+        }
+    }
+}
+
+/// The native review and run.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NativeAutoRefinePolicy;
+
+impl AutoRefinePolicy for NativeAutoRefinePolicy {}
+
+/// The instructions a natively approved review carries into its local run.
+#[must_use]
+pub fn native_auto_refine_instructions(reason: &str, review: &AutoRefineReview) -> String {
+    let detail = review
+        .instructions
+        .as_deref()
+        .map(|instructions| {
+            format!(
+                "
+
+Reviewer instructions: {instructions}"
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "Automatic refine review triggered by {reason}. Only create/update/delete local harness entries if there is clear evidence that should help this session continue. Prefer an empty edits array over speculative or one-off memories. Do not promote anything global unless explicitly requested. Reviewer rationale: {}{detail}",
+        review.rationale
+    )
 }
 
 pub struct AutoRefineReviewContext {
@@ -337,6 +402,7 @@ fn parse_auto_refine_review(text: &str) -> anyhow::Result<AutoRefineReview> {
             .get("instructions")
             .and_then(|value| value.as_str())
             .map(std::string::ToString::to_string),
+        reply: record,
     })
 }
 
@@ -351,8 +417,10 @@ pub async fn review_auto_refine(
     history: &[RefinementResult],
     model: &pa_types::ai::Model,
     context: &AutoRefineReviewContext,
+    policy: &dyn AutoRefinePolicy,
     review_call: RefinerFn,
 ) -> anyhow::Result<AutoRefineReview> {
+    let system_prompt = policy.review_system_prompt();
     let conversation_text = conversation_text(messages, 40_000);
     let build_prompt = |conversation: &str| -> String {
         [
@@ -369,20 +437,20 @@ pub async fn review_auto_refine(
                 history_for_prompt(history)
             ),
             format!("<conversation>\n{conversation}\n</conversation>"),
-            "Return shouldRefine=true when the trajectory contains evidence useful to this session's future turns. Prefer local harness edits for current task progress, temporary blockers, and current-run coordination. Ask for global refinement only for durable cross-session lessons or explicitly project-qualified lessons likely to be reused in future sessions.".to_string(),
+            policy.review_guidance().to_string(),
         ]
         .join("\n\n")
     };
     let (request_max_tokens, user_prompt) = refinement_request(
         model,
-        AUTO_REFINE_REVIEW_SYSTEM_PROMPT,
+        system_prompt,
         &conversation_text,
         &build_prompt,
         AUTO_REFINE_REVIEW_MAX_OUTPUT_TOKENS,
     )?;
     let mut request_model = model.clone();
     request_model.max_tokens = request_max_tokens.min(AUTO_REFINE_REVIEW_MAX_OUTPUT_TOKENS);
-    let reply = review_call(request_model, AUTO_REFINE_REVIEW_SYSTEM_PROMPT, user_prompt).await?;
+    let reply = review_call(request_model, system_prompt, user_prompt).await?;
     parse_auto_refine_review(&assistant_text(&reply))
 }
 
@@ -445,6 +513,7 @@ mod tests {
                 reason: "compact".to_string(),
                 turns_since_last_review: 0,
             },
+            &NativeAutoRefinePolicy,
             review_call,
         )
         .await
@@ -512,6 +581,7 @@ mod tests {
                     created_at: String::new(),
                     updated_at: String::new(),
                     version: 0,
+                    extensions: serde_json::Map::new(),
                 },
             );
         let overview = overview_for_prompt(&state);
@@ -593,6 +663,7 @@ mod tests {
                 reason: "checkpoint".to_string(),
                 turns_since_last_review: 4,
             },
+            &NativeAutoRefinePolicy,
             seam(r#"{"shouldRefine":true,"rationale":"pattern seen","instructions":"note the tactic"}"#),
         )
         .await
@@ -609,6 +680,7 @@ mod tests {
                 reason: "checkpoint".to_string(),
                 turns_since_last_review: 1,
             },
+            &NativeAutoRefinePolicy,
             seam(r#"{"shouldRefine":false}"#),
         )
         .await
@@ -616,6 +688,91 @@ mod tests {
         assert!(!rejected.should_refine);
         assert_eq!(rejected.rationale, "No rationale provided.");
         assert_eq!(rejected.instructions, None);
+    }
+
+    /// Asks with its own prompt texts and runs every approval globally.
+    struct StubPolicy;
+
+    impl AutoRefinePolicy for StubPolicy {
+        fn review_system_prompt(&self) -> &'static str {
+            "stub review system"
+        }
+
+        fn review_guidance(&self) -> &'static str {
+            "stub guidance"
+        }
+
+        fn approved_refine(&self, reason: &str, review: &AutoRefineReview) -> AutoRefineRun {
+            AutoRefineRun {
+                global: review.reply.get("scope") != Some(&serde_json::json!("local")),
+                instructions: format!("{reason}: {}", review.rationale),
+            }
+        }
+    }
+
+    /// A policy's review asks with its own system prompt and closing
+    /// guidance and sees the whole reply; the native policy asks and runs
+    /// exactly as before.
+    #[tokio::test]
+    async fn an_auto_refine_policy_shapes_the_review_and_its_run() {
+        let asked: std::sync::Arc<std::sync::Mutex<Vec<(&'static str, String)>>> =
+            std::sync::Arc::default();
+        let call = |reply: &'static str| -> RefinerFn {
+            let asked = std::sync::Arc::clone(&asked);
+            Box::new(move |_model, system, prompt| {
+                asked.lock().unwrap().push((system, prompt));
+                Box::pin(async move { Ok(text_message(reply)) })
+            })
+        };
+        let context = AutoRefineReviewContext {
+            reason: "compact".to_string(),
+            turns_since_last_review: 2,
+        };
+        let state = super::super::empty_harness_state();
+        let review = review_auto_refine(
+            &[],
+            &state,
+            &[],
+            &test_model(),
+            &context,
+            &StubPolicy,
+            call(r#"{"shouldRefine":true,"rationale":"durable","scope":"local"}"#),
+        )
+        .await
+        .unwrap();
+        assert_eq!(review.reply.get("scope"), Some(&serde_json::json!("local")));
+        assert_eq!(
+            StubPolicy.approved_refine("compact", &review),
+            AutoRefineRun {
+                global: false,
+                instructions: "compact: durable".to_string(),
+            }
+        );
+        let native = review_auto_refine(
+            &[],
+            &state,
+            &[],
+            &test_model(),
+            &context,
+            &NativeAutoRefinePolicy,
+            call(r#"{"shouldRefine":true,"rationale":"durable"}"#),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            NativeAutoRefinePolicy.approved_refine("compact", &native),
+            AutoRefineRun {
+                global: false,
+                instructions: native_auto_refine_instructions("compact", &native),
+            }
+        );
+        let asked = asked.lock().unwrap();
+        assert_eq!(asked[0].0, "stub review system");
+        assert!(asked[0].1.ends_with("\n\nstub guidance"));
+        assert_eq!(asked[1].0, AUTO_REFINE_REVIEW_SYSTEM_PROMPT);
+        assert!(asked[1]
+            .1
+            .ends_with(&format!("\n\n{AUTO_REFINE_REVIEW_GUIDANCE}")));
     }
 
     fn test_model() -> pa_types::ai::Model {

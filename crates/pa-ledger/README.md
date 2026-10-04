@@ -97,7 +97,9 @@ Harness state: `HarnessDocument` (`load`, `get`, `set`, `failures`, `set_failure
 Runtime: `FailureLedgerFeature::with_observers(options, observers)` and `.handle()`. A `LedgerObserver` sees every
 `LedgerBoundary` (turn, observations, local and effective ledgers, newly recurring records, actionably recurred ids,
 local and global ordinals, the global document read for it), may hold a session's flushes (`hold_flush`, e.g. while a
-refine plan binds the state), may ask for a global flush with nothing observed (`wants_global_flush`), writes its own
+refine plan binds the state), may ask for a local or a global flush with nothing observed (`wants_local_flush`,
+`wants_global_flush`), writes its own
 keys into the same document inside the flush (`on_flush`, under the lock for the global scope), and learns whether it
 landed (`on_flush_result`). `LedgerHandle`: `session_ledger`, `fresh_global_ledger`, `turn`,
-`record_replay_verifications`, `request_flush`, `wait_idle`, `global_ledger_enabled`, `local_harness_state_dir`.
+`record_replay_verifications`, `pending_replay_verifications`, `request_flush`, `request_global_flush` (the global state only: for a caller that
+may run while the kernel writes the local state), `wait_idle`, `global_ledger_enabled`, `local_harness_state_dir`.

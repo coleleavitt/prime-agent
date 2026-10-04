@@ -11,7 +11,7 @@
 //! 3 adds the kernel telemetry bridge's skill-event vocabulary
 //! (`computer_use_session_started`, `computer_use_action`); schema version 4
 //! adds the separately built features' adoption events (`dream_run`,
-//! `failure_resolution_hint`, `learning_report`, `observability command used`, `ravo_gate_decision`, `toolforge
+//! `failure_resolution_hint`, `learning_report`, `observability command used`, `ravo_gate_decision`, `ravo_run`, `toolforge
 //! publish`, `workflow_run_agent`, `workflow_durable_request`): new-event
 //! vocabulary bumps the version,
 //! additive property changes do not.
@@ -1082,6 +1082,40 @@ const RAVO_GATE_DECISION: EventRule = EventRule {
     ],
 };
 
+/// `ravo_run` (v4): one `ravo.run` the fork's RAVO run service finished
+/// (the `pa-ravo` feature, wired by pa-cli behind its `ravo` feature). How
+/// it stopped, its scope, and how many rounds and repairs it took — never
+/// the task, a proposal, a fingerprint, or child text.
+const RAVO_RUN: EventRule = EventRule {
+    name: "ravo_run",
+    since: 4,
+    properties: &[
+        (
+            "outcome",
+            required(enum_rule(
+                &[
+                    "accepted",
+                    "round_limit",
+                    "repair_limit",
+                    "deadline",
+                    "budget",
+                    "cancelled",
+                    "stale_cas",
+                    "error",
+                    "unknown",
+                ],
+                "unknown",
+            )),
+        ),
+        (
+            "scope",
+            required(enum_rule(&["local", "global", "unknown"], "unknown")),
+        ),
+        ("rounds", required(count())),
+        ("repairs", required(count())),
+    ],
+};
+
 /// `observability command used` (v4): one `prime-agent trace` /
 /// `prime-agent health` run (the fork's trace feature crate, wired by pa-cli
 /// behind its `trace` feature; the native build never sends it). The
@@ -1646,6 +1680,7 @@ pub fn catalog() -> Vec<&'static EventRule> {
         &FAILURE_RESOLUTION_HINT,
         &RAVO_GATE_DECISION,
         &LEARNING_REPORT,
+        &RAVO_RUN,
     ];
     all.extend(UPDATE_EVENTS.iter());
     all
@@ -1957,6 +1992,24 @@ mod tests {
         odd.set("subcommand", json!("chart"));
         sanitize("learning_report", &mut odd);
         assert_eq!(odd.get("subcommand"), Some(&json!("unknown")));
+    }
+
+    #[test]
+    fn ravo_run_carries_only_its_vocabulary_and_counts() {
+        assert_eq!(lookup("ravo_run").map(|rule| rule.since), Some(4));
+        let mut properties = Properties::new();
+        properties.set("outcome", json!("accepted"));
+        properties.set("scope", json!("local"));
+        properties.set("rounds", json!(2u64));
+        properties.set("repairs", json!(1u64));
+        let expected = properties.clone();
+        properties.set("task", json!("turn the checklist into a skill")); // not catalogued
+        assert_eq!(sanitize("ravo_run", &mut properties), 1);
+        assert_eq!(properties, expected);
+        let mut odd = Properties::new();
+        odd.set("outcome", json!("exploded"));
+        sanitize("ravo_run", &mut odd);
+        assert_eq!(odd.get("outcome"), Some(&json!("unknown")));
     }
 
     #[test]

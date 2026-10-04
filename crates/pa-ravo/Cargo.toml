@@ -9,16 +9,20 @@ description = "RAVO: the gate that admits or refuses harness refinements, its li
 pa-core = { path = "../pa-core" }
 pa-ledger = { path = "../pa-ledger" }
 pa-types = { workspace = true }
+pa-agent = { workspace = true }
+pa-ai = { workspace = true }
 pa-telemetry = { workspace = true }
 anyhow = { workspace = true }
+indexmap = { version = "2", features = ["serde"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 tracing = { workspace = true }
 sha2 = "0.10"
 
 [dev-dependencies]
-pa-agent = { workspace = true }
 tempfile = "3"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["registry", "std"] }
 

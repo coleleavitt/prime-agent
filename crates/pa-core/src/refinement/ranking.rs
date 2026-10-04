@@ -650,6 +650,7 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
             version: 1,
+            extensions: serde_json::Map::new(),
         }
     }
 
@@ -669,6 +670,7 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
             version: 1,
+            extensions: serde_json::Map::new(),
         };
         let mut terms = HarnessQueryTerms::new();
         terms.insert("web".to_string(), 1.0);
@@ -972,6 +974,7 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
             version: 2,
+            extensions: serde_json::Map::new(),
         };
         state
             .entries

@@ -11,8 +11,13 @@ use pa_core::refinement::gate::{
     GateAdmission, RefineGuard, RefinementGate, RefinementGateRequest, RefinementGateVerdict,
 };
 use pa_core::refinement::planner::{refused_refinement_edits, RefinementProposal};
+use pa_core::refinement::prompt_hook::{
+    HarnessPromptAdjustment, HarnessPromptHook, WithheldHarnessEntries,
+};
 use pa_core::refinement::ranking::{format_harness_state_for_prompt, HarnessStatePromptOptions};
-use pa_core::refinement::{HarnessScope, HarnessState, RefinementResult};
+use pa_core::refinement::{
+    HarnessScope, HarnessState, RefinementAction, RefinementKind, RefinementResult,
+};
 use pa_core::session_engine::refine::RefinementSource;
 use pa_core::session_engine::turn_boundary::{PendingRefine, RefineRequester};
 use pa_ledger::{
@@ -37,6 +42,13 @@ use crate::gate::{
 use crate::reducer::RavoWindowClock;
 use crate::referee::ReplayRunner;
 use crate::trigger::{failure_refine, queue, read_trigger, FailureRequest, RequestKind};
+use crate::trust::{
+    empty_entry_trust, harness_entry_ref, is_dormant_trust, log_trust_settlement,
+    normalize_entry_trust, open_trust_window, record_harness_trust_evidence, reference_imports,
+    settle_harness_trust, stored_trust_windows, trust_windows_value, TrustClaim, TrustSettlement,
+    TRUST_KEY, TRUST_WINDOWS_KEY,
+};
+use crate::trust_runtime::{TrustRunner, TrustTracker};
 use crate::verification::ReplayVerifier;
 
 /// The kill switch: gating is on unless it says `0`, `off` or `false`.
@@ -45,8 +57,7 @@ pub const RAVO_ENV: &str = "PRIME_AGENT_RAVO";
 /// The adoption event: one gated refinement's final decision.
 pub const RAVO_GATE_DECISION_EVENT: &str = "ravo_gate_decision";
 
-/// Where the outcome log lines go (TS `REFINEMENT_LOG_COMPONENT`).
-pub const REFINEMENT_LOG_TARGET: &str = "pa_ravo::refinement";
+pub use crate::outcome::REFINEMENT_LOG_TARGET;
 
 /// Whether RAVO gating is on for a `PRIME_AGENT_RAVO` value.
 #[must_use]
@@ -101,6 +112,14 @@ struct Inner {
     triggered: Mutex<HashMap<String, HashSet<String>>>,
     /// Requests parked behind a pending one of the other scope.
     parked: Mutex<HashMap<String, Vec<PendingRefine>>>,
+    trust: Arc<TrustTracker>,
+    /// The failures each session's running (evaluated, not yet finished)
+    /// refines were queued for, one entry per refine.
+    live_triggers: Mutex<HashMap<String, Vec<Vec<String>>>>,
+    /// The `ravo.run` services.
+    run_host: Arc<crate::run_host::RunHost>,
+    /// Each session's agent dir (where its global store lives).
+    agent_dirs: Mutex<HashMap<String, std::path::PathBuf>>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -120,7 +139,9 @@ impl RavoFeature {
     /// [`Self::attach_ledger`] once the ledger feature exists.
     #[must_use]
     pub fn new(options: RavoOptions) -> Self {
-        Self {
+        let runner = Arc::clone(&options.runner);
+        let replay_sys_path = options.replay_sys_path.clone();
+        let feature = Self {
             inner: Arc::new(Inner {
                 options,
                 ledger: OnceLock::new(),
@@ -131,8 +152,36 @@ impl RavoFeature {
                 requesters: Mutex::new(HashMap::new()),
                 triggered: Mutex::new(HashMap::new()),
                 parked: Mutex::new(HashMap::new()),
+                trust: Arc::default(),
+                live_triggers: Mutex::new(HashMap::new()),
+                run_host: Arc::new(crate::run_host::RunHost {
+                    runner: Arc::clone(&runner),
+                    replay_sys_path,
+                    model: Mutex::new(Arc::new(|context: &SessionFeatureContext| {
+                        Arc::new(crate::run_host::SessionModel::new(context))
+                            as Arc<dyn crate::run::RavoModel>
+                    })),
+                    services: Mutex::new(HashMap::new()),
+                }),
+                agent_dirs: Mutex::new(HashMap::new()),
             }),
-        }
+        };
+        // A finished self-check batch releases the trust replays awaiting it.
+        let weak = Arc::downgrade(&feature.inner);
+        feature
+            .inner
+            .verifier
+            .set_listener(Box::new(move |session_id, verifications| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                if let Some(run) = inner.trust_runner() {
+                    inner
+                        .trust
+                        .release(session_id, verifications, &inner.verifier, &run);
+                }
+            }));
+        feature
     }
 
     /// The observer to build the ledger feature with.
@@ -143,13 +192,26 @@ impl RavoFeature {
         })
     }
 
-    /// Wait until no replay self-check runs, up to `timeout`; `false` when
-    /// the timeout passed first.
+    /// Wait until no replay self-check and no trust replay runs, up to
+    /// `timeout`; `false` when the timeout passed first.
     #[must_use]
     pub fn wait_replay_checks(&self, timeout: std::time::Duration) -> bool {
         self.inner
-            .verifier
-            .wait_idle(std::time::Instant::now() + timeout)
+            .wait_referee_runs(std::time::Instant::now() + timeout)
+    }
+
+    /// Prompt `ravo.run`'s children with the model `factory` builds for a
+    /// session instead of the session model (tests script it).
+    ///
+    #[must_use]
+    pub fn with_run_model(self, factory: crate::run_host::ModelFactory) -> Self {
+        *self
+            .inner
+            .run_host
+            .model
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = factory;
+        self
     }
 
     /// Give the feature the ledger's handle; later calls are ignored.
@@ -164,6 +226,71 @@ impl RavoFeature {
 }
 
 impl Inner {
+    /// What a trust replay batch runs with, once the ledger is attached.
+    fn trust_runner(&self) -> Option<TrustRunner> {
+        self.ledger.get().map(|handle| TrustRunner {
+            runner: Arc::clone(&self.options.runner),
+            sys_path: self.options.replay_sys_path.clone(),
+            handle: handle.clone(),
+        })
+    }
+
+    fn remember(&self, context: &SessionFeatureContext) {
+        lock(&self.agent_dirs)
+            .entry(context.session_id.clone())
+            .or_insert_with(|| context.agent_dir.clone());
+    }
+
+    /// The observation ordinal of the global ledger as it stands now (TS
+    /// `observationOrdinal(_freshGlobalFailureLedger())`): the clock trust
+    /// windows are measured on, even with the global ledger off (nothing
+    /// advances it then, so no window settles: the fail-closed direction).
+    fn fresh_global_ordinal(&self, session_id: &str) -> u64 {
+        let agent_dir = lock(&self.agent_dirs).get(session_id).cloned();
+        match (self.ledger.get(), agent_dir) {
+            (Some(ledger), Some(agent_dir)) => observation_ordinal(Some(
+                &ledger.fresh_global_ledger(&agent_dir, Some(session_id)),
+            )),
+            _ => 0,
+        }
+    }
+
+    /// Wait for the running replay self-checks and trust replays,
+    /// including the batches they start (TS `_awaitRefereeRuns`).
+    fn wait_referee_runs(&self, deadline: std::time::Instant) -> bool {
+        self.verifier.wait_idle(deadline)
+            && self.trust.wait_idle(deadline)
+            && self.verifier.wait_idle(deadline)
+    }
+
+    /// A dropped request repaired nothing: the failures that queued it may
+    /// queue a repair again, except those a running refine still carries
+    /// (TS `_releaseRefineTriggers`). The requests parked behind it are
+    /// dropped with it (TS `_dropPendingRefineRequests`).
+    fn release_dropped(&self, session_id: &str, dropped: &PendingRefine) {
+        let parked = lock(&self.parked).remove(session_id).unwrap_or_default();
+        let held: Vec<String> = lock(&self.live_triggers)
+            .get(session_id)
+            .map(|live| live.iter().flatten().cloned().collect())
+            .unwrap_or_default();
+        let mut triggered = lock(&self.triggered);
+        let Some(triggered) = triggered.get_mut(session_id) else {
+            return;
+        };
+        for request in std::iter::once(dropped).chain(&parked) {
+            let Some(request) = request.trigger.as_ref().and_then(read_trigger) else {
+                continue;
+            };
+            for id in &request.trigger_fingerprint_ids {
+                if held.contains(id) {
+                    continue;
+                }
+                triggered.remove(&format!("recurrence:{id}"));
+                triggered.remove(&format!("regression:{id}"));
+            }
+        }
+    }
+
     fn enabled(&self) -> bool {
         self.options
             .enabled
@@ -176,22 +303,94 @@ impl SessionFeature for RavoFeature {
         "ravo"
     }
 
+    /// `ravo.run`, `ravo.status` and `ravo.cancel` (the bundled `ravo`
+    /// skill's host side).
+    fn register_host_handlers(
+        &self,
+        context: &SessionFeatureContext,
+        handlers: &mut pa_core::kernel::shared::HostRequestHandlers,
+    ) {
+        crate::run_host::register(&self.inner.run_host, context, handlers);
+    }
+
     /// Let running replay self-checks finish, so the ledger's exit flush
     /// (installed after this feature) writes what they verified.
     fn flush(&self, deadline: std::time::Instant) {
-        if !self.inner.verifier.wait_idle(deadline) {
-            tracing::debug!("replay self-checks abandoned at the exit deadline");
+        if !self.inner.wait_referee_runs(deadline) {
+            tracing::debug!("replay self-checks and trust replays abandoned at the exit deadline");
         }
+    }
+
+    /// An approved automatic review refines the global harness unless the
+    /// reviewer asked for a local refine, while the gate judges refines
+    /// (TS `4c99bf8c2`); with gating off the native policy stays.
+    fn auto_refine_policy(
+        &self,
+        _context: &Arc<SessionFeatureContext>,
+    ) -> Option<Arc<dyn pa_core::refinement::executor::AutoRefinePolicy>> {
+        self.inner
+            .enabled()
+            .then(|| Arc::new(crate::auto_refine::GlobalDefaultAutoRefine) as _)
+    }
+
+    /// Dormant entries leave the rendered harness (TS
+    /// `formatHarnessStateForPrompt`).
+    fn harness_prompt_hook(
+        &self,
+        _context: &Arc<SessionFeatureContext>,
+    ) -> Option<Arc<dyn HarnessPromptHook>> {
+        Some(Arc::new(DormantEntries))
     }
 
     fn refinement_gate(
         &self,
         context: &Arc<SessionFeatureContext>,
     ) -> Option<Arc<dyn RefinementGate>> {
+        self.inner.remember(context);
         Some(Arc::new(SessionGate {
             inner: Arc::clone(&self.inner),
             context: Arc::clone(context),
         }))
+    }
+}
+
+/// Withholds entries whose measured trust fell below the threshold,
+/// announced as `- +<n> dormant <kind> entries (below trust threshold;
+/// still readable and editable)`.
+pub(crate) struct DormantEntries;
+
+/// The render adjustment withholding `state`'s dormant entries.
+pub(crate) fn dormant_adjustment(state: &HarnessState) -> HarnessPromptAdjustment {
+    let entries = state
+        .entries
+        .iter()
+        .flat_map(|(kind, records)| {
+            records
+                .iter()
+                .filter(|(_, entry)| {
+                    is_dormant_trust(
+                        normalize_entry_trust(entry.extensions.get(TRUST_KEY)).as_ref(),
+                    )
+                })
+                .map(move |(id, _)| (*kind, id.clone()))
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    if entries.is_empty() {
+        return HarnessPromptAdjustment::default();
+    }
+    HarnessPromptAdjustment {
+        withheld: vec![WithheldHarnessEntries {
+            label: "dormant".to_string(),
+            note: "below trust threshold; still readable and editable".to_string(),
+            entries,
+        }],
+        ..HarnessPromptAdjustment::default()
+    }
+}
+
+impl HarnessPromptHook for DormantEntries {
+    fn adjust(&self, state: &HarnessState) -> HarnessPromptAdjustment {
+        dormant_adjustment(state)
     }
 }
 
@@ -360,6 +559,13 @@ impl RefinementGate for SessionGate {
     }
 
     fn attach_refine_requester(&self, requester: RefineRequester) {
+        let inner = Arc::downgrade(&self.inner);
+        let session_id = self.context.session_id.clone();
+        requester.on_dropped(Arc::new(move |dropped: &PendingRefine| {
+            if let Some(inner) = inner.upgrade() {
+                inner.release_dropped(&session_id, dropped);
+            }
+        }));
         lock(&self.inner.requesters).insert(self.context.session_id.clone(), requester);
     }
 
@@ -382,6 +588,7 @@ impl RefinementGate for SessionGate {
             .as_ref()
             .map(|failure| failure.trigger_fingerprint_ids.clone())
             .unwrap_or_default();
+        let live = LiveTriggers::hold(&self.inner, &self.context.session_id, &triggers);
         let (recurring, turn, clock) = self.charges(
             request.scope,
             &request.baseline_state,
@@ -390,6 +597,7 @@ impl RefinementGate for SessionGate {
         );
         let inner = Arc::clone(&self.inner);
         let telemetry = self.context.telemetry.clone();
+        let session_id = self.context.session_id.clone();
         Box::pin(async move {
             let stored = stored_ravo_state(&request.baseline_state);
             let state = gate_start_state(stored.as_ref());
@@ -404,6 +612,7 @@ impl RefinementGate for SessionGate {
                         &request.planning_state,
                         &HarnessStatePromptOptions {
                             include_ipython_examples: Some(false),
+                            adjustment: Some(dormant_adjustment(&request.planning_state)),
                             ..HarnessStatePromptOptions::default()
                         },
                     ),
@@ -427,6 +636,10 @@ impl RefinementGate for SessionGate {
                 triggers,
                 telemetry,
                 rejection: Mutex::new(None),
+                session_id,
+                inner,
+                applying: Mutex::new(None),
+                _live: live,
             }) as Box<dyn RefinementGateVerdict>))
         })
     }
@@ -449,6 +662,60 @@ struct RavoVerdict {
     triggers: Vec<String>,
     telemetry: Option<FeatureTelemetry>,
     rejection: Mutex<Option<Rejection>>,
+    session_id: String,
+    inner: Arc<Inner>,
+    /// What `prepare_application` settled, for `record_application`.
+    applying: Mutex<Option<Applying>>,
+    /// Marks the refine's failures live until the refine ends.
+    _live: LiveTriggers,
+}
+
+/// The failures a running refine carries, live while it is held.
+struct LiveTriggers {
+    inner: Arc<Inner>,
+    session_id: String,
+    ids: Vec<String>,
+}
+
+impl LiveTriggers {
+    fn hold(inner: &Arc<Inner>, session_id: &str, ids: &[String]) -> Self {
+        if !ids.is_empty() {
+            lock(&inner.live_triggers)
+                .entry(session_id.to_string())
+                .or_default()
+                .push(ids.to_vec());
+        }
+        Self {
+            inner: Arc::clone(inner),
+            session_id: session_id.to_string(),
+            ids: ids.to_vec(),
+        }
+    }
+}
+
+impl Drop for LiveTriggers {
+    fn drop(&mut self) {
+        if self.ids.is_empty() {
+            return;
+        }
+        let mut live = lock(&self.inner.live_triggers);
+        if let Some(refines) = live.get_mut(&self.session_id) {
+            if let Some(index) = refines.iter().position(|ids| *ids == self.ids) {
+                refines.remove(index);
+            }
+            if refines.is_empty() {
+                live.remove(&self.session_id);
+            }
+        }
+    }
+}
+
+/// The trust half of one admitted refine, between preparing the store and
+/// recording the application.
+struct Applying {
+    /// The durable observation ordinal the commit is measured from.
+    observation_turn: u64,
+    settlement: TrustSettlement,
 }
 
 /// A refinement's final decision, after the apply-time checks.
@@ -481,47 +748,17 @@ impl RavoVerdict {
         let proposal_id = self.proposal_id.as_str();
         let reason = self.reason.as_str();
         let scope = scope_name(self.scope);
-        let addressed = report.addressed_fingerprints.join(",");
-        match decision {
-            FinalDecision::Gate(RavoDecision::Commit)
-                if !report.addressed_fingerprints.is_empty() =>
-            {
-                tracing::info!(
-                    target: REFINEMENT_LOG_TARGET,
-                    proposal_id,
-                    addressed,
-                    deep_score = report.deep_score,
-                    missed = report.missed_criteria.len(),
-                    reason,
-                    scope,
-                    "refinement.committed"
-                );
-            }
-            FinalDecision::Gate(RavoDecision::Commit) | FinalDecision::CommitUnmeasured => {
-                tracing::info!(
-                    target: REFINEMENT_LOG_TARGET,
-                    proposal_id,
-                    deep_score = report.deep_score,
-                    reason,
-                    scope,
-                    "refinement.applied_unmeasured"
-                );
-            }
-            FinalDecision::Gate(_) | FinalDecision::Partial => {
-                tracing::info!(
-                    target: REFINEMENT_LOG_TARGET,
-                    proposal_id,
-                    decision = decision.as_str(),
-                    deep_score = report.deep_score,
-                    missed = report.missed_criteria.len(),
-                    claimed = report.addressed_fingerprints.len(),
-                    reason,
-                    scope,
-                    cause = cause.map(RejectionCause::as_str),
-                    "refinement.rejected"
-                );
-            }
-        }
+        crate::outcome::log_refinement_outcome(&crate::outcome::RefinementOutcome {
+            proposal_id,
+            decision: decision.as_str(),
+            addressed: &report.addressed_fingerprints,
+            deep_score: report.deep_score,
+            missed: report.missed_criteria.len(),
+            claimed: report.addressed_fingerprints.len(),
+            reason,
+            scope,
+            cause: cause.map(RejectionCause::as_str),
+        });
         if let Some(telemetry) = &self.telemetry {
             let mut properties = Properties::new();
             properties.set("decision", Value::from(decision.as_str()));
@@ -639,8 +876,34 @@ impl RefinementGateVerdict for RavoVerdict {
         true
     }
 
+    /// Trust is settled and claimed on the durable observation ordinal.
+    /// Settling first means this commit's own claim cannot be credited by
+    /// the window it is about to open; evidence a skipped flush left
+    /// pending is folded in first, so a recurred window never closes clean
+    /// (it stays pending: recording it again is a no-op).
+    fn prepare_application(&self, state: &mut HarnessState) {
+        let observation_turn = self.inner.fresh_global_ordinal(&self.session_id);
+        let evidence = self.inner.trust.pending(&self.session_id, self.scope);
+        let windows =
+            record_harness_trust_evidence(stored_trust_windows(state).as_ref(), state, &evidence);
+        let mut settlement = TrustSettlement::default();
+        if let Some(windows) = windows {
+            let (windows, settled) =
+                settle_harness_trust(&windows, state, observation_turn, &pa_ledger::now_iso());
+            settlement = settled;
+            state
+                .extensions
+                .insert(TRUST_WINDOWS_KEY.to_string(), trust_windows_value(&windows));
+        }
+        *lock(&self.applying) = Some(Applying {
+            observation_turn,
+            settlement,
+        });
+    }
+
     fn record_application(&self, state: &mut HarnessState, result: &mut RefinementResult) {
         let all_applied = result.applied_edits.iter().all(|edit| edit.applied);
+        self.record_trust(state, result, all_applied);
         if let (true, Some(authorization)) = (all_applied, self.report.authorization.as_ref()) {
             // A regression another session recorded while this one planned
             // is not bound, so it survives.
@@ -671,6 +934,91 @@ impl RefinementGateVerdict for RavoVerdict {
     }
 }
 
+impl RavoVerdict {
+    /// Every entry the commit wrote carries a trust record from now on,
+    /// and a commit that claimed fingerprints opens a trust window over
+    /// the entries it wrote (TS `applyRefinementProposal`'s `trustClaim`).
+    fn record_trust(
+        &self,
+        state: &mut HarnessState,
+        result: &mut RefinementResult,
+        all_applied: bool,
+    ) {
+        let applying = lock(&self.applying).take();
+        let mut touched = Vec::new();
+        let mut skill_imports = indexmap::IndexMap::new();
+        for edit in &mut result.applied_edits {
+            if edit.action == RefinementAction::Delete {
+                continue;
+            }
+            let Some(after) = edit.after.as_mut() else {
+                continue;
+            };
+            if !after.extensions.contains_key(TRUST_KEY) {
+                let trust = serde_json::to_value(empty_entry_trust(&after.updated_at))
+                    .unwrap_or(Value::Null);
+                after.extensions.insert(TRUST_KEY.to_string(), trust);
+            }
+            if !(all_applied && edit.applied) {
+                continue;
+            }
+            if let Some(stored) = state
+                .entries
+                .get_mut(&edit.kind)
+                .and_then(|records| records.get_mut(&edit.id))
+            {
+                if let Some(trust) = after.extensions.get(TRUST_KEY) {
+                    stored
+                        .extensions
+                        .entry(TRUST_KEY.to_string())
+                        .or_insert_with(|| trust.clone());
+                }
+            }
+            let entry_ref = harness_entry_ref(kind_str(edit.kind), &edit.id);
+            if edit.kind == RefinementKind::Skill {
+                let imports = reference_imports(&after.reference);
+                if imports.is_empty() {
+                    skill_imports.shift_remove(&entry_ref);
+                } else {
+                    skill_imports.insert(entry_ref.clone(), imports);
+                }
+            }
+            touched.push(entry_ref);
+        }
+        let Some(applying) = applying else {
+            return;
+        };
+        let claimed = &self.report.addressed_fingerprints;
+        if all_applied && !claimed.is_empty() && !touched.is_empty() {
+            let windows = open_trust_window(
+                stored_trust_windows(state).as_ref(),
+                &TrustClaim {
+                    proposal_id: self.proposal_id.clone(),
+                    touched,
+                    claimed_fingerprints: claimed.clone(),
+                    committed_turn: applying.observation_turn,
+                    until_turn: applying.observation_turn + DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS,
+                    skill_imports,
+                },
+            );
+            state
+                .extensions
+                .insert(TRUST_WINDOWS_KEY.to_string(), trust_windows_value(&windows));
+        }
+        log_trust_settlement(&applying.settlement, scope_name(self.scope));
+    }
+}
+
+fn kind_str(kind: RefinementKind) -> &'static str {
+    match kind {
+        RefinementKind::Prompt => "prompt",
+        RefinementKind::Memory => "memory",
+        RefinementKind::Skill => "skill",
+        RefinementKind::Subagent => "subagent",
+        RefinementKind::Factory => "factory",
+    }
+}
+
 /// The ledger observer half.
 struct RavoLedgerObserver {
     inner: Arc<Inner>,
@@ -684,14 +1032,11 @@ impl RavoLedgerObserver {
         &self,
         context: &SessionFeatureContext,
         boundary: &LedgerBoundary<'_>,
+        local: Option<&HarnessDocument>,
     ) -> (Vec<ProvisionalRegression>, Vec<ProvisionalRegression>) {
-        if boundary.recurred_ids.is_empty() {
-            return (Vec::new(), Vec::new());
-        }
-        let Some(artifact_dir) = context.session_artifact_dir.as_deref() else {
+        let Some(local) = local else {
             return (Vec::new(), Vec::new());
         };
-        let local = HarnessDocument::load(&local_harness_state_dir(artifact_dir));
         let local_ravo = local.get(RAVO_KEY);
         let on_local_clock = find_provisional_regressions(
             local_ravo,
@@ -878,22 +1223,45 @@ impl RavoLedgerObserver {
 
 impl LedgerObserver for RavoLedgerObserver {
     fn on_boundary(&self, context: &Arc<SessionFeatureContext>, boundary: &LedgerBoundary<'_>) {
-        if let Some(handle) = self.inner.ledger.get() {
-            self.inner.verifier.observe(
+        // The self-checks are queued before the trust replays are planned
+        // (a replay awaits a check still queued) and start after.
+        let start_checks = self.inner.ledger.get().is_some()
+            && self.inner.verifier.enqueue(
                 &context.session_id,
                 boundary.observations,
                 boundary.effective,
-                Arc::clone(&self.inner.options.runner),
-                handle.clone(),
             );
-        }
         let requester = lock(&self.inner.requesters)
             .get(&context.session_id)
             .cloned();
         if let Some(requester) = &requester {
             self.release_parked(&context.session_id, requester);
         }
-        let (local, global) = self.find_regressions(context, boundary);
+        self.inner.remember(context);
+        // One read of the local state serves the regressions and the trust
+        // windows; only when something recurred.
+        let local_document = context
+            .session_artifact_dir
+            .as_deref()
+            .filter(|_| !boundary.recurred_ids.is_empty())
+            .map(|artifact_dir| HarnessDocument::load(&local_harness_state_dir(artifact_dir)));
+        let (local, global) = self.find_regressions(context, boundary, local_document.as_ref());
+        if let Some(run) = self.inner.trust_runner() {
+            self.inner.trust.observe_recurrences(
+                &context.session_id,
+                boundary,
+                local_document.as_ref(),
+                &self.inner.verifier,
+                &run,
+            );
+        }
+        if let (true, Some(handle)) = (start_checks, self.inner.ledger.get()) {
+            self.inner.verifier.spawn(
+                &context.session_id,
+                Arc::clone(&self.inner.options.runner),
+                handle.clone(),
+            );
+        }
         if let Some(requester) = &requester {
             self.queue_failure_refines(context, requester, boundary, local, global);
         }
@@ -903,13 +1271,36 @@ impl LedgerObserver for RavoLedgerObserver {
         lock(&self.inner.refines).contains_key(session_id)
     }
 
+    fn wants_local_flush(&self, session_id: &str) -> bool {
+        self.inner.trust.wants_flush(session_id, LedgerScope::Local)
+    }
+
     fn wants_global_flush(&self, session_id: &str) -> bool {
         lock(&self.inner.regressions)
             .get(session_id)
             .is_some_and(|pending| !pending.global.is_empty())
+            || self
+                .inner
+                .trust
+                .wants_flush(session_id, LedgerScope::Global)
     }
 
     fn on_flush(&self, flush: &mut LedgerFlush<'_>) {
+        let session_id = flush.session_id.to_string();
+        self.inner
+            .trust
+            .on_flush(flush, || self.inner.fresh_global_ordinal(&session_id));
+        self.record_regressions(flush);
+    }
+
+    fn on_flush_result(&self, scope: LedgerScope, session_id: &str, landed: bool) {
+        self.inner.trust.on_flush_result(scope, session_id, landed);
+        self.regressions_flushed(scope, session_id, landed);
+    }
+}
+
+impl RavoLedgerObserver {
+    fn record_regressions(&self, flush: &mut LedgerFlush<'_>) {
         let mut regressions = lock(&self.inner.regressions);
         let Some(pending) = regressions.get_mut(flush.session_id) else {
             if flush.scope == LedgerScope::Global {
@@ -945,7 +1336,7 @@ impl LedgerObserver for RavoLedgerObserver {
         flush.document.set(RAVO_KEY, ravo);
     }
 
-    fn on_flush_result(&self, scope: LedgerScope, session_id: &str, landed: bool) {
+    fn regressions_flushed(&self, scope: LedgerScope, session_id: &str, landed: bool) {
         let mut regressions = lock(&self.inner.regressions);
         let Some(pending) = regressions.get_mut(session_id) else {
             return;

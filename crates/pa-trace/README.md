@@ -66,3 +66,9 @@ ERROR event carrying only `error` (what `#[instrument(err)]` emits), marks the s
 
 `observability command used` (`command`: `trace`/`health`, `outcome`), emitted by `pa-cli` when a reader command
 runs.
+
+## JSON-valued fields
+
+An event field named `<key>.json` carries JSON text; the record holds the value it parses to under `<key>` (how a
+feature writes the array or object a TS log record held, e.g. `pa-ravo`'s `addressed` list). Text that does not parse
+stays a string under the full field name.

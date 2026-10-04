@@ -65,24 +65,10 @@ impl AutoRefineGates {
     }
 }
 
-/// The instructions an approved review carries into the run.
+/// The instructions a natively approved review carries into the run.
 #[must_use]
 pub fn auto_refine_instructions(reason: &str, review: &AutoRefineReview) -> String {
-    let detail = review
-        .instructions
-        .as_deref()
-        .map(|instructions| {
-            format!(
-                "
-
-Reviewer instructions: {instructions}"
-            )
-        })
-        .unwrap_or_default();
-    format!(
-        "Automatic refine review triggered by {reason}. Only create/update/delete local harness entries if there is clear evidence that should help this session continue. Prefer an empty edits array over speculative or one-off memories. Do not promote anything global unless explicitly requested. Reviewer rationale: {}{detail}",
-        review.rationale
-    )
+    crate::refinement::executor::native_auto_refine_instructions(reason, review)
 }
 
 /// Who triggered a refinement.
@@ -480,6 +466,7 @@ pub async fn execute_refinement_gated(
             }
             return record_rejected_refinement(session, rejected, global_harness_dir, target_scope);
         }
+        verdict.prepare_application(&mut state);
     }
     let mut result = apply_refinement_plan(
         &mut state,
@@ -587,6 +574,14 @@ pub(crate) enum AutoRefineRound {
 }
 
 impl AgentSession {
+    /// The session's automatic-refine policy (the native one unless a
+    /// feature installed its own).
+    fn auto_refine_policy(&self) -> &dyn crate::refinement::executor::AutoRefinePolicy {
+        self.auto_refine_policy
+            .as_deref()
+            .unwrap_or(&crate::refinement::executor::NativeAutoRefinePolicy)
+    }
+
     /// The compact-trigger review: an LLM call over the conversation, the
     /// merged harness state, and the refinement history. `Ok(None)` is the
     /// decline; `Ok(Some(review))` a fresh approval.
@@ -632,6 +627,7 @@ impl AgentSession {
                 reason: AUTO_REFINE_COMPACT_REASON.to_string(),
                 turns_since_last_review,
             },
+            self.auto_refine_policy(),
             default_refiner_call(api_key.clone()),
         )
         .await?;
@@ -690,9 +686,12 @@ impl AgentSession {
         api_key: Option<String>,
         global_harness_dir: std::path::PathBuf,
     ) -> anyhow::Result<RefinementResult> {
+        let run = self
+            .auto_refine_policy()
+            .approved_refine(AUTO_REFINE_COMPACT_REASON, review);
         let options = RefineOptions {
-            global: false,
-            instructions: Some(auto_refine_instructions(AUTO_REFINE_COMPACT_REASON, review)),
+            global: run.global,
+            instructions: Some(run.instructions),
             rollback_id: None,
             trigger: None,
         };
@@ -883,6 +882,7 @@ mod tests {
             should_refine: true,
             rationale: "reusable tactic".to_string(),
             instructions: Some("record it".to_string()),
+            reply: serde_json::Map::new(),
         };
         assert_eq!(
             auto_refine_instructions("compact", &review),
@@ -894,6 +894,7 @@ Reviewer instructions: record it"
             should_refine: true,
             rationale: "reusable tactic".to_string(),
             instructions: None,
+            reply: serde_json::Map::new(),
         };
         assert_eq!(
             auto_refine_instructions("compact", &bare),
@@ -1444,6 +1445,13 @@ Reviewer instructions: record it"
             true
         }
 
+        fn prepare_application(&self, state: &mut crate::refinement::HarnessState) {
+            self.log.lock().unwrap().push("prepare".to_string());
+            state
+                .extensions
+                .insert("stubPrepared".to_string(), json!(true));
+        }
+
         fn record_application(
             &self,
             state: &mut crate::refinement::HarnessState,
@@ -1558,8 +1566,9 @@ Reviewer instructions: record it"
         assert_eq!(held.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
-    /// An admitting gate: the edits apply, and the verdict's records land
-    /// in the saved state and on the recorded result.
+    /// An admitting gate: the verdict prepares the re-read store, the edits
+    /// apply, and the verdict's records land in the saved state and on the
+    /// recorded result.
     #[tokio::test]
     async fn an_admitting_gate_applies_and_records_into_state_and_result() {
         let dir = TempDir::new().unwrap();
@@ -1594,6 +1603,7 @@ Reviewer instructions: record it"
         let state = load_harness_state(&harness_dir, HarnessScope::Local);
         assert!(state.entries[&crate::refinement::RefinementKind::Memory].contains_key("m1"));
         assert_eq!(state.extensions.get("stub"), Some(&json!({ "applied": 1 })));
+        assert_eq!(state.extensions.get("stubPrepared"), Some(&json!(true)));
         assert_eq!(
             custom_types(&session),
             [
@@ -1605,7 +1615,13 @@ Reviewer instructions: record it"
         // The store stays locked from the re-read until the save landed.
         assert_eq!(
             evaluated.lock().unwrap().clone(),
-            ["true auto Local held=1", "lock Local", "apply", "unlock"]
+            [
+                "true auto Local held=1",
+                "lock Local",
+                "prepare",
+                "apply",
+                "unlock"
+            ]
         );
         assert_eq!(held.load(std::sync::atomic::Ordering::SeqCst), 0);
     }

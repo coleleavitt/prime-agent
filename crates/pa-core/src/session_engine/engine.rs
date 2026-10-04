@@ -679,6 +679,10 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         }
     }
     session.set_refinement_gate(refinement_gate);
+    session.set_auto_refine_policy(crate::features::session_auto_refine_policy(
+        crate::features::installed(),
+        &feature_context,
+    ));
     // Every compaction path reads the session's resolved compaction
     // settings (TS `getCompactionSettings`): `/compact` matches the
     // `compact.*` turn-boundary tool's `keepRecentTokens`/`reserveTokens`.

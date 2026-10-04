@@ -26,7 +26,7 @@ use pa_types::trace_context::{TraceContext, TRACEPARENT_ENV};
 use tracing_subscriber::layer::SubscriberExt;
 
 pub use health::run_health_command;
-pub use layer::TraceLayer;
+pub use layer::{TraceLayer, JSON_FIELD_SUFFIX};
 pub use otlp::{parse_otlp_headers, OtlpConfig, OtlpStats, OTLP_ENDPOINT_ENV, OTLP_HEADERS_ENV};
 pub use retained::{read_log_text, retained_log_files};
 pub use trace_command::run_trace_command;

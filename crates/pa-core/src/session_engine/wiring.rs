@@ -128,6 +128,16 @@ impl AgentSession {
         self.refinement_gate = gate;
     }
 
+    /// Bind the automatic-refine policy an installed feature offers (see
+    /// [`crate::refinement::executor::AutoRefinePolicy`]); `None` keeps the
+    /// native one.
+    pub fn set_auto_refine_policy(
+        &mut self,
+        policy: Option<std::sync::Arc<dyn crate::refinement::executor::AutoRefinePolicy>>,
+    ) {
+        self.auto_refine_policy = policy;
+    }
+
     /// Bind the kernel-state probe behind the post-compaction
     /// `ipython_state` notice (the engine wiring hands over the session's
     /// kernel provisioner, TS `AgentSession._ipythonKernelProvisioner`).

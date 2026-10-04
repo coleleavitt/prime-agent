@@ -300,3 +300,31 @@ fn a_span_attributes_event_annotates_its_span_and_logs_nothing() {
         )]
     );
 }
+
+/// A field named `<key>.json` carries JSON text: the record holds the
+/// parsed value under `<key>` (how a feature writes the array or object a
+/// TS log record held); text that is not JSON stays under the full name.
+#[test]
+fn a_json_field_records_its_parsed_value() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let entries = record(dir.path(), None, || {
+        tracing::info!(
+            target: "pa_trace_test",
+            proposalId = "p1",
+            addressed.json = r#"["a","b"]"#,
+            broken.json = "[not json",
+            "refinement.committed"
+        );
+    });
+    assert_eq!(
+        entries,
+        vec![object(json!({
+            "proposalId": "p1",
+            "addressed": ["a", "b"],
+            "broken.json": "[not json",
+            "level": "info",
+            "component": "pa_trace_test",
+            "msg": "refinement.committed"
+        }))]
+    );
+}

@@ -66,6 +66,24 @@ pub struct HarnessEntry {
     #[serde(rename = "updated_at")]
     pub updated_at: String,
     pub version: u64,
+    /// Keys this crate does not model (another producer's per-entry state,
+    /// such as the fork's `trust`), carried through load, refine and save
+    /// untouched, after the modelled keys as a TS save writes them.
+    #[serde(flatten)]
+    pub extensions: serde_json::Map<String, serde_json::Value>,
+}
+
+impl HarnessEntry {
+    /// The entry without its unmodelled keys: what an edit of the entry
+    /// is compared on, since other producers' bookkeeping on it moves
+    /// independently of its content.
+    #[must_use]
+    pub fn modelled(&self) -> Self {
+        Self {
+            extensions: serde_json::Map::new(),
+            ..self.clone()
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -590,6 +608,40 @@ mod tests {
         }
     }
 
+    /// An entry key this crate does not model (the fork's per-entry
+    /// `trust`) survives a load/save round trip in place: dropping it
+    /// silently reset another producer's measurements on every refine save.
+    #[test]
+    fn a_save_round_trip_keeps_unmodeled_entry_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let document = serde_json::json!({
+            "schema": 1,
+            "entries": {
+                "prompt": {}, "memory": {},
+                "skill": {"s1": {
+                    "id": "s1", "kind": "skill", "title": "S", "content": "c", "path": "general",
+                    "scope": "global", "reference": {}, "arguments": {}, "metadata": {},
+                    "source": "refine", "created_at": "t0", "updated_at": "t1", "version": 2,
+                    "trust": {"score": 35, "updated_at": "t2", "events": []}
+                }},
+                "subagent": {}, "factory": {}
+            },
+            "refinements": []
+        });
+        std::fs::write(
+            get_harness_state_path(dir.path()),
+            serde_json::to_string_pretty(&document).unwrap(),
+        )
+        .unwrap();
+        let state = load_harness_state(dir.path(), HarnessScope::Global);
+        save_harness_state(dir.path(), &state).unwrap();
+        let saved = std::fs::read_to_string(get_harness_state_path(dir.path())).unwrap();
+        assert_eq!(
+            saved,
+            format!("{}\n", serde_json::to_string_pretty(&document).unwrap())
+        );
+    }
+
     fn entry(id: &str, kind: RefinementKind, scope: HarnessScope, content: &str) -> HarnessEntry {
         HarnessEntry {
             id: id.to_string(),
@@ -605,6 +657,7 @@ mod tests {
             created_at: "2024-01-01T00:00:00.000Z".to_string(),
             updated_at: "2024-01-01T00:00:00.000Z".to_string(),
             version: 1,
+            extensions: serde_json::Map::new(),
         }
     }
 
