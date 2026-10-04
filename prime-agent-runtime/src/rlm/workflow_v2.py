@@ -29,15 +29,28 @@ class CapabilityUnavailable(RuntimeError):
     code = "CAPABILITY_UNAVAILABLE"
 
 
-_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schemas" / "workflow-v2.schema.json"
+_SCHEMA_NAME = "workflow-v2.schema.json"
+# An installed wheel carries the schema inside the package (pyproject
+# force-include); a source checkout keeps the one authority copy beside src/.
+_SCHEMA_PATHS = (
+    Path(__file__).resolve().parent / "schemas" / _SCHEMA_NAME,
+    Path(__file__).resolve().parents[2] / "schemas" / _SCHEMA_NAME,
+)
 _SCHEMA: dict[str, Any] | None = None
+
+
+def _read_schema() -> Any:
+    for path in _SCHEMA_PATHS:
+        if path.is_file():
+            return json.loads(path.read_text(encoding="utf-8"))
+    raise OSError("Workflow V2 schema is not packaged")
 
 
 def _schema() -> dict[str, Any]:
     global _SCHEMA
     if _SCHEMA is None:
         try:
-            value = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+            value = _read_schema()
         except (OSError, ValueError) as exc:
             raise CapabilityUnavailable("Workflow V2 schema is unavailable") from exc
         if not isinstance(value, dict) or not isinstance(value.get("$defs"), dict):
