@@ -998,6 +998,31 @@ const COMPUTER_USE_SESSION_STARTED: EventRule = EventRule {
     )],
 };
 
+/// `observability command used`: one `prime-agent trace` / `prime-agent
+/// health` run (the fork's trace feature crate, wired by pa-cli behind its
+/// `trace` feature; the native build never sends it). The command, its exit
+/// class (`ok` 0, `unhealthy` 2, `error` 1), and duration only — never a
+/// trace id, a path, or log content. Catalogued without a schema bump: the
+/// version stamp is shared with the native build, which must not change.
+const OBSERVABILITY_COMMAND_USED: EventRule = EventRule {
+    name: "observability command used",
+    since: 3,
+    properties: &[
+        (
+            "command",
+            required(enum_rule(&["trace", "health", "unknown"], "unknown")),
+        ),
+        (
+            "outcome",
+            required(enum_rule(
+                &["ok", "unhealthy", "error", "unknown"],
+                "unknown",
+            )),
+        ),
+        ("duration_ms", optional(duration())),
+    ],
+};
+
 /// `computer_use_action` (v3): one computer-use skill action per call,
 /// emitted through the `telemetry.emit` kernel bridge. Category,
 /// outcome, frozen error code, and duration only — never element text,
@@ -1353,6 +1378,7 @@ pub fn catalog() -> Vec<&'static EventRule> {
         &TUI_IPYTHON_BASH_RENDERED,
         &COMPUTER_USE_SESSION_STARTED,
         &COMPUTER_USE_ACTION,
+        &OBSERVABILITY_COMMAND_USED,
     ];
     all.extend(UPDATE_EVENTS.iter());
     all
@@ -1593,6 +1619,21 @@ mod tests {
         assert_eq!(properties.get("tool_bash_call_count"), Some(&json!(3u64)));
         assert!(properties.get("tool_name").is_none(), "unknown key dropped");
         assert_eq!(adjusted, 2, "one fallback + one dropped key");
+    }
+
+    #[test]
+    fn observability_command_used_carries_only_its_vocabulary() {
+        let mut properties = Properties::new();
+        properties.set("command", json!("trace"));
+        properties.set("outcome", json!("exploded")); // out of vocabulary
+        properties.set("duration_ms", json!(12));
+        properties.set("trace_id", json!("0af7651916cd43dd8448eb211c80319c")); // not catalogued
+        let adjusted = sanitize("observability command used", &mut properties);
+        let mut expected = Properties::new();
+        expected.set("command", json!("trace"));
+        expected.set("outcome", json!("unknown"));
+        expected.set("duration_ms", json!(12));
+        assert_eq!((properties, adjusted), (expected, 2));
     }
 
     #[test]
