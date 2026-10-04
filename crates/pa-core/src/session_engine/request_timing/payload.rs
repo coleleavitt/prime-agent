@@ -22,6 +22,12 @@ pub(crate) mod tests;
 #[cfg(all(test, unix))]
 pub(crate) static WRITER_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// Test-only writer gate: the writer takes it before each job, so a test
+/// holding it keeps every queued job (and its reserved slot) in place for
+/// as long as it needs, instead of betting on how long a write takes.
+#[cfg(test)]
+pub(crate) static WRITER_TEST_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// One file per request, so long-context payloads never grow without
 /// bound in an always-on daemon's diagnostics dir.
 pub(crate) const REQUEST_PAYLOAD_CAPTURE_KEEP: usize = 64;
@@ -230,6 +236,10 @@ impl RequestPayloadCapture {
 #[cfg_attr(not(unix), allow(dead_code))]
 fn drain_writer(queued: &Arc<AtomicUsize>, retained: &Arc<AtomicU64>, jobs: &Receiver<CaptureJob>) {
     while let Ok(job) = jobs.recv() {
+        #[cfg(test)]
+        let _gate = WRITER_TEST_GATE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         queued.fetch_sub(1, Ordering::Relaxed);
         let result = write_capture(&job.root, &job.dir, job.keep, &job);
         retained.fetch_sub(job.estimate, Ordering::Relaxed);

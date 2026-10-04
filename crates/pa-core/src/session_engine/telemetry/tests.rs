@@ -543,7 +543,14 @@ async fn session_counters_ride_session_ended() {
 /// `telemetry.json` (one user across both products) and mirrors events to
 /// the local JSONL file under that id.
 #[tokio::test]
+#[expect(
+    clippy::await_holding_lock,
+    reason = "the env lock only serializes other test threads; this test's own runtime never contends for it"
+)]
 async fn build_client_reuses_the_ts_installation_id_and_mirrors() {
+    // The switch reads PI_OFFLINE, which the packages tests set and clear
+    // under this lock: hold it so `track` and the check below see one value.
+    let _env = crate::packages::test_support::lock_env();
     let dir = tempfile::tempdir().unwrap();
     let agent_dir = dir.path().join("agent");
     std::fs::create_dir_all(&agent_dir).unwrap();

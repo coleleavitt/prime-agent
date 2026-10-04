@@ -566,8 +566,12 @@ fn concurrent_producers_drop_at_the_reserve_when_the_queue_is_full() {
     let dir_path = dir.path().join("request-payloads");
     // The ring keeps every body: the count assertions need no eviction.
     let capture = RequestPayloadCapture::at(&dir_path, 4 * REQUEST_PAYLOAD_CAPTURE_KEEP);
-    // The stall body: serialized for far longer than the whole storm
-    // window, so no slot frees mid storm.
+    // Hold the writer for the whole storm: no queued job is written, so no
+    // slot frees mid storm however the producer threads are scheduled.
+    let gate = super::WRITER_TEST_GATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // The stall body: the job the held writer sits on.
     let stall = json!({
         "marker": "stall",
         "messages": (0..100_000_u32).map(|seq| json!({ "seq": seq })).collect::<Vec<_>>()
@@ -596,6 +600,7 @@ fn concurrent_producers_drop_at_the_reserve_when_the_queue_is_full() {
     for handle in handles {
         handle.join().expect("the producer finishes");
     }
+    drop(gate);
     let queued_after = super::CAPTURE_WRITER
         .get()
         .and_then(|writer| {
