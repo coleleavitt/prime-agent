@@ -30,6 +30,7 @@ pub mod rejections;
 pub mod replay;
 pub mod rng;
 pub mod rollout;
+pub mod run_service;
 pub mod store;
 pub mod task;
 pub mod tasks;

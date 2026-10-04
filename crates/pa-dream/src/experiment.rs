@@ -430,6 +430,18 @@ impl ExperimentPlan {
     }
 }
 
+/// `<task>-s<seed>-n<rounds>-<clock>`: an experiment's id (TS `experimentIdFor`).
+#[must_use]
+pub fn experiment_id_for(spec: &ExperimentSpec, clock: DreamClock<'_>) -> String {
+    format!(
+        "{}-s{}-n{}-{}",
+        spec.task.as_str(),
+        spec.seed,
+        spec.rounds,
+        clock()
+    )
+}
+
 /// Validate a spec, resolve the task once and lay out the arm stores.
 ///
 /// # Errors
@@ -477,13 +489,7 @@ pub fn plan_experiment(
             )));
         }
     }
-    let experiment_id = format!(
-        "{}-s{}-n{}-{}",
-        spec.task.as_str(),
-        spec.seed,
-        spec.rounds,
-        (options.clock)()
-    );
+    let experiment_id = experiment_id_for(spec, options.clock);
     let result_path = experiment_result_path(options.dir, &experiment_id);
     let existing = experiment_dir(options.dir, &experiment_id);
     if !options.overwrite && existing.exists() {
