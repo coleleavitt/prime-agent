@@ -19,7 +19,12 @@ fn run_quiet(command: &str, args: &[&str]) -> bool {
         .stderr(Stdio::null());
     // Hidden window on Windows (TS `spawnHidden`).
     crate::platform::process::set_no_window(&mut child);
-    matches!(child.status(), Ok(status) if status.success())
+    // A transiently busy interpreter (being rewritten) is not a broken
+    // runtime: the spawn rides out ETXTBSY before judging.
+    matches!(
+        crate::platform::process::status_retrying_text_busy(&mut child),
+        Ok(status) if status.success()
+    )
 }
 
 /// The runtime-ready assertion from the TS product: a current
@@ -198,6 +203,31 @@ pub fn invalidate_runtime_probe_cache() {
         .take()
         .map(|memo| memo.values().cloned().collect())
         .unwrap_or_default();
+    for path in tracked {
+        super::super::disk_memo::disk_memo_invalidate(&path);
+    }
+}
+
+/// Drop the memoized runtime-ready results recorded for one interpreter,
+/// both layers, leaving other venvs' verdicts intact: a kernel that failed
+/// to start on `python` says nothing about a different venv. The memo key
+/// starts with the interpreter path (see [`runtime_probe_key`]).
+pub fn invalidate_runtime_probe_cache_for(python: &Path) {
+    let prefix = format!("{}\u{0}", python.to_string_lossy());
+    let tracked: Vec<PathBuf> = {
+        let mut memo = lock_probe_memo();
+        let Some(entries) = memo.as_mut() else {
+            return;
+        };
+        let keys: Vec<String> = entries
+            .keys()
+            .filter(|key| key.starts_with(&prefix))
+            .cloned()
+            .collect();
+        keys.into_iter()
+            .filter_map(|key| entries.remove(&key))
+            .collect()
+    };
     for path in tracked {
         super::super::disk_memo::disk_memo_invalidate(&path);
     }

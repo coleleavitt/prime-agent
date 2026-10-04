@@ -718,3 +718,56 @@ mod process_group_tests {
         );
     }
 }
+
+/// Run `command` to completion, retrying a spawn that fails with ETXTBSY
+/// ("text file busy"): the executable is open for writing at that instant
+/// (a concurrent `uv`/bootstrap rewriting the venv, or any process whose
+/// fork inherited that write handle until its exec). The window is
+/// transient, so the spawn retries briefly (20 x 25 ms) before reporting
+/// the error; every other spawn failure returns at once.
+///
+/// # Errors
+///
+/// Returns the spawn or wait error once the retries are spent, or at once
+/// for any error other than ETXTBSY.
+pub fn status_retrying_text_busy(
+    command: &mut std::process::Command,
+) -> std::io::Result<std::process::ExitStatus> {
+    let mut attempts = 0;
+    loop {
+        match command.status() {
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ExecutableFileBusy && attempts < 20 =>
+            {
+                attempts += 1;
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            result => return result,
+        }
+    }
+}
+
+/// [`status_retrying_text_busy`] for an async spawn: start `command`,
+/// riding out ETXTBSY (a just-written or just-copied executable whose write
+/// handle a concurrent fork still holds) with the same bounded retry.
+///
+/// # Errors
+///
+/// Returns the spawn error once the retries are spent, or at once for any
+/// error other than ETXTBSY.
+pub async fn spawn_retrying_text_busy(
+    command: &mut tokio::process::Command,
+) -> std::io::Result<tokio::process::Child> {
+    let mut attempts = 0;
+    loop {
+        match command.spawn() {
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ExecutableFileBusy && attempts < 20 =>
+            {
+                attempts += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            result => return result,
+        }
+    }
+}

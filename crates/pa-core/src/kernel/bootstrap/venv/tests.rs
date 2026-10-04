@@ -156,6 +156,41 @@ fn probe_memo_key_distinguishes_every_input_and_drops_on_invalidate() {
         .is_none_or(|memo| !memo.contains_key(&key)));
 }
 
+/// A failed start invalidates only its own interpreter's verdicts: another
+/// venv's memo entry (in memory and on disk) survives, so one broken venv
+/// never forces a re-probe of the others.
+#[cfg(unix)]
+#[test]
+fn scoped_invalidation_keeps_other_interpreters_verdicts() {
+    let _memo_state = MEMO_STATE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    invalidate_runtime_probe_cache();
+    let mut memo = super::probe::lock_probe_memo();
+    let entries = memo.get_or_insert_with(HashMap::new);
+    let key_a = super::probe::runtime_probe_key("/venv-a/bin/python", "id", "v", "i");
+    let key_b = super::probe::runtime_probe_key("/venv-b/bin/python", "id", "v", "i");
+    entries.insert(key_a.clone(), PathBuf::from("/nonexistent/a-memo"));
+    entries.insert(key_b.clone(), PathBuf::from("/nonexistent/b-memo"));
+    drop(memo);
+
+    super::invalidate_runtime_probe_cache_for(Path::new("/venv-a/bin/python"));
+    let memo = super::probe::lock_probe_memo();
+    let entries = memo
+        .as_ref()
+        .expect("the memo survives a scoped invalidation");
+    assert!(
+        !entries.contains_key(&key_a),
+        "the failed interpreter's verdict is dropped"
+    );
+    assert!(
+        entries.contains_key(&key_b),
+        "another interpreter's verdict stays"
+    );
+    drop(memo);
+    invalidate_runtime_probe_cache();
+}
+
 /// The out-of-band-detection trio: the memo must hit on an unchanged venv, miss when the installed
 /// `rlm` tree or the interpreter changes, and miss after invalidation.
 #[cfg(unix)]

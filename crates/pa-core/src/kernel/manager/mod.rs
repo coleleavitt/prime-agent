@@ -479,6 +479,13 @@ impl ReplKernelManager {
         !lock(&self.inner.guarded).background_bash_handles.is_empty()
     }
 
+    /// The interpreter this manager resolved for its kernel, once a start
+    /// got that far: the scope of a failed start's probe-memo invalidation.
+    #[must_use]
+    pub(crate) fn resolved_python(&self) -> Option<std::path::PathBuf> {
+        lock(&self.inner.resolved_python).clone()
+    }
+
     /// Process id of the spawned kernel child, when present. Used by tests and
     /// orphan bookkeeping.
     #[must_use]

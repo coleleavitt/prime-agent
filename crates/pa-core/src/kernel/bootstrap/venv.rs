@@ -27,9 +27,9 @@ mod version;
 use layout::home_dir;
 pub(crate) use layout::{expand_home, resolve_writable_kernel_venv_dir};
 pub use layout::{kernel_venv_dir, kernel_venv_python};
-pub use probe::invalidate_runtime_probe_cache;
 #[cfg(test)]
 use probe::{installed_rlm_dir, lock_probe_memo, runtime_probe_key};
+pub use probe::{invalidate_runtime_probe_cache, invalidate_runtime_probe_cache_for};
 // The memo-clear helper and the live-probe package-dir walk exist only behind
 // the unix tests (see their gates in probe.rs and tests.rs).
 #[cfg(all(test, unix))]
@@ -84,8 +84,7 @@ async fn run_async(command: &str, args: &[String]) -> anyhow::Result<()> {
         child.args(&args).stdin(Stdio::null());
         // Hidden window on Windows (TS `spawnHidden`).
         crate::platform::process::set_no_window(&mut child);
-        let status = child
-            .status()
+        let status = crate::platform::process::status_retrying_text_busy(&mut child)
             .with_context(|| format!("failed to spawn {command}"))?;
         if status.success() {
             Ok(())

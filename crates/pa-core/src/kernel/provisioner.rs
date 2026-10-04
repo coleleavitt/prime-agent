@@ -1156,7 +1156,12 @@ async fn start_kernel_impl(
         Ok(bootstrap) => {
             // The kernel booted but its runtime did not initialize: the venv is the prime suspect,
             // so drop the memoized runtime-ready result.
-            crate::kernel::bootstrap::invalidate_runtime_probe_cache();
+            match manager.resolved_python() {
+                Some(python) => {
+                    crate::kernel::bootstrap::invalidate_runtime_probe_cache_for(&python);
+                }
+                None => crate::kernel::bootstrap::invalidate_runtime_probe_cache(),
+            }
             let details = [bootstrap.stderr.clone()]
                 .into_iter()
                 .chain(bootstrap.error.iter().map(|e| e.traceback.join("\n")))

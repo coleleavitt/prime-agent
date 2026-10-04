@@ -6,6 +6,7 @@
 //! containing directory after every create/replace rename; the TS
 //! product instead tolerates this class through repair-on-open.
 
+#[cfg(unix)]
 use std::fs;
 use std::io;
 use std::path::Path;

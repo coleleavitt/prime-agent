@@ -128,14 +128,18 @@ pub async fn binary_reported_version(exe: &Path) -> Result<String> {
     const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
     const MAX_VERSION_OUTPUT: usize = 512;
     let deadline = tokio::time::Instant::now() + PROBE_TIMEOUT;
-    let mut child = tokio::process::Command::new(exe)
+    let mut command = tokio::process::Command::new(exe);
+    command
         .arg("--version")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         // A dropped timeout future must never leave the probe running.
-        .kill_on_drop(true)
-        .spawn()
+        .kill_on_drop(true);
+    // The staged binary was copied in just now: a concurrent fork may still
+    // hold the copy's write handle (ETXTBSY) for an instant.
+    let mut child = crate::platform::process::spawn_retrying_text_busy(&mut command)
+        .await
         .with_context(|| format!("run {} --version", exe.display()))?;
     let mut stdout = child
         .stdout
