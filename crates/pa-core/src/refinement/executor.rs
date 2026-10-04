@@ -512,6 +512,7 @@ mod tests {
                     created_at: String::new(),
                     updated_at: String::new(),
                     version: 0,
+                    extensions: serde_json::Map::new(),
                 },
             );
         let overview = overview_for_prompt(&state);

@@ -401,9 +401,13 @@ pub fn apply_refinement_proposal(
                 .get(&kind)
                 .and_then(|entries| entries.get(&id).cloned())
         });
+        // Unmodelled keys are other producers' bookkeeping (TS compares the
+        // entries without `trust`, settled at turn boundaries): their moving
+        // meanwhile is no edit of the entry.
         if options.baseline_state.is_some()
             && !proposal_modified_keys.contains(&entry_key)
-            && serde_json::to_value(&before).ok() != serde_json::to_value(&baseline).ok()
+            && serde_json::to_value(before.as_ref().map(HarnessEntry::modelled)).ok()
+                != serde_json::to_value(baseline.as_ref().map(HarnessEntry::modelled)).ok()
         {
             let mut row = AppliedRefinementEdit::planned(edit, action, kind, id.clone());
             row.before = before;
@@ -500,6 +504,12 @@ pub fn apply_refinement_proposal(
                 .map_or_else(now_iso, |entry| entry.created_at.clone()),
             updated_at: now_iso(),
             version: before.as_ref().map_or(1, |entry| entry.version + 1),
+            // TS spreads `before` first: a key this function does not model
+            // survives an update instead of being dropped by the rewrite.
+            extensions: before
+                .as_ref()
+                .map(|entry| entry.extensions.clone())
+                .unwrap_or_default(),
         };
         records.insert(id.clone(), after.clone());
         proposal_modified_keys.insert(entry_key);
@@ -985,6 +995,7 @@ mod tests {
                     created_at: String::new(),
                     updated_at: String::new(),
                     version: 1,
+                    extensions: serde_json::Map::new(),
                 },
             );
         let refused_update = apply_refinement_proposal(
@@ -1060,6 +1071,55 @@ mod tests {
         assert!(result.applied_edits[0].applied);
         assert!(result.applied_edits[0].error.is_none());
         assert!(state.entries[&RefinementKind::Factory].contains_key("sweep"));
+    }
+
+    /// An update keeps the entry's unmodelled keys (TS spreads `before`
+    /// first), and the "entry changed during planning" check ignores them:
+    /// another producer's bookkeeping (the fork's `trust`, settled at turn
+    /// boundaries) moving meanwhile is not an edit of the entry.
+    #[test]
+    fn an_update_keeps_unmodelled_entry_keys_and_the_planning_check_ignores_them() {
+        let stored = |trust: u64| -> HarnessEntry {
+            serde_json::from_value(serde_json::json!({
+                "id": "s1", "kind": "memory", "title": "S", "content": "old", "path": "general",
+                "scope": "local", "reference": {}, "arguments": {}, "metadata": {},
+                "source": "refine", "created_at": "t0", "updated_at": "t1", "version": 1,
+                "trust": {"score": trust, "updated_at": "t2", "events": []}
+            }))
+            .unwrap()
+        };
+        let with = |entry: HarnessEntry| {
+            let mut state = empty_harness_state();
+            state
+                .entries
+                .get_mut(&RefinementKind::Memory)
+                .unwrap()
+                .insert("s1".to_string(), entry);
+            state
+        };
+        let baseline = with(stored(50));
+        let mut state = with(stored(35));
+        let result = apply_refinement_proposal(
+            &mut state,
+            &parse_proposal(
+                r#"{"summary":"s","edits":[{"action":"update","kind":"memory","id":"s1","title":"S","content":"new"}]}"#,
+            )
+            .unwrap(),
+            ApplyOptions {
+                id: "r1".to_string(),
+                rollback_of: None,
+                scope: Some(HarnessScope::Local),
+                baseline_state: Some(baseline),
+                factory_enabled: false,
+            },
+        );
+        assert_eq!(result.applied_edits[0].error, None);
+        let after = serde_json::to_value(&state.entries[&RefinementKind::Memory]["s1"]).unwrap();
+        assert_eq!(after["content"], "new");
+        assert_eq!(
+            after["trust"],
+            serde_json::json!({"score": 35, "updated_at": "t2", "events": []})
+        );
     }
 
     /// The screen counts the edits apply would accept structurally, and a

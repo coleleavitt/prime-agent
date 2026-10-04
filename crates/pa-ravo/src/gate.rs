@@ -330,6 +330,9 @@ pub fn proposal_artifact(proposal: &RefinementProposal) -> Value {
     })
 }
 
+/// The per-entry key of trust bookkeeping (TS `HarnessEntry.trust`).
+pub const TRUST_KEY: &str = "trust";
+
 /// The stored RAVO state of a harness state, normalized; `None` when the
 /// key is absent.
 #[must_use]
@@ -360,10 +363,18 @@ pub fn without_observed_recurrences(ravo: &RavoState) -> RavoState {
 pub fn refinement_baseline_view(state: &HarnessState) -> Value {
     let mut view = Map::new();
     view.insert("schema".to_string(), Value::from(state.schema));
-    view.insert(
-        "entries".to_string(),
-        serde_json::to_value(&state.entries).unwrap_or(Value::Null),
-    );
+    // Trust is settled at turn boundaries and by other processes, like the
+    // failure ledger: binding it would reject an in-flight refine for a
+    // reason that has nothing to do with the proposal.
+    let mut entries = serde_json::to_value(&state.entries).unwrap_or(Value::Null);
+    if let Some(kinds) = entries.as_object_mut() {
+        for records in kinds.values_mut().filter_map(Value::as_object_mut) {
+            for entry in records.values_mut().filter_map(Value::as_object_mut) {
+                entry.shift_remove(TRUST_KEY);
+            }
+        }
+    }
+    view.insert("entries".to_string(), entries);
     if let Some(ravo) = stored_ravo_state(state) {
         view.insert(
             RAVO_KEY.to_string(),
@@ -940,4 +951,46 @@ pub fn scope_name(scope: HarnessScope) -> &'static str {
 pub fn judge_conversation_text(messages: &[pa_types::session::AgentMessage]) -> String {
     let serialized = pa_core::session_engine::compaction_utils::serialize_conversation(messages);
     js_tail(&serialized, RAVO_JUDGE_CONVERSATION_UNITS).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use pa_core::refinement::{empty_harness_state, HarnessEntry, RefinementKind};
+    use serde_json::json;
+
+    use super::*;
+
+    fn with_memory(entry: Value) -> HarnessState {
+        let mut state = empty_harness_state();
+        let entry: HarnessEntry = serde_json::from_value(entry).unwrap();
+        state
+            .entries
+            .get_mut(&RefinementKind::Memory)
+            .unwrap()
+            .insert(entry.id.clone(), entry);
+        state
+    }
+
+    /// TS `refinementBaselineView` binds the entries without `trust`
+    /// (settled at turn boundaries and by other processes, like the
+    /// failure ledger) and with every other key.
+    #[test]
+    fn the_baseline_view_binds_entries_without_their_trust() {
+        let entry = json!({
+            "id": "m1", "kind": "memory", "title": "M", "content": "c", "path": "general",
+            "scope": "local", "reference": {}, "arguments": {}, "metadata": {},
+            "source": "refine", "created_at": "t0", "updated_at": "t1", "version": 1,
+            "other": 1
+        });
+        let mut trusted = entry.clone();
+        trusted["trust"] = json!({"score": 20, "updated_at": "t2", "events": []});
+        assert_eq!(
+            refinement_baseline_view(&with_memory(trusted)),
+            refinement_baseline_view(&with_memory(entry.clone()))
+        );
+        assert_eq!(
+            refinement_baseline_view(&with_memory(entry))["entries"]["memory"]["m1"]["other"],
+            json!(1)
+        );
+    }
 }
