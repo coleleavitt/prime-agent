@@ -236,7 +236,8 @@ pub async fn run_exit_test(
     pa_core::platform::process::set_new_process_group(&mut command);
     let mut command = tokio::process::Command::from(command);
     command.kill_on_drop(true);
-    let mut child = match command.spawn() {
+    // The kernel venv python can be mid-rewrite (ETXTBSY): ride it out.
+    let mut child = match pa_core::platform::process::spawn_retrying_text_busy(&mut command).await {
         Ok(child) => child,
         Err(error) => {
             return RunOutcome::unrunnable(format!(
@@ -365,6 +366,49 @@ mod tests {
         assert_eq!(
             run_exit_test("pass", dir.path(), dir.path(), None, DEFAULT_GATE_TIMEOUT).await,
             RunOutcome::unrunnable("no kernel python: the replay case could not be executed")
+        );
+    }
+
+    /// The kernel interpreter can be open for writing at the spawn instant
+    /// (ETXTBSY: a concurrent bootstrap rewriting the venv, or a fork that
+    /// still holds the write handle until its exec). The gate rides that
+    /// transient window out instead of reporting the case unrunnable.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn an_interpreter_busy_being_written_still_runs_the_exit_test() {
+        use std::io::Write as _;
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let python = dir.path().join("python");
+        std::fs::write(&python, "#!/bin/sh\nprintf CLEAN\n").unwrap();
+        std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut writer = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&python)
+            .unwrap();
+        writer.write_all(b"# appended by the writer\n").unwrap();
+        let release = std::thread::spawn(move || {
+            // Fault injection, not a readiness wait: the concurrent
+            // writer's hold lasts this long (inside the 20 x 25 ms budget).
+            std::thread::sleep(Duration::from_millis(150));
+            drop(writer);
+        });
+        let outcome = run_exit_test(
+            "pass",
+            dir.path(),
+            dir.path(),
+            Some(&python),
+            DEFAULT_GATE_TIMEOUT,
+        )
+        .await;
+        release.join().unwrap();
+        assert_eq!(
+            outcome,
+            RunOutcome {
+                kind: OutcomeKind::Clean,
+                detail: "replay case completed without raising".to_string()
+            }
         );
     }
 }

@@ -264,14 +264,16 @@ impl PythonReplayRunner {
         pa_core::platform::set_new_process_group(&mut command);
         let mut command = tokio::process::Command::from(command);
         command.kill_on_drop(true);
-        let mut child = match command.spawn() {
-            Ok(child) => child,
-            Err(error) => {
-                return ReplayOutcome::Unrunnable {
-                    detail: format!("spawn failed for {}: {error}", python.display()),
+        // The kernel venv python can be mid-rewrite (ETXTBSY): ride it out.
+        let mut child =
+            match pa_core::platform::process::spawn_retrying_text_busy(&mut command).await {
+                Ok(child) => child,
+                Err(error) => {
+                    return ReplayOutcome::Unrunnable {
+                        detail: format!("spawn failed for {}: {error}", python.display()),
+                    }
                 }
-            }
-        };
+            };
         let pid = child.id().and_then(|pid| i32::try_from(pid).ok());
         if let Some(pid) = pid {
             pa_core::kernel::orphan_journal::record_orphan_process_state(pid, true);
@@ -478,6 +480,52 @@ mod tests {
                 exception_class: "ModuleNotFoundError".to_string(),
                 detail: "ModuleNotFoundError: No module named 'prime_agent_replay_missing_module'"
                     .to_string()
+            }
+        );
+    }
+
+    /// The kernel interpreter can be open for writing at the spawn instant
+    /// (ETXTBSY: a concurrent bootstrap rewriting the venv, or a fork that
+    /// still holds the write handle until its exec). The runner rides that
+    /// transient window out instead of reporting the case unrunnable.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn an_interpreter_busy_being_written_still_runs_the_case() {
+        use std::io::Write as _;
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let python = dir.path().join("python");
+        std::fs::write(&python, "#!/bin/sh\nprintf CLEAN\n").unwrap();
+        std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut writer = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&python)
+            .unwrap();
+        writer.write_all(b"# appended by the writer\n").unwrap();
+        let release = std::thread::spawn(move || {
+            // Fault injection, not a readiness wait: the concurrent
+            // writer's hold lasts this long (inside the 20 x 25 ms budget).
+            std::thread::sleep(Duration::from_millis(150));
+            drop(writer);
+        });
+        let runner = PythonReplayRunner {
+            python: Some(python),
+            timeout: Duration::from_secs(30),
+        };
+        let case = ReplayCase {
+            language: "python".to_string(),
+            source: "import json".to_string(),
+            exception_class: None,
+            sys_path: None,
+            verified_at: None,
+        };
+        let outcome = runner.run(&case, ReplayEnvironment::Sanitized, &[]).await;
+        release.join().unwrap();
+        assert_eq!(
+            outcome,
+            ReplayOutcome::Clean {
+                detail: "replay case completed without raising".to_string()
             }
         );
     }
