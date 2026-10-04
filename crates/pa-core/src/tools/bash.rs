@@ -454,6 +454,7 @@ pub async fn execute_bash(
                 content: vec![ToolContentBlock::text(text)],
                 details: formatted.details,
                 is_error: false,
+                host_facts: serde_json::Value::Null,
             })
         }
     }

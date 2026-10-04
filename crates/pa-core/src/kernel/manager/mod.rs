@@ -136,6 +136,7 @@ impl InternalExecuteResult {
                 attachments: None,
                 sent_agent_messages: None,
                 bash_commands: None,
+                executed_bash_commands: Vec::new(),
                 background_output: None,
                 status: ExecuteStatus::Aborted,
                 error: None,

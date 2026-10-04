@@ -276,23 +276,22 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     }
     // Separately built features installed by the composition root (none in
     // the native product).
-    crate::features::register_session_host_handlers(
-        &crate::features::SessionFeatureContext {
-            agent_dir: config.agent_dir.clone(),
-            cwd: cwd.clone(),
-            session_id: session_id.clone(),
-            python_skill_import_names: python_skills
-                .iter()
-                .map(|skill| skill.import_name.clone())
-                .collect(),
-            model: model.clone(),
-            telemetry: config
-                .telemetry
-                .as_ref()
-                .map(crate::features::FeatureTelemetry::from_wiring),
-        },
-        &mut handlers,
-    );
+    let feature_context = Arc::new(crate::features::SessionFeatureContext {
+        agent_dir: config.agent_dir.clone(),
+        cwd: cwd.clone(),
+        session_id: session_id.clone(),
+        python_skill_import_names: python_skills
+            .iter()
+            .map(|skill| skill.import_name.clone())
+            .collect(),
+        model: model.clone(),
+        telemetry: config
+            .telemetry
+            .as_ref()
+            .map(crate::features::FeatureTelemetry::from_wiring),
+        rlm_depth: config.rlm_depth.unwrap_or(0),
+    });
+    crate::features::register_session_host_handlers(&feature_context, &mut handlers);
     // The `system_router.run` host handler the bundled system-router skill
     // reaches through `rlm.host_request` (#2484).
     super::system_router_host::register_system_router_handlers(
@@ -590,6 +589,10 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         }
         None => timing_stream_fn,
     };
+    // Installed features observe the session's tool calls; with none
+    // installed both hooks stay `None` and the loop runs as native.
+    let (before_tool_call, after_tool_call) =
+        crate::features::tool_call_hooks(crate::features::installed(), &feature_context);
     let agent = Agent::new(AgentOptions {
         initial_state: AgentInitialState {
             system_prompt: Some(system_prompt.clone()),
@@ -623,8 +626,12 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         should_stop_before_turn: config.queued_steering_probe.clone(),
         steering_mode: config.steering_mode,
         follow_up_mode: config.follow_up_mode,
+        before_tool_call,
+        after_tool_call,
         ..Default::default()
     });
+    crate::features::observe_agent_end(crate::features::installed(), &feature_context, &agent)
+        .await;
 
     let agent = Arc::new(agent);
     // TS `_startRlmChildRun`'s spawn anchor: the `rlm.spawn` host handler

@@ -59,6 +59,9 @@ pub struct ExecuteResult {
     /// The `bash()` commands this cell started, summarized for display
     /// (`bashCommands` on the tool-result details).
     pub bash_commands: Option<crate::kernel::shared::KernelBashCommands>,
+    /// The `bash()` commands that finished while the cell ran, with exit
+    /// codes; reported to observers as the `bashCommands` host fact.
+    pub executed_bash_commands: Vec<crate::kernel::shared::KernelExecutedBashCommand>,
 }
 
 /// The wire form of one sent agent message (TS `KernelSentAgentMessage`):
@@ -521,10 +524,25 @@ pub async fn execute_ipython(
             .collect::<Vec<_>>());
     }
 
+    // Host facts for in-process observers (never persisted): the cell's
+    // finished `bash()` commands with exit codes, TS `bashCommands` shape.
+    let host_facts = if r.executed_bash_commands.is_empty() {
+        serde_json::Value::Null
+    } else {
+        json!({
+            "bashCommands": r
+                .executed_bash_commands
+                .iter()
+                .map(crate::kernel::shared::KernelExecutedBashCommand::to_json)
+                .collect::<Vec<_>>(),
+        })
+    };
+
     Ok(ToolExecutionResult {
         content,
         details: Some(details),
         is_error: r.status == ExecuteStatus::Error || r.status == ExecuteStatus::Aborted,
+        host_facts,
     })
 }
 
@@ -552,6 +570,7 @@ fn kernel_crash_result(
             },
         })),
         is_error: true,
+        host_facts: serde_json::Value::Null,
     }
 }
 

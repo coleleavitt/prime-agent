@@ -353,6 +353,7 @@ fn convert_execute_result(
             .collect(),
         sent_agent_messages: result.sent_agent_messages.unwrap_or_default(),
         bash_commands: result.bash_commands,
+        executed_bash_commands: result.executed_bash_commands,
     }
 }
 

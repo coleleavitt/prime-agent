@@ -100,6 +100,7 @@ fn build(name: &str, provider_config: &Value, with_telemetry: bool) -> Harness {
                 telemetry_enabled: None,
             })
         }),
+        rlm_depth: 0,
     };
     let mut handlers = HostRequestHandlers::new();
     WorkflowFeature.register_host_handlers(&context, &mut handlers);

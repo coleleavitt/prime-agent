@@ -4,6 +4,7 @@
 //! is the native product.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use pa_core::features::SessionFeature;
 
@@ -13,12 +14,14 @@ use pa_core::features::SessionFeature;
 // not stable); with every feature compiled out nothing is pushed.
 #[allow(unused_mut, clippy::vec_init_then_push)]
 pub fn enabled_features() -> Vec<Arc<dyn SessionFeature>> {
-    let mut features: Vec<Arc<dyn SessionFeature>> = Vec::new();
-    #[cfg(feature = "toolforge")]
-    features.push(Arc::new(pa_toolforge::ToolforgeFeature::new()));
-    #[cfg(feature = "workflow")]
-    features.push(Arc::new(pa_workflow::WorkflowFeature));
-    features
+    vec![
+        #[cfg(feature = "recall")]
+        Arc::new(pa_recall::WorkspaceRecall::default()),
+        #[cfg(feature = "toolforge")]
+        Arc::new(pa_toolforge::ToolforgeFeature::new()),
+        #[cfg(feature = "workflow")]
+        Arc::new(pa_workflow::WorkflowFeature),
+    ]
 }
 
 /// Install the enabled features into the session seam. Called once by the
@@ -27,24 +30,35 @@ pub fn install_enabled_features() {
     pa_core::features::install(enabled_features());
 }
 
+/// How long the process waits at exit for the features' background work.
+const FEATURE_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Give the installed features a bounded chance to finish background work
+/// before the process exits; returns at once when none is installed.
+pub fn flush_enabled_features() {
+    pa_core::features::flush_installed(FEATURE_FLUSH_TIMEOUT);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The build installs exactly the feature crates its Cargo features
-    /// enable; the native product (`--no-default-features`) installs none.
+    /// Each Cargo feature installs its crate, and nothing else is installed:
+    /// `--no-default-features` installs none.
     #[test]
-    #[allow(unused_mut, clippy::vec_init_then_push)] // as in `enabled_features`
     fn the_build_installs_exactly_its_enabled_features() {
         let names: Vec<&str> = enabled_features()
             .iter()
             .map(|feature| feature.name())
             .collect();
-        let mut expected: Vec<&str> = Vec::new();
-        #[cfg(feature = "toolforge")]
-        expected.push("toolforge");
-        #[cfg(feature = "workflow")]
-        expected.push("workflow");
+        let expected: Vec<&str> = vec![
+            #[cfg(feature = "recall")]
+            "recall",
+            #[cfg(feature = "toolforge")]
+            "toolforge",
+            #[cfg(feature = "workflow")]
+            "workflow",
+        ];
         assert_eq!(names, expected);
     }
 }

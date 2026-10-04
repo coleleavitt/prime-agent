@@ -31,6 +31,7 @@ fn context(agent_dir: PathBuf, loaded: &[&str], tracked: &Tracked) -> SessionFea
             "contextWindow": 1000, "maxTokens": 100
         }))
         .unwrap(),
+        rlm_depth: 0,
         telemetry: Some(FeatureTelemetry::new(move |name, properties| {
             recorder
                 .lock()

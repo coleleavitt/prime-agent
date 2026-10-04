@@ -443,6 +443,11 @@ pub struct AgentToolResult {
     /// Hint that the agent should stop after the current tool batch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminate: Option<bool>,
+    /// Host-side facts the tool reports for in-process observers (the
+    /// `after_tool_call` hook): never sent to the model, never serialized,
+    /// `Null` when the tool reports none.
+    #[serde(skip)]
+    pub host_facts: serde_json::Value,
 }
 
 impl AgentToolResult {
@@ -451,6 +456,7 @@ impl AgentToolResult {
             content: vec![ToolResultContent::text(s)],
             details: serde_json::Value::Null,
             terminate: None,
+            host_facts: serde_json::Value::Null,
         }
     }
 
@@ -459,6 +465,7 @@ impl AgentToolResult {
             content: vec![ToolResultContent::text(s)],
             details: serde_json::Value::Object(serde_json::Map::new()),
             terminate: None,
+            host_facts: serde_json::Value::Null,
         }
     }
 }

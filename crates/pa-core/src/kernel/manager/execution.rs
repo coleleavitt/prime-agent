@@ -232,6 +232,10 @@ impl Inner {
                 sent_agent_messages: (!buffers.sent_agent_messages.is_empty())
                     .then(|| std::mem::take(&mut buffers.sent_agent_messages)),
                 bash_commands: buffers.bash_commands.take(),
+                executed_bash_commands: done_fields
+                    .as_ref()
+                    .map(crate::kernel::shared::KernelExecutedBashCommand::parse_done_frame)
+                    .unwrap_or_default(),
                 background_output: (!background_output.is_empty()).then_some(background_output),
                 status,
                 error: buffers.error.take(),
