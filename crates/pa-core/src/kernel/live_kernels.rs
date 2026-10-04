@@ -95,6 +95,12 @@ mod tests {
     /// Whether the registry holds a live entry for this allocation. Tests
     /// ask about their own kernel, not the global count: the registry is
     /// process-wide and other tests' kernels come and go concurrently.
+    /// The two tests here share the process-wide registry, and
+    /// `shutdown_all_live_kernels` briefly upgrades every live entry to a
+    /// strong ref: run concurrently, it keeps the other test's manager alive
+    /// across its drop. They take turns.
+    static REGISTRY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     fn tracks(target: &Weak<Inner>) -> bool {
         let mut entries = registry()
             .lock()
@@ -105,6 +111,7 @@ mod tests {
 
     #[tokio::test]
     async fn registry_tracks_and_releases_kernels() {
+        let _serial = REGISTRY_TEST_LOCK.lock().await;
         let manager = crate::kernel::ReplKernelManager::new(KernelManagerOptions::default());
         let weak = Arc::downgrade(&manager.inner);
         assert!(!tracks(&weak));
@@ -125,6 +132,7 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_all_is_safe_with_no_kernels() {
+        let _serial = REGISTRY_TEST_LOCK.lock().await;
         shutdown_all_live_kernels().await;
     }
 }
