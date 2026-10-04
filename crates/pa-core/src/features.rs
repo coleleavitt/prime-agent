@@ -85,8 +85,10 @@ mod tests {
             handlers: &mut HostRequestHandlers,
         ) {
             let cwd = context.cwd.display().to_string();
+            // No dot: prompt_guards scans the sources for dotted request
+            // literals and requires the core prompt to document each one.
             handlers.register(
-                "stub.ping",
+                "stub_ping",
                 crate::kernel::shared::host_handler(move |_| {
                     let cwd = cwd.clone();
                     async move { Ok(serde_json::json!({ "cwd": cwd })) }
@@ -106,6 +108,6 @@ mod tests {
         };
         let mut handlers = HostRequestHandlers::default();
         Stub.register_host_handlers(&context, &mut handlers);
-        assert!(handlers.get("stub.ping").is_some());
+        assert!(handlers.get("stub_ping").is_some());
     }
 }
