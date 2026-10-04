@@ -1,0 +1,1673 @@
+[
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--seed",
+      "",
+      "--dir",
+      "<DIR>/l0"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --seed requires a non-negative integer.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--seed",
+      " ",
+      "--dir",
+      "<DIR>/l1"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --seed requires a non-negative integer.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--seed",
+      " 5 ",
+      "--dir",
+      "<DIR>/l2"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l2",
+      "  task sum-difference  seed 5  mode local  W 1  k1 1  k2 1  M 1  beta1 0.05  beta2 0.1  beta3 0.25  iterations 1",
+      "  round 0: best 0.804978  probes 1  tree sum-difference-s5-i0-1700000000000",
+      "  round 1: best 0.812356  probes 1  tree sum-difference-s5-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score 0.834007",
+      "  final   policy 1be99d403b0405a3  score 0.834007  improved false",
+      "  best node score 0.812356  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--seed",
+      "\n5\t",
+      "--dir",
+      "<DIR>/l3"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l3",
+      "  task sum-difference  seed 5  mode local  W 1  k1 1  k2 1  M 1  beta1 0.05  beta2 0.1  beta3 0.25  iterations 1",
+      "  round 0: best 0.804978  probes 1  tree sum-difference-s5-i0-1700000000000",
+      "  round 1: best 0.812356  probes 1  tree sum-difference-s5-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score 0.834007",
+      "  final   policy 1be99d403b0405a3  score 0.834007  improved false",
+      "  best node score 0.812356  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--seed",
+      " 7",
+      "--dir",
+      "<DIR>/l4"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l4",
+      "  task sum-difference  seed 7  mode local  W 1  k1 1  k2 1  M 1  beta1 0.05  beta2 0.1  beta3 0.25  iterations 1",
+      "  round 0: best 0.779115  probes 1  tree sum-difference-s7-i0-1700000000000",
+      "  round 1: best 0.800283  probes 1  tree sum-difference-s7-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score 0.641492",
+      "  final   policy 1be99d403b0405a3  score 0.641492  improved false",
+      "  best node score 0.800283  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--seed",
+      "﻿7",
+      "--dir",
+      "<DIR>/l5"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l5",
+      "  task sum-difference  seed 7  mode local  W 1  k1 1  k2 1  M 1  beta1 0.05  beta2 0.1  beta3 0.25  iterations 1",
+      "  round 0: best 0.779115  probes 1  tree sum-difference-s7-i0-1700000000000",
+      "  round 1: best 0.800283  probes 1  tree sum-difference-s7-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score 0.641492",
+      "  final   policy 1be99d403b0405a3  score 0.641492  improved false",
+      "  best node score 0.800283  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--seed",
+      "7",
+      "--dir",
+      "<DIR>/l6"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --seed requires a non-negative integer.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--seed",
+      "7",
+      "--dir",
+      "<DIR>/l7"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --seed requires a non-negative integer.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--seed",
+      "᠎7",
+      "--dir",
+      "<DIR>/l8"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --seed requires a non-negative integer.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--seed",
+      "0x1F",
+      "--dir",
+      "<DIR>/l9"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --seed requires a non-negative integer.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--seed",
+      "0b11",
+      "--dir",
+      "<DIR>/l10"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --seed requires a non-negative integer.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--seed",
+      "1e3",
+      "--dir",
+      "<DIR>/l11"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --seed requires a non-negative integer.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--seed",
+      "+5",
+      "--dir",
+      "<DIR>/l12"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --seed requires a non-negative integer.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--seed",
+      "05",
+      "--dir",
+      "<DIR>/l13"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --seed requires a non-negative integer.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--seed",
+      "5.0",
+      "--dir",
+      "<DIR>/l14"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --seed requires a non-negative integer.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--seed",
+      "9007199254740991",
+      "--dir",
+      "<DIR>/l15"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l15",
+      "  task sum-difference  seed 9007199254740991  mode local  W 1  k1 1  k2 1  M 1  beta1 0.05  beta2 0.1  beta3 0.25  iterations 1",
+      "  round 0: best 0.800283  probes 1  tree sum-difference-s9007199254740991-i0-1700000000000",
+      "  round 1: best 0.798354  probes 1  tree sum-difference-s9007199254740991-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score 0.922484",
+      "  final   policy 1be99d403b0405a3  score 0.922484  improved false",
+      "  best node score 0.800283  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--seed",
+      "9007199254740992",
+      "--dir",
+      "<DIR>/l16"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --seed requires a non-negative integer.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--seed=-0",
+      "--dir",
+      "<DIR>/l17"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --seed requires a non-negative integer.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "",
+      "--dir",
+      "<DIR>/l18"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --beta1 requires a finite non-negative number.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      " ",
+      "--dir",
+      "<DIR>/l19"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --beta1 requires a finite non-negative number.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      " 0.5 ",
+      "--dir",
+      "<DIR>/l20"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l20",
+      "  task sum-difference  seed 1  mode local  W 1  k1 1  k2 1  M 1  beta1 0.5  beta2 0.1  beta3 0.25  iterations 1",
+      "  round 0: best 0.824312  probes 1  tree sum-difference-s1-i0-1700000000000",
+      "  round 1: best 0.805434  probes 1  tree sum-difference-s1-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score 0.107182",
+      "  final   policy 1be99d403b0405a3  score 0.107182  improved false",
+      "  best node score 0.824312  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "\t0.5\n",
+      "--dir",
+      "<DIR>/l21"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l21",
+      "  task sum-difference  seed 1  mode local  W 1  k1 1  k2 1  M 1  beta1 0.5  beta2 0.1  beta3 0.25  iterations 1",
+      "  round 0: best 0.824312  probes 1  tree sum-difference-s1-i0-1700000000000",
+      "  round 1: best 0.805434  probes 1  tree sum-difference-s1-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score 0.107182",
+      "  final   policy 1be99d403b0405a3  score 0.107182  improved false",
+      "  best node score 0.824312  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      " 0.5",
+      "--dir",
+      "<DIR>/l22"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l22",
+      "  task sum-difference  seed 1  mode local  W 1  k1 1  k2 1  M 1  beta1 0.5  beta2 0.1  beta3 0.25  iterations 1",
+      "  round 0: best 0.824312  probes 1  tree sum-difference-s1-i0-1700000000000",
+      "  round 1: best 0.805434  probes 1  tree sum-difference-s1-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score 0.107182",
+      "  final   policy 1be99d403b0405a3  score 0.107182  improved false",
+      "  best node score 0.824312  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "﻿0.5",
+      "--dir",
+      "<DIR>/l23"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l23",
+      "  task sum-difference  seed 1  mode local  W 1  k1 1  k2 1  M 1  beta1 0.5  beta2 0.1  beta3 0.25  iterations 1",
+      "  round 0: best 0.824312  probes 1  tree sum-difference-s1-i0-1700000000000",
+      "  round 1: best 0.805434  probes 1  tree sum-difference-s1-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score 0.107182",
+      "  final   policy 1be99d403b0405a3  score 0.107182  improved false",
+      "  best node score 0.824312  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "0.5",
+      "--dir",
+      "<DIR>/l24"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --beta1 requires a finite non-negative number.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "0.5",
+      "--dir",
+      "<DIR>/l25"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --beta1 requires a finite non-negative number.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "0x1F",
+      "--dir",
+      "<DIR>/l26"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l26",
+      "  task sum-difference  seed 1  mode local  W 1  k1 1  k2 1  M 1  beta1 31  beta2 0.1  beta3 0.25  iterations 1",
+      "  round 0: best 0.824312  probes 1  tree sum-difference-s1-i0-1700000000000",
+      "  round 1: best 0.805434  probes 1  tree sum-difference-s1-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score -30.392818",
+      "  final   policy 1be99d403b0405a3  score -30.392818  improved false",
+      "  best node score 0.824312  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "0X1f",
+      "--dir",
+      "<DIR>/l27"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l27",
+      "  task sum-difference  seed 1  mode local  W 1  k1 1  k2 1  M 1  beta1 31  beta2 0.1  beta3 0.25  iterations 1",
+      "  round 0: best 0.824312  probes 1  tree sum-difference-s1-i0-1700000000000",
+      "  round 1: best 0.805434  probes 1  tree sum-difference-s1-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score -30.392818",
+      "  final   policy 1be99d403b0405a3  score -30.392818  improved false",
+      "  best node score 0.824312  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "0x20000000000003",
+      "--dir",
+      "<DIR>/l28"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l28",
+      "  task sum-difference  seed 1  mode local  W 1  k1 1  k2 1  M 1  beta1 9007199254740996  beta2 0.1  beta3 0.25  iterations 1",
+      "  round 0: best 0.824312  probes 1  tree sum-difference-s1-i0-1700000000000",
+      "  round 1: best 0.805434  probes 1  tree sum-difference-s1-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score -9007199254740996.000000",
+      "  final   policy 1be99d403b0405a3  score -9007199254740996.000000  improved false",
+      "  best node score 0.824312  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "0x10000000000000000",
+      "--dir",
+      "<DIR>/l29"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l29",
+      "  task sum-difference  seed 1  mode local  W 1  k1 1  k2 1  M 1  beta1 18446744073709552000  beta2 0.1  beta3 0.25  iterations 1",
+      "  round 0: best 0.824312  probes 1  tree sum-difference-s1-i0-1700000000000",
+      "  round 1: best 0.805434  probes 1  tree sum-difference-s1-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score -18446744073709551616.000000",
+      "  final   policy 1be99d403b0405a3  score -18446744073709551616.000000  improved false",
+      "  best node score 0.824312  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "0xffffffffffffffffffffffffffffffff",
+      "--dir",
+      "<DIR>/l30"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l30",
+      "  task sum-difference  seed 1  mode local  W 1  k1 1  k2 1  M 1  beta1 3.402823669209385e+38  beta2 0.1  beta3 0.25  iterations 1",
+      "  round 0: best 0.824312  probes 1  tree sum-difference-s1-i0-1700000000000",
+      "  round 1: best 0.805434  probes 1  tree sum-difference-s1-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score -3.402823669209385e+38",
+      "  final   policy 1be99d403b0405a3  score -3.402823669209385e+38  improved false",
+      "  best node score 0.824312  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "0b101",
+      "--dir",
+      "<DIR>/l31"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l31",
+      "  task sum-difference  seed 1  mode local  W 1  k1 1  k2 1  M 1  beta1 5  beta2 0.1  beta3 0.25  iterations 1",
+      "  round 0: best 0.824312  probes 1  tree sum-difference-s1-i0-1700000000000",
+      "  round 1: best 0.805434  probes 1  tree sum-difference-s1-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score -4.392818",
+      "  final   policy 1be99d403b0405a3  score -4.392818  improved false",
+      "  best node score 0.824312  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "0o17",
+      "--dir",
+      "<DIR>/l32"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l32",
+      "  task sum-difference  seed 1  mode local  W 1  k1 1  k2 1  M 1  beta1 15  beta2 0.1  beta3 0.25  iterations 1",
+      "  round 0: best 0.824312  probes 1  tree sum-difference-s1-i0-1700000000000",
+      "  round 1: best 0.805434  probes 1  tree sum-difference-s1-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score -14.392818",
+      "  final   policy 1be99d403b0405a3  score -14.392818  improved false",
+      "  best node score 0.824312  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "017",
+      "--dir",
+      "<DIR>/l33"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l33",
+      "  task sum-difference  seed 1  mode local  W 1  k1 1  k2 1  M 1  beta1 17  beta2 0.1  beta3 0.25  iterations 1",
+      "  round 0: best 0.824312  probes 1  tree sum-difference-s1-i0-1700000000000",
+      "  round 1: best 0.805434  probes 1  tree sum-difference-s1-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score -16.392818",
+      "  final   policy 1be99d403b0405a3  score -16.392818  improved false",
+      "  best node score 0.824312  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "1e3",
+      "--dir",
+      "<DIR>/l34"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l34",
+      "  task sum-difference  seed 1  mode local  W 1  k1 1  k2 1  M 1  beta1 1000  beta2 0.1  beta3 0.25  iterations 1",
+      "  round 0: best 0.824312  probes 1  tree sum-difference-s1-i0-1700000000000",
+      "  round 1: best 0.805434  probes 1  tree sum-difference-s1-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score -999.392818",
+      "  final   policy 1be99d403b0405a3  score -999.392818  improved false",
+      "  best node score 0.824312  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "1E+2",
+      "--dir",
+      "<DIR>/l35"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l35",
+      "  task sum-difference  seed 1  mode local  W 1  k1 1  k2 1  M 1  beta1 100  beta2 0.1  beta3 0.25  iterations 1",
+      "  round 0: best 0.824312  probes 1  tree sum-difference-s1-i0-1700000000000",
+      "  round 1: best 0.805434  probes 1  tree sum-difference-s1-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score -99.392818",
+      "  final   policy 1be99d403b0405a3  score -99.392818  improved false",
+      "  best node score 0.824312  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      ".5",
+      "--dir",
+      "<DIR>/l36"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l36",
+      "  task sum-difference  seed 1  mode local  W 1  k1 1  k2 1  M 1  beta1 0.5  beta2 0.1  beta3 0.25  iterations 1",
+      "  round 0: best 0.824312  probes 1  tree sum-difference-s1-i0-1700000000000",
+      "  round 1: best 0.805434  probes 1  tree sum-difference-s1-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score 0.107182",
+      "  final   policy 1be99d403b0405a3  score 0.107182  improved false",
+      "  best node score 0.824312  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "5.",
+      "--dir",
+      "<DIR>/l37"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l37",
+      "  task sum-difference  seed 1  mode local  W 1  k1 1  k2 1  M 1  beta1 5  beta2 0.1  beta3 0.25  iterations 1",
+      "  round 0: best 0.824312  probes 1  tree sum-difference-s1-i0-1700000000000",
+      "  round 1: best 0.805434  probes 1  tree sum-difference-s1-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score -4.392818",
+      "  final   policy 1be99d403b0405a3  score -4.392818  improved false",
+      "  best node score 0.824312  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "1e999",
+      "--dir",
+      "<DIR>/l38"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --beta1 requires a finite non-negative number.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "Infinity",
+      "--dir",
+      "<DIR>/l39"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --beta1 requires a finite non-negative number.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      " Infinity ",
+      "--dir",
+      "<DIR>/l40"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --beta1 requires a finite non-negative number.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "inf",
+      "--dir",
+      "<DIR>/l41"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --beta1 requires a finite non-negative number.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "NaN",
+      "--dir",
+      "<DIR>/l42"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --beta1 requires a finite non-negative number.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "1_0",
+      "--dir",
+      "<DIR>/l43"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --beta1 requires a finite non-negative number.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "1,5",
+      "--dir",
+      "<DIR>/l44"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --beta1 requires a finite non-negative number.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "0x",
+      "--dir",
+      "<DIR>/l45"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --beta1 requires a finite non-negative number.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "5abc",
+      "--dir",
+      "<DIR>/l46"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --beta1 requires a finite non-negative number.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1",
+      "123456789012345678901234567890",
+      "--dir",
+      "<DIR>/l47"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l47",
+      "  task sum-difference  seed 1  mode local  W 1  k1 1  k2 1  M 1  beta1 1.2345678901234568e+29  beta2 0.1  beta3 0.25  iterations 1",
+      "  round 0: best 0.824312  probes 1  tree sum-difference-s1-i0-1700000000000",
+      "  round 1: best 0.805434  probes 1  tree sum-difference-s1-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score -1.2345678901234568e+29",
+      "  final   policy 1be99d403b0405a3  score -1.2345678901234568e+29  improved false",
+      "  best node score 0.824312  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1=-0",
+      "--dir",
+      "<DIR>/l48"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l48",
+      "  task sum-difference  seed 1  mode local  W 1  k1 1  k2 1  M 1  beta1 0  beta2 0.1  beta3 0.25  iterations 1",
+      "  round 0: best 0.824312  probes 1  tree sum-difference-s1-i0-1700000000000",
+      "  round 1: best 0.805434  probes 1  tree sum-difference-s1-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score 0.607182",
+      "  final   policy 1be99d403b0405a3  score 0.607182  improved false",
+      "  best node score 0.824312  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta1=-0x10",
+      "--dir",
+      "<DIR>/l49"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --beta1 requires a finite non-negative number.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta3",
+      "0x1",
+      "--dir",
+      "<DIR>/l50"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l50",
+      "  task sum-difference  seed 1  mode local  W 1  k1 1  k2 1  M 1  beta1 0.05  beta2 0.1  beta3 1  iterations 1",
+      "  round 0: best 0.824312  probes 1  tree sum-difference-s1-i0-1700000000000",
+      "  round 1: best 0.805434  probes 1  tree sum-difference-s1-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score 0.557182",
+      "  final   policy 1be99d403b0405a3  score 0.557182  improved false",
+      "  best node score 0.824312  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta3",
+      "1e0",
+      "--dir",
+      "<DIR>/l51"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l51",
+      "  task sum-difference  seed 1  mode local  W 1  k1 1  k2 1  M 1  beta1 0.05  beta2 0.1  beta3 1  iterations 1",
+      "  round 0: best 0.824312  probes 1  tree sum-difference-s1-i0-1700000000000",
+      "  round 1: best 0.805434  probes 1  tree sum-difference-s1-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score 0.557182",
+      "  final   policy 1be99d403b0405a3  score 0.557182  improved false",
+      "  best node score 0.824312  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta3",
+      " 1 ",
+      "--dir",
+      "<DIR>/l52"
+    ],
+    "exit": 0,
+    "stdout": [
+      "dream loop  <DIR>/l52",
+      "  task sum-difference  seed 1  mode local  W 1  k1 1  k2 1  M 1  beta1 0.05  beta2 0.1  beta3 1  iterations 1",
+      "  round 0: best 0.824312  probes 1  tree sum-difference-s1-i0-1700000000000",
+      "  round 1: best 0.805434  probes 1  tree sum-difference-s1-i1-1700000000000",
+      "  initial policy 1be99d403b0405a3  score 0.557182",
+      "  final   policy 1be99d403b0405a3  score 0.557182  improved false",
+      "  best node score 0.824312  tokens 0"
+    ],
+    "stderr": []
+  },
+  {
+    "args": [
+      "loop",
+      "--task",
+      "sum-difference",
+      "--workers",
+      "1",
+      "--k1",
+      "1",
+      "--k2",
+      "1",
+      "--dreams",
+      "1",
+      "--iterations",
+      "1",
+      "--beta3",
+      "0x2",
+      "--dir",
+      "<DIR>/l53"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --beta3 must be in [0, 1].",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "status",
+      "--n",
+      "﻿6",
+      "--dir",
+      "<DIR>/empty"
+    ],
+    "exit": 2,
+    "stdout": [],
+    "stderr": [
+      "Error: dream store is empty (<DIR>/empty)"
+    ]
+  },
+  {
+    "args": [
+      "status",
+      "--n",
+      "6",
+      "--dir",
+      "<DIR>/empty"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --n requires a positive integer.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "status",
+      "--workers",
+      " 2 ",
+      "--dir",
+      "<DIR>/empty"
+    ],
+    "exit": 2,
+    "stdout": [],
+    "stderr": [
+      "Error: dream store is empty (<DIR>/empty)"
+    ]
+  },
+  {
+    "args": [
+      "status",
+      "--seeds",
+      "﻿1, 2",
+      "--dir",
+      "<DIR>/empty"
+    ],
+    "exit": 2,
+    "stdout": [],
+    "stderr": [
+      "Error: dream store is empty (<DIR>/empty)"
+    ]
+  },
+  {
+    "args": [
+      "status",
+      "--seeds",
+      "1,2",
+      "--dir",
+      "<DIR>/empty"
+    ],
+    "exit": 1,
+    "stdout": [],
+    "stderr": [
+      "Error: --seeds requires a non-negative integer.",
+      "Usage: prime-agent dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]"
+    ]
+  },
+  {
+    "args": [
+      "status",
+      "--arms",
+      "﻿dream",
+      "--dir",
+      "<DIR>/empty"
+    ],
+    "exit": 2,
+    "stdout": [],
+    "stderr": [
+      "Error: dream store is empty (<DIR>/empty)"
+    ]
+  }
+]

@@ -142,4 +142,28 @@ loopGolden("loop-autocorrelation.json", "autocorrelation", 32, 11, { workers: 3,
   save("cli.json", transcripts);
   rmSync(base, { recursive: true, force: true });
 }
+// G. numeric flag parsing: JS `trim` / `parseInt` / `Number` edge cases, each
+// either rejected with the usage line or echoed back by a one-probe loop header.
+{
+  const transcripts: unknown[] = [];
+  const base = fresh();
+  let runs = 0;
+  const run = (args: string[]) => {
+    const stdout: string[] = []; const stderr: string[] = [];
+    const exit = runDreamCommand(args, { stdout: (l) => stdout.push(l), stderr: (l) => stderr.push(l), now: () => CLOCK });
+    const scrub = (l: string) => l.split(base).join("<DIR>");
+    transcripts.push({ args: args.map(scrub), exit, stdout: stdout.map(scrub), stderr: stderr.map(scrub) });
+  };
+  const tiny = (...flags: string[]) => run(["loop", "--task", "sum-difference", "--workers", "1", "--k1", "1", "--k2", "1", "--dreams", "1", "--iterations", "1", ...flags, "--dir", join(base, `l${runs++}`)]);
+  const parseOnly = (...flags: string[]) => run(["status", ...flags, "--dir", join(base, "empty")]);
+  for (const seed of ["", " ", " 5 ", "\n5\t", "\u00a07", "\ufeff7", "\u00857", "7\u0085", "\u180e7", "0x1F", "0b11", "1e3", "+5", "05", "5.0", "9007199254740991", "9007199254740992"]) tiny("--seed", seed);
+  tiny("--seed=-0");
+  for (const beta of ["", " ", " 0.5 ", "\t0.5\n", "\u00a00.5", "\ufeff0.5", "\u00850.5", "0.5\u0085", "0x1F", "0X1f", "0x20000000000003", "0x10000000000000000", "0xffffffffffffffffffffffffffffffff", "0b101", "0o17", "017", "1e3", "1E+2", ".5", "5.", "1e999", "Infinity", " Infinity ", "inf", "NaN", "1_0", "1,5", "0x", "5abc", "123456789012345678901234567890"]) tiny("--beta1", beta);
+  tiny("--beta1=-0");
+  tiny("--beta1=-0x10");
+  for (const beta of ["0x1", "1e0", " 1 ", "0x2"]) tiny("--beta3", beta);
+  for (const flags of [["--n", "\ufeff6"], ["--n", "\u00856"], ["--workers", " 2 "], ["--seeds", "\ufeff1,\u00a02"], ["--seeds", "1,\u00852"], ["--arms", "\ufeffdream"]]) parseOnly(...flags);
+  save("cli-numbers.json", transcripts);
+  rmSync(base, { recursive: true, force: true });
+}
 console.log("ok");

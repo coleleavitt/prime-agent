@@ -71,13 +71,50 @@ pub fn js_number(value: f64) -> String {
     out
 }
 
-/// `x.toFixed(digits)` for the scores the CLI prints. Rust's `{:.N}` rounds the
-/// exact binary value like `toFixed` does (a decimal tie at 6 or 2 digits is
-/// never exactly representable); only `-0` differs, and `toFixed` prints `0`.
+/// ECMAScript `x.toFixed(digits)`: `String(x)` when `x` is not finite or
+/// `|x| >= 1e21`, else the exact binary value rounded at `digits` with a
+/// decimal tie going to the larger magnitude (`0.125.toFixed(2)` is `0.13`;
+/// Rust's `{:.2}` ties to even and prints `0.12`). `-0` prints as `0`.
 #[must_use]
 pub fn to_fixed(value: f64, digits: usize) -> String {
-    let value = if value == 0.0 { 0.0 } else { value };
-    format!("{value:.digits$}")
+    if !value.is_finite() || value.abs() >= 1e21 {
+        return js_number(value);
+    }
+    // A double has at most 1074 fractional digits, so this expansion is exact
+    // and the rounding below sees the true value.
+    let exact = format!("{:.1074}", value.abs());
+    let (whole, fraction) = exact.split_once('.').unwrap_or((exact.as_str(), ""));
+    let mut kept: Vec<u8> = whole.bytes().chain(fraction.bytes().take(digits)).collect();
+    if fraction
+        .as_bytes()
+        .get(digits)
+        .is_some_and(|digit| *digit >= b'5')
+    {
+        let mut carry = true;
+        for digit in kept.iter_mut().rev() {
+            if *digit == b'9' {
+                *digit = b'0';
+            } else {
+                *digit += 1;
+                carry = false;
+                break;
+            }
+        }
+        if carry {
+            kept.insert(0, b'1');
+        }
+    }
+    let split = kept.len() - digits;
+    let mut out = String::with_capacity(kept.len() + 2);
+    if value < 0.0 {
+        out.push('-');
+    }
+    out.push_str(std::str::from_utf8(&kept[..split]).unwrap_or("0"));
+    if digits > 0 {
+        out.push('.');
+        out.push_str(std::str::from_utf8(&kept[split..]).unwrap_or(""));
+    }
+    out
 }
 
 /// A `serde_json` formatter that writes doubles as `JSON.stringify` does.
@@ -517,6 +554,52 @@ mod tests {
             printed.iter().map(|(_, s)| s.clone()).collect::<Vec<_>>(),
             expected.iter().map(|(_, s)| s.clone()).collect::<Vec<_>>()
         );
+    }
+
+    /// Expected strings are node's `x.toFixed(digits)`: a decimal tie rounds
+    /// to the larger magnitude, and `|x| >= 1e21` prints as `String(x)`.
+    #[test]
+    fn to_fixed_matches_node() {
+        let cases: [(f64, usize, &str); 29] = [
+            (0.007_812_5, 6, "0.007813"),
+            (-0.007_812_5, 6, "-0.007813"),
+            (0.125, 2, "0.13"),
+            (-0.125, 2, "-0.13"),
+            (0.5, 0, "1"),
+            (2.5, 0, "3"),
+            (-2.5, 0, "-3"),
+            (1.005, 2, "1.00"),
+            (2.675, 2, "2.67"),
+            (0.0, 6, "0.000000"),
+            (-0.0, 6, "0.000000"),
+            (-1e-7, 6, "-0.000000"),
+            (1e-7, 6, "0.000000"),
+            (0.999_999_5, 6, "1.000000"),
+            (999_999.999_999_5, 6, "999999.999999"),
+            (1e20, 2, "100000000000000000000.00"),
+            (1e21, 2, "1e+21"),
+            (-1e21, 6, "-1e+21"),
+            (3.402_823_669_209_385e38, 6, "3.402823669209385e+38"),
+            (-3.402_823_669_209_385e38, 6, "-3.402823669209385e+38"),
+            (123.456, 0, "123"),
+            (5e-324, 6, "0.000000"),
+            (f64::MAX, 2, "1.7976931348623157e+308"),
+            (0.000_001, 6, "0.000001"),
+            (5e-7, 6, "0.000000"),
+            (0.804_978_3, 6, "0.804978"),
+            (f64::NAN, 6, "NaN"),
+            (f64::INFINITY, 6, "Infinity"),
+            (f64::NEG_INFINITY, 2, "-Infinity"),
+        ];
+        let printed: Vec<(f64, usize, String)> = cases
+            .iter()
+            .map(|&(value, digits, _)| (value, digits, to_fixed(value, digits)))
+            .collect();
+        let expected: Vec<(f64, usize, String)> = cases
+            .iter()
+            .map(|&(value, digits, text)| (value, digits, text.to_string()))
+            .collect();
+        assert_eq!(format!("{printed:?}"), format!("{expected:?}"));
     }
 
     #[test]

@@ -7,6 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
+use pa_types::js::js_trim;
 use serde_json::{Map, Value};
 
 use crate::dream_loop::{run_dream_loop, DreamLoopOptions, DreamLoopResult};
@@ -161,9 +162,10 @@ fn usage(message: impl Into<String>) -> DreamCommandUsageError {
     DreamCommandUsageError(message.into())
 }
 
-/// `Number.parseInt(raw, 10)` that must print back as `raw.trim()`.
+/// `Number.parseInt(raw, 10)` that must print back as `raw.trim()` (JS trim:
+/// U+FEFF is white space, U+0085 is not) and be a safe integer.
 fn integer(raw: &str) -> Option<u64> {
-    let trimmed = raw.trim();
+    let trimmed = js_trim(raw);
     let parsed: u64 = trimmed.parse().ok()?;
     (parsed.to_string() == trimmed && parsed < (1u64 << 53)).then_some(parsed)
 }
@@ -179,46 +181,21 @@ fn non_negative_integer(raw: &str, option: &str) -> Result<u64, DreamCommandUsag
     integer(raw).ok_or_else(|| usage(format!("{option} requires a non-negative integer.")))
 }
 
+/// `Number(raw.trim())`, except that a blank value is rejected rather than
+/// read as `0`, and the result must be finite and not below zero (`-0` passes).
 fn non_negative_number(raw: &str, option: &str) -> Result<f64, DreamCommandUsageError> {
-    let trimmed = raw.trim();
-    let parsed = js_number_from_str(trimmed);
-    match parsed {
-        Some(value) if value.is_finite() && value >= 0.0 => Ok(value),
-        _ => Err(usage(format!(
+    let trimmed = js_trim(raw);
+    let parsed = if trimmed.is_empty() {
+        f64::NAN
+    } else {
+        pa_types::js::js_number(trimmed)
+    };
+    if parsed.is_finite() && parsed >= 0.0 {
+        Ok(parsed)
+    } else {
+        Err(usage(format!(
             "{option} requires a finite non-negative number."
-        ))),
-    }
-}
-
-/// `Number(text)` for the decimal and exponent forms (and hex/binary/octal).
-fn js_number_from_str(text: &str) -> Option<f64> {
-    if text.is_empty() {
-        return None;
-    }
-    for (prefix, radix) in [
-        ("0x", 16),
-        ("0X", 16),
-        ("0b", 2),
-        ("0B", 2),
-        ("0o", 8),
-        ("0O", 8),
-    ] {
-        if let Some(digits) = text.strip_prefix(prefix) {
-            #[allow(clippy::cast_precision_loss)]
-            return u64::from_str_radix(digits, radix)
-                .ok()
-                .map(|value| value as f64);
-        }
-    }
-    if text.contains(['i', 'n', 'I', 'N'])
-        && !matches!(text, "Infinity" | "+Infinity" | "-Infinity")
-    {
-        return None;
-    }
-    match text {
-        "Infinity" | "+Infinity" => Some(f64::INFINITY),
-        "-Infinity" => Some(f64::NEG_INFINITY),
-        _ => text.parse().ok(),
+        )))
     }
 }
 
@@ -326,7 +303,7 @@ pub fn parse_dream_command_args(
                 let raw = value("--arms")?;
                 let names: Vec<&str> = raw
                     .split(',')
-                    .map(str::trim)
+                    .map(js_trim)
                     .filter(|name| !name.is_empty())
                     .collect();
                 if names.is_empty() {
@@ -353,7 +330,7 @@ pub fn parse_dream_command_args(
                 let raw = value("--seeds")?;
                 let parts: Vec<&str> = raw
                     .split(',')
-                    .map(str::trim)
+                    .map(js_trim)
                     .filter(|part| !part.is_empty())
                     .collect();
                 if parts.is_empty() {
