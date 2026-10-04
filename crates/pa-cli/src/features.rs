@@ -21,6 +21,8 @@ pub fn enabled_features() -> Vec<Arc<dyn SessionFeature>> {
         Arc::new(pa_toolforge::ToolforgeFeature::new()),
         #[cfg(feature = "workflow")]
         Arc::new(pa_workflow::WorkflowFeature),
+        #[cfg(feature = "learning")]
+        Arc::new(pa_learning::LearningFeature),
     ];
     #[cfg(feature = "ledger")]
     features.extend(ledger_features());
@@ -45,6 +47,10 @@ fn ledger_features() -> Vec<Arc<dyn SessionFeature>> {
             vec![ravo.ledger_observer()],
         );
         ravo.attach_ledger(ledger.handle());
+        // The trajectory's internalized fingerprints mute their recurrence
+        // reminders (feature `learning`, which implies `ravo`).
+        #[cfg(feature = "learning")]
+        ravo.attach_recurrence_filter(pa_learning::LearningFeature.recurrence_filter());
         vec![Arc::new(ravo), Arc::new(ledger)]
     }
     #[cfg(not(feature = "ravo"))]
@@ -195,6 +201,8 @@ mod tests {
             "toolforge",
             #[cfg(feature = "workflow")]
             "workflow",
+            #[cfg(feature = "learning")]
+            "learning",
             #[cfg(feature = "ravo")]
             "ravo",
             #[cfg(feature = "ledger")]

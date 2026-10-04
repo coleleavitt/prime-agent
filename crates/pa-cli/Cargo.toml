@@ -8,9 +8,13 @@ description = "The prime-agent binary."
 [features]
 # The fork's feature crates (docs/fork-feature-crates.md); `--no-default-features`
 # builds the native product.
-default = ["dream", "ledger", "ravo", "recall", "toolforge", "trace", "workflow"]
+default = ["dream", "learning", "ledger", "ravo", "recall", "toolforge", "trace", "workflow"]
 # `prime-agent dream`: Dream-RSI's standalone zero-token runner (pa-dream).
 dream = ["dep:pa-dream"]
+# The continual-learning gate: the learning index, `prime-agent learning`, and
+# the Engineer Trajectory Index's digest hook and RAVO recurrence filter
+# (crates/pa-learning).
+learning = ["ravo", "dep:pa-learning"]
 # The failure ledger and the ipython resolution index (crates/pa-ledger).
 ledger = ["dep:pa-ledger"]
 # RAVO: the gate on harness refinements, its lineage and provisional-regression
@@ -41,6 +45,7 @@ pa-dream = { path = "../pa-dream", optional = true }
 pa-trace = { path = "../pa-trace", optional = true }
 pa-ledger = { path = "../pa-ledger", optional = true }
 pa-ravo = { path = "../pa-ravo", optional = true }
+pa-learning = { path = "../pa-learning", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }
 tokio = { workspace = true }
 anyhow = { workspace = true }

@@ -38,6 +38,8 @@ pub(crate) mod incident;
 pub(crate) mod initial_message;
 pub(crate) mod installer_update;
 pub(crate) mod interactive_mode;
+#[cfg(feature = "learning")]
+pub(crate) mod learning_command;
 pub(crate) mod list_models;
 pub(crate) mod mcp_command;
 pub(crate) mod mcp_login;

@@ -1273,6 +1273,7 @@ dependencies = [
  "pa-core",
  "pa-daemon",
  "pa-dream",
+ "pa-learning",
  "pa-ledger",
  "pa-ravo",
  "pa-recall",
