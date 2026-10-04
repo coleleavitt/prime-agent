@@ -65,6 +65,19 @@ fn count(summary: &Value, category: &str) -> u64 {
     summary["counts"][category].as_u64().expect("count")
 }
 
+/// `--limit` is JS `Number(text)`: hex, JS white space (U+FEFF) and an
+/// exponent all name an integer; `inf` is `NaN`, not infinity.
+#[test]
+fn parses_the_limit_as_js_number() {
+    let limit =
+        |value: &str| parse_health_args(&[format!("--limit={value}")]).map(|options| options.limit);
+    let range = Err("--limit must be an integer from 1 to 200.".to_string());
+    assert_eq!(
+        ["0x32", "\u{feff}50", "5e1", "inf", ""].map(limit),
+        [Ok(50), Ok(50), Ok(50), range.clone(), range]
+    );
+}
+
 #[test]
 fn parses_bounded_duration_and_output_options() {
     let args =
