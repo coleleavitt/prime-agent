@@ -1,0 +1,33 @@
+[package]
+name = "pa-learning"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The continual-learning gate: the learning index over the structured log, `prime-agent learning`, and the Engineer Trajectory Index."
+
+[dependencies]
+pa-core = { path = "../pa-core" }
+pa-ledger = { path = "../pa-ledger" }
+pa-ravo = { path = "../pa-ravo" }
+pa-trace = { path = "../pa-trace" }
+pa-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+# The span fingerprint key is the TS sha256 digest.
+sha2 = "0.10"
+# The security-class predicate is the TS regex.
+regex = "1"
+# JavaScript `Map` iteration order (insertion order) for the report's rows.
+indexmap = "2"
+
+[dev-dependencies]
+pa-agent = { workspace = true }
+tempfile = "3"
+# The golden replay writes rotated `.gz` log generations.
+flate2 = "1"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["registry", "std"] }
+
+[lints]
+workspace = true

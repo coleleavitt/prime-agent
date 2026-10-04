@@ -1,0 +1,4694 @@
+{
+  "afterCorpusMs": 1787270400000,
+  "insideLastDayMs": 1786842000000,
+  "logSha256": {
+    "treated": "28e7076ff6ca42fba3f56fd900f3bb5f7d8a32d13bc35323b37d26f43920bf11",
+    "swapped": "fea447a5ea5b557aa4a374acfc6de18e35cc76d6cbe487639589c1a6d1bd792f"
+  },
+  "rolledDays": [
+    {
+      "schema": 1,
+      "day": "2026-08-01",
+      "sealedAt": "2026-08-21T00:00:00.000Z",
+      "turns": 500,
+      "fingerprints": [
+        {
+          "fingerprint": "span:bd1876553060fd33",
+          "name": "agent.turn",
+          "status": "ok",
+          "failure": false,
+          "count": 500,
+          "p50Ms": 949.25,
+          "p95Ms": 1174.375,
+          "message": ""
+        },
+        {
+          "fingerprint": "fp00",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 40,
+          "p95Ms": 40,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp01",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 41,
+          "p95Ms": 41,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp02",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 42,
+          "p95Ms": 42,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp03",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 43,
+          "p95Ms": 43,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp04",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 44,
+          "p95Ms": 44,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp05",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 45,
+          "p95Ms": 45,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp06",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 46,
+          "p95Ms": 46,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp07",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 47,
+          "p95Ms": 47,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp08",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 48,
+          "p95Ms": 48,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp09",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 49,
+          "p95Ms": 49,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp10",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 50,
+          "p95Ms": 50,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp11",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 51,
+          "p95Ms": 51,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp12",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 52,
+          "p95Ms": 52,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp13",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 53,
+          "p95Ms": 53,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp14",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 54,
+          "p95Ms": 54,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp15",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 55,
+          "p95Ms": 55,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp16",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 56,
+          "p95Ms": 56,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp17",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 57,
+          "p95Ms": 57,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp18",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 58,
+          "p95Ms": 58,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp19",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 59,
+          "p95Ms": 59,
+          "message": "attributeerror: object has no attribute ?"
+        }
+      ],
+      "commits": [],
+      "parseErrors": 0,
+      "sourceFiles": [
+        "<dir>/treated/agent.jsonl"
+      ]
+    },
+    {
+      "schema": 1,
+      "day": "2026-08-02",
+      "sealedAt": "2026-08-21T00:00:00.000Z",
+      "turns": 500,
+      "fingerprints": [
+        {
+          "fingerprint": "span:bd1876553060fd33",
+          "name": "agent.turn",
+          "status": "ok",
+          "failure": false,
+          "count": 500,
+          "p50Ms": 974.125,
+          "p95Ms": 1174.5,
+          "message": ""
+        },
+        {
+          "fingerprint": "fp00",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 40,
+          "p95Ms": 40,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp01",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 41,
+          "p95Ms": 41,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp02",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 42,
+          "p95Ms": 42,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp03",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 43,
+          "p95Ms": 43,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp04",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 44,
+          "p95Ms": 44,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp05",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 45,
+          "p95Ms": 45,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp06",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 46,
+          "p95Ms": 46,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp07",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 47,
+          "p95Ms": 47,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp08",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 48,
+          "p95Ms": 48,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp09",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 49,
+          "p95Ms": 49,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp10",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 50,
+          "p95Ms": 50,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp11",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 51,
+          "p95Ms": 51,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp12",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 52,
+          "p95Ms": 52,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp13",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 53,
+          "p95Ms": 53,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp14",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 54,
+          "p95Ms": 54,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp15",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 55,
+          "p95Ms": 55,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp16",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 56,
+          "p95Ms": 56,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp17",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 57,
+          "p95Ms": 57,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp18",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 58,
+          "p95Ms": 58,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp19",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 59,
+          "p95Ms": 59,
+          "message": "attributeerror: object has no attribute ?"
+        }
+      ],
+      "commits": [],
+      "parseErrors": 0,
+      "sourceFiles": [
+        "<dir>/treated/agent.jsonl"
+      ]
+    },
+    {
+      "schema": 1,
+      "day": "2026-08-03",
+      "sealedAt": "2026-08-21T00:00:00.000Z",
+      "turns": 500,
+      "fingerprints": [
+        {
+          "fingerprint": "span:bd1876553060fd33",
+          "name": "agent.turn",
+          "status": "ok",
+          "failure": false,
+          "count": 500,
+          "p50Ms": 1024.375,
+          "p95Ms": 1174.625,
+          "message": ""
+        },
+        {
+          "fingerprint": "fp00",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 40,
+          "p95Ms": 40,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp01",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 41,
+          "p95Ms": 41,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp02",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 42,
+          "p95Ms": 42,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp03",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 43,
+          "p95Ms": 43,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp04",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 44,
+          "p95Ms": 44,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp05",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 45,
+          "p95Ms": 45,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp06",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 46,
+          "p95Ms": 46,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp07",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 47,
+          "p95Ms": 47,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp08",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 48,
+          "p95Ms": 48,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp09",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 49,
+          "p95Ms": 49,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp10",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 50,
+          "p95Ms": 50,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp11",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 51,
+          "p95Ms": 51,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp12",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 52,
+          "p95Ms": 52,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp13",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 53,
+          "p95Ms": 53,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp14",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 54,
+          "p95Ms": 54,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp15",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 55,
+          "p95Ms": 55,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp16",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 56,
+          "p95Ms": 56,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp17",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 57,
+          "p95Ms": 57,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp18",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 58,
+          "p95Ms": 58,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp19",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 59,
+          "p95Ms": 59,
+          "message": "attributeerror: object has no attribute ?"
+        }
+      ],
+      "commits": [],
+      "parseErrors": 0,
+      "sourceFiles": [
+        "<dir>/treated/agent.jsonl"
+      ]
+    },
+    {
+      "schema": 1,
+      "day": "2026-08-04",
+      "sealedAt": "2026-08-21T00:00:00.000Z",
+      "turns": 500,
+      "fingerprints": [
+        {
+          "fingerprint": "span:bd1876553060fd33",
+          "name": "agent.turn",
+          "status": "ok",
+          "failure": false,
+          "count": 500,
+          "p50Ms": 1049.125,
+          "p95Ms": 1187.625,
+          "message": ""
+        },
+        {
+          "fingerprint": "fp00",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 40,
+          "p95Ms": 40,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp01",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 41,
+          "p95Ms": 41,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp02",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 42,
+          "p95Ms": 42,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp03",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 43,
+          "p95Ms": 43,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp04",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 44,
+          "p95Ms": 44,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp05",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 45,
+          "p95Ms": 45,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp06",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 46,
+          "p95Ms": 46,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp07",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 47,
+          "p95Ms": 47,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp08",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 48,
+          "p95Ms": 48,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp09",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 49,
+          "p95Ms": 49,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp10",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 50,
+          "p95Ms": 50,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp11",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 51,
+          "p95Ms": 51,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp12",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 52,
+          "p95Ms": 52,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp13",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 53,
+          "p95Ms": 53,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp14",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 54,
+          "p95Ms": 54,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp15",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 55,
+          "p95Ms": 55,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp16",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 56,
+          "p95Ms": 56,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp17",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 57,
+          "p95Ms": 57,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp18",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 58,
+          "p95Ms": 58,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp19",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 59,
+          "p95Ms": 59,
+          "message": "attributeerror: object has no attribute ?"
+        }
+      ],
+      "commits": [],
+      "parseErrors": 0,
+      "sourceFiles": [
+        "<dir>/treated/agent.jsonl"
+      ]
+    },
+    {
+      "schema": 1,
+      "day": "2026-08-05",
+      "sealedAt": "2026-08-21T00:00:00.000Z",
+      "turns": 500,
+      "fingerprints": [
+        {
+          "fingerprint": "span:bd1876553060fd33",
+          "name": "agent.turn",
+          "status": "ok",
+          "failure": false,
+          "count": 500,
+          "p50Ms": 949,
+          "p95Ms": 1174.125,
+          "message": ""
+        },
+        {
+          "fingerprint": "fp00",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 40,
+          "p95Ms": 40,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp01",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 41,
+          "p95Ms": 41,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp02",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 42,
+          "p95Ms": 42,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp03",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 43,
+          "p95Ms": 43,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp04",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 44,
+          "p95Ms": 44,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp05",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 45,
+          "p95Ms": 45,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp06",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 46,
+          "p95Ms": 46,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp07",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 47,
+          "p95Ms": 47,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp08",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 48,
+          "p95Ms": 48,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp09",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 49,
+          "p95Ms": 49,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp10",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 50,
+          "p95Ms": 50,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp11",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 51,
+          "p95Ms": 51,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp12",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 52,
+          "p95Ms": 52,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp13",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 53,
+          "p95Ms": 53,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp14",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 54,
+          "p95Ms": 54,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp15",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 55,
+          "p95Ms": 55,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp16",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 56,
+          "p95Ms": 56,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp17",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 57,
+          "p95Ms": 57,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp18",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 58,
+          "p95Ms": 58,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp19",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 59,
+          "p95Ms": 59,
+          "message": "attributeerror: object has no attribute ?"
+        }
+      ],
+      "commits": [],
+      "parseErrors": 0,
+      "sourceFiles": [
+        "<dir>/treated/agent.jsonl"
+      ]
+    },
+    {
+      "schema": 1,
+      "day": "2026-08-06",
+      "sealedAt": "2026-08-21T00:00:00.000Z",
+      "turns": 500,
+      "fingerprints": [
+        {
+          "fingerprint": "span:bd1876553060fd33",
+          "name": "agent.turn",
+          "status": "ok",
+          "failure": false,
+          "count": 500,
+          "p50Ms": 974.75,
+          "p95Ms": 1174.25,
+          "message": ""
+        },
+        {
+          "fingerprint": "fp00",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 40,
+          "p95Ms": 40,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp01",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 41,
+          "p95Ms": 41,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp02",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 42,
+          "p95Ms": 42,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp03",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 43,
+          "p95Ms": 43,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp04",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 44,
+          "p95Ms": 44,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp05",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 45,
+          "p95Ms": 45,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp06",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 46,
+          "p95Ms": 46,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp07",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 47,
+          "p95Ms": 47,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp08",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 48,
+          "p95Ms": 48,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp09",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 49,
+          "p95Ms": 49,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp10",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 50,
+          "p95Ms": 50,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp11",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 51,
+          "p95Ms": 51,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp12",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 52,
+          "p95Ms": 52,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp13",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 53,
+          "p95Ms": 53,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp14",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 54,
+          "p95Ms": 54,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp15",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 55,
+          "p95Ms": 55,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp16",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 56,
+          "p95Ms": 56,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp17",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 57,
+          "p95Ms": 57,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp18",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 58,
+          "p95Ms": 58,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp19",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 59,
+          "p95Ms": 59,
+          "message": "attributeerror: object has no attribute ?"
+        }
+      ],
+      "commits": [],
+      "parseErrors": 0,
+      "sourceFiles": [
+        "<dir>/treated/agent.jsonl"
+      ]
+    },
+    {
+      "schema": 1,
+      "day": "2026-08-07",
+      "sealedAt": "2026-08-21T00:00:00.000Z",
+      "turns": 500,
+      "fingerprints": [
+        {
+          "fingerprint": "span:bd1876553060fd33",
+          "name": "agent.turn",
+          "status": "ok",
+          "failure": false,
+          "count": 500,
+          "p50Ms": 1024.125,
+          "p95Ms": 1174.375,
+          "message": ""
+        },
+        {
+          "fingerprint": "fp00",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 40,
+          "p95Ms": 40,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp01",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 41,
+          "p95Ms": 41,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp02",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 42,
+          "p95Ms": 42,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp03",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 43,
+          "p95Ms": 43,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp04",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 44,
+          "p95Ms": 44,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp05",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 45,
+          "p95Ms": 45,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp06",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 46,
+          "p95Ms": 46,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp07",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 47,
+          "p95Ms": 47,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp08",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 48,
+          "p95Ms": 48,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp09",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 49,
+          "p95Ms": 49,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp10",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 50,
+          "p95Ms": 50,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp11",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 51,
+          "p95Ms": 51,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp12",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 52,
+          "p95Ms": 52,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp13",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 53,
+          "p95Ms": 53,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp14",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 54,
+          "p95Ms": 54,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp15",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 55,
+          "p95Ms": 55,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp16",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 56,
+          "p95Ms": 56,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp17",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 57,
+          "p95Ms": 57,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp18",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 58,
+          "p95Ms": 58,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp19",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 59,
+          "p95Ms": 59,
+          "message": "attributeerror: object has no attribute ?"
+        }
+      ],
+      "commits": [],
+      "parseErrors": 0,
+      "sourceFiles": [
+        "<dir>/treated/agent.jsonl"
+      ]
+    },
+    {
+      "schema": 1,
+      "day": "2026-08-08",
+      "sealedAt": "2026-08-21T00:00:00.000Z",
+      "turns": 500,
+      "fingerprints": [
+        {
+          "fingerprint": "span:bd1876553060fd33",
+          "name": "agent.turn",
+          "status": "ok",
+          "failure": false,
+          "count": 500,
+          "p50Ms": 1049.75,
+          "p95Ms": 1187.375,
+          "message": ""
+        },
+        {
+          "fingerprint": "fp00",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 40,
+          "p95Ms": 40,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp01",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 41,
+          "p95Ms": 41,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp02",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 42,
+          "p95Ms": 42,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp03",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 43,
+          "p95Ms": 43,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp04",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 44,
+          "p95Ms": 44,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp05",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 45,
+          "p95Ms": 45,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp06",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 46,
+          "p95Ms": 46,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp07",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 47,
+          "p95Ms": 47,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp08",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 48,
+          "p95Ms": 48,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp09",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 49,
+          "p95Ms": 49,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp10",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 50,
+          "p95Ms": 50,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp11",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 51,
+          "p95Ms": 51,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp12",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 52,
+          "p95Ms": 52,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp13",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 53,
+          "p95Ms": 53,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp14",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 54,
+          "p95Ms": 54,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp15",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 55,
+          "p95Ms": 55,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp16",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 56,
+          "p95Ms": 56,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp17",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 57,
+          "p95Ms": 57,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp18",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 58,
+          "p95Ms": 58,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp19",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 59,
+          "p95Ms": 59,
+          "message": "attributeerror: object has no attribute ?"
+        }
+      ],
+      "commits": [],
+      "parseErrors": 0,
+      "sourceFiles": [
+        "<dir>/treated/agent.jsonl"
+      ]
+    },
+    {
+      "schema": 1,
+      "day": "2026-08-09",
+      "sealedAt": "2026-08-21T00:00:00.000Z",
+      "turns": 500,
+      "fingerprints": [
+        {
+          "fingerprint": "span:bd1876553060fd33",
+          "name": "agent.turn",
+          "status": "ok",
+          "failure": false,
+          "count": 500,
+          "p50Ms": 949.625,
+          "p95Ms": 1174.75,
+          "message": ""
+        },
+        {
+          "fingerprint": "fp10",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 50,
+          "p95Ms": 50,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp11",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 51,
+          "p95Ms": 51,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp12",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 52,
+          "p95Ms": 52,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp13",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 53,
+          "p95Ms": 53,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp14",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 54,
+          "p95Ms": 54,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp15",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 55,
+          "p95Ms": 55,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp16",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 56,
+          "p95Ms": 56,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp17",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 57,
+          "p95Ms": 57,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp18",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 58,
+          "p95Ms": 58,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp19",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 59,
+          "p95Ms": 59,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp00",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 40,
+          "p95Ms": 40,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp01",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 41,
+          "p95Ms": 41,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp02",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 42,
+          "p95Ms": 42,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp03",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 43,
+          "p95Ms": 43,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp04",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 44,
+          "p95Ms": 44,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp05",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 45,
+          "p95Ms": 45,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp06",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 46,
+          "p95Ms": 46,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp07",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 47,
+          "p95Ms": 47,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp08",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 48,
+          "p95Ms": 48,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp09",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 49,
+          "p95Ms": 49,
+          "message": "attributeerror: object has no attribute ?"
+        }
+      ],
+      "commits": [
+        {
+          "at": "2026-08-09T00:00:00.000Z",
+          "proposalId": "champion-1",
+          "addressed": [
+            "fp00",
+            "fp01",
+            "fp02",
+            "fp03",
+            "fp04",
+            "fp05",
+            "fp06",
+            "fp07",
+            "fp08",
+            "fp09"
+          ]
+        }
+      ],
+      "parseErrors": 0,
+      "sourceFiles": [
+        "<dir>/treated/agent.jsonl"
+      ]
+    },
+    {
+      "schema": 1,
+      "day": "2026-08-10",
+      "sealedAt": "2026-08-21T00:00:00.000Z",
+      "turns": 500,
+      "fingerprints": [
+        {
+          "fingerprint": "span:bd1876553060fd33",
+          "name": "agent.turn",
+          "status": "ok",
+          "failure": false,
+          "count": 500,
+          "p50Ms": 974.5,
+          "p95Ms": 1174,
+          "message": ""
+        },
+        {
+          "fingerprint": "fp10",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 50,
+          "p95Ms": 50,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp11",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 51,
+          "p95Ms": 51,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp12",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 52,
+          "p95Ms": 52,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp13",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 53,
+          "p95Ms": 53,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp14",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 54,
+          "p95Ms": 54,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp15",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 55,
+          "p95Ms": 55,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp16",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 56,
+          "p95Ms": 56,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp17",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 57,
+          "p95Ms": 57,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp18",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 58,
+          "p95Ms": 58,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp19",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 59,
+          "p95Ms": 59,
+          "message": "attributeerror: object has no attribute ?"
+        }
+      ],
+      "commits": [],
+      "parseErrors": 0,
+      "sourceFiles": [
+        "<dir>/treated/agent.jsonl"
+      ]
+    },
+    {
+      "schema": 1,
+      "day": "2026-08-11",
+      "sealedAt": "2026-08-21T00:00:00.000Z",
+      "turns": 500,
+      "fingerprints": [
+        {
+          "fingerprint": "span:bd1876553060fd33",
+          "name": "agent.turn",
+          "status": "ok",
+          "failure": false,
+          "count": 500,
+          "p50Ms": 1024.75,
+          "p95Ms": 1174.125,
+          "message": ""
+        },
+        {
+          "fingerprint": "fp10",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 50,
+          "p95Ms": 50,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp11",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 51,
+          "p95Ms": 51,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp12",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 52,
+          "p95Ms": 52,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp13",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 53,
+          "p95Ms": 53,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp14",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 54,
+          "p95Ms": 54,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp15",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 55,
+          "p95Ms": 55,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp16",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 56,
+          "p95Ms": 56,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp17",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 57,
+          "p95Ms": 57,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp18",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 58,
+          "p95Ms": 58,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp19",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 59,
+          "p95Ms": 59,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp00",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 40,
+          "p95Ms": 40,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp01",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 41,
+          "p95Ms": 41,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp02",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 42,
+          "p95Ms": 42,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp03",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 43,
+          "p95Ms": 43,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp04",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 44,
+          "p95Ms": 44,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp05",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 45,
+          "p95Ms": 45,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp06",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 46,
+          "p95Ms": 46,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp07",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 47,
+          "p95Ms": 47,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp08",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 48,
+          "p95Ms": 48,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp09",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 49,
+          "p95Ms": 49,
+          "message": "attributeerror: object has no attribute ?"
+        }
+      ],
+      "commits": [],
+      "parseErrors": 0,
+      "sourceFiles": [
+        "<dir>/treated/agent.jsonl"
+      ]
+    },
+    {
+      "schema": 1,
+      "day": "2026-08-12",
+      "sealedAt": "2026-08-21T00:00:00.000Z",
+      "turns": 500,
+      "fingerprints": [
+        {
+          "fingerprint": "span:bd1876553060fd33",
+          "name": "agent.turn",
+          "status": "ok",
+          "failure": false,
+          "count": 500,
+          "p50Ms": 1049.5,
+          "p95Ms": 1187.125,
+          "message": ""
+        },
+        {
+          "fingerprint": "fp10",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 50,
+          "p95Ms": 50,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp11",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 51,
+          "p95Ms": 51,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp12",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 52,
+          "p95Ms": 52,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp13",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 53,
+          "p95Ms": 53,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp14",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 54,
+          "p95Ms": 54,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp15",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 55,
+          "p95Ms": 55,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp16",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 56,
+          "p95Ms": 56,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp17",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 57,
+          "p95Ms": 57,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp18",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 58,
+          "p95Ms": 58,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp19",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 59,
+          "p95Ms": 59,
+          "message": "attributeerror: object has no attribute ?"
+        }
+      ],
+      "commits": [],
+      "parseErrors": 0,
+      "sourceFiles": [
+        "<dir>/treated/agent.jsonl"
+      ]
+    },
+    {
+      "schema": 1,
+      "day": "2026-08-13",
+      "sealedAt": "2026-08-21T00:00:00.000Z",
+      "turns": 500,
+      "fingerprints": [
+        {
+          "fingerprint": "span:bd1876553060fd33",
+          "name": "agent.turn",
+          "status": "ok",
+          "failure": false,
+          "count": 500,
+          "p50Ms": 949.375,
+          "p95Ms": 1174.5,
+          "message": ""
+        },
+        {
+          "fingerprint": "fp10",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 50,
+          "p95Ms": 50,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp11",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 51,
+          "p95Ms": 51,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp12",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 52,
+          "p95Ms": 52,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp13",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 53,
+          "p95Ms": 53,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp14",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 54,
+          "p95Ms": 54,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp15",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 55,
+          "p95Ms": 55,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp16",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 56,
+          "p95Ms": 56,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp17",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 57,
+          "p95Ms": 57,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp18",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 58,
+          "p95Ms": 58,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp19",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 59,
+          "p95Ms": 59,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp00",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 40,
+          "p95Ms": 40,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp01",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 41,
+          "p95Ms": 41,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp02",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 42,
+          "p95Ms": 42,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp03",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 43,
+          "p95Ms": 43,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp04",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 44,
+          "p95Ms": 44,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp05",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 45,
+          "p95Ms": 45,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp06",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 46,
+          "p95Ms": 46,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp07",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 47,
+          "p95Ms": 47,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp08",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 48,
+          "p95Ms": 48,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp09",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 49,
+          "p95Ms": 49,
+          "message": "attributeerror: object has no attribute ?"
+        }
+      ],
+      "commits": [],
+      "parseErrors": 0,
+      "sourceFiles": [
+        "<dir>/treated/agent.jsonl"
+      ]
+    },
+    {
+      "schema": 1,
+      "day": "2026-08-14",
+      "sealedAt": "2026-08-21T00:00:00.000Z",
+      "turns": 500,
+      "fingerprints": [
+        {
+          "fingerprint": "span:bd1876553060fd33",
+          "name": "agent.turn",
+          "status": "ok",
+          "failure": false,
+          "count": 500,
+          "p50Ms": 974.25,
+          "p95Ms": 1174.625,
+          "message": ""
+        },
+        {
+          "fingerprint": "fp10",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 50,
+          "p95Ms": 50,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp11",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 51,
+          "p95Ms": 51,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp12",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 52,
+          "p95Ms": 52,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp13",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 53,
+          "p95Ms": 53,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp14",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 54,
+          "p95Ms": 54,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp15",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 55,
+          "p95Ms": 55,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp16",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 56,
+          "p95Ms": 56,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp17",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 57,
+          "p95Ms": 57,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp18",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 58,
+          "p95Ms": 58,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp19",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 59,
+          "p95Ms": 59,
+          "message": "attributeerror: object has no attribute ?"
+        }
+      ],
+      "commits": [],
+      "parseErrors": 0,
+      "sourceFiles": [
+        "<dir>/treated/agent.jsonl"
+      ]
+    },
+    {
+      "schema": 1,
+      "day": "2026-08-15",
+      "sealedAt": "2026-08-21T00:00:00.000Z",
+      "turns": 500,
+      "fingerprints": [
+        {
+          "fingerprint": "span:bd1876553060fd33",
+          "name": "agent.turn",
+          "status": "ok",
+          "failure": false,
+          "count": 500,
+          "p50Ms": 1024.5,
+          "p95Ms": 1174.75,
+          "message": ""
+        },
+        {
+          "fingerprint": "fp10",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 50,
+          "p95Ms": 50,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp11",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 51,
+          "p95Ms": 51,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp12",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 52,
+          "p95Ms": 52,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp13",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 53,
+          "p95Ms": 53,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp14",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 54,
+          "p95Ms": 54,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp15",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 55,
+          "p95Ms": 55,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp16",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 56,
+          "p95Ms": 56,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp17",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 57,
+          "p95Ms": 57,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp18",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 58,
+          "p95Ms": 58,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp19",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 59,
+          "p95Ms": 59,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp00",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 40,
+          "p95Ms": 40,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp01",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 41,
+          "p95Ms": 41,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp02",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 42,
+          "p95Ms": 42,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp03",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 43,
+          "p95Ms": 43,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp04",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 44,
+          "p95Ms": 44,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp05",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 45,
+          "p95Ms": 45,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp06",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 46,
+          "p95Ms": 46,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp07",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 47,
+          "p95Ms": 47,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp08",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 48,
+          "p95Ms": 48,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp09",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 49,
+          "p95Ms": 49,
+          "message": "attributeerror: object has no attribute ?"
+        }
+      ],
+      "commits": [],
+      "parseErrors": 0,
+      "sourceFiles": [
+        "<dir>/treated/agent.jsonl"
+      ]
+    },
+    {
+      "schema": 1,
+      "day": "2026-08-16",
+      "sealedAt": "2026-08-21T00:00:00.000Z",
+      "turns": 500,
+      "fingerprints": [
+        {
+          "fingerprint": "span:bd1876553060fd33",
+          "name": "agent.turn",
+          "status": "ok",
+          "failure": false,
+          "count": 500,
+          "p50Ms": 1049.25,
+          "p95Ms": 1187,
+          "message": ""
+        },
+        {
+          "fingerprint": "fp10",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 50,
+          "p95Ms": 50,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp11",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 51,
+          "p95Ms": 51,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp12",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 52,
+          "p95Ms": 52,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp13",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 53,
+          "p95Ms": 53,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp14",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 54,
+          "p95Ms": 54,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp15",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 55,
+          "p95Ms": 55,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp16",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 56,
+          "p95Ms": 56,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp17",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 57,
+          "p95Ms": 57,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp18",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 58,
+          "p95Ms": 58,
+          "message": "attributeerror: object has no attribute ?"
+        },
+        {
+          "fingerprint": "fp19",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 4,
+          "p50Ms": 59,
+          "p95Ms": 59,
+          "message": "attributeerror: object has no attribute ?"
+        }
+      ],
+      "commits": [],
+      "parseErrors": 0,
+      "sourceFiles": [
+        "<dir>/treated/agent.jsonl"
+      ]
+    }
+  ],
+  "parseErrors": 0,
+  "reports": {
+    "treated": {
+      "schema": 1,
+      "generatedAt": "2026-08-21T00:00:00.000Z",
+      "days": [
+        "2026-08-01",
+        "2026-08-02",
+        "2026-08-03",
+        "2026-08-04",
+        "2026-08-05",
+        "2026-08-06",
+        "2026-08-07",
+        "2026-08-08",
+        "2026-08-09",
+        "2026-08-10",
+        "2026-08-11",
+        "2026-08-12",
+        "2026-08-13",
+        "2026-08-14",
+        "2026-08-15",
+        "2026-08-16"
+      ],
+      "pivotAt": "2026-08-09T00:00:00.000Z",
+      "pivotDay": "2026-08-09",
+      "commits": 1,
+      "turns": {
+        "before": 4000,
+        "after": 3500
+      },
+      "fingerprints": [
+        {
+          "fingerprint": "fp00",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp01",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp02",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp03",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp04",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp05",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp06",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp07",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp08",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp09",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp10",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp11",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp12",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp13",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp14",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp15",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp16",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp17",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp18",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp19",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        }
+      ],
+      "unobservedTreated": [],
+      "cohorts": {
+        "treated": {
+          "ids": [
+            "fp00",
+            "fp01",
+            "fp02",
+            "fp03",
+            "fp04",
+            "fp05",
+            "fp06",
+            "fp07",
+            "fp08",
+            "fp09"
+          ],
+          "n": 10,
+          "medianDelta": -7.142857142857143,
+          "meanDelta": -7.142857142857143,
+          "deltas": [
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143
+          ]
+        },
+        "untreated": {
+          "ids": [
+            "fp10",
+            "fp11",
+            "fp12",
+            "fp13",
+            "fp14",
+            "fp15",
+            "fp16",
+            "fp17",
+            "fp18",
+            "fp19"
+          ],
+          "n": 10,
+          "medianDelta": 0,
+          "meanDelta": 0,
+          "deltas": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "series": [
+        {
+          "day": "2026-08-01",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-02",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-03",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-04",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-05",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-06",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-07",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-08",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-09",
+          "turns": 500,
+          "window": "pivot",
+          "treatedRate": 2,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-10",
+          "turns": 500,
+          "window": "after",
+          "treatedRate": 0,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-11",
+          "turns": 500,
+          "window": "after",
+          "treatedRate": 2,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-12",
+          "turns": 500,
+          "window": "after",
+          "treatedRate": 0,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-13",
+          "turns": 500,
+          "window": "after",
+          "treatedRate": 2,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-14",
+          "turns": 500,
+          "window": "after",
+          "treatedRate": 0,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-15",
+          "turns": 500,
+          "window": "after",
+          "treatedRate": 2,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-16",
+          "turns": 500,
+          "window": "after",
+          "treatedRate": 0,
+          "untreatedRate": 8
+        }
+      ],
+      "u": 0,
+      "pValue": 0.000007974779091146633,
+      "minCohortN": 5,
+      "rateDenominator": 1000
+    },
+    "swapped": {
+      "schema": 1,
+      "generatedAt": "2026-08-21T00:00:00.000Z",
+      "days": [
+        "2026-08-01",
+        "2026-08-02",
+        "2026-08-03",
+        "2026-08-04",
+        "2026-08-05",
+        "2026-08-06",
+        "2026-08-07",
+        "2026-08-08",
+        "2026-08-09",
+        "2026-08-10",
+        "2026-08-11",
+        "2026-08-12",
+        "2026-08-13",
+        "2026-08-14",
+        "2026-08-15",
+        "2026-08-16"
+      ],
+      "pivotAt": "2026-08-09T00:00:00.000Z",
+      "pivotDay": "2026-08-09",
+      "commits": 1,
+      "turns": {
+        "before": 4000,
+        "after": 3500
+      },
+      "fingerprints": [
+        {
+          "fingerprint": "fp00",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp01",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp02",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp03",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp04",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp05",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp06",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp07",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp08",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp09",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp10",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp11",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp12",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp13",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp14",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp15",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp16",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp17",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp18",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp19",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        }
+      ],
+      "unobservedTreated": [],
+      "cohorts": {
+        "treated": {
+          "ids": [
+            "fp10",
+            "fp11",
+            "fp12",
+            "fp13",
+            "fp14",
+            "fp15",
+            "fp16",
+            "fp17",
+            "fp18",
+            "fp19"
+          ],
+          "n": 10,
+          "medianDelta": 0,
+          "meanDelta": 0,
+          "deltas": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "untreated": {
+          "ids": [
+            "fp00",
+            "fp01",
+            "fp02",
+            "fp03",
+            "fp04",
+            "fp05",
+            "fp06",
+            "fp07",
+            "fp08",
+            "fp09"
+          ],
+          "n": 10,
+          "medianDelta": -7.142857142857143,
+          "meanDelta": -7.142857142857143,
+          "deltas": [
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143
+          ]
+        }
+      },
+      "series": [
+        {
+          "day": "2026-08-01",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-02",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-03",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-04",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-05",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-06",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-07",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-08",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-09",
+          "turns": 500,
+          "window": "pivot",
+          "treatedRate": 8,
+          "untreatedRate": 2
+        },
+        {
+          "day": "2026-08-10",
+          "turns": 500,
+          "window": "after",
+          "treatedRate": 8,
+          "untreatedRate": 0
+        },
+        {
+          "day": "2026-08-11",
+          "turns": 500,
+          "window": "after",
+          "treatedRate": 8,
+          "untreatedRate": 2
+        },
+        {
+          "day": "2026-08-12",
+          "turns": 500,
+          "window": "after",
+          "treatedRate": 8,
+          "untreatedRate": 0
+        },
+        {
+          "day": "2026-08-13",
+          "turns": 500,
+          "window": "after",
+          "treatedRate": 8,
+          "untreatedRate": 2
+        },
+        {
+          "day": "2026-08-14",
+          "turns": 500,
+          "window": "after",
+          "treatedRate": 8,
+          "untreatedRate": 0
+        },
+        {
+          "day": "2026-08-15",
+          "turns": 500,
+          "window": "after",
+          "treatedRate": 8,
+          "untreatedRate": 2
+        },
+        {
+          "day": "2026-08-16",
+          "turns": 500,
+          "window": "after",
+          "treatedRate": 8,
+          "untreatedRate": 0
+        }
+      ],
+      "u": 100,
+      "pValue": 0.9999946448000263,
+      "minCohortN": 5,
+      "rateDenominator": 1000
+    },
+    "strict": {
+      "schema": 1,
+      "generatedAt": "2026-08-21T00:00:00.000Z",
+      "days": [
+        "2026-08-01",
+        "2026-08-02",
+        "2026-08-03",
+        "2026-08-04",
+        "2026-08-05",
+        "2026-08-06",
+        "2026-08-07",
+        "2026-08-08",
+        "2026-08-09",
+        "2026-08-10",
+        "2026-08-11",
+        "2026-08-12",
+        "2026-08-13",
+        "2026-08-14",
+        "2026-08-15",
+        "2026-08-16"
+      ],
+      "pivotAt": "2026-08-09T00:00:00.000Z",
+      "pivotDay": "2026-08-09",
+      "commits": 1,
+      "turns": {
+        "before": 4000,
+        "after": 3500
+      },
+      "fingerprints": [
+        {
+          "fingerprint": "fp00",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp01",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp02",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp03",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp04",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp05",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp06",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp07",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp08",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp09",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": true,
+          "beforeCount": 32,
+          "afterCount": 3,
+          "beforeRate": 8,
+          "afterRate": 0.8571428571428571,
+          "delta": -7.142857142857143
+        },
+        {
+          "fingerprint": "fp10",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp11",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp12",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp13",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp14",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp15",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp16",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp17",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp18",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        },
+        {
+          "fingerprint": "fp19",
+          "name": "tool.execute",
+          "message": "attributeerror: object has no attribute ?",
+          "treated": false,
+          "beforeCount": 32,
+          "afterCount": 28,
+          "beforeRate": 8,
+          "afterRate": 8,
+          "delta": 0
+        }
+      ],
+      "unobservedTreated": [],
+      "cohorts": {
+        "treated": {
+          "ids": [
+            "fp00",
+            "fp01",
+            "fp02",
+            "fp03",
+            "fp04",
+            "fp05",
+            "fp06",
+            "fp07",
+            "fp08",
+            "fp09"
+          ],
+          "n": 10,
+          "medianDelta": -7.142857142857143,
+          "meanDelta": -7.142857142857143,
+          "deltas": [
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143,
+            -7.142857142857143
+          ]
+        },
+        "untreated": {
+          "ids": [
+            "fp10",
+            "fp11",
+            "fp12",
+            "fp13",
+            "fp14",
+            "fp15",
+            "fp16",
+            "fp17",
+            "fp18",
+            "fp19"
+          ],
+          "n": 10,
+          "medianDelta": 0,
+          "meanDelta": 0,
+          "deltas": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "series": [
+        {
+          "day": "2026-08-01",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-02",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-03",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-04",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-05",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-06",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-07",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-08",
+          "turns": 500,
+          "window": "before",
+          "treatedRate": 8,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-09",
+          "turns": 500,
+          "window": "pivot",
+          "treatedRate": 2,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-10",
+          "turns": 500,
+          "window": "after",
+          "treatedRate": 0,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-11",
+          "turns": 500,
+          "window": "after",
+          "treatedRate": 2,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-12",
+          "turns": 500,
+          "window": "after",
+          "treatedRate": 0,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-13",
+          "turns": 500,
+          "window": "after",
+          "treatedRate": 2,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-14",
+          "turns": 500,
+          "window": "after",
+          "treatedRate": 0,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-15",
+          "turns": 500,
+          "window": "after",
+          "treatedRate": 2,
+          "untreatedRate": 8
+        },
+        {
+          "day": "2026-08-16",
+          "turns": 500,
+          "window": "after",
+          "treatedRate": 0,
+          "untreatedRate": 8
+        }
+      ],
+      "insufficientEvidence": "cohorts are too small (treated 10, untreated 10, minimum 11 each)",
+      "minCohortN": 11,
+      "rateDenominator": 1000
+    },
+    "none": {
+      "schema": 1,
+      "generatedAt": "2026-08-21T00:00:00.000Z",
+      "days": [
+        "2026-08-01",
+        "2026-08-02",
+        "2026-08-03",
+        "2026-08-04",
+        "2026-08-05",
+        "2026-08-06",
+        "2026-08-07",
+        "2026-08-08",
+        "2026-08-09",
+        "2026-08-10",
+        "2026-08-11",
+        "2026-08-12",
+        "2026-08-13",
+        "2026-08-14",
+        "2026-08-15",
+        "2026-08-16"
+      ],
+      "commits": 0,
+      "turns": {
+        "before": 0,
+        "after": 0
+      },
+      "fingerprints": [],
+      "unobservedTreated": [],
+      "cohorts": {
+        "treated": {
+          "ids": [],
+          "n": 0,
+          "medianDelta": 0,
+          "meanDelta": 0,
+          "deltas": []
+        },
+        "untreated": {
+          "ids": [],
+          "n": 0,
+          "medianDelta": 0,
+          "meanDelta": 0,
+          "deltas": []
+        }
+      },
+      "series": [],
+      "insufficientEvidence": "no refinement.committed record in the index",
+      "minCohortN": 5,
+      "rateDenominator": 1000
+    }
+  },
+  "seal": {
+    "first": {
+      "written": [
+        "2026-08-01",
+        "2026-08-02",
+        "2026-08-03",
+        "2026-08-04",
+        "2026-08-05",
+        "2026-08-06",
+        "2026-08-07",
+        "2026-08-08",
+        "2026-08-09",
+        "2026-08-10",
+        "2026-08-11",
+        "2026-08-12",
+        "2026-08-13",
+        "2026-08-14",
+        "2026-08-15"
+      ],
+      "skipped": [],
+      "open": [
+        "2026-08-16"
+      ],
+      "parseErrors": 0
+    },
+    "second": {
+      "written": [
+        "2026-08-16"
+      ],
+      "skipped": [
+        "2026-08-01",
+        "2026-08-02",
+        "2026-08-03",
+        "2026-08-04",
+        "2026-08-05",
+        "2026-08-06",
+        "2026-08-07",
+        "2026-08-08",
+        "2026-08-09",
+        "2026-08-10",
+        "2026-08-11",
+        "2026-08-12",
+        "2026-08-13",
+        "2026-08-14",
+        "2026-08-15"
+      ],
+      "open": [],
+      "parseErrors": 0
+    },
+    "firstDayFile": "{\n  \"schema\": 1,\n  \"day\": \"2026-08-01\",\n  \"sealedAt\": \"2026-08-16T01:00:00.000Z\",\n  \"turns\": 500,\n  \"fingerprints\": [\n    {\n      \"fingerprint\": \"span:bd1876553060fd33\",\n      \"name\": \"agent.turn\",\n      \"status\": \"ok\",\n      \"failure\": false,\n      \"count\": 500,\n      \"p50Ms\": 949.25,\n      \"p95Ms\": 1174.375,\n      \"message\": \"\"\n    },\n    {\n      \"fingerprint\": \"fp00\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 40,\n      \"p95Ms\": 40,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp01\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 41,\n      \"p95Ms\": 41,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp02\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 42,\n      \"p95Ms\": 42,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp03\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 43,\n      \"p95Ms\": 43,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp04\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 44,\n      \"p95Ms\": 44,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp05\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 45,\n      \"p95Ms\": 45,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp06\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 46,\n      \"p95Ms\": 46,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp07\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 47,\n      \"p95Ms\": 47,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp08\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 48,\n      \"p95Ms\": 48,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp09\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 49,\n      \"p95Ms\": 49,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp10\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 50,\n      \"p95Ms\": 50,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp11\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 51,\n      \"p95Ms\": 51,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp12\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 52,\n      \"p95Ms\": 52,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp13\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 53,\n      \"p95Ms\": 53,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp14\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 54,\n      \"p95Ms\": 54,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp15\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 55,\n      \"p95Ms\": 55,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp16\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 56,\n      \"p95Ms\": 56,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp17\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 57,\n      \"p95Ms\": 57,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp18\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 58,\n      \"p95Ms\": 58,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp19\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 59,\n      \"p95Ms\": 59,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    }\n  ],\n  \"commits\": [],\n  \"parseErrors\": 0,\n  \"sourceFiles\": [\n    \"<dir>/treated/agent.jsonl\"\n  ]\n}\n",
+    "commitDayFile": "{\n  \"schema\": 1,\n  \"day\": \"2026-08-09\",\n  \"sealedAt\": \"2026-08-16T01:00:00.000Z\",\n  \"turns\": 500,\n  \"fingerprints\": [\n    {\n      \"fingerprint\": \"span:bd1876553060fd33\",\n      \"name\": \"agent.turn\",\n      \"status\": \"ok\",\n      \"failure\": false,\n      \"count\": 500,\n      \"p50Ms\": 949.625,\n      \"p95Ms\": 1174.75,\n      \"message\": \"\"\n    },\n    {\n      \"fingerprint\": \"fp10\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 50,\n      \"p95Ms\": 50,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp11\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 51,\n      \"p95Ms\": 51,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp12\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 52,\n      \"p95Ms\": 52,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp13\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 53,\n      \"p95Ms\": 53,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp14\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 54,\n      \"p95Ms\": 54,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp15\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 55,\n      \"p95Ms\": 55,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp16\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 56,\n      \"p95Ms\": 56,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp17\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 57,\n      \"p95Ms\": 57,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp18\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 58,\n      \"p95Ms\": 58,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp19\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 4,\n      \"p50Ms\": 59,\n      \"p95Ms\": 59,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp00\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 1,\n      \"p50Ms\": 40,\n      \"p95Ms\": 40,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp01\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 1,\n      \"p50Ms\": 41,\n      \"p95Ms\": 41,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp02\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 1,\n      \"p50Ms\": 42,\n      \"p95Ms\": 42,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp03\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 1,\n      \"p50Ms\": 43,\n      \"p95Ms\": 43,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp04\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 1,\n      \"p50Ms\": 44,\n      \"p95Ms\": 44,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp05\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 1,\n      \"p50Ms\": 45,\n      \"p95Ms\": 45,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp06\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 1,\n      \"p50Ms\": 46,\n      \"p95Ms\": 46,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp07\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 1,\n      \"p50Ms\": 47,\n      \"p95Ms\": 47,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp08\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 1,\n      \"p50Ms\": 48,\n      \"p95Ms\": 48,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    },\n    {\n      \"fingerprint\": \"fp09\",\n      \"name\": \"tool.execute\",\n      \"status\": \"error\",\n      \"failure\": true,\n      \"count\": 1,\n      \"p50Ms\": 49,\n      \"p95Ms\": 49,\n      \"message\": \"attributeerror: object has no attribute ?\"\n    }\n  ],\n  \"commits\": [\n    {\n      \"at\": \"2026-08-09T00:00:00.000Z\",\n      \"proposalId\": \"champion-1\",\n      \"addressed\": [\n        \"fp00\",\n        \"fp01\",\n        \"fp02\",\n        \"fp03\",\n        \"fp04\",\n        \"fp05\",\n        \"fp06\",\n        \"fp07\",\n        \"fp08\",\n        \"fp09\"\n      ]\n    }\n  ],\n  \"parseErrors\": 0,\n  \"sourceFiles\": [\n    \"<dir>/treated/agent.jsonl\"\n  ]\n}\n"
+  },
+  "commands": {
+    "text": {
+      "code": 0,
+      "stdout": [
+        "learning index  <dir>/cmd-text\n  16 sealed days (2026-08-01 .. 2026-08-16), 7500 turns in the compared windows, 1 refinement commit\n  sealed 16 new days, kept 0, left 0 open\n  pivot 2026-08-09T00:00:00.000Z (day 2026-08-09 excluded from both windows), before 4000 turns / after 3500 turns\n\n  fingerprint  span          cohort   before/1k   after/1k      delta\n  -------------------------------------------------------------------\n  fp00         tool.execute  treated       8.00       0.86      -7.14\n  fp01         tool.execute  treated       8.00       0.86      -7.14\n  fp02         tool.execute  treated       8.00       0.86      -7.14\n  fp03         tool.execute  treated       8.00       0.86      -7.14\n  fp04         tool.execute  treated       8.00       0.86      -7.14\n  fp05         tool.execute  treated       8.00       0.86      -7.14\n  fp06         tool.execute  treated       8.00       0.86      -7.14\n  fp07         tool.execute  treated       8.00       0.86      -7.14\n  fp08         tool.execute  treated       8.00       0.86      -7.14\n  fp09         tool.execute  treated       8.00       0.86      -7.14\n  fp10         tool.execute  control       8.00       8.00       0.00\n  fp11         tool.execute  control       8.00       8.00       0.00\n  fp12         tool.execute  control       8.00       8.00       0.00\n  fp13         tool.execute  control       8.00       8.00       0.00\n  fp14         tool.execute  control       8.00       8.00       0.00\n  fp15         tool.execute  control       8.00       8.00       0.00\n  fp16         tool.execute  control       8.00       8.00       0.00\n  fp17         tool.execute  control       8.00       8.00       0.00\n  fp18         tool.execute  control       8.00       8.00       0.00\n  fp19         tool.execute  control       8.00       8.00       0.00\n\n  cohort       n   median delta   mean delta\n  treated     10          -7.14        -7.14\n  control     10           0.00         0.00\n\n  Mann-Whitney U (one-sided, treated < untreated): U = 0.0, p = 7.97e-6",
+        "",
+        "       mean failures per 1000 turns, per fingerprint",
+        " 8.00 |********uuuuuuuu",
+        "      |",
+        "      |",
+        "      |",
+        "      |",
+        "      |",
+        "      |        T T T T",
+        "      |",
+        " 0.00 |         T T T T",
+        "      +----------------",
+        "               ^",
+        "       2026-08-01 2026-08-16",
+        "       T treated   u control   * both"
+      ],
+      "stderr": []
+    },
+    "json": {
+      "code": 0,
+      "stdout": [
+        "{\n  \"schema\": 1,\n  \"generatedAt\": \"2026-08-21T00:00:00.000Z\",\n  \"days\": [\n    \"2026-08-01\",\n    \"2026-08-02\",\n    \"2026-08-03\",\n    \"2026-08-04\",\n    \"2026-08-05\",\n    \"2026-08-06\",\n    \"2026-08-07\",\n    \"2026-08-08\",\n    \"2026-08-09\",\n    \"2026-08-10\",\n    \"2026-08-11\",\n    \"2026-08-12\",\n    \"2026-08-13\",\n    \"2026-08-14\",\n    \"2026-08-15\",\n    \"2026-08-16\"\n  ],\n  \"pivotAt\": \"2026-08-09T00:00:00.000Z\",\n  \"pivotDay\": \"2026-08-09\",\n  \"commits\": 1,\n  \"turns\": {\n    \"before\": 4000,\n    \"after\": 3500\n  },\n  \"fingerprints\": [\n    {\n      \"fingerprint\": \"fp00\",\n      \"name\": \"tool.execute\",\n      \"message\": \"attributeerror: object has no attribute ?\",\n      \"treated\": true,\n      \"beforeCount\": 32,\n      \"afterCount\": 3,\n      \"beforeRate\": 8,\n      \"afterRate\": 0.8571428571428571,\n      \"delta\": -7.142857142857143\n    },\n    {\n      \"fingerprint\": \"fp01\",\n      \"name\": \"tool.execute\",\n      \"message\": \"attributeerror: object has no attribute ?\",\n      \"treated\": true,\n      \"beforeCount\": 32,\n      \"afterCount\": 3,\n      \"beforeRate\": 8,\n      \"afterRate\": 0.8571428571428571,\n      \"delta\": -7.142857142857143\n    },\n    {\n      \"fingerprint\": \"fp02\",\n      \"name\": \"tool.execute\",\n      \"message\": \"attributeerror: object has no attribute ?\",\n      \"treated\": true,\n      \"beforeCount\": 32,\n      \"afterCount\": 3,\n      \"beforeRate\": 8,\n      \"afterRate\": 0.8571428571428571,\n      \"delta\": -7.142857142857143\n    },\n    {\n      \"fingerprint\": \"fp03\",\n      \"name\": \"tool.execute\",\n      \"message\": \"attributeerror: object has no attribute ?\",\n      \"treated\": true,\n      \"beforeCount\": 32,\n      \"afterCount\": 3,\n      \"beforeRate\": 8,\n      \"afterRate\": 0.8571428571428571,\n      \"delta\": -7.142857142857143\n    },\n    {\n      \"fingerprint\": \"fp04\",\n      \"name\": \"tool.execute\",\n      \"message\": \"attributeerror: object has no attribute ?\",\n      \"treated\": true,\n      \"beforeCount\": 32,\n      \"afterCount\": 3,\n      \"beforeRate\": 8,\n      \"afterRate\": 0.8571428571428571,\n      \"delta\": -7.142857142857143\n    },\n    {\n      \"fingerprint\": \"fp05\",\n      \"name\": \"tool.execute\",\n      \"message\": \"attributeerror: object has no attribute ?\",\n      \"treated\": true,\n      \"beforeCount\": 32,\n      \"afterCount\": 3,\n      \"beforeRate\": 8,\n      \"afterRate\": 0.8571428571428571,\n      \"delta\": -7.142857142857143\n    },\n    {\n      \"fingerprint\": \"fp06\",\n      \"name\": \"tool.execute\",\n      \"message\": \"attributeerror: object has no attribute ?\",\n      \"treated\": true,\n      \"beforeCount\": 32,\n      \"afterCount\": 3,\n      \"beforeRate\": 8,\n      \"afterRate\": 0.8571428571428571,\n      \"delta\": -7.142857142857143\n    },\n    {\n      \"fingerprint\": \"fp07\",\n      \"name\": \"tool.execute\",\n      \"message\": \"attributeerror: object has no attribute ?\",\n      \"treated\": true,\n      \"beforeCount\": 32,\n      \"afterCount\": 3,\n      \"beforeRate\": 8,\n      \"afterRate\": 0.8571428571428571,\n      \"delta\": -7.142857142857143\n    },\n    {\n      \"fingerprint\": \"fp08\",\n      \"name\": \"tool.execute\",\n      \"message\": \"attributeerror: object has no attribute ?\",\n      \"treated\": true,\n      \"beforeCount\": 32,\n      \"afterCount\": 3,\n      \"beforeRate\": 8,\n      \"afterRate\": 0.8571428571428571,\n      \"delta\": -7.142857142857143\n    },\n    {\n      \"fingerprint\": \"fp09\",\n      \"name\": \"tool.execute\",\n      \"message\": \"attributeerror: object has no attribute ?\",\n      \"treated\": true,\n      \"beforeCount\": 32,\n      \"afterCount\": 3,\n      \"beforeRate\": 8,\n      \"afterRate\": 0.8571428571428571,\n      \"delta\": -7.142857142857143\n    },\n    {\n      \"fingerprint\": \"fp10\",\n      \"name\": \"tool.execute\",\n      \"message\": \"attributeerror: object has no attribute ?\",\n      \"treated\": false,\n      \"beforeCount\": 32,\n      \"afterCount\": 28,\n      \"beforeRate\": 8,\n      \"afterRate\": 8,\n      \"delta\": 0\n    },\n    {\n      \"fingerprint\": \"fp11\",\n      \"name\": \"tool.execute\",\n      \"message\": \"attributeerror: object has no attribute ?\",\n      \"treated\": false,\n      \"beforeCount\": 32,\n      \"afterCount\": 28,\n      \"beforeRate\": 8,\n      \"afterRate\": 8,\n      \"delta\": 0\n    },\n    {\n      \"fingerprint\": \"fp12\",\n      \"name\": \"tool.execute\",\n      \"message\": \"attributeerror: object has no attribute ?\",\n      \"treated\": false,\n      \"beforeCount\": 32,\n      \"afterCount\": 28,\n      \"beforeRate\": 8,\n      \"afterRate\": 8,\n      \"delta\": 0\n    },\n    {\n      \"fingerprint\": \"fp13\",\n      \"name\": \"tool.execute\",\n      \"message\": \"attributeerror: object has no attribute ?\",\n      \"treated\": false,\n      \"beforeCount\": 32,\n      \"afterCount\": 28,\n      \"beforeRate\": 8,\n      \"afterRate\": 8,\n      \"delta\": 0\n    },\n    {\n      \"fingerprint\": \"fp14\",\n      \"name\": \"tool.execute\",\n      \"message\": \"attributeerror: object has no attribute ?\",\n      \"treated\": false,\n      \"beforeCount\": 32,\n      \"afterCount\": 28,\n      \"beforeRate\": 8,\n      \"afterRate\": 8,\n      \"delta\": 0\n    },\n    {\n      \"fingerprint\": \"fp15\",\n      \"name\": \"tool.execute\",\n      \"message\": \"attributeerror: object has no attribute ?\",\n      \"treated\": false,\n      \"beforeCount\": 32,\n      \"afterCount\": 28,\n      \"beforeRate\": 8,\n      \"afterRate\": 8,\n      \"delta\": 0\n    },\n    {\n      \"fingerprint\": \"fp16\",\n      \"name\": \"tool.execute\",\n      \"message\": \"attributeerror: object has no attribute ?\",\n      \"treated\": false,\n      \"beforeCount\": 32,\n      \"afterCount\": 28,\n      \"beforeRate\": 8,\n      \"afterRate\": 8,\n      \"delta\": 0\n    },\n    {\n      \"fingerprint\": \"fp17\",\n      \"name\": \"tool.execute\",\n      \"message\": \"attributeerror: object has no attribute ?\",\n      \"treated\": false,\n      \"beforeCount\": 32,\n      \"afterCount\": 28,\n      \"beforeRate\": 8,\n      \"afterRate\": 8,\n      \"delta\": 0\n    },\n    {\n      \"fingerprint\": \"fp18\",\n      \"name\": \"tool.execute\",\n      \"message\": \"attributeerror: object has no attribute ?\",\n      \"treated\": false,\n      \"beforeCount\": 32,\n      \"afterCount\": 28,\n      \"beforeRate\": 8,\n      \"afterRate\": 8,\n      \"delta\": 0\n    },\n    {\n      \"fingerprint\": \"fp19\",\n      \"name\": \"tool.execute\",\n      \"message\": \"attributeerror: object has no attribute ?\",\n      \"treated\": false,\n      \"beforeCount\": 32,\n      \"afterCount\": 28,\n      \"beforeRate\": 8,\n      \"afterRate\": 8,\n      \"delta\": 0\n    }\n  ],\n  \"unobservedTreated\": [],\n  \"cohorts\": {\n    \"treated\": {\n      \"ids\": [\n        \"fp00\",\n        \"fp01\",\n        \"fp02\",\n        \"fp03\",\n        \"fp04\",\n        \"fp05\",\n        \"fp06\",\n        \"fp07\",\n        \"fp08\",\n        \"fp09\"\n      ],\n      \"n\": 10,\n      \"medianDelta\": -7.142857142857143,\n      \"meanDelta\": -7.142857142857143,\n      \"deltas\": [\n        -7.142857142857143,\n        -7.142857142857143,\n        -7.142857142857143,\n        -7.142857142857143,\n        -7.142857142857143,\n        -7.142857142857143,\n        -7.142857142857143,\n        -7.142857142857143,\n        -7.142857142857143,\n        -7.142857142857143\n      ]\n    },\n    \"untreated\": {\n      \"ids\": [\n        \"fp10\",\n        \"fp11\",\n        \"fp12\",\n        \"fp13\",\n        \"fp14\",\n        \"fp15\",\n        \"fp16\",\n        \"fp17\",\n        \"fp18\",\n        \"fp19\"\n      ],\n      \"n\": 10,\n      \"medianDelta\": 0,\n      \"meanDelta\": 0,\n      \"deltas\": [\n        0,\n        0,\n        0,\n        0,\n        0,\n        0,\n        0,\n        0,\n        0,\n        0\n      ]\n    }\n  },\n  \"series\": [\n    {\n      \"day\": \"2026-08-01\",\n      \"turns\": 500,\n      \"window\": \"before\",\n      \"treatedRate\": 8,\n      \"untreatedRate\": 8\n    },\n    {\n      \"day\": \"2026-08-02\",\n      \"turns\": 500,\n      \"window\": \"before\",\n      \"treatedRate\": 8,\n      \"untreatedRate\": 8\n    },\n    {\n      \"day\": \"2026-08-03\",\n      \"turns\": 500,\n      \"window\": \"before\",\n      \"treatedRate\": 8,\n      \"untreatedRate\": 8\n    },\n    {\n      \"day\": \"2026-08-04\",\n      \"turns\": 500,\n      \"window\": \"before\",\n      \"treatedRate\": 8,\n      \"untreatedRate\": 8\n    },\n    {\n      \"day\": \"2026-08-05\",\n      \"turns\": 500,\n      \"window\": \"before\",\n      \"treatedRate\": 8,\n      \"untreatedRate\": 8\n    },\n    {\n      \"day\": \"2026-08-06\",\n      \"turns\": 500,\n      \"window\": \"before\",\n      \"treatedRate\": 8,\n      \"untreatedRate\": 8\n    },\n    {\n      \"day\": \"2026-08-07\",\n      \"turns\": 500,\n      \"window\": \"before\",\n      \"treatedRate\": 8,\n      \"untreatedRate\": 8\n    },\n    {\n      \"day\": \"2026-08-08\",\n      \"turns\": 500,\n      \"window\": \"before\",\n      \"treatedRate\": 8,\n      \"untreatedRate\": 8\n    },\n    {\n      \"day\": \"2026-08-09\",\n      \"turns\": 500,\n      \"window\": \"pivot\",\n      \"treatedRate\": 2,\n      \"untreatedRate\": 8\n    },\n    {\n      \"day\": \"2026-08-10\",\n      \"turns\": 500,\n      \"window\": \"after\",\n      \"treatedRate\": 0,\n      \"untreatedRate\": 8\n    },\n    {\n      \"day\": \"2026-08-11\",\n      \"turns\": 500,\n      \"window\": \"after\",\n      \"treatedRate\": 2,\n      \"untreatedRate\": 8\n    },\n    {\n      \"day\": \"2026-08-12\",\n      \"turns\": 500,\n      \"window\": \"after\",\n      \"treatedRate\": 0,\n      \"untreatedRate\": 8\n    },\n    {\n      \"day\": \"2026-08-13\",\n      \"turns\": 500,\n      \"window\": \"after\",\n      \"treatedRate\": 2,\n      \"untreatedRate\": 8\n    },\n    {\n      \"day\": \"2026-08-14\",\n      \"turns\": 500,\n      \"window\": \"after\",\n      \"treatedRate\": 0,\n      \"untreatedRate\": 8\n    },\n    {\n      \"day\": \"2026-08-15\",\n      \"turns\": 500,\n      \"window\": \"after\",\n      \"treatedRate\": 2,\n      \"untreatedRate\": 8\n    },\n    {\n      \"day\": \"2026-08-16\",\n      \"turns\": 500,\n      \"window\": \"after\",\n      \"treatedRate\": 0,\n      \"untreatedRate\": 8\n    }\n  ],\n  \"u\": 0,\n  \"pValue\": 0.000007974779091146633,\n  \"minCohortN\": 5,\n  \"rateDenominator\": 1000,\n  \"indexDir\": \"<dir>/cmd-json\",\n  \"seal\": {\n    \"written\": [\n      \"2026-08-01\",\n      \"2026-08-02\",\n      \"2026-08-03\",\n      \"2026-08-04\",\n      \"2026-08-05\",\n      \"2026-08-06\",\n      \"2026-08-07\",\n      \"2026-08-08\",\n      \"2026-08-09\",\n      \"2026-08-10\",\n      \"2026-08-11\",\n      \"2026-08-12\",\n      \"2026-08-13\",\n      \"2026-08-14\",\n      \"2026-08-15\",\n      \"2026-08-16\"\n    ],\n    \"skipped\": [],\n    \"open\": [],\n    \"parseErrors\": 0\n  }\n}"
+      ],
+      "stderr": []
+    },
+    "withheld": {
+      "code": 2,
+      "stdout": [
+        "learning index  <dir>/cmd-withheld\n  16 sealed days (2026-08-01 .. 2026-08-16), 7500 turns in the compared windows, 1 refinement commit\n  sealed 16 new days, kept 0, left 0 open\n  pivot 2026-08-09T00:00:00.000Z (day 2026-08-09 excluded from both windows), before 4000 turns / after 3500 turns\n\n  fingerprint  span          cohort   before/1k   after/1k      delta\n  -------------------------------------------------------------------\n  fp00         tool.execute  treated       8.00       0.86      -7.14\n  fp01         tool.execute  treated       8.00       0.86      -7.14\n  fp02         tool.execute  treated       8.00       0.86      -7.14\n  fp03         tool.execute  treated       8.00       0.86      -7.14\n  fp04         tool.execute  treated       8.00       0.86      -7.14\n  fp05         tool.execute  treated       8.00       0.86      -7.14\n  fp06         tool.execute  treated       8.00       0.86      -7.14\n  fp07         tool.execute  treated       8.00       0.86      -7.14\n  fp08         tool.execute  treated       8.00       0.86      -7.14\n  fp09         tool.execute  treated       8.00       0.86      -7.14\n  fp10         tool.execute  control       8.00       8.00       0.00\n  fp11         tool.execute  control       8.00       8.00       0.00\n  fp12         tool.execute  control       8.00       8.00       0.00\n  fp13         tool.execute  control       8.00       8.00       0.00\n  fp14         tool.execute  control       8.00       8.00       0.00\n  fp15         tool.execute  control       8.00       8.00       0.00\n  fp16         tool.execute  control       8.00       8.00       0.00\n  fp17         tool.execute  control       8.00       8.00       0.00\n  fp18         tool.execute  control       8.00       8.00       0.00\n  fp19         tool.execute  control       8.00       8.00       0.00\n\n  cohort       n   median delta   mean delta\n  treated     10          -7.14        -7.14\n  control     10           0.00         0.00\n\n  p-value: withheld - cohorts are too small (treated 10, untreated 10, minimum 11 each)"
+      ],
+      "stderr": []
+    },
+    "limited": {
+      "code": 0,
+      "stdout": [
+        "learning index  <dir>/cmd-limited\n  16 sealed days (2026-08-01 .. 2026-08-16), 7500 turns in the compared windows, 1 refinement commit\n  sealed 16 new days, kept 0, left 0 open\n  pivot 2026-08-09T00:00:00.000Z (day 2026-08-09 excluded from both windows), before 4000 turns / after 3500 turns\n\n  fingerprint  span          cohort   before/1k   after/1k      delta\n  -------------------------------------------------------------------\n  fp00         tool.execute  treated       8.00       0.86      -7.14\n  fp01         tool.execute  treated       8.00       0.86      -7.14\n  fp02         tool.execute  treated       8.00       0.86      -7.14\n  ... 17 more (raise --limit)\n\n  cohort       n   median delta   mean delta\n  treated     10          -7.14        -7.14\n  control     10           0.00         0.00\n\n  Mann-Whitney U (one-sided, treated < untreated): U = 0.0, p = 7.97e-6",
+        "",
+        "       mean failures per 1000 turns, per fingerprint",
+        " 8.00 |********uuuuuuuu",
+        "      |",
+        "      |",
+        "      |",
+        "      |",
+        "      |",
+        "      |        T T T T",
+        "      |",
+        " 0.00 |         T T T T",
+        "      +----------------",
+        "               ^",
+        "       2026-08-01 2026-08-16",
+        "       T treated   u control   * both"
+      ],
+      "stderr": []
+    },
+    "unknown": {
+      "code": 1,
+      "stdout": [],
+      "stderr": [
+        "Error: Unknown option for learning: --nope",
+        "Usage: prime-agent learning [--log <path>] [--index <dir>] [--min-n <n>] [--limit <n>] [--no-seal] [--no-chart] [--json]"
+      ]
+    },
+    "operand": {
+      "code": 1,
+      "stdout": [],
+      "stderr": [
+        "Error: learning takes no operands: extra",
+        "Usage: prime-agent learning [--log <path>] [--index <dir>] [--min-n <n>] [--limit <n>] [--no-seal] [--no-chart] [--json]"
+      ]
+    },
+    "missing-value": {
+      "code": 1,
+      "stdout": [],
+      "stderr": [
+        "Error: --log requires a value.",
+        "Usage: prime-agent learning [--log <path>] [--index <dir>] [--min-n <n>] [--limit <n>] [--no-seal] [--no-chart] [--json]"
+      ]
+    },
+    "bad-integer": {
+      "code": 1,
+      "stdout": [],
+      "stderr": [
+        "Error: --min-n requires a positive integer.",
+        "Usage: prime-agent learning [--log <path>] [--index <dir>] [--min-n <n>] [--limit <n>] [--no-seal] [--no-chart] [--json]"
+      ]
+    },
+    "no-log": {
+      "code": 1,
+      "stdout": [],
+      "stderr": [
+        "Error: no log file at <dir>/absent/agent.jsonl"
+      ]
+    },
+    "no-days": {
+      "code": 1,
+      "stdout": [],
+      "stderr": [
+        "Error: no sealed days in <dir>/cmd-empty"
+      ]
+    }
+  }
+}

@@ -1372,6 +1372,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "pa-learning"
+version = "0.9.8"
+dependencies = [
+ "flate2",
+ "indexmap",
+ "pa-agent",
+ "pa-core",
+ "pa-ledger",
+ "pa-ravo",
+ "pa-trace",
+ "pa-types",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "pa-ledger"
 version = "0.9.8"
 dependencies = [

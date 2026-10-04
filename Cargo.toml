@@ -18,6 +18,7 @@ members = [
     "crates/pa-workflow",
     "crates/pa-ledger",
     "crates/pa-ravo",
+    "crates/pa-learning",
 ]
 
 # Crossterm 0.28.1's kitty support check holds the process-wide event reader
