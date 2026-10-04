@@ -12,6 +12,7 @@ default = [
     "dream",
     "learning",
     "ledger",
+    "mermaid",
     "ravo",
     "recall",
     "session-index",
@@ -27,6 +28,10 @@ dream = ["dep:pa-dream"]
 learning = ["ravo", "dep:pa-learning"]
 # The failure ledger and the ipython resolution index (crates/pa-ledger).
 ledger = ["dep:pa-ledger"]
+# The fork's Mermaid diagrams in the TUI: lovely-mermaid 0.3.3, a too-wide
+# flowchart redrawn on the other axis, art drawn with its warnings, and diagrams
+# in agent/custom messages and /btw (crates/pa-mermaid).
+mermaid = ["dep:pa-mermaid"]
 # RAVO: the gate on harness refinements, its lineage and provisional-regression
 # recording (crates/pa-ravo); it observes the failure ledger.
 ravo = ["ledger", "dep:pa-ravo"]
@@ -59,6 +64,7 @@ pa-ledger = { path = "../pa-ledger", optional = true }
 pa-session-index = { path = "../pa-session-index", optional = true }
 pa-ravo = { path = "../pa-ravo", optional = true }
 pa-learning = { path = "../pa-learning", optional = true }
+pa-mermaid = { path = "../pa-mermaid", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }
 tokio = { workspace = true }
 anyhow = { workspace = true }

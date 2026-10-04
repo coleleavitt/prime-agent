@@ -90,15 +90,17 @@ impl InstalledFeatures {
     }
 }
 
-/// Install the enabled features: the session seam, (feature `trace`) the
-/// trace recorder as the process subscriber, and (feature `session-index`)
-/// the saved-session catalog cache. Called once by the binary before any
+/// Install the enabled features: the session seam, the TUI seams
+/// ([`install_tui_features`]), (feature `trace`) the trace recorder as the
+/// process subscriber, and (feature `session-index`) the saved-session
+/// catalog cache. Called once by the binary before any
 /// session or worker starts. Does no I/O: the recorder opens its log and
 /// starts its workers with the first record; the index reads a session
 /// directory on its first listing.
 #[must_use]
 pub fn install_enabled_features() -> InstalledFeatures {
     pa_core::features::install(enabled_features());
+    install_tui_features();
     #[cfg(feature = "session-index")]
     let session_index = {
         let index = pa_session_index::SessionIndex::new();
@@ -115,6 +117,13 @@ pub fn install_enabled_features() -> InstalledFeatures {
         ))
         .ok(),
     }
+}
+
+/// Install the enabled features' TUI seams before the first frame: (feature `mermaid`)
+/// the fork's Mermaid diagrams as the TUI's diagram renderer. Idempotent; no I/O.
+pub fn install_tui_features() {
+    #[cfg(feature = "mermaid")]
+    crate::mermaid_diagrams::install();
 }
 
 /// The shared structured log (`<agentDir>/logs/agent.jsonl`).
