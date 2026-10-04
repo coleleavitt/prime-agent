@@ -40,7 +40,8 @@ No `opentelemetry` dependency, no collector contact unless configured, no metric
 
 `recorder(RecorderConfig) -> (TraceLayer, RecorderHandle)`, `install(RecorderConfig)` (global subscriber + context
 source), `install_context_source()`, `RecorderConfig::from_env`, `RecorderHandle::{flush, shutdown, otlp_stats}`,
-`run_trace_command`, `run_health_command`, `CommandOutcome`, `OtlpConfig`, `OtlpStats`, `parse_otlp_headers`,
+`run_trace_command`, `run_health_command`, `CommandOutcome`, `retained_log_files` / `read_log_text` (the retained
+generations of a log, oldest first, and one generation's text, gzip bounded at 64 MiB), `OtlpConfig`, `OtlpStats`, `parse_otlp_headers`,
 `SHUTDOWN_DRAIN`, `OTLP_ENDPOINT_ENV`, `OTLP_HEADERS_ENV`.
 
 ## Seams

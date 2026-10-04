@@ -11,7 +11,8 @@ use serde_json::Value;
 const MAX_DECOMPRESSED_LOG_BYTES: u64 = 64 * 1024 * 1024;
 
 /// The existing files of a log, oldest first.
-pub(crate) fn retained_log_files(log_path: &Path) -> Vec<PathBuf> {
+#[must_use]
+pub fn retained_log_files(log_path: &Path) -> Vec<PathBuf> {
     let directory = log_path.parent().unwrap_or_else(|| Path::new("."));
     let base = log_path
         .file_name()
@@ -53,7 +54,7 @@ pub(crate) fn retained_log_files(log_path: &Path) -> Vec<PathBuf> {
 /// # Errors
 ///
 /// A read or decompression failure (including a generation past the bound).
-pub(crate) fn read_log_text(path: &Path) -> std::io::Result<String> {
+pub fn read_log_text(path: &Path) -> std::io::Result<String> {
     let bytes = std::fs::read(path)?;
     if path.extension().is_some_and(|extension| extension == "gz") {
         let mut text = String::new();
