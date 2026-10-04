@@ -73,6 +73,13 @@ pub trait RefinementGateVerdict: Send + Sync {
     /// return `true` to have the funnel save it.
     fn record_rejection(&self, state: &mut HarnessState) -> bool;
 
+    /// After [`Self::admit`] admitted, before the edits apply: update
+    /// `state` (the re-read store) first, such as settling bookkeeping the
+    /// apply must see. The default changes nothing.
+    fn prepare_application(&self, state: &mut HarnessState) {
+        let _ = state;
+    }
+
     /// After [`Self::admit`] admitted and the edits were applied to `state`
     /// (`result` says which applied): update `state` and `result` before
     /// the funnel saves and records them.

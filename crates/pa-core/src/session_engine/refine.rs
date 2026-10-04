@@ -480,6 +480,7 @@ pub async fn execute_refinement_gated(
             }
             return record_rejected_refinement(session, rejected, global_harness_dir, target_scope);
         }
+        verdict.prepare_application(&mut state);
     }
     let mut result = apply_refinement_plan(
         &mut state,
@@ -1444,6 +1445,13 @@ Reviewer instructions: record it"
             true
         }
 
+        fn prepare_application(&self, state: &mut crate::refinement::HarnessState) {
+            self.log.lock().unwrap().push("prepare".to_string());
+            state
+                .extensions
+                .insert("stubPrepared".to_string(), json!(true));
+        }
+
         fn record_application(
             &self,
             state: &mut crate::refinement::HarnessState,
@@ -1558,8 +1566,9 @@ Reviewer instructions: record it"
         assert_eq!(held.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
-    /// An admitting gate: the edits apply, and the verdict's records land
-    /// in the saved state and on the recorded result.
+    /// An admitting gate: the verdict prepares the re-read store, the edits
+    /// apply, and the verdict's records land in the saved state and on the
+    /// recorded result.
     #[tokio::test]
     async fn an_admitting_gate_applies_and_records_into_state_and_result() {
         let dir = TempDir::new().unwrap();
@@ -1594,6 +1603,7 @@ Reviewer instructions: record it"
         let state = load_harness_state(&harness_dir, HarnessScope::Local);
         assert!(state.entries[&crate::refinement::RefinementKind::Memory].contains_key("m1"));
         assert_eq!(state.extensions.get("stub"), Some(&json!({ "applied": 1 })));
+        assert_eq!(state.extensions.get("stubPrepared"), Some(&json!(true)));
         assert_eq!(
             custom_types(&session),
             [
@@ -1605,7 +1615,13 @@ Reviewer instructions: record it"
         // The store stays locked from the re-read until the save landed.
         assert_eq!(
             evaluated.lock().unwrap().clone(),
-            ["true auto Local held=1", "lock Local", "apply", "unlock"]
+            [
+                "true auto Local held=1",
+                "lock Local",
+                "prepare",
+                "apply",
+                "unlock"
+            ]
         );
         assert_eq!(held.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
