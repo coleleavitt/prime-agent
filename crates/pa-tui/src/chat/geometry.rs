@@ -52,6 +52,8 @@ pub(super) fn thinking_style(md: &MarkdownStyle, theme: &Theme) -> MarkdownStyle
     md.quote_border = dim;
     md.hr = dim;
     md.list_bullet = dim;
+    // TS applies the Mermaid transform to text blocks only, never thinking.
+    md.mermaid = None;
     md
 }
 
@@ -67,11 +69,13 @@ pub(crate) fn user_block_row_count(
     markdown_row_count(&mask.text, width.saturating_sub(4).max(1), &md).max(1) + 2
 }
 
+#[allow(clippy::too_many_arguments)] // Mirrors `render_assistant`'s inputs one for one.
 pub(crate) fn assistant_row_count(
     message: &AssistantMessage,
     detail: Detail,
     theme: &Theme,
     code_block_indent: &str,
+    mermaid: crate::markdown::MermaidMode,
     width: usize,
     preceded_by_tool_activity: bool,
     cache: &MarkdownBlockCache,
@@ -80,6 +84,10 @@ pub(crate) fn assistant_row_count(
     let mut count = usize::from(!blocks.is_empty());
     let mut md = MarkdownStyle::from_theme(theme);
     code_block_indent.clone_into(&mut md.code_block_indent);
+    md.mermaid = Some(crate::markdown::MermaidRender {
+        mode: mermaid,
+        streaming: message.streaming,
+    });
     let content_width = width.saturating_sub(2).max(1);
     for (index, block) in blocks.iter().enumerate() {
         match block {

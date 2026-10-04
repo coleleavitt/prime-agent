@@ -1,7 +1,7 @@
 //! Geometry uses the same wrapping traversal as painted Markdown rows.
 use super::{
-    block_cache_key, code_rows, heading_spans, parse_blocks, render_inline, wrapped_span_count,
-    Block, BlockKind, MarkdownBlockCache, MarkdownStyle,
+    block_cache_key, code_rows, heading_spans, mermaid_blocks, parse_blocks, render_inline,
+    wrapped_span_count, Block, BlockKind, MarkdownBlockCache, MarkdownStyle,
 };
 use crate::{Line, Span};
 use ratatui::style::Style;
@@ -83,8 +83,8 @@ pub(crate) fn markdown_row_count_tagged(
         return 0;
     }
     let normalized = text.replace('\t', "   ");
-    let blocks = parse_blocks(&normalized);
     let width = width.max(1);
+    let blocks = mermaid_blocks::apply(parse_blocks(&normalized), width, style);
     let mut total = 0;
     for (index, block) in blocks.iter().enumerate() {
         let next = blocks.get(index + 1);
@@ -117,6 +117,13 @@ pub(crate) fn markdown_row_count_tagged(
                     .lines
                     .iter()
                     .map(|text| wrapped_span_count(&render_inline(text, style), width))
+                    .sum::<usize>()
+                    + usize::from(blank_after(next, true))
+            }
+            BlockKind::ArtParagraph { rows } => {
+                mermaid_blocks::art_paragraph_lines(rows, style)
+                    .iter()
+                    .map(|line| wrapped_span_count(line, width))
                     .sum::<usize>()
                     + usize::from(blank_after(next, true))
             }

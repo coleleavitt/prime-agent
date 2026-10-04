@@ -323,6 +323,7 @@ fn assistant_markers_skip_tool_call_messages() {
         Detail::Overview,
         &theme(),
         "  ",
+        crate::markdown::MermaidMode::default(),
         60,
         false,
         &mut crate::markdown::MarkdownBlockCache::default(),
@@ -342,6 +343,7 @@ fn assistant_markers_skip_tool_call_messages() {
         Detail::Overview,
         &theme(),
         "  ",
+        crate::markdown::MermaidMode::default(),
         60,
         false,
         &mut crate::markdown::MarkdownBlockCache::default(),
@@ -373,6 +375,7 @@ fn code_block_indent_rides_the_render_calls() {
         Detail::Overview,
         &theme(),
         "    ",
+        crate::markdown::MermaidMode::default(),
         60,
         false,
         &mut crate::markdown::MarkdownBlockCache::default(),
@@ -392,6 +395,7 @@ fn code_block_indent_rides_the_render_calls() {
         Detail::Overview,
         &theme(),
         "  ",
+        crate::markdown::MermaidMode::default(),
         60,
         false,
         &mut crate::markdown::MarkdownBlockCache::default(),
@@ -447,6 +451,7 @@ fn assistant_error_row_and_spacers() {
         Detail::Overview,
         &theme(),
         "  ",
+        crate::markdown::MermaidMode::default(),
         60,
         false,
         &mut crate::markdown::MarkdownBlockCache::default(),
@@ -475,6 +480,7 @@ fn assistant_error_row_and_spacers() {
         Detail::Overview,
         &theme(),
         "  ",
+        crate::markdown::MermaidMode::default(),
         60,
         true,
         &mut crate::markdown::MarkdownBlockCache::default(),
@@ -492,6 +498,7 @@ fn assistant_error_row_and_spacers() {
         Detail::Overview,
         &theme(),
         "  ",
+        crate::markdown::MermaidMode::default(),
         60,
         true,
         &mut crate::markdown::MarkdownBlockCache::default(),
@@ -518,6 +525,7 @@ fn login_recovery_error_renders_one_merged_inline_line() {
             detail,
             &theme,
             "  ",
+            crate::markdown::MermaidMode::default(),
             60,
             false,
             &mut crate::markdown::MarkdownBlockCache::default(),
@@ -562,6 +570,7 @@ fn login_recovery_merges_the_exact_daemon_error_wording() {
         Detail::Overview,
         &theme,
         "  ",
+        crate::markdown::MermaidMode::default(),
         140,
         false,
         &mut crate::markdown::MarkdownBlockCache::default(),
@@ -584,6 +593,7 @@ fn login_recovery_merges_the_exact_daemon_error_wording() {
         Detail::Overview,
         &theme,
         "  ",
+        crate::markdown::MermaidMode::default(),
         60,
         false,
         &mut crate::markdown::MarkdownBlockCache::default(),
@@ -629,6 +639,7 @@ fn login_recovery_fallthroughs_keep_the_normal_error_rows() {
             detail,
             &theme,
             "  ",
+            crate::markdown::MermaidMode::default(),
             60,
             false,
             &mut crate::markdown::MarkdownBlockCache::default(),
@@ -705,6 +716,7 @@ fn aborted_assistant_message_renders_the_red_abort_row() {
         Detail::Overview,
         &theme,
         "  ",
+        crate::markdown::MermaidMode::default(),
         60,
         true,
         &mut crate::markdown::MarkdownBlockCache::default(),
@@ -753,6 +765,7 @@ fn aborted_assistant_message_renders_the_red_abort_row() {
         Detail::Overview,
         &theme,
         "  ",
+        crate::markdown::MermaidMode::default(),
         60,
         false,
         &mut crate::markdown::MarkdownBlockCache::default(),
@@ -854,5 +867,104 @@ fn live_abort_text_matches_ts() {
     assert_eq!(
         live_abort_text(2, Some(65)),
         "Aborted after 2 retry attempts \u{00b7} 1m 05s"
+    );
+}
+
+/// The assistant rows of a one-block message, OSC zone markers stripped.
+fn assistant_texts(
+    message: &AssistantMessage,
+    detail: Detail,
+    mermaid: crate::markdown::MermaidMode,
+) -> Vec<String> {
+    let rows = render_assistant(
+        message,
+        detail,
+        &theme(),
+        "  ",
+        mermaid,
+        40,
+        false,
+        &mut crate::markdown::MarkdownBlockCache::default(),
+    );
+    rows.iter()
+        .map(|line| {
+            let mut line = line.clone();
+            crate::osc133::strip(&mut line);
+            line.iter()
+                .map(|s| s.content.as_str())
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        })
+        .collect()
+}
+
+const MERMAID_TEXT: &str = "```mermaid\nflowchart LR\n  A[Start] --> B[Done]\n```";
+
+/// TS `defers mermaid rendering to message_end in final mode`: the streaming message keeps
+/// the fence, the settled one shows the diagram; the row count follows the paint.
+#[test]
+fn final_mode_defers_the_diagram_until_the_message_settles() {
+    let mut message = AssistantMessage {
+        blocks: vec![MessageBlock::Text(MERMAID_TEXT.to_string())],
+        has_tool_calls: false,
+        streaming: true,
+        error: None,
+        aborted: false,
+    };
+    let fence = vec![
+        String::new(),
+        "   flowchart LR".to_string(),
+        "     A[Start] --> B[Done]".to_string(),
+    ];
+    let art = vec![
+        String::new(),
+        " ┌───────┐    ┌──────┐".to_string(),
+        " │ Start ├───▶│ Done │".to_string(),
+        " └───────┘    └──────┘".to_string(),
+    ];
+    let mode = crate::markdown::MermaidMode::Final;
+    assert_eq!(assistant_texts(&message, Detail::Overview, mode), fence);
+    message.streaming = false;
+    assert_eq!(assistant_texts(&message, Detail::Overview, mode), art);
+    assert_eq!(
+        assistant_row_count(
+            &message,
+            Detail::Overview,
+            &theme(),
+            "  ",
+            mode,
+            40,
+            false,
+            &crate::markdown::MarkdownBlockCache::default()
+        ),
+        art.len()
+    );
+    message.streaming = true;
+    let streaming = crate::markdown::MermaidMode::Streaming;
+    assert_eq!(assistant_texts(&message, Detail::Overview, streaming), art);
+}
+
+/// The transform rides assistant text only: a thinking block's fence stays code.
+#[test]
+fn thinking_blocks_never_render_diagrams() {
+    let message = AssistantMessage {
+        blocks: vec![MessageBlock::Thinking(MERMAID_TEXT.to_string())],
+        has_tool_calls: false,
+        streaming: false,
+        error: None,
+        aborted: false,
+    };
+    assert_eq!(
+        assistant_texts(
+            &message,
+            Detail::Details,
+            crate::markdown::MermaidMode::Streaming
+        ),
+        vec![
+            String::new(),
+            "   flowchart LR".to_string(),
+            "     A[Start] --> B[Done]".to_string(),
+        ]
     );
 }

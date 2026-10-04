@@ -1,0 +1,1 @@
+- Render Mermaid code blocks in assistant messages as inline Unicode diagrams (a Rust port of the grok-mermaid renderer the TypeScript version uses), per the "Mermaid diagrams" setting (off/final/streaming, default streaming).

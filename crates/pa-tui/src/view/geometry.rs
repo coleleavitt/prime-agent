@@ -37,6 +37,7 @@ impl AgentView {
                     detail,
                     &self.theme,
                     &self.code_block_indent,
+                    self.mermaid_mode,
                     width,
                     preceded_by_tool,
                     caches.get(&index).unwrap_or(&empty),

@@ -316,6 +316,7 @@ impl AgentView {
         let options = (
             self.theme.clone(),
             self.code_block_indent.clone(),
+            self.mermaid_mode,
             self.show_images,
             crate::image_component::fullscreen_image_fallback_active(),
         );
