@@ -189,7 +189,7 @@ The table summarizes each crate's current direct workspace dependencies:
 | --- | --- | --- |
 | `pa-types` | Shared wire and domain types | none |
 | `pa-telemetry` | Events and sinks | none |
-| `pa-agent` | Provider-independent agent loop | none |
+| `pa-agent` | Provider-independent agent loop | `pa-types` |
 | `pa-ai` | Providers, model registry, streaming | `pa-types` |
 | `pa-models` | Live model catalog and transport | `pa-ai`, `pa-types` |
 | `pa-sandbox` | Prime Sandboxes lifecycle client (idempotent create, wait, delete) | none |

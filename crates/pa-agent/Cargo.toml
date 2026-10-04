@@ -6,6 +6,8 @@ license.workspace = true
 description = "Agent loop for Prime Agent."
 
 [dependencies]
+# The shared JS value semantics (`Number(text)`) tool-argument coercion uses.
+pa-types.workspace = true
 anyhow.workspace = true
 futures.workspace = true
 serde.workspace = true
