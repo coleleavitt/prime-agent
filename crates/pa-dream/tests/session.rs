@@ -301,6 +301,17 @@ async fn a_child_session_gets_no_dream_surface() {
     let harness = harness("child", 1);
     let feature = DreamFeature::new();
     assert!(harness.handlers(&feature).is_empty());
+    // The bundled skill is hidden where its requests are not registered;
+    // other skills are not this feature's to hide.
+    assert!(!feature.session_skill_visible(&harness.context, "dream"));
+    assert!(feature.session_skill_visible(&harness.context, "refine"));
+    let storeless = SessionFeatureContext {
+        rlm_depth: 0,
+        session_artifact_dir: None,
+        ..(*harness.context).clone()
+    };
+    assert!(!feature.session_skill_visible(&storeless, "dream"));
+    assert!(feature.session_skill_visible(&harness_with_depth0(&harness), "dream"));
     let refused = feature
         .execute_slash_command(&harness.context, "dream", "")
         .unwrap()
