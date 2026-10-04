@@ -780,6 +780,19 @@ impl LedgerHandle {
         }
     }
 
+    /// The replay verifications queued for the session's next flushes and
+    /// not yet written (both ledgers' queues, local first).
+    #[must_use]
+    pub fn pending_replay_verifications(&self, session_id: &str) -> Vec<ReplayVerification> {
+        let Some(session) = self.inner.existing(session_id) else {
+            return Vec::new();
+        };
+        let state = lock(&session);
+        let mut pending = state.local_verifications.clone();
+        pending.extend(state.global_verifications.iter().cloned());
+        pending
+    }
+
     /// Ask the worker to flush the session.
     pub fn request_flush(&self, session_id: &str) {
         if let Some(session) = self.inner.existing(session_id) {

@@ -12,6 +12,7 @@ mod runner;
 mod trigger;
 mod trust;
 mod trust_adjudication;
+mod trust_runtime;
 mod verification;
 
 pub use authority::*;

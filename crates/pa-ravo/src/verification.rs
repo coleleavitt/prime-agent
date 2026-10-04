@@ -16,6 +16,7 @@ use pa_ledger::{FailureLedger, FailureObservation, LedgerHandle, ReplayCase, Rep
 use crate::referee::{verdict_from_outcome, RefereeVerdictStatus, ReplayEnvironment, ReplayRunner};
 
 /// A case waiting for its self-check.
+#[derive(Clone)]
 struct Pending {
     fingerprint_id: String,
     case: ReplayCase,
@@ -25,8 +26,13 @@ struct Pending {
 struct SessionChecks {
     attempted: HashSet<(String, String)>,
     backlog: Vec<Pending>,
+    /// The batch running now.
+    in_flight: Vec<Pending>,
     running: bool,
 }
+
+/// Told what each finished batch verified (empty when it could not run).
+pub(crate) type BatchListener = Box<dyn Fn(&str, &[ReplayVerification]) + Send + Sync>;
 
 /// The per-session self-check queues.
 #[derive(Default)]
@@ -34,6 +40,7 @@ pub(crate) struct ReplayVerifier {
     sessions: Mutex<HashMap<String, SessionChecks>>,
     /// Notified whenever a session's batches stop.
     stopped: Condvar,
+    listener: std::sync::OnceLock<BatchListener>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -43,18 +50,41 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl ReplayVerifier {
-    /// Queue the unverified cases `observations` derived and start a batch
-    /// when none is running. `ledger` is the ledger recurrence is judged
+    /// Report every finished batch to `listener` (set once; later calls
+    /// are ignored).
+    pub(crate) fn set_listener(&self, listener: BatchListener) {
+        let _ = self.listener.set(listener);
+    }
+
+    /// Whether a self-check of `fingerprint_id` with one of `sources` is
+    /// still backlogged or, with `running`, running.
+    pub(crate) fn is_pending(
+        &self,
+        session_id: &str,
+        fingerprint_id: &str,
+        sources: &[String],
+        running: bool,
+    ) -> bool {
+        let sessions = lock(&self.sessions);
+        let Some(checks) = sessions.get(session_id) else {
+            return false;
+        };
+        let in_flight: &[Pending] = if running { &checks.in_flight } else { &[] };
+        checks.backlog.iter().chain(in_flight).any(|pending| {
+            pending.fingerprint_id == fingerprint_id && sources.contains(&pending.case.source)
+        })
+    }
+
+    /// Queue the unverified cases `observations` derived; `true` when a
+    /// batch must start (none is running), to be run with [`Self::spawn`]. `ledger` is the ledger recurrence is judged
     /// on: a case it holds verified is not run again.
-    pub(crate) fn observe(
-        self: &Arc<Self>,
+    pub(crate) fn enqueue(
+        &self,
         session_id: &str,
         observations: &[FailureObservation],
         ledger: &FailureLedger,
-        runner: Arc<dyn ReplayRunner>,
-        handle: LedgerHandle,
-    ) {
-        let start = {
+    ) -> bool {
+        {
             let mut sessions = lock(&self.sessions);
             let checks = sessions.entry(session_id.to_string()).or_default();
             for observation in observations {
@@ -88,10 +118,16 @@ impl ReplayVerifier {
             let start = !checks.running && !checks.backlog.is_empty();
             checks.running |= start;
             start
-        };
-        if !start {
-            return;
         }
+    }
+
+    /// Run the batch [`Self::enqueue`] said to start (it answered `true`).
+    pub(crate) fn spawn(
+        self: &Arc<Self>,
+        session_id: &str,
+        runner: Arc<dyn ReplayRunner>,
+        handle: LedgerHandle,
+    ) {
         let verifier = Arc::clone(self);
         let owned = session_id.to_string();
         let spawned = std::thread::Builder::new()
@@ -140,15 +176,21 @@ impl ReplayVerifier {
                     .get_mut(session_id)
                     .filter(|checks| !checks.backlog.is_empty());
                 let Some(checks) = checks else {
+                    if let Some(checks) = sessions.get_mut(session_id) {
+                        checks.in_flight.clear();
+                    }
                     drop(sessions);
                     self.stop(session_id);
                     return;
                 };
-                std::mem::take(&mut checks.backlog)
+                let batch = std::mem::take(&mut checks.backlog);
+                checks.in_flight.clone_from(&batch);
+                batch
             };
             // A self-check that cannot run leaves its cases unverified, the
             // conservative state.
             let Ok(runtime) = runtime.as_ref() else {
+                self.finish_batch(session_id, &[]);
                 continue;
             };
             let verifications: Vec<ReplayVerification> = runtime.block_on(async {
@@ -171,6 +213,18 @@ impl ReplayVerifier {
             if !verifications.is_empty() {
                 handle.record_replay_verifications(session_id, &verifications);
             }
+            self.finish_batch(session_id, &verifications);
+        }
+    }
+
+    /// The running batch is over: no longer in flight, and the listener
+    /// hears what it verified.
+    fn finish_batch(&self, session_id: &str, verifications: &[ReplayVerification]) {
+        if let Some(checks) = lock(&self.sessions).get_mut(session_id) {
+            checks.in_flight.clear();
+        }
+        if let Some(listener) = self.listener.get() {
+            listener(session_id, verifications);
         }
     }
 }
