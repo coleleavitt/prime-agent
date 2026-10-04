@@ -53,6 +53,7 @@ impl DiagramRenderer for MermaidDiagrams {
                     })
                     .collect(),
                 notices: notices(n),
+                adapted: false,
             },
             pa_mermaid::Layout::Source { notices: n } => DiagramLayout::Source {
                 notices: notices(n),

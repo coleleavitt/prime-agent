@@ -8,8 +8,18 @@
 //! into drawing on surfaces beyond assistant text ([`DiagramSurface`]), honouring the same
 //! `markdown.mermaid` mode. Plain-text surfaces (agent messages) find their fences with
 //! [`text_segments`].
+//!
+//! Every settled layout also counts once per diagram into the run's [`RenderCounts`]
+//! (drawn, kept as source, drawn adapted), which the composition root reads with
+//! [`take_render_counts`] after turning counting on with [`set_render_counting`].
 
 use std::sync::OnceLock;
+
+#[path = "diagram_counts.rs"]
+mod counts;
+
+pub use counts::{set_render_counting, take_render_counts, RenderCounts};
+pub(crate) use counts::{settled, Outcome};
 
 use crate::width::is_whitespace_char;
 
@@ -57,9 +67,12 @@ pub struct DiagramNotice {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiagramLayout {
     /// Draw these rows in place of the fence (they fit the width), then the notices.
+    /// `adapted`: the renderer changed the diagram's layout to make it fit (for example,
+    /// drew it on the other axis); it only feeds [`RenderCounts::adapted`].
     Rows {
         rows: Vec<Vec<DiagramSpan>>,
         notices: Vec<DiagramNotice>,
+        adapted: bool,
     },
     /// Keep the fence, then the notices (none: the fence is left untouched).
     Source { notices: Vec<DiagramNotice> },
@@ -294,8 +307,10 @@ pub(crate) fn text_segments(
             pending.push((raw, None));
             continue;
         };
-        let (rows, notices) = match renderer.layout(&source, available_width, false) {
-            DiagramLayout::Rows { rows, notices } => (Some(rows), notices),
+        let layout = renderer.layout(&source, available_width, false);
+        settled(&source, Outcome::of(&layout));
+        let (rows, notices) = match layout {
+            DiagramLayout::Rows { rows, notices, .. } => (Some(rows), notices),
             DiagramLayout::Source { notices } => (None, notices),
         };
         changed |= rows.is_some() || !notices.is_empty();

@@ -32,6 +32,7 @@ impl DiagramRenderer for Stub {
                 level: NoticeLevel::Info,
                 text: "stub note".to_owned(),
             }],
+            adapted: false,
         }
     }
 
