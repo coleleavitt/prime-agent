@@ -11,7 +11,7 @@
 //! 3 adds the kernel telemetry bridge's skill-event vocabulary
 //! (`computer_use_session_started`, `computer_use_action`); schema version 4
 //! adds the separately built features' adoption events (`dream_run`,
-//! `failure_resolution_hint`, `observability command used`, `ravo_gate_decision`, `toolforge
+//! `failure_resolution_hint`, `learning_report`, `observability command used`, `ravo_gate_decision`, `toolforge
 //! publish`, `workflow_run_agent`, `workflow_durable_request`): new-event
 //! vocabulary bumps the version,
 //! additive property changes do not.
@@ -1269,6 +1269,30 @@ const WORKFLOW_V2_REQUEST: EventRule = EventRule {
     ],
 };
 
+/// `learning_report` (v4): one parsed `prime-agent learning` invocation (the
+/// fork's `pa-learning` feature): which report, how it ended (a p-value or a
+/// label reported, everything withheld, or an error), how many sealed days it
+/// read and sealed, whether backfill was folded in, and the duration — never
+/// a fingerprint, a path, a rate, or a p-value.
+const LEARNING_REPORT: EventRule = EventRule {
+    name: "learning_report",
+    since: 4,
+    properties: &[
+        (
+            "subcommand",
+            required(enum_rule(&["report", "trajectory", "unknown"], "unknown")),
+        ),
+        (
+            "outcome",
+            required(enum_rule(&["reported", "withheld", "failed"], "failed")),
+        ),
+        ("days", required(count())),
+        ("sealed", required(count())),
+        ("backfill", required(boolean())),
+        ("duration_ms", required(duration())),
+    ],
+};
+
 /// `dream_run` (v4): one parsed `prime-agent dream` invocation (the fork's
 /// `pa-dream` feature). Subcommand, task and outcome vocabularies, rollout
 /// and probe counts, whether a better policy was adopted, and the duration —
@@ -1621,6 +1645,7 @@ pub fn catalog() -> Vec<&'static EventRule> {
         &OBSERVABILITY_COMMAND_USED,
         &FAILURE_RESOLUTION_HINT,
         &RAVO_GATE_DECISION,
+        &LEARNING_REPORT,
     ];
     all.extend(UPDATE_EVENTS.iter());
     all
@@ -1758,6 +1783,7 @@ mod tests {
             Some(4)
         );
         assert_eq!(lookup("ravo_gate_decision").map(|rule| rule.since), Some(4));
+        assert_eq!(lookup("learning_report").map(|rule| rule.since), Some(4));
         for name in ["computer_use_session_started", "computer_use_action"] {
             let rule = catalog()
                 .into_iter()
@@ -1912,6 +1938,25 @@ mod tests {
         odd.set("decision", json!("approve"));
         sanitize("ravo_gate_decision", &mut odd);
         assert_eq!(odd.get("decision"), Some(&json!("unknown")));
+    }
+
+    #[test]
+    fn learning_report_carries_only_its_vocabulary_and_counts() {
+        let mut properties = Properties::new();
+        properties.set("subcommand", json!("trajectory"));
+        properties.set("outcome", json!("withheld"));
+        properties.set("days", json!(16u64));
+        properties.set("sealed", json!(2u64));
+        properties.set("backfill", json!(true));
+        properties.set("duration_ms", json!(40u64));
+        let expected = properties.clone();
+        properties.set("fingerprint", json!("0123456789abcdef")); // not catalogued
+        assert_eq!(sanitize("learning_report", &mut properties), 1);
+        assert_eq!(properties, expected);
+        let mut odd = Properties::new();
+        odd.set("subcommand", json!("chart"));
+        sanitize("learning_report", &mut odd);
+        assert_eq!(odd.get("subcommand"), Some(&json!("unknown")));
     }
 
     #[test]

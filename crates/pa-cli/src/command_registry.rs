@@ -295,6 +295,16 @@ pub const COMMAND_SPECS: &[CommandSpec] = &[
         "trace 0af7651916cd43dd8448eb211c80319c",
         "trace 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
     ]),
+    // The fork's continual-learning gate (pa-learning), present only with its feature.
+    #[cfg(feature = "learning")]
+    CommandSpec::new(
+        &["learning"],
+        pa_learning::command::LEARNING_USAGE,
+        pa_learning::command::LEARNING_SUMMARY,
+    )
+    .description(pa_learning::command::LEARNING_DESCRIPTION)
+    .options(pa_learning::command::LEARNING_OPTIONS)
+    .examples(pa_learning::command::LEARNING_EXAMPLES),
     CommandSpec::new(
         &["factory"],
         "factory <list|import|export>",

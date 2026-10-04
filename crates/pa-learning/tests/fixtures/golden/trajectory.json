@@ -1,0 +1,3675 @@
+{
+  "nowMs": 1741564800000,
+  "isoWeeks": [
+    {
+      "day": "2025-01-06",
+      "week": "2025-W02"
+    },
+    {
+      "day": "2021-01-01",
+      "week": "2020-W53"
+    },
+    {
+      "day": "2020-12-28",
+      "week": "2020-W53"
+    },
+    {
+      "day": "2019-12-30",
+      "week": "2020-W01"
+    },
+    {
+      "day": "2026-08-01",
+      "week": "2026-W31"
+    },
+    {
+      "day": "2024-12-30",
+      "week": "2025-W01"
+    },
+    {
+      "day": "2027-01-03",
+      "week": "2026-W53"
+    }
+  ],
+  "security": [
+    {
+      "name": "authentication error",
+      "message": "invalid token",
+      "matches": true
+    },
+    {
+      "name": "kernel.cell",
+      "message": "Token expired",
+      "matches": true
+    },
+    {
+      "name": "tool.execute",
+      "message": "Permission Denied",
+      "matches": true
+    },
+    {
+      "name": "tool.execute",
+      "message": "permission_denied",
+      "matches": false
+    },
+    {
+      "name": "UnAuthorized",
+      "message": "",
+      "matches": true
+    },
+    {
+      "name": "",
+      "message": "",
+      "matches": false
+    },
+    {
+      "name": "bash",
+      "message": "exit 1",
+      "matches": false
+    }
+  ],
+  "sealed": {
+    "windowing": {
+      "input": {
+        "days": [
+          {
+            "schema": 1,
+            "day": "2025-01-06",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpA",
+                "name": "fpA",
+                "status": "error",
+                "failure": true,
+                "count": 1,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-01-08",
+            "sealedAt": "",
+            "turns": 3,
+            "fingerprints": [
+              {
+                "fingerprint": "fpA",
+                "name": "fpA",
+                "status": "error",
+                "failure": true,
+                "count": 4,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              },
+              {
+                "fingerprint": "fpZ",
+                "name": "older",
+                "status": "error",
+                "failure": true,
+                "count": 1,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-01-09",
+            "sealedAt": "",
+            "turns": 1,
+            "fingerprints": [
+              {
+                "fingerprint": "fpZ",
+                "name": "newer",
+                "status": "error",
+                "failure": true,
+                "count": 1,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": "m"
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-01-13",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpA",
+                "name": "fpA",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-01-20",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpA",
+                "name": "fpA",
+                "status": "error",
+                "failure": true,
+                "count": 1,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              },
+              {
+                "fingerprint": "ok",
+                "name": "ok",
+                "status": "ok",
+                "failure": false,
+                "count": 9,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-01-27",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpA",
+                "name": "fpA",
+                "status": "error",
+                "failure": true,
+                "count": 3,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-02-03",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpA",
+                "name": "fpA",
+                "status": "error",
+                "failure": true,
+                "count": 1,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-03-10",
+            "sealedAt": "",
+            "turns": 9,
+            "fingerprints": [
+              {
+                "fingerprint": "fpA",
+                "name": "fpA",
+                "status": "error",
+                "failure": true,
+                "count": 99,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          }
+        ]
+      },
+      "file": {
+        "version": 1,
+        "sealedAt": "2025-03-10T00:00:00.000Z",
+        "windowsObserved": 5,
+        "minWindows": 4,
+        "windows": [
+          {
+            "schema": 1,
+            "window": "2025-W02",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-06",
+              "2025-01-08",
+              "2025-01-09"
+            ],
+            "turns": 9,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpA",
+                "name": "fpA",
+                "message": "",
+                "failure": true,
+                "count": 5,
+                "cumulativeOrdinal": 7
+              },
+              {
+                "fingerprint": "fpZ",
+                "name": "newer",
+                "message": "m",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 7
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W03",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-13"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpA",
+                "name": "fpA",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 9
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W04",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-20"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpA",
+                "name": "fpA",
+                "message": "",
+                "failure": true,
+                "count": 1,
+                "cumulativeOrdinal": 10
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W05",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-27"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpA",
+                "name": "fpA",
+                "message": "",
+                "failure": true,
+                "count": 3,
+                "cumulativeOrdinal": 13
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W06",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-02-03"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpA",
+                "name": "fpA",
+                "message": "",
+                "failure": true,
+                "count": 1,
+                "cumulativeOrdinal": 14
+              }
+            ]
+          }
+        ],
+        "labels": [
+          {
+            "fingerprint": "fpA",
+            "name": "fpA",
+            "message": "",
+            "corpus": "prime",
+            "label": "persists",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W06",
+            "windowsPresent": 5,
+            "windowsRecurring": 3,
+            "claimedByRefinement": false,
+            "domainActive": true,
+            "securityClass": false,
+            "confounds": [
+              "task-mix"
+            ]
+          },
+          {
+            "fingerprint": "fpZ",
+            "name": "newer",
+            "message": "m",
+            "corpus": "prime",
+            "label": "dropped",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W02",
+            "windowsPresent": 1,
+            "windowsRecurring": 1,
+            "claimedByRefinement": false,
+            "domainActive": true,
+            "securityClass": false,
+            "confounds": [
+              "task-mix"
+            ]
+          }
+        ],
+        "rate": [
+          {
+            "window": "2025-W02",
+            "appeared": 2,
+            "retired": 0,
+            "newMinusRetired": 2
+          },
+          {
+            "window": "2025-W03",
+            "appeared": 0,
+            "retired": 1,
+            "newMinusRetired": -1
+          },
+          {
+            "window": "2025-W04",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W05",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W06",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          }
+        ]
+      },
+      "report": {
+        "windowsObserved": 5,
+        "minWindows": 4,
+        "allWithheld": false,
+        "rows": [
+          {
+            "fingerprint": "fpA",
+            "name": "fpA",
+            "corpus": "prime",
+            "label": "persists",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W06",
+            "windowsRecurring": 3,
+            "confounds": "task-mix",
+            "securityClass": false
+          },
+          {
+            "fingerprint": "fpZ",
+            "name": "newer",
+            "corpus": "prime",
+            "label": "dropped",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W02",
+            "windowsRecurring": 1,
+            "confounds": "task-mix",
+            "securityClass": false
+          }
+        ],
+        "rate": [
+          {
+            "window": "2025-W02",
+            "appeared": 2,
+            "retired": 0,
+            "newMinusRetired": 2
+          },
+          {
+            "window": "2025-W03",
+            "appeared": 0,
+            "retired": 1,
+            "newMinusRetired": -1
+          },
+          {
+            "window": "2025-W04",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W05",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W06",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          }
+        ],
+        "windows": [
+          {
+            "window": "2025-W02",
+            "corpus": "prime",
+            "days": 3,
+            "turns": 9
+          },
+          {
+            "window": "2025-W03",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W04",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W05",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W06",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          }
+        ]
+      },
+      "lines": [
+        "stable-gap: fpA recurs in 3 of 5 windows [confounds: task-mix]"
+      ],
+      "internalized": [
+        "fpZ"
+      ]
+    },
+    "labels": {
+      "input": {
+        "days": [
+          {
+            "schema": 1,
+            "day": "2025-01-06",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              },
+              {
+                "fingerprint": "a1b2c3d4e5f60718",
+                "name": "tool_error: git push rejected",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              },
+              {
+                "fingerprint": "00ffeeddccbbaa99",
+                "name": "kernel.cell",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": "token expired for the api"
+              },
+              {
+                "fingerprint": "span:0123456789abcdef",
+                "name": "span:0123456789abcdef",
+                "status": "error",
+                "failure": true,
+                "count": 3,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-01-13",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              },
+              {
+                "fingerprint": "a1b2c3d4e5f60718",
+                "name": "tool_error: git push rejected",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              },
+              {
+                "fingerprint": "00ffeeddccbbaa99",
+                "name": "kernel.cell",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": "token expired for the api"
+              },
+              {
+                "fingerprint": "span:0123456789abcdef",
+                "name": "span:0123456789abcdef",
+                "status": "error",
+                "failure": true,
+                "count": 3,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-01-20",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              },
+              {
+                "fingerprint": "fpOnce",
+                "name": "fpOnce",
+                "status": "error",
+                "failure": true,
+                "count": 1,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              },
+              {
+                "fingerprint": "span:0123456789abcdef",
+                "name": "span:0123456789abcdef",
+                "status": "error",
+                "failure": true,
+                "count": 3,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-01-27",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              },
+              {
+                "fingerprint": "persistent",
+                "name": "",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": "x"
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-02-03",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              },
+              {
+                "fingerprint": "fpNew",
+                "name": "fpNew",
+                "status": "error",
+                "failure": true,
+                "count": 1,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              },
+              {
+                "fingerprint": "persistent",
+                "name": "",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          }
+        ]
+      },
+      "file": {
+        "version": 1,
+        "sealedAt": "2025-03-10T00:00:00.000Z",
+        "windowsObserved": 5,
+        "minWindows": 4,
+        "windows": [
+          {
+            "schema": 1,
+            "window": "2025-W02",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-06"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "span:0123456789abcdef",
+                "name": "span:0123456789abcdef",
+                "message": "",
+                "failure": true,
+                "count": 3,
+                "cumulativeOrdinal": 9
+              },
+              {
+                "fingerprint": "00ffeeddccbbaa99",
+                "name": "kernel.cell",
+                "message": "token expired for the api",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 9
+              },
+              {
+                "fingerprint": "a1b2c3d4e5f60718",
+                "name": "tool_error: git push rejected",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 9
+              },
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 9
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W03",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-13"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "span:0123456789abcdef",
+                "name": "span:0123456789abcdef",
+                "message": "",
+                "failure": true,
+                "count": 3,
+                "cumulativeOrdinal": 18
+              },
+              {
+                "fingerprint": "00ffeeddccbbaa99",
+                "name": "kernel.cell",
+                "message": "token expired for the api",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 18
+              },
+              {
+                "fingerprint": "a1b2c3d4e5f60718",
+                "name": "tool_error: git push rejected",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 18
+              },
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 18
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W04",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-20"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "span:0123456789abcdef",
+                "name": "span:0123456789abcdef",
+                "message": "",
+                "failure": true,
+                "count": 3,
+                "cumulativeOrdinal": 24
+              },
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 24
+              },
+              {
+                "fingerprint": "fpOnce",
+                "name": "fpOnce",
+                "message": "",
+                "failure": true,
+                "count": 1,
+                "cumulativeOrdinal": 24
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W05",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-27"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 28
+              },
+              {
+                "fingerprint": "persistent",
+                "name": "",
+                "message": "x",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 28
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W06",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-02-03"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 33
+              },
+              {
+                "fingerprint": "persistent",
+                "name": "",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 33
+              },
+              {
+                "fingerprint": "fpNew",
+                "name": "fpNew",
+                "message": "",
+                "failure": true,
+                "count": 1,
+                "cumulativeOrdinal": 33
+              }
+            ]
+          }
+        ],
+        "labels": [
+          {
+            "fingerprint": "00ffeeddccbbaa99",
+            "name": "kernel.cell",
+            "message": "token expired for the api",
+            "corpus": "prime",
+            "label": "dropped",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W03",
+            "windowsPresent": 2,
+            "windowsRecurring": 2,
+            "claimedByRefinement": false,
+            "domainActive": true,
+            "securityClass": true,
+            "confounds": [
+              "task-mix"
+            ]
+          },
+          {
+            "fingerprint": "a1b2c3d4e5f60718",
+            "name": "tool_error: git push rejected",
+            "message": "",
+            "corpus": "prime",
+            "label": "dropped",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W03",
+            "windowsPresent": 2,
+            "windowsRecurring": 2,
+            "claimedByRefinement": false,
+            "domainActive": true,
+            "securityClass": false,
+            "confounds": [
+              "task-mix"
+            ]
+          },
+          {
+            "fingerprint": "fpNew",
+            "name": "fpNew",
+            "message": "",
+            "corpus": "prime",
+            "label": "new",
+            "sinceWindow": "2025-W06",
+            "lastWindow": "2025-W06",
+            "windowsPresent": 1,
+            "windowsRecurring": 0,
+            "claimedByRefinement": false,
+            "domainActive": true,
+            "securityClass": false,
+            "confounds": [
+              "task-mix"
+            ]
+          },
+          {
+            "fingerprint": "fpOnce",
+            "name": "fpOnce",
+            "message": "",
+            "corpus": "prime",
+            "label": null,
+            "sinceWindow": "2025-W04",
+            "lastWindow": "2025-W04",
+            "windowsPresent": 1,
+            "windowsRecurring": 0,
+            "claimedByRefinement": false,
+            "domainActive": true,
+            "securityClass": false,
+            "confounds": [
+              "task-mix"
+            ]
+          },
+          {
+            "fingerprint": "fpStay",
+            "name": "fpStay",
+            "message": "",
+            "corpus": "prime",
+            "label": "persists",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W06",
+            "windowsPresent": 5,
+            "windowsRecurring": 5,
+            "claimedByRefinement": false,
+            "domainActive": true,
+            "securityClass": false,
+            "confounds": [
+              "task-mix"
+            ]
+          },
+          {
+            "fingerprint": "persistent",
+            "name": "",
+            "message": "",
+            "corpus": "prime",
+            "label": null,
+            "sinceWindow": "2025-W05",
+            "lastWindow": "2025-W06",
+            "windowsPresent": 2,
+            "windowsRecurring": 2,
+            "claimedByRefinement": false,
+            "domainActive": true,
+            "securityClass": false,
+            "confounds": [
+              "task-mix"
+            ]
+          },
+          {
+            "fingerprint": "span:0123456789abcdef",
+            "name": "span:0123456789abcdef",
+            "message": "",
+            "corpus": "prime",
+            "label": "dropped",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W04",
+            "windowsPresent": 3,
+            "windowsRecurring": 3,
+            "claimedByRefinement": false,
+            "domainActive": true,
+            "securityClass": false,
+            "confounds": [
+              "task-mix"
+            ]
+          }
+        ],
+        "rate": [
+          {
+            "window": "2025-W02",
+            "appeared": 4,
+            "retired": 0,
+            "newMinusRetired": 4
+          },
+          {
+            "window": "2025-W03",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W04",
+            "appeared": 1,
+            "retired": 2,
+            "newMinusRetired": -1
+          },
+          {
+            "window": "2025-W05",
+            "appeared": 1,
+            "retired": 2,
+            "newMinusRetired": -1
+          },
+          {
+            "window": "2025-W06",
+            "appeared": 1,
+            "retired": 0,
+            "newMinusRetired": 1
+          }
+        ]
+      },
+      "report": {
+        "windowsObserved": 5,
+        "minWindows": 4,
+        "allWithheld": false,
+        "rows": [
+          {
+            "fingerprint": "fpStay",
+            "name": "fpStay",
+            "corpus": "prime",
+            "label": "persists",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W06",
+            "windowsRecurring": 5,
+            "confounds": "task-mix",
+            "securityClass": false
+          },
+          {
+            "fingerprint": "fpNew",
+            "name": "fpNew",
+            "corpus": "prime",
+            "label": "new",
+            "sinceWindow": "2025-W06",
+            "lastWindow": "2025-W06",
+            "windowsRecurring": 0,
+            "confounds": "task-mix",
+            "securityClass": false
+          },
+          {
+            "fingerprint": "span:0123456789abcdef",
+            "name": "span:0123456789abcdef",
+            "corpus": "prime",
+            "label": "dropped",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W04",
+            "windowsRecurring": 3,
+            "confounds": "task-mix",
+            "securityClass": false
+          },
+          {
+            "fingerprint": "00ffeeddccbbaa99",
+            "name": "kernel.cell",
+            "corpus": "prime",
+            "label": "dropped",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W03",
+            "windowsRecurring": 2,
+            "confounds": "task-mix",
+            "securityClass": true
+          },
+          {
+            "fingerprint": "a1b2c3d4e5f60718",
+            "name": "tool_error: git push rejected",
+            "corpus": "prime",
+            "label": "dropped",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W03",
+            "windowsRecurring": 2,
+            "confounds": "task-mix",
+            "securityClass": false
+          },
+          {
+            "fingerprint": "persistent",
+            "name": "",
+            "corpus": "prime",
+            "label": "-",
+            "sinceWindow": "2025-W05",
+            "lastWindow": "2025-W06",
+            "windowsRecurring": 2,
+            "confounds": "task-mix",
+            "securityClass": false
+          },
+          {
+            "fingerprint": "fpOnce",
+            "name": "fpOnce",
+            "corpus": "prime",
+            "label": "-",
+            "sinceWindow": "2025-W04",
+            "lastWindow": "2025-W04",
+            "windowsRecurring": 0,
+            "confounds": "task-mix",
+            "securityClass": false
+          }
+        ],
+        "rate": [
+          {
+            "window": "2025-W02",
+            "appeared": 4,
+            "retired": 0,
+            "newMinusRetired": 4
+          },
+          {
+            "window": "2025-W03",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W04",
+            "appeared": 1,
+            "retired": 2,
+            "newMinusRetired": -1
+          },
+          {
+            "window": "2025-W05",
+            "appeared": 1,
+            "retired": 2,
+            "newMinusRetired": -1
+          },
+          {
+            "window": "2025-W06",
+            "appeared": 1,
+            "retired": 0,
+            "newMinusRetired": 1
+          }
+        ],
+        "windows": [
+          {
+            "window": "2025-W02",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W03",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W04",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W05",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W06",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          }
+        ]
+      },
+      "lines": [
+        "stable-gap: fpStay recurs in 5 of 5 windows [confounds: task-mix]"
+      ],
+      "internalized": [
+        "a1b2c3d4e5f60718"
+      ]
+    },
+    "claimed": {
+      "input": {
+        "days": [
+          {
+            "schema": 1,
+            "day": "2025-01-06",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              },
+              {
+                "fingerprint": "a1b2c3d4e5f60718",
+                "name": "tool_error: git push rejected",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [
+              {
+                "at": "2025-01-08T00:00:00Z",
+                "proposalId": "p1",
+                "addressed": [
+                  "a1b2c3d4e5f60718"
+                ]
+              }
+            ],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-01-13",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              },
+              {
+                "fingerprint": "a1b2c3d4e5f60718",
+                "name": "tool_error: git push rejected",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-01-20",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-01-27",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-02-03",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          }
+        ]
+      },
+      "file": {
+        "version": 1,
+        "sealedAt": "2025-03-10T00:00:00.000Z",
+        "windowsObserved": 5,
+        "minWindows": 4,
+        "windows": [
+          {
+            "schema": 1,
+            "window": "2025-W02",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-06"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "a1b2c3d4e5f60718",
+                "name": "tool_error: git push rejected",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 4
+              },
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 4
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W03",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-13"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "a1b2c3d4e5f60718",
+                "name": "tool_error: git push rejected",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 8
+              },
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 8
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W04",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-20"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 10
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W05",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-27"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 12
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W06",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-02-03"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 14
+              }
+            ]
+          }
+        ],
+        "labels": [
+          {
+            "fingerprint": "a1b2c3d4e5f60718",
+            "name": "tool_error: git push rejected",
+            "message": "",
+            "corpus": "prime",
+            "label": null,
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W03",
+            "windowsPresent": 2,
+            "windowsRecurring": 2,
+            "claimedByRefinement": true,
+            "domainActive": true,
+            "securityClass": false,
+            "confounds": [
+              "task-mix"
+            ],
+            "withheld": "absent but a committed refinement claimed it"
+          },
+          {
+            "fingerprint": "fpStay",
+            "name": "fpStay",
+            "message": "",
+            "corpus": "prime",
+            "label": "persists",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W06",
+            "windowsPresent": 5,
+            "windowsRecurring": 5,
+            "claimedByRefinement": false,
+            "domainActive": true,
+            "securityClass": false,
+            "confounds": [
+              "task-mix"
+            ]
+          }
+        ],
+        "rate": [
+          {
+            "window": "2025-W02",
+            "appeared": 2,
+            "retired": 0,
+            "newMinusRetired": 2
+          },
+          {
+            "window": "2025-W03",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W04",
+            "appeared": 0,
+            "retired": 1,
+            "newMinusRetired": -1
+          },
+          {
+            "window": "2025-W05",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W06",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          }
+        ]
+      },
+      "report": {
+        "windowsObserved": 5,
+        "minWindows": 4,
+        "allWithheld": false,
+        "rows": [
+          {
+            "fingerprint": "fpStay",
+            "name": "fpStay",
+            "corpus": "prime",
+            "label": "persists",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W06",
+            "windowsRecurring": 5,
+            "confounds": "task-mix",
+            "securityClass": false
+          },
+          {
+            "fingerprint": "a1b2c3d4e5f60718",
+            "name": "tool_error: git push rejected",
+            "corpus": "prime",
+            "label": "withheld: absent but a committed refinement claimed it",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W03",
+            "windowsRecurring": 2,
+            "confounds": "task-mix",
+            "securityClass": false
+          }
+        ],
+        "rate": [
+          {
+            "window": "2025-W02",
+            "appeared": 2,
+            "retired": 0,
+            "newMinusRetired": 2
+          },
+          {
+            "window": "2025-W03",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W04",
+            "appeared": 0,
+            "retired": 1,
+            "newMinusRetired": -1
+          },
+          {
+            "window": "2025-W05",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W06",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          }
+        ],
+        "windows": [
+          {
+            "window": "2025-W02",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W03",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W04",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W05",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W06",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          }
+        ]
+      },
+      "lines": [
+        "stable-gap: fpStay recurs in 5 of 5 windows [confounds: task-mix]"
+      ],
+      "internalized": []
+    },
+    "inactive": {
+      "input": {
+        "days": [
+          {
+            "schema": 1,
+            "day": "2025-01-06",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              },
+              {
+                "fingerprint": "a1b2c3d4e5f60718",
+                "name": "tool_error: git push rejected",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-01-13",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              },
+              {
+                "fingerprint": "a1b2c3d4e5f60718",
+                "name": "tool_error: git push rejected",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-01-20",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-01-27",
+            "sealedAt": "",
+            "turns": 0,
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-02-03",
+            "sealedAt": "",
+            "turns": 0,
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          }
+        ]
+      },
+      "file": {
+        "version": 1,
+        "sealedAt": "2025-03-10T00:00:00.000Z",
+        "windowsObserved": 5,
+        "minWindows": 4,
+        "windows": [
+          {
+            "schema": 1,
+            "window": "2025-W02",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-06"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "a1b2c3d4e5f60718",
+                "name": "tool_error: git push rejected",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 4
+              },
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 4
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W03",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-13"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "a1b2c3d4e5f60718",
+                "name": "tool_error: git push rejected",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 8
+              },
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 8
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W04",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-20"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 10
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W05",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-27"
+            ],
+            "turns": 0,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 12
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W06",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-02-03"
+            ],
+            "turns": 0,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 14
+              }
+            ]
+          }
+        ],
+        "labels": [
+          {
+            "fingerprint": "a1b2c3d4e5f60718",
+            "name": "tool_error: git push rejected",
+            "message": "",
+            "corpus": "prime",
+            "label": null,
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W03",
+            "windowsPresent": 2,
+            "windowsRecurring": 2,
+            "claimedByRefinement": false,
+            "domainActive": false,
+            "securityClass": false,
+            "confounds": [
+              "task-mix"
+            ],
+            "withheld": "absent but domain inactive (task-mix)"
+          },
+          {
+            "fingerprint": "fpStay",
+            "name": "fpStay",
+            "message": "",
+            "corpus": "prime",
+            "label": "persists",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W06",
+            "windowsPresent": 5,
+            "windowsRecurring": 5,
+            "claimedByRefinement": false,
+            "domainActive": false,
+            "securityClass": false,
+            "confounds": [
+              "task-mix"
+            ]
+          }
+        ],
+        "rate": [
+          {
+            "window": "2025-W02",
+            "appeared": 2,
+            "retired": 0,
+            "newMinusRetired": 2
+          },
+          {
+            "window": "2025-W03",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W04",
+            "appeared": 0,
+            "retired": 1,
+            "newMinusRetired": -1
+          },
+          {
+            "window": "2025-W05",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W06",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          }
+        ]
+      },
+      "report": {
+        "windowsObserved": 5,
+        "minWindows": 4,
+        "allWithheld": false,
+        "rows": [
+          {
+            "fingerprint": "fpStay",
+            "name": "fpStay",
+            "corpus": "prime",
+            "label": "persists",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W06",
+            "windowsRecurring": 5,
+            "confounds": "task-mix",
+            "securityClass": false
+          },
+          {
+            "fingerprint": "a1b2c3d4e5f60718",
+            "name": "tool_error: git push rejected",
+            "corpus": "prime",
+            "label": "withheld: absent but domain inactive (task-mix)",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W03",
+            "windowsRecurring": 2,
+            "confounds": "task-mix",
+            "securityClass": false
+          }
+        ],
+        "rate": [
+          {
+            "window": "2025-W02",
+            "appeared": 2,
+            "retired": 0,
+            "newMinusRetired": 2
+          },
+          {
+            "window": "2025-W03",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W04",
+            "appeared": 0,
+            "retired": 1,
+            "newMinusRetired": -1
+          },
+          {
+            "window": "2025-W05",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W06",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          }
+        ],
+        "windows": [
+          {
+            "window": "2025-W02",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W03",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W04",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W05",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 0
+          },
+          {
+            "window": "2025-W06",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 0
+          }
+        ]
+      },
+      "lines": [
+        "stable-gap: fpStay recurs in 5 of 5 windows [confounds: task-mix]"
+      ],
+      "internalized": []
+    },
+    "withheld": {
+      "input": {
+        "days": [
+          {
+            "schema": 1,
+            "day": "2025-01-06",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-01-13",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-01-20",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          }
+        ]
+      },
+      "file": {
+        "version": 1,
+        "sealedAt": "2025-03-10T00:00:00.000Z",
+        "windowsObserved": 3,
+        "minWindows": 4,
+        "windows": [
+          {
+            "schema": 1,
+            "window": "2025-W02",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-06"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 2
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W03",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-13"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 4
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W04",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-20"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 6
+              }
+            ]
+          }
+        ],
+        "labels": [
+          {
+            "fingerprint": "fpStay",
+            "name": "fpStay",
+            "message": "",
+            "corpus": "prime",
+            "label": null,
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W04",
+            "windowsPresent": 3,
+            "windowsRecurring": 3,
+            "claimedByRefinement": false,
+            "domainActive": true,
+            "securityClass": false,
+            "confounds": [
+              "task-mix"
+            ],
+            "withheld": "fewer than 4 observed windows (3)"
+          }
+        ],
+        "rate": [
+          {
+            "window": "2025-W02",
+            "appeared": 1,
+            "retired": 0,
+            "newMinusRetired": 1
+          },
+          {
+            "window": "2025-W03",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W04",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          }
+        ]
+      },
+      "report": {
+        "windowsObserved": 3,
+        "minWindows": 4,
+        "allWithheld": true,
+        "rows": [
+          {
+            "fingerprint": "fpStay",
+            "name": "fpStay",
+            "corpus": "prime",
+            "label": "withheld: fewer than 4 observed windows (3)",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W04",
+            "windowsRecurring": 3,
+            "confounds": "task-mix",
+            "securityClass": false
+          }
+        ],
+        "rate": [
+          {
+            "window": "2025-W02",
+            "appeared": 1,
+            "retired": 0,
+            "newMinusRetired": 1
+          },
+          {
+            "window": "2025-W03",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W04",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          }
+        ],
+        "windows": [
+          {
+            "window": "2025-W02",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W03",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W04",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          }
+        ]
+      },
+      "lines": [],
+      "internalized": []
+    },
+    "gap": {
+      "input": {
+        "days": [
+          {
+            "schema": 1,
+            "day": "2025-01-06",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpG",
+                "name": "fpG",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-01-13",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpG",
+                "name": "fpG",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-02-03",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpG",
+                "name": "fpG",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-02-10",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpG",
+                "name": "fpG",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              },
+              {
+                "fingerprint": "fpH",
+                "name": "fpH",
+                "status": "error",
+                "failure": true,
+                "count": 1,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          }
+        ],
+        "minWindows": 3,
+        "gap": 1
+      },
+      "file": {
+        "version": 1,
+        "sealedAt": "2025-03-10T00:00:00.000Z",
+        "windowsObserved": 4,
+        "minWindows": 3,
+        "windows": [
+          {
+            "schema": 1,
+            "window": "2025-W02",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-06"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpG",
+                "name": "fpG",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 2
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W03",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-13"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpG",
+                "name": "fpG",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 4
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W06",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-02-03"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpG",
+                "name": "fpG",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 6
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W07",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-02-10"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpG",
+                "name": "fpG",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 9
+              },
+              {
+                "fingerprint": "fpH",
+                "name": "fpH",
+                "message": "",
+                "failure": true,
+                "count": 1,
+                "cumulativeOrdinal": 9
+              }
+            ]
+          }
+        ],
+        "labels": [
+          {
+            "fingerprint": "fpG",
+            "name": "fpG",
+            "message": "",
+            "corpus": "prime",
+            "label": "persists",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W07",
+            "windowsPresent": 4,
+            "windowsRecurring": 4,
+            "claimedByRefinement": false,
+            "domainActive": true,
+            "securityClass": false,
+            "confounds": [
+              "task-mix",
+              "measurement-instrument"
+            ]
+          },
+          {
+            "fingerprint": "fpH",
+            "name": "fpH",
+            "message": "",
+            "corpus": "prime",
+            "label": "new",
+            "sinceWindow": "2025-W07",
+            "lastWindow": "2025-W07",
+            "windowsPresent": 1,
+            "windowsRecurring": 0,
+            "claimedByRefinement": false,
+            "domainActive": true,
+            "securityClass": false,
+            "confounds": [
+              "task-mix"
+            ]
+          }
+        ],
+        "rate": [
+          {
+            "window": "2025-W02",
+            "appeared": 1,
+            "retired": 0,
+            "newMinusRetired": 1
+          },
+          {
+            "window": "2025-W03",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W06",
+            "appeared": 0,
+            "retired": null,
+            "newMinusRetired": null
+          },
+          {
+            "window": "2025-W07",
+            "appeared": 1,
+            "retired": 0,
+            "newMinusRetired": 1
+          }
+        ]
+      },
+      "report": {
+        "windowsObserved": 4,
+        "minWindows": 3,
+        "allWithheld": false,
+        "rows": [
+          {
+            "fingerprint": "fpG",
+            "name": "fpG",
+            "corpus": "prime",
+            "label": "persists",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W07",
+            "windowsRecurring": 4,
+            "confounds": "task-mix, measurement-instrument",
+            "securityClass": false
+          },
+          {
+            "fingerprint": "fpH",
+            "name": "fpH",
+            "corpus": "prime",
+            "label": "new",
+            "sinceWindow": "2025-W07",
+            "lastWindow": "2025-W07",
+            "windowsRecurring": 0,
+            "confounds": "task-mix",
+            "securityClass": false
+          }
+        ],
+        "rate": [
+          {
+            "window": "2025-W02",
+            "appeared": 1,
+            "retired": 0,
+            "newMinusRetired": 1
+          },
+          {
+            "window": "2025-W03",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W06",
+            "appeared": 0,
+            "retired": null,
+            "newMinusRetired": null
+          },
+          {
+            "window": "2025-W07",
+            "appeared": 1,
+            "retired": 0,
+            "newMinusRetired": 1
+          }
+        ],
+        "windows": [
+          {
+            "window": "2025-W02",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W03",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W06",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W07",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          }
+        ]
+      },
+      "lines": [
+        "stable-gap: fpG recurs in 4 of 4 windows [confounds: task-mix, measurement-instrument]"
+      ],
+      "internalized": []
+    },
+    "rate": {
+      "input": {
+        "days": [
+          {
+            "schema": 1,
+            "day": "2025-01-06",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpX",
+                "name": "fpX",
+                "status": "error",
+                "failure": true,
+                "count": 1,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              },
+              {
+                "fingerprint": "fpZ",
+                "name": "fpZ",
+                "status": "error",
+                "failure": true,
+                "count": 1,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-01-13",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpX",
+                "name": "fpX",
+                "status": "error",
+                "failure": true,
+                "count": 1,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              },
+              {
+                "fingerprint": "fpY",
+                "name": "fpY",
+                "status": "error",
+                "failure": true,
+                "count": 1,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-01-20",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpY",
+                "name": "fpY",
+                "status": "error",
+                "failure": true,
+                "count": 1,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-01-27",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpY",
+                "name": "fpY",
+                "status": "error",
+                "failure": true,
+                "count": 1,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          }
+        ]
+      },
+      "file": {
+        "version": 1,
+        "sealedAt": "2025-03-10T00:00:00.000Z",
+        "windowsObserved": 4,
+        "minWindows": 4,
+        "windows": [
+          {
+            "schema": 1,
+            "window": "2025-W02",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-06"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpX",
+                "name": "fpX",
+                "message": "",
+                "failure": true,
+                "count": 1,
+                "cumulativeOrdinal": 2
+              },
+              {
+                "fingerprint": "fpZ",
+                "name": "fpZ",
+                "message": "",
+                "failure": true,
+                "count": 1,
+                "cumulativeOrdinal": 2
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W03",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-13"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpX",
+                "name": "fpX",
+                "message": "",
+                "failure": true,
+                "count": 1,
+                "cumulativeOrdinal": 4
+              },
+              {
+                "fingerprint": "fpY",
+                "name": "fpY",
+                "message": "",
+                "failure": true,
+                "count": 1,
+                "cumulativeOrdinal": 4
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W04",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-20"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpY",
+                "name": "fpY",
+                "message": "",
+                "failure": true,
+                "count": 1,
+                "cumulativeOrdinal": 5
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W05",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-27"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpY",
+                "name": "fpY",
+                "message": "",
+                "failure": true,
+                "count": 1,
+                "cumulativeOrdinal": 6
+              }
+            ]
+          }
+        ],
+        "labels": [
+          {
+            "fingerprint": "fpX",
+            "name": "fpX",
+            "message": "",
+            "corpus": "prime",
+            "label": null,
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W03",
+            "windowsPresent": 2,
+            "windowsRecurring": 0,
+            "claimedByRefinement": false,
+            "domainActive": true,
+            "securityClass": false,
+            "confounds": [
+              "task-mix"
+            ]
+          },
+          {
+            "fingerprint": "fpY",
+            "name": "fpY",
+            "message": "",
+            "corpus": "prime",
+            "label": null,
+            "sinceWindow": "2025-W03",
+            "lastWindow": "2025-W05",
+            "windowsPresent": 3,
+            "windowsRecurring": 0,
+            "claimedByRefinement": false,
+            "domainActive": true,
+            "securityClass": false,
+            "confounds": [
+              "task-mix"
+            ]
+          },
+          {
+            "fingerprint": "fpZ",
+            "name": "fpZ",
+            "message": "",
+            "corpus": "prime",
+            "label": null,
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W02",
+            "windowsPresent": 1,
+            "windowsRecurring": 0,
+            "claimedByRefinement": false,
+            "domainActive": true,
+            "securityClass": false,
+            "confounds": [
+              "task-mix"
+            ]
+          }
+        ],
+        "rate": [
+          {
+            "window": "2025-W02",
+            "appeared": 2,
+            "retired": 0,
+            "newMinusRetired": 2
+          },
+          {
+            "window": "2025-W03",
+            "appeared": 1,
+            "retired": 1,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W04",
+            "appeared": 0,
+            "retired": 1,
+            "newMinusRetired": -1
+          },
+          {
+            "window": "2025-W05",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          }
+        ]
+      },
+      "report": {
+        "windowsObserved": 4,
+        "minWindows": 4,
+        "allWithheld": true,
+        "rows": [
+          {
+            "fingerprint": "fpX",
+            "name": "fpX",
+            "corpus": "prime",
+            "label": "-",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W03",
+            "windowsRecurring": 0,
+            "confounds": "task-mix",
+            "securityClass": false
+          },
+          {
+            "fingerprint": "fpY",
+            "name": "fpY",
+            "corpus": "prime",
+            "label": "-",
+            "sinceWindow": "2025-W03",
+            "lastWindow": "2025-W05",
+            "windowsRecurring": 0,
+            "confounds": "task-mix",
+            "securityClass": false
+          },
+          {
+            "fingerprint": "fpZ",
+            "name": "fpZ",
+            "corpus": "prime",
+            "label": "-",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W02",
+            "windowsRecurring": 0,
+            "confounds": "task-mix",
+            "securityClass": false
+          }
+        ],
+        "rate": [
+          {
+            "window": "2025-W02",
+            "appeared": 2,
+            "retired": 0,
+            "newMinusRetired": 2
+          },
+          {
+            "window": "2025-W03",
+            "appeared": 1,
+            "retired": 1,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W04",
+            "appeared": 0,
+            "retired": 1,
+            "newMinusRetired": -1
+          },
+          {
+            "window": "2025-W05",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          }
+        ],
+        "windows": [
+          {
+            "window": "2025-W02",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W03",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W04",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W05",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          }
+        ]
+      },
+      "lines": [],
+      "internalized": []
+    },
+    "backfill": {
+      "input": {
+        "days": [
+          {
+            "schema": 1,
+            "day": "2025-01-06",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-01-13",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-01-20",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          },
+          {
+            "schema": 1,
+            "day": "2025-01-27",
+            "sealedAt": "",
+            "turns": 5,
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "status": "error",
+                "failure": true,
+                "count": 2,
+                "p50Ms": 0,
+                "p95Ms": 0,
+                "message": ""
+              }
+            ],
+            "commits": [],
+            "parseErrors": 0,
+            "sourceFiles": []
+          }
+        ],
+        "backfill": [
+          {
+            "corpus": "backfill:opencode",
+            "day": {
+              "schema": 1,
+              "day": "2025-01-06",
+              "sealedAt": "",
+              "turns": 3,
+              "fingerprints": [
+                {
+                  "fingerprint": "bf",
+                  "name": "exc:ValueError",
+                  "status": "error",
+                  "failure": true,
+                  "count": 2,
+                  "p50Ms": 0,
+                  "p95Ms": 0,
+                  "message": ""
+                }
+              ],
+              "commits": [],
+              "parseErrors": 0,
+              "sourceFiles": []
+            }
+          },
+          {
+            "corpus": "backfill:opencode",
+            "day": {
+              "schema": 1,
+              "day": "2025-01-13",
+              "sealedAt": "",
+              "turns": 3,
+              "fingerprints": [
+                {
+                  "fingerprint": "bf",
+                  "name": "exc:ValueError",
+                  "status": "error",
+                  "failure": true,
+                  "count": 2,
+                  "p50Ms": 0,
+                  "p95Ms": 0,
+                  "message": ""
+                }
+              ],
+              "commits": [],
+              "parseErrors": 0,
+              "sourceFiles": []
+            }
+          },
+          {
+            "corpus": "backfill:claude",
+            "day": {
+              "schema": 1,
+              "day": "2025-01-20",
+              "sealedAt": "",
+              "turns": 1,
+              "fingerprints": [
+                {
+                  "fingerprint": "cl",
+                  "name": "sh:permission-denied",
+                  "status": "error",
+                  "failure": true,
+                  "count": 1,
+                  "p50Ms": 0,
+                  "p95Ms": 0,
+                  "message": ""
+                }
+              ],
+              "commits": [],
+              "parseErrors": 0,
+              "sourceFiles": []
+            }
+          }
+        ]
+      },
+      "file": {
+        "version": 1,
+        "sealedAt": "2025-03-10T00:00:00.000Z",
+        "windowsObserved": 4,
+        "minWindows": 4,
+        "windows": [
+          {
+            "schema": 1,
+            "window": "2025-W02",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-06"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 2
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W03",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-13"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 4
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W04",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-20"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 6
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W05",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-27"
+            ],
+            "turns": 5,
+            "corpus": "prime",
+            "fingerprints": [
+              {
+                "fingerprint": "fpStay",
+                "name": "fpStay",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 8
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W04",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-20"
+            ],
+            "turns": 1,
+            "corpus": "backfill:claude",
+            "fingerprints": [
+              {
+                "fingerprint": "cl",
+                "name": "sh:permission-denied",
+                "message": "",
+                "failure": true,
+                "count": 1,
+                "cumulativeOrdinal": 1
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W02",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-06"
+            ],
+            "turns": 3,
+            "corpus": "backfill:opencode",
+            "fingerprints": [
+              {
+                "fingerprint": "bf",
+                "name": "exc:ValueError",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 2
+              }
+            ]
+          },
+          {
+            "schema": 1,
+            "window": "2025-W03",
+            "sealedAt": "2025-03-10T00:00:00.000Z",
+            "days": [
+              "2025-01-13"
+            ],
+            "turns": 3,
+            "corpus": "backfill:opencode",
+            "fingerprints": [
+              {
+                "fingerprint": "bf",
+                "name": "exc:ValueError",
+                "message": "",
+                "failure": true,
+                "count": 2,
+                "cumulativeOrdinal": 4
+              }
+            ]
+          }
+        ],
+        "labels": [
+          {
+            "fingerprint": "fpStay",
+            "name": "fpStay",
+            "message": "",
+            "corpus": "prime",
+            "label": "persists",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W05",
+            "windowsPresent": 4,
+            "windowsRecurring": 4,
+            "claimedByRefinement": false,
+            "domainActive": true,
+            "securityClass": false,
+            "confounds": [
+              "task-mix",
+              "tool-surface",
+              "measurement-instrument"
+            ]
+          },
+          {
+            "fingerprint": "cl",
+            "name": "sh:permission-denied",
+            "message": "",
+            "corpus": "backfill:claude",
+            "label": null,
+            "sinceWindow": "2025-W04",
+            "lastWindow": "2025-W04",
+            "windowsPresent": 1,
+            "windowsRecurring": 0,
+            "claimedByRefinement": false,
+            "domainActive": true,
+            "securityClass": true,
+            "confounds": [
+              "task-mix",
+              "tool-surface",
+              "measurement-instrument"
+            ],
+            "withheld": "fewer than 4 observed windows (1)"
+          },
+          {
+            "fingerprint": "bf",
+            "name": "exc:ValueError",
+            "message": "",
+            "corpus": "backfill:opencode",
+            "label": null,
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W03",
+            "windowsPresent": 2,
+            "windowsRecurring": 2,
+            "claimedByRefinement": false,
+            "domainActive": true,
+            "securityClass": false,
+            "confounds": [
+              "task-mix",
+              "tool-surface",
+              "measurement-instrument"
+            ],
+            "withheld": "fewer than 4 observed windows (2)"
+          }
+        ],
+        "rate": [
+          {
+            "window": "2025-W02",
+            "appeared": 1,
+            "retired": 0,
+            "newMinusRetired": 1
+          },
+          {
+            "window": "2025-W03",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W04",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W05",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          }
+        ]
+      },
+      "report": {
+        "windowsObserved": 4,
+        "minWindows": 4,
+        "allWithheld": false,
+        "rows": [
+          {
+            "fingerprint": "fpStay",
+            "name": "fpStay",
+            "corpus": "prime",
+            "label": "persists",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W05",
+            "windowsRecurring": 4,
+            "confounds": "task-mix, tool-surface, measurement-instrument",
+            "securityClass": false
+          },
+          {
+            "fingerprint": "bf",
+            "name": "exc:ValueError",
+            "corpus": "backfill:opencode",
+            "label": "withheld: fewer than 4 observed windows (2)",
+            "sinceWindow": "2025-W02",
+            "lastWindow": "2025-W03",
+            "windowsRecurring": 2,
+            "confounds": "task-mix, tool-surface, measurement-instrument",
+            "securityClass": false
+          },
+          {
+            "fingerprint": "cl",
+            "name": "sh:permission-denied",
+            "corpus": "backfill:claude",
+            "label": "withheld: fewer than 4 observed windows (1)",
+            "sinceWindow": "2025-W04",
+            "lastWindow": "2025-W04",
+            "windowsRecurring": 0,
+            "confounds": "task-mix, tool-surface, measurement-instrument",
+            "securityClass": true
+          }
+        ],
+        "rate": [
+          {
+            "window": "2025-W02",
+            "appeared": 1,
+            "retired": 0,
+            "newMinusRetired": 1
+          },
+          {
+            "window": "2025-W03",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W04",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          },
+          {
+            "window": "2025-W05",
+            "appeared": 0,
+            "retired": 0,
+            "newMinusRetired": 0
+          }
+        ],
+        "windows": [
+          {
+            "window": "2025-W02",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W03",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W04",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W05",
+            "corpus": "prime",
+            "days": 1,
+            "turns": 5
+          },
+          {
+            "window": "2025-W04",
+            "corpus": "backfill:claude",
+            "days": 1,
+            "turns": 1
+          },
+          {
+            "window": "2025-W02",
+            "corpus": "backfill:opencode",
+            "days": 1,
+            "turns": 3
+          },
+          {
+            "window": "2025-W03",
+            "corpus": "backfill:opencode",
+            "days": 1,
+            "turns": 3
+          }
+        ]
+      },
+      "lines": [
+        "stable-gap: fpStay recurs in 4 of 4 windows [confounds: task-mix, tool-surface, measurement-instrument]"
+      ],
+      "internalized": []
+    }
+  },
+  "classState": {
+    "schema": 1,
+    "entries": {},
+    "refinements": [],
+    "trustWindows": {
+      "p1": {
+        "proposalId": "p1",
+        "touched": [
+          "memory:keep",
+          "skill:sec-skill",
+          "bad",
+          ":x",
+          "y:"
+        ],
+        "claimedFingerprints": [
+          "fpStay"
+        ]
+      },
+      "p2": {
+        "proposalId": "p2",
+        "touched": [
+          "prompt:keep",
+          "memory:dropme"
+        ],
+        "claimedFingerprints": [
+          "a1b2c3d4e5f60718"
+        ]
+      },
+      "p3": {
+        "proposalId": "p3",
+        "touched": [
+          "memory:sec"
+        ],
+        "claimedFingerprints": [
+          "00ffeeddccbbaa99"
+        ]
+      },
+      "p4": {
+        "proposalId": "p4",
+        "touched": [
+          "memory:via-ledger",
+          "memory:new-one"
+        ],
+        "claimedFingerprints": []
+      }
+    },
+    "failures": {
+      "failures": {
+        "fpNew": {
+          "addressedByProposalIds": [
+            "p4",
+            "absent"
+          ]
+        },
+        "fpStay": {
+          "addressedByProposalIds": []
+        }
+      }
+    }
+  },
+  "classOf": {
+    "dropme": "internalized",
+    "keep": "stable-gap",
+    "new-one": "new",
+    "sec-skill": "stable-gap",
+    "via-ledger": "new"
+  }
+}

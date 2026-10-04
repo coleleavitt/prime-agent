@@ -10,6 +10,7 @@ description = "The prime-agent binary."
 # builds the native product.
 default = [
     "dream",
+    "learning",
     "ledger",
     "ravo",
     "recall",
@@ -20,6 +21,10 @@ default = [
 ]
 # `prime-agent dream`: Dream-RSI's standalone zero-token runner (pa-dream).
 dream = ["dep:pa-dream"]
+# The continual-learning gate: the learning index, `prime-agent learning`, and
+# the Engineer Trajectory Index's digest hook and RAVO recurrence filter
+# (crates/pa-learning).
+learning = ["ravo", "dep:pa-learning"]
 # The failure ledger and the ipython resolution index (crates/pa-ledger).
 ledger = ["dep:pa-ledger"]
 # RAVO: the gate on harness refinements, its lineage and provisional-regression
@@ -53,6 +58,7 @@ pa-trace = { path = "../pa-trace", optional = true }
 pa-ledger = { path = "../pa-ledger", optional = true }
 pa-session-index = { path = "../pa-session-index", optional = true }
 pa-ravo = { path = "../pa-ravo", optional = true }
+pa-learning = { path = "../pa-learning", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }
 tokio = { workspace = true }
 anyhow = { workspace = true }

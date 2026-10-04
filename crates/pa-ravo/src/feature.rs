@@ -66,6 +66,16 @@ pub struct RavoOptions {
     pub replay_sys_path: Vec<String>,
 }
 
+/// Mutes the recurrence refines of fingerprints judged no longer worth a
+/// reminder (TS `_trajectoryInternalizedReminders`); attached by the
+/// composition root through [`RavoFeature::attach_recurrence_filter`].
+pub trait RecurrenceFilter: Send + Sync {
+    /// The fingerprints whose recurrence refine is not queued at this
+    /// boundary. `live_recurring` are the fingerprints recurring in the
+    /// session's own ledger: a filter must never mute one of them.
+    fn muted(&self, context: &SessionFeatureContext, live_recurring: &[String]) -> HashSet<String>;
+}
+
 /// Provisional regressions found at boundaries, waiting for the flush of
 /// the scope whose lineage they belong to.
 #[derive(Default)]
@@ -80,6 +90,7 @@ struct PendingRegressions {
 struct Inner {
     options: RavoOptions,
     ledger: OnceLock<LedgerHandle>,
+    recurrence_filter: OnceLock<Arc<dyn RecurrenceFilter>>,
     /// Refines running per session.
     refines: Mutex<HashMap<String, usize>>,
     regressions: Mutex<HashMap<String, PendingRegressions>>,
@@ -113,6 +124,7 @@ impl RavoFeature {
             inner: Arc::new(Inner {
                 options,
                 ledger: OnceLock::new(),
+                recurrence_filter: OnceLock::new(),
                 refines: Mutex::new(HashMap::new()),
                 regressions: Mutex::new(HashMap::new()),
                 verifier: Arc::default(),
@@ -143,6 +155,11 @@ impl RavoFeature {
     /// Give the feature the ledger's handle; later calls are ignored.
     pub fn attach_ledger(&self, handle: LedgerHandle) {
         let _ = self.inner.ledger.set(handle);
+    }
+
+    /// Mute recurrence refines through `filter`; later calls are ignored.
+    pub fn attach_recurrence_filter(&self, filter: Arc<dyn RecurrenceFilter>) {
+        let _ = self.inner.recurrence_filter.set(filter);
     }
 }
 
@@ -751,12 +768,13 @@ impl RavoLedgerObserver {
     /// triggers each kind once per session.
     fn queue_failure_refines(
         &self,
-        session_id: &str,
+        context: &SessionFeatureContext,
         requester: &RefineRequester,
         boundary: &LedgerBoundary<'_>,
         local: Vec<ProvisionalRegression>,
         global: Vec<ProvisionalRegression>,
     ) {
+        let session_id = context.session_id.as_str();
         let mut triggered = lock(&self.inner.triggered);
         let triggered = triggered.entry(session_id.to_string()).or_default();
         let untriggered = |regressions: Vec<ProvisionalRegression>| -> Vec<ProvisionalRegression> {
@@ -810,10 +828,29 @@ impl RavoLedgerObserver {
             }
             return;
         }
+        // A muted fingerprint stays untriggered: its reminder fires once the
+        // filter lets it through.
+        let muted = match self.inner.recurrence_filter.get() {
+            Some(filter) if !boundary.newly_recurring.is_empty() => {
+                let live: Vec<String> = recurring_failures(boundary.local, None)
+                    .into_iter()
+                    .map(|record| record.fingerprint.id)
+                    .collect();
+                let mut muted = filter.muted(context, &live);
+                for id in &live {
+                    muted.remove(id);
+                }
+                muted
+            }
+            _ => HashSet::new(),
+        };
         let recurring: Vec<FailureRecord> = boundary
             .newly_recurring
             .iter()
-            .filter(|record| !triggered.contains(&format!("recurrence:{}", record.fingerprint.id)))
+            .filter(|record| {
+                !triggered.contains(&format!("recurrence:{}", record.fingerprint.id))
+                    && !muted.contains(&record.fingerprint.id)
+            })
             .cloned()
             .collect();
         if recurring.is_empty() {
@@ -858,7 +895,7 @@ impl LedgerObserver for RavoLedgerObserver {
         }
         let (local, global) = self.find_regressions(context, boundary);
         if let Some(requester) = &requester {
-            self.queue_failure_refines(&context.session_id, requester, boundary, local, global);
+            self.queue_failure_refines(context, requester, boundary, local, global);
         }
     }
 

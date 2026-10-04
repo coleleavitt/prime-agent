@@ -1,0 +1,224 @@
+{
+  "generations": {
+    "gz2": [
+      "{\"level\":\"info\",\"component\":\"trace\",\"msg\":\"span_end\",\"ts\":\"2026-09-01T10:00:00.000Z\",\"name\":\"agent.turn\",\"durationMs\":12.5}",
+      "{\"level\":\"info\",\"component\":\"trace\",\"msg\":\"span_end\",\"ts\":\"2026-09-01T10:00:01.000Z\",\"name\":\"kernel.cell\",\"status\":\"error\",\"error\":\"ModuleNotFoundError: No module named 'paramiko' at /home/u/x.py line 12\",\"durationMs\":3.25}",
+      "not json at all",
+      "{\"ts\":\"2026-09-01T10:00:02.000Z\",\"msg\":\"no component\"}"
+    ],
+    "gz1": [
+      "{\"level\":\"info\",\"component\":\"trace\",\"msg\":\"span_end\",\"ts\":\"2026-09-01T23:59:59.999Z\",\"name\":\"kernel.cell\",\"status\":\"error\",\"error\":\"ModuleNotFoundError: No module named 'httpx' at /tmp/y.py line 99\",\"durationMs\":0.001}",
+      "{\"level\":\"info\",\"component\":\"trace\",\"msg\":\"span_end\",\"ts\":\"2026-09-02T00:00:00.000Z\",\"name\":\"agent.turn\",\"durationMs\":7}",
+      "{\"level\":\"info\",\"component\":\"trace\",\"msg\":\"span_end\",\"ts\":\"2026-09-02T00:00:00.500Z\",\"name\":\"llm.request\",\"status\":\"ok\",\"durationMs\":1.1}",
+      "{\"level\":\"info\",\"component\":\"trace\",\"msg\":\"span_end\",\"ts\":\"2026-09-02T00:00:00.600Z\",\"name\":\"llm.request\",\"status\":\"ok\",\"durationMs\":2.2}",
+      "{\"level\":\"info\",\"component\":\"trace\",\"msg\":\"span_end\",\"ts\":\"2026-09-02T00:00:00.700Z\",\"name\":\"llm.request\",\"status\":\"ok\",\"durationMs\":0.3}"
+    ],
+    "old": [
+      "{\"ts\":\"2026-09-02T01:00:00.000Z\",\"level\":\"info\",\"component\":\"coding-agent.refinement\",\"msg\":\"refinement.committed\",\"proposalId\":\"p-2\",\"addressed\":[\"abc0123456789def\",7,\"fedcba9876543210\"]}",
+      "{\"ts\":\"2026-09-02T01:00:01.000Z\",\"level\":\"info\",\"component\":\"coding-agent.refinement\",\"msg\":\"refinement.committed\",\"proposalId\":\"p-claimless\",\"addressed\":[]}",
+      "{\"level\":\"info\",\"component\":\"trace\",\"msg\":\"span_end\",\"ts\":\"2026-09-02T02:00:00.000Z\",\"name\":\"tool.execute\",\"status\":\"error\",\"error\":\"boom\",\"attrs\":{\"failure.fingerprint\":\"abc0123456789def\"},\"durationMs\":\"12\"}",
+      "{\"level\":\"info\",\"component\":\"trace\",\"msg\":\"span_end\",\"ts\":\"2026-09-02T02:00:01.000Z\",\"name\":\"\",\"durationMs\":1}",
+      "{\"ts\":\"2026-09-02T02:00:02.000Z\",\"level\":\"info\",\"component\":\"other\",\"msg\":\"span_end\",\"name\":\"x\"}",
+      "{\"level\":\"info\",\"component\":\"trace\",\"msg\":\"span_end\",\"ts\":\"bad-day\",\"name\":\"agent.turn\"}",
+      "[1,2,3]"
+    ],
+    "live": [
+      "{\"level\":\"info\",\"component\":\"trace\",\"msg\":\"span_end\",\"ts\":\"2026-09-03T00:00:00.000Z\",\"name\":\"agent.turn\",\"durationMs\":5}",
+      "{\"level\":\"info\",\"component\":\"trace\",\"msg\":\"span_end\",\"ts\":\"2026-09-03T00:00:01.000Z\",\"name\":\"tool.execute\",\"status\":\"error\",\"attrs\":{\"failure.fingerprint\":\"\"}}",
+      ""
+    ]
+  },
+  "files": [
+    "agent.jsonl.old.2.gz",
+    "agent.jsonl.old.1.gz",
+    "agent.jsonl.old",
+    "agent.jsonl"
+  ],
+  "nowMs": 1788998400000,
+  "days": [
+    {
+      "schema": 1,
+      "day": "2026-09-01",
+      "sealedAt": "2026-09-10T00:00:00.000Z",
+      "turns": 1,
+      "fingerprints": [
+        {
+          "fingerprint": "span:846e49ed13b6919a",
+          "name": "kernel.cell",
+          "status": "error",
+          "failure": true,
+          "count": 2,
+          "p50Ms": 0.001,
+          "p95Ms": 3.25,
+          "message": "modulenotfounderror: no module named ? at <path> line #"
+        },
+        {
+          "fingerprint": "span:bd1876553060fd33",
+          "name": "agent.turn",
+          "status": "ok",
+          "failure": false,
+          "count": 1,
+          "p50Ms": 12.5,
+          "p95Ms": 12.5,
+          "message": ""
+        }
+      ],
+      "commits": [],
+      "parseErrors": 0,
+      "sourceFiles": [
+        "agent.jsonl.old.1.gz",
+        "agent.jsonl.old.2.gz"
+      ]
+    },
+    {
+      "schema": 1,
+      "day": "2026-09-02",
+      "sealedAt": "2026-09-10T00:00:00.000Z",
+      "turns": 1,
+      "fingerprints": [
+        {
+          "fingerprint": "span:549b93d8a76fa948",
+          "name": "llm.request",
+          "status": "ok",
+          "failure": false,
+          "count": 3,
+          "p50Ms": 1.1,
+          "p95Ms": 2.2,
+          "message": ""
+        },
+        {
+          "fingerprint": "abc0123456789def",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "message": "boom"
+        },
+        {
+          "fingerprint": "span:bd1876553060fd33",
+          "name": "agent.turn",
+          "status": "ok",
+          "failure": false,
+          "count": 1,
+          "p50Ms": 7,
+          "p95Ms": 7,
+          "message": ""
+        }
+      ],
+      "commits": [
+        {
+          "at": "2026-09-02T01:00:00.000Z",
+          "proposalId": "p-2",
+          "addressed": [
+            "abc0123456789def",
+            "fedcba9876543210"
+          ]
+        }
+      ],
+      "parseErrors": 0,
+      "sourceFiles": [
+        "agent.jsonl.old",
+        "agent.jsonl.old.1.gz"
+      ]
+    },
+    {
+      "schema": 1,
+      "day": "2026-09-03",
+      "sealedAt": "2026-09-10T00:00:00.000Z",
+      "turns": 1,
+      "fingerprints": [
+        {
+          "fingerprint": "span:bc3337e2c0fc587e",
+          "name": "tool.execute",
+          "status": "error",
+          "failure": true,
+          "count": 1,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "message": ""
+        },
+        {
+          "fingerprint": "span:bd1876553060fd33",
+          "name": "agent.turn",
+          "status": "ok",
+          "failure": false,
+          "count": 1,
+          "p50Ms": 5,
+          "p95Ms": 5,
+          "message": ""
+        }
+      ],
+      "commits": [],
+      "parseErrors": 0,
+      "sourceFiles": [
+        "agent.jsonl"
+      ]
+    }
+  ],
+  "parseErrors": 3,
+  "keys": [
+    {
+      "entry": {
+        "name": "kernel.cell",
+        "status": "error",
+        "error": "ModuleNotFoundError: No module named 'paramiko'"
+      },
+      "key": {
+        "fingerprint": "span:8af7b16a28ca05bb",
+        "failure": true,
+        "message": "modulenotfounderror: no module named ?"
+      }
+    },
+    {
+      "entry": {
+        "name": "kernel.cell",
+        "status": "error",
+        "error": "ModuleNotFoundError: No module named 'httpx'"
+      },
+      "key": {
+        "fingerprint": "span:8af7b16a28ca05bb",
+        "failure": true,
+        "message": "modulenotfounderror: no module named ?"
+      }
+    },
+    {
+      "entry": {
+        "name": "kernel.cell",
+        "status": "ok"
+      },
+      "key": {
+        "fingerprint": "span:ff6903cc7fa97155",
+        "failure": false,
+        "message": ""
+      }
+    },
+    {
+      "entry": {
+        "name": "tool.execute",
+        "error": "x",
+        "attrs": {
+          "failure.fingerprint": "0011223344556677"
+        }
+      },
+      "key": {
+        "fingerprint": "0011223344556677",
+        "failure": true,
+        "message": "x"
+      }
+    },
+    {
+      "entry": {
+        "name": "tool.execute",
+        "status": "error",
+        "error": "Error: ENOENT /var/tmp/a.txt 0xdeadbeef 42"
+      },
+      "key": {
+        "fingerprint": "span:dd0d4c5093fb64c8",
+        "failure": true,
+        "message": "error: enoent <path> <hex> #"
+      }
+    }
+  ]
+}

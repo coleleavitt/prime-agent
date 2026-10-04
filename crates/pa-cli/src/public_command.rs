@@ -183,6 +183,8 @@ pub fn handle_public_command(args: &[String]) -> PublicCommandResult {
         "factory" => handled_with_exit(crate::factory_command::run_factory_command(&rest)),
         #[cfg(feature = "dream")]
         "dream" => handled_with_exit(crate::dream_command::run(&rest)),
+        #[cfg(feature = "learning")]
+        "learning" => handled_with_exit(crate::learning_command::run(&rest)),
         #[cfg(feature = "trace")]
         "trace" => handled_with_exit(crate::features::run_trace_reader(
             crate::features::TraceReader::Trace,
@@ -1067,6 +1069,13 @@ mod trace_reader_dispatch_tests {
         );
         let help = format_top_level_help();
         assert!(help.contains("trace") && help.contains("health"), "{help}");
+    }
+
+    #[cfg(not(feature = "learning"))]
+    #[test]
+    fn the_native_product_has_no_learning_command() {
+        assert!(get_command_spec(&["learning"]).is_none());
+        assert!(!handle_public_command(&args(&["learning"])).handled);
     }
 
     #[cfg(not(feature = "trace"))]

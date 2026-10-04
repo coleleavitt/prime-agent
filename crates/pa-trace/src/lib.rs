@@ -28,6 +28,7 @@ use tracing_subscriber::layer::SubscriberExt;
 pub use health::run_health_command;
 pub use layer::TraceLayer;
 pub use otlp::{parse_otlp_headers, OtlpConfig, OtlpStats, OTLP_ENDPOINT_ENV, OTLP_HEADERS_ENV};
+pub use retained::{read_log_text, retained_log_files};
 pub use trace_command::run_trace_command;
 
 /// How long an orderly exit waits for queued log lines and for the OTLP

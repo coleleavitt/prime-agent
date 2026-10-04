@@ -14,7 +14,7 @@ mod verification;
 
 pub use authority::*;
 pub use feature::{
-    ravo_enabled, RavoFeature, RavoOptions, RAVO_ENV, RAVO_GATE_DECISION_EVENT,
+    ravo_enabled, RavoFeature, RavoOptions, RecurrenceFilter, RAVO_ENV, RAVO_GATE_DECISION_EVENT,
     REFINEMENT_LOG_TARGET,
 };
 pub use gate::*;
