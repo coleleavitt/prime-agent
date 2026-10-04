@@ -1,6 +1,7 @@
 //! The headless print runtime: single-shot prompt -> answer over the pa-core
 //! session engine with a real pa-ai provider.
 
+use pa_types::sync::{MutexExt, RwLockExt};
 use std::sync::Arc;
 
 use pa_agent::types::Model as AgentModel;
@@ -628,17 +629,9 @@ fn route_authoritative_stream_fn(
 ) -> StreamFn {
     std::sync::Arc::new(
         move |_requested: AgentModel, context: LlmContext, options: StreamRequestOptions| {
-            let armed = armed_target
-                .lock()
-                .expect("armed image target lock")
-                .clone();
+            let armed = armed_target.lock_or_recover().clone();
             let target = armed
-                .or_else(|| {
-                    provider_target
-                        .read()
-                        .expect("provider target lock")
-                        .clone()
-                })
+                .or_else(|| provider_target.read_or_recover().clone())
                 .expect("provider target set before the first stream");
             let ProviderTarget {
                 api_key,
@@ -685,20 +678,15 @@ fn headless_image_model_router(
             }
             // The routing decision needs the SESSION model: during an armed episode
             // the live slot holds the ROUTED target; un-armed, it is the live slot.
-            let armed_capture = decide_armed_from
-                .lock()
-                .expect("armed-from lock")
-                .as_ref()
-                .map(
-                    |target: &pa_core::session_engine::provider_adapter::ProviderTarget| {
-                        target.model.clone()
-                    },
-                );
+            let armed_capture = decide_armed_from.lock_or_recover().as_ref().map(
+                |target: &pa_core::session_engine::provider_adapter::ProviderTarget| {
+                    target.model.clone()
+                },
+            );
             let session_model = armed_capture
                 .or_else(|| {
                     decide_provider_target
-                        .read()
-                        .expect("provider target lock")
+                        .read_or_recover()
                         .as_ref()
                         .map(|target| target.model.clone())
                 })
@@ -744,9 +732,9 @@ fn headless_image_model_router(
         std::sync::Arc::new(move |route: Option<&pa_core::models::ResolvedImageModel>| {
             if let Some(resolved) = route {
                 // The first swap of the episode captures the session target it replaces.
-                let mut armed_from = armed_from.lock().expect("armed-from lock");
+                let mut armed_from = armed_from.lock_or_recover();
                 if armed_from.is_none() {
-                    armed_from.clone_from(&provider_target.read().expect("provider target lock"));
+                    armed_from.clone_from(&provider_target.read_or_recover());
                 }
                 // The routed model's request auth resolves like the
                 // session model's did at startup (registry + headers).
@@ -761,17 +749,14 @@ fn headless_image_model_router(
                     model: resolved.model.clone(),
                     service_tier: resolved.service_tier,
                 };
-                *armed_to.lock().expect("armed-to lock") = Some(target.clone());
-                *provider_target.write().expect("provider target lock") = Some(target);
+                *armed_to.lock_or_recover() = Some(target.clone());
+                *provider_target.write_or_recover() = Some(target);
             } else {
                 // Restore the captured session target ONLY when the slot still holds the routed
                 // target the arm wrote.
-                let captured = armed_from.lock().expect("armed-from lock").take();
-                let routed = armed_to.lock().expect("armed-to lock").take();
-                let current = provider_target
-                    .read()
-                    .expect("provider target lock")
-                    .clone();
+                let captured = armed_from.lock_or_recover().take();
+                let routed = armed_to.lock_or_recover().take();
+                let current = provider_target.read_or_recover().clone();
                 // The full serving target, credentials included: a switch may keep the same
                 // id while rotating its api key; the guard treats that slot as switched.
                 let still_routed = match (&current, &routed) {
@@ -785,7 +770,7 @@ fn headless_image_model_router(
                 };
                 if still_routed {
                     if let Some(target) = captured.or(current) {
-                        *provider_target.write().expect("provider target lock") = Some(target);
+                        *provider_target.write_or_recover() = Some(target);
                     }
                 }
             }
