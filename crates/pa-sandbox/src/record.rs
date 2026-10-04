@@ -6,6 +6,8 @@
 //! the SDK and backend). A malformed body is a typed `invalid_response`
 //! error, never a silent default.
 
+#![cfg_attr(test, allow(clippy::float_cmp))]
+
 use crate::error::SandboxError;
 use crate::types::{Sandbox, SandboxStatus};
 use serde::Deserialize;
