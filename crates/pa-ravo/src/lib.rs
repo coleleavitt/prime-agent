@@ -11,6 +11,7 @@ mod referee;
 mod runner;
 mod trigger;
 mod trust;
+mod trust_adjudication;
 mod verification;
 
 pub use authority::*;
@@ -24,3 +25,4 @@ pub use reducer::*;
 pub use referee::*;
 pub use runner::{PythonReplayRunner, DEFAULT_REPLAY_TIMEOUT};
 pub use trust::*;
+pub use trust_adjudication::*;
