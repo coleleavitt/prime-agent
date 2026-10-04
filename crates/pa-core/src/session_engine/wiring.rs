@@ -119,6 +119,15 @@ impl AgentSession {
         self.agent_dir = Some(agent_dir);
     }
 
+    /// Bind the refinement gate an installed feature judges this session's
+    /// refinements with (see [`crate::refinement::gate`]).
+    pub fn set_refinement_gate(
+        &mut self,
+        gate: Option<std::sync::Arc<dyn crate::refinement::gate::RefinementGate>>,
+    ) {
+        self.refinement_gate = gate;
+    }
+
     /// Bind the kernel-state probe behind the post-compaction
     /// `ipython_state` notice (the engine wiring hands over the session's
     /// kernel provisioner, TS `AgentSession._ipythonKernelProvisioner`).

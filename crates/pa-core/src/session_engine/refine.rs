@@ -12,6 +12,7 @@ use crate::refinement::executor::{
     apply_refinement_plan, plan_refinement, review_auto_refine, AutoRefineReview,
     AutoRefineReviewContext, RefineOptions as CoreRefineOptions, RefinementPlan,
 };
+use crate::refinement::gate::{GateAdmission, RefinementGateRequest, RefinementGating};
 use crate::refinement::{
     append_global_refinement, format_refinement_notice_body, load_global_refinement_history,
     load_harness_state, merge_harness_states, save_harness_state, HarnessScope, RefinementResult,
@@ -92,7 +93,9 @@ pub enum RefinementSource {
 }
 
 impl RefinementSource {
-    fn as_str(self) -> &'static str {
+    /// The TS source label (`auto`, `user`, `self`).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
         match self {
             RefinementSource::Auto => "auto",
             RefinementSource::User => "user",
@@ -308,6 +311,48 @@ pub async fn execute_refinement_with_rows(
     refine_call: crate::refinement::executor::RefinerFn,
     agent_dir: Option<&Path>,
 ) -> anyhow::Result<(RefinementResult, Vec<String>)> {
+    execute_refinement_gated(
+        session,
+        transcript,
+        global_harness_dir,
+        model,
+        options,
+        source,
+        refine_call,
+        agent_dir,
+        None,
+    )
+    .await
+}
+
+/// [`execute_refinement_with_rows`] judged by an installed feature's gate
+/// (`gating`, see [`crate::refinement::gate`]): a planned, non-empty,
+/// non-rollback proposal is evaluated before it applies; a refused one
+/// applies nothing and is recorded as its rejected result (audit and
+/// outcome rows, and the global history for a global refine), and the
+/// verdict records what happened in the state the funnel saves. `None`
+/// runs the native, ungated flow.
+///
+/// # Errors
+///
+/// Returns the same errors as [`execute_refinement`], and the gate's
+/// evaluation error.
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_refinement_gated(
+    session: &mut SessionManager,
+    transcript: RefinementTranscript<'_>,
+    global_harness_dir: &Path,
+    model: &pa_types::ai::Model,
+    options: &RefineOptions,
+    source: RefinementSource,
+    refine_call: crate::refinement::executor::RefinerFn,
+    agent_dir: Option<&Path>,
+    gating: Option<RefinementGating>,
+) -> anyhow::Result<(RefinementResult, Vec<String>)> {
+    // Held until this refine's harness write landed or it failed.
+    let _refine_guard = gating
+        .as_ref()
+        .and_then(|gating| gating.gate.begin_refine());
     let RefinementTranscript {
         messages,
         refinement_history,
@@ -370,6 +415,27 @@ pub async fn execute_refinement_with_rows(
     plan = strip_display_prefixes(plan);
 
     let target_scope = plan.rollback_scope.unwrap_or(requested_scope);
+    // Rollbacks are safety actions and an empty proposal is no candidate:
+    // neither meets the gate.
+    let verdict = match gating {
+        Some(gating) if plan.rollback_of.is_none() && !plan.proposal.edits.is_empty() => {
+            gating
+                .gate
+                .evaluate(RefinementGateRequest {
+                    proposal_id: plan.id.clone(),
+                    proposal: plan.proposal.clone(),
+                    scope: target_scope,
+                    baseline_state: baseline_state.clone(),
+                    planning_state: planning_state.clone(),
+                    messages: messages.to_vec(),
+                    model: model.clone(),
+                    source,
+                    model_call: gating.model_call,
+                })
+                .await?
+        }
+        _ => None,
+    };
     let target_dir = match target_scope {
         HarnessScope::Global => global_harness_dir.to_path_buf(),
         HarnessScope::Local => local_harness_dir.clone(),
@@ -393,6 +459,17 @@ pub async fn execute_refinement_with_rows(
         }
         None => false,
     };
+    if let Some(verdict) = &verdict {
+        if let GateAdmission::Reject(rejected) = verdict.admit(&plan.proposal, &state) {
+            let mut rejected = *rejected;
+            if verdict.record_rejection(&mut state) {
+                rejected.harness_state_path = save_harness_state(&target_dir, &state)?
+                    .to_string_lossy()
+                    .to_string();
+            }
+            return record_rejected_refinement(session, rejected, global_harness_dir, target_scope);
+        }
+    }
     let mut result = apply_refinement_plan(
         &mut state,
         plan,
@@ -400,6 +477,9 @@ pub async fn execute_refinement_with_rows(
         Some(baseline_state),
         factory_enabled,
     );
+    if let Some(verdict) = &verdict {
+        verdict.record_application(&mut state, &mut result);
+    }
     result.harness_state_path = save_harness_state(&target_dir, &state)?
         .to_string_lossy()
         .to_string();
@@ -439,6 +519,38 @@ pub async fn execute_refinement_with_rows(
         context_row_ids.push(notice_id);
     }
     Ok((result, context_row_ids))
+}
+
+/// Record a refinement the gate refused: nothing applied, so the audit and
+/// outcome rows land (and the global history for a global refine), and no
+/// model-facing notice.
+fn record_rejected_refinement(
+    session: &mut SessionManager,
+    rejected: RefinementResult,
+    global_harness_dir: &Path,
+    target_scope: HarnessScope,
+) -> anyhow::Result<(RefinementResult, Vec<String>)> {
+    if target_scope == HarnessScope::Global {
+        append_global_refinement(global_harness_dir, &rejected)?;
+    }
+    let (_, audit_write) = session.append_custom_entry_retained(
+        REFINEMENT_AUDIT_CUSTOM_TYPE,
+        Some(serde_json::to_value(&rejected)?),
+    );
+    let outcome = create_refinement_outcome_message(&rejected);
+    let (outcome_id, outcome_write) = session.append_custom_message_retained(
+        &outcome.custom_type,
+        outcome.content.clone(),
+        outcome.display,
+        outcome.details.clone(),
+    );
+    if let Some(error) = audit_write {
+        anyhow::bail!("refinement audit row not persisted: {error}");
+    }
+    if let Some(error) = outcome_write {
+        anyhow::bail!("refinement outcome row not persisted: {error}");
+    }
+    Ok((rejected, vec![outcome_id]))
 }
 
 /// `/refine` request options (session layer).
@@ -705,6 +817,7 @@ mod tests {
             harness_state_path: String::new(),
             rollback_of: None,
             scope: Some(HarnessScope::Local),
+            extensions: serde_json::Map::new(),
         };
         let outcome = create_refinement_outcome_message(&result);
         assert_eq!(outcome.custom_type, "refinement_outcome");
@@ -1194,5 +1307,287 @@ Reviewer instructions: record it"
         assert!(
             !global_state.entries[&crate::refinement::RefinementKind::Memory].contains_key("g1")
         );
+    }
+
+    /// A stub gate: refuses or admits every proposal, records a `stub` key
+    /// in the state it saves and a `stubReport` key on the result, and
+    /// counts the refines it was held across.
+    struct StubGate {
+        admit: bool,
+        held: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        evaluated: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    struct StubVerdict {
+        admit: bool,
+        judged: String,
+    }
+
+    struct StubHold(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    impl Drop for StubHold {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    impl crate::refinement::gate::RefinementGate for StubGate {
+        fn begin_refine(&self) -> Option<crate::refinement::gate::RefineGuard> {
+            self.held.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Some(Box::new(StubHold(std::sync::Arc::clone(&self.held))))
+        }
+
+        fn evaluate(
+            &self,
+            request: RefinementGateRequest,
+        ) -> crate::features::FeatureFuture<
+            anyhow::Result<Option<Box<dyn crate::refinement::gate::RefinementGateVerdict>>>,
+        > {
+            let admit = self.admit;
+            let evaluated = std::sync::Arc::clone(&self.evaluated);
+            let held = self.held.load(std::sync::atomic::Ordering::SeqCst);
+            Box::pin(async move {
+                let reply = (request.model_call)(
+                    request.model.clone(),
+                    "judge",
+                    request.proposal.summary.clone(),
+                )
+                .await?;
+                let judged = reply
+                    .content
+                    .iter()
+                    .find_map(|block| match block {
+                        pa_types::ai::AssistantContentBlock::Text(text) => Some(text.text.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                evaluated.lock().unwrap().push(format!(
+                    "{} {} {:?} held={held}",
+                    request.proposal_id.starts_with("refine_"),
+                    request.source.as_str(),
+                    request.scope
+                ));
+                Ok(Some(Box::new(StubVerdict { admit, judged })
+                    as Box<dyn crate::refinement::gate::RefinementGateVerdict>))
+            })
+        }
+    }
+
+    impl crate::refinement::gate::RefinementGateVerdict for StubVerdict {
+        fn admit(
+            &self,
+            proposal: &crate::refinement::planner::RefinementProposal,
+            _current: &crate::refinement::HarnessState,
+        ) -> GateAdmission {
+            if self.admit {
+                return GateAdmission::Apply;
+            }
+            let mut extensions = serde_json::Map::new();
+            extensions.insert("stubReport".to_string(), json!(self.judged));
+            GateAdmission::Reject(Box::new(RefinementResult {
+                id: "refused".to_string(),
+                summary: format!("refused: {}", proposal.summary),
+                rationale: proposal.rationale.clone(),
+                expected_outcome: proposal.expected_outcome.clone(),
+                applied_edits: vec![],
+                harness_state_path: String::new(),
+                rollback_of: None,
+                scope: Some(HarnessScope::Local),
+                extensions,
+            }))
+        }
+
+        fn record_rejection(&self, state: &mut crate::refinement::HarnessState) -> bool {
+            state
+                .extensions
+                .insert("stub".to_string(), json!({ "rejected": 1 }));
+            true
+        }
+
+        fn record_application(
+            &self,
+            state: &mut crate::refinement::HarnessState,
+            result: &mut RefinementResult,
+        ) {
+            state
+                .extensions
+                .insert("stub".to_string(), json!({ "applied": 1 }));
+            result
+                .extensions
+                .insert("stubReport".to_string(), json!(self.judged));
+        }
+    }
+
+    fn stub_gating(
+        admit: bool,
+    ) -> (
+        RefinementGating,
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    ) {
+        let held = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let evaluated = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let gating = RefinementGating {
+            gate: std::sync::Arc::new(StubGate {
+                admit,
+                held: std::sync::Arc::clone(&held),
+                evaluated: std::sync::Arc::clone(&evaluated),
+            }),
+            model_call: seam("judged ok"),
+        };
+        (gating, held, evaluated)
+    }
+
+    const MEMORY_REPLY: &str = r#"{"summary":"note it","rationale":"repeated","expectedOutcome":"recall","edits":[{"action":"create","kind":"memory","id":"m1","title":"Tactic","content":"Use tactic A"}]}"#;
+
+    fn custom_types(session: &SessionManager) -> Vec<String> {
+        session
+            .get_all_entries()
+            .iter()
+            .filter_map(|entry| match entry {
+                FileEntry::CustomMessage { payload, .. } => Some(payload.custom_type.clone()),
+                FileEntry::Custom { payload, .. } => Some(payload.custom_type.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A gate that refuses a proposal: nothing applies, the gate's own
+    /// result is what the session records (audit and outcome rows, no
+    /// model-facing notice), and the state the verdict updated is saved.
+    #[tokio::test]
+    async fn a_refusing_gate_applies_nothing_and_records_its_result() {
+        let dir = TempDir::new().unwrap();
+        let mut session = persisted_session(&dir);
+        session.append_message(user_message("seed")).unwrap();
+        let global_dir = dir.path().join("harness");
+        let (gating, held, evaluated) = stub_gating(false);
+        let (result, rows) = execute_refinement_gated(
+            &mut session,
+            RefinementTranscript {
+                messages: &[user_message("do a thing twice")],
+                refinement_history: &[],
+            },
+            &global_dir,
+            &test_model(),
+            &RefineOptions::default(),
+            RefinementSource::User,
+            seam(MEMORY_REPLY),
+            None,
+            Some(gating),
+        )
+        .await
+        .unwrap();
+        let harness_dir =
+            crate::refinement::get_local_harness_state_dir(Some(session.get_session_dir()))
+                .unwrap();
+        let mut extensions = serde_json::Map::new();
+        extensions.insert("stubReport".to_string(), json!("judged ok"));
+        assert_eq!(
+            result,
+            RefinementResult {
+                id: "refused".to_string(),
+                summary: "refused: note it".to_string(),
+                rationale: "repeated".to_string(),
+                expected_outcome: "recall".to_string(),
+                applied_edits: vec![],
+                harness_state_path: crate::refinement::get_harness_state_path(&harness_dir)
+                    .to_string_lossy()
+                    .to_string(),
+                rollback_of: None,
+                scope: Some(HarnessScope::Local),
+                extensions,
+            }
+        );
+        assert_eq!(rows.len(), 1);
+        let state = load_harness_state(&harness_dir, HarnessScope::Local);
+        assert!(state.entries[&crate::refinement::RefinementKind::Memory].is_empty());
+        assert_eq!(
+            state.extensions.get("stub"),
+            Some(&json!({ "rejected": 1 }))
+        );
+        assert_eq!(
+            custom_types(&session),
+            [REFINEMENT_AUDIT_CUSTOM_TYPE, REFINEMENT_OUTCOME_CUSTOM_TYPE]
+        );
+        assert_eq!(
+            evaluated.lock().unwrap().clone(),
+            ["true user Local held=1"]
+        );
+        assert_eq!(held.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    /// An admitting gate: the edits apply, and the verdict's records land
+    /// in the saved state and on the recorded result.
+    #[tokio::test]
+    async fn an_admitting_gate_applies_and_records_into_state_and_result() {
+        let dir = TempDir::new().unwrap();
+        let mut session = persisted_session(&dir);
+        session.append_message(user_message("seed")).unwrap();
+        let global_dir = dir.path().join("harness");
+        let (gating, held, _) = stub_gating(true);
+        let (result, _) = execute_refinement_gated(
+            &mut session,
+            RefinementTranscript {
+                messages: &[user_message("do a thing twice")],
+                refinement_history: &[],
+            },
+            &global_dir,
+            &test_model(),
+            &RefineOptions::default(),
+            RefinementSource::Auto,
+            seam(MEMORY_REPLY),
+            None,
+            Some(gating),
+        )
+        .await
+        .unwrap();
+        assert!(result.applied_edits[0].applied);
+        assert_eq!(
+            result.extensions.get("stubReport"),
+            Some(&json!("judged ok"))
+        );
+        let harness_dir =
+            crate::refinement::get_local_harness_state_dir(Some(session.get_session_dir()))
+                .unwrap();
+        let state = load_harness_state(&harness_dir, HarnessScope::Local);
+        assert!(state.entries[&crate::refinement::RefinementKind::Memory].contains_key("m1"));
+        assert_eq!(state.extensions.get("stub"), Some(&json!({ "applied": 1 })));
+        assert_eq!(
+            custom_types(&session),
+            [
+                REFINEMENT_AUDIT_CUSTOM_TYPE,
+                REFINEMENT_OUTCOME_CUSTOM_TYPE,
+                REFINEMENT_NOTICE_CUSTOM_TYPE
+            ]
+        );
+        assert_eq!(held.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    /// An empty proposal is no candidate: the gate is never consulted.
+    #[tokio::test]
+    async fn an_empty_proposal_never_meets_the_gate() {
+        let dir = TempDir::new().unwrap();
+        let mut session = persisted_session(&dir);
+        let global_dir = dir.path().join("harness");
+        let (gating, _, evaluated) = stub_gating(false);
+        let (result, _) = execute_refinement_gated(
+            &mut session,
+            RefinementTranscript {
+                messages: &[user_message("nothing to learn")],
+                refinement_history: &[],
+            },
+            &global_dir,
+            &test_model(),
+            &RefineOptions::default(),
+            RefinementSource::User,
+            seam(r#"{"summary":"nothing","edits":[]}"#),
+            None,
+            Some(gating),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.summary, "nothing");
+        assert!(evaluated.lock().unwrap().is_empty());
     }
 }

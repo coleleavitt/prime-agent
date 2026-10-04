@@ -31,6 +31,10 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
      appended to the result the model sees), `on_message_end` (every finalized message, in order, non-blocking),
      `on_agent_end` (every run end, non-blocking), and `flush` (bounded, once at process exit); the context carries the
      session's artifact dir. Installed only when a feature is.
+   - refinement gate: `SessionFeature::refinement_gate` hands the session a `pa_core::refinement::gate::RefinementGate`
+     that evaluates every planned, non-empty, non-rollback refinement (with one model call), admits or refuses its edit
+     set against the store re-read at apply time, records its own keys in the saved harness state and on the
+     `RefinementResult` (`extensions`), and may hold a guard across the whole refine.
    Seams to add as features need them: system-prompt layer providers, turn-start observers.
 5. **Data ownership.** A crate owns its files under `~/.prime/agent/<feature>/` (or the session artifact dir) and its
    key in `harness_state.json` (`HarnessState::extensions["<feature>"]`). It never rewrites another crate's data.

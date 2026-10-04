@@ -182,6 +182,9 @@ pub struct AgentSession {
     /// resolves it (verification harnesses building the session directly
     /// keep `None`, which reads as the fail-closed disabled default).
     agent_dir: Option<std::path::PathBuf>,
+    /// The refinement gate an installed feature judges this session's
+    /// refinements with; `None` in the native product.
+    refinement_gate: Option<std::sync::Arc<dyn crate::refinement::gate::RefinementGate>>,
     /// Serializes notice admissions with parent input and generation close.
     terminal_admission: tokio::sync::Mutex<TerminalAdmission>,
     /// Agent-message reply IDs pre-synced by the parent inbox. Ordinary
@@ -289,6 +292,7 @@ impl AgentSession {
             semantic_edges: std::sync::Mutex::new(None),
             side_question_stream_fn: std::sync::Mutex::new(None),
             agent_dir: None,
+            refinement_gate: None,
             terminal_admission: tokio::sync::Mutex::new(TerminalAdmission::default()),
             pre_synced_reply_ids,
             terminal_pump_shutdown,
