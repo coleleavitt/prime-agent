@@ -48,15 +48,15 @@ pub(crate) fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<(
     write_private_file_synced(path, bytes, false, false)
 }
 
-/// Set `path`'s permission bits (a no-op off unix).
+/// Set `path`'s permission bits.
 #[cfg(unix)]
 pub(crate) fn set_mode(path: &Path, mode: u32) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt as _;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
 }
 
-/// Set `path`'s permission bits (a no-op off unix).
+/// No mode bits off unix: the file keeps its ACL; only confirm it exists.
 #[cfg(not(unix))]
-pub(crate) fn set_mode(_path: &Path, _mode: u32) -> std::io::Result<()> {
-    Ok(())
+pub(crate) fn set_mode(path: &Path, _mode: u32) -> std::io::Result<()> {
+    std::fs::metadata(path).map(|_| ())
 }
