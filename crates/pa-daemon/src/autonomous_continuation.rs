@@ -3,6 +3,7 @@
 //! (`_getContinuationMessages`), churning INSIDE the one prompt wait - no
 //! run boundary between continuation turns, one `agent_end` per prompt wait.
 
+use pa_types::sync::{MutexExt, RwLockExt};
 use std::sync::Arc;
 
 use pa_core::session_engine::provider_adapter::json_round_trip;
@@ -26,10 +27,7 @@ pub(crate) struct AutonomousBoundaryMirror {
 impl AgentSessionEngine {
     /// The built session's consult mirror (cleared with the runtime's retirement).
     fn autonomous_boundary_mirror(&self) -> Option<AutonomousBoundaryMirror> {
-        self.autonomous_boundary
-            .lock()
-            .expect("autonomous boundary lock")
-            .clone()
+        self.autonomous_boundary.lock_or_recover().clone()
     }
 }
 
@@ -41,11 +39,7 @@ impl AgentSessionEngine {
         &self,
         agent: &Arc<pa_agent::agent::Agent>,
     ) {
-        let weak = self
-            .self_weak
-            .lock()
-            .expect("engine self weak lock")
-            .clone();
+        let weak = self.self_weak.lock_or_recover().clone();
         let Some(weak) = weak else {
             return;
         };
@@ -68,12 +62,8 @@ impl AgentSessionEngine {
 
     /// Register the engine's own arc (the weak the in-run continuation hook
     /// upgrades): the worker calls this once after wrapping the engine.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the self-weak mutex is poisoned.
     pub fn register_arc(self: &Arc<Self>) {
-        *self.self_weak.lock().expect("engine self weak lock") = Some(Arc::downgrade(self));
+        *self.self_weak.lock_or_recover() = Some(Arc::downgrade(self));
     }
 
     /// The hook's consult for one settled turn (TS `_getContinuationMessages`):
@@ -115,10 +105,7 @@ impl AgentSessionEngine {
         // stops; the settled boundary compacts and hands the held text to the queue lanes.
         if self.autonomous_threshold_due().await {
             if let Some(text) = self.autonomous_follow_up_text(message).await {
-                *self
-                    .held_autonomous_continuation
-                    .lock()
-                    .expect("held autonomous continuation lock") = Some(text);
+                *self.held_autonomous_continuation.lock_or_recover() = Some(text);
             }
             return Vec::new();
         }
@@ -138,12 +125,7 @@ impl AgentSessionEngine {
         message: &pa_agent::types::AssistantMessage,
     ) -> Option<String> {
         let message = json_round_trip::<_, pa_types::ai::AssistantMessage>(message)?;
-        let driver = std::sync::Arc::clone(
-            &*self
-                .autonomous_driver
-                .read()
-                .expect("autonomous driver lock"),
-        );
+        let driver = std::sync::Arc::clone(&*self.autonomous_driver.read_or_recover());
         let follow_up = {
             let mut state = self.autonomous.lock().await;
             driver.after_turn(&mut state, &message).await
@@ -157,7 +139,7 @@ impl AgentSessionEngine {
 
     /// Whether an active thread goal owns the continuation wakeup.
     async fn goal_owns_continuation_wakeup(&self) -> bool {
-        let Some(handles) = self.goal_runtime.lock().expect("goal runtime lock").clone() else {
+        let Some(handles) = self.goal_runtime.lock_or_recover().clone() else {
             return false;
         };
         let driver = handles.driver.lock().await;
@@ -252,11 +234,7 @@ impl AgentSessionEngine {
             return;
         };
         if let Some(text) = self.autonomous_follow_up_text(&message).await {
-            let admission = self
-                .autonomous_admission
-                .lock()
-                .expect("autonomous admission lock")
-                .clone();
+            let admission = self.autonomous_admission.lock_or_recover().clone();
             if let Some(admit) = admission {
                 admit(text);
             }
@@ -282,48 +260,23 @@ impl AgentSessionEngine {
 
     /// Wire the worker's autonomous admission sink: the turn loop hands the
     /// held threshold continuation to it at the settled boundary.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the admission mutex is poisoned.
     pub fn set_autonomous_admission(&self, sink: crate::agent_engine::AutonomousAdmission) {
-        *self
-            .autonomous_admission
-            .lock()
-            .expect("autonomous admission lock") = Some(sink);
+        *self.autonomous_admission.lock_or_recover() = Some(sink);
     }
 
     /// Wire the worker's queue purge for held autonomous continuations (the
     /// `/autonomous off` withdrawal).
-    ///
-    /// # Panics
-    ///
-    /// Panics when the queue-purge mutex is poisoned.
     pub fn set_autonomous_queue_purge(&self, purge: std::sync::Arc<dyn Fn() + Send + Sync>) {
-        *self
-            .autonomous_queue_purge
-            .lock()
-            .expect("autonomous queue purge lock") = Some(purge);
+        *self.autonomous_queue_purge.lock_or_recover() = Some(purge);
     }
 
     /// `/autonomous off`: clear the held threshold continuation and the
     /// RLM-work deferral, and withdraw the queued continuation item.
-    ///
-    /// # Panics
-    ///
-    /// Panics when an internal mutex is poisoned.
     pub fn clear_autonomous_continuations(&self) {
-        *self
-            .held_autonomous_continuation
-            .lock()
-            .expect("held autonomous continuation lock") = None;
+        *self.held_autonomous_continuation.lock_or_recover() = None;
         self.autonomous_awaits_rlm_work
             .store(false, std::sync::atomic::Ordering::SeqCst);
-        let purge = self
-            .autonomous_queue_purge
-            .lock()
-            .expect("autonomous queue purge lock")
-            .clone();
+        let purge = self.autonomous_queue_purge.lock_or_recover().clone();
         if let Some(purge) = purge {
             purge();
         }

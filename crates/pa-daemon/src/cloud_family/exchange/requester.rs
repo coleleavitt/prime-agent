@@ -1,6 +1,7 @@
 //! Guest-side half of the exchange: durable requests out, journaled answers
 //! in.
 
+use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -66,11 +67,6 @@ impl CloudFamilyRequester {
     /// Returns an error when the durable request log stalls the append or
     /// the journaled answer rejects the delivery; the outcome is never a
     /// fabricated receipt.
-    ///
-    /// # Panics
-    ///
-    /// Panics when an internal lock is poisoned (a writer panicked while
-    /// holding it).
     pub async fn send_agent_message(
         &self,
         from_remote_session_id: &str,
@@ -99,11 +95,6 @@ impl CloudFamilyRequester {
     ///
     /// Returns an error when the durable request log stalls the append or
     /// the journaled answer rejects the roster fetch.
-    ///
-    /// # Panics
-    ///
-    /// Panics when an internal lock is poisoned (a writer panicked while
-    /// holding it).
     pub async fn request_family_roster(
         &self,
         from_remote_session_id: &str,
@@ -122,13 +113,8 @@ impl CloudFamilyRequester {
     /// Feed one journaled answer command back to its pending request. The
     /// TS default rejection applies when an `agent_message_result` carries
     /// no error.
-    ///
-    /// # Panics
-    ///
-    /// Panics when an internal lock is poisoned (a writer panicked while
-    /// holding it).
     pub fn resolve_result(&self, command: &CloudFamilyCommand) -> ResolveOutcome {
-        let mut pending = self.pending.lock().expect("pending map poisoned");
+        let mut pending = self.pending.lock_or_recover();
         let Some(sender) = pending.remove(command.request_id()) else {
             return ResolveOutcome::UnknownRequestId;
         };
@@ -173,28 +159,15 @@ impl CloudFamilyRequester {
     /// their channels, so each awaiter gets
     /// [`CloudFamilyRequestError::Released`]. New answers for released ids
     /// resolve as unknown.
-    ///
-    /// # Panics
-    ///
-    /// Panics when an internal lock is poisoned (a writer panicked while
-    /// holding it).
     pub fn release(&self) {
-        self.pending.lock().expect("pending map poisoned").clear();
+        self.pending.lock_or_recover().clear();
     }
 
     /// The sequence of the newest admitted request (transport
     /// observability).
-    ///
-    /// # Panics
-    ///
-    /// Panics when an internal lock is poisoned (a writer panicked while
-    /// holding it).
     #[must_use]
     pub fn tail_sequence(&self) -> u64 {
-        self.log
-            .lock()
-            .expect("request log poisoned")
-            .tail_sequence()
+        self.log.lock_or_recover().tail_sequence()
     }
 
     /// Admitted requests after `sequence`, oldest first — the replay view
@@ -205,16 +178,8 @@ impl CloudFamilyRequester {
     ///
     /// Returns the TS cursor problem string when `sequence` is beyond the
     /// event tail.
-    ///
-    /// # Panics
-    ///
-    /// Panics when an internal lock is poisoned (a writer panicked while
-    /// holding it).
     pub fn events_after(&self, sequence: u64) -> Result<Vec<CloudFamilyEvent>, String> {
-        self.log
-            .lock()
-            .expect("request log poisoned")
-            .events_after(sequence)
+        self.log.lock_or_recover().events_after(sequence)
     }
 
     fn append_request(
@@ -223,8 +188,7 @@ impl CloudFamilyRequester {
         stall_message: &str,
     ) -> Result<(), CloudFamilyRequestError> {
         self.log
-            .lock()
-            .expect("request log poisoned")
+            .lock_or_recover()
             .append(payload)
             .map(|_| ())
             .map_err(|_| CloudFamilyRequestError::Stalled(stall_message.to_string()))
@@ -237,8 +201,7 @@ impl CloudFamilyRequester {
     ) -> Result<CloudFamilyRequestOutcome<T>, CloudFamilyRequestError> {
         let (sender, receiver) = oneshot::channel();
         self.pending
-            .lock()
-            .expect("pending map poisoned")
+            .lock_or_recover()
             .insert(request_id.clone(), register(sender));
         let answer = tokio::time::timeout(self.request_timeout, receiver).await;
         match answer {
@@ -247,19 +210,13 @@ impl CloudFamilyRequester {
             Ok(Err(_)) => {
                 // The sender half was dropped without an answer (release
                 // paths drop the map entry only through this send).
-                self.pending
-                    .lock()
-                    .expect("pending map poisoned")
-                    .remove(&request_id);
+                self.pending.lock_or_recover().remove(&request_id);
                 Err(CloudFamilyRequestError::Released)
             }
             Err(_elapsed) => {
                 // Timed out: the request is durably admitted but has no
                 // journaled answer. Never report it delivered or queued.
-                self.pending
-                    .lock()
-                    .expect("pending map poisoned")
-                    .remove(&request_id);
+                self.pending.lock_or_recover().remove(&request_id);
                 Ok(CloudFamilyRequestOutcome::Pending { request_id })
             }
         }

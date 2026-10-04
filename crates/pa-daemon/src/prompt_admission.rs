@@ -4,6 +4,7 @@
 //! clears when the route settles; `cancel_prompt_admission` answers the
 //! TS status ladder.
 
+use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -566,7 +567,7 @@ impl Worker {
             // The enqueue/commit transition holds this same lock. Decide
             // whether the owned admission is still queued atomically with
             // removing it; never abort a different in-flight turn.
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             let status = self.prompt_admissions.cancel(admission_id);
             let queued = core
                 .steering

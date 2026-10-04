@@ -7,6 +7,7 @@
 //! open, never a kernel round-trip; connected rows carry their record-held
 //! tool count).
 
+use pa_types::sync::MutexExt;
 use serde_json::{json, Value};
 
 use crate::protocol::{response_failure, response_success, DaemonResponse};
@@ -40,7 +41,7 @@ impl Worker {
         let roster_manager = std::sync::Arc::clone(&manager);
         let (roster, services, credentials, diagnostics) =
             match tokio::task::spawn_blocking(move || {
-                let mut manager = roster_manager.lock().unwrap();
+                let mut manager = roster_manager.lock_or_recover();
                 // The auth store re-read comes FIRST: the interactive client
                 // stores the api-key credentials through its own storage
                 // instance (the `/mcp` key flow runs client-side), so the
@@ -117,7 +118,7 @@ impl Worker {
         // Gather under a short manager lock; the install (credential store +
         // handshake probe) awaits without holding it.
         let inputs = {
-            let manager = manager.lock().unwrap();
+            let manager = manager.lock_or_recover();
             manager.paste_install_inputs(server)
         };
         let install = match inputs {
@@ -125,7 +126,7 @@ impl Worker {
             Err(message) => Err(message),
         };
         if install.is_ok() {
-            let manager = manager.lock().unwrap();
+            let manager = manager.lock_or_recover();
             manager.note_usage("paste-install", server);
         }
         match install {
@@ -167,7 +168,7 @@ impl Worker {
             );
         };
         let handles = {
-            let manager = manager.lock().unwrap();
+            let manager = manager.lock_or_recover();
             manager.connection_handles()
         };
         match pa_core::mcp::remove_mcp_connection(&handles, server).await {

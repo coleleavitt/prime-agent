@@ -4,6 +4,7 @@
 //! `set_follow_up_mode`, `set_auto_compaction`, `set_auto_retry`, and
 //! `abort_retry`; the wire contracts are TS-verbatim.
 
+use pa_types::sync::MutexExt;
 use serde_json::{json, Value};
 
 use pa_types::ai::{ServiceTier, Transport};
@@ -72,7 +73,7 @@ impl Worker {
         let _replacement_gate = self.replacement_gate.lock().await;
         let backward = payload.get("direction").and_then(Value::as_str) == Some("backward");
         let (scoped, current) = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             (
                 core.scoped_models.clone(),
                 self.engine.model_metadata().and_then(|model| {
@@ -145,7 +146,7 @@ impl Worker {
         {
             let selector = format!("{provider}/{model_id}");
             let cwd = {
-                let core = self.core.lock().unwrap();
+                let core = self.core.lock_or_recover();
                 core.cwd.clone()
             };
             let allowlist =
@@ -186,7 +187,7 @@ impl Worker {
                 }
             }
             let cwd = {
-                let mut core = core.lock().unwrap();
+                let mut core = core.lock_or_recover();
                 if let Some(store) = core.store.as_mut() {
                     let _ = store.persist_entry(
                         "model_change",
@@ -216,7 +217,7 @@ impl Worker {
         // The cycled model must reach the roster surfaces immediately.
         self.push_roster_delta();
         let (thinking_level, service_tier) = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             (
                 self.engine
                     .effective_thinking_level()
@@ -244,7 +245,7 @@ impl Worker {
         // The preference/active pair and the engine's request slot move under one lock: concurrent
         // commands must never see the active tier and the provider target disagree.
         let (changed, clamped) = {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             let clamped = effective_service_tier(core.service_tier, self.engine.as_ref());
             let previous_active = core.active_service_tier;
             core.active_service_tier = clamped;
@@ -263,7 +264,7 @@ impl Worker {
     /// `service_tier_change` row, else the settings default, then re-clamp.
     pub(crate) fn reseed_service_tier_for_replacement(&self) {
         let (restored, cwd) = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             let restored = core.store.as_ref().and_then(|store| {
                 store
                     .has_service_tier()
@@ -274,7 +275,7 @@ impl Worker {
         let default_tier = pa_core::settings::SettingsManager::create(&cwd, &self.config.agent_dir)
             .get_default_service_tier();
         {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             core.service_tier = restored.unwrap_or(Some(default_tier));
         }
         self.clamp_service_tier_for_model();
@@ -325,7 +326,7 @@ impl Worker {
                 }
             }
         }
-        self.core.lock().unwrap().scoped_models.clone_from(scoped);
+        self.core.lock_or_recover().scoped_models.clone_from(scoped);
         response_success(None, "set_scoped_models", None)
     }
 
@@ -392,7 +393,7 @@ impl Worker {
         };
         let effective = effective_service_tier(Some(tier), self.engine.as_ref()).unwrap_or(tier);
         let (preference_changed, effective_changed, cwd) = {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             // The engine's request slot moves under the SAME lock as the core publish:
             // a concurrent turn must never read the new state with the old-tier target.
             self.engine.configure_service_tier(Some(effective));
@@ -446,7 +447,7 @@ impl Worker {
                 None,
             );
         };
-        let core = self.core.lock().unwrap();
+        let core = self.core.lock_or_recover();
         let cwd = core.cwd.clone();
         drop(core);
         let setting = match transport {
@@ -490,14 +491,14 @@ impl Worker {
             _ => pa_core::settings::QueueModeSetting::OneAtATime,
         };
         {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             if command == "set_steering_mode" {
                 core.steering_mode = mode.to_string();
             } else {
                 core.follow_up_mode = mode.to_string();
             }
         }
-        let core = self.core.lock().unwrap();
+        let core = self.core.lock_or_recover();
         let cwd = core.cwd.clone();
         drop(core);
         let mut settings = pa_core::settings::SettingsManager::create(&cwd, &self.config.agent_dir);
@@ -532,7 +533,7 @@ impl Worker {
                 None,
             );
         };
-        let core = self.core.lock().unwrap();
+        let core = self.core.lock_or_recover();
         let cwd = core.cwd.clone();
         drop(core);
         let mut settings = pa_core::settings::SettingsManager::create(&cwd, &self.config.agent_dir);
@@ -552,7 +553,7 @@ impl Worker {
             .get("enabled")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        let core = self.core.lock().unwrap();
+        let core = self.core.lock_or_recover();
         let cwd = core.cwd.clone();
         drop(core);
         let mut settings = pa_core::settings::SettingsManager::create(&cwd, &self.config.agent_dir);
@@ -569,7 +570,7 @@ impl Worker {
         if let Err(response) = self.require_created("abort_retry") {
             return response;
         }
-        self.core.lock().unwrap().retry_abort_requested = true;
+        self.core.lock_or_recover().retry_abort_requested = true;
         response_success(None, "abort_retry", None)
     }
 }

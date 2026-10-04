@@ -3,6 +3,7 @@
 //! pass). Publishers resolve the set under one lock and enqueue into per-connection
 //! bounded queues; a full queue drops with one log line per stall cycle.
 
+use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -30,13 +31,12 @@ impl ClientSubscriptions {
     /// The attached-session list (pause bookkeeping, detach-on-disconnect
     /// routing): the registry may lag this list momentarily, never lead it.
     pub(crate) fn session_ids(&self) -> Vec<String> {
-        self.sessions.lock().unwrap().clone()
+        self.sessions.lock_or_recover().clone()
     }
 
     pub(crate) fn contains(&self, active_session_id: &str) -> bool {
         self.sessions
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .iter()
             .any(|id| id == active_session_id)
     }
@@ -45,7 +45,7 @@ impl ClientSubscriptions {
     /// registry — the registry insertion is the delivery boundary.
     pub(crate) fn attach(&self, registry: &SessionSubscribers, active_session_id: &str) {
         {
-            let mut sessions = self.sessions.lock().unwrap();
+            let mut sessions = self.sessions.lock_or_recover();
             if !sessions.iter().any(|id| id == active_session_id) {
                 sessions.push(active_session_id.to_string());
             }
@@ -58,8 +58,7 @@ impl ClientSubscriptions {
     pub(crate) fn detach(&self, registry: &SessionSubscribers, active_session_id: &str) {
         registry.unregister(active_session_id, &self.connection_id);
         self.sessions
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .retain(|id| id != active_session_id);
     }
 
@@ -75,7 +74,7 @@ impl ClientSubscriptions {
         let was_attached = self.contains(selector);
         if was_attached {
             registry.move_subscription(selector, current, &self.connection_id, self.queue.clone());
-            let mut sessions = self.sessions.lock().unwrap();
+            let mut sessions = self.sessions.lock_or_recover();
             sessions.retain(|id| id != selector);
             if !sessions.iter().any(|id| id == current) {
                 sessions.push(current.to_string());
@@ -87,7 +86,7 @@ impl ClientSubscriptions {
     /// Disconnect: every list entry's registry subscription goes (the list is the
     /// superset, so an attach-in-flight cannot leak).
     pub(crate) fn detach_all(&self, registry: &SessionSubscribers) {
-        for active_session_id in self.sessions.lock().unwrap().clone() {
+        for active_session_id in self.sessions.lock_or_recover().clone() {
             registry.unregister(&active_session_id, &self.connection_id);
         }
     }
@@ -125,7 +124,7 @@ impl SessionSubscribers {
         connection_id: &str,
         queue: mpsc::Sender<Arc<Value>>,
     ) {
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock_or_recover();
         sessions
             .entry(active_session_id.to_string())
             .or_default()
@@ -139,7 +138,7 @@ impl SessionSubscribers {
     }
 
     fn unregister(&self, active_session_id: &str, connection_id: &str) {
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock_or_recover();
         if let Some(subscribers) = sessions.get_mut(active_session_id) {
             subscribers.remove(connection_id);
             if subscribers.is_empty() {
@@ -158,7 +157,7 @@ impl SessionSubscribers {
         connection_id: &str,
         queue: mpsc::Sender<Arc<Value>>,
     ) {
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock_or_recover();
         if let Some(subscribers) = sessions.get_mut(from) {
             subscribers.remove(connection_id);
             if subscribers.is_empty() {
@@ -179,7 +178,7 @@ impl SessionSubscribers {
     /// log); a closed queue prunes its entry.
     pub(crate) fn publish(&self, active_session_id: &str, payload: &Arc<Value>) -> PublishOutcome {
         let mut outcome = PublishOutcome::default();
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock_or_recover();
         let Some(subscribers) = sessions.get_mut(active_session_id) else {
             return outcome;
         };

@@ -5,6 +5,7 @@
 //! only the daemon's own delivery or recovery journal reaches a queue lane with a
 //! reserved kind.
 
+use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -55,7 +56,7 @@ fn pending() -> &'static Mutex<HashMap<String, Instant>> {
 /// 3): eviction could drop a still-live mint; growth is bounded and mints age out.
 pub(crate) fn mint() -> String {
     let nonce = uuid::Uuid::new_v4().to_string();
-    let mut registry = pending().lock().unwrap();
+    let mut registry = pending().lock_or_recover();
     let now = Instant::now();
     registry.retain(|_, minted| now.duration_since(*minted) < MINT_TTL);
     registry.insert(nonce.clone(), now);
@@ -69,7 +70,7 @@ pub(crate) fn consume(nonce: Option<&str>) -> bool {
     let Some(nonce) = nonce else {
         return false;
     };
-    pending().lock().unwrap().remove(nonce).is_some()
+    pending().lock_or_recover().remove(nonce).is_some()
 }
 
 #[cfg(test)]

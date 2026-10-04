@@ -20,6 +20,7 @@
 //! `get_available_models` for discovery, `set_model` /
 //! `set_thinking_level` for the applied selection.
 
+use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -210,25 +211,25 @@ impl DaemonLink {
         };
         let line = serde_json::to_string(&envelope)?;
         let (tx, rx) = oneshot::channel::<DaemonResponse>();
-        self.pending.lock().unwrap().insert(id.clone(), tx);
+        self.pending.lock_or_recover().insert(id.clone(), tx);
         // A request that races the close loses either way: the flag
         // fails it here, or the pending clear already dropped its
         // sender. The flag is stored before the clear, so no request
         // parks unnoticed.
         if self.closed.load(Ordering::SeqCst) {
-            self.pending.lock().unwrap().remove(&id);
+            self.pending.lock_or_recover().remove(&id);
             anyhow::bail!("the daemon connection is closed");
         }
         if self.writer.send(line).is_err() {
             // A closed writer leaves the pending slot behind otherwise; a
             // link that never answers again would grow one entry per
             // request.
-            self.pending.lock().unwrap().remove(&id);
+            self.pending.lock_or_recover().remove(&id);
             anyhow::bail!("the daemon connection is closed");
         }
         match timeout {
             Some(timeout) => tokio::time::timeout(timeout, rx).await.map_err(|_| {
-                self.pending.lock().unwrap().remove(&id);
+                self.pending.lock_or_recover().remove(&id);
                 anyhow::anyhow!("timed out waiting for the daemon response")
             })?,
             None => rx.await,
@@ -307,11 +308,6 @@ pub(crate) struct DaemonAcpState {
 /// socket connect, the startup create, or its attach fails; a daemon that
 /// drops mid-session fails the hosted session's requests instead, exactly
 /// like the TS daemon connection.
-///
-/// # Panics
-///
-/// The frame-consumer task panics when the link's pending-response map
-/// lock is poisoned (a holder panicked while holding it).
 pub async fn run_daemon_attached_acp_mode(options: DaemonAcpOptions) -> anyhow::Result<i32> {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
     let writer = tokio::spawn(async move {
@@ -401,7 +397,7 @@ pub async fn run_daemon_attached_acp_mode(options: DaemonAcpOptions) -> anyhow::
                     }
                     LinkFrame::Response(response) => {
                         let id = response.id.clone().unwrap_or_default();
-                        if let Some(tx) = link.pending.lock().unwrap().remove(&id) {
+                        if let Some(tx) = link.pending.lock_or_recover().remove(&id) {
                             let _ = tx.send(response);
                         }
                     }
@@ -436,7 +432,7 @@ pub async fn run_daemon_attached_acp_mode(options: DaemonAcpOptions) -> anyhow::
             // and fail every later request fast. The flag goes up
             // before the clear; `request` covers the race.
             link.closed.store(true, std::sync::atomic::Ordering::SeqCst);
-            link.pending.lock().unwrap().clear();
+            link.pending.lock_or_recover().clear();
         });
     }
     let binding = bind_daemon_session(&link, &state, options.create.clone()).await?;

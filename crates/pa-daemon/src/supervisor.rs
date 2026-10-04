@@ -19,6 +19,7 @@ mod worker_lifecycle;
 
 use adoption::AdoptionBoot;
 use launch_budget::WORKER_AUTH_FLOOR_MS;
+use pa_types::sync::MutexExt;
 // Called only by the clients sibling module (its `use super::*` glob); unused on the lib target.
 #[allow(unused_imports)]
 use signals_shutdown::daemon_closing_shutdown_event;
@@ -338,10 +339,6 @@ impl Supervisor {
     ///
     /// Returns an error when the socket path cannot be prepared (already in use), the
     /// socket cannot be bound, or the accept loop exhausts its give-up budget.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the telemetry mutex is poisoned (the holder panicked mid-lock).
     pub async fn run(self: Arc<Self>) -> Result<()> {
         // The admission contract (TS daemon-supervisor.ts start():855-857,
         // the choreography slot before prepare/listen and before any
@@ -375,7 +372,7 @@ impl Supervisor {
                 pa_core::session_engine::telemetry::telemetry_switch(&settings),
                 pa_core::session_engine::telemetry::TelemetrySwitch::Env { enabled: false, .. }
             );
-            *self.telemetry.lock().unwrap() = (!env_forced_off).then(|| {
+            *self.telemetry.lock_or_recover() = (!env_forced_off).then(|| {
                 pa_core::session_engine::telemetry::build_client(&settings, &self.options.agent_dir)
             });
         }
@@ -426,7 +423,7 @@ impl Supervisor {
         // `restrictDaemonSocketPath`): the exit cleanup below compares
         // against THIS value, never a fresh read, so a successor's file
         // at the same path survives this supervisor's exit.
-        *self.bound_socket_identity.lock().unwrap() =
+        *self.bound_socket_identity.lock_or_recover() =
             socket::socket_identity(&self.options.socket_path);
         socket::restrict_socket_path(&self.options.socket_path);
         // The optional tailnet TCP listener (TS #2517): binds beside the
@@ -513,7 +510,7 @@ impl Supervisor {
         if self.remote_mesh.is_some() {
             let supervisor = Arc::clone(&self);
             tokio::spawn(async move {
-                let receiver = supervisor.mesh_roster_rx.lock().unwrap().take();
+                let receiver = supervisor.mesh_roster_rx.lock_or_recover().take();
                 if let Some(mut receiver) = receiver {
                     while let Some((changed, removed)) = receiver.recv().await {
                         supervisor.push_mesh_roster_update(&changed, removed);
@@ -545,7 +542,7 @@ impl Supervisor {
         // only when it still holds a dead socket of ours: a successor's live
         // socket at the path survives even a poisoned bind-time capture, and
         // on unix only while this supervisor still holds the socket lease.
-        let expected_identity = self.bound_socket_identity.lock().unwrap().clone();
+        let expected_identity = self.bound_socket_identity.lock_or_recover().clone();
         #[cfg(unix)]
         if pa_types::platform::transport::unix_listener_definitely_closed(&self.options.socket_path)
         {

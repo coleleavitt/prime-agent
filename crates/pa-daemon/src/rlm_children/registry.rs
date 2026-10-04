@@ -2,6 +2,7 @@
 //! deletes with their tombstone receipts, the close walk, the target
 //! lookup/resolution, and the ledger reseed; the close-failure no-op
 //! marker is registry-only.
+use pa_types::sync::MutexExt;
 use std::path::{Path, PathBuf};
 
 use super::{
@@ -253,13 +254,7 @@ impl SupervisorChildSessionsInner {
     /// its usage cursor starts lazy: the first delivery primes it at the
     /// file's tail.
     pub(super) async fn reseed_from_ledger(&self) {
-        let Some(parent_file) = self
-            .identity
-            .lock()
-            .expect("identity lock")
-            .session_file
-            .clone()
-        else {
+        let Some(parent_file) = self.identity.lock_or_recover().session_file.clone() else {
             return;
         };
         let agent_dir = self.agent_dir.clone();
@@ -272,14 +267,7 @@ impl SupervisorChildSessionsInner {
         .unwrap_or_default();
         let mut children = self.children.lock().await;
         // A swap rebound the identity mid-read: its own reseed lists the new session's children.
-        if self
-            .identity
-            .lock()
-            .expect("identity lock")
-            .session_file
-            .as_deref()
-            != Some(parent_file.as_str())
-        {
+        if self.identity.lock_or_recover().session_file.as_deref() != Some(parent_file.as_str()) {
             return;
         }
         children.extend(

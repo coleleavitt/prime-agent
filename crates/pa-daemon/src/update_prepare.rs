@@ -3,6 +3,7 @@
 //! A transaction with watchdogs (spec §2): expiry aborts, deletes the prepared artifacts, and
 //! returns the supervisor to `Serving`.
 
+use pa_types::sync::MutexExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -246,7 +247,7 @@ impl PrepareCoordinator {
     /// Run one operation on the transaction slot, waking the expiry wait
     /// when the operation moved the watchdog budget.
     fn modify<R>(&self, operation: impl FnOnce(&mut Option<PrepareTransaction>) -> R) -> R {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock_or_recover();
         let before = inner.as_ref().and_then(PrepareTransaction::watchdog);
         let output = operation(&mut inner);
         if inner.as_ref().and_then(PrepareTransaction::watchdog) != before {
@@ -396,8 +397,7 @@ impl PrepareCoordinator {
             let moved = self.watchdog_moved.notified();
             let watchdog = self
                 .inner
-                .lock()
-                .unwrap()
+                .lock_or_recover()
                 .as_ref()
                 .and_then(PrepareTransaction::watchdog);
             let Some((deadline_ms, _)) = watchdog else {
@@ -420,8 +420,7 @@ impl PrepareCoordinator {
     /// The state of the active transaction, if any.
     pub(crate) fn active_state(&self) -> Option<PrepareState> {
         self.inner
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .as_ref()
             .map(PrepareTransaction::state)
     }
@@ -431,8 +430,7 @@ impl PrepareCoordinator {
     #[allow(dead_code)]
     pub(crate) fn active_update_id(&self) -> Option<UpdateId> {
         self.inner
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .as_ref()
             .map(|t| t.update_id().clone())
     }

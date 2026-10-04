@@ -7,6 +7,7 @@ use super::{
     RouteAdmission, SnapshotPurpose, Supervisor, Value, WorkerReply, WorkerRequest,
 };
 use anyhow::Context as _;
+use pa_types::sync::MutexExt;
 
 /// The route-level wake outcome: a woken resident, or the fallthrough
 /// error the caller answers (no saved session matched).
@@ -918,7 +919,7 @@ impl Supervisor {
         selector: &str,
     ) -> Option<crate::messaging::WakeOutcome> {
         let mut files: Vec<String> = {
-            let roster = self.roster.lock().unwrap();
+            let roster = self.roster.lock_or_recover();
             roster
                 .by_active_session_id(selector)
                 .map(|row| {
@@ -937,7 +938,7 @@ impl Supervisor {
         // The passive row's durable summary carries the child identity: the depth + agent id
         // ride the create's rest (without `rest.rlmDepth` the revived child never re-passivates).
         let (depth, child_id) = {
-            let roster = self.roster.lock().unwrap();
+            let roster = self.roster.lock_or_recover();
             roster
                 .by_active_session_id(selector)
                 .map_or((0, String::new()), |row| {
@@ -1108,7 +1109,7 @@ impl Supervisor {
             .to_string_lossy()
             .to_string();
         let removed: Vec<String> = {
-            let mut roster = self.roster.lock().unwrap();
+            let mut roster = self.roster.lock_or_recover();
             let agent_id = roster
                 .by_session_file(&canonical)
                 .map(|row| row.agent_id.clone());

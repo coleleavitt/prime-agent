@@ -3,6 +3,7 @@
 //! once, and the turn re-issues on the compacted context. One attempt per
 //! overflow; a new prompt or a settled non-error turn resets it.
 
+use pa_types::sync::MutexExt;
 use serde_json::Value;
 
 use crate::agent_engine::AgentSessionEngine;
@@ -57,10 +58,7 @@ impl AgentSessionEngine {
     /// Reset the overflow recovery state (TS: a message that starts an
     /// agent run and every settled non-error assistant message reset it).
     pub(crate) fn reset_overflow_recovery(&self) {
-        *self
-            .overflow_recovery
-            .lock()
-            .expect("overflow recovery lock") = OverflowRecovery::Idle;
+        *self.overflow_recovery.lock_or_recover() = OverflowRecovery::Idle;
     }
 
     /// The overflow arm at the settled-turn boundary: `assistant` is the
@@ -201,10 +199,7 @@ impl AgentSessionEngine {
         }
         // One recovery attempt per overflow.
         {
-            let mut recovery = self
-                .overflow_recovery
-                .lock()
-                .expect("overflow recovery lock");
+            let mut recovery = self.overflow_recovery.lock_or_recover();
             match *recovery {
                 OverflowRecovery::Idle => *recovery = OverflowRecovery::Attempted,
                 OverflowRecovery::Attempted => {
@@ -268,10 +263,8 @@ impl AgentSessionEngine {
         let controller = std::sync::Arc::new(AbortController::new());
         let signal = controller.signal();
         {
-            *self
-                .auto_compaction_abort
-                .lock()
-                .expect("auto compaction abort lock") = Some(std::sync::Arc::clone(&controller));
+            *self.auto_compaction_abort.lock_or_recover() =
+                Some(std::sync::Arc::clone(&controller));
         }
         let api_key = self.resolve_request_api_key(&model);
         let outcome = {

@@ -4,6 +4,7 @@
 //! THE NO-AUTO-RESUME CONTRACT: a boot never creates a worker the user did
 //! not ask for; due heartbeats stay dormant (restore never fails the boot).
 
+use pa_types::sync::MutexExt;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Mutex;
@@ -76,19 +77,19 @@ impl RestoreProgress {
     /// Record the boot's update identity before serving, and register
     /// the roster rows: a mid-recovery reconnect queues behind its row (spec §10.4).
     pub(crate) fn begin(&self, roster: Option<&UpdateRoster>) {
-        *self.update_id.lock().unwrap() = roster.map(|roster| roster.update_id.clone());
+        *self.update_id.lock_or_recover() = roster.map(|roster| roster.update_id.clone());
         if let Some(roster) = roster {
             self.register_targets(roster);
         }
     }
 
     pub(crate) fn update_id(&self) -> Option<UpdateId> {
-        self.update_id.lock().unwrap().clone()
+        self.update_id.lock_or_recover().clone()
     }
 
     /// The hello resume contract (spec §10.3).
     pub(crate) fn hello_resume(&self) -> DaemonUpdateResume {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock_or_recover();
         DaemonUpdateResume {
             update_id: self.update_id(),
             complete: state.done,
@@ -97,7 +98,7 @@ impl RestoreProgress {
 
     /// Register the roster rows the restore pass will settle.
     fn register_targets(&self, roster: &UpdateRoster) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock_or_recover();
         for row in &roster.sessions {
             state.targets.insert(
                 row.session_id.clone(),
@@ -117,7 +118,7 @@ impl RestoreProgress {
     /// it: the row's waiters wake immediately. Idempotent.
     pub(crate) fn settle_target(&self, selector: &str, failure: Option<String>) {
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock_or_recover();
             let Some(target) = restore_target_mut(&mut state.targets, selector) else {
                 return;
             };
@@ -136,7 +137,7 @@ impl RestoreProgress {
     /// stays queued — the skip still bumps the generation.
     pub(crate) fn settle_adopted(&self, selector: &str) {
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock_or_recover();
             let Some(target) = restore_target_mut(&mut state.targets, selector) else {
                 return;
             };
@@ -156,7 +157,7 @@ impl RestoreProgress {
     /// Mark the pass settled: per-row outcomes, counts, and the waiters' wakeup. Idempotent.
     fn settle(&self, counts: UpdateStatusCounts, failures: Vec<UpdateStatusFailure>) {
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock_or_recover();
             if state.done {
                 return;
             }
@@ -180,7 +181,7 @@ impl RestoreProgress {
 
     /// One row's failure message once settled, if any (spec §10.4).
     fn settled_failure(&self, selector: &str) -> Option<(String, String)> {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock_or_recover();
         let target = restore_target(&state.targets, selector)?;
         target
             .failure
@@ -191,7 +192,7 @@ impl RestoreProgress {
     /// Whether an in-flight pass owns the selector: any roster row the
     /// registry-shaped selector resolves to.
     fn owns_target(&self, selector: &str) -> bool {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock_or_recover();
         !state.done && restore_target(&state.targets, selector).is_some()
     }
 
@@ -201,7 +202,7 @@ impl RestoreProgress {
     async fn wait_for_settle_target(&self, selector: &str) {
         let quiet = std::time::Duration::from_millis(RESTORE_ATTACH_WAIT_MS.max(1));
         let (mut last_generation, mut deadline) = {
-            let state = self.state.lock().unwrap();
+            let state = self.state.lock_or_recover();
             (
                 state.settled_generation,
                 tokio::time::Instant::now() + quiet,
@@ -212,7 +213,7 @@ impl RestoreProgress {
             // between the check and the registration must still wake us.
             let notified = self.notify.notified();
             let (settled, generation) = {
-                let state = self.state.lock().unwrap();
+                let state = self.state.lock_or_recover();
                 (
                     state.done
                         || restore_target(&state.targets, selector)
@@ -543,7 +544,7 @@ impl Supervisor {
 
     /// The `update_restore_status` RPC body (the coordinator's `Restoring` report, spec §9).
     pub(crate) fn restore_status_body(&self) -> serde_json::Value {
-        let state = self.restore.state.lock().unwrap();
+        let state = self.restore.state.lock_or_recover();
         json!({
             "updateId": self.restore.update_id().map(|id| id.to_string()),
             "inFlight": !state.done,

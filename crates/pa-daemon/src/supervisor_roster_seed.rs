@@ -3,6 +3,7 @@
 //! edge-only family seed, and the bounded background hydration that
 //! fills their durable display rows.
 
+use pa_types::sync::MutexExt;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -69,7 +70,7 @@ impl Supervisor {
             {
                 continue;
             }
-            let mut roster = self.roster.lock().unwrap();
+            let mut roster = self.roster.lock_or_recover();
             // Re-check under the lock: never clobber a row that landed during the read.
             if roster.get(&candidate.agent_id).is_some()
                 || roster.has_session_file(&candidate.child_file)
@@ -171,7 +172,7 @@ impl Supervisor {
     pub(crate) async fn deleted_descendant_usage_bucket(
         self: &Arc<Self>,
     ) -> Option<(u64, HashMap<String, SessionUsageSummary>)> {
-        let ticket = self.roster.lock().unwrap().begin_bucket_fold();
+        let ticket = self.roster.lock_or_recover().begin_bucket_fold();
         let bucket = match self.rlm_spawn_ledger_for(None).await {
             Ok(ledger) => {
                 tokio::task::spawn_blocking(move || ledger.deleted_descendant_usage_by_parent())
@@ -211,15 +212,14 @@ impl Supervisor {
             return Vec::new();
         };
         self.roster
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .set_deleted_descendant_usage(ticket, bucket)
     }
 
     /// The seeded candidate's roster row when already present (TS
     /// `roster().has` + `hasSessionFile`): by agent id or session file.
     fn roster_row_for_candidate(&self, candidate: &SeededRosterEntry) -> Option<AgentRosterEntry> {
-        let roster = self.roster.lock().unwrap();
+        let roster = self.roster.lock_or_recover();
         roster
             .get(&candidate.agent_id)
             .or_else(|| roster.by_session_file(&candidate.child_file))
@@ -271,7 +271,7 @@ impl Supervisor {
         let mut changed = Vec::new();
         let mut retry = Vec::new();
         {
-            let mut roster = self.roster.lock().unwrap();
+            let mut roster = self.roster.lock_or_recover();
             for edge in candidates {
                 let candidate = SeededRosterEntry::edge_only(edge);
                 // Present rows never republish; an unhydrated seeded row stays a candidate.
@@ -329,7 +329,7 @@ impl Supervisor {
                 continue;
             }
             {
-                let mut roster = self.roster.lock().unwrap();
+                let mut roster = self.roster.lock_or_recover();
                 // The identity gate: the write-back lands only while the roster
                 // holds the pre-read row.
                 if roster.get(&entry.agent_id) != Some(&entry) {
@@ -345,7 +345,7 @@ impl Supervisor {
     /// row written (a stale snapshot would regress the subscriber's view).
     fn push_seeded_rows(&self, changed: Vec<AgentRosterEntry>) {
         let changed = {
-            let roster = self.roster.lock().unwrap();
+            let roster = self.roster.lock_or_recover();
             changed
                 .into_iter()
                 .filter(|entry| roster.get(&entry.agent_id) == Some(entry))
@@ -359,7 +359,7 @@ impl Supervisor {
     /// Whether the roster still holds exactly the given seeded row (the
     /// identity gate's pre-read half).
     fn seeded_row_unchanged(&self, entry: &AgentRosterEntry) -> bool {
-        let roster = self.roster.lock().unwrap();
+        let roster = self.roster.lock_or_recover();
         roster.get(&entry.agent_id) == Some(entry)
     }
 }

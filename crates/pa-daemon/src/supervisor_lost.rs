@@ -3,6 +3,7 @@
 //! window (sessions persist on disk). Divergence from TS: this port implements the
 //! give-up branch directly, not the TS replacement-supervisor launch.
 
+use pa_types::sync::MutexExt;
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -62,7 +63,7 @@ async fn monitor(worker: Arc<Worker>) {
     loop {
         tokio::time::sleep(delay).await;
         delay = CHECK_INTERVAL;
-        if worker.core.lock().unwrap().shutdown_requested
+        if worker.core.lock_or_recover().shutdown_requested
             || worker.supervisor_claims.load(Ordering::SeqCst) > 0
         {
             absent_since = None;
@@ -76,7 +77,7 @@ async fn monitor(worker: Arc<Worker>) {
         if since.elapsed() < window {
             continue;
         }
-        let ongoing = worker.core.lock().unwrap().has_ongoing_work();
+        let ongoing = worker.core.lock_or_recover().has_ongoing_work();
         if ongoing {
             // TS `hasOngoingSessionWork`: an active run owns the worker a little
             // longer; its turn end lets the next check reconsider.

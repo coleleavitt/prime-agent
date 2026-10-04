@@ -3,6 +3,7 @@
 //! `set_session_entry_label`, `navigate_tree`, `fork`, and
 //! `abort_branch_summary`; the store operations live in [`crate::session_tree`].
 
+use pa_types::sync::MutexExt;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
@@ -63,7 +64,7 @@ impl TreeNavigation {
     /// `get_session_tree`: every entry in file order with its label plus the
     /// current leaf id (TS `getFlatTree` + `getLeafId`).
     pub(crate) fn get_session_tree(&self) -> DaemonResponse {
-        let core = self.core.lock().unwrap();
+        let core = self.core.lock_or_recover();
         match core.store.as_ref() {
             Some(store) => response_success(
                 None,
@@ -85,7 +86,7 @@ impl TreeNavigation {
     /// `get_user_messages_for_forking`: the user messages with text (TS
     /// `getUserMessagesForForking`).
     pub(crate) fn get_user_messages_for_forking(&self) -> DaemonResponse {
-        let core = self.core.lock().unwrap();
+        let core = self.core.lock_or_recover();
         match core.store.as_ref() {
             Some(store) => response_success(
                 None,
@@ -111,7 +112,7 @@ impl TreeNavigation {
             .and_then(Value::as_str)
             .unwrap_or_default();
         let label = payload.get("label").and_then(Value::as_str);
-        let mut core = self.core.lock().unwrap();
+        let mut core = self.core.lock_or_recover();
         match core.store.as_mut() {
             Some(store) => match store.append_label_change(entry_id, label) {
                 Ok(_) => response_success(None, "set_session_entry_label", None),
@@ -148,7 +149,7 @@ impl TreeNavigation {
 
         // Snapshot the tree state under one lock pass; the model call below runs without it.
         let (target, old_leaf, entries) = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             let Some(store) = core.store.as_ref() else {
                 return response_failure(
                     None,
@@ -254,7 +255,7 @@ impl TreeNavigation {
         // Move the leaf and persist the summary entry, then rebuild the engine context.
         let summarized = summary.is_some();
         let (branch_entries, summary_entry) = {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             let Some(store) = core.store.as_mut() else {
                 return response_failure(
                     None,
@@ -343,7 +344,7 @@ impl TreeNavigation {
         self.wait_turn_end().await;
 
         let (target_leaf, selected_text, store, cwd) = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             let Some(store) = core.store.as_ref() else {
                 return Err(response_failure(
                     None,
@@ -440,7 +441,7 @@ impl TreeNavigation {
             tokio::task::spawn_blocking(move || crate::session_store::read_session_info(&primed))
                 .await;
         let previous = {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             core.store.replace(forked)
         };
         // The old store's lease release flushes the window and info
@@ -467,7 +468,7 @@ impl TreeNavigation {
     async fn wait_turn_end(&self) {
         loop {
             let busy = {
-                let mut core = self.core.lock().unwrap();
+                let mut core = self.core.lock_or_recover();
                 if core.busy {
                     core.abort_requested = true;
                     // The interrupted turn's aborted row stays off the wire and out of the
@@ -491,7 +492,7 @@ impl TreeNavigation {
             .await;
         }
         // The interrupted turn settled; the suppression owns only that drain window.
-        self.core.lock().unwrap().suppress_aborted_row = false;
+        self.core.lock_or_recover().suppress_aborted_row = false;
     }
 }
 
@@ -577,12 +578,11 @@ impl Worker {
                 // its own session reference immediately — same pane, new
                 // session).
                 let (active, session_ref) = {
-                    let core = self.core.lock().unwrap();
+                    let core = self.core.lock_or_recover();
                     (core.busy, Worker::herdr_session_ref(&core))
                 };
                 self.herdr
-                    .lock()
-                    .unwrap()
+                    .lock_or_recover()
                     .session_started(active, session_ref);
                 let mut data = json!({ "cancelled": false });
                 if let Some(selected_text) = selected_text {
@@ -595,7 +595,7 @@ impl Worker {
                 // installing the successor: the reporter goes silent (the
                 // TS `session_shutdown` non-quit arm — never release, the
                 // pane is not the worker's to free here).
-                *self.herdr.lock().unwrap() = crate::herdr::HerdrReporter::default();
+                *self.herdr.lock_or_recover() = crate::herdr::HerdrReporter::default();
                 response_failure(None, "fork", &error, None)
             }
         }

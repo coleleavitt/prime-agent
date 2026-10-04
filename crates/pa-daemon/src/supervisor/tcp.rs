@@ -3,6 +3,7 @@
 //! same JSONL protocol as the unix socket through the ordinary client
 //! connection handler - the only difference is the trust mode.
 
+use pa_types::sync::MutexExt;
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -89,7 +90,7 @@ impl Supervisor {
             .await
             .with_context(|| format!("bind daemon TCP listener {address}"))?;
         let listener = Arc::new(listener);
-        *self.tcp_listener.lock().unwrap() = Some(Arc::clone(&listener));
+        *self.tcp_listener.lock_or_recover() = Some(Arc::clone(&listener));
         self.log_line(&format!(
             "Prime Agent daemon TCP listener listening on {address} (token file: {}{})",
             token.token_path.display(),
@@ -167,7 +168,7 @@ impl Supervisor {
         // Release the port: take the listener out of the supervisor (the
         // accept loop holds the last Arc) and drop it.
         drop(listener);
-        let held = self.tcp_listener.lock().unwrap().take();
+        let held = self.tcp_listener.lock_or_recover().take();
         drop(held);
     }
 }

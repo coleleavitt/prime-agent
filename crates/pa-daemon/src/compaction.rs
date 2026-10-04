@@ -3,6 +3,7 @@
 //! their exact TS shapes, the `isCompacting` state flag, and the durable
 //! compaction entry the worker appends to the session store.
 
+use pa_types::sync::MutexExt;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Map, Value};
@@ -45,7 +46,7 @@ impl CompactionManager {
     /// `abort_compaction`: abort the manual run's controller and the automatic run.
     /// Succeeds whether or not a run is in flight (the TS handler always replies success).
     pub(crate) fn abort(&self) {
-        let controller = self.abort.lock().unwrap().clone();
+        let controller = self.abort.lock_or_recover().clone();
         if let Some(controller) = controller {
             controller.abort();
         }
@@ -67,10 +68,10 @@ impl CompactionManager {
         {
             // Each run replaces the live slot; aborts hit the newest run, and only its own
             // run clears the slot.
-            *self.abort.lock().unwrap() = Some(Arc::clone(&controller));
+            *self.abort.lock_or_recover() = Some(Arc::clone(&controller));
         }
         {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             core.compacting = true;
         }
         let start = compaction_start_event("manual", custom_instructions.as_deref());
@@ -123,14 +124,14 @@ impl CompactionManager {
         // (the TS `finally` clear): clearing earlier would admit a racing
         // turn, interleaving the file (a user row before its compaction entry).
         {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             core.compacting = false;
         }
         // Every settle-waiting flag clear must wake the waits parked on it: the waits
         // register their `idle_notify` permit BEFORE checking the flags, or a clear parks them.
         idle_notify.notify_waiters();
         {
-            let mut slot = self.abort.lock().unwrap();
+            let mut slot = self.abort.lock_or_recover();
             if slot
                 .as_ref()
                 .is_some_and(|live| Arc::ptr_eq(live, &controller))
@@ -144,7 +145,7 @@ impl CompactionManager {
     /// `set_auto_compaction`: update the connection-state flag (the
     /// persistent write lives in the `set_auto_compaction` handler).
     pub(crate) fn set_auto_compaction(&self, enabled: bool) {
-        let mut core = self.core.lock().unwrap();
+        let mut core = self.core.lock_or_recover();
         core.auto_compaction_enabled = enabled;
     }
 
@@ -152,7 +153,7 @@ impl CompactionManager {
     async fn wait_for_turn_end(&self, idle_notify: &tokio::sync::Notify) {
         loop {
             let busy = {
-                let mut core = self.core.lock().unwrap();
+                let mut core = self.core.lock_or_recover();
                 if core.busy {
                     core.abort_requested = true;
                     // TS `compact()` detaches from agent events before the abort, so the
@@ -177,7 +178,7 @@ impl CompactionManager {
         }
         // The interrupted turn settled (its row swallowed exactly like the
         // TS compact path); the suppression owns only that drain window.
-        self.core.lock().unwrap().suppress_aborted_row = false;
+        self.core.lock_or_recover().suppress_aborted_row = false;
     }
 
     /// Append the durable compaction entry (TS `appendCompaction`). A real
@@ -189,7 +190,7 @@ impl CompactionManager {
         custom_instructions: Option<&str>,
     ) {
         let result = &run.result;
-        let mut core = self.core.lock().unwrap();
+        let mut core = self.core.lock_or_recover();
         let cwd = core.cwd.clone();
         let Some(store) = core.store.as_mut() else {
             return;
@@ -250,7 +251,7 @@ impl CompactionManager {
     /// `message_end` pair (TS `appendCustomMessageEntry`).
     fn persist_and_emit_ipython_state(&self, message: &Value) {
         {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             if let Some(store) = core.store.as_mut() {
                 let _ = store.persist_entry(
                     "custom_message",
@@ -273,7 +274,7 @@ impl CompactionManager {
 
     /// Sequence and broadcast one compaction `session_event` frame.
     fn emit_session_event(&self, event: Value) -> serde_json::Result<()> {
-        let mut core = self.core.lock().unwrap();
+        let mut core = self.core.lock_or_recover();
         let sequence = core.last_event_sequence + 1;
         core.last_event_sequence = sequence;
         let meta = crate::protocol::create_daemon_event_meta(

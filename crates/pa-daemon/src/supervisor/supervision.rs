@@ -11,6 +11,7 @@ use super::{
 };
 use crate::lease::is_process_alive;
 use crate::registry::WorkerRelay;
+use pa_types::sync::MutexExt;
 
 pub(super) const MAX_CONSECUTIVE_FAILURES: u32 = 5;
 /// A crash-path child that lived at least this long proved health: its death resets
@@ -264,10 +265,7 @@ impl Supervisor {
             // discloses the aborted run in the rebuilt transcript, and the record is
             // consumed by the reply.
             let pending = {
-                let mut journal = self
-                    .compaction_journal
-                    .lock()
-                    .expect("compaction journal lock");
+                let mut journal = self.compaction_journal.lock_or_recover();
                 match journal.pending(&descriptor.root_active_session_id) {
                     Ok(pending) => pending.cloned(),
                     Err(error) => {
@@ -361,8 +359,7 @@ impl Supervisor {
             if persisted {
                 if let Err(error) = self
                     .compaction_journal
-                    .lock()
-                    .expect("compaction journal lock")
+                    .lock_or_recover()
                     .consume(&root_active_session_id)
                 {
                     self.log_line(&format!(
@@ -677,10 +674,8 @@ impl Supervisor {
                                 }
                                 Some("compaction_end") => {
                                     let clear_error = {
-                                        let mut journal = reader_supervisor
-                                            .compaction_journal
-                                            .lock()
-                                            .expect("compaction journal lock");
+                                        let mut journal =
+                                            reader_supervisor.compaction_journal.lock_or_recover();
                                         reader_resident.compaction.observe_end();
                                         active_session_id.as_deref().and_then(|active_session_id| {
                                             // A failed clear keeps the record pending

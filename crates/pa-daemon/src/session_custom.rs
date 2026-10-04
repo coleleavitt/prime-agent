@@ -3,6 +3,7 @@
 //! and `reload`. Wire contracts are TS-verbatim; the durable rows and
 //! broadcasts go through the same paths the turn runner uses.
 
+use pa_types::sync::MutexExt;
 use serde_json::{json, Value};
 
 use crate::protocol::{response_failure, response_success, DaemonResponse};
@@ -56,7 +57,7 @@ impl Worker {
             };
             rows.push(row);
         }
-        self.core.lock().unwrap().pending_next_turn.extend(rows);
+        self.core.lock_or_recover().pending_next_turn.extend(rows);
         response_success(None, "restore_next_turn", None)
     }
 
@@ -153,7 +154,7 @@ impl Worker {
         // Restore pass: each action lands in its delivery lane —
         // `next_turn_boundary` is the steering schedule, `when_run_idle` the follow-up one.
         let restored = {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             for action in actions {
                 let payload = action.get("payload").unwrap_or(&Value::Null);
                 let lane_follow_up =

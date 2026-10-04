@@ -10,6 +10,7 @@ use super::{
     RUNTIME_METADATA_PROMPT_MAX, STATE_TIMEOUT_MS, WATCH_MAX_UNREACHABLE_POLLS,
     WATCH_POLL_INTERVAL_MS, WATCH_SETTLE_GRACE_MS, WATCH_WAIT_SLICE_MS,
 };
+use pa_types::sync::MutexExt;
 
 /// Parsed ids of one created child session.
 struct CreatedSessionIds {
@@ -604,11 +605,7 @@ impl SupervisorChildSessionsInner {
     /// "error"`). A child without a durable session id, or a parent
     /// without a recorder, records nothing.
     async fn record_child_return(&self, record: &Arc<Mutex<ChildRecord>>) {
-        let recorder = self
-            .semantic_edges
-            .lock()
-            .expect("semantic edges lock")
-            .clone();
+        let recorder = self.semantic_edges.lock_or_recover().clone();
         let Some(recorder) = recorder else {
             return;
         };

@@ -4,6 +4,7 @@
 //! it burns on first use (before the token is even checked), so a leaked
 //! or replayed ticket is worthless.
 
+use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -133,7 +134,7 @@ impl PeerGrantStore {
         issuer_generation: &str,
         now_ms: u64,
     ) -> Result<(), &'static str> {
-        let mut grants = self.grants.lock().unwrap();
+        let mut grants = self.grants.lock_or_recover();
         let now = now_ms as i64;
         grants.retain(|_, pending| match iso_to_unix_ms(&pending.expires_at) {
             Some(expires) => expires as i64 > now,
@@ -175,7 +176,7 @@ impl PeerGrantStore {
             purpose,
             ..
         } = presented;
-        let burned = self.grants.lock().unwrap().remove(grant_id);
+        let burned = self.grants.lock_or_recover().remove(grant_id);
         let Some(grant) = burned else {
             return Err(PEER_AUTH_FAILED);
         };
@@ -290,7 +291,7 @@ impl Worker {
         {
             Ok(grant) => {
                 let session = Arc::new(PeerSession::new(grant.clone()));
-                *role.lock().unwrap() = if grant.purpose == PEER_PURPOSE_WORKER {
+                *role.lock_or_recover() = if grant.purpose == PEER_PURPOSE_WORKER {
                     ConnectionRole::PeerWorker {
                         session: Arc::clone(&session),
                     }
@@ -348,7 +349,7 @@ impl Worker {
     /// The worker identity grants are validated against, read under the
     /// core lock (the session-known check is the live `created` state).
     fn grant_context(&self) -> GrantContext {
-        let core = self.core.lock().unwrap();
+        let core = self.core.lock_or_recover();
         GrantContext {
             worker_instance_id: self.config.worker_instance_id.clone(),
             active_session_id: self.config.active_session_id.clone(),

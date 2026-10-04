@@ -5,6 +5,7 @@
 //! the persist-and-broadcast contract.
 
 use pa_agent::abort::AbortController;
+use pa_types::sync::MutexExt;
 use serde_json::Value;
 
 use crate::agent_engine::AgentSessionEngine;
@@ -76,10 +77,8 @@ impl AgentSessionEngine {
         let controller = std::sync::Arc::new(AbortController::new());
         let signal = controller.signal();
         {
-            *self
-                .auto_compaction_abort
-                .lock()
-                .expect("auto compaction abort lock") = Some(std::sync::Arc::clone(&controller));
+            *self.auto_compaction_abort.lock_or_recover() =
+                Some(std::sync::Arc::clone(&controller));
         }
         let api_key = self.resolve_request_api_key(&model);
         let outcome = {

@@ -2,6 +2,7 @@
 //! `start_side_question`/`abort_side_question` handlers with their exact
 //! error strings, and the `side_question_event` frames pushed to the supervisor.
 
+use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -94,7 +95,7 @@ impl SideQuestionManager {
 
         let controller = pa_agent::abort::AbortController::new();
         {
-            let mut runs = self.runs.lock().unwrap();
+            let mut runs = self.runs.lock_or_recover();
             // The admission check rides the registry lock: `abort_all` sets
             // `closing` under the same lock, so a start is either admitted
             // before the close's aborts or rejected once the close owns the registry.
@@ -146,7 +147,7 @@ impl SideQuestionManager {
             .and_then(Value::as_str)
             .unwrap_or("anonymous")
             .to_string();
-        let runs = self.runs.lock().unwrap();
+        let runs = self.runs.lock_or_recover();
         let aborted = match runs.get(&side_question_id) {
             Some(run) if run.client_id == client_id => {
                 run.abort.abort();
@@ -165,7 +166,7 @@ impl SideQuestionManager {
     /// run drops its own entry and queues its terminal cancelled event under
     /// one registry hold, so a detach racing a close cannot empty the registry.
     pub(crate) fn abort_for_client(&self, client_id: &str) {
-        let runs = self.runs.lock().unwrap();
+        let runs = self.runs.lock_or_recover();
         for run in runs.values() {
             if run.client_id == client_id {
                 run.abort.abort();
@@ -176,7 +177,7 @@ impl SideQuestionManager {
     /// Abort every live run (session close) and close the admission gate: the
     /// drained registry means every cancelled event was queued.
     pub(crate) fn abort_all(&self) {
-        let runs = self.runs.lock().unwrap();
+        let runs = self.runs.lock_or_recover();
         self.closing.store(true, Ordering::SeqCst);
         for run in runs.values() {
             run.abort.abort();
@@ -189,7 +190,7 @@ impl SideQuestionManager {
         self.abort_all();
         let deadline = tokio::time::Instant::now() + settle_timeout;
         loop {
-            let drained = self.runs.lock().unwrap().is_empty();
+            let drained = self.runs.lock_or_recover().is_empty();
             if drained || tokio::time::Instant::now() >= deadline {
                 return;
             }
@@ -275,7 +276,7 @@ impl SideQuestionManager {
             // reads the id as free (with the emit first, TS's own order, a fast
             // restart could read a stale "Side question already exists").
             {
-                let mut runs = runs.lock().unwrap();
+                let mut runs = runs.lock_or_recover();
                 runs.remove(&side_question_id);
                 emit_side_question_frame(&events, &active_session_id, event);
             }

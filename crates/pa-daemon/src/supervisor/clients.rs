@@ -1,6 +1,7 @@
 //! Client connections: the per-connection task - read loop, dispatch,
 //! and the parsed-command execution surface.
 use anyhow::anyhow;
+use pa_types::sync::MutexExt;
 
 use super::{
     broadcast, command_type_name, current_protocol_info, daemon_closing_shutdown_event,
@@ -197,8 +198,7 @@ impl Supervisor {
         let connection_id = util::new_display_id();
         let effective_client_id = Arc::new(std::sync::Mutex::new(connection_id.clone()));
         self.client_connections
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .insert(connection_id.clone(), Arc::clone(&effective_client_id));
         let served = Arc::clone(&self)
             .serve_client(
@@ -209,10 +209,9 @@ impl Supervisor {
             )
             .await;
         self.client_connections
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .remove(&connection_id);
-        let owner = effective_client_id.lock().unwrap().clone();
+        let owner = effective_client_id.lock_or_recover().clone();
         self.schedule_owned_worker_cleanup_for_client(&owner).await;
         served
     }
@@ -660,7 +659,7 @@ impl Supervisor {
         // fallback: another client disconnecting in the response window must not preempt the
         // acknowledgement.
         let is_shutdown_owner =
-            self.shutdown_owner.lock().unwrap().as_deref() == Some(connection_id.as_str());
+            self.shutdown_owner.lock_or_recover().as_deref() == Some(connection_id.as_str());
         if is_shutdown_owner
             && self.shutting_down.load(Ordering::SeqCst)
             && !self.accept_exit.load(Ordering::SeqCst)
@@ -697,10 +696,9 @@ impl Supervisor {
     /// process may hold several connections).
     fn client_connected(&self, client_id: &str) -> bool {
         self.client_connections
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .values()
-            .any(|effective| *effective.lock().unwrap() == client_id)
+            .any(|effective| *effective.lock_or_recover() == client_id)
     }
 
     /// TS `scheduleOwnedWorkerCleanupForClient`.
@@ -735,7 +733,7 @@ impl Supervisor {
             // abort a sleeping timer, never a stop in progress. A newer arm's
             // handle in the slot means this timer was replaced (and aborted).
             {
-                let mut slot = timer_resident.owner_cleanup.lock().unwrap();
+                let mut slot = timer_resident.owner_cleanup.lock_or_recover();
                 if slot.as_ref().map(tokio::task::AbortHandle::id) != Some(tokio::task::id()) {
                     return;
                 }
@@ -782,8 +780,7 @@ impl Supervisor {
         });
         let previous = resident
             .owner_cleanup
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .replace(task.abort_handle());
         if let Some(previous) = previous {
             previous.abort();
@@ -838,9 +835,9 @@ impl Supervisor {
         let request_client_id = envelope
             .client_id
             .clone()
-            .unwrap_or_else(|| effective_client_id.lock().unwrap().clone());
+            .unwrap_or_else(|| effective_client_id.lock_or_recover().clone());
         if let Some(client_id) = envelope.client_id.clone() {
-            *effective_client_id.lock().unwrap() = client_id;
+            *effective_client_id.lock_or_recover() = client_id;
         }
         // A prompt carrying an admissionId reserves it before dispatch (TS parse-time);
         // duplicates and empty ids answer the TS parse errors with `command: "parse"`.
@@ -979,7 +976,7 @@ impl Supervisor {
                 // Answer first, then shut down: the client receives the response and
                 // daemon_closing before the stop pass can end the process. The gate flips
                 // synchronously here, so no create dispatched after the shutdown can slip past it.
-                *self.shutdown_owner.lock().unwrap() = Some(connection_id.to_string());
+                *self.shutdown_owner.lock_or_recover() = Some(connection_id.to_string());
                 self.shutting_down.store(true, Ordering::SeqCst);
                 (lines, true)
             }
@@ -1057,7 +1054,7 @@ impl Supervisor {
                 (vec![response_line(&response)], false)
             }
             DaemonCommand::Create { .. } => {
-                let client_id = effective_client_id.lock().unwrap().clone();
+                let client_id = effective_client_id.lock_or_recover().clone();
                 match self.handle_create(command, client_id).await {
                     Ok(summary) => (
                         vec![response_line(&response_success(
@@ -1100,7 +1097,7 @@ impl Supervisor {
                 (vec![response_line(&response)], false)
             }
             DaemonCommand::SendMessage { .. } => {
-                let client_id = effective_client_id.lock().unwrap().clone();
+                let client_id = effective_client_id.lock_or_recover().clone();
                 let response = self
                     .handle_send_message(&command_id, &client_id, command)
                     .await;
@@ -1166,7 +1163,7 @@ impl Supervisor {
             } if input_admission_id(command).is_some_and(|id| !id.is_empty()) => {
                 // An admitted prompt: the cancellation checks, the admission-id rewrite,
                 // and the owned commit around the routed prompt.
-                let client_id = effective_client_id.lock().unwrap().clone();
+                let client_id = effective_client_id.lock_or_recover().clone();
                 self.route_prompt_with_admission(
                     connection,
                     command,
@@ -1184,31 +1181,31 @@ impl Supervisor {
                     .await
             }
             DaemonCommand::CompleteOwnedSession { .. } => {
-                let client_id = effective_client_id.lock().unwrap().clone();
+                let client_id = effective_client_id.lock_or_recover().clone();
                 self.handle_complete_owned_session(command, &client_id, &command_id, &type_name)
                     .await
             }
             DaemonCommand::PromoteOwnedSession { .. } => {
-                let client_id = effective_client_id.lock().unwrap().clone();
+                let client_id = effective_client_id.lock_or_recover().clone();
                 self.handle_promote_owned_session(command, &client_id, &command_id, &type_name)
                     .await
             }
             DaemonCommand::RetryWorker { .. } => {
                 // The recovery is a supervisor arm — the worker never sees the command.
-                let client_id = effective_client_id.lock().unwrap().clone();
+                let client_id = effective_client_id.lock_or_recover().clone();
                 self.handle_retry_worker(command, &client_id, &command_id, &type_name)
                     .await
             }
             DaemonCommand::AbortCompaction { .. } => {
                 // The supervisor answers the abort itself: a wedged worker must not turn
                 // the abort into its own 30s route timeout and a loader that never clears.
-                let client_id = effective_client_id.lock().unwrap().clone();
+                let client_id = effective_client_id.lock_or_recover().clone();
                 self.handle_abort_compaction(command, &client_id, attached, &command_id, &type_name)
                     .await
             }
             DaemonCommand::AcquireSessionInputPause { .. } => {
                 // The supervisor-owned lease path: resolve, rewrite the lease key, forward, record.
-                let client_id = effective_client_id.lock().unwrap().clone();
+                let client_id = effective_client_id.lock_or_recover().clone();
                 self.handle_acquire_session_input_pause(
                     connection,
                     command,
@@ -1232,7 +1229,7 @@ impl Supervisor {
             } => {
                 // Detach carries the pause-lease bookkeeping: mark the detaching sessions and
                 // bump the epoch BEFORE the routed detach, then release the client's leases.
-                let client_id = effective_client_id.lock().unwrap().clone();
+                let client_id = effective_client_id.lock_or_recover().clone();
                 let attached_ids = attached.session_ids();
                 let marked = Self::begin_detach_pause_bookkeeping(
                     connection,
@@ -1283,7 +1280,7 @@ impl Supervisor {
             } => {
                 // Reattach clears the detach marks for the reattached sessions (TS
                 // reattach arm): a reattached session may acquire pauses again.
-                let client_id = effective_client_id.lock().unwrap().clone();
+                let client_id = effective_client_id.lock_or_recover().clone();
                 let outcome = self
                     .route_client_command(
                         command,
@@ -1306,7 +1303,7 @@ impl Supervisor {
             } if active_session_id.is_none() => {
                 // Selector-less `agent_messages_status`: the first live worker answers,
                 // else the TS empty-status object.
-                let client_id = effective_client_id.lock().unwrap().clone();
+                let client_id = effective_client_id.lock_or_recover().clone();
                 self.handle_agent_messages_status_broadcast(
                     command,
                     &client_id,
@@ -1322,7 +1319,7 @@ impl Supervisor {
             }
             DaemonCommand::RenameSavedSession { .. } => {
                 // `rename_saved_session`: reservation ladder, then catalog rename or worker route.
-                let client_id = effective_client_id.lock().unwrap().clone();
+                let client_id = effective_client_id.lock_or_recover().clone();
                 self.handle_rename_saved_session(
                     command,
                     &client_id,
@@ -1336,7 +1333,7 @@ impl Supervisor {
                 active_session_id, ..
             } if active_session_id.is_none() => {
                 // Selector-less `delete_saved_session`: the supervisor's catalog delete.
-                let client_id = effective_client_id.lock().unwrap().clone();
+                let client_id = effective_client_id.lock_or_recover().clone();
                 self.handle_delete_saved_session(command, &client_id, &command_id, &type_name)
                     .await
             }
@@ -1344,7 +1341,7 @@ impl Supervisor {
                 active_session_id, ..
             } if active_session_id.is_none() => {
                 // Selector-less `cron_list`: merge the live workers' jobs with the passive ones.
-                let client_id = effective_client_id.lock().unwrap().clone();
+                let client_id = effective_client_id.lock_or_recover().clone();
                 self.handle_cron_list_catalog(command, &client_id, &command_id, &type_name)
                     .await
             }
@@ -1352,7 +1349,7 @@ impl Supervisor {
                 active_session_id, ..
             } if active_session_id.is_none() => {
                 // Selector-less `heartbeats_list`: the merged heartbeat catalog.
-                let client_id = effective_client_id.lock().unwrap().clone();
+                let client_id = effective_client_id.lock_or_recover().clone();
                 self.handle_heartbeats_list_catalog(command, &client_id, &command_id, &type_name)
                     .await
             }
@@ -1361,14 +1358,14 @@ impl Supervisor {
             } if active_session_id.is_none() => {
                 // Selector-less `cron_cancel`: the owner-worker search, then the passive
                 // store, then the TS error.
-                let client_id = effective_client_id.lock().unwrap().clone();
+                let client_id = effective_client_id.lock_or_recover().clone();
                 self.handle_cron_cancel_catalog(command, &client_id, &command_id, &type_name)
                     .await
             }
             DaemonCommand::HeartbeatManage { .. } => {
                 // `heartbeat_manage`: passive jobs are managed against their durable store,
                 // live ones route to their worker.
-                let client_id = effective_client_id.lock().unwrap().clone();
+                let client_id = effective_client_id.lock_or_recover().clone();
                 self.handle_heartbeat_manage_catalog(
                     command,
                     &client_id,
@@ -1381,13 +1378,13 @@ impl Supervisor {
             DaemonCommand::CronAdd { .. } => {
                 // `cron_add`: the routed add plus the ownership promotion the command may
                 // ask for.
-                let client_id = effective_client_id.lock().unwrap().clone();
+                let client_id = effective_client_id.lock_or_recover().clone();
                 self.handle_cron_add_catalog(command, &client_id, attached, &command_id, &type_name)
                     .await
             }
             DaemonCommand::HeartbeatSet { .. } => {
                 // `heartbeat_set`: the same forward-and-promote path as `cron_add`.
-                let client_id = effective_client_id.lock().unwrap().clone();
+                let client_id = effective_client_id.lock_or_recover().clone();
                 self.handle_heartbeat_set_catalog(
                     command,
                     &client_id,
@@ -1404,7 +1401,7 @@ impl Supervisor {
                 active_session_id, ..
             } if active_session_id.is_none() => {
                 // Selector-less pause/resume: the broadcast to every live worker.
-                let client_id = effective_client_id.lock().unwrap().clone();
+                let client_id = effective_client_id.lock_or_recover().clone();
                 self.handle_agent_messages_pause_resume_broadcast(
                     command,
                     &client_id,
@@ -1414,7 +1411,7 @@ impl Supervisor {
                 .await
             }
             command => {
-                let client_id = effective_client_id.lock().unwrap().clone();
+                let client_id = effective_client_id.lock_or_recover().clone();
                 self.route_client_command(
                     command,
                     &client_id,

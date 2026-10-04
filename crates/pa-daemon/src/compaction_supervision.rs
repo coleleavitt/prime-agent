@@ -3,6 +3,7 @@
 //! Aborts acknowledge immediately (TS `abortCompaction` is instant); a run with no end inside
 //! the grace gets a durable terminal declaration plus a synthetic `compaction_end`.
 
+use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -65,7 +66,7 @@ impl CompactionSupervision {
         let epoch = self
             .next_epoch
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let mut state = self.state.lock().expect("compaction supervision lock");
+        let mut state = self.state.lock_or_recover();
         let carried_abort = match state.as_ref() {
             Some(run) if run.synthetic && !run.terminal => Some(epoch),
             _ => None,
@@ -85,7 +86,7 @@ impl CompactionSupervision {
     /// (the empty-slot wedge: a supervisor restart while the client holds a loader). A
     /// live run that armed during the probe wait is never stomped; a terminal leftover none.
     pub(crate) fn arm_aborted_fallback(&self, active_session_id: &str) -> Option<u64> {
-        let mut state = self.state.lock().expect("compaction supervision lock");
+        let mut state = self.state.lock_or_recover();
         match state.as_mut() {
             Some(run) if run.terminal => None,
             Some(run) => {
@@ -112,13 +113,13 @@ impl CompactionSupervision {
 
     /// A `compaction_end` frame flowed through: the run settled; nothing terminal to declare.
     pub(crate) fn observe_end(&self) {
-        *self.state.lock().expect("compaction supervision lock") = None;
+        *self.state.lock_or_recover() = None;
     }
 
     /// The worker connection ended: a run without an abort request dies with the worker;
     /// a pending-abort run is declared terminal, durable before the relaunch replays.
     pub(crate) fn observe_worker_gone(&self) -> Option<TerminalCompaction> {
-        let mut state = self.state.lock().expect("compaction supervision lock");
+        let mut state = self.state.lock_or_recover();
         let declared = match state.as_mut() {
             Some(run) if run.abort_requested_at_epoch.is_some() && !run.terminal => {
                 run.terminal = true;
@@ -136,7 +137,7 @@ impl CompactionSupervision {
     /// An `abort_compaction` landed: mark the armed run and return the epoch the watch
     /// task declares against. No armed run means the TS silent no-op.
     pub(crate) fn request_abort(&self) -> Option<u64> {
-        let mut state = self.state.lock().expect("compaction supervision lock");
+        let mut state = self.state.lock_or_recover();
         let run = state.as_mut()?;
         if run.terminal {
             return None;
@@ -149,7 +150,7 @@ impl CompactionSupervision {
     /// Declare the run terminal when the abort this watch task observed never resolved:
     /// `None` when the run settled.
     pub(crate) fn declare_terminal_if_unresolved(&self, epoch: u64) -> Option<TerminalCompaction> {
-        let mut state = self.state.lock().expect("compaction supervision lock");
+        let mut state = self.state.lock_or_recover();
         let run = state.as_mut()?;
         if run.terminal || run.abort_requested_at_epoch != Some(epoch) {
             return None;
@@ -448,10 +449,7 @@ impl crate::supervisor::Supervisor {
         let session_file = resident.descriptor.lock().await.session_file.clone();
         let declared = crate::util::now_iso();
         let terminal = {
-            let mut journal = self
-                .compaction_journal
-                .lock()
-                .expect("compaction journal lock");
+            let mut journal = self.compaction_journal.lock_or_recover();
             let Some(terminal) = take() else {
                 return;
             };

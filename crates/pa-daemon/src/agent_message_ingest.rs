@@ -3,6 +3,7 @@
 //! delivery gate. Deliberate deviation from TS: no per-sender rate bucket
 //! (the daemon's queue capacity bound is the enforced limit).
 
+use pa_types::sync::MutexExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::{json, Value};
@@ -124,7 +125,7 @@ impl Worker {
     /// Remove the queued agent-message items from both lanes (never
     /// client-queued prompts), in the `{ steering, followUp }` shape.
     fn clear_queued_agent_messages(&self) -> Value {
-        let mut core = self.core.lock().unwrap();
+        let mut core = self.core.lock_or_recover();
         let mut steering = Vec::new();
         let mut follow_up = Vec::new();
         let mut retained_steering = std::collections::VecDeque::new();

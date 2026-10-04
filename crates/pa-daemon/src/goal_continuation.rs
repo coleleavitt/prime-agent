@@ -3,6 +3,7 @@
 //! or a live background `bash()` handle until they settle. The goal
 //! takes exclusive priority over autonomous continuation.
 
+use pa_types::sync::MutexExt;
 use std::sync::Arc;
 
 use crate::agent_engine::AgentSessionEngine;
@@ -22,19 +23,15 @@ impl AgentSessionEngine {
     /// Wire the worker's session-input probe, goal admission sink, and
     /// queued-goal-context purge, and register the RLM settle hook; the
     /// hook holds a weak engine reference so the registry never pins it.
-    ///
-    /// # Panics
-    ///
-    /// Panics when an internal mutex is poisoned.
     pub fn set_goal_admission(
         self: &Arc<Self>,
         probe: crate::engine::SessionInputProbe,
         sink: crate::engine::GoalAdmissionSink,
         queue_purge: std::sync::Arc<dyn Fn() + Send + Sync>,
     ) {
-        *self.goal_input_probe.lock().expect("goal probe lock") = Some(probe);
-        *self.goal_admission_sink.lock().expect("goal sink lock") = Some(sink);
-        *self.goal_queue_purge.lock().expect("goal queue purge lock") = Some(queue_purge);
+        *self.goal_input_probe.lock_or_recover() = Some(probe);
+        *self.goal_admission_sink.lock_or_recover() = Some(sink);
+        *self.goal_queue_purge.lock_or_recover() = Some(queue_purge);
         let Some(children) = self.children.clone() else {
             return;
         };
@@ -68,24 +65,17 @@ impl AgentSessionEngine {
     /// this once with a probe over the shared cron store; the settled-child
     /// kernel release defers while the probe reports an active or paused
     /// scheduled job for the current session.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the probe lock is poisoned.
     pub fn set_registered_jobs_probe(
         self: &Arc<Self>,
         probe: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
     ) {
-        *self
-            .registered_jobs_probe
-            .lock()
-            .expect("registered jobs probe lock") = Some(probe);
+        *self.registered_jobs_probe.lock_or_recover() = Some(probe);
     }
 
     /// An error assistant message fails an active goal (an abort keeps
     /// it); the state change surfaces through the run's tracking wrapper.
     pub(crate) fn finish_goal_for_terminal_error(&self, error: &str) {
-        let Some(handles) = self.goal_runtime.lock().expect("goal runtime lock").clone() else {
+        let Some(handles) = self.goal_runtime.lock_or_recover().clone() else {
             return;
         };
         self.runtime.block_on(async {
@@ -134,7 +124,7 @@ impl AgentSessionEngine {
         if self.session_is_closed() {
             return;
         }
-        let Some(handles) = self.goal_runtime.lock().expect("goal runtime lock").clone() else {
+        let Some(handles) = self.goal_runtime.lock_or_recover().clone() else {
             return;
         };
         {
@@ -237,8 +227,7 @@ impl AgentSessionEngine {
     /// consult can run inside a compaction turn, which holds it).
     pub(crate) fn has_live_background_bash_handles(&self) -> bool {
         self.background_bash_probe
-            .lock()
-            .expect("background bash probe lock")
+            .lock_or_recover()
             .clone()
             .is_some_and(|probe| probe())
     }
@@ -253,11 +242,7 @@ impl AgentSessionEngine {
         if self.has_unsettled_rlm_work().await || self.has_live_background_bash_handles() {
             return false;
         }
-        let probe = self
-            .registered_jobs_probe
-            .lock()
-            .expect("registered jobs probe lock")
-            .clone();
+        let probe = self.registered_jobs_probe.lock_or_recover().clone();
         !probe.is_some_and(|probe| probe())
     }
 
@@ -266,8 +251,7 @@ impl AgentSessionEngine {
     /// unwired probe answers `false`.
     pub(crate) fn session_input_queued(&self) -> bool {
         self.goal_input_probe
-            .lock()
-            .expect("goal probe lock")
+            .lock_or_recover()
             .clone()
             .is_some_and(|probe| probe())
     }
@@ -281,7 +265,7 @@ impl AgentSessionEngine {
         if self.session_is_closed() {
             return GoalBoundary::Proceed;
         }
-        let Some(handles) = self.goal_runtime.lock().expect("goal runtime lock").clone() else {
+        let Some(handles) = self.goal_runtime.lock_or_recover().clone() else {
             return GoalBoundary::Proceed;
         };
         // Read the just-settled turn BEFORE the driver lock (the session
@@ -389,11 +373,7 @@ impl AgentSessionEngine {
         if self.session_is_closed() {
             return None;
         }
-        let handles = self
-            .goal_runtime
-            .lock()
-            .expect("goal runtime lock")
-            .clone()?;
+        let handles = self.goal_runtime.lock_or_recover().clone()?;
         let message = self.runtime.block_on(async {
             let driver = handles.driver.lock().await;
             let state = driver.state_with_creation_elapsed();
@@ -420,7 +400,7 @@ impl AgentSessionEngine {
         &self,
         goal: &pa_core::goals::GoalState,
     ) -> Option<serde_json::Value> {
-        let mut published = self.published_goal.lock().expect("published goal lock");
+        let mut published = self.published_goal.lock_or_recover();
         // The dedupe is age-invariant: the creation-based timer's age ticks
         // with the wall clock (a second boundary between reads must not
         // re-emit an unchanged goal).
@@ -445,11 +425,7 @@ impl AgentSessionEngine {
             AgentSessionEngine::release_goal_work_continuation(&work);
             return;
         }
-        let sink = self
-            .goal_admission_sink
-            .lock()
-            .expect("goal sink lock")
-            .clone();
+        let sink = self.goal_admission_sink.lock_or_recover().clone();
         if let Some(sink) = sink {
             sink(work);
         } else {
