@@ -456,7 +456,7 @@ async fn run_stream(
     command_input.insert("modelId".into(), json!(model.id));
     command_input.insert(
         "messages".into(),
-        json!(convert_messages(context, model, cache_retention)),
+        json!(convert_messages(context, model, cache_retention)?),
     );
     if let Some(system) =
         build_system_prompt_blocks(context.system_prompt.as_deref(), model, cache_retention)
@@ -997,6 +997,56 @@ mod tests {
             &test_model("us.anthropic.claude"),
             &options
         ));
+    }
+
+    fn image_context(mime_type: &str, data: &str) -> Context {
+        use crate::types::{
+            ImageContent, Message, UserMessage, UserMessageContent, UserOrToolContent,
+        };
+        Context {
+            system_prompt: None,
+            messages: vec![Message::User(UserMessage {
+                content: UserMessageContent::Blocks(vec![UserOrToolContent::Image(ImageContent {
+                    mime_type: mime_type.into(),
+                    data: data.into(),
+                    rest: Map::default(),
+                })]),
+                timestamp: 0,
+                rest: Map::default(),
+            })],
+            tools: None,
+        }
+    }
+
+    /// TS `createImageBlock` throws inside the stream body, so an image Bedrock cannot take
+    /// (an unsupported mime type, bytes that are not base64) ends the stream with its error
+    /// event. It must never panic the stream task, which ends the stream with no terminal event.
+    #[tokio::test]
+    async fn an_unsendable_image_ends_the_stream_with_an_error_event() {
+        let mut model = test_model("us.anthropic.claude-sonnet-4");
+        model.input = vec![
+            crate::types::ModelInput::Text,
+            crate::types::ModelInput::Image,
+        ];
+        for (mime_type, data, message) in [
+            ("image/bmp", "QQ==", "Unknown image type: image/bmp"),
+            (
+                "image/png",
+                "not base64!",
+                "Invalid base64 image data for Bedrock image block",
+            ),
+        ] {
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                stream_bedrock(&model, &image_context(mime_type, data), None).result(),
+            )
+            .await
+            .expect("the stream settles");
+            assert_eq!(
+                (result.stop_reason, result.error_message.as_deref()),
+                (crate::types::StopReason::Error, Some(message)),
+            );
+        }
     }
 
     fn test_model(id: &str) -> Model {
