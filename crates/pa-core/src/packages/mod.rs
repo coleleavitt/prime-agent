@@ -90,6 +90,12 @@ pub(crate) fn source_checkout_root() -> Option<&'static std::path::Path> {
     .as_deref()
 }
 
+/// The subdirectory of the bundled skills directory that holds the skills
+/// installed features contribute. Its leading dot hides it from every native
+/// skill scan, so a build without the feature never sees them; it ships with
+/// `skills/` and needs no packaging of its own.
+pub const FEATURE_SKILLS_DIR: &str = ".features";
+
 /// The directory of built-in skills shipped with the package (TS
 /// `getBundledSkillsDir`): `skills/` next to the executable (the packaged
 /// layout), falling back to the workspace `skills/` for source checkouts

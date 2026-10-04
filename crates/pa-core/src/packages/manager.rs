@@ -96,6 +96,10 @@ pub struct PackageManager {
     /// `None` disables built-in skills entirely.
     bundled_skills_dir: Option<PathBuf>,
     extra_builtin_skill_overrides: Vec<String>,
+    /// Feature-contributed built-in skills: directory names under
+    /// `<bundled skills dir>/.features/` (see
+    /// [`crate::features::SessionFeature::bundled_skills`]).
+    feature_skills: Vec<String>,
 }
 
 impl PackageManager {
@@ -128,7 +132,16 @@ impl PackageManager {
             global_npm_root: None,
             bundled_skills_dir,
             extra_builtin_skill_overrides: options.extra_builtin_skill_overrides,
+            feature_skills: crate::features::installed_bundled_skills(),
         }
+    }
+
+    /// Replace the feature-contributed built-in skill names (the installed
+    /// features' by default).
+    #[must_use]
+    pub fn with_feature_skills(mut self, names: Vec<String>) -> Self {
+        self.feature_skills = names;
+        self
     }
 
     #[must_use]
@@ -178,6 +191,11 @@ impl PackageManager {
             .as_ref()
             .and_then(|bundled| bundled.websearch)
             .unwrap_or(true)
+    }
+
+    /// Feature-contributed built-in skill directory names.
+    pub(super) fn feature_skills(&self) -> &[String] {
+        &self.feature_skills
     }
 
     /// Extra force-exclude patterns for built-in skills.

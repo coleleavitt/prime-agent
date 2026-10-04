@@ -155,6 +155,31 @@ impl PackageManager {
                     &builtin_skill_overrides,
                     bundled_dir,
                 );
+                // Skills installed features contribute: built-ins too, under
+                // the hidden feature directory, overridable as
+                // `-<name>/SKILL.md` like any other built-in.
+                let feature_root = bundled_dir.join(super::super::FEATURE_SKILLS_DIR);
+                let feature_entries: Vec<_> = self
+                    .feature_skills()
+                    .iter()
+                    .flat_map(|name| {
+                        collect_skill_entries(&feature_root.join(name), SkillDiscoveryMode::Pi)
+                    })
+                    .collect();
+                if !feature_entries.is_empty() {
+                    let feature_metadata = PathMetadata {
+                        base_dir: Some(feature_root.clone()),
+                        ..builtin_metadata
+                    };
+                    add_resources(
+                        accumulator,
+                        ResourceType::Skills,
+                        feature_entries,
+                        &feature_metadata,
+                        &builtin_skill_overrides,
+                        &feature_root,
+                    );
+                }
             }
         }
 

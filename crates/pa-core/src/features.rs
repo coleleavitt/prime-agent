@@ -232,6 +232,16 @@ pub trait SessionFeature: Send + Sync {
         None
     }
 
+    /// Built-in skills this feature contributes: directory names under the
+    /// bundled skills directory's hidden feature directory
+    /// (`skills/.features/<name>/`, see
+    /// [`crate::packages::FEATURE_SKILLS_DIR`]). They load as built-in skills
+    /// (Python ones are installed into the kernel) only while the feature is
+    /// installed; native scans never see them. Empty by default.
+    fn bundled_skills(&self) -> Vec<&'static str> {
+        Vec::new()
+    }
+
     /// The hook this feature adjusts the session's harness digest with (see
     /// [`crate::refinement::prompt_hook`]); `None`, the default, leaves the
     /// digest native. Called once, on the session-creation path; every
@@ -258,6 +268,16 @@ pub fn install(features: Vec<Arc<dyn SessionFeature>>) -> bool {
 #[must_use]
 pub fn installed() -> &'static [Arc<dyn SessionFeature>] {
     INSTALLED.get().map_or(&[], Vec::as_slice)
+}
+
+/// The built-in skill directory names every installed feature contributes.
+#[must_use]
+pub fn installed_bundled_skills() -> Vec<String> {
+    installed()
+        .iter()
+        .flat_map(|feature| feature.bundled_skills())
+        .map(str::to_string)
+        .collect()
 }
 
 /// Let every installed feature register its handlers for one session.

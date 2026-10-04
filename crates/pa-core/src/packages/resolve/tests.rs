@@ -982,3 +982,73 @@ fn disabled_builtin_skills_are_not_collected() {
         .iter()
         .any(|r| r.path.to_string_lossy().contains("some-skill")));
 }
+
+#[test]
+fn feature_skills_load_only_when_a_feature_contributes_them() {
+    // Other tests move HOME (the user skill dirs) under this lock.
+    let _env = lock_env();
+    let fixture = Fixture::new();
+    let bundled = fixture.temp_dir.join("bundled-skills");
+    skill_md(&bundled, "plain", "Plain");
+    let features = bundled.join(crate::packages::FEATURE_SKILLS_DIR);
+    skill_md(&features, "stub-feature-skill", "Contributed");
+    skill_md(&features, "other-feature-skill", "Not contributed");
+    let manager = |names: Vec<String>, overrides: Vec<String>| {
+        PackageManager::with_options(PackageManagerOptions {
+            cwd: fixture.manager.cwd().to_path_buf(),
+            agent_dir: fixture.agent_dir.clone(),
+            settings: SettingsManager::create(fixture.manager.cwd(), &fixture.agent_dir),
+            bundled_skills_dir: BundledSkillsDir::Directory(bundled.clone()),
+            extra_builtin_skill_overrides: overrides,
+        })
+        .with_feature_skills(names)
+    };
+    let names = |result: &super::ResolvedPaths| {
+        let mut names: Vec<String> = result
+            .skills
+            .iter()
+            .filter(|resource| resource.enabled && resource.path.starts_with(&bundled))
+            .map(|resource| {
+                resource
+                    .path
+                    .parent()
+                    .and_then(Path::file_name)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        names.sort();
+        names
+    };
+    // No feature: the hidden directory is invisible.
+    let native = manager(Vec::new(), Vec::new()).resolve().unwrap();
+    assert_eq!(names(&native), vec!["plain".to_string()]);
+    // A feature contributes one skill: it loads as a built-in.
+    let with_feature = manager(vec!["stub-feature-skill".to_string()], Vec::new())
+        .resolve()
+        .unwrap();
+    assert_eq!(
+        names(&with_feature),
+        vec!["plain".to_string(), "stub-feature-skill".to_string()]
+    );
+    let contributed = with_feature
+        .skills
+        .iter()
+        .find(|resource| {
+            resource
+                .path
+                .to_string_lossy()
+                .contains("stub-feature-skill")
+        })
+        .unwrap();
+    assert_eq!(contributed.metadata.source, MetadataSource::Builtin);
+    // The built-in overrides apply to it too.
+    let overridden = manager(
+        vec!["stub-feature-skill".to_string()],
+        vec!["-stub-feature-skill/SKILL.md".to_string()],
+    )
+    .resolve()
+    .unwrap();
+    assert_eq!(names(&overridden), vec!["plain".to_string()]);
+}
