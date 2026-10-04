@@ -1275,6 +1275,7 @@ dependencies = [
  "pa-dream",
  "pa-ledger",
  "pa-recall",
+ "pa-session-index",
  "pa-telemetry",
  "pa-toolforge",
  "pa-trace",
