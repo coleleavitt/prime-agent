@@ -144,6 +144,7 @@ async fn digest_session(provider: Arc<ScriptedProvider>) -> (AgentSession, tempf
         include_ipython: false,
         include_shell_examples: false,
         include_refine: false,
+        render_filters: crate::refinement::ranking::HarnessRenderFilters::default(),
     };
     let session = digest_session_with_harness(provider, harness).await;
     (session, tmp)
@@ -276,6 +277,7 @@ async fn resume_dedupes_by_state_fingerprint_and_replaces_stale_digests() {
         include_ipython: false,
         include_shell_examples: false,
         include_refine: false,
+        render_filters: crate::refinement::ranking::HarnessRenderFilters::default(),
     };
 
     // First session: the deferred first-turn digest rides the turn and

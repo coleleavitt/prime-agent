@@ -178,8 +178,44 @@ fn entry_sort_key(entry: &HarnessEntry) -> String {
     format!("{}\0{}\0{}", entry.path, entry.title, entry.id)
 }
 
+/// A feature's say over which harness entries the rendered harness shows
+/// (installed through
+/// [`crate::features::SessionFeature::harness_render_filter`]). A
+/// withheld entry stays in the store, readable and editable; the render
+/// only stops spending prompt attention on it and announces how many were
+/// withheld.
+pub trait HarnessRenderFilter: Send + Sync {
+    /// Whether the rendered harness leaves `entry` out.
+    fn withholds(&self, entry: &HarnessEntry) -> bool;
+
+    /// The line that stands in for `count` (at least one) withheld entries
+    /// of `kind`, rendered after the kind's listed entries.
+    fn withheld_line(&self, kind: &str, count: usize) -> String;
+}
+
+/// The render filters of one session, in installation order; empty for the
+/// native product. An entry is withheld by the first filter that withholds
+/// it.
+#[derive(Clone, Default)]
+pub struct HarnessRenderFilters(pub Vec<std::sync::Arc<dyn HarnessRenderFilter>>);
+
+impl std::fmt::Debug for HarnessRenderFilters {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "HarnessRenderFilters({})", self.0.len())
+    }
+}
+
+impl HarnessRenderFilters {
+    /// The index of the filter that withholds `entry`, if one does.
+    fn withholding(&self, entry: &HarnessEntry) -> Option<usize> {
+        self.0.iter().position(|filter| filter.withholds(entry))
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct HarnessStatePromptOptions {
+    /// Entries these filters withhold are left out of the render.
+    pub render_filters: HarnessRenderFilters,
     pub max_entries_per_kind: Option<usize>,
     pub max_refinements: Option<usize>,
     pub max_content_length: Option<usize>,
@@ -243,7 +279,17 @@ pub fn format_harness_state_for_prompt(
         // The ranked corpus is the kind's own entries: they compete for the
         // same top-k slots, so document frequency discounts terms ubiquitous
         // within the kind rather than across unrelated kinds.
-        let mut entries: Vec<HarnessEntry> = entries.into_values().collect();
+        let mut withheld = vec![0usize; options.render_filters.0.len()];
+        let mut entries: Vec<HarnessEntry> = entries
+            .into_values()
+            .filter(|entry| match options.render_filters.withholding(entry) {
+                Some(filter) => {
+                    withheld[filter] += 1;
+                    false
+                }
+                None => true,
+            })
+            .collect();
         let ranked_idf = match query_terms.as_ref() {
             Some(terms) if !terms.is_empty() => Some(harness_query_term_idf(&entries, terms)),
             _ => None,
@@ -324,6 +370,11 @@ pub fn format_harness_state_for_prompt(
         let overflow = entries.len().saturating_sub(max_entries_per_kind);
         if overflow > 0 {
             lines.push(format!("- +{overflow} more {kind_name} entries"));
+        }
+        for (filter, count) in options.render_filters.0.iter().zip(&withheld) {
+            if *count > 0 {
+                lines.push(filter.withheld_line(kind_name, *count));
+            }
         }
         lines.push(String::new());
     }
@@ -409,6 +460,18 @@ pub fn harness_digest_fingerprint(
     state: &HarnessState,
     render_flags: HarnessDigestRenderFlags,
 ) -> String {
+    harness_digest_fingerprint_filtered(state, render_flags, &HarnessRenderFilters::default())
+}
+
+/// [`harness_digest_fingerprint`] of a render under `filters`: an entry a
+/// filter withholds renders differently, so its material says so (and
+/// only then, so a state no filter touches fingerprints as before).
+#[must_use]
+pub fn harness_digest_fingerprint_filtered(
+    state: &HarnessState,
+    render_flags: HarnessDigestRenderFlags,
+    filters: &HarnessRenderFilters,
+) -> String {
     // The section key is the renderer's grouping: an entry moved between
     // sections renders differently and must invalidate the digest, even
     // when its `kind` field disagrees with its section.
@@ -449,6 +512,9 @@ pub fn harness_digest_fingerprint(
                 "arguments".to_string(),
                 serde_json::Value::Object(entry.arguments.clone().into_iter().collect()),
             );
+        }
+        if filters.withholding(entry).is_some() {
+            material.insert("withheld".to_string(), serde_json::json!(true));
         }
         serde_json::Value::Object(material)
     };
@@ -544,6 +610,82 @@ mod tests {
         assert!(!terms.contains(&"fix".to_string())); // short runs drop
         let dupes = harness_query_terms("alpha alpha alpha");
         assert_eq!(dupes.iter().filter(|t| *t == "alpha").count(), 1);
+    }
+
+    /// Withholds entries titled `dormant`.
+    struct WithholdDormant;
+
+    impl HarnessRenderFilter for WithholdDormant {
+        fn withholds(&self, entry: &HarnessEntry) -> bool {
+            entry.title == "dormant"
+        }
+
+        fn withheld_line(&self, kind: &str, count: usize) -> String {
+            format!("- +{count} withheld {kind} entries")
+        }
+    }
+
+    /// A render filter's withheld entries leave the listing and the kind's
+    /// count; its line stands in for them after the overflow line; an
+    /// all-withheld harness renders as empty. The digest fingerprint marks
+    /// what the filter withholds, and with no filter it is unchanged.
+    #[test]
+    fn a_render_filter_withholds_entries_and_announces_them() {
+        let mut state = empty_harness_state();
+        let memories = state.entries.get_mut(&RefinementKind::Memory).unwrap();
+        for (id, title) in [("m1", "live one"), ("m2", "dormant"), ("m3", "dormant")] {
+            memories.insert(id.to_string(), make_entry(id, title, "c", "general"));
+        }
+        let filters = HarnessRenderFilters(vec![std::sync::Arc::new(WithholdDormant)]);
+        let options = |filters: HarnessRenderFilters| HarnessStatePromptOptions {
+            include_ipython_examples: Some(false),
+            max_entries_per_kind: Some(0),
+            render_filters: filters,
+            ..HarnessStatePromptOptions::default()
+        };
+        let rendered = format_harness_state_for_prompt(&state, &options(filters.clone()));
+        let tail: Vec<&str> = rendered
+            .lines()
+            .skip_while(|line| *line != "memory: 1")
+            .take(3)
+            .collect();
+        assert_eq!(
+            tail,
+            [
+                "memory: 1",
+                "- +1 more memory entries",
+                "- +2 withheld memory entries"
+            ]
+        );
+        let unfiltered =
+            format_harness_state_for_prompt(&state, &options(HarnessRenderFilters::default()));
+        assert!(unfiltered.contains("memory: 3\n- +3 more memory entries\n\n"));
+        let mut all_dormant = empty_harness_state();
+        all_dormant
+            .entries
+            .get_mut(&RefinementKind::Prompt)
+            .unwrap()
+            .insert(
+                "p1".to_string(),
+                make_entry("p1", "dormant", "c", "general"),
+            );
+        let rendered = format_harness_state_for_prompt(&all_dormant, &options(filters.clone()));
+        assert!(rendered.contains("prompt: 0\n- +1 withheld prompt entries\n\n"));
+        assert!(rendered.contains("No saved harness entries yet."));
+
+        let flags = HarnessDigestRenderFlags {
+            include_ipython_examples: false,
+            include_shell_examples: false,
+            include_refine_examples: false,
+        };
+        assert_eq!(
+            harness_digest_fingerprint_filtered(&state, flags, &HarnessRenderFilters::default()),
+            harness_digest_fingerprint(&state, flags)
+        );
+        assert_ne!(
+            harness_digest_fingerprint_filtered(&state, flags, &filters),
+            harness_digest_fingerprint(&state, flags)
+        );
     }
 
     fn make_entry(id: &str, title: &str, content: &str, path: &str) -> HarnessEntry {
