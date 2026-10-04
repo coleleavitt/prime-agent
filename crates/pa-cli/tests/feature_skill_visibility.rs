@@ -110,11 +110,13 @@ async fn feature_skills_reach_only_sessions_that_can_run_them() {
             .collect::<Vec<_>>(),
         vec![vec!["dream", "ravo"], vec![], vec![]]
     );
-    // Only the feature skills differ: the native ones stay bound.
+    // Only the feature skills and the native `refine` (withheld by the same
+    // rule, pa-core session_refine_visibility) differ: the other native
+    // skills stay bound.
     let native = |names: &[String]| -> Vec<String> {
         names
             .iter()
-            .filter(|name| !FEATURE_SKILLS.contains(&name.as_str()))
+            .filter(|name| !FEATURE_SKILLS.contains(&name.as_str()) && *name != "refine")
             .cloned()
             .collect()
     };

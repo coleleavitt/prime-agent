@@ -1221,6 +1221,7 @@ version = "0.9.8"
 dependencies = [
  "anyhow",
  "futures",
+ "pa-types",
  "reqwest",
  "serde",
  "serde_json",

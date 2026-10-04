@@ -32,7 +32,7 @@ fn lost_exit_ms() -> u64 {
 
 /// The TS parse contract: `Number(raw)` kept only when finite and >= 0.
 fn lost_exit_ms_from(raw: Option<&str>) -> u64 {
-    raw.and_then(|raw| raw.parse::<f64>().ok())
+    raw.map(pa_types::js::js_number)
         .filter(|value| value.is_finite() && *value >= 0.0)
         .map_or(DEFAULT_LOST_EXIT_MS, |value| value as u64)
 }
@@ -128,11 +128,11 @@ mod tests {
         assert_eq!(lost_exit_ms_from(Some("0")), 0);
         assert_eq!(lost_exit_ms_from(Some("15000")), 15_000);
         assert_eq!(lost_exit_ms_from(Some("15000.5")), 15_000);
-    }
-
-    fn lost_exit_ms_from(raw: Option<&str>) -> u64 {
-        raw.and_then(|raw| raw.parse::<f64>().ok())
-            .filter(|value| value.is_finite() && *value >= 0.0)
-            .map_or(DEFAULT_LOST_EXIT_MS, |value| value as u64)
+        // JS `Number`: blank is 0, white space trims, hex parses, and
+        // `inf` is NaN.
+        assert_eq!(lost_exit_ms_from(Some("")), 0);
+        assert_eq!(lost_exit_ms_from(Some(" 15000\n")), 15_000);
+        assert_eq!(lost_exit_ms_from(Some("0x3a98")), 15_000);
+        assert_eq!(lost_exit_ms_from(Some("inf")), DEFAULT_LOST_EXIT_MS);
     }
 }

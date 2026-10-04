@@ -154,16 +154,6 @@ fn parse_duration(value: &str, option: &str) -> Result<i64, String> {
         .ok_or_else(|| format!("{option} must be positive."))
 }
 
-/// `Number(text)` for the `--limit` value: blank is 0, anything else must be
-/// a finite decimal number.
-fn js_number_arg(text: &str) -> f64 {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return 0.0;
-    }
-    trimmed.parse::<f64>().unwrap_or(f64::NAN)
-}
-
 fn parse_health_args(args: &[String]) -> Result<HealthOptions, String> {
     let mut options = HealthOptions {
         log_path: None,
@@ -172,7 +162,7 @@ fn parse_health_args(args: &[String]) -> Result<HealthOptions, String> {
         limit: DEFAULT_LIMIT,
         json: false,
     };
-    let mut limit = js_number_arg("20");
+    let mut limit = pa_types::js::js_number("20");
     let mut log_path: Option<String> = None;
     let take_value = |index: usize, option: &str| -> Result<String, String> {
         match args.get(index + 1) {
@@ -202,10 +192,10 @@ fn parse_health_args(args: &[String]) -> Result<HealthOptions, String> {
         } else if let Some(value) = arg.strip_prefix("--stuck-after=") {
             options.stuck_after_ms = parse_duration(value, "--stuck-after")?;
         } else if arg == "--limit" {
-            limit = js_number_arg(&take_value(index, "--limit")?);
+            limit = pa_types::js::js_number(&take_value(index, "--limit")?);
             index += 1;
         } else if let Some(value) = arg.strip_prefix("--limit=") {
-            limit = js_number_arg(value);
+            limit = pa_types::js::js_number(value);
         } else {
             return Err(format!("Unknown option for health: {arg}"));
         }

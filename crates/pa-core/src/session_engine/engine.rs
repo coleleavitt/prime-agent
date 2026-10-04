@@ -308,14 +308,24 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         rlm_depth: config.rlm_depth.unwrap_or(0),
         session_artifact_dir: session_artifact_dir.clone(),
     };
+    let local_harness_dir =
+        crate::refinement::get_local_harness_state_dir(session_artifact_dir.as_deref());
+    // The only sessions whose `refine.*` host requests register and the
+    // compact-trigger auto-refine may run for.
+    let auto_refine_allowed = config.rlm_depth.unwrap_or(0) == 0 && local_harness_dir.is_some();
     // The skills the model sees (TS `_modelVisibleSkills`): the system
     // prompt lists, the digest references and the kernel binds only these;
-    // `/skill:` expansion keeps every loaded skill.
-    let visible_skills = crate::features::session_visible_skills(
+    // `/skill:` expansion keeps every loaded skill. The native `refine`
+    // skill is withheld where its `refine.*` requests are not registered.
+    let mut visible_skills = crate::features::session_visible_skills(
         crate::features::installed(),
         &feature_context,
         &resources.skills,
     );
+    if !auto_refine_allowed {
+        visible_skills
+            .retain(|skill| skill.name != crate::prompts::system_prompt::REFINE_SKILL_NAME);
+    }
     let python_skills = super::runtime_wiring::kernel_python_skills(&visible_skills);
     feature_context.python_skill_import_names = python_skills
         .iter()
@@ -384,11 +394,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     if compaction_settings.agent_callable.unwrap_or(true) {
         turn_boundary.register_compact_handlers(&mut handlers, keep_recent_tokens);
     }
-    let local_harness_dir =
-        crate::refinement::get_local_harness_state_dir(session_artifact_dir.as_deref());
-    // The only sessions whose `refine.*` host requests register and the
-    // compact-trigger auto-refine may run for.
-    let auto_refine_allowed = config.rlm_depth.unwrap_or(0) == 0 && local_harness_dir.is_some();
     if auto_refine_allowed {
         turn_boundary.register_refine_handlers(&mut handlers);
     }

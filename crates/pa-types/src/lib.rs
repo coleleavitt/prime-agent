@@ -10,6 +10,7 @@ pub mod ai;
 pub mod daemon;
 pub mod goal;
 pub mod incident;
+pub mod js;
 pub mod memory_release;
 pub mod platform;
 pub mod session;

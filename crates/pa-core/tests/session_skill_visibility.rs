@@ -109,9 +109,11 @@ async fn a_feature_hides_a_skill_from_the_sessions_it_gates() {
     let started = stub.started.lock().unwrap().clone();
     let top_names = started[0].python_skill_import_names.clone();
     assert!(top_names.iter().any(|name| name == GATED));
+    // Child and storeless sessions also withhold the native `refine` skill
+    // (they cannot run refine; see session_refine_visibility.rs).
     let gated_names: Vec<String> = top_names
         .iter()
-        .filter(|name| *name != GATED)
+        .filter(|name| *name != GATED && *name != "refine")
         .cloned()
         .collect();
     assert_eq!(

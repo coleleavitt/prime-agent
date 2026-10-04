@@ -69,7 +69,10 @@ pub(crate) fn parse_tailscale_args(args: &[String]) -> TailscaleArgs {
                     index += 1;
                     rest.get(index).copied()
                 };
-                let Some(parsed) = value.and_then(js_number) else {
+                let Some(parsed) = value
+                    .map(pa_types::js::js_number)
+                    .filter(|parsed| !parsed.is_nan())
+                else {
                     return error_args("--port requires a numeric value (1-65535)");
                 };
                 port = Some(parsed);
@@ -101,16 +104,4 @@ pub(crate) fn parse_tailscale_args(args: &[String]) -> TailscaleArgs {
 
 fn error_args(message: impl Into<String>) -> TailscaleArgs {
     TailscaleArgs::Error(message.into())
-}
-
-/// JS `Number(value)`: `None` stands for `NaN` (the parse-rejection case).
-fn js_number(value: &str) -> Option<f64> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Some(0.0);
-    }
-    trimmed
-        .parse::<f64>()
-        .ok()
-        .filter(|parsed| !parsed.is_nan())
 }

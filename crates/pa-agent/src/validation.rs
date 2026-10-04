@@ -50,7 +50,8 @@ fn schema_type(schema: &Value) -> Vec<&str> {
 }
 
 /// Primitive coercion mirroring `TypeBox` `Value.Convert`: strings parse
-/// into number/boolean when the schema requests it, and numbers/booleans
+/// into number/boolean when the schema requests it (numbers as JS
+/// `Number(text)`), and numbers/booleans
 /// stringify when the schema requests a string.
 fn coerce(schema: &Value, value: &mut Value) {
     let types = schema_type(schema);
@@ -60,15 +61,12 @@ fn coerce(schema: &Value, value: &mut Value) {
     }
     for ty in types {
         match (ty, &*value) {
-            ("number", Value::String(s)) => {
-                if let Ok(n) = s.trim().parse::<f64>() {
+            // TS converts a non-blank string through JS `Number(text)` and
+            // keeps it only when finite (an integer, for `integer`).
+            ("number" | "integer", Value::String(s)) if !pa_types::js::js_trim(s).is_empty() => {
+                let n = pa_types::js::js_number(s);
+                if n.is_finite() && (ty == "number" || n.fract() == 0.0) {
                     *value = number_value(n);
-                    return coerce_children(schema, value);
-                }
-            }
-            ("integer", Value::String(s)) => {
-                if let Ok(n) = s.trim().parse::<i64>() {
-                    *value = Value::from(n);
                     return coerce_children(schema, value);
                 }
             }
@@ -139,8 +137,9 @@ fn coerce_children(schema: &Value, value: &mut Value) {
 }
 
 fn number_value(n: f64) -> Value {
-    if n.fract() == 0.0 && n.abs() < 9.007_199_254_740_992e15 {
-        // The guard proves the conversion exact: whole value, |n| < 2^53.
+    if n.fract() == 0.0 && n.abs() < 9.223_372_036_854_776e18 {
+        // The guard proves the conversion exact: whole value, |n| < 2^63
+        // (JSON integers, as JS prints them, so `integer` schemas accept them).
         #[allow(clippy::cast_possible_truncation)]
         let whole = n as i64;
         Value::from(whole)
@@ -309,5 +308,65 @@ fn type_matches(ty: &str, value: &Value) -> bool {
         "array" => value.is_array(),
         "object" => value.is_object(),
         _ => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{json, Value};
+
+    use super::validate_tool_arguments;
+
+    fn validate(ty: &str, raw: &str) -> Result<Value, String> {
+        let schema = json!({ "type": "object", "properties": { "v": { "type": ty } } });
+        validate_tool_arguments("t", &schema, &json!({ "v": raw }))
+    }
+
+    fn rejected(ty: &str, raw: &str) -> Result<Value, String> {
+        Err(format!(
+            "Validation failed for tool \"t\":\n  - v: Expected {ty}, received string\n\n\
+             Received arguments:\n{{\n  \"v\": {}\n}}",
+            Value::from(raw)
+        ))
+    }
+
+    /// Numeric strings convert as JS `Number(text)` where TS's `TypeBox`
+    /// `Value.Convert` and its plain-JSON-schema coercion agree (node runs
+    /// of TS `validateToolArguments`): hex/binary/octal, exponents and JS
+    /// white space convert; `inf`/`nan`/`Infinity` stay strings.
+    #[test]
+    fn numeric_strings_convert_as_js_number() {
+        let cases = [
+            ("number", "0x10"),
+            ("number", "0b11"),
+            ("number", "\u{feff}5\u{2028}"),
+            ("number", "1e3"),
+            ("integer", "1e3"),
+            ("integer", "0o17"),
+            ("integer", "9007199254740993"),
+            ("number", "inf"),
+            ("number", "nan"),
+            ("number", "Infinity"),
+            ("integer", "-Infinity"),
+            ("integer", "1.5"),
+        ];
+        let actual: Vec<_> = cases.iter().map(|(ty, raw)| validate(ty, raw)).collect();
+        assert_eq!(
+            actual,
+            vec![
+                Ok(json!({ "v": 16 })),
+                Ok(json!({ "v": 3 })),
+                Ok(json!({ "v": 5 })),
+                Ok(json!({ "v": 1000 })),
+                Ok(json!({ "v": 1000 })),
+                Ok(json!({ "v": 15 })),
+                Ok(json!({ "v": 9_007_199_254_740_992_i64 })),
+                rejected("number", "inf"),
+                rejected("number", "nan"),
+                rejected("number", "Infinity"),
+                rejected("integer", "-Infinity"),
+                rejected("integer", "1.5"),
+            ]
+        );
     }
 }
