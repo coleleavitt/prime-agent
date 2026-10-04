@@ -27,6 +27,13 @@ pub const RAVO_RUN_EVENT: &str = "ravo_run";
 /// Where run status updates are logged (no daemon event carries them yet).
 pub const RAVO_RUN_LOG_TARGET: &str = "pa_ravo::run";
 
+/// Whether `context`'s session is offered RAVO runs (TS
+/// `_autoRefineAllowedForSession`): RLM depth 0 with a local harness store.
+#[must_use]
+pub fn ravo_run_allowed(context: &SessionFeatureContext) -> bool {
+    context.rlm_depth == 0 && context.session_artifact_dir.is_some()
+}
+
 /// The session model, resolved and authorized through the model registry
 /// at each call (a credential refreshed meanwhile is picked up), one
 /// tool-less provider call per prompt, no system prompt.
@@ -278,12 +285,17 @@ fn track_completion(
     });
 }
 
-/// Register `ravo.run`, `ravo.status` and `ravo.cancel` for one session.
+/// Register `ravo.run`, `ravo.status` and `ravo.cancel` for one session
+/// offered RAVO runs ([`ravo_run_allowed`]); elsewhere the kernel's calls
+/// fail as unregistered (TS registered them only where refine is).
 pub(crate) fn register(
     host: &Arc<RunHost>,
     context: &SessionFeatureContext,
     handlers: &mut HostRequestHandlers,
 ) {
+    if !ravo_run_allowed(context) {
+        return;
+    }
     let context = Arc::new(context.clone());
     for kind in ["ravo.run", "ravo.status", "ravo.cancel"] {
         let host = Arc::clone(host);

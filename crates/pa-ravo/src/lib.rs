@@ -33,7 +33,7 @@ pub use run::{
     parse_ravo_run_payload, ModelFailure, ModelReply, NotStarted, RavoModel, RavoRunRequest,
     RavoRunService, RunServiceDeps, RunStores, StatusListener,
 };
-pub use run_host::{ModelFactory, SessionModel, RAVO_RUN_EVENT};
+pub use run_host::{ravo_run_allowed, ModelFactory, SessionModel, RAVO_RUN_EVENT};
 pub use runner::{PythonReplayRunner, DEFAULT_REPLAY_TIMEOUT};
 pub use trust::*;
 pub use trust_adjudication::*;
