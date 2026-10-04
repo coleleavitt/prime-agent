@@ -1,0 +1,613 @@
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Traceback (most recent call last): no"
+        }
+      ],
+      "timestamp": 1
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call-1",
+      "toolName": "ipython",
+      "content": [
+        {
+          "type": "text",
+          "text": "Traceback (most recent call last):\n  File \"<ipython-input-1>\", line 1, in <module>\n    import polars\nModuleNotFoundError: No module named 'polars'"
+        },
+        {
+          "type": "image",
+          "data": "AAAA",
+          "mimeType": "image/png"
+        }
+      ],
+      "details": {
+        "status": "error",
+        "error": {
+          "ename": "ModuleNotFoundError",
+          "evalue": "No module named 'polars'",
+          "traceback": [
+            "Traceback (most recent call last):",
+            "  File \"<ipython-input-1>\", line 1, in <module>",
+            "    import polars",
+            "ModuleNotFoundError: No module named 'polars'"
+          ]
+        }
+      },
+      "isError": true,
+      "timestamp": 1
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call-1",
+      "toolName": "ipython",
+      "content": [
+        {
+          "type": "text",
+          "text": "Traceback (most recent call last):\n  File \"<ipython-input-2>\", line 1, in <module>\n    importlib.metadata.version(\"foo-bar\")\nimportlib.metadata.PackageNotFoundError: No package metadata was found for foo-bar"
+        },
+        {
+          "type": "image",
+          "data": "AAAA",
+          "mimeType": "image/png"
+        }
+      ],
+      "details": {
+        "status": "error",
+        "error": {
+          "ename": "PackageNotFoundError",
+          "evalue": "x",
+          "traceback": [
+            "Traceback (most recent call last):",
+            "  File \"<ipython-input-2>\", line 1, in <module>",
+            "    importlib.metadata.version(\"foo-bar\")",
+            "importlib.metadata.PackageNotFoundError: No package metadata was found for foo-bar"
+          ]
+        }
+      },
+      "isError": true,
+      "timestamp": 1
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call-1",
+      "toolName": "ipython",
+      "content": [
+        {
+          "type": "text",
+          "text": "Traceback (most recent call last):\n  File \"<ipython-input-1>\", line 1, in <module>\n    import polars\nModuleNotFoundError: No module named 'polars'"
+        },
+        {
+          "type": "image",
+          "data": "AAAA",
+          "mimeType": "image/png"
+        }
+      ],
+      "details": {
+        "status": "ok"
+      },
+      "isError": false,
+      "timestamp": 1
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call-1",
+      "toolName": "ipython",
+      "content": [
+        {
+          "type": "text",
+          "text": "Traceback (most recent call last):\n  File \"<ipython-input-1>\", line 1, in <module>\n    import polars\nModuleNotFoundError: No module named 'polars'"
+        },
+        {
+          "type": "image",
+          "data": "AAAA",
+          "mimeType": "image/png"
+        }
+      ],
+      "details": {
+        "status": "error",
+        "error": {
+          "ename": "KeyError",
+          "evalue": "x",
+          "traceback": [
+            "KeyError: 'x'"
+          ]
+        }
+      },
+      "isError": true,
+      "timestamp": 1
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call-1",
+      "toolName": "bash",
+      "content": [
+        {
+          "type": "text",
+          "text": "bash: line 1: cargo: command not found (exit 127)"
+        },
+        {
+          "type": "image",
+          "data": "AAAA",
+          "mimeType": "image/png"
+        }
+      ],
+      "isError": true,
+      "timestamp": 1
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call-1",
+      "toolName": "edit",
+      "content": [
+        {
+          "type": "text",
+          "text": "   "
+        },
+        {
+          "type": "image",
+          "data": "AAAA",
+          "mimeType": "image/png"
+        }
+      ],
+      "isError": true,
+      "timestamp": 1
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call-1",
+      "toolName": "",
+      "content": [
+        {
+          "type": "text",
+          "text": "flagged without a name"
+        },
+        {
+          "type": "image",
+          "data": "AAAA",
+          "mimeType": "image/png"
+        }
+      ],
+      "isError": true,
+      "timestamp": 1
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call-1",
+      "toolName": "read",
+      "content": [
+        {
+          "type": "text",
+          "text": "ok: 3 files written"
+        },
+        {
+          "type": "image",
+          "data": "AAAA",
+          "mimeType": "image/png"
+        }
+      ],
+      "isError": false,
+      "timestamp": 1
+    },
+    {
+      "role": "assistant",
+      "content": [],
+      "api": "faux",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 0,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "error",
+      "timestamp": 1,
+      "errorMessage": "429 rate limited: retry after 12s"
+    },
+    {
+      "role": "assistant",
+      "content": [],
+      "api": "faux",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 0,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "error",
+      "timestamp": 1,
+      "errorMessage": "   ",
+      "stopReasonRaw": "content_filter"
+    },
+    {
+      "role": "assistant",
+      "content": [],
+      "api": "faux",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 0,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "error",
+      "timestamp": 1
+    },
+    {
+      "role": "assistant",
+      "content": [],
+      "api": "faux",
+      "provider": "",
+      "model": "faux-1",
+      "usage": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 0,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "error",
+      "timestamp": 1,
+      "errorMessage": "boom"
+    },
+    {
+      "role": "assistant",
+      "content": [],
+      "api": "faux",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 0,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "aborted",
+      "timestamp": 1,
+      "errorMessage": "aborted by user"
+    },
+    {
+      "role": "assistant",
+      "content": [],
+      "api": "faux",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 0,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "stop",
+      "timestamp": 1
+    }
+  ],
+  "runs": [
+    {
+      "fromEntryIndex": 0,
+      "turn": 4,
+      "observations": [
+        {
+          "fingerprint": {
+            "id": "ca578aff209c6a3c",
+            "kind": "python_exception",
+            "message": "no module named ?",
+            "source": "ipython",
+            "exceptionClass": "ModuleNotFoundError"
+          },
+          "excerpt": "File \"<ipython-input-1>\", line 1, in <module>\nModuleNotFoundError: No module named 'polars'",
+          "entryIndex": 1,
+          "turn": 4,
+          "at": "2026-01-01T00:00:00.000Z",
+          "replayCase": {
+            "language": "python",
+            "source": "import polars",
+            "exceptionClass": "ModuleNotFoundError"
+          }
+        },
+        {
+          "fingerprint": {
+            "id": "653704d56b1f1e0f",
+            "kind": "python_exception",
+            "message": "no package metadata was found for foo-bar",
+            "source": "ipython",
+            "exceptionClass": "importlib.metadata.PackageNotFoundError"
+          },
+          "excerpt": "File \"<ipython-input-2>\", line 1, in <module>\nimportlib.metadata.PackageNotFoundError: No package metadata was found for foo-bar",
+          "entryIndex": 2,
+          "turn": 4,
+          "at": "2026-01-01T00:00:01.000Z",
+          "replayCase": {
+            "language": "python",
+            "source": "import importlib.metadata\nimportlib.metadata.version(\"foo-bar\")",
+            "exceptionClass": "PackageNotFoundError"
+          }
+        },
+        {
+          "fingerprint": {
+            "id": "ca578aff209c6a3c",
+            "kind": "python_exception",
+            "message": "no module named ?",
+            "source": "ipython",
+            "exceptionClass": "ModuleNotFoundError"
+          },
+          "excerpt": "File \"<ipython-input-1>\", line 1, in <module>\nModuleNotFoundError: No module named 'polars'",
+          "entryIndex": 3,
+          "turn": 4,
+          "at": "2026-01-01T00:00:02.000Z"
+        },
+        {
+          "fingerprint": {
+            "id": "ca578aff209c6a3c",
+            "kind": "python_exception",
+            "message": "no module named ?",
+            "source": "ipython",
+            "exceptionClass": "ModuleNotFoundError"
+          },
+          "excerpt": "File \"<ipython-input-1>\", line 1, in <module>\nModuleNotFoundError: No module named 'polars'",
+          "entryIndex": 4,
+          "turn": 4,
+          "at": "2026-01-01T00:00:03.000Z"
+        },
+        {
+          "fingerprint": {
+            "id": "9ad30bace129d1c8",
+            "kind": "tool_error",
+            "message": "bash: line #: cargo: command not found (exit #)",
+            "source": "bash"
+          },
+          "excerpt": "bash: line 1: cargo: command not found (exit 127)",
+          "entryIndex": 5,
+          "turn": 4,
+          "at": "2026-01-01T00:00:04.000Z"
+        },
+        {
+          "fingerprint": {
+            "id": "25c55003f476bf59",
+            "kind": "tool_error",
+            "message": "tool returned an error without output",
+            "source": "edit"
+          },
+          "excerpt": "tool returned an error without output",
+          "entryIndex": 6,
+          "turn": 4,
+          "at": "2026-01-01T00:00:05.000Z"
+        },
+        {
+          "fingerprint": {
+            "id": "7de34aae8e99598b",
+            "kind": "tool_error",
+            "message": "flagged without a name",
+            "source": ""
+          },
+          "excerpt": "flagged without a name",
+          "entryIndex": 7,
+          "turn": 4,
+          "at": "2026-01-01T00:00:06.000Z"
+        },
+        {
+          "fingerprint": {
+            "id": "29f08e547224d60a",
+            "kind": "provider_error",
+            "message": "# rate limited: retry after #s",
+            "source": "faux"
+          },
+          "excerpt": "429 rate limited: retry after 12s",
+          "entryIndex": 9,
+          "turn": 4,
+          "at": "2026-01-01T00:00:07.000Z"
+        },
+        {
+          "fingerprint": {
+            "id": "1e7c52cdc10b46c2",
+            "kind": "provider_error",
+            "message": "content_filter",
+            "source": "faux"
+          },
+          "excerpt": "content_filter",
+          "entryIndex": 10,
+          "turn": 4,
+          "at": "2026-01-01T00:00:08.000Z"
+        },
+        {
+          "fingerprint": {
+            "id": "df792817cf89e48d",
+            "kind": "provider_error",
+            "message": "provider returned an error",
+            "source": "faux"
+          },
+          "excerpt": "provider returned an error",
+          "entryIndex": 11,
+          "turn": 4,
+          "at": "2026-01-01T00:00:09.000Z"
+        },
+        {
+          "fingerprint": {
+            "id": "48148c66ba62d81a",
+            "kind": "provider_error",
+            "message": "boom"
+          },
+          "excerpt": "boom",
+          "entryIndex": 12,
+          "turn": 4,
+          "at": "2026-01-01T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "fromEntryIndex": 3,
+      "turn": 4,
+      "observations": [
+        {
+          "fingerprint": {
+            "id": "ca578aff209c6a3c",
+            "kind": "python_exception",
+            "message": "no module named ?",
+            "source": "ipython",
+            "exceptionClass": "ModuleNotFoundError"
+          },
+          "excerpt": "File \"<ipython-input-1>\", line 1, in <module>\nModuleNotFoundError: No module named 'polars'",
+          "entryIndex": 3,
+          "turn": 4,
+          "at": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "fingerprint": {
+            "id": "ca578aff209c6a3c",
+            "kind": "python_exception",
+            "message": "no module named ?",
+            "source": "ipython",
+            "exceptionClass": "ModuleNotFoundError"
+          },
+          "excerpt": "File \"<ipython-input-1>\", line 1, in <module>\nModuleNotFoundError: No module named 'polars'",
+          "entryIndex": 4,
+          "turn": 4,
+          "at": "2026-01-01T00:00:01.000Z"
+        },
+        {
+          "fingerprint": {
+            "id": "9ad30bace129d1c8",
+            "kind": "tool_error",
+            "message": "bash: line #: cargo: command not found (exit #)",
+            "source": "bash"
+          },
+          "excerpt": "bash: line 1: cargo: command not found (exit 127)",
+          "entryIndex": 5,
+          "turn": 4,
+          "at": "2026-01-01T00:00:02.000Z"
+        },
+        {
+          "fingerprint": {
+            "id": "25c55003f476bf59",
+            "kind": "tool_error",
+            "message": "tool returned an error without output",
+            "source": "edit"
+          },
+          "excerpt": "tool returned an error without output",
+          "entryIndex": 6,
+          "turn": 4,
+          "at": "2026-01-01T00:00:03.000Z"
+        },
+        {
+          "fingerprint": {
+            "id": "7de34aae8e99598b",
+            "kind": "tool_error",
+            "message": "flagged without a name",
+            "source": ""
+          },
+          "excerpt": "flagged without a name",
+          "entryIndex": 7,
+          "turn": 4,
+          "at": "2026-01-01T00:00:04.000Z"
+        },
+        {
+          "fingerprint": {
+            "id": "29f08e547224d60a",
+            "kind": "provider_error",
+            "message": "# rate limited: retry after #s",
+            "source": "faux"
+          },
+          "excerpt": "429 rate limited: retry after 12s",
+          "entryIndex": 9,
+          "turn": 4,
+          "at": "2026-01-01T00:00:05.000Z"
+        },
+        {
+          "fingerprint": {
+            "id": "1e7c52cdc10b46c2",
+            "kind": "provider_error",
+            "message": "content_filter",
+            "source": "faux"
+          },
+          "excerpt": "content_filter",
+          "entryIndex": 10,
+          "turn": 4,
+          "at": "2026-01-01T00:00:06.000Z"
+        },
+        {
+          "fingerprint": {
+            "id": "df792817cf89e48d",
+            "kind": "provider_error",
+            "message": "provider returned an error",
+            "source": "faux"
+          },
+          "excerpt": "provider returned an error",
+          "entryIndex": 11,
+          "turn": 4,
+          "at": "2026-01-01T00:00:07.000Z"
+        },
+        {
+          "fingerprint": {
+            "id": "48148c66ba62d81a",
+            "kind": "provider_error",
+            "message": "boom"
+          },
+          "excerpt": "boom",
+          "entryIndex": 12,
+          "turn": 4,
+          "at": "2026-01-01T00:00:08.000Z"
+        }
+      ]
+    },
+    {
+      "fromEntryIndex": 20,
+      "turn": 4,
+      "observations": []
+    }
+  ]
+}

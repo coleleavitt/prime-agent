@@ -11,7 +11,7 @@
 //! 3 adds the kernel telemetry bridge's skill-event vocabulary
 //! (`computer_use_session_started`, `computer_use_action`); schema version 4
 //! adds the separately built features' adoption events (`dream_run`,
-//! `observability command used`, `toolforge publish`,
+//! `failure_resolution_hint`, `observability command used`, `toolforge publish`,
 //! `workflow_run_agent`): new-event vocabulary bumps the version,
 //! additive property changes do not.
 //!
@@ -1002,6 +1002,20 @@ const COMPUTER_USE_SESSION_STARTED: EventRule = EventRule {
     )],
 };
 
+/// `failure_resolution_hint` (v4): an `ipython` result carried the cell that
+/// fixed the same failure before (the fork's `pa-ledger` resolution index,
+/// wired by pa-cli behind its `ledger` feature; the native build never sends
+/// it). Whether the fix came from this session or the repo's store only —
+/// never the fingerprint, the cell source, the exception class, or a path.
+const FAILURE_RESOLUTION_HINT: EventRule = EventRule {
+    name: "failure_resolution_hint",
+    since: 4,
+    properties: &[(
+        "origin",
+        required(enum_rule(&["session", "store", "unknown"], "unknown")),
+    )],
+};
+
 /// `observability command used` (v4): one `prime-agent trace` /
 /// `prime-agent health` run (the fork's trace feature crate, wired by pa-cli
 /// behind its `trace` feature; the native build never sends it). The
@@ -1506,6 +1520,7 @@ pub fn catalog() -> Vec<&'static EventRule> {
         &TOOLFORGE_PUBLISH,
         &WORKFLOW_RUN_AGENT,
         &OBSERVABILITY_COMMAND_USED,
+        &FAILURE_RESOLUTION_HINT,
     ];
     all.extend(UPDATE_EVENTS.iter());
     all
@@ -1634,6 +1649,10 @@ mod tests {
             lookup("observability command used").map(|rule| rule.since),
             Some(4)
         );
+        assert_eq!(
+            lookup("failure_resolution_hint").map(|rule| rule.since),
+            Some(4)
+        );
         for name in ["computer_use_session_started", "computer_use_action"] {
             let rule = catalog()
                 .into_iter()
@@ -1753,6 +1772,22 @@ mod tests {
         assert_eq!(properties.get("tool_bash_call_count"), Some(&json!(3u64)));
         assert!(properties.get("tool_name").is_none(), "unknown key dropped");
         assert_eq!(adjusted, 2, "one fallback + one dropped key");
+    }
+
+    #[test]
+    fn failure_resolution_hint_carries_only_its_origin() {
+        let mut properties = Properties::new();
+        properties.set("origin", json!("store"));
+        properties.set("fingerprint", json!("0123456789abcdef")); // not catalogued
+        let adjusted = sanitize("failure_resolution_hint", &mut properties);
+        let mut expected = Properties::new();
+        expected.set("origin", json!("store"));
+        assert_eq!(properties, expected);
+        assert_eq!(adjusted, 1, "one dropped key");
+        let mut odd = Properties::new();
+        odd.set("origin", json!("elsewhere"));
+        sanitize("failure_resolution_hint", &mut odd);
+        assert_eq!(odd.get("origin"), Some(&json!("unknown")));
     }
 
     #[test]

@@ -1,0 +1,105 @@
+{
+  "derived": [
+    {
+      "exceptionClass": "ModuleNotFoundError",
+      "excerpt": "ModuleNotFoundError: No module named 'polars.io'",
+      "replayCase": {
+        "language": "python",
+        "source": "import polars.io",
+        "exceptionClass": "ModuleNotFoundError"
+      }
+    },
+    {
+      "exceptionClass": "ModuleNotFoundError",
+      "excerpt": "ModuleNotFoundError: No Module Named \"pip\"",
+      "replayCase": null
+    },
+    {
+      "exceptionClass": "ModuleNotFoundError",
+      "excerpt": "No module named 'a._b'",
+      "replayCase": null
+    },
+    {
+      "exceptionClass": "importlib.metadata.PackageNotFoundError",
+      "excerpt": "PackageNotFoundError: foo_bar  \nmore",
+      "replayCase": {
+        "language": "python",
+        "source": "import importlib.metadata\nimportlib.metadata.version(\"foo_bar\")",
+        "exceptionClass": "PackageNotFoundError"
+      }
+    },
+    {
+      "exceptionClass": "PackageNotFoundError",
+      "excerpt": "PackageNotFoundError: 'quoted-dist'",
+      "replayCase": {
+        "language": "python",
+        "source": "import importlib.metadata\nimportlib.metadata.version(\"quoted-dist\")",
+        "exceptionClass": "PackageNotFoundError"
+      }
+    },
+    {
+      "exceptionClass": "ValueError",
+      "excerpt": "No package metadata was found for Some.Dist\r\n",
+      "replayCase": {
+        "language": "python",
+        "source": "import importlib.metadata\nimportlib.metadata.version(\"Some.Dist\")",
+        "exceptionClass": "PackageNotFoundError"
+      }
+    },
+    {
+      "exceptionClass": "ValueError",
+      "excerpt": "PackageNotFoundError: not-this-class",
+      "replayCase": null
+    },
+    {
+      "exceptionClass": "AttributeError",
+      "excerpt": "module 'x' has no attribute 'y'",
+      "replayCase": null
+    }
+  ],
+  "probes": [
+    {
+      "source": "import a",
+      "valid": true
+    },
+    {
+      "source": "import a.b_c",
+      "valid": true
+    },
+    {
+      "source": "import _a",
+      "valid": false
+    },
+    {
+      "source": "import tkinter",
+      "valid": false
+    },
+    {
+      "source": "import a ",
+      "valid": false
+    },
+    {
+      "source": "import importlib.metadata\nimportlib.metadata.version(\"x-y\")",
+      "valid": true
+    },
+    {
+      "source": "import importlib.metadata\nimportlib.metadata.version(\"-x\")",
+      "valid": false
+    },
+    {
+      "source": "from a import b",
+      "valid": false
+    }
+  ],
+  "normalized": [
+    {
+      "language": "python",
+      "source": "import b",
+      "verifiedAt": "v"
+    },
+    {
+      "language": "python",
+      "source": "import c"
+    }
+  ]
+}
