@@ -179,6 +179,7 @@ async def spawn(
     model: str | None = None,
     thinking: str | None = None,
     cwd: str | None = None,
+    target: str | None = None,
 ) -> RLMSpawnHandle:
     """Spawn a recursive Prime Agent child and return once its task is admitted.
 
@@ -188,9 +189,16 @@ async def spawn(
     defaults to the parent level; levels invalid for the resolved model fail the spawn.
     ``cwd`` sets the child working directory (absolute, or relative to the parent cwd); it must be
     an existing directory.
+    ``target`` sets the child placement: 'local' (the default when omitted)
+    or 'cloud'. 'cloud' is not supported yet — no cloud child backend exists,
+    and the spawn fails with an explicit error instead of running the child
+    locally. The kwarg is forwarded only when passed, so an omitted ``target``
+    sends the byte-identical wire payload.
     """
     if not isinstance(prompt, str):
         raise TypeError(f"prompt must be str, got {type(prompt).__name__}")
+    if target is not None and not isinstance(target, str):
+        raise TypeError(f"target must be str, got {type(target).__name__}")
     kwargs: dict[str, Any] = {"name": name}
     if model is not None:
         kwargs["model"] = model
@@ -198,6 +206,8 @@ async def spawn(
         kwargs["thinking"] = thinking
     if cwd is not None:
         kwargs["cwd"] = cwd
+    if target is not None:
+        kwargs["target"] = target
     # Wire type stays "rlm.run" so kernels and hosts of different versions stay compatible.
     payload = await host_request("rlm.run", {"prompt": prompt, "kwargs": kwargs})
     return _spawn_handle_from_payload(payload)
@@ -842,8 +852,11 @@ class _RLMNamespace:
         model: str | None = None,
         thinking: str | None = None,
         cwd: str | None = None,
+        target: str | None = None,
     ) -> RLMSpawnHandle:
-        return await spawn(prompt, name=name, model=model, thinking=thinking, cwd=cwd)
+        return await spawn(
+            prompt, name=name, model=model, thinking=thinking, cwd=cwd, target=target
+        )
 
     async def create_session(
         self,

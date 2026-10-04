@@ -22,7 +22,23 @@ logic of its own). The RLM recursion host seam
 (`session_engine::rlm_host`): the trait the kernel's `rlm.spawn`/
 `rlm.create_session`/`rlm.list_subagents`/`rlm.collect`/
 `rlm.delete_subagent` host requests call into, with the roster/collect/
-selector-error vocabulary the daemon implements over the supervisor link.
+selector-error vocabulary the daemon implements over the supervisor link,
+plus the typed `rlm.spawn` placement contract (`target` kwarg; the
+`RlmSpawnTarget` vocabulary and its design note live in
+`kernel::rlm_runtime`): omitted or `local` keeps the pre-contract local
+spawn byte-identically, `cloud` is refused at admission before any host is
+consulted until the cloud child backend exists (never a silent local
+fallback), and the note pins the admission/messaging parity the backend
+must uphold.
+The in-process RLM host admits each child terminal notice through the parent
+session inbox: one fsynced JSONL row precedes live registration and child
+settlement. A child that replied settles only after its explicit reply row
+is durably admitted through that same strict writer. On reopen, notices without
+a `notice_consumed` marker replay from
+the original row. Model delivery is **at least once**, not exactly once: a
+crash after the parent model responds but before its assistant row and marker
+are synced can repeat inference. No durable terminal row means the child's
+pre-crash outcome remains interrupted or unknown, never fabricated as done.
 Platform wall (`platform`): process control (signals/process groups, kernel exit waits), file locking, file permissions, and shell selection - every OS-specific behavior in the engine lives there behind cfg-gated implementations (the durable-write rename primitive is pa-telemetry's `rename_onto`, re-exported as `platform::rename_onto`). Scheduled jobs (`cron`, the `AgentCronJobStore` port of `core/cron-jobs.ts`): file-backed job state under session artifacts (`scheduled-jobs.json` partitions) with cross-process locking, plus the public read-only scan (`cron::store::read_scheduled_jobs_artifact`) the update flow's roster projection and boot re-arm read. Tools (bash, edit, ipython + internal rename/stdout), file mutation queue, truncation and rendering rules, RLM kernel lifecycle (IPython spawn/execute/revive), skills loading, system prompt assembly, compaction, harness refinement, settings/config, package manager (npm/git/local source install/remove/list/update against settings, plus `resolve()`: precedence-ranked session resource resolution over configured packages, settings arrays, auto-discovery, and bundled skills), session manager (persist/resume). origin/main
 
 Provider resilience policies in `session_engine`: the shared quick-retry
