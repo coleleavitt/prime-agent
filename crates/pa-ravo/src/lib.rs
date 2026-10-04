@@ -7,6 +7,7 @@ mod auto_refine;
 mod feature;
 mod gate;
 mod js;
+mod outcome;
 mod reducer;
 mod referee;
 mod run;

@@ -1001,15 +1001,17 @@ impl RunHooks {
         } else {
             claimed.clone()
         };
-        let scope = crate::gate::scope_name(self.scope);
-        let deep_score = certificate.deep.score.unwrap_or(0);
-        let missed = certificate.missed_criterion_ids.len();
-        let addressed = addressed.join(",");
-        if decision == "commit" {
-            tracing::info!(target: crate::feature::REFINEMENT_LOG_TARGET, proposal_id, addressed, deep_score, missed, reason = "ravo_run", scope, "refinement.committed");
-        } else {
-            tracing::info!(target: crate::feature::REFINEMENT_LOG_TARGET, proposal_id, decision, deep_score, missed, claimed = claimed.len(), reason = "ravo_run", scope, cause, "refinement.rejected");
-        }
+        crate::outcome::log_refinement_outcome(&crate::outcome::RefinementOutcome {
+            proposal_id,
+            decision,
+            addressed: &addressed,
+            deep_score: certificate.deep.score.unwrap_or(0),
+            missed: certificate.missed_criterion_ids.len(),
+            claimed: claimed.len(),
+            reason: "ravo_run",
+            scope: crate::gate::scope_name(self.scope),
+            cause: Some(cause),
+        });
     }
 
     fn commit_inputs(

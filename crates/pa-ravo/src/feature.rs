@@ -57,8 +57,7 @@ pub const RAVO_ENV: &str = "PRIME_AGENT_RAVO";
 /// The adoption event: one gated refinement's final decision.
 pub const RAVO_GATE_DECISION_EVENT: &str = "ravo_gate_decision";
 
-/// Where the outcome log lines go (TS `REFINEMENT_LOG_COMPONENT`).
-pub const REFINEMENT_LOG_TARGET: &str = "pa_ravo::refinement";
+pub use crate::outcome::REFINEMENT_LOG_TARGET;
 
 /// Whether RAVO gating is on for a `PRIME_AGENT_RAVO` value.
 #[must_use]
@@ -732,47 +731,17 @@ impl RavoVerdict {
         let proposal_id = self.proposal_id.as_str();
         let reason = self.reason.as_str();
         let scope = scope_name(self.scope);
-        let addressed = report.addressed_fingerprints.join(",");
-        match decision {
-            FinalDecision::Gate(RavoDecision::Commit)
-                if !report.addressed_fingerprints.is_empty() =>
-            {
-                tracing::info!(
-                    target: REFINEMENT_LOG_TARGET,
-                    proposal_id,
-                    addressed,
-                    deep_score = report.deep_score,
-                    missed = report.missed_criteria.len(),
-                    reason,
-                    scope,
-                    "refinement.committed"
-                );
-            }
-            FinalDecision::Gate(RavoDecision::Commit) | FinalDecision::CommitUnmeasured => {
-                tracing::info!(
-                    target: REFINEMENT_LOG_TARGET,
-                    proposal_id,
-                    deep_score = report.deep_score,
-                    reason,
-                    scope,
-                    "refinement.applied_unmeasured"
-                );
-            }
-            FinalDecision::Gate(_) | FinalDecision::Partial => {
-                tracing::info!(
-                    target: REFINEMENT_LOG_TARGET,
-                    proposal_id,
-                    decision = decision.as_str(),
-                    deep_score = report.deep_score,
-                    missed = report.missed_criteria.len(),
-                    claimed = report.addressed_fingerprints.len(),
-                    reason,
-                    scope,
-                    cause = cause.map(RejectionCause::as_str),
-                    "refinement.rejected"
-                );
-            }
-        }
+        crate::outcome::log_refinement_outcome(&crate::outcome::RefinementOutcome {
+            proposal_id,
+            decision: decision.as_str(),
+            addressed: &report.addressed_fingerprints,
+            deep_score: report.deep_score,
+            missed: report.missed_criteria.len(),
+            claimed: report.addressed_fingerprints.len(),
+            reason,
+            scope,
+            cause: cause.map(RejectionCause::as_str),
+        });
         if let Some(telemetry) = &self.telemetry {
             let mut properties = Properties::new();
             properties.set("decision", Value::from(decision.as_str()));

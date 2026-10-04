@@ -159,7 +159,9 @@ differently. A judge reply that is not JSON reports `serde_json`'s parse error w
 `ravo_gate_decision` (schema v4): `decision`, `scope`, `reason`, `cause`, `recurring` (failure opponents charged),
 `claimed` (fingerprints credited). Never a fingerprint, a proposal, a score or judge text. The outcome line
 (`refinement.committed`, `refinement.applied_unmeasured`, `refinement.rejected`) is a `tracing` event under
-`pa_ravo::refinement`; each settled window (`harness.trust.settled`: proposal, scope, from, outcome, ordinal,
+`pa_ravo::refinement`, with the TS record's fields (`proposalId`, `addressed` as an array through `pa-trace`'s
+`<key>.json` field, `deepScore`, `missed`, `claimed`, `decision`, `cause` on a `reject_*` decision, `reason`,
+`scope`); each settled window (`harness.trust.settled`: proposal, scope, from, outcome, ordinal,
 fingerprints) and each moved score (`harness.trust.adjusted`: proposal, scope, entry, reason, delta, before, after,
 dormant, fingerprint) under `pa_ravo::harness_trust`. Trust adds no telemetry event: it is not user-invoked. `ravo_run` (schema v4): `outcome` (the stop reason or `error`),
 `scope`, `rounds`, `repairs`, once a run settles; never the task, a proposal or child text. A run's spans: `ravo.run`,
