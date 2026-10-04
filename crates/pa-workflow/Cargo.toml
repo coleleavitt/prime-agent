@@ -1,0 +1,28 @@
+[package]
+name = "pa-workflow"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The fork's Workflow host: the kernel's workflow.* host requests."
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+pa-types.workspace = true
+pa-agent.workspace = true
+pa-telemetry.workspace = true
+pa-core = { path = "../pa-core" }
+sha2 = "0.10"
+
+[dev-dependencies]
+pa-ai.workspace = true
+tempfile = "3"
+tokio-util.workspace = true
+
+[lints]
+workspace = true

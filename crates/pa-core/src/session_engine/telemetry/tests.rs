@@ -289,7 +289,7 @@ async fn emits_aggregate_metrics_without_content() {
         serde_json::json!("0197d0a0-8f5c-7f2a-b0e3-2d7e0d2b3b1a")
     );
     assert_eq!(run["execution_mode"], serde_json::json!("interactive"));
-    assert_eq!(run["schema_version"], serde_json::json!(3));
+    assert_eq!(run["schema_version"], serde_json::json!(4));
 
     // Privacy: no private prompt/tool/assistant text anywhere.
     let all = serde_json::to_string(&fixture.mock.events()).unwrap();

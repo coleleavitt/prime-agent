@@ -1272,6 +1272,7 @@ dependencies = [
  "pa-telemetry",
  "pa-tui",
  "pa-types",
+ "pa-workflow",
  "rsa",
  "serde",
  "serde_json",
@@ -1434,6 +1435,26 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "pa-workflow"
+version = "0.9.8"
+dependencies = [
+ "anyhow",
+ "pa-agent",
+ "pa-ai",
+ "pa-core",
+ "pa-telemetry",
+ "pa-types",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
