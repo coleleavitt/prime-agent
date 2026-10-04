@@ -3,6 +3,7 @@
 //! models, offline or not. Resolution returns fresh snapshots: a
 //! mid-session refresh never retargets the active model.
 
+use pa_types::sync::MutexExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -144,14 +145,10 @@ impl ModelCatalog {
     /// this process served — the split-process port of TS `authStorage.onChange`: the stored disk
     /// scope only seeds the first observation; afterwards only live credentials are trusted. Every
     /// call records the current scope as the next comparison base.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the scope-observation mutex is poisoned.
     pub fn credentials_changed(&self, credentials: Option<&PrimeCredentials>) -> bool {
         let current = credentials
             .map(|credentials| self.prime_inference.scope_for(&credentials.as_inference()));
-        let mut seen = self.pi_scope_seen.lock().expect("scope observation lock");
+        let mut seen = self.pi_scope_seen.lock_or_recover();
         let last = seen
             .clone()
             .unwrap_or_else(|| self.prime_inference.stored_scope());
