@@ -1418,6 +1418,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pa-mermaid"
+version = "0.9.8"
+dependencies = [
+ "serde_json",
+ "unicode-segmentation",
+ "unicode-width 0.2.0",
+]
+
+[[package]]
 name = "pa-models"
 version = "0.9.8"
 dependencies = [
