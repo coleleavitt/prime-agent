@@ -1,5 +1,10 @@
 # Prime Agent — How It Actually Works
 
+> **TS-era map.** This flowchart describes the TypeScript implementation (`packages/`), which the upstream Rust port
+> (#2524) replaced. It is kept as design history and as the inventory source for porting the fork's TS-only features.
+> For the current architecture see `AGENTS.md` → Crates (dependency direction), `CLAUDE.md` → Architecture First
+> (process boundaries), and each `crates/<crate>/README.md`.
+
 A living map of the architecture. Keep it current as the code changes; see [Keeping this current](#keeping-this-current).
 
 Last verified against: `perf/session-catalog-resume` @ `f4afe5b5d`, plus the working tree · 2026-09-18
