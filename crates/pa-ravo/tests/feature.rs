@@ -724,3 +724,28 @@ async fn failures_queue_their_own_refines_and_repairs() {
         ]
     );
 }
+
+/// With the gate on, an approved automatic review refines the global
+/// harness unless it asked for a local refine; with it off the native
+/// policy (no policy offered) stays.
+#[test]
+fn the_gate_offers_the_global_default_auto_refine_policy() {
+    let session = session();
+    let policy = session
+        .ravo
+        .auto_refine_policy(&session.context)
+        .expect("a policy while the gate is on");
+    let review = pa_core::refinement::executor::AutoRefineReview {
+        should_refine: true,
+        rationale: "a standing rule".to_string(),
+        instructions: None,
+        reply: serde_json::Map::new(),
+    };
+    assert!(policy.approved_refine("compact", &review).global);
+    let disabled = RavoFeature::new(RavoOptions {
+        enabled: Some(false),
+        runner: Arc::new(NeverRuns),
+        replay_sys_path: Vec::new(),
+    });
+    assert!(disabled.auto_refine_policy(&session.context).is_none());
+}

@@ -3,6 +3,7 @@
 //! are judged against, and the recording of provisional regressions.
 
 mod authority;
+mod auto_refine;
 mod feature;
 mod gate;
 mod js;
@@ -16,6 +17,7 @@ mod trust_runtime;
 mod verification;
 
 pub use authority::*;
+pub use auto_refine::*;
 pub use feature::{
     ravo_enabled, RavoFeature, RavoOptions, RAVO_ENV, RAVO_GATE_DECISION_EVENT,
     REFINEMENT_LOG_TARGET,

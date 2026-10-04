@@ -236,6 +236,18 @@ impl SessionFeature for RavoFeature {
         }
     }
 
+    /// An approved automatic review refines the global harness unless the
+    /// reviewer asked for a local refine, while the gate judges refines
+    /// (TS `4c99bf8c2`); with gating off the native policy stays.
+    fn auto_refine_policy(
+        &self,
+        _context: &Arc<SessionFeatureContext>,
+    ) -> Option<Arc<dyn pa_core::refinement::executor::AutoRefinePolicy>> {
+        self.inner
+            .enabled()
+            .then(|| Arc::new(crate::auto_refine::GlobalDefaultAutoRefine) as _)
+    }
+
     /// Dormant entries leave the rendered harness (TS
     /// `formatHarnessStateForPrompt`).
     fn harness_render_filter(

@@ -56,6 +56,9 @@ on `perf/session-catalog-resume`, and `docs/ravo-architecture.md` there.
   edits apply (`prepare_application`) and opens the commit's window after. An entry below 30 is dormant: left out of
   the rendered harness digest and of the judge's harness overview (`- +N dormant <kind> entries (below trust threshold;
   still readable and editable)`), never deleted.
+- Global-default auto-refine (TS `4c99bf8c2`), while the gate is on: the automatic review's prompt asks for a `scope`
+  (the TS system prompt and closing guidance), and an approved review runs a global refine unless the reviewer answered
+  `"scope": "local"`, with the TS instructions for either scope. With gating off the native (local) policy stays.
 - Replay self-checks (`_startReplayVerification`): each boundary's newly derived, unverified cases run off the turn
   path in the sanitized environment, one batch at a time per session on a thread of their own, each (fingerprint,
   source) once per session and never one the ledger already holds verified; a reproduction is queued through
@@ -92,6 +95,7 @@ on `perf/session-catalog-resume`, and `docs/ravo-architecture.md` there.
   (with a `RefineTrigger` carrying `{reason, kind, triggerFingerprintIds}`) onto the pending refine the next serviced
   turn boundary consumes. The ledger reports boundaries from its worker thread, so a request lands at the boundary the
   host services after the worker processed the turn (TS queued synchronously at `message_end`).
+- `SessionFeature::auto_refine_policy` → `pa_core::refinement::executor::AutoRefinePolicy` (`GlobalDefaultAutoRefine`).
 - `RefinementGateVerdict::prepare_application`: an admitted refine records the pending trust evidence of its target
   store and settles its windows on the re-read store before the edits apply; `record_application` gives the written
   entries their trust record and opens the commit's window.
