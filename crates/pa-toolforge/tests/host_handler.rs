@@ -32,6 +32,7 @@ fn context(agent_dir: PathBuf, loaded: &[&str], tracked: &Tracked) -> SessionFea
         }))
         .unwrap(),
         rlm_depth: 0,
+        session_artifact_dir: None,
         telemetry: Some(FeatureTelemetry::new(move |name, properties| {
             recorder
                 .lock()

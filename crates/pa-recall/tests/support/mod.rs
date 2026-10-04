@@ -177,6 +177,7 @@ pub fn context(repo: &Path, agent_dir: &Path, session_id: &str) -> Arc<SessionFe
         .expect("stub model"),
         telemetry: None,
         rlm_depth: 0,
+        session_artifact_dir: None,
     })
 }
 
@@ -187,6 +188,7 @@ pub fn child_context(
 ) -> Arc<SessionFeatureContext> {
     Arc::new(SessionFeatureContext {
         rlm_depth: 1,
+        session_artifact_dir: None,
         ..(*context(repo, agent_dir, session_id)).clone()
     })
 }
@@ -273,6 +275,8 @@ impl Process {
                     tool_name: tool.to_string(),
                     args: serde_json::json!({ "code": "print('orient')" }),
                     is_error: false,
+                    content: Vec::new(),
+                    details: serde_json::Value::Null,
                     host_facts,
                     earlier_results_of_tool,
                 },

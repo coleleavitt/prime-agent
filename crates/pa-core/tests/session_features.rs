@@ -20,9 +20,17 @@ use pa_core::{ExecutionMode, ToolDefinition, ToolExecutionResult};
 
 #[derive(Debug, Clone, PartialEq)]
 enum Seen {
+    SessionStart {
+        history: usize,
+        artifact_dir: Option<std::path::PathBuf>,
+    },
+    MessageEnd(String),
     Before(ToolCallObservation),
     After(ToolResultObservation),
-    AgentEnd { session_id: String, rlm_depth: u32 },
+    AgentEnd {
+        session_id: String,
+        rlm_depth: u32,
+    },
     Flush,
 }
 
@@ -34,6 +42,20 @@ struct Stub {
 impl SessionFeature for Stub {
     fn name(&self) -> &'static str {
         "stub"
+    }
+
+    fn on_session_start(&self, context: &Arc<SessionFeatureContext>, history: &[AgentMessage]) {
+        self.seen.lock().unwrap().push(Seen::SessionStart {
+            history: history.len(),
+            artifact_dir: context.session_artifact_dir.clone(),
+        });
+    }
+
+    fn on_message_end(&self, _context: &Arc<SessionFeatureContext>, message: &AgentMessage) {
+        self.seen
+            .lock()
+            .unwrap()
+            .push(Seen::MessageEnd(message.role().to_string()));
     }
 
     fn before_tool_call(
@@ -83,6 +105,7 @@ fn echo_definition() -> ToolDefinition {
             Box::pin(async move {
                 Ok(ToolExecutionResult {
                     host_facts: serde_json::json!({ "fact": 1 }),
+                    details: Some(serde_json::json!({ "status": "ok" })),
                     ..ToolExecutionResult::text("echo: hi")
                 })
             })
@@ -90,6 +113,8 @@ fn echo_definition() -> ToolDefinition {
     }
 }
 
+// One end-to-end scenario, asserted as a whole sequence.
+#[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn an_installed_feature_observes_tool_calls_and_run_ends() {
     let stub = Arc::new(Stub::default());
@@ -128,6 +153,7 @@ async fn an_installed_feature_observes_tool_calls_and_run_ends() {
         model: Some(model),
         stream_fn: Some(provider.stream_fn()),
         tools: vec![bridge_tool(echo_definition())],
+        conversation_log_path: Some(tmp.path().join("sessions").join("project").join("s1.jsonl")),
         ..SessionEngineConfig::default()
     }))
     .await
@@ -145,6 +171,8 @@ async fn an_installed_feature_observes_tool_calls_and_run_ends() {
         tool_name: "echo".to_string(),
         args: serde_json::json!({ "text": text }),
         is_error: false,
+        content: vec![ToolResultContent::text("echo: hi")],
+        details: serde_json::json!({ "status": "ok" }),
         host_facts: serde_json::json!({ "fact": 1 }),
         earlier_results_of_tool: earlier,
     };
@@ -156,10 +184,27 @@ async fn an_installed_feature_observes_tool_calls_and_run_ends() {
     assert_eq!(
         *stub.seen.lock().unwrap(),
         vec![
+            Seen::SessionStart {
+                history: 0,
+                artifact_dir: Some(
+                    tmp.path()
+                        .join("sessions")
+                        .join("session-artifacts")
+                        .join("s1")
+                ),
+            },
+            // A custom (non-LLM) row the engine adds before the prompt.
+            Seen::MessageEnd("custom".to_string()),
+            Seen::MessageEnd("user".to_string()),
+            Seen::MessageEnd("assistant".to_string()),
             Seen::Before(call("call-1", "hi")),
             Seen::After(result("call-1", "hi", 0)),
+            Seen::MessageEnd("toolResult".to_string()),
+            Seen::MessageEnd("assistant".to_string()),
             Seen::Before(call("call-2", "again")),
             Seen::After(result("call-2", "again", 1)),
+            Seen::MessageEnd("toolResult".to_string()),
+            Seen::MessageEnd("assistant".to_string()),
             Seen::AgentEnd {
                 session_id,
                 rlm_depth: 0
