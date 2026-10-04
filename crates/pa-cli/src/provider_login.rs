@@ -595,15 +595,30 @@ fn login_blocking_on_panel(
                     ))
                 },
                 |runtime| {
-                    runtime.block_on(crate::subscription_login::run_anthropic_login(
+                    let http = pa_ai::oauth::ReqwestProviderHttp::new();
+                    let ui = crate::subscription_login::PanelSubscriptionLoginUi::new(
+                        panel,
+                        &provider_row.id,
+                    );
+                    // `anthropic-auth`: the login goes to the shared account store
+                    // that serves the provider.
+                    #[cfg(feature = "anthropic-auth")]
+                    let source = pa_anthropic_auth::shared_source();
+                    #[cfg(feature = "anthropic-auth")]
+                    let login = crate::subscription_login::run_anthropic_shared_login(
+                        &source,
+                        &provider_row.name,
+                        &http,
+                        &ui,
+                    );
+                    #[cfg(not(feature = "anthropic-auth"))]
+                    let login = crate::subscription_login::run_anthropic_login(
                         &agent_dir,
                         &provider_row.name,
-                        &pa_ai::oauth::ReqwestProviderHttp::new(),
-                        &crate::subscription_login::PanelSubscriptionLoginUi::new(
-                            panel,
-                            &provider_row.id,
-                        ),
-                    ))
+                        &http,
+                        &ui,
+                    );
+                    runtime.block_on(login)
                 },
             );
     }

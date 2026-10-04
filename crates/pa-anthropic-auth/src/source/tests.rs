@@ -348,3 +348,56 @@ fn the_adoption_event_is_reported_once_per_process() {
         )]
     );
 }
+
+#[test]
+fn a_login_joins_the_store_as_its_current_account() {
+    const PROFILE: &str = r#"{"account":{"uuid":"acct-0001","email":"person@example.com"},"organization":{"uuid":"org-0001","name":"Org"}}"#;
+    let (profile_url, profile_hits) = token_endpoint(200, PROFILE);
+    let (_home, seeded) = source_over(vec![row("other", Duration::hours(2))], "http://127.0.0.1:9");
+    let source = SharedStoreSource::new(SharedStoreConfig::isolated(
+        seeded.store_path().to_path_buf(),
+        "http://127.0.0.1:9/v1/oauth/token",
+        &profile_url,
+    ));
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime");
+
+    let stored = runtime
+        .block_on(source.store_login(crate::NewLogin {
+            access: "sk-ant-oat01-new-login-access-000".to_string(),
+            refresh: "sk-ant-ort01-new-login-refresh-000".to_string(),
+            expires_ms: (Utc::now() + Duration::hours(8)).timestamp_millis(),
+        }))
+        .expect("the login is stored");
+
+    assert_eq!(
+        stored,
+        crate::StoredLogin {
+            store_path: source.store_path().to_path_buf(),
+            claude_code: None,
+        }
+    );
+    assert_eq!(profile_hits.load(Ordering::SeqCst), 1);
+    let store = AccountStore::load(source.store_path()).expect("the store");
+    assert_eq!(
+        (
+            store.current.as_deref(),
+            store
+                .accounts
+                .iter()
+                .map(|a| a.id.as_str())
+                .collect::<Vec<_>>(),
+        ),
+        (
+            Some("person@example.com"),
+            vec!["other", "person@example.com"]
+        )
+    );
+    // The current account serves first.
+    assert_eq!(
+        source.credential().map(|credential| credential.api_key),
+        Ok("sk-ant-oat01-new-login-access-000".to_string())
+    );
+}

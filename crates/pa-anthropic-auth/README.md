@@ -25,20 +25,25 @@ auth.json resolves the `anthropic` provider exactly as before.
 - `install()`: installs the process's source (`shared_source()`, configured from the environment: the store path
   overrides `ANTHROPIC_ACCOUNTS_FILE` / `ANTHROPIC_ACCOUNTS_DIR`, the `ANTHROPIC_OAUTH_*` endpoint overrides,
   `ANTHROPIC_NATIVE_PUBLISH`) for the `anthropic` provider id. No I/O.
+- `SharedStoreSource::store_login(NewLogin)`: the custody half of anthropic-napi's `completeLogin`. pa-cli's
+  `/login anthropic` runs the native browser flow (callback server raced against the paste, unchanged UX) and hands
+  the tokens here instead of auth.json: the account is identified at the profile endpoint (best effort), merged into
+  the row holding the same login (else a new row named after the email), made `current`, and, when Claude Code is
+  logged into the same account (whose login this one revokes), published to Claude Code.
 - `AnthropicAuthFeature`: a `SessionFeature` that reports adoption once per process.
 
 ## Non-goals (here)
 
-- Login, logout and account management (`/login anthropic` still writes auth.json; a store login is made with the
-  plugins or `claude /login` for now).
+- Logout and account management (`/logout anthropic` still edits auth.json only; the store's rows are managed by
+  the plugins), and importing an existing auth.json Anthropic login into the store (napi `importOAuthAccount`).
 - Quota reads, quota-reserve routing, rotation on 429 or 401 recovery (`handleUnauthorized`), the keep-alive.
 - The request shape (headers, betas, system prompt, tool names): pa-ai's Claude Code mode owns it for every
   `sk-ant-oat` token, whatever its source. The source adds no headers.
 
 ## Public API
 
-`install`, `shared_source`, `PROVIDER_ID`, `SharedStoreSource` (`new`, `store_path`, `usage`), `SharedStoreConfig`
-(`from_env`), `SourceUsage`, `STORE_LABEL`, `AnthropicAuthFeature`, `TELEMETRY_EVENT`.
+`install`, `shared_source`, `PROVIDER_ID`, `SharedStoreSource` (`new`, `store_path`, `usage`, `store_login`),
+`SharedStoreConfig` (`from_env`, `isolated`), `NewLogin`, `StoredLogin` (`claude_code_notice`), `SourceUsage`, `STORE_LABEL`, `AnthropicAuthFeature`, `TELEMETRY_EVENT`.
 
 ## Seams
 

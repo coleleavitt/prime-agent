@@ -19,8 +19,10 @@ use std::sync::{Arc, OnceLock};
 use pa_core::features::{SessionFeature, SessionFeatureContext};
 use pa_telemetry::Properties;
 
+mod login;
 mod source;
 
+pub use login::{NewLogin, StoredLogin};
 pub use source::{SharedStoreConfig, SharedStoreSource, SourceUsage, STORE_LABEL};
 
 /// The provider id the store serves.
