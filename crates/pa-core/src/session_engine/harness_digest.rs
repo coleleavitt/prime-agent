@@ -9,8 +9,8 @@ use pa_agent::types::{AgentMessage, Message, UserContent, UserPart};
 use pa_types::session::{AgentMessage as SessionAgentMessage, FileEntry};
 
 use crate::refinement::ranking::{
-    format_harness_state_for_prompt, harness_digest_fingerprint_filtered, harness_query_terms,
-    HarnessDigestRenderFlags, HarnessQueryTerms, HarnessRenderFilters, HarnessStatePromptOptions,
+    format_harness_state_for_prompt, harness_digest_fingerprint, harness_query_terms,
+    HarnessDigestRenderFlags, HarnessQueryTerms, HarnessStatePromptOptions,
 };
 use crate::refinement::{load_harness_state, merge_harness_states, HarnessScope};
 
@@ -31,8 +31,6 @@ pub struct HarnessDigestContext {
     pub include_ipython: bool,
     pub include_shell_examples: bool,
     pub include_refine: bool,
-    /// The session's installed render filters (none natively).
-    pub render_filters: HarnessRenderFilters,
 }
 
 /// Relevance terms for digest entry ranking: the active goal objective
@@ -102,12 +100,10 @@ fn render_digest_with_fingerprint(
             include_shell_examples: context.include_shell_examples,
             include_refine_examples: Some(render_flags.include_refine_examples),
             query_terms: Some(query_terms),
-            render_filters: context.render_filters.clone(),
             ..Default::default()
         },
     );
-    let state_fingerprint =
-        harness_digest_fingerprint_filtered(&merged, render_flags, &context.render_filters);
+    let state_fingerprint = harness_digest_fingerprint(&merged, render_flags);
     HarnessDigestRender {
         digest,
         state_fingerprint,

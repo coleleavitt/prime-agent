@@ -23,7 +23,6 @@ use pa_telemetry::{base_properties, lookup, Properties, TelemetryClient};
 
 use crate::kernel::shared::HostRequestHandlers;
 use crate::refinement::gate::RefinementGate;
-use crate::refinement::ranking::{HarnessRenderFilter, HarnessRenderFilters};
 use crate::session_engine::telemetry::TelemetryWiring;
 
 /// A feature hook's boxed future: hooks run inline on the session's tool
@@ -245,17 +244,6 @@ pub trait SessionFeature: Send + Sync {
         None
     }
 
-    /// The filter this feature applies to the session's rendered harness
-    /// (see [`crate::refinement::ranking::HarnessRenderFilter`]); `None`,
-    /// the default, shows every entry. Called once, on the
-    /// session-creation path; it must not block.
-    fn harness_render_filter(
-        &self,
-        context: &Arc<SessionFeatureContext>,
-    ) -> Option<Arc<dyn HarnessRenderFilter>> {
-        let _ = context;
-        None
-    }
 }
 
 static INSTALLED: OnceLock<Vec<Arc<dyn SessionFeature>>> = OnceLock::new();
@@ -394,20 +382,6 @@ pub(crate) fn session_auto_refine_policy(
     features
         .iter()
         .find_map(|feature| feature.auto_refine_policy(context))
-}
-
-/// Every render filter `features` offer the session, in installation
-/// order; empty when no feature filters the harness.
-pub(crate) fn session_harness_render_filters(
-    features: &[Arc<dyn SessionFeature>],
-    context: &Arc<SessionFeatureContext>,
-) -> HarnessRenderFilters {
-    HarnessRenderFilters(
-        features
-            .iter()
-            .filter_map(|feature| feature.harness_render_filter(context))
-            .collect(),
-    )
 }
 
 /// Tell `features` a session was created with `history`; nothing happens
@@ -604,58 +578,6 @@ mod tests {
         ) -> Option<Arc<dyn RefinementGate>> {
             Some(Arc::new(GateStub))
         }
-    }
-
-    struct WithholdAll;
-
-    impl HarnessRenderFilter for WithholdAll {
-        fn withholds(&self, _entry: &crate::refinement::HarnessEntry) -> bool {
-            true
-        }
-
-        fn withheld_line(&self, kind: &str, count: usize) -> String {
-            format!("- {count} {kind} withheld")
-        }
-    }
-
-    struct Filtering;
-
-    impl SessionFeature for Filtering {
-        fn name(&self) -> &'static str {
-            "filtering"
-        }
-
-        fn harness_render_filter(
-            &self,
-            _context: &Arc<SessionFeatureContext>,
-        ) -> Option<Arc<dyn HarnessRenderFilter>> {
-            Some(Arc::new(WithholdAll))
-        }
-    }
-
-    /// No feature filters the rendered harness natively; every installed
-    /// feature that offers a filter contributes it, in order.
-    #[test]
-    fn every_offered_render_filter_joins_the_session() {
-        let context = Arc::new(SessionFeatureContext {
-            agent_dir: PathBuf::from("/agent"),
-            cwd: PathBuf::from("/work"),
-            session_id: "s1".to_string(),
-            python_skill_import_names: Vec::new(),
-            model: stub_model(),
-            telemetry: None,
-            rlm_depth: 0,
-            session_artifact_dir: None,
-        });
-        assert!(session_harness_render_filters(&[], &context).0.is_empty());
-        let features: Vec<Arc<dyn SessionFeature>> =
-            vec![Arc::new(Stub), Arc::new(Filtering), Arc::new(Filtering)];
-        let filters = session_harness_render_filters(&features, &context);
-        assert_eq!(filters.0.len(), 2);
-        assert_eq!(
-            filters.0[0].withheld_line("memory", 2),
-            "- 2 memory withheld"
-        );
     }
 
     /// No feature offers a gate in the native product; with features

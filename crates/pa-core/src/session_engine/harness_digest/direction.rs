@@ -125,7 +125,6 @@ async fn direction_rig(
             include_ipython: false,
             include_shell_examples: false,
             include_refine: false,
-            render_filters: crate::refinement::ranking::HarnessRenderFilters::default(),
         }),
     )
     .await

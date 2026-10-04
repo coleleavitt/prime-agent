@@ -518,10 +518,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             !skill.disable_model_invocation
                 && skill.name == crate::prompts::system_prompt::REFINE_SKILL_NAME
         }),
-        render_filters: crate::features::session_harness_render_filters(
-            crate::features::installed(),
-            &feature_context,
-        ),
     };
     let (existing_messages, has_thinking_entry, has_service_tier_entry) = {
         let session = wiring.session.lock().await;

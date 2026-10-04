@@ -16,7 +16,6 @@ fn empty_state_digest_renders_placeholder() {
         include_ipython: true,
         include_shell_examples: false,
         include_refine: true,
-        render_filters: crate::refinement::ranking::HarnessRenderFilters::default(),
     };
     let digest = harness_digest_text(&context, HarnessQueryTerms::default());
     assert!(digest.starts_with("# Continual Harness State"));
@@ -403,7 +402,6 @@ async fn placement_rig(
             include_ipython: false,
             include_shell_examples: false,
             include_refine: false,
-            render_filters: crate::refinement::ranking::HarnessRenderFilters::default(),
         }),
     )
     .await
