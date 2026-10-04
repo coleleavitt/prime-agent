@@ -42,8 +42,13 @@ pub struct Notice {
 /// How one Mermaid block is shown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Layout {
-    /// Draw this art (it fits), then the notices.
-    Art { art: Art, notices: Vec<Notice> },
+    /// Draw this art (it fits), then the notices. `rotated`: the axis a too-wide flowchart
+    /// was redrawn on to fit (`None`: drawn as written).
+    Art {
+        art: Art,
+        notices: Vec<Notice>,
+        rotated: Option<Axis>,
+    },
     /// Keep the fenced source, then the notices.
     Source { notices: Vec<Notice> },
 }
@@ -148,6 +153,7 @@ pub fn layout(source: &str, available_width: usize, streaming: bool) -> Layout {
     let art = render_cached(source);
     let art = art.as_ref().as_ref();
     let mut chosen: Option<Art> = art.filter(|a| a.width <= available_width).cloned();
+    let mut rotated_on = None;
     let mut needed_width = art.map(|a| a.width);
     if chosen.is_none() {
         if let (Some(art), Some(rotated)) = (art, rotate_flowchart(source)) {
@@ -156,6 +162,7 @@ pub fn layout(source: &str, available_width: usize, streaming: bool) -> Layout {
                 needed_width = Some(art.width.min(rotated_art.width));
                 if rotated_art.width <= available_width {
                     chosen = Some(rotated_art.clone());
+                    rotated_on = Some(rotated.axis);
                     if !streaming {
                         let axis = match rotated.axis {
                             Axis::LeftToRight => "left to right",
@@ -180,7 +187,11 @@ pub fn layout(source: &str, available_width: usize, streaming: bool) -> Layout {
                 text: describe_warnings(&art.warnings),
             });
         }
-        return Layout::Art { art, notices };
+        return Layout::Art {
+            art,
+            notices,
+            rotated: rotated_on,
+        };
     }
 
     if !streaming {

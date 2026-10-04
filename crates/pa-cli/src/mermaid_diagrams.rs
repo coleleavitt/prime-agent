@@ -39,7 +39,11 @@ fn notices(notices: Vec<pa_mermaid::Notice>) -> Vec<DiagramNotice> {
 impl DiagramRenderer for MermaidDiagrams {
     fn layout(&self, source: &str, available_width: usize, streaming: bool) -> DiagramLayout {
         match pa_mermaid::layout(source, available_width, streaming) {
-            pa_mermaid::Layout::Art { art, notices: n } => DiagramLayout::Rows {
+            pa_mermaid::Layout::Art {
+                art,
+                notices: n,
+                rotated,
+            } => DiagramLayout::Rows {
                 rows: art
                     .rows
                     .into_iter()
@@ -53,6 +57,7 @@ impl DiagramRenderer for MermaidDiagrams {
                     })
                     .collect(),
                 notices: notices(n),
+                adapted: rotated.is_some(),
             },
             pa_mermaid::Layout::Source { notices: n } => DiagramLayout::Source {
                 notices: notices(n),

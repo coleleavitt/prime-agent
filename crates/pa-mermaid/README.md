@@ -21,7 +21,7 @@ lovely-mermaid 0.3.3 package itself (npm tarball, integrity `sha512-EMLJS934…H
   frontmatter `title:`, lenient parsing everywhere, size caps that truncate with a warning. Rows are runs of one
   `Role`; widths are display columns of an installable grapheme measure (`set_width_measure`; the package's own
   `unicode-width` rule by default).
-- **Policy** (`layout`, `rotate_flowchart`): `Layout::Art { art, notices }` or `Layout::Source { notices }` for one
+- **Policy** (`layout`, `rotate_flowchart`): `Layout::Art { art, notices, rotated }` (`rotated`: the axis a too-wide flowchart was redrawn on) or `Layout::Source { notices }` for one
   fence at the available width, notices omitted while streaming: `Mermaid diagram drawn left to right|top to bottom
   to fit <w> columns` (info), `Mermaid diagram incomplete: <first warning>[ (+n more)]`, `Mermaid diagram not drawn:
   needs <n> columns, <w> available` (the narrower of the two axes), `… no statement could be parsed`, `… <header> is

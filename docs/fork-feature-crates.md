@@ -56,7 +56,9 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
      `mermaid` fence instead of the built-in renderer — drawn rows or the kept source, each with notice lines, the
      paragraph closed after them — and may opt into custom messages, agent messages, and `/btw` answers
      (`draws_on`), all under the `markdown.mermaid` mode. Without one nothing changes. `pa-tui` stays unaware of the
-     feature crates, so `pa-cli` adapts a crate's layout onto the seam's types.
+     feature crates, so `pa-cli` adapts a crate's layout onto the seam's types. A drawn layout that changed the
+     diagram to fit sets `DiagramLayout::Rows::adapted`; the TUI counts each settled diagram once per run
+     (`diagram::take_render_counts`) for the composition root's `tui exit`.
    - bundled skills: `SessionFeature::bundled_skills` names directories under `skills/.features/` (hidden from every
      native skill scan, shipped inside `skills/`), loaded as built-in skills only while the feature is installed.
    - per-session skill visibility: `SessionFeature::session_skill_visible(context, skill_name)` (default `true`)

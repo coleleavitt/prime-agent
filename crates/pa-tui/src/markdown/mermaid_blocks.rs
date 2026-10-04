@@ -17,7 +17,7 @@
 
 use super::{render_inline, Block, BlockKind, MarkdownStyle};
 use crate::diagram::{
-    DiagramLayout, DiagramNotice, DiagramRenderer, DiagramRole, DiagramSpan, NoticeLevel,
+    DiagramLayout, DiagramNotice, DiagramRenderer, DiagramRole, DiagramSpan, NoticeLevel, Outcome,
 };
 use crate::mermaid::{render_cached, ArtSpan, Cls};
 use crate::{Line, Span};
@@ -209,7 +209,17 @@ pub(super) fn apply_with(
             continue;
         };
         let art = render_cached(&source);
-        let Some(art) = art.as_ref().as_ref().filter(|art| art.width <= width) else {
+        let shown = art.as_ref().as_ref().filter(|art| art.width <= width);
+        if !render.streaming {
+            let drawn = shown.is_some_and(|art| art.warnings.is_empty());
+            let outcome = if drawn {
+                Outcome::Drawn { adapted: false }
+            } else {
+                Outcome::KeptSource
+            };
+            crate::diagram::settled(&source, outcome);
+        }
+        let Some(art) = shown else {
             out.push(block);
             continue;
         };
@@ -257,8 +267,12 @@ pub(super) fn apply_layouts(
             out.push(block);
             continue;
         };
-        match renderer.layout(&source, width, streaming) {
-            DiagramLayout::Rows { rows, notices } => {
+        let layout = renderer.layout(&source, width, streaming);
+        if !streaming {
+            crate::diagram::settled(&source, Outcome::of(&layout));
+        }
+        match layout {
+            DiagramLayout::Rows { rows, notices, .. } => {
                 let rows = rows
                     .into_iter()
                     .map(ArtRow::Drawn)

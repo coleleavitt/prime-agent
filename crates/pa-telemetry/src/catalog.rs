@@ -1497,6 +1497,17 @@ const TUI_EXIT: EventRule = EventRule {
         ("tui_enhanced_keys_kitty", optional(boolean())),
         ("tui_enhanced_keys_modify_other_keys", optional(boolean())),
         ("tui_hyperlinks_enabled", optional(boolean())),
+        // Mermaid adoption (added in schema v4, additive): the run's `markdown.mermaid`
+        // mode at exit and its settled diagrams, each counted once (never per repaint),
+        // by outcome; `tui_mermaid_rotated` (the fork renderer's axis flip, a subset of
+        // `tui_mermaid_rendered`) rides only fork builds. Counts only, never diagram text.
+        (
+            "tui_mermaid_mode",
+            optional(enum_rule(&["off", "final", "streaming"], "streaming")),
+        ),
+        ("tui_mermaid_rendered", optional(count())),
+        ("tui_mermaid_kept_source", optional(count())),
+        ("tui_mermaid_rotated", optional(count())),
         ("feature_model_initiated_count", optional(count())),
         ("feature_model_completed_count", optional(count())),
         ("feature_model_failed_count", optional(count())),
@@ -2118,6 +2129,30 @@ mod tests {
         properties.set("action", json!("send_everything"));
         assert_eq!(sanitize("tui image fallback", &mut properties), 1);
         assert_eq!(properties.get("action"), Some(&json!("cancel")));
+    }
+
+    #[test]
+    fn tui_exit_carries_the_mermaid_counts_and_mode_only() {
+        let mut properties = Properties::new();
+        properties.set("exit_reason", json!("ctrl_d"));
+        properties.set("turn_active", json!(false));
+        properties.set("tui_mermaid_mode", json!("final"));
+        properties.set("tui_mermaid_rendered", json!(2u64));
+        properties.set("tui_mermaid_kept_source", json!(1u64));
+        properties.set("tui_mermaid_rotated", json!(1u64));
+        let expected = properties.clone();
+        properties.set("tui_mermaid_source", json!("flowchart TD\n  A --> B")); // not catalogued
+        properties.set("tui_mermaid_kind", json!("flowchart")); // not catalogued
+        assert_eq!(sanitize("tui exit", &mut properties), 2);
+        assert_eq!(properties, expected);
+        let mut odd = Properties::new();
+        odd.set("exit_reason", json!("ctrl_d"));
+        odd.set("turn_active", json!(false));
+        odd.set("tui_mermaid_mode", json!("sometimes"));
+        odd.set("tui_mermaid_rendered", json!(u64::MAX));
+        sanitize("tui exit", &mut odd);
+        assert_eq!(odd.get("tui_mermaid_mode"), Some(&json!("streaming")));
+        assert_eq!(odd.get("tui_mermaid_rendered"), Some(&json!(1_000_000u64)));
     }
 
     #[test]

@@ -303,6 +303,7 @@ pub(crate) mod installed {
                     })
                     .collect(),
                 notices,
+                adapted: false,
             },
             "source" => DiagramLayout::Source { notices },
             other => panic!("unknown layout kind {other}"),
@@ -426,6 +427,7 @@ pub(crate) mod installed {
                     level: NoticeLevel::Info,
                     text: "note".to_owned(),
                 }],
+                adapted: false,
             }
         }
     }
