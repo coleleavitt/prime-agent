@@ -78,7 +78,10 @@ fn tool_result_entries_persisted_and_streamed() {
                     tool_result_message = event["message"].clone();
                 }
             }
-            Some("turn_end") => break,
+            // The run's end, not the first turn's: the scripted reply after
+            // the tool result is a second turn, and the stats below must
+            // see it persisted.
+            Some("agent_end") => break,
             _ => {}
         }
     }
