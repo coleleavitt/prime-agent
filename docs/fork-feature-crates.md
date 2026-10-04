@@ -45,6 +45,14 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
      sections rendered after the entries (heading, then sanitized one-line bullets). Every installed feature's hook
      applies (ranks add, groups and sections append); an empty adjustment renders the native digest byte for byte, a
      non-empty one is folded into the digest's state fingerprint.
+   - bundled skills: `SessionFeature::bundled_skills` names directories under `skills/.features/` (hidden from every
+     native skill scan, shipped inside `skills/`), loaded as built-in skills only while the feature is installed.
+   - session slash commands: `SessionFeature::slash_commands` (registered by `features::install` in the shared
+     `pa_types::slash_commands` registry as session commands) and `execute_slash_command` (a result row, plus an
+     optional completion awaited in the background and appended as a durable row).
+   - live status: `pa_core::features::publish_feature_status(session_id, FeatureStatus { feature, line, status })`;
+     the daemon worker puts it on the roster summary (`featureStatus.<feature>`) and sends a `feature_status`
+     session event; the agents view shows each `line`.
    Seams to add as features need them: system-prompt layer providers, turn-start observers.
 5. **Data ownership.** A crate owns its files under `~/.prime/agent/<feature>/` (or the session artifact dir) and its
    key in `harness_state.json` (`HarnessState::extensions["<feature>"]`). It never rewrites another crate's data.

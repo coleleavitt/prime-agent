@@ -47,7 +47,7 @@ pub const OBJECTIVE_NOTE: &str =
 pub const GUIDED_ARM_REJECTION_MESSAGE: &str = "dream-guided/fixed-guided need the in-session LLM proposer; run dream.experiment(...) from the kernel skill or /dream experiment --llm-proposer";
 
 /// One experiment arm.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, serde::Deserialize)]
 pub enum ExperimentArm {
     #[serde(rename = "dream")]
     Dream,

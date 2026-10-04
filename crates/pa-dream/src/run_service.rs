@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::child::{ChildRuntimeScope, RunAgent, RunAgentOptions, RunAgentRequest, RunAgentResult};
@@ -35,7 +35,7 @@ use crate::store::{experiment_result_path, DreamStoreError};
 use crate::tasks::{resolve_task, resolve_task_n, task_prompt_context, DreamTaskId};
 
 /// Why a run ended. `Completed` covers improved and no-improvement finishes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DreamStopReason {
     Completed,
@@ -56,7 +56,7 @@ impl DreamStopReason {
 }
 
 /// A run's phase.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DreamRunPhase {
     Idle,
@@ -68,7 +68,7 @@ pub enum DreamRunPhase {
 }
 
 /// Whether the slot holds a run or an experiment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DreamRunKind {
     Run,
@@ -78,62 +78,77 @@ pub enum DreamRunKind {
 /// A snapshot of one run (TS `DreamRunStatus`). Every field but
 /// `result_paths` is a scalar; the experiment and seed fields are optional
 /// and additive.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DreamRunStatus {
     pub run_id: String,
     pub phase: DreamRunPhase,
-    #[serde(serialize_with = "task_name")]
+    #[serde(serialize_with = "task_name", deserialize_with = "task_of")]
     pub task: DreamTaskId,
     pub iteration: u32,
     pub best_node_score: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub final_policy_score: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub improved: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_reason: Option<DreamStopReason>,
     pub started_at: u64,
     pub updated_at: u64,
     /// Set when the run ended with an unexpected error instead of a clean stop.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub kind: DreamRunKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub experiment_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arm: Option<ExperimentArm>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arm_index: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arm_count: Option<usize>,
     /// The current arm's round (1-based) and the rounds per arm.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub round: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rounds: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cumulative_probes: Option<u32>,
     /// Where the LAST completed seed's `result.json` landed.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed_index: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed_count: Option<usize>,
     /// Every completed seed's `result.json`, in run order.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_paths: Option<Vec<String>>,
     /// Token total of the last COMPLETED seed (all arms), on the LLM path.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens: Option<u64>,
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)] // serde's `serialize_with` signature
 fn task_name<S: serde::Serializer>(task: &DreamTaskId, serializer: S) -> Result<S::Ok, S::Error> {
     serializer.serialize_str(task.as_str())
+}
+
+fn task_of<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<DreamTaskId, D::Error> {
+    let name = String::deserialize(deserializer)?;
+    DreamTaskId::from_name(&name)
+        .ok_or_else(|| serde::de::Error::custom(format!("unknown dream task {name}")))
+}
+
+/// A status read back from its JSON (a `dream.status` reply).
+///
+/// # Errors
+///
+/// The deserialization error.
+pub fn status_from_value(value: &serde_json::Value) -> Result<DreamRunStatus, serde_json::Error> {
+    DreamRunStatus::deserialize(value)
 }
 
 impl DreamRunStatus {
