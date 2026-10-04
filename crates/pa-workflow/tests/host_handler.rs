@@ -184,10 +184,11 @@ fn completed(selector: &str, text: &str) -> Value {
 }
 
 #[test]
-fn the_feature_registers_exactly_the_run_agent_route() {
+fn the_feature_registers_exactly_the_two_workflow_routes() {
     let harness = harness("route", &json!({ "apiKey": "workflow-key" }));
-    assert_eq!(harness.handlers.len(), 1);
+    assert_eq!(harness.handlers.len(), 2);
     assert!(harness.handlers.get("workflow.run_agent").is_some());
+    assert!(harness.handlers.get("workflow.v2.request").is_some());
 }
 
 #[tokio::test]

@@ -258,10 +258,13 @@ fn discriminator_key_integer_identifier_digest_enum_and_utf8_mutations_fail() {
         "$.reason exceeds its UTF-8 byte bound"
     );
     let unknown = with(command("start"), "/action", json!("pause"));
-    assert!(matches!(
+    assert_eq!(
         decode_public_request(&unknown),
-        Err(RequestError::Request(_))
-    ));
+        Err(RequestError::Request(WireError::new(
+            "$.action",
+            "is outside the closed enum"
+        )))
+    );
 }
 
 #[test]

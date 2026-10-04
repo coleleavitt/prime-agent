@@ -12,7 +12,7 @@
 //! (`computer_use_session_started`, `computer_use_action`); schema version 4
 //! adds the separately built features' adoption events (`dream_run`,
 //! `observability command used`, `toolforge publish`,
-//! `workflow_run_agent`): new-event vocabulary bumps the version,
+//! `workflow_run_agent`, `workflow_durable_request`): new-event vocabulary bumps the version,
 //! additive property changes do not.
 //!
 //! [`sanitize`] is the platform adjust layer: before a batch reaches any
@@ -1157,6 +1157,38 @@ const WORKFLOW_RUN_AGENT: EventRule = EventRule {
     ],
 };
 
+/// `workflow_durable_request` (v4): one Workflow V2 `workflow.v2.request` kernel
+/// host request answered by the host (the fork's `pa-workflow` feature).
+/// The public action and the reply's classification only — never the
+/// definition, a prompt, a model selector, or a request, run, or node id.
+const WORKFLOW_V2_REQUEST: EventRule = EventRule {
+    name: "workflow_durable_request",
+    since: 4,
+    properties: &[
+        (
+            "action",
+            required(enum_rule(
+                &[
+                    "validate", "create", "start", "cancel", "retry", "status", "events", "unknown",
+                ],
+                "unknown",
+            )),
+        ),
+        (
+            "outcome",
+            required(enum_rule(
+                &[
+                    "valid",
+                    "invalid_definition",
+                    "invalid_request",
+                    "capability_unavailable",
+                ],
+                "invalid_request",
+            )),
+        ),
+    ],
+};
+
 /// `dream_run` (v4): one parsed `prime-agent dream` invocation (the fork's
 /// `pa-dream` feature). Subcommand, task and outcome vocabularies, rollout
 /// and probe counts, whether a better policy was adopted, and the duration —
@@ -1505,6 +1537,7 @@ pub fn catalog() -> Vec<&'static EventRule> {
         &DREAM_RUN,
         &TOOLFORGE_PUBLISH,
         &WORKFLOW_RUN_AGENT,
+        &WORKFLOW_V2_REQUEST,
         &OBSERVABILITY_COMMAND_USED,
     ];
     all.extend(UPDATE_EVENTS.iter());
@@ -1629,6 +1662,10 @@ mod tests {
         assert_eq!(SCHEMA_VERSION, 4);
         assert_eq!(lookup("toolforge publish").map(|rule| rule.since), Some(4));
         assert_eq!(lookup("workflow_run_agent").map(|rule| rule.since), Some(4));
+        assert_eq!(
+            lookup("workflow_durable_request").map(|rule| rule.since),
+            Some(4)
+        );
         assert_eq!(lookup("dream_run").map(|rule| rule.since), Some(4));
         assert_eq!(
             lookup("observability command used").map(|rule| rule.since),

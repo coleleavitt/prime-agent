@@ -17,7 +17,8 @@ recall = ["dep:pa-recall"]
 toolforge = ["dep:pa-toolforge"]
 # Observability: the agent.jsonl span recorder, `trace` / `health`, OTLP export.
 trace = ["dep:pa-trace"]
-# Workflow V1 host: the kernel's `workflow.run_agent` (crates/pa-workflow).
+# Workflow host: the kernel's `workflow.run_agent` (V1) and
+# `workflow.v2.request` (V2) (crates/pa-workflow).
 workflow = ["dep:pa-workflow"]
 
 [dependencies]

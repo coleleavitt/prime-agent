@@ -420,7 +420,8 @@ pub enum RequestError {
 }
 
 /// Decode one public request: the variant its `action` names (an unknown
-/// action is checked as `validate`, which then fails), the message bounds,
+/// action name is refused; a missing or non-string one is checked as
+/// `validate`, which then fails), the message bounds,
 /// and, for `validate` and `create`, the definition's structure and
 /// semantics — reported apart from envelope violations.
 ///
@@ -429,11 +430,12 @@ pub enum RequestError {
 /// The first violation.
 pub fn decode_public_request(value: &Value) -> Result<PublicRequest, RequestError> {
     json::check_bounds(value).map_err(RequestError::Request)?;
-    let action = value
-        .get("action")
-        .and_then(Value::as_str)
-        .and_then(Action::from_wire)
-        .unwrap_or(Action::Validate);
+    let action = match value.get("action").and_then(Value::as_str) {
+        Some(name) => Action::from_wire(name).ok_or_else(|| {
+            RequestError::Request(WireError::new("$.action", "is outside the closed enum"))
+        })?,
+        None => Action::Validate,
+    };
     let text = |key: &str| value.get(key).and_then(Value::as_str).map(str::to_string);
     let definition = match action {
         Action::Validate | Action::Create => {
