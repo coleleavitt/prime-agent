@@ -4,6 +4,7 @@
 //! TS parity (sanctioned divergence): the TS `SERVICE_CATALOG` is compile-time baked —
 //! TS never fetches at runtime.
 
+use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -56,7 +57,7 @@ fn shared() -> &'static Mutex<SharedCaches> {
 /// supervisor's startup refresh and hourly loop share the same snapshots.
 fn plugins_catalog_cache_for(agent_dir: &Path) -> Arc<PluginsCatalogCache> {
     let cache_path = agent_dir.join(PLUGINS_CACHE_FILE);
-    let mut shared = shared().lock().unwrap();
+    let mut shared = shared().lock_or_recover();
     Arc::clone(shared.entry(cache_path.clone()).or_insert_with(move || {
         Arc::new(PluginsCatalogCache::at_url(
             MCP_SERVICE_CATALOG_URL,

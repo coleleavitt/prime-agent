@@ -5,6 +5,7 @@
 
 use pa_types::ai::Usage;
 use pa_types::session::ChildUsageOrigin;
+use pa_types::sync::MutexExt;
 use std::sync::{Arc, Weak};
 use tokio::sync::{watch, Mutex};
 
@@ -577,8 +578,7 @@ impl super::InProcessRlmHost {
         };
         self.inner
             .deleted_children
-            .lock()
-            .expect("deleted children lock")
+            .lock_or_recover()
             .insert(deleted.rlm_child_id.clone(), deleted);
     }
 
@@ -587,8 +587,7 @@ impl super::InProcessRlmHost {
     pub(crate) fn deleted_children_matching(&self, target: &str) -> Vec<DeletedChild> {
         self.inner
             .deleted_children
-            .lock()
-            .expect("deleted children lock")
+            .lock_or_recover()
             .values()
             .filter(|deleted| deleted.matches(target))
             .cloned()
@@ -601,8 +600,7 @@ impl super::InProcessRlmHost {
     pub(crate) fn reserve_spawn_name(&self, name: &str) -> bool {
         self.inner
             .pending_spawn_names
-            .lock()
-            .expect("spawn name lock")
+            .lock_or_recover()
             .insert(name.to_string())
     }
 
@@ -611,23 +609,17 @@ impl super::InProcessRlmHost {
     pub(crate) fn release_spawn_name(&self, name: &str) {
         self.inner
             .pending_spawn_names
-            .lock()
-            .expect("spawn name lock")
+            .lock_or_recover()
             .remove(name);
     }
 
     /// Whether a requested spawn name is currently reserved (the TS test
     /// peek).
-    ///
-    /// # Panics
-    ///
-    /// Panics when the spawn-name lock is poisoned.
     #[must_use]
     pub fn spawn_name_reserved(&self, name: &str) -> bool {
         self.inner
             .pending_spawn_names
-            .lock()
-            .expect("spawn name lock")
+            .lock_or_recover()
             .contains(name)
     }
 

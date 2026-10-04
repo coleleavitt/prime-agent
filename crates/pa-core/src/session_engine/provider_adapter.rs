@@ -3,6 +3,7 @@
 //! boundary by wire-shape (JSON) round-trip; shared by pa-cli and
 //! pa-daemon.
 
+use pa_types::sync::RwLockExt;
 use std::sync::Arc;
 
 use pa_agent::stream::{LlmContext, ModelStream, StreamFn, StreamRequestOptions};
@@ -131,8 +132,7 @@ pub struct ProviderTarget {
 ///
 /// # Panics
 ///
-/// Panics at stream time if the provider target lock is poisoned, or if the
-/// target slot was never set before the first stream.
+/// Panics at stream time if the target slot was never set before the first stream.
 pub fn switchable_stream_fn(target: Arc<std::sync::RwLock<Option<ProviderTarget>>>) -> StreamFn {
     Arc::new(
         move |_requested: AgentModel, context: LlmContext, options: StreamRequestOptions| {
@@ -142,8 +142,7 @@ pub fn switchable_stream_fn(target: Arc<std::sync::RwLock<Option<ProviderTarget>
                 service_tier,
                 headers,
             } = target
-                .read()
-                .expect("provider target lock")
+                .read_or_recover()
                 .clone()
                 .expect("provider target set before the first stream");
             Box::pin(async move {

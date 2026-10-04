@@ -1,6 +1,7 @@
 //! Settings storage: global (agentDir/settings.json) + project
 //! (cwd/<config-dir>/settings.json) files with lock-retry and atomic writes.
 
+use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
@@ -108,7 +109,7 @@ fn process_lock(path: &Path) -> MutexGuard<'static, ()> {
     static LOCKS: OnceLock<Mutex<HashMap<PathBuf, &'static Mutex<()>>>> = OnceLock::new();
     let registry = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
     let lock = {
-        let mut registry = registry.lock().expect("settings process-lock registry");
+        let mut registry = registry.lock_or_recover();
         *registry
             .entry(path.to_path_buf())
             .or_insert_with(|| Box::leak(Box::new(Mutex::new(()))))
@@ -321,7 +322,7 @@ impl SettingsStorage for InMemorySettingsStorage {
             SettingsScope::Global => &self.global,
             SettingsScope::Project => &self.project,
         };
-        let mut guard = slot.lock().unwrap();
+        let mut guard = slot.lock_or_recover();
         if let Some(next) = update(guard.clone()) {
             *guard = Some(next);
         }

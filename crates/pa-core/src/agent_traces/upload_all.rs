@@ -9,6 +9,7 @@ use super::{
     TraceUploadOptions, TraceUploadResult, TRACE_UPLOAD_ALL_CONCURRENCY,
     TRACE_UPLOAD_ALL_MIN_REQUEST_INTERVAL_MS,
 };
+use pa_types::sync::MutexExt;
 use std::collections::HashSet;
 use std::sync::atomic::AtomicUsize;
 
@@ -116,10 +117,6 @@ pub fn find_trace_files(session_dir: &Path) -> Vec<PathBuf> {
 
 /// The concurrent sweep (default 4 workers) through the shared request gate, with the
 /// per-file progress and the cancel checks at the worker boundaries.
-///
-/// # Panics
-///
-/// Panics if a per-file result slot mutex is poisoned.
 pub async fn upload_all_traces(options: &TraceUploadAllOptions<'_>) -> TraceUploadAllResult {
     let session_dir = options.session_dir.map_or_else(
         || {
@@ -190,7 +187,7 @@ pub async fn upload_all_traces(options: &TraceUploadAllOptions<'_>) -> TraceUplo
                 if cancelled() && matches!(result, TraceUploadResult::Failed { .. }) {
                     return;
                 }
-                *results[index].lock().unwrap() = Some(result.clone());
+                *results[index].lock_or_recover() = Some(result.clone());
                 let done = completed.fetch_add(1, Ordering::SeqCst) + 1;
                 send_progress(TraceUploadAllProgress {
                     completed: done,
@@ -208,7 +205,7 @@ pub async fn upload_all_traces(options: &TraceUploadAllOptions<'_>) -> TraceUplo
     let mut bytes_stored = 0;
     let mut completed_results = Vec::new();
     for (session_file, slot) in session_files.iter().zip(results.iter()) {
-        if let Some(result) = slot.lock().unwrap().clone() {
+        if let Some(result) = slot.lock_or_recover().clone() {
             match &result {
                 TraceUploadResult::Uploaded {
                     bytes_stored: stored,

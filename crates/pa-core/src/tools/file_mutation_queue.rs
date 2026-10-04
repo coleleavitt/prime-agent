@@ -1,6 +1,7 @@
 //! Serialize file mutation operations targeting the same file: different files run
 //! in parallel; the same file (after resolving symlinks) runs in arrival order.
 
+use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
@@ -35,7 +36,7 @@ where
 {
     let key = get_mutation_queue_key(file_path);
     let queue = {
-        let mut map = registry().lock().unwrap();
+        let mut map = registry().lock_or_recover();
         map.entry(key.clone()).or_default().clone()
     };
     let result = {
@@ -44,7 +45,7 @@ where
     };
     drop(queue);
     // Drop the entry when this is the last holder (no queued waiters).
-    let mut map = registry().lock().unwrap();
+    let mut map = registry().lock_or_recover();
     if let Some(current) = map.get(&key) {
         // Arc strong count 1 = registry only; nobody is queued behind us.
         if Arc::strong_count(current) == 1 {

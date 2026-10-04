@@ -3,6 +3,7 @@
 //! then the review, and only an approving review runs the refinement.
 
 use pa_types::ai::Model;
+use pa_types::sync::MutexExt;
 
 use crate::refinement::executor::AutoRefineReview;
 use crate::refinement::RefinementResult;
@@ -43,71 +44,38 @@ pub(crate) struct CompactAutoRefineState {
 impl AgentSession {
     /// A successful compaction arms the compact-trigger review; sessions
     /// without the refine surface never arm — the trigger would never run.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the compact auto-refine state mutex is poisoned.
     pub fn mark_compact_auto_refine_pending(&self) {
         if !self.auto_refine_allowed() {
             return;
         }
-        self.compact_auto_refine
-            .lock()
-            .expect("compact auto-refine state lock")
-            .pending = true;
+        self.compact_auto_refine.lock_or_recover().pending = true;
     }
 
     /// Whether a trigger is armed or an approving review is retained:
     /// the scheduling surfaces' cheap pre-check.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the compact auto-refine state mutex is poisoned.
     pub fn compact_auto_refine_pending(&self) -> bool {
-        let state = self
-            .compact_auto_refine
-            .lock()
-            .expect("compact auto-refine state lock");
+        let state = self.compact_auto_refine.lock_or_recover();
         state.pending || state.pending_review.is_some()
     }
 
     /// Whether the branch version is still the one the round captured:
     /// false means a discard fired mid-round and the result is stale.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the compact auto-refine state mutex is poisoned.
     pub(crate) fn compact_auto_refine_branch_version_unchanged(&self, captured: u64) -> bool {
-        self.compact_auto_refine
-            .lock()
-            .expect("compact auto-refine state lock")
-            .branch_version
-            == captured
+        self.compact_auto_refine.lock_or_recover().branch_version == captured
     }
 
     /// Drop the armed trigger and bump the branch version — an in-flight
     /// review started on the abandoned branch never applies its edits.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the compact auto-refine state mutex is poisoned.
     pub fn discard_compact_auto_refine(&self) {
-        let mut state = self
-            .compact_auto_refine
-            .lock()
-            .expect("compact auto-refine state lock");
+        let mut state = self.compact_auto_refine.lock_or_recover();
         state.pending = false;
         state.pending_review = None;
         state.branch_version += 1;
     }
 
-    /// # Panics
-    ///
-    /// Panics if the compact auto-refine state mutex is poisoned.
     pub fn note_settled_turn_since_auto_refine_review(&self) {
         self.compact_auto_refine
-            .lock()
-            .expect("compact auto-refine state lock")
+            .lock_or_recover()
             .settled_turns_since_review += 1;
     }
 
@@ -118,10 +86,6 @@ impl AgentSession {
     /// # Errors
     ///
     /// Returns the error of a failed auto-refine review or refinement run.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the compact auto-refine state mutex is poisoned.
     pub async fn consume_compact_auto_refine(
         &self,
         model: &Model,
@@ -131,10 +95,7 @@ impl AgentSession {
     ) -> anyhow::Result<Option<RefinementResult>> {
         let gates = self.auto_refine_gates();
         let (retained_review, settled_turns, branch_version) = {
-            let mut state = self
-                .compact_auto_refine
-                .lock()
-                .expect("compact auto-refine state lock");
+            let mut state = self.compact_auto_refine.lock_or_recover();
             if !state.pending && state.pending_review.is_none() {
                 return Ok(None);
             }
@@ -217,10 +178,7 @@ impl AgentSession {
             }
         };
         let outcome = {
-            let mut state = self
-                .compact_auto_refine
-                .lock()
-                .expect("compact auto-refine state lock");
+            let mut state = self.compact_auto_refine.lock_or_recover();
             // The in-flight guard always releases, fresh or stale
             // alike.
             state.in_flight = false;

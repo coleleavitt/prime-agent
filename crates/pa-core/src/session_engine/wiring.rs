@@ -2,6 +2,7 @@ use super::{
     auxiliary_model, compaction, compaction_exec, image_model_routing, ipython_state,
     provider_adapter, refine, semantic_edges, telemetry, AgentSession, PromptBatchRow,
 };
+use pa_types::sync::MutexExt;
 
 impl AgentSession {
     /// Install the image-model routing host seam; `None` keeps image turns on the session model.
@@ -153,15 +154,8 @@ impl AgentSession {
     /// Install the live compaction summary-delta sink (the daemon's
     /// `compaction_summary_delta` broadcast seam): every summarizer delta reaches the
     /// sink while the summary generates, in arrival order.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the sink slot's mutex is poisoned.
     pub fn set_compaction_summary_sink(&self, sink: compaction_exec::SummaryDeltaSink) {
-        *self
-            .compaction_summary_sink
-            .lock()
-            .expect("compaction summary sink lock") = Some(sink);
+        *self.compaction_summary_sink.lock_or_recover() = Some(sink);
     }
 
     /// Whether the session may run auto-refinement.

@@ -2,6 +2,7 @@
 //! The session subscribes persistence listeners on the caller's reactor, so
 //! `create_session` is async.
 
+use pa_types::sync::MutexExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -169,11 +170,6 @@ fn mcp_gating_blocking(
 ///
 /// Returns an error when the MCP gating task fails, when session resources
 /// cannot be loaded, or when the runtime bootstrap fails.
-///
-/// # Panics
-///
-/// Panics if the MCP manager mutex is poisoned while wiring telemetry
-/// reporting.
 pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<SessionEngine> {
     let cwd = config.cwd.clone();
     // Session persistence first: the conversation-log path and the resume
@@ -367,8 +363,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     if config.telemetry.is_some() {
         let counters = std::sync::Arc::clone(&session_counters);
         mcp_manager
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .set_usage_report(Some(std::sync::Arc::new(move |_action, _server| {
                 counters.note_mcp_connector_use();
             })));

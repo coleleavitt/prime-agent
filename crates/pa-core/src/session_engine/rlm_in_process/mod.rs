@@ -58,6 +58,7 @@ pub use family::{
     RlmRemoteFamily,
 };
 pub use model::{assert_thinking_supported, resolve_child_model, ResolvedChildModel};
+use pa_types::sync::{MutexExt, RwLockExt};
 pub use registry::{ChildIdentity, InProcessChildRecord};
 
 use std::path::PathBuf;
@@ -253,10 +254,6 @@ impl InProcessRlmHost {
     ///
     /// Returns a recovery error if the original parent file cannot be read
     /// or an unconsumed terminal row cannot be re-admitted.
-    ///
-    /// # Panics
-    ///
-    /// Panics when a host lock is poisoned.
     pub async fn bind_parent(&self, engine: Arc<SessionEngine>) -> anyhow::Result<()> {
         let _binding = self.inner.rebinding.lock().await;
         let previous = self.parent_engine();
@@ -281,7 +278,7 @@ impl InProcessRlmHost {
                 session.get_cwd().to_path_buf(),
             )
         };
-        *self.inner.parent.write().expect("parent binding lock") = Some(ParentBinding {
+        *self.inner.parent.write_or_recover() = Some(ParentBinding {
             engine: Arc::downgrade(&engine),
             session_id,
             session_name,
@@ -299,7 +296,7 @@ impl InProcessRlmHost {
     /// facts (an unbound host fails the spawn admission with a precise
     /// error).
     pub(crate) fn parent(&self) -> anyhow::Result<(Weak<SessionEngine>, ParentFacts)> {
-        let guard = self.inner.parent.read().expect("parent binding lock");
+        let guard = self.inner.parent.read_or_recover();
         let binding = guard.as_ref().ok_or_else(|| {
             anyhow::anyhow!("the in-process RLM host has no parent session bound yet")
         })?;
@@ -317,8 +314,7 @@ impl InProcessRlmHost {
     pub(crate) fn parent_engine(&self) -> Option<Arc<SessionEngine>> {
         self.inner
             .parent
-            .read()
-            .expect("parent binding lock")
+            .read_or_recover()
             .as_ref()
             .and_then(|binding| binding.engine.upgrade())
     }
@@ -327,8 +323,7 @@ impl InProcessRlmHost {
     /// spawned child's host gets the parent host's handle for sibling
     /// enumeration).
     pub(crate) fn set_parent_host(&self, parent_host: &InProcessRlmHost) {
-        *self.inner.parent_host.lock().expect("parent host lock") =
-            Some(Arc::downgrade(&parent_host.inner));
+        *self.inner.parent_host.lock_or_recover() = Some(Arc::downgrade(&parent_host.inner));
     }
 
     /// The host of the parent this session spawns under, when the parent
@@ -336,8 +331,7 @@ impl InProcessRlmHost {
     pub(crate) fn parent_host(&self) -> Option<InProcessRlmHost> {
         self.inner
             .parent_host
-            .lock()
-            .expect("parent host lock")
+            .lock_or_recover()
             .as_ref()
             .and_then(Weak::upgrade)
             .map(|inner| InProcessRlmHost { inner })
@@ -346,7 +340,7 @@ impl InProcessRlmHost {
     /// The parent binding's identity (the family roster's parent row):
     /// its session id and name.
     pub(crate) fn parent_identity(&self) -> Option<(String, Option<String>)> {
-        let guard = self.inner.parent.read().expect("parent binding lock");
+        let guard = self.inner.parent.read_or_recover();
         guard
             .as_ref()
             .map(|binding| (binding.session_id.clone(), binding.session_name.clone()))
@@ -380,8 +374,7 @@ impl InProcessRlmHost {
             || !self
                 .inner
                 .parent
-                .read()
-                .expect("parent binding lock")
+                .read_or_recover()
                 .as_ref()
                 .is_some_and(|binding| {
                     binding.session_id == record.parent_session_id
@@ -571,8 +564,7 @@ impl RlmSubagentHost for InProcessRlmHost {
             let parent_session_id = host
                 .inner
                 .parent
-                .read()
-                .expect("parent binding lock")
+                .read_or_recover()
                 .as_ref()
                 .map(|binding| binding.session_id.clone());
             if let Some(target) = &session_id {
@@ -590,13 +582,7 @@ impl RlmSubagentHost for InProcessRlmHost {
                 .await
                 .append_session_info(&name)
                 .map_err(anyhow::Error::from)?;
-            if let Some(binding) = host
-                .inner
-                .parent
-                .write()
-                .expect("parent binding lock")
-                .as_mut()
-            {
+            if let Some(binding) = host.inner.parent.write_or_recover().as_mut() {
                 binding.session_name = Some(name.clone());
             }
             Ok(name)

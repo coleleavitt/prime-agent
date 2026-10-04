@@ -3,6 +3,7 @@
 //! daemon has a private catalog layer per session in one process; the Rust
 //! daemon runs one worker per session, so the disk caches carry the state.
 
+use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -28,13 +29,9 @@ fn shared() -> &'static Mutex<HashMap<Option<PathBuf>, Arc<ModelCatalog>>> {
 
 /// The process-shared catalog for `models_json_path` (`None` = an
 /// in-memory registry, no disk caches).
-///
-/// # Panics
-///
-/// Panics if the shared catalog registry mutex is poisoned.
 pub fn catalog_for(models_json_path: Option<&Path>) -> Arc<ModelCatalog> {
     let key = models_json_path.map(models_dir);
-    let mut shared = shared().lock().unwrap();
+    let mut shared = shared().lock_or_recover();
     Arc::clone(
         shared
             .entry(key.clone())
@@ -44,14 +41,9 @@ pub fn catalog_for(models_json_path: Option<&Path>) -> Arc<ModelCatalog> {
 
 /// Install `catalog` as the process-shared catalog for `models_json_path`
 /// (hermetic tests: a catalog whose fetch URLs point at a local server).
-///
-/// # Panics
-///
-/// Panics if the shared catalog registry mutex is poisoned.
 pub fn install_catalog(models_json_path: &Path, catalog: Arc<ModelCatalog>) {
     shared()
-        .lock()
-        .unwrap()
+        .lock_or_recover()
         .insert(Some(models_dir(models_json_path)), catalog);
 }
 

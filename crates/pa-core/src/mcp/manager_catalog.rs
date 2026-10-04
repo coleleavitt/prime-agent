@@ -3,6 +3,7 @@
 //! over resolved descriptors with ENDPOINT PINNING (an installed record keeps
 //! its approved endpoint even when the catalog URL moves), the paste install.
 
+use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -62,7 +63,7 @@ impl McpManager {
         let remote = self.remote_source.as_ref().and_then(|source| source());
         let catalog_available = remote.is_some();
         let remote_entries = remote.map(|catalog| catalog.entries);
-        let records = self.connection_store.lock().unwrap().records();
+        let records = self.connection_store.lock_or_recover().records();
         self.service_catalog =
             resolve_mcp_service_catalog(&sources, remote_entries.as_deref(), &records);
         self.catalog_available = catalog_available;
@@ -95,8 +96,7 @@ impl McpManager {
     /// Records keyed by connectionId (view + status computations).
     pub(crate) fn records_by_id(&self) -> HashMap<String, McpConnectionRecord> {
         self.connection_store
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .records()
             .into_iter()
             .map(|record| (record.connection_id.clone(), record))
@@ -498,10 +498,6 @@ pub struct PasteInstallInputs {
 ///
 /// Returns a human-readable error when the pasted token is empty or the connection
 /// record cannot be written.
-///
-/// # Panics
-///
-/// Panics if the connection store mutex is poisoned.
 pub async fn install_static_token(
     inputs: PasteInstallInputs,
     token: &str,
@@ -558,7 +554,7 @@ pub async fn install_static_token(
         Some(AuthCredential::McpStaticToken { bearer, endpoint: Some(bound) })
             if bearer == token && bound == &inputs.endpoint
     );
-    let mut store = inputs.store.lock().unwrap();
+    let mut store = inputs.store.lock_or_recover();
     let committed = store
         .apply_verify_result(&record, still_current)
         .map_err(|error| format!("connection record write failed: {error}"))?;
@@ -593,10 +589,6 @@ pub async fn install_static_token(
 /// # Errors
 ///
 /// Returns a human-readable error when the connection record cannot be written.
-///
-/// # Panics
-///
-/// Panics if the connection store mutex is poisoned.
 pub async fn remove_mcp_connection(
     handles: &McpConnectionHandles,
     server: &str,
@@ -607,7 +599,7 @@ pub async fn remove_mcp_connection(
         auth.remove(&provider_id);
         auth.drain_errors().is_empty()
     };
-    let mut store = handles.store.lock().unwrap();
+    let mut store = handles.store.lock_or_recover();
     store
         .remove(server)
         .map_err(|error| format!("connection record write failed: {error}"))?;
