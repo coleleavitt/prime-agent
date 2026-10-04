@@ -60,14 +60,14 @@ impl AgentSessionEngine {
         if self.config.faux_script.is_none() && self.current_selection().api_key.is_none() {
             let mut registry = self.session_model_registry();
             registry.load_private_authorization_from_cache();
+            let uses_oauth = registry
+                .auth
+                .get_all()
+                .credential(&preflight_model.provider)
+                .is_some_and(|credential| {
+                    matches!(credential, pa_core::auth::AuthCredential::Oauth { .. })
+                });
             if !registry.has_configured_auth(&preflight_model) {
-                let uses_oauth = registry
-                    .auth
-                    .get_all()
-                    .credential(&preflight_model.provider)
-                    .is_some_and(|credential| {
-                        matches!(credential, pa_core::auth::AuthCredential::Oauth { .. })
-                    });
                 let message = if uses_oauth {
                     format!(
                         "Authentication failed for \"{}\". Credentials may have expired or network is unavailable.\n\nRun /login to update credentials.",
@@ -86,6 +86,37 @@ impl AgentSessionEngine {
                     error: message,
                     assistant: None,
                 };
+            }
+            // An OAuth login resolves its key per turn: an expired token
+            // refreshes here (the serving target's key was resolved at
+            // build time and would go stale), and a failed refresh is an
+            // authentication failure, not a keyless provider call.
+            if uses_oauth {
+                let resolved = registry
+                    .get_api_key_and_headers(&preflight_model, preflight_model.headers.as_ref());
+                if resolved.oauth_refresh_failed {
+                    return TurnResult::Error {
+                        error: resolved.error.unwrap_or_else(|| {
+                            pa_core::auth::oauth_refresh_failed_message(&preflight_model.provider)
+                        }),
+                        assistant: None,
+                    };
+                }
+                if resolved.ok {
+                    if let Some(target) = self
+                        .provider_target
+                        .write()
+                        .expect("provider target lock")
+                        .as_mut()
+                        .filter(|target| {
+                            target.model.provider == preflight_model.provider
+                                && target.model.id == preflight_model.id
+                        })
+                    {
+                        target.api_key = resolved.api_key;
+                        target.headers = resolved.headers;
+                    }
+                }
             }
         }
         let agent = match self.session_agent(&model) {

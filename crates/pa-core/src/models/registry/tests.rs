@@ -397,3 +397,44 @@ fn without_a_stored_xai_subscription_the_models_stay_on_completions() {
     assert!(grok.thinking_level_map.is_none());
     assert!(grok.compat.is_none());
 }
+
+#[test]
+fn a_failed_oauth_refresh_resolves_to_an_authentication_failure() {
+    // NoOAuth never refreshes: the expired login yields no key, and the
+    // request auth names the failed refresh instead of going keyless.
+    let mut registry = ModelRegistry::in_memory(auth_without_env(&serde_json::json!({
+        "anthropic": {
+            "type": "oauth", "access": "expired", "refresh": "r", "expires": 1000
+        }
+    })));
+    let result = registry.get_api_key_and_headers(&model("m", "anthropic"), None);
+    assert_eq!(
+        result,
+        ResolvedRequestAuth {
+            ok: false,
+            api_key: None,
+            headers: None,
+            error: Some(
+                "Authentication failed for \"anthropic\": the OAuth token refresh failed. Credentials may have expired or network is unavailable.\n\nRun /login to update credentials."
+                    .to_string()
+            ),
+            oauth_refresh_failed: true,
+        }
+    );
+    // A live login still resolves its access token.
+    let mut registry = ModelRegistry::in_memory(auth_without_env(&serde_json::json!({
+        "anthropic": {
+            "type": "oauth", "access": "live", "refresh": "r",
+            "expires": 4_102_444_800_000i64
+        }
+    })));
+    let result = registry.get_api_key_and_headers(&model("m", "anthropic"), None);
+    assert_eq!(
+        (
+            result.ok,
+            result.api_key.as_deref(),
+            result.oauth_refresh_failed
+        ),
+        (true, Some("live"), false)
+    );
+}

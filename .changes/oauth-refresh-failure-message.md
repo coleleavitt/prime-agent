@@ -1,0 +1,1 @@
+- A failed OAuth refresh now fails the turn with an authentication error naming the provider and the failed refresh, instead of calling the provider without a key ("No API key for provider"). The stored login is kept, and a later turn retries the refresh and uses the refreshed token.

@@ -40,6 +40,10 @@ pub struct ResolvedRequestAuth {
     /// composed request headers randomly.
     pub headers: Option<BTreeMap<String, String>>,
     pub error: Option<String>,
+    /// The provider's stored OAuth login could not be refreshed and no
+    /// configured key stands in: `ok` is false and `error` is the
+    /// authentication failure to report.
+    pub oauth_refresh_failed: bool,
 }
 
 /// Why a `set_model` selection failed to resolve: the provider is not
@@ -831,6 +835,14 @@ impl ModelRegistry {
                 }
             }
         }
+        if api_key.is_none() && stored.oauth_refresh_failed {
+            return ResolvedRequestAuth {
+                ok: false,
+                error: Some(crate::auth::oauth_refresh_failed_message(&model.provider)),
+                oauth_refresh_failed: true,
+                ..Default::default()
+            };
+        }
         let provider_headers = provider_config
             .as_ref()
             .and_then(|config| config.headers.clone());
@@ -873,6 +885,7 @@ impl ModelRegistry {
             api_key,
             headers: (!headers.is_empty()).then_some(headers),
             error: None,
+            oauth_refresh_failed: false,
         }
     }
 }

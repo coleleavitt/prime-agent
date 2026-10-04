@@ -1381,3 +1381,97 @@ fn a_model_switch_keeps_the_agent_slot_in_sync_with_the_reported_level() {
         "the agent slot re-syncs to the restored level"
     );
 }
+
+/// A stored OAuth login whose refresh fails is an authentication
+/// failure naming the provider and the refresh, not the keyless provider
+/// call's "No API key for provider". The credential stays on disk for a
+/// later retry. (The custom provider has no OAuth refresher, so the
+/// refresh fails without touching the network.)
+#[test]
+fn failed_oauth_refresh_fails_the_turn_as_an_authentication_error() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let agent_dir = dir.path().join("agent");
+    std::fs::create_dir_all(&agent_dir).unwrap();
+    std::fs::write(
+        agent_dir.join("models.json"),
+        serde_json::json!({
+            "providers": {
+                "battery": {
+                    "api": "openai-completions",
+                    "baseUrl": "http://127.0.0.1:9",
+                    // A key command that yields nothing: no configured
+                    // key stands in for the OAuth login.
+                    "apiKey": "!false",
+                    "models": [
+                        {
+                            "id": "mock-1",
+                            "name": "Mock 1",
+                            "api": "openai-completions",
+                            "contextWindow": 128_000,
+                            "maxTokens": 4096,
+                        }
+                    ]
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let auth = serde_json::json!({
+        "battery": {
+            "type": "oauth",
+            "access": "expired-access",
+            "refresh": "refresh-token",
+            "expires": 1000,
+        }
+    });
+    std::fs::write(agent_dir.join("auth.json"), auth.to_string()).unwrap();
+    let engine = AgentSessionEngine::new(AgentEngineConfig {
+        cwd: dir.path().to_path_buf(),
+        agent_dir: agent_dir.clone(),
+        provider: Some("battery".to_string()),
+        model: Some("mock-1".to_string()),
+        api_key: None,
+        thinking: None,
+        session_dir: None,
+        session_file: None,
+        faux_script: None,
+        supervisor_link: None,
+        telemetry_disabled: None,
+        cron_store: None,
+        queued_steering_probe: None,
+    })
+    .unwrap();
+    let mut events: Vec<EngineEvent> = Vec::new();
+    engine.run_prompt(
+        0,
+        PromptRequest {
+            batch: Vec::new(),
+            images: Vec::new(),
+            message: "hi".to_string(),
+            source: "user".to_string(),
+            agent_message_id: None,
+            custom_message: None,
+        },
+        &|| false,
+        &mut |event| {
+            events.push(event);
+            true
+        },
+    );
+    let done = events.iter().find_map(|event| match event {
+        EngineEvent::Done(result) => Some(result.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        done,
+        Some(Err(
+            "Authentication failed for \"battery\": the OAuth token refresh failed. Credentials may have expired or network is unavailable.\n\nRun /login to update credentials."
+                .to_string()
+        ))
+    );
+    let stored: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(agent_dir.join("auth.json")).unwrap())
+            .unwrap();
+    assert_eq!(stored, auth, "the credential is kept for a later retry");
+}

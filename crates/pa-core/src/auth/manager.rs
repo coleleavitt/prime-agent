@@ -82,6 +82,23 @@ pub struct AuthApiKeyResult {
     pub api_key: Option<String>,
     pub source_token: Option<AuthSourceToken>,
     pub credential_type: Option<&'static str>,
+    /// The stored OAuth login was expired and its refresh failed: there
+    /// is no key, but the provider is signed in (the credential stays for
+    /// a later retry). Callers report an authentication failure
+    /// ([`oauth_refresh_failed_message`]) instead of calling the provider
+    /// keyless.
+    pub oauth_refresh_failed: bool,
+}
+
+/// The authentication failure a turn reports when a stored OAuth login
+/// could not be refreshed (TS `formatAuthenticationFailedMessage`, naming
+/// the refresh): the provider would otherwise fail keyless as "No API key
+/// for provider".
+#[must_use]
+pub fn oauth_refresh_failed_message(provider: &str) -> String {
+    format!(
+        "Authentication failed for \"{provider}\": the OAuth token refresh failed. Credentials may have expired or network is unavailable.\n\nRun /login to update credentials."
+    )
 }
 
 /// OAuth integration seam, implemented by the pa-ai oauth registry; a
