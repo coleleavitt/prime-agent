@@ -1269,6 +1269,7 @@ dependencies = [
  "pa-ai",
  "pa-core",
  "pa-daemon",
+ "pa-dream",
  "pa-telemetry",
  "pa-tui",
  "pa-types",

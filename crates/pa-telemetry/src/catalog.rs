@@ -9,8 +9,9 @@
 //! version 2 is the #2117 vocabulary (the v2 enrichment on the legacy
 //! events and the onboarding/startup/installation stages). Schema version
 //! 3 adds the kernel telemetry bridge's skill-event vocabulary
-//! (`computer_use_session_started`, `computer_use_action`): new-event
-//! vocabulary bumps the version, additive property changes do not.
+//! (`computer_use_session_started`, `computer_use_action`); version 4 adds
+//! the feature crates' adoption events (`dream_run`): new-event vocabulary
+//! bumps the version, additive property changes do not.
 //!
 //! [`sanitize`] is the platform adjust layer: before a batch reaches any
 //! sink, every catalogued event's properties are normalized against its
@@ -26,10 +27,11 @@ use crate::properties::Properties;
 
 /// The current schema version stamped on every event. Bumped to 2 when
 /// the #2117 tracking vocabulary landed and to 3 when the kernel
-/// telemetry bridge's skill-event vocabulary (`computer_use_*`) landed —
+/// telemetry bridge's skill-event vocabulary (`computer_use_*`) landed,
+/// and to 4 for the feature crates' adoption events (`dream_run`) —
 /// new-event vocabulary bumps the version (the #2117 precedent);
 /// additive property changes alone do not.
-pub const SCHEMA_VERSION: u64 = 3;
+pub const SCHEMA_VERSION: u64 = 4;
 
 // ---------------------------------------------------------------------------
 // Rule kinds
@@ -546,10 +548,10 @@ const fn free_string(max: usize) -> PropKind {
 }
 
 // ---------------------------------------------------------------------------
-// The catalog (schema v3): the #2117 events, the v1 adoption events, and
-// the kernel `telemetry.emit` bridge's skill events. Every event the
-// product emits has exactly one row here; the seams are the complete
-// emission set (privacy contract).
+// The catalog (schema v4): the #2117 events, the v1 adoption events, the
+// kernel `telemetry.emit` bridge's skill events, and the feature crates'
+// adoption events. Every event the product emits has exactly one row
+// here; the seams are the complete emission set (privacy contract).
 // ---------------------------------------------------------------------------
 
 /// Session creation, depth-0 only.
@@ -1056,6 +1058,54 @@ const COMPUTER_USE_ACTION: EventRule = EventRule {
     ],
 };
 
+/// `dream_run` (v4): one parsed `prime-agent dream` invocation (the fork's
+/// `pa-dream` feature). Subcommand, task and outcome vocabularies, rollout
+/// and probe counts, whether a better policy was adopted, and the duration —
+/// never a path, a seed, a tree or policy id, or a score.
+const DREAM_RUN: EventRule = EventRule {
+    name: "dream_run",
+    since: 4,
+    properties: &[
+        (
+            "subcommand",
+            required(enum_rule(
+                &[
+                    "loop",
+                    "experiment",
+                    "rollout",
+                    "replay",
+                    "improve",
+                    "status",
+                    "show",
+                    "unknown",
+                ],
+                "unknown",
+            )),
+        ),
+        (
+            "task",
+            required(enum_rule(
+                &[
+                    "circle-packing",
+                    "sum-difference",
+                    "python-speedup",
+                    "autocorrelation",
+                    "unknown",
+                ],
+                "unknown",
+            )),
+        ),
+        (
+            "outcome",
+            required(enum_rule(&["completed", "failed", "unavailable"], "failed")),
+        ),
+        ("rollouts", required(count())),
+        ("probes", required(count())),
+        ("improved", required(boolean())),
+        ("duration_ms", required(duration())),
+    ],
+};
+
 /// `image delegation` (v2): one image-carrying turn delegated to a child
 /// running the resolved `settings.imageModel` (the supervisor-backed
 /// routing for text-only session models). Outcome only — never the
@@ -1353,6 +1403,7 @@ pub fn catalog() -> Vec<&'static EventRule> {
         &TUI_IPYTHON_BASH_RENDERED,
         &COMPUTER_USE_SESSION_STARTED,
         &COMPUTER_USE_ACTION,
+        &DREAM_RUN,
     ];
     all.extend(UPDATE_EVENTS.iter());
     all
@@ -1472,8 +1523,13 @@ mod tests {
     fn the_catalog_is_the_low_frequency_set() {
         // New-event vocabulary bumps the schema version: the #2117
         // vocabulary landed at v2, the kernel telemetry bridge's skill
-        // events at v3.
-        assert_eq!(SCHEMA_VERSION, 3);
+        // events at v3, the feature crates' adoption events at v4.
+        assert_eq!(SCHEMA_VERSION, 4);
+        let dream = catalog()
+            .into_iter()
+            .find(|rule| rule.name == "dream_run")
+            .expect("dream_run must be catalogued");
+        assert_eq!(dream.since, 4);
         for name in ["computer_use_session_started", "computer_use_action"] {
             let rule = catalog()
                 .into_iter()
@@ -1670,6 +1726,35 @@ mod tests {
         assert_eq!(properties.get("platform"), Some(&json!("unknown")));
         assert!(properties.get("app_name").is_none(), "unknown key dropped");
         assert_eq!(adjusted, 2, "one fallback + one dropped key");
+    }
+
+    #[test]
+    fn sanitize_normalizes_dream_run() {
+        let mut properties = Properties::new();
+        properties.set("subcommand", json!("loop"));
+        properties.set("task", json!("circle-packing"));
+        properties.set("outcome", json!("completed"));
+        properties.set("rollouts", json!(4u64));
+        properties.set("probes", json!(131u64));
+        properties.set("improved", json!(true));
+        properties.set("duration_ms", json!(2_400u64));
+        assert_eq!(sanitize("dream_run", &mut properties), 0);
+        // No free string rides the event: an out-of-vocabulary subcommand,
+        // task or outcome falls back and an uncatalogued key is dropped.
+        let mut properties = Properties::new();
+        properties.set("subcommand", json!("frobnicate"));
+        properties.set("task", json!("/home/user/secret"));
+        properties.set("outcome", json!("exploded"));
+        properties.set("rollouts", json!(0u64));
+        properties.set("probes", json!(0u64));
+        properties.set("improved", json!(false));
+        properties.set("duration_ms", json!(1u64));
+        properties.set("seed", json!(7u64));
+        assert_eq!(sanitize("dream_run", &mut properties), 4);
+        assert_eq!(properties.get("subcommand"), Some(&json!("unknown")));
+        assert_eq!(properties.get("task"), Some(&json!("unknown")));
+        assert_eq!(properties.get("outcome"), Some(&json!("failed")));
+        assert!(properties.get("seed").is_none());
     }
 
     #[test]
