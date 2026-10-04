@@ -92,22 +92,35 @@ mod tests {
     use super::*;
     use crate::kernel::shared::KernelManagerOptions;
 
+    /// Whether the registry holds a live entry for this allocation. Tests
+    /// ask about their own kernel, not the global count: the registry is
+    /// process-wide and other tests' kernels come and go concurrently.
+    fn tracks(target: &Weak<Inner>) -> bool {
+        let mut entries = registry()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        entries.retain(|weak| weak.strong_count() > 0);
+        entries.iter().any(|weak| Weak::ptr_eq(weak, target))
+    }
+
     #[tokio::test]
     async fn registry_tracks_and_releases_kernels() {
-        assert_eq!(live_kernel_count(), 0);
         let manager = crate::kernel::ReplKernelManager::new(KernelManagerOptions::default());
+        let weak = Arc::downgrade(&manager.inner);
+        assert!(!tracks(&weak));
         add(&manager.inner);
-        assert_eq!(live_kernel_count(), 1);
+        assert!(tracks(&weak));
         // Removing the same pointer deregisters it.
         remove(&manager.inner);
-        assert_eq!(live_kernel_count(), 0);
+        assert!(!tracks(&weak));
         add(&manager.inner);
         drop(manager);
         assert_eq!(
-            live_kernel_count(),
+            weak.strong_count(),
             0,
-            "weak entry must vanish with the manager"
+            "the manager held the only strong ref"
         );
+        assert!(!tracks(&weak), "weak entry must vanish with the manager");
     }
 
     #[tokio::test]
