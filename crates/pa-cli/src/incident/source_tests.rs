@@ -252,3 +252,30 @@ fn reports_missing_logs_clearly() {
         assert_eq!(source.source, "");
     });
 }
+
+/// The Rust daemon writes its timeline to the per-daemon log; agent.jsonl
+/// holds only other diagnostics (request timing, trace spans), none of which
+/// is an incident event. Such a structured log must not hide the daemon log.
+#[test]
+fn falls_back_when_agent_jsonl_holds_no_incident_events() {
+    with_agent_dir(|agent_dir| {
+        let lines = [
+            r#"{"pid":1,"ts":"2026-09-10T20:01:00.000Z","level":"info","component":"coding-agent.request-timing","msg":"request timing","phase":"first-byte"}"#,
+            r#"{"pid":1,"traceId":"0af7651916cd43dd8448eb211c80319c","spanId":"b7ad6b7169203331","name":"agent.turn","durationMs":12,"status":"ok","attrs":{},"ts":"2026-09-10T20:02:00.000Z","level":"info","component":"trace","msg":"span_end"}"#,
+        ]
+        .join("\n");
+        std::fs::write(agent_dir.join("logs/agent.jsonl"), format!("{lines}\n"))
+            .expect("write log");
+        std::fs::write(
+            agent_dir.join("logs/daemon.sock.98ed5cb2.log"),
+            "[2026-09-10T20:23:24.945Z] uncaught exception: Error: write EPIPE\n",
+        )
+        .expect("write daemon log");
+        let text = report_text("2026-09-10T20:00", "2026-09-10T20:30");
+        assert!(text.contains("daemon.sock.98ed5cb2.log"), "{text}");
+        assert!(
+            text.contains("worker crashed: uncaught exception: Error: write EPIPE"),
+            "{text}"
+        );
+    });
+}

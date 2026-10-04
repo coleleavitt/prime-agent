@@ -10,7 +10,8 @@ pub(crate) mod time;
 use self::report::{build_incident_report, IncidentReportOptions};
 use crate::config::get_agent_dir;
 use pa_types::incident::{
-    parse_incident_daemon_log_line, parse_incident_log_line, IncidentLogEntry,
+    collect_incident_events, collect_worker_pid_map, parse_incident_daemon_log_line,
+    parse_incident_log_line, IncidentLogEntry,
 };
 use std::path::{Path, PathBuf};
 
@@ -150,11 +151,15 @@ pub(crate) fn read_incident_log_entries() -> IncidentLogSource {
         .map(|path| (path.clone(), IncidentLogFileKind::Jsonl))
         .collect::<Vec<_>>();
     let structured = scan_incident_log_files(&structured_files);
-    if !structured.entries.is_empty() {
+    // Only incident events make agent.jsonl the daemon's log: the Rust daemon
+    // writes its timeline to the per-daemon log, and agent.jsonl may hold
+    // other diagnostics alone (request timing, trace spans).
+    let worker_pids = collect_worker_pid_map(&structured.entries);
+    if !collect_incident_events(&structured.entries, &worker_pids).is_empty() {
         return structured;
     }
-    // agent.jsonl is missing, empty, or unreadable: fall back to the
-    // newest per-daemon log. Window filtering happens later.
+    // agent.jsonl is missing, empty, unreadable, or has no incident event:
+    // fall back to the newest per-daemon log. Window filtering happens later.
     let Some(fallback_path) = newest_daemon_log_path(&logs_dir) else {
         return structured;
     };
