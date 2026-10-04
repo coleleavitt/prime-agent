@@ -8,7 +8,9 @@ description = "The prime-agent binary."
 [features]
 # The fork's feature crates (docs/fork-feature-crates.md); `--no-default-features`
 # builds the native product.
-default = []
+default = ["recall"]
+# Workspace Recall (crates/pa-recall).
+recall = ["dep:pa-recall"]
 
 [dependencies]
 pa-types = { path = "../pa-types" }
@@ -18,6 +20,7 @@ pa-agent = { path = "../pa-agent" }
 pa-daemon = { path = "../pa-daemon" }
 pa-tui = { path = "../pa-tui" }
 pa-telemetry = { path = "../pa-telemetry" }
+pa-recall = { path = "../pa-recall", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }
 tokio = { workspace = true }
 anyhow = { workspace = true }

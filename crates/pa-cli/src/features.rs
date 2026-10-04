@@ -11,9 +11,10 @@ use pa_core::features::SessionFeature;
 /// The features this build enables, in installation order.
 #[must_use]
 pub fn enabled_features() -> Vec<Arc<dyn SessionFeature>> {
-    #[allow(unused_mut)] // empty until the first feature crate is wired in
-    let mut features: Vec<Arc<dyn SessionFeature>> = Vec::new();
-    features
+    vec![
+        #[cfg(feature = "recall")]
+        Arc::new(pa_recall::WorkspaceRecall::default()),
+    ]
 }
 
 /// Install the enabled features into the session seam. Called once by the
@@ -29,4 +30,24 @@ const FEATURE_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
 /// before the process exits; returns at once when none is installed.
 pub fn flush_enabled_features() {
     pa_core::features::flush_installed(FEATURE_FLUSH_TIMEOUT);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each Cargo feature installs its crate, and nothing else is installed:
+    /// `--no-default-features` installs none.
+    #[test]
+    fn the_build_installs_exactly_its_enabled_features() {
+        let names: Vec<&str> = enabled_features()
+            .iter()
+            .map(|feature| feature.name())
+            .collect();
+        let expected: Vec<&str> = vec![
+            #[cfg(feature = "recall")]
+            "recall",
+        ];
+        assert_eq!(names, expected);
+    }
 }

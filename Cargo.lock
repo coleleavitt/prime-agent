@@ -1269,6 +1269,7 @@ dependencies = [
  "pa-ai",
  "pa-core",
  "pa-daemon",
+ "pa-recall",
  "pa-telemetry",
  "pa-tui",
  "pa-types",
@@ -1358,6 +1359,23 @@ dependencies = [
  "pa-types",
  "reqwest",
  "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "pa-recall"
+version = "0.9.8"
+dependencies = [
+ "fancy-regex",
+ "getrandom 0.3.4",
+ "libc",
+ "pa-agent",
+ "pa-core",
  "serde_json",
  "sha2",
  "tempfile",
