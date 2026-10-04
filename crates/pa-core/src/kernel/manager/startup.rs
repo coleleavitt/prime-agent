@@ -9,6 +9,19 @@ use super::{
     READY_TIMEOUT_MS, REPL_PROTOCOL_VERSION,
 };
 
+/// Env prefixes of the daemon worker identity (`PRIME_AGENT_INTERNAL_DAEMON_*`:
+/// role, token, supervisor socket, recovery journal, ...) and of the session
+/// lease only the worker process owns. The kernel and everything it spawns
+/// through `bash()` must not inherit them: a `prime-agent` run started from a
+/// cell would otherwise present the live worker's token to the supervisor
+/// and believe it is a worker. The orphan-process journal
+/// (`PRIME_AGENT_INTERNAL_ORPHAN_PROCESS_JOURNAL`) is kept: `bash()` enrolls
+/// its process groups there.
+const DAEMON_WORKER_IDENTITY_ENV_PREFIXES: [&str; 2] = [
+    "PRIME_AGENT_INTERNAL_DAEMON_",
+    "PRIME_AGENT_INTERNAL_SESSION_LEASE",
+];
+
 /// Bound on waiting for a dead kernel's stderr pipe to drain before its
 /// exit is described.
 const UNEXPECTED_EXIT_STDERR_DRAIN_MS: u64 = 500;
@@ -221,7 +234,15 @@ impl Inner {
 
         // bash.py journals its process groups under this pid so the host can
         // reap them if the runtime dies without running its shutdown hook.
-        let mut env: HashMap<String, String> = std::env::vars().collect();
+        // The daemon worker's identity never reaches the kernel or what it
+        // spawns (see `DAEMON_WORKER_IDENTITY_ENV_PREFIXES`).
+        let mut env: HashMap<String, String> = std::env::vars()
+            .filter(|(key, _)| {
+                !DAEMON_WORKER_IDENTITY_ENV_PREFIXES
+                    .iter()
+                    .any(|prefix| key.starts_with(prefix))
+            })
+            .collect();
         for (key, value) in &self.options.env {
             env.insert(key.clone(), value.clone());
         }

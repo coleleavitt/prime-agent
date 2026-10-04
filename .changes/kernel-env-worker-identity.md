@@ -1,0 +1,1 @@
+- The Python kernel no longer inherits the daemon worker's internal identity and session-lease environment variables, so a `prime-agent` run started from a cell no longer presents the worker's token to the running daemon.
