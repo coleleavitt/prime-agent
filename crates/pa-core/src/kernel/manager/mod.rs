@@ -104,6 +104,8 @@ struct ExecBuffers {
 
 pub(crate) struct ActiveExecution {
     request_id: String,
+    /// The request's protocol type, named when the kernel dies serving it.
+    request_type: &'static str,
     code: String,
     started: Instant,
     max_chars: usize,
@@ -317,6 +319,8 @@ struct Guarded {
     /// rlm.run spawns from detached asyncio tasks can still attribute their spawning program.
     last_cell_code: Option<String>,
     ready_tx: Option<oneshot::Sender<anyhow::Result<i64>>>,
+    /// The kernel process's death outside a host-owned teardown, if it died.
+    unexpected_exit: Option<crate::kernel::shared::KernelUnexpectedExit>,
 }
 
 struct ChildHandle {
@@ -453,6 +457,7 @@ impl ReplKernelManager {
                 active_execution: None,
                 last_cell_code: None,
                 ready_tx: None,
+                unexpected_exit: None,
             }),
             child: Mutex::new(None),
             busy_notify: Notify::new(),
@@ -502,6 +507,13 @@ impl ReplKernelManager {
     #[must_use]
     pub fn is_defunct(&self) -> bool {
         lock(&self.inner.guarded).state == KernelState::Shutdown
+    }
+
+    /// How the kernel process died, when it exited outside a host-owned
+    /// teardown (a crash, not `shutdown()`/`kill()`).
+    #[must_use]
+    pub fn unexpected_exit(&self) -> Option<crate::kernel::shared::KernelUnexpectedExit> {
+        lock(&self.inner.guarded).unexpected_exit.clone()
     }
 
     /// Diagnostics tail (kernel stderr, at most the last 8 KiB).

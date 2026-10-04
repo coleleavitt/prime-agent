@@ -219,6 +219,9 @@ struct ProvisionerState {
     /// take-LOSING stop task open a fresh gate before the winner's final
     /// snapshot flush, un-gating a revival to race that flush.
     pending_stop_for_startup: Option<tokio::sync::watch::Receiver<Option<StartupResult>>>,
+    /// The unexpected exit of a kernel this provisioner replaced, not yet
+    /// surfaced to the model (TS `takeUnreportedExit`).
+    unreported_exit: Option<crate::kernel::shared::KernelUnexpectedExit>,
 }
 
 /// Owns one kernel for one session: starts it, memoizes the startup so concurrent callers join the
@@ -253,6 +256,7 @@ impl IpythonKernelProvisioner {
                     dispose_snapshot: true,
                     pending_stop: None,
                     pending_stop_for_startup: None,
+                    unreported_exit: None,
                 }),
                 dispose_signal: AbortSignal::new(),
             }),
@@ -270,6 +274,14 @@ impl IpythonKernelProvisioner {
     #[must_use]
     pub fn manager(&self) -> Option<ReplKernelManager> {
         self.lock_state().manager.clone()
+    }
+
+    /// The unexpected exit of a kernel this provisioner replaced with a fresh
+    /// one, handed out once: the caller explains to the model, one time, why
+    /// live state changed.
+    #[must_use]
+    pub fn take_unreported_exit(&self) -> Option<crate::kernel::shared::KernelUnexpectedExit> {
+        self.lock_state().unreported_exit.take()
     }
 
     /// Result of reviving a prior session's namespace on the last kernel start.
@@ -327,6 +339,11 @@ impl IpythonKernelProvisioner {
             }
             if let Some(manager) = &state.manager {
                 if manager.is_defunct() {
+                    // A kernel that died on its own is replaced by the boot
+                    // below; its exit is kept for the one-time notice.
+                    if let Some(exit) = manager.unexpected_exit() {
+                        state.unreported_exit = Some(exit);
+                    }
                     state.manager = None;
                     state.startup = None;
                 }

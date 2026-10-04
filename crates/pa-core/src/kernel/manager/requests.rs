@@ -184,6 +184,7 @@ impl ReplKernelManager {
         };
         let execution = Arc::new(ActiveExecution {
             request_id: request_id.clone(),
+            request_type: request.type_name(),
             code: code.to_string(),
             started,
             max_chars,

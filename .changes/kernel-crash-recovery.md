@@ -1,0 +1,1 @@
+- When the Python kernel process dies on its own (for example a native `os._exit()` inside a cell), the `ipython` result now reports the exit code or signal, the request it was serving, and the kernel's stderr tail instead of "Kernel has been shut down", and the first cell on the replacement kernel carries a one-time notice explaining what state was lost.

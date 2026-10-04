@@ -111,13 +111,17 @@ impl Inner {
     }
 
     pub(crate) fn reject_active_execution(&self, message: &str) {
+        self.reject_active_execution_with(anyhow!("{message}"));
+    }
+
+    pub(crate) fn reject_active_execution_with(&self, error: anyhow::Error) {
         let execution = {
             let mut g = lock(&self.guarded);
             g.active_execution.take()
         };
         if let Some(execution) = execution {
             if let Some(tx) = lock(&execution.result_tx).take() {
-                let _ = tx.send(Err(anyhow!("{message}")));
+                let _ = tx.send(Err(error));
             }
             self.notify_active_execution_idle();
         }
