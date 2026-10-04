@@ -281,6 +281,14 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             agent_dir: config.agent_dir.clone(),
             cwd: cwd.clone(),
             session_id: session_id.clone(),
+            python_skill_import_names: python_skills
+                .iter()
+                .map(|skill| skill.import_name.clone())
+                .collect(),
+            telemetry: config
+                .telemetry
+                .as_ref()
+                .map(super::telemetry::TelemetryWiring::feature_telemetry),
         },
         &mut handlers,
     );

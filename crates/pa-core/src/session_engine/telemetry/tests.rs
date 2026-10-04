@@ -1575,3 +1575,40 @@ async fn kernel_telemetry_bridge_round_trips_through_the_registry() {
     wiring.client.flush().await.unwrap();
     assert_eq!(mock.events().len(), 1, "nothing else emitted");
 }
+
+/// The feature emitter: base properties stamped, the feature's own
+/// properties kept, and nothing queued while the live opt-out reads off.
+#[tokio::test]
+async fn feature_telemetry_stamps_base_properties_and_honors_the_switch() {
+    let mock = std::sync::Arc::new(MockSink::new());
+    let switch_on = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let switch_probe = std::sync::Arc::clone(&switch_on);
+    let wiring = TelemetryWiring {
+        client: client_for(&mock),
+        execution_mode: Some("interactive".to_string()),
+        now: None,
+        telemetry_enabled: Some(RecordingSwitch::test(std::sync::Arc::new(move || {
+            switch_probe.load(std::sync::atomic::Ordering::SeqCst)
+        }))),
+    };
+    let telemetry = wiring.feature_telemetry();
+    let mut properties = pa_telemetry::Properties::new();
+    properties.set("platform", serde_json::json!("linux"));
+    telemetry.track("computer_use_session_started", properties.clone());
+    switch_on.store(false, std::sync::atomic::Ordering::SeqCst);
+    telemetry.track("computer_use_session_started", properties);
+    wiring.client.flush().await.unwrap();
+    let events = mock.events();
+    assert_eq!(events.len(), 1, "the opted-out event is dropped");
+    assert_eq!(events[0].name, "computer_use_session_started");
+    assert_eq!(
+        (
+            events[0].properties.get("platform"),
+            events[0].properties.get("execution_mode")
+        ),
+        (
+            Some(&serde_json::json!("linux")),
+            Some(&serde_json::json!("interactive"))
+        )
+    );
+}
