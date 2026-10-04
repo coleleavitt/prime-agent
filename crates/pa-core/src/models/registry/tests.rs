@@ -106,6 +106,15 @@ fn models_json_custom_models_and_auth_header() {
         .clone();
     assert_eq!(custom.base_url, "https://custom.example");
     assert!(registry.get_available().iter().any(|m| m.id == "my-model"));
+    assert_eq!(
+        registry.provider_request_config("custom"),
+        Some(&ProviderRequestConfig {
+            api_key: Some("custom-key".to_string()),
+            headers: None,
+            auth_header: Some(true),
+        })
+    );
+    assert_eq!(registry.provider_request_config("unconfigured"), None);
     let auth_result = registry.get_api_key_and_headers(&custom, None);
     assert!(auth_result.ok);
     assert_eq!(auth_result.api_key.as_deref(), Some("custom-key"));
