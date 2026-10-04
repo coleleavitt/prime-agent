@@ -368,6 +368,7 @@ async fn execute_compaction_attaches_harness_digest_snapshot() {
             include_ipython: true,
             include_shell_examples: true,
             include_refine: true,
+            prompt_hooks: crate::refinement::prompt_hook::HarnessPromptHooks::default(),
         },
         terms: super::super::harness_digest::digest_query_terms(None, &[]),
     };
@@ -456,6 +457,7 @@ async fn execute_compaction_attaches_harness_digest_snapshot() {
             include_ipython: true,
             include_shell_examples: true,
             include_refine: true,
+            prompt_hooks: crate::refinement::prompt_hook::HarnessPromptHooks::default(),
         },
         terms: super::super::harness_digest::digest_query_terms(Some("fresh terms"), &[]),
     };

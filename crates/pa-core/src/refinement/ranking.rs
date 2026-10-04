@@ -178,6 +178,28 @@ fn entry_sort_key(entry: &HarnessEntry) -> String {
     format!("{}\0{}\0{}", entry.path, entry.title, entry.id)
 }
 
+/// The native digest order: relevance to the query terms when there are
+/// any (ties by path, title, id), else path, title, id.
+fn native_entry_order(
+    a: &HarnessEntry,
+    b: &HarnessEntry,
+    query_terms: Option<&HarnessQueryTerms>,
+    idf: Option<&HarnessQueryTerms>,
+) -> std::cmp::Ordering {
+    match query_terms {
+        Some(terms) if !terms.is_empty() => {
+            let by_score = score_harness_entry_for_query(b, terms, idf)
+                .partial_cmp(&score_harness_entry_for_query(a, terms, idf))
+                .unwrap_or(std::cmp::Ordering::Equal);
+            if by_score != std::cmp::Ordering::Equal {
+                return by_score;
+            }
+            entry_sort_key(a).cmp(&entry_sort_key(b))
+        }
+        _ => entry_sort_key(a).cmp(&entry_sort_key(b)),
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct HarnessStatePromptOptions {
     pub max_entries_per_kind: Option<usize>,
@@ -187,6 +209,10 @@ pub struct HarnessStatePromptOptions {
     pub include_shell_examples: bool,
     pub include_refine_examples: Option<bool>,
     pub query_terms: Option<HarnessQueryTerms>,
+    /// What installed features change about this render
+    /// ([`super::prompt_hook`]); `None` (or an empty adjustment) renders the
+    /// native digest byte for byte.
+    pub adjustment: Option<super::prompt_hook::HarnessPromptAdjustment>,
 }
 
 /// Render the harness state as the model-facing digest block. Strings must
@@ -233,6 +259,7 @@ pub fn format_harness_state_for_prompt(
     ];
 
     let query_terms = &options.query_terms;
+    let adjustment = options.adjustment.as_ref();
     let mut total_entries = 0usize;
     for kind in REFINEMENT_KINDS {
         let entries = state
@@ -240,25 +267,36 @@ pub fn format_harness_state_for_prompt(
             .get(&kind_for(kind))
             .cloned()
             .unwrap_or_default();
+        // Entries a feature withholds are counted per group, not listed.
+        let mut withheld_counts: Vec<usize> =
+            vec![0; adjustment.map_or(0, |adjustment| adjustment.withheld.len())];
+        let entries: Vec<HarnessEntry> = entries
+            .into_iter()
+            .filter(|(id, _)| {
+                let group =
+                    adjustment.and_then(|adjustment| adjustment.withheld_group(kind_for(kind), id));
+                if let Some(group) = group {
+                    withheld_counts[group] += 1;
+                }
+                group.is_none()
+            })
+            .map(|(_, entry)| entry)
+            .collect();
         // The ranked corpus is the kind's own entries: they compete for the
         // same top-k slots, so document frequency discounts terms ubiquitous
         // within the kind rather than across unrelated kinds.
-        let mut entries: Vec<HarnessEntry> = entries.into_values().collect();
+        let mut entries: Vec<HarnessEntry> = entries;
         let ranked_idf = match query_terms.as_ref() {
             Some(terms) if !terms.is_empty() => Some(harness_query_term_idf(&entries, terms)),
             _ => None,
         };
-        entries.sort_by(|a, b| match (query_terms.as_ref(), ranked_idf.as_ref()) {
-            (Some(terms), idf) if !terms.is_empty() => {
-                let left = score_harness_entry_for_query(b, terms, idf)
-                    .partial_cmp(&score_harness_entry_for_query(a, terms, idf))
-                    .unwrap_or(std::cmp::Ordering::Equal);
-                if left != std::cmp::Ordering::Equal {
-                    return left;
-                }
-                entry_sort_key(a).cmp(&entry_sort_key(b))
-            }
-            _ => entry_sort_key(a).cmp(&entry_sort_key(b)),
+        // A feature's rank leads; the native order breaks its ties.
+        let rank =
+            |entry: &HarnessEntry| adjustment.map_or(0, |adjustment| adjustment.rank(&entry.id));
+        entries.sort_by(|a, b| {
+            rank(a)
+                .cmp(&rank(b))
+                .then_with(|| native_entry_order(a, b, query_terms.as_ref(), ranked_idf.as_ref()))
         });
         total_entries += entries.len();
         let kind_name = kind;
@@ -325,10 +363,34 @@ pub fn format_harness_state_for_prompt(
         if overflow > 0 {
             lines.push(format!("- +{overflow} more {kind_name} entries"));
         }
+        if let Some(adjustment) = adjustment {
+            for (group, count) in adjustment.withheld.iter().zip(&withheld_counts) {
+                if *count > 0 {
+                    lines.push(format!(
+                        "- +{count} {} {kind_name} entries ({})",
+                        group.label, group.note
+                    ));
+                }
+            }
+        }
         lines.push(String::new());
     }
     if total_entries == 0 {
         lines.push("No saved harness entries yet.".to_string());
+        lines.push(String::new());
+    }
+    for section in adjustment.map_or(&[][..], |adjustment| adjustment.sections.as_slice()) {
+        let section_lines: Vec<String> = section
+            .lines
+            .iter()
+            .map(|line| super::prompt_hook::sanitize_prompt_line(line, max_content_length))
+            .filter(|line| !line.is_empty())
+            .collect();
+        if section_lines.is_empty() {
+            continue;
+        }
+        lines.push(section.heading.clone());
+        lines.extend(section_lines.into_iter().map(|line| format!("- {line}")));
         lines.push(String::new());
     }
     lines.push(format!("recent refinements: {}", state.refinements.len()));
@@ -398,6 +460,33 @@ fn refinement_kind_name(kind: RefinementKind) -> &'static str {
         RefinementKind::Subagent => "subagent",
         RefinementKind::Factory => "factory",
     }
+}
+
+/// [`harness_digest_fingerprint`] of a render a feature adjusted: the
+/// native fingerprint when `adjustment` is `None`, else a hash over it and
+/// the adjustment, so a changed adjustment re-delivers the digest.
+#[must_use]
+pub fn adjusted_harness_digest_fingerprint(
+    state: &HarnessState,
+    render_flags: HarnessDigestRenderFlags,
+    adjustment: Option<&super::prompt_hook::HarnessPromptAdjustment>,
+) -> String {
+    let native = harness_digest_fingerprint(state, render_flags);
+    let Some(adjustment) = adjustment else {
+        return native;
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(native.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(
+        serde_json::to_string(adjustment)
+            .unwrap_or_default()
+            .as_bytes(),
+    );
+    hasher
+        .finalize()
+        .iter()
+        .fold(String::new(), |hex, byte| hex + &format!("{byte:02x}"))
 }
 
 /// Stable fingerprint of the harness material a digest renders (TS
