@@ -5,6 +5,7 @@
 //! mid-stream does not disturb an attached client. Every failure to
 //! establish the direct link degrades silently to supervisor routing.
 
+use pa_types::sync::MutexExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -89,8 +90,7 @@ impl DirectState {
     /// The live link, when one is established.
     pub(crate) fn live_link(&self) -> Option<DirectLink> {
         self.link
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .as_ref()
             .filter(|link| link.is_alive())
             .cloned()
@@ -98,14 +98,14 @@ impl DirectState {
 
     /// Install a link (dropping any previous one).
     pub(crate) fn set_link(&self, link: DirectLink) {
-        if let Some(previous) = self.link.lock().unwrap().replace(link) {
+        if let Some(previous) = self.link.lock_or_recover().replace(link) {
             previous.close();
         }
     }
 
     /// Drop the link and keep plain supervisor routing.
     pub(crate) fn drop_link(&self) {
-        if let Some(link) = self.link.lock().unwrap().take() {
+        if let Some(link) = self.link.lock_or_recover().take() {
             link.close();
         }
     }
@@ -117,12 +117,12 @@ impl DirectState {
 
     /// The retained event sender, for spawning a direct reader pump.
     pub(crate) fn event_sender(&self) -> Option<mpsc::UnboundedSender<DaemonClientEvent>> {
-        self.event_tx.lock().unwrap().clone()
+        self.event_tx.lock_or_recover().clone()
     }
 
     /// Drop the retained event sender (`close`).
     pub(crate) fn take_event_sender(&self) {
-        self.event_tx.lock().unwrap().take();
+        self.event_tx.lock_or_recover().take();
     }
 }
 

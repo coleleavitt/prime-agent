@@ -5,6 +5,7 @@
 use super::python::preview_python_code;
 #[cfg(test)]
 use super::python::{preview_ipython_code, python_statement_lines};
+use pa_types::sync::MutexExt;
 
 const DESCRIPTOR_MAX_WIDTH: usize = 64;
 
@@ -76,9 +77,7 @@ impl Rx {
     /// Look up (or compile) a preview regex; errors abort (patterns are
     /// constants).
     pub(crate) fn new(pattern: &str) -> Self {
-        let mut pool = regex_pool()
-            .lock()
-            .expect("code-preview regex pool poisoned");
+        let mut pool = regex_pool().lock_or_recover();
         if let Some(rx) = pool.get(pattern) {
             return rx.clone();
         }
