@@ -1,6 +1,6 @@
 //! The API-key lookup + OAuth refresh arm (moved with its concern): the
-//! resolution walk over the candidate sources (runtime override, prime
-//! inference env and then the directory's saved context before stored,
+//! resolution walk over the candidate sources (runtime override, an
+//! installed credential source, prime inference env and then the directory's saved context before stored,
 //! stored, environment, fallback) with the staleness gate, the OAuth
 //! expiry refresh under the per-provider single-flight, and the
 //! passthrough `get_api_key` (TS getApiKey).
@@ -10,6 +10,7 @@ use super::{
     resolve_config_value_uncached, AuthApiKeyResult, AuthCredential, AuthStorage,
     PRIME_INFERENCE_PROVIDER_ID,
 };
+use crate::auth::{credential_source, CredentialSourceError};
 
 impl AuthStorage {
     pub fn get_api_key_with_source_token(
@@ -26,7 +27,43 @@ impl AuthStorage {
                         source_token: Self::token_for(provider_id, &candidate),
                         credential_type: Some("api_key"),
                         oauth_refresh_failed: false,
+                        headers: None,
                     };
+                }
+            }
+        }
+
+        // 1b. An installed credential source owns the provider while it
+        // reports a login: its failure is the authentication failure, never
+        // a fall-through to a credential it may have superseded.
+        if let Some(candidate) = self.credential_source_candidate(provider_id) {
+            if !self.is_stale(provider_id, &candidate) {
+                match credential_source(provider_id)
+                    .map_or(Err(CredentialSourceError::NotConfigured), |source| {
+                        source.credential()
+                    }) {
+                    Ok(credential) => {
+                        return AuthApiKeyResult {
+                            api_key: Some(credential.api_key),
+                            source_token: Self::token_for(provider_id, &candidate),
+                            credential_type: Some("oauth"),
+                            oauth_refresh_failed: false,
+                            headers: (!credential.headers.is_empty()).then_some(credential.headers),
+                        };
+                    }
+                    Err(CredentialSourceError::NotConfigured) => {}
+                    Err(CredentialSourceError::Unavailable(message)) => {
+                        tracing::warn!(
+                            provider = provider_id,
+                            error = %message,
+                            "the provider's credential source produced no credential"
+                        );
+                        return AuthApiKeyResult {
+                            credential_type: Some("oauth"),
+                            oauth_refresh_failed: true,
+                            ..AuthApiKeyResult::default()
+                        };
+                    }
                 }
             }
         }
@@ -43,6 +80,7 @@ impl AuthStorage {
                         source_token: Self::token_for(provider_id, &candidate),
                         credential_type: Some("api_key"),
                         oauth_refresh_failed: false,
+                        headers: None,
                     };
                 }
             }
@@ -59,6 +97,7 @@ impl AuthStorage {
                     source_token: Self::token_for(provider_id, candidate),
                     credential_type: Some("api_key"),
                     oauth_refresh_failed: false,
+                    headers: None,
                 };
             }
         }
@@ -85,6 +124,7 @@ impl AuthStorage {
                                 source_token: Self::token_for(provider_id, &candidate),
                                 credential_type: Some("api_key"),
                                 oauth_refresh_failed: false,
+                                headers: None,
                             };
                         }
                         AuthCredential::Oauth { expires, .. } => {
@@ -100,6 +140,7 @@ impl AuthStorage {
                                             .and_then(|c| Self::token_for(provider_id, &c)),
                                         credential_type: Some("oauth"),
                                         oauth_refresh_failed: false,
+                                        headers: None,
                                     };
                                 }
                                 // Refresh failed: keep credentials for a
@@ -108,6 +149,7 @@ impl AuthStorage {
                                 return AuthApiKeyResult {
                                     credential_type: Some("oauth"),
                                     oauth_refresh_failed: true,
+                                    headers: None,
                                     ..AuthApiKeyResult::default()
                                 };
                             }
@@ -116,6 +158,7 @@ impl AuthStorage {
                                 source_token: Self::token_for(provider_id, &candidate),
                                 credential_type: Some("oauth"),
                                 oauth_refresh_failed: false,
+                                headers: None,
                             };
                         }
                         // A pasted MCP static token IS the api key for its
@@ -126,6 +169,7 @@ impl AuthStorage {
                                 source_token: Self::token_for(provider_id, &candidate),
                                 credential_type: Some("mcp_static_token"),
                                 oauth_refresh_failed: false,
+                                headers: None,
                             };
                         }
                     }
@@ -142,6 +186,7 @@ impl AuthStorage {
                         source_token: Self::token_for(provider_id, &candidate),
                         credential_type: None,
                         oauth_refresh_failed: false,
+                        headers: None,
                     };
                 }
             }
@@ -160,6 +205,7 @@ impl AuthStorage {
                         source_token: Self::token_for(provider_id, &candidate),
                         credential_type: None,
                         oauth_refresh_failed: false,
+                        headers: None,
                     };
                 }
             }

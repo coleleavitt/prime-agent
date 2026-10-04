@@ -20,7 +20,7 @@ mod lookup;
 
 mod prime_inference;
 
-fn fingerprint(source: AuthSource, material: &str) -> String {
+pub(crate) fn fingerprint(source: AuthSource, material: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(format!("{source:?}"));
@@ -78,7 +78,7 @@ impl AuthSourceCandidate {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct AuthApiKeyResult {
     pub api_key: Option<String>,
     pub source_token: Option<AuthSourceToken>,
@@ -89,6 +89,9 @@ pub struct AuthApiKeyResult {
     /// ([`oauth_refresh_failed_message`]) instead of calling the provider
     /// keyless.
     pub oauth_refresh_failed: bool,
+    /// Request headers the credential needs (an installed credential
+    /// source's), merged into the request after the provider's own.
+    pub headers: Option<std::collections::BTreeMap<String, String>>,
 }
 
 /// The authentication failure a turn reports when a stored OAuth login
@@ -498,6 +501,31 @@ impl AuthStorage {
         ))
     }
 
+    /// The installed credential source's candidate while it reports a
+    /// login; its value is the source's revision, never the secret.
+    fn credential_source_candidate(&self, provider: &str) -> Option<AuthSourceCandidate> {
+        let status = super::credential_source(provider)?.status()?;
+        let key = format!("{} {}", status.label, status.revision);
+        Some(
+            self.reuse_auth_source_candidate(AuthSource::CredentialSource, provider, key, || {
+                AuthSourceCandidate {
+                    source: AuthSource::CredentialSource,
+                    configured: true,
+                    label: Some(status.label),
+                    identity_fingerprint: fingerprint(
+                        AuthSource::CredentialSource,
+                        &format!("identity:credential-source {provider}"),
+                    ),
+                    value_fingerprint: Some(fingerprint(
+                        AuthSource::CredentialSource,
+                        &format!("value:credential-source {}", status.revision),
+                    )),
+                    resolve_value_fingerprint: None,
+                }
+            }),
+        )
+    }
+
     fn stored_candidate(&self, provider: &str) -> Option<AuthSourceCandidate> {
         let credential = self.data.credential(provider)?;
         let value_material = self.stored_value_material(&credential);
@@ -580,9 +608,10 @@ impl AuthStorage {
         ))
     }
 
-    /// Candidate priority: runtime first; prime-inference prefers environment
-    /// over the directory's saved context over stored; everyone else prefers
-    /// stored over environment; fallback last.
+    /// Candidate priority: runtime first, then an installed credential
+    /// source; prime-inference prefers environment over the directory's
+    /// saved context over stored; everyone else prefers stored over
+    /// environment; fallback last.
     fn auth_source_candidates(
         &self,
         provider: &str,
@@ -601,6 +630,7 @@ impl AuthStorage {
                 .flatten();
             vec![
                 self.runtime_candidate(provider),
+                self.credential_source_candidate(provider),
                 self.environment_candidate(provider),
                 directory,
                 stored,
@@ -609,6 +639,7 @@ impl AuthStorage {
         } else {
             vec![
                 self.runtime_candidate(provider),
+                self.credential_source_candidate(provider),
                 self.stored_candidate(provider),
                 self.environment_candidate(provider),
                 fallback,

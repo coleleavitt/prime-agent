@@ -82,6 +82,9 @@ impl StartupModelProbe {
                 "models_json".to_string()
             }
             Some(AuthSource::Fallback) => "fallback".to_string(),
+            // An installed credential source's login is a stored login kept
+            // outside auth.json.
+            Some(AuthSource::CredentialSource) => "stored".to_string(),
             Some(AuthSource::Stale) => "stale".to_string(),
             None => {
                 // The `--api-key` flag rides as a runtime key the daemon installs; a

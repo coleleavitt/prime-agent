@@ -321,3 +321,22 @@ async fn a_stored_web_search_key_pairs_with_the_logout_row() {
         );
     assert!(auth.logout_options().await.is_empty());
 }
+
+#[test]
+fn a_credential_source_login_marks_the_subscription_row_configured() {
+    assert_eq!(
+        status_indicator(
+            None,
+            &AuthStatus {
+                configured: true,
+                source: Some(AuthSource::CredentialSource),
+                label: Some("shared account store".to_string()),
+            },
+            AuthType::Oauth
+        ),
+        Some(AuthStatusIndicator {
+            style: AuthStatusStyle::Success,
+            label: "shared account store".to_string()
+        })
+    );
+}

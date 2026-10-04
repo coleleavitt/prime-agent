@@ -108,6 +108,16 @@ fn status_indicator(
     }
     // A non-stored source: env keys and config mark api-key providers configured; subscription rows
     // stay "unconfigured".
+    // An installed credential source's login configures either row type.
+    if status.source == Some(AuthSource::CredentialSource) {
+        return Some(AuthStatusIndicator {
+            style: AuthStatusStyle::Success,
+            label: status
+                .label
+                .clone()
+                .unwrap_or_else(|| "configured".to_string()),
+        });
+    }
     if let Some(source) = status.source {
         if source != AuthSource::Stored {
             return match auth_type {
@@ -164,6 +174,7 @@ fn api_key_source_label(source: AuthSource, label: Option<&str>) -> String {
         AuthSource::Fallback => "custom API key".to_string(),
         AuthSource::ModelsJsonKey => "key in models.json".to_string(),
         AuthSource::ModelsJsonCommand => "command in models.json".to_string(),
+        AuthSource::CredentialSource => label.unwrap_or("configured").to_string(),
         AuthSource::Stored | AuthSource::Stale => "unconfigured".to_string(),
     }
 }

@@ -447,3 +447,40 @@ fn a_failed_oauth_refresh_resolves_to_an_authentication_failure() {
         (true, Some("live"), false)
     );
 }
+
+/// An installed credential source's credential and headers resolve the
+/// request auth (the generic seam; pa-core names no source).
+#[test]
+fn a_credential_source_supplies_the_request_key_and_headers() {
+    struct HeaderSource;
+    impl crate::auth::ProviderCredentialSource for HeaderSource {
+        fn status(&self) -> Option<crate::auth::CredentialSourceStatus> {
+            Some(crate::auth::CredentialSourceStatus {
+                label: "stub store".to_string(),
+                revision: "rev".to_string(),
+            })
+        }
+        fn credential(
+            &self,
+        ) -> Result<crate::auth::SourcedCredential, crate::auth::CredentialSourceError> {
+            Ok(crate::auth::SourcedCredential {
+                api_key: "source-access".to_string(),
+                headers: BTreeMap::from([("x-source".to_string(), "on".to_string())]),
+            })
+        }
+    }
+    let provider = "stub-source-registry";
+    crate::auth::install_credential_source(provider, Arc::new(HeaderSource));
+    let mut registry = ModelRegistry::in_memory(auth_without_env(&serde_json::json!({})));
+
+    assert_eq!(
+        registry.get_api_key_and_headers(&model("m", provider), None),
+        ResolvedRequestAuth {
+            ok: true,
+            api_key: Some("source-access".to_string()),
+            headers: Some(BTreeMap::from([("x-source".to_string(), "on".to_string())])),
+            error: None,
+            oauth_refresh_failed: false,
+        }
+    );
+}

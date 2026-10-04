@@ -160,6 +160,9 @@ pub enum AuthSource {
     Fallback,
     ModelsJsonKey,
     ModelsJsonCommand,
+    /// A credential source installed for the provider
+    /// ([`crate::auth::ProviderCredentialSource`]).
+    CredentialSource,
     /// Marked stale; kept for a later explicit re-login.
     Stale,
 }

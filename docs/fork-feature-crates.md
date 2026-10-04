@@ -71,6 +71,13 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
    - live status: `pa_core::features::publish_feature_status(session_id, FeatureStatus { feature, line, status })`;
      the daemon worker puts it on the roster summary (`featureStatus.<feature>`) and sends a `feature_status`
      session event; the agents view shows each `line`.
+   - provider credentials: `pa_core::auth::install_credential_source(provider_id, Arc<dyn ProviderCredentialSource>)`
+     (process-wide, before any session or worker starts) puts a credential store outside `auth.json` in charge of
+     one provider id: consulted after the runtime `--api-key` override and before `auth.json`, the environment and
+     the fallback resolver, it reports a login cheaply and offline (`status`: a label and a non-secret revision that
+     stale marks bind to) and produces the request credential plus any headers it needs (`credential`, refreshing
+     under its own lock); `NotConfigured` falls through, any other failure is the provider's OAuth authentication
+     failure. The status rows show its label; `AuthSource::CredentialSource` names it.
    Seams to add as features need them: system-prompt layer providers, turn-start observers.
 5. **Data ownership.** A crate owns its files under `~/.prime/agent/<feature>/` (or the session artifact dir) and its
    key in `harness_state.json` (`HarnessState::extensions["<feature>"]`). It never rewrites another crate's data.

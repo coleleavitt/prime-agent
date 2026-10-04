@@ -867,6 +867,10 @@ impl ModelRegistry {
         if let Some(auth_storage_headers) = auth_storage_headers {
             headers.extend(auth_storage_headers);
         }
+        // An installed credential source's headers ride with its credential.
+        if let Some(credential_headers) = stored.headers {
+            headers.extend(credential_headers);
+        }
         if let Some(provider_headers) = provider_headers {
             headers.extend(provider_headers);
         }
