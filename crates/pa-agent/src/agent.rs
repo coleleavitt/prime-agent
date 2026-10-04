@@ -449,7 +449,10 @@ impl AgentInner {
 
 impl AgentInner {
     fn current_signal(&self) -> Option<AbortSignal> {
-        let run = self.run.lock().unwrap();
+        let run = self
+            .run
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         run.as_ref().map(|run| run.controller.signal())
     }
 
@@ -513,13 +516,13 @@ impl AgentInner {
             let model = self
                 .run
                 .lock()
-                .unwrap()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .as_ref()
                 .and_then(|run| run.model.clone())
                 .or_else(|| {
                     self.model_override
                         .lock()
-                        .unwrap()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .as_ref()
                         .map(|routed| routed.model.clone())
                 })
@@ -608,14 +611,23 @@ impl AgentInner {
                 let skip_poll = Arc::clone(&skip_poll);
                 let inner = Arc::clone(&steering_inner);
                 Box::pin(async move {
-                    if *skip_poll.lock().unwrap() {
-                        *skip_poll.lock().unwrap() = false;
+                    if *skip_poll
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    {
+                        *skip_poll
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) = false;
                         return Ok(Vec::new());
                     }
                     let parked = inner
                         .user_rows_parked
                         .load(std::sync::atomic::Ordering::SeqCst);
-                    Ok(inner.steering_queue.lock().unwrap().drain_where(parked))
+                    Ok(inner
+                        .steering_queue
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .drain_where(parked))
                 }) as crate::BoxFut<'static, anyhow::Result<Vec<AgentMessage>>>
             }) as PollMessagesFn
         };
@@ -627,11 +639,19 @@ impl AgentInner {
                     let parked = inner
                         .user_rows_parked
                         .load(std::sync::atomic::Ordering::SeqCst);
-                    Ok(inner.follow_up_queue.lock().unwrap().drain_where(parked))
+                    Ok(inner
+                        .follow_up_queue
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .drain_where(parked))
                 }) as crate::BoxFut<'static, anyhow::Result<Vec<AgentMessage>>>
             }) as PollMessagesFn
         };
-        let continuation = self.get_continuation_messages.lock().unwrap().clone();
+        let continuation = self
+            .get_continuation_messages
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         let should_stop_after_turn = self.should_stop_after_turn.clone();
 
         let (model, reasoning) = match model_override {
@@ -676,7 +696,11 @@ impl AgentInner {
         // busy/idle decision — the shared lock is held across listener
         // awaits, so a caller holding a serialization lock across an
         // admission could otherwise wait out a live run.
-        let run_override: Option<AgentModelOverride> = self.model_override.lock().unwrap().clone();
+        let run_override: Option<AgentModelOverride> = self
+            .model_override
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         let run_model = {
             let shared = self.shared.lock().await;
             run_override
@@ -696,7 +720,10 @@ impl AgentInner {
     /// observe the same idle window (the check-then-act gap of the plain
     /// pre-checks) — and no std guard rides an await.
     pub(crate) fn claim_run_slot(&self, model: Option<Model>) -> Option<RunClaim> {
-        let mut run = self.run.lock().unwrap();
+        let mut run = self
+            .run
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if run.is_some() {
             return None;
         }
@@ -727,9 +754,15 @@ impl AgentInner {
     /// after a finishing run's queue re-check, which happens inside the
     /// same lock — and an idle agent's slot is claimed on the spot.
     pub(crate) fn claim_or_enqueue(&self, batch: AgentMessageBatch) -> ClaimOrEnqueue {
-        let mut run = self.run.lock().unwrap();
+        let mut run = self
+            .run
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if run.is_some() {
-            self.steering_queue.lock().unwrap().enqueue(batch, true);
+            self.steering_queue
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .enqueue(batch, true);
             return ClaimOrEnqueue::Enqueued;
         }
         let claim = Self::install_run_locked(&mut run, None);
@@ -743,7 +776,10 @@ impl AgentInner {
     /// as the run's seed (steering first, then follow-ups). The
     /// idle-queued wake reflects whatever survives the drain.
     pub(crate) fn claim_or_drain(&self) -> QueuedClaim {
-        let mut run = self.run.lock().unwrap();
+        let mut run = self
+            .run
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if run.is_some() {
             return QueuedClaim::Busy;
         }
@@ -757,9 +793,18 @@ impl AgentInner {
                 queue.has_items()
             }
         };
-        let steering = self.steering_queue.lock().unwrap().drain_where(parked);
+        let steering = self
+            .steering_queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .drain_where(parked);
         if !steering.is_empty() {
-            let leftovers = wakeable(&self.steering_queue.lock().unwrap());
+            let leftovers = wakeable(
+                &self
+                    .steering_queue
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            );
             self.idle_queued_tx.send_modify(|armed| *armed = leftovers);
             let claim = Self::install_run_locked(&mut run, None);
             return QueuedClaim::Claimed {
@@ -768,9 +813,18 @@ impl AgentInner {
                 drained_follow_ups: false,
             };
         }
-        let follow_ups = self.follow_up_queue.lock().unwrap().drain_where(parked);
+        let follow_ups = self
+            .follow_up_queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .drain_where(parked);
         if !follow_ups.is_empty() {
-            let leftovers = wakeable(&self.follow_up_queue.lock().unwrap());
+            let leftovers = wakeable(
+                &self
+                    .follow_up_queue
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            );
             self.idle_queued_tx.send_modify(|armed| *armed = leftovers);
             let claim = Self::install_run_locked(&mut run, None);
             return QueuedClaim::Claimed {
@@ -829,10 +883,19 @@ impl AgentInner {
             shared.state.pending_tool_calls.clear();
         }
         {
-            let mut run = self.run.lock().unwrap();
+            let mut run = self
+                .run
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(active) = run.take() {
-                let steering = self.steering_queue.lock().unwrap();
-                let follow_ups = self.follow_up_queue.lock().unwrap();
+                let steering = self
+                    .steering_queue
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let follow_ups = self
+                    .follow_up_queue
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let user_rows = steering.has_user_items() || follow_ups.has_user_items();
                 let parked = user_rows
                     && (finish_signal.is_aborted()
@@ -930,7 +993,12 @@ impl AgentInner {
                 drop(shared);
                 // Backfill the claimed run's model snapshot (failure
                 // attribution) from the same read that serves the run.
-                if let Some(active) = inner.run.lock().unwrap().as_mut() {
+                if let Some(active) = inner
+                    .run
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .as_mut()
+                {
                     active.model = Some(model);
                 }
                 (context, config)
@@ -1007,7 +1075,11 @@ impl AgentInner {
                 messages,
                 drained_follow_ups,
             } => {
-                let run_override = self.model_override.lock().unwrap().clone();
+                let run_override = self
+                    .model_override
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
                 let skip_initial_steering_poll = !drained_follow_ups;
                 self.execute_prompt_claim(
                     claim,
@@ -1212,100 +1284,94 @@ impl Agent {
         mutate(&mut self.inner.shared.lock().await.state.messages);
     }
 
-    /// # Panics
-    ///
-    /// Panics if the `steering_queue` mutex is poisoned.
     #[must_use]
     pub fn steering_mode(&self) -> QueueMode {
-        self.inner.steering_queue.lock().unwrap().mode
+        self.inner
+            .steering_queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .mode
     }
 
-    /// # Panics
-    ///
-    /// Panics if the `steering_queue` mutex is poisoned.
     pub fn set_steering_mode(&self, mode: QueueMode) {
-        self.inner.steering_queue.lock().unwrap().mode = mode;
+        self.inner
+            .steering_queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .mode = mode;
     }
 
-    /// # Panics
-    ///
-    /// Panics if the `follow_up_queue` mutex is poisoned.
     #[must_use]
     pub fn follow_up_mode(&self) -> QueueMode {
-        self.inner.follow_up_queue.lock().unwrap().mode
+        self.inner
+            .follow_up_queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .mode
     }
 
     /// Install or replace the natural-turn-end continuation hook: the embedding that owns the
     /// goal/autonomous continuation policy wires it after the agent exists. `None` uninstalls the
     /// hook.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the `get_continuation_messages` mutex is poisoned.
     pub fn set_continuation_hook(&self, hook: Option<GetContinuationMessagesFn>) {
-        *self.inner.get_continuation_messages.lock().unwrap() = hook;
+        *self
+            .inner
+            .get_continuation_messages
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = hook;
     }
 
-    /// # Panics
-    ///
-    /// Panics if the `follow_up_queue` mutex is poisoned.
     pub fn set_follow_up_mode(&self, mode: QueueMode) {
-        self.inner.follow_up_queue.lock().unwrap().mode = mode;
+        self.inner
+            .follow_up_queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .mode = mode;
     }
 
     /// Queue a message batch to be injected after the current assistant turn finishes.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the `steering_queue` mutex is poisoned.
     pub fn steer(&self, message: impl Into<AgentMessageBatch>) {
         self.inner
             .steering_queue
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .enqueue(message.into(), false);
     }
 
     /// Queue a message batch to run only after the agent would otherwise stop.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the `follow_up_queue` mutex is poisoned.
     pub fn follow_up(&self, message: impl Into<AgentMessageBatch>) {
         self.inner
             .follow_up_queue
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .enqueue(message.into(), false);
     }
 
-    /// # Panics
-    ///
-    /// Panics if the `steering_queue` mutex is poisoned.
     pub fn clear_steering_queue(&self) {
-        self.inner.steering_queue.lock().unwrap().clear();
+        self.inner
+            .steering_queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
     }
 
-    /// # Panics
-    ///
-    /// Panics if the `follow_up_queue` mutex is poisoned.
     pub fn clear_follow_up_queue(&self) {
-        self.inner.follow_up_queue.lock().unwrap().clear();
+        self.inner
+            .follow_up_queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
     }
 
     /// Previews of the queued steering batches (TS
     /// `getSteeringMessagePreviews`): one text preview per queued batch,
     /// in queue order.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the `steering_queue` mutex is poisoned.
     #[must_use]
     pub fn steering_previews(&self) -> Vec<String> {
         self.inner
             .steering_queue
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .batches
             .iter()
             .map(|batch| batch_preview(batch))
@@ -1313,48 +1379,55 @@ impl Agent {
     }
 
     /// Previews of the queued follow-up batches: one text preview per queued batch, in queue order.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the `follow_up_queue` mutex is poisoned.
     #[must_use]
     pub fn follow_up_previews(&self) -> Vec<String> {
         self.inner
             .follow_up_queue
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .batches
             .iter()
             .map(|batch| batch_preview(batch))
             .collect()
     }
 
-    /// # Panics
-    ///
-    /// Panics if the `steering_queue` or `follow_up_queue` mutex is poisoned.
     pub fn remove_queued_messages(
         &self,
         predicate: impl Fn(&AgentMessage) -> bool,
     ) -> Vec<AgentMessage> {
         let mut removed = Vec::new();
         {
-            let mut queue = self.inner.steering_queue.lock().unwrap();
+            let mut queue = self
+                .inner
+                .steering_queue
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             removed.extend(queue.remove_where(&predicate));
         }
         {
-            let mut queue = self.inner.follow_up_queue.lock().unwrap();
+            let mut queue = self
+                .inner
+                .follow_up_queue
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             removed.extend(queue.remove_where(&predicate));
         }
         removed
     }
 
-    /// # Panics
-    ///
-    /// Panics if the `steering_queue` or `follow_up_queue` mutex is poisoned.
     #[must_use]
     pub fn has_queued_messages(&self) -> bool {
-        self.inner.steering_queue.lock().unwrap().has_items()
-            || self.inner.follow_up_queue.lock().unwrap().has_items()
+        self.inner
+            .steering_queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .has_items()
+            || self
+                .inner
+                .follow_up_queue
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .has_items()
     }
 
     /// The loop's provider stream function (the side-thread clone passes the
@@ -1369,23 +1442,26 @@ impl Agent {
         self.inner.current_signal()
     }
 
-    /// # Panics
-    ///
-    /// Panics if the `run` mutex is poisoned.
     pub fn abort(&self) {
-        if let Some(run) = self.inner.run.lock().unwrap().as_ref() {
+        if let Some(run) = self
+            .inner
+            .run
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+        {
             run.controller.abort();
         }
     }
 
     /// Resolve when the current run and all awaited event listeners have finished.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the `run` mutex is poisoned.
     pub async fn wait_for_idle(&self) {
         let idle_rx = {
-            let run = self.inner.run.lock().unwrap();
+            let run = self
+                .inner
+                .run
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             run.as_ref().map(|run| run.idle_tx.subscribe())
         };
         let Some(mut idle_rx) = idle_rx else {
@@ -1421,12 +1497,14 @@ impl Agent {
     /// # Errors
     ///
     /// Errors when a run is already active, or with the started run's failure.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the `run` mutex is poisoned.
     pub async fn prompt(&self, input: impl Into<AgentPromptInput>) -> anyhow::Result<()> {
-        if self.inner.run.lock().unwrap().is_some() {
+        if self
+            .inner
+            .run
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some()
+        {
             anyhow::bail!(
                 "Agent is already processing a prompt. Use steer() or followUp() to queue messages, or wait for completion."
             );
@@ -1444,12 +1522,19 @@ impl Agent {
     ///
     /// # Panics
     ///
-    /// Panics if the `run` mutex is poisoned.
+    /// Never in practice: a dropped start signal always comes with the refusal on the failure
+    /// channel.
     pub async fn prompt_until_accepted(
         &self,
         input: impl Into<AgentPromptInput>,
     ) -> anyhow::Result<()> {
-        if self.inner.run.lock().unwrap().is_some() {
+        if self
+            .inner
+            .run
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some()
+        {
             anyhow::bail!(
                 "Agent is already processing a prompt. Use steer() or followUp() to queue messages, or wait for completion."
             );
@@ -1484,17 +1569,19 @@ impl Agent {
     ///
     /// Returns an [`AgentContinueError`] in `anyhow::Error`: `Busy` or
     /// `NothingToContinue`; queued-message errors propagate too.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the `run` mutex is poisoned.
     pub async fn continue_run(&self) -> anyhow::Result<()> {
         // The user's explicit continue folds parked rows, like a prompt
         // does (TS `continue()` drains both queues).
         self.inner
             .user_rows_parked
             .store(false, std::sync::atomic::Ordering::SeqCst);
-        if self.inner.run.lock().unwrap().is_some() {
+        if self
+            .inner
+            .run
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some()
+        {
             return Err(anyhow::Error::new(AgentContinueError::new(
                 AgentContinueErrorCode::Busy,
                 "Agent is already processing. Wait for completion before continuing.",

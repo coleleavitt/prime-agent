@@ -5,6 +5,7 @@ use super::{
     DaemonResponse, QueueCheckpoint, QueuePriority, QueuedItem, SessionFile, TurnPolicy, Value,
     Worker, SIDE_QUESTION_SETTLE_TIMEOUT,
 };
+use pa_types::sync::MutexExt;
 
 impl Worker {
     /// `update_snapshot` (supervisor plane, update flow spec §8): a read-only
@@ -12,7 +13,7 @@ impl Worker {
     /// and the durable respawn state agree (`busy` is the continuation signal).
     pub(crate) fn handle_update_snapshot(&self) -> DaemonResponse {
         let (core_data, lanes) = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             let store = core.store.as_ref();
             let data = json!({
                 "activeSessionId": core.active_session_id,
@@ -63,7 +64,7 @@ impl Worker {
             .abort_all_and_settle(SIDE_QUESTION_SETTLE_TIMEOUT)
             .await;
         {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             // The shutdown gate closes FIRST: a racing execute_bash must see the
             // stop before the abort runs, or the fresh claim clears the abort and
             // spawns a child the exit leaves running.
@@ -98,8 +99,7 @@ impl Worker {
         self.engine.end_telemetry().await;
         let lease = self
             .core
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .store
             .as_mut()
             .and_then(|store| store.lease.take());
@@ -108,7 +108,7 @@ impl Worker {
         // pane reporter releases its pane as the last write on the wire
         // — awaited here so the release lands before this reply unlocks
         // the process exit, and no late report reclaims the pane.
-        let reporter = self.herdr.lock().unwrap().clone();
+        let reporter = self.herdr.lock_or_recover().clone();
         reporter.release().await;
         response_success(None, "shutdown", None)
     }
@@ -122,7 +122,7 @@ impl Worker {
             // registered futures).
             let notified = self.idle_notify.notified();
             {
-                let core = self.core.lock().unwrap();
+                let core = self.core.lock_or_recover();
                 if !core.busy && !core.compacting {
                     return;
                 }
@@ -142,7 +142,7 @@ impl Worker {
             agent_engine.mark_session_closed();
         }
         {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             core.steering.clear();
             core.follow_up.clear();
         }
@@ -195,7 +195,7 @@ impl Worker {
     async fn await_replacement_settled(&self) {
         loop {
             let busy = {
-                let mut core = self.core.lock().unwrap();
+                let mut core = self.core.lock_or_recover();
                 let busy = core.busy || core.compacting;
                 if busy {
                     core.abort_requested = true;
@@ -318,7 +318,7 @@ impl Worker {
     /// lanes drain; an owed continuation re-evaluates here too.
     pub(crate) fn resume_queued_input(&self) {
         {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             if core.queued_input_suspended {
                 core.queued_input_suspended = false;
             }
@@ -343,7 +343,7 @@ impl Worker {
             // `compact()` aborts first, which suspends queued-input admission: the
             // suspension outlives skip/failure/abort outcomes and is cleared below
             // only for the didCompact + active-goal branch.
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             core.queued_input_suspended = true;
         }
         let outcome = self
@@ -367,7 +367,7 @@ impl Worker {
                 == Some("active");
             if goal_active {
                 let has_queued = {
-                    let core = self.core.lock().unwrap();
+                    let core = self.core.lock_or_recover();
                     !core.steering.is_empty() || !core.follow_up.is_empty()
                 };
                 if !has_queued {
@@ -398,7 +398,7 @@ impl Worker {
                         // outside a turn, so the store write rides here, not the emit closure.
                         if let Some(goal) = continuation.goal_update {
                             {
-                                let mut core = self.core.lock().unwrap();
+                                let mut core = self.core.lock_or_recover();
                                 if let Some(store) = core.store.as_mut() {
                                     let _ = store.persist_entry(
                                         "custom",
@@ -415,7 +415,7 @@ impl Worker {
                             }));
                         }
                         {
-                            let mut core = self.core.lock().unwrap();
+                            let mut core = self.core.lock_or_recover();
                             core.follow_up.push_back(QueuedItem {
                                 priority: QueuePriority::Background,
                                 preview: None,
@@ -521,7 +521,7 @@ impl Worker {
         loop {
             let idle = self.idle_notify.notified();
             {
-                let core = self.core.lock().unwrap();
+                let core = self.core.lock_or_recover();
                 if !core.busy
                     && (core.steering.is_empty() && core.follow_up.is_empty()
                         || self.input_pauses.paused())

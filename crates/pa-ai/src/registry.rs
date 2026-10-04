@@ -1,6 +1,7 @@
 //! API provider registry: providers register stream functions per `api` identifier;
 //! `stream()`/`complete()` resolve the provider for a model and forward.
 
+use pa_types::sync::RwLockExt;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock};
 
@@ -38,12 +39,8 @@ fn registry() -> &'static RwLock<HashMap<String, RegisteredProvider>> {
 }
 
 /// Register (or replace) the provider for `provider.api()`.
-///
-/// # Panics
-///
-/// Panics if the registry `RwLock` is poisoned (a thread panicked while holding it).
 pub fn register_api_provider(provider: Arc<dyn Provider>, source_id: Option<&str>) {
-    let mut registry = registry().write().unwrap();
+    let mut registry = registry().write_or_recover();
     registry.insert(
         provider.api().to_string(),
         RegisteredProvider {
@@ -54,60 +51,38 @@ pub fn register_api_provider(provider: Arc<dyn Provider>, source_id: Option<&str
 }
 
 /// Look up the provider for an api identifier.
-///
-/// # Panics
-///
-/// Panics if the registry `RwLock` is poisoned (a thread panicked while holding it).
 #[must_use]
 pub fn get_api_provider(api: &str) -> Option<Arc<dyn Provider>> {
     registry()
-        .read()
-        .unwrap()
+        .read_or_recover()
         .get(api)
         .map(|entry| entry.provider.clone())
 }
 
 /// All registered providers.
-///
-/// # Panics
-///
-/// Panics if the registry `RwLock` is poisoned (a thread panicked while holding it).
 #[must_use]
 pub fn get_api_providers() -> Vec<Arc<dyn Provider>> {
     registry()
-        .read()
-        .unwrap()
+        .read_or_recover()
         .values()
         .map(|entry| entry.provider.clone())
         .collect()
 }
 
 /// Unregister providers installed with the given source id (extension teardown).
-///
-/// # Panics
-///
-/// Panics if the registry `RwLock` is poisoned (a thread panicked while holding it).
 pub fn unregister_api_providers(source_id: &str) {
-    let mut registry = registry().write().unwrap();
+    let mut registry = registry().write_or_recover();
     registry.retain(|_, entry| entry.source_id.as_deref() != Some(source_id));
 }
 
 /// Remove all registered providers.
-///
-/// # Panics
-///
-/// Panics if the registry `RwLock` is poisoned (a thread panicked while holding it).
 pub fn clear_api_providers() {
-    registry().write().unwrap().clear();
+    registry().write_or_recover().clear();
 }
 
 /// Register the built-in providers (the explicit Rust equivalent of the TS side-effect import).
-///
-/// # Panics
-///
-/// Panics if the registry `RwLock` is poisoned (a thread panicked while holding it).
 pub fn register_builtin_api_providers() {
-    let mut registry = registry().write().unwrap();
+    let mut registry = registry().write_or_recover();
     // Each entry mirrors the corresponding import in `providers/register-builtins.ts`.
     let builtins: Vec<Arc<dyn Provider>> = vec![
         Arc::new(crate::providers::anthropic::AnthropicMessagesProvider),

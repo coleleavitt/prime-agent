@@ -25,6 +25,7 @@ mod parse;
 mod tests;
 mod width;
 
+use pa_types::sync::MutexExt;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -151,18 +152,14 @@ struct RenderCache {
 }
 
 /// [`render`] through a bounded process-wide cache (oldest entry evicted first).
-///
-/// # Panics
-///
-/// Panics when the cache mutex is poisoned; the render under the lock cannot panic.
 pub(crate) fn render_cached(src: &str) -> Arc<Option<Art>> {
     static CACHE: OnceLock<Mutex<RenderCache>> = OnceLock::new();
     let cache = CACHE.get_or_init(Mutex::default);
-    if let Some(hit) = cache.lock().unwrap().entries.get(src) {
+    if let Some(hit) = cache.lock_or_recover().entries.get(src) {
         return Arc::clone(hit);
     }
     let art = Arc::new(render(src));
-    let mut cache = cache.lock().unwrap();
+    let mut cache = cache.lock_or_recover();
     if !cache.entries.contains_key(src) {
         if cache.order.len() >= RENDER_CACHE_ENTRIES {
             if let Some(oldest) = cache.order.pop_front() {

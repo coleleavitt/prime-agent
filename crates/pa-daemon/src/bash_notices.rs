@@ -4,6 +4,7 @@
 //! `resumeIfIdle`; a later kernel read that reaches the model first sends
 //! `bash.consumed`, and the undelivered notice withdraws.
 
+use pa_types::sync::MutexExt;
 use serde_json::Value;
 
 use pa_core::kernel::shared::{host_handler, HostRequestHandlers};
@@ -14,24 +15,13 @@ use crate::engine::{BashCompletionNotice, BashConsumedNotice};
 impl AgentSessionEngine {
     /// Wire the worker's bash-completion queue seams (called once at
     /// construction, before the first session build reads them).
-    ///
-    /// # Panics
-    ///
-    /// Panics when a sink mutex is poisoned (a holder panicked while
-    /// holding the completion or consumed-sink lock).
     pub fn set_bash_notice_sinks(
         &self,
         completion: crate::engine::BashCompletionSink,
         consumed: crate::engine::BashConsumedSink,
     ) {
-        *self
-            .bash_completion_sink
-            .lock()
-            .expect("bash completion sink lock") = Some(completion);
-        *self
-            .bash_consumed_sink
-            .lock()
-            .expect("bash consumed sink lock") = Some(consumed);
+        *self.bash_completion_sink.lock_or_recover() = Some(completion);
+        *self.bash_consumed_sink.lock_or_recover() = Some(consumed);
     }
 
     /// The `bash.completed`/`bash.consumed` kernel host handlers (TS
@@ -39,20 +29,10 @@ impl AgentSessionEngine {
     /// Registered only when both seams are wired — no worker queue leaves the requests
     /// honestly unavailable.
     pub(crate) fn register_bash_notice_host_handlers(&self, handlers: &mut HostRequestHandlers) {
-        let Some(completion) = self
-            .bash_completion_sink
-            .lock()
-            .expect("bash completion sink lock")
-            .clone()
-        else {
+        let Some(completion) = self.bash_completion_sink.lock_or_recover().clone() else {
             return;
         };
-        let Some(consumed) = self
-            .bash_consumed_sink
-            .lock()
-            .expect("bash consumed sink lock")
-            .clone()
-        else {
+        let Some(consumed) = self.bash_consumed_sink.lock_or_recover().clone() else {
             return;
         };
         handlers.register(

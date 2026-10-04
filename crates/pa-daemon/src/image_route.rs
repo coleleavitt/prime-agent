@@ -7,6 +7,7 @@
 use pa_core::session_engine::provider_adapter::{
     json_round_trip, map_thinking_level, ProviderTarget,
 };
+use pa_types::sync::{MutexExt, RwLockExt};
 
 use crate::agent_engine::AgentSessionEngine;
 
@@ -66,7 +67,7 @@ impl AgentSessionEngine {
             &pa_core::models::ImageModelRoutingInputs {
                 session_model: &session_model,
                 thinking_level: self.effective_thinking(),
-                service_tier: *self.service_tier.read().expect("service tier lock"),
+                service_tier: *self.service_tier.read_or_recover(),
                 image_model_reference: image_model_reference.as_deref(),
                 available_models: &available,
                 // Keyed (provider, id): one provider's authenticated row must
@@ -165,12 +166,12 @@ impl AgentSessionEngine {
         if route.session_target.is_none() {
             route
                 .session_target
-                .clone_from(&self.provider_target.read().expect("provider target lock"));
+                .clone_from(&self.provider_target.read_or_recover());
         }
         let route = route.clone();
         drop(slot);
         agent.set_model_override(Some(route.agent_override));
-        *self.provider_target.write().expect("provider target lock") = Some(route.target);
+        *self.provider_target.write_or_recover() = Some(route.target);
     }
 
     /// Clear the armed route and restore the session's serving target (a
@@ -188,7 +189,7 @@ impl AgentSessionEngine {
         // The agent override clears even when the session target cannot be
         // rebuilt: the next run must not silently serve on the routed
         // image model (a stale pin beats a leftover routed image target).
-        let agent = self.turn_agent.lock().expect("turn agent lock").clone();
+        let agent = self.turn_agent.lock_or_recover().clone();
         if let Some(agent) = agent {
             agent.set_model_override(None);
         }
@@ -196,7 +197,7 @@ impl AgentSessionEngine {
             Ok(model) => {
                 let (api_key, headers) = self.resolve_request_key_and_headers(&model);
                 Some(ProviderTarget {
-                    service_tier: *self.service_tier.read().expect("service tier lock"),
+                    service_tier: *self.service_tier.read_or_recover(),
                     api_key,
                     headers,
                     model,
@@ -205,7 +206,7 @@ impl AgentSessionEngine {
             Err(_) => route.session_target,
         };
         if let Some(target) = target.take() {
-            *self.provider_target.write().expect("provider target lock") = Some(target);
+            *self.provider_target.write_or_recover() = Some(target);
         }
     }
 

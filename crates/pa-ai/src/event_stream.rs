@@ -2,6 +2,7 @@
 //! one of `done` (success) or `error` (failure/abort). The event type is owned by `pa-types`, so
 //! the helpers below are an extension trait.
 
+use pa_types::sync::MutexExt;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -130,7 +131,7 @@ struct Shared {
 
 impl Shared {
     fn push(&self, event: AssistantMessageEvent) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock_or_recover();
         if state.done {
             return;
         }
@@ -147,7 +148,7 @@ impl Shared {
     }
 
     fn end(&self, result: Option<AssistantMessage>) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock_or_recover();
         state.done = true;
         if let Some(result) = result {
             state.resolve(result);
@@ -175,7 +176,7 @@ impl AssistantMessageEventWriter {
     }
 
     pub fn is_done(&self) -> bool {
-        self.shared.state.lock().unwrap().done
+        self.shared.state.lock_or_recover().done
     }
 }
 
@@ -214,15 +215,11 @@ impl AssistantMessageEventStream {
     }
 
     /// Poll for the next queued event, or `None` once the stream terminated.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the shared-state `Mutex` is poisoned.
     pub fn poll_next_event(
         &mut self,
         cx: &mut TaskContext<'_>,
     ) -> Poll<Option<AssistantMessageEvent>> {
-        let mut state = self.shared.state.lock().unwrap();
+        let mut state = self.shared.state.lock_or_recover();
         if let Some(event) = state.queue.pop_front() {
             return Poll::Ready(Some(event));
         }
@@ -237,7 +234,7 @@ impl AssistantMessageEventStream {
     ///
     /// # Panics
     ///
-    /// Panics if the shared-state `Mutex` is poisoned.
+    /// Panics when every waiter sender is dropped without a resolved message.
     ///
     /// A stream terminated without a resolved message (`end(None)`) never resolves: this future
     /// hangs.
@@ -247,7 +244,7 @@ impl AssistantMessageEventStream {
         }
         let (tx, rx) = tokio::sync::oneshot::channel();
         {
-            let mut state = self.shared.state.lock().unwrap();
+            let mut state = self.shared.state.lock_or_recover();
             if let Some(message) = &state.resolved {
                 return message.clone();
             }
@@ -264,7 +261,7 @@ impl AssistantMessageEventStream {
     }
 
     fn try_result(&self) -> Option<AssistantMessage> {
-        self.shared.state.lock().unwrap().resolved.clone()
+        self.shared.state.lock_or_recover().resolved.clone()
     }
 }
 

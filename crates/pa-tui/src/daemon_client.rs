@@ -3,6 +3,7 @@
 //! Non-response frames (session events, list progress, closing notices)
 //! are forwarded through an event channel so the UI can render live state.
 
+use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -238,7 +239,7 @@ pub(crate) struct Shared {
 
 impl Shared {
     pub(crate) fn resolve(&self, id: &str, response: DaemonResponse) -> bool {
-        let mut pending = self.pending.lock().unwrap();
+        let mut pending = self.pending.lock_or_recover();
         pending
             .remove(id)
             .is_some_and(|tx| tx.send(Ok(response)).is_ok())
@@ -248,7 +249,7 @@ impl Shared {
     /// transport error: the connection that carried them died. The failure
     /// resolves on the `Err` half — never a synthetic response.
     pub(crate) fn fail_pending(&self, prefix: &str, error: &str) {
-        let mut pending = self.pending.lock().unwrap();
+        let mut pending = self.pending.lock_or_recover();
         let dead: Vec<String> = pending
             .keys()
             .filter(|id| id.starts_with(prefix))
@@ -597,10 +598,6 @@ impl DaemonClient {
     ///
     /// Returns `Err` when the envelope cannot be serialized or sent, the
     /// reader has died, or the timeout elapses.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the shared pending-request mutex is poisoned.
     pub async fn request_supervisor_with_id(
         &self,
         command: DaemonCommand,
@@ -620,12 +617,12 @@ impl DaemonClient {
         };
         let line = serde_json::to_string(&envelope)?;
         let (tx, rx) = oneshot::channel::<Result<DaemonResponse>>();
-        self.shared.pending.lock().unwrap().insert(id.clone(), tx);
+        self.shared.pending.lock_or_recover().insert(id.clone(), tx);
         // The reader runs on another worker: it can die (and run its failure
         // sweep) between the entry check and this registration. Re-check after
         // inserting — a death it missed is caught here.
         if *self.reader_dead_rx.borrow() {
-            self.shared.pending.lock().unwrap().remove(&id);
+            self.shared.pending.lock_or_recover().remove(&id);
             return Err(self.dead_reader_error());
         }
         self.writer
@@ -640,7 +637,7 @@ impl DaemonClient {
                 self.socket_path.display()
             )),
             Err(_) => {
-                self.shared.pending.lock().unwrap().remove(&id);
+                self.shared.pending.lock_or_recover().remove(&id);
                 Err(anyhow!(
                     "Timed out after {timeout_ms}ms waiting for the Prime Agent daemon response. Socket: {}.",
                     self.socket_path.display()
@@ -702,11 +699,10 @@ impl DaemonClient {
         let (reply_tx, reply_rx) = oneshot::channel::<Result<DaemonResponse>>();
         self.shared
             .pending
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .insert(id.to_string(), reply_tx);
         if !link.send(frame) {
-            self.shared.pending.lock().unwrap().remove(id);
+            self.shared.pending.lock_or_recover().remove(id);
             return Err(DirectRequestError::NotSent);
         }
         match tokio::time::timeout(Duration::from_millis(timeout_ms), reply_rx).await {
@@ -718,7 +714,7 @@ impl DaemonClient {
                 link.socket_path
             ))),
             Err(_) => {
-                self.shared.pending.lock().unwrap().remove(id);
+                self.shared.pending.lock_or_recover().remove(id);
                 Err(DirectRequestError::Wait(anyhow!(
                     "Timed out after {timeout_ms}ms waiting for the session response. Socket: {}.",
                     link.socket_path

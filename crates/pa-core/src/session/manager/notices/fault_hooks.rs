@@ -6,6 +6,7 @@
 //! leaves, so the reconcile/idempotence machinery under test behaves
 //! identically.
 
+use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
@@ -53,7 +54,7 @@ static ARMED: Mutex<Option<HashMap<PathBuf, Armed>>> = Mutex::new(None);
 /// Arm `fault` to fire `times` more times for the session at
 /// `session_file`.
 pub fn arm(session_file: &Path, fault: Fault, times: usize) {
-    let mut armed = ARMED.lock().unwrap();
+    let mut armed = ARMED.lock_or_recover();
     let state = armed
         .get_or_insert_with(HashMap::new)
         .entry(session_file.to_path_buf())
@@ -63,7 +64,7 @@ pub fn arm(session_file: &Path, fault: Fault, times: usize) {
 
 /// Consume one firing of `fault` for the session at `session_file`.
 pub fn take(session_file: &Path, fault: Fault) -> bool {
-    let mut armed = ARMED.lock().unwrap();
+    let mut armed = ARMED.lock_or_recover();
     let Some(by_path) = armed.as_mut() else {
         return false;
     };
@@ -82,7 +83,7 @@ pub fn take(session_file: &Path, fault: Fault) -> bool {
 
 /// Disarm every fault armed for the session at `session_file`.
 pub fn disarm(session_file: &Path) {
-    let mut armed = ARMED.lock().unwrap();
+    let mut armed = ARMED.lock_or_recover();
     if let Some(by_path) = armed.as_mut() {
         by_path.remove(session_file);
     }

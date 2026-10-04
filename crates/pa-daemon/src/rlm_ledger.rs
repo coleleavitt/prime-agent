@@ -15,6 +15,7 @@
 //! the whole file behind a stat guard, so staleness is bounded to in-flight
 //! appends.
 
+use pa_types::sync::MutexExt;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -608,7 +609,7 @@ impl RlmSpawnLedger {
     /// unchanged reuses the cached edges. A missing file replays empty.
     fn replay_cached(&self) -> Result<ReplayState> {
         let identity = file_identity(&self.path)?;
-        let mut cache = self.cache.lock().expect("ledger cache lock");
+        let mut cache = self.cache.lock_or_recover();
         if let (Some(identity), Some(cached)) = (&identity, cache.as_ref()) {
             if *identity == cached.identity {
                 return Ok(cached.state.clone());
@@ -775,7 +776,7 @@ impl RlmSpawnLedger {
         file.write_all(line.as_bytes())?;
         file.sync_all()?;
         // Our own writes must not be served stale from the stat guard.
-        self.cache.lock().expect("ledger cache lock").take();
+        self.cache.lock_or_recover().take();
         Ok(())
     }
 

@@ -14,6 +14,7 @@ use super::{
     WATCH_MAX_UNREACHABLE_POLLS, WATCH_POLL_INTERVAL_MS, WATCH_SETTLE_GRACE_MS,
 };
 use crate::rlm_child_model::compact_rlm_text;
+use pa_types::sync::MutexExt;
 
 /// One image-turn delegation request: the child runs `model` (the resolved
 /// `settings.imageModel` selector with the thinking level the resolver
@@ -95,7 +96,7 @@ impl SupervisorChildSessionsInner {
         request: ImageDelegationRequest,
         aborted: &dyn Fn() -> bool,
     ) -> ImageDelegationOutcome {
-        let identity = self.identity.lock().expect("identity lock").clone();
+        let identity = self.identity.lock_or_recover().clone();
         if identity.rlm_depth >= identity.rlm_max_depth {
             // No silent model swap and no image downgrade: the user's
             // product expectation is the child, and a depth-capped

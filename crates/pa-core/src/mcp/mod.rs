@@ -32,6 +32,7 @@ pub use manager_catalog::{
 };
 pub use oauth::{mcp_login, mcp_refresh_token, McpLoginUi, McpOAuthConfig};
 pub use oauth_http::{OAuthHttp, OAuthHttpRequest, OAuthHttpResponse, ReqwestOAuthHttp};
+use pa_types::sync::MutexExt;
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -385,14 +386,9 @@ impl McpManager {
     }
 
     /// Whether ACP server configs owned by `owner_id` may be released.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the ACP owner mutex is poisoned.
     pub fn can_release_acp_servers(&self, owner_id: &str) -> bool {
         self.acp_owner_id
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .as_deref()
             .is_none_or(|owner| owner == owner_id)
     }
@@ -403,10 +399,6 @@ impl McpManager {
     /// # Errors
     ///
     /// Returns an error when `owner_id` is empty, or two servers share a name.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the ACP owner or ACP server mutexes are poisoned.
     pub fn replace_acp_servers(
         &self,
         servers: &[AcpMcpServerConfig],
@@ -415,7 +407,7 @@ impl McpManager {
         if owner_id.is_empty() {
             anyhow::bail!("ACP MCP owner id is required");
         }
-        let owner_fence = self.acp_owner_id.lock().unwrap().clone();
+        let owner_fence = self.acp_owner_id.lock_or_recover().clone();
         if servers.is_empty() && owner_fence.as_deref() != Some(owner_id) {
             return Ok(false);
         }
@@ -433,7 +425,7 @@ impl McpManager {
             }
             next.insert(server.name().to_string(), server.clone());
         }
-        let mut acp_servers = self.acp_servers.lock().unwrap();
+        let mut acp_servers = self.acp_servers.lock_or_recover();
         let unchanged = next.len() == acp_servers.len()
             && next.iter().all(|(name, config)| {
                 acp_servers.get(name).is_some_and(|current| {
@@ -444,7 +436,7 @@ impl McpManager {
             return Ok(false);
         }
         *acp_servers = next;
-        *self.acp_owner_id.lock().unwrap() = (!servers.is_empty()).then(|| owner_id.to_string());
+        *self.acp_owner_id.lock_or_recover() = (!servers.is_empty()).then(|| owner_id.to_string());
         Ok(true)
     }
 
@@ -556,11 +548,6 @@ impl McpManager {
     ///
     /// The inventory handlers capture this manager so each request serves LIVE views; view
     /// computation reads the blocking auth-store snapshot.
-    ///
-    /// # Panics
-    ///
-    /// The registered handlers panic at request time if the manager or ACP server mutex
-    /// is poisoned.
     pub fn register_host_handlers(
         manager: &Arc<std::sync::Mutex<Self>>,
         handlers: &mut HostRequestHandlers,
@@ -602,7 +589,7 @@ impl McpManager {
             usage_config,
             begin_login,
         ) = {
-            let manager = manager.lock().unwrap();
+            let manager = manager.lock_or_recover();
             (
                 manager.auth_storage.clone(),
                 manager.acp_servers.clone(),
@@ -629,7 +616,7 @@ impl McpManager {
                     if server.is_empty() {
                         return Err(anyhow::anyhow!("mcp.refresh requires a server"));
                     }
-                    if acp_servers.lock().unwrap().contains_key(&server) {
+                    if acp_servers.lock_or_recover().contains_key(&server) {
                         return Err(anyhow::anyhow!(
                             "ACP MCP server {server} does not use host OAuth"
                         ));
@@ -669,7 +656,7 @@ impl McpManager {
                     if server.is_empty() {
                         return Err(anyhow::anyhow!("mcp.config requires a server"));
                     }
-                    let acp = acp_servers.lock().unwrap().get(&server).cloned();
+                    let acp = acp_servers.lock_or_recover().get(&server).cloned();
                     if let Some(acp) = acp {
                         let mut config = serde_json::to_value(acp).unwrap_or(Value::Null);
                         if let Value::Object(map) = &mut config {
@@ -779,7 +766,7 @@ impl McpManager {
                     // The views read the auth store through a blocking
                     // snapshot; keep that off the async runtime.
                     let views = tokio::task::spawn_blocking(move || {
-                        let manager = manager.lock().unwrap();
+                        let manager = manager.lock_or_recover();
                         manager.service_catalog_views()
                     })
                     .await
@@ -822,7 +809,7 @@ impl McpManager {
                     }
                     let limit = bounded_limit(payload.data.get("limit"), 10, 50)?;
                     let views = tokio::task::spawn_blocking(move || {
-                        let manager = manager.lock().unwrap();
+                        let manager = manager.lock_or_recover();
                         manager.service_catalog_views()
                     })
                     .await
@@ -840,7 +827,7 @@ impl McpManager {
                 let manager = std::sync::Arc::clone(&manager);
                 Box::pin(async move {
                     let connections = tokio::task::spawn_blocking(move || {
-                        let manager = manager.lock().unwrap();
+                        let manager = manager.lock_or_recover();
                         let acp_servers = manager.get_acp_servers();
                         manager.service_catalog_connection_views(&acp_servers)
                     })
@@ -853,12 +840,12 @@ impl McpManager {
     }
 
     /// Session-scoped servers supplied by the active ACP client.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the ACP server mutex is poisoned.
     pub fn get_acp_servers(&self) -> Vec<AcpMcpServerConfig> {
-        self.acp_servers.lock().unwrap().values().cloned().collect()
+        self.acp_servers
+            .lock_or_recover()
+            .values()
+            .cloned()
+            .collect()
     }
 
     /// Enabled servers available through the generic kernel API: user- declared plus connected

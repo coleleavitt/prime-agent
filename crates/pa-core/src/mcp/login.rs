@@ -2,6 +2,7 @@
 //! the interactive flow, persist the endpoint-bound credential, and wire the
 //! `mcp.begin_login` host request in product paths.
 
+use pa_types::sync::MutexExt;
 use std::sync::{Arc, Mutex, Weak};
 
 use anyhow::{anyhow, Context as _, Result};
@@ -83,10 +84,6 @@ impl McpManager {
 /// Wire a login UI into the manager so its `mcp.begin_login` host request runs the full flow. The
 /// wire is weak on the manager: a dropped manager fails the request instead of keeping the store
 /// alive.
-///
-/// # Panics
-///
-/// The wired login panics if the MCP manager mutex is poisoned.
 pub fn wire_begin_login(
     manager: &Arc<Mutex<McpManager>>,
     ui: Arc<dyn McpLoginUi>,
@@ -102,7 +99,7 @@ pub fn wire_begin_login(
                 .upgrade()
                 .ok_or_else(|| anyhow!("the MCP manager is no longer running"))?;
             let context = {
-                let manager = manager.lock().expect("MCP manager lock poisoned");
+                let manager = manager.lock_or_recover();
                 manager.login_context(&server)
             };
             context?.run(ui.as_ref(), http.as_ref()).await?;
@@ -113,7 +110,7 @@ pub fn wire_begin_login(
         let boxed: super::BeginLoginFuture = Box::new(login);
         boxed
     };
-    let mut manager = manager.lock().expect("MCP manager lock poisoned");
+    let mut manager = manager.lock_or_recover();
     manager.set_begin_login(Some(Arc::new(begin_login)));
 }
 

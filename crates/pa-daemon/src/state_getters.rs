@@ -3,6 +3,7 @@
 //! from the worker's persisted session store, the engine seams, and the
 //! model registry.
 
+use pa_types::sync::MutexExt;
 use serde_json::{json, Value};
 
 use pa_core::models::ModelRegistry;
@@ -17,7 +18,7 @@ impl Worker {
         if let Err(response) = self.require_created("get_connection_state") {
             return response;
         }
-        let core = self.core.lock().unwrap();
+        let core = self.core.lock_or_recover();
         let state = self.connection_state_locked(&core);
         drop(core);
         let mut value = serde_json::to_value(&state).unwrap_or(Value::Null);
@@ -32,14 +33,14 @@ impl Worker {
             return response;
         }
         let event_sequence = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             core.last_event_sequence
         };
         let mut children = self.engine.rlm_child_snapshots().await;
         // The parent's own RLM node id overlays each child's `parentId`
         // (absent for top-level sessions, serialized out on the wire).
         let parent_id = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             core.rlm_child_id.clone()
         };
         if let Some(parent_id) = parent_id {
@@ -67,7 +68,7 @@ impl Worker {
         // The root node is in-memory data: the usage walk reads the live store
         // borrow-based, so the request answers from memory even on a grown store.
         let (label, context_usage, own_usage, total_usage, session_id, own_usage_by_model) = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             let store = core.store.as_ref();
             let label = store
                 .and_then(|store| store.session_name().map(str::to_string))
@@ -141,7 +142,7 @@ impl Worker {
     /// current store): called on reads older than the TTL and as the warm at open.
     pub(crate) fn poke_context_tree_refresh(&self) {
         let (session_id, session_file) = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             core.store
                 .as_ref()
                 .map(|store| (store.session_id().to_string(), store.path.clone()))
@@ -180,7 +181,7 @@ impl Worker {
         if let Err(response) = self.require_created("get_session_context") {
             return response;
         }
-        let core = self.core.lock().unwrap();
+        let core = self.core.lock_or_recover();
         let Some(store) = core.store.as_ref() else {
             return response_failure(
                 None,

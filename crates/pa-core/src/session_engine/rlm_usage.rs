@@ -3,6 +3,7 @@
 //! (TS `attributeChildUsage`). Divergence: Rust children are separate
 //! worker processes, so the daemon's children registry delivers batches.
 
+use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 
 use pa_types::ai::Usage;
@@ -80,24 +81,16 @@ impl RlmChildUsageAttributions {
     /// Bind the telemetry handle the `rlm_child_*` session counters count
     /// through (the engine wiring installs it
     /// once the session telemetry is assembled; depth-0 sessions only).
-    ///
-    /// # Panics
-    ///
-    /// Panics if the telemetry state mutex is poisoned.
     pub fn set_telemetry(&self, telemetry: std::sync::Arc<super::telemetry::SessionTelemetry>) {
-        *self.telemetry.lock().expect("rlm usage telemetry lock") = Some(telemetry);
+        *self.telemetry.lock_or_recover() = Some(telemetry);
     }
 
     /// The child attributes to the parent's last assistant row; that row's usage becomes the
     /// aggregate base. No assistant row leaves the child unregistered, its reports drop.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the forward or children state mutexes are poisoned.
     pub async fn register_spawn(&self, rlm_child_id: &str) {
         // The guard drops at its statement end (held across the forwarded await it is not
         // Send); the recursion is boxed so a rebuild chain forwards across successors.
-        let forward = self.forward.lock().expect("rlm usage forward lock").clone();
+        let forward = self.forward.lock_or_recover().clone();
         if let Some(forward) = forward {
             Box::pin(async move { forward.register_spawn(rlm_child_id).await }).await;
             return;
@@ -117,8 +110,7 @@ impl RlmChildUsageAttributions {
             bases.entry(target_id.clone()).or_insert(usage);
             drop(bases);
             self.children
-                .lock()
-                .expect("rlm usage children lock")
+                .lock_or_recover()
                 .insert(rlm_child_id.to_string(), target_id);
         }
     }
@@ -126,12 +118,8 @@ impl RlmChildUsageAttributions {
     /// Flush one observed report: batches fold into the target row's cumulative aggregate,
     /// one durable `child_usage_attributed` row per batch; a failed append is logged and
     /// dropped, so attribution bookkeeping never breaks the observing path.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the forward, children, or telemetry state mutexes are poisoned.
     pub async fn record_child_usage(&self, report: RlmChildUsageReport) {
-        let forward = self.forward.lock().expect("rlm usage forward lock").clone();
+        let forward = self.forward.lock_or_recover().clone();
         if let Some(forward) = forward {
             Box::pin(async move { forward.record_child_usage(report).await }).await;
             return;
@@ -140,8 +128,7 @@ impl RlmChildUsageAttributions {
         // across the fallback await is not Send.
         let registered = self
             .children
-            .lock()
-            .expect("rlm usage children lock")
+            .lock_or_recover()
             .get(&report.rlm_child_id)
             .cloned();
         let target_id = match registered {
@@ -161,7 +148,7 @@ impl RlmChildUsageAttributions {
         let mut bases = self.bases.lock().await;
         // The forward re-check runs WITH the bases lock held: a handoff that armed
         // mid-report blocks its bases copy on this lock, so the adoption carries it.
-        let forward = self.forward.lock().expect("rlm usage forward lock").clone();
+        let forward = self.forward.lock_or_recover().clone();
         if let Some(forward) = forward {
             // Release the bases BEFORE forwarding: the successor's fallback_base re-locks
             // THIS producer's bases (a tokio Mutex is not reentrant); holding it across
@@ -186,12 +173,7 @@ impl RlmChildUsageAttributions {
             ) {
                 Ok(_) => {
                     bases.insert(target_id.clone(), aggregate);
-                    if let Some(telemetry) = self
-                        .telemetry
-                        .lock()
-                        .expect("rlm usage telemetry lock")
-                        .as_ref()
-                    {
+                    if let Some(telemetry) = self.telemetry.lock_or_recover().as_ref() {
                         telemetry.note_child_usage_attributed(
                             usage.input,
                             usage.output,
@@ -211,21 +193,15 @@ impl RlmChildUsageAttributions {
     /// A rebuild keeps the session's live children: adopt the retired
     /// registrations and bases before observing, or a post-swap report drops
     /// or the chain restarts from the spawn-time base and double-counts.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the forward, fallback, or children state mutexes are poisoned.
     pub async fn adopt_registrations(self: &std::sync::Arc<Self>, retired: &std::sync::Arc<Self>) {
         // The handoff goes FIRST: in-flight work on the retired side holds its locks
         // across its flow, so the copies below serialize with it; late arrivals land
         // on the successor through the forward.
-        *retired.forward.lock().expect("rlm usage forward lock") =
-            Some(std::sync::Arc::clone(self));
-        *self.fallback.lock().expect("rlm usage fallback lock") =
-            Some(std::sync::Arc::downgrade(retired));
+        *retired.forward.lock_or_recover() = Some(std::sync::Arc::clone(self));
+        *self.fallback.lock_or_recover() = Some(std::sync::Arc::downgrade(retired));
         {
-            let retired_children = retired.children.lock().expect("rlm usage children lock");
-            let mut children = self.children.lock().expect("rlm usage children lock");
+            let retired_children = retired.children.lock_or_recover();
+            let mut children = self.children.lock_or_recover();
             for (rlm_child_id, target_id) in retired_children.iter() {
                 children
                     .entry(rlm_child_id.clone())
@@ -244,16 +220,12 @@ impl RlmChildUsageAttributions {
     /// where the one-hop back-pointer stops at the middle producer.
     fn fallback_chain(&self) -> Vec<std::sync::Arc<Self>> {
         let mut chain = Vec::new();
-        let mut link = self
-            .fallback
-            .lock()
-            .expect("rlm usage fallback lock")
-            .clone();
+        let mut link = self.fallback.lock_or_recover().clone();
         while let Some(ref weak) = link {
             let Some(producer) = weak.upgrade() else {
                 break;
             };
-            link.clone_from(&producer.fallback.lock().expect("rlm usage fallback lock"));
+            link.clone_from(&producer.fallback.lock_or_recover());
             chain.push(producer);
         }
         chain
@@ -263,7 +235,7 @@ impl RlmChildUsageAttributions {
         let chain = self.fallback_chain();
         let mut target: Option<String> = None;
         for producer in &chain {
-            let retired_children = producer.children.lock().expect("rlm usage children lock");
+            let retired_children = producer.children.lock_or_recover();
             if let Some(found) = retired_children.get(rlm_child_id) {
                 target = Some(found.clone());
                 break;
@@ -271,7 +243,7 @@ impl RlmChildUsageAttributions {
         }
         let target_id = target?;
         {
-            let mut children = self.children.lock().expect("rlm usage children lock");
+            let mut children = self.children.lock_or_recover();
             children
                 .entry(rlm_child_id.to_string())
                 .or_insert_with(|| target_id.clone());
@@ -304,28 +276,13 @@ impl RlmChildUsageAttributions {
     /// Drop one child's registration once its final observation lands; the
     /// aggregate base stays. The retired side's copy is pruned too, so a
     /// straggler cannot resurrect it through the fallback.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the children or fallback state mutexes are poisoned.
     pub fn forget_child(&self, rlm_child_id: &str) -> impl std::future::Future<Output = ()> {
-        self.children
-            .lock()
-            .expect("rlm usage children lock")
-            .remove(rlm_child_id);
-        let fallback = self
-            .fallback
-            .lock()
-            .expect("rlm usage fallback lock")
-            .clone();
+        self.children.lock_or_recover().remove(rlm_child_id);
+        let fallback = self.fallback.lock_or_recover().clone();
         if let Some(fallback) = fallback.and_then(|weak| weak.upgrade()) {
             // A separate lock section on purpose: the fallback consult
             // takes the maps the other way around.
-            fallback
-                .children
-                .lock()
-                .expect("rlm usage children lock")
-                .remove(rlm_child_id);
+            fallback.children.lock_or_recover().remove(rlm_child_id);
         }
         std::future::ready(())
     }

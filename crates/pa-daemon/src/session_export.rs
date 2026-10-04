@@ -3,6 +3,7 @@
 //! exporter (the embedded template plus the session data); the JSONL export is the current
 //! branch re-chained into a linear file.
 
+use pa_types::sync::MutexExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -51,7 +52,7 @@ impl ExportCommands {
         // The store snapshot under the core lock: the std guard is not `Send`, so the
         // engine reads below await outside the lock.
         let (header, entries, leaf_id, session_file, theme_name) = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             let store = core
                 .store
                 .as_ref()
@@ -132,7 +133,7 @@ impl ExportCommands {
     }
 
     fn export_jsonl_impl(&self, output_path: Option<&str>) -> Result<String> {
-        let core = self.core.lock().unwrap();
+        let core = self.core.lock_or_recover();
         let store = core
             .store
             .as_ref()

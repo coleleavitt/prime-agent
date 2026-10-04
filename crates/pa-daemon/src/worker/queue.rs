@@ -4,6 +4,7 @@ use super::{
     emit_worker_event_with, json, oneshot, Arc, Duration, EventPump, Mutex, Notify, Result,
     SessionCore, Value, VecDeque, WorkerRecoveryJournal, AUTONOMOUS_QUEUE_KEY,
 };
+use pa_types::sync::MutexExt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lane {
@@ -239,7 +240,7 @@ pub(crate) fn checkpoint_queue_recovery(
     checkpoint: QueueCheckpoint,
     cloud_admission: Option<(&str, &Value)>,
 ) {
-    let mut guard = recovery.lock().unwrap();
+    let mut guard = recovery.lock_or_recover();
     let Some(journal) = guard.as_mut() else {
         return;
     };
@@ -254,11 +255,6 @@ pub(crate) fn checkpoint_queue_recovery(
 /// lock: the cloud-keyed agent-message delivery admits its request id in
 /// the same locked section as the enqueue, so two concurrent deliveries
 /// under one key cannot both become visible.
-///
-/// # Panics
-///
-/// Panics when the core lock is poisoned (a holder panicked while holding
-/// it).
 pub(crate) fn record_queue_checkpoint_locked(
     journal: &mut WorkerRecoveryJournal,
     core_lock: &std::sync::Mutex<SessionCore>,
@@ -273,7 +269,7 @@ pub(crate) fn record_queue_checkpoint_locked(
     // mutating non-persist (a runner pop) is corrected by the next
     // checkpoint's fresh read.
     let (active_session_id, session_id, session_file, lanes, turn_in_flight) = {
-        let core = core_lock.lock().unwrap();
+        let core = core_lock.lock_or_recover();
         (
             core.active_session_id.clone(),
             core.store
@@ -452,7 +448,7 @@ pub(crate) fn admit_autonomous_follow_up(
     text: String,
 ) {
     {
-        let mut core = core.lock().unwrap();
+        let mut core = core.lock_or_recover();
         core.follow_up.push_back(QueuedItem {
             priority: QueuePriority::Background,
             preview: None,
@@ -494,7 +490,7 @@ pub(crate) fn admit_goal_follow_up(
     };
     if let Some(goal) = &follow_up.goal_update {
         {
-            let mut guard = core.lock().unwrap();
+            let mut guard = core.lock_or_recover();
             if let Some(store) = guard.store.as_mut() {
                 let _ = store.persist_entry(
                     "custom",
@@ -508,7 +504,7 @@ pub(crate) fn admit_goal_follow_up(
         emit_worker_event_with(core, events, json!({ "type": "goal_update", "goal": goal }));
     }
     {
-        let mut core = core.lock().unwrap();
+        let mut core = core.lock_or_recover();
         let item = QueuedItem {
             priority: QueuePriority::Background,
             preview: None,
@@ -568,7 +564,7 @@ pub(crate) fn admit_bash_completion_notice(
     };
     // The busy sample and the push share ONE critical section: a turn starting
     // between them would queue an invisible row for a busy session.
-    let mut core_guard = core.lock().unwrap();
+    let mut core_guard = core.lock_or_recover();
     // A notice that raced past the sink's first check is refused here or wiped
     // by the close's clear — never a completion turn for a closed session.
     if session_is_closed() {
@@ -623,7 +619,7 @@ pub(crate) fn withdraw_bash_completion_notice(
     notice: &crate::engine::BashConsumedNotice,
 ) {
     let removed = {
-        let mut core_guard = core.lock().unwrap();
+        let mut core_guard = core.lock_or_recover();
         let before = core_guard.steering.len() + core_guard.follow_up.len();
         // The front-most match across the two lanes, never the
         // whole set.

@@ -54,6 +54,7 @@ mod compaction_arms;
 mod terminal_inbox;
 mod wiring;
 
+use pa_types::sync::MutexExt;
 use std::sync::Arc;
 
 use pa_agent::agent::Agent;
@@ -484,10 +485,7 @@ async fn persist_event(
                     if rlm_notices::terminal_notice_key(&custom).is_some() =>
                 {
                     if let Some(key) = rlm_notices::terminal_notice_key(&custom) {
-                        delivered
-                            .lock()
-                            .expect("notice delivery lock")
-                            .insert(key.to_string());
+                        delivered.lock_or_recover().insert(key.to_string());
                     }
                     None
                 }
@@ -499,10 +497,7 @@ async fn persist_event(
                             .and_then(|details| details.get("id"))
                             .and_then(serde_json::Value::as_str)
                             .is_some_and(|id| {
-                                pre_synced_replies
-                                    .lock()
-                                    .expect("pre-synced reply lock")
-                                    .contains(id)
+                                pre_synced_replies.lock_or_recover().contains(id)
                             }) =>
                 {
                     None
@@ -522,12 +517,7 @@ async fn persist_event(
             if let Some(error) = write_error {
                 eprintln!("pa-core: message row not persisted: {error}");
             } else if successful_assistant {
-                let keys: Vec<String> = delivered
-                    .lock()
-                    .expect("notice delivery lock")
-                    .iter()
-                    .cloned()
-                    .collect();
+                let keys: Vec<String> = delivered.lock_or_recover().iter().cloned().collect();
                 if !keys.is_empty() {
                     #[cfg(test)]
                     terminal_inbox::pause_terminal_gate(
@@ -539,7 +529,7 @@ async fn persist_event(
                     .await;
                     match session.append_notice_consumed(&keys) {
                         Ok(()) => {
-                            let mut pending = delivered.lock().expect("notice delivery lock");
+                            let mut pending = delivered.lock_or_recover();
                             for key in &keys {
                                 pending.remove(key);
                             }

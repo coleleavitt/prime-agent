@@ -7,6 +7,7 @@
 //! loop; a scan runs at most once per TTL when a consumer asks, and
 //! concurrent consumers coalesce onto the in-flight scan.
 
+use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -315,7 +316,7 @@ impl RemoteAgentMeshState {
             return false;
         };
         let epoch_before = {
-            let inner = self.shared.inner.lock().unwrap();
+            let inner = self.shared.inner.lock_or_recover();
             if self.ttl_fresh(&inner) {
                 return false;
             }
@@ -364,7 +365,7 @@ impl RemoteAgentMeshState {
         let mut completions = self.shared.scan_done.subscribe();
         loop {
             {
-                let inner = self.shared.inner.lock().unwrap();
+                let inner = self.shared.inner.lock_or_recover();
                 if inner.scan_epoch != epoch_before {
                     return true;
                 }
@@ -405,7 +406,7 @@ impl RemoteAgentMeshState {
                 if let Some(on_scan_error) = &shared.on_scan_error {
                     on_scan_error(&error);
                 }
-                let mut inner = shared.inner.lock().unwrap();
+                let mut inner = shared.inner.lock_or_recover();
                 inner.last_scan_at = Some((shared.now)());
                 let epoch = inner.scan_epoch + 1;
                 inner.scan_epoch = epoch;
@@ -413,7 +414,7 @@ impl RemoteAgentMeshState {
                 return false;
             }
         };
-        let mut inner = shared.inner.lock().unwrap();
+        let mut inner = shared.inner.lock_or_recover();
         inner.last_scan_at = Some((shared.now)());
         let epoch = inner.scan_epoch + 1;
         inner.scan_epoch = epoch;
@@ -535,8 +536,7 @@ impl RemoteAgentMeshState {
     pub fn entries_for_clients(&self) -> Vec<AgentRosterEntry> {
         self.shared
             .inner
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .entries
             .values()
             .cloned()
@@ -548,8 +548,7 @@ impl RemoteAgentMeshState {
     pub fn entry_by_id(&self, agent_id: &str) -> Option<AgentRosterEntry> {
         self.shared
             .inner
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .entries
             .get(agent_id)
             .cloned()
@@ -559,8 +558,7 @@ impl RemoteAgentMeshState {
     pub fn session_summaries(&self) -> Vec<Value> {
         self.shared
             .inner
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .entries
             .values()
             .map(|entry| entry.summary.clone())
@@ -573,8 +571,7 @@ impl RemoteAgentMeshState {
     pub fn peer_summaries(&self) -> Vec<Value> {
         self.shared
             .inner
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .entries
             .values()
             .map(|entry| {
@@ -627,7 +624,7 @@ impl RemoteAgentMeshState {
     /// suffix, so a copied table id reaches a remote row the same way.
     #[must_use]
     pub fn find_message_targets(&self, selector: &str) -> Vec<RemoteAgentMessageTarget> {
-        let inner = self.shared.inner.lock().unwrap();
+        let inner = self.shared.inner.lock_or_recover();
         let rows: Vec<Value> = inner
             .entries
             .values()

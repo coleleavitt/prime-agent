@@ -4,6 +4,7 @@ use super::{
     session_message_to_loop, standard_message, AgentMessage, AgentSession, FileEntry,
     SessionAgentMessage, TrailingAssistantFilter,
 };
+use pa_types::sync::MutexExt;
 
 impl AgentSession {
     pub async fn latest_compaction_timestamp(&self) -> Option<u64> {
@@ -153,10 +154,6 @@ impl AgentSession {
     /// # Errors
     ///
     /// Returns the abort error, or the summarizer/persist failure; a skip is a normal `Ok` outcome.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the compaction summary sink slot's mutex is poisoned.
     #[tracing::instrument(
         level = "info",
         name = "session.compact",
@@ -187,11 +184,7 @@ impl AgentSession {
         compaction_trace::trace("compact.digest_captured", &serde_json::Value::Null);
         let mut outcome = {
             let mut session = self.session.lock().await;
-            let summary_delta = self
-                .compaction_summary_sink
-                .lock()
-                .expect("compaction summary sink lock")
-                .clone();
+            let summary_delta = self.compaction_summary_sink.lock_or_recover().clone();
             crate::session_engine::compact_session::execute_compaction(
                 &mut session,
                 crate::session_engine::compact_session::CompactOptions {

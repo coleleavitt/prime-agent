@@ -7,6 +7,7 @@
 //! composition, and the exact tool schemas.
 
 #![cfg(test)]
+use pa_types::sync::MutexExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -415,7 +416,7 @@ impl KernelExecutor for MockKernel {
         self.exec_calls.fetch_add(1, Ordering::SeqCst);
         // TS harness: executions[min(i++, len-1)] — the last item repeats.
         let item = {
-            let executions = self.executions.lock().unwrap();
+            let executions = self.executions.lock_or_recover();
             if executions.is_empty() {
                 MockOutcome::Ok(Box::default())
             } else {

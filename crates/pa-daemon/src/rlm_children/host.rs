@@ -12,6 +12,7 @@ use super::{
     SupervisorChildSessions, SupervisorChildSessionsInner, Value, KILL_TIMEOUT_MS,
     RENAME_TIMEOUT_MS, WATCH_SETTLE_GRACE_MS,
 };
+use pa_types::sync::MutexExt;
 
 /// Resolve the child model with the daemon `allowedModels` allowlist enforced, refusing loudly with
 /// the typed error and the `model refused` event; the settings read runs on the blocking pool.
@@ -21,7 +22,7 @@ async fn resolve_child_model_allowlisted(
     surface: &'static str,
     target: &str,
 ) -> Result<String> {
-    let identity = this.identity.lock().expect("identity lock").clone();
+    let identity = this.identity.lock_or_recover().clone();
     let cwd = identity.cwd.clone().unwrap_or_else(|| "/".to_string());
     let load_cwd = cwd.clone();
     let agent_dir = this.agent_dir.clone();
@@ -70,7 +71,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
     fn spawn(&self, request: RlmSpawnRequest) -> RlmHostFuture<RlmSpawnHandle> {
         let this = Arc::clone(&self.inner);
         Box::pin(async move {
-            let identity = this.identity.lock().expect("identity lock").clone();
+            let identity = this.identity.lock_or_recover().clone();
             if identity.rlm_depth >= identity.rlm_max_depth {
                 bail!(
                     "RLM recursion depth limit reached (RLM_DEPTH={}, RLM_MAX_DEPTH={})",
@@ -239,7 +240,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
     ) -> RlmHostFuture<RlmCreateSessionHandle> {
         let this = Arc::clone(&self.inner);
         Box::pin(async move {
-            let identity = this.identity.lock().expect("identity lock").clone();
+            let identity = this.identity.lock_or_recover().clone();
             if identity.rlm_depth != 0 {
                 bail!("rlm.create_session is available only from a depth-0 session");
             }
@@ -380,12 +381,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 .retain(|candidate| !Arc::ptr_eq(candidate, &record));
             // A deleted subagent leaves `/context` immediately (the
             // background refresh would otherwise resurrect it).
-            if let Some(notify) = this
-                .delete_notifier
-                .lock()
-                .expect("delete notifier lock")
-                .clone()
-            {
+            if let Some(notify) = this.delete_notifier.lock_or_recover().clone() {
                 notify(&entry.rlm_child_id);
             }
             // A still-running child was cut short by the delete: the
@@ -570,7 +566,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
             // or one direct child by rlm child id, active id, or durable
             // session id ONLY — a child NAME never selects a rename
             // target (TS `renameAgentFamilySession`).
-            let identity = this.identity.lock().expect("identity lock").clone();
+            let identity = this.identity.lock_or_recover().clone();
             let self_target = match &session_id {
                 None => true,
                 Some(target) => {

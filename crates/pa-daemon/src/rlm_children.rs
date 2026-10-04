@@ -3,6 +3,7 @@
 //! keep the parent-side roster the kernel reads. Unlike TS, each child runs
 //! in its own supervised worker process; the kernel surface stays TS parity.
 
+use pa_types::sync::MutexExt;
 use serde_json::Map;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -384,16 +385,8 @@ impl SupervisorChildSessions {
     }
 
     /// Wire the delete notification hook (context-tree cache invalidation).
-    ///
-    /// # Panics
-    ///
-    /// Panics when the delete-notifier mutex is poisoned.
     pub fn set_delete_notifier(&self, notifier: DeleteNotifier) {
-        *self
-            .inner
-            .delete_notifier
-            .lock()
-            .expect("delete notifier lock") = Some(notifier);
+        *self.inner.delete_notifier.lock_or_recover() = Some(notifier);
     }
 
     pub(crate) fn set_child_update_sink(&self, sink: ChildUpdateSink) {
@@ -412,41 +405,25 @@ impl SupervisorChildSessions {
 
     /// Register the child-settle hook: fired once per settled child run
     /// so an owed goal continuation re-evaluates.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the settle-hook mutex is poisoned.
     pub fn set_settle_hook(&self, hook: Arc<dyn Fn() + Send + Sync>) {
-        *self.inner.settle_hook.lock().expect("settle hook lock") = Some(hook);
+        *self.inner.settle_hook.lock_or_recover() = Some(hook);
     }
 
     /// Wire the engine's child-usage attribution producer.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the usage-sink mutex is poisoned.
     pub fn set_usage_sink(&self, sink: Arc<dyn RlmChildUsageSink>) {
-        *self.inner.usage_sink.lock().expect("usage sink lock") = Some(sink);
+        *self.inner.usage_sink.lock_or_recover() = Some(sink);
     }
 
     /// Wire the parent session's semantic-edge recorder (the per-build
     /// handoff beside the usage sink): the settle watcher records a
     /// returned child's last committed request into it.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the semantic-edges mutex is poisoned.
     pub fn set_semantic_edges(
         &self,
         recorder: Option<
             std::sync::Arc<pa_core::session_engine::semantic_edges::SemanticEdgeRecorder>,
         >,
     ) {
-        *self
-            .inner
-            .semantic_edges
-            .lock()
-            .expect("semantic edges lock") = recorder;
+        *self.inner.semantic_edges.lock_or_recover() = recorder;
     }
 
     /// Whether a spawn-name reservation currently holds `name` (the TS
@@ -497,12 +474,8 @@ impl SupervisorChildSessions {
     }
 
     /// Replace the parent identity (set once the worker session exists).
-    ///
-    /// # Panics
-    ///
-    /// Panics when the identity mutex is poisoned.
     pub fn set_identity(&self, identity: ParentIdentity) {
-        *self.inner.identity.lock().expect("identity lock") = identity;
+        *self.inner.identity.lock_or_recover() = identity;
     }
 
     /// Rebuild the children registry from the spawn ledger (a restarted
@@ -513,17 +486,9 @@ impl SupervisorChildSessions {
 
     /// The inherited RLM depth bound (TS `getRlmMaxDepthStatus().maxDepth`
     /// before any chat override).
-    ///
-    /// # Panics
-    ///
-    /// Panics when the identity mutex is poisoned.
     #[must_use]
     pub fn rlm_max_depth(&self) -> u32 {
-        self.inner
-            .identity
-            .lock()
-            .expect("identity lock")
-            .rlm_max_depth
+        self.inner.identity.lock_or_recover().rlm_max_depth
     }
 
     /// Test-only read of the identity's model selector (for the regression test).
@@ -690,26 +655,14 @@ impl SupervisorChildSessions {
 
     /// Set only the inherited model selector (the engine resolves its
     /// model when it builds the session).
-    ///
-    /// # Panics
-    ///
-    /// Panics when the identity mutex is poisoned.
     pub fn set_model(&self, model: String) {
-        self.inner.identity.lock().expect("identity lock").model = Some(model);
+        self.inner.identity.lock_or_recover().model = Some(model);
     }
 
     /// Set the session's RLM depth bound: the registry is the bound every
     /// spawn checks, so children respect it immediately.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the identity mutex is poisoned.
     pub fn set_rlm_max_depth(&self, max_depth: u32) {
-        self.inner
-            .identity
-            .lock()
-            .expect("identity lock")
-            .rlm_max_depth = max_depth;
+        self.inner.identity.lock_or_recover().rlm_max_depth = max_depth;
     }
 
     /// Cancel one live child run: abort the worker's in-flight turn and

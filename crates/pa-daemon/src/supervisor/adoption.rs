@@ -1,6 +1,7 @@
 //! Worker adoption: the boot discovery pass and the per-worker
 //! adoption outcomes.
 
+use pa_types::sync::MutexExt;
 use std::sync::Arc;
 
 use super::{
@@ -92,7 +93,7 @@ impl Supervisor {
         stopped: usize,
         failed: usize,
     ) {
-        if let Some(client) = &*self.telemetry.lock().unwrap() {
+        if let Some(client) = &*self.telemetry.lock_or_recover() {
             pa_core::session_engine::telemetry::track_worker_adoption(
                 client,
                 boot,
@@ -416,7 +417,7 @@ impl Supervisor {
             // meet the slot naming the replacement; a re-register keeps it untouched.
             if previous_worker_instance_id.as_deref() != worker_instance_id.as_deref() {
                 let replacement = worker_instance_id.clone().unwrap_or_default();
-                let mut roster = self.roster.lock().unwrap();
+                let mut roster = self.roster.lock_or_recover();
                 roster.note_worker_generation(&resident.worker_id, &replacement);
             }
             descriptor.pid = *pid;

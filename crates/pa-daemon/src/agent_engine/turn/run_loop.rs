@@ -4,6 +4,7 @@ use super::{
     AgentSessionEngine, AutoCompactionRun, BoundaryRun, EngineEvent, GoalBoundary, Model,
     OverflowArmRun, TurnAdmission, TurnPrompt, TurnResult,
 };
+use pa_types::sync::MutexExt;
 
 impl AgentSessionEngine {
     /// Map a wire/settings queue mode ("all"/"one-at-a-time") onto the
@@ -182,11 +183,7 @@ impl AgentSessionEngine {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .take()
             {
-                let admission = self
-                    .autonomous_admission
-                    .lock()
-                    .expect("autonomous admission lock")
-                    .clone();
+                let admission = self.autonomous_admission.lock_or_recover().clone();
                 if let Some(admit) = admission {
                     admit(text);
                 }

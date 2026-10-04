@@ -5,6 +5,7 @@ use super::{
     Arc, EngineModelSelection, Result, RlmSessionIdentity, SessionEngine, SessionFile, VecDeque,
     Worker,
 };
+use pa_types::sync::{MutexExt, RwLockExt};
 
 use serde::Deserialize as _;
 use serde_json::Value;
@@ -18,7 +19,7 @@ impl Worker {
         // answers with the created summary instead of racing a second init.
         let _create_gate = self.create_gate.lock().await;
         let existing_summary = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             core.created.then(|| self.summary_locked(&core))
         };
         if let Some(summary) = existing_summary {
@@ -109,10 +110,7 @@ impl Worker {
                 *agent_engine.autonomous.lock().await =
                     pa_core::autonomous::create_autonomous_runtime_state(Some(autonomous), None);
             }
-            *agent_engine
-                .create_resources
-                .write()
-                .expect("create resources lock") = resources;
+            *agent_engine.create_resources.write_or_recover() = resources;
         }
         let cwd = payload
             .get("cwd")
@@ -434,7 +432,7 @@ impl Worker {
         // Restore the persisted queue snapshot (crash/respawn recovery) from
         // the worker recovery journal.
         let (steering, follow_up) = {
-            let guard = self.recovery.lock().unwrap();
+            let guard = self.recovery.lock_or_recover();
             match guard.as_ref() {
                 Some(journal) => restore_queue_snapshot(journal, &self.config.active_session_id),
                 None => (VecDeque::new(), VecDeque::new()),
@@ -480,7 +478,7 @@ impl Worker {
         // The core lock stays inside this block: everything after it may await,
         // and a std MutexGuard must never ride an await point.
         let (summary, rlm_depth) = {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             core.cwd = cwd;
             core.steering = steering;
             core.follow_up = follow_up;
@@ -629,7 +627,7 @@ impl Worker {
                 let core = std::sync::Arc::clone(&self.core);
                 let events = self.events.clone();
                 children.set_child_update_sink(std::sync::Arc::new(move |mut child| {
-                    if let Some(parent_id) = core.lock().unwrap().rlm_child_id.clone() {
+                    if let Some(parent_id) = core.lock_or_recover().rlm_child_id.clone() {
                         child["parentId"] = json!(parent_id);
                     }
                     crate::user_bash::emit_session_event_frame(
@@ -659,11 +657,6 @@ impl Worker {
     /// or a respawn's) is dropped here — its task goes silent without a
     /// release, exactly like the TS replacement arm, so it cannot race
     /// this session's reports on the pane.
-    ///
-    /// # Panics
-    ///
-    /// Panics on a poisoned session-core mutex (a holder panicked while
-    /// holding it — the worker's standing convention).
     pub(super) fn rebind_herdr_reporter(&self, payload: &Value) {
         let client_env: std::collections::BTreeMap<String, String> = payload
             .get("env")
@@ -681,7 +674,7 @@ impl Worker {
             .and_then(Value::as_u64)
             .is_some_and(|depth| depth > 0);
         let (active, session_ref) = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             (core.busy, Worker::herdr_session_ref(&core))
         };
         let reporter = match crate::herdr::HerdrConfig::from_env(&client_env) {
@@ -701,7 +694,7 @@ impl Worker {
                     std::sync::Arc::clone(&self.herdr_generation),
                 )
             }
-            None if !spawned_as_child && self.herdr.lock().unwrap().enabled() => {
+            None if !spawned_as_child && self.herdr.lock_or_recover().enabled() => {
                 // An idempotent re-create that carries no pane identity
                 // (e.g. a replay from a client outside a Herdr pane)
                 // must not strip the binding an earlier create or an
@@ -715,7 +708,7 @@ impl Worker {
             _ => crate::herdr::HerdrReporter::default(),
         };
         reporter.session_started(active, session_ref);
-        *self.herdr.lock().unwrap() = reporter;
+        *self.herdr.lock_or_recover() = reporter;
     }
 }
 

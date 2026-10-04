@@ -3,6 +3,7 @@
 //! merged with the passive jobs in the session-artifacts tree; passive jobs mutate their
 //! durable store, a selector-less cancel searches for the owning worker.
 
+use pa_types::sync::MutexExt;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::atomic::Ordering;
@@ -109,7 +110,7 @@ impl Supervisor {
         // The snapshot decision and the serve-side filter read under ONE lock:
         // an invalidation between them cannot turn a cached hit into an empty catalog.
         {
-            let snapshot = self.passive_catalog.lock().unwrap();
+            let snapshot = self.passive_catalog.lock_or_recover();
             if let Some(snapshot) = snapshot.as_ref() {
                 if snapshot.scanned_at.elapsed()
                     >= std::time::Duration::from_millis(PASSIVE_CATALOG_REFRESH_MS)
@@ -157,15 +158,14 @@ impl Supervisor {
         // the snapshot already.
         let still_fresh = self
             .passive_catalog
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .as_ref()
             .is_some_and(|snapshot| {
                 snapshot.scanned_at.elapsed()
                     < std::time::Duration::from_millis(PASSIVE_CATALOG_REFRESH_MS)
             });
         if still_fresh {
-            if let Some(snapshot) = self.passive_catalog.lock().unwrap().as_ref() {
+            if let Some(snapshot) = self.passive_catalog.lock_or_recover().as_ref() {
                 return snapshot.rows.clone();
             }
         }
@@ -176,7 +176,7 @@ impl Supervisor {
         // runs UNDER the snapshot lock (TS is single-threaded there): outside the lock, a
         // check/store race would republish pre-mutation rows over the cleared snapshot.
         {
-            let mut snapshot = self.passive_catalog.lock().unwrap();
+            let mut snapshot = self.passive_catalog.lock_or_recover();
             if self.passive_catalog_epoch.load(Ordering::SeqCst) == epoch {
                 *snapshot = Some(PassiveCatalogSnapshot {
                     rows: rows.clone(),
@@ -206,7 +206,7 @@ impl Supervisor {
     /// scan can no longer store, then drop it — the next read rescans.
     pub(crate) fn invalidate_passive_catalog(&self) {
         self.passive_catalog_epoch.fetch_add(1, Ordering::SeqCst);
-        *self.passive_catalog.lock().unwrap() = None;
+        *self.passive_catalog.lock_or_recover() = None;
     }
 
     /// A passive job's artifact store: the same partitioned store the owning worker

@@ -9,6 +9,7 @@ use super::{
     TransportStream, Value, Worker, WorkerRecoveryJournal, DAEMON_APP_VERSION, DAEMON_SCHEMA_ID,
     DAEMON_SCHEMA_REVISION, DEFAULT_PRIVATE_FRAME_LIMITS, PEER_COMMAND_NOT_ALLOWED,
 };
+use pa_types::sync::MutexExt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AuthOutcome {
@@ -88,7 +89,7 @@ impl EventPump {
     }
 
     pub(crate) fn send(&self, mut frame: OutboundFrame) {
-        let _guard = self.send_guard.lock().unwrap();
+        let _guard = self.send_guard.lock_or_recover();
         frame.seq = self.next_seq.fetch_add(1, Ordering::SeqCst) + 1;
         let _ = self.events.send(Arc::new(frame));
     }
@@ -205,12 +206,8 @@ impl Worker {
     ///
     /// Returns an error when the journal cannot be opened, the socket
     /// cannot be prepared or bound, or an accept fails.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the recovery mutex is poisoned.
     pub async fn serve(self: Arc<Self>) -> Result<()> {
-        *self.recovery.lock().unwrap() = Some(WorkerRecoveryJournal::open(
+        *self.recovery.lock_or_recover() = Some(WorkerRecoveryJournal::open(
             &self.config.recovery_journal_path,
         )?);
         // A worker spawned under a supervisor arms the orphan-exit monitor:
@@ -228,7 +225,7 @@ impl Worker {
         // identity capture and `restrictDaemonSocketPath`): the exit
         // cleanups compare against THIS value, never a fresh read, so a
         // successor's file at the same path survives this worker's exit.
-        *self.bound_socket_identity.lock().unwrap() =
+        *self.bound_socket_identity.lock_or_recover() =
             crate::socket::socket_identity(&self.config.socket_path);
         crate::socket::restrict_socket_path(&self.config.socket_path);
         // This loop owns the bound listener and hands its close to the
@@ -434,7 +431,7 @@ impl Worker {
                 eprintln!("[worker {}] got command {command_type}", std::process::id());
             }
 
-            let current_role = role.lock().unwrap().clone();
+            let current_role = role.lock_or_recover().clone();
             match current_role {
                 ConnectionRole::Unauthenticated => {
                     // The first command authenticates the connection; a
@@ -600,7 +597,7 @@ impl Worker {
                     "worker_auth",
                     Some(json!({ "capabilities": capabilities })),
                 );
-                *role.lock().unwrap() = ConnectionRole::Supervisor { generation };
+                *role.lock_or_recover() = ConnectionRole::Supervisor { generation };
                 self.supervisor_claims
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 self.write_response_frame(sink, request_id, success).await;
@@ -777,7 +774,7 @@ impl Worker {
             .filter(|value| !value.is_null())
             .and_then(|value| serde_json::from_value::<DaemonResumeCursor>(value).ok());
 
-        let mut core = self.core.lock().unwrap();
+        let mut core = self.core.lock_or_recover();
         // The connection-scoped registry (the fresh bots' release
         // findings): the attach's retention is keyed by the connection
         // token so the release on ANY return path (the guard's Drop)
@@ -878,7 +875,7 @@ impl Worker {
                 .unwrap_or_default();
             if let Some(config) = crate::herdr::HerdrConfig::from_env(&client_env) {
                 let (active, session_ref, rlm_depth) = {
-                    let core = self.core.lock().unwrap();
+                    let core = self.core.lock_or_recover();
                     (core.busy, Worker::herdr_session_ref(&core), core.rlm_depth)
                 };
                 if rlm_depth == 0 {
@@ -889,7 +886,7 @@ impl Worker {
                     // pane with a stray report. The first attach wins,
                     // the second's is a no-op, and a watcher that sends
                     // no env never reaches here at all.
-                    let mut slot = self.herdr.lock().unwrap();
+                    let mut slot = self.herdr.lock_or_recover();
                     if !slot.enabled() {
                         let generation = self
                             .herdr_generation
@@ -925,8 +922,12 @@ impl Worker {
     /// ungated core push still leaked the id in `attached_client_ids`
     /// with no registry entry left to release it).
     pub(crate) fn register_session_attach(&self, token: &str, client_id: &str) -> bool {
-        let mut attachments = self.session_attachments.lock().unwrap();
-        if self.released_attach_tokens.lock().unwrap().contains(token) {
+        let mut attachments = self.session_attachments.lock_or_recover();
+        if self
+            .released_attach_tokens
+            .lock_or_recover()
+            .contains(token)
+        {
             return false;
         }
         let ids = attachments.entry(token.to_string()).or_default();
@@ -943,7 +944,7 @@ impl Worker {
         // at 8192); the explicit DETACH is NOT final, so a later re-attach
         // re-registers.
         if final_release {
-            let mut released = self.released_attach_tokens.lock().unwrap();
+            let mut released = self.released_attach_tokens.lock_or_recover();
             // Clear before the insert: the token released right now is
             // the one most likely to race a late registration, so the
             // overflow must never forget it.
@@ -952,11 +953,11 @@ impl Worker {
             }
             released.insert(token.to_string());
         }
-        let mut core = self.core.lock().unwrap();
+        let mut core = self.core.lock_or_recover();
         let ids = {
             // The attachments' lock nests INSIDE the core lock (the
             // same order the attach path uses).
-            let mut attachments = self.session_attachments.lock().unwrap();
+            let mut attachments = self.session_attachments.lock_or_recover();
             attachments.remove(token).unwrap_or_default()
         };
         if ids.is_empty() {
@@ -965,8 +966,7 @@ impl Worker {
         for id in &ids {
             let held_elsewhere = self
                 .session_attachments
-                .lock()
-                .unwrap()
+                .lock_or_recover()
                 .values()
                 .any(|other| other.iter().any(|entry| entry == id));
             if !held_elsewhere {
@@ -995,13 +995,12 @@ impl Worker {
         if let Some(token) = payload.get("connectionToken").and_then(Value::as_str) {
             self.release_session_attachments(token, false);
         }
-        let mut core = self.core.lock().unwrap();
+        let mut core = self.core.lock_or_recover();
         // The detach removes the id only when no other live connection
         // still retains it.
         let held_elsewhere = self
             .session_attachments
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .values()
             .any(|other| other.iter().any(|entry| entry == &client_id));
         if !held_elsewhere {

@@ -3,6 +3,7 @@
 //! `session_action_update` events expose each lane's message previews,
 //! and a mutation addresses one preview by `lane` + `index` + `expectedText`.
 
+use pa_types::sync::MutexExt;
 use serde_json::Value;
 
 use crate::protocol::{response_failure, response_success, DaemonResponse};
@@ -71,7 +72,7 @@ impl Worker {
         }
         let index = index as usize;
         let (status, queue_changed): (&'static str, bool) = {
-            let mut core = self.core.lock().unwrap();
+            let mut core = self.core.lock_or_recover();
             let status = match lane {
                 Lane::Steering => mutate_lane(
                     &mut core.steering,
@@ -131,7 +132,7 @@ impl Worker {
         }
         // Same post-mutation flow as the admission paths: persist the lanes,
         // push the projection, and wake the turn runner.
-        let core = self.core.lock().unwrap();
+        let core = self.core.lock_or_recover();
         let snapshot = Self::snapshot_locked(&core);
         drop(core);
         // The edit refreshed the lanes: the verdict follows them (a delete
@@ -156,7 +157,7 @@ impl Worker {
         // site even when it answers "No queued work to resume".
         self.resume_queued_input();
         let has_queued_work = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             !core.steering.is_empty() || !core.follow_up.is_empty()
         };
         if !has_queued_work {

@@ -1,6 +1,7 @@
 //! Resolve config values: `!command` (successful results are cached),
 //! env var, or literal.
 
+use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -36,7 +37,7 @@ fn resolve_env_or_literal(config: &str) -> Option<String> {
 }
 
 fn execute_command(cache_key: &str, command: &str) -> Option<String> {
-    let mut cache = COMMAND_RESULT_CACHE.lock().unwrap();
+    let mut cache = COMMAND_RESULT_CACHE.lock_or_recover();
     let cache = cache.get_or_insert_with(HashMap::new);
     if let Some(cached) = cache.get(cache_key) {
         return Some(cached.clone());

@@ -2,15 +2,13 @@
 //! goal continuation), the stale boundary-request drop, and the
 //! auto-compaction abort clear.
 use super::{AbortController, AgentSessionEngine, BoundaryRun, EngineEvent, Value};
+use pa_types::sync::MutexExt;
 
 impl AgentSessionEngine {
     /// Clear the automatic-compaction abort slot when `controller`'s run
     /// settles: only the run that assigned the controller clears it.
     pub(crate) fn clear_auto_compaction_abort(&self, controller: &std::sync::Arc<AbortController>) {
-        let mut slot = self
-            .auto_compaction_abort
-            .lock()
-            .expect("auto compaction abort lock");
+        let mut slot = self.auto_compaction_abort.lock_or_recover();
         if slot
             .as_ref()
             .is_some_and(|live| std::sync::Arc::ptr_eq(live, controller))
@@ -88,10 +86,8 @@ impl AgentSessionEngine {
         let controller = std::sync::Arc::new(AbortController::new());
         let signal = controller.signal();
         {
-            *self
-                .auto_compaction_abort
-                .lock()
-                .expect("auto compaction abort lock") = Some(std::sync::Arc::clone(&controller));
+            *self.auto_compaction_abort.lock_or_recover() =
+                Some(std::sync::Arc::clone(&controller));
         }
         let consumption = {
             let guard = self.session.blocking_lock();

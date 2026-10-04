@@ -1,6 +1,7 @@
 //! Supervisor-side roster serving: subscribe/unsubscribe handling, worker
 //! roster deltas, the stop-path passivation, and the `roster_update` pushes subscribers receive.
 
+use pa_types::sync::MutexExt;
 use serde_json::Map;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -111,7 +112,7 @@ impl Supervisor {
     ) -> DaemonResponse {
         // A registration seed's pushes must never overtake this answer
         // (a client applying the push first loses the seeded rows).
-        let pending = std::mem::take(&mut *self.pending_registration_seeds.lock().unwrap());
+        let pending = std::mem::take(&mut *self.pending_registration_seeds.lock_or_recover());
         for handle in pending {
             let _ = handle.await;
         }
@@ -128,7 +129,7 @@ impl Supervisor {
                 }
             });
         }
-        let mut roster = self.roster.lock().unwrap().entries();
+        let mut roster = self.roster.lock_or_recover().entries();
         roster.extend(self.remote_roster_entries());
         response_success(
             Some(command_id),
@@ -188,7 +189,7 @@ impl Supervisor {
         {
             let mut descriptor = resident.descriptor.lock().await;
             {
-                let mut roster = self.roster.lock().unwrap();
+                let mut roster = self.roster.lock_or_recover();
                 if !roster.accept_delta_sequence(
                     &resident.worker_id,
                     worker_instance_id.as_deref().unwrap_or(""),
@@ -271,7 +272,7 @@ impl Supervisor {
             // section.
             let mut descriptor = resident.descriptor.lock().await;
             let (entry, swapped) = {
-                let mut roster = self.roster.lock().unwrap();
+                let mut roster = self.roster.lock_or_recover();
                 if !roster.accept_roster_pull(&resident.worker_id, &instance, counter) {
                     return None;
                 }
@@ -334,7 +335,7 @@ impl Supervisor {
         ephemeral: bool,
     ) {
         let (owned, unowned_at_start) = {
-            let mut roster = self.roster.lock().unwrap();
+            let mut roster = self.roster.lock_or_recover();
             let owned: Vec<AgentRosterEntry> = roster
                 .entries_for_worker(worker_id)
                 .into_iter()
@@ -393,7 +394,7 @@ impl Supervisor {
         let mut changed = Vec::new();
         let mut removed = Vec::new();
         {
-            let mut roster = self.roster.lock().unwrap();
+            let mut roster = self.roster.lock_or_recover();
             // The refreshed bucket applies FIRST: the settle loop's
             // passivated rewrites then attach the new value at store
             // time, and the rewritten rows ship in this same push - the
@@ -496,7 +497,7 @@ impl Supervisor {
         // ONE lock acquisition spans the diff, the rebase, and the send:
         // interleaved pushes would deliver stale A after B and then
         // suppress the correction.
-        let mut last = self.last_published_roster.lock().unwrap();
+        let mut last = self.last_published_roster.lock_or_recover();
         let mut changed = changed;
         changed.retain(|entry| {
             let Some(published) = serde_json::to_value(entry).ok() else {
@@ -544,7 +545,7 @@ impl Supervisor {
             return;
         }
         // The rebase and the send share one lock hold.
-        let mut last = self.last_published_roster.lock().unwrap();
+        let mut last = self.last_published_roster.lock_or_recover();
         for entry in changed {
             if let Ok(published) = serde_json::to_value(entry) {
                 last.insert(entry.agent_id.clone(), published);
@@ -666,3 +667,5 @@ mod delta_push;
 mod mesh_tests;
 #[cfg(test)]
 mod passivation;
+#[cfg(test)]
+mod poison;

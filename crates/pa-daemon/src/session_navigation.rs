@@ -3,6 +3,7 @@
 //! validated BEFORE the teardown (a failed prepare leaves the old session
 //! untouched); tree moves are NOT replacements — the kernel stays warm.
 
+use pa_types::sync::MutexExt;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
@@ -95,8 +96,7 @@ impl SessionNavigation {
     ) -> anyhow::Result<Option<Arc<crate::lease::SessionLease>>> {
         let source = self
             .core
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .store
             .as_ref()
             .and_then(|store| store.lease.clone());
@@ -121,7 +121,7 @@ impl SessionNavigation {
             .and_then(Value::as_str)
             .map(str::to_string);
         let (cwd, session_dir, rlm_depth) = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             match core.store.as_ref() {
                 Some(store) => (
                     core.cwd.clone(),
@@ -206,7 +206,7 @@ impl SessionNavigation {
         }
         // The destination is the session dir's copy; an in-place import skips the copy.
         let destination = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             core.store
                 .as_ref()
                 .and_then(|store| store.path.parent().map(std::path::Path::to_path_buf))
@@ -273,7 +273,7 @@ impl SessionNavigation {
         if let Some(cwd) = cwd.as_deref() {
             if !std::path::Path::new(cwd).is_dir() {
                 let fallback = {
-                    let core = self.core.lock().unwrap();
+                    let core = self.core.lock_or_recover();
                     core.cwd.clone()
                 };
                 // The typed error info lets clients render the TS missing-cwd prompt (the issue
@@ -350,12 +350,11 @@ impl Worker {
                 // the teardown, the successor force-publishes with its own
                 // session reference immediately — same pane, new session).
                 let (active, session_ref) = {
-                    let core = self.core.lock().unwrap();
+                    let core = self.core.lock_or_recover();
                     (core.busy, Worker::herdr_session_ref(&core))
                 };
                 self.herdr
-                    .lock()
-                    .unwrap()
+                    .lock_or_recover()
                     .session_started(active, session_ref);
                 response_success(None, command, Some(json!({ "cancelled": false })))
             }
@@ -364,7 +363,7 @@ impl Worker {
                 // installing the successor: the reporter goes silent (the
                 // TS `session_shutdown` non-quit arm — never release, the
                 // pane is not the worker's to free here).
-                *self.herdr.lock().unwrap() = crate::herdr::HerdrReporter::default();
+                *self.herdr.lock_or_recover() = crate::herdr::HerdrReporter::default();
                 response_failure(None, command, &error, None)
             }
         }

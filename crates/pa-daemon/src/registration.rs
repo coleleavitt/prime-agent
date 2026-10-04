@@ -3,6 +3,7 @@
 //! returns, so a supervisor restart rebuilds its roster without losing
 //! sessions. The registration connection doubles as the liveness watch.
 
+use pa_types::sync::MutexExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -55,12 +56,8 @@ pub struct RegistrationHandle {
 
 impl RegistrationHandle {
     /// Record the persisted session id and trigger a re-registration.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the session-id mutex is poisoned.
     pub fn notify_session_created(&self, session_id: String) {
-        *self.session_id.lock().unwrap() = Some(session_id.clone());
+        *self.session_id.lock_or_recover() = Some(session_id.clone());
         let _ = self
             .tx
             .send(RegistrationSignal::SessionCreated { session_id });
@@ -126,7 +123,7 @@ struct RegistrationTask {
 }
 
 fn current_session_id(session_id: &Arc<std::sync::Mutex<Option<String>>>) -> Option<String> {
-    session_id.lock().unwrap().clone()
+    session_id.lock_or_recover().clone()
 }
 
 impl RegistrationTask {

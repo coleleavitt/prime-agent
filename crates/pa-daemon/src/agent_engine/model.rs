@@ -6,6 +6,7 @@
 use super::{
     AgentSessionEngine, EngineModelSelection, Model, RestoredSessionModel, SessionEngine, Value,
 };
+use pa_types::sync::RwLockExt;
 
 impl AgentSessionEngine {
     /// This session's auth: the stored credentials, with the Prime
@@ -57,17 +58,10 @@ impl AgentSessionEngine {
     /// flags survive every replacement; the cached thinking level drops (the
     /// clamp follows the moved-to model).
     fn reset_selection_to_spawn_fallback(&self) {
-        *self
-            .effective_thinking
-            .write()
-            .expect("effective thinking lock") = None;
+        *self.effective_thinking.write_or_recover() = None;
         {
-            let initial = self
-                .initial_selection
-                .read()
-                .expect("initial selection lock")
-                .clone();
-            let mut current = self.selection.write().expect("model selection lock");
+            let initial = self.initial_selection.read_or_recover().clone();
+            let mut current = self.selection.write_or_recover();
             if current.provider == initial.provider
                 && current.model == initial.model
                 && current.api_key == initial.api_key
@@ -168,10 +162,7 @@ impl AgentSessionEngine {
         // The decision is on the record, so the level must resolve against the
         // model this session runs on; a concurrent read may have populated the
         // cache against the startup chain, so drop it once more.
-        *self
-            .effective_thinking
-            .write()
-            .expect("effective thinking lock") = None;
+        *self.effective_thinking.write_or_recover() = None;
         let _ = self.effective_thinking();
     }
 
@@ -299,12 +290,7 @@ impl AgentSessionEngine {
     /// ([`Self::resolve_model`] can resolve differently). Falls back to it
     /// before the session's first build.
     pub(crate) fn session_model(&self) -> anyhow::Result<Model> {
-        if let Some(target) = self
-            .provider_target
-            .read()
-            .expect("provider target lock")
-            .clone()
-        {
+        if let Some(target) = self.provider_target.read_or_recover().clone() {
             return Ok(target.model);
         }
         self.resolve_model()
@@ -314,11 +300,7 @@ impl AgentSessionEngine {
     /// settings default, then "medium" — clamped to what the model supports; an
     /// unresolvable model degrades to "off". Resolved once and cached.
     pub(crate) fn effective_thinking(&self) -> pa_types::ai::ModelThinkingLevel {
-        if let Some(level) = *self
-            .effective_thinking
-            .read()
-            .expect("effective thinking lock")
-        {
+        if let Some(level) = *self.effective_thinking.read_or_recover() {
             return level;
         }
         let model = self.resolve_model();
@@ -366,10 +348,7 @@ impl AgentSessionEngine {
             Ok(model) => pa_ai::models::clamp_thinking_level(&model, requested),
             Err(_) => pa_types::ai::ModelThinkingLevel::Off,
         };
-        *self
-            .effective_thinking
-            .write()
-            .expect("effective thinking lock") = Some(resolved);
+        *self.effective_thinking.write_or_recover() = Some(resolved);
         resolved
     }
 

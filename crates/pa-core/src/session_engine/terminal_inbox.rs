@@ -1,6 +1,7 @@
 //! Parent-owned terminal-notice inbox: one durable row, one live delivery,
 //! and one coalesced wake pump per session (never one task per notice).
 
+use pa_types::sync::MutexExt;
 use std::sync::Arc;
 
 use pa_agent::admission::{AdmitStatus, QueuedAdmission};
@@ -116,8 +117,7 @@ impl AgentSession {
             .ok_or_else(|| anyhow::anyhow!("explicit reply lacks a stable id"))?;
         self.session.lock().await.append_agent_message(row)?;
         self.pre_synced_reply_ids
-            .lock()
-            .expect("pre-synced reply lock")
+            .lock_or_recover()
             .insert(id.to_string());
         if admission.registered_replies.contains(id) {
             return Ok(AdmitStatus::Busy);

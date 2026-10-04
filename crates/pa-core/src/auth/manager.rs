@@ -1,6 +1,7 @@
 //! `AuthStorage`: credential resolution with runtime overrides, environment
 //! keys, stored credentials, fallback resolvers, and stale-marking.
 
+use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -49,7 +50,7 @@ fn refresh_flight(provider: &str) -> std::sync::MutexGuard<'static, ()> {
     > = std::sync::OnceLock::new();
     let registry = FLIGHTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
     let lock = {
-        let mut registry = registry.lock().expect("auth refresh-flight registry");
+        let mut registry = registry.lock_or_recover();
         *registry
             .entry(provider.to_string())
             .or_insert_with(|| Box::leak(Box::new(std::sync::Mutex::new(()))))

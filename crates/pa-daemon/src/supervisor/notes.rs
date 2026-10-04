@@ -1,6 +1,7 @@
 //! The supervisor's operator-note surface: the daemon-event and session-channel
 //! notes, the rotating log line, and the spawn-ledger assembly.
 use super::{paths, util, Arc, Result, Supervisor, Value};
+use pa_types::sync::MutexExt;
 
 /// How long the frequent supervision events accumulate before their one
 /// `daemon event` summary.
@@ -54,7 +55,7 @@ impl Supervisor {
         if !self.telemetry_recording_on() {
             return;
         }
-        if let Some(client) = &*self.telemetry.lock().unwrap() {
+        if let Some(client) = &*self.telemetry.lock_or_recover() {
             pa_core::session_engine::telemetry::track_sessions_archived(client, count);
         }
     }
@@ -68,7 +69,7 @@ impl Supervisor {
         if !self.telemetry_recording_on() {
             return;
         }
-        if let Some(client) = &*self.telemetry.lock().unwrap() {
+        if let Some(client) = &*self.telemetry.lock_or_recover() {
             pa_core::session_engine::telemetry::track_worker_children_closed(client, count);
         }
     }
@@ -79,7 +80,7 @@ impl Supervisor {
         if !self.telemetry_recording_on() {
             return;
         }
-        if let Some(client) = &*self.telemetry.lock().unwrap() {
+        if let Some(client) = &*self.telemetry.lock_or_recover() {
             pa_core::session_engine::telemetry::track_catalog_refresh(client, count);
         }
     }
@@ -90,7 +91,7 @@ impl Supervisor {
         if !self.telemetry_recording_on() {
             return;
         }
-        if let Some(client) = &*self.telemetry.lock().unwrap() {
+        if let Some(client) = &*self.telemetry.lock_or_recover() {
             pa_core::session_engine::telemetry::track_deleted_child_usage_captured(
                 client, source, count,
             );
@@ -130,7 +131,7 @@ impl Supervisor {
             // events never ride the next summary after a re-enable.
             return;
         }
-        let Some(client) = self.telemetry.lock().unwrap().clone() else {
+        let Some(client) = self.telemetry.lock_or_recover().clone() else {
             return;
         };
         let mut counts = self
@@ -147,7 +148,7 @@ impl Supervisor {
     /// drain the telemetry client, so the last window's counts and any
     /// queued event are not lost when the process ends.
     pub(super) async fn flush_telemetry_on_exit(&self) {
-        let Some(client) = self.telemetry.lock().unwrap().take() else {
+        let Some(client) = self.telemetry.lock_or_recover().take() else {
             return;
         };
         let counts = std::mem::take(
@@ -180,7 +181,7 @@ impl Supervisor {
         if !self.telemetry_recording_on() {
             return;
         }
-        if let Some(client) = &*self.telemetry.lock().unwrap() {
+        if let Some(client) = &*self.telemetry.lock_or_recover() {
             pa_core::session_engine::telemetry::track_compaction_abort_declared(client);
         }
     }

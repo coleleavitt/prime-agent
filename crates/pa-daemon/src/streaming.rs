@@ -3,6 +3,7 @@
 //! every other frame flushes the parked update first, so wire order stays identical.
 //! The deltas are ADDITIVE, so the parked run merges delta text; block-end events flush it.
 
+use pa_types::sync::MutexExt;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -75,7 +76,7 @@ impl TurnStreamCoalescer {
         delta: &str,
         sequence: u64,
     ) -> bool {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock_or_recover();
         if inner.closed {
             return false;
         }
@@ -105,7 +106,7 @@ impl TurnStreamCoalescer {
     /// update first. All sends happen under the coalescer lock, so the flusher
     /// can never interleave between the parked update and its settling frame.
     pub(crate) fn send_direct(&self, payloads: &[Vec<u8>], events: &crate::worker::EventPump) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock_or_recover();
         self.flush_locked(&mut inner, events);
         for payload in payloads {
             events.send(OutboundFrame::session_event(payload.clone()));
@@ -115,7 +116,7 @@ impl TurnStreamCoalescer {
     /// Flusher tick: broadcast the parked update when one is waiting.
     /// Returns `false` once the turn closed and the flusher should stop.
     pub(crate) fn flush_pending(&self, events: &crate::worker::EventPump) -> bool {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock_or_recover();
         if inner.closed {
             return false;
         }
@@ -127,7 +128,7 @@ impl TurnStreamCoalescer {
     /// turn's stale partial must not appear after its settle events), and
     /// anything still parked is dropped.
     pub(crate) fn close(&self) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock_or_recover();
         inner.closed = true;
         inner.pending = None;
     }

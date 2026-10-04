@@ -3,6 +3,7 @@
 //! allowlist loudly (never a fallback) and emit the adoption event
 //! (`model refused`).
 use anyhow::Result;
+use pa_types::sync::MutexExt;
 use std::path::Path;
 
 use pa_core::models::ModelAllowlistRefusal;
@@ -118,8 +119,7 @@ impl ModelRefusalTelemetry {
     ///
     /// # Panics
     ///
-    /// Panics when an internal mutex is poisoned; the client-bound expect
-    /// is an internal invariant and cannot fire.
+    /// The client-bound expect is an internal invariant and cannot fire.
     pub fn note_refused(&self, surface: &str, selector: &str, cwd: &Path) {
         if !self.enabled {
             return;
@@ -132,12 +132,12 @@ impl ModelRefusalTelemetry {
         }
         // Once per distinct (surface, selector).
         {
-            let mut noted = self.noted.lock().expect("refusal noted lock");
+            let mut noted = self.noted.lock_or_recover();
             if !noted.insert((surface.to_string(), selector.to_string())) {
                 return;
             }
         }
-        let mut slot = self.client.lock().expect("refusal telemetry lock");
+        let mut slot = self.client.lock_or_recover();
         if slot.as_ref().is_none_or(|(bound_cwd, _)| bound_cwd != cwd) {
             let client =
                 pa_core::session_engine::telemetry::build_client(&settings, &self.agent_dir);

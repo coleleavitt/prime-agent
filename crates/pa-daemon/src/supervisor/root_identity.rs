@@ -3,6 +3,7 @@
 //! its UNCHANGED active session id; the descriptor, persisted record, and
 //! binding table follow the roster under the descriptor lock (older never wins).
 
+use pa_types::sync::MutexExt;
 use std::sync::Arc;
 
 use pa_types::daemon::DaemonWorkerDescriptor;
@@ -121,7 +122,7 @@ impl Supervisor {
         descriptor: &mut MutexGuard<'_, DaemonWorkerDescriptor>,
     ) -> bool {
         let summary = {
-            let roster = self.roster.lock().unwrap();
+            let roster = self.roster.lock_or_recover();
             roster
                 .by_active_session_id(&resident.worker_id)
                 .map(|entry| entry.summary.clone())

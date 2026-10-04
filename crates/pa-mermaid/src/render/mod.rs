@@ -139,19 +139,22 @@ struct RenderCache {
 }
 
 /// [`render`] through a bounded process-wide cache (oldest entry evicted first).
-///
-/// # Panics
-///
-/// Panics when the cache mutex is poisoned; the render under the lock cannot panic.
 #[must_use]
 pub fn render_cached(src: &str) -> Arc<Option<Art>> {
     static CACHE: OnceLock<Mutex<RenderCache>> = OnceLock::new();
     let cache = CACHE.get_or_init(Mutex::default);
-    if let Some(hit) = cache.lock().unwrap().entries.get(src) {
+    if let Some(hit) = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .entries
+        .get(src)
+    {
         return Arc::clone(hit);
     }
     let art = Arc::new(render(src));
-    let mut cache = cache.lock().unwrap();
+    let mut cache = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if !cache.entries.contains_key(src) {
         if cache.order.len() >= RENDER_CACHE_ENTRIES {
             if let Some(oldest) = cache.order.pop_front() {

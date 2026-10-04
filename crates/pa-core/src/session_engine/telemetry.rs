@@ -20,6 +20,7 @@
 //! model calls classify through [`super::error_classify`]: only fixed
 //! diagnostics and reviewed fixed strings ride events.
 
+use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -469,10 +470,6 @@ pub struct SkillCounts {
 /// # Errors
 ///
 /// The current implementation never returns `Err`.
-///
-/// # Panics
-///
-/// Panics if the telemetry state mutex is poisoned.
 pub async fn install_session_telemetry(
     agent: &Arc<pa_agent::agent::Agent>,
     wiring: &TelemetryWiring,
@@ -517,7 +514,7 @@ pub async fn install_session_telemetry(
 
     let mut properties = base_properties(&execution_mode);
     {
-        let state = state.lock().expect("telemetry state poisoned");
+        let state = state.lock_or_recover();
         properties.set("session_id", Value::from(state.session_id.as_str()));
         if let Some(counts) = skill_counts {
             properties.set("skill_count", Value::from(counts.skill_count as u64));
@@ -545,12 +542,8 @@ impl SessionTelemetry {
     /// never inflate session totals. The duration (measured centrally by
     /// the compaction executor) sums into the run's
     /// `compaction_duration_ms`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the telemetry state mutex is poisoned.
     pub fn note_compaction(&self, duration_ms: Option<u64>) {
-        let mut state = self.state.lock().expect("telemetry state poisoned");
+        let mut state = self.state.lock_or_recover();
         if !state.recording {
             sever_off_period_run(&mut state);
             return;
@@ -569,12 +562,8 @@ impl SessionTelemetry {
     /// a retry that never ran (a cancelled wait) leaves the run to
     /// finalize at the next start instead of absorbing the next turn. The
     /// final attempt's message decides the outcome.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the telemetry state mutex is poisoned.
     pub fn note_auto_retry_event(&self, event: &AutoRetryEvent) {
-        let mut state = self.state.lock().expect("telemetry state poisoned");
+        let mut state = self.state.lock_or_recover();
         if !state.recording {
             // While off nothing counts, and the run severs: an off-period
             // retry never continues an on-period run across the opt-out.
@@ -624,16 +613,12 @@ impl SessionTelemetry {
     /// # Errors
     ///
     /// Returns the telemetry client's flush error, if any.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the telemetry state mutex is poisoned.
     pub async fn end(&self) -> anyhow::Result<()> {
         if self.ended.swap(true, std::sync::atomic::Ordering::SeqCst) {
             return Ok(());
         }
         {
-            let mut state = self.state.lock().expect("telemetry state poisoned");
+            let mut state = self.state.lock_or_recover();
             // Session close is the last recording seam: a run still open
             // when the cached decision says off severs here instead of
             // finalizing; the client's flush drops whatever the
@@ -645,7 +630,7 @@ impl SessionTelemetry {
         }
         let mut properties = self.session_properties();
         {
-            let state = self.state.lock().expect("telemetry state poisoned");
+            let state = self.state.lock_or_recover();
             let totals = &state.totals;
             properties.set(
                 "duration_ms",
@@ -684,14 +669,10 @@ impl SessionTelemetry {
 
     /// `session archived` (schema v1): the session reached the archive
     /// state (daemon `kill`); emitted before `end()` on that path.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the telemetry state mutex is poisoned.
     pub fn note_archived(&self) {
         let mut properties = self.session_properties();
         {
-            let state = self.state.lock().expect("telemetry state poisoned");
+            let state = self.state.lock_or_recover();
             properties.set(
                 "duration_ms",
                 Value::from((state.now)().saturating_sub(state.started_at)),
@@ -733,7 +714,7 @@ impl SessionTelemetry {
 
     fn session_properties(&self) -> Properties {
         let mut properties = base_properties(&self.execution_mode);
-        let state = self.state.lock().expect("telemetry state poisoned");
+        let state = self.state.lock_or_recover();
         properties.set("session_id", Value::from(state.session_id.as_str()));
         properties
     }
@@ -747,7 +728,7 @@ fn handle_event(
     state: &Arc<Mutex<TelemetryState>>,
     event: AgentEvent,
 ) {
-    let mut state = state.lock().expect("telemetry state poisoned");
+    let mut state = state.lock_or_recover();
     // The switch is asked at the turn boundaries only: a run or turn
     // start refreshes the cached decision, every other event consults
     // the cache, and the client's flush drops everything queued while

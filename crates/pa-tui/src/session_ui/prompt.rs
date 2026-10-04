@@ -8,6 +8,7 @@ use super::{
     LoadedImage, Map, PendingConfirm, PromptStash, RebuildKind, Result, SessionUi,
     SlashCommandRegistry, StatusKind, Value, UI_REQUEST_TIMEOUT_MS,
 };
+use pa_types::sync::MutexExt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SubmitBehavior {
     Steer,
@@ -166,10 +167,7 @@ impl SessionUi {
         if self.stash_session_id == session_id {
             return;
         }
-        let mut store = self
-            .prompt_stash
-            .lock()
-            .expect("prompt stash store poisoned");
+        let mut store = self.prompt_stash.lock_or_recover();
         if !self.stash_session_id.is_empty() {
             store.release(&self.stash_session_id);
         }
@@ -190,10 +188,7 @@ impl SessionUi {
         if self.stash_session_id.is_empty() {
             return;
         }
-        let mut store = self
-            .prompt_stash
-            .lock()
-            .expect("prompt stash store poisoned");
+        let mut store = self.prompt_stash.lock_or_recover();
         store.release(&self.stash_session_id);
     }
 
@@ -237,10 +232,7 @@ impl SessionUi {
                 telemetry.prompt_stash("agents_view", had_images).await;
             });
         }
-        let mut store = self
-            .prompt_stash
-            .lock()
-            .expect("prompt stash store poisoned");
+        let mut store = self.prompt_stash.lock_or_recover();
         store
             .for_session(&self.stash_session_id)
             .stash_draft_head(draft);
@@ -258,10 +250,7 @@ impl SessionUi {
                 telemetry.prompt_stash("session_switch", had_images).await;
             });
         }
-        let mut store = self
-            .prompt_stash
-            .lock()
-            .expect("prompt stash store poisoned");
+        let mut store = self.prompt_stash.lock_or_recover();
         store
             .for_session(&self.stash_session_id)
             .stash_draft_head(draft);
@@ -295,10 +284,7 @@ impl SessionUi {
             return false;
         }
         let stash = {
-            let mut store = self
-                .prompt_stash
-                .lock()
-                .expect("prompt stash store poisoned");
+            let mut store = self.prompt_stash.lock_or_recover();
             let state = store.for_session(&self.stash_session_id);
             if auto_head_only {
                 state.take_head_restore_on_open()
@@ -342,10 +328,7 @@ impl SessionUi {
             return;
         }
         let holds_draft = {
-            let mut store = self
-                .prompt_stash
-                .lock()
-                .expect("prompt stash store poisoned");
+            let mut store = self.prompt_stash.lock_or_recover();
             store.for_session(&self.stash_session_id).stash.is_some()
         };
         if holds_draft {
@@ -356,10 +339,7 @@ impl SessionUi {
             return;
         };
         {
-            let mut store = self
-                .prompt_stash
-                .lock()
-                .expect("prompt stash store poisoned");
+            let mut store = self.prompt_stash.lock_or_recover();
             store
                 .for_session(&self.stash_session_id)
                 .stash_draft_head(draft);
@@ -748,8 +728,7 @@ impl SessionUi {
         let generation = self.input_submission_generation;
         let stash_to_restore = self
             .prompt_stash
-            .lock()
-            .expect("prompt stash store poisoned")
+            .lock_or_recover()
             .for_session(&self.stash_session_id)
             .stash
             .clone();
@@ -966,8 +945,7 @@ impl SessionUi {
                     if let Some(captured) = note.stash_to_restore {
                         let head_unchanged = self
                             .prompt_stash
-                            .lock()
-                            .expect("prompt stash store poisoned")
+                            .lock_or_recover()
                             .for_session(&self.stash_session_id)
                             .stash
                             .as_ref()
@@ -1093,10 +1071,7 @@ impl SessionUi {
             images: stashed_images,
             restore_on_open: true,
         };
-        let mut store = self
-            .prompt_stash
-            .lock()
-            .expect("prompt stash store poisoned");
+        let mut store = self.prompt_stash.lock_or_recover();
         store.for_session(stash_session_id).stash_draft_head(stash);
     }
 }

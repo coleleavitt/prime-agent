@@ -6,6 +6,7 @@ use super::{
     WATCH_MAX_UNREACHABLE_POLLS, WATCH_POLL_INTERVAL_MS, WATCH_SETTLE_GRACE_MS,
     WATCH_WAIT_SLICE_MS,
 };
+use pa_types::sync::MutexExt;
 
 impl SupervisorChildSessionsInner {
     /// Deliver the child's unattributed usage rows as one per-origin
@@ -13,7 +14,7 @@ impl SupervisorChildSessionsInner {
     /// double-billing); without a sink nothing is read, a torn trailing
     /// line lands on the next read.
     pub(super) async fn emit_child_usage(&self, record: &Arc<Mutex<ChildRecord>>) {
-        let sink = self.usage_sink.lock().expect("usage sink lock").clone();
+        let sink = self.usage_sink.lock_or_recover().clone();
         let Some(sink) = sink else {
             return;
         };
@@ -76,7 +77,7 @@ impl SupervisorChildSessionsInner {
     /// Drop one child's attribution registration after its final
     /// observation, so sequential children do not accumulate registrations in the producer.
     pub(super) async fn forget_child_usage(&self, record: &Arc<Mutex<ChildRecord>>) {
-        let sink = self.usage_sink.lock().expect("usage sink lock").clone();
+        let sink = self.usage_sink.lock_or_recover().clone();
         let Some(sink) = sink else {
             return;
         };

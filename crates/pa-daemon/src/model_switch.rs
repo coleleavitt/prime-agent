@@ -3,6 +3,7 @@
 //! contract: registry resolution, the durable `model_change` /
 //! `thinking_level_change` rows, and the persisted settings defaults.
 
+use pa_types::sync::MutexExt;
 use serde_json::Value;
 
 use crate::engine::EngineModelSelection;
@@ -62,7 +63,7 @@ impl Worker {
         // it fails loudly, never a fallback.
         let selector = format!("{provider}/{model_id}");
         let cwd = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             core.cwd.clone()
         };
         let allowlist =
@@ -96,7 +97,7 @@ impl Worker {
                 return None;
             }
             let cwd = {
-                let mut core = core.lock().unwrap();
+                let mut core = core.lock_or_recover();
                 if let Some(store) = core.store.as_mut() {
                     // TS `appendModelChange` records every switch, even to
                     // the current model.
@@ -188,7 +189,7 @@ impl Worker {
                 return Some(effective);
             }
             let cwd = {
-                let mut core = core.lock().unwrap();
+                let mut core = core.lock_or_recover();
                 if let Some(store) = core.store.as_mut() {
                     let _ = store.persist_entry(
                         "thinking_level_change",

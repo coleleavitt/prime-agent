@@ -10,6 +10,7 @@ use super::{
     SideQuestionOutcome, SideQuestionRequest, StartupScope, TurnPrompt, Value,
     DEFAULT_RLM_MAX_DEPTH,
 };
+use pa_types::sync::{MutexExt, RwLockExt};
 
 impl SessionEngine for AgentSessionEngine {
     /// Swarm PR E's "watchers die with the session" at a session
@@ -23,11 +24,7 @@ impl SessionEngine for AgentSessionEngine {
     /// the queued minted goal-context turns (pause/clear/start must not
     /// leave a stale continuation to run after the state change).
     fn purge_queued_goal_contexts(&self) {
-        let purge = self
-            .goal_queue_purge
-            .lock()
-            .expect("goal queue purge lock")
-            .clone();
+        let purge = self.goal_queue_purge.lock_or_recover().clone();
         if let Some(purge) = purge {
             purge();
         }
@@ -60,11 +57,7 @@ impl SessionEngine for AgentSessionEngine {
             }
             // The release itself: best-effort; a retired runtime releases
             // nothing. The probe lock drops before the await (`Send`).
-            let release = self
-                .kernel_release_probe
-                .lock()
-                .expect("kernel release probe lock")
-                .clone();
+            let release = self.kernel_release_probe.lock_or_recover().clone();
             if let Some(release) = release {
                 release().await;
             }
@@ -77,7 +70,7 @@ impl SessionEngine for AgentSessionEngine {
         }
         // The driver is mid-mutation or the session is unbuilt: fall back to the published state,
         // then empty.
-        let published = self.published_goal.lock().expect("published goal lock");
+        let published = self.published_goal.lock_or_recover();
         published
             .as_ref()
             .and_then(|goal| serde_json::to_value(goal).ok())
@@ -87,11 +80,7 @@ impl SessionEngine for AgentSessionEngine {
 
     fn mint_post_compaction_goal_continuation(&self) -> Option<crate::engine::GoalContinuation> {
         // The mirrored locks are async, so the mint runs on the engine runtime.
-        let handles = self
-            .goal_runtime
-            .lock()
-            .expect("goal runtime lock")
-            .clone()?;
+        let handles = self.goal_runtime.lock_or_recover().clone()?;
         // The progress check's input, read before the driver lock. The
         // failed pair's DROP happens INSIDE the quiescence gate (an early
         // drop would remint).
@@ -316,13 +305,8 @@ impl SessionEngine for AgentSessionEngine {
     }
 
     fn configure_service_tier(&self, tier: Option<pa_types::ai::ServiceTier>) {
-        *self.service_tier.write().expect("service tier lock") = tier;
-        if let Some(target) = self
-            .provider_target
-            .write()
-            .expect("provider target lock")
-            .as_mut()
-        {
+        *self.service_tier.write_or_recover() = tier;
+        if let Some(target) = self.provider_target.write_or_recover().as_mut() {
             target.service_tier = tier;
         }
     }
@@ -330,7 +314,7 @@ impl SessionEngine for AgentSessionEngine {
     fn configure_model(&self, selection: EngineModelSelection) {
         // Merge like the TS runtime config: explicit wire flags replace; absent fields keep.
         {
-            let mut current = self.selection.write().expect("model selection lock");
+            let mut current = self.selection.write_or_recover();
             if selection.provider.is_some() {
                 current.provider = selection.provider;
             }
@@ -346,10 +330,7 @@ impl SessionEngine for AgentSessionEngine {
         }
         // The merge may have changed the selection: drop the cached level;
         // later summary/state calls stay side-effect-free.
-        *self
-            .effective_thinking
-            .write()
-            .expect("effective thinking lock") = None;
+        *self.effective_thinking.write_or_recover() = None;
         let _ = self.effective_thinking();
     }
 
@@ -357,10 +338,7 @@ impl SessionEngine for AgentSessionEngine {
         // The create's explicit flags fold into the runtime config (TS
         // `mergeAgentSessionRuntimeConfig`) and must survive the restore reset.
         {
-            let mut initial = self
-                .initial_selection
-                .write()
-                .expect("initial selection lock");
+            let mut initial = self.initial_selection.write_or_recover();
             if selection.provider.is_some() {
                 initial.provider.clone_from(&selection.provider);
             }
@@ -393,9 +371,9 @@ impl SessionEngine for AgentSessionEngine {
         };
         {
             let (api_key, headers) = self.resolve_request_key_and_headers(&model);
-            let mut target = self.provider_target.write().expect("provider target lock");
+            let mut target = self.provider_target.write_or_recover();
             *target = Some(ProviderTarget {
-                service_tier: *self.service_tier.read().expect("service tier lock"),
+                service_tier: *self.service_tier.read_or_recover(),
                 api_key,
                 model: model.clone(),
                 headers,
@@ -495,16 +473,13 @@ impl SessionEngine for AgentSessionEngine {
         scoped_models: Vec<pa_core::models::ScopedModel>,
         is_continuing: bool,
     ) {
-        *self.startup_scope.lock().unwrap() = Some(StartupScope {
+        *self.startup_scope.lock_or_recover() = Some(StartupScope {
             scoped_models,
             is_continuing,
         });
         // The scope changed the startup decisions: drop the stale level; the
         // next read re-resolves against the scope.
-        *self
-            .effective_thinking
-            .write()
-            .expect("effective thinking lock") = None;
+        *self.effective_thinking.write_or_recover() = None;
     }
 
     fn model_metadata(&self) -> Option<Value> {
@@ -535,11 +510,7 @@ impl SessionEngine for AgentSessionEngine {
     /// dropping the future (the entry write happens inside it).
     fn abort_auto_compaction(&self) {
         // Aborts the controller in flight; only its own controller clears the slot.
-        let controller = self
-            .auto_compaction_abort
-            .lock()
-            .expect("auto compaction abort lock")
-            .clone();
+        let controller = self.auto_compaction_abort.lock_or_recover().clone();
         if let Some(controller) = controller {
             controller.abort();
         }
@@ -753,20 +724,14 @@ impl SessionEngine for AgentSessionEngine {
             let manager = session.lock().await;
             driver.reload_from_branch(&manager, goal_reload);
             let announcement = self.publish_goal_state(&driver.state_with_creation_elapsed());
-            *self
-                .reloaded_goal_update
-                .lock()
-                .expect("reloaded goal update lock") = announcement;
+            *self.reloaded_goal_update.lock_or_recover() = announcement;
             Ok(())
         })
     }
 
     fn goal_update_after_rebuild(&self) -> Option<Value> {
         // The on-change announcement: already published through the dedupe; taken exactly once.
-        self.reloaded_goal_update
-            .lock()
-            .expect("reloaded goal update lock")
-            .take()
+        self.reloaded_goal_update.lock_or_recover().take()
     }
 
     /// Rebind the session cwd: the rebuilt session's kernel-resident tools
@@ -774,7 +739,7 @@ impl SessionEngine for AgentSessionEngine {
     /// driver stays.
     fn set_cwd(&self, cwd: std::path::PathBuf) {
         {
-            let mut slot = self.cwd.write().expect("engine cwd lock");
+            let mut slot = self.cwd.write_or_recover();
             if *slot == cwd {
                 return;
             }
@@ -784,10 +749,7 @@ impl SessionEngine for AgentSessionEngine {
             .autonomous_driver_default
             .load(std::sync::atomic::Ordering::Relaxed)
         {
-            *self
-                .autonomous_driver
-                .write()
-                .expect("autonomous driver lock") =
+            *self.autonomous_driver.write_or_recover() =
                 std::sync::Arc::new(pa_core::autonomous::ShellAutonomousDriver::new(cwd))
                     as std::sync::Arc<dyn pa_core::autonomous::AutonomousDriver>;
         }
@@ -827,7 +789,7 @@ impl SessionEngine for AgentSessionEngine {
                     .map(|depth| (depth, "env"))
             })
             .unwrap_or((u64::from(DEFAULT_RLM_MAX_DEPTH), "default"));
-        *self.rlm_max_depth_source.lock().expect("depth source lock") = source;
+        *self.rlm_max_depth_source.lock_or_recover() = source;
         // The semantic-edge identity (TS `semanticEdgeLedgerPath` +
         // provenance): a spawned child's ledger lives in its rlm session
         // dir (the session file's parent), a top-level session's in its
@@ -864,10 +826,7 @@ impl SessionEngine for AgentSessionEngine {
                     .and_then(|spawn| spawn.spawned_by_request_id.clone()),
             }
         });
-        *self
-            .semantic_identity
-            .lock()
-            .expect("semantic identity lock") = semantic_identity;
+        *self.semantic_identity.lock_or_recover() = semantic_identity;
         if let Some(children) = &self.children {
             let parent = ParentIdentity {
                 rlm_depth: identity.rlm_depth,
@@ -1187,7 +1146,7 @@ impl SessionEngine for AgentSessionEngine {
     }
 
     fn rlm_max_depth_status(&self) -> Value {
-        let source = *self.rlm_max_depth_source.lock().expect("depth source lock");
+        let source = *self.rlm_max_depth_source.lock_or_recover();
         let max_depth = match &self.children {
             Some(children) => children.rlm_max_depth(),
             None => DEFAULT_RLM_MAX_DEPTH,
@@ -1225,7 +1184,7 @@ impl SessionEngine for AgentSessionEngine {
         if let Some(children) = &self.children {
             children.set_rlm_max_depth(max_depth.min(u64::from(u32::MAX)) as u32);
         }
-        *self.rlm_max_depth_source.lock().expect("depth source lock") = "chat";
+        *self.rlm_max_depth_source.lock_or_recover() = "chat";
         // The durable `rlm_max_depth_state` entry: a resumed session
         // re-seeds from it; an unbuilt session parks it (the
         // `pending_branch` pattern).
@@ -1438,7 +1397,7 @@ impl SessionEngine for AgentSessionEngine {
 
     fn abort_in_flight_turn(&self) {
         // The active run aborts and the in-flight fetch cancels; none in flight: nothing.
-        let agent = self.turn_agent.lock().expect("turn agent lock").clone();
+        let agent = self.turn_agent.lock_or_recover().clone();
         if let Some(agent) = agent {
             agent.abort();
         }
@@ -1449,7 +1408,7 @@ impl SessionEngine for AgentSessionEngine {
     /// by the new mode from the next boundary.
     fn set_queue_modes(&self, steering: Option<&str>, follow_up: Option<&str>) {
         {
-            let mut modes = self.queue_modes.lock().expect("queue modes");
+            let mut modes = self.queue_modes.lock_or_recover();
             if let Some(mode) = steering {
                 modes.0 = Some(mode.to_string());
             }
@@ -1457,7 +1416,7 @@ impl SessionEngine for AgentSessionEngine {
                 modes.1 = Some(mode.to_string());
             }
         }
-        let agent = self.turn_agent.lock().expect("turn agent lock").clone();
+        let agent = self.turn_agent.lock_or_recover().clone();
         if let Some(agent) = agent {
             if let Some(mode) = steering.and_then(Self::queue_mode) {
                 agent.set_steering_mode(mode);

@@ -3,6 +3,7 @@
 //! tabs expand to 3 spaces.
 
 use crate::{Line, Span};
+use pa_types::sync::MutexExt;
 use unicode_properties::{
     EmojiStatus, GeneralCategory, GeneralCategoryGroup, UnicodeEmoji, UnicodeGeneralCategory,
 };
@@ -153,7 +154,7 @@ pub(crate) fn escape_len(s: &str) -> Option<usize> {
 ///
 /// # Panics
 ///
-/// Panics when the width-cache mutex is poisoned; the `expect` cannot fire.
+/// The grapheme `expect` cannot fire: it runs on a non-empty rest.
 #[must_use]
 pub fn str_width(s: &str) -> usize {
     use unicode_segmentation::UnicodeSegmentation;
@@ -164,7 +165,7 @@ pub fn str_width(s: &str) -> usize {
     if s.bytes().all(|b| (0x20..=0x7e).contains(&b)) {
         return s.len();
     }
-    if let Some(width) = width_cache().lock().unwrap().get(s) {
+    if let Some(width) = width_cache().lock_or_recover().get(s) {
         return *width;
     }
     // TS `visibleWidth` expands tabs to three spaces BEFORE measuring.
@@ -186,7 +187,7 @@ pub fn str_width(s: &str) -> usize {
             rest = &rest[g.len()..];
         }
     }
-    let mut cache = width_cache().lock().unwrap();
+    let mut cache = width_cache().lock_or_recover();
     // TS caps its width cache at 512 entries, evicting the oldest key; the
     // HashMap has no insertion order, so evict an arbitrary key instead.
     if cache.len() >= WIDTH_CACHE_SIZE {

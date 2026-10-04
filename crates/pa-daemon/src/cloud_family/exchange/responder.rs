@@ -1,6 +1,7 @@
 //! Local-side half of the exchange: request events in, journaled answers
 //! out through the delivery and submit seams.
 
+use pa_types::sync::MutexExt;
 use std::sync::Mutex;
 
 use pa_types::daemon::cloud::{
@@ -47,11 +48,6 @@ impl CloudFamilyResponder {
     /// Returns an error when the durable admission or answer record cannot
     /// be written (a disk-level failure: the request is not answered, and
     /// the requester times out — at-least-once, TS parity).
-    ///
-    /// # Panics
-    ///
-    /// Panics when an internal lock is poisoned (a writer panicked while
-    /// holding it).
     pub async fn handle_event<D: CloudFamilyDelivery, S: FamilyResultSubmitter>(
         &self,
         event: &CloudFamilyEvent,
@@ -60,11 +56,7 @@ impl CloudFamilyResponder {
     ) -> Result<HandleOutcome, String> {
         let request_id = event.request_id().to_string();
         // A journaled answer exists: re-submit it without re-delivering.
-        let durable_answer = self
-            .results
-            .lock()
-            .expect("result log poisoned")
-            .result(&request_id);
+        let durable_answer = self.results.lock_or_recover().result(&request_id);
         if let Some(answer) = durable_answer {
             return match submitter
                 .submit_family_result(&answer.journal_command_id(), &answer)
@@ -79,8 +71,7 @@ impl CloudFamilyResponder {
         // replay to re-deliver.
         let admission = self
             .results
-            .lock()
-            .expect("result log poisoned")
+            .lock_or_recover()
             .admit(&request_id)
             .map_err(|error| format!("admit {request_id}: {error}"))?;
         if admission == Admission::Already {
@@ -128,8 +119,7 @@ impl CloudFamilyResponder {
                 }
             };
             self.results
-                .lock()
-                .expect("result log poisoned")
+                .lock_or_recover()
                 .record(command.clone())
                 .map_err(|error| format!("record answer for {request_id}: {error}"))?;
             let outcome = match submitter
@@ -197,8 +187,7 @@ impl CloudFamilyResponder {
             }
         };
         self.results
-            .lock()
-            .expect("result log poisoned")
+            .lock_or_recover()
             .record(command.clone())
             .map_err(|error| format!("record answer for {}: {error}", event.request_id()))?;
         let outcome = match submitter
@@ -221,15 +210,9 @@ impl CloudFamilyResponder {
     ///
     /// Returns an error when the request was never admitted or the
     /// durable answer record cannot be written.
-    ///
-    /// # Panics
-    ///
-    /// Panics when an internal lock is poisoned (a writer panicked while
-    /// holding it).
     pub fn record_answer(&self, command: CloudFamilyCommand) -> Result<(), String> {
         self.results
-            .lock()
-            .expect("result log poisoned")
+            .lock_or_recover()
             .record(command)
             .map_err(|error| error.to_string())
     }
@@ -237,17 +220,9 @@ impl CloudFamilyResponder {
     /// Request ids durably admitted without a journaled answer — the
     /// uncertain set the wiring layer must reconcile before replaying
     /// their request events.
-    ///
-    /// # Panics
-    ///
-    /// Panics when an internal lock is poisoned (a writer panicked while
-    /// holding it).
     #[must_use]
     pub fn uncertain(&self) -> Vec<String> {
-        self.results
-            .lock()
-            .expect("result log poisoned")
-            .uncertain()
+        self.results.lock_or_recover().uncertain()
     }
 }
 

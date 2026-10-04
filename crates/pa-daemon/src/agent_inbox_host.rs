@@ -9,6 +9,7 @@
 //! seams exist — every product session is a daemon worker, and anything
 //! without the worker queue leaves the requests honestly unavailable.
 
+use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -117,30 +118,14 @@ impl AgentSessionEngine {
     /// Install the digest inbox seams (the worker calls this at
     /// construction, before the first session build reads them in
     /// [`Self::register_digest_inbox_host_handlers`]).
-    ///
-    /// # Panics
-    ///
-    /// Panics when the seams mutex is poisoned (a holder panicked while
-    /// holding the seam lock).
     pub fn set_digest_inbox_seams(&self, seams: DigestInboxSeams) {
-        *self
-            .digest_inbox_seams
-            .lock()
-            .expect("digest inbox seams lock") = Some(seams);
+        *self.digest_inbox_seams.lock_or_recover() = Some(seams);
     }
 
     /// Install the watch notice sink (the worker owns the digest-aware
     /// notice routing).
-    ///
-    /// # Panics
-    ///
-    /// Panics when the sink mutex is poisoned (a holder panicked while
-    /// holding the sink lock).
     pub fn set_watch_notice_sink(&self, sink: WatchNoticeSink) {
-        *self
-            .watch_notice_sink
-            .lock()
-            .expect("watch notice sink lock") = Some(sink);
+        *self.watch_notice_sink.lock_or_recover() = Some(sink);
     }
 
     /// `rlm.inbox.list` / `rlm.inbox.read` / `rlm.inbox.configure`
@@ -148,12 +133,7 @@ impl AgentSessionEngine {
     /// the same honest-unavailability contract the bash notice handlers
     /// hold.
     pub(crate) fn register_digest_inbox_host_handlers(&self, handlers: &mut HostRequestHandlers) {
-        let Some(seams) = self
-            .digest_inbox_seams
-            .lock()
-            .expect("digest inbox seams lock")
-            .clone()
-        else {
+        let Some(seams) = self.digest_inbox_seams.lock_or_recover().clone() else {
             return;
         };
         let list = Arc::clone(&seams.list);
@@ -207,12 +187,7 @@ impl AgentSessionEngine {
     /// `bash.progress` job-watch request (swarm PR E): registered only when
     /// the worker's notice sink exists.
     pub(crate) fn register_watch_host_handlers(&self, handlers: &mut HostRequestHandlers) {
-        let Some(sink) = self
-            .watch_notice_sink
-            .lock()
-            .expect("watch notice sink lock")
-            .clone()
-        else {
+        let Some(sink) = self.watch_notice_sink.lock_or_recover().clone() else {
             return;
         };
         let progress_sink = Arc::clone(&sink);
@@ -259,11 +234,7 @@ impl AgentSessionEngine {
     ) {
         // The handlers hold the engine weakly (the registered self-arc):
         // the session owns the registry, the poller never pins the engine.
-        let weak = self
-            .self_weak
-            .lock()
-            .expect("engine self weak lock")
-            .clone();
+        let weak = self.self_weak.lock_or_recover().clone();
         let Some(weak) = weak else {
             return;
         };
@@ -387,7 +358,7 @@ impl AgentSessionEngine {
     /// The watch host state accessor (register/poll paths hold the lock
     /// briefly; the poll task clones what it needs).
     pub(crate) fn watch_host_state(&self) -> std::sync::MutexGuard<'_, AgentWatchHostState> {
-        self.agent_watches.lock().expect("agent watch state lock")
+        self.agent_watches.lock_or_recover()
     }
 
     /// Resolve one watch target against this session's resident direct

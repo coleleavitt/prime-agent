@@ -1,6 +1,7 @@
 //! Auth storage backends: locked JSON file (0o600, atomic writes) and
 //! in-memory (tests, embedded hosts).
 
+use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -115,7 +116,7 @@ fn process_lock(path: &Path) -> MutexGuard<'static, ()> {
     static LOCKS: OnceLock<Mutex<HashMap<PathBuf, &'static Mutex<()>>>> = OnceLock::new();
     let registry = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
     let lock = {
-        let mut registry = registry.lock().expect("auth process-lock registry");
+        let mut registry = registry.lock_or_recover();
         *registry
             .entry(path.to_path_buf())
             .or_insert_with(|| Box::leak(Box::new(Mutex::new(()))))
@@ -253,7 +254,7 @@ impl AuthStorageBackend for InMemoryAuthStorageBackend {
         &self,
         update: &mut dyn FnMut(Option<String>) -> Result<((), Option<String>)>,
     ) -> Result<()> {
-        let mut guard = self.value.lock().unwrap();
+        let mut guard = self.value.lock_or_recover();
         let ((), next) = update(guard.clone())?;
         if let Some(next) = next {
             *guard = Some(next);

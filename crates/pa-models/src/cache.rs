@@ -3,6 +3,7 @@
 //! One last-good snapshot per source URL; a scope change discards the
 //! previous view (an account's models never leak across scopes).
 
+use pa_types::sync::MutexExt;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -126,12 +127,8 @@ impl<T: Clone + Send + Sync + 'static> CatalogCache<T> {
     /// Serve the last-good snapshot for `scope`, loading and re-validating the
     /// disk snapshot on first access. A scope change discards the previous
     /// account's view entirely.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the cache mutex is poisoned.
     pub fn get(&self, scope: &str) -> Option<T> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock_or_recover();
         if state.scope.as_deref() == Some(scope) {
             return state
                 .snapshot
@@ -168,12 +165,8 @@ impl<T: Clone + Send + Sync + 'static> CatalogCache<T> {
 
     /// Drop the snapshot for `scope` (401/403 revocation); other scopes keep
     /// their own snapshots.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the cache mutex is poisoned (a panicking thread held it).
     pub fn clear(&self, scope: &str) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock_or_recover();
         if state.scope.as_deref() != Some(scope) {
             return;
         }
@@ -192,8 +185,8 @@ impl<T: Clone + Send + Sync + 'static> CatalogCache<T> {
     ///
     /// # Panics
     ///
-    /// Panics if the cache mutex is poisoned; in debug builds, also if a refresh
-    /// settles its shared result twice (the current code never does).
+    /// In debug builds, if a refresh settles its shared result twice (the
+    /// current code never does).
     pub async fn refresh(&self, scope: &str, opts: RefreshOptions) -> Option<T> {
         enum Gate<T> {
             Coalesced(Arc<InFlight<T>>),
@@ -207,7 +200,7 @@ impl<T: Clone + Send + Sync + 'static> CatalogCache<T> {
         // The mutex guard must never live across an await: decide under the
         // lock, then act outside it.
         let gate = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock_or_recover();
             let coalesced = state
                 .pending
                 .clone()
@@ -248,7 +241,7 @@ impl<T: Clone + Send + Sync + 'static> CatalogCache<T> {
         };
         let result = self.drive_refresh(scope, &opts, previous, generation).await;
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock_or_recover();
             if state
                 .pending
                 .as_ref()
@@ -267,7 +260,7 @@ impl<T: Clone + Send + Sync + 'static> CatalogCache<T> {
     }
 
     fn is_current(&self, scope: &str, generation: u64, opts: &RefreshOptions) -> bool {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock_or_recover();
         state.scope.as_deref() == Some(scope)
             && state.generation == generation
             && opts.is_current.as_ref().is_none_or(|check| check())
@@ -334,7 +327,7 @@ impl<T: Clone + Send + Sync + 'static> CatalogCache<T> {
         if !self.is_current(scope, generation, opts) {
             return None;
         }
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock_or_recover();
         state
             .snapshot
             .as_ref()
@@ -343,7 +336,7 @@ impl<T: Clone + Send + Sync + 'static> CatalogCache<T> {
 
     fn store_snapshot(&self, scope: &str, snapshot: &Snapshot<T>) {
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock_or_recover();
             if state.scope.as_deref() != Some(scope) {
                 return;
             }
@@ -410,7 +403,7 @@ impl<T: Clone + Send + Sync + 'static> Drop for SettleOnDrop<'_, T> {
             return;
         }
         {
-            let mut state = self.cache.state.lock().unwrap();
+            let mut state = self.cache.state.lock_or_recover();
             if state
                 .pending
                 .as_ref()

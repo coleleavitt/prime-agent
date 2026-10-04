@@ -3,6 +3,7 @@
 //! reader before starting the next one. Readers run the TS paste heuristic,
 //! [`SequenceGuard`], and the enhanced-key dispatch filters.
 
+use pa_types::sync::MutexExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -32,10 +33,7 @@ const POLL_TIMEOUT_MS: u64 = 10;
 /// so the flag's release store plus the wake is the one stop sequence).
 pub(crate) fn stop_reader() {
     request_reader_stop();
-    let reader = PREVIOUS_READER
-        .lock()
-        .expect("the input-reader registry lock is poisoned")
-        .take();
+    let reader = PREVIOUS_READER.lock_or_recover().take();
     if let Some(reader) = reader {
         let _ = reader.handle.join();
     }
@@ -46,9 +44,7 @@ pub(crate) fn stop_reader() {
 /// Teardown calls this BEFORE any drain that polls crossterm directly (the drain
 /// must own the reader lock).
 pub(crate) fn request_reader_stop() {
-    let guard = PREVIOUS_READER
-        .lock()
-        .expect("the input-reader registry lock is poisoned");
+    let guard = PREVIOUS_READER.lock_or_recover();
     if let Some(reader) = guard.as_ref() {
         // The flag is released before the wake: the reader's drain of the wake pipe is a kernel
         // round-trip whose completion orders the reader's (acquire) flag load after this store.
@@ -87,9 +83,7 @@ fn spawn_reader<F>(mut on_input: F)
 where
     F: FnMut(ReaderInput) -> bool + Send + 'static,
 {
-    let mut previous = PREVIOUS_READER
-        .lock()
-        .expect("the input-reader registry lock is poisoned");
+    let mut previous = PREVIOUS_READER.lock_or_recover();
     if let Some(reader) = previous.take() {
         // The same release-before-wake protocol as [`request_reader_stop`]: the join below returns
         // within one loop-top check of the drained wake.

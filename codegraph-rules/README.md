@@ -26,7 +26,7 @@ to read to confirm or dismiss it.
 
 | Rule | File | Catches | Sites |
 | --- | --- | --- | --- |
-| `pa-lock-unwrap-outside-tests` | `locks.yaml` | `.lock()/.read()/.write()` + `unwrap`/`expect` outside tests | 758 |
+| `pa-lock-unwrap-outside-tests` | `locks.yaml` | `.lock()/.read()/.write()` + `unwrap`/`expect` outside tests | 10 (was 758) |
 | `pa-std-guard-across-await` | `locks.yaml` | a sync guard bound by `let` in async code, with a later statement that awaits | 0 (22 in tests) |
 | `pa-spawn-without-text-busy-retry` | `process.yaml` | `Command::new(<computed path>)` in a function that never calls `*_retrying_text_busy` | 29 |
 | `pa-test-env-mutation-without-lock` | `tests-isolation.yaml` | `env::set_var`/`remove_var` in a test that takes no env lock | 105 |
@@ -40,11 +40,21 @@ to read to confirm or dismiss it.
 A panic while any holder has the guard poisons a std lock, and every later
 `.lock().unwrap()` then panics too. In the daemon, supervisor and session worker
 (long-lived processes; tokio catches the first panic per task) that cascades.
-The repo's poison-tolerant forms are the `lock()` helpers and
-`.unwrap_or_else(PoisonError::into_inner)`. The hits are the plain Rust idiom
-spread through `pa-daemon` (517), `pa-core`, `pa-agent`. None is a bug alone; the
-hazard is the mix of conventions. Read it as a migration list (or a reason to
-switch to non-poisoning `parking_lot` locks), not as 758 bugs.
+The convention is `pa_types::sync::{MutexExt::lock_or_recover,
+RwLockExt::read_or_recover, RwLockExt::write_or_recover}`, which recover the
+guard through `PoisonError::into_inner`; the leaf crates with no pa-types
+dependency (pa-agent, pa-telemetry, pa-mermaid) spell it
+`.unwrap_or_else(PoisonError::into_inner)`. `fix-lockpoison` migrated all 748
+product sites (pa-daemon 508, pa-core 95, pa-agent 62, pa-tui 31, pa-ai 26,
+pa-cli 12, pa-models 9, pa-telemetry 3, pa-mermaid 2); no site was kept as an
+unrecoverable invariant. A new hit is a regression: convert it, or, if a
+panicking holder can leave the value half-updated and unsafe to read, keep the
+`expect` with a comment saying so and list it here.
+
+The 10 remaining hits are not product code: helpers in test modules gated at
+their `mod` declaration (`worker/turn_stream_tests/*`, `cloud_guest/tests_support.rs`,
+which `is-test` cannot see) and `docs/evidence/stall-2026-09-07/historical-eventbus-deadlock.rs`
+(a historical excerpt, not compiled).
 
 ### `pa-std-guard-across-await`
 

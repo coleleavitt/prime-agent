@@ -38,12 +38,11 @@ impl MockSink {
     }
 
     /// All recorded batches.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the batches mutex is poisoned.
     pub fn batches(&self) -> Vec<RecordedBatch> {
-        self.batches.lock().expect("mock sink poisoned").clone()
+        self.batches
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// All recorded events across batches, in order.
@@ -60,12 +59,11 @@ impl MockSink {
     }
 
     /// Clear recorded batches.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the batches mutex is poisoned.
     pub fn clear(&self) {
-        self.batches.lock().expect("mock sink poisoned").clear();
+        self.batches
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
     }
 }
 
@@ -80,7 +78,7 @@ impl TelemetrySink for MockSink {
         } else {
             self.batches
                 .lock()
-                .expect("mock sink poisoned")
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .push(RecordedBatch {
                     install_id: install_id.to_string(),
                     events,

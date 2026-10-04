@@ -1,6 +1,7 @@
 //! The `bash` tool: shell command execution with output truncation and a destructive-git dirty-tree
 //! guard (execution, guard, truncation, and formatting match the TS tool).
 
+use pa_types::sync::MutexExt;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::future::Future;
@@ -118,8 +119,7 @@ async fn probe_uncommitted_changes(
             ExecOptions {
                 on_data: &|data: &[u8]| {
                     output
-                        .lock()
-                        .unwrap()
+                        .lock_or_recover()
                         .push_str(&String::from_utf8_lossy(data));
                 },
                 signal,
@@ -350,7 +350,7 @@ pub async fn execute_bash(
         let dirty = dirty.clone();
         let acc = acc.clone();
         move |data: &[u8]| {
-            acc.lock().unwrap().append(data);
+            acc.lock_or_recover().append(data);
             dirty.store(true, Ordering::SeqCst);
             notify.notify_one();
         }
@@ -396,7 +396,7 @@ pub async fn execute_bash(
         if dirty.swap(false, Ordering::SeqCst) {
             last_update_at = Some(std::time::Instant::now());
             if let Some(on_update) = &on_update {
-                let snapshot = acc.lock().unwrap().snapshot();
+                let snapshot = acc.lock_or_recover().snapshot();
                 on_update(ToolUpdate {
                     content: vec![ToolContentBlock::text(snapshot.content.clone())],
                     details: Some(json!({
@@ -413,11 +413,11 @@ pub async fn execute_bash(
     };
 
     {
-        let mut acc = acc.lock().unwrap();
+        let mut acc = acc.lock_or_recover();
         acc.finish();
     }
     let (snapshot, last_line_bytes) = {
-        let mut acc = acc.lock().unwrap();
+        let mut acc = acc.lock_or_recover();
         acc.close_temp_file_sync();
         let snapshot = acc.snapshot();
         (snapshot, acc.get_last_line_bytes())

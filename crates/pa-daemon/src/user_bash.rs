@@ -3,6 +3,7 @@
 //! `bash_start`/`bash_output`/`bash_end` events and the `bashExecution`
 //! durable row. A TS-stack port: sanitization, the 50KB window, the spill.
 
+use pa_types::sync::MutexExt;
 use std::io::Write;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -201,11 +202,11 @@ impl Worker {
         let agent_dir = self.config.agent_dir.clone();
         tokio::spawn(async move {
             let cwd = {
-                let core = core.lock().unwrap();
+                let core = core.lock_or_recover();
                 core.cwd.clone()
             };
             let settings = {
-                let core = core.lock().unwrap();
+                let core = core.lock_or_recover();
                 pa_core::settings::SettingsManager::create(&core.cwd, &agent_dir)
             };
             let prefix = settings.settings().shell_command_prefix.clone();
@@ -277,7 +278,7 @@ impl Worker {
             .abort_requested
             .store(false, Ordering::SeqCst);
         let (cwd, prefix, shell_path) = {
-            let core = self.core.lock().unwrap();
+            let core = self.core.lock_or_recover();
             let settings =
                 pa_core::settings::SettingsManager::create(&core.cwd, &self.config.agent_dir);
             let settings = settings.settings();
@@ -530,7 +531,7 @@ async fn run_bash(run: RunBash<'_>) -> BashEnd {
             loop {
                 match reader.read(&mut buffer).await {
                     Ok(0) | Err(_) => break,
-                    Ok(read) => stream.lock().unwrap().push(&buffer[..read]),
+                    Ok(read) => stream.lock_or_recover().push(&buffer[..read]),
                 }
             }
         }
@@ -597,7 +598,7 @@ fn record_bash_result(
     result: &BashResult,
     exclude_from_context: bool,
 ) {
-    let mut core = core.lock().unwrap();
+    let mut core = core.lock_or_recover();
     let Some(store) = core.store.as_mut() else {
         return;
     };
@@ -795,7 +796,7 @@ pub(crate) fn emit_session_event_frame(
     use crate::protocol::create_daemon_event_meta;
     use crate::protocol::DaemonOutbound;
     use crate::worker::OutboundFrame;
-    let mut core = core.lock().unwrap();
+    let mut core = core.lock_or_recover();
     let sequence = core.last_event_sequence + 1;
     core.last_event_sequence = sequence;
     let meta = create_daemon_event_meta(
