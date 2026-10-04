@@ -15,6 +15,7 @@ pub mod command;
 pub mod dream_loop;
 pub mod dreams;
 pub mod experiment;
+pub mod experiment_llm;
 pub mod improve;
 pub mod interpreter;
 pub mod js_math;

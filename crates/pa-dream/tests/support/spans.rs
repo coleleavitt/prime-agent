@@ -51,18 +51,34 @@ impl Visit for Fields<'_> {
     }
 }
 
-#[derive(Clone, Default)]
-struct Sink(Arc<Mutex<Vec<SpanRecord>>>);
+type Records = Arc<Mutex<Vec<SpanRecord>>>;
+
+thread_local! {
+    /// The recording the current thread's `capture` collects into.
+    static ACTIVE: std::cell::RefCell<Option<Records>> = const { std::cell::RefCell::new(None) };
+}
+
+fn active() -> Option<Records> {
+    ACTIVE.with(|active| active.borrow().clone())
+}
+
+/// One process-wide subscriber that records into the capturing thread's
+/// buffer. A global default (rather than a scoped one per test) keeps every
+/// callsite's cached interest stable while tests run in parallel.
+struct Sink;
 
 impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for Sink {
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+        let Some(records) = active() else {
+            return;
+        };
         let mut fields = Map::new();
         attrs.record(&mut Fields(&mut fields));
         let parent = ctx
             .span(id)
             .and_then(|span| span.parent())
             .map(|parent| parent.id().into_u64());
-        self.0
+        records
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(SpanRecord {
@@ -74,20 +90,28 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for Sink {
     }
 
     fn on_record(&self, id: &Id, values: &Record<'_>, _ctx: Context<'_, S>) {
-        let mut spans = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(records) = active() else {
+            return;
+        };
+        let mut spans = records.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(span) = spans.iter_mut().rev().find(|span| span.id == id.into_u64()) {
             values.record(&mut Fields(&mut span.attrs));
         }
     }
 }
 
-/// Run `body` with a recording subscriber; return its value and the spans.
+static INSTALL: std::sync::Once = std::sync::Once::new();
+
+/// Run `body` recording every span this thread opens; return its value and the spans.
 pub fn capture<T>(body: impl FnOnce() -> T) -> (T, Vec<SpanRecord>) {
-    let sink = Sink::default();
-    let subscriber = tracing_subscriber::registry().with(sink.clone());
-    let value = tracing::subscriber::with_default(subscriber, body);
-    let spans = sink
-        .0
+    INSTALL.call_once(|| {
+        let _ = tracing::subscriber::set_global_default(tracing_subscriber::registry().with(Sink));
+    });
+    let records = Records::default();
+    ACTIVE.with(|active| *active.borrow_mut() = Some(Arc::clone(&records)));
+    let value = body();
+    ACTIVE.with(|active| *active.borrow_mut() = None);
+    let spans = records
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .clone();
