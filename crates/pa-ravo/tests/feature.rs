@@ -66,6 +66,10 @@ fn model() -> Model {
 }
 
 fn session() -> Session {
+    session_with(Arc::new(NeverRuns))
+}
+
+fn session_with(runner: Arc<dyn ReplayRunner>) -> Session {
     let root = tempfile::tempdir().unwrap();
     let session_dir = root.path().join("session");
     std::fs::create_dir_all(&session_dir).unwrap();
@@ -96,7 +100,7 @@ fn session() -> Session {
     });
     let ravo = RavoFeature::new(RavoOptions {
         enabled: Some(true),
-        runner: Arc::new(NeverRuns),
+        runner,
         replay_sys_path: Vec::new(),
     });
     let ledger = FailureLedgerFeature::with_observers(
@@ -215,6 +219,15 @@ impl Session {
 
     /// One turn whose `bash` call fails, through the ledger's hooks.
     fn failing_turn(&self) {
+        self.turn_failing_with(json!({
+            "role": "toolResult", "toolCallId": "c", "toolName": "bash",
+            "content": [{ "type": "text", "text": "boom: exit 1" }], "isError": true,
+            "timestamp": 1
+        }));
+    }
+
+    /// One turn whose tool call ends in `result`, through the ledger's hooks.
+    fn turn_failing_with(&self, result: Value) {
         let message = |value: Value| -> pa_agent::types::AgentMessage {
             serde_json::from_value(value).unwrap()
         };
@@ -228,11 +241,7 @@ impl Session {
         for turn in [
             message(json!({ "role": "user", "content": "go", "timestamp": 1 })),
             assistant("toolUse"),
-            message(json!({
-                "role": "toolResult", "toolCallId": "c", "toolName": "bash",
-                "content": [{ "type": "text", "text": "boom: exit 1" }], "isError": true,
-                "timestamp": 1
-            })),
+            message(result),
             assistant("stop"),
         ] {
             self.ledger.on_message_end(&self.context, &turn);
@@ -466,4 +475,60 @@ async fn a_disabled_gate_lets_the_refine_apply_ungated() {
     assert!(result.applied_edits.iter().all(|edit| edit.applied));
     assert!(result.extensions.is_empty());
     assert_eq!(session.stored().get("ravo"), None);
+}
+
+/// Answers every run with the recorded exception, counting the runs.
+struct Reproduces(Mutex<Vec<String>>);
+
+impl ReplayRunner for Reproduces {
+    fn run<'a>(
+        &'a self,
+        case: &'a ReplayCase,
+        environment: ReplayEnvironment,
+        _sys_path: &'a [String],
+    ) -> Pin<Box<dyn Future<Output = ReplayOutcome> + Send + 'a>> {
+        assert_eq!(environment, ReplayEnvironment::Sanitized);
+        self.0.lock().unwrap().push(case.source.clone());
+        Box::pin(async {
+            ReplayOutcome::Raised {
+                exception_class: "ModuleNotFoundError".to_string(),
+                detail: "ModuleNotFoundError: No module named 'foo'".to_string(),
+            }
+        })
+    }
+}
+
+/// A replay case derived from a cell's own traceback is self-checked off
+/// the turn path, once per session, and the ledger's next flush stores it
+/// verified: only then is it evidence the referee can run.
+#[tokio::test]
+async fn derived_replay_cases_are_self_checked_once_and_stored_verified() {
+    let runner = Arc::new(Reproduces(Mutex::default()));
+    let session = session_with(Arc::clone(&runner) as Arc<dyn ReplayRunner>);
+    let traceback = "Traceback (most recent call last):\n  File \"<cell>\", line 1, in <module>\nModuleNotFoundError: No module named 'foo'";
+    let cell = json!({
+        "role": "toolResult", "toolCallId": "c", "toolName": "ipython",
+        "content": [{ "type": "text", "text": traceback }], "isError": true,
+        "details": { "status": "error", "error": {
+            "ename": "ModuleNotFoundError",
+            "evalue": "No module named 'foo'",
+            "traceback": traceback.split('\n').collect::<Vec<_>>()
+        } },
+        "timestamp": 1
+    });
+    session.turn_failing_with(cell.clone());
+    assert!(session.ravo.wait_replay_checks(Duration::from_secs(30)));
+    session.turn_failing_with(cell);
+    assert!(session.ravo.wait_replay_checks(Duration::from_secs(30)));
+    assert_eq!(runner.0.lock().unwrap().clone(), ["import foo"]);
+    let ledger = session.stored().failures();
+    let record = ledger.failures.values().next().unwrap();
+    assert_eq!(
+        record
+            .replay_cases
+            .iter()
+            .map(|case| (case.source.as_str(), case.verified_at.is_some()))
+            .collect::<Vec<_>>(),
+        [("import foo", true)]
+    );
 }

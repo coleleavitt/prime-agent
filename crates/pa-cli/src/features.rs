@@ -29,7 +29,8 @@ pub fn enabled_features() -> Vec<Arc<dyn SessionFeature>> {
 
 /// The failure ledger, and (feature `ravo`, which implies `ledger`) RAVO
 /// observing it: the ledger reports to RAVO's observer, and RAVO reads the
-/// ledger through its handle.
+/// ledger through its handle. RAVO is installed first, so at exit its
+/// replay self-checks finish before the ledger's flush writes them.
 #[cfg(feature = "ledger")]
 fn ledger_features() -> Vec<Arc<dyn SessionFeature>> {
     #[cfg(feature = "ravo")]
@@ -44,7 +45,7 @@ fn ledger_features() -> Vec<Arc<dyn SessionFeature>> {
             vec![ravo.ledger_observer()],
         );
         ravo.attach_ledger(ledger.handle());
-        vec![Arc::new(ledger), Arc::new(ravo)]
+        vec![Arc::new(ravo), Arc::new(ledger)]
     }
     #[cfg(not(feature = "ravo"))]
     {
@@ -194,10 +195,10 @@ mod tests {
             "toolforge",
             #[cfg(feature = "workflow")]
             "workflow",
-            #[cfg(feature = "ledger")]
-            "ledger",
             #[cfg(feature = "ravo")]
             "ravo",
+            #[cfg(feature = "ledger")]
+            "ledger",
         ];
         assert_eq!(names, expected);
     }

@@ -29,6 +29,11 @@ on `perf/session-catalog-resume`, and `docs/ravo-architecture.md` there.
   authorized state, the charged recurring failures and the window clock of a non-failure refine.
 - The session feature: the refinement gate for every session (kill switch `PRIME_AGENT_RAVO=0|off|false`), the
   rejected result, the outcome log line, the adoption event, the failure-ledger observer.
+- Replay self-checks (`_startReplayVerification`): each boundary's newly derived, unverified cases run off the turn
+  path in the sanitized environment, one batch at a time per session on a thread of their own, each (fingerprint,
+  source) once per session and never one the ledger already holds verified; a reproduction is queued through
+  `LedgerHandle::record_replay_verifications` for the ledger's next flush. At exit the feature waits for running
+  checks until the flush deadline (it is installed before the ledger, which flushes after it).
 
 ## Non-goals (this slice)
 
@@ -37,8 +42,6 @@ on `perf/session-catalog-resume`, and `docs/ravo-architecture.md` there.
   one yet, because the session has no seam through which a feature can request a refine.
 - Trust windows (`trustWindows`, `harness-trust.ts`, `trust-adjudication.ts`): opening a window at commit, recording
   evidence, settling at flushes, the `trust.*` flush attributes.
-- Replay self-checks (`_startReplayVerification`): verifying newly derived cases off the turn path and recording them
-  through `LedgerHandle::record_replay_verifications`.
 - The skill dry-run in the fast screen (`skill-dry-run.ts`); the screen is structural only.
 - Evidence drift and the stale-evidence re-plan; the RAVO archive (`refinement-ravo/`); the rejection-history and
   related-rejection prompt sections; per-session `local-refinements/<id>.jsonl`.
@@ -82,7 +85,7 @@ differently. A judge reply that is not JSON reports `serde_json`'s parse error w
 
 ## Public API
 
-`RavoFeature` (`new`, `ledger_observer`, `attach_ledger`), `RavoOptions`, `ravo_enabled`; the reducer
+`RavoFeature` (`new`, `ledger_observer`, `attach_ledger`, `wait_replay_checks`), `RavoOptions`, `ravo_enabled`; the reducer
 (`ravo_step`, `ravo_w`, `ravo_pressure`, `ravo_extend_opponents`, `ravo_mark_provisional`, `ravo_observe_champion`,
 `ravo_best_score` and their types); the authority (`authorize_assisted_ravo`, `normalize_assisted_ravo_state`,
 `ravo_artifact_digest`, binding checks); the referee (`adjudicate_failure_claims`, `ReplayRunner`,

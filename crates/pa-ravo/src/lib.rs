@@ -9,6 +9,7 @@ mod js;
 mod reducer;
 mod referee;
 mod runner;
+mod verification;
 
 pub use authority::*;
 pub use feature::{

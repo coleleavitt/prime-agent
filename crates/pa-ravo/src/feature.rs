@@ -33,6 +33,7 @@ use crate::gate::{
 };
 use crate::reducer::RavoWindowClock;
 use crate::referee::ReplayRunner;
+use crate::verification::ReplayVerifier;
 
 /// The kill switch: gating is on unless it says `0`, `off` or `false`.
 pub const RAVO_ENV: &str = "PRIME_AGENT_RAVO";
@@ -78,6 +79,7 @@ struct Inner {
     /// Refines running per session.
     refines: Mutex<HashMap<String, usize>>,
     regressions: Mutex<HashMap<String, PendingRegressions>>,
+    verifier: Arc<ReplayVerifier>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -103,6 +105,7 @@ impl RavoFeature {
                 ledger: OnceLock::new(),
                 refines: Mutex::new(HashMap::new()),
                 regressions: Mutex::new(HashMap::new()),
+                verifier: Arc::default(),
             }),
         }
     }
@@ -113,6 +116,15 @@ impl RavoFeature {
         Arc::new(RavoLedgerObserver {
             inner: Arc::clone(&self.inner),
         })
+    }
+
+    /// Wait until no replay self-check runs, up to `timeout`; `false` when
+    /// the timeout passed first.
+    #[must_use]
+    pub fn wait_replay_checks(&self, timeout: std::time::Duration) -> bool {
+        self.inner
+            .verifier
+            .wait_idle(std::time::Instant::now() + timeout)
     }
 
     /// Give the feature the ledger's handle; later calls are ignored.
@@ -132,6 +144,14 @@ impl Inner {
 impl SessionFeature for RavoFeature {
     fn name(&self) -> &'static str {
         "ravo"
+    }
+
+    /// Let running replay self-checks finish, so the ledger's exit flush
+    /// (installed after this feature) writes what they verified.
+    fn flush(&self, deadline: std::time::Instant) {
+        if !self.inner.verifier.wait_idle(deadline) {
+            tracing::debug!("replay self-checks abandoned at the exit deadline");
+        }
     }
 
     fn refinement_gate(
@@ -558,6 +578,15 @@ struct RavoLedgerObserver {
 
 impl LedgerObserver for RavoLedgerObserver {
     fn on_boundary(&self, context: &Arc<SessionFeatureContext>, boundary: &LedgerBoundary<'_>) {
+        if let Some(handle) = self.inner.ledger.get() {
+            self.inner.verifier.observe(
+                &context.session_id,
+                boundary.observations,
+                boundary.effective,
+                Arc::clone(&self.inner.options.runner),
+                handle.clone(),
+            );
+        }
         if boundary.recurred_ids.is_empty() {
             return;
         }
