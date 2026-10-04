@@ -1,0 +1,186 @@
+[
+  {
+    "raw": null,
+    "ledgerText": "{\n  \"schema\": 1,\n  \"failures\": {},\n  \"lastScannedEntryIndex\": 0\n}\n"
+  },
+  {
+    "raw": [],
+    "ledgerText": "{\n  \"schema\": 1,\n  \"failures\": {},\n  \"lastScannedEntryIndex\": 0\n}\n"
+  },
+  {
+    "raw": {
+      "lastScannedEntryIndex": -3,
+      "failures": []
+    },
+    "ledgerText": "{\n  \"schema\": 1,\n  \"failures\": {},\n  \"lastScannedEntryIndex\": 0\n}\n"
+  },
+  {
+    "raw": {
+      "lastScannedEntryIndex": 4.5,
+      "failures": {}
+    },
+    "ledgerText": "{\n  \"schema\": 1,\n  \"failures\": {},\n  \"lastScannedEntryIndex\": 0\n}\n"
+  },
+  {
+    "raw": {
+      "schema": 7,
+      "lastScannedEntryIndex": 11,
+      "extra": true,
+      "failures": {
+        "keyed": {
+          "fingerprint": {
+            "kind": "tool_error",
+            "message": "m",
+            "source": 3,
+            "exceptionClass": "X",
+            "extra": 1
+          },
+          "count": 5,
+          "firstSeenTurn": -1,
+          "lastSeenTurn": 2.5,
+          "excerpt": "plain",
+          "addressedByProposalIds": [
+            "p1",
+            2,
+            "p3"
+          ],
+          "nonActionableCount": 9,
+          "unknown": "dropped"
+        },
+        "legacyFlag": {
+          "fingerprint": {
+            "id": "",
+            "kind": "tool_error",
+            "message": "m2"
+          },
+          "count": 3,
+          "nonActionable": true
+        },
+        "legacyExcerpt": {
+          "fingerprint": {
+            "id": "own",
+            "kind": "tool_error",
+            "message": "m3"
+          },
+          "count": 3,
+          "excerpt": "socket hang up"
+        },
+        "byMessage": {
+          "fingerprint": {
+            "kind": "provider_error",
+            "message": "overloaded"
+          },
+          "count": 4,
+          "nonActionableCount": 1
+        },
+        "zero": {
+          "fingerprint": {
+            "kind": "tool_error",
+            "message": "z"
+          },
+          "count": 0,
+          "nonActionableCount": 3
+        },
+        "cases": {
+          "fingerprint": {
+            "kind": "python_exception",
+            "message": "c",
+            "exceptionClass": "ModuleNotFoundError"
+          },
+          "count": 2,
+          "replayCase": {
+            "language": "python",
+            "source": "import legacy",
+            "verifiedAt": "t0"
+          },
+          "replayCases": [
+            {
+              "language": "python",
+              "source": "import a",
+              "sysPath": [
+                "",
+                "/x",
+                3
+              ],
+              "verifiedAt": ""
+            },
+            {
+              "language": "python",
+              "source": "import os; os.system('x')"
+            },
+            {
+              "language": "ruby",
+              "source": "import b"
+            },
+            {
+              "language": "python",
+              "source": "import a",
+              "exceptionClass": "E",
+              "verifiedAt": "t1"
+            },
+            {
+              "language": "python",
+              "source": "import c"
+            },
+            {
+              "language": "python",
+              "source": "import d"
+            },
+            {
+              "language": "python",
+              "source": "import e"
+            },
+            {
+              "language": "python",
+              "source": "import f"
+            },
+            {
+              "language": "python",
+              "source": "import g"
+            },
+            {
+              "language": "python",
+              "source": "import h"
+            },
+            {
+              "language": "python",
+              "source": "import i"
+            },
+            {
+              "language": "python",
+              "source": "import j"
+            }
+          ]
+        },
+        "retired": {
+          "fingerprint": {
+            "kind": "python_exception",
+            "message": "r"
+          },
+          "count": 1,
+          "replayCases": [
+            {
+              "language": "python",
+              "source": "from a import b"
+            }
+          ]
+        },
+        "badKind": {
+          "fingerprint": {
+            "kind": "nope",
+            "message": "m"
+          },
+          "count": 1
+        },
+        "noMessage": {
+          "fingerprint": {
+            "kind": "tool_error"
+          },
+          "count": 1
+        },
+        "notObject": 3
+      }
+    },
+    "ledgerText": "{\n  \"schema\": 1,\n  \"failures\": {\n    \"keyed\": {\n      \"fingerprint\": {\n        \"id\": \"keyed\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m\",\n        \"exceptionClass\": \"X\"\n      },\n      \"count\": 5,\n      \"firstSeenTurn\": 0,\n      \"lastSeenTurn\": 0,\n      \"firstSeenAt\": \"\",\n      \"lastSeenAt\": \"\",\n      \"excerpt\": \"plain\",\n      \"addressedByProposalIds\": [\n        \"p1\",\n        \"p3\"\n      ],\n      \"nonActionableCount\": 5\n    },\n    \"legacyFlag\": {\n      \"fingerprint\": {\n        \"id\": \"legacyFlag\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m2\"\n      },\n      \"count\": 3,\n      \"firstSeenTurn\": 0,\n      \"lastSeenTurn\": 0,\n      \"firstSeenAt\": \"\",\n      \"lastSeenAt\": \"\",\n      \"excerpt\": \"\",\n      \"addressedByProposalIds\": [],\n      \"nonActionableCount\": 3\n    },\n    \"legacyExcerpt\": {\n      \"fingerprint\": {\n        \"id\": \"own\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m3\"\n      },\n      \"count\": 3,\n      \"firstSeenTurn\": 0,\n      \"lastSeenTurn\": 0,\n      \"firstSeenAt\": \"\",\n      \"lastSeenAt\": \"\",\n      \"excerpt\": \"socket hang up\",\n      \"addressedByProposalIds\": [],\n      \"nonActionableCount\": 1\n    },\n    \"byMessage\": {\n      \"fingerprint\": {\n        \"id\": \"byMessage\",\n        \"kind\": \"provider_error\",\n        \"message\": \"overloaded\"\n      },\n      \"count\": 4,\n      \"firstSeenTurn\": 0,\n      \"lastSeenTurn\": 0,\n      \"firstSeenAt\": \"\",\n      \"lastSeenAt\": \"\",\n      \"excerpt\": \"\",\n      \"addressedByProposalIds\": [],\n      \"nonActionableCount\": 4\n    },\n    \"zero\": {\n      \"fingerprint\": {\n        \"id\": \"zero\",\n        \"kind\": \"tool_error\",\n        \"message\": \"z\"\n      },\n      \"count\": 0,\n      \"firstSeenTurn\": 0,\n      \"lastSeenTurn\": 0,\n      \"firstSeenAt\": \"\",\n      \"lastSeenAt\": \"\",\n      \"excerpt\": \"\",\n      \"addressedByProposalIds\": []\n    },\n    \"cases\": {\n      \"fingerprint\": {\n        \"id\": \"cases\",\n        \"kind\": \"python_exception\",\n        \"message\": \"c\",\n        \"exceptionClass\": \"ModuleNotFoundError\"\n      },\n      \"count\": 2,\n      \"firstSeenTurn\": 0,\n      \"lastSeenTurn\": 0,\n      \"firstSeenAt\": \"\",\n      \"lastSeenAt\": \"\",\n      \"excerpt\": \"\",\n      \"addressedByProposalIds\": [],\n      \"replayCases\": [\n        {\n          \"language\": \"python\",\n          \"source\": \"import c\"\n        },\n        {\n          \"language\": \"python\",\n          \"source\": \"import d\"\n        },\n        {\n          \"language\": \"python\",\n          \"source\": \"import e\"\n        },\n        {\n          \"language\": \"python\",\n          \"source\": \"import f\"\n        },\n        {\n          \"language\": \"python\",\n          \"source\": \"import g\"\n        },\n        {\n          \"language\": \"python\",\n          \"source\": \"import h\"\n        },\n        {\n          \"language\": \"python\",\n          \"source\": \"import i\"\n        },\n        {\n          \"language\": \"python\",\n          \"source\": \"import j\"\n        }\n      ]\n    },\n    \"retired\": {\n      \"fingerprint\": {\n        \"id\": \"retired\",\n        \"kind\": \"python_exception\",\n        \"message\": \"r\"\n      },\n      \"count\": 1,\n      \"firstSeenTurn\": 0,\n      \"lastSeenTurn\": 0,\n      \"firstSeenAt\": \"\",\n      \"lastSeenAt\": \"\",\n      \"excerpt\": \"\",\n      \"addressedByProposalIds\": []\n    }\n  },\n  \"lastScannedEntryIndex\": 11\n}\n"
+  }
+]

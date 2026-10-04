@@ -1,0 +1,169 @@
+[
+  {
+    "text": "Executing cell...\nTraceback (most recent call last):\n  File \"<ipython-input-3>\", line 2, in <module>\n    run()\n  File \"/home/user/.agents/skills/deploy-widget/scripts/run.py\", line 40, in run\n    return client.fetch(url)\nrequests.exceptions.ConnectionError: HTTPSConnectionPool(host='api.example.com', port=443): Max retries exceeded with url: /v2/items/1234\n",
+    "parsed": {
+      "exceptionClass": "requests.exceptions.ConnectionError",
+      "message": "HTTPSConnectionPool(host='api.example.com', port=443): Max retries exceeded with url: /v2/items/1234",
+      "excerpt": "File \"/home/user/.agents/skills/deploy-widget/scripts/run.py\", line 40, in run\nrequests.exceptions.ConnectionError: HTTPSConnectionPool(host='api.example.com', port=443): Max retries exceeded with url: /v2/items/1234",
+      "skillName": "deploy-widget"
+    },
+    "asToolResult": {
+      "id": "c025ceb4c11edd25",
+      "kind": "python_exception",
+      "message": "httpsconnectionpool(host=?, port=#): max retries exceeded with url: <path>",
+      "source": "deploy-widget",
+      "exceptionClass": "requests.exceptions.ConnectionError"
+    },
+    "asError": {
+      "id": "c025ceb4c11edd25",
+      "kind": "python_exception",
+      "message": "httpsconnectionpool(host=?, port=#): max retries exceeded with url: <path>",
+      "source": "deploy-widget",
+      "exceptionClass": "requests.exceptions.ConnectionError"
+    }
+  },
+  {
+    "text": "Traceback (most recent call last):\n  File \"/tmp/x.py\", line 1, in <module>\nKeyboardInterrupt\n",
+    "parsed": {
+      "exceptionClass": "KeyboardInterrupt",
+      "message": "",
+      "excerpt": "File \"/tmp/x.py\", line 1, in <module>\nKeyboardInterrupt"
+    },
+    "asToolResult": {
+      "id": "71936fee5ec25900",
+      "kind": "python_exception",
+      "message": "",
+      "source": "ipython",
+      "exceptionClass": "KeyboardInterrupt"
+    },
+    "asError": {
+      "id": "078416d1da0064f1",
+      "kind": "python_exception",
+      "message": "",
+      "source": "bash",
+      "exceptionClass": "KeyboardInterrupt"
+    }
+  },
+  {
+    "text": "Traceback (most recent call last):\r\n  File \"a.py\", line 1, in <module>\r\nValueError: bad\r\n",
+    "parsed": {
+      "exceptionClass": "ValueError",
+      "message": "bad",
+      "excerpt": "File \"a.py\", line 1, in <module>\nValueError: bad"
+    },
+    "asToolResult": {
+      "id": "ab40126004273cab",
+      "kind": "python_exception",
+      "message": "bad",
+      "source": "ipython",
+      "exceptionClass": "ValueError"
+    },
+    "asError": {
+      "id": "86d7bed0bfa0df5c",
+      "kind": "python_exception",
+      "message": "bad",
+      "source": "bash",
+      "exceptionClass": "ValueError"
+    }
+  },
+  {
+    "text": "Traceback (most recent call last):\n  File \"first.py\", line 1, in <module>\nTypeError: first\nDuring handling...\nTraceback (most recent call last):\n  File \"C:\\work\\skills\\win-skill\\main.py\", line 9, in go\n  File \"/x/skills/a.py\", line 3, in f\nModuleNotFoundError: No module named 'polars'",
+    "parsed": {
+      "exceptionClass": "ModuleNotFoundError",
+      "message": "No module named 'polars'",
+      "excerpt": "File \"/x/skills/a.py\", line 3, in f\nModuleNotFoundError: No module named 'polars'",
+      "skillName": "win-skill"
+    },
+    "asToolResult": {
+      "id": "31e3fd334b5c5715",
+      "kind": "python_exception",
+      "message": "no module named ?",
+      "source": "win-skill",
+      "exceptionClass": "ModuleNotFoundError"
+    },
+    "asError": {
+      "id": "31e3fd334b5c5715",
+      "kind": "python_exception",
+      "message": "no module named ?",
+      "source": "win-skill",
+      "exceptionClass": "ModuleNotFoundError"
+    }
+  },
+  {
+    "text": "Traceback (most recent call last)\nno frames here\nKeyError",
+    "parsed": null,
+    "asToolResult": null,
+    "asError": {
+      "id": "1c0d6067ef0882d3",
+      "kind": "tool_error",
+      "message": "traceback (most recent call last) no frames here keyerror",
+      "source": "bash"
+    }
+  },
+  {
+    "text": "Traceback (most recent call last):\n  File \"x\", line 1\nfoo.bar.BazWarning: careful tail",
+    "parsed": {
+      "exceptionClass": "foo.bar.BazWarning",
+      "message": "careful",
+      "excerpt": "File \"x\", line 1\nfoo.bar.BazWarning: careful"
+    },
+    "asToolResult": {
+      "id": "5893302e28e65f7e",
+      "kind": "python_exception",
+      "message": "careful",
+      "source": "ipython",
+      "exceptionClass": "foo.bar.BazWarning"
+    },
+    "asError": {
+      "id": "f1db6a294128ba2b",
+      "kind": "python_exception",
+      "message": "careful",
+      "source": "bash",
+      "exceptionClass": "foo.bar.BazWarning"
+    }
+  },
+  {
+    "text": "Traceback (most recent call last):\n  File \"x\", line 1\nNotAnErr: nope",
+    "parsed": null,
+    "asToolResult": null,
+    "asError": {
+      "id": "4624fe82aef5018e",
+      "kind": "tool_error",
+      "message": "traceback (most recent call last): file ?, line # notanerr: nope",
+      "source": "bash"
+    }
+  },
+  {
+    "text": "Traceback (most recent call last):\n  File \"x\", line 1\nRuntimeError: long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long ",
+    "parsed": {
+      "exceptionClass": "RuntimeError",
+      "message": "long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long",
+      "excerpt": "File \"x\", line 1\nRuntimeError: long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long..."
+    },
+    "asToolResult": {
+      "id": "dc626abb9e803cbe",
+      "kind": "python_exception",
+      "message": "long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long ",
+      "source": "ipython",
+      "exceptionClass": "RuntimeError"
+    },
+    "asError": {
+      "id": "223d5cf57b0c4898",
+      "kind": "python_exception",
+      "message": "long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long ",
+      "source": "bash",
+      "exceptionClass": "RuntimeError"
+    }
+  },
+  {
+    "text": "no traceback at all",
+    "parsed": null,
+    "asToolResult": null,
+    "asError": {
+      "id": "948ba5a3d1ebc6cf",
+      "kind": "tool_error",
+      "message": "no traceback at all",
+      "source": "bash"
+    }
+  }
+]

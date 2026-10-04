@@ -1,0 +1,256 @@
+[
+  {
+    "kind": "tool_error",
+    "excerpt": "The operation was aborted",
+    "actionable": false
+  },
+  {
+    "kind": "provider_error",
+    "excerpt": "The operation was aborted",
+    "actionable": false
+  },
+  {
+    "kind": "tool_error",
+    "excerpt": "fetch HTTP 503 for https://x",
+    "actionable": false
+  },
+  {
+    "kind": "provider_error",
+    "excerpt": "fetch HTTP 503 for https://x",
+    "actionable": false
+  },
+  {
+    "kind": "tool_error",
+    "excerpt": "fetch http 404x",
+    "actionable": true
+  },
+  {
+    "kind": "provider_error",
+    "excerpt": "fetch http 404x",
+    "actionable": true
+  },
+  {
+    "kind": "tool_error",
+    "excerpt": "Error: getaddrinfo ENOTFOUND api.x",
+    "actionable": false
+  },
+  {
+    "kind": "provider_error",
+    "excerpt": "Error: getaddrinfo ENOTFOUND api.x",
+    "actionable": false
+  },
+  {
+    "kind": "tool_error",
+    "excerpt": "connect ECONNREFUSED",
+    "actionable": false
+  },
+  {
+    "kind": "provider_error",
+    "excerpt": "connect ECONNREFUSED",
+    "actionable": false
+  },
+  {
+    "kind": "tool_error",
+    "excerpt": "request timed out after 30s",
+    "actionable": false
+  },
+  {
+    "kind": "provider_error",
+    "excerpt": "request timed out after 30s",
+    "actionable": false
+  },
+  {
+    "kind": "tool_error",
+    "excerpt": "TimeoutError",
+    "actionable": true
+  },
+  {
+    "kind": "provider_error",
+    "excerpt": "TimeoutError",
+    "actionable": true
+  },
+  {
+    "kind": "tool_error",
+    "excerpt": "timeout=5 is not a keyword",
+    "actionable": true
+  },
+  {
+    "kind": "provider_error",
+    "excerpt": "timeout=5 is not a keyword",
+    "actionable": true
+  },
+  {
+    "kind": "tool_error",
+    "excerpt": "database is locked",
+    "actionable": false
+  },
+  {
+    "kind": "provider_error",
+    "excerpt": "database is locked",
+    "actionable": false
+  },
+  {
+    "kind": "tool_error",
+    "excerpt": "denied by the user",
+    "actionable": false
+  },
+  {
+    "kind": "provider_error",
+    "excerpt": "denied by the user",
+    "actionable": false
+  },
+  {
+    "kind": "tool_error",
+    "excerpt": "Kernel has been shutdown",
+    "actionable": false
+  },
+  {
+    "kind": "provider_error",
+    "excerpt": "Kernel has been shutdown",
+    "actionable": false
+  },
+  {
+    "kind": "tool_error",
+    "excerpt": "rate_limit_error",
+    "actionable": true
+  },
+  {
+    "kind": "provider_error",
+    "excerpt": "rate_limit_error",
+    "actionable": false
+  },
+  {
+    "kind": "tool_error",
+    "excerpt": "Too Many Requests",
+    "actionable": true
+  },
+  {
+    "kind": "provider_error",
+    "excerpt": "Too Many Requests",
+    "actionable": false
+  },
+  {
+    "kind": "tool_error",
+    "excerpt": "error 429",
+    "actionable": true
+  },
+  {
+    "kind": "provider_error",
+    "excerpt": "error 429",
+    "actionable": false
+  },
+  {
+    "kind": "tool_error",
+    "excerpt": "HTTP 502 Bad Gateway",
+    "actionable": true
+  },
+  {
+    "kind": "provider_error",
+    "excerpt": "HTTP 502 Bad Gateway",
+    "actionable": false
+  },
+  {
+    "kind": "tool_error",
+    "excerpt": "status code: 500",
+    "actionable": true
+  },
+  {
+    "kind": "provider_error",
+    "excerpt": "status code: 500",
+    "actionable": false
+  },
+  {
+    "kind": "tool_error",
+    "excerpt": "internal-server error",
+    "actionable": true
+  },
+  {
+    "kind": "provider_error",
+    "excerpt": "internal-server error",
+    "actionable": false
+  },
+  {
+    "kind": "tool_error",
+    "excerpt": "content filter triggered",
+    "actionable": true
+  },
+  {
+    "kind": "provider_error",
+    "excerpt": "content filter triggered",
+    "actionable": false
+  },
+  {
+    "kind": "tool_error",
+    "excerpt": "empty completion",
+    "actionable": true
+  },
+  {
+    "kind": "provider_error",
+    "excerpt": "empty completion",
+    "actionable": false
+  },
+  {
+    "kind": "tool_error",
+    "excerpt": "the model refused",
+    "actionable": true
+  },
+  {
+    "kind": "provider_error",
+    "excerpt": "the model refused",
+    "actionable": false
+  },
+  {
+    "kind": "tool_error",
+    "excerpt": "service unavailable",
+    "actionable": true
+  },
+  {
+    "kind": "provider_error",
+    "excerpt": "service unavailable",
+    "actionable": false
+  },
+  {
+    "kind": "tool_error",
+    "excerpt": "overloaded_error",
+    "actionable": true
+  },
+  {
+    "kind": "provider_error",
+    "excerpt": "overloaded_error",
+    "actionable": false
+  },
+  {
+    "kind": "tool_error",
+    "excerpt": "ordinary KeyError",
+    "actionable": true
+  },
+  {
+    "kind": "provider_error",
+    "excerpt": "ordinary KeyError",
+    "actionable": true
+  },
+  {
+    "kind": "python_exception",
+    "exceptionClass": "TimeoutError",
+    "excerpt": "x",
+    "actionable": false
+  },
+  {
+    "kind": "python_exception",
+    "exceptionClass": "asyncio.TimeoutError",
+    "excerpt": "x",
+    "actionable": false
+  },
+  {
+    "kind": "python_exception",
+    "exceptionClass": "httpx.ConnectError",
+    "excerpt": "x",
+    "actionable": false
+  },
+  {
+    "kind": "python_exception",
+    "exceptionClass": "ConnectionError",
+    "excerpt": "x",
+    "actionable": true
+  }
+]

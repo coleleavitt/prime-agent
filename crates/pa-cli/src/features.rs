@@ -21,6 +21,8 @@ pub fn enabled_features() -> Vec<Arc<dyn SessionFeature>> {
         Arc::new(pa_toolforge::ToolforgeFeature::new()),
         #[cfg(feature = "workflow")]
         Arc::new(pa_workflow::WorkflowFeature),
+        #[cfg(feature = "ledger")]
+        Arc::new(pa_ledger::FailureLedgerFeature::default()),
     ]
 }
 
@@ -166,6 +168,8 @@ mod tests {
             "toolforge",
             #[cfg(feature = "workflow")]
             "workflow",
+            #[cfg(feature = "ledger")]
+            "ledger",
         ];
         assert_eq!(names, expected);
     }

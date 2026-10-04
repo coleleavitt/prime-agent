@@ -96,6 +96,7 @@ fn harness(with_telemetry: bool) -> Harness {
                 telemetry_enabled: None,
             })
         }),
+        session_artifact_dir: None,
         rlm_depth: 0,
     };
     let mut handlers = HostRequestHandlers::new();

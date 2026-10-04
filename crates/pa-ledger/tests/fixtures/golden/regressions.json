@@ -1,0 +1,131 @@
+{
+  "ravo": {
+    "version": 1,
+    "lineage": [
+      {
+        "proposalId": "p-1",
+        "claimedFingerprints": [
+          "b",
+          "a",
+          "a",
+          3
+        ],
+        "provisional": {
+          "committedTurn": 5,
+          "untilTurn": 25,
+          "clock": "ordinal"
+        },
+        "score": 1
+      },
+      {
+        "proposalId": "p-2",
+        "claimedFingerprints": [
+          "a"
+        ],
+        "provisional": {
+          "committedTurn": 5,
+          "untilTurn": 25,
+          "clock": "local-ordinal"
+        }
+      },
+      {
+        "proposalId": "p-3",
+        "claimedFingerprints": [
+          "a"
+        ],
+        "provisional": {
+          "committedTurn": 5,
+          "untilTurn": 25
+        }
+      },
+      {
+        "proposalId": "p-4",
+        "claimedFingerprints": [
+          "a"
+        ],
+        "provisional": {
+          "committedTurn": 30,
+          "untilTurn": 40,
+          "clock": "ordinal"
+        }
+      },
+      {
+        "proposalId": "p-5",
+        "claimedFingerprints": [
+          "z"
+        ],
+        "provisional": {
+          "committedTurn": 5,
+          "untilTurn": 25,
+          "clock": "ordinal"
+        }
+      },
+      {
+        "proposalId": 6,
+        "claimedFingerprints": [
+          "a"
+        ],
+        "provisional": {
+          "committedTurn": 5,
+          "untilTurn": 25,
+          "clock": "ordinal"
+        }
+      },
+      {
+        "proposalId": "p-7",
+        "claimedFingerprints": [
+          "a"
+        ]
+      },
+      {
+        "proposalId": "p-8",
+        "claimedFingerprints": [
+          "a"
+        ],
+        "provisional": {
+          "committedTurn": 5.5,
+          "untilTurn": 25,
+          "clock": "ordinal",
+          "observedRecurrence": {
+            "turn": 1,
+            "fingerprints": []
+          },
+          "note": "kept"
+        }
+      }
+    ],
+    "tail": "kept"
+  },
+  "found": [
+    {
+      "championId": "p-1",
+      "fingerprints": [
+        "a",
+        "b"
+      ],
+      "committedTurn": 5,
+      "untilTurn": 25
+    },
+    {
+      "championId": "p-8",
+      "fingerprints": [
+        "a"
+      ],
+      "committedTurn": 5.5,
+      "untilTurn": 25
+    }
+  ],
+  "foundLocal": [
+    {
+      "championId": "p-2",
+      "fingerprints": [
+        "a"
+      ],
+      "committedTurn": 5,
+      "untilTurn": 25
+    }
+  ],
+  "none": [],
+  "outside": [],
+  "recordedText": "{\n  \"version\": 1,\n  \"lineage\": [\n    {\n      \"proposalId\": \"p-1\",\n      \"claimedFingerprints\": [\n        \"b\",\n        \"a\",\n        \"a\",\n        3\n      ],\n      \"provisional\": {\n        \"committedTurn\": 5,\n        \"untilTurn\": 25,\n        \"clock\": \"ordinal\",\n        \"observedRecurrence\": {\n          \"turn\": 12,\n          \"fingerprints\": [\n            \"a\",\n            \"b\"\n          ]\n        }\n      },\n      \"score\": 1\n    },\n    {\n      \"proposalId\": \"p-2\",\n      \"claimedFingerprints\": [\n        \"a\"\n      ],\n      \"provisional\": {\n        \"committedTurn\": 5,\n        \"untilTurn\": 25,\n        \"clock\": \"local-ordinal\"\n      }\n    },\n    {\n      \"proposalId\": \"p-3\",\n      \"claimedFingerprints\": [\n        \"a\"\n      ],\n      \"provisional\": {\n        \"committedTurn\": 5,\n        \"untilTurn\": 25\n      }\n    },\n    {\n      \"proposalId\": \"p-4\",\n      \"claimedFingerprints\": [\n        \"a\"\n      ],\n      \"provisional\": {\n        \"committedTurn\": 30,\n        \"untilTurn\": 40,\n        \"clock\": \"ordinal\"\n      }\n    },\n    {\n      \"proposalId\": \"p-5\",\n      \"claimedFingerprints\": [\n        \"z\"\n      ],\n      \"provisional\": {\n        \"committedTurn\": 5,\n        \"untilTurn\": 25,\n        \"clock\": \"ordinal\"\n      }\n    },\n    {\n      \"proposalId\": 6,\n      \"claimedFingerprints\": [\n        \"a\"\n      ],\n      \"provisional\": {\n        \"committedTurn\": 5,\n        \"untilTurn\": 25,\n        \"clock\": \"ordinal\"\n      }\n    },\n    {\n      \"proposalId\": \"p-7\",\n      \"claimedFingerprints\": [\n        \"a\"\n      ]\n    },\n    {\n      \"proposalId\": \"p-8\",\n      \"claimedFingerprints\": [\n        \"a\"\n      ],\n      \"provisional\": {\n        \"committedTurn\": 5.5,\n        \"untilTurn\": 25,\n        \"clock\": \"ordinal\",\n        \"observedRecurrence\": {\n          \"turn\": 12,\n          \"fingerprints\": [\n            \"a\"\n          ]\n        },\n        \"note\": \"kept\"\n      }\n    }\n  ],\n  \"tail\": \"kept\"\n}\n"
+}

@@ -1,0 +1,395 @@
+[
+  {
+    "step": {
+      "mode": "update",
+      "observations": [
+        {
+          "fingerprint": {
+            "id": "a",
+            "kind": "tool_error",
+            "message": "m-a",
+            "source": "bash"
+          },
+          "excerpt": "excerpt a turn 1",
+          "entryIndex": 1,
+          "turn": 1,
+          "at": "t1"
+        },
+        {
+          "fingerprint": {
+            "id": "b",
+            "kind": "tool_error",
+            "message": "m-b",
+            "source": "bash"
+          },
+          "excerpt": "excerpt b turn 1",
+          "entryIndex": 1,
+          "turn": 1,
+          "at": "t1"
+        }
+      ]
+    },
+    "ledgerText": "{\n  \"schema\": 1,\n  \"failures\": {\n    \"a\": {\n      \"fingerprint\": {\n        \"id\": \"a\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-a\",\n        \"source\": \"bash\"\n      },\n      \"count\": 1,\n      \"firstSeenTurn\": 1,\n      \"lastSeenTurn\": 1,\n      \"firstSeenAt\": \"t1\",\n      \"lastSeenAt\": \"t1\",\n      \"excerpt\": \"excerpt a turn 1\",\n      \"addressedByProposalIds\": []\n    },\n    \"b\": {\n      \"fingerprint\": {\n        \"id\": \"b\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-b\",\n        \"source\": \"bash\"\n      },\n      \"count\": 1,\n      \"firstSeenTurn\": 1,\n      \"lastSeenTurn\": 1,\n      \"firstSeenAt\": \"t1\",\n      \"lastSeenAt\": \"t1\",\n      \"excerpt\": \"excerpt b turn 1\",\n      \"addressedByProposalIds\": []\n    }\n  },\n  \"lastScannedEntryIndex\": 2\n}\n",
+    "newlyRecurring": [],
+    "recurring": [],
+    "recurringAt1": [
+      "a",
+      "b"
+    ],
+    "ordinal": 2,
+    "actionable": {
+      "a": true,
+      "b": true
+    }
+  },
+  {
+    "step": {
+      "mode": "update",
+      "observations": [],
+      "scannedThroughEntryIndex": 9
+    },
+    "ledgerText": "{\n  \"schema\": 1,\n  \"failures\": {\n    \"a\": {\n      \"fingerprint\": {\n        \"id\": \"a\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-a\",\n        \"source\": \"bash\"\n      },\n      \"count\": 1,\n      \"firstSeenTurn\": 1,\n      \"lastSeenTurn\": 1,\n      \"firstSeenAt\": \"t1\",\n      \"lastSeenAt\": \"t1\",\n      \"excerpt\": \"excerpt a turn 1\",\n      \"addressedByProposalIds\": []\n    },\n    \"b\": {\n      \"fingerprint\": {\n        \"id\": \"b\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-b\",\n        \"source\": \"bash\"\n      },\n      \"count\": 1,\n      \"firstSeenTurn\": 1,\n      \"lastSeenTurn\": 1,\n      \"firstSeenAt\": \"t1\",\n      \"lastSeenAt\": \"t1\",\n      \"excerpt\": \"excerpt b turn 1\",\n      \"addressedByProposalIds\": []\n    }\n  },\n  \"lastScannedEntryIndex\": 9\n}\n",
+    "newlyRecurring": [],
+    "recurring": [],
+    "recurringAt1": [
+      "a",
+      "b"
+    ],
+    "ordinal": 2,
+    "actionable": {
+      "a": true,
+      "b": true
+    }
+  },
+  {
+    "step": {
+      "mode": "update",
+      "observations": [
+        {
+          "fingerprint": {
+            "id": "a",
+            "kind": "tool_error",
+            "message": "m-a",
+            "source": "bash"
+          },
+          "excerpt": "excerpt a turn 2",
+          "entryIndex": 12,
+          "turn": 2,
+          "at": "t2"
+        },
+        {
+          "fingerprint": {
+            "id": "c",
+            "kind": "tool_error",
+            "message": "m-c",
+            "source": "bash"
+          },
+          "excerpt": "request timed out",
+          "entryIndex": 2,
+          "turn": 2,
+          "at": "t2"
+        }
+      ]
+    },
+    "ledgerText": "{\n  \"schema\": 1,\n  \"failures\": {\n    \"a\": {\n      \"fingerprint\": {\n        \"id\": \"a\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-a\",\n        \"source\": \"bash\"\n      },\n      \"count\": 2,\n      \"firstSeenTurn\": 1,\n      \"lastSeenTurn\": 2,\n      \"firstSeenAt\": \"t1\",\n      \"lastSeenAt\": \"t2\",\n      \"excerpt\": \"excerpt a turn 2\",\n      \"addressedByProposalIds\": []\n    },\n    \"b\": {\n      \"fingerprint\": {\n        \"id\": \"b\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-b\",\n        \"source\": \"bash\"\n      },\n      \"count\": 1,\n      \"firstSeenTurn\": 1,\n      \"lastSeenTurn\": 1,\n      \"firstSeenAt\": \"t1\",\n      \"lastSeenAt\": \"t1\",\n      \"excerpt\": \"excerpt b turn 1\",\n      \"addressedByProposalIds\": []\n    },\n    \"c\": {\n      \"fingerprint\": {\n        \"id\": \"c\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-c\",\n        \"source\": \"bash\"\n      },\n      \"count\": 1,\n      \"firstSeenTurn\": 2,\n      \"lastSeenTurn\": 2,\n      \"firstSeenAt\": \"t2\",\n      \"lastSeenAt\": \"t2\",\n      \"excerpt\": \"request timed out\",\n      \"addressedByProposalIds\": [],\n      \"nonActionableCount\": 1\n    }\n  },\n  \"lastScannedEntryIndex\": 13\n}\n",
+    "newlyRecurring": [
+      "a"
+    ],
+    "recurring": [
+      "a"
+    ],
+    "recurringAt1": [
+      "a",
+      "b"
+    ],
+    "ordinal": 4,
+    "actionable": {
+      "a": true,
+      "b": true,
+      "c": false
+    }
+  },
+  {
+    "step": {
+      "mode": "update",
+      "observations": [
+        {
+          "fingerprint": {
+            "id": "c",
+            "kind": "tool_error",
+            "message": "m-c",
+            "source": "bash"
+          },
+          "excerpt": "fetch failed",
+          "entryIndex": 3,
+          "turn": 3,
+          "at": "t3"
+        },
+        {
+          "fingerprint": {
+            "id": "c",
+            "kind": "tool_error",
+            "message": "m-c",
+            "source": "bash"
+          },
+          "excerpt": "excerpt c turn 3",
+          "entryIndex": 3,
+          "turn": 3,
+          "at": "t3"
+        }
+      ],
+      "threshold": 2
+    },
+    "ledgerText": "{\n  \"schema\": 1,\n  \"failures\": {\n    \"a\": {\n      \"fingerprint\": {\n        \"id\": \"a\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-a\",\n        \"source\": \"bash\"\n      },\n      \"count\": 2,\n      \"firstSeenTurn\": 1,\n      \"lastSeenTurn\": 2,\n      \"firstSeenAt\": \"t1\",\n      \"lastSeenAt\": \"t2\",\n      \"excerpt\": \"excerpt a turn 2\",\n      \"addressedByProposalIds\": []\n    },\n    \"b\": {\n      \"fingerprint\": {\n        \"id\": \"b\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-b\",\n        \"source\": \"bash\"\n      },\n      \"count\": 1,\n      \"firstSeenTurn\": 1,\n      \"lastSeenTurn\": 1,\n      \"firstSeenAt\": \"t1\",\n      \"lastSeenAt\": \"t1\",\n      \"excerpt\": \"excerpt b turn 1\",\n      \"addressedByProposalIds\": []\n    },\n    \"c\": {\n      \"fingerprint\": {\n        \"id\": \"c\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-c\",\n        \"source\": \"bash\"\n      },\n      \"count\": 3,\n      \"firstSeenTurn\": 2,\n      \"lastSeenTurn\": 3,\n      \"firstSeenAt\": \"t2\",\n      \"lastSeenAt\": \"t3\",\n      \"excerpt\": \"excerpt c turn 3\",\n      \"addressedByProposalIds\": [],\n      \"nonActionableCount\": 2\n    }\n  },\n  \"lastScannedEntryIndex\": 13\n}\n",
+    "newlyRecurring": [],
+    "recurring": [
+      "a"
+    ],
+    "recurringAt1": [
+      "a",
+      "b"
+    ],
+    "ordinal": 6,
+    "actionable": {
+      "a": true,
+      "b": true,
+      "c": false
+    }
+  },
+  {
+    "step": {
+      "mode": "merge",
+      "observations": [
+        {
+          "fingerprint": {
+            "id": "d",
+            "kind": "tool_error",
+            "message": "m-d",
+            "source": "bash"
+          },
+          "excerpt": "excerpt d turn 4",
+          "entryIndex": 4,
+          "turn": 4,
+          "at": "t4",
+          "replayCase": {
+            "language": "python",
+            "source": "import polars",
+            "exceptionClass": "ModuleNotFoundError"
+          }
+        },
+        {
+          "fingerprint": {
+            "id": "d",
+            "kind": "tool_error",
+            "message": "m-d",
+            "source": "bash"
+          },
+          "excerpt": "excerpt d turn 4",
+          "entryIndex": 4,
+          "turn": 4,
+          "at": "t4",
+          "replayCase": {
+            "language": "python",
+            "source": "import os; os.system('x')",
+            "exceptionClass": "ModuleNotFoundError"
+          }
+        }
+      ]
+    },
+    "ledgerText": "{\n  \"schema\": 1,\n  \"failures\": {\n    \"a\": {\n      \"fingerprint\": {\n        \"id\": \"a\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-a\",\n        \"source\": \"bash\"\n      },\n      \"count\": 2,\n      \"firstSeenTurn\": 1,\n      \"lastSeenTurn\": 2,\n      \"firstSeenAt\": \"t1\",\n      \"lastSeenAt\": \"t2\",\n      \"excerpt\": \"excerpt a turn 2\",\n      \"addressedByProposalIds\": []\n    },\n    \"b\": {\n      \"fingerprint\": {\n        \"id\": \"b\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-b\",\n        \"source\": \"bash\"\n      },\n      \"count\": 1,\n      \"firstSeenTurn\": 1,\n      \"lastSeenTurn\": 1,\n      \"firstSeenAt\": \"t1\",\n      \"lastSeenAt\": \"t1\",\n      \"excerpt\": \"excerpt b turn 1\",\n      \"addressedByProposalIds\": []\n    },\n    \"c\": {\n      \"fingerprint\": {\n        \"id\": \"c\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-c\",\n        \"source\": \"bash\"\n      },\n      \"count\": 3,\n      \"firstSeenTurn\": 2,\n      \"lastSeenTurn\": 3,\n      \"firstSeenAt\": \"t2\",\n      \"lastSeenAt\": \"t3\",\n      \"excerpt\": \"excerpt c turn 3\",\n      \"addressedByProposalIds\": [],\n      \"nonActionableCount\": 2\n    },\n    \"d\": {\n      \"fingerprint\": {\n        \"id\": \"d\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-d\",\n        \"source\": \"bash\"\n      },\n      \"count\": 2,\n      \"firstSeenTurn\": 4,\n      \"lastSeenTurn\": 4,\n      \"firstSeenAt\": \"t4\",\n      \"lastSeenAt\": \"t4\",\n      \"excerpt\": \"excerpt d turn 4\",\n      \"addressedByProposalIds\": [],\n      \"replayCases\": [\n        {\n          \"language\": \"python\",\n          \"source\": \"import polars\",\n          \"exceptionClass\": \"ModuleNotFoundError\"\n        }\n      ]\n    }\n  },\n  \"lastScannedEntryIndex\": 13\n}\n",
+    "newlyRecurring": [
+      "d"
+    ],
+    "recurring": [
+      "d",
+      "a"
+    ],
+    "recurringAt1": [
+      "d",
+      "a",
+      "b"
+    ],
+    "ordinal": 8,
+    "actionable": {
+      "a": true,
+      "b": true,
+      "c": false,
+      "d": true
+    }
+  },
+  {
+    "step": {
+      "mode": "merge",
+      "observations": [
+        {
+          "fingerprint": {
+            "id": "d",
+            "kind": "tool_error",
+            "message": "m-d",
+            "source": "bash"
+          },
+          "excerpt": "excerpt d turn 5",
+          "entryIndex": 5,
+          "turn": 5,
+          "at": "t5",
+          "replayCase": {
+            "language": "python",
+            "source": "import numpy",
+            "exceptionClass": "ModuleNotFoundError"
+          }
+        },
+        {
+          "fingerprint": {
+            "id": "e",
+            "kind": "provider_error",
+            "message": "# rate limited",
+            "source": "bash"
+          },
+          "excerpt": "excerpt e turn 5",
+          "entryIndex": 5,
+          "turn": 5,
+          "at": "t5"
+        }
+      ]
+    },
+    "ledgerText": "{\n  \"schema\": 1,\n  \"failures\": {\n    \"a\": {\n      \"fingerprint\": {\n        \"id\": \"a\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-a\",\n        \"source\": \"bash\"\n      },\n      \"count\": 2,\n      \"firstSeenTurn\": 1,\n      \"lastSeenTurn\": 2,\n      \"firstSeenAt\": \"t1\",\n      \"lastSeenAt\": \"t2\",\n      \"excerpt\": \"excerpt a turn 2\",\n      \"addressedByProposalIds\": []\n    },\n    \"b\": {\n      \"fingerprint\": {\n        \"id\": \"b\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-b\",\n        \"source\": \"bash\"\n      },\n      \"count\": 1,\n      \"firstSeenTurn\": 1,\n      \"lastSeenTurn\": 1,\n      \"firstSeenAt\": \"t1\",\n      \"lastSeenAt\": \"t1\",\n      \"excerpt\": \"excerpt b turn 1\",\n      \"addressedByProposalIds\": []\n    },\n    \"c\": {\n      \"fingerprint\": {\n        \"id\": \"c\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-c\",\n        \"source\": \"bash\"\n      },\n      \"count\": 3,\n      \"firstSeenTurn\": 2,\n      \"lastSeenTurn\": 3,\n      \"firstSeenAt\": \"t2\",\n      \"lastSeenAt\": \"t3\",\n      \"excerpt\": \"excerpt c turn 3\",\n      \"addressedByProposalIds\": [],\n      \"nonActionableCount\": 2\n    },\n    \"d\": {\n      \"fingerprint\": {\n        \"id\": \"d\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-d\",\n        \"source\": \"bash\"\n      },\n      \"count\": 3,\n      \"firstSeenTurn\": 4,\n      \"lastSeenTurn\": 5,\n      \"firstSeenAt\": \"t4\",\n      \"lastSeenAt\": \"t5\",\n      \"excerpt\": \"excerpt d turn 5\",\n      \"addressedByProposalIds\": [],\n      \"replayCases\": [\n        {\n          \"language\": \"python\",\n          \"source\": \"import polars\",\n          \"exceptionClass\": \"ModuleNotFoundError\"\n        },\n        {\n          \"language\": \"python\",\n          \"source\": \"import numpy\",\n          \"exceptionClass\": \"ModuleNotFoundError\"\n        }\n      ]\n    },\n    \"e\": {\n      \"fingerprint\": {\n        \"id\": \"e\",\n        \"kind\": \"provider_error\",\n        \"message\": \"# rate limited\",\n        \"source\": \"bash\"\n      },\n      \"count\": 1,\n      \"firstSeenTurn\": 5,\n      \"lastSeenTurn\": 5,\n      \"firstSeenAt\": \"t5\",\n      \"lastSeenAt\": \"t5\",\n      \"excerpt\": \"excerpt e turn 5\",\n      \"addressedByProposalIds\": [],\n      \"nonActionableCount\": 1\n    }\n  },\n  \"lastScannedEntryIndex\": 13\n}\n",
+    "newlyRecurring": [],
+    "recurring": [
+      "d",
+      "a"
+    ],
+    "recurringAt1": [
+      "d",
+      "a",
+      "b"
+    ],
+    "ordinal": 10,
+    "actionable": {
+      "a": true,
+      "b": true,
+      "c": false,
+      "d": true,
+      "e": false
+    }
+  },
+  {
+    "step": {
+      "mode": "update",
+      "observations": [
+        {
+          "fingerprint": {
+            "id": "e",
+            "kind": "provider_error",
+            "message": "overloaded",
+            "source": "bash"
+          },
+          "excerpt": "excerpt e turn 6",
+          "entryIndex": 6,
+          "turn": 6,
+          "at": "t6"
+        },
+        {
+          "fingerprint": {
+            "id": "f",
+            "kind": "tool_error",
+            "message": "m-f",
+            "source": "bash",
+            "exceptionClass": "httpx.ConnectError"
+          },
+          "excerpt": "excerpt f turn 6",
+          "entryIndex": 6,
+          "turn": 6,
+          "at": "t6"
+        }
+      ],
+      "threshold": 1
+    },
+    "ledgerText": "{\n  \"schema\": 1,\n  \"failures\": {\n    \"a\": {\n      \"fingerprint\": {\n        \"id\": \"a\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-a\",\n        \"source\": \"bash\"\n      },\n      \"count\": 2,\n      \"firstSeenTurn\": 1,\n      \"lastSeenTurn\": 2,\n      \"firstSeenAt\": \"t1\",\n      \"lastSeenAt\": \"t2\",\n      \"excerpt\": \"excerpt a turn 2\",\n      \"addressedByProposalIds\": []\n    },\n    \"b\": {\n      \"fingerprint\": {\n        \"id\": \"b\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-b\",\n        \"source\": \"bash\"\n      },\n      \"count\": 1,\n      \"firstSeenTurn\": 1,\n      \"lastSeenTurn\": 1,\n      \"firstSeenAt\": \"t1\",\n      \"lastSeenAt\": \"t1\",\n      \"excerpt\": \"excerpt b turn 1\",\n      \"addressedByProposalIds\": []\n    },\n    \"c\": {\n      \"fingerprint\": {\n        \"id\": \"c\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-c\",\n        \"source\": \"bash\"\n      },\n      \"count\": 3,\n      \"firstSeenTurn\": 2,\n      \"lastSeenTurn\": 3,\n      \"firstSeenAt\": \"t2\",\n      \"lastSeenAt\": \"t3\",\n      \"excerpt\": \"excerpt c turn 3\",\n      \"addressedByProposalIds\": [],\n      \"nonActionableCount\": 2\n    },\n    \"d\": {\n      \"fingerprint\": {\n        \"id\": \"d\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-d\",\n        \"source\": \"bash\"\n      },\n      \"count\": 3,\n      \"firstSeenTurn\": 4,\n      \"lastSeenTurn\": 5,\n      \"firstSeenAt\": \"t4\",\n      \"lastSeenAt\": \"t5\",\n      \"excerpt\": \"excerpt d turn 5\",\n      \"addressedByProposalIds\": [],\n      \"replayCases\": [\n        {\n          \"language\": \"python\",\n          \"source\": \"import polars\",\n          \"exceptionClass\": \"ModuleNotFoundError\"\n        },\n        {\n          \"language\": \"python\",\n          \"source\": \"import numpy\",\n          \"exceptionClass\": \"ModuleNotFoundError\"\n        }\n      ]\n    },\n    \"e\": {\n      \"fingerprint\": {\n        \"id\": \"e\",\n        \"kind\": \"provider_error\",\n        \"message\": \"# rate limited\",\n        \"source\": \"bash\"\n      },\n      \"count\": 2,\n      \"firstSeenTurn\": 5,\n      \"lastSeenTurn\": 6,\n      \"firstSeenAt\": \"t5\",\n      \"lastSeenAt\": \"t6\",\n      \"excerpt\": \"excerpt e turn 6\",\n      \"addressedByProposalIds\": [],\n      \"nonActionableCount\": 2\n    },\n    \"f\": {\n      \"fingerprint\": {\n        \"id\": \"f\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-f\",\n        \"source\": \"bash\",\n        \"exceptionClass\": \"httpx.ConnectError\"\n      },\n      \"count\": 1,\n      \"firstSeenTurn\": 6,\n      \"lastSeenTurn\": 6,\n      \"firstSeenAt\": \"t6\",\n      \"lastSeenAt\": \"t6\",\n      \"excerpt\": \"excerpt f turn 6\",\n      \"addressedByProposalIds\": [],\n      \"nonActionableCount\": 1\n    }\n  },\n  \"lastScannedEntryIndex\": 13\n}\n",
+    "newlyRecurring": [],
+    "recurring": [
+      "d",
+      "a"
+    ],
+    "recurringAt1": [
+      "d",
+      "a",
+      "b"
+    ],
+    "ordinal": 12,
+    "actionable": {
+      "a": true,
+      "b": true,
+      "c": false,
+      "d": true,
+      "e": false,
+      "f": false
+    }
+  },
+  {
+    "step": {
+      "mode": "update",
+      "observations": [
+        {
+          "fingerprint": {
+            "id": "c",
+            "kind": "tool_error",
+            "message": "m-c",
+            "source": "bash"
+          },
+          "excerpt": "excerpt c turn 7",
+          "entryIndex": 7,
+          "turn": 7,
+          "at": "t7"
+        },
+        {
+          "fingerprint": {
+            "id": "c",
+            "kind": "tool_error",
+            "message": "m-c",
+            "source": "bash"
+          },
+          "excerpt": "excerpt c turn 7",
+          "entryIndex": 7,
+          "turn": 7,
+          "at": "t7"
+        },
+        {
+          "fingerprint": {
+            "id": "c",
+            "kind": "tool_error",
+            "message": "m-c",
+            "source": "bash"
+          },
+          "excerpt": "excerpt c turn 7",
+          "entryIndex": 7,
+          "turn": 7,
+          "at": "t7"
+        }
+      ]
+    },
+    "ledgerText": "{\n  \"schema\": 1,\n  \"failures\": {\n    \"a\": {\n      \"fingerprint\": {\n        \"id\": \"a\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-a\",\n        \"source\": \"bash\"\n      },\n      \"count\": 2,\n      \"firstSeenTurn\": 1,\n      \"lastSeenTurn\": 2,\n      \"firstSeenAt\": \"t1\",\n      \"lastSeenAt\": \"t2\",\n      \"excerpt\": \"excerpt a turn 2\",\n      \"addressedByProposalIds\": []\n    },\n    \"b\": {\n      \"fingerprint\": {\n        \"id\": \"b\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-b\",\n        \"source\": \"bash\"\n      },\n      \"count\": 1,\n      \"firstSeenTurn\": 1,\n      \"lastSeenTurn\": 1,\n      \"firstSeenAt\": \"t1\",\n      \"lastSeenAt\": \"t1\",\n      \"excerpt\": \"excerpt b turn 1\",\n      \"addressedByProposalIds\": []\n    },\n    \"c\": {\n      \"fingerprint\": {\n        \"id\": \"c\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-c\",\n        \"source\": \"bash\"\n      },\n      \"count\": 6,\n      \"firstSeenTurn\": 2,\n      \"lastSeenTurn\": 7,\n      \"firstSeenAt\": \"t2\",\n      \"lastSeenAt\": \"t7\",\n      \"excerpt\": \"excerpt c turn 7\",\n      \"addressedByProposalIds\": [],\n      \"nonActionableCount\": 2\n    },\n    \"d\": {\n      \"fingerprint\": {\n        \"id\": \"d\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-d\",\n        \"source\": \"bash\"\n      },\n      \"count\": 3,\n      \"firstSeenTurn\": 4,\n      \"lastSeenTurn\": 5,\n      \"firstSeenAt\": \"t4\",\n      \"lastSeenAt\": \"t5\",\n      \"excerpt\": \"excerpt d turn 5\",\n      \"addressedByProposalIds\": [],\n      \"replayCases\": [\n        {\n          \"language\": \"python\",\n          \"source\": \"import polars\",\n          \"exceptionClass\": \"ModuleNotFoundError\"\n        },\n        {\n          \"language\": \"python\",\n          \"source\": \"import numpy\",\n          \"exceptionClass\": \"ModuleNotFoundError\"\n        }\n      ]\n    },\n    \"e\": {\n      \"fingerprint\": {\n        \"id\": \"e\",\n        \"kind\": \"provider_error\",\n        \"message\": \"# rate limited\",\n        \"source\": \"bash\"\n      },\n      \"count\": 2,\n      \"firstSeenTurn\": 5,\n      \"lastSeenTurn\": 6,\n      \"firstSeenAt\": \"t5\",\n      \"lastSeenAt\": \"t6\",\n      \"excerpt\": \"excerpt e turn 6\",\n      \"addressedByProposalIds\": [],\n      \"nonActionableCount\": 2\n    },\n    \"f\": {\n      \"fingerprint\": {\n        \"id\": \"f\",\n        \"kind\": \"tool_error\",\n        \"message\": \"m-f\",\n        \"source\": \"bash\",\n        \"exceptionClass\": \"httpx.ConnectError\"\n      },\n      \"count\": 1,\n      \"firstSeenTurn\": 6,\n      \"lastSeenTurn\": 6,\n      \"firstSeenAt\": \"t6\",\n      \"lastSeenAt\": \"t6\",\n      \"excerpt\": \"excerpt f turn 6\",\n      \"addressedByProposalIds\": [],\n      \"nonActionableCount\": 1\n    }\n  },\n  \"lastScannedEntryIndex\": 13\n}\n",
+    "newlyRecurring": [
+      "c"
+    ],
+    "recurring": [
+      "c",
+      "d",
+      "a"
+    ],
+    "recurringAt1": [
+      "c",
+      "d",
+      "a",
+      "b"
+    ],
+    "ordinal": 15,
+    "actionable": {
+      "a": true,
+      "b": true,
+      "c": true,
+      "d": true,
+      "e": false,
+      "f": false
+    }
+  }
+]

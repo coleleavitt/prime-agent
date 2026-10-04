@@ -49,6 +49,10 @@ pub struct SessionFeatureContext {
     /// The session's depth in the RLM recursion tree: 0 for a top-level
     /// session, N for a child spawned at depth N.
     pub rlm_depth: u32,
+    /// The session's artifact directory (where its local harness state,
+    /// kernel snapshot and other per-session files live); `None` for a
+    /// session that persists nothing.
+    pub session_artifact_dir: Option<PathBuf>,
 }
 
 /// A tool call the loop is about to execute (arguments validated).
@@ -66,6 +70,12 @@ pub struct ToolResultObservation {
     pub tool_name: String,
     pub args: serde_json::Value,
     pub is_error: bool,
+    /// The result's content blocks as the tool returned them, before any
+    /// feature appended text.
+    pub content: Vec<ToolResultContent>,
+    /// The result's structured details (`AgentToolResult::details`); `Null`
+    /// when it reported none.
+    pub details: serde_json::Value,
     /// Host-side facts the tool reported (`AgentToolResult::host_facts`);
     /// `Null` when it reported none.
     pub host_facts: serde_json::Value,
@@ -180,6 +190,21 @@ pub trait SessionFeature: Send + Sync {
         Box::pin(async { None })
     }
 
+    /// The session was created: `history` is the conversation it resumed
+    /// with (empty for a new session). Called once, before the session's
+    /// first run, on the session-creation path, so it must not block.
+    fn on_session_start(&self, context: &Arc<SessionFeatureContext>, history: &[AgentMessage]) {
+        let _ = (context, history);
+    }
+
+    /// A message was finalized into the session's context (a prompt, an
+    /// assistant reply, a tool result, a steering message), in order.
+    /// Called from the run's event stream: it must not block, so durable
+    /// work is handed to the feature's own background worker.
+    fn on_message_end(&self, context: &Arc<SessionFeatureContext>, message: &AgentMessage) {
+        let _ = (context, message);
+    }
+
     /// The session's agent run ended. Called from the run's event stream:
     /// it must not block, so durable work is handed to the feature's own
     /// background worker.
@@ -280,6 +305,8 @@ pub(crate) fn tool_call_hooks(
                 tool_name: call.tool_call.name.clone(),
                 args: call.args,
                 is_error: call.is_error,
+                content: call.result.content.clone(),
+                details: call.result.details.clone(),
                 host_facts: call.result.host_facts.clone(),
                 earlier_results_of_tool,
             };
@@ -308,9 +335,21 @@ pub(crate) fn tool_call_hooks(
     (Some(before), Some(after))
 }
 
-/// Report the end of every agent run of `agent` to `features`; nothing is
-/// subscribed when there are no features.
-pub(crate) async fn observe_agent_end(
+/// Tell `features` a session was created with `history`; nothing happens
+/// when there are no features.
+pub(crate) fn observe_session_start(
+    features: &[Arc<dyn SessionFeature>],
+    context: &Arc<SessionFeatureContext>,
+    history: &[AgentMessage],
+) {
+    for feature in features {
+        feature.on_session_start(context, history);
+    }
+}
+
+/// Report every finalized message and the end of every agent run of
+/// `agent` to `features`; nothing is subscribed when there are no features.
+pub(crate) async fn observe_agent_events(
     features: &[Arc<dyn SessionFeature>],
     context: &Arc<SessionFeatureContext>,
     agent: &pa_agent::agent::Agent,
@@ -324,10 +363,18 @@ pub(crate) async fn observe_agent_end(
     // keeps the listener.
     let _subscription = agent
         .subscribe(move |event, _signal| {
-            if matches!(event, pa_agent::types::AgentEvent::AgentEnd { .. }) {
-                for feature in &features {
-                    feature.on_agent_end(&context);
+            match &event {
+                pa_agent::types::AgentEvent::MessageEnd { message } => {
+                    for feature in &features {
+                        feature.on_message_end(&context, message);
+                    }
                 }
+                pa_agent::types::AgentEvent::AgentEnd { .. } => {
+                    for feature in &features {
+                        feature.on_agent_end(&context);
+                    }
+                }
+                _ => {}
             }
             Box::pin(async { Ok(()) })
         })
@@ -389,6 +436,7 @@ mod tests {
             model: stub_model(),
             telemetry: None,
             rlm_depth: 0,
+            session_artifact_dir: None,
         };
         let mut handlers = HostRequestHandlers::default();
         Stub.register_host_handlers(&context, &mut handlers);
@@ -449,6 +497,7 @@ mod tests {
             model: stub_model(),
             telemetry: None,
             rlm_depth: 0,
+            session_artifact_dir: None,
         });
         let (before, after) = tool_call_hooks(&[], &context);
         assert!(before.is_none() && after.is_none());

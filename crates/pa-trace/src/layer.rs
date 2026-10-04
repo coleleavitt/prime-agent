@@ -11,7 +11,9 @@
 //!
 //! Field conventions: span fields become `attrs` (dotted names kept); an
 //! `error` field (or an ERROR event carrying only `error`, as
-//! `#[instrument(err)]` emits) marks the span failed with that text; a
+//! `#[instrument(err)]` emits) marks the span failed with that text; an
+//! event under [`SPAN_ATTRIBUTES_TARGET`] adds its fields to the attrs of
+//! the span it happens in and writes nothing itself; a
 //! `traceparent` field names a remote parent; `session.id` scopes the
 //! `sessionId` of every entry written inside the span.
 
@@ -20,6 +22,7 @@ use std::time::{Instant, SystemTime};
 
 use pa_types::trace_context::{
     TraceContext, FORWARDED_RECORD_FIELD, FORWARDED_RECORD_TARGET, REMOTE_PARENT_FIELD,
+    SPAN_ATTRIBUTES_TARGET,
 };
 use serde_json::{Map, Value};
 use tracing::field::{Field, Visit};
@@ -172,6 +175,7 @@ impl TraceLayer {
 /// Whether a callsite reaches the recorder at all.
 fn recorded(metadata: &Metadata<'_>) -> bool {
     metadata.target() == FORWARDED_RECORD_TARGET
+        || metadata.target() == SPAN_ATTRIBUTES_TARGET
         || (metadata.target().starts_with("pa_") && *metadata.level() <= tracing::Level::INFO)
 }
 
@@ -280,6 +284,14 @@ where
         let mut visitor = FieldVisitor::default();
         event.record(&mut visitor);
         let span = ctx.event_span(event);
+        if metadata.target() == SPAN_ATTRIBUTES_TARGET {
+            if let Some(span) = &span {
+                if let Some(state) = span.extensions_mut().get_mut::<SpanState>() {
+                    state.attrs.extend(visitor.fields);
+                }
+            }
+            return;
+        }
         let Some(message) = visitor.message else {
             // `#[instrument(err)]`: the error ends the span that returned it.
             if *metadata.level() == tracing::Level::ERROR && visitor.error.is_some() {

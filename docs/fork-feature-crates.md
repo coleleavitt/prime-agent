@@ -22,12 +22,15 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
    a stub provider. Existing seams:
    - kernel host requests: `pa_core::kernel::shared::HostRequestHandlers` via `SessionEngineConfig::extra_host_handlers`;
    - observability: `tracing` spans/events emitted by native code; a feature crate supplies a `tracing_subscriber` Layer
-     that `pa-cli` installs;
+     that `pa-cli` installs; an event under `pa_types::trace_context::SPAN_ATTRIBUTES_TARGET` adds its fields to the
+     attributes of the span it happens in (how a feature annotates a native span such as `tool.execute`);
    - CLI commands: `#[cfg(feature)]` entries in `pa-cli`'s command registry dispatching into the feature crate;
-   - session lifecycle: `pa_core::features::SessionFeature` default methods `before_tool_call` / `after_tool_call`
-     (observe a tool call and its result, incl. the tool's non-persisted `host_facts` such as an `ipython` cell's
-     finished `bash()` commands; returned text is appended to the result the model sees), `on_agent_end` (every run
-     end, non-blocking), and `flush` (bounded, once at process exit). Installed only when a feature is.
+   - session lifecycle: `pa_core::features::SessionFeature` default methods `on_session_start` (once, with the
+     resumed history), `before_tool_call` / `after_tool_call` (observe a tool call and its result: content, details,
+     and the tool's non-persisted `host_facts` such as an `ipython` cell's finished `bash()` commands; returned text is
+     appended to the result the model sees), `on_message_end` (every finalized message, in order, non-blocking),
+     `on_agent_end` (every run end, non-blocking), and `flush` (bounded, once at process exit); the context carries the
+     session's artifact dir. Installed only when a feature is.
    Seams to add as features need them: system-prompt layer providers, turn-start observers.
 5. **Data ownership.** A crate owns its files under `~/.prime/agent/<feature>/` (or the session artifact dir) and its
    key in `harness_state.json` (`HarnessState::extensions["<feature>"]`). It never rewrites another crate's data.

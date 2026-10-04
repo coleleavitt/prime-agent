@@ -1,0 +1,1058 @@
+[
+  {
+    "kind": "tool_error",
+    "source": "bash",
+    "exceptionClass": null,
+    "raw": "exit 1",
+    "normalized": "exit #",
+    "fingerprint": {
+      "id": "ee303b80f7945236",
+      "kind": "tool_error",
+      "message": "exit #",
+      "source": "bash"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "ipython",
+    "exceptionClass": "FileNotFoundError",
+    "raw": "exit 1",
+    "normalized": "exit #",
+    "fingerprint": {
+      "id": "0ec489f2bb1a2c3e",
+      "kind": "python_exception",
+      "message": "exit #",
+      "source": "ipython",
+      "exceptionClass": "FileNotFoundError"
+    }
+  },
+  {
+    "kind": "provider_error",
+    "source": "anthropic",
+    "exceptionClass": null,
+    "raw": "exit 1",
+    "normalized": "exit #",
+    "fingerprint": {
+      "id": "46eb4086224935df",
+      "kind": "provider_error",
+      "message": "exit #",
+      "source": "anthropic"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": null,
+    "exceptionClass": null,
+    "raw": "exit 1",
+    "normalized": "exit #",
+    "fingerprint": {
+      "id": "41d5f7050af4f5fd",
+      "kind": "tool_error",
+      "message": "exit #"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "deploy-widget",
+    "exceptionClass": "requests.exceptions.ConnectionError",
+    "raw": "exit 1",
+    "normalized": "exit #",
+    "fingerprint": {
+      "id": "49acc77d3d41face",
+      "kind": "python_exception",
+      "message": "exit #",
+      "source": "deploy-widget",
+      "exceptionClass": "requests.exceptions.ConnectionError"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": "bash",
+    "exceptionClass": null,
+    "raw": "exit 001",
+    "normalized": "exit #",
+    "fingerprint": {
+      "id": "ee303b80f7945236",
+      "kind": "tool_error",
+      "message": "exit #",
+      "source": "bash"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "ipython",
+    "exceptionClass": "FileNotFoundError",
+    "raw": "exit 001",
+    "normalized": "exit #",
+    "fingerprint": {
+      "id": "0ec489f2bb1a2c3e",
+      "kind": "python_exception",
+      "message": "exit #",
+      "source": "ipython",
+      "exceptionClass": "FileNotFoundError"
+    }
+  },
+  {
+    "kind": "provider_error",
+    "source": "anthropic",
+    "exceptionClass": null,
+    "raw": "exit 001",
+    "normalized": "exit #",
+    "fingerprint": {
+      "id": "46eb4086224935df",
+      "kind": "provider_error",
+      "message": "exit #",
+      "source": "anthropic"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": null,
+    "exceptionClass": null,
+    "raw": "exit 001",
+    "normalized": "exit #",
+    "fingerprint": {
+      "id": "41d5f7050af4f5fd",
+      "kind": "tool_error",
+      "message": "exit #"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "deploy-widget",
+    "exceptionClass": "requests.exceptions.ConnectionError",
+    "raw": "exit 001",
+    "normalized": "exit #",
+    "fingerprint": {
+      "id": "49acc77d3d41face",
+      "kind": "python_exception",
+      "message": "exit #",
+      "source": "deploy-widget",
+      "exceptionClass": "requests.exceptions.ConnectionError"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": "bash",
+    "exceptionClass": null,
+    "raw": "  [Errno 2] No such file: \"/var/tmp/run-42/out.json\"   at   0x7ffe1234 id=3f2a9c8e7b6d5a4f   line 17\n",
+    "normalized": "[errno #] no such file: ? at <hex> id=<hex> line #",
+    "fingerprint": {
+      "id": "b2798b94a862e6dd",
+      "kind": "tool_error",
+      "message": "[errno #] no such file: ? at <hex> id=<hex> line #",
+      "source": "bash"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "ipython",
+    "exceptionClass": "FileNotFoundError",
+    "raw": "  [Errno 2] No such file: \"/var/tmp/run-42/out.json\"   at   0x7ffe1234 id=3f2a9c8e7b6d5a4f   line 17\n",
+    "normalized": "[errno #] no such file: ? at <hex> id=<hex> line #",
+    "fingerprint": {
+      "id": "641cca8041ca4fb7",
+      "kind": "python_exception",
+      "message": "[errno #] no such file: ? at <hex> id=<hex> line #",
+      "source": "ipython",
+      "exceptionClass": "FileNotFoundError"
+    }
+  },
+  {
+    "kind": "provider_error",
+    "source": "anthropic",
+    "exceptionClass": null,
+    "raw": "  [Errno 2] No such file: \"/var/tmp/run-42/out.json\"   at   0x7ffe1234 id=3f2a9c8e7b6d5a4f   line 17\n",
+    "normalized": "[errno #] no such file: ? at <hex> id=<hex> line #",
+    "fingerprint": {
+      "id": "597e09fb4a68e7c0",
+      "kind": "provider_error",
+      "message": "[errno #] no such file: ? at <hex> id=<hex> line #",
+      "source": "anthropic"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": null,
+    "exceptionClass": null,
+    "raw": "  [Errno 2] No such file: \"/var/tmp/run-42/out.json\"   at   0x7ffe1234 id=3f2a9c8e7b6d5a4f   line 17\n",
+    "normalized": "[errno #] no such file: ? at <hex> id=<hex> line #",
+    "fingerprint": {
+      "id": "8098731926dc5cea",
+      "kind": "tool_error",
+      "message": "[errno #] no such file: ? at <hex> id=<hex> line #"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "deploy-widget",
+    "exceptionClass": "requests.exceptions.ConnectionError",
+    "raw": "  [Errno 2] No such file: \"/var/tmp/run-42/out.json\"   at   0x7ffe1234 id=3f2a9c8e7b6d5a4f   line 17\n",
+    "normalized": "[errno #] no such file: ? at <hex> id=<hex> line #",
+    "fingerprint": {
+      "id": "d1fd66310d71a058",
+      "kind": "python_exception",
+      "message": "[errno #] no such file: ? at <hex> id=<hex> line #",
+      "source": "deploy-widget",
+      "exceptionClass": "requests.exceptions.ConnectionError"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": "bash",
+    "exceptionClass": null,
+    "raw": "[Errno 2] No such file or directory: '/tmp/build-1/out.txt'",
+    "normalized": "[errno #] no such file or directory: ?",
+    "fingerprint": {
+      "id": "c69d0b7a0f733176",
+      "kind": "tool_error",
+      "message": "[errno #] no such file or directory: ?",
+      "source": "bash"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "ipython",
+    "exceptionClass": "FileNotFoundError",
+    "raw": "[Errno 2] No such file or directory: '/tmp/build-1/out.txt'",
+    "normalized": "[errno #] no such file or directory: ?",
+    "fingerprint": {
+      "id": "cc62aef6bb2fc67d",
+      "kind": "python_exception",
+      "message": "[errno #] no such file or directory: ?",
+      "source": "ipython",
+      "exceptionClass": "FileNotFoundError"
+    }
+  },
+  {
+    "kind": "provider_error",
+    "source": "anthropic",
+    "exceptionClass": null,
+    "raw": "[Errno 2] No such file or directory: '/tmp/build-1/out.txt'",
+    "normalized": "[errno #] no such file or directory: ?",
+    "fingerprint": {
+      "id": "4d50da42d2ff86ab",
+      "kind": "provider_error",
+      "message": "[errno #] no such file or directory: ?",
+      "source": "anthropic"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": null,
+    "exceptionClass": null,
+    "raw": "[Errno 2] No such file or directory: '/tmp/build-1/out.txt'",
+    "normalized": "[errno #] no such file or directory: ?",
+    "fingerprint": {
+      "id": "7da4d4ea50b0e5dd",
+      "kind": "tool_error",
+      "message": "[errno #] no such file or directory: ?"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "deploy-widget",
+    "exceptionClass": "requests.exceptions.ConnectionError",
+    "raw": "[Errno 2] No such file or directory: '/tmp/build-1/out.txt'",
+    "normalized": "[errno #] no such file or directory: ?",
+    "fingerprint": {
+      "id": "9eee3a3389cd8742",
+      "kind": "python_exception",
+      "message": "[errno #] no such file or directory: ?",
+      "source": "deploy-widget",
+      "exceptionClass": "requests.exceptions.ConnectionError"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": "bash",
+    "exceptionClass": null,
+    "raw": "HTTPSConnectionPool(host='api.example.com', port=443): Max retries exceeded with url: /v2/items/1234",
+    "normalized": "httpsconnectionpool(host=?, port=#): max retries exceeded with url: <path>",
+    "fingerprint": {
+      "id": "226fb49bb57ce719",
+      "kind": "tool_error",
+      "message": "httpsconnectionpool(host=?, port=#): max retries exceeded with url: <path>",
+      "source": "bash"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "ipython",
+    "exceptionClass": "FileNotFoundError",
+    "raw": "HTTPSConnectionPool(host='api.example.com', port=443): Max retries exceeded with url: /v2/items/1234",
+    "normalized": "httpsconnectionpool(host=?, port=#): max retries exceeded with url: <path>",
+    "fingerprint": {
+      "id": "1f13f3a67079177f",
+      "kind": "python_exception",
+      "message": "httpsconnectionpool(host=?, port=#): max retries exceeded with url: <path>",
+      "source": "ipython",
+      "exceptionClass": "FileNotFoundError"
+    }
+  },
+  {
+    "kind": "provider_error",
+    "source": "anthropic",
+    "exceptionClass": null,
+    "raw": "HTTPSConnectionPool(host='api.example.com', port=443): Max retries exceeded with url: /v2/items/1234",
+    "normalized": "httpsconnectionpool(host=?, port=#): max retries exceeded with url: <path>",
+    "fingerprint": {
+      "id": "cf31aac7ba56987c",
+      "kind": "provider_error",
+      "message": "httpsconnectionpool(host=?, port=#): max retries exceeded with url: <path>",
+      "source": "anthropic"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": null,
+    "exceptionClass": null,
+    "raw": "HTTPSConnectionPool(host='api.example.com', port=443): Max retries exceeded with url: /v2/items/1234",
+    "normalized": "httpsconnectionpool(host=?, port=#): max retries exceeded with url: <path>",
+    "fingerprint": {
+      "id": "66b04ff2af12c297",
+      "kind": "tool_error",
+      "message": "httpsconnectionpool(host=?, port=#): max retries exceeded with url: <path>"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "deploy-widget",
+    "exceptionClass": "requests.exceptions.ConnectionError",
+    "raw": "HTTPSConnectionPool(host='api.example.com', port=443): Max retries exceeded with url: /v2/items/1234",
+    "normalized": "httpsconnectionpool(host=?, port=#): max retries exceeded with url: <path>",
+    "fingerprint": {
+      "id": "c025ceb4c11edd25",
+      "kind": "python_exception",
+      "message": "httpsconnectionpool(host=?, port=#): max retries exceeded with url: <path>",
+      "source": "deploy-widget",
+      "exceptionClass": "requests.exceptions.ConnectionError"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": "bash",
+    "exceptionClass": null,
+    "raw": "'AgentClient' object has no attribute 'list_agents'",
+    "normalized": "? object has no attribute ?",
+    "fingerprint": {
+      "id": "8f921d88d20a7514",
+      "kind": "tool_error",
+      "message": "? object has no attribute ?",
+      "source": "bash"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "ipython",
+    "exceptionClass": "FileNotFoundError",
+    "raw": "'AgentClient' object has no attribute 'list_agents'",
+    "normalized": "? object has no attribute ?",
+    "fingerprint": {
+      "id": "a3f98a71fa004303",
+      "kind": "python_exception",
+      "message": "? object has no attribute ?",
+      "source": "ipython",
+      "exceptionClass": "FileNotFoundError"
+    }
+  },
+  {
+    "kind": "provider_error",
+    "source": "anthropic",
+    "exceptionClass": null,
+    "raw": "'AgentClient' object has no attribute 'list_agents'",
+    "normalized": "? object has no attribute ?",
+    "fingerprint": {
+      "id": "d3375ebc7f174904",
+      "kind": "provider_error",
+      "message": "? object has no attribute ?",
+      "source": "anthropic"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": null,
+    "exceptionClass": null,
+    "raw": "'AgentClient' object has no attribute 'list_agents'",
+    "normalized": "? object has no attribute ?",
+    "fingerprint": {
+      "id": "e47ad27b8ce6e033",
+      "kind": "tool_error",
+      "message": "? object has no attribute ?"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "deploy-widget",
+    "exceptionClass": "requests.exceptions.ConnectionError",
+    "raw": "'AgentClient' object has no attribute 'list_agents'",
+    "normalized": "? object has no attribute ?",
+    "fingerprint": {
+      "id": "ce637dea179f2173",
+      "kind": "python_exception",
+      "message": "? object has no attribute ?",
+      "source": "deploy-widget",
+      "exceptionClass": "requests.exceptions.ConnectionError"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": "bash",
+    "exceptionClass": null,
+    "raw": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "normalized": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "fingerprint": {
+      "id": "672464acbff2ff40",
+      "kind": "tool_error",
+      "message": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "source": "bash"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "ipython",
+    "exceptionClass": "FileNotFoundError",
+    "raw": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "normalized": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "fingerprint": {
+      "id": "68f83c5a307cfa01",
+      "kind": "python_exception",
+      "message": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "source": "ipython",
+      "exceptionClass": "FileNotFoundError"
+    }
+  },
+  {
+    "kind": "provider_error",
+    "source": "anthropic",
+    "exceptionClass": null,
+    "raw": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "normalized": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "fingerprint": {
+      "id": "8d086b8a20788de1",
+      "kind": "provider_error",
+      "message": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "source": "anthropic"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": null,
+    "exceptionClass": null,
+    "raw": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "normalized": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "fingerprint": {
+      "id": "bf4e4c62de9aefd2",
+      "kind": "tool_error",
+      "message": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "deploy-widget",
+    "exceptionClass": "requests.exceptions.ConnectionError",
+    "raw": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "normalized": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "fingerprint": {
+      "id": "7bb0947e56a779b9",
+      "kind": "python_exception",
+      "message": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "source": "deploy-widget",
+      "exceptionClass": "requests.exceptions.ConnectionError"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": "bash",
+    "exceptionClass": null,
+    "raw": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy😀tail",
+    "normalized": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy😀",
+    "fingerprint": {
+      "id": "f32e0ec6fa31773b",
+      "kind": "tool_error",
+      "message": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy😀",
+      "source": "bash"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "ipython",
+    "exceptionClass": "FileNotFoundError",
+    "raw": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy😀tail",
+    "normalized": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy😀",
+    "fingerprint": {
+      "id": "6d2fc13957febc0c",
+      "kind": "python_exception",
+      "message": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy😀",
+      "source": "ipython",
+      "exceptionClass": "FileNotFoundError"
+    }
+  },
+  {
+    "kind": "provider_error",
+    "source": "anthropic",
+    "exceptionClass": null,
+    "raw": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy😀tail",
+    "normalized": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy😀",
+    "fingerprint": {
+      "id": "9da3c8323a94a5f3",
+      "kind": "provider_error",
+      "message": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy😀",
+      "source": "anthropic"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": null,
+    "exceptionClass": null,
+    "raw": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy😀tail",
+    "normalized": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy😀",
+    "fingerprint": {
+      "id": "c3d530ab929a717b",
+      "kind": "tool_error",
+      "message": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy😀"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "deploy-widget",
+    "exceptionClass": "requests.exceptions.ConnectionError",
+    "raw": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy😀tail",
+    "normalized": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy😀",
+    "fingerprint": {
+      "id": "d77f52995db38d06",
+      "kind": "python_exception",
+      "message": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy😀",
+      "source": "deploy-widget",
+      "exceptionClass": "requests.exceptions.ConnectionError"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": "bash",
+    "exceptionClass": null,
+    "raw": "Ünïcödé ΣΊΣΥΦΟΣ error at C:\\Users\\me\\x.py and c:/tmp/a-b/c.txt ~/home/.cache/x",
+    "normalized": "ünïcödé σίσυφος error at c:\\users\\me\\x.py and <path> <path>",
+    "fingerprint": {
+      "id": "40ea58d5e8fd3c79",
+      "kind": "tool_error",
+      "message": "ünïcödé σίσυφος error at c:\\users\\me\\x.py and <path> <path>",
+      "source": "bash"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "ipython",
+    "exceptionClass": "FileNotFoundError",
+    "raw": "Ünïcödé ΣΊΣΥΦΟΣ error at C:\\Users\\me\\x.py and c:/tmp/a-b/c.txt ~/home/.cache/x",
+    "normalized": "ünïcödé σίσυφος error at c:\\users\\me\\x.py and <path> <path>",
+    "fingerprint": {
+      "id": "ac2a95f22dc69bf5",
+      "kind": "python_exception",
+      "message": "ünïcödé σίσυφος error at c:\\users\\me\\x.py and <path> <path>",
+      "source": "ipython",
+      "exceptionClass": "FileNotFoundError"
+    }
+  },
+  {
+    "kind": "provider_error",
+    "source": "anthropic",
+    "exceptionClass": null,
+    "raw": "Ünïcödé ΣΊΣΥΦΟΣ error at C:\\Users\\me\\x.py and c:/tmp/a-b/c.txt ~/home/.cache/x",
+    "normalized": "ünïcödé σίσυφος error at c:\\users\\me\\x.py and <path> <path>",
+    "fingerprint": {
+      "id": "61aa73b2a9705f8e",
+      "kind": "provider_error",
+      "message": "ünïcödé σίσυφος error at c:\\users\\me\\x.py and <path> <path>",
+      "source": "anthropic"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": null,
+    "exceptionClass": null,
+    "raw": "Ünïcödé ΣΊΣΥΦΟΣ error at C:\\Users\\me\\x.py and c:/tmp/a-b/c.txt ~/home/.cache/x",
+    "normalized": "ünïcödé σίσυφος error at c:\\users\\me\\x.py and <path> <path>",
+    "fingerprint": {
+      "id": "5f85b795ecded182",
+      "kind": "tool_error",
+      "message": "ünïcödé σίσυφος error at c:\\users\\me\\x.py and <path> <path>"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "deploy-widget",
+    "exceptionClass": "requests.exceptions.ConnectionError",
+    "raw": "Ünïcödé ΣΊΣΥΦΟΣ error at C:\\Users\\me\\x.py and c:/tmp/a-b/c.txt ~/home/.cache/x",
+    "normalized": "ünïcödé σίσυφος error at c:\\users\\me\\x.py and <path> <path>",
+    "fingerprint": {
+      "id": "39bc47bd77cb9824",
+      "kind": "python_exception",
+      "message": "ünïcödé σίσυφος error at c:\\users\\me\\x.py and <path> <path>",
+      "source": "deploy-widget",
+      "exceptionClass": "requests.exceptions.ConnectionError"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": "bash",
+    "exceptionClass": null,
+    "raw": "uuid 123e4567-e89b-12d3-a456-426614174000 and deadbeefcafe and 0xFF and -3.25 and +7",
+    "normalized": "uuid <hex> and <hex> and <hex> and # and #",
+    "fingerprint": {
+      "id": "79728b9474dd4fad",
+      "kind": "tool_error",
+      "message": "uuid <hex> and <hex> and <hex> and # and #",
+      "source": "bash"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "ipython",
+    "exceptionClass": "FileNotFoundError",
+    "raw": "uuid 123e4567-e89b-12d3-a456-426614174000 and deadbeefcafe and 0xFF and -3.25 and +7",
+    "normalized": "uuid <hex> and <hex> and <hex> and # and #",
+    "fingerprint": {
+      "id": "6e8275d6ae1b9583",
+      "kind": "python_exception",
+      "message": "uuid <hex> and <hex> and <hex> and # and #",
+      "source": "ipython",
+      "exceptionClass": "FileNotFoundError"
+    }
+  },
+  {
+    "kind": "provider_error",
+    "source": "anthropic",
+    "exceptionClass": null,
+    "raw": "uuid 123e4567-e89b-12d3-a456-426614174000 and deadbeefcafe and 0xFF and -3.25 and +7",
+    "normalized": "uuid <hex> and <hex> and <hex> and # and #",
+    "fingerprint": {
+      "id": "2a86b0da805474aa",
+      "kind": "provider_error",
+      "message": "uuid <hex> and <hex> and <hex> and # and #",
+      "source": "anthropic"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": null,
+    "exceptionClass": null,
+    "raw": "uuid 123e4567-e89b-12d3-a456-426614174000 and deadbeefcafe and 0xFF and -3.25 and +7",
+    "normalized": "uuid <hex> and <hex> and <hex> and # and #",
+    "fingerprint": {
+      "id": "ba2daf59120cb3ec",
+      "kind": "tool_error",
+      "message": "uuid <hex> and <hex> and <hex> and # and #"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "deploy-widget",
+    "exceptionClass": "requests.exceptions.ConnectionError",
+    "raw": "uuid 123e4567-e89b-12d3-a456-426614174000 and deadbeefcafe and 0xFF and -3.25 and +7",
+    "normalized": "uuid <hex> and <hex> and <hex> and # and #",
+    "fingerprint": {
+      "id": "2b91328b7c5a24a5",
+      "kind": "python_exception",
+      "message": "uuid <hex> and <hex> and <hex> and # and #",
+      "source": "deploy-widget",
+      "exceptionClass": "requests.exceptions.ConnectionError"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": "bash",
+    "exceptionClass": null,
+    "raw": "quotes `back tick` \"double\" 'single' 'unterminated and \"multi\nline\"",
+    "normalized": "quotes ? ? ? 'unterminated and \"multi line\"",
+    "fingerprint": {
+      "id": "3c80caafbddac221",
+      "kind": "tool_error",
+      "message": "quotes ? ? ? 'unterminated and \"multi line\"",
+      "source": "bash"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "ipython",
+    "exceptionClass": "FileNotFoundError",
+    "raw": "quotes `back tick` \"double\" 'single' 'unterminated and \"multi\nline\"",
+    "normalized": "quotes ? ? ? 'unterminated and \"multi line\"",
+    "fingerprint": {
+      "id": "38f33e11295c1039",
+      "kind": "python_exception",
+      "message": "quotes ? ? ? 'unterminated and \"multi line\"",
+      "source": "ipython",
+      "exceptionClass": "FileNotFoundError"
+    }
+  },
+  {
+    "kind": "provider_error",
+    "source": "anthropic",
+    "exceptionClass": null,
+    "raw": "quotes `back tick` \"double\" 'single' 'unterminated and \"multi\nline\"",
+    "normalized": "quotes ? ? ? 'unterminated and \"multi line\"",
+    "fingerprint": {
+      "id": "b85c5f3b66ab6d2d",
+      "kind": "provider_error",
+      "message": "quotes ? ? ? 'unterminated and \"multi line\"",
+      "source": "anthropic"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": null,
+    "exceptionClass": null,
+    "raw": "quotes `back tick` \"double\" 'single' 'unterminated and \"multi\nline\"",
+    "normalized": "quotes ? ? ? 'unterminated and \"multi line\"",
+    "fingerprint": {
+      "id": "a511a52c937501fc",
+      "kind": "tool_error",
+      "message": "quotes ? ? ? 'unterminated and \"multi line\""
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "deploy-widget",
+    "exceptionClass": "requests.exceptions.ConnectionError",
+    "raw": "quotes `back tick` \"double\" 'single' 'unterminated and \"multi\nline\"",
+    "normalized": "quotes ? ? ? 'unterminated and \"multi line\"",
+    "fingerprint": {
+      "id": "5bf9f3922c1782eb",
+      "kind": "python_exception",
+      "message": "quotes ? ? ? 'unterminated and \"multi line\"",
+      "source": "deploy-widget",
+      "exceptionClass": "requests.exceptions.ConnectionError"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": "bash",
+    "exceptionClass": null,
+    "raw": "'qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq' then 'rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr'",
+    "normalized": "? then 'rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+    "fingerprint": {
+      "id": "aaf7724553612faa",
+      "kind": "tool_error",
+      "message": "? then 'rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+      "source": "bash"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "ipython",
+    "exceptionClass": "FileNotFoundError",
+    "raw": "'qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq' then 'rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr'",
+    "normalized": "? then 'rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+    "fingerprint": {
+      "id": "0cf88c98901f2ebb",
+      "kind": "python_exception",
+      "message": "? then 'rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+      "source": "ipython",
+      "exceptionClass": "FileNotFoundError"
+    }
+  },
+  {
+    "kind": "provider_error",
+    "source": "anthropic",
+    "exceptionClass": null,
+    "raw": "'qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq' then 'rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr'",
+    "normalized": "? then 'rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+    "fingerprint": {
+      "id": "3b64615df367c37c",
+      "kind": "provider_error",
+      "message": "? then 'rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+      "source": "anthropic"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": null,
+    "exceptionClass": null,
+    "raw": "'qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq' then 'rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr'",
+    "normalized": "? then 'rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+    "fingerprint": {
+      "id": "b9fb4e780d0a9b29",
+      "kind": "tool_error",
+      "message": "? then 'rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "deploy-widget",
+    "exceptionClass": "requests.exceptions.ConnectionError",
+    "raw": "'qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq' then 'rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr'",
+    "normalized": "? then 'rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+    "fingerprint": {
+      "id": "cc0b0ccc82720ffe",
+      "kind": "python_exception",
+      "message": "? then 'rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+      "source": "deploy-widget",
+      "exceptionClass": "requests.exceptions.ConnectionError"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": "bash",
+    "exceptionClass": null,
+    "raw": "tabs\tand nbsp ls﻿bomnel",
+    "normalized": "tabs and nbsp ls bomnel",
+    "fingerprint": {
+      "id": "1b96c8bc52901b6a",
+      "kind": "tool_error",
+      "message": "tabs and nbsp ls bomnel",
+      "source": "bash"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "ipython",
+    "exceptionClass": "FileNotFoundError",
+    "raw": "tabs\tand nbsp ls﻿bomnel",
+    "normalized": "tabs and nbsp ls bomnel",
+    "fingerprint": {
+      "id": "46fe71481f8bdb32",
+      "kind": "python_exception",
+      "message": "tabs and nbsp ls bomnel",
+      "source": "ipython",
+      "exceptionClass": "FileNotFoundError"
+    }
+  },
+  {
+    "kind": "provider_error",
+    "source": "anthropic",
+    "exceptionClass": null,
+    "raw": "tabs\tand nbsp ls﻿bomnel",
+    "normalized": "tabs and nbsp ls bomnel",
+    "fingerprint": {
+      "id": "f7b781319218a00a",
+      "kind": "provider_error",
+      "message": "tabs and nbsp ls bomnel",
+      "source": "anthropic"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": null,
+    "exceptionClass": null,
+    "raw": "tabs\tand nbsp ls﻿bomnel",
+    "normalized": "tabs and nbsp ls bomnel",
+    "fingerprint": {
+      "id": "dc757b1824e1fed2",
+      "kind": "tool_error",
+      "message": "tabs and nbsp ls bomnel"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "deploy-widget",
+    "exceptionClass": "requests.exceptions.ConnectionError",
+    "raw": "tabs\tand nbsp ls﻿bomnel",
+    "normalized": "tabs and nbsp ls bomnel",
+    "fingerprint": {
+      "id": "264af78e78fc6bcb",
+      "kind": "python_exception",
+      "message": "tabs and nbsp ls bomnel",
+      "source": "deploy-widget",
+      "exceptionClass": "requests.exceptions.ConnectionError"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": "bash",
+    "exceptionClass": null,
+    "raw": "",
+    "normalized": "",
+    "fingerprint": {
+      "id": "c08ac94c475cc028",
+      "kind": "tool_error",
+      "message": "",
+      "source": "bash"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "ipython",
+    "exceptionClass": "FileNotFoundError",
+    "raw": "",
+    "normalized": "",
+    "fingerprint": {
+      "id": "ccf72e18d309ca03",
+      "kind": "python_exception",
+      "message": "",
+      "source": "ipython",
+      "exceptionClass": "FileNotFoundError"
+    }
+  },
+  {
+    "kind": "provider_error",
+    "source": "anthropic",
+    "exceptionClass": null,
+    "raw": "",
+    "normalized": "",
+    "fingerprint": {
+      "id": "85f058da39c594b7",
+      "kind": "provider_error",
+      "message": "",
+      "source": "anthropic"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": null,
+    "exceptionClass": null,
+    "raw": "",
+    "normalized": "",
+    "fingerprint": {
+      "id": "df31353d36f8c3bd",
+      "kind": "tool_error",
+      "message": ""
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "deploy-widget",
+    "exceptionClass": "requests.exceptions.ConnectionError",
+    "raw": "",
+    "normalized": "",
+    "fingerprint": {
+      "id": "01cf2d4881ad57d5",
+      "kind": "python_exception",
+      "message": "",
+      "source": "deploy-widget",
+      "exceptionClass": "requests.exceptions.ConnectionError"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": "bash",
+    "exceptionClass": null,
+    "raw": "   ",
+    "normalized": "",
+    "fingerprint": {
+      "id": "c08ac94c475cc028",
+      "kind": "tool_error",
+      "message": "",
+      "source": "bash"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "ipython",
+    "exceptionClass": "FileNotFoundError",
+    "raw": "   ",
+    "normalized": "",
+    "fingerprint": {
+      "id": "ccf72e18d309ca03",
+      "kind": "python_exception",
+      "message": "",
+      "source": "ipython",
+      "exceptionClass": "FileNotFoundError"
+    }
+  },
+  {
+    "kind": "provider_error",
+    "source": "anthropic",
+    "exceptionClass": null,
+    "raw": "   ",
+    "normalized": "",
+    "fingerprint": {
+      "id": "85f058da39c594b7",
+      "kind": "provider_error",
+      "message": "",
+      "source": "anthropic"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": null,
+    "exceptionClass": null,
+    "raw": "   ",
+    "normalized": "",
+    "fingerprint": {
+      "id": "df31353d36f8c3bd",
+      "kind": "tool_error",
+      "message": ""
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "deploy-widget",
+    "exceptionClass": "requests.exceptions.ConnectionError",
+    "raw": "   ",
+    "normalized": "",
+    "fingerprint": {
+      "id": "01cf2d4881ad57d5",
+      "kind": "python_exception",
+      "message": "",
+      "source": "deploy-widget",
+      "exceptionClass": "requests.exceptions.ConnectionError"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": "bash",
+    "exceptionClass": null,
+    "raw": "rate limited: retry after 12s (HTTP 429)",
+    "normalized": "rate limited: retry after #s (http #)",
+    "fingerprint": {
+      "id": "fe138605d0f93eef",
+      "kind": "tool_error",
+      "message": "rate limited: retry after #s (http #)",
+      "source": "bash"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "ipython",
+    "exceptionClass": "FileNotFoundError",
+    "raw": "rate limited: retry after 12s (HTTP 429)",
+    "normalized": "rate limited: retry after #s (http #)",
+    "fingerprint": {
+      "id": "81cfec2bc1782ebe",
+      "kind": "python_exception",
+      "message": "rate limited: retry after #s (http #)",
+      "source": "ipython",
+      "exceptionClass": "FileNotFoundError"
+    }
+  },
+  {
+    "kind": "provider_error",
+    "source": "anthropic",
+    "exceptionClass": null,
+    "raw": "rate limited: retry after 12s (HTTP 429)",
+    "normalized": "rate limited: retry after #s (http #)",
+    "fingerprint": {
+      "id": "6514ea1a2913f12c",
+      "kind": "provider_error",
+      "message": "rate limited: retry after #s (http #)",
+      "source": "anthropic"
+    }
+  },
+  {
+    "kind": "tool_error",
+    "source": null,
+    "exceptionClass": null,
+    "raw": "rate limited: retry after 12s (HTTP 429)",
+    "normalized": "rate limited: retry after #s (http #)",
+    "fingerprint": {
+      "id": "a975cc44e10254c0",
+      "kind": "tool_error",
+      "message": "rate limited: retry after #s (http #)"
+    }
+  },
+  {
+    "kind": "python_exception",
+    "source": "deploy-widget",
+    "exceptionClass": "requests.exceptions.ConnectionError",
+    "raw": "rate limited: retry after 12s (HTTP 429)",
+    "normalized": "rate limited: retry after #s (http #)",
+    "fingerprint": {
+      "id": "be8681a1a6d2c046",
+      "kind": "python_exception",
+      "message": "rate limited: retry after #s (http #)",
+      "source": "deploy-widget",
+      "exceptionClass": "requests.exceptions.ConnectionError"
+    }
+  }
+]

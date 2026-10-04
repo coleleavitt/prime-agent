@@ -274,6 +274,19 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     if let Some(extra) = config.extra_host_handlers.clone() {
         handlers.merge(extra);
     }
+    // The daemon worker owns persistence outside the session manager, so
+    // its conversation-log path implies the same artifact tree.
+    let session_artifact_dir: Option<PathBuf> = wiring
+        .session
+        .lock()
+        .await
+        .get_session_artifact_dir()
+        .or_else(|| {
+            config
+                .conversation_log_path
+                .as_deref()
+                .and_then(super::harness_digest::session_artifact_dir_for_log)
+        });
     // Separately built features installed by the composition root (none in
     // the native product).
     let feature_context = Arc::new(crate::features::SessionFeatureContext {
@@ -290,6 +303,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             .as_ref()
             .map(crate::features::FeatureTelemetry::from_wiring),
         rlm_depth: config.rlm_depth.unwrap_or(0),
+        session_artifact_dir: session_artifact_dir.clone(),
     });
     crate::features::register_session_host_handlers(&feature_context, &mut handlers);
     // The `system_router.run` host handler the bundled system-router skill
@@ -353,19 +367,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     if compaction_settings.agent_callable.unwrap_or(true) {
         turn_boundary.register_compact_handlers(&mut handlers, keep_recent_tokens);
     }
-    // The daemon worker owns persistence outside the session manager, so
-    // its conversation-log path implies the same artifact tree.
-    let session_artifact_dir: Option<PathBuf> = wiring
-        .session
-        .lock()
-        .await
-        .get_session_artifact_dir()
-        .or_else(|| {
-            config
-                .conversation_log_path
-                .as_deref()
-                .and_then(super::harness_digest::session_artifact_dir_for_log)
-        });
     let local_harness_dir =
         crate::refinement::get_local_harness_state_dir(session_artifact_dir.as_deref());
     // The only sessions whose `refine.*` host requests register and the
@@ -593,6 +594,11 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // installed both hooks stay `None` and the loop runs as native.
     let (before_tool_call, after_tool_call) =
         crate::features::tool_call_hooks(crate::features::installed(), &feature_context);
+    crate::features::observe_session_start(
+        crate::features::installed(),
+        &feature_context,
+        initial_messages.as_deref().unwrap_or_default(),
+    );
     let agent = Agent::new(AgentOptions {
         initial_state: AgentInitialState {
             system_prompt: Some(system_prompt.clone()),
@@ -630,7 +636,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         after_tool_call,
         ..Default::default()
     });
-    crate::features::observe_agent_end(crate::features::installed(), &feature_context, &agent)
+    crate::features::observe_agent_events(crate::features::installed(), &feature_context, &agent)
         .await;
 
     let agent = Arc::new(agent);
