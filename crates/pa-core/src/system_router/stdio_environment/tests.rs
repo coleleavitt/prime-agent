@@ -110,8 +110,12 @@ async fn an_adapter_that_exits_early_fails_the_pending_request() {
         None,
     );
     let error = env.init().await.unwrap_err().to_string();
+    // The adapter exits at once, so either the exit is observed first or the
+    // init request's write hits the closed pipe first: both are this failure.
     assert!(
-        error.contains("exited early") || error.contains("stdin failed"),
+        error.contains("exited early")
+            || error.contains("stdin failed")
+            || error.contains("failed writing to the environment adapter"),
         "unexpected early-exit error: {error}"
     );
     env.close(RouterCloseOptions {
