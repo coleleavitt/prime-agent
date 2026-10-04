@@ -336,11 +336,11 @@ impl DreamCommandIo for Capture {
     }
 }
 
-#[test]
-fn every_cli_transcript_matches_the_ts_command() {
+/// Replay every `dream` invocation of a transcript golden against one scratch base.
+fn replay_cli_transcripts(golden_name: &str) {
     let base = tempfile::tempdir().expect("tempdir");
     let base_text = base.path().to_string_lossy().into_owned();
-    let expected = golden("cli.json");
+    let expected = golden(golden_name);
     let cases = expected.as_array().expect("transcripts");
     for case in cases {
         let args: Vec<String> = case["args"]
@@ -366,8 +366,21 @@ fn every_cli_transcript_matches_the_ts_command() {
             "stdout": scrub(&io.stdout),
             "stderr": scrub(&io.stderr),
         });
-        assert_json_eq(&actual, case, &format!("dream {}", args.join(" ")));
+        assert_json_eq(&actual, case, &format!("dream {args:?}"));
     }
+}
+
+#[test]
+fn every_cli_transcript_matches_the_ts_command() {
+    replay_cli_transcripts("cli.json");
+}
+
+/// Numeric flags parse with JS `String.prototype.trim`, `parseInt` and
+/// `Number`: U+FEFF trims but U+0085 does not, hex beyond `u64` keeps its
+/// nearest double, and a blank value is rejected.
+#[test]
+fn numeric_flags_parse_like_the_ts_command() {
+    replay_cli_transcripts("cli-numbers.json");
 }
 
 #[test]

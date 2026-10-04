@@ -1,7 +1,7 @@
 //! `js_number` against Node's `Number(text)`: the table is node v26 output
 //! (regenerate with the inputs below and `Number(s)` printed as f64 bits).
 
-use super::js_number;
+use super::{js_number, js_number_to_string};
 
 /// Node's result for one input.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -139,4 +139,66 @@ fn an_oversized_hex_integer_overflows_to_infinity() {
         golden(js_number(&format!("0x{}", "f".repeat(300)))),
         G::PosInf
     );
+}
+
+/// Node's `String(x)` for doubles given as exact bits (node v26:
+/// `Buffer.writeDoubleBE(x)` printed beside `String(x)`).
+const TO_STRING: &[(u64, &str)] = &[
+    (0x0000_0000_0000_0000, "0"),
+    (0x8000_0000_0000_0000, "0"),
+    (0x3ff0_0000_0000_0000, "1"),
+    (0xc000_0000_0000_0000, "-2"),
+    (0x3fe0_0000_0000_0000, "0.5"),
+    (0x412e_8480_0000_0000, "1000000"),
+    (0x3fd3_3333_3333_3334, "0.30000000000000004"),
+    (0x444b_1ae4_d6e2_ef50, "1e+21"),
+    (0x4454_542b_a12a_337c, "1.5e+21"),
+    (0x4415_af1d_78b5_8c40, "100000000000000000000"),
+    (0xc415_af1d_78b5_8c40, "-100000000000000000000"),
+    (0x441a_c53a_7e04_bcda, "123456789012345680000"),
+    (0x3eb0_c6f7_a0b5_ed8d, "0.000001"),
+    (0x3e7a_d7f2_9abc_af48, "1e-7"),
+    (0x3e80_c6f7_a0b5_ed8d, "1.25e-7"),
+    (0x3fe0_ca90_d70c_b627, "0.5247272682369769"),
+    (0x43b0_0000_0000_0000, "1152921504606847000"),
+    (0x43e0_0000_0000_0000, "9223372036854776000"),
+    (0xc3e0_0000_0000_0000, "-9223372036854776000"),
+    (0x43f0_0000_0000_0000, "18446744073709552000"),
+    (0x43e0_2207_973f_6440, "9300000000000000000"),
+    (0x430c_6bf5_2634_0000, "1000000000000000"),
+    (0x3efa_36e2_eb1c_432d, "0.000025"),
+    (0x0000_0000_0000_0001, "5e-324"),
+    (0x7fef_ffff_ffff_ffff, "1.7976931348623157e+308"),
+    (0xffef_ffff_ffff_ffff, "-1.7976931348623157e+308"),
+    (0x0010_0000_0000_0000, "2.2250738585072014e-308"),
+    (0x4340_0000_0000_0000, "9007199254740992"),
+    (0x4340_0000_0000_0001, "9007199254740994"),
+    (0x4340_0000_0000_0000, "9007199254740992"),
+    (0x7fef_ffff_ffff_ffff, "1.7976931348623157e+308"),
+    (0x47f0_0000_0000_0000, "3.402823669209385e+38"),
+    (0x3eb0_c6f7_a0b5_ed8d, "0.000001"),
+    (0x3eb4_b623_1abf_d271, "0.0000012345"),
+    (0x0000_0000_0000_0002, "1e-323"),
+    (0x405e_dd2f_1a9f_be77, "123.456"),
+    (0x54b2_49ad_2594_c37d, "1e+100"),
+    (0x7e41_eb2d_6600_5835, "1.5e+300"),
+    (0x4011_6666_6666_6666, "4.35"),
+    (0x3fb9_9999_9999_999a, "0.1"),
+    (0x4059_0000_0000_0000, "100"),
+    (0x7e6d_dd4b_aa00_9303, "1e+301"),
+    (0xfe6d_dd4b_aa00_9303, "-1e+301"),
+    (0x7ff8_0000_0000_0000, "NaN"),
+];
+
+#[test]
+fn number_to_string_matches_node_string() {
+    let printed: Vec<(u64, String)> = TO_STRING
+        .iter()
+        .map(|&(bits, _)| (bits, js_number_to_string(f64::from_bits(bits))))
+        .collect();
+    let expected: Vec<(u64, String)> = TO_STRING
+        .iter()
+        .map(|&(bits, text)| (bits, text.to_string()))
+        .collect();
+    assert_eq!(printed, expected);
 }
