@@ -432,6 +432,7 @@ pub async fn execute_refinement_gated(
                     messages: messages.to_vec(),
                     model: model.clone(),
                     source,
+                    trigger: options.trigger.clone(),
                     model_call: gating.model_call,
                 })
                 .await?
@@ -569,6 +570,8 @@ pub struct RefineOptions {
     pub global: bool,
     pub instructions: Option<String>,
     pub rollback_id: Option<String>,
+    /// Why a feature requested this refine, for the session's gate.
+    pub trigger: Option<super::turn_boundary::RefineTrigger>,
 }
 
 /// The compact-trigger round's resolution: decline, deferred behind an
@@ -691,6 +694,7 @@ impl AgentSession {
             global: false,
             instructions: Some(auto_refine_instructions(AUTO_REFINE_COMPACT_REASON, review)),
             rollback_id: None,
+            trigger: None,
         };
         self.refine(
             &options,

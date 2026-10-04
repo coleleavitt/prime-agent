@@ -21,6 +21,7 @@ use super::planner::RefinementProposal;
 use super::{HarnessScope, HarnessState, RefinementResult};
 use crate::features::FeatureFuture;
 use crate::session_engine::refine::RefinementSource;
+use crate::session_engine::turn_boundary::{RefineRequester, RefineTrigger};
 
 /// A value held for the whole run of one refine (plan, gate, apply, save)
 /// and dropped when it ends, however it ends.
@@ -46,6 +47,8 @@ pub struct RefinementGateRequest {
     pub model: pa_types::ai::Model,
     /// Who asked for the refinement.
     pub source: RefinementSource,
+    /// Why a feature asked for it, when one did.
+    pub trigger: Option<RefineTrigger>,
     /// One call to `model`, for a gate that consults it.
     pub model_call: RefinerFn,
 }
@@ -101,6 +104,13 @@ pub trait RefinementGate: Send + Sync {
     ) -> anyhow::Result<Option<RefineGuard>> {
         let _ = (scope, harness_state_dir);
         Ok(None)
+    }
+
+    /// The session accepts refinements this gate's feature requests: it may
+    /// auto-refine, and auto-refine is on. Called once, on the
+    /// session-creation path; the default ignores it.
+    fn attach_refine_requester(&self, requester: RefineRequester) {
+        let _ = requester;
     }
 
     /// Evaluate one planned refinement. `Ok(None)` lets it apply ungated;

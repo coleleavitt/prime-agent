@@ -401,9 +401,90 @@ async fn refine_run_and_status_round_trip_inside_a_tool_call() {
         Some(PendingRefine {
             instructions: Some("create a memory about the failing gate".to_string()),
             global: true,
+            trigger: None,
         })
     );
     assert!(requests.take_refine().await.is_none());
+}
+
+/// A feature queues its own refine through a requester; the agent's
+/// `refine.run` in the same turn joins it instead of replacing it: the
+/// queued instructions stay with the agent's appended, and the trigger
+/// rides on, marked joined.
+#[tokio::test]
+async fn a_feature_request_keeps_its_trigger_when_refine_run_joins_it() {
+    let requests = Arc::new(TurnBoundaryRequests::new());
+    let handlers = registered(&requests);
+    let requester = RefineRequester::new(&requests);
+    let trigger = RefineTrigger {
+        data: json!({ "reason": "recurrence" }),
+        joined_by_agent: false,
+    };
+    let queued = trigger.clone();
+    let updated = tokio::task::spawn_blocking(move || {
+        requester.update(|pending| {
+            assert_eq!(pending, None);
+            Some(PendingRefine {
+                instructions: Some("stop the recurring failure".to_string()),
+                global: false,
+                trigger: Some(queued),
+            })
+        })
+    })
+    .await
+    .unwrap();
+    assert!(updated);
+    let session = Arc::new(Mutex::new(session_with_history(false)));
+    let provider = Arc::new(ScriptedProvider::new(agent_model()));
+    provider.push_tool_call_turn(None, vec![("call-1", "probe-a", json!({}))]);
+    provider.push_text_turn("done");
+    let probe = probe_tool(
+        &requests,
+        "probe-a",
+        "refine.run",
+        json!({ "instructions": "and note the tactic" }),
+    );
+    let agent = Arc::new(Agent::new(AgentOptions {
+        initial_state: AgentInitialState {
+            system_prompt: Some("s".to_string()),
+            model: Some(agent_model()),
+            thinking_level: Some(ThinkingLevel::Off),
+            tools: Some(vec![probe.tool.clone()]),
+            messages: None,
+        },
+        stream_fn: Some(provider.stream_fn()),
+        ..Default::default()
+    }));
+    requests.bind(TurnBoundaryRuntime {
+        agent,
+        session,
+        context_window: Some(100_000),
+        model_info: model_info(),
+    });
+    let agent = requests.bound().expect("bound").agent.clone();
+    agent.prompt("run the probe").await.unwrap();
+    agent.wait_for_idle().await;
+    assert_eq!(probe.result().await["scheduled"], true);
+    assert_eq!(
+        requests.take_refine().await,
+        Some(PendingRefine {
+            instructions: Some("stop the recurring failure\n\nand note the tactic".to_string()),
+            global: false,
+            trigger: Some(RefineTrigger {
+                joined_by_agent: true,
+                ..trigger
+            }),
+        })
+    );
+    // The session is gone: the requester reports it.
+    let requester = RefineRequester::new(&requests);
+    drop(handlers);
+    drop(requests);
+    assert!(
+        !tokio::task::spawn_blocking(move || requester.update(|pending| pending))
+            .await
+            .unwrap()
+    );
 }
 
 #[tokio::test]
@@ -471,6 +552,7 @@ async fn refine_run_validates_and_merges_into_a_pending_request() {
         Some(PendingRefine {
             instructions: Some("first observation".to_string()),
             global: true,
+            trigger: None,
         })
     );
 }
