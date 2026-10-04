@@ -267,6 +267,25 @@ fn a_failing_installer_keeps_the_previous_install() {
 /// installer's own Python), `npm` reports an empty global root — so the run
 /// never touches the network, the machine's daemons, or a global npm
 /// package.
+/// Run a binary this test just copied into place. A sibling test's
+/// `fork` can briefly inherit the copy's write handle (until its `exec`
+/// closes it), and executing a file that is open for writing fails with
+/// ETXTBSY; that window is microseconds wide, so retry it, bounded.
+fn output_of_copied_binary(command: &mut Command) -> std::process::Output {
+    let mut attempts = 0;
+    loop {
+        match command.output() {
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ExecutableFileBusy && attempts < 50 =>
+            {
+                attempts += 1;
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            result => return result.expect("run the installed build"),
+        }
+    }
+}
+
 fn installer_env(command: &mut Command, sandbox: &Sandbox) {
     let shims = sandbox.root.join("shims");
     std::fs::create_dir_all(&shims).expect("shims dir");
@@ -374,7 +393,7 @@ fn update_archive_and_rollback_swap_installer_payloads() {
         let mut command = Command::new(&binary);
         command.arg("update").args(args);
         installer_env(&mut command, &sandbox);
-        command.output().expect("run the installed build")
+        output_of_copied_binary(&mut command)
     };
 
     let archive = fake_release(&sandbox, "1.0.0");
@@ -453,10 +472,7 @@ fn rollback_check_answers_synchronously_without_touching_the_payload() {
         .arg("--archive")
         .arg(archive.to_str().expect("utf-8 path"));
     installer_env(&mut command, &sandbox);
-    assert_ran(
-        &command.output().expect("run the installed build"),
-        "update --archive",
-    );
+    assert_ran(&output_of_copied_binary(&mut command), "update --archive");
     assert_eq!(live_version(&sandbox), "1.0.0");
 
     let output = run_check();
@@ -523,7 +539,7 @@ fn update_archive_refuses_a_misnamed_payload_version() {
         .arg("--archive")
         .arg(archive.to_str().expect("utf-8 path"));
     installer_env(&mut command, &sandbox);
-    let output = command.output().expect("run the installed build");
+    let output = output_of_copied_binary(&mut command);
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -565,7 +581,7 @@ fn update_rollback_reads_the_unsuffixed_installer_slot() {
     let mut command = Command::new(&binary);
     command.args(["update", "--rollback"]);
     installer_env(&mut command, &sandbox);
-    let output = command.output().expect("run the installed build");
+    let output = output_of_copied_binary(&mut command);
     assert!(output.status.success(), "the slot is a rollback source");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("rolled back to 1.0.0"), "{stdout}");
@@ -603,7 +619,7 @@ fn update_rollback_without_a_kept_version_changes_nothing() {
     let mut command = Command::new(&binary);
     command.args(["update", "--rollback"]);
     installer_env(&mut command, &sandbox);
-    let output = command.output().expect("run the installed build");
+    let output = output_of_copied_binary(&mut command);
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("nothing to roll back"), "{stderr}");
@@ -614,7 +630,7 @@ fn update_rollback_without_a_kept_version_changes_nothing() {
     let mut command = Command::new(&binary);
     command.args(["update", "--rollback", "--nightly"]);
     installer_env(&mut command, &sandbox);
-    let output = command.output().expect("run the installed build");
+    let output = output_of_copied_binary(&mut command);
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("do not apply to --rollback"), "{stderr}");
@@ -625,7 +641,7 @@ fn update_rollback_without_a_kept_version_changes_nothing() {
     let mut command = Command::new(&binary);
     command.args(["update", "--rollback", "--force"]);
     installer_env(&mut command, &sandbox);
-    let output = command.output().expect("run the installed build");
+    let output = output_of_copied_binary(&mut command);
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("--force does not apply"), "{stderr}");
