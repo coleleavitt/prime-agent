@@ -281,6 +281,11 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             agent_dir: config.agent_dir.clone(),
             cwd: cwd.clone(),
             session_id: session_id.clone(),
+            model: model.clone(),
+            telemetry: config
+                .telemetry
+                .as_ref()
+                .map(crate::features::FeatureTelemetry::from_wiring),
         },
         &mut handlers,
     );
