@@ -1273,6 +1273,7 @@ dependencies = [
  "pa-core",
  "pa-daemon",
  "pa-dream",
+ "pa-ledger",
  "pa-recall",
  "pa-telemetry",
  "pa-toolforge",
