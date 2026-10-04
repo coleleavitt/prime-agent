@@ -8,11 +8,14 @@ description = "The prime-agent binary."
 [features]
 # The fork's feature crates (docs/fork-feature-crates.md); `--no-default-features`
 # builds the native product.
-default = []
+default = ["toolforge"]
+# `rlm.toolforge.publish`: the gated path from agent-written Python to a skill.
+toolforge = ["dep:pa-toolforge"]
 
 [dependencies]
 pa-types = { path = "../pa-types" }
 pa-core = { path = "../pa-core" }
+pa-toolforge = { path = "../pa-toolforge", optional = true }
 pa-ai = { path = "../pa-ai" }
 pa-agent = { path = "../pa-agent" }
 pa-daemon = { path = "../pa-daemon" }

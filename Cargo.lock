@@ -1270,6 +1270,7 @@ dependencies = [
  "pa-core",
  "pa-daemon",
  "pa-telemetry",
+ "pa-toolforge",
  "pa-tui",
  "pa-types",
  "rsa",
