@@ -11,8 +11,14 @@
 //! Known gap: a fence glued to a list item or a blockquote line (no blank line between)
 //! lazily continues that item in marked's re-lex; this port starts a fresh paragraph there,
 //! as its block parser does for any non-indented line after a list.
+//!
+//! With a renderer installed through [`crate::diagram`], each fence is laid out by it
+//! instead ([`apply_layouts`]); without one this module draws exactly as above.
 
 use super::{render_inline, Block, BlockKind, MarkdownStyle};
+use crate::diagram::{
+    DiagramLayout, DiagramNotice, DiagramRenderer, DiagramRole, DiagramSpan, NoticeLevel,
+};
 use crate::mermaid::{render_cached, ArtSpan, Cls};
 use crate::{Line, Span};
 use ratatui::style::Style;
@@ -56,6 +62,9 @@ pub(crate) struct MermaidPalette {
     pub(crate) edge: Style,
     pub(crate) edge_label: Style,
     pub(crate) warning: Style,
+    /// An installed renderer's titles and info notices.
+    pub(crate) title: Style,
+    pub(crate) info: Style,
 }
 
 impl MermaidPalette {
@@ -67,6 +76,10 @@ impl MermaidPalette {
             edge: theme.fg_style(C::Accent),
             edge_label: theme.fg_style(C::Muted),
             warning: theme.fg_style(C::Warning),
+            title: theme
+                .fg_style(C::Accent)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+            info: theme.fg_style(C::Muted),
         }
     }
 }
@@ -81,6 +94,10 @@ pub(super) enum ArtRow {
     /// The `Mermaid diagram not rendered: …` notice under a fence that kept its source;
     /// `trailing` is the hard-break spacing a paragraph's final row keeps.
     Warning { text: String, trailing: String },
+    /// One row an installed renderer drew.
+    Drawn(Vec<DiagramSpan>),
+    /// A notice an installed renderer put under its diagram (or the kept source).
+    Notice(DiagramNotice),
 }
 
 /// The fence's diagram source, when the block is a `mermaid` fence.
@@ -110,7 +127,7 @@ fn settle_last_row(rows: &mut [ArtRow]) {
     match rows.last_mut() {
         Some(ArtRow::Inline(text)) => text.truncate(text.trim_end().len()),
         Some(ArtRow::Warning { trailing, .. }) => trailing.clear(),
-        Some(ArtRow::Art(_)) | None => {}
+        Some(ArtRow::Art(_) | ArtRow::Drawn(_) | ArtRow::Notice(_)) | None => {}
     }
 }
 
@@ -145,18 +162,29 @@ fn push_rows(out: &mut Vec<Block>, sep_blank: bool, rows: Vec<ArtRow>) {
 
 /// Rewrite the parsed blocks: each `mermaid` fence whose diagram fits `width` becomes its
 /// rows, honouring the mode; a settled diagram with warnings keeps its fence and gains the
-/// notice row. Anything else passes through untouched.
+/// notice row. Anything else passes through untouched. An installed renderer
+/// ([`crate::diagram`]) lays the fences out instead.
 pub(super) fn apply(blocks: Vec<Block>, width: usize, style: &MarkdownStyle) -> Vec<Block> {
+    apply_with(blocks, width, style, crate::diagram::installed())
+}
+
+/// [`apply`] with an explicit renderer (`None`: the built-in one).
+pub(super) fn apply_with(
+    blocks: Vec<Block>,
+    width: usize,
+    style: &MarkdownStyle,
+    renderer: Option<&dyn DiagramRenderer>,
+) -> Vec<Block> {
     let Some(render) = style.mermaid else {
         return blocks;
     };
-    let active = match render.mode {
-        MermaidMode::Off => false,
-        MermaidMode::Final => !render.streaming,
-        MermaidMode::Streaming => true,
-    };
-    if !active || !blocks.iter().any(|b| mermaid_source(b).is_some()) {
+    if !crate::diagram::mode_active(render.mode, render.streaming)
+        || !blocks.iter().any(|b| mermaid_source(b).is_some())
+    {
         return blocks;
+    }
+    if let Some(renderer) = renderer {
+        return apply_layouts(blocks, width, render.streaming, renderer);
     }
 
     let mut out: Vec<Block> = Vec::with_capacity(blocks.len());
@@ -210,6 +238,99 @@ pub(super) fn apply(blocks: Vec<Block>, width: usize, style: &MarkdownStyle) -> 
     out
 }
 
+/// Rewrite the parsed blocks with an installed renderer's layouts. Drawn rows replace the
+/// fence (joining a paragraph directly above, as the built-in rows do), the notices
+/// follow as rows of the same paragraph; a kept fence gains its notices as a paragraph
+/// right under it. Either way the paragraph ends there: the next block starts after a
+/// blank line, so following text never joins the last row.
+pub(super) fn apply_layouts(
+    blocks: Vec<Block>,
+    width: usize,
+    streaming: bool,
+    renderer: &dyn DiagramRenderer,
+) -> Vec<Block> {
+    let mut out: Vec<Block> = Vec::with_capacity(blocks.len());
+    let mut closed = false;
+    for mut block in blocks {
+        block.sep_blank |= std::mem::take(&mut closed);
+        let Some(source) = mermaid_source(&block) else {
+            out.push(block);
+            continue;
+        };
+        match renderer.layout(&source, width, streaming) {
+            DiagramLayout::Rows { rows, notices } => {
+                let rows = rows
+                    .into_iter()
+                    .map(ArtRow::Drawn)
+                    .chain(notices.into_iter().map(ArtRow::Notice))
+                    .collect();
+                push_rows(&mut out, block.sep_blank, rows);
+                closed = true;
+            }
+            DiagramLayout::Source { notices } if notices.is_empty() => out.push(block),
+            DiagramLayout::Source { notices } => {
+                out.push(block);
+                out.push(Block {
+                    kind: BlockKind::ArtParagraph {
+                        rows: notices.into_iter().map(ArtRow::Notice).collect(),
+                    },
+                    sep_blank: false,
+                    lines: Vec::new(),
+                });
+                closed = true;
+            }
+        }
+    }
+    out
+}
+
+/// One row an installed renderer drew: its roles take the theme slots, its blank runs
+/// `blank(i)` (the run's index in the row).
+pub(crate) fn drawn_spans(
+    spans: &[DiagramSpan],
+    palette: &MermaidPalette,
+    blank: impl Fn(usize) -> Style,
+) -> Line {
+    spans
+        .iter()
+        .enumerate()
+        .map(|(i, span)| {
+            let slot = match span.role {
+                DiagramRole::Border => palette.border,
+                DiagramRole::Text => palette.text,
+                DiagramRole::Edge => palette.edge,
+                DiagramRole::EdgeLabel => palette.edge_label,
+                DiagramRole::Title => palette.title,
+                DiagramRole::None => blank(i),
+            };
+            Span::styled(span.text.clone(), slot)
+        })
+        .collect()
+}
+
+/// One row an installed renderer drew, painted like a built-in row: the leading blank run
+/// sits in the code color, a later one after a role's color reset.
+fn drawn_line(spans: &[DiagramSpan], style: &MarkdownStyle) -> Line {
+    if spans.is_empty() {
+        return vec![Span::styled("\u{a0}", style.code)];
+    }
+    drawn_spans(spans, &style.mermaid_palette, |i| {
+        if i == 0 {
+            style.code
+        } else {
+            Style::default()
+        }
+    })
+}
+
+/// The style a notice paints with.
+pub(crate) fn notice_style(level: NoticeLevel, palette: &MermaidPalette) -> Style {
+    match level {
+        NoticeLevel::Info => palette.info,
+        NoticeLevel::Warning => palette.warning,
+    }
+}
+
 /// One diagram row painted in the theme (TS `styleSpan` inside the row's `mdCode` span):
 /// the leading blank run sits in the code color, a later one after a class's color reset.
 fn art_line(spans: &[ArtSpan], style: &MarkdownStyle) -> Line {
@@ -248,6 +369,11 @@ pub(super) fn art_paragraph_lines(rows: &[ArtRow], style: &MarkdownStyle) -> Vec
                 }
                 line
             }
+            ArtRow::Drawn(spans) => drawn_line(spans, style),
+            ArtRow::Notice(notice) => vec![Span::styled(
+                notice.text.clone(),
+                notice_style(notice.level, &style.mermaid_palette),
+            )],
         })
         .collect()
 }

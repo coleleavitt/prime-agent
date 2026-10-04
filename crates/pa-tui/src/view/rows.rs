@@ -204,13 +204,14 @@ impl AgentView {
                 if self.conversation_leading(index, detail.tool_output_expanded()) {
                     rows.push(Vec::new());
                 }
-                rows.extend(crate::tool_card::render_tool_card(
+                rows.extend(crate::tool_card::render_tool_card_in(
                     card,
                     self.pulse_frame,
                     detail,
                     &self.theme,
                     width,
                     self.show_images,
+                    self.mermaid_mode,
                 ));
                 rows
             }
@@ -240,6 +241,7 @@ impl AgentView {
                 &self.theme,
                 width,
                 self.conversation_leading(index, detail.tool_output_expanded()),
+                self.mermaid_mode,
             ),
             // TS `addMessageToChat`'s user case: `Spacer(1)` when the chat is non-empty, then the
             // card.
@@ -277,9 +279,12 @@ impl AgentView {
                     width,
                 )
             }
-            ChatEntry::CustomPanel(row) => {
-                crate::custom_message::render::render_custom_panel(row, &self.theme, width)
-            }
+            ChatEntry::CustomPanel(row) => crate::custom_message::render::render_custom_panel(
+                row,
+                &self.theme,
+                width,
+                self.mermaid_mode,
+            ),
         }
     }
 }

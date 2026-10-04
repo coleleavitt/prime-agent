@@ -9,12 +9,15 @@ mod inline;
 mod mermaid_blocks;
 #[cfg(test)]
 mod mermaid_blocks_tests;
+/// The golden-replaying diagram renderer the markdown and plain-text seam tests share.
+#[cfg(test)]
+pub(crate) use mermaid_blocks_tests::installed as test_support;
 #[cfg(test)]
 mod tests;
 
 pub use inline::render_inline;
 pub use mermaid_blocks::MermaidMode;
-pub(crate) use mermaid_blocks::MermaidRender;
+pub(crate) use mermaid_blocks::{drawn_spans, notice_style, MermaidPalette, MermaidRender};
 
 use crate::width::str_width;
 use crate::{Line, Span};
@@ -92,6 +95,16 @@ impl MarkdownStyle {
             mermaid: None,
             mermaid_palette: mermaid_blocks::MermaidPalette::from_theme(theme),
         }
+    }
+}
+
+impl MarkdownStyle {
+    /// Render `mermaid` fences as diagrams per `mode` (the `markdown.mermaid` setting) in a
+    /// message that is (or is not) still `streaming` — what assistant text blocks use.
+    #[must_use]
+    pub fn with_mermaid(mut self, mode: MermaidMode, streaming: bool) -> Self {
+        self.mermaid = Some(MermaidRender { mode, streaming });
+        self
     }
 }
 

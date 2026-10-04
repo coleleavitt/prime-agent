@@ -409,6 +409,7 @@ impl AgentView {
                 self.detail.tool_output_expanded(),
                 &self.editor.keybindings().key_text("tui.select.cancel"),
                 width,
+                self.mermaid_mode,
             ));
         }
         tail

@@ -54,6 +54,7 @@ impl AgentView {
                     &self.theme,
                     width,
                     spacing,
+                    self.mermaid_mode,
                 )
             }
             ChatEntry::ShellCompletion(row) => {
@@ -61,9 +62,12 @@ impl AgentView {
                     row, detail, width, spacing,
                 )
             }
-            ChatEntry::CustomPanel(row) => {
-                crate::custom_message::geometry::custom_panel_row_count(row, &self.theme, width)
-            }
+            ChatEntry::CustomPanel(row) => crate::custom_message::geometry::custom_panel_row_count(
+                row,
+                &self.theme,
+                width,
+                self.mermaid_mode,
+            ),
             ChatEntry::Tool(card) => {
                 usize::from(spacing)
                     + crate::tool_card::count_tool_card(
@@ -73,6 +77,7 @@ impl AgentView {
                         &self.theme,
                         width,
                         self.show_images,
+                        self.mermaid_mode,
                     )
             }
             ChatEntry::BashExecution(card) => {
