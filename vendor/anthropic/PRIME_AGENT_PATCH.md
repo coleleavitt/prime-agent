@@ -16,7 +16,12 @@ dependency and drop the `exclude` entry in the workspace manifest.
 
 ## Source changes
 
-None. The manifest differs in two places:
+Formatting only: nine files (`access.rs`, `credentials/link.rs`, `credentials/mod.rs`, `device/mod.rs`, `legacy.rs`,
+`lib.rs`, `quota_manager.rs`, `shaping.rs`, `store.rs`) are reformatted with rustfmt's defaults, because the
+workspace's `cargo fmt --all --check` covers local path dependencies and upstream is formatted with a
+`HorizontalVertical` import layout. The changes are import-list layout; no token changes.
+
+The manifest differs in two places:
 
 1. `[workspace]` is empty (upstream lists `anthropic-napi`, which is not vendored). The prime-agent workspace
    excludes this directory, so the workspace lint gates do not apply to third-party code.
@@ -33,5 +38,7 @@ git -C <anthropic-rs checkout> archive <commit> -- Cargo.toml README.md PORTING.
   | tar -x -C vendor/anthropic
 ```
 
-then reapply the two manifest changes above, update the commit in this file, and run the pa-anthropic-auth tests
+then reapply the two manifest changes above, run
+`rustfmt --edition 2024 --config-path <an empty rustfmt.toml>` over `vendor/anthropic/src/**/*.rs`, update the
+commit in this file, and run the pa-anthropic-auth tests
 and `cargo deny --all-features --workspace check advisories licenses`.

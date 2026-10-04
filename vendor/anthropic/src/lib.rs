@@ -111,64 +111,31 @@ pub mod sticky_routing;
 pub use account::{Account, QuotaObservation, RefreshLease, Unavailable};
 pub use backoff::OperationError;
 pub use cch::{
-    CCH_PLACEHOLDER,
-    CCH_SEED_2_1_233,
-    build_cch_preimage,
-    compute_cch,
-    sign_request_body,
+    CCH_PLACEHOLDER, CCH_SEED_2_1_233, build_cch_preimage, compute_cch, sign_request_body,
 };
 #[cfg(feature = "store")]
 pub use credentials::{
-    FileSecretStore,
-    NATIVE_CLAUDE_KEYRING_SERVICE,
-    NATIVE_PUBLISH_ENV,
-    NativeClaudeCredentialSource,
-    NativeClaudeImport,
-    NativeOAuthSummary,
-    NativePublish,
-    NativePublishOutcome,
-    NativeTrustedDeviceToken,
-    SecretStore,
-    discover_native_claude_credentials,
-    import_native_claude_file,
-    native_claude_credentials_path,
-    native_claude_credentials_path_from_lookup,
-    native_claude_keyring_account,
-    native_claude_keyring_service,
-    publish_native_rotation,
-    read_native_claude_summary,
+    FileSecretStore, NATIVE_CLAUDE_KEYRING_SERVICE, NATIVE_PUBLISH_ENV,
+    NativeClaudeCredentialSource, NativeClaudeImport, NativeOAuthSummary, NativePublish,
+    NativePublishOutcome, NativeTrustedDeviceToken, SecretStore,
+    discover_native_claude_credentials, import_native_claude_file, native_claude_credentials_path,
+    native_claude_credentials_path_from_lookup, native_claude_keyring_account,
+    native_claude_keyring_service, publish_native_rotation, read_native_claude_summary,
 };
 #[cfg(feature = "secure-store")]
 pub use credentials::{KeyringSecretStore, import_native_claude_keyring};
 #[cfg(feature = "device")]
 pub use device::{
-    AttestationPolicy,
-    AttestationStatus,
-    CoworkDeviceClient,
-    CoworkDeviceKey,
-    CoworkPlatform,
-    CreateSessionBinding,
-    DeviceId,
-    DeviceIdentityStore,
-    RegisteredCoworkDevice,
-    TRUSTED_DEVICE_TOKEN_ENV,
-    TrustedDeviceClient,
-    TrustedDeviceEnrollment,
-    TrustedDeviceToken,
-    VerifiedLevel,
-    build_bind_preimage,
-    trusted_device_header,
-    trusted_device_token_from_env,
+    AttestationPolicy, AttestationStatus, CoworkDeviceClient, CoworkDeviceKey, CoworkPlatform,
+    CreateSessionBinding, DeviceId, DeviceIdentityStore, RegisteredCoworkDevice,
+    TRUSTED_DEVICE_TOKEN_ENV, TrustedDeviceClient, TrustedDeviceEnrollment, TrustedDeviceToken,
+    VerifiedLevel, build_bind_preimage, trusted_device_header, trusted_device_token_from_env,
 };
 pub use endpoints::{Endpoints, Scope};
 pub use error::{Error, Result, RevocationOrigin};
 #[cfg(feature = "federation")]
 pub use federation::{
-    FederatedToken,
-    FederationClient,
-    FederationConfig,
-    FederationEnvironment,
-    IdentityTokenSource,
+    FederatedToken, FederationClient, FederationConfig, FederationEnvironment, IdentityTokenSource,
 };
 #[cfg(feature = "store")]
 pub use keepalive::{KeepAliveLease, KeepAliveOptions, keepalive_due};
@@ -178,23 +145,12 @@ pub use killswitch::{KillswitchConfig, KillswitchThresholds};
 #[cfg(feature = "client")]
 pub use messages::MessagesClient;
 pub use messages::{
-    ContentBlock,
-    Message,
-    MessagesRequest,
-    MessagesResponse,
-    Role,
-    SseDecoder,
-    SseEvent,
-    Usage,
+    ContentBlock, Message, MessagesRequest, MessagesResponse, Role, SseDecoder, SseEvent, Usage,
 };
 #[cfg(feature = "client")]
 pub use oauth::OAuthClient;
 pub use oauth::{
-    AuthorizeRequest,
-    RevokeOutcome,
-    TokenRequest,
-    TokenResponse,
-    parse_redirect_code,
+    AuthorizeRequest, RevokeOutcome, TokenRequest, TokenResponse, parse_redirect_code,
 };
 #[cfg(feature = "interactive-oauth")]
 pub use oauth_callback::LoopbackLogin;
@@ -214,23 +170,11 @@ pub use sticky_routing::StickySessionRouter;
 pub use sticky_routing::{RoutingMode, StickyRouteFamily};
 #[cfg(feature = "store")]
 pub use store::{
-    AccountStore,
-    LoadSource,
-    Loaded,
-    account_identities,
-    default_store_path,
-    store_dir,
+    AccountStore, LoadSource, Loaded, account_identities, default_store_path, store_dir,
 };
 pub use token::{
-    AccessToken,
-    ApiKey,
-    AuthHeader,
-    CUSTODY_TOMBSTONE_PREFIX,
-    Credential,
-    OAuthTokens,
-    RefreshToken,
-    is_custody_tombstone,
-    token_fingerprint,
+    AccessToken, ApiKey, AuthHeader, CUSTODY_TOMBSTONE_PREFIX, Credential, OAuthTokens,
+    RefreshToken, is_custody_tombstone, token_fingerprint,
 };
 
 /// Begin an interactive login: the authorize URL to open, plus the PKCE

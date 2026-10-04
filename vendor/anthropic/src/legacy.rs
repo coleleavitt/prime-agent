@@ -20,12 +20,7 @@ use serde::Deserialize;
 
 use crate::account::Account;
 use crate::token::{
-    AccessToken,
-    Credential,
-    OAuthTokens,
-    RefreshToken,
-    TokenAccount,
-    TokenOrganization,
+    AccessToken, Credential, OAuthTokens, RefreshToken, TokenAccount, TokenOrganization,
     redact_secrets,
 };
 

@@ -983,13 +983,7 @@ mod tests {
     use super::*;
     use crate::account::Account;
     use crate::token::{
-        AccessToken,
-        ApiKey,
-        Credential,
-        OAuthTokens,
-        RefreshToken,
-        TokenAccount,
-        TokenOrganization,
+        AccessToken, ApiKey, Credential, OAuthTokens, RefreshToken, TokenAccount, TokenOrganization,
     };
 
     fn at(secs: i64) -> DateTime<Utc> {

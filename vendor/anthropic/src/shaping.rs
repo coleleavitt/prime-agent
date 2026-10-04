@@ -5,13 +5,9 @@
 use serde_json::{Value, json};
 
 use crate::models::{
-    ThinkingShape,
-    clamp_effort_for_model,
-    is_claude_opus_5_model,
-    model_injects_summarized_adaptive_thinking,
-    model_rejects_disabled_thinking,
-    model_rejects_forced_tool_choice,
-    resolve_thinking_shape,
+    ThinkingShape, clamp_effort_for_model, is_claude_opus_5_model,
+    model_injects_summarized_adaptive_thinking, model_rejects_disabled_thinking,
+    model_rejects_forced_tool_choice, resolve_thinking_shape,
 };
 
 /// A caller's reasoning level (Pi/host vocabulary).
