@@ -1,0 +1,2599 @@
+{
+  "steps": [
+    {
+      "name": "commit missing one criterion",
+      "state": {
+        "lineage": [],
+        "championId": null,
+        "opponents": {
+          "criteria": [
+            {
+              "id": "scope",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "evidence",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "failure:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "referee:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "arc:all-levels",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "Novelty",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty-2",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty_2",
+              "seedWeight": 1,
+              "currentWeight": 1
+            }
+          ]
+        },
+        "evaluatedProposalIds": []
+      },
+      "proposal": {
+        "id": "p1",
+        "artifact": {
+          "summary": "first",
+          "edits": []
+        }
+      },
+      "evaluation": {
+        "proposalId": "p1",
+        "screen": {
+          "status": "pass",
+          "score": 80
+        },
+        "deep": {
+          "status": "pass",
+          "score": 70,
+          "detail": "good"
+        },
+        "criteria": [
+          {
+            "criterionId": "scope",
+            "status": "fail"
+          },
+          {
+            "criterionId": "evidence",
+            "status": "pass",
+            "detail": "ok"
+          },
+          {
+            "criterionId": "failure:0a1b",
+            "status": "pass"
+          },
+          {
+            "criterionId": "referee:0a1b",
+            "status": "pass"
+          },
+          {
+            "criterionId": "arc:all-levels",
+            "status": "pass"
+          },
+          {
+            "criterionId": "Novelty",
+            "status": "pass"
+          },
+          {
+            "criterionId": "novelty-2",
+            "status": "pass"
+          },
+          {
+            "criterionId": "novelty_2",
+            "status": "pass"
+          }
+        ]
+      },
+      "config": {
+        "screenThreshold": 50,
+        "epsilon": 1,
+        "deepTolerance": 10
+      },
+      "result": {
+        "state": {
+          "lineage": [
+            {
+              "proposalId": "p1",
+              "parentId": null,
+              "score": 70,
+              "artifact": {
+                "summary": "first",
+                "edits": []
+              },
+              "missedCriterionIds": [
+                "scope"
+              ]
+            }
+          ],
+          "championId": "p1",
+          "opponents": {
+            "criteria": [
+              {
+                "id": "scope",
+                "seedWeight": 1,
+                "currentWeight": 2
+              },
+              {
+                "id": "evidence",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "failure:0a1b",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "referee:0a1b",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "arc:all-levels",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "Novelty",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty-2",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty_2",
+                "seedWeight": 1,
+                "currentWeight": 1
+              }
+            ]
+          },
+          "evaluatedProposalIds": [
+            "p1"
+          ]
+        },
+        "certificate": {
+          "proposalId": "p1",
+          "previousChampionId": null,
+          "previousBestScore": 0,
+          "screenThreshold": 50,
+          "epsilon": 1,
+          "deepTolerance": 10,
+          "screen": {
+            "status": "pass",
+            "score": 80
+          },
+          "deep": {
+            "status": "pass",
+            "score": 70,
+            "detail": "good"
+          },
+          "criteria": [
+            {
+              "criterionId": "arc:all-levels",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false
+            },
+            {
+              "criterionId": "evidence",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false,
+              "detail": "ok"
+            },
+            {
+              "criterionId": "failure:0a1b",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false
+            },
+            {
+              "criterionId": "Novelty",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false
+            },
+            {
+              "criterionId": "novelty_2",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false
+            },
+            {
+              "criterionId": "novelty-2",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false
+            },
+            {
+              "criterionId": "referee:0a1b",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false
+            },
+            {
+              "criterionId": "scope",
+              "status": "fail",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": true
+            }
+          ],
+          "missedCriterionIds": [
+            "scope"
+          ],
+          "missedSeedWeight": 1,
+          "missedCurrentWeight": 1,
+          "committed": true
+        }
+      }
+    },
+    {
+      "name": "already evaluated",
+      "state": {
+        "lineage": [
+          {
+            "proposalId": "p1",
+            "parentId": null,
+            "score": 70,
+            "artifact": {
+              "summary": "first",
+              "edits": []
+            },
+            "missedCriterionIds": [
+              "scope"
+            ]
+          }
+        ],
+        "championId": "p1",
+        "opponents": {
+          "criteria": [
+            {
+              "id": "scope",
+              "seedWeight": 1,
+              "currentWeight": 2
+            },
+            {
+              "id": "evidence",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "failure:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "referee:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "arc:all-levels",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "Novelty",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty-2",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty_2",
+              "seedWeight": 1,
+              "currentWeight": 1
+            }
+          ]
+        },
+        "evaluatedProposalIds": [
+          "p1"
+        ]
+      },
+      "proposal": {
+        "id": "p1",
+        "artifact": null
+      },
+      "evaluation": {
+        "proposalId": "p1",
+        "screen": {
+          "status": "pass",
+          "score": 80
+        },
+        "deep": {
+          "status": "pass",
+          "score": 90
+        },
+        "criteria": [
+          {
+            "criterionId": "scope",
+            "status": "pass"
+          },
+          {
+            "criterionId": "evidence",
+            "status": "pass"
+          },
+          {
+            "criterionId": "failure:0a1b",
+            "status": "pass"
+          },
+          {
+            "criterionId": "referee:0a1b",
+            "status": "pass"
+          },
+          {
+            "criterionId": "arc:all-levels",
+            "status": "pass"
+          },
+          {
+            "criterionId": "Novelty",
+            "status": "pass"
+          },
+          {
+            "criterionId": "novelty-2",
+            "status": "pass"
+          },
+          {
+            "criterionId": "novelty_2",
+            "status": "pass"
+          }
+        ]
+      },
+      "config": {
+        "screenThreshold": 50,
+        "epsilon": 1,
+        "deepTolerance": 10
+      },
+      "result": {
+        "state": {
+          "lineage": [
+            {
+              "proposalId": "p1",
+              "parentId": null,
+              "score": 70,
+              "artifact": {
+                "summary": "first",
+                "edits": []
+              },
+              "missedCriterionIds": [
+                "scope"
+              ]
+            }
+          ],
+          "championId": "p1",
+          "opponents": {
+            "criteria": [
+              {
+                "id": "scope",
+                "seedWeight": 1,
+                "currentWeight": 2
+              },
+              {
+                "id": "evidence",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "failure:0a1b",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "referee:0a1b",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "arc:all-levels",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "Novelty",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty-2",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty_2",
+                "seedWeight": 1,
+                "currentWeight": 1
+              }
+            ]
+          },
+          "evaluatedProposalIds": [
+            "p1"
+          ]
+        },
+        "certificate": {
+          "proposalId": "p1",
+          "previousChampionId": "p1",
+          "previousBestScore": 70,
+          "screenThreshold": 50,
+          "epsilon": 1,
+          "deepTolerance": 10,
+          "screen": {
+            "status": "pass",
+            "score": 80
+          },
+          "deep": {
+            "status": "pass",
+            "score": 90
+          },
+          "criteria": [],
+          "missedCriterionIds": [],
+          "missedSeedWeight": 0,
+          "missedCurrentWeight": 0,
+          "committed": false,
+          "rejection": "already_evaluated"
+        }
+      }
+    },
+    {
+      "name": "screen below threshold",
+      "state": {
+        "lineage": [
+          {
+            "proposalId": "p1",
+            "parentId": null,
+            "score": 70,
+            "artifact": {
+              "summary": "first",
+              "edits": []
+            },
+            "missedCriterionIds": [
+              "scope"
+            ]
+          }
+        ],
+        "championId": "p1",
+        "opponents": {
+          "criteria": [
+            {
+              "id": "scope",
+              "seedWeight": 1,
+              "currentWeight": 2
+            },
+            {
+              "id": "evidence",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "failure:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "referee:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "arc:all-levels",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "Novelty",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty-2",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty_2",
+              "seedWeight": 1,
+              "currentWeight": 1
+            }
+          ]
+        },
+        "evaluatedProposalIds": [
+          "p1"
+        ]
+      },
+      "proposal": {
+        "id": "p2",
+        "artifact": 1
+      },
+      "evaluation": {
+        "proposalId": "p2",
+        "screen": {
+          "status": "pass",
+          "score": 40
+        },
+        "deep": {
+          "status": "pass",
+          "score": 99
+        },
+        "criteria": []
+      },
+      "config": {
+        "screenThreshold": 50,
+        "epsilon": 1,
+        "deepTolerance": 10
+      },
+      "result": {
+        "state": {
+          "lineage": [
+            {
+              "proposalId": "p1",
+              "parentId": null,
+              "score": 70,
+              "artifact": {
+                "summary": "first",
+                "edits": []
+              },
+              "missedCriterionIds": [
+                "scope"
+              ]
+            }
+          ],
+          "championId": "p1",
+          "opponents": {
+            "criteria": [
+              {
+                "id": "scope",
+                "seedWeight": 1,
+                "currentWeight": 2
+              },
+              {
+                "id": "evidence",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "failure:0a1b",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "referee:0a1b",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "arc:all-levels",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "Novelty",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty-2",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty_2",
+                "seedWeight": 1,
+                "currentWeight": 1
+              }
+            ]
+          },
+          "evaluatedProposalIds": [
+            "p1",
+            "p2"
+          ]
+        },
+        "certificate": {
+          "proposalId": "p2",
+          "previousChampionId": "p1",
+          "previousBestScore": 70,
+          "screenThreshold": 50,
+          "epsilon": 1,
+          "deepTolerance": 10,
+          "screen": {
+            "status": "pass",
+            "score": 40
+          },
+          "deep": {
+            "status": "pass",
+            "score": 99
+          },
+          "criteria": [],
+          "missedCriterionIds": [],
+          "missedSeedWeight": 0,
+          "missedCurrentWeight": 0,
+          "committed": false,
+          "rejection": "screen"
+        }
+      }
+    },
+    {
+      "name": "deep under the slacked bar",
+      "state": {
+        "lineage": [
+          {
+            "proposalId": "p1",
+            "parentId": null,
+            "score": 70,
+            "artifact": {
+              "summary": "first",
+              "edits": []
+            },
+            "missedCriterionIds": [
+              "scope"
+            ]
+          }
+        ],
+        "championId": "p1",
+        "opponents": {
+          "criteria": [
+            {
+              "id": "scope",
+              "seedWeight": 1,
+              "currentWeight": 2
+            },
+            {
+              "id": "evidence",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "failure:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "referee:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "arc:all-levels",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "Novelty",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty-2",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty_2",
+              "seedWeight": 1,
+              "currentWeight": 1
+            }
+          ]
+        },
+        "evaluatedProposalIds": [
+          "p1",
+          "p2"
+        ]
+      },
+      "proposal": {
+        "id": "p3",
+        "artifact": 1
+      },
+      "evaluation": {
+        "proposalId": "p3",
+        "screen": {
+          "status": "pass",
+          "score": 100
+        },
+        "deep": {
+          "status": "pass",
+          "score": 59
+        },
+        "criteria": [
+          {
+            "criterionId": "scope",
+            "status": "pass"
+          },
+          {
+            "criterionId": "evidence",
+            "status": "pass"
+          },
+          {
+            "criterionId": "failure:0a1b",
+            "status": "pass"
+          },
+          {
+            "criterionId": "referee:0a1b",
+            "status": "pass"
+          },
+          {
+            "criterionId": "arc:all-levels",
+            "status": "pass"
+          },
+          {
+            "criterionId": "Novelty",
+            "status": "pass"
+          },
+          {
+            "criterionId": "novelty-2",
+            "status": "pass"
+          },
+          {
+            "criterionId": "novelty_2",
+            "status": "pass"
+          }
+        ]
+      },
+      "config": {
+        "screenThreshold": 50,
+        "epsilon": 1,
+        "deepTolerance": 10
+      },
+      "result": {
+        "state": {
+          "lineage": [
+            {
+              "proposalId": "p1",
+              "parentId": null,
+              "score": 70,
+              "artifact": {
+                "summary": "first",
+                "edits": []
+              },
+              "missedCriterionIds": [
+                "scope"
+              ]
+            }
+          ],
+          "championId": "p1",
+          "opponents": {
+            "criteria": [
+              {
+                "id": "scope",
+                "seedWeight": 1,
+                "currentWeight": 2
+              },
+              {
+                "id": "evidence",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "failure:0a1b",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "referee:0a1b",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "arc:all-levels",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "Novelty",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty-2",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty_2",
+                "seedWeight": 1,
+                "currentWeight": 1
+              }
+            ]
+          },
+          "evaluatedProposalIds": [
+            "p1",
+            "p2",
+            "p3"
+          ]
+        },
+        "certificate": {
+          "proposalId": "p3",
+          "previousChampionId": "p1",
+          "previousBestScore": 70,
+          "screenThreshold": 50,
+          "epsilon": 1,
+          "deepTolerance": 10,
+          "screen": {
+            "status": "pass",
+            "score": 100
+          },
+          "deep": {
+            "status": "pass",
+            "score": 59
+          },
+          "criteria": [],
+          "missedCriterionIds": [],
+          "missedSeedWeight": 0,
+          "missedCurrentWeight": 0,
+          "committed": false,
+          "rejection": "deep"
+        }
+      }
+    },
+    {
+      "name": "pressured criterion misses past epsilon",
+      "state": {
+        "lineage": [
+          {
+            "proposalId": "p1",
+            "parentId": null,
+            "score": 70,
+            "artifact": {
+              "summary": "first",
+              "edits": []
+            },
+            "missedCriterionIds": [
+              "scope"
+            ]
+          }
+        ],
+        "championId": "p1",
+        "opponents": {
+          "criteria": [
+            {
+              "id": "scope",
+              "seedWeight": 1,
+              "currentWeight": 2
+            },
+            {
+              "id": "evidence",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "failure:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "referee:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "arc:all-levels",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "Novelty",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty-2",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty_2",
+              "seedWeight": 1,
+              "currentWeight": 1
+            }
+          ]
+        },
+        "evaluatedProposalIds": [
+          "p1",
+          "p2",
+          "p3"
+        ]
+      },
+      "proposal": {
+        "id": "p4",
+        "artifact": 1
+      },
+      "evaluation": {
+        "proposalId": "p4",
+        "screen": {
+          "status": "pass",
+          "score": 100
+        },
+        "deep": {
+          "status": "pass",
+          "score": 65
+        },
+        "criteria": [
+          {
+            "criterionId": "scope",
+            "status": "fail"
+          },
+          {
+            "criterionId": "evidence",
+            "status": "pass"
+          },
+          {
+            "criterionId": "failure:0a1b",
+            "status": "pass"
+          },
+          {
+            "criterionId": "referee:0a1b",
+            "status": "pass"
+          },
+          {
+            "criterionId": "arc:all-levels",
+            "status": "pass"
+          },
+          {
+            "criterionId": "Novelty",
+            "status": "pass"
+          },
+          {
+            "criterionId": "novelty-2",
+            "status": "pass"
+          },
+          {
+            "criterionId": "novelty_2",
+            "status": "pass"
+          }
+        ]
+      },
+      "config": {
+        "screenThreshold": 50,
+        "epsilon": 1,
+        "deepTolerance": 10
+      },
+      "result": {
+        "state": {
+          "lineage": [
+            {
+              "proposalId": "p1",
+              "parentId": null,
+              "score": 70,
+              "artifact": {
+                "summary": "first",
+                "edits": []
+              },
+              "missedCriterionIds": [
+                "scope"
+              ]
+            }
+          ],
+          "championId": "p1",
+          "opponents": {
+            "criteria": [
+              {
+                "id": "scope",
+                "seedWeight": 1,
+                "currentWeight": 2
+              },
+              {
+                "id": "evidence",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "failure:0a1b",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "referee:0a1b",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "arc:all-levels",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "Novelty",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty-2",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty_2",
+                "seedWeight": 1,
+                "currentWeight": 1
+              }
+            ]
+          },
+          "evaluatedProposalIds": [
+            "p1",
+            "p2",
+            "p3",
+            "p4"
+          ]
+        },
+        "certificate": {
+          "proposalId": "p4",
+          "previousChampionId": "p1",
+          "previousBestScore": 70,
+          "screenThreshold": 50,
+          "epsilon": 1,
+          "deepTolerance": 10,
+          "screen": {
+            "status": "pass",
+            "score": 100
+          },
+          "deep": {
+            "status": "pass",
+            "score": 65
+          },
+          "criteria": [
+            {
+              "criterionId": "arc:all-levels",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false
+            },
+            {
+              "criterionId": "evidence",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false
+            },
+            {
+              "criterionId": "failure:0a1b",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false
+            },
+            {
+              "criterionId": "Novelty",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false
+            },
+            {
+              "criterionId": "novelty_2",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false
+            },
+            {
+              "criterionId": "novelty-2",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false
+            },
+            {
+              "criterionId": "referee:0a1b",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false
+            },
+            {
+              "criterionId": "scope",
+              "status": "fail",
+              "seedWeight": 1,
+              "currentWeight": 2,
+              "countedAsMissed": true
+            }
+          ],
+          "missedCriterionIds": [
+            "scope"
+          ],
+          "missedSeedWeight": 1,
+          "missedCurrentWeight": 2,
+          "committed": false,
+          "rejection": "opponents"
+        }
+      }
+    },
+    {
+      "name": "duplicate observation",
+      "state": {
+        "lineage": [
+          {
+            "proposalId": "p1",
+            "parentId": null,
+            "score": 70,
+            "artifact": {
+              "summary": "first",
+              "edits": []
+            },
+            "missedCriterionIds": [
+              "scope"
+            ]
+          }
+        ],
+        "championId": "p1",
+        "opponents": {
+          "criteria": [
+            {
+              "id": "scope",
+              "seedWeight": 1,
+              "currentWeight": 2
+            },
+            {
+              "id": "evidence",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "failure:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "referee:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "arc:all-levels",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "Novelty",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty-2",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty_2",
+              "seedWeight": 1,
+              "currentWeight": 1
+            }
+          ]
+        },
+        "evaluatedProposalIds": [
+          "p1",
+          "p2",
+          "p3",
+          "p4"
+        ]
+      },
+      "proposal": {
+        "id": "p5",
+        "artifact": 1
+      },
+      "evaluation": {
+        "proposalId": "p5",
+        "screen": {
+          "status": "pass",
+          "score": 100
+        },
+        "deep": {
+          "status": "pass",
+          "score": 90
+        },
+        "criteria": [
+          {
+            "criterionId": "scope",
+            "status": "pass"
+          },
+          {
+            "criterionId": "evidence",
+            "status": "pass"
+          },
+          {
+            "criterionId": "failure:0a1b",
+            "status": "pass"
+          },
+          {
+            "criterionId": "referee:0a1b",
+            "status": "pass"
+          },
+          {
+            "criterionId": "arc:all-levels",
+            "status": "pass"
+          },
+          {
+            "criterionId": "Novelty",
+            "status": "pass"
+          },
+          {
+            "criterionId": "novelty-2",
+            "status": "pass"
+          },
+          {
+            "criterionId": "novelty_2",
+            "status": "pass"
+          },
+          {
+            "criterionId": "scope",
+            "status": "pass"
+          }
+        ]
+      },
+      "config": {
+        "screenThreshold": 50,
+        "epsilon": 1,
+        "deepTolerance": 10
+      },
+      "result": {
+        "state": {
+          "lineage": [
+            {
+              "proposalId": "p1",
+              "parentId": null,
+              "score": 70,
+              "artifact": {
+                "summary": "first",
+                "edits": []
+              },
+              "missedCriterionIds": [
+                "scope"
+              ]
+            }
+          ],
+          "championId": "p1",
+          "opponents": {
+            "criteria": [
+              {
+                "id": "scope",
+                "seedWeight": 1,
+                "currentWeight": 2
+              },
+              {
+                "id": "evidence",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "failure:0a1b",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "referee:0a1b",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "arc:all-levels",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "Novelty",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty-2",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty_2",
+                "seedWeight": 1,
+                "currentWeight": 1
+              }
+            ]
+          },
+          "evaluatedProposalIds": [
+            "p1",
+            "p2",
+            "p3",
+            "p4",
+            "p5"
+          ]
+        },
+        "certificate": {
+          "proposalId": "p5",
+          "previousChampionId": "p1",
+          "previousBestScore": 70,
+          "screenThreshold": 50,
+          "epsilon": 1,
+          "deepTolerance": 10,
+          "screen": {
+            "status": "pass",
+            "score": 100
+          },
+          "deep": {
+            "status": "pass",
+            "score": 90
+          },
+          "criteria": [],
+          "missedCriterionIds": [],
+          "missedSeedWeight": 0,
+          "missedCurrentWeight": 0,
+          "committed": false,
+          "rejection": "invalid_input"
+        }
+      }
+    },
+    {
+      "name": "unknown criterion",
+      "state": {
+        "lineage": [
+          {
+            "proposalId": "p1",
+            "parentId": null,
+            "score": 70,
+            "artifact": {
+              "summary": "first",
+              "edits": []
+            },
+            "missedCriterionIds": [
+              "scope"
+            ]
+          }
+        ],
+        "championId": "p1",
+        "opponents": {
+          "criteria": [
+            {
+              "id": "scope",
+              "seedWeight": 1,
+              "currentWeight": 2
+            },
+            {
+              "id": "evidence",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "failure:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "referee:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "arc:all-levels",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "Novelty",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty-2",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty_2",
+              "seedWeight": 1,
+              "currentWeight": 1
+            }
+          ]
+        },
+        "evaluatedProposalIds": [
+          "p1",
+          "p2",
+          "p3",
+          "p4",
+          "p5"
+        ]
+      },
+      "proposal": {
+        "id": "p6",
+        "artifact": 1
+      },
+      "evaluation": {
+        "proposalId": "p6",
+        "screen": {
+          "status": "pass",
+          "score": 100
+        },
+        "deep": {
+          "status": "pass",
+          "score": 90
+        },
+        "criteria": [
+          {
+            "criterionId": "scope",
+            "status": "pass"
+          },
+          {
+            "criterionId": "evidence",
+            "status": "pass"
+          },
+          {
+            "criterionId": "failure:0a1b",
+            "status": "pass"
+          },
+          {
+            "criterionId": "referee:0a1b",
+            "status": "pass"
+          },
+          {
+            "criterionId": "arc:all-levels",
+            "status": "pass"
+          },
+          {
+            "criterionId": "Novelty",
+            "status": "pass"
+          },
+          {
+            "criterionId": "novelty-2",
+            "status": "pass"
+          },
+          {
+            "criterionId": "novelty_2",
+            "status": "pass"
+          },
+          {
+            "criterionId": "nope",
+            "status": "pass"
+          }
+        ]
+      },
+      "config": {
+        "screenThreshold": 50,
+        "epsilon": 1,
+        "deepTolerance": 10
+      },
+      "result": {
+        "state": {
+          "lineage": [
+            {
+              "proposalId": "p1",
+              "parentId": null,
+              "score": 70,
+              "artifact": {
+                "summary": "first",
+                "edits": []
+              },
+              "missedCriterionIds": [
+                "scope"
+              ]
+            }
+          ],
+          "championId": "p1",
+          "opponents": {
+            "criteria": [
+              {
+                "id": "scope",
+                "seedWeight": 1,
+                "currentWeight": 2
+              },
+              {
+                "id": "evidence",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "failure:0a1b",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "referee:0a1b",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "arc:all-levels",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "Novelty",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty-2",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty_2",
+                "seedWeight": 1,
+                "currentWeight": 1
+              }
+            ]
+          },
+          "evaluatedProposalIds": [
+            "p1",
+            "p2",
+            "p3",
+            "p4",
+            "p5",
+            "p6"
+          ]
+        },
+        "certificate": {
+          "proposalId": "p6",
+          "previousChampionId": "p1",
+          "previousBestScore": 70,
+          "screenThreshold": 50,
+          "epsilon": 1,
+          "deepTolerance": 10,
+          "screen": {
+            "status": "pass",
+            "score": 100
+          },
+          "deep": {
+            "status": "pass",
+            "score": 90
+          },
+          "criteria": [],
+          "missedCriterionIds": [],
+          "missedSeedWeight": 0,
+          "missedCurrentWeight": 0,
+          "committed": false,
+          "rejection": "invalid_input"
+        }
+      }
+    },
+    {
+      "name": "deep abstains",
+      "state": {
+        "lineage": [
+          {
+            "proposalId": "p1",
+            "parentId": null,
+            "score": 70,
+            "artifact": {
+              "summary": "first",
+              "edits": []
+            },
+            "missedCriterionIds": [
+              "scope"
+            ]
+          }
+        ],
+        "championId": "p1",
+        "opponents": {
+          "criteria": [
+            {
+              "id": "scope",
+              "seedWeight": 1,
+              "currentWeight": 2
+            },
+            {
+              "id": "evidence",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "failure:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "referee:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "arc:all-levels",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "Novelty",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty-2",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty_2",
+              "seedWeight": 1,
+              "currentWeight": 1
+            }
+          ]
+        },
+        "evaluatedProposalIds": [
+          "p1",
+          "p2",
+          "p3",
+          "p4",
+          "p5",
+          "p6"
+        ]
+      },
+      "proposal": {
+        "id": "p7",
+        "artifact": 1
+      },
+      "evaluation": {
+        "proposalId": "p7",
+        "screen": {
+          "status": "pass",
+          "score": 100
+        },
+        "deep": {
+          "status": "abstain"
+        },
+        "criteria": []
+      },
+      "config": {
+        "screenThreshold": 50,
+        "epsilon": 1,
+        "deepTolerance": 10
+      },
+      "result": {
+        "state": {
+          "lineage": [
+            {
+              "proposalId": "p1",
+              "parentId": null,
+              "score": 70,
+              "artifact": {
+                "summary": "first",
+                "edits": []
+              },
+              "missedCriterionIds": [
+                "scope"
+              ]
+            }
+          ],
+          "championId": "p1",
+          "opponents": {
+            "criteria": [
+              {
+                "id": "scope",
+                "seedWeight": 1,
+                "currentWeight": 2
+              },
+              {
+                "id": "evidence",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "failure:0a1b",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "referee:0a1b",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "arc:all-levels",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "Novelty",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty-2",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty_2",
+                "seedWeight": 1,
+                "currentWeight": 1
+              }
+            ]
+          },
+          "evaluatedProposalIds": [
+            "p1",
+            "p2",
+            "p3",
+            "p4",
+            "p5",
+            "p6",
+            "p7"
+          ]
+        },
+        "certificate": {
+          "proposalId": "p7",
+          "previousChampionId": "p1",
+          "previousBestScore": 70,
+          "screenThreshold": 50,
+          "epsilon": 1,
+          "deepTolerance": 10,
+          "screen": {
+            "status": "pass",
+            "score": 100
+          },
+          "deep": {
+            "status": "abstain"
+          },
+          "criteria": [],
+          "missedCriterionIds": [],
+          "missedSeedWeight": 0,
+          "missedCurrentWeight": 0,
+          "committed": false,
+          "rejection": "deep"
+        }
+      }
+    },
+    {
+      "name": "second commit, abstentions counted",
+      "state": {
+        "lineage": [
+          {
+            "proposalId": "p1",
+            "parentId": null,
+            "score": 70,
+            "artifact": {
+              "summary": "first",
+              "edits": []
+            },
+            "missedCriterionIds": [
+              "scope"
+            ]
+          }
+        ],
+        "championId": "p1",
+        "opponents": {
+          "criteria": [
+            {
+              "id": "scope",
+              "seedWeight": 1,
+              "currentWeight": 2
+            },
+            {
+              "id": "evidence",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "failure:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "referee:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "arc:all-levels",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "Novelty",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty-2",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty_2",
+              "seedWeight": 1,
+              "currentWeight": 1
+            }
+          ]
+        },
+        "evaluatedProposalIds": [
+          "p1",
+          "p2",
+          "p3",
+          "p4",
+          "p5",
+          "p6",
+          "p7"
+        ]
+      },
+      "proposal": {
+        "id": "p8",
+        "artifact": {
+          "second": true
+        }
+      },
+      "evaluation": {
+        "proposalId": "p8",
+        "screen": {
+          "status": "pass",
+          "score": 60
+        },
+        "deep": {
+          "status": "pass",
+          "score": 75
+        },
+        "criteria": [
+          {
+            "criterionId": "scope",
+            "status": "pass"
+          },
+          {
+            "criterionId": "evidence",
+            "status": "pass"
+          },
+          {
+            "criterionId": "failure:0a1b",
+            "status": "pass"
+          },
+          {
+            "criterionId": "referee:0a1b",
+            "status": "pass"
+          },
+          {
+            "criterionId": "arc:all-levels",
+            "status": "pass"
+          },
+          {
+            "criterionId": "Novelty",
+            "status": "pass"
+          },
+          {
+            "criterionId": "novelty-2",
+            "status": "pass"
+          }
+        ]
+      },
+      "config": {
+        "screenThreshold": 50,
+        "epsilon": 1,
+        "deepTolerance": 10
+      },
+      "result": {
+        "state": {
+          "lineage": [
+            {
+              "proposalId": "p1",
+              "parentId": null,
+              "score": 70,
+              "artifact": {
+                "summary": "first",
+                "edits": []
+              },
+              "missedCriterionIds": [
+                "scope"
+              ]
+            },
+            {
+              "proposalId": "p8",
+              "parentId": "p1",
+              "score": 75,
+              "artifact": {
+                "second": true
+              },
+              "missedCriterionIds": [
+                "novelty_2"
+              ]
+            }
+          ],
+          "championId": "p8",
+          "opponents": {
+            "criteria": [
+              {
+                "id": "scope",
+                "seedWeight": 1,
+                "currentWeight": 2
+              },
+              {
+                "id": "evidence",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "failure:0a1b",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "referee:0a1b",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "arc:all-levels",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "Novelty",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty-2",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty_2",
+                "seedWeight": 1,
+                "currentWeight": 2
+              }
+            ]
+          },
+          "evaluatedProposalIds": [
+            "p1",
+            "p2",
+            "p3",
+            "p4",
+            "p5",
+            "p6",
+            "p7",
+            "p8"
+          ]
+        },
+        "certificate": {
+          "proposalId": "p8",
+          "previousChampionId": "p1",
+          "previousBestScore": 70,
+          "screenThreshold": 50,
+          "epsilon": 1,
+          "deepTolerance": 10,
+          "screen": {
+            "status": "pass",
+            "score": 60
+          },
+          "deep": {
+            "status": "pass",
+            "score": 75
+          },
+          "criteria": [
+            {
+              "criterionId": "arc:all-levels",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false
+            },
+            {
+              "criterionId": "evidence",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false
+            },
+            {
+              "criterionId": "failure:0a1b",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false
+            },
+            {
+              "criterionId": "Novelty",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false
+            },
+            {
+              "criterionId": "novelty_2",
+              "status": "abstain",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": true
+            },
+            {
+              "criterionId": "novelty-2",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false
+            },
+            {
+              "criterionId": "referee:0a1b",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false
+            },
+            {
+              "criterionId": "scope",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 2,
+              "countedAsMissed": false
+            }
+          ],
+          "missedCriterionIds": [
+            "novelty_2"
+          ],
+          "missedSeedWeight": 1,
+          "missedCurrentWeight": 1,
+          "committed": true
+        }
+      }
+    }
+  ],
+  "provisional": {
+    "marked": {
+      "lineage": [
+        {
+          "proposalId": "p1",
+          "parentId": null,
+          "score": 70,
+          "artifact": {
+            "summary": "first",
+            "edits": []
+          },
+          "missedCriterionIds": [
+            "scope"
+          ],
+          "claimedFingerprints": [
+            "a1",
+            "A1",
+            "b2"
+          ],
+          "provisional": {
+            "committedTurn": 40,
+            "untilTurn": 60,
+            "clock": "ordinal"
+          }
+        },
+        {
+          "proposalId": "p8",
+          "parentId": "p1",
+          "score": 75,
+          "artifact": {
+            "second": true
+          },
+          "missedCriterionIds": [
+            "novelty_2"
+          ]
+        }
+      ],
+      "championId": "p8",
+      "opponents": {
+        "criteria": [
+          {
+            "id": "scope",
+            "seedWeight": 1,
+            "currentWeight": 2
+          },
+          {
+            "id": "evidence",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "failure:0a1b",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "referee:0a1b",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "arc:all-levels",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "Novelty",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "novelty-2",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "novelty_2",
+            "seedWeight": 1,
+            "currentWeight": 2
+          }
+        ]
+      },
+      "evaluatedProposalIds": [
+        "p1",
+        "p2",
+        "p3",
+        "p4",
+        "p5",
+        "p6",
+        "p7",
+        "p8"
+      ]
+    },
+    "inside": {
+      "state": {
+        "lineage": [
+          {
+            "proposalId": "p1",
+            "parentId": null,
+            "score": 70,
+            "artifact": {
+              "summary": "first",
+              "edits": []
+            },
+            "missedCriterionIds": [
+              "scope"
+            ],
+            "claimedFingerprints": [
+              "a1",
+              "A1",
+              "b2"
+            ],
+            "provisional": {
+              "committedTurn": 40,
+              "untilTurn": 60,
+              "clock": "ordinal",
+              "observedRecurrence": {
+                "turn": 47,
+                "fingerprints": [
+                  "a1"
+                ]
+              }
+            }
+          },
+          {
+            "proposalId": "p8",
+            "parentId": "p1",
+            "score": 75,
+            "artifact": {
+              "second": true
+            },
+            "missedCriterionIds": [
+              "novelty_2"
+            ]
+          }
+        ],
+        "championId": "p8",
+        "opponents": {
+          "criteria": [
+            {
+              "id": "scope",
+              "seedWeight": 1,
+              "currentWeight": 2
+            },
+            {
+              "id": "evidence",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "failure:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "referee:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "arc:all-levels",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "Novelty",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty-2",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty_2",
+              "seedWeight": 1,
+              "currentWeight": 2
+            }
+          ]
+        },
+        "evaluatedProposalIds": [
+          "p1",
+          "p2",
+          "p3",
+          "p4",
+          "p5",
+          "p6",
+          "p7",
+          "p8"
+        ]
+      },
+      "regression": true
+    },
+    "outside": {
+      "state": {
+        "lineage": [
+          {
+            "proposalId": "p1",
+            "parentId": null,
+            "score": 70,
+            "artifact": {
+              "summary": "first",
+              "edits": []
+            },
+            "missedCriterionIds": [
+              "scope"
+            ],
+            "claimedFingerprints": [
+              "a1",
+              "A1",
+              "b2"
+            ],
+            "provisional": {
+              "committedTurn": 40,
+              "untilTurn": 60,
+              "clock": "ordinal"
+            }
+          },
+          {
+            "proposalId": "p8",
+            "parentId": "p1",
+            "score": 75,
+            "artifact": {
+              "second": true
+            },
+            "missedCriterionIds": [
+              "novelty_2"
+            ]
+          }
+        ],
+        "championId": "p8",
+        "opponents": {
+          "criteria": [
+            {
+              "id": "scope",
+              "seedWeight": 1,
+              "currentWeight": 2
+            },
+            {
+              "id": "evidence",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "failure:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "referee:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "arc:all-levels",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "Novelty",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty-2",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty_2",
+              "seedWeight": 1,
+              "currentWeight": 2
+            }
+          ]
+        },
+        "evaluatedProposalIds": [
+          "p1",
+          "p2",
+          "p3",
+          "p4",
+          "p5",
+          "p6",
+          "p7",
+          "p8"
+        ]
+      },
+      "regression": false
+    },
+    "unclaimed": {
+      "state": {
+        "lineage": [
+          {
+            "proposalId": "p1",
+            "parentId": null,
+            "score": 70,
+            "artifact": {
+              "summary": "first",
+              "edits": []
+            },
+            "missedCriterionIds": [
+              "scope"
+            ],
+            "claimedFingerprints": [
+              "a1",
+              "A1",
+              "b2"
+            ],
+            "provisional": {
+              "committedTurn": 40,
+              "untilTurn": 60,
+              "clock": "ordinal"
+            }
+          },
+          {
+            "proposalId": "p8",
+            "parentId": "p1",
+            "score": 75,
+            "artifact": {
+              "second": true
+            },
+            "missedCriterionIds": [
+              "novelty_2"
+            ]
+          }
+        ],
+        "championId": "p8",
+        "opponents": {
+          "criteria": [
+            {
+              "id": "scope",
+              "seedWeight": 1,
+              "currentWeight": 2
+            },
+            {
+              "id": "evidence",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "failure:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "referee:0a1b",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "arc:all-levels",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "Novelty",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty-2",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty_2",
+              "seedWeight": 1,
+              "currentWeight": 2
+            }
+          ]
+        },
+        "evaluatedProposalIds": [
+          "p1",
+          "p2",
+          "p3",
+          "p4",
+          "p5",
+          "p6",
+          "p7",
+          "p8"
+        ]
+      },
+      "regression": false
+    },
+    "unknownChampion": {
+      "lineage": [
+        {
+          "proposalId": "p1",
+          "parentId": null,
+          "score": 70,
+          "artifact": {
+            "summary": "first",
+            "edits": []
+          },
+          "missedCriterionIds": [
+            "scope"
+          ]
+        },
+        {
+          "proposalId": "p8",
+          "parentId": "p1",
+          "score": 75,
+          "artifact": {
+            "second": true
+          },
+          "missedCriterionIds": [
+            "novelty_2"
+          ]
+        }
+      ],
+      "championId": "p8",
+      "opponents": {
+        "criteria": [
+          {
+            "id": "scope",
+            "seedWeight": 1,
+            "currentWeight": 2
+          },
+          {
+            "id": "evidence",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "failure:0a1b",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "referee:0a1b",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "arc:all-levels",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "Novelty",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "novelty-2",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "novelty_2",
+            "seedWeight": 1,
+            "currentWeight": 2
+          }
+        ]
+      },
+      "evaluatedProposalIds": [
+        "p1",
+        "p2",
+        "p3",
+        "p4",
+        "p5",
+        "p6",
+        "p7",
+        "p8"
+      ]
+    },
+    "invalidWindow": {
+      "lineage": [
+        {
+          "proposalId": "p1",
+          "parentId": null,
+          "score": 70,
+          "artifact": {
+            "summary": "first",
+            "edits": []
+          },
+          "missedCriterionIds": [
+            "scope"
+          ]
+        },
+        {
+          "proposalId": "p8",
+          "parentId": "p1",
+          "score": 75,
+          "artifact": {
+            "second": true
+          },
+          "missedCriterionIds": [
+            "novelty_2"
+          ]
+        }
+      ],
+      "championId": "p8",
+      "opponents": {
+        "criteria": [
+          {
+            "id": "scope",
+            "seedWeight": 1,
+            "currentWeight": 2
+          },
+          {
+            "id": "evidence",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "failure:0a1b",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "referee:0a1b",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "arc:all-levels",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "Novelty",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "novelty-2",
+            "seedWeight": 1,
+            "currentWeight": 1
+          },
+          {
+            "id": "novelty_2",
+            "seedWeight": 1,
+            "currentWeight": 2
+          }
+        ]
+      },
+      "evaluatedProposalIds": [
+        "p1",
+        "p2",
+        "p3",
+        "p4",
+        "p5",
+        "p6",
+        "p7",
+        "p8"
+      ]
+    }
+  }
+}

@@ -1,0 +1,1455 @@
+[
+  {
+    "name": "a directed commit that claims nothing",
+    "proposal": {
+      "summary": "teach the tactic",
+      "rationale": "seen twice",
+      "expectedOutcome": "no repeat",
+      "edits": [
+        {
+          "action": "create",
+          "kind": "memory",
+          "title": "Use tactic A",
+          "content": "Always do A."
+        }
+      ]
+    },
+    "options": {
+      "state": {
+        "lineage": [],
+        "championId": null,
+        "opponents": {
+          "criteria": [
+            {
+              "id": "evidence",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "scope",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "minimality",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "contracts",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty",
+              "seedWeight": 1,
+              "currentWeight": 1
+            }
+          ]
+        },
+        "evaluatedProposalIds": []
+      },
+      "validEdits": 1,
+      "conversationText": "[User]: do it twice",
+      "harnessOverview": "memory: 0",
+      "baseline": {
+        "schema": 1,
+        "entries": {
+          "memory": {
+            "m1": {
+              "id": "m1",
+              "title": "Tactic"
+            }
+          }
+        }
+      },
+      "proposalId": "g1",
+      "refineKind": "directed"
+    },
+    "reply": {
+      "text": "{\"verdict\":\"pass\",\"score\":72,\"failedCriteria\":[],\"rationale\":\"fine\"}"
+    },
+    "requests": [
+      {
+        "systemPrompt": "You are the RAVO deep evaluator for Prime Agent's /refine subsystem.\n\nScore a proposed continual-harness refinement against the trajectory evidence.\nJudge the QUALITY OF THE RESULTING HARNESS STATE, not prose style.\n\nWhen <recurring_failures> is present, each listed failure is an opponent\ncriterion (id \"failure:<fingerprint>\"). The proposal ADDRESSES a fingerprint\nonly if its edits would plausibly prevent that exact failure from recurring\n(a memory, prompt note, skill fix, or subagent change that targets its cause).\nList the fingerprint ids the proposal genuinely addresses in\n\"addressedFingerprints\"; a fingerprint not listed there counts as a missed\nopponent. Never list a fingerprint the proposal merely mentions. A fingerprint\nmarked replay=verified is re-executed after you answer when a skill the proposal\nwrites imports the module its replay case probes, so listing one whose failure\nhas not actually stopped costs the proposal the gate. Do not list a fingerprint\nwhose failure is outside the harness's control (a provider outage, a user\ndenial, a flaky network).\n\n\"verdict\" is your own decision on the deep gate: \"pass\" if this candidate is at\nleast as good a harness state as the current champion, \"fail\" if it is worse,\n\"abstain\" if you cannot tell from the evidence given. It is not a summary of\n\"score\"; a non-pass verdict rejects the candidate regardless of the number.\n\nReturn JSON only:\n{\n  \"verdict\": \"pass\" | \"fail\" | \"abstain\",\n  \"score\": 0-100,\n  \"failedCriteria\": [\"criterion ids that the proposal fails\"],\n  \"addressedFingerprints\": [\"recurring failure fingerprint ids the proposal addresses\"],\n  \"rationale\": \"one or two sentences\"\n}",
+        "prompt": "<criteria>\n- evidence (weight 1): Every edit is backed by concrete trajectory evidence.\n- scope (weight 1): Edits match the requested scope (local vs global) policy.\n- minimality (weight 1): Edits touch the smallest relevant components; no sprawling rewrites.\n- contracts (weight 1): Skill edits carry a valid python reference and arguments contract.\n- novelty (weight 1): Edits do not duplicate or overlap existing harness entries.\n</criteria>\n\n<current_harness_state>\nmemory: 0\n</current_harness_state>\n\n<proposal>\n{\n  \"summary\": \"teach the tactic\",\n  \"rationale\": \"seen twice\",\n  \"expectedOutcome\": \"no repeat\",\n  \"edits\": [\n    {\n      \"action\": \"create\",\n      \"kind\": \"memory\",\n      \"title\": \"Use tactic A\",\n      \"content\": \"Always do A.\"\n    }\n  ]\n}\n</proposal>\n\n<conversation>\n[User]: do it twice\n</conversation>\n\nScore the proposal and list any failed criterion ids. Return JSON only.",
+        "maxTokens": 2048
+      }
+    ],
+    "report": {
+      "fastScore": 100,
+      "bestScore": 0,
+      "epsilon": 1,
+      "screenThreshold": 50,
+      "deepTolerance": 10,
+      "failureOpponents": [],
+      "decision": "commit",
+      "deepScore": 72,
+      "missedCriteria": [],
+      "missedWeight": 0,
+      "addressedFingerprints": [],
+      "refereeVerdicts": [],
+      "rationale": "fine",
+      "authorization": {
+        "authorized": true,
+        "certificate": {
+          "proposalId": "g1",
+          "previousChampionId": null,
+          "previousBestScore": 0,
+          "screenThreshold": 50,
+          "epsilon": 1,
+          "deepTolerance": 10,
+          "screen": {
+            "status": "pass",
+            "score": 100
+          },
+          "deep": {
+            "status": "pass",
+            "score": 72,
+            "detail": "fine"
+          },
+          "criteria": [
+            {
+              "criterionId": "contracts",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false,
+              "detail": "fine"
+            },
+            {
+              "criterionId": "evidence",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false,
+              "detail": "fine"
+            },
+            {
+              "criterionId": "minimality",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false,
+              "detail": "fine"
+            },
+            {
+              "criterionId": "novelty",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false,
+              "detail": "fine"
+            },
+            {
+              "criterionId": "scope",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false,
+              "detail": "fine"
+            }
+          ],
+          "missedCriterionIds": [],
+          "missedSeedWeight": 0,
+          "missedCurrentWeight": 0,
+          "committed": true,
+          "proposalDigest": "7b35de38359f1c160b7d2aa6d54df5b8bd4b13bbf7761a42b43ced84cb635cb2",
+          "baselineDigest": "af0c9e5b7c15e8e2a6238dfdacd007997cd2df5131482694359c3375e5a775e9"
+        },
+        "proposalDigest": "7b35de38359f1c160b7d2aa6d54df5b8bd4b13bbf7761a42b43ced84cb635cb2",
+        "baselineDigest": "af0c9e5b7c15e8e2a6238dfdacd007997cd2df5131482694359c3375e5a775e9",
+        "nextState": {
+          "lineage": [],
+          "championId": null,
+          "opponents": {
+            "criteria": [
+              {
+                "id": "evidence",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "scope",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "minimality",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "contracts",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty",
+                "seedWeight": 1,
+                "currentWeight": 1
+              }
+            ]
+          },
+          "evaluatedProposalIds": []
+        }
+      },
+      "measurable": false,
+      "refereeCounts": {
+        "cleared": 0,
+        "upheld": 0,
+        "unverifiable": 0,
+        "no_evidence": 0,
+        "not_applicable": 0
+      }
+    }
+  },
+  {
+    "name": "an unverifiable replay charges the claim",
+    "proposal": {
+      "summary": "teach the tactic",
+      "rationale": "seen twice",
+      "expectedOutcome": "no repeat",
+      "edits": [
+        {
+          "action": "update",
+          "kind": "skill",
+          "id": "fetcher",
+          "title": "Fetcher",
+          "content": "Fetch things.",
+          "reference": {
+            "type": "python",
+            "import": "foo.bar",
+            "callable": "run"
+          },
+          "arguments": {
+            "url": "string"
+          }
+        },
+        {
+          "action": "create",
+          "kind": "memory",
+          "title": "Use tactic A",
+          "content": "Always do A."
+        }
+      ]
+    },
+    "options": {
+      "state": {
+        "lineage": [],
+        "championId": null,
+        "opponents": {
+          "criteria": [
+            {
+              "id": "evidence",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "scope",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "minimality",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "contracts",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty",
+              "seedWeight": 1,
+              "currentWeight": 1
+            }
+          ]
+        },
+        "evaluatedProposalIds": []
+      },
+      "validEdits": 2,
+      "conversationText": "[User]: fetch it",
+      "harnessOverview": "skill: 1",
+      "baseline": {
+        "schema": 1,
+        "entries": {
+          "memory": {
+            "m1": {
+              "id": "m1",
+              "title": "Tactic"
+            }
+          }
+        }
+      },
+      "proposalId": "g2",
+      "recurringFailures": [
+        {
+          "fingerprint": {
+            "id": "1111aaaa2222bbbb",
+            "kind": "python_exception",
+            "message": "message of 1111aaaa2222bbbb",
+            "source": "ipython",
+            "exceptionClass": "ModuleNotFoundError"
+          },
+          "count": 3,
+          "firstSeenTurn": 1,
+          "lastSeenTurn": 6,
+          "firstSeenAt": "2026-01-01T00:00:00.000Z",
+          "lastSeenAt": "2026-01-01T00:05:00.000Z",
+          "excerpt": "Traceback ...\nModuleNotFoundError: No module named 'foo'  1111aaaa2222bbbb",
+          "addressedByProposalIds": [],
+          "replayCases": [
+            {
+              "language": "python",
+              "source": "import foo",
+              "exceptionClass": "ModuleNotFoundError",
+              "verifiedAt": "2026-01-01T00:01:00.000Z"
+            }
+          ]
+        },
+        {
+          "fingerprint": {
+            "id": "3333cccc4444dddd",
+            "kind": "tool_error",
+            "message": "message of 3333cccc4444dddd",
+            "source": "bash"
+          },
+          "count": 2,
+          "firstSeenTurn": 1,
+          "lastSeenTurn": 5,
+          "firstSeenAt": "2026-01-01T00:00:00.000Z",
+          "lastSeenAt": "2026-01-01T00:05:00.000Z",
+          "excerpt": "Traceback ...\nModuleNotFoundError: No module named 'foo'  3333cccc4444dddd",
+          "addressedByProposalIds": []
+        }
+      ],
+      "turn": 40,
+      "turnClock": "ordinal",
+      "refineKind": "directed"
+    },
+    "reply": {
+      "text": "{\"verdict\":\"pass\",\"score\":80,\"failedCriteria\":[],\"addressedFingerprints\":[\"1111aaaa2222bbbb\",\"unknownfp\"],\"rationale\":\"fixes the import\"}"
+    },
+    "requests": [
+      {
+        "systemPrompt": "You are the RAVO deep evaluator for Prime Agent's /refine subsystem.\n\nScore a proposed continual-harness refinement against the trajectory evidence.\nJudge the QUALITY OF THE RESULTING HARNESS STATE, not prose style.\n\nWhen <recurring_failures> is present, each listed failure is an opponent\ncriterion (id \"failure:<fingerprint>\"). The proposal ADDRESSES a fingerprint\nonly if its edits would plausibly prevent that exact failure from recurring\n(a memory, prompt note, skill fix, or subagent change that targets its cause).\nList the fingerprint ids the proposal genuinely addresses in\n\"addressedFingerprints\"; a fingerprint not listed there counts as a missed\nopponent. Never list a fingerprint the proposal merely mentions. A fingerprint\nmarked replay=verified is re-executed after you answer when a skill the proposal\nwrites imports the module its replay case probes, so listing one whose failure\nhas not actually stopped costs the proposal the gate. Do not list a fingerprint\nwhose failure is outside the harness's control (a provider outage, a user\ndenial, a flaky network).\n\n\"verdict\" is your own decision on the deep gate: \"pass\" if this candidate is at\nleast as good a harness state as the current champion, \"fail\" if it is worse,\n\"abstain\" if you cannot tell from the evidence given. It is not a summary of\n\"score\"; a non-pass verdict rejects the candidate regardless of the number.\n\nReturn JSON only:\n{\n  \"verdict\": \"pass\" | \"fail\" | \"abstain\",\n  \"score\": 0-100,\n  \"failedCriteria\": [\"criterion ids that the proposal fails\"],\n  \"addressedFingerprints\": [\"recurring failure fingerprint ids the proposal addresses\"],\n  \"rationale\": \"one or two sentences\"\n}",
+        "prompt": "<criteria>\n- evidence (weight 1): Every edit is backed by concrete trajectory evidence.\n- scope (weight 1): Edits match the requested scope (local vs global) policy.\n- minimality (weight 1): Edits touch the smallest relevant components; no sprawling rewrites.\n- contracts (weight 1): Skill edits carry a valid python reference and arguments contract.\n- novelty (weight 1): Edits do not duplicate or overlap existing harness entries.\n- failure:1111aaaa2222bbbb (weight 1): Recurring python_exception (3x): message of 1111aaaa2222bbbb\n- failure:3333cccc4444dddd (weight 1): Recurring tool_error (2x): message of 3333cccc4444dddd\n</criteria>\n\n<recurring_failures>\n- failure:1111aaaa2222bbbb [python_exception] source=ipython class=ModuleNotFoundError count=3 turns=1..6 replay=verified\n  Traceback ... ModuleNotFoundError: No module named 'foo' 1111aaaa2222bbbb\n  replay case (re-run to check the fix): import foo\n- failure:3333cccc4444dddd [tool_error] source=bash count=2 turns=1..5\n  Traceback ... ModuleNotFoundError: No module named 'foo' 3333cccc4444dddd\n</recurring_failures>\n\nThe proposal must address these recurring failures. Return the fingerprint ids it addresses in \"addressedFingerprints\" (candidates: 1111aaaa2222bbbb, 3333cccc4444dddd).\n\n<current_harness_state>\nskill: 1\n</current_harness_state>\n\n<proposal>\n{\n  \"summary\": \"teach the tactic\",\n  \"rationale\": \"seen twice\",\n  \"expectedOutcome\": \"no repeat\",\n  \"edits\": [\n    {\n      \"action\": \"update\",\n      \"kind\": \"skill\",\n      \"id\": \"fetcher\",\n      \"title\": \"Fetcher\",\n      \"content\": \"Fetch things.\",\n      \"reference\": {\n        \"type\": \"python\",\n        \"import\": \"foo.bar\",\n        \"callable\": \"run\"\n      },\n      \"arguments\": {\n        \"url\": \"string\"\n      }\n    },\n    {\n      \"action\": \"create\",\n      \"kind\": \"memory\",\n      \"title\": \"Use tactic A\",\n      \"content\": \"Always do A.\"\n    }\n  ]\n}\n</proposal>\n\n<conversation>\n[User]: fetch it\n</conversation>\n\nScore the proposal and list any failed criterion ids. Return JSON only.",
+        "maxTokens": 2048
+      }
+    ],
+    "report": {
+      "fastScore": 100,
+      "bestScore": 0,
+      "epsilon": 1,
+      "screenThreshold": 50,
+      "deepTolerance": 10,
+      "failureOpponents": [
+        "failure:1111aaaa2222bbbb",
+        "failure:3333cccc4444dddd"
+      ],
+      "decision": "reject_criteria",
+      "deepScore": 80,
+      "missedCriteria": [
+        "failure:1111aaaa2222bbbb",
+        "failure:3333cccc4444dddd",
+        "referee:1111aaaa2222bbbb"
+      ],
+      "missedWeight": 3,
+      "addressedFingerprints": [
+        "1111aaaa2222bbbb"
+      ],
+      "refereeVerdicts": [
+        {
+          "fingerprintId": "1111aaaa2222bbbb",
+          "status": "unverifiable",
+          "detail": "unverifiable: no kernel python: the replay case could not be executed"
+        }
+      ],
+      "rationale": "fixes the import",
+      "authorization": {
+        "authorized": false,
+        "certificate": {
+          "proposalId": "g2",
+          "previousChampionId": null,
+          "previousBestScore": 0,
+          "screenThreshold": 50,
+          "epsilon": 1,
+          "deepTolerance": 10,
+          "screen": {
+            "status": "pass",
+            "score": 100
+          },
+          "deep": {
+            "status": "pass",
+            "score": 80,
+            "detail": "fixes the import"
+          },
+          "criteria": [
+            {
+              "criterionId": "contracts",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false,
+              "detail": "fixes the import"
+            },
+            {
+              "criterionId": "evidence",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false,
+              "detail": "fixes the import"
+            },
+            {
+              "criterionId": "failure:1111aaaa2222bbbb",
+              "status": "fail",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": true,
+              "detail": "unverifiable: no kernel python: the replay case could not be executed"
+            },
+            {
+              "criterionId": "failure:3333cccc4444dddd",
+              "status": "fail",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": true,
+              "detail": "fixes the import"
+            },
+            {
+              "criterionId": "minimality",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false,
+              "detail": "fixes the import"
+            },
+            {
+              "criterionId": "novelty",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false,
+              "detail": "fixes the import"
+            },
+            {
+              "criterionId": "referee:1111aaaa2222bbbb",
+              "status": "fail",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": true,
+              "detail": "unverifiable: no kernel python: the replay case could not be executed"
+            },
+            {
+              "criterionId": "scope",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false,
+              "detail": "fixes the import"
+            }
+          ],
+          "missedCriterionIds": [
+            "failure:1111aaaa2222bbbb",
+            "failure:3333cccc4444dddd",
+            "referee:1111aaaa2222bbbb"
+          ],
+          "missedSeedWeight": 3,
+          "missedCurrentWeight": 3,
+          "committed": false,
+          "rejection": "opponents",
+          "proposalDigest": "9d9e5c4a200db14f5325b2c5239c3b3da801deac61183cfffe6fddde7079840d",
+          "baselineDigest": "af0c9e5b7c15e8e2a6238dfdacd007997cd2df5131482694359c3375e5a775e9"
+        },
+        "proposalDigest": "9d9e5c4a200db14f5325b2c5239c3b3da801deac61183cfffe6fddde7079840d",
+        "baselineDigest": "af0c9e5b7c15e8e2a6238dfdacd007997cd2df5131482694359c3375e5a775e9",
+        "nextState": {
+          "lineage": [],
+          "championId": null,
+          "opponents": {
+            "criteria": [
+              {
+                "id": "evidence",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "scope",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "minimality",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "contracts",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "failure:1111aaaa2222bbbb",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "failure:3333cccc4444dddd",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "referee:1111aaaa2222bbbb",
+                "seedWeight": 1,
+                "currentWeight": 1
+              }
+            ]
+          },
+          "evaluatedProposalIds": [
+            "g2"
+          ]
+        }
+      },
+      "measurable": false,
+      "refereeCounts": {
+        "cleared": 0,
+        "upheld": 0,
+        "unverifiable": 1,
+        "no_evidence": 0,
+        "not_applicable": 0
+      }
+    }
+  },
+  {
+    "name": "a failure refine that claims nothing",
+    "proposal": {
+      "summary": "teach the tactic",
+      "rationale": "seen twice",
+      "expectedOutcome": "no repeat",
+      "edits": [
+        {
+          "action": "create",
+          "kind": "memory",
+          "title": "Use tactic A",
+          "content": "Always do A."
+        }
+      ]
+    },
+    "options": {
+      "state": {
+        "lineage": [],
+        "championId": null,
+        "opponents": {
+          "criteria": [
+            {
+              "id": "evidence",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "scope",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "minimality",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "contracts",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty",
+              "seedWeight": 1,
+              "currentWeight": 1
+            }
+          ]
+        },
+        "evaluatedProposalIds": []
+      },
+      "validEdits": 1,
+      "conversationText": "",
+      "harnessOverview": "",
+      "baseline": {
+        "schema": 1,
+        "entries": {
+          "memory": {
+            "m1": {
+              "id": "m1",
+              "title": "Tactic"
+            }
+          }
+        }
+      },
+      "proposalId": "g3",
+      "recurringFailures": [
+        {
+          "fingerprint": {
+            "id": "3333cccc4444dddd",
+            "kind": "tool_error",
+            "message": "message of 3333cccc4444dddd",
+            "source": "bash"
+          },
+          "count": 2,
+          "firstSeenTurn": 1,
+          "lastSeenTurn": 5,
+          "firstSeenAt": "2026-01-01T00:00:00.000Z",
+          "lastSeenAt": "2026-01-01T00:05:00.000Z",
+          "excerpt": "Traceback ...\nModuleNotFoundError: No module named 'foo'  3333cccc4444dddd",
+          "addressedByProposalIds": []
+        }
+      ],
+      "turn": 7,
+      "turnClock": "local-ordinal",
+      "refineKind": "failure"
+    },
+    "reply": {
+      "text": "{\"verdict\":\"pass\",\"score\":90,\"failedCriteria\":[],\"addressedFingerprints\":[],\"rationale\":\"unrelated\"}"
+    },
+    "requests": [
+      {
+        "systemPrompt": "You are the RAVO deep evaluator for Prime Agent's /refine subsystem.\n\nScore a proposed continual-harness refinement against the trajectory evidence.\nJudge the QUALITY OF THE RESULTING HARNESS STATE, not prose style.\n\nWhen <recurring_failures> is present, each listed failure is an opponent\ncriterion (id \"failure:<fingerprint>\"). The proposal ADDRESSES a fingerprint\nonly if its edits would plausibly prevent that exact failure from recurring\n(a memory, prompt note, skill fix, or subagent change that targets its cause).\nList the fingerprint ids the proposal genuinely addresses in\n\"addressedFingerprints\"; a fingerprint not listed there counts as a missed\nopponent. Never list a fingerprint the proposal merely mentions. A fingerprint\nmarked replay=verified is re-executed after you answer when a skill the proposal\nwrites imports the module its replay case probes, so listing one whose failure\nhas not actually stopped costs the proposal the gate. Do not list a fingerprint\nwhose failure is outside the harness's control (a provider outage, a user\ndenial, a flaky network).\n\n\"verdict\" is your own decision on the deep gate: \"pass\" if this candidate is at\nleast as good a harness state as the current champion, \"fail\" if it is worse,\n\"abstain\" if you cannot tell from the evidence given. It is not a summary of\n\"score\"; a non-pass verdict rejects the candidate regardless of the number.\n\nReturn JSON only:\n{\n  \"verdict\": \"pass\" | \"fail\" | \"abstain\",\n  \"score\": 0-100,\n  \"failedCriteria\": [\"criterion ids that the proposal fails\"],\n  \"addressedFingerprints\": [\"recurring failure fingerprint ids the proposal addresses\"],\n  \"rationale\": \"one or two sentences\"\n}",
+        "prompt": "<criteria>\n- evidence (weight 1): Every edit is backed by concrete trajectory evidence.\n- scope (weight 1): Edits match the requested scope (local vs global) policy.\n- minimality (weight 1): Edits touch the smallest relevant components; no sprawling rewrites.\n- contracts (weight 1): Skill edits carry a valid python reference and arguments contract.\n- novelty (weight 1): Edits do not duplicate or overlap existing harness entries.\n- failure:3333cccc4444dddd (weight 1): Recurring tool_error (2x): message of 3333cccc4444dddd\n</criteria>\n\n<recurring_failures>\n- failure:3333cccc4444dddd [tool_error] source=bash count=2 turns=1..5\n  Traceback ... ModuleNotFoundError: No module named 'foo' 3333cccc4444dddd\n</recurring_failures>\n\nThe proposal must address these recurring failures. Return the fingerprint ids it addresses in \"addressedFingerprints\" (candidates: 3333cccc4444dddd).\n\n<current_harness_state>\n\n</current_harness_state>\n\n<proposal>\n{\n  \"summary\": \"teach the tactic\",\n  \"rationale\": \"seen twice\",\n  \"expectedOutcome\": \"no repeat\",\n  \"edits\": [\n    {\n      \"action\": \"create\",\n      \"kind\": \"memory\",\n      \"title\": \"Use tactic A\",\n      \"content\": \"Always do A.\"\n    }\n  ]\n}\n</proposal>\n\n<conversation>\n\n</conversation>\n\nScore the proposal and list any failed criterion ids. Return JSON only.",
+        "maxTokens": 2048
+      }
+    ],
+    "report": {
+      "fastScore": 100,
+      "bestScore": 0,
+      "epsilon": 1,
+      "screenThreshold": 50,
+      "deepTolerance": 10,
+      "failureOpponents": [
+        "failure:3333cccc4444dddd"
+      ],
+      "decision": "reject_unclaimed",
+      "deepScore": 90,
+      "missedCriteria": [
+        "failure:3333cccc4444dddd"
+      ],
+      "missedWeight": 1,
+      "addressedFingerprints": [],
+      "refereeVerdicts": [],
+      "rationale": "unrelated",
+      "authorization": {
+        "authorized": false,
+        "certificate": {
+          "proposalId": "g3",
+          "previousChampionId": null,
+          "previousBestScore": 0,
+          "screenThreshold": 50,
+          "epsilon": 1,
+          "deepTolerance": 10,
+          "screen": {
+            "status": "pass",
+            "score": 100
+          },
+          "deep": {
+            "status": "pass",
+            "score": 90,
+            "detail": "unrelated"
+          },
+          "criteria": [
+            {
+              "criterionId": "contracts",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false,
+              "detail": "unrelated"
+            },
+            {
+              "criterionId": "evidence",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false,
+              "detail": "unrelated"
+            },
+            {
+              "criterionId": "failure:3333cccc4444dddd",
+              "status": "fail",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": true,
+              "detail": "unrelated"
+            },
+            {
+              "criterionId": "minimality",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false,
+              "detail": "unrelated"
+            },
+            {
+              "criterionId": "novelty",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false,
+              "detail": "unrelated"
+            },
+            {
+              "criterionId": "scope",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false,
+              "detail": "unrelated"
+            }
+          ],
+          "missedCriterionIds": [
+            "failure:3333cccc4444dddd"
+          ],
+          "missedSeedWeight": 1,
+          "missedCurrentWeight": 1,
+          "committed": false,
+          "rejection": "unclaimed",
+          "proposalDigest": "7b35de38359f1c160b7d2aa6d54df5b8bd4b13bbf7761a42b43ced84cb635cb2",
+          "baselineDigest": "af0c9e5b7c15e8e2a6238dfdacd007997cd2df5131482694359c3375e5a775e9"
+        },
+        "proposalDigest": "7b35de38359f1c160b7d2aa6d54df5b8bd4b13bbf7761a42b43ced84cb635cb2",
+        "baselineDigest": "af0c9e5b7c15e8e2a6238dfdacd007997cd2df5131482694359c3375e5a775e9",
+        "nextState": {
+          "lineage": [],
+          "championId": null,
+          "opponents": {
+            "criteria": [
+              {
+                "id": "evidence",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "scope",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "minimality",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "contracts",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "failure:3333cccc4444dddd",
+                "seedWeight": 1,
+                "currentWeight": 1
+              }
+            ]
+          },
+          "evaluatedProposalIds": [
+            "g3"
+          ]
+        }
+      },
+      "measurable": false,
+      "refereeCounts": {
+        "cleared": 0,
+        "upheld": 0,
+        "unverifiable": 0,
+        "no_evidence": 0,
+        "not_applicable": 0
+      }
+    }
+  },
+  {
+    "name": "the judge is unavailable",
+    "proposal": {
+      "summary": "teach the tactic",
+      "rationale": "seen twice",
+      "expectedOutcome": "no repeat",
+      "edits": [
+        {
+          "action": "create",
+          "kind": "memory",
+          "title": "Use tactic A",
+          "content": "Always do A."
+        }
+      ]
+    },
+    "options": {
+      "state": {
+        "lineage": [],
+        "championId": null,
+        "opponents": {
+          "criteria": [
+            {
+              "id": "evidence",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "scope",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "minimality",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "contracts",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty",
+              "seedWeight": 1,
+              "currentWeight": 1
+            }
+          ]
+        },
+        "evaluatedProposalIds": []
+      },
+      "validEdits": 1,
+      "conversationText": "x",
+      "harnessOverview": "y",
+      "baseline": {
+        "schema": 1,
+        "entries": {
+          "memory": {
+            "m1": {
+              "id": "m1",
+              "title": "Tactic"
+            }
+          }
+        }
+      },
+      "proposalId": "g4",
+      "recurringFailures": [
+        {
+          "fingerprint": {
+            "id": "3333cccc4444dddd",
+            "kind": "tool_error",
+            "message": "message of 3333cccc4444dddd",
+            "source": "bash"
+          },
+          "count": 2,
+          "firstSeenTurn": 1,
+          "lastSeenTurn": 5,
+          "firstSeenAt": "2026-01-01T00:00:00.000Z",
+          "lastSeenAt": "2026-01-01T00:05:00.000Z",
+          "excerpt": "Traceback ...\nModuleNotFoundError: No module named 'foo'  3333cccc4444dddd",
+          "addressedByProposalIds": []
+        }
+      ],
+      "refineKind": "directed"
+    },
+    "reply": {
+      "error": "rate limited"
+    },
+    "requests": [
+      {
+        "systemPrompt": "You are the RAVO deep evaluator for Prime Agent's /refine subsystem.\n\nScore a proposed continual-harness refinement against the trajectory evidence.\nJudge the QUALITY OF THE RESULTING HARNESS STATE, not prose style.\n\nWhen <recurring_failures> is present, each listed failure is an opponent\ncriterion (id \"failure:<fingerprint>\"). The proposal ADDRESSES a fingerprint\nonly if its edits would plausibly prevent that exact failure from recurring\n(a memory, prompt note, skill fix, or subagent change that targets its cause).\nList the fingerprint ids the proposal genuinely addresses in\n\"addressedFingerprints\"; a fingerprint not listed there counts as a missed\nopponent. Never list a fingerprint the proposal merely mentions. A fingerprint\nmarked replay=verified is re-executed after you answer when a skill the proposal\nwrites imports the module its replay case probes, so listing one whose failure\nhas not actually stopped costs the proposal the gate. Do not list a fingerprint\nwhose failure is outside the harness's control (a provider outage, a user\ndenial, a flaky network).\n\n\"verdict\" is your own decision on the deep gate: \"pass\" if this candidate is at\nleast as good a harness state as the current champion, \"fail\" if it is worse,\n\"abstain\" if you cannot tell from the evidence given. It is not a summary of\n\"score\"; a non-pass verdict rejects the candidate regardless of the number.\n\nReturn JSON only:\n{\n  \"verdict\": \"pass\" | \"fail\" | \"abstain\",\n  \"score\": 0-100,\n  \"failedCriteria\": [\"criterion ids that the proposal fails\"],\n  \"addressedFingerprints\": [\"recurring failure fingerprint ids the proposal addresses\"],\n  \"rationale\": \"one or two sentences\"\n}",
+        "prompt": "<criteria>\n- evidence (weight 1): Every edit is backed by concrete trajectory evidence.\n- scope (weight 1): Edits match the requested scope (local vs global) policy.\n- minimality (weight 1): Edits touch the smallest relevant components; no sprawling rewrites.\n- contracts (weight 1): Skill edits carry a valid python reference and arguments contract.\n- novelty (weight 1): Edits do not duplicate or overlap existing harness entries.\n- failure:3333cccc4444dddd (weight 1): Recurring tool_error (2x): message of 3333cccc4444dddd\n</criteria>\n\n<recurring_failures>\n- failure:3333cccc4444dddd [tool_error] source=bash count=2 turns=1..5\n  Traceback ... ModuleNotFoundError: No module named 'foo' 3333cccc4444dddd\n</recurring_failures>\n\nThe proposal must address these recurring failures. Return the fingerprint ids it addresses in \"addressedFingerprints\" (candidates: 3333cccc4444dddd).\n\n<current_harness_state>\ny\n</current_harness_state>\n\n<proposal>\n{\n  \"summary\": \"teach the tactic\",\n  \"rationale\": \"seen twice\",\n  \"expectedOutcome\": \"no repeat\",\n  \"edits\": [\n    {\n      \"action\": \"create\",\n      \"kind\": \"memory\",\n      \"title\": \"Use tactic A\",\n      \"content\": \"Always do A.\"\n    }\n  ]\n}\n</proposal>\n\n<conversation>\nx\n</conversation>\n\nScore the proposal and list any failed criterion ids. Return JSON only.",
+        "maxTokens": 2048
+      }
+    ],
+    "report": {
+      "fastScore": 100,
+      "bestScore": 0,
+      "epsilon": 1,
+      "screenThreshold": 50,
+      "deepTolerance": 10,
+      "failureOpponents": [
+        "failure:3333cccc4444dddd"
+      ],
+      "decision": "reject_deep",
+      "deepScore": 0,
+      "missedCriteria": [
+        "failure:3333cccc4444dddd"
+      ],
+      "missedWeight": 1,
+      "addressedFingerprints": [],
+      "refereeVerdicts": [],
+      "rationale": "deep judge unavailable (rate limited); no harness edits were authorized; retry /refine when evaluation is available",
+      "judgeError": "rate limited",
+      "authorization": {
+        "authorized": false,
+        "certificate": {
+          "proposalId": "g4",
+          "previousChampionId": null,
+          "previousBestScore": 0,
+          "screenThreshold": 50,
+          "epsilon": 1,
+          "deepTolerance": 10,
+          "screen": {
+            "status": "pass",
+            "score": 100
+          },
+          "deep": {
+            "status": "error",
+            "detail": "deep judge unavailable (rate limited); no harness edits were authorized; retry /refine when evaluation is available"
+          },
+          "criteria": [],
+          "missedCriterionIds": [],
+          "missedSeedWeight": 0,
+          "missedCurrentWeight": 0,
+          "committed": false,
+          "rejection": "deep",
+          "proposalDigest": "7b35de38359f1c160b7d2aa6d54df5b8bd4b13bbf7761a42b43ced84cb635cb2",
+          "baselineDigest": "af0c9e5b7c15e8e2a6238dfdacd007997cd2df5131482694359c3375e5a775e9"
+        },
+        "proposalDigest": "7b35de38359f1c160b7d2aa6d54df5b8bd4b13bbf7761a42b43ced84cb635cb2",
+        "baselineDigest": "af0c9e5b7c15e8e2a6238dfdacd007997cd2df5131482694359c3375e5a775e9",
+        "nextState": {
+          "lineage": [],
+          "championId": null,
+          "opponents": {
+            "criteria": [
+              {
+                "id": "evidence",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "scope",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "minimality",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "contracts",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "failure:3333cccc4444dddd",
+                "seedWeight": 1,
+                "currentWeight": 1
+              }
+            ]
+          },
+          "evaluatedProposalIds": [
+            "g4"
+          ]
+        }
+      },
+      "measurable": false,
+      "refereeCounts": {
+        "cleared": 0,
+        "upheld": 0,
+        "unverifiable": 0,
+        "no_evidence": 0,
+        "not_applicable": 0
+      }
+    }
+  },
+  {
+    "name": "the structural screen fails",
+    "proposal": {
+      "summary": "teach the tactic",
+      "rationale": "seen twice",
+      "expectedOutcome": "no repeat",
+      "edits": [
+        {
+          "action": "create",
+          "kind": "memory",
+          "title": "Use tactic A",
+          "content": "Always do A."
+        },
+        {
+          "action": "update",
+          "kind": "memory"
+        },
+        {
+          "action": "delete",
+          "kind": "skill"
+        }
+      ]
+    },
+    "options": {
+      "state": {
+        "lineage": [],
+        "championId": null,
+        "opponents": {
+          "criteria": [
+            {
+              "id": "evidence",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "scope",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "minimality",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "contracts",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty",
+              "seedWeight": 1,
+              "currentWeight": 1
+            }
+          ]
+        },
+        "evaluatedProposalIds": []
+      },
+      "validEdits": 1,
+      "conversationText": "x",
+      "harnessOverview": "y",
+      "baseline": {
+        "schema": 1,
+        "entries": {
+          "memory": {
+            "m1": {
+              "id": "m1",
+              "title": "Tactic"
+            }
+          }
+        }
+      },
+      "proposalId": "g5",
+      "recurringFailures": [
+        {
+          "fingerprint": {
+            "id": "3333cccc4444dddd",
+            "kind": "tool_error",
+            "message": "message of 3333cccc4444dddd",
+            "source": "bash"
+          },
+          "count": 2,
+          "firstSeenTurn": 1,
+          "lastSeenTurn": 5,
+          "firstSeenAt": "2026-01-01T00:00:00.000Z",
+          "lastSeenAt": "2026-01-01T00:05:00.000Z",
+          "excerpt": "Traceback ...\nModuleNotFoundError: No module named 'foo'  3333cccc4444dddd",
+          "addressedByProposalIds": []
+        }
+      ],
+      "refineKind": "checkpoint"
+    },
+    "reply": {
+      "text": "never asked"
+    },
+    "requests": [],
+    "report": {
+      "fastScore": 33,
+      "bestScore": 0,
+      "epsilon": 1,
+      "screenThreshold": 50,
+      "deepTolerance": 10,
+      "failureOpponents": [
+        "failure:3333cccc4444dddd"
+      ],
+      "decision": "reject_screen",
+      "deepScore": 0,
+      "missedCriteria": [],
+      "missedWeight": 0,
+      "addressedFingerprints": [],
+      "rationale": "structural screen scored 33 below threshold 50",
+      "authorization": {
+        "authorized": false,
+        "certificate": {
+          "proposalId": "g5",
+          "previousChampionId": null,
+          "previousBestScore": 0,
+          "screenThreshold": 50,
+          "epsilon": 1,
+          "deepTolerance": 10,
+          "screen": {
+            "status": "fail",
+            "score": 33
+          },
+          "deep": {
+            "status": "abstain",
+            "detail": "structural screen scored 33 below threshold 50"
+          },
+          "criteria": [],
+          "missedCriterionIds": [],
+          "missedSeedWeight": 0,
+          "missedCurrentWeight": 0,
+          "committed": false,
+          "rejection": "screen",
+          "proposalDigest": "ccb16c161450df3c563a12e7c20e0cf1af85289d1aa64d756f15594cb677da04",
+          "baselineDigest": "af0c9e5b7c15e8e2a6238dfdacd007997cd2df5131482694359c3375e5a775e9"
+        },
+        "proposalDigest": "ccb16c161450df3c563a12e7c20e0cf1af85289d1aa64d756f15594cb677da04",
+        "baselineDigest": "af0c9e5b7c15e8e2a6238dfdacd007997cd2df5131482694359c3375e5a775e9",
+        "nextState": {
+          "lineage": [],
+          "championId": null,
+          "opponents": {
+            "criteria": [
+              {
+                "id": "evidence",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "scope",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "minimality",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "contracts",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "failure:3333cccc4444dddd",
+                "seedWeight": 1,
+                "currentWeight": 1
+              }
+            ]
+          },
+          "evaluatedProposalIds": [
+            "g5"
+          ]
+        }
+      },
+      "measurable": false,
+      "refereeCounts": {
+        "cleared": 0,
+        "upheld": 0,
+        "unverifiable": 0,
+        "no_evidence": 0,
+        "not_applicable": 0
+      }
+    }
+  },
+  {
+    "name": "a fenced reply with a status token and a string score",
+    "proposal": {
+      "summary": "teach the tactic",
+      "rationale": "seen twice",
+      "expectedOutcome": "no repeat",
+      "edits": [
+        {
+          "action": "create",
+          "kind": "memory",
+          "title": "Use tactic A",
+          "content": "Always do A."
+        }
+      ]
+    },
+    "options": {
+      "state": {
+        "lineage": [],
+        "championId": null,
+        "opponents": {
+          "criteria": [
+            {
+              "id": "evidence",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "scope",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "minimality",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "contracts",
+              "seedWeight": 1,
+              "currentWeight": 1
+            },
+            {
+              "id": "novelty",
+              "seedWeight": 1,
+              "currentWeight": 1
+            }
+          ]
+        },
+        "evaluatedProposalIds": []
+      },
+      "validEdits": 1,
+      "conversationText": "[Assistant]: done",
+      "harnessOverview": "memory: 1",
+      "baseline": {
+        "schema": 1,
+        "entries": {
+          "memory": {
+            "m1": {
+              "id": "m1",
+              "title": "Tactic"
+            }
+          }
+        }
+      },
+      "proposalId": "g6",
+      "recurringFailures": [
+        {
+          "fingerprint": {
+            "id": "3333cccc4444dddd",
+            "kind": "tool_error",
+            "message": "message of 3333cccc4444dddd",
+            "source": "bash"
+          },
+          "count": 2,
+          "firstSeenTurn": 1,
+          "lastSeenTurn": 5,
+          "firstSeenAt": "2026-01-01T00:00:00.000Z",
+          "lastSeenAt": "2026-01-01T00:05:00.000Z",
+          "excerpt": "Traceback ...\nModuleNotFoundError: No module named 'foo'  3333cccc4444dddd",
+          "addressedByProposalIds": []
+        },
+        {
+          "fingerprint": {
+            "id": "1111aaaa2222bbbb",
+            "kind": "python_exception",
+            "message": "message of 1111aaaa2222bbbb",
+            "source": "ipython",
+            "exceptionClass": "ModuleNotFoundError"
+          },
+          "count": 3,
+          "firstSeenTurn": 1,
+          "lastSeenTurn": 6,
+          "firstSeenAt": "2026-01-01T00:00:00.000Z",
+          "lastSeenAt": "2026-01-01T00:05:00.000Z",
+          "excerpt": "Traceback ...\nModuleNotFoundError: No module named 'foo'  1111aaaa2222bbbb",
+          "addressedByProposalIds": [],
+          "replayCases": [
+            {
+              "language": "python",
+              "source": "import foo",
+              "exceptionClass": "ModuleNotFoundError",
+              "verifiedAt": "2026-01-01T00:01:00.000Z"
+            }
+          ]
+        }
+      ],
+      "turn": 40,
+      "turnClock": "ordinal",
+      "refineKind": "failure"
+    },
+    "reply": {
+      "text": "Here you go:\n```json\n{\"status\":\" Accept \",\"score\":\"88.5\",\"failedCriteria\":[\"novelty\"],\"addressedFingerprints\":[\"3333cccc4444dddd\"],\"rationale\":\"targets the tool error\"}\n```\ntrailing {"
+    },
+    "requests": [
+      {
+        "systemPrompt": "You are the RAVO deep evaluator for Prime Agent's /refine subsystem.\n\nScore a proposed continual-harness refinement against the trajectory evidence.\nJudge the QUALITY OF THE RESULTING HARNESS STATE, not prose style.\n\nWhen <recurring_failures> is present, each listed failure is an opponent\ncriterion (id \"failure:<fingerprint>\"). The proposal ADDRESSES a fingerprint\nonly if its edits would plausibly prevent that exact failure from recurring\n(a memory, prompt note, skill fix, or subagent change that targets its cause).\nList the fingerprint ids the proposal genuinely addresses in\n\"addressedFingerprints\"; a fingerprint not listed there counts as a missed\nopponent. Never list a fingerprint the proposal merely mentions. A fingerprint\nmarked replay=verified is re-executed after you answer when a skill the proposal\nwrites imports the module its replay case probes, so listing one whose failure\nhas not actually stopped costs the proposal the gate. Do not list a fingerprint\nwhose failure is outside the harness's control (a provider outage, a user\ndenial, a flaky network).\n\n\"verdict\" is your own decision on the deep gate: \"pass\" if this candidate is at\nleast as good a harness state as the current champion, \"fail\" if it is worse,\n\"abstain\" if you cannot tell from the evidence given. It is not a summary of\n\"score\"; a non-pass verdict rejects the candidate regardless of the number.\n\nReturn JSON only:\n{\n  \"verdict\": \"pass\" | \"fail\" | \"abstain\",\n  \"score\": 0-100,\n  \"failedCriteria\": [\"criterion ids that the proposal fails\"],\n  \"addressedFingerprints\": [\"recurring failure fingerprint ids the proposal addresses\"],\n  \"rationale\": \"one or two sentences\"\n}",
+        "prompt": "<criteria>\n- evidence (weight 1): Every edit is backed by concrete trajectory evidence.\n- scope (weight 1): Edits match the requested scope (local vs global) policy.\n- minimality (weight 1): Edits touch the smallest relevant components; no sprawling rewrites.\n- contracts (weight 1): Skill edits carry a valid python reference and arguments contract.\n- novelty (weight 1): Edits do not duplicate or overlap existing harness entries.\n- failure:3333cccc4444dddd (weight 1): Recurring tool_error (2x): message of 3333cccc4444dddd\n- failure:1111aaaa2222bbbb (weight 1): Recurring python_exception (3x): message of 1111aaaa2222bbbb\n</criteria>\n\n<recurring_failures>\n- failure:3333cccc4444dddd [tool_error] source=bash count=2 turns=1..5\n  Traceback ... ModuleNotFoundError: No module named 'foo' 3333cccc4444dddd\n- failure:1111aaaa2222bbbb [python_exception] source=ipython class=ModuleNotFoundError count=3 turns=1..6 replay=verified\n  Traceback ... ModuleNotFoundError: No module named 'foo' 1111aaaa2222bbbb\n  replay case (re-run to check the fix): import foo\n</recurring_failures>\n\nThe proposal must address these recurring failures. Return the fingerprint ids it addresses in \"addressedFingerprints\" (candidates: 3333cccc4444dddd, 1111aaaa2222bbbb).\n\n<current_harness_state>\nmemory: 1\n</current_harness_state>\n\n<proposal>\n{\n  \"summary\": \"teach the tactic\",\n  \"rationale\": \"seen twice\",\n  \"expectedOutcome\": \"no repeat\",\n  \"edits\": [\n    {\n      \"action\": \"create\",\n      \"kind\": \"memory\",\n      \"title\": \"Use tactic A\",\n      \"content\": \"Always do A.\"\n    }\n  ]\n}\n</proposal>\n\n<conversation>\n[Assistant]: done\n</conversation>\n\nScore the proposal and list any failed criterion ids. Return JSON only.",
+        "maxTokens": 2048
+      }
+    ],
+    "report": {
+      "fastScore": 100,
+      "bestScore": 0,
+      "epsilon": 1,
+      "screenThreshold": 50,
+      "deepTolerance": 10,
+      "failureOpponents": [
+        "failure:3333cccc4444dddd",
+        "failure:1111aaaa2222bbbb"
+      ],
+      "decision": "reject_criteria",
+      "deepScore": 89,
+      "missedCriteria": [
+        "failure:1111aaaa2222bbbb",
+        "novelty"
+      ],
+      "missedWeight": 2,
+      "addressedFingerprints": [
+        "3333cccc4444dddd"
+      ],
+      "refereeVerdicts": [
+        {
+          "fingerprintId": "3333cccc4444dddd",
+          "status": "not_applicable",
+          "detail": "not_applicable: no replay case derivable for this failure"
+        }
+      ],
+      "rationale": "targets the tool error",
+      "authorization": {
+        "authorized": false,
+        "certificate": {
+          "proposalId": "g6",
+          "previousChampionId": null,
+          "previousBestScore": 0,
+          "screenThreshold": 50,
+          "epsilon": 1,
+          "deepTolerance": 10,
+          "screen": {
+            "status": "pass",
+            "score": 100
+          },
+          "deep": {
+            "status": "pass",
+            "score": 89,
+            "detail": "targets the tool error"
+          },
+          "criteria": [
+            {
+              "criterionId": "contracts",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false,
+              "detail": "targets the tool error"
+            },
+            {
+              "criterionId": "evidence",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false,
+              "detail": "targets the tool error"
+            },
+            {
+              "criterionId": "failure:1111aaaa2222bbbb",
+              "status": "fail",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": true,
+              "detail": "targets the tool error"
+            },
+            {
+              "criterionId": "failure:3333cccc4444dddd",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false,
+              "detail": "targets the tool error"
+            },
+            {
+              "criterionId": "minimality",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false,
+              "detail": "targets the tool error"
+            },
+            {
+              "criterionId": "novelty",
+              "status": "fail",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": true,
+              "detail": "targets the tool error"
+            },
+            {
+              "criterionId": "scope",
+              "status": "pass",
+              "seedWeight": 1,
+              "currentWeight": 1,
+              "countedAsMissed": false,
+              "detail": "targets the tool error"
+            }
+          ],
+          "missedCriterionIds": [
+            "failure:1111aaaa2222bbbb",
+            "novelty"
+          ],
+          "missedSeedWeight": 2,
+          "missedCurrentWeight": 2,
+          "committed": false,
+          "rejection": "opponents",
+          "proposalDigest": "7b35de38359f1c160b7d2aa6d54df5b8bd4b13bbf7761a42b43ced84cb635cb2",
+          "baselineDigest": "af0c9e5b7c15e8e2a6238dfdacd007997cd2df5131482694359c3375e5a775e9"
+        },
+        "proposalDigest": "7b35de38359f1c160b7d2aa6d54df5b8bd4b13bbf7761a42b43ced84cb635cb2",
+        "baselineDigest": "af0c9e5b7c15e8e2a6238dfdacd007997cd2df5131482694359c3375e5a775e9",
+        "nextState": {
+          "lineage": [],
+          "championId": null,
+          "opponents": {
+            "criteria": [
+              {
+                "id": "evidence",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "scope",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "minimality",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "contracts",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "novelty",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "failure:3333cccc4444dddd",
+                "seedWeight": 1,
+                "currentWeight": 1
+              },
+              {
+                "id": "failure:1111aaaa2222bbbb",
+                "seedWeight": 1,
+                "currentWeight": 1
+              }
+            ]
+          },
+          "evaluatedProposalIds": [
+            "g6"
+          ]
+        }
+      },
+      "measurable": false,
+      "refereeCounts": {
+        "cleared": 0,
+        "upheld": 0,
+        "unverifiable": 0,
+        "no_evidence": 0,
+        "not_applicable": 1
+      }
+    }
+  }
+]

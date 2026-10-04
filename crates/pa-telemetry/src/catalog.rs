@@ -11,7 +11,7 @@
 //! 3 adds the kernel telemetry bridge's skill-event vocabulary
 //! (`computer_use_session_started`, `computer_use_action`); schema version 4
 //! adds the separately built features' adoption events (`dream_run`,
-//! `failure_resolution_hint`, `observability command used`, `toolforge
+//! `failure_resolution_hint`, `observability command used`, `ravo_gate_decision`, `toolforge
 //! publish`, `workflow_run_agent`, `workflow_durable_request`): new-event
 //! vocabulary bumps the version,
 //! additive property changes do not.
@@ -1017,6 +1017,71 @@ const FAILURE_RESOLUTION_HINT: EventRule = EventRule {
     )],
 };
 
+/// `ravo_gate_decision` (v4): one refinement the fork's RAVO gate judged
+/// (the `pa-ravo` feature, wired by pa-cli behind its `ravo` feature),
+/// at its final decision. The decision, scope, why the refine ran, the
+/// rejection cause, and how many recurring failures it was charged and
+/// claimed — never a fingerprint, a proposal, a score, or judge text.
+const RAVO_GATE_DECISION: EventRule = EventRule {
+    name: "ravo_gate_decision",
+    since: 4,
+    properties: &[
+        (
+            "decision",
+            required(enum_rule(
+                &[
+                    "commit",
+                    "commit_unmeasured",
+                    "partial",
+                    "reject_screen",
+                    "reject_deep",
+                    "reject_criteria",
+                    "reject_unclaimed",
+                    "unknown",
+                ],
+                "unknown",
+            )),
+        ),
+        (
+            "scope",
+            required(enum_rule(&["local", "global", "unknown"], "unknown")),
+        ),
+        (
+            "reason",
+            required(enum_rule(
+                &[
+                    "manual",
+                    "refine_run",
+                    "recurrence",
+                    "regression",
+                    "turn_interval",
+                    "compact",
+                    "ravo_run",
+                    "unknown",
+                ],
+                "unknown",
+            )),
+        ),
+        (
+            "cause",
+            required(enum_rule(
+                &[
+                    "none",
+                    "gate",
+                    "screen",
+                    "judge_unavailable",
+                    "baseline_changed",
+                    "stale_evidence",
+                    "unknown",
+                ],
+                "unknown",
+            )),
+        ),
+        ("recurring", required(count())),
+        ("claimed", required(count())),
+    ],
+};
+
 /// `observability command used` (v4): one `prime-agent trace` /
 /// `prime-agent health` run (the fork's trace feature crate, wired by pa-cli
 /// behind its `trace` feature; the native build never sends it). The
@@ -1555,6 +1620,7 @@ pub fn catalog() -> Vec<&'static EventRule> {
         &WORKFLOW_V2_REQUEST,
         &OBSERVABILITY_COMMAND_USED,
         &FAILURE_RESOLUTION_HINT,
+        &RAVO_GATE_DECISION,
     ];
     all.extend(UPDATE_EVENTS.iter());
     all
@@ -1691,6 +1757,7 @@ mod tests {
             lookup("failure_resolution_hint").map(|rule| rule.since),
             Some(4)
         );
+        assert_eq!(lookup("ravo_gate_decision").map(|rule| rule.since), Some(4));
         for name in ["computer_use_session_started", "computer_use_action"] {
             let rule = catalog()
                 .into_iter()
@@ -1826,6 +1893,25 @@ mod tests {
         odd.set("origin", json!("elsewhere"));
         sanitize("failure_resolution_hint", &mut odd);
         assert_eq!(odd.get("origin"), Some(&json!("unknown")));
+    }
+
+    #[test]
+    fn ravo_gate_decision_carries_only_its_vocabulary_and_counts() {
+        let mut properties = Properties::new();
+        properties.set("decision", json!("reject_criteria"));
+        properties.set("scope", json!("global"));
+        properties.set("reason", json!("manual"));
+        properties.set("cause", json!("gate"));
+        properties.set("recurring", json!(2u64));
+        properties.set("claimed", json!(1u64));
+        let expected = properties.clone();
+        properties.set("rationale", json!("judge text")); // not catalogued
+        assert_eq!(sanitize("ravo_gate_decision", &mut properties), 1);
+        assert_eq!(properties, expected);
+        let mut odd = Properties::new();
+        odd.set("decision", json!("approve"));
+        sanitize("ravo_gate_decision", &mut odd);
+        assert_eq!(odd.get("decision"), Some(&json!("unknown")));
     }
 
     #[test]

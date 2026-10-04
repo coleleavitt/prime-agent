@@ -1411,6 +1411,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "pa-ravo"
+version = "0.9.8"
+dependencies = [
+ "anyhow",
+ "pa-agent",
+ "pa-core",
+ "pa-ledger",
+ "pa-telemetry",
+ "pa-types",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "pa-recall"
 version = "0.9.8"
 dependencies = [

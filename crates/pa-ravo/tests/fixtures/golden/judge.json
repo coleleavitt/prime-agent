@@ -1,0 +1,79 @@
+{
+  "verdicts": [
+    {
+      "value": " PASS ",
+      "verdict": "pass"
+    },
+    {
+      "value": "accept",
+      "verdict": "pass"
+    },
+    {
+      "value": "passed",
+      "verdict": "pass"
+    },
+    {
+      "value": "true",
+      "verdict": "pass"
+    },
+    {
+      "value": "fail",
+      "verdict": "fail"
+    },
+    {
+      "value": "reject",
+      "verdict": "fail"
+    },
+    {
+      "value": "false",
+      "verdict": "fail"
+    },
+    {
+      "value": "",
+      "verdict": "abstain"
+    },
+    {
+      "value": "maybe",
+      "verdict": "abstain"
+    },
+    {
+      "value": null,
+      "verdict": "abstain"
+    },
+    {
+      "value": true,
+      "verdict": "abstain"
+    },
+    {
+      "value": 1,
+      "verdict": "abstain"
+    }
+  ],
+  "screens": [
+    {
+      "edits": 0,
+      "valid": 0,
+      "score": 0
+    },
+    {
+      "edits": 3,
+      "valid": 1,
+      "score": 33
+    },
+    {
+      "edits": 3,
+      "valid": 2,
+      "score": 67
+    },
+    {
+      "edits": 8,
+      "valid": 5,
+      "score": 63
+    },
+    {
+      "edits": 2,
+      "valid": 1,
+      "score": 50
+    }
+  ]
+}
