@@ -8,6 +8,127 @@ use crate::event::source::windows::WindowsEventSource;
 use crate::event::sys::Waker;
 use crate::event::{filter::Filter, source::EventSource, timeout::PollTimeout, InternalEvent};
 
+/// Prime Agent patch: the keyboard-enhancement reply watch.
+///
+/// The support check (`CSI ? u` + `CSI c`) arms the watch BEFORE it writes
+/// the query, and from then on whichever poller parses the reply publishes
+/// the verdict here: every caller reads the tty through the one shared
+/// reader, and the app's input reader polls it throughout the check's
+/// window. The check used to find the reply only by taking the reader lock
+/// itself and reading it out of the shared queue; under CPU contention its
+/// slices lost every round of the lock to the app reader (whose 10ms polls
+/// re-take it within microseconds), so a reply that arrived and was parsed
+/// in time sat in the queue while the check's window lapsed — and the
+/// terminal was classified "no kitty support" for the rest of the process.
+/// With the watch the check only reads the verdict, which needs no reader
+/// lock.
+///
+/// A lapsed window is no verdict either: the query stays watched after the
+/// check returns its no-answer error, and a reply that arrives later still
+/// publishes its verdict, for the caller to take through
+/// [`crate::event::take_late_keyboard_enhancement_reply`] (a parked
+/// unbounded poll wakes when it lands). The kitty contract has no deadline;
+/// a slow hop or a loaded host answers late, not never.
+///
+/// The verdict follows the kitty detection contract: the terminal answers
+/// the flags query before the device-attributes query, so a flags reply
+/// means "supported", and a DA1 reply that arrives first means
+/// "unsupported" (<https://sw.kovidgoyal.net/kitty/keyboard-protocol/#detection-of-support-for-this-protocol>).
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReplyWatch {
+    /// No query outstanding: replies take the normal filtered path.
+    Off,
+    /// The query is out: the first flags or DA1 reply is the verdict.
+    Awaiting,
+    /// A flags reply concluded the query: its trailing DA1 reply is consumed
+    /// instead of parking in the shared queue forever.
+    SwallowDa1,
+}
+
+#[cfg(unix)]
+struct CapabilityReplies {
+    watch: ReplyWatch,
+    verdict: Option<bool>,
+}
+
+#[cfg(unix)]
+static CAPABILITY_REPLIES: std::sync::Mutex<CapabilityReplies> =
+    std::sync::Mutex::new(CapabilityReplies {
+        watch: ReplyWatch::Off,
+        verdict: None,
+    });
+
+#[cfg(unix)]
+fn capability_replies() -> std::sync::MutexGuard<'static, CapabilityReplies> {
+    CAPABILITY_REPLIES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Arm the watch for a query about to be written (clears a stale verdict).
+#[cfg(unix)]
+pub(crate) fn arm_capability_watch() {
+    let mut replies = capability_replies();
+    replies.watch = ReplyWatch::Awaiting;
+    replies.verdict = None;
+}
+
+/// Take the published verdict: `Some(true)` for a flags reply, `Some(false)`
+/// for a DA1 reply that arrived first. Each verdict is returned once.
+#[cfg(unix)]
+pub(crate) fn take_capability_verdict() -> Option<bool> {
+    capability_replies().verdict.take()
+}
+
+/// The check's window lapsed: take a verdict that landed in the meantime.
+/// With none, the watch stays armed — the late reply's verdict is published
+/// for [`crate::event::take_late_keyboard_enhancement_reply`].
+#[cfg(unix)]
+pub(crate) fn lapse_capability_watch() -> Option<bool> {
+    capability_replies().verdict.take()
+}
+
+/// What [`observe_capability_reply`] did with one parsed event.
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WatchedReply {
+    /// Not a watched reply: the event takes the normal filtered path.
+    Unwatched,
+    /// The event concluded the outstanding query (the verdict is published).
+    Verdict,
+    /// The trailing DA1 of a query a flags reply concluded: consumed.
+    Swallowed,
+}
+
+/// Route one parsed event through the reply watch.
+#[cfg(unix)]
+fn observe_capability_reply(event: &InternalEvent) -> WatchedReply {
+    let flags = match event {
+        InternalEvent::KeyboardEnhancementFlags(_) => true,
+        InternalEvent::PrimaryDeviceAttributes => false,
+        _ => return WatchedReply::Unwatched,
+    };
+    let mut replies = capability_replies();
+    match (replies.watch, flags) {
+        (ReplyWatch::Awaiting, true) => {
+            replies.watch = ReplyWatch::SwallowDa1;
+            replies.verdict = Some(true);
+            WatchedReply::Verdict
+        }
+        (ReplyWatch::Awaiting, false) => {
+            replies.watch = ReplyWatch::Off;
+            replies.verdict = Some(false);
+            WatchedReply::Verdict
+        }
+        (ReplyWatch::SwallowDa1, false) => {
+            replies.watch = ReplyWatch::Off;
+            WatchedReply::Swallowed
+        }
+        _ => WatchedReply::Unwatched,
+    }
+}
+
 /// Can be used to read `InternalEvent`s.
 pub(crate) struct InternalEventReader {
     events: VecDeque<InternalEvent>,
@@ -73,6 +194,22 @@ impl InternalEventReader {
             let maybe_event = match event_source.try_read(poll_timeout.leftover()) {
                 Ok(None) => None,
                 Ok(Some(event)) => {
+                    #[cfg(unix)]
+                    match observe_capability_reply(&event) {
+                        WatchedReply::Unwatched => {}
+                        WatchedReply::Swallowed => continue,
+                        WatchedReply::Verdict => {
+                            // A parked (unbounded) poller wakes too, like a
+                            // waker wake, so an edge-driven reader can take a
+                            // late verdict at once; bounded pollers keep their
+                            // timeouts (a drain must not end on a reply).
+                            if timeout.is_none() || filter.wakes_on_capability_verdict() {
+                                self.events.extend(self.skipped_events.drain(..));
+                                return Ok(false);
+                            }
+                            continue;
+                        }
+                    }
                     if filter.eval(&event) {
                         Some(event)
                     } else {

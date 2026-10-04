@@ -174,6 +174,70 @@ fn the_same_ms100_reply_on_a_silent_pty_still_upgrades() {
     harness.finish();
 }
 
+/// Past the probe's bounded answer window: a reply landing here never
+/// upgraded before the window's lapse stopped being a verdict.
+const PAST_THE_WINDOW: Duration = Duration::from_millis(400);
+
+/// The kitty detection contract has no deadline: a flags reply means
+/// "supported" whenever it arrives, and only a DA1 reply that arrives first
+/// means "unsupported". A reply that lands after the probe's bounded window
+/// (a slow hop, or a loaded host whose pty round trip outlives the window)
+/// still upgrades — at the answer — and the surface keeps taking input.
+#[test]
+fn a_flags_reply_after_the_window_still_upgrades() {
+    let _lock = match HARNESS_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut harness = VerdictHarness::start();
+    let t_query = harness
+        .chunk_time_of(KITTY_QUERY)
+        .expect("the kitty capability query is on the wire");
+    VerdictHarness::sleep_until(t_query + PAST_THE_WINDOW);
+    let mark = harness.mark();
+    harness.write(KITTY_ANSWER);
+    harness.wait_from(mark, KITTY_FLAGS_PUSH, "the late flags push");
+    // The reply's trailing DA1 is consumed, not wedged: input still renders.
+    harness.write(EARLY_KEY);
+    harness
+        .time_until_painted_since(EARLY_KEY, Duration::from_secs(10))
+        .expect("the post-upgrade key rendered");
+    harness.assert_query_count(1);
+    harness.finish();
+}
+
+/// The negative half of the same contract: after a silent window, a DA1
+/// reply that arrives FIRST concludes "unsupported" — a flags reply behind it
+/// never upgrades — and the surface keeps taking input.
+#[test]
+fn a_da1_reply_after_the_window_concludes_unsupported() {
+    let _lock = match HARNESS_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut harness = VerdictHarness::start();
+    let t_query = harness
+        .chunk_time_of(KITTY_QUERY)
+        .expect("the kitty capability query is on the wire");
+    VerdictHarness::sleep_until(t_query + PAST_THE_WINDOW);
+    harness.write(DA1_ANSWER);
+    // The liveness key renders behind the DA1: the verdict landed first.
+    harness.write(EARLY_KEY);
+    harness
+        .time_until_painted_since(EARLY_KEY, Duration::from_secs(10))
+        .expect("the post-verdict key rendered");
+    harness.write(KITTY_ANSWER);
+    VerdictHarness::sleep_until(Instant::now() + Duration::from_millis(300));
+    harness.drain_until_quiet(10);
+    assert!(
+        !contains(&harness.output(), KITTY_FLAGS_PUSH),
+        "a flags reply behind a late DA1 upgraded — the DA1 arriving first is \
+         the terminal's \"unsupported\" verdict"
+    );
+    harness.assert_query_count(1);
+    harness.finish();
+}
+
 #[test]
 fn the_kitty_control_upgrades_at_the_answer() {
     let _lock = match HARNESS_LOCK.lock() {

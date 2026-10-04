@@ -202,8 +202,10 @@ fn read_supports_keyboard_enhancement_flags() -> io::Result<bool> {
 #[cfg(feature = "events")]
 pub(crate) fn read_supports_keyboard_enhancement_raw() -> io::Result<bool> {
     use crate::event::{
-        filter::{KeyboardEnhancementFlagsFilter, PrimaryDeviceAttributesFilter},
-        poll_internal, read_internal, InternalEvent,
+        filter::KeyboardEnhancementFlagsFilter,
+        poll_internal,
+        read::{arm_capability_watch, lapse_capability_watch, take_capability_verdict},
+        read_internal, InternalEvent,
     };
     use std::io::Write;
     use std::time::{Duration, Instant};
@@ -218,6 +220,10 @@ pub(crate) fn read_supports_keyboard_enhancement_raw() -> io::Result<bool> {
     // ESC [ ? u        Query progressive keyboard enhancement flags (kitty protocol).
     // ESC [ c          Query primary device attributes.
     const QUERY: &[u8] = b"\x1B[?u\x1B[c";
+
+    // Prime Agent patch: armed before the write, so the reply's verdict is
+    // published by whichever poller parses it (see `read::ReplyWatch`).
+    arm_capability_watch();
 
     let result = File::open("/dev/tty").and_then(|mut file| {
         file.write_all(QUERY)?;
@@ -235,48 +241,46 @@ pub(crate) fn read_supports_keyboard_enhancement_raw() -> io::Result<bool> {
     // early typing at its own cadence while the probe listens; a slice
     // timeout just yields to the app reader (an unanswered query keeps
     // waiting until the window deadline, like the 250ms hold it replaces).
-    // The parked-reply queue and the app reader's skipped-event parking are
-    // shared state guarded by the same lock, so a reply read on the app
-    // reader's side is found by the probe's next slice — the reply-filtering
-    // contract is unchanged (diagnostic 1c5af0f for the window's origin).
+    // The reply's verdict comes from the reply watch, published by whichever
+    // poller parsed it — the probe's own slice, or the app reader's poll —
+    // so the check never needs to win the reader lock to see a reply that
+    // already arrived (diagnostic 1c5af0f for the window's origin).
     let deadline = Instant::now() + Duration::from_millis(250);
     let slice = Duration::from_millis(10);
     loop {
+        if let Some(supported) = take_capability_verdict() {
+            return Ok(supported);
+        }
         let leftover = deadline.saturating_duration_since(Instant::now());
         if leftover.is_zero() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "The keyboard enhancement status could not be read within a normal duration",
-            ));
+            return lapse_capability_watch().map_or_else(
+                || {
+                    Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        "The keyboard enhancement status could not be read within a normal duration",
+                    ))
+                },
+                Ok,
+            );
         }
+        // The poll drives the parse: a watched reply never reaches the
+        // filter (its verdict ends the slice early, and the next turn takes
+        // it). Only a reply that was already parked before the watch was
+        // armed matches the filter here; it is read out as the verdict, the
+        // upstream way. A lost lock round or a poll error just loops to the
+        // verdict and deadline checks.
         match poll_internal(Some(leftover.min(slice)), &KeyboardEnhancementFlagsFilter) {
             Ok(true) => {
-                match read_internal(&KeyboardEnhancementFlagsFilter) {
-                    Ok(InternalEvent::KeyboardEnhancementFlags(_current_flags)) => {
-                        // Flush the PrimaryDeviceAttributes out of the event queue.
-                        read_internal(&PrimaryDeviceAttributesFilter).ok();
-                        return Ok(true);
-                    }
-                    _ => return Ok(false),
-                }
+                let parked = read_internal(&KeyboardEnhancementFlagsFilter);
+                let _ = lapse_capability_watch();
+                return Ok(matches!(
+                    parked,
+                    Ok(InternalEvent::KeyboardEnhancementFlags(_))
+                ));
             }
-            Ok(false) => {
-                if Instant::now() >= deadline {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        "The keyboard enhancement status could not be read within a normal duration",
-                    ));
-                }
+            Ok(false) | Err(_) => {
                 // Yield the reader to the app between slices.
                 std::thread::yield_now();
-            }
-            Err(_) => {
-                if Instant::now() >= deadline {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        "The keyboard enhancement status could not be read within a normal duration",
-                    ));
-                }
             }
         }
     }

@@ -4,6 +4,15 @@ use crate::event::InternalEvent;
 pub(crate) trait Filter: Send + Sync + 'static {
     /// Returns whether the given event fulfills the filter.
     fn eval(&self, event: &InternalEvent) -> bool;
+
+    /// Prime Agent patch: whether a bounded poll with this filter returns as
+    /// soon as a watched keyboard-enhancement reply publishes its verdict
+    /// (see `read::observe_capability_reply`). Only the support check's own
+    /// poll wants that; every other poller keeps its timeout.
+    #[cfg(unix)]
+    fn wakes_on_capability_verdict(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(unix)]
@@ -33,9 +42,16 @@ impl Filter for KeyboardEnhancementFlagsFilter {
             InternalEvent::KeyboardEnhancementFlags(_) | InternalEvent::PrimaryDeviceAttributes
         )
     }
+
+    fn wakes_on_capability_verdict(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(unix)]
+// Prime Agent patch: the support check consumes the trailing DA1 through the
+// reply watch now; the filter stays for its upstream tests.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct PrimaryDeviceAttributesFilter;
 

@@ -50,10 +50,16 @@ const CHILD_SOCKET_ENV: &str = "PA_SLOW_DRAIN_CHILD_SOCKET";
 /// The paced rate: the flush must still drain past the 1500ms deadline,
 /// with chunk completions inside the grace window.
 const READ_RATE_BYTES_PER_S: f64 = 96.0 * 1024.0;
+/// A slow link's rate (256kbit/s): still a DRAINING terminal. Under the old
+/// 32KiB flush chunks one chunk took 1s here — twice the guard's 500ms
+/// progress grace — so the watchdog fired mid-flush and truncated the
+/// transcript (the loaded-host flake: a harness slowed below 64KiB/s).
+const SLOW_LINK_RATE_BYTES_PER_S: f64 = 32.0 * 1024.0;
 /// Pairs of user/assistant messages whose wrapped rows flush well past the deadline's drain.
 const SEED_MESSAGES: usize = 1_600;
-/// The LAST seeded row: the mount needle (the viewport paints the tail).
-const LAST_ROW: &[u8] = b"row 1599";
+/// The slow-link run's transcript: a quarter of the rows still drains for
+/// seconds at the slow rate (far past the deadline), in a quarter of the time.
+const SLOW_LINK_SEED_MESSAGES: usize = 400;
 /// The dock's exit-hint row, rendered after every transcript row.
 const EXIT_HINT_ROW: &[u8] = b"Press Ctrl+C again to exit";
 
@@ -90,11 +96,30 @@ fn a_slow_drain_flushes_the_whole_transcript_without_forcing_the_exit() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     };
-    let mut harness = SlowDrainHarness::start();
+    assert_the_paced_drain_flushes_whole(READ_RATE_BYTES_PER_S, SEED_MESSAGES);
+}
+
+/// The guard's floor is set by the progress proof's granularity (one flush
+/// chunk per grace window), not by the deadline: a slow link keeps
+/// draining, so it must flush the whole transcript too.
+#[test]
+fn a_slow_link_drain_flushes_the_whole_transcript_without_forcing_the_exit() {
+    let _lock = match HARNESS_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    assert_the_paced_drain_flushes_whole(SLOW_LINK_RATE_BYTES_PER_S, SLOW_LINK_SEED_MESSAGES);
+}
+
+/// One paced exit at `rate` over a `seed`-message transcript: the drain
+/// outlasts the deadline, no force-quit fires, and the whole transcript
+/// flushes after the alt-screen leave.
+fn assert_the_paced_drain_flushes_whole(rate: f64, seed: usize) {
+    let mut harness = SlowDrainHarness::start(seed);
 
     harness.wait_from_start(KITTY_QUERY, "the kitty capability query");
     harness.write(KITTY_ANSWER);
-    harness.wait_from_start(LAST_ROW, "the attach snapshot rendered");
+    harness.wait_from_start(&last_row(seed), "the attach snapshot rendered");
     harness.settle();
 
     // The exit gesture: the Ctrl+C pair arms the deadline at the second press.
@@ -106,7 +131,7 @@ fn a_slow_drain_flushes_the_whole_transcript_without_forcing_the_exit() {
 
     // Pace the drain: the deadline lands mid-flush, and the guard must hold
     // its fire on the writer's per-chunk progress.
-    let drained = harness.pump_until_exit(READ_RATE_BYTES_PER_S, Duration::from_secs(120));
+    let drained = harness.pump_until_exit(rate, Duration::from_secs(120));
     let exit_wall = keys_sent.elapsed();
     assert_eq!(
         harness.wait_child_exit(Duration::from_secs(5)),
@@ -133,7 +158,7 @@ fn a_slow_drain_flushes_the_whole_transcript_without_forcing_the_exit() {
     // use the user rows (contiguous; assistant rows carry SGR spans).
     let first_row_at = find_subsequence_last(&output, FIRST_ROW)
         .expect("the flush wrote the transcript's first row");
-    let last_user_row = format!("row {}", SEED_MESSAGES - 2).into_bytes();
+    let last_user_row = format!("row {}", seed - 2).into_bytes();
     let last_row_at = find_subsequence_last(&output, &last_user_row)
         .expect("the flush wrote the transcript's last user row");
     let dock_at =
@@ -160,11 +185,11 @@ fn a_stalled_drain_still_fires_the_force_quit() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     };
-    let mut harness = SlowDrainHarness::start();
+    let mut harness = SlowDrainHarness::start(SEED_MESSAGES);
 
     harness.wait_from_start(KITTY_QUERY, "the kitty capability query");
     harness.write(KITTY_ANSWER);
-    harness.wait_from_start(LAST_ROW, "the attach snapshot rendered");
+    harness.wait_from_start(&last_row(SEED_MESSAGES), "the attach snapshot rendered");
     harness.settle();
 
     // The exit gesture arms the deadline; then the terminal stops consuming
@@ -228,10 +253,10 @@ struct SlowDrainHarness {
 }
 
 impl SlowDrainHarness {
-    fn start() -> SlowDrainHarness {
+    fn start(seed: usize) -> SlowDrainHarness {
         let dir = tempfile::TempDir::new().expect("temp dir");
         let socket = dir.path().join("tui.sock");
-        let supervisor = MockSupervisor::bind(&socket);
+        let supervisor = MockSupervisor::bind(&socket, seed);
         let server = std::thread::spawn(move || supervisor.serve());
 
         let pty = openpty(
@@ -296,10 +321,14 @@ impl SlowDrainHarness {
 
     /// Read the master at a fixed byte rate until the child exits (a token
     /// bucket refilling at `rate`).
+    /// Drain at `rate` until the child exits. Paced by the wall clock: the
+    /// bytes allowed so far are `rate` x elapsed, so a late wakeup on a
+    /// loaded host catches up instead of lowering the rate (a fixed
+    /// per-slice budget let every sleep overshoot cut the effective rate).
     fn pump_until_exit(&mut self, rate: f64, deadline: Duration) -> usize {
-        let deadline = Instant::now() + deadline;
+        let start = Instant::now();
+        let deadline = start + deadline;
         let slice = Duration::from_millis(4);
-        let slice_bytes = (rate * slice.as_secs_f64()).max(1.0) as usize;
         let mut drained = 0usize;
         loop {
             if self.child.try_wait().ok().flatten().is_some() {
@@ -308,11 +337,11 @@ impl SlowDrainHarness {
             if Instant::now() > deadline {
                 return drained;
             }
+            let allowed = (rate * start.elapsed().as_secs_f64()) as usize;
             let mut buffer = [0u8; 4096];
-            let want = buffer.len().min(slice_bytes.max(1));
-            match self.master.file.read(&mut buffer[..want]) {
-                Ok(0) | Err(_) => std::thread::sleep(slice),
-                Ok(n) => {
+            let want = buffer.len().min(allowed.saturating_sub(drained));
+            if want > 0 {
+                if let Ok(n) = self.master.file.read(&mut buffer[..want]) {
                     self.master.output.extend_from_slice(&buffer[..n]);
                     drained += n;
                 }
@@ -487,25 +516,28 @@ fn child_options(socket: PathBuf) -> InteractiveOptions {
 /// One attached session behind a mock supervisor socket.
 struct MockSupervisor {
     listener: std::os::unix::net::UnixListener,
+    /// The seeded transcript's message count.
+    seed: usize,
 }
 
 impl MockSupervisor {
-    fn bind(socket: &std::path::Path) -> Self {
+    fn bind(socket: &std::path::Path, seed: usize) -> Self {
         MockSupervisor {
             listener: std::os::unix::net::UnixListener::bind(socket).expect("bind mock socket"),
+            seed,
         }
     }
 
     fn serve(self) {
         for stream in self.listener.incoming() {
             match stream {
-                Ok(stream) => Self::serve_connection(stream),
+                Ok(stream) => Self::serve_connection(stream, self.seed),
                 Err(_) => return,
             }
         }
     }
 
-    fn serve_connection(stream: std::os::unix::net::UnixStream) {
+    fn serve_connection(stream: std::os::unix::net::UnixStream, seed: usize) {
         let write_stream = stream.try_clone().expect("clone mock socket");
         let mut writer = write_stream;
         let mut reader = std::io::BufReader::new(stream);
@@ -554,7 +586,7 @@ impl MockSupervisor {
                     );
                 }
                 "attach" => {
-                    write_json(&mut writer, &attach_data(id));
+                    write_json(&mut writer, &attach_data(id, seed));
                 }
                 _ => {
                     write_json(
@@ -580,10 +612,15 @@ fn write_json(writer: &mut std::os::unix::net::UnixStream, value: &Value) {
     writer.flush().expect("flush mock frame");
 }
 
-/// The seeded transcript: `SEED_MESSAGES` wrapped rows — a flush the
-/// paced drain cannot finish inside the 1500ms window.
-fn attach_data(id: &str) -> Value {
-    let messages: Vec<Value> = (0..SEED_MESSAGES)
+/// The LAST seeded row: the mount needle (the viewport paints the tail).
+fn last_row(seed: usize) -> Vec<u8> {
+    format!("row {}", seed - 1).into_bytes()
+}
+
+/// The seeded transcript: `seed` wrapped rows — a flush the paced drain
+/// cannot finish inside the 1500ms window.
+fn attach_data(id: &str, seed: usize) -> Value {
+    let messages: Vec<Value> = (0..seed)
         .map(|index| {
             json!({
                 "role": if index % 2 == 0 { "user" } else { "assistant" },

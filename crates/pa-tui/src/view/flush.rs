@@ -55,7 +55,14 @@ impl AgentView {
 
 /// The encoded flush rows leave the process in slices of at most this many bytes: each PTY
 /// write stays one syscall, and a completed chunk write is the exit guard's progress proof.
-const CHUNK_BYTES: usize = 32 * 1024;
+///
+/// The size is the guard's drain-rate floor: a terminal must take one chunk per progress
+/// grace window (500ms) to read as draining, so the floor is `CHUNK_BYTES` / 500ms. At 32KiB
+/// that floor was 64KiB/s (512kbit/s) — a slow link, or a loaded host, blocked inside one
+/// chunk's write past the grace and the watchdog force-quit a terminal that WAS draining,
+/// truncating the scrollback transcript. At 4KiB the floor is 8KiB/s; the cost is eight
+/// write syscalls where there was one, on the exit path only.
+const CHUNK_BYTES: usize = 4 * 1024;
 
 /// The streaming main-screen flush state: feeds rows section by section, routes them between
 /// the append stream and the repaint ring, writes in bounded chunks.

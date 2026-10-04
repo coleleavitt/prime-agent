@@ -262,6 +262,15 @@ fn run_route(route: Route, known_terminal: bool) {
                     harness.drive_suspend_cycle();
                 }
                 let last = index == stages.len() - 1;
+                // A terminal answers a query as it parses it: the answer write follows
+                // the query's arrival at once. A quiet-wait first (the surface keeps
+                // painting its mount, so the stream only goes quiet hundreds of ms
+                // later) landed the answer past the probe's bounded window — a
+                // late-answering terminal, not the kitty terminal this route models.
+                let answer_next = matches!(
+                    stages.get(index + 1),
+                    Some(Stage::Write(payload)) if *payload == KITTY_ANSWER
+                );
                 if last && route == Route::ForceQuit {
                     // The pair lands inside the hint window; the reads then stop so
                     // the watchdog fires its own restore.
@@ -274,7 +283,7 @@ fn run_route(route: Route, known_terminal: bool) {
                     harness.write(b"\x03");
                     std::thread::sleep(Duration::from_millis(400));
                     harness.write(b"\x03");
-                } else if !last {
+                } else if !last && !answer_next {
                     harness.drain_until_quiet(6);
                 }
             }

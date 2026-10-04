@@ -109,6 +109,9 @@ where
             if thread_stop.load(Ordering::Acquire) {
                 break;
             }
+            // A kitty reply that arrived after the probe's window (its parse wakes a parked
+            // poll) upgrades the mounted surface here, at the answer.
+            crate::enhanced_keys::apply_late_capability_reply();
             // The wait never runs past a held escape sequence's deadline (the guard flushes on the
             // next wake); otherwise the reader parks edge-driven on real input, so an idle surface
             // costs no wakeups. Two bounded exceptions: a held sequence's flush deadline, and the
