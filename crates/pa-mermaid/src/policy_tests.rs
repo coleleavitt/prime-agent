@@ -25,7 +25,7 @@ fn notices_json(notices: &[Notice]) -> Value {
 /// A layout in the golden file's JSON shape.
 fn layout_json(layout: &Layout) -> Value {
     match layout {
-        Layout::Art { art, notices } => {
+        Layout::Art { art, notices, .. } => {
             let art = art_json(art);
             json!({ "kind": "art", "rows": art["rows"], "width": art["width"], "notices": notices_json(notices) })
         }
@@ -153,10 +153,13 @@ fn art_of(layout: Layout) -> crate::Art {
 
 #[test]
 fn draws_a_diagram_that_fits() {
-    let Layout::Art { notices, .. } = layout(SMALL, 80, false) else {
+    let Layout::Art {
+        notices, rotated, ..
+    } = layout(SMALL, 80, false)
+    else {
         panic!("expected art");
     };
-    assert_eq!(notices, Vec::new());
+    assert_eq!((notices, rotated), (Vec::new(), None));
 }
 
 #[test]
@@ -179,6 +182,7 @@ fn rotates_a_flowchart_that_is_too_wide_and_says_so_once_settled() {
                 level: NoticeLevel::Info,
                 text: format!("Mermaid diagram drawn left to right to fit {width} columns"),
             }],
+            rotated: Some(Axis::LeftToRight),
         }
     );
     assert_eq!(
@@ -186,6 +190,7 @@ fn rotates_a_flowchart_that_is_too_wide_and_says_so_once_settled() {
         Layout::Art {
             art: rotated,
             notices: Vec::new(),
+            rotated: Some(Axis::LeftToRight),
         }
     );
 }
