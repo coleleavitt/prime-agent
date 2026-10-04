@@ -2,6 +2,7 @@
 //! plan -> re-read -> apply -> persist flow.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use pa_types::ai::{UserContent, UserMessage};
 use pa_types::session::{AgentMessage, CustomMessage, FileEntry};
@@ -415,6 +416,7 @@ pub async fn execute_refinement_gated(
     plan = strip_display_prefixes(plan);
 
     let target_scope = plan.rollback_scope.unwrap_or(requested_scope);
+    let gate = gating.as_ref().map(|gating| Arc::clone(&gating.gate));
     // Rollbacks are safety actions and an empty proposal is no candidate:
     // neither meets the gate.
     let verdict = match gating {
@@ -439,6 +441,14 @@ pub async fn execute_refinement_gated(
     let target_dir = match target_scope {
         HarnessScope::Global => global_harness_dir.to_path_buf(),
         HarnessScope::Local => local_harness_dir.clone(),
+    };
+    // Held from the re-read until the save landed.
+    let _store_guard = match gate {
+        Some(gate) => {
+            let dir = target_dir.clone();
+            tokio::task::spawn_blocking(move || gate.lock_store(target_scope, &dir)).await??
+        }
+        None => None,
     };
     let mut state = load_harness_state(&target_dir, target_scope);
     // The factory opt-in resolves HERE — immediately before the apply,
@@ -1321,6 +1331,16 @@ Reviewer instructions: record it"
     struct StubVerdict {
         admit: bool,
         judged: String,
+        log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    /// Logs `unlock` when the store lock is released.
+    struct StubStoreLock(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl Drop for StubStoreLock {
+        fn drop(&mut self) {
+            self.0.lock().unwrap().push("unlock".to_string());
+        }
     }
 
     struct StubHold(std::sync::Arc<std::sync::atomic::AtomicUsize>);
@@ -1335,6 +1355,21 @@ Reviewer instructions: record it"
         fn begin_refine(&self) -> Option<crate::refinement::gate::RefineGuard> {
             self.held.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Some(Box::new(StubHold(std::sync::Arc::clone(&self.held))))
+        }
+
+        fn lock_store(
+            &self,
+            scope: HarnessScope,
+            harness_state_dir: &Path,
+        ) -> anyhow::Result<Option<crate::refinement::gate::RefineGuard>> {
+            assert!(harness_state_dir.ends_with("harness"));
+            self.evaluated
+                .lock()
+                .unwrap()
+                .push(format!("lock {scope:?}"));
+            Ok(Some(Box::new(StubStoreLock(std::sync::Arc::clone(
+                &self.evaluated,
+            )))))
         }
 
         fn evaluate(
@@ -1367,7 +1402,8 @@ Reviewer instructions: record it"
                     request.source.as_str(),
                     request.scope
                 ));
-                Ok(Some(Box::new(StubVerdict { admit, judged })
+                let log = std::sync::Arc::clone(&evaluated);
+                Ok(Some(Box::new(StubVerdict { admit, judged, log })
                     as Box<dyn crate::refinement::gate::RefinementGateVerdict>))
             })
         }
@@ -1409,6 +1445,7 @@ Reviewer instructions: record it"
             state: &mut crate::refinement::HarnessState,
             result: &mut RefinementResult,
         ) {
+            self.log.lock().unwrap().push("apply".to_string());
             state
                 .extensions
                 .insert("stub".to_string(), json!({ "applied": 1 }));
@@ -1512,7 +1549,7 @@ Reviewer instructions: record it"
         );
         assert_eq!(
             evaluated.lock().unwrap().clone(),
-            ["true user Local held=1"]
+            ["true user Local held=1", "lock Local", "unlock"]
         );
         assert_eq!(held.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
@@ -1525,7 +1562,7 @@ Reviewer instructions: record it"
         let mut session = persisted_session(&dir);
         session.append_message(user_message("seed")).unwrap();
         let global_dir = dir.path().join("harness");
-        let (gating, held, _) = stub_gating(true);
+        let (gating, held, evaluated) = stub_gating(true);
         let (result, _) = execute_refinement_gated(
             &mut session,
             RefinementTranscript {
@@ -1561,10 +1598,15 @@ Reviewer instructions: record it"
                 REFINEMENT_NOTICE_CUSTOM_TYPE
             ]
         );
+        // The store stays locked from the re-read until the save landed.
+        assert_eq!(
+            evaluated.lock().unwrap().clone(),
+            ["true auto Local held=1", "lock Local", "apply", "unlock"]
+        );
         assert_eq!(held.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
-    /// An empty proposal is no candidate: the gate is never consulted.
+    /// An empty proposal is no candidate: the gate never evaluates it.
     #[tokio::test]
     async fn an_empty_proposal_never_meets_the_gate() {
         let dir = TempDir::new().unwrap();
@@ -1588,6 +1630,7 @@ Reviewer instructions: record it"
         .await
         .unwrap();
         assert_eq!(result.summary, "nothing");
-        assert!(evaluated.lock().unwrap().is_empty());
+        // Not evaluated; the store is still locked for its write.
+        assert_eq!(evaluated.lock().unwrap().clone(), ["lock Local", "unlock"]);
     }
 }
