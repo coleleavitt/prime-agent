@@ -1,0 +1,1 @@
+- The kernel bootstrap lock now records its owner's process start identity beside the pid, so a recycled pid no longer keeps a dead owner's lock alive; locks written with a start identity by other builds are read correctly instead of as ownerless.
