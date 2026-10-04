@@ -49,7 +49,6 @@ on `perf/session-catalog-resume`, and `docs/ravo-architecture.md` there.
 - Releasing a queued failure refine's fingerprints when it is cancelled before it applies (TS `refine_failed`): the
   native turn boundary drops a pending refine on an aborted turn without telling the feature, so a dropped request's
   fingerprints stay triggered for the rest of the session.
-- The trajectory-index mute of internalized recurrence reminders (`_trajectoryInternalizedReminders`, phase 4).
 - Trust windows (`trustWindows`, `harness-trust.ts`, `trust-adjudication.ts`): opening a window at commit, recording
   evidence, settling at flushes, the `trust.*` flush attributes.
 - The skill dry-run in the fast screen (`skill-dry-run.ts`); the screen is structural only.
@@ -71,6 +70,11 @@ on `perf/session-catalog-resume`, and `docs/ravo-architecture.md` there.
   (with a `RefineTrigger` carrying `{reason, kind, triggerFingerprintIds}`) onto the pending refine the next serviced
   turn boundary consumes. The ledger reports boundaries from its worker thread, so a request lands at the boundary the
   host services after the worker processed the turn (TS queued synchronously at `message_end`).
+- `RecurrenceFilter` (`RavoFeature::attach_recurrence_filter`, attached by `pa-cli`): at each boundary with newly
+  recurring failures the filter names fingerprints whose recurrence refine is not queued (TS
+  `_trajectoryInternalizedReminders`, implemented by `pa-learning`). It is shown the fingerprints recurring in the
+  session's own ledger, and RAVO never mutes one of those (the live-recurrence override); a muted fingerprint stays
+  untriggered, so its reminder fires once the filter lets it through.
 - `pa_ledger::LedgerObserver` (built into `FailureLedgerFeature::with_observers` by `pa-cli`) and
   `pa_ledger::LedgerHandle` (`attach_ledger`): `on_boundary` finds provisional regressions on each window's own clock
   (local lineage on the local and, with the global ledger on, the global ordinal; the global lineage on the global
@@ -101,7 +105,8 @@ differently. A judge reply that is not JSON reports `serde_json`'s parse error w
 
 ## Public API
 
-`RavoFeature` (`new`, `ledger_observer`, `attach_ledger`, `wait_replay_checks`), `RavoOptions`, `ravo_enabled`; the reducer
+`RavoFeature` (`new`, `ledger_observer`, `attach_ledger`, `attach_recurrence_filter`, `wait_replay_checks`),
+`RavoOptions`, `RecurrenceFilter`, `ravo_enabled`; the reducer
 (`ravo_step`, `ravo_w`, `ravo_pressure`, `ravo_extend_opponents`, `ravo_mark_provisional`, `ravo_observe_champion`,
 `ravo_best_score` and their types); the authority (`authorize_assisted_ravo`, `normalize_assisted_ravo_state`,
 `ravo_artifact_digest`, binding checks); the referee (`adjudicate_failure_claims`, `ReplayRunner`,
