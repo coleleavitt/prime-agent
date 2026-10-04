@@ -166,15 +166,27 @@ impl SessionManager {
         self.session_dir_backed
     }
 
-    /// Open an existing session file (repair + migrate), or a fresh one.
+    /// Open an existing session file (repair + migrate), or a fresh one, as a
+    /// `session.load` span (`session.path`, `session.entries`).
     #[must_use]
+    #[tracing::instrument(
+        level = "info",
+        name = "session.load",
+        skip_all,
+        fields(
+            session.path = %session_file.display(),
+            session.entries = tracing::field::Empty,
+        )
+    )]
     pub fn open(cwd: &Path, session_dir: &Path, session_file: &Path) -> Self {
-        Self::new_with(
+        let manager = Self::new_with(
             cwd.to_path_buf(),
             session_dir.to_path_buf(),
             Some(session_file.to_path_buf()),
             true,
-        )
+        );
+        tracing::Span::current().record("session.entries", manager.file_entries.len());
+        manager
     }
 
     /// Copy a source session file into a fresh session under `target_cwd`,
