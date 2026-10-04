@@ -503,3 +503,88 @@ async fn a_crashed_kernel_or_another_tool_never_feeds_the_index() {
         assert_eq!(feature.after_tool_call(&session, call).await, None);
     }
 }
+
+/// Wants a flush of each scope while it has something of its own to write
+/// there, and writes a `mark` key into each document.
+#[derive(Default)]
+struct Owner {
+    local_due: std::sync::atomic::AtomicBool,
+    global_due: std::sync::atomic::AtomicBool,
+    flushes: Mutex<Vec<(LedgerScope, bool)>>,
+}
+
+impl LedgerObserver for Owner {
+    fn wants_local_flush(&self, _session_id: &str) -> bool {
+        self.local_due.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn wants_global_flush(&self, _session_id: &str) -> bool {
+        self.global_due.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn on_flush(&self, flush: &mut LedgerFlush<'_>) {
+        flush.document.set("mark", json!(true));
+    }
+
+    fn on_flush_result(&self, scope: LedgerScope, _session_id: &str, landed: bool) {
+        let due = match scope {
+            LedgerScope::Local => &self.local_due,
+            LedgerScope::Global => &self.global_due,
+        };
+        if landed {
+            due.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+        self.flushes.lock().unwrap().push((scope, landed));
+    }
+}
+
+/// An observer with state of its own gets a local flush with nothing
+/// observed (TS marks the ledger dirty for trust evidence), and a
+/// global-only flush leaves the local state alone (TS
+/// `_flushFailureLedger(undefined, "global")`, for a caller that may run
+/// while the kernel writes the local state).
+#[test]
+fn an_observer_with_state_of_its_own_is_flushed_and_a_global_only_flush_skips_local() {
+    let root = tempfile::tempdir().unwrap();
+    let owner = Arc::new(Owner::default());
+    let feature = FailureLedgerFeature::with_observers(
+        LedgerOptions {
+            global_ledger: Some(true),
+            ..LedgerOptions::default()
+        },
+        vec![Arc::clone(&owner) as Arc<dyn LedgerObserver>],
+    )
+    .with_clock(|| AT.to_string());
+    let session = context(root.path(), "a", true);
+    feature.on_session_start(&session, &[]);
+    // A clean ledger and nothing due: a flush writes nothing.
+    feature.handle().request_flush("a");
+    assert!(feature.handle().wait_idle(Duration::from_secs(30)));
+    assert!(!local_dir(root.path(), "a").exists());
+    assert!(!global_dir(root.path()).exists());
+
+    owner
+        .local_due
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    owner
+        .global_due
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    feature.handle().request_global_flush("a");
+    assert!(feature.handle().wait_idle(Duration::from_secs(30)));
+    assert!(!local_dir(root.path(), "a").exists());
+    assert_eq!(
+        HarnessDocument::load(&global_dir(root.path())).get("mark"),
+        Some(&json!(true))
+    );
+
+    feature.handle().request_flush("a");
+    assert!(feature.handle().wait_idle(Duration::from_secs(30)));
+    assert_eq!(
+        HarnessDocument::load(&local_dir(root.path(), "a")).get("mark"),
+        Some(&json!(true))
+    );
+    assert_eq!(
+        *owner.flushes.lock().unwrap(),
+        vec![(LedgerScope::Global, true), (LedgerScope::Local, true)]
+    );
+}

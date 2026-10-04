@@ -129,6 +129,13 @@ pub trait LedgerObserver: Send + Sync {
         false
     }
 
+    /// Whether the session has local state of its own to write even when
+    /// its ledger is clean (trust evidence).
+    fn wants_local_flush(&self, session_id: &str) -> bool {
+        let _ = session_id;
+        false
+    }
+
     /// A flush is about to write `flush.document`.
     fn on_flush(&self, flush: &mut LedgerFlush<'_>) {
         let _ = flush;
@@ -165,8 +172,17 @@ enum Job {
         turn: u64,
         through: u64,
     },
-    Flush(Arc<Mutex<SessionLedger>>),
+    Flush(Arc<Mutex<SessionLedger>>, FlushScope),
     Barrier(Sender<()>),
+}
+
+/// Which harness states a flush writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FlushScope {
+    All,
+    /// The global state only: the local one is written only where no cell
+    /// runs, since the kernel writes it without a lock.
+    Global,
 }
 
 type Clock = Arc<dyn Fn() -> String + Send + Sync>;
@@ -368,11 +384,11 @@ impl Inner {
                 observer.on_boundary(&context, &boundary);
             }
         }
-        self.flush(session);
+        self.flush(session, FlushScope::All);
     }
 
     /// Persist the session's pending local and global ledger changes.
-    fn flush(&self, session: &Arc<Mutex<SessionLedger>>) {
+    fn flush(&self, session: &Arc<Mutex<SessionLedger>>, scope: FlushScope) {
         let session_id = lock(session).context.session_id.clone();
         if self
             .observers
@@ -382,7 +398,9 @@ impl Inner {
             return;
         }
         self.flush_global(session, &session_id);
-        self.flush_local(session, &session_id);
+        if scope == FlushScope::All {
+            self.flush_local(session, &session_id);
+        }
     }
 
     fn flush_local(&self, session: &Arc<Mutex<SessionLedger>>, session_id: &str) {
@@ -391,7 +409,13 @@ impl Inner {
             let Some(artifact_dir) = state.context.session_artifact_dir.as_deref() else {
                 return;
             };
-            if !state.dirty && state.local_verifications.is_empty() {
+            if !state.dirty
+                && state.local_verifications.is_empty()
+                && !self
+                    .observers
+                    .iter()
+                    .any(|observer| observer.wants_local_flush(session_id))
+            {
                 return;
             }
             (
@@ -533,7 +557,7 @@ fn run_worker(inner: &std::sync::Weak<Inner>, receiver: &Receiver<Job>) {
                 turn,
                 through,
             } => inner.boundary(&session, observations, turn, through),
-            Job::Flush(session) => inner.flush(&session),
+            Job::Flush(session, scope) => inner.flush(&session, scope),
             Job::Barrier(done) => {
                 let _ = done.send(());
             }
@@ -676,7 +700,7 @@ impl SessionFeature for FailureLedgerFeature {
 
     fn on_agent_end(&self, context: &Arc<SessionFeatureContext>) {
         if let Some(session) = self.inner.existing(&context.session_id) {
-            self.inner.submit(Job::Flush(session));
+            self.inner.submit(Job::Flush(session, FlushScope::All));
         }
     }
 
@@ -686,7 +710,7 @@ impl SessionFeature for FailureLedgerFeature {
             return;
         }
         for session in sessions {
-            self.inner.submit(Job::Flush(session));
+            self.inner.submit(Job::Flush(session, FlushScope::All));
         }
         if !self.inner.wait_idle(deadline) {
             tracing::debug!("failure ledger flush abandoned at the exit deadline");
@@ -759,7 +783,16 @@ impl LedgerHandle {
     /// Ask the worker to flush the session.
     pub fn request_flush(&self, session_id: &str) {
         if let Some(session) = self.inner.existing(session_id) {
-            self.inner.submit(Job::Flush(session));
+            self.inner.submit(Job::Flush(session, FlushScope::All));
+        }
+    }
+
+    /// Ask the worker to flush the session's global state only: for a
+    /// caller that may run while the session's kernel runs a cell (the
+    /// kernel writes the local state without a lock).
+    pub fn request_global_flush(&self, session_id: &str) {
+        if let Some(session) = self.inner.existing(session_id) {
+            self.inner.submit(Job::Flush(session, FlushScope::Global));
         }
     }
 
