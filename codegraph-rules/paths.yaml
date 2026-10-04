@@ -1,0 +1,48 @@
+# Untrusted names joined into filesystem paths.
+id: pa-unvalidated-name-path-join
+description: >-
+  An identifier-like value (a skill/session/request/run/worker id or name) is
+  joined into a filesystem path (`dir.join(name)`, `dir.join(format!("{id}.jsonl"))`)
+  in a function that runs no validation over it. Names arrive from the kernel
+  (`HostRequestPayload` data the agent's Python wrote), from daemon socket
+  frames, from the model's tool-call arguments and from files on disk; `..`,
+  an absolute path or a `/` in one escapes the intended directory (CWE-22)
+  or splits one record across directories.
+severity: medium
+tags: [CWE-22, path-traversal]
+language: rust
+check-patterns:
+  - name: join-name
+    query: |
+      ((call_expression
+         function: (field_expression field: (field_identifier) @m)
+         arguments: (arguments . (_) @arg .)) @call
+       (#eq? @m "join"))
+    at: call
+    where:
+      - capture: arg
+        regex: "^&?(\\w+\\.)*(name|\\w+_name|session_id|\\w+_id|id|slug|skill|key|arm)(\\.(trim|as_str|as_ref)\\(\\))*$|^&?format!\\(\"[^\"]*\\{(name|\\w+_name|session_id|\\w+_id|id|slug|skill|key|arm)\\}"
+      # Validated here (or a slug/safe-component helper built the name).
+      - enclosing-function:
+          calls-not: "(?i)validate|sanitize|is_safe|safe_|is_valid|normalize|slug|assert_|check_name|component"
+          is-test: false
+message: "`{arg}` is joined into a path without validation in this function"
+review:
+  - Where does `{arg}` come from (kernel host request, daemon frame, model tool call, disk, or a constructor that only makes safe ids)?
+  - Is it validated upstream (a charset/format check, a UUID/ULID parse) before it reaches here? If not, `..` or `/` escapes the directory.
+examples:
+  bad:
+    - |
+      fn session_file(dir: &Path, session_id: &str) -> PathBuf { dir.join(format!("{session_id}.jsonl")) }
+    - |
+      fn install(skills: &Path, request: &Request) -> PathBuf { skills.join(request.name.trim()) }
+  good:
+    - |
+      fn install(skills: &Path, request: &Request) -> Result<PathBuf, String> {
+          let name = validate_name(&request.name)?;
+          Ok(skills.join(name))
+      }
+    - |
+      fn ledger(dir: &Path) -> PathBuf { dir.join("ledger.json") }
+    - |
+      fn words(parts: &[String]) -> String { parts.join(", ") }

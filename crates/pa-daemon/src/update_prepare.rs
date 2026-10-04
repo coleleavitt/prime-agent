@@ -464,6 +464,20 @@ pub(crate) fn update_gate_refuses(state: PrepareState, command_type: &str) -> bo
     !(state == PrepareState::Draining && is_update_drain_command(command_type))
 }
 
+/// Whether a client's `updateId` can name its prepared directory: one plain
+/// path component (ASCII letters, digits, `.`, `_`, `-`; never `.` or `..`).
+/// The coordinator mints UUIDs; anything else (`../x`, an absolute path, a
+/// separator) would aim the artifact writes - and the abort's recursive
+/// delete - outside the socket's scratch dir.
+pub(crate) fn is_plain_update_id(update_id: &str) -> bool {
+    !update_id.is_empty()
+        && update_id != "."
+        && update_id != ".."
+        && update_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
 /// The prepared directory for one update under the socket's scratch dir.
 /// `socket_hash` is the sha256 hex of the normalized socket path.
 pub(crate) fn prepared_dir(agent_dir: &Path, socket_hash: &str, update_id: &UpdateId) -> PathBuf {

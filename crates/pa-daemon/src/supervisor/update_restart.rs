@@ -85,6 +85,17 @@ impl Supervisor {
                 None,
             );
         };
+        if !crate::update_prepare::is_plain_update_id(update_id.as_ref()) {
+            return response_failure(
+                Some(command_id),
+                type_name,
+                &format!(
+                    "prepare_update_restart updateId {:?} is not a plain name (letters, digits, '.', '_', '-')",
+                    update_id.as_ref()
+                ),
+                None,
+            );
+        }
         let now = util::now_ms();
         match self
             .update_prepare

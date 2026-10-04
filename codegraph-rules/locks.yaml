@@ -1,0 +1,130 @@
+# Lock hazards in long-lived (daemon, supervisor, worker, kernel manager) code.
+id: pa-lock-unwrap-outside-tests
+description: >-
+  A std `Mutex`/`RwLock` acquisition is unwrapped (`.lock().unwrap()`,
+  `.lock().expect(..)`, `.read()/.write()` + unwrap/expect) outside tests. A
+  panic anywhere while the guard is held poisons the lock, and every later
+  acquisition through `unwrap` then panics too: in the daemon, the supervisor
+  or a session worker one bad turn takes the whole long-lived process down.
+  The repo's convention is the poison-tolerant `lock()` helper or
+  `.unwrap_or_else(PoisonError::into_inner)`.
+severity: medium
+tags: [panic, poisoning, availability]
+language: rust
+check-patterns:
+  - name: lock-unwrap
+    query: |
+      ((call_expression
+         function: (field_expression
+           value: (call_expression
+             function: (field_expression field: (field_identifier) @acquire)
+             arguments: (arguments) @acquire_args)
+           field: (field_identifier) @unwrap)) @call
+       (#match? @acquire "^(lock|read|write)$")
+       (#match? @unwrap "^(unwrap|expect)$"))
+    at: call
+    where:
+      # `lock()` / `read()` / `write()` with no arguments: a guard, not `File::write(buf)`.
+      - capture: acquire_args
+        regex: "^\\(\\s*\\)$"
+      - enclosing-function:
+          is-test: false
+message: "`.{acquire}().{unwrap}()` panics on a poisoned lock outside tests"
+review:
+  - Is this code reached from the daemon/supervisor/worker/kernel manager (a long-lived process)?
+  - Could anything panic while another holder has this guard? Then use the poison-tolerant helper.
+examples:
+  bad:
+    - |
+      fn bump(state: &Mutex<u32>) { *state.lock().unwrap() += 1; }
+    - |
+      fn read(state: &RwLock<Vec<u8>>) -> usize { state.read().expect("poisoned").len() }
+  good:
+    - |
+      fn bump(state: &Mutex<u32>) { *state.lock().unwrap_or_else(PoisonError::into_inner) += 1; }
+    - |
+      #[test]
+      fn bumps() { let m = Mutex::new(1); assert_eq!(*m.lock().unwrap(), 1); }
+    - |
+      fn save(file: &mut File, buf: &[u8]) { file.write(buf).unwrap(); }
+---
+id: pa-std-guard-across-await
+description: >-
+  A synchronous lock guard (std/parking_lot `Mutex`/`RwLock`, or the repo's
+  `lock(&m)` helper that returns a std `MutexGuard`) is bound with `let` in an
+  async function and a later statement of the same block awaits. Holding a
+  std guard across `.await` blocks the executor thread and deadlocks when the
+  task resumes on another thread that wants the same lock.
+  `clippy::await_holding_lock` catches the std type at compile time; this
+  rule also sees the poison-tolerant wrappers and lists the sites the lint is
+  `#[allow]`ed at.
+severity: high
+tags: [deadlock, async]
+language: rust
+check-patterns:
+  - name: guard-then-await
+    query: |
+      (block
+        (let_declaration pattern: (_) @guard value: (_) @value) @let
+        (_) @later)
+    at: let
+    unique: true
+    where:
+      - capture: value
+        # The binding IS the guard: the acquisition ends the expression (a
+        # `lock(..).clone()` or `{ *m.lock().unwrap() }` drops it at the `;`).
+        regex: "((^|[^\\w.])lock\\([^()]*(\\([^()]*\\))?[^()]*\\)|\\.lock\\(\\)|\\.(read|write)\\(\\))(\\s*\\.(unwrap|expect|unwrap_or_else)\\((\\([^()]*\\)|[^()])*\\))?\\s*$"
+      - capture: value
+        not-regex: "^\\{"
+      # tokio's guards are awaited, and they are fine across `.await`.
+      - capture: value
+        not-regex: "\\.await|try_lock|lock_owned|blocking_lock"
+      - capture: later
+        regex: "\\.await\\b"
+      # The guard is consumed before the await (`drop(guard)`, or a block ends).
+      - capture: later
+        not-regex: "\\bdrop\\("
+      # An await inside a spawned/async block runs on another task, not here.
+      - capture: later
+        not-regex: "async\\s+(move\\s+)?\\{"
+      - inside: |
+          [(function_item (function_modifiers) @mods (#match? @mods "async"))
+           (async_block)]
+message: "lock guard `{guard}` is still held when a later statement awaits"
+review:
+  - Is `{guard}` a synchronous guard (std/parking_lot or the `lock()` helper)? tokio guards are fine.
+  - Is the guard dropped (explicit `drop`, or moved) before the awaiting statement?
+examples:
+  bad:
+    - |
+      async fn f(state: &Mutex<u32>, tx: &Sender<u32>) {
+          let guard = state.lock().unwrap();
+          tx.send(*guard).await;
+      }
+    - |
+      async fn f(inner: &Inner) {
+          let g = lock(&inner.guarded);
+          inner.write_line(&g.frame).await;
+      }
+  good:
+    - |
+      async fn f(state: &tokio::sync::Mutex<u32>, tx: &Sender<u32>) {
+          let guard = state.lock().await;
+          tx.send(*guard).await;
+      }
+    - |
+      async fn f(state: &Mutex<u32>, tx: &Sender<u32>) {
+          let value = { *state.lock().unwrap() };
+          tx.send(value).await;
+      }
+    - |
+      async fn f(inner: Arc<Inner>, memo: &Mutex<Option<u32>>) {
+          let mut slot = lock(memo);
+          tokio::spawn(async move { inner.run().await });
+          *slot = Some(1);
+      }
+    - |
+      fn f(state: &Mutex<u32>) -> u32 {
+          let guard = state.lock().unwrap();
+          *guard
+      }

@@ -289,7 +289,10 @@ impl Inner {
             command.current_dir(cwd);
         }
         command.env_clear().envs(env);
-        let child = match command.spawn() {
+        // A just-(re)written interpreter (a concurrent bootstrap, or a fork
+        // still holding its write handle) refuses exec with ETXTBSY for a
+        // moment: ride it out like the runtime probe does.
+        let child = match crate::platform::process::spawn_retrying_text_busy(&mut command).await {
             Ok(child) => child,
             Err(error) => {
                 // Fail a pending start promptly instead of riding out the ready timeout. The

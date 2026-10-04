@@ -41,7 +41,12 @@ serde = { version = "1", features = ["derive"] }
 # model the TS daemon and session files byte-emit. Without it the Map is a
 # BTreeMap and every Value-built frame re-sorts its keys alphabetically,
 # diverging from the TS byte stream (e.g. compaction `details` order).
-serde_json = { version = "1", features = ["preserve_order"] }
+# float_roundtrip: parse decimal numbers correctly rounded, like JS
+# `JSON.parse`. The default parser is best-effort and lands one ulp off for
+# many shortest-round-trip values the TS side writes (`499.57400010000003`
+# reads back as `499.5740001`), which moves re-serialized TS-format bytes and
+# every digest over canonical JSON.
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"

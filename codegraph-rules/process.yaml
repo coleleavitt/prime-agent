@@ -1,0 +1,51 @@
+# Process-spawn hazards.
+id: pa-spawn-without-text-busy-retry
+description: >-
+  A child is spawned from a computed executable path (not a literal PATH
+  lookup like `"git"`) without going through
+  `pa_core::platform::process::{spawn_retrying_text_busy,
+  status_retrying_text_busy}`. Executing a file that was just written or
+  copied fails with ETXTBSY ("Text file busy") while any concurrent fork
+  still holds its write handle (until that child's exec); in a
+  multi-threaded process (tokio, parallel tests) that window is real, and the
+  spawn then fails for a perfectly good binary. Freshly bootstrapped venv
+  interpreters, staged update binaries and test shims are the usual victims.
+severity: low
+tags: [race, ETXTBSY, flaky]
+language: rust
+check-patterns:
+  - name: computed-program
+    query: |
+      ((call_expression
+         function: (scoped_identifier path: (_) @ty name: (identifier) @ctor)
+         arguments: (arguments . (_) @program .)) @call
+       (#match? @ty "(^|::)Command$")
+       (#eq? @ctor "new"))
+    at: call
+    where:
+      # A literal names a PATH binary nobody here writes.
+      - capture: program
+        not-regex: "^\""
+      - enclosing-function:
+          calls-not: "retrying_text_busy"
+          is-test: false
+message: "`Command::new({program})` spawns a computed path without the ETXTBSY retry"
+review:
+  - Can `{program}` have been written, copied or extracted shortly before (by this process, a sibling thread, or a test that wrote a shim)?
+  - If so, spawn through `spawn_retrying_text_busy` / `status_retrying_text_busy`.
+examples:
+  bad:
+    - |
+      async fn probe(exe: &Path) -> io::Result<Output> {
+          tokio::process::Command::new(exe).arg("--version").output().await
+      }
+    - |
+      fn run(python: &Path) -> io::Result<ExitStatus> { std::process::Command::new(python).status() }
+  good:
+    - |
+      fn head(dir: &Path) -> io::Result<Output> { Command::new("git").arg("rev-parse").current_dir(dir).output() }
+    - |
+      async fn probe(exe: &Path) -> io::Result<Child> {
+          let mut command = tokio::process::Command::new(exe);
+          spawn_retrying_text_busy(&mut command).await
+      }

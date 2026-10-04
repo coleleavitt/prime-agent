@@ -11,6 +11,7 @@ use crate::types::{
     UserMessageContent,
 };
 use crate::utils_inner::sanitize_unicode::sanitize_surrogates;
+use crate::ProviderError;
 
 fn get_model_match_candidates(model_id: &str, model_name: Option<&str>) -> Vec<String> {
     let mut values = vec![model_id.to_string()];
@@ -108,26 +109,33 @@ pub fn normalize_tool_call_id(id: &str) -> String {
 }
 
 /// Validates the mime type and passes the base64 bytes straight through (the AWS JSON protocol
-/// transmits blobs as base64).
-fn create_image_block(mime_type: &str, data: &str) -> Value {
+/// transmits blobs as base64). An image Bedrock cannot take fails the request (TS
+/// `createImageBlock` throws, and the stream reports it as its error event).
+fn create_image_block(mime_type: &str, data: &str) -> Result<Value, ProviderError> {
     let format = match mime_type {
         "image/jpeg" | "image/jpg" => "jpeg",
         "image/png" => "png",
         "image/gif" => "gif",
         "image/webp" => "webp",
-        other => panic!("Unknown image type: {other}"),
+        other => {
+            return Err(ProviderError::Message(format!(
+                "Unknown image type: {other}"
+            )))
+        }
     };
     // Fail fast on invalid base64 so the request never leaves with bad bytes.
     if base64::engine::general_purpose::STANDARD
         .decode(data)
         .is_err()
     {
-        panic!("Invalid base64 image data for Bedrock image block");
+        return Err(ProviderError::Message(
+            "Invalid base64 image data for Bedrock image block".to_string(),
+        ));
     }
-    json!({
+    Ok(json!({
         "format": format,
         "source": { "bytes": data },
-    })
+    }))
 }
 
 pub fn build_system_prompt(
@@ -150,13 +158,16 @@ pub fn build_system_prompt(
     Some(blocks)
 }
 
+/// # Errors
+///
+/// An image block Bedrock cannot take (see [`create_image_block`]).
 // Long by design: mirrors the provider's stream shape.
 #[allow(clippy::too_many_lines)]
 pub fn convert_messages(
     context: &Context,
     model: &Model,
     cache_retention: CacheRetention,
-) -> Vec<Value> {
+) -> Result<Vec<Value>, ProviderError> {
     let mut result: Vec<Value> = Vec::new();
     let transformed = transform_messages_with_normalizer(&context.messages, model, &|id, _, _| {
         Some(normalize_tool_call_id(id))
@@ -174,16 +185,16 @@ pub fn convert_messages(
                         .iter()
                         .map(|c| match crate::types::user_block_payload(c) {
                             crate::types::UserBlockPayload::Text(text) => {
-                                json!({ "text": sanitize_surrogates(text) })
+                                Ok(json!({ "text": sanitize_surrogates(text) }))
                             }
                             crate::types::UserBlockPayload::Image { data, mime_type } => {
-                                json!({ "image": create_image_block(mime_type, data) })
+                                Ok(json!({ "image": create_image_block(mime_type, data)? }))
                             }
                             crate::types::UserBlockPayload::Opaque(json) => {
-                                json!({ "text": sanitize_surrogates(&json) })
+                                Ok(json!({ "text": sanitize_surrogates(&json) }))
                             }
                         })
-                        .collect(),
+                        .collect::<Result<_, ProviderError>>()?,
                 };
                 result.push(json!({ "role": "user", "content": content_blocks }));
                 i += 1;
@@ -274,15 +285,15 @@ pub fn convert_messages(
                             "toolUseId": current.tool_call_id,
                             "content": current.content.iter().map(|c| match crate::types::user_block_payload(c) {
                                 crate::types::UserBlockPayload::Text(text) => {
-                                    json!({ "text": sanitize_surrogates(text) })
+                                    Ok(json!({ "text": sanitize_surrogates(text) }))
                                 }
                                 crate::types::UserBlockPayload::Image { data, mime_type } => {
-                                    json!({ "image": create_image_block(mime_type, data) })
+                                    Ok(json!({ "image": create_image_block(mime_type, data)? }))
                                 }
                                 crate::types::UserBlockPayload::Opaque(json) => {
-                                    json!({ "text": sanitize_surrogates(&json) })
+                                    Ok(json!({ "text": sanitize_surrogates(&json) }))
                                 }
-                            }).collect::<Vec<Value>>(),
+                            }).collect::<Result<Vec<Value>, ProviderError>>()?,
                             "status": if current.is_error { "error" } else { "success" },
                         }
                     }));
@@ -314,7 +325,7 @@ pub fn convert_messages(
         }
     }
 
-    result
+    Ok(result)
 }
 
 pub fn convert_tool_config(
