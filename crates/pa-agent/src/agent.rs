@@ -135,6 +135,11 @@ impl Default for MutableAgentState {
 struct PendingMessageQueue {
     mode: QueueMode,
     batches: Vec<Vec<AgentMessage>>,
+    /// Per batch (aligned with `batches`): whether the host admitted it
+    /// (`admit_or_enqueue`: terminal notices, injected rows) rather than
+    /// the user queuing it (`steer`/`follow_up`). An abort parks the user's
+    /// batches; host batches keep driving the session.
+    host: Vec<bool>,
 }
 
 impl PendingMessageQueue {
@@ -142,17 +147,18 @@ impl PendingMessageQueue {
         PendingMessageQueue {
             mode,
             batches: Vec::new(),
+            host: Vec::new(),
         }
     }
 
-    fn enqueue(&mut self, message: AgentMessageBatch) {
-        match message {
-            AgentMessageBatch::Single(message) => self.batches.push(vec![message]),
-            AgentMessageBatch::Batch(messages) => {
-                if !messages.is_empty() {
-                    self.batches.push(messages);
-                }
-            }
+    fn enqueue(&mut self, message: AgentMessageBatch, host: bool) {
+        let batch = match message {
+            AgentMessageBatch::Single(message) => vec![message],
+            AgentMessageBatch::Batch(messages) => messages,
+        };
+        if !batch.is_empty() {
+            self.batches.push(batch);
+            self.host.push(host);
         }
     }
 
@@ -160,33 +166,61 @@ impl PendingMessageQueue {
         !self.batches.is_empty()
     }
 
+    fn has_host_items(&self) -> bool {
+        self.host.iter().any(|host| *host)
+    }
+
+    fn has_user_items(&self) -> bool {
+        self.host.iter().any(|host| !*host)
+    }
+
+    /// Drain per the queue mode; with `host_only` (the user's batches are
+    /// parked by an abort) only host-admitted batches leave the queue.
+    fn drain_where(&mut self, host_only: bool) -> Vec<AgentMessage> {
+        let take: Vec<bool> = self.host.iter().map(|host| !host_only || *host).collect();
+        let mut drained = Vec::new();
+        let mut kept_batches = Vec::new();
+        let mut kept_host = Vec::new();
+        let mut taken_one = false;
+        for ((batch, host), eligible) in self.batches.drain(..).zip(self.host.drain(..)).zip(take) {
+            let all_mode = self.mode == QueueMode::All;
+            if eligible && (all_mode || !taken_one) {
+                drained.extend(batch);
+                taken_one = true;
+            } else {
+                kept_batches.push(batch);
+                kept_host.push(host);
+            }
+        }
+        self.batches = kept_batches;
+        self.host = kept_host;
+        drained
+    }
+
+    #[cfg(test)]
     fn drain(&mut self) -> Vec<AgentMessage> {
-        if self.mode == QueueMode::All {
-            let drained: Vec<AgentMessage> = self.batches.drain(..).flatten().collect();
-            return drained;
-        }
-        if let Some(first) = self.batches.first().cloned() {
-            self.batches.remove(0);
-            return first;
-        }
-        Vec::new()
+        self.drain_where(false)
     }
 
     fn clear(&mut self) {
         self.batches.clear();
+        self.host.clear();
     }
 
     fn remove_where(&mut self, predicate: &dyn Fn(&AgentMessage) -> bool) -> Vec<AgentMessage> {
         let mut removed: Vec<AgentMessage> = Vec::new();
         let mut retained: Vec<Vec<AgentMessage>> = Vec::new();
-        for batch in self.batches.drain(..) {
+        let mut retained_host: Vec<bool> = Vec::new();
+        for (batch, host) in self.batches.drain(..).zip(self.host.drain(..)) {
             if batch.iter().any(predicate) {
                 removed.extend(batch);
             } else {
                 retained.push(batch);
+                retained_host.push(host);
             }
         }
         self.batches = retained;
+        self.host = retained_host;
         removed
     }
 }
@@ -362,6 +396,12 @@ pub(crate) struct AgentInner {
     shared: tokio::sync::Mutex<Shared>,
     steering_queue: Mutex<PendingMessageQueue>,
     follow_up_queue: Mutex<PendingMessageQueue>,
+    /// The user's queued batches are parked: the last run was aborted with
+    /// user rows still queued (TS `runLoop` parks them for the next
+    /// prompt). While parked, queue polls, the pump drain, and the
+    /// idle-queued wake see only host-admitted batches; the next user
+    /// prompt's claim unparks, and its run folds the parked rows.
+    user_rows_parked: std::sync::atomic::AtomicBool,
     /// Active-run bookkeeping. A plain mutex: never held across awaits.
     run: Mutex<Option<ActiveRun>>,
     /// Stateful idle-queued wake (the admission seam's pump signal): the
@@ -572,7 +612,10 @@ impl AgentInner {
                         *skip_poll.lock().unwrap() = false;
                         return Ok(Vec::new());
                     }
-                    Ok(inner.steering_queue.lock().unwrap().drain())
+                    let parked = inner
+                        .user_rows_parked
+                        .load(std::sync::atomic::Ordering::SeqCst);
+                    Ok(inner.steering_queue.lock().unwrap().drain_where(parked))
                 }) as crate::BoxFut<'static, anyhow::Result<Vec<AgentMessage>>>
             }) as PollMessagesFn
         };
@@ -580,8 +623,12 @@ impl AgentInner {
         let follow_up = {
             Arc::new(move || {
                 let inner = Arc::clone(&follow_up_inner);
-                Box::pin(async move { Ok(inner.follow_up_queue.lock().unwrap().drain()) })
-                    as crate::BoxFut<'static, anyhow::Result<Vec<AgentMessage>>>
+                Box::pin(async move {
+                    let parked = inner
+                        .user_rows_parked
+                        .load(std::sync::atomic::Ordering::SeqCst);
+                    Ok(inner.follow_up_queue.lock().unwrap().drain_where(parked))
+                }) as crate::BoxFut<'static, anyhow::Result<Vec<AgentMessage>>>
             }) as PollMessagesFn
         };
         let continuation = self.get_continuation_messages.lock().unwrap().clone();
@@ -653,6 +700,9 @@ impl AgentInner {
         if run.is_some() {
             return None;
         }
+        // A user prompt's run: it folds any parked rows (TS `runLoop`).
+        self.user_rows_parked
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         Some(Self::install_run_locked(&mut run, model))
     }
 
@@ -679,7 +729,7 @@ impl AgentInner {
     pub(crate) fn claim_or_enqueue(&self, batch: AgentMessageBatch) -> ClaimOrEnqueue {
         let mut run = self.run.lock().unwrap();
         if run.is_some() {
-            self.steering_queue.lock().unwrap().enqueue(batch);
+            self.steering_queue.lock().unwrap().enqueue(batch, true);
             return ClaimOrEnqueue::Enqueued;
         }
         let claim = Self::install_run_locked(&mut run, None);
@@ -697,9 +747,19 @@ impl AgentInner {
         if run.is_some() {
             return QueuedClaim::Busy;
         }
-        let steering = self.steering_queue.lock().unwrap().drain();
+        let parked = self
+            .user_rows_parked
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let wakeable = |queue: &PendingMessageQueue| {
+            if parked {
+                queue.has_host_items()
+            } else {
+                queue.has_items()
+            }
+        };
+        let steering = self.steering_queue.lock().unwrap().drain_where(parked);
         if !steering.is_empty() {
-            let leftovers = self.steering_queue.lock().unwrap().has_items();
+            let leftovers = wakeable(&self.steering_queue.lock().unwrap());
             self.idle_queued_tx.send_modify(|armed| *armed = leftovers);
             let claim = Self::install_run_locked(&mut run, None);
             return QueuedClaim::Claimed {
@@ -708,9 +768,9 @@ impl AgentInner {
                 drained_follow_ups: false,
             };
         }
-        let follow_ups = self.follow_up_queue.lock().unwrap().drain();
+        let follow_ups = self.follow_up_queue.lock().unwrap().drain_where(parked);
         if !follow_ups.is_empty() {
-            let leftovers = self.follow_up_queue.lock().unwrap().has_items();
+            let leftovers = wakeable(&self.follow_up_queue.lock().unwrap());
             self.idle_queued_tx.send_modify(|armed| *armed = leftovers);
             let claim = Self::install_run_locked(&mut run, None);
             return QueuedClaim::Claimed {
@@ -727,10 +787,13 @@ impl AgentInner {
     /// the executor, settle failures, then the finish critical section —
     /// clear the slot and, under the same lock, reflect "leftover queued
     /// batches" into the idle-queued wake, so a batch that missed the
-    /// loop's final steering poll (or a stop hook/abort that skipped the
-    /// polls) cannot strand between the final poll and the idle
-    /// transition. The wake is re-armed on every finish with a non-empty
-    /// queue, so a subscribed pump converges without spinning.
+    /// loop's final steering poll (or a stop hook that skipped the polls)
+    /// cannot strand between the final poll and the idle transition. The
+    /// wake is re-armed on every finish with a non-empty queue, so a
+    /// subscribed pump converges without spinning. An aborted run never
+    /// arms it: the abort parks the queued rows, and the next prompt's run
+    /// folds them (TS `runLoop`), so the pump must not restart the turn the
+    /// user just stopped.
     async fn execute_claimed_run<F, Fut>(
         self: &Arc<Self>,
         claim: RunClaim,
@@ -742,6 +805,7 @@ impl AgentInner {
         Fut: std::future::Future<Output = anyhow::Result<()>>,
     {
         let run_signal = claim.controller.signal();
+        let finish_signal = claim.controller.signal();
 
         {
             let mut shared = self.shared.lock().await;
@@ -767,9 +831,23 @@ impl AgentInner {
         {
             let mut run = self.run.lock().unwrap();
             if let Some(active) = run.take() {
-                let has_queued = self.steering_queue.lock().unwrap().has_items()
-                    || self.follow_up_queue.lock().unwrap().has_items();
-                self.idle_queued_tx.send_modify(|armed| *armed = has_queued);
+                let steering = self.steering_queue.lock().unwrap();
+                let follow_ups = self.follow_up_queue.lock().unwrap();
+                let user_rows = steering.has_user_items() || follow_ups.has_user_items();
+                let parked = user_rows
+                    && (finish_signal.is_aborted()
+                        || self
+                            .user_rows_parked
+                            .load(std::sync::atomic::Ordering::SeqCst));
+                self.user_rows_parked
+                    .store(parked, std::sync::atomic::Ordering::SeqCst);
+                let wake = if parked {
+                    steering.has_host_items() || follow_ups.has_host_items()
+                } else {
+                    steering.has_items() || follow_ups.has_items()
+                };
+                drop((steering, follow_ups));
+                self.idle_queued_tx.send_modify(|armed| *armed = wake);
                 let _ = active.idle_tx.send(true);
             }
         }
@@ -996,6 +1074,7 @@ impl Agent {
             follow_up_queue: Mutex::new(PendingMessageQueue::new(
                 options.follow_up_mode.unwrap_or(QueueMode::OneAtATime),
             )),
+            user_rows_parked: std::sync::atomic::AtomicBool::new(false),
             run: Mutex::new(None),
             idle_queued_tx,
             idle_queued_rx,
@@ -1184,7 +1263,7 @@ impl Agent {
             .steering_queue
             .lock()
             .unwrap()
-            .enqueue(message.into());
+            .enqueue(message.into(), false);
     }
 
     /// Queue a message batch to run only after the agent would otherwise stop.
@@ -1197,7 +1276,7 @@ impl Agent {
             .follow_up_queue
             .lock()
             .unwrap()
-            .enqueue(message.into());
+            .enqueue(message.into(), false);
     }
 
     /// # Panics
@@ -1410,6 +1489,11 @@ impl Agent {
     ///
     /// Panics if the `run` mutex is poisoned.
     pub async fn continue_run(&self) -> anyhow::Result<()> {
+        // The user's explicit continue folds parked rows, like a prompt
+        // does (TS `continue()` drains both queues).
+        self.inner
+            .user_rows_parked
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         if self.inner.run.lock().unwrap().is_some() {
             return Err(anyhow::Error::new(AgentContinueError::new(
                 AgentContinueErrorCode::Busy,
@@ -1475,11 +1559,11 @@ mod tests {
     #[test]
     fn pending_message_queue_all_mode_flattens() {
         let mut queue = PendingMessageQueue::new(QueueMode::All);
-        queue.enqueue(AgentMessageBatch::Single(AgentMessage::user("a")));
-        queue.enqueue(AgentMessageBatch::Batch(vec![
-            AgentMessage::user("b"),
-            AgentMessage::user("c"),
-        ]));
+        queue.enqueue(AgentMessageBatch::Single(AgentMessage::user("a")), false);
+        queue.enqueue(
+            AgentMessageBatch::Batch(vec![AgentMessage::user("b"), AgentMessage::user("c")]),
+            false,
+        );
         let drained = queue.drain();
         assert_eq!(drained.len(), 3);
         assert!(!queue.has_items());
@@ -1488,11 +1572,11 @@ mod tests {
     #[test]
     fn pending_message_queue_one_at_a_time_keeps_batches() {
         let mut queue = PendingMessageQueue::new(QueueMode::OneAtATime);
-        queue.enqueue(AgentMessageBatch::Single(AgentMessage::user("a")));
-        queue.enqueue(AgentMessageBatch::Batch(vec![
-            AgentMessage::user("b"),
-            AgentMessage::user("c"),
-        ]));
+        queue.enqueue(AgentMessageBatch::Single(AgentMessage::user("a")), false);
+        queue.enqueue(
+            AgentMessageBatch::Batch(vec![AgentMessage::user("b"), AgentMessage::user("c")]),
+            false,
+        );
         let drained = queue.drain();
         assert_eq!(drained.len(), 1);
         assert!(queue.has_items());
@@ -1502,8 +1586,14 @@ mod tests {
     #[test]
     fn remove_where_drops_matching_batches() {
         let mut queue = PendingMessageQueue::new(QueueMode::OneAtATime);
-        queue.enqueue(AgentMessageBatch::Single(AgentMessage::user("drop-me")));
-        queue.enqueue(AgentMessageBatch::Single(AgentMessage::user("keep-me")));
+        queue.enqueue(
+            AgentMessageBatch::Single(AgentMessage::user("drop-me")),
+            false,
+        );
+        queue.enqueue(
+            AgentMessageBatch::Single(AgentMessage::user("keep-me")),
+            false,
+        );
         let removed = queue.remove_where(&|m| matches!(m, AgentMessage::Standard(crate::types::Message::User(u)) if matches!(&u.content, crate::types::UserContent::Text(t) if t.contains("drop"))));
         assert_eq!(removed.len(), 1);
         assert!(queue.has_items());
@@ -1851,5 +1941,32 @@ mod tests {
         );
         assert!(!agent.has_queued_messages());
         subscription.unsubscribe().await;
+    }
+
+    #[test]
+    fn a_parked_drain_takes_only_host_batches() {
+        let mut queue = PendingMessageQueue::new(QueueMode::OneAtATime);
+        queue.enqueue(
+            AgentMessageBatch::Single(AgentMessage::user("user steer")),
+            false,
+        );
+        queue.enqueue(
+            AgentMessageBatch::Single(AgentMessage::user("host notice")),
+            true,
+        );
+        assert!(queue.has_user_items() && queue.has_host_items());
+        let drained = queue.drain_where(true);
+        assert_eq!(drained.len(), 1);
+        assert!(!queue.has_host_items(), "the host batch left");
+        assert!(queue.has_user_items(), "the parked user batch stays");
+        assert!(
+            queue.drain_where(true).is_empty(),
+            "nothing host-owned is left"
+        );
+        assert_eq!(
+            queue.drain().len(),
+            1,
+            "an unparked drain takes the user batch"
+        );
     }
 }
