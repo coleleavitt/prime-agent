@@ -1,0 +1,20 @@
+[package]
+name = "pa-session-index"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The persisted saved-session catalog index: session-index.ndjson and session-search-index.ndjson, keyed by (size, mtimeMs)."
+
+[dependencies]
+pa-core = { path = "../pa-core" }
+serde = { workspace = true }
+# `raw_value` (already enabled by pa-daemon): numbers are parsed from their
+# text, exactly.
+serde_json = { workspace = true, features = ["raw_value"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

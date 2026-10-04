@@ -4,13 +4,25 @@
 //! (TS never invalidates on a parse failure).
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+
+use pa_core::session::catalog_cache::{
+    self, CatalogEntry, CatalogFile, CatalogFileKey, CatalogSessionRow, CatalogUsage,
+    SessionCatalogCache,
+};
 
 use crate::session_store::{
     parse_session_header_line, read_first_line_bounded_from, read_session_info_from, SessionInfo,
     SESSION_LIST_HEADER_READ_MAX_BYTES,
 };
+use crate::session_usage::SessionUsageSummary;
+
+/// The version of the rules that derive a [`SessionInfo`] from a session
+/// file's content (the scan fold and the row build). A catalog cache serves
+/// only rows recorded under this exact version: bump it on any change to
+/// what a file lists as, or cached rows keep the old rules.
+const SESSION_ROW_VERSION: u32 = 1;
 
 /// The bounded header read's verdict for one roster file.
 enum HeaderGate {
@@ -77,34 +89,156 @@ pub fn list_sessions(session_dir: &Path) -> Vec<SessionInfo> {
 /// newest session. `false` stops the scan.
 pub fn list_sessions_with(
     session_dir: &Path,
+    on_row: impl FnMut(usize, usize, &SessionInfo) -> bool,
+) -> Vec<SessionInfo> {
+    list_sessions_through(session_dir, catalog_cache::installed(), on_row)
+}
+
+/// [`list_sessions_with`] over an explicit catalog cache (`None` folds every
+/// file).
+fn list_sessions_through(
+    session_dir: &Path,
+    cache: Option<&dyn SessionCatalogCache>,
     mut on_row: impl FnMut(usize, usize, &SessionInfo) -> bool,
 ) -> Vec<SessionInfo> {
     let Ok(read) = fs::read_dir(session_dir) else {
         return Vec::new();
     };
-    let mut files: Vec<(std::path::PathBuf, SystemTime)> = read
+    let mut files: Vec<(PathBuf, SystemTime, Option<CatalogFileKey>)> = read
         .flatten()
         .map(|entry| entry.path())
         .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("jsonl"))
         .filter_map(|path| {
-            let modified = fs::metadata(&path).and_then(|m| m.modified()).ok()?;
-            Some((path, modified))
+            let metadata = fs::metadata(&path).ok()?;
+            let modified = metadata.modified().ok()?;
+            Some((path, modified, CatalogFileKey::from_metadata(&metadata)))
         })
         .collect();
-    files.sort_by_key(|(_, modified)| std::cmp::Reverse(*modified));
+    files.sort_by_key(|(_, modified, _)| std::cmp::Reverse(*modified));
     let total = files.len();
+    let listed: Vec<PathBuf> = match cache {
+        Some(_) => files.iter().map(|(path, _, _)| path.clone()).collect(),
+        None => Vec::new(),
+    };
     let mut infos = Vec::new();
-    for (index, (path, _)) in files.into_iter().enumerate() {
-        if let Some(info) = roster_session_info(&path) {
+    for (index, (path, _, key)) in files.into_iter().enumerate() {
+        let info = match (cache, key) {
+            (Some(cache), Some(key)) => cached_roster_session_info(
+                cache,
+                &CatalogFile {
+                    session_dir,
+                    path: &path,
+                    key,
+                    fold_version: SESSION_ROW_VERSION,
+                },
+            ),
+            (None, _) | (Some(_), None) => roster_session_info(&path),
+        };
+        if let Some(info) = info {
             // `false` stops the scan: the consumer is gone, so the remaining
             // folds serve nobody — the scan returns the rows it has.
             if !on_row(index, total, &info) {
-                break;
+                return infos;
             }
             infos.push(info);
         }
     }
+    if let Some(cache) = cache {
+        cache.scan_finished(session_dir, &listed);
+    }
     infos
+}
+
+/// One file's row through the catalog cache: a hit is served without the
+/// fold; a miss folds and records the result when the file's key held
+/// across the fold (a racing append must never be cached under the old key).
+fn cached_roster_session_info(
+    cache: &dyn SessionCatalogCache,
+    file: &CatalogFile<'_>,
+) -> Option<SessionInfo> {
+    match cache.lookup(file) {
+        Some(CatalogEntry::Session(row)) => return Some(info_from_row(file.path, *row)),
+        Some(CatalogEntry::NotASession) => return None,
+        None => {}
+    }
+    let info = roster_session_info(file.path);
+    let unchanged = fs::metadata(file.path)
+        .ok()
+        .and_then(|metadata| CatalogFileKey::from_metadata(&metadata))
+        == Some(file.key);
+    if unchanged {
+        let entry = match &info {
+            Some(info) => CatalogEntry::Session(Box::new(row_from_info(info))),
+            None => CatalogEntry::NotASession,
+        };
+        cache.record(file, entry);
+    }
+    info
+}
+
+fn row_from_info(info: &SessionInfo) -> CatalogSessionRow {
+    CatalogSessionRow {
+        id: info.id.clone(),
+        cwd: info.cwd.clone(),
+        name: info.name.clone(),
+        state: info.state.clone(),
+        model: info.model.clone(),
+        thinking_level: info.thinking_level.clone(),
+        parent_session_path: info.parent_session_path.clone(),
+        rlm_depth: info.rlm_depth,
+        created: info.created.clone(),
+        modified: info.modified.clone(),
+        message_count: info.message_count,
+        first_message: info.first_message.clone(),
+        all_messages_text: info.all_messages_text.clone(),
+        usage: info.usage.as_ref().map(|usage| CatalogUsage {
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            cost: usage.cost,
+        }),
+    }
+}
+
+fn info_from_row(path: &Path, row: CatalogSessionRow) -> SessionInfo {
+    let CatalogSessionRow {
+        id,
+        cwd,
+        name,
+        state,
+        model,
+        thinking_level,
+        parent_session_path,
+        rlm_depth,
+        created,
+        modified,
+        message_count,
+        first_message,
+        all_messages_text,
+        usage,
+    } = row;
+    SessionInfo {
+        path: path.to_path_buf(),
+        id,
+        cwd,
+        name,
+        state,
+        model,
+        thinking_level,
+        parent_session_path,
+        rlm_depth,
+        created,
+        modified,
+        message_count,
+        first_message,
+        all_messages_text,
+        usage: usage.map(|usage| SessionUsageSummary {
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            cost: usage.cost,
+        }),
+        // Ledger-derived, never the file's: the listing arm attaches it.
+        deleted_descendant_usage: None,
+    }
 }
 
 #[cfg(test)]
@@ -326,5 +460,117 @@ mod tests {
         });
         assert_eq!(emitted, 2, "the scan stops at the consumer's false");
         assert_eq!(rows.len(), 1, "only the emitted row returns: {rows:?}");
+    }
+
+    /// A stub catalog cache: serves canned entries by path and records what
+    /// the scan hands it.
+    #[derive(Default)]
+    struct StubCache {
+        served: std::collections::HashMap<PathBuf, CatalogEntry>,
+        recorded: std::sync::Mutex<Vec<(PathBuf, CatalogFileKey, u32, CatalogEntry)>>,
+        finished: std::sync::Mutex<Vec<(PathBuf, Vec<PathBuf>)>>,
+    }
+
+    impl SessionCatalogCache for StubCache {
+        fn lookup(&self, file: &CatalogFile<'_>) -> Option<CatalogEntry> {
+            self.served.get(file.path).cloned()
+        }
+
+        fn record(&self, file: &CatalogFile<'_>, entry: CatalogEntry) {
+            self.recorded.lock().unwrap().push((
+                file.path.to_path_buf(),
+                file.key,
+                file.fold_version,
+                entry,
+            ));
+        }
+
+        fn scan_finished(&self, session_dir: &Path, listed: &[PathBuf]) {
+            self.finished
+                .lock()
+                .unwrap()
+                .push((session_dir.to_path_buf(), listed.to_vec()));
+        }
+    }
+
+    fn file_key(path: &Path) -> CatalogFileKey {
+        CatalogFileKey::from_metadata(&fs::metadata(path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_catalog_cache_miss_folds_records_and_reports_the_listing() {
+        let dir = temp_dir();
+        let session = write_session(&dir, "/repo/a", Some("alpha"), 2);
+        let foreign = dir.join("foreign.jsonl");
+        fs::write(&foreign, "{\"type\":\"message\"}\n").unwrap();
+        let cache = StubCache::default();
+        let rows = list_sessions_through(&dir, Some(&cache), |_, _, _| true);
+        let native = list_sessions_through(&dir, None, |_, _, _| true);
+        assert_eq!(
+            rows, native,
+            "a miss lists exactly what the native scan lists"
+        );
+        let mut recorded = cache.recorded.into_inner().unwrap();
+        recorded.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut expected = vec![
+            (
+                session.clone(),
+                file_key(&session),
+                SESSION_ROW_VERSION,
+                CatalogEntry::Session(Box::new(row_from_info(&native[0]))),
+            ),
+            (
+                foreign.clone(),
+                file_key(&foreign),
+                SESSION_ROW_VERSION,
+                CatalogEntry::NotASession,
+            ),
+        ];
+        expected.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(recorded, expected);
+        let mut finished = cache.finished.into_inner().unwrap();
+        for (_, listed) in &mut finished {
+            listed.sort();
+        }
+        let mut listed = vec![session, foreign];
+        listed.sort();
+        assert_eq!(finished, vec![(dir, listed)]);
+    }
+
+    #[test]
+    fn a_catalog_cache_hit_serves_its_row_without_recording() {
+        let dir = temp_dir();
+        let session = write_session(&dir, "/repo/a", Some("alpha"), 2);
+        let hidden = write_session(&dir, "/repo/b", Some("beta"), 1);
+        let mut row = row_from_info(&read_session_info(&session).unwrap());
+        row.name = Some("served from the cache".to_string());
+        let mut cache = StubCache::default();
+        cache.served.insert(
+            session.clone(),
+            CatalogEntry::Session(Box::new(row.clone())),
+        );
+        cache.served.insert(hidden, CatalogEntry::NotASession);
+        let rows = list_sessions_through(&dir, Some(&cache), |_, _, _| true);
+        assert_eq!(rows, vec![info_from_row(&session, row)]);
+        assert!(cache.recorded.into_inner().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_stopped_listing_does_not_report_a_finished_scan() {
+        let dir = temp_dir();
+        write_session(&dir, "/repo/a", Some("first"), 1);
+        write_session(&dir, "/repo/b", Some("second"), 1);
+        let cache = StubCache::default();
+        let rows = list_sessions_through(&dir, Some(&cache), |_, _, _| false);
+        assert!(rows.is_empty());
+        assert!(cache.finished.into_inner().unwrap().is_empty());
+    }
+
+    #[test]
+    fn rows_round_trip_through_the_catalog_row() {
+        let dir = temp_dir();
+        let path = write_session(&dir, "/repo/a", Some("alpha"), 3);
+        let info = read_session_info(&path).unwrap();
+        assert_eq!(info_from_row(&path, row_from_info(&info)), info);
     }
 }

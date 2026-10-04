@@ -34,6 +34,10 @@ pub struct InstalledFeatures {
     /// the optional OTLP export, both on background workers.
     #[cfg(feature = "trace")]
     trace: Option<pa_trace::RecorderHandle>,
+    /// The saved-session catalog index (`feature = "session-index"`):
+    /// its writes run on a writer thread.
+    #[cfg(feature = "session-index")]
+    session_index: pa_session_index::SessionIndex,
 }
 
 impl InstalledFeatures {
@@ -44,17 +48,33 @@ impl InstalledFeatures {
         if let Some(trace) = &self.trace {
             trace.shutdown(pa_trace::SHUTDOWN_DRAIN);
         }
+        // A write cut off at exit leaves the previous index in place (the
+        // rename is atomic); the bound only spares the next process a fold.
+        #[cfg(feature = "session-index")]
+        let _idle = self
+            .session_index
+            .flush(std::time::Instant::now() + FEATURE_FLUSH_TIMEOUT);
     }
 }
 
-/// Install the enabled features: the session seam, and (feature `trace`)
-/// the trace recorder as the process subscriber. Called once by the binary
-/// before any session or worker starts. Does no I/O: the recorder opens its
-/// log and starts its workers with the first record.
+/// Install the enabled features: the session seam, (feature `trace`) the
+/// trace recorder as the process subscriber, and (feature `session-index`)
+/// the saved-session catalog cache. Called once by the binary before any
+/// session or worker starts. Does no I/O: the recorder opens its log and
+/// starts its workers with the first record; the index reads a session
+/// directory on its first listing.
 #[must_use]
 pub fn install_enabled_features() -> InstalledFeatures {
     pa_core::features::install(enabled_features());
+    #[cfg(feature = "session-index")]
+    let session_index = {
+        let index = pa_session_index::SessionIndex::new();
+        pa_core::session::catalog_cache::install(Box::new(index.clone()));
+        index
+    };
     InstalledFeatures {
+        #[cfg(feature = "session-index")]
+        session_index,
         #[cfg(feature = "trace")]
         trace: pa_trace::install(pa_trace::RecorderConfig::from_env(
             trace_log_path(),

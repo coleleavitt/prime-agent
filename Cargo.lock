@@ -1275,6 +1275,7 @@ dependencies = [
  "pa-dream",
  "pa-ledger",
  "pa-recall",
+ "pa-session-index",
  "pa-telemetry",
  "pa-toolforge",
  "pa-trace",
@@ -1438,6 +1439,17 @@ dependencies = [
  "tokio",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "pa-session-index"
+version = "0.9.8"
+dependencies = [
+ "pa-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]
