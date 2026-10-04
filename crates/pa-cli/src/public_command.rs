@@ -181,6 +181,16 @@ pub fn handle_public_command(args: &[String]) -> PublicCommandResult {
         "session" => rewrite_nested_command("session", "export", "--export", &rest),
         "prompt" => handled_with_exit(crate::prompt_command::run_prompt_command(&rest)),
         "factory" => handled_with_exit(crate::factory_command::run_factory_command(&rest)),
+        #[cfg(feature = "trace")]
+        "trace" => handled_with_exit(crate::features::run_trace_reader(
+            crate::features::TraceReader::Trace,
+            &rest,
+        )),
+        #[cfg(feature = "trace")]
+        "health" => handled_with_exit(crate::features::run_trace_reader(
+            crate::features::TraceReader::Health,
+            &rest,
+        )),
         "config" => {
             if !rest.is_empty() {
                 return fail(format!("Usage: {APP_NAME} config"), None);
@@ -998,6 +1008,73 @@ mod incident_dispatch_tests {
             help.contains("Times without a timezone are read as UTC"),
             "{help}"
         );
+    }
+}
+
+/// The `trace` / `health` readers exist exactly when the `trace` feature is
+/// built: routed and listed with it, unknown to the native product.
+#[cfg(test)]
+mod trace_reader_dispatch_tests {
+    use super::*;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect()
+    }
+
+    #[cfg(feature = "trace")]
+    #[test]
+    fn routes_the_readers_and_exits_with_their_codes() {
+        let _guard = crate::config::env_lock();
+        let previous = std::env::var_os("DO_NOT_TRACK");
+        std::env::set_var("DO_NOT_TRACK", "1");
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let log = dir.path().join("agent.jsonl");
+        std::fs::write(
+            &log,
+            r#"{"ts":"2026-09-07T10:00:00.100Z","level":"info","component":"x","msg":"m","traceId":"0af7651916cd43dd8448eb211c80319c"}"#,
+        )
+        .expect("write log");
+        let log = log.display().to_string();
+        let codes: Vec<(bool, Option<i32>)> = [
+            args(&["trace", "0af7651916cd43dd8448eb211c80319c", "--log", &log]),
+            args(&["trace", "not-a-trace"]),
+            args(&["health", "--log", &log]),
+            args(&["health", "--limit", "0"]),
+        ]
+        .iter()
+        .map(|values| {
+            let result = handle_public_command(values);
+            (result.handled, result.exit_code)
+        })
+        .collect();
+        match previous {
+            Some(previous) => std::env::set_var("DO_NOT_TRACK", previous),
+            None => std::env::remove_var("DO_NOT_TRACK"),
+        }
+        assert_eq!(
+            codes,
+            vec![
+                (true, Some(0)),
+                (true, Some(1)),
+                (true, Some(2)),
+                (true, Some(1))
+            ]
+        );
+        let help = format_top_level_help();
+        assert!(help.contains("trace") && help.contains("health"), "{help}");
+    }
+
+    #[cfg(not(feature = "trace"))]
+    #[test]
+    fn the_native_product_has_no_readers() {
+        for command in ["trace", "health"] {
+            assert!(get_command_spec(&[command]).is_none(), "{command}");
+            let result = handle_public_command(&args(&[command]));
+            assert!(!result.handled, "{command}");
+        }
     }
 }
 

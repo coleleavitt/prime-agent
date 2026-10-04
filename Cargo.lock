@@ -1271,6 +1271,7 @@ dependencies = [
  "pa-core",
  "pa-daemon",
  "pa-telemetry",
+ "pa-trace",
  "pa-tui",
  "pa-types",
  "rsa",
