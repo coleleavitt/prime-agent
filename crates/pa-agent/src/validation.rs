@@ -49,13 +49,24 @@ fn schema_type(schema: &Value) -> Vec<&str> {
     }
 }
 
-/// Primitive coercion mirroring `TypeBox` `Value.Convert`: strings parse
-/// into number/boolean when the schema requests it (numbers as JS
-/// `Number(text)`), and numbers/booleans
-/// stringify when the schema requests a string.
+/// Primitive coercion mirroring TS's plain-JSON-schema path
+/// (`coercePrimitiveByType`; Rust schemas carry no `TypeBox` metadata, so
+/// `Value.Convert`'s looser rules never apply): strings parse into
+/// number/boolean when the schema requests it (numbers as JS `Number(text)`),
+/// and numbers/booleans stringify (as JS `String(x)`) when it requests a string.
 fn coerce(schema: &Value, value: &mut Value) {
     let types = schema_type(schema);
-    if types.is_empty() {
+    // TS `matchesUnionMember`: under a multi-type `type`, a value that
+    // already is one of the members is kept as it is (unknown type names
+    // match nothing here, unlike in `check`).
+    let matches_union_member = types.len() > 1
+        && types.iter().any(|ty| {
+            matches!(
+                *ty,
+                "number" | "integer" | "boolean" | "string" | "null" | "array" | "object"
+            ) && type_matches(ty, value)
+        });
+    if types.is_empty() || matches_union_member {
         coerce_children(schema, value);
         return;
     }
@@ -70,19 +81,39 @@ fn coerce(schema: &Value, value: &mut Value) {
                     return coerce_children(schema, value);
                 }
             }
-            ("boolean", Value::String(s)) => {
-                let lower = s.trim().to_ascii_lowercase();
-                if lower == "true" {
-                    *value = Value::Bool(true);
-                    return coerce_children(schema, value);
-                }
-                if lower == "false" {
-                    *value = Value::Bool(false);
+            // A whole double under `integer` (`9.3e18`, `-2^63`) becomes the
+            // JSON integer `JSON.stringify` writes for it when one holds it.
+            ("integer", Value::Number(n)) if !n.is_i64() && !n.is_u64() => {
+                if let Some(whole) = n.as_f64().filter(|n| n.fract() == 0.0) {
+                    *value = number_value(whole);
                     return coerce_children(schema, value);
                 }
             }
+            // TS's plain-JSON-schema `coercePrimitiveByType`: exactly
+            // "true"/"false", the numbers 1/0 and `null`; no trim, no case
+            // folding ("TRUE" and "1" convert only under `TypeBox`
+            // `Value.Convert`, which Rust schemas, carrying no `TypeBox`
+            // metadata, never take).
+            ("boolean", Value::String(s)) if s == "true" || s == "false" => {
+                *value = Value::Bool(s == "true");
+                return coerce_children(schema, value);
+            }
+            ("boolean", Value::Number(n)) => {
+                if let Some(flag) = n.as_f64().and_then(js_bool_of_number) {
+                    *value = Value::Bool(flag);
+                    return coerce_children(schema, value);
+                }
+            }
+            ("boolean", Value::Null) => {
+                *value = Value::Bool(false);
+                return coerce_children(schema, value);
+            }
+            // JS `String(n)` of the double TS parsed.
             ("string", Value::Number(n)) => {
-                *value = Value::String(n.to_string());
+                let text = n
+                    .as_f64()
+                    .map_or_else(|| n.to_string(), pa_types::js::js_number_to_string);
+                *value = Value::String(text);
                 return coerce_children(schema, value);
             }
             ("string", Value::Bool(b)) => {
@@ -136,15 +167,51 @@ fn coerce_children(schema: &Value, value: &mut Value) {
     }
 }
 
+/// A coerced double as a JSON number: a whole value that `i64` or `u64`
+/// holds exactly becomes a JSON integer (the number `JSON.stringify` writes);
+/// any other finite double (a fraction, or a whole value past `u64`) stays a
+/// JSON double, which `integer` still accepts when it has no fraction.
 fn number_value(n: f64) -> Value {
-    if n.fract() == 0.0 && n.abs() < 9.223_372_036_854_776e18 {
-        // The guard proves the conversion exact: whole value, |n| < 2^63
-        // (JSON integers, as JS prints them, so `integer` schemas accept them).
+    const TWO_63: f64 = 9_223_372_036_854_775_808.0;
+    const TWO_64: f64 = 18_446_744_073_709_551_616.0;
+    if n.fract() == 0.0 && (-TWO_63..TWO_63).contains(&n) {
+        // Whole and inside [-2^63, 2^63): the conversion is exact.
         #[allow(clippy::cast_possible_truncation)]
         let whole = n as i64;
         Value::from(whole)
+    } else if n.fract() == 0.0 && (TWO_63..TWO_64).contains(&n) {
+        // Whole and inside [2^63, 2^64): the conversion is exact.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let whole = n as u64;
+        Value::from(whole)
     } else {
         serde_json::Number::from_f64(n).map_or(Value::Null, Value::Number)
+    }
+}
+
+/// TS's `value === 1` / `value === 0` (so `1.0` and `-0` count).
+#[expect(clippy::float_cmp, reason = "JS strict equality against exact 1 and 0")]
+fn js_bool_of_number(n: f64) -> Option<bool> {
+    if n == 1.0 {
+        Some(true)
+    } else if n == 0.0 {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// JS `Number.isInteger`: a JSON integer, or a finite double with no
+/// fraction (`1e20` is an integer to TS though no Rust integer type holds it).
+fn is_js_integer(value: &Value) -> bool {
+    match value {
+        Value::Number(n) => {
+            n.is_i64()
+                || n.is_u64()
+                || n.as_f64()
+                    .is_some_and(|n| n.is_finite() && n.fract() == 0.0)
+        }
+        _ => false,
     }
 }
 
@@ -285,8 +352,8 @@ fn type_name(value: &Value) -> &'static str {
     match value {
         Value::Null => "null",
         Value::Bool(_) => "boolean",
-        Value::Number(n) => {
-            if n.is_i64() || n.is_u64() {
+        Value::Number(_) => {
+            if is_js_integer(value) {
                 "integer"
             } else {
                 "number"
@@ -302,7 +369,7 @@ fn type_matches(ty: &str, value: &Value) -> bool {
     match ty {
         "null" => value.is_null(),
         "boolean" => value.is_boolean(),
-        "integer" => value.is_i64() || value.is_u64(),
+        "integer" => is_js_integer(value),
         "number" => value.is_number(),
         "string" => value.is_string(),
         "array" => value.is_array(),
@@ -366,6 +433,205 @@ mod tests {
                 rejected("number", "Infinity"),
                 rejected("integer", "-Infinity"),
                 rejected("integer", "1.5"),
+            ]
+        );
+    }
+
+    /// Validate one argument `v` given as JSON text, as a provider delivers it.
+    fn validate_json(ty: &str, raw: &str) -> Result<Value, String> {
+        let schema = json!({ "type": "object", "properties": { "v": { "type": ty } } });
+        let arguments: Value =
+            serde_json::from_str(&format!("{{\"v\":{raw}}}")).expect("argument JSON");
+        validate_tool_arguments("t", &schema, &arguments)
+    }
+
+    fn mismatch(ty: &str, raw: &str, received: &str) -> Result<Value, String> {
+        let arguments: Value =
+            serde_json::from_str(&format!("{{\"v\":{raw}}}")).expect("argument JSON");
+        Err(format!(
+            "Validation failed for tool \"t\":\n  - v: Expected {ty}, received {received}\n\n\
+             Received arguments:\n{}",
+            serde_json::to_string_pretty(&arguments).expect("pretty")
+        ))
+    }
+
+    /// TS's plain-JSON-schema coercion (the path Rust's schemas take: they
+    /// carry no `TypeBox` metadata) turns only the exact strings `"true"` /
+    /// `"false"`, the numbers `1` / `0` and `null` into a boolean. `TypeBox`
+    /// `Value.Convert` would also take `"TRUE"`, `"True"`, `"1"`, `"0"`;
+    /// neither path trims, so `" true "` stays a string. Oracle: node runs of
+    /// TS `validateToolArguments`.
+    #[test]
+    fn booleans_coerce_like_the_plain_json_schema_path() {
+        let cases = [
+            "\"true\"",
+            "\"false\"",
+            "\"TRUE\"",
+            "\"True\"",
+            "\" true \"",
+            "\"true \"",
+            "\"1\"",
+            "\"0\"",
+            "\"yes\"",
+            "\"\"",
+            "1",
+            "0",
+            "1.0",
+            "-0",
+            "2",
+            "null",
+        ];
+        let actual: Vec<_> = cases
+            .iter()
+            .map(|raw| validate_json("boolean", raw))
+            .collect();
+        assert_eq!(
+            actual,
+            vec![
+                Ok(json!({ "v": true })),
+                Ok(json!({ "v": false })),
+                mismatch("boolean", "\"TRUE\"", "string"),
+                mismatch("boolean", "\"True\"", "string"),
+                mismatch("boolean", "\" true \"", "string"),
+                mismatch("boolean", "\"true \"", "string"),
+                mismatch("boolean", "\"1\"", "string"),
+                mismatch("boolean", "\"0\"", "string"),
+                mismatch("boolean", "\"yes\"", "string"),
+                mismatch("boolean", "\"\"", "string"),
+                Ok(json!({ "v": true })),
+                Ok(json!({ "v": false })),
+                Ok(json!({ "v": true })),
+                Ok(json!({ "v": false })),
+                mismatch("boolean", "2", "integer"),
+                Ok(json!({ "v": false })),
+            ]
+        );
+    }
+
+    /// TS checks `integer` with `Number.isInteger`, so any finite double with
+    /// no fraction passes, however large; Rust held integers to `i64`/`u64`.
+    /// A whole value that fits `i64`/`u64` comes back as a JSON integer (the
+    /// same number `JSON.stringify` writes); beyond that it stays a JSON
+    /// number. Oracle: node runs of TS `validateToolArguments`.
+    #[test]
+    fn integers_accept_every_finite_whole_double() {
+        let cases = [
+            "1e20",
+            "\"1e20\"",
+            "9223372036854775808",
+            "9.223372036854775808e18",
+            "\"9223372036854775808\"",
+            "9.3e18",
+            "-9.223372036854775808e18",
+            "-9223372036854780000",
+            "-9.3e18",
+            "1e21",
+            "\"1e21\"",
+            "1.8446744073709552e19",
+            "\"18446744073709551616\"",
+            "1.5e300",
+            "-1e20",
+            "1.5",
+        ];
+        let actual: Vec<_> = cases
+            .iter()
+            .map(|raw| validate_json("integer", raw))
+            .collect();
+        assert_eq!(
+            actual,
+            vec![
+                Ok(json!({ "v": 1e20 })),
+                Ok(json!({ "v": 1e20 })),
+                Ok(json!({ "v": 9_223_372_036_854_775_808_u64 })),
+                Ok(json!({ "v": 9_223_372_036_854_775_808_u64 })),
+                Ok(json!({ "v": 9_223_372_036_854_775_808_u64 })),
+                Ok(json!({ "v": 9_300_000_000_000_000_000_u64 })),
+                Ok(json!({ "v": i64::MIN })),
+                Ok(json!({ "v": -9.223_372_036_854_78e18 })),
+                Ok(json!({ "v": -9.3e18 })),
+                Ok(json!({ "v": 1e21 })),
+                Ok(json!({ "v": 1e21 })),
+                Ok(json!({ "v": 1.844_674_407_370_955_2e19 })),
+                Ok(json!({ "v": 1.844_674_407_370_955_2e19 })),
+                Ok(json!({ "v": 1.5e300 })),
+                Ok(json!({ "v": -1e20 })),
+                mismatch("integer", "1.5", "number"),
+            ]
+        );
+    }
+
+    /// A number coerced to a `string` prints as JS `String(n)` (the double
+    /// TS parsed, shortest round-trip, `1e+21` past 21 digits).
+    #[test]
+    fn numbers_coerce_to_strings_as_js_prints_them() {
+        let cases = [
+            "5",
+            "1.5",
+            "1e20",
+            "1e21",
+            "1e-7",
+            "0.30000000000000004",
+            "9223372036854775807",
+            "1e15",
+            "2.5e-5",
+            "123456789012345680000",
+            "true",
+        ];
+        let actual: Vec<_> = cases
+            .iter()
+            .map(|raw| validate_json("string", raw))
+            .collect();
+        let expected: Vec<Result<Value, String>> = [
+            "5",
+            "1.5",
+            "100000000000000000000",
+            "1e+21",
+            "1e-7",
+            "0.30000000000000004",
+            "9223372036854776000",
+            "1000000000000000",
+            "0.000025",
+            "123456789012345680000",
+            "true",
+        ]
+        .iter()
+        .map(|text| Ok(json!({ "v": text })))
+        .collect();
+        assert_eq!(actual, expected);
+    }
+
+    /// A value that already matches one member of a multi-type `type` is
+    /// left alone (TS `matchesUnionMember`), so the boolean and integer
+    /// coercions above never rewrite a valid `null`, `1` or `"5"`. Oracle:
+    /// node runs of TS `validateToolArguments`.
+    #[test]
+    fn a_value_matching_a_union_member_is_not_coerced() {
+        let cases = [
+            (json!(["boolean", "null"]), json!(null)),
+            (json!(["string", "number"]), json!("5")),
+            (json!(["number", "string"]), json!("5")),
+            (json!(["integer", "boolean"]), json!("true")),
+            (json!(["boolean", "integer"]), json!(1)),
+            (json!(["integer", "null"]), json!(1e20)),
+            (json!(["string", "boolean"]), json!(1)),
+        ];
+        let actual: Vec<_> = cases
+            .iter()
+            .map(|(ty, v)| {
+                let schema = json!({ "type": "object", "properties": { "v": { "type": ty } } });
+                validate_tool_arguments("t", &schema, &json!({ "v": v }))
+            })
+            .collect();
+        assert_eq!(
+            actual,
+            vec![
+                Ok(json!({ "v": null })),
+                Ok(json!({ "v": "5" })),
+                Ok(json!({ "v": "5" })),
+                Ok(json!({ "v": true })),
+                Ok(json!({ "v": 1 })),
+                Ok(json!({ "v": 1e20 })),
+                Ok(json!({ "v": "1" })),
             ]
         );
     }
