@@ -19,6 +19,11 @@
 //! fires on the TS schedule. The check holds its window in 10ms poll
 //! slices (the vendored crossterm patch), so the app reader interleaves
 //! and early typing delivers at its own cadence while the probe listens.
+//! The reply's verdict reaches the check through the vendored reply watch,
+//! whichever reader parsed it: the app reader's own polls parse the reply
+//! too, and under CPU contention the check used to lose every round of the
+//! shared reader lock to them, so an in-time reply sat parked while the
+//! window lapsed (the loaded-host "no kitty" misclassification).
 //! Crossterm parks user keys in its internal event queue, so early
 //! typing is preserved; the app reader never sees protocol bytes as key
 //! input. An answer after the 150ms fallback but within the 250ms query
