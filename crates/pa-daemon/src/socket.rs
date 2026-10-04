@@ -542,7 +542,13 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         fn fd_exists(fd: std::os::fd::RawFd) -> bool {
-            std::fs::read_link(format!("/proc/self/fd/{fd}")).is_ok()
+            fd_target(fd).is_some()
+        }
+        // What the fd number names (`socket:[inode]`): another test thread
+        // may reuse a closed number at once, so "closed" means the number
+        // no longer names this socket, not that the number is free.
+        fn fd_target(fd: std::os::fd::RawFd) -> Option<std::path::PathBuf> {
+            std::fs::read_link(format!("/proc/self/fd/{fd}")).ok()
         }
 
         let dir = tempfile::TempDir::new().unwrap();
@@ -554,10 +560,11 @@ mod tests {
         let mut accepted = listener.accept().await.unwrap().0;
         let listener_fd = listener.as_raw_fd();
         let accepted_fd = accepted.as_raw_fd();
-        assert!(fd_exists(listener_fd));
+        let listener_target = fd_target(listener_fd);
+        assert!(listener_target.is_some());
         drop(listener);
         assert!(
-            !fd_exists(listener_fd),
+            fd_target(listener_fd) != listener_target,
             "the listener's fd closed at the drop: no fd leaked on the bound socket"
         );
         assert!(
