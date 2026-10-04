@@ -69,17 +69,23 @@ callable surface; a unit test pins its protocol number to `REPL_PROTOCOL_VERSION
 
 ## Current State
 
-Branch `merge-rust-port` (local; **not pushed**). Upstream `main` merged through #3264/#3290, then every open upstream
-PR (99) was triaged: 56 merged (one merge commit each, resolution decisions in the commit messages), 43 not merged —
-22 TS-only, 14 superseded by a merged Rust port, 5 TS-only in substance or targeting tooling the port deleted, and
-#2351 (`rlm.watch`) / #2352 (`messaging_stats`), which need a Rust host port first. Full `cargo test --workspace` green (214 binaries, 5821
-passed), clippy `-D warnings` clean for linux-gnu **and** windows-gnu, `cargo deny` clean, runtime unittest 1153 OK,
-computer-use skill 452 OK. Live handoff notes: `MEMORY.md`.
+Branch `merge-rust-port`, pushed to the fork remote (`fork`, `coleleavitt/prime-agent`). Upstream `main` merged
+through #3264/#3290, then every open upstream PR (99) was triaged: 56 merged (one merge commit each, resolution
+decisions in the commit messages), 43 not merged — 22 TS-only, 14 superseded by a merged Rust port, 5 TS-only in
+substance or targeting tooling the port deleted, and #2351 (`rlm.watch`) / #2352 (`messaging_stats`), which need a
+Rust host port first. Live handoff notes: `MEMORY.md`.
+
+The fork's TS-only features are ported as removable feature crates (`docs/fork-feature-crates.md`): `pa-trace`,
+`pa-recall`, `pa-toolforge`, `pa-dream` (standalone + in-session, `/dream`), `pa-workflow` (V1 host; V2 wire +
+`validate`), `pa-ledger`, `pa-ravo` (gate, referee, trust windows, `ravo.run`, `/ravo`), `pa-learning`,
+`pa-session-index`, `pa-mermaid`. Native upstream-parity Mermaid rendering lives in `pa-tui/src/mermaid/`. On-disk
+formats are byte-compatible with the TS fork, proven by node-generated goldens in each crate's `tests/`. Static bug
+rules for this repo's hazard classes: `codegraph-rules/` (`codegraph analyze rules`).
 
 Open:
-- **Port the fork's TS-only features to Rust** (Dream-RSI, RAVO, Workspace Recall, trajectory index, the TS
-  observability span set, …): inventory + phased plan not written yet. `docs/dream-rsi.md`, `docs/ravo-*.md`,
-  `docs/observability.md` and `FLOWCHART.md` describe the **TS** implementation.
+- Workflow V2's durable controller (the TS fork never built it; needs a store dependency decision).
+- `docs/dream-rsi.md`, `docs/ravo-*.md`, `docs/observability.md` and `FLOWCHART.md` still describe the **TS**
+  implementation; the crate READMEs describe the Rust one.
 - Wayland computer-use: PyGObject is a Linux dependency of the skill (built by the kernel bootstrap's skill sync;
   needs gobject-introspection + cairo headers). Live-tested on niri 26.04 with a GTK 4 window (AT-SPI observe/press,
   set_value, field focus, virtual keyboard/pointer, grim, secure-field refusal); tiled windows still lack coordinate
