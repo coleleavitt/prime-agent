@@ -179,6 +179,55 @@ pub struct KernelBashCommands {
     pub lines: usize,
 }
 
+/// One `bash()` command that finished while a cell's body ran, as the
+/// runtime reports it in the `bashCommands` field of the cell's `done`
+/// frame (secret-redacted, capped text; absent from older runtimes).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KernelExecutedBashCommand {
+    pub command: String,
+    pub exit_code: i64,
+    /// The runtime cut the command text, so it only names the command.
+    pub command_truncated: bool,
+}
+
+impl KernelExecutedBashCommand {
+    /// The `done` frame's `bashCommands` records; malformed records are
+    /// skipped, and a frame without the field yields none.
+    #[must_use]
+    pub fn parse_done_frame(done: &Value) -> Vec<Self> {
+        let Some(records) = done.get("bashCommands").and_then(Value::as_array) else {
+            return Vec::new();
+        };
+        records
+            .iter()
+            .filter_map(|record| {
+                Some(Self {
+                    command: record.get("command")?.as_str()?.to_string(),
+                    exit_code: record.get("exitCode")?.as_i64()?,
+                    command_truncated: record
+                        .get("commandTruncated")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                })
+            })
+            .collect()
+    }
+
+    /// The host-facts form (TS `IpythonBashCommand`): `command`, `exitCode`,
+    /// and `commandTruncated` only when set.
+    #[must_use]
+    pub fn to_json(&self) -> Value {
+        let mut value = serde_json::json!({
+            "command": self.command,
+            "exitCode": self.exit_code,
+        });
+        if self.command_truncated {
+            value["commandTruncated"] = Value::Bool(true);
+        }
+        value
+    }
+}
+
 /// A kernel error reported by a failed cell.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KernelError {
@@ -202,6 +251,9 @@ pub struct ExecuteResult {
     pub sent_agent_messages: Option<Vec<KernelSentAgentMessage>>,
     /// The `bash()` commands this cell started, summarized for display.
     pub bash_commands: Option<KernelBashCommands>,
+    /// The `bash()` commands that finished while the cell body ran, with
+    /// their exit codes (the `done` frame's `bashCommands`).
+    pub executed_bash_commands: Vec<KernelExecutedBashCommand>,
     /// Output that arrived without this cell's id (user threads, other cells' leftovers, raw fd writes).
     pub background_output: Option<String>,
     pub status: ExecuteStatus,

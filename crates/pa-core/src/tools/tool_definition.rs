@@ -58,6 +58,9 @@ pub struct ToolExecutionResult {
     pub content: Vec<ToolContentBlock>,
     pub details: Option<serde_json::Value>,
     pub is_error: bool,
+    /// Host-side facts for in-process observers (the loop's
+    /// `AgentToolResult::host_facts`); never sent to the model or persisted.
+    pub host_facts: serde_json::Value,
 }
 
 impl ToolExecutionResult {
@@ -66,6 +69,7 @@ impl ToolExecutionResult {
             content: vec![ToolContentBlock::text(text)],
             details: None,
             is_error: false,
+            host_facts: serde_json::Value::Null,
         }
     }
 }

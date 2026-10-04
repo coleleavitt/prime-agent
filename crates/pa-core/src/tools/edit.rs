@@ -300,6 +300,7 @@ fn execute_edit_locked(
         ))],
         details: Some(details),
         is_error: false,
+        host_facts: serde_json::Value::Null,
     })
 }
 

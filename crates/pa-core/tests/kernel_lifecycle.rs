@@ -21,8 +21,8 @@ use std::time::Duration;
 use pa_core::kernel::bootstrap::build_rlm_bootstrap_code;
 use pa_core::kernel::manager::{KernelStartOptions, ReplKernelManager};
 use pa_core::kernel::shared::{
-    ExecuteOptions, ExecuteStatus, HostRequestHandlers, KernelBashCommands, KernelManagerOptions,
-    KernelShutdownOptions, KernelSnapshotConfig,
+    ExecuteOptions, ExecuteStatus, HostRequestHandlers, KernelBashCommands,
+    KernelExecutedBashCommand, KernelManagerOptions, KernelShutdownOptions, KernelSnapshotConfig,
 };
 use pa_core::kernel::state_snapshot::{manifest_path_in, snapshot_path_in};
 
@@ -474,6 +474,40 @@ async fn cell_result_summarizes_the_bash_commands_it_ran() {
             count: 2,
             lines: 3,
         })
+    );
+    manager
+        .shutdown(KernelShutdownOptions::default())
+        .await
+        .expect("shutdown");
+}
+
+/// The `done` frame's `bashCommands` reach the cell result: every `bash()`
+/// command that finished while the cell body ran, in order, with its exit
+/// code (Workspace Recall's build claims read these).
+#[tokio::test]
+async fn cell_result_carries_the_finished_bash_commands_with_exit_codes() {
+    let Some(options) = test_options(None) else {
+        return;
+    };
+    let manager = started_manager(options).await;
+    execute(&manager, "from rlm import bash").await;
+
+    let result = execute(&manager, "await bash(\"true\")\nawait bash(\"exit 3\")").await;
+
+    assert_eq!(
+        result.executed_bash_commands,
+        vec![
+            KernelExecutedBashCommand {
+                command: "true".to_string(),
+                exit_code: 0,
+                command_truncated: false,
+            },
+            KernelExecutedBashCommand {
+                command: "exit 3".to_string(),
+                exit_code: 3,
+                command_truncated: false,
+            },
+        ]
     );
     manager
         .shutdown(KernelShutdownOptions::default())
