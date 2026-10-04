@@ -44,12 +44,15 @@ const RULE: &str = "\u{2500}";
 
 struct MockSupervisor {
     listener: UnixListener,
+    /// The attach snapshot's transcript.
+    messages: Value,
 }
 
 impl MockSupervisor {
-    fn bind(socket: &std::path::Path) -> Self {
+    fn bind(socket: &std::path::Path, messages: Value) -> Self {
         MockSupervisor {
             listener: UnixListener::bind(socket).expect("bind mock socket"),
+            messages,
         }
     }
 
@@ -117,7 +120,7 @@ impl MockSupervisor {
                     );
                 }
                 "attach" => {
-                    write_json(&mut writer, &attach_data(id));
+                    write_json(&mut writer, &attach_data(id, &self.messages));
                 }
                 "get_session_stats" => {
                     write_json(
@@ -184,8 +187,8 @@ fn write_json(writer: &mut UnixStream, value: &Value) {
     writer.flush().expect("flush mock frame");
 }
 
-/// The slim attach result: one empty session.
-fn attach_data(id: &str) -> Value {
+/// The slim attach result: one session holding `messages`.
+fn attach_data(id: &str, messages: &Value) -> Value {
     json!({
         "type": "response",
         "id": id,
@@ -207,7 +210,7 @@ fn attach_data(id: &str) -> Value {
                     "isCompacting": false,
                     "sessionActions": { "queuedCount": 0, "steering": [], "followUps": [] },
                 },
-                "messages": [],
+                "messages": messages,
                 "lastEventSequence": 0,
                 "lastEventCursor": null,
             },
@@ -331,8 +334,8 @@ impl pa_tui::client_settings::ClientSettings for RecordingSettings {
     fn mermaid_rendering_mode(&self) -> String {
         "streaming".to_string()
     }
-    fn set_mermaid_rendering_mode(&self, _mode: &str) -> Result<()> {
-        Ok(())
+    fn set_mermaid_rendering_mode(&self, mode: &str) -> Result<()> {
+        self.record(&format!("mermaid-rendering={mode}"))
     }
     fn tree_filter_mode(&self) -> String {
         "user-only".to_string()
@@ -423,12 +426,20 @@ fn options(socket: PathBuf, settings: Arc<RecordingSettings>) -> InteractiveOpti
     }
 }
 
-/// Run a plan against the mock daemon, with the recording settings seam.
+/// Run a plan against the mock daemon (an empty session), with the recording settings seam.
 fn run_plan(steps: Vec<HeadlessStep>) -> (Vec<String>, Arc<RecordingSettings>) {
+    run_plan_with(steps, json!([]))
+}
+
+/// Run a plan against the mock daemon attached to a session holding `messages`.
+fn run_plan_with(
+    steps: Vec<HeadlessStep>,
+    messages: Value,
+) -> (Vec<String>, Arc<RecordingSettings>) {
     std::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
-    let supervisor = MockSupervisor::bind(&socket);
+    let supervisor = MockSupervisor::bind(&socket, messages);
     let handle = std::thread::spawn(move || supervisor.serve());
 
     let settings = Arc::new(RecordingSettings::default());
@@ -729,5 +740,61 @@ fn a_no_match_query_backspaces_away_and_space_still_cycles() {
     assert!(
         row.contains("false"),
         "Space still cycles the selected row: {row}"
+    );
+}
+
+/// Changing "Mermaid diagrams" persists the mode and re-renders the transcript under it
+/// (TS `onMermaidRenderingModeChange`: set the mode, invalidate the chat): the diagram the
+/// attached message drew turns back into its fence once the mode is off.
+#[test]
+fn the_mermaid_setting_rerenders_the_transcript() {
+    let messages = json!([
+        { "role": "user", "content": [{ "type": "text", "text": "draw it" }], "timestamp": 1 },
+        {
+            "role": "assistant",
+            "content": [{ "type": "text", "text": "```mermaid\nflowchart LR\n  A[Start] --> B[Done]\n```" }],
+            "api": "faux:1", "provider": "faux", "model": "faux-1",
+            "usage": { "input": 1, "output": 1, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 2,
+                       "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 } },
+            "stopReason": "stop", "timestamp": 2
+        },
+    ]);
+    let diagram_row =
+        "\u{2502} Start \u{251c}\u{2500}\u{2500}\u{2500}\u{25b6}\u{2502} Done \u{2502}";
+    let mut steps = vec![HeadlessStep::WaitRender {
+        needle: diagram_row.to_string(),
+        timeout_ms: 5000,
+    }];
+    steps.extend(open_settings());
+    // 3 jumps to the Display tab; down x6 lands on Mermaid diagrams (its seventh row).
+    steps.push(HeadlessStep::Key(key(KeyCode::Char('3'))));
+    steps.push(HeadlessStep::WaitRender {
+        needle: "Mermaid diagrams".to_string(),
+        timeout_ms: 5000,
+    });
+    for _ in 0..6 {
+        steps.push(HeadlessStep::Key(key(KeyCode::Down)));
+    }
+    steps.push(HeadlessStep::WaitRender {
+        needle: "Render Mermaid code blocks".to_string(),
+        timeout_ms: 5000,
+    });
+    // streaming -> off (the row's values wrap), then close the menu.
+    steps.push(HeadlessStep::Key(key(KeyCode::Right)));
+    steps.push(HeadlessStep::Key(key(KeyCode::Esc)));
+    steps.push(HeadlessStep::WaitRender {
+        needle: "A[Start] --> B[Done]".to_string(),
+        timeout_ms: 5000,
+    });
+    let (frames, settings) = run_plan_with(steps, messages);
+    assert_eq!(settings.log(), vec!["mermaid-rendering=off"]);
+    let rows = frame_with(&frames, "A[Start] --> B[Done]");
+    assert!(
+        !rows.iter().any(|row| row.contains(diagram_row)),
+        "the diagram is gone once the mode is off: {rows:?}"
+    );
+    assert!(
+        rows.iter().any(|row| row == "   flowchart LR"),
+        "the fence renders as code: {rows:?}"
     );
 }

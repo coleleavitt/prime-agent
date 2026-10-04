@@ -554,6 +554,9 @@ impl SessionUi {
                         self.error_row(&format!("{error:#}"), view);
                     }
                 }
+                // TS `onMermaidRenderingModeChange` invalidates the chat: the mode is a layout
+                // option, so every assistant entry re-renders under it.
+                view.mermaid_mode = crate::markdown::MermaidMode::from_setting(value);
             }
             "quiet-startup" => {
                 self.persist_bool_setting(
