@@ -76,7 +76,18 @@ on `perf/session-catalog-resume`, and `docs/ravo-architecture.md` there.
   child is one JSON-only prompt to the session model (resolved and authorized through the model registry), retried
   once on an invalid reply. Each phase is checkpointed to `<store>/ravo/runs/<runId>.json` (removed on acceptance) and
   every step appended to the hash-chained archive `<store>/ravo/archive/{events.jsonl,state.json}`; each evaluated
-  proposal logs its outcome (`refinement.committed` / `refinement.rejected`, reason `ravo_run`).
+  proposal logs its outcome (`refinement.committed` / `refinement.rejected`, reason `ravo_run`). Like TS
+  (`_autoRefineAllowedForSession`), only such a session gets the `ravo.*` handlers; elsewhere the kernel's calls fail as
+  unregistered. A running run is cancelled at exit (TS: on dispose).
+- Around `ravo.run` (`agent-session.ts`, `slash-commands.ts`, `agents-view-state.ts`): `/ravo [--global] [--rounds N]
+  [--repairs N] [--arc-repo DIR --arc-game ID] <task>` (`parseRavoCommandOptions`: flags anywhere, the rest joined as
+  the task, the TS usage error; the result row `RAVO run <id> started: <task>`, then a durable terminal row `RAVO run
+  <id> <stopReason|stopped>` or `Command failed: RAVO run <id> failed: <error>` when the run settles; refused with the
+  TS reason outside a session offered runs or while a run is in progress); the bundled `ravo` kernel skill
+  (`skills/.features/ravo`, the TS `packages/coding-agent/skills/ravo` verbatim); every status update (TS
+  `ravo_run_update`) published as the session's `ravo` feature status with the TS agents-view line
+  (`formatRavoRunStatusLine`: `ravo <phase> r<round>/<repairs>[ · <certificate status> <score>][ · missed: a,b]`, `ravo
+  <stopReason>`, `ravo error`).
 - Replay self-checks (`_startReplayVerification`): each boundary's newly derived, unverified cases run off the turn
   path in the sanitized environment, one batch at a time per session on a thread of their own, each (fingerprint,
   source) once per session and never one the ledger already holds verified; a reproduction is queued through
@@ -93,11 +104,11 @@ on `perf/session-catalog-resume`, and `docs/ravo-architecture.md` there.
 - The skill dry-run in the fast screen (`skill-dry-run.ts`); the screen is structural only.
 - Evidence drift and the stale-evidence re-plan; the RAVO archive (`refinement-ravo/`); the rejection-history and
   related-rejection prompt sections; per-session `local-refinements/<id>.jsonl`.
-- Around `ravo.run`: the bundled `ravo` skill (a file under the repository's `skills/` is discovered by every build, the
-  native one included, so it needs a feature-contributed skill seam and packaging for it), the `/ravo` slash command
-  (the command table is the static `pa_types::slash_commands` vocabulary shared with the TUI), the `ravo_run_update`
-  daemon event and the agents-view line (the daemon event set is closed; status updates are a `debug` record under
-  `pa_ravo::run`), the retained worker runtime (children are single provider calls), resuming from a checkpoint,
+- Around `ravo.run`: the `ravo` skill is listed to every session of a build with the feature (TS withheld it from
+  sessions not offered runs; no per-session skill visibility seam exists, as for `dream`), where its calls fail as
+  unregistered host requests; `/ravo --arc-repo/--arc-game` is refused (no ARC-AGI evaluator); the status reaches
+  clients as the generic `feature_status` event and `featureStatus.ravo` summary key, not the TS capability-gated
+  `ravo_run_update` event; the retained worker runtime (children are single provider calls), resuming from a checkpoint,
   probabilistic deep evaluators and the error-budget ledger's allocations (no product evaluator is probabilistic; the
   ledger snapshot is the empty one), concurrent evaluators (they run one at a time), the skill dry-run in the fast
   screen, and the ARC-AGI evaluator (benchmark code, outside the product; `arc_agi` is refused).
@@ -131,7 +142,12 @@ on `perf/session-catalog-resume`, and `docs/ravo-architecture.md` there.
   evidence and settles the windows of the document being written; the global flush's span gets `trust.recurrences`,
   `trust.adjudications`, `trust.faulted`, `trust.clean`, `trust.contested`), `LedgerHandle::request_global_flush`
   (after a global verdict) and `pending_replay_verifications` (what a planned replay's record will carry).
-- `SessionFeature::register_host_handlers`: `ravo.run`, `ravo.status`, `ravo.cancel`.
+- `SessionFeature::register_host_handlers`: `ravo.run`, `ravo.status`, `ravo.cancel` (sessions offered runs only).
+- `SessionFeature::slash_commands` / `execute_slash_command`: `/ravo` (a result row, and the run's completion as the
+  durable terminal row).
+- `SessionFeature::bundled_skills`: `ravo` (`skills/.features/ravo`).
+- `pa_core::features::publish_feature_status`: each run status update as feature `ravo` (the daemon's `feature_status`
+  event and roster `featureStatus.ravo`, the agents-view line).
 - `pa_ledger::LedgerObserver` (built into `FailureLedgerFeature::with_observers` by `pa-cli`) and
   `pa_ledger::LedgerHandle` (`attach_ledger`): `on_boundary` finds provisional regressions on each window's own clock
   (local lineage on the local and, with the global ledger on, the global ordinal; the global lineage on the global
@@ -168,13 +184,15 @@ differently. A judge reply that is not JSON reports `serde_json`'s parse error w
 `scope`); each settled window (`harness.trust.settled`: proposal, scope, from, outcome, ordinal,
 fingerprints) and each moved score (`harness.trust.adjusted`: proposal, scope, entry, reason, delta, before, after,
 dormant, fingerprint) under `pa_ravo::harness_trust`. Trust adds no telemetry event: it is not user-invoked. `ravo_run` (schema v4): `outcome` (the stop reason or `error`),
-`scope`, `rounds`, `repairs`, once a run settles; never the task, a proposal or child text. A run's spans: `ravo.run`,
+`scope`, `rounds`, `repairs`, once a run (`ravo.run` or `/ravo`) settles; never the task, a proposal or child text. A run's spans: `ravo.run`,
 `ravo.round`, `ravo.proposal`, `ravo.evaluation` with the TS `ravo.*` attributes.
 
 ## Public API
 
 `RavoFeature` (`new`, `ledger_observer`, `attach_ledger`, `attach_recurrence_filter`, `wait_replay_checks`),
-`RavoOptions`, `RecurrenceFilter`, `ravo_enabled`; the reducer
+`RavoOptions`, `RecurrenceFilter`, `ravo_enabled`; the session surface (`ravo_run_allowed`, `parse_ravo_command`,
+`RavoCommand`, `ArcAgiTarget`, `RAVO_USAGE`, `RAVO_COMMAND`, `RAVO_SKILL`, `ravo_status_line`, `RAVO_STATUS_FEATURE`);
+the reducer
 (`ravo_step`, `ravo_w`, `ravo_pressure`, `ravo_extend_opponents`, `ravo_mark_provisional`, `ravo_observe_champion`,
 `ravo_best_score` and their types); the authority (`authorize_assisted_ravo`, `normalize_assisted_ravo_state`,
 `ravo_artifact_digest`, binding checks); the referee (`adjudicate_failure_claims`, `ReplayRunner`,

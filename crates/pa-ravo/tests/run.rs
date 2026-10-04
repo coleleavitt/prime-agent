@@ -95,6 +95,10 @@ struct Session {
 }
 
 fn session(model: Scripted, artifacts: bool) -> Session {
+    session_at_depth(model, artifacts, 0)
+}
+
+fn session_at_depth(model: Scripted, artifacts: bool, rlm_depth: u32) -> Session {
     let root = tempfile::tempdir().unwrap();
     let context = SessionFeatureContext {
         agent_dir: root.path().join("agent"),
@@ -109,7 +113,7 @@ fn session(model: Scripted, artifacts: bool) -> Session {
         }))
         .unwrap(),
         telemetry: None,
-        rlm_depth: 0,
+        rlm_depth,
         session_artifact_dir: artifacts.then(|| root.path().join("artifacts")),
     };
     let model = Arc::new(model);
@@ -308,8 +312,7 @@ async fn a_run_stops_when_cancelled() {
 }
 
 /// Malformed requests fail the host request with the TS messages; the
-/// ARC-AGI evaluator is not part of the product; a session without a local
-/// harness store has no runs.
+/// ARC-AGI evaluator is not part of the product.
 #[tokio::test]
 async fn requests_are_validated_and_runs_need_a_session_store() {
     let session = session(Scripted::default(), true);
@@ -337,12 +340,26 @@ async fn requests_are_validated_and_runs_need_a_session_store() {
             message
         );
     }
-    let storeless = self::session(Scripted::default(), false);
-    assert_eq!(
-        storeless
-            .call("ravo.run", json!({ "task": "x" }))
-            .await
-            .unwrap(),
-        json!({ "started": false, "reason": "RAVO is not available in this session" })
-    );
+}
+
+/// Like TS (`_autoRefineAllowedForSession`), the `ravo.*` requests are
+/// registered only where refine is: a top-level session with a local
+/// harness store. Elsewhere the kernel's calls fail as unregistered.
+#[test]
+fn only_a_top_level_session_with_a_store_gets_the_requests() {
+    let names = |session: &Session| {
+        let mut names: Vec<String> = ["ravo.run", "ravo.status", "ravo.cancel"]
+            .into_iter()
+            .filter(|kind| session.handlers.get(kind).is_some())
+            .map(str::to_string)
+            .collect();
+        names.sort();
+        names
+    };
+    let top = session(Scripted::default(), true);
+    assert_eq!(names(&top), ["ravo.cancel", "ravo.run", "ravo.status"]);
+    let storeless = session(Scripted::default(), false);
+    assert_eq!(names(&storeless), Vec::<String>::new());
+    let child = session_at_depth(Scripted::default(), true, 1);
+    assert_eq!(names(&child), Vec::<String>::new());
 }

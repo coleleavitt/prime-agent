@@ -35,7 +35,8 @@ pub fn enabled_features() -> Vec<Arc<dyn SessionFeature>> {
 
 /// The failure ledger, and (feature `ravo`, which implies `ledger`) RAVO
 /// observing it: the ledger reports to RAVO's observer, and RAVO reads the
-/// ledger through its handle. RAVO is installed first, so at exit its
+/// ledger through its handle. RAVO also brings `ravo.run`, `/ravo` and the
+/// bundled `ravo` skill (top-level sessions with harness state). RAVO is installed first, so at exit its
 /// replay self-checks finish before the ledger's flush writes them.
 #[cfg(feature = "ledger")]
 fn ledger_features() -> Vec<Arc<dyn SessionFeature>> {
