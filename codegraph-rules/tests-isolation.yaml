@@ -1,0 +1,139 @@
+# Test-isolation hazards: tests in one binary run on parallel threads and share
+# the process (environment, fd table, process-wide registries).
+id: pa-test-env-mutation-without-lock
+description: >-
+  A test mutates the process environment (`std::env::set_var`/`remove_var`)
+  in a function that takes no env lock. Every test in the binary shares one
+  environment: a concurrent test reading the same variable (or the code under
+  test reading it) sees the other test's value. The repo serializes these on
+  a lock (`config::env_lock()`, `packages::test_support::lock_env()`,
+  `test_support::TELEMETRY_ENV_MUTEX`, a module's `env_lock()`), usually
+  through a guard type that takes it.
+severity: low
+tags: [flaky, test-isolation]
+language: rust
+check-patterns:
+  - name: set-or-remove-var
+    query: |
+      ((call_expression
+         function: (scoped_identifier path: (_) @path name: (identifier) @fn)) @call
+       (#match? @path "(^|::)env$")
+       (#match? @fn "^(set_var|remove_var)$"))
+    at: call
+    where:
+      - enclosing-function:
+          is-test: true
+          calls-not: "(?i)env_lock|lock_env|env_mutex|ENV_LOCK|ENV_MUTEX|EnvGuard|EnvVarGuard|ScopedEnv|with_env|lock$"
+      # A guard type's apply/drop: whoever builds the guard holds the lock.
+      - not-inside: "(impl_item) @impl"
+message: "test calls `env::{fn}` without holding an env lock"
+review:
+  - Does a caller (or a guard constructed earlier in the test) hold the crate's env lock?
+  - Does any other test in the same binary read or write this variable?
+examples:
+  bad:
+    - |
+      #[test]
+      fn reads_the_key() {
+          std::env::set_var("PRIME_API_KEY", "k");
+          assert_eq!(key(), "k");
+      }
+  good:
+    - |
+      #[test]
+      fn reads_the_key() {
+          let _env = env_lock();
+          std::env::set_var("PRIME_API_KEY", "k");
+          assert_eq!(key(), "k");
+      }
+    - |
+      fn main() { std::env::set_var("RUST_LOG", "info"); }
+    - |
+      impl Drop for EnvOverride {
+          fn drop(&mut self) { std::env::remove_var("PA_X"); }
+      }
+---
+id: pa-test-proc-self-fd-number
+description: >-
+  A test judges a file descriptor by its number under `/proc/self/fd`. The fd
+  table is process-wide: once the fd is closed, another test thread can be
+  handed the same number at once, so "the number is gone" (or "the number
+  still exists") says nothing about this test's descriptor. Compare the link
+  target (`socket:[inode]`, the file path) instead.
+severity: low
+tags: [flaky, test-isolation]
+language: rust
+check-patterns:
+  - name: proc-self-fd-path
+    query: |
+      ((string_literal) @lit
+       (#match? @lit "/proc/self/fd"))
+    at: lit
+    where:
+      - enclosing-function:
+          is-test: true
+message: "test inspects /proc/self/fd by number"
+review:
+  - Does the test conclude anything from the number alone (exists / vanished / count)? Another thread may reuse it.
+examples:
+  bad:
+    - |
+      #[test]
+      fn closes_fd() {
+          let fd = listener.as_raw_fd();
+          drop(listener);
+          assert!(std::fs::read_link(format!("/proc/self/fd/{fd}")).is_err());
+      }
+  good:
+    - |
+      fn open_fds() -> usize { std::fs::read_dir("/proc/self/fd").map(|d| d.count()).unwrap_or(0) }
+---
+id: pa-test-global-count-assertion
+description: >-
+  A test asserts an exact count on a process-wide registry (a free
+  `*_count()` / `live_*()` / `active_*()` accessor, or the `.len()` of a
+  `static`/global registry). Other tests in the same binary register and
+  release entries concurrently, so the count is not this test's to assert;
+  ask whether this test's own entry is present instead.
+severity: low
+tags: [flaky, test-isolation]
+language: rust
+check-patterns:
+  - name: assert-eq-on-global-count
+    query: |
+      ((macro_invocation macro: (identifier) @mac (token_tree) @args) @call
+       (#match? @mac "^(assert_eq|assert_ne|assert)$"))
+    at: call
+    where:
+      # A free (path-less receiver) call to a count-like accessor with no arguments,
+      # or the len() of a registry()/REGISTRY global.
+      - capture: args
+        regex: "(^|[^\\w.:])(\\w+::)*(live_\\w+_count|\\w+_count|count_live\\w*|active_\\w+|live_\\w+)\\(\\s*\\)|(registry|REGISTRY|GLOBAL\\w*|global\\w*)\\(\\)[\\s\\S]{0,80}\\.len\\(\\)"
+      - enclosing-function:
+          is-test: true
+message: "test asserts an exact process-wide count"
+review:
+  - Is the counted registry process-wide (a static, a OnceLock, a global accessor)?
+  - Can another test in the same binary add or remove entries concurrently?
+examples:
+  bad:
+    - |
+      #[tokio::test]
+      async fn registry_tracks_kernels() {
+          add(&manager.inner);
+          assert_eq!(live_kernel_count(), 1);
+      }
+    - |
+      #[test]
+      fn registers() {
+          register("x");
+          assert_eq!(registry().lock().unwrap().len(), 1);
+      }
+  good:
+    - |
+      #[test]
+      fn counts_own_items() {
+          let items = vec![1, 2];
+          assert_eq!(items.len(), 2);
+          assert_eq!(tree.node_count(), 3);
+      }
