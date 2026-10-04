@@ -89,6 +89,11 @@ pub struct HarnessState {
     /// would write random key order (and churn the file between runs).
     pub entries: BTreeMap<RefinementKind, BTreeMap<String, HarnessEntry>>,
     pub refinements: Vec<HarnessRefinementEvent>,
+    /// Top-level keys this crate does not model (other producers' state, such
+    /// as the fork's `ravo` / `failures` / `trustWindows`), carried through a
+    /// load/save round trip untouched so a refine never erases them.
+    #[serde(flatten)]
+    pub extensions: serde_json::Map<String, serde_json::Value>,
 }
 
 #[must_use]
@@ -105,6 +110,7 @@ pub fn empty_harness_state() -> HarnessState {
         .into_iter()
         .collect(),
         refinements: Vec::new(),
+        extensions: serde_json::Map::new(),
     }
 }
 
@@ -218,6 +224,11 @@ pub fn load_harness_state(harness_state_dir: &Path, scope: HarnessScope) -> Harn
             .filter_map(|event| serde_json::from_value(event.clone()).ok())
             .collect();
     }
+    state.extensions = parsed_obj
+        .iter()
+        .filter(|(key, _)| !matches!(key.as_str(), "schema" | "entries" | "refinements"))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
     state
 }
 
@@ -542,6 +553,36 @@ pub(crate) use compact_text as compact_harness_text;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A refine's load/save round trip keeps every top-level key it does not
+    /// model (the fork runtime's `ravo` / `failures` / `trustWindows` state):
+    /// losing them silently erased other producers' data.
+    #[test]
+    fn a_save_round_trip_keeps_unmodeled_top_level_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let extra = serde_json::json!({
+            "schema": 1,
+            "entries": {"prompt": {}, "memory": {}, "skill": {}, "subagent": {}, "factory": {}},
+            "refinements": [],
+            "ravo": {"gates": [{"id": "g1", "status": "pass"}]},
+            "failures": [{"signature": "sig", "count": 3}],
+            "trustWindows": {"global": 0.5}
+        });
+        std::fs::write(
+            get_harness_state_path(dir.path()),
+            serde_json::to_string(&extra).unwrap(),
+        )
+        .unwrap();
+        let state = load_harness_state(dir.path(), HarnessScope::Global);
+        save_harness_state(dir.path(), &state).unwrap();
+        let saved: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(get_harness_state_path(dir.path())).unwrap(),
+        )
+        .unwrap();
+        for key in ["ravo", "failures", "trustWindows"] {
+            assert_eq!(saved[key], extra[key], "{key} survives the round trip");
+        }
+    }
 
     fn entry(id: &str, kind: RefinementKind, scope: HarnessScope, content: &str) -> HarnessEntry {
         HarnessEntry {
