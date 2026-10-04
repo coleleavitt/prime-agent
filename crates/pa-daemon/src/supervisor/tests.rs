@@ -1168,6 +1168,49 @@ async fn a_signal_during_an_in_flight_shutdown_forces() {
     );
 }
 
+/// The prepare transaction names its artifact directory after the client's
+/// `updateId` (`<agent>/update-restarts/<socket>/prepared/<updateId>/`), and an
+/// abort or the marker self-expiry deletes that directory recursively. An id
+/// that is not one plain path component would aim both outside the scratch
+/// dir: it is refused before any transaction starts or anything is written.
+#[tokio::test]
+async fn a_prepare_update_id_that_escapes_the_prepared_dir_is_refused() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let options = SupervisorOptions {
+        tcp_port: None,
+        tcp_bind_host: None,
+        remote_agent_mesh: None,
+        socket_path: dir.path().join("daemon.sock"),
+        agent_dir: dir.path().join("agent"),
+    };
+    let supervisor = Arc::new(Supervisor::new(options).expect("supervisor"));
+    for update_id in ["../../../../outside", "/abs/outside", "..", "a/b", ""] {
+        let command = DaemonCommand::PrepareUpdateRestart {
+            id: None,
+            update_id: Some(update_id.to_string()),
+            rest: Map::default(),
+        };
+        let response = supervisor
+            .handle_prepare_update_restart("c1", "prepare_update_restart", &command)
+            .await;
+        assert_eq!(
+            response,
+            response_failure(
+                Some("c1"),
+                "prepare_update_restart",
+                &format!("prepare_update_restart updateId {update_id:?} is not a plain name (letters, digits, '.', '_', '-')"),
+                None,
+            ),
+            "updateId {update_id:?}"
+        );
+        assert_eq!(supervisor.update_prepare.active_state(), None);
+    }
+    assert!(
+        !dir.path().join("outside").exists(),
+        "nothing was written outside the prepared dir"
+    );
+}
+
 #[tokio::test]
 async fn idle_passivation_requires_the_worker_token() {
     let dir = tempfile::TempDir::new().unwrap();
