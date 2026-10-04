@@ -16,6 +16,7 @@ pub mod session;
 pub mod skill_blocks;
 pub mod slash_commands;
 pub mod themes;
+pub mod trace_context;
 pub mod usage;
 
 use serde::{Deserialize, Serialize};

@@ -1,0 +1,32 @@
+[package]
+name = "pa-trace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Trace recorder (agent.jsonl), trace/health readers, and optional OTLP export for Prime Agent."
+
+[dependencies]
+pa-types.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+# The span recorder is a `Layer` over the stock registry (span storage and
+# parent lookup); no formatter, filter, or ANSI features.
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["registry", "std"] }
+uuid = { version = "1", features = ["v4"] }
+# Rotated log generations are gzip files (byte-compatible with the TS logger).
+flate2 = "1"
+# The redaction and health classifier patterns are the TS regexes.
+regex = "1"
+# The optional OTLP/HTTP exporter: the workspace's HTTP client on its own
+# background worker runtime.
+tokio.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+
+[dev-dependencies]
+tempfile = "3"
+pa-agent.workspace = true
+pa-core = { path = "../pa-core" }
+anyhow.workspace = true
+
+[lints]
+workspace = true

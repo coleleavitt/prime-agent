@@ -261,6 +261,40 @@ pub const COMMAND_SPECS: &[CommandSpec] = &[
         "Export a saved session to HTML",
     ),
     CommandSpec::new(&["config"], "config", "Configure package resources"),
+    #[cfg(feature = "trace")]
+    CommandSpec::new(
+        &["health"],
+        "health [--since <duration>] [--stuck-after <duration>] [--limit <n>] [--log <path>] [--json]",
+        "Summarize recent operational failures from the structured log",
+    )
+    .description(
+        "Reads the retained structured log and reports historian failures, provider errors, incomplete turns, and daemon recovery failures. The default window is 24h; a turn is considered stuck after 10m.",
+    )
+    .options(&[
+        "--since <duration>       Look back this far (default: 24h)",
+        "--stuck-after <duration>  Flag incomplete turns older than this (default: 10m)",
+        "--limit <n>              Show at most this many incident details (default: 20, max: 200)",
+        "--log <path>             Read this JSONL log instead of the default agent log",
+        "--json                   Print a machine-readable summary",
+    ])
+    .examples(&["health", "health --since 6h --json", "health --stuck-after 30m --limit 50"]),
+    #[cfg(feature = "trace")]
+    CommandSpec::new(
+        &["trace"],
+        "trace <traceId|traceparent> [--log <path>] [--json]",
+        "Show one trace from the structured log as a span tree",
+    )
+    .description(
+        "Reads ~/.prime/agent/logs/agent.jsonl (and its rotated .old sibling), keeps the entries for one trace id and prints spans with their log lines. Trace ids appear on every log line and on session records written during a traced turn.",
+    )
+    .options(&[
+        "--log <path>  Read this JSONL log instead of the default agent log",
+        "--json        Print the raw matching log lines instead of the tree",
+    ])
+    .examples(&[
+        "trace 0af7651916cd43dd8448eb211c80319c",
+        "trace 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+    ]),
     CommandSpec::new(
         &["factory"],
         "factory <list|import|export>",

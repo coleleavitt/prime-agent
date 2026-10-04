@@ -57,7 +57,13 @@ impl Inner {
             }
             Event::HostRequest { id, data } => self.start_host_request(&id, &data),
             Event::Trace { fields } => {
-                tracing::debug!(target: "pa_core::kernel::trace", event = %fields, "kernel span");
+                // A runtime span or diagnostic in the trace log shape, forwarded verbatim to
+                // whatever trace subscriber the binary installed (none in the native build).
+                tracing::debug!(
+                    target: pa_types::trace_context::FORWARDED_RECORD_TARGET,
+                    record = %fields,
+                    "kernel trace record"
+                );
             }
             Event::HostCancel { id } => {
                 // The runtime keeps awaiting this id, and the host settles the

@@ -157,6 +157,17 @@ impl AgentSession {
     /// # Panics
     ///
     /// Panics when the compaction summary sink slot's mutex is poisoned.
+    #[tracing::instrument(
+        level = "info",
+        name = "session.compact",
+        skip_all,
+        err(Display),
+        fields(
+            llm.provider = model.provider.as_str(),
+            llm.model = model.id.as_str(),
+            compact.skipped = tracing::field::Empty,
+        )
+    )]
     pub async fn compact(
         &self,
         custom_instructions: Option<&str>,
@@ -197,7 +208,9 @@ impl AgentSession {
             )
             .await?
         };
-        if matches!(outcome, CompactOutcome::Skipped(_)) {
+        let skipped = matches!(outcome, CompactOutcome::Skipped(_));
+        tracing::Span::current().record("compact.skipped", skipped);
+        if skipped {
             compaction_trace::trace("compact.skipped", &serde_json::Value::Null);
             return Ok(outcome);
         }

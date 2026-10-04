@@ -365,6 +365,8 @@ mod tests {
             handlers: &mut HostRequestHandlers,
         ) {
             let cwd = context.cwd.display().to_string();
+            // No dot: prompt_guards scans the sources for dotted request
+            // literals and requires the core prompt to document each one.
             handlers.register(
                 STUB_REQUEST,
                 crate::kernel::shared::host_handler(move |_| {

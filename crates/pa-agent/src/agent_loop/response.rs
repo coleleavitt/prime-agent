@@ -11,6 +11,24 @@ use crate::types::{AgentContext, AgentEvent, AgentMessage, AssistantMessage};
 use super::abort::{create_aborted_assistant_message, race_with_abort};
 use super::{AgentEventSink, AgentLoopConfig};
 
+/// One provider call as an `llm.request` span (`llm.provider`, `llm.api`,
+/// `llm.model`, `llm.base_url`); it ends when the response settles, with the
+/// stop reason and token usage, and a provider error marks it failed.
+#[tracing::instrument(
+    level = "info",
+    name = "llm.request",
+    skip_all,
+    fields(
+        llm.provider = config.model.provider.as_str(),
+        llm.api = config.model.api.as_str(),
+        llm.model = config.model.id.as_str(),
+        llm.base_url = config.model.base_url.as_str(),
+        llm.stop_reason = tracing::field::Empty,
+        llm.usage.input = tracing::field::Empty,
+        llm.usage.output = tracing::field::Empty,
+        error = tracing::field::Empty,
+    )
+)]
 pub(crate) async fn stream_assistant_response(
     context: &mut AgentContext,
     config: &AgentLoopConfig,
@@ -59,9 +77,26 @@ pub(crate) async fn stream_assistant_response(
     )
     .await;
 
+    let span = tracing::Span::current();
     match result {
-        Ok(message) => Ok(message),
+        Ok(message) => {
+            let stop_reason = serde_json::to_value(message.stop_reason).ok();
+            span.record(
+                "llm.stop_reason",
+                stop_reason.as_ref().and_then(serde_json::Value::as_str),
+            )
+            .record("llm.usage.input", message.usage.input)
+            .record("llm.usage.output", message.usage.output);
+            if message.stop_reason == crate::types::StopReason::Error {
+                span.record(
+                    "error",
+                    message.error_message.as_deref().unwrap_or("provider error"),
+                );
+            }
+            Ok(message)
+        }
         Err(error) => {
+            span.record("error", format!("{error:#}"));
             if signal.is_some_and(AbortSignal::is_aborted) && is_abort_error(&error) {
                 return Ok(finish_aborted_message!());
             }

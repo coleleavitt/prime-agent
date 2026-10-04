@@ -5,8 +5,8 @@
 use crate::abort::AbortSignal;
 use crate::stream::StreamFn;
 use crate::types::{
-    AgentContext, AgentEvent, AgentMessage, ShouldStopAfterTurnContext, StopReason, ToolCall,
-    ToolResultMessage,
+    AgentContext, AgentEvent, AgentMessage, AssistantMessage, ShouldStopAfterTurnContext,
+    StopReason, ToolCall, ToolResultMessage,
 };
 
 use super::abort::{
@@ -27,6 +27,7 @@ pub(crate) async fn run_loop(
     stream_fn: Option<&StreamFn>,
 ) -> anyhow::Result<()> {
     let mut first_turn = true;
+    let mut turn_index: u64 = 0;
     let mut last_turn: Option<ShouldStopAfterTurnContext> = None;
     let mut pending_messages =
         poll_messages_unless_aborted(config.get_steering_messages.as_ref(), signal).await?;
@@ -48,73 +49,38 @@ pub(crate) async fn run_loop(
 
         while has_more_tool_calls || !pending_messages.is_empty() {
             crate::abort::throw_if_aborted_signal(signal)?;
-            if first_turn {
-                first_turn = false;
-            } else {
-                emit(AgentEvent::TurnStart).await?;
-            }
-
-            if !pending_messages.is_empty() {
-                for message in pending_messages.drain(..) {
-                    emit(AgentEvent::MessageStart {
-                        message: message.clone(),
-                    })
-                    .await?;
-                    emit(AgentEvent::MessageEnd {
-                        message: message.clone(),
-                    })
-                    .await?;
-                    current_context.messages.push(message.clone());
-                    new_messages.push(message);
-                }
-            }
-
-            let message =
-                stream_assistant_response(current_context, config, signal, emit, stream_fn).await?;
-            new_messages.push(AgentMessage::from(message.clone()));
-
-            if message.stop_reason == StopReason::Error
-                || message.stop_reason == StopReason::Aborted
-            {
-                emit(AgentEvent::TurnEnd {
-                    message: AgentMessage::from(message.clone()),
-                    tool_results: Vec::new(),
-                })
-                .await?;
+            let emit_turn_start = !first_turn;
+            first_turn = false;
+            let turn = run_turn(
+                TurnInput {
+                    index: turn_index,
+                    emit_turn_start,
+                    pending_messages: std::mem::take(&mut pending_messages),
+                },
+                current_context,
+                new_messages,
+                config,
+                signal,
+                emit,
+                stream_fn,
+            )
+            .await?;
+            turn_index += 1;
+            if turn.terminal {
                 emit(AgentEvent::AgentEnd {
                     messages: new_messages.clone(),
                 })
                 .await?;
                 return Ok(());
             }
+            let TurnOutcome {
+                message,
+                tool_results,
+                has_more_tool_calls: more_tool_calls,
+                ..
+            } = turn;
+            has_more_tool_calls = more_tool_calls;
 
-            let tool_calls = message
-                .tool_calls()
-                .into_iter()
-                .cloned()
-                .collect::<Vec<ToolCall>>();
-
-            let mut tool_results: Vec<ToolResultMessage> = Vec::new();
-            has_more_tool_calls = false;
-            if !tool_calls.is_empty() {
-                let executed_tool_batch =
-                    execute_tool_calls(current_context, &message, config, signal, emit).await?;
-                tool_results.extend(executed_tool_batch.messages);
-                has_more_tool_calls = !executed_tool_batch.terminate;
-
-                for result in &tool_results {
-                    current_context
-                        .messages
-                        .push(AgentMessage::from(result.clone()));
-                    new_messages.push(AgentMessage::from(result.clone()));
-                }
-            }
-
-            emit(AgentEvent::TurnEnd {
-                message: AgentMessage::from(message.clone()),
-                tool_results: tool_results.clone(),
-            })
-            .await?;
             if signal.is_some_and(AbortSignal::is_aborted) {
                 emit(AgentEvent::AgentEnd {
                     messages: new_messages.clone(),
@@ -248,6 +214,158 @@ pub(crate) async fn run_loop(
     })
     .await?;
     Ok(())
+}
+
+/// One turn's inputs: its index in this run, whether it opens with
+/// `turn_start` (every turn but the run's first), and the steering or
+/// follow-up messages it delivers before the assistant response.
+struct TurnInput {
+    index: u64,
+    emit_turn_start: bool,
+    pending_messages: Vec<AgentMessage>,
+}
+
+struct TurnOutcome {
+    message: AssistantMessage,
+    tool_results: Vec<ToolResultMessage>,
+    /// The assistant stopped with an error or abort: the run ends without post-turn hooks.
+    terminal: bool,
+    has_more_tool_calls: bool,
+}
+
+/// At most this many distinct failed tool names ride the turn span.
+const TURN_TOOL_ERROR_NAMES_LIMIT: usize = 8;
+
+/// One assistant turn (`turn_start` ... `turn_end`) as an `agent.turn` span, so the
+/// provider request and every tool execution nest under it. A failed response
+/// marks the span failed; an abort is a normal outcome (`turn.aborted`). Tool
+/// failures roll up as `turn.tool_errors` / `turn.tool_error_names` while the
+/// turn itself stays ok.
+#[tracing::instrument(
+    level = "info",
+    name = "agent.turn",
+    skip_all,
+    fields(
+        session.id = config.session_id.as_deref(),
+        turn.index = turn.index,
+        llm.provider = config.model.provider.as_str(),
+        llm.model = config.model.id.as_str(),
+        turn.stop_reason = tracing::field::Empty,
+        turn.aborted = tracing::field::Empty,
+        turn.tool_calls = tracing::field::Empty,
+        turn.tool_errors = tracing::field::Empty,
+        turn.tool_error_names = tracing::field::Empty,
+        error = tracing::field::Empty,
+    )
+)]
+async fn run_turn(
+    turn: TurnInput,
+    current_context: &mut AgentContext,
+    new_messages: &mut Vec<AgentMessage>,
+    config: &AgentLoopConfig,
+    signal: Option<&AbortSignal>,
+    emit: &AgentEventSink,
+    stream_fn: Option<&StreamFn>,
+) -> anyhow::Result<TurnOutcome> {
+    let span = tracing::Span::current();
+    if turn.emit_turn_start {
+        emit(AgentEvent::TurnStart).await?;
+    }
+
+    for message in turn.pending_messages {
+        emit(AgentEvent::MessageStart {
+            message: message.clone(),
+        })
+        .await?;
+        emit(AgentEvent::MessageEnd {
+            message: message.clone(),
+        })
+        .await?;
+        current_context.messages.push(message.clone());
+        new_messages.push(message);
+    }
+
+    let message =
+        stream_assistant_response(current_context, config, signal, emit, stream_fn).await?;
+    new_messages.push(AgentMessage::from(message.clone()));
+    let stop_reason = serde_json::to_value(message.stop_reason).ok();
+    span.record(
+        "turn.stop_reason",
+        stop_reason.as_ref().and_then(serde_json::Value::as_str),
+    );
+
+    if message.stop_reason == StopReason::Error || message.stop_reason == StopReason::Aborted {
+        if message.stop_reason == StopReason::Error {
+            span.record(
+                "error",
+                message
+                    .error_message
+                    .as_deref()
+                    .unwrap_or("assistant response failed"),
+            );
+        } else {
+            span.record("turn.aborted", true);
+        }
+        emit(AgentEvent::TurnEnd {
+            message: AgentMessage::from(message.clone()),
+            tool_results: Vec::new(),
+        })
+        .await?;
+        return Ok(TurnOutcome {
+            message,
+            tool_results: Vec::new(),
+            terminal: true,
+            has_more_tool_calls: false,
+        });
+    }
+
+    let tool_calls = message
+        .tool_calls()
+        .into_iter()
+        .cloned()
+        .collect::<Vec<ToolCall>>();
+    span.record("turn.tool_calls", tool_calls.len());
+
+    let mut tool_results: Vec<ToolResultMessage> = Vec::new();
+    let mut has_more_tool_calls = false;
+    if !tool_calls.is_empty() {
+        let executed_tool_batch =
+            execute_tool_calls(current_context, &message, config, signal, emit).await?;
+        tool_results.extend(executed_tool_batch.messages);
+        has_more_tool_calls = !executed_tool_batch.terminate;
+
+        for result in &tool_results {
+            current_context
+                .messages
+                .push(AgentMessage::from(result.clone()));
+            new_messages.push(AgentMessage::from(result.clone()));
+        }
+        let mut failed_names: Vec<&str> = Vec::new();
+        let mut failed = 0usize;
+        for result in tool_results.iter().filter(|result| result.is_error) {
+            failed += 1;
+            if !failed_names.contains(&result.tool_name.as_str()) {
+                failed_names.push(&result.tool_name);
+            }
+        }
+        span.record("turn.tool_errors", failed);
+        if failed > 0 {
+            failed_names.truncate(TURN_TOOL_ERROR_NAMES_LIMIT);
+            span.record("turn.tool_error_names", failed_names.join(","));
+        }
+    }
+
+    emit(AgentEvent::TurnEnd {
+        message: AgentMessage::from(message.clone()),
+        tool_results: tool_results.clone(),
+    })
+    .await?;
+    Ok(TurnOutcome {
+        message,
+        tool_results,
+        terminal: false,
+        has_more_tool_calls,
+    })
 }
 
 pub(crate) fn clone_context(context: &AgentContext) -> AgentContext {

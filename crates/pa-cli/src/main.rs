@@ -4,9 +4,10 @@ fn main() {
     // per-thread arenas otherwise keep each burst's high-water pages
     // resident for the process lifetime.
     pa_types::memory_release::cap_thread_arenas();
-    pa_cli::features::install_enabled_features();
+    let features = pa_cli::features::install_enabled_features();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let code = pa_cli::main_with_runtime(&args, &pa_cli::PrintRuntime);
     pa_cli::features::flush_enabled_features();
+    features.finish();
     std::process::exit(code);
 }

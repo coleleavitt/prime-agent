@@ -11,7 +11,8 @@
 //! 3 adds the kernel telemetry bridge's skill-event vocabulary
 //! (`computer_use_session_started`, `computer_use_action`); schema version 4
 //! adds the separately built features' adoption events (`dream_run`,
-//! `toolforge publish`, `workflow_run_agent`): new-event vocabulary bumps the version,
+//! `observability command used`, `toolforge publish`,
+//! `workflow_run_agent`): new-event vocabulary bumps the version,
 //! additive property changes do not.
 //!
 //! [`sanitize`] is the platform adjust layer: before a batch reaches any
@@ -1001,6 +1002,30 @@ const COMPUTER_USE_SESSION_STARTED: EventRule = EventRule {
     )],
 };
 
+/// `observability command used` (v4): one `prime-agent trace` /
+/// `prime-agent health` run (the fork's trace feature crate, wired by pa-cli
+/// behind its `trace` feature; the native build never sends it). The
+/// command, its exit class (`ok` 0, `unhealthy` 2, `error` 1), and duration
+/// only — never a trace id, a path, or log content.
+const OBSERVABILITY_COMMAND_USED: EventRule = EventRule {
+    name: "observability command used",
+    since: 4,
+    properties: &[
+        (
+            "command",
+            required(enum_rule(&["trace", "health", "unknown"], "unknown")),
+        ),
+        (
+            "outcome",
+            required(enum_rule(
+                &["ok", "unhealthy", "error", "unknown"],
+                "unknown",
+            )),
+        ),
+        ("duration_ms", optional(duration())),
+    ],
+};
+
 /// `computer_use_action` (v3): one computer-use skill action per call,
 /// emitted through the `telemetry.emit` kernel bridge. Category,
 /// outcome, frozen error code, and duration only — never element text,
@@ -1480,6 +1505,7 @@ pub fn catalog() -> Vec<&'static EventRule> {
         &DREAM_RUN,
         &TOOLFORGE_PUBLISH,
         &WORKFLOW_RUN_AGENT,
+        &OBSERVABILITY_COMMAND_USED,
     ];
     all.extend(UPDATE_EVENTS.iter());
     all
@@ -1604,6 +1630,10 @@ mod tests {
         assert_eq!(lookup("toolforge publish").map(|rule| rule.since), Some(4));
         assert_eq!(lookup("workflow_run_agent").map(|rule| rule.since), Some(4));
         assert_eq!(lookup("dream_run").map(|rule| rule.since), Some(4));
+        assert_eq!(
+            lookup("observability command used").map(|rule| rule.since),
+            Some(4)
+        );
         for name in ["computer_use_session_started", "computer_use_action"] {
             let rule = catalog()
                 .into_iter()
@@ -1723,6 +1753,21 @@ mod tests {
         assert_eq!(properties.get("tool_bash_call_count"), Some(&json!(3u64)));
         assert!(properties.get("tool_name").is_none(), "unknown key dropped");
         assert_eq!(adjusted, 2, "one fallback + one dropped key");
+    }
+
+    #[test]
+    fn observability_command_used_carries_only_its_vocabulary() {
+        let mut properties = Properties::new();
+        properties.set("command", json!("trace"));
+        properties.set("outcome", json!("exploded")); // out of vocabulary
+        properties.set("duration_ms", json!(12));
+        properties.set("trace_id", json!("0af7651916cd43dd8448eb211c80319c")); // not catalogued
+        let adjusted = sanitize("observability command used", &mut properties);
+        let mut expected = Properties::new();
+        expected.set("command", json!("trace"));
+        expected.set("outcome", json!("unknown"));
+        expected.set("duration_ms", json!(12));
+        assert_eq!((properties, adjusted), (expected, 2));
     }
 
     #[test]

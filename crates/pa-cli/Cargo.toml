@@ -8,13 +8,15 @@ description = "The prime-agent binary."
 [features]
 # The fork's feature crates (docs/fork-feature-crates.md); `--no-default-features`
 # builds the native product.
-default = ["dream", "recall", "toolforge", "workflow"]
+default = ["dream", "recall", "toolforge", "trace", "workflow"]
 # `prime-agent dream`: Dream-RSI's standalone zero-token runner (pa-dream).
 dream = ["dep:pa-dream"]
 # Workspace Recall (crates/pa-recall).
 recall = ["dep:pa-recall"]
 # `rlm.toolforge.publish`: the gated path from agent-written Python to a skill.
 toolforge = ["dep:pa-toolforge"]
+# Observability: the agent.jsonl span recorder, `trace` / `health`, OTLP export.
+trace = ["dep:pa-trace"]
 # Workflow V1 host: the kernel's `workflow.run_agent` (crates/pa-workflow).
 workflow = ["dep:pa-workflow"]
 
@@ -30,6 +32,7 @@ pa-telemetry = { path = "../pa-telemetry" }
 pa-workflow = { path = "../pa-workflow", optional = true }
 pa-recall = { path = "../pa-recall", optional = true }
 pa-dream = { path = "../pa-dream", optional = true }
+pa-trace = { path = "../pa-trace", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }
 tokio = { workspace = true }
 anyhow = { workspace = true }

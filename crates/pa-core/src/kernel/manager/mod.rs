@@ -558,7 +558,9 @@ impl ReplKernelManager {
         let inner = self.inner.clone();
         let run_slot = slot.clone();
         let wait_signal = options.signal.clone();
-        let task = tokio::spawn(async move {
+        // The start outlives this caller's wait, but its `kernel.start` span still belongs
+        // to the operation that triggered it.
+        let task = tokio::spawn(tracing::Instrument::in_current_span(async move {
             let result = inner.do_start(&options).await;
             run_slot.finish(result.as_ref().err().map(|e| anyhow!("{e:#}")));
             if result.is_err() {
@@ -569,7 +571,7 @@ impl ReplKernelManager {
                 }
             }
             result
-        });
+        }));
         match wait_signal.as_ref() {
             None => match task.await {
                 Ok(result) => result,
