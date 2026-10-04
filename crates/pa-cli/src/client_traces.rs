@@ -236,20 +236,16 @@ impl TracesCommands for ClientTraces {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The engine reads process env (the credential keys); the tests that
+    // touch it serialize on the crate-wide env lock, the one every other
+    // mutator of those keys (`provider_login`'s tests) takes too.
+    use crate::config::env_lock;
 
     fn temp_agent_dir() -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().expect("temp dir");
         let agent = dir.path().join("agent");
         std::fs::create_dir_all(&agent).expect("agent dir");
         (dir, agent)
-    }
-
-    /// The engine reads process env (the credential keys); the tests that
-    /// touch it serialize on one lock.
-    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        LOCK.lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     #[tokio::test]

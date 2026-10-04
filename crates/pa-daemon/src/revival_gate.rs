@@ -296,11 +296,11 @@ mod tests {
         let recorded_at = iso_from_unix_ms(now_ms());
         let agent_dir = agent_dir();
         // A live lease written the way another daemon's worker writes it
-        // (this test process holds it): the file is owned elsewhere.
-        std::env::set_var(crate::lease::SESSION_LEASES_ENABLED_ENV, "1");
-        let lease = crate::lease::acquire_runtime_session_lease(&file, &agent_dir);
-        std::env::remove_var(crate::lease::SESSION_LEASES_ENABLED_ENV);
-        let _lease = lease.expect("the test process acquires the lease");
+        // (this test process holds it): the file is owned elsewhere. The
+        // runtime acquire is ungated by the test env flag, so the test
+        // leaves the process env alone.
+        let _lease = crate::lease::acquire_runtime_session_lease(&file, &agent_dir)
+            .expect("the test process acquires the lease");
         let veto = revival_veto(
             &agent_dir,
             &descriptor(Some(&file)),
@@ -319,10 +319,10 @@ mod tests {
         // A lease whose owner is long dead is stale ownership, not a live
         // one: the gate must not park genuinely interrupted work behind a
         // dead holder's record.
-        std::env::set_var(crate::lease::SESSION_LEASES_ENABLED_ENV, "1");
-        let lease = crate::lease::acquire_runtime_session_lease(&file, &agent_dir);
-        std::env::remove_var(crate::lease::SESSION_LEASES_ENABLED_ENV);
-        drop(lease.expect("the test process acquires the lease"));
+        drop(
+            crate::lease::acquire_runtime_session_lease(&file, &agent_dir)
+                .expect("the test process acquires the lease"),
+        );
         assert!(revival_veto(
             &agent_dir,
             &descriptor(Some(&file)),

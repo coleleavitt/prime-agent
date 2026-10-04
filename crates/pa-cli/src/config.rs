@@ -129,8 +129,10 @@ pub fn is_truthy_env_flag(value: Option<&str>) -> bool {
     }
 }
 
-/// The env-mutating tests serialize on one lock (the `client_traces`
-/// convention): both HOME mutators in this crate's test binary take it.
+/// The env-mutating tests serialize on this one crate-wide lock: two
+/// private locks guarding the same variable do not serialize each other,
+/// so every test in this crate's binary that mutates the process env
+/// (HOME, the credential keys, ...) takes it.
 #[cfg(test)]
 pub(crate) fn env_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -141,6 +143,32 @@ pub(crate) fn env_lock() -> std::sync::MutexGuard<'static, ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Puts one env variable back the way it was when dropped, on every
+    /// exit path (a failed assertion included). Create it while holding
+    /// [`env_lock`] and keep the lock guard alive longer (declare it first).
+    struct RestoreEnv {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl RestoreEnv {
+        fn new(key: &'static str) -> Self {
+            Self {
+                key,
+                previous: std::env::var_os(key),
+            }
+        }
+    }
+
+    impl Drop for RestoreEnv {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
 
     /// The flag/env/default order is the co-existence contract (the launcher pins the env).
     #[test]
@@ -159,9 +187,26 @@ mod tests {
         assert_eq!(resolve_daemon_socket_path(None), default);
     }
 
+    /// `expands_tilde` hands HOME back the way it found it: the rest of the
+    /// test binary (any test resolving `~` or the agent dir) reads it.
+    #[test]
+    fn expands_tilde_restores_home() {
+        let before = {
+            let _env = env_lock();
+            std::env::var_os("HOME")
+        };
+        expands_tilde();
+        let after = {
+            let _env = env_lock();
+            std::env::var_os("HOME")
+        };
+        assert_eq!(after, before);
+    }
+
     #[test]
     fn expands_tilde() {
         let _env = env_lock();
+        let _home = RestoreEnv::new("HOME");
         std::env::set_var("HOME", "/home/tester");
         assert_eq!(expand_tilde_path("~"), PathBuf::from("/home/tester"));
         assert_eq!(
@@ -177,6 +222,8 @@ mod tests {
     #[cfg(windows)]
     fn expands_the_win32_backslash_tilde() {
         let _env = env_lock();
+        let _home = RestoreEnv::new("HOME");
+        let _profile = RestoreEnv::new("USERPROFILE");
         std::env::remove_var("HOME");
         std::env::set_var("USERPROFILE", r"C:\Users\tester");
         assert_eq!(
@@ -187,6 +234,5 @@ mod tests {
             expand_tilde_path(r"~\deep\dir"),
             PathBuf::from(r"C:\Users\tester\deep\dir")
         );
-        std::env::remove_var("USERPROFILE");
     }
 }

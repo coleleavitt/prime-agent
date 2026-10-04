@@ -121,7 +121,12 @@ fn the_api_key_login_rule_matches_ts() {
 }
 
 #[tokio::test]
+// The process env must stay stable across the flow's awaits: the
+// crate-wide env lock (shared with `client_traces`' tests, which set the
+// same credential keys) is held for the whole test by design.
+#[allow(clippy::await_holding_lock)]
 async fn login_options_list_providers_only() {
+    let _env = crate::config::env_lock();
     let dir = tempfile::tempdir().expect("temp dir");
     let agent = dir.path().join("agent");
     std::fs::create_dir_all(&agent).expect("agent dir");
@@ -161,7 +166,12 @@ async fn login_options_list_providers_only() {
 /// subscription (a stored OAuth login or an `sk-ant-oat` key), and
 /// its text names the risk.
 #[tokio::test]
+// The process env must stay stable across the flow's awaits: the
+// crate-wide env lock (shared with `client_traces`' tests, which set the
+// same credential keys) is held for the whole test by design.
+#[allow(clippy::await_holding_lock)]
 async fn the_anthropic_subscription_warning_matches_the_active_credential() {
+    let _env = crate::config::env_lock();
     let dir = tempfile::tempdir().expect("temp dir");
     let agent = dir.path().join("agent");
     std::fs::create_dir_all(&agent).expect("agent dir");
