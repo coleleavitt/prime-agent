@@ -768,3 +768,37 @@ fn probe_tool(
         slot,
     }
 }
+
+/// A feature that queued a refinement hears when an aborted turn drops it
+/// unserviced (TS `refine_failed` for a cancelled request); a refinement
+/// the boundary takes to run is no drop.
+#[tokio::test]
+async fn a_dropped_pending_refine_is_reported_to_the_requesters_listeners() {
+    let requests = Arc::new(TurnBoundaryRequests::new());
+    let requester = RefineRequester::new(&requests);
+    let dropped: Arc<std::sync::Mutex<Vec<PendingRefine>>> = Arc::default();
+    let heard = Arc::clone(&dropped);
+    assert!(
+        requester.on_dropped(Arc::new(move |pending: &PendingRefine| {
+            heard.lock().unwrap().push(pending.clone());
+        }))
+    );
+    let pending = PendingRefine {
+        instructions: Some("repair".to_string()),
+        global: false,
+        trigger: Some(RefineTrigger {
+            data: json!({ "kind": "failure" }),
+            joined_by_agent: false,
+        }),
+    };
+    requests.schedule_refine(pending.clone()).await;
+    assert_eq!(requests.take_refine().await, Some(pending.clone()));
+    requests.clear_pending().await;
+    assert!(dropped.lock().unwrap().is_empty());
+    requests.schedule_refine(pending.clone()).await;
+    requests.clear_pending().await;
+    assert_eq!(*dropped.lock().unwrap(), [pending]);
+    // The session is gone: nothing to listen to.
+    drop(requests);
+    assert!(!requester.on_dropped(Arc::new(|_: &PendingRefine| {})));
+}

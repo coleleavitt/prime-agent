@@ -78,6 +78,27 @@ impl RefineRequester {
     }
 }
 
+/// Told about a pending refinement an aborted turn dropped unserviced. It
+/// runs on the turn path: it must not block (and must not call
+/// [`RefineRequester::update`]).
+pub type RefineDroppedFn = Arc<dyn Fn(&PendingRefine) + Send + Sync>;
+
+impl RefineRequester {
+    /// Hear about every pending refinement the session drops unserviced
+    /// (whoever queued it); `false` when the session is gone.
+    pub fn on_dropped(&self, listener: RefineDroppedFn) -> bool {
+        let Some(requests) = self.requests.upgrade() else {
+            return false;
+        };
+        requests
+            .refine_dropped
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(listener);
+        true
+    }
+}
+
 /// The model facts `model.info` reports (TS answers nulls when the session
 /// has no model; the Rust engine always resolves one).
 #[derive(Debug, Clone, PartialEq)]
@@ -119,6 +140,8 @@ pub struct TurnBoundaryRequests {
     runtime: std::sync::RwLock<Option<Arc<TurnBoundaryRuntime>>>,
     compaction: Mutex<Option<PendingCompaction>>,
     refine: Mutex<Option<PendingRefine>>,
+    /// Who hears about a pending refinement dropped unserviced.
+    refine_dropped: std::sync::Mutex<Vec<RefineDroppedFn>>,
 }
 
 impl TurnBoundaryRequests {
@@ -208,7 +231,17 @@ impl TurnBoundaryRequests {
     /// a stale request must not leak into the next turn).
     pub async fn clear_pending(&self) {
         *self.compaction.lock().await = None;
-        *self.refine.lock().await = None;
+        let dropped = self.refine.lock().await.take();
+        if let Some(dropped) = dropped {
+            let listeners = self
+                .refine_dropped
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            for listener in listeners {
+                listener(&dropped);
+            }
+        }
     }
 
     /// Whether a refinement is queued (TS `refine.status` `pending`).
