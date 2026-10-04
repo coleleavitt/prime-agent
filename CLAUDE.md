@@ -77,7 +77,10 @@ Open:
 - **Port the fork's TS-only features to Rust** (Dream-RSI, RAVO, Workspace Recall, trajectory index, the TS
   observability span set, …): inventory + phased plan not written yet. `docs/dream-rsi.md`, `docs/ravo-*.md`,
   `docs/observability.md` and `FLOWCHART.md` describe the **TS** implementation.
-- Wayland computer-use needs PyGObject (`gi` + Atspi typelib) in the kernel Python; untested against the live compositor.
+- Wayland computer-use: PyGObject is a Linux dependency of the skill (built by the kernel bootstrap's skill sync;
+  needs gobject-introspection + cairo headers). Live-tested on niri 26.04 with a GTK 4 window (AT-SPI observe/press,
+  set_value, field focus, virtual keyboard/pointer, grim, secure-field refusal); tiled windows still lack coordinate
+  input and screenshots (niri exposes positions only for floating windows).
 - `make check`'s MSVC lane needs `cargo-xwin` (not installed here); the gnu Windows lane passes.
 
 ## Working Rules
