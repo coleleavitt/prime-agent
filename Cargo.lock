@@ -1441,6 +1441,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pa-session-index"
+version = "0.9.8"
+dependencies = [
+ "pa-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "pa-telemetry"
 version = "0.9.8"
 dependencies = [
