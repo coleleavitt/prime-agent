@@ -9,6 +9,7 @@
 //!
 //! See `README.md` for scope, seams, files, and the field conventions.
 
+mod health;
 mod layer;
 mod log_file;
 mod otlp;
@@ -24,6 +25,7 @@ use std::time::Duration;
 use pa_types::trace_context::{TraceContext, TRACEPARENT_ENV};
 use tracing_subscriber::layer::SubscriberExt;
 
+pub use health::run_health_command;
 pub use layer::TraceLayer;
 pub use otlp::{parse_otlp_headers, OtlpConfig, OtlpStats, OTLP_ENDPOINT_ENV, OTLP_HEADERS_ENV};
 pub use trace_command::run_trace_command;
