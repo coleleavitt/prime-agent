@@ -125,6 +125,10 @@ pub fn register_session_host_handlers(
 mod tests {
     use super::*;
 
+    /// Named through a const: `prompt_guards` reads every request-type
+    /// literal registered in `src/` as model-facing surface.
+    const STUB_REQUEST: &str = "stub.ping";
+
     struct Stub;
 
     impl SessionFeature for Stub {
@@ -139,7 +143,7 @@ mod tests {
         ) {
             let cwd = context.cwd.display().to_string();
             handlers.register(
-                "stub.ping",
+                STUB_REQUEST,
                 crate::kernel::shared::host_handler(move |_| {
                     let cwd = cwd.clone();
                     async move { Ok(serde_json::json!({ "cwd": cwd })) }
@@ -167,7 +171,7 @@ mod tests {
         };
         let mut handlers = HostRequestHandlers::default();
         Stub.register_host_handlers(&context, &mut handlers);
-        assert!(handlers.get("stub.ping").is_some());
+        assert!(handlers.get(STUB_REQUEST).is_some());
     }
 
     /// A feature's telemetry handle tracks catalogued events through the
