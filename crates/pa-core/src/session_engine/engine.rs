@@ -285,10 +285,11 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 .iter()
                 .map(|skill| skill.import_name.clone())
                 .collect(),
+            model: model.clone(),
             telemetry: config
                 .telemetry
                 .as_ref()
-                .map(super::telemetry::TelemetryWiring::feature_telemetry),
+                .map(crate::features::FeatureTelemetry::from_wiring),
         },
         &mut handlers,
     );

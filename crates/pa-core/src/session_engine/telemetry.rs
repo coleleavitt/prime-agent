@@ -96,30 +96,6 @@ pub struct TelemetryWiring {
 }
 
 impl TelemetryWiring {
-    /// The emitter separately built features report through
-    /// ([`crate::features::FeatureTelemetry`]): base properties stamped per
-    /// event, nothing queued while the live opt-out switch reads off.
-    #[must_use]
-    pub fn feature_telemetry(&self) -> crate::features::FeatureTelemetry {
-        let client = self.client.clone();
-        let execution_mode = self
-            .execution_mode
-            .clone()
-            .unwrap_or_else(|| EXECUTION_MODE_UNKNOWN.to_string());
-        let telemetry_enabled = self.telemetry_enabled.clone();
-        crate::features::FeatureTelemetry::new(move |name, properties| {
-            if !telemetry_enabled
-                .as_ref()
-                .is_none_or(|switch| (switch.enabled)())
-            {
-                return;
-            }
-            let mut tracked = base_properties(&execution_mode);
-            tracked.merge(&properties);
-            client.track(name, tracked);
-        })
-    }
-
     /// Register the kernel `telemetry.emit` host request onto the handler
     /// map: the generic, best-effort bridge Python-backed skills call to
     /// emit catalogued events through this wiring's client. Skills on

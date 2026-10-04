@@ -24,6 +24,13 @@ fn context(agent_dir: PathBuf, loaded: &[&str], tracked: &Tracked) -> SessionFea
         agent_dir,
         session_id: "s-handler".to_string(),
         python_skill_import_names: loaded.iter().map(|name| (*name).to_string()).collect(),
+        model: serde_json::from_value(serde_json::json!({
+            "id": "m1", "name": "M1", "api": "test", "provider": "p1",
+            "baseUrl": "http://localhost", "reasoning": false,
+            "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+            "contextWindow": 1000, "maxTokens": 100
+        }))
+        .unwrap(),
         telemetry: Some(FeatureTelemetry::new(move |name, properties| {
             recorder
                 .lock()

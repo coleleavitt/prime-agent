@@ -16,6 +16,8 @@ pub fn enabled_features() -> Vec<Arc<dyn SessionFeature>> {
     let mut features: Vec<Arc<dyn SessionFeature>> = Vec::new();
     #[cfg(feature = "toolforge")]
     features.push(Arc::new(pa_toolforge::ToolforgeFeature::new()));
+    #[cfg(feature = "workflow")]
+    features.push(Arc::new(pa_workflow::WorkflowFeature));
     features
 }
 
@@ -41,6 +43,8 @@ mod tests {
         let mut expected: Vec<&str> = Vec::new();
         #[cfg(feature = "toolforge")]
         expected.push("toolforge");
+        #[cfg(feature = "workflow")]
+        expected.push("workflow");
         assert_eq!(names, expected);
     }
 }

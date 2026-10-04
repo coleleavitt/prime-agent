@@ -137,7 +137,7 @@ fn track_publish(telemetry: &FeatureTelemetry, result: &PublishResult, duration:
             .unwrap_or(u64::MAX)
             .into(),
     );
-    telemetry.track(PUBLISH_EVENT, properties);
+    telemetry.track(PUBLISH_EVENT, &properties);
 }
 
 /// Register `toolforge.publish`. Publishes from one session run one at a

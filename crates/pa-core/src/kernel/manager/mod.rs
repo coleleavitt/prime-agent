@@ -305,6 +305,9 @@ struct Guarded {
     kernel_stderr: String,
     background_bash_handles: HashMap<String, i32>,
     handled_host_request_ids: (HashSet<String>, VecDeque<String>),
+    /// Cancellation tokens of the host requests still in flight, keyed by
+    /// request id: a `host_cancel` frame fires its request's token.
+    host_request_cancellations: HashMap<String, tokio_util::sync::CancellationToken>,
     /// Late agent-message handlers keyed by request id, insertion-ordered with eviction.
     late_handlers: VecDeque<(String, LateSentAgentMessageCallback)>,
     /// Resolvers for done events outside the active execution (the shutdown reply).
@@ -449,6 +452,7 @@ impl ReplKernelManager {
                 kernel_stderr: String::new(),
                 background_bash_handles: HashMap::new(),
                 handled_host_request_ids: (HashSet::new(), VecDeque::new()),
+                host_request_cancellations: HashMap::new(),
                 late_handlers: VecDeque::new(),
                 pending_done_waiters: HashMap::new(),
                 bash_activity_waiters: HashMap::new(),

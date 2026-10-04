@@ -8,9 +8,11 @@ description = "The prime-agent binary."
 [features]
 # The fork's feature crates (docs/fork-feature-crates.md); `--no-default-features`
 # builds the native product.
-default = ["toolforge"]
+default = ["toolforge", "workflow"]
 # `rlm.toolforge.publish`: the gated path from agent-written Python to a skill.
 toolforge = ["dep:pa-toolforge"]
+# Workflow V1 host: the kernel's `workflow.run_agent` (crates/pa-workflow).
+workflow = ["dep:pa-workflow"]
 
 [dependencies]
 pa-types = { path = "../pa-types" }
@@ -21,6 +23,7 @@ pa-agent = { path = "../pa-agent" }
 pa-daemon = { path = "../pa-daemon" }
 pa-tui = { path = "../pa-tui" }
 pa-telemetry = { path = "../pa-telemetry" }
+pa-workflow = { path = "../pa-workflow", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }
 tokio = { workspace = true }
 anyhow = { workspace = true }

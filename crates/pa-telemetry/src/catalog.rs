@@ -11,8 +11,8 @@
 //! 3 adds the kernel telemetry bridge's skill-event vocabulary
 //! (`computer_use_session_started`, `computer_use_action`); schema version 4
 //! adds the separately built features' adoption events (`toolforge
-//! publish`): new-event vocabulary bumps the version, additive property
-//! changes do not.
+//! publish`, `workflow_run_agent`): new-event vocabulary bumps the version,
+//! additive property changes do not.
 //!
 //! [`sanitize`] is the platform adjust layer: before a batch reaches any
 //! sink, every catalogued event's properties are normalized against its
@@ -29,8 +29,8 @@ use crate::properties::Properties;
 /// The current schema version stamped on every event. Bumped to 2 when
 /// the #2117 tracking vocabulary landed and to 3 when the kernel
 /// telemetry bridge's skill-event vocabulary (`computer_use_*`) landed, and
-/// to 4 when the feature crates' adoption events (`toolforge publish`)
-/// landed — new-event vocabulary bumps the version (the #2117 precedent);
+/// to 4 when the feature crates' adoption events (`toolforge publish`,
+/// `workflow_run_agent`) landed — new-event vocabulary bumps the version (the #2117 precedent);
 /// additive property changes alone do not.
 pub const SCHEMA_VERSION: u64 = 4;
 
@@ -549,10 +549,10 @@ const fn free_string(max: usize) -> PropKind {
 }
 
 // ---------------------------------------------------------------------------
-// The catalog (schema v3): the #2117 events, the v1 adoption events, and
-// the kernel `telemetry.emit` bridge's skill events. Every event the
-// product emits has exactly one row here; the seams are the complete
-// emission set (privacy contract).
+// The catalog (schema v4): the #2117 events, the v1 adoption events, the
+// kernel `telemetry.emit` bridge's skill events, and the feature crates'
+// adoption events. Every event the product emits has exactly one row
+// here; the seams are the complete emission set (privacy contract).
 // ---------------------------------------------------------------------------
 
 /// Session creation, depth-0 only.
@@ -1084,6 +1084,54 @@ const TOOLFORGE_PUBLISH: EventRule = EventRule {
     ],
 };
 
+/// `workflow_run_agent` (v4): one Workflow V1 `workflow.run_agent` kernel
+/// host request settled by the host (the fork's `pa-workflow` feature).
+/// Terminal classification, timing, and token totals only — never the
+/// prompt, the result text, node or request ids, or any model id.
+const WORKFLOW_RUN_AGENT: EventRule = EventRule {
+    name: "workflow_run_agent",
+    since: 4,
+    properties: &[
+        (
+            "outcome",
+            required(enum_rule(
+                &["completed", "failed", "cancelled", "execution_unknown"],
+                "failed",
+            )),
+        ),
+        (
+            "stop_reason",
+            required(enum_rule(
+                &[
+                    "completed",
+                    "caller_aborted",
+                    "model_resolution_failed",
+                    "provider_failed",
+                    "result_missing",
+                    "result_too_large",
+                    "usage_invalid",
+                    "unexpected_tool_call",
+                    "host_failed",
+                    "drain_timeout",
+                    "terminal_capture_ambiguous",
+                ],
+                "host_failed",
+            )),
+        ),
+        (
+            "turns_started",
+            required(PropKind::Number {
+                max: 1,
+                integer: true,
+                nullable: false,
+            }),
+        ),
+        ("duration_ms", required(duration())),
+        ("total_tokens", required(tokens())),
+        ("budget_exhausted", required(boolean())),
+    ],
+};
+
 /// `image delegation` (v2): one image-carrying turn delegated to a child
 /// running the resolved `settings.imageModel` (the supervisor-backed
 /// routing for text-only session models). Outcome only — never the
@@ -1382,6 +1430,7 @@ pub fn catalog() -> Vec<&'static EventRule> {
         &COMPUTER_USE_SESSION_STARTED,
         &COMPUTER_USE_ACTION,
         &TOOLFORGE_PUBLISH,
+        &WORKFLOW_RUN_AGENT,
     ];
     all.extend(UPDATE_EVENTS.iter());
     all
@@ -1504,6 +1553,7 @@ mod tests {
         // events at v3, the feature crates' adoption events at v4.
         assert_eq!(SCHEMA_VERSION, 4);
         assert_eq!(lookup("toolforge publish").map(|rule| rule.since), Some(4));
+        assert_eq!(lookup("workflow_run_agent").map(|rule| rule.since), Some(4));
         for name in ["computer_use_session_started", "computer_use_action"] {
             let rule = catalog()
                 .into_iter()

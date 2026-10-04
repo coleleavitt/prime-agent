@@ -317,6 +317,36 @@ where
     }
 }
 
+tokio::task_local! {
+    static HOST_REQUEST_CANCELLATION: tokio_util::sync::CancellationToken;
+}
+
+/// The cancellation token of the kernel host request whose handler is being
+/// polled, or `None` outside a handler.
+///
+/// The kernel fires it when the runtime sends `host_cancel` for the request
+/// (its Python caller was cancelled while awaiting the reply). The runtime
+/// keeps awaiting the same id, so a handler that observes the token must
+/// still settle with a terminal reply, promptly; handlers that ignore it
+/// keep the advisory behaviour. The token is task-local: read it in the
+/// handler's own future, before handing work to a spawned task.
+#[must_use]
+pub fn host_request_cancellation() -> Option<tokio_util::sync::CancellationToken> {
+    HOST_REQUEST_CANCELLATION
+        .try_with(tokio_util::sync::CancellationToken::clone)
+        .ok()
+}
+
+/// Poll `future` with `token` as its [`host_request_cancellation`]. The
+/// kernel manager wraps every host-request handler in it; embeddings that
+/// dispatch handlers themselves (and tests) use it the same way.
+pub fn with_host_request_cancellation<F: Future>(
+    token: tokio_util::sync::CancellationToken,
+    future: F,
+) -> impl Future<Output = F::Output> {
+    HOST_REQUEST_CANCELLATION.scope(token, future)
+}
+
 /// Build a [`HostRequestHandler`] from a closure returning a future.
 pub fn host_handler<F, Fut>(f: F) -> HostHandlerFn
 where

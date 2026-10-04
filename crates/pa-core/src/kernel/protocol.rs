@@ -145,8 +145,9 @@ pub enum Event {
     Trace {
         fields: Value,
     },
-    /// Cancellation of an in-flight host request. Advisory: the host still
-    /// sends the terminal `host_reply` for that id after settlement.
+    /// Cancellation of an in-flight host request. Advisory: it fires the
+    /// handler's `host_request_cancellation` token, and the host still sends
+    /// the terminal `host_reply` for that id after settlement.
     HostCancel {
         id: String,
     },

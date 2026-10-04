@@ -23,7 +23,7 @@ use super::private_auth::{
 };
 
 /// Request-auth bits a provider can configure in models.json.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProviderRequestConfig {
     pub api_key: Option<String>,
     /// Ordered (`BTreeMap`): merged into request-header maps that
@@ -270,6 +270,16 @@ impl ModelRegistry {
     /// probing for keys.
     pub fn get_provider_auth_status(&self, provider: &str) -> crate::auth::types::AuthStatus {
         self.auth.get_auth_status(provider)
+    }
+
+    /// The provider's models.json request-auth config as written (the
+    /// `apiKey` reference unresolved), or `None` when models.json does not
+    /// configure the provider. Callers that must tell an explicit
+    /// `authHeader` policy or a configured credential header apart from
+    /// resolved request headers read it here.
+    #[must_use]
+    pub fn provider_request_config(&self, provider: &str) -> Option<&ProviderRequestConfig> {
+        self.provider_request_configs.get(provider)
     }
 
     /// `set_model`'s model resolution: an available model resolves directly; a

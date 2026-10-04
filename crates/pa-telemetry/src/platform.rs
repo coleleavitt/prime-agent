@@ -281,7 +281,8 @@ mod tests {
     fn base_properties_carry_schema_and_platform() {
         let properties = base_properties("interactive");
         // The #2117 vocabulary bumped the catalog to v2; the kernel
-        // telemetry bridge's skill-event vocabulary bumped it to v3.
+        // telemetry bridge's skill-event vocabulary bumped it to v3, the
+        // Workflow V1 host's event to v4.
         assert_eq!(
             properties.get("schema_version"),
             Some(&Value::from(SCHEMA_VERSION))
