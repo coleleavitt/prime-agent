@@ -60,9 +60,14 @@ impl Inner {
                 tracing::debug!(target: "pa_core::kernel::trace", event = %fields, "kernel span");
             }
             Event::HostCancel { id } => {
-                // Advisory: the runtime keeps awaiting this id, and the host
-                // settles the request and sends its terminal host_reply as usual.
+                // The runtime keeps awaiting this id, and the host settles the
+                // request and sends its terminal host_reply as usual; the
+                // request's token tells a handler that watches it to settle
+                // early (`host_request_cancellation`).
                 tracing::debug!(target: "pa_core::kernel", host_request = %id, "host_cancel");
+                if let Some(token) = lock(&self.guarded).host_request_cancellations.get(&id) {
+                    token.cancel();
+                }
             }
             Event::Stdout { id, text } => {
                 self.route_stream(id.as_deref(), StreamName::Stdout, &text);

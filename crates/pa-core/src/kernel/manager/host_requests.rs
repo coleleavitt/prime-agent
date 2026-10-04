@@ -7,7 +7,7 @@ use super::{
     anyhow, json, lock, Arc, Duration, HostRequestPayload, Inner, Value,
     MAX_HANDLED_HOST_REQUEST_IDS,
 };
-use crate::kernel::shared::HostHandlerFuture;
+use crate::kernel::shared::{with_host_request_cancellation, HostHandlerFuture};
 
 /// The cell source attached to a host request is capped at this many characters (TS #2475:
 /// `MAX_CELL_SOURCE_CHARS`): the spawning cell's source rides on every host request it triggers.
@@ -28,6 +28,7 @@ impl Inner {
     /// Dispatch one typed request from kernel code to the registered handler
     /// and reply over the protocol. Unhandled requests answer with an error.
     pub(crate) fn start_host_request(self: &Arc<Self>, request_id: &str, data: &Value) {
+        let cancellation = tokio_util::sync::CancellationToken::new();
         {
             let mut g = lock(&self.guarded);
             let (seen, order) = &mut g.handled_host_request_ids;
@@ -43,8 +44,13 @@ impl Inner {
                     break;
                 }
             }
+            g.host_request_cancellations
+                .insert(request_id.to_string(), cancellation.clone());
         }
-        let mut request = self.host_request_future(data);
+        let mut request: HostHandlerFuture = Box::pin(with_host_request_cancellation(
+            cancellation,
+            self.host_request_future(data),
+        ));
         // Run the handler's synchronous prefix in line, before the reader
         // takes the next frame (TS `repl-manager.ts` dispatches through an
         // async IIFE, whose body runs up to its first await immediately).
@@ -71,6 +77,10 @@ impl Inner {
                     json!({ "status": "error", "error": format!("{error:#}") })
                 }
             };
+            // Settled: a late `host_cancel` for this id has nothing to cancel.
+            lock(&inner.guarded)
+                .host_request_cancellations
+                .remove(&request_id);
             let frame = json!({ "type": "host_reply", "id": request_id, "data": reply });
             if let Err(error) = inner.write_line(&frame).await {
                 inner.append_diagnostic(&format!(
