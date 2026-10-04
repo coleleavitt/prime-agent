@@ -9,6 +9,10 @@ dependencies = [
     "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'",
     "pyobjc-framework-ApplicationServices>=10; sys_platform == 'darwin'",
     "pyobjc-framework-Vision>=10; sys_platform == 'darwin'",
+    # The Wayland (niri) backend reads apps through AT-SPI via GObject
+    # introspection. Source-only on PyPI: building needs the system's
+    # gobject-introspection and cairo headers.
+    "PyGObject>=3.50; sys_platform == 'linux'",
 ]
 
 [project.scripts]

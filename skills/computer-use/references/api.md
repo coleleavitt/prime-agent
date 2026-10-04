@@ -162,9 +162,11 @@ clients.
 "input": {"pointer", "keyboard"}, "help"}` — AT-SPI, grim, and the two
 virtual-input managers, each `ok`, `missing`, or `unknown`.
 
-Setup the user may need: PyGObject with the Atspi 2.0 typelib importable by
-the kernel's Python (a venv created with `--system-site-packages`, or
-PyGObject installed into it), at-spi2-core running, `grim` on PATH, and apps
+Setup: the kernel bootstrap installs PyGObject with this skill on Linux (it
+builds from source, so the system needs the gobject-introspection and cairo
+development headers; without them the skill fails to install and the
+bootstrap warns). The host also needs the Atspi 2.0 typelib and at-spi2-core
+running, `grim` on PATH, and apps
 exposing AT-SPI (Firefox: accessibility enabled; Chromium/Electron:
 `--force-renderer-accessibility`). The virtual-input protocols need no
 setup: niri offers them to every client outside a sandboxed security context.

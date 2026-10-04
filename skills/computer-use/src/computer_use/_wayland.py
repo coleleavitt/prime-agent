@@ -371,8 +371,9 @@ def _atspi() -> Any:
         raise ComputerUseError(
             "TRANSPORT_ERROR",
             "computer use backend unavailable: AT-SPI needs PyGObject with the Atspi 2.0 typelib in the "
-            "kernel's Python (install PyGObject and libatspi/at-spi2-core, or use a venv created with "
-            f"--system-site-packages): {str(error)[:120]}",
+            "kernel's Python (the skill's bootstrap install builds PyGObject, which needs the "
+            "gobject-introspection and cairo headers; libatspi/at-spi2-core must be installed): "
+            f"{str(error)[:120]}",
         ) from error
     Atspi.init()
     try:
