@@ -1395,6 +1395,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "pa-toolforge"
+version = "0.9.8"
+dependencies = [
+ "anyhow",
+ "nix",
+ "pa-agent",
+ "pa-core",
+ "pa-telemetry",
+ "pa-types",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "pa-tui"
 version = "0.9.8"
 dependencies = [

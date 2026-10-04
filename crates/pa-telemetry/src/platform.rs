@@ -286,7 +286,7 @@ mod tests {
             properties.get("schema_version"),
             Some(&Value::from(SCHEMA_VERSION))
         );
-        assert_eq!(properties.get("schema_version"), Some(&Value::from(3u64)));
+        assert_eq!(properties.get("schema_version"), Some(&Value::from(4u64)));
         assert_eq!(
             properties.get("schema_revision"),
             Some(&Value::from(SCHEMA_REVISION))
