@@ -252,18 +252,18 @@ fn set_mode(path: &Path, _mode: u32) -> std::io::Result<()> {
     std::fs::metadata(path).map(|_| ())
 }
 
-/// Run `update` while holding the harness state lock of `harness_state_dir`
-/// (the TS `withHarnessStateLock`: 200 attempts 5 ms apart, a lock older
-/// than 10 s is stale). Blocking; call it off the async runtime.
+/// Acquire the harness state lock of `harness_state_dir` (the TS
+/// `withHarnessStateLock` protocol: 200 attempts 5 ms apart, a lock older
+/// than 10 s is stale); dropping the guard releases it. Blocking; call it
+/// off the async runtime.
 ///
 /// # Errors
 ///
 /// [`HarnessStateError::Locked`] when every attempt found a live lock, and
 /// [`HarnessStateError::Io`] when the directory or the lock cannot be made.
-pub fn with_harness_state_lock<T>(
+pub fn acquire_harness_state_lock(
     harness_state_dir: &Path,
-    update: impl FnOnce() -> T,
-) -> Result<T, HarnessStateError> {
+) -> Result<pa_core::platform::LockDir, HarnessStateError> {
     let path = harness_state_path(harness_state_dir);
     std::fs::create_dir_all(harness_state_dir).map_err(|source| HarnessStateError::Io {
         path: path.clone(),
@@ -271,11 +271,7 @@ pub fn with_harness_state_lock<T>(
     })?;
     for attempt in 0..LOCK_ATTEMPTS {
         match pa_core::platform::LockDir::acquire(&path, LOCK_STALE) {
-            Ok(lock) => {
-                let result = update();
-                drop(lock);
-                return Ok(result);
-            }
+            Ok(lock) => return Ok(lock),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 if attempt + 1 < LOCK_ATTEMPTS {
                     std::thread::sleep(LOCK_RETRY);
@@ -285,6 +281,23 @@ pub fn with_harness_state_lock<T>(
         }
     }
     Err(HarnessStateError::Locked(path))
+}
+
+/// Run `update` while holding the harness state lock of `harness_state_dir`
+/// ([`acquire_harness_state_lock`]). Blocking; call it off the async
+/// runtime.
+///
+/// # Errors
+///
+/// The errors of [`acquire_harness_state_lock`].
+pub fn with_harness_state_lock<T>(
+    harness_state_dir: &Path,
+    update: impl FnOnce() -> T,
+) -> Result<T, HarnessStateError> {
+    let lock = acquire_harness_state_lock(harness_state_dir)?;
+    let result = update();
+    drop(lock);
+    Ok(result)
 }
 
 #[cfg(test)]

@@ -55,6 +55,8 @@ on `perf/session-catalog-resume`, and `docs/ravo-architecture.md` there.
   holds the session's ledger flushes for the whole refine (the guard requests a flush when it drops), `evaluate` runs
   the gate with the one model call the session hands it, the verdict admits or refuses against the target store re-read
   at apply time and records `ravo` into the saved state and the report on the result.
+- `RefinementGate::lock_store`: a global refine holds the harness state lock (`pa_ledger::acquire_harness_state_lock`,
+  the TS `proper-lockfile` protocol every ledger flush takes) from the re-read of the global store until its save.
 - `pa_ledger::LedgerObserver` (built into `FailureLedgerFeature::with_observers` by `pa-cli`) and
   `pa_ledger::LedgerHandle` (`attach_ledger`): `on_boundary` finds provisional regressions on each window's own clock
   (local lineage on the local and, with the global ledger on, the global ordinal; the global lineage on the global

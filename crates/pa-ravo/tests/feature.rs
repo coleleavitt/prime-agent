@@ -532,3 +532,58 @@ async fn derived_replay_cases_are_self_checked_once_and_stored_verified() {
         [("import foo", true)]
     );
 }
+
+/// A global refine holds the harness state lock every ledger flush takes:
+/// while another writer holds it, the refine waits and then fails rather
+/// than overwrite what that writer is writing.
+#[tokio::test]
+async fn a_global_refine_takes_the_harness_state_lock() {
+    let mut session = session();
+    let gate = session.ravo.refinement_gate(&session.context).unwrap();
+    let held = pa_ledger::acquire_harness_state_lock(&session.global_dir).unwrap();
+    assert!(gate
+        .lock_store(HarnessScope::Global, &session.global_dir)
+        .is_err());
+    assert!(gate
+        .lock_store(HarnessScope::Local, &session.harness_dir())
+        .unwrap()
+        .is_none());
+    drop(held);
+    let guard = gate
+        .lock_store(HarnessScope::Global, &session.global_dir)
+        .unwrap()
+        .expect("a lock guard");
+    assert!(pa_ledger::acquire_harness_state_lock(&session.global_dir).is_err());
+    drop(guard);
+    let messages = vec![serde_json::from_value(
+        json!({ "role": "user", "content": "do it twice", "timestamp": 1 }),
+    )
+    .unwrap()];
+    let (result, _) = execute_refinement_gated(
+        &mut session.manager,
+        RefinementTranscript {
+            messages: &messages,
+            refinement_history: &[],
+        },
+        &session.global_dir,
+        &model(),
+        &RefineOptions {
+            global: true,
+            ..RefineOptions::default()
+        },
+        RefinementSource::User,
+        scripted(MEMORY_PLAN),
+        None,
+        Some(RefinementGating {
+            gate,
+            model_call: scripted(
+                r#"{"verdict":"pass","score":72,"failedCriteria":[],"rationale":"fine"}"#,
+            ),
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(result.applied_edits.iter().all(|edit| edit.applied));
+    // Released once the save landed.
+    assert!(pa_ledger::acquire_harness_state_lock(&session.global_dir).is_ok());
+}
