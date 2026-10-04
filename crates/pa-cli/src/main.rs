@@ -7,5 +7,6 @@ fn main() {
     pa_cli::features::install_enabled_features();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let code = pa_cli::main_with_runtime(&args, &pa_cli::PrintRuntime);
+    pa_cli::features::flush_enabled_features();
     std::process::exit(code);
 }
