@@ -265,6 +265,10 @@ pub(crate) async fn observe_agent_end(
 mod tests {
     use super::*;
 
+    /// Bound to a name, not inlined: `prompt_guards` reads every literal
+    /// `.register("…")` in `src/` as part of the model-facing surface.
+    const STUB_REQUEST: &str = "stub.ping";
+
     struct Stub;
 
     impl SessionFeature for Stub {
@@ -279,7 +283,7 @@ mod tests {
         ) {
             let cwd = context.cwd.display().to_string();
             handlers.register(
-                "stub.ping",
+                STUB_REQUEST,
                 crate::kernel::shared::host_handler(move |_| {
                     let cwd = cwd.clone();
                     async move { Ok(serde_json::json!({ "cwd": cwd })) }
@@ -300,7 +304,7 @@ mod tests {
         };
         let mut handlers = HostRequestHandlers::default();
         Stub.register_host_handlers(&context, &mut handlers);
-        assert!(handlers.get("stub.ping").is_some());
+        assert!(handlers.get(STUB_REQUEST).is_some());
     }
 
     /// With no feature installed the agent loop gets no tool hooks at all:
