@@ -185,6 +185,9 @@ pub struct AgentSession {
     /// The refinement gate an installed feature judges this session's
     /// refinements with; `None` in the native product.
     refinement_gate: Option<std::sync::Arc<dyn crate::refinement::gate::RefinementGate>>,
+    /// How this session's automatic refine reviews ask and what an
+    /// approval runs; `None` is the native policy.
+    auto_refine_policy: Option<std::sync::Arc<dyn crate::refinement::executor::AutoRefinePolicy>>,
     /// Serializes notice admissions with parent input and generation close.
     terminal_admission: tokio::sync::Mutex<TerminalAdmission>,
     /// Agent-message reply IDs pre-synced by the parent inbox. Ordinary
@@ -293,6 +296,7 @@ impl AgentSession {
             side_question_stream_fn: std::sync::Mutex::new(None),
             agent_dir: None,
             refinement_gate: None,
+            auto_refine_policy: None,
             terminal_admission: tokio::sync::Mutex::new(TerminalAdmission::default()),
             pre_synced_reply_ids,
             terminal_pump_shutdown,

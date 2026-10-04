@@ -232,6 +232,19 @@ pub trait SessionFeature: Send + Sync {
         None
     }
 
+    /// How the session's automatic refine reviews ask and what an approval
+    /// runs (see [`crate::refinement::executor::AutoRefinePolicy`]);
+    /// `None`, the default, keeps the native policy. Called once, on the
+    /// session-creation path; the first installed feature that offers one
+    /// is the session's.
+    fn auto_refine_policy(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+    ) -> Option<Arc<dyn crate::refinement::executor::AutoRefinePolicy>> {
+        let _ = context;
+        None
+    }
+
     /// The filter this feature applies to the session's rendered harness
     /// (see [`crate::refinement::ranking::HarnessRenderFilter`]); `None`,
     /// the default, shows every entry. Called once, on the
@@ -370,6 +383,17 @@ pub(crate) fn session_refinement_gate(
     features
         .iter()
         .find_map(|feature| feature.refinement_gate(context))
+}
+
+/// The first automatic-refine policy `features` offer the session; `None`
+/// keeps the native one.
+pub(crate) fn session_auto_refine_policy(
+    features: &[Arc<dyn SessionFeature>],
+    context: &Arc<SessionFeatureContext>,
+) -> Option<Arc<dyn crate::refinement::executor::AutoRefinePolicy>> {
+    features
+        .iter()
+        .find_map(|feature| feature.auto_refine_policy(context))
 }
 
 /// Every render filter `features` offer the session, in installation

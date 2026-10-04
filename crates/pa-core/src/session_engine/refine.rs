@@ -65,24 +65,10 @@ impl AutoRefineGates {
     }
 }
 
-/// The instructions an approved review carries into the run.
+/// The instructions a natively approved review carries into the run.
 #[must_use]
 pub fn auto_refine_instructions(reason: &str, review: &AutoRefineReview) -> String {
-    let detail = review
-        .instructions
-        .as_deref()
-        .map(|instructions| {
-            format!(
-                "
-
-Reviewer instructions: {instructions}"
-            )
-        })
-        .unwrap_or_default();
-    format!(
-        "Automatic refine review triggered by {reason}. Only create/update/delete local harness entries if there is clear evidence that should help this session continue. Prefer an empty edits array over speculative or one-off memories. Do not promote anything global unless explicitly requested. Reviewer rationale: {}{detail}",
-        review.rationale
-    )
+    crate::refinement::executor::native_auto_refine_instructions(reason, review)
 }
 
 /// Who triggered a refinement.
@@ -588,6 +574,14 @@ pub(crate) enum AutoRefineRound {
 }
 
 impl AgentSession {
+    /// The session's automatic-refine policy (the native one unless a
+    /// feature installed its own).
+    fn auto_refine_policy(&self) -> &dyn crate::refinement::executor::AutoRefinePolicy {
+        self.auto_refine_policy
+            .as_deref()
+            .unwrap_or(&crate::refinement::executor::NativeAutoRefinePolicy)
+    }
+
     /// The compact-trigger review: an LLM call over the conversation, the
     /// merged harness state, and the refinement history. `Ok(None)` is the
     /// decline; `Ok(Some(review))` a fresh approval.
@@ -633,6 +627,7 @@ impl AgentSession {
                 reason: AUTO_REFINE_COMPACT_REASON.to_string(),
                 turns_since_last_review,
             },
+            self.auto_refine_policy(),
             default_refiner_call(api_key.clone()),
         )
         .await?;
@@ -691,9 +686,12 @@ impl AgentSession {
         api_key: Option<String>,
         global_harness_dir: std::path::PathBuf,
     ) -> anyhow::Result<RefinementResult> {
+        let run = self
+            .auto_refine_policy()
+            .approved_refine(AUTO_REFINE_COMPACT_REASON, review);
         let options = RefineOptions {
-            global: false,
-            instructions: Some(auto_refine_instructions(AUTO_REFINE_COMPACT_REASON, review)),
+            global: run.global,
+            instructions: Some(run.instructions),
             rollback_id: None,
             trigger: None,
         };
@@ -884,6 +882,7 @@ mod tests {
             should_refine: true,
             rationale: "reusable tactic".to_string(),
             instructions: Some("record it".to_string()),
+            reply: serde_json::Map::new(),
         };
         assert_eq!(
             auto_refine_instructions("compact", &review),
@@ -895,6 +894,7 @@ Reviewer instructions: record it"
             should_refine: true,
             rationale: "reusable tactic".to_string(),
             instructions: None,
+            reply: serde_json::Map::new(),
         };
         assert_eq!(
             auto_refine_instructions("compact", &bare),
