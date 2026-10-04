@@ -1045,6 +1045,7 @@ fn run_rollout(
         iteration: 0,
         proposer: None,
         tree_id: None,
+        cancel: None,
     })
     .map_err(|error| store_error(io, &error))?;
     let default_id = policy_id(&DEFAULT_POLICY);

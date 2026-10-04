@@ -2,6 +2,9 @@
 
 #![allow(dead_code)] // each test binary uses a subset
 
+pub mod spans;
+pub mod stub;
+
 use std::path::PathBuf;
 
 use pa_dream::improve::{CandidateInput, CandidateSource};

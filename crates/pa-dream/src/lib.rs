@@ -9,6 +9,7 @@
 //! [`improve::CandidateSource`] and [`experiment::ExperimentArmRunner`].
 //! See `README.md` for scope, files owned and telemetry.
 
+pub mod child;
 pub mod collate;
 pub mod command;
 pub mod dream_loop;
@@ -18,10 +19,13 @@ pub mod improve;
 pub mod interpreter;
 pub mod js_math;
 pub mod json;
+pub mod llm;
+pub mod llm_loop;
 pub mod objective;
 pub mod policy;
 pub mod proposer;
 pub mod records;
+pub mod rejections;
 pub mod replay;
 pub mod rng;
 pub mod rollout;
