@@ -1,7 +1,6 @@
-//! The yes/no confirm selector: the shared menu grammar (the `›` marker
-//! rows and the key-hint status row every picker renders with) over the
-//! title, the message as its description lines, and a small option list
-//! that answers the pending question.
+//! The yes/no confirm selector: the shared menu grammar over the title,
+//! the message as its description lines, and a small option list that
+//! answers the pending question.
 
 use crate::keybindings::KeybindingsManager;
 use crate::menu_panel::{hint_row, key_hint, menu_row};
@@ -130,9 +129,8 @@ impl ConfirmPanel {
     }
 }
 
-/// The pane's key hint: the shared hint-row grammar, this surface's
-/// vocabulary (an unbound action is omitted, never advertised with a
-/// default key).
+/// The pane's key hint: the shared hint-row grammar (an unbound action is
+/// omitted, never advertised with a default key).
 fn hint(kb: &KeybindingsManager) -> String {
     [
         key_hint(kb, &["tui.select.up", "tui.select.down"], "navigate"),
@@ -229,7 +227,6 @@ mod tests {
             .any(|row| row.contains("continue in current cwd")));
         assert!(text.iter().any(|row| row.contains("› Yes")));
         assert!(text.iter().any(|row| row.contains("  No")));
-        // The shared hint-row grammar (the pickers' vocabulary shape).
         assert!(text
             .iter()
             .any(|row| row.contains("↑/↓ navigate · Enter select · Esc close")));

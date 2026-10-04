@@ -10,11 +10,9 @@
 use super::*;
 
 impl AuthStorage {
-    /// TS `updatePrimeInferenceCredential`: one locked read/modify/write of
-    /// the prime-inference credential; an update returning `None` leaves
-    /// the document untouched. `true` when the locked run completed (TS
-    /// returns normally; a write failure throws, so the callers must not
-    /// treat a failed run as applied).
+    /// One locked read/modify/write of the prime-inference credential; an update returning `None`
+    /// leaves the document untouched. `true` when the locked run completed; callers must
+    /// not treat a failed run as applied.
     fn update_prime_inference_credential(
         &mut self,
         update: impl FnOnce(Option<AuthCredential>) -> Option<AuthCredential>,
@@ -32,11 +30,8 @@ impl AuthStorage {
                 return Ok(((), None));
             };
             data.insert(PRIME_INFERENCE_PROVIDER_ID, &credential);
-            // TS writes `primeTeam: null` explicitly for the personal
-            // account (`{ ...credential, primeTeam: null }`); the
-            // declarative serde skips a `None` field, so the prime write
-            // restores the key. The generic `set` keeps the TS omit
-            // shape for other providers' keys.
+            // TS writes `primeTeam: null` explicitly for the personal account; serde's
+            // skip-if-none would omit it, so restore the key here.
             if let Some(serde_json::Value::Object(map)) =
                 data.0.get_mut(PRIME_INFERENCE_PROVIDER_ID)
             {
@@ -54,7 +49,7 @@ impl AuthStorage {
         true
     }
 
-    /// TS `setPrimeInferenceApiKey`: store the key and its team selection.
+    /// Store the key and its team selection.
     pub fn set_prime_inference_api_key(&mut self, api_key: &str, team: PrimeTeamAssignment) {
         let api_key = api_key.to_string();
         let applied = self.update_prime_inference_credential(|existing| {
@@ -75,16 +70,15 @@ impl AuthStorage {
                 prime_team,
             })
         });
-        // TS: the stale clear sits after the write and never runs on a
-        // failed one — a failed replacement must not re-enable the
-        // server-rejected credential.
+        // The stale clear never runs on a failed write: a failed
+        // replacement must not re-enable the server-rejected credential.
         if applied {
             self.clear_stale_auth_source(PRIME_INFERENCE_PROVIDER_ID, AuthSource::Stored);
         }
     }
 
-    /// TS `setPrimeInferenceTeamSelection`: rebind the stored key's team;
-    /// `expected_api_key: None` skips the key check (TS `undefined`).
+    /// Rebind the stored key's team; `expected_api_key: None` skips the
+    /// key check (TS `undefined`).
     pub fn set_prime_inference_team_selection(
         &mut self,
         team: Option<PrimeTeamCredential>,
@@ -106,13 +100,8 @@ impl AuthStorage {
         });
     }
 
-    /// TS `getPrimeInferenceTeamSelection`: the stored team selection, or
-    /// [`StoredPrimeTeam::NotSelected`] when `PRIME_TEAM_ID` pins the team
-    /// or no api-key credential is stored. Fleet divergence (P5): the stored
-    /// primeTeam survives runtime and environment API-key overrides — TS
-    /// returns `undefined` when those are the active source, which forced
-    /// dogfood daemons to pin `PRIME_TEAM_ID` in the environment; the stored
-    /// login's team is used with whichever key is active instead.
+    /// The stored team selection, or [`StoredPrimeTeam::NotSelected`] when `PRIME_TEAM_ID`. Fleet
+    /// divergence (P5): the stored primeTeam survives overrides.
     pub fn get_prime_inference_team_selection(&self) -> StoredPrimeTeam {
         if self
             .env_credentials

@@ -1,7 +1,5 @@
-//! `--mode daemon`: the supervisor process. The interactive client spawns
-//! this mode (detached) when no daemon is listening, so `prime-agent` alone
-//! is enough to bring the full session stack up (port of the TS
-//! `daemon-mode.ts` entry: the CLI process becomes the supervisor).
+//! `--mode daemon`: the supervisor process. The interactive client spawns this
+//! mode (detached) when no daemon is listening.
 
 use anyhow::Result;
 

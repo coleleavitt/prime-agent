@@ -58,10 +58,8 @@ impl Worker {
             Ok(custom_message) => custom_message,
             Err(error) => return response_failure(None, "prompt", &error, None),
         };
-        // The reserved child-status kinds are daemon provenance (the
-        // queue-fold anti-spoof): the notice injection rides the
-        // follow-up route only, so a prompt row claiming one is always a
-        // spoof — answered loudly, never parked.
+        // The reserved child-status kinds are daemon provenance: a prompt row
+        // claiming one is always a spoof — answered loudly, never parked.
         if let Some(row) = custom_message.as_ref() {
             if crate::child_status_notices::is_reserved_child_status_custom_type(row) {
                 return response_failure(
@@ -128,12 +126,9 @@ impl Worker {
             let queued_behind_work = core.busy;
             let lane = match streaming_behavior {
                 Some("steer") => Lane::Steering,
-                // Plain prompts admitted while busy drain when the run goes
-                // idle, like `queueIfBusy` prompt admission; an idle
-                // session's prompt IS the next run, so it takes the
-                // steering lane - otherwise a steering delivery that
-                // arrives in the same window would jump the prompt's turn
-                // (the runner drains steering first).
+                // An idle session's prompt IS the next run, so it takes the steering
+                // lane — otherwise a steering delivery arriving in the same window would
+                // jump the prompt's turn.
                 Some(_) | None => {
                     if core.busy {
                         Lane::FollowUp
@@ -173,9 +168,8 @@ impl Worker {
             let snapshot = Self::snapshot_locked(&core);
             (snapshot, queued_behind_work)
         };
-        // The admission checkpoint (TS `prompt_accepted`, busy=true): the
-        // admitted prompt is undelivered live work until its turn
-        // settles, and the lane snapshot rides the same locked read.
+        // The admission checkpoint: the admitted prompt is undelivered
+        // live work until its turn settles.
         self.checkpoint_queue(QueueCheckpoint::Admitted {
             operation: "prompt_accepted",
         });
@@ -199,9 +193,8 @@ impl Worker {
         if let Err(response) = self.require_created(lane.as_str()) {
             return response;
         }
-        // TS daemon `steer`/`follow_up` pass `resumeIfIdle: true`, and an
-        // admitted turn with `wake: "immediate"` resumes the suspension:
-        // these commands are resume sites.
+        // These commands are resume sites: an admitted turn with
+        // `wake: "immediate"` resumes the suspension.
         self.resume_queued_input();
         let message = payload
             .get("message")
@@ -211,13 +204,9 @@ impl Worker {
             Ok(custom_message) => custom_message,
             Err(error) => return response_failure(None, lane.as_str(), &error, None),
         };
-        // The reserved child-status kinds are daemon provenance, not
-        // client data (the queue-fold anti-spoof): a caller-supplied row
-        // claiming one is answered loudly — it never parks, so the strip's
-        // typed classification only ever sees daemon-authentic rows. The
-        // daemon's own notice injection rides this same command with the
-        // one-shot capability it minted in this process
-        // (`child_status_notices`), the only thing the admission accepts.
+        // The reserved child-status kinds are daemon provenance: a caller-supplied
+        // row claiming one is answered loudly, never parked. The daemon's own
+        // notice injection rides this command with the one-shot capability.
         if let Some(row) = custom_message.as_ref() {
             if crate::child_status_notices::is_reserved_child_status_custom_type(row) {
                 let minted = crate::child_status_notices::consume(
@@ -259,10 +248,9 @@ impl Worker {
         }
         let snapshot = Self::snapshot_locked(&core);
         drop(core);
-        // The queue-write checkpoint (busy=true): an undelivered lane is
-        // live work. The operation names are TS's journal strings
-        // (`steer_queued`/`follow_up_queued`), not this port's command
-        // names, so the journals stay comparable record-for-record.
+        // The queue-write checkpoint: an undelivered lane is live work. The
+        // operation names are TS's journal strings, so the journals stay
+        // comparable record-for-record.
         let queued_operation = match lane {
             Lane::Steering => "steer_queued",
             Lane::FollowUp => "follow_up_queued",
@@ -567,11 +555,9 @@ impl Worker {
             .find_map(|key| sender.get(*key).and_then(Value::as_str))
             .unwrap_or("unknown")
             .to_string();
-        // The delivery's relationship label derives from the sender's
-        // durable parent edge, never from the sender's runtime kind alone:
-        // a subagent spawned by a DIFFERENT parent is not this session's
-        // child, and its messages must not render as one. The core lock is
-        // scoped to the read (a std MutexGuard never rides an await).
+        // The relationship label derives from the sender's durable parent edge,
+        // never the runtime kind alone: a subagent spawned by a DIFFERENT parent
+        // is not this session's child.
         let from_relationship = {
             let core = self
                 .core
@@ -665,9 +651,9 @@ impl Worker {
             let id = message_id;
             let queued = core.busy;
             let summary = self.summary_locked(&core);
-            // The receiving session's endpoint (TS
-            // `createAgentSessionMessageEndpoint`): the receipt's `target`
-            // and the delivered row's `details.target` share the one shape.
+            // The receiving session's endpoint: the receipt's `target`
+            // and the delivered row's `details.target` share the one
+            // shape.
             let mut target = json!({
                 "activeSessionId": summary.active_session_id.clone().unwrap_or_default(),
                 "sessionId": summary.session_id,
@@ -679,14 +665,9 @@ impl Worker {
             if let Some(name) = summary.session_name.filter(|name| !name.is_empty()) {
                 target["sessionName"] = json!(name);
             }
-            // The receiving side's custom row (TS
-            // `acceptAgentSessionMessage` -> `createAgentSessionMessage`,
-            // riding `acceptAgentMessagePrompt`'s `customMessage`): the
-            // queued turn carries the `agent_message` row so the
-            // transcript renders the collapsed card instead of a plain
-            // user row, while the row's `content` IS the rendered prompt -
-            // the model context stays byte-identical to the
-            // plain-prompt delivery.
+            // The queued turn carries the `agent_message` row so the transcript renders
+            // the collapsed card, while the row's `content` IS the rendered prompt —
+            // the model context stays byte-identical to the plain-prompt delivery.
             let custom_message =
                 pa_core::session_engine::agent_messaging::create_agent_session_message_row(
                     &pa_core::session_engine::agent_messaging::AgentSessionMessageRowPayload {
@@ -701,9 +682,8 @@ impl Worker {
                 );
             let item = QueuedItem {
                 priority: QueuePriority::Background,
-                // The labeled queue-strip row (TS `queuedAgentMessagePreview`:
-                // an agent-session-message custom row previews as
-                // "Agent message received: <details.message>").
+                // The labeled queue-strip row: "Agent message
+                // received: <details.message>".
                 preview: Some(format!(
                     "{}: {message}",
                     pa_core::session_engine::agent_messaging::AGENT_MESSAGE_RECEIVED_PREVIEW_LABEL

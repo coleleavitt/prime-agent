@@ -16,7 +16,6 @@
 
 use pa_core::update::installer::{self, InstallerOutput};
 
-/// The `/update` funnel handle (the interactive options carry it).
 #[derive(Clone, Default)]
 pub struct ClientUpdate;
 
