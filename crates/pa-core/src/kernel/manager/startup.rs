@@ -124,6 +124,25 @@ impl Inner {
 
     /// Perform the startup: resolve the interpreter, spawn `python -m rlm.repl`,
     /// complete the protocol handshake, and mark the kernel running.
+    ///
+    /// One `kernel.start` span per attempt; it is current while the child is spawned,
+    /// so the `TRACEPARENT` the runtime inherits names it and every runtime span opened
+    /// outside a request nests under it.
+    #[tracing::instrument(
+        level = "info",
+        name = "kernel.start",
+        skip_all,
+        err(Display),
+        fields(
+            kernel.python = self
+                .options
+                .python
+                .as_ref()
+                .map_or_else(|| "venv".to_string(), |python| python.display().to_string()),
+            kernel.restore = self.options.snapshot.is_some(),
+            kernel.pid = tracing::field::Empty,
+        )
+    )]
     pub(crate) async fn do_start(
         self: &Arc<Self>,
         options: &KernelStartOptions,
@@ -173,6 +192,12 @@ impl Inner {
             "PRIME_AGENT_KERNEL_OWNER_PID".to_string(),
             std::process::id().to_string(),
         );
+        if let Some(traceparent) = pa_types::trace_context::current_traceparent() {
+            env.insert(
+                pa_types::trace_context::TRACEPARENT_ENV.to_string(),
+                traceparent,
+            );
+        }
         let cwd = self.options.cwd.clone();
         let mut command = tokio::process::Command::new(&python);
         command
@@ -211,6 +236,7 @@ impl Inner {
             }
         };
         let pid = child.id().map_or(-1, |p| p as i32);
+        tracing::Span::current().record("kernel.pid", pid);
         orphan_journal::record_orphan_process_state(pid, true);
         let (ready_tx, ready_rx) = oneshot::channel::<anyhow::Result<i64>>();
         {
@@ -276,6 +302,7 @@ impl Inner {
     /// exit watcher that settles the manager when the process dies.
     fn wire_child(self: &Arc<Self>, mut child: tokio::process::Child, generation: u64) {
         let pid = child.id().map_or(-1, |p| p as i32);
+        tracing::Span::current().record("kernel.pid", pid);
         let stdin = child.stdin.take();
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();

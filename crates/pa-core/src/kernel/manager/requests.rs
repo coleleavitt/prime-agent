@@ -142,7 +142,21 @@ impl ReplKernelManager {
         lock(&self.inner.guarded).state
     }
 
+    /// One protocol request as a `kernel.execute` span: it is current while the frame is
+    /// written, so the frame's `traceparent` names it and the runtime's `kernel.cell` nests
+    /// under it; the outcome is recorded as `kernel.status`.
     #[allow(clippy::too_many_lines)]
+    #[tracing::instrument(
+        level = "info",
+        name = "kernel.execute",
+        skip_all,
+        fields(
+            kernel.request_id = tracing::field::Empty,
+            kernel.request_type = request.type_name(),
+            kernel.status = tracing::field::Empty,
+            error = tracing::field::Empty,
+        )
+    )]
     async fn execute_inner(
         &self,
         request: Request,
@@ -152,14 +166,25 @@ impl ReplKernelManager {
     ) -> anyhow::Result<InternalExecuteResult> {
         let max_chars = opts.max_output_chars.unwrap_or(DEFAULT_MAX_OUTPUT_CHARS);
         let request_id = uuid::Uuid::new_v4().to_string();
+        let span = tracing::Span::current();
+        span.record("kernel.request_id", request_id.as_str());
+        let settle = |result: anyhow::Result<InternalExecuteResult>| {
+            match &result {
+                Ok(settled) => span.record("kernel.status", settled.result.status.as_str()),
+                Err(error) => span
+                    .record("kernel.status", "error")
+                    .record("error", format!("{error:#}")),
+            };
+            result
+        };
 
         if let Some(signal) = &opts.signal {
             if signal.is_aborted() {
-                return Ok(InternalExecuteResult::aborted(started));
+                return settle(Ok(InternalExecuteResult::aborted(started)));
             }
         }
         if lock(&self.inner.guarded).active_execution.is_some() {
-            return Err(anyhow!("Kernel already has an active execution"));
+            return settle(Err(anyhow!("Kernel already has an active execution")));
         }
 
         let (result_tx, mut result_rx) =
@@ -227,6 +252,9 @@ impl ReplKernelManager {
 
         let mut frame = request.to_json();
         frame["id"] = json!(request_id);
+        if let Some(traceparent) = pa_types::trace_context::current_traceparent() {
+            frame[pa_types::trace_context::TRACEPARENT_FIELD] = json!(traceparent);
+        }
 
         let mut send_task = {
             let writer = lock(&self.inner.child).as_ref().map(|c| c.stdin.clone());
@@ -235,7 +263,7 @@ impl ReplKernelManager {
                     let mut g = lock(&self.inner.guarded);
                     g.active_execution = None;
                 }
-                return Err(anyhow!("Kernel stdin is not connected"));
+                return settle(Err(anyhow!("Kernel stdin is not connected")));
             };
             let mut line = frame.to_string();
             line.push('\n');
@@ -279,7 +307,7 @@ impl ReplKernelManager {
             }
         };
 
-        match settled_result.take() {
+        settle(match settled_result.take() {
             Some(result) => result,
             None => match send_outcome {
                 Err(error) => {
@@ -297,7 +325,7 @@ impl ReplKernelManager {
                     Err(_) => Err(anyhow!("Kernel has been shut down")),
                 },
             },
-        }
+        })
     }
 }
 
