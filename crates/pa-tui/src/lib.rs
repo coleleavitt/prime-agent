@@ -81,6 +81,7 @@ pub mod markdown;
 pub mod markdown_table;
 pub mod mcp_view;
 mod menu_panel;
+mod mermaid;
 pub mod model_picker;
 pub(crate) mod mouse;
 pub(crate) mod mouse_tracking;

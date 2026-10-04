@@ -6,10 +6,15 @@
 mod geometry;
 pub(crate) use geometry::{markdown_row_count, markdown_row_count_tagged};
 mod inline;
+mod mermaid_blocks;
+#[cfg(test)]
+mod mermaid_blocks_tests;
 #[cfg(test)]
 mod tests;
 
 pub use inline::render_inline;
+pub use mermaid_blocks::MermaidMode;
+pub(crate) use mermaid_blocks::MermaidRender;
 
 use crate::width::str_width;
 use crate::{Line, Span};
@@ -40,6 +45,11 @@ pub struct MarkdownStyle {
     /// over the highlight.js grammar). `None` renders every code line uniform in `code_block`
     /// — the TS no-valid-language fallback, and the quiet thinking theme.
     pub(crate) syntax: Option<crate::tool_card::highlight::SyntaxPalette>,
+    /// How `mermaid` fences render (TS `mermaidTransform`); `None` everywhere but assistant
+    /// text blocks, so thinking, user, and panel markdown keep their fences.
+    pub(crate) mermaid: Option<MermaidRender>,
+    /// The theme slots the diagram classes paint with.
+    pub(crate) mermaid_palette: mermaid_blocks::MermaidPalette,
 }
 
 impl Default for MarkdownStyle {
@@ -79,6 +89,8 @@ impl MarkdownStyle {
             syntax: Some(crate::tool_card::highlight::SyntaxPalette::from_theme(
                 theme,
             )),
+            mermaid: None,
+            mermaid_palette: mermaid_blocks::MermaidPalette::from_theme(theme),
         }
     }
 }
@@ -104,7 +116,7 @@ pub fn render_markdown_tagged(
     }
     let normalized = text.replace('\t', "   ");
     let mut lines: Vec<Line> = Vec::new();
-    let blocks = parse_blocks(&normalized);
+    let blocks = mermaid_blocks::apply(parse_blocks(&normalized), content_width, style);
     for (i, block) in blocks.iter().enumerate() {
         let next = blocks.get(i + 1);
         // A blank source line separates blocks: TS's lexer emits one `space` token per blank
@@ -200,6 +212,10 @@ enum BlockKind {
     Table {
         header: Vec<String>,
         rows: Vec<Vec<String>>,
+    },
+    /// A paragraph carrying Mermaid diagram rows (see `mermaid_blocks`).
+    ArtParagraph {
+        rows: Vec<mermaid_blocks::ArtRow>,
     },
 }
 
@@ -565,6 +581,14 @@ fn render_block(
                     quote_spans.push(s);
                 }
                 wrap_quote(&quote_spans, width, style, out);
+            }
+        }
+        BlockKind::ArtParagraph { rows } => {
+            for line in mermaid_blocks::art_paragraph_lines(rows, style) {
+                wrap_spans(&line, width, style.body, out);
+            }
+            if blank_after(true) {
+                out.push(Vec::new());
             }
         }
         BlockKind::Hr => {

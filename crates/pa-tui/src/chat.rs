@@ -362,12 +362,15 @@ pub fn render_user_block(
 }
 
 /// One assistant message: a leading spacer when a visible body exists, markdown
-/// blocks separated by spacers, and a trailing spacer before its tool calls.
+/// blocks separated by spacers, and a trailing spacer before its tool calls. Text blocks
+/// (never thinking) render `mermaid` fences per `mermaid` (the `markdown.mermaid` setting).
+#[allow(clippy::too_many_arguments)] // The settings-driven render inputs ride as one call.
 pub fn render_assistant(
     message: &AssistantMessage,
     detail: Detail,
     theme: &Theme,
     code_block_indent: &str,
+    mermaid: crate::markdown::MermaidMode,
     width: usize,
     preceded_by_tool_activity: bool,
     cache: &mut crate::markdown::MarkdownBlockCache,
@@ -380,6 +383,10 @@ pub fn render_assistant(
     }
     let mut md = crate::markdown::MarkdownStyle::from_theme(theme);
     md.code_block_indent = code_block_indent.to_string();
+    md.mermaid = Some(crate::markdown::MermaidRender {
+        mode: mermaid,
+        streaming: message.streaming,
+    });
     for (index, block) in visible_blocks.iter().enumerate() {
         match block {
             MessageBlock::Text(text) => {

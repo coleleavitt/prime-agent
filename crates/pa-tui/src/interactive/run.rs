@@ -216,6 +216,12 @@ async fn run_interactive_surface(
     let theme = crate::app::load_theme(&options.theme);
     let mut view = AgentView::new(theme);
     view.code_block_indent = options.code_block_indent.clone();
+    view.mermaid_mode = options
+        .client_settings
+        .as_ref()
+        .map_or_else(crate::markdown::MermaidMode::default, |settings| {
+            crate::markdown::MermaidMode::from_setting(&settings.mermaid_rendering_mode())
+        });
     // The file-completion provider browses the SESSION cwd, not the process cwd: the completion
     // menu must browse the directory the user sees.
     view.editor.set_autocomplete_provider(Box::new(

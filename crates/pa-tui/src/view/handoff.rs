@@ -10,7 +10,10 @@ use std::sync::{Mutex, OnceLock};
 
 /// The render-shape inputs a packed layout's rows depend on: the width
 /// plus the view's `layout_options` tuple.
-pub(super) type LayoutShape = (usize, (Theme, String, bool, bool));
+pub(super) type LayoutShape = (usize, LayoutOptions);
+/// The rendering options that affect cached entry rows: theme, code-block indent, Mermaid
+/// mode, image rows, and the fullscreen image fallback.
+pub(super) type LayoutOptions = (Theme, String, crate::markdown::MermaidMode, bool, bool);
 
 /// One visible-window entry's held layouts, per detail slot (a pack is
 /// valid for the slot it was built under).

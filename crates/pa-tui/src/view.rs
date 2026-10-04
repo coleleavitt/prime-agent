@@ -55,6 +55,9 @@ pub struct AgentView {
     /// The chat markdown fenced-code indent (`markdown.codeBlockIndent`;
     /// default two spaces).
     pub code_block_indent: String,
+    /// When assistant text renders `mermaid` fences as diagrams (`markdown.mermaid`;
+    /// default streaming).
+    pub mermaid_mode: crate::markdown::MermaidMode,
     pub editor: Editor,
     pub chrome: ChromeState,
     /// Queued input parked behind the running turn (steering/follow-up
@@ -161,7 +164,7 @@ pub struct AgentView {
     /// The width the cached rows were laid out for.
     pub(crate) layout_width: usize,
     /// Rendering options that affect cached entry rows.
-    layout_options: Option<(Theme, String, bool, bool)>,
+    layout_options: Option<handoff::LayoutOptions>,
     /// Row texts of the inline frame at the last main-screen flush: the
     /// next flush diffs against this, so exits never duplicate scrollback.
     flushed_frame: Vec<String>,
@@ -278,6 +281,7 @@ impl AgentView {
         Self {
             theme,
             code_block_indent: "  ".to_string(),
+            mermaid_mode: crate::markdown::MermaidMode::default(),
             editor: Editor::new(),
             chrome: ChromeState::default(),
             queued: crate::queued::QueuedMessages::default(),
