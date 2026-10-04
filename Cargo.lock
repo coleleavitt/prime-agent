@@ -1274,6 +1274,7 @@ dependencies = [
  "pa-daemon",
  "pa-dream",
  "pa-ledger",
+ "pa-ravo",
  "pa-recall",
  "pa-telemetry",
  "pa-toolforge",
