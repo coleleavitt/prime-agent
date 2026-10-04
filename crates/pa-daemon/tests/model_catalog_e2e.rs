@@ -149,15 +149,10 @@ fn write_models_json(agent_dir: &Path, base_url: &str) {
 
 #[test]
 fn offline_daemon_serves_the_bundled_catalog_fallback() {
-    let dir = std::env::temp_dir().join(format!(
-        "pa-model-catalog-{}",
-        std::process::id() * 1000
-            + std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.subsec_nanos())
-                .unwrap_or_default()
-    ));
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    // A unique, self-cleaning dir: the earlier `pid * 1000 + subsec_nanos`
+    // name overflowed `u32` on hosts with a large `pid_max`.
+    let temp = tempfile::tempdir().expect("temp dir");
+    let dir = temp.path().to_path_buf();
     let agent_dir = dir.join("agent");
     let socket = dir.join("daemon.sock");
     // No auth beyond the models.json key: no provider credentials, no private-model entitlements.
