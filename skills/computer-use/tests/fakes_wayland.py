@@ -213,6 +213,9 @@ class FakeAccessible:
         self.writes: list[str] = []
         self.selections: list[tuple[int, int]] = []
         self.do_action_result = True
+        # Component.grab_focus: None = not exposed, True = focuses, "raise" =
+        # errors like GTK 4 (which does not implement GrabFocus).
+        self.grab_focus: bool | str | None = None
 
     def _check(self) -> None:
         if self.broken:
@@ -271,7 +274,17 @@ class FakeAccessible:
             assert coord is FakeAtspi.CoordType.WINDOW, "the backend reads WINDOW-relative extents"
             return FakeRect(*node.extents)
 
-        return types.SimpleNamespace(get_extents=get_extents)
+        iface = types.SimpleNamespace(get_extents=get_extents)
+        if node.grab_focus is not None:
+
+            def grab_focus() -> bool:
+                if node.grab_focus == "raise":
+                    raise RuntimeError("atspi_error: GrabFocus not implemented")
+                node.states.add("FOCUSED")
+                return True
+
+            iface.grab_focus = grab_focus
+        return iface
 
     def get_text_iface(self) -> Any:
         self._check()
@@ -376,12 +389,16 @@ class InputRecorder:
     def __init__(self, niri: FakeNiri) -> None:
         self.niri = niri
         self.calls: list[tuple[Any, ...]] = []
+        # Optional reaction to a pointer click (a real click focusing a field).
+        self.on_click: Any = None
 
     def _focused(self) -> int | None:
         return self.niri.focused_id()
 
     def click(self, target: Any, point: Any, button: str, count: int) -> None:
         self.calls.append(("click", target, point, button, count, self._focused()))
+        if self.on_click is not None:
+            self.on_click(point)
 
     def drag(self, target: Any, start: Any, end: Any) -> None:
         self.calls.append(("drag", target, start, end, self._focused()))

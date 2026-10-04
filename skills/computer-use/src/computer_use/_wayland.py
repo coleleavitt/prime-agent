@@ -743,6 +743,48 @@ def _is_settable(ref: Any, attribute: str = "AXValue") -> bool:
         return _call(ref.get_editable_text_iface) is not None and _has(atspi, _states(ref), "EDITABLE")
 
 
+def _is_text_field(ref: Any) -> bool:
+    """Report whether an element is a text field: editable text or a password field.
+
+    Clicking a field means focusing it; its default AT-SPI action is
+    `activate` (Enter), which must never stand in for a click.
+    """
+    atspi = _atspi()
+    with _ATSPI_LOCK:
+        if _is_secure_role(atspi, ref):
+            return True
+        return _call(ref.get_editable_text_iface) is not None and _has(atspi, _states(ref), "EDITABLE")
+
+
+def _focus_text_field(ref: Any) -> bool:
+    """Ask the toolkit to focus a field through AT-SPI Component.grab_focus.
+
+    Returns True once the element reports STATE_FOCUSED. GTK 4 does not
+    implement GrabFocus (the call errors), so False sends the caller to a real
+    pointer click instead.
+    """
+    atspi = _atspi()
+    with _ATSPI_LOCK:
+        component = _call(ref.get_component_iface)
+        grab_focus = getattr(component, "grab_focus", None)
+        if grab_focus is None or not _call(grab_focus, default=False):
+            return False
+        return _has(atspi, _states(ref), "FOCUSED")
+
+
+def _wait_focused(ref: Any, timeout_seconds: float = 0.5) -> bool:
+    """Poll an element's STATE_FOCUSED until it holds or the bound runs out."""
+    atspi = _atspi()
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        with _ATSPI_LOCK:
+            if _has(atspi, _states(ref), "FOCUSED"):
+                return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.02)
+
+
 def _set_value(ref: Any, value: str) -> None:
     """Replace an editable element's text through EditableText.set_text_contents."""
     _atspi()

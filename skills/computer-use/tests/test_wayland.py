@@ -734,6 +734,44 @@ class AppWaylandTests(unittest.TestCase):
             [("click", target, (304.0, 81.0), "left", 1, 10), ("click", target, (154.0, 81.0), "right", 1, 10)],
         )
 
+    def _editor_with_password(self, grab_focus: bool | str | None) -> tuple[FakeAtspi, FakeAccessible]:
+        atspi = FakeAtspi([editor_app(), floaty_app()])
+        frame = atspi.desktop.children[0].children[0]
+        password = frame.children[2]
+        password.actions = ["activate"]
+        password.grab_focus = grab_focus
+        frame.children[1].states.discard("FOCUSED")
+        return atspi, password
+
+    def test_clicking_a_field_focuses_it_through_grab_focus(self) -> None:
+        atspi, password = self._editor_with_password(grab_focus=True)
+        with fakes_wayland.wayland_app_environment(atspi=atspi) as env:
+            app = self.bind()
+            run(app.click(2))
+        self.assertIn("FOCUSED", password.states)
+        self.assertEqual(password.performed, [], "a field's activate (Enter) never stands in for a click")
+        self.assertEqual(env.input.calls, [])
+
+    def test_without_grab_focus_a_field_click_is_a_real_pointer_click(self) -> None:
+        # GTK 4 does not implement GrabFocus: the click falls back to the pointer.
+        atspi, password = self._editor_with_password(grab_focus="raise")
+        with fakes_wayland.wayland_app_environment(atspi=atspi) as env:
+            env.input.on_click = lambda point: password.states.add("FOCUSED")
+            app = self.bind()
+            run(app.click(2))
+        self.assertEqual(password.performed, [])
+        self.assertEqual([call[0] for call in env.input.calls], ["click"])
+        self.assertIn("FOCUSED", password.states)
+
+    def test_a_field_that_never_takes_focus_fails_the_click(self) -> None:
+        atspi, password = self._editor_with_password(grab_focus="raise")
+        with fakes_wayland.wayland_app_environment(atspi=atspi):
+            app = self.bind()
+            with self.assertRaises(ComputerUseError) as caught:
+                run(app.click(2))
+        self.assertEqual(caught.exception.code, "INJECTION_FAILED")
+        self.assertEqual(password.performed, [], "never silently activates instead")
+
     def test_screenshot_points_scale_back_to_logical(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.object(_wayland.capture, "_SCREENSHOTS_DIR", Path(tmp) / "s"):

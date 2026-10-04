@@ -794,6 +794,21 @@ class App:
             if wayland is not None:
                 if isinstance(target, int) and not isinstance(target, bool):
                     element, ref = self._element(target)
+                    if button == "left" and count == 1 and wayland._is_text_field(ref):
+                        # Clicking into a field focuses it; its default action
+                        # (activate = Enter) never stands in for that. Toolkits
+                        # without AT-SPI GrabFocus (GTK 4) get a real pointer
+                        # click, and the focus must land or the click fails.
+                        if not wayland._focus_text_field(ref):
+                            wayland._click(self._pid, self._element_center(target), button="left", count=1)
+                            if not wayland._wait_focused(ref):
+                                raise ComputerUseError(
+                                    "INJECTION_FAILED",
+                                    f"element [{target}] did not take keyboard focus; re-observe and retry, "
+                                    "or use set_value() for an editable field",
+                                    {"element_index": target},
+                                )
+                        return
                     press = wayland._press_action(element.get("actions") or [])
                     if button == "left" and count == 1 and press is not None:
                         wayland._perform_action(ref, press)
