@@ -112,14 +112,13 @@ impl Agent {
     /// Never awaits a model turn (the decision is one synchronous
     /// critical section); a run failure after admission rides the
     /// events.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the `model_override`, `run`, `steering_queue`, or
-    /// `follow_up_queue` mutex is poisoned (another task panicked while
-    /// holding one of them).
     pub fn admit_or_enqueue(&self, batch: impl Into<AgentMessageBatch>) -> AdmitStatus {
-        let run_override = self.inner.model_override.lock().unwrap().clone();
+        let run_override = self
+            .inner
+            .model_override
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         match self.inner.claim_or_enqueue(batch.into()) {
             ClaimOrEnqueue::Enqueued => AdmitStatus::Busy,
             ClaimOrEnqueue::Claimed { claim, batch } => {
@@ -148,14 +147,13 @@ impl Agent {
     /// wake. The idle-queued wake is reflected inside the same critical
     /// section (armed for leftovers, cleared when the drain emptied the
     /// queues), so the pump converges without spinning.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the `model_override`, `run`, `steering_queue`, or
-    /// `follow_up_queue` mutex is poisoned (another task panicked while
-    /// holding one of them).
     pub fn admit_queued_turn(&self) -> QueuedAdmission {
-        let run_override = self.inner.model_override.lock().unwrap().clone();
+        let run_override = self
+            .inner
+            .model_override
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         match self.inner.claim_or_drain() {
             QueuedClaim::Busy => QueuedAdmission::Busy,
             QueuedClaim::Empty => QueuedAdmission::Empty,
@@ -201,17 +199,17 @@ impl Agent {
     ///
     /// Returns [`AgentBusyRefusal`] when a run is active; nothing was
     /// admitted or queued. No other error exists at admission.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the `model_override` or `run` mutex is poisoned (another
-    /// task panicked while holding one of them).
     pub fn admit_prompt_or_busy(
         &self,
         input: impl Into<AgentPromptInput>,
     ) -> anyhow::Result<AdmittedTurn> {
         let messages = AgentInner::normalize_prompt_input(input.into());
-        let run_override = self.inner.model_override.lock().unwrap().clone();
+        let run_override = self
+            .inner
+            .model_override
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         let Some(claim) = self.inner.claim_run_slot(None) else {
             return Err(anyhow::Error::new(AgentBusyRefusal));
         };
