@@ -37,7 +37,9 @@ on `perf/session-catalog-resume`, and `docs/ravo-architecture.md` there.
   the next boundary that finds the slot empty), and an agent `refine.run` joining it makes it directed. A refine is
   charged its triggers (on the session's own record when the judged ledger lacks them) and, unless it is a failure
   refine, the recent recurrences; a failure refine that claims nothing is `reject_unclaimed`; results carry
-  `triggerFingerprintIds`.
+  `triggerFingerprintIds`. A request an aborted turn drops unserviced releases its fingerprints (and those of the
+  requests parked behind it, dropped with it) so they may queue a repair again, except fingerprints a running refine
+  still carries (TS `_releaseRefineTriggers` on `refine_failed` for a cancelled request).
 - Trust (`harness-trust.ts`, `trust-adjudication.ts`, the trust half of `agent-session.ts`): every entry a gated commit
   writes carries a trust record (`trust`: default 50, clamped to [0, 100], the last 20 events); a commit that claims
   fingerprints opens a window over the entries it wrote (`trustWindows[<proposalId>]`: touched `kind:id`s, claimed
@@ -67,9 +69,6 @@ on `perf/session-catalog-resume`, and `docs/ravo-architecture.md` there.
 
 ## Non-goals (this slice)
 
-- Releasing a queued failure refine's fingerprints when it is cancelled before it applies (TS `refine_failed`): the
-  native turn boundary drops a pending refine on an aborted turn without telling the feature, so a dropped request's
-  fingerprints stay triggered for the rest of the session.
 - The trajectory-index mute of internalized recurrence reminders (`_trajectoryInternalizedReminders`, phase 4).
 - Trust bookkeeping on ungated refines: TS gave every entry any refine wrote a default trust record and settled the
   target store's windows at every apply; here only a gated commit does (an absent record reads as the default score,
@@ -91,6 +90,7 @@ on `perf/session-catalog-resume`, and `docs/ravo-architecture.md` there.
   at apply time and records `ravo` into the saved state and the report on the result.
 - `RefinementGate::lock_store`: a global refine holds the harness state lock (`pa_ledger::acquire_harness_state_lock`,
   the TS `proper-lockfile` protocol every ledger flush takes) from the re-read of the global store until its save.
+- `RefineRequester::on_dropped`: the session tells RAVO about a pending refine an aborted turn dropped.
 - `RefinementGate::attach_refine_requester`: the session's `RefineRequester`, through which RAVO queues its own refines
   (with a `RefineTrigger` carrying `{reason, kind, triggerFingerprintIds}`) onto the pending refine the next serviced
   turn boundary consumes. The ledger reports boundaries from its worker thread, so a request lands at the boundary the

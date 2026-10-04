@@ -749,3 +749,57 @@ fn the_gate_offers_the_global_default_auto_refine_policy() {
     });
     assert!(disabled.auto_refine_policy(&session.context).is_none());
 }
+
+/// An aborted turn drops the pending repair unserviced: it repaired
+/// nothing, so the failure that queued it may queue a repair again at the
+/// next boundary (TS `refine_failed` releasing a cancelled request's
+/// triggers); a repair that ran keeps it triggered for the session.
+#[tokio::test]
+async fn a_dropped_repair_releases_its_failure_to_queue_again() {
+    let mut session = session();
+    let requests = Arc::new(TurnBoundaryRequests::new());
+    let gate = session.ravo.refinement_gate(&session.context).unwrap();
+    gate.attach_refine_requester(RefineRequester::new(&requests));
+    let fingerprint = fingerprint_tool_result_text(Some("bash"), "boom: exit 1", true)
+        .unwrap()
+        .id;
+    session.failing_turn();
+    session.failing_turn();
+    let recurrence = requests.take_refine().await.expect("a recurrence refine");
+    let options = RefineOptions {
+        trigger: recurrence.trigger.clone(),
+        instructions: recurrence.instructions.clone(),
+        ..RefineOptions::default()
+    };
+    let claim = format!(
+        r#"{{"verdict":"pass","score":80,"failedCriteria":[],"addressedFingerprints":["{fingerprint}"],"rationale":"fixes it"}}"#
+    );
+    session
+        .refine_with(
+            &options,
+            RefinementSource::SelfRefine,
+            MEMORY_PLAN,
+            scripted(&claim),
+        )
+        .await;
+
+    session.failing_turn();
+    assert!(requests.refine_pending().await);
+    requests.clear_pending().await;
+    session.failing_turn();
+    let repair = requests
+        .take_refine()
+        .await
+        .expect("the released failure queues its repair again");
+    assert_eq!(
+        repair.trigger.unwrap().data,
+        json!({
+            "reason": "regression",
+            "kind": "failure",
+            "triggerFingerprintIds": [fingerprint]
+        })
+    );
+    // Taken to run, not dropped: still triggered.
+    session.failing_turn();
+    assert_eq!(requests.take_refine().await, None);
+}

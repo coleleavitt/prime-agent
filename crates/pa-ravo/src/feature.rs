@@ -103,6 +103,9 @@ struct Inner {
     /// Requests parked behind a pending one of the other scope.
     parked: Mutex<HashMap<String, Vec<PendingRefine>>>,
     trust: Arc<TrustTracker>,
+    /// The failures each session's running (evaluated, not yet finished)
+    /// refines were queued for, one entry per refine.
+    live_triggers: Mutex<HashMap<String, Vec<Vec<String>>>>,
     /// Each session's agent dir (where its global store lives).
     agent_dirs: Mutex<HashMap<String, std::path::PathBuf>>,
 }
@@ -135,6 +138,7 @@ impl RavoFeature {
                 triggered: Mutex::new(HashMap::new()),
                 parked: Mutex::new(HashMap::new()),
                 trust: Arc::default(),
+                live_triggers: Mutex::new(HashMap::new()),
                 agent_dirs: Mutex::new(HashMap::new()),
             }),
         };
@@ -214,6 +218,34 @@ impl Inner {
         self.verifier.wait_idle(deadline)
             && self.trust.wait_idle(deadline)
             && self.verifier.wait_idle(deadline)
+    }
+
+    /// A dropped request repaired nothing: the failures that queued it may
+    /// queue a repair again, except those a running refine still carries
+    /// (TS `_releaseRefineTriggers`). The requests parked behind it are
+    /// dropped with it (TS `_dropPendingRefineRequests`).
+    fn release_dropped(&self, session_id: &str, dropped: &PendingRefine) {
+        let parked = lock(&self.parked).remove(session_id).unwrap_or_default();
+        let held: Vec<String> = lock(&self.live_triggers)
+            .get(session_id)
+            .map(|live| live.iter().flatten().cloned().collect())
+            .unwrap_or_default();
+        let mut triggered = lock(&self.triggered);
+        let Some(triggered) = triggered.get_mut(session_id) else {
+            return;
+        };
+        for request in std::iter::once(dropped).chain(&parked) {
+            let Some(request) = request.trigger.as_ref().and_then(read_trigger) else {
+                continue;
+            };
+            for id in &request.trigger_fingerprint_ids {
+                if held.contains(id) {
+                    continue;
+                }
+                triggered.remove(&format!("recurrence:{id}"));
+                triggered.remove(&format!("regression:{id}"));
+            }
+        }
     }
 
     fn enabled(&self) -> bool {
@@ -449,6 +481,13 @@ impl RefinementGate for SessionGate {
     }
 
     fn attach_refine_requester(&self, requester: RefineRequester) {
+        let inner = Arc::downgrade(&self.inner);
+        let session_id = self.context.session_id.clone();
+        requester.on_dropped(Arc::new(move |dropped: &PendingRefine| {
+            if let Some(inner) = inner.upgrade() {
+                inner.release_dropped(&session_id, dropped);
+            }
+        }));
         lock(&self.inner.requesters).insert(self.context.session_id.clone(), requester);
     }
 
@@ -471,6 +510,7 @@ impl RefinementGate for SessionGate {
             .as_ref()
             .map(|failure| failure.trigger_fingerprint_ids.clone())
             .unwrap_or_default();
+        let live = LiveTriggers::hold(&self.inner, &self.context.session_id, &triggers);
         let (recurring, turn, clock) = self.charges(
             request.scope,
             &request.baseline_state,
@@ -521,6 +561,7 @@ impl RefinementGate for SessionGate {
                 session_id,
                 inner,
                 applying: Mutex::new(None),
+                _live: live,
             }) as Box<dyn RefinementGateVerdict>))
         })
     }
@@ -547,6 +588,48 @@ struct RavoVerdict {
     inner: Arc<Inner>,
     /// What `prepare_application` settled, for `record_application`.
     applying: Mutex<Option<Applying>>,
+    /// Marks the refine's failures live until the refine ends.
+    _live: LiveTriggers,
+}
+
+/// The failures a running refine carries, live while it is held.
+struct LiveTriggers {
+    inner: Arc<Inner>,
+    session_id: String,
+    ids: Vec<String>,
+}
+
+impl LiveTriggers {
+    fn hold(inner: &Arc<Inner>, session_id: &str, ids: &[String]) -> Self {
+        if !ids.is_empty() {
+            lock(&inner.live_triggers)
+                .entry(session_id.to_string())
+                .or_default()
+                .push(ids.to_vec());
+        }
+        Self {
+            inner: Arc::clone(inner),
+            session_id: session_id.to_string(),
+            ids: ids.to_vec(),
+        }
+    }
+}
+
+impl Drop for LiveTriggers {
+    fn drop(&mut self) {
+        if self.ids.is_empty() {
+            return;
+        }
+        let mut live = lock(&self.inner.live_triggers);
+        if let Some(refines) = live.get_mut(&self.session_id) {
+            if let Some(index) = refines.iter().position(|ids| *ids == self.ids) {
+                refines.remove(index);
+            }
+            if refines.is_empty() {
+                live.remove(&self.session_id);
+            }
+        }
+    }
 }
 
 /// The trust half of one admitted refine, between preparing the store and
