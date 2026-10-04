@@ -49,8 +49,15 @@ fn detect_python_skill(
         });
         return None;
     }
-    let package_init_path = skill_dir.join("src").join(&import_name).join("__init__.py");
-    if !package_init_path.is_file() {
+    // The src layout (src/<pkg>/__init__.py) or the flat one
+    // (<pkg>/__init__.py): the editable install handles either.
+    let has_package = [
+        skill_dir.join("src").join(&import_name),
+        skill_dir.join(&import_name),
+    ]
+    .iter()
+    .any(|package| package.join("__init__.py").is_file());
+    if !has_package {
         diagnostics.push(ResourceDiagnostic::Warning {
             message: format!("python skill package src/{import_name}/__init__.py not found"),
             path: Some(pyproject_path.display().to_string()),
@@ -355,4 +362,44 @@ fn load_skills_from_dir_internal(
         },
         state,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_python_skill_accepts_the_flat_package_layout_as_well_as_src() {
+        let tmp = tempfile::tempdir().unwrap();
+        for (skill_name, package_dir) in [
+            ("flat-skill", vec!["flat_skill"]),
+            ("src-skill", vec!["src", "src_skill"]),
+        ] {
+            let skill_dir = tmp.path().join(skill_name);
+            let package = package_dir
+                .iter()
+                .fold(skill_dir.clone(), |path, part| path.join(part));
+            std::fs::create_dir_all(&package).unwrap();
+            std::fs::write(package.join("__init__.py"), "").unwrap();
+            std::fs::write(skill_dir.join("pyproject.toml"), "[project]\n").unwrap();
+            std::fs::write(
+                skill_dir.join("SKILL.md"),
+                format!("---\nname: {skill_name}\ndescription: a python skill\n---\nbody"),
+            )
+            .unwrap();
+            let (skill, diagnostics) = load_skill_from_file(&skill_dir.join("SKILL.md"), "path");
+            assert_eq!(
+                (skill.and_then(|skill| skill.python), diagnostics),
+                (
+                    Some(SkillPythonMetadata {
+                        import_name: skill_name.replace('-', "_"),
+                        package_path: skill_dir.clone(),
+                        pyproject_path: skill_dir.join("pyproject.toml"),
+                    }),
+                    Vec::new()
+                ),
+                "{skill_name}"
+            );
+        }
+    }
 }

@@ -1,0 +1,1 @@
+- Python skills with a flat package layout (`<package>/__init__.py` at the skill root) are now recognized, as well as the `src/<package>/` layout.
