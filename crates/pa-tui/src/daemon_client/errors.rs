@@ -98,6 +98,7 @@ pub fn is_daemon_unreachable(error: &anyhow::Error) -> bool {
                 || cause.contains("prime agent daemon closed")
                 || cause.contains("direct session connection closed")
                 || cause.contains("the session connection closed")
+                || cause.contains(crate::direct_transport::LINK_CLOSED_BY_CLIENT)
         })
 }
 

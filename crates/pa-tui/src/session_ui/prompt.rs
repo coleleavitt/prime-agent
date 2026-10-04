@@ -886,6 +886,20 @@ impl SessionUi {
         view: &mut AgentView,
     ) -> Result<()> {
         self.prompt_in_flight = self.prompt_in_flight.saturating_sub(1);
+        // This client closed the submit's direct link itself (a switch or close is underway)
+        // after the frame was queued: the daemon owns that prompt, and the closing caller has
+        // moved on, so the outcome is no failure of the submit — it stays silent like a success.
+        // (The switch may close the link before it remounts, so the session check below can
+        // still read the old session here.)
+        if note.result.as_ref().is_err_and(|error| {
+            error.chain().any(|cause| {
+                cause
+                    .to_string()
+                    .contains(crate::direct_transport::LINK_CLOSED_BY_CLIENT)
+            })
+        }) {
+            return Ok(());
+        }
         // The submit's session is no longer the mounted one: the outcome never applies bookkeeping
         // to the new session, but a FAILED outlived submit still shows its error row and retains
         // its rejected draft into the session it was typed for; a succeeded one stays silent.

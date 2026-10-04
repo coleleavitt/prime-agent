@@ -5111,6 +5111,13 @@ async fn tui_submit_outlived_by_switch_stays_silent_on_the_new_session() {
             pa_tui::interactive::HeadlessStep::Submit(format!("/switch {second}")),
             pa_tui::interactive::HeadlessStep::WaitIdle { timeout_ms: 30_000 },
             pa_tui::interactive::HeadlessStep::Submit("for b".to_string()),
+            // WaitIdle alone can pass in the gap between the prompt's ack and
+            // its turn's start (nothing is in flight or active yet): wait for
+            // the reply this test asserts on, then for the turn to settle.
+            pa_tui::interactive::HeadlessStep::WaitRender {
+                needle: "b turn reply".to_string(),
+                timeout_ms: 30_000,
+            },
             pa_tui::interactive::HeadlessStep::WaitIdle { timeout_ms: 30_000 },
         ],
         width: 100,

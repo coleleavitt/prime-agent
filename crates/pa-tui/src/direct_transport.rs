@@ -33,6 +33,15 @@ pub(crate) const TICKET_TIMEOUT_MS: u64 = 5_000;
 /// The supervisor capability that enables the upgrade.
 pub(crate) const DIRECT_PEER_TRANSPORT_CAPABILITY: &str = "direct_peer_transport";
 
+/// Why direct-link requests in flight fail when this client closed the link
+/// itself (a session switch, `close`, a link replacement): the request was
+/// queued, so the daemon owns it, and the caller that closed the link has
+/// moved on. Distinct from [`LINK_LOST`], the worker's own exit.
+pub(crate) const LINK_CLOSED_BY_CLIENT: &str = "the session connection was closed by this client";
+
+/// Why direct-link requests in flight fail when the worker side went away.
+const LINK_LOST: &str = "the session connection closed";
+
 /// One live direct link to a session worker.
 #[derive(Debug, Clone)]
 pub(crate) struct DirectLink {
@@ -281,12 +290,20 @@ pub(crate) async fn connect_direct(
             }
             // The worker socket closed: every direct-link request in
             // flight fails now instead of riding out its timeout.
-            shared.fail_pending("direct_", "the session connection closed");
             // An intentional close (client `close`, session switch, link
             // replacement) marks the link dead before its writer's
             // shutdown reaches this EOF; only an unmarked exit is the
             // worker's own death, which arms the re-attach loop.
-            if alive.swap(false, Ordering::SeqCst) {
+            let lost = alive.swap(false, Ordering::SeqCst);
+            shared.fail_pending(
+                "direct_",
+                if lost {
+                    LINK_LOST
+                } else {
+                    LINK_CLOSED_BY_CLIENT
+                },
+            );
+            if lost {
                 let _ = event_tx.send(DaemonClientEvent::DirectLinkLost {
                     active_session_id: active_session_id.clone(),
                 });
