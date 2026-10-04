@@ -1418,6 +1418,7 @@ dependencies = [
  "anyhow",
  "indexmap",
  "pa-agent",
+ "pa-ai",
  "pa-core",
  "pa-ledger",
  "pa-telemetry",
@@ -1426,7 +1427,9 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "thiserror",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]

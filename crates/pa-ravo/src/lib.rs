@@ -9,6 +9,8 @@ mod gate;
 mod js;
 mod reducer;
 mod referee;
+mod run;
+mod run_host;
 mod runner;
 mod trigger;
 mod trust;
@@ -26,6 +28,11 @@ pub use gate::*;
 pub use js::{canonical_json, locale_compare, sha256_hex};
 pub use reducer::*;
 pub use referee::*;
+pub use run::{
+    parse_ravo_run_payload, ModelFailure, ModelReply, NotStarted, RavoModel, RavoRunRequest,
+    RavoRunService, RunServiceDeps, RunStores, StatusListener,
+};
+pub use run_host::{ModelFactory, SessionModel, RAVO_RUN_EVENT};
 pub use runner::{PythonReplayRunner, DEFAULT_REPLAY_TIMEOUT};
 pub use trust::*;
 pub use trust_adjudication::*;

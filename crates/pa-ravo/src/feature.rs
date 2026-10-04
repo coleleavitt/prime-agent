@@ -106,6 +106,8 @@ struct Inner {
     /// The failures each session's running (evaluated, not yet finished)
     /// refines were queued for, one entry per refine.
     live_triggers: Mutex<HashMap<String, Vec<Vec<String>>>>,
+    /// The `ravo.run` services.
+    run_host: Arc<crate::run_host::RunHost>,
     /// Each session's agent dir (where its global store lives).
     agent_dirs: Mutex<HashMap<String, std::path::PathBuf>>,
 }
@@ -127,6 +129,8 @@ impl RavoFeature {
     /// [`Self::attach_ledger`] once the ledger feature exists.
     #[must_use]
     pub fn new(options: RavoOptions) -> Self {
+        let runner = Arc::clone(&options.runner);
+        let replay_sys_path = options.replay_sys_path.clone();
         let feature = Self {
             inner: Arc::new(Inner {
                 options,
@@ -139,6 +143,15 @@ impl RavoFeature {
                 parked: Mutex::new(HashMap::new()),
                 trust: Arc::default(),
                 live_triggers: Mutex::new(HashMap::new()),
+                run_host: Arc::new(crate::run_host::RunHost {
+                    runner: Arc::clone(&runner),
+                    replay_sys_path,
+                    model: Mutex::new(Arc::new(|context: &SessionFeatureContext| {
+                        Arc::new(crate::run_host::SessionModel::new(context))
+                            as Arc<dyn crate::run::RavoModel>
+                    })),
+                    services: Mutex::new(HashMap::new()),
+                }),
                 agent_dirs: Mutex::new(HashMap::new()),
             }),
         };
@@ -174,6 +187,20 @@ impl RavoFeature {
     pub fn wait_replay_checks(&self, timeout: std::time::Duration) -> bool {
         self.inner
             .wait_referee_runs(std::time::Instant::now() + timeout)
+    }
+
+    /// Prompt `ravo.run`'s children with the model `factory` builds for a
+    /// session instead of the session model (tests script it).
+    ///
+    #[must_use]
+    pub fn with_run_model(self, factory: crate::run_host::ModelFactory) -> Self {
+        *self
+            .inner
+            .run_host
+            .model
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = factory;
+        self
     }
 
     /// Give the feature the ledger's handle; later calls are ignored.
@@ -260,6 +287,16 @@ impl SessionFeature for RavoFeature {
         "ravo"
     }
 
+    /// `ravo.run`, `ravo.status` and `ravo.cancel` (the bundled `ravo`
+    /// skill's host side).
+    fn register_host_handlers(
+        &self,
+        context: &SessionFeatureContext,
+        handlers: &mut pa_core::kernel::shared::HostRequestHandlers,
+    ) {
+        crate::run_host::register(&self.inner.run_host, context, handlers);
+    }
+
     /// Let running replay self-checks finish, so the ledger's exit flush
     /// (installed after this feature) writes what they verified.
     fn flush(&self, deadline: std::time::Instant) {
@@ -302,7 +339,7 @@ impl SessionFeature for RavoFeature {
 }
 
 /// Withholds entries whose measured trust fell below the threshold.
-struct DormantEntries;
+pub(crate) struct DormantEntries;
 
 impl HarnessRenderFilter for DormantEntries {
     fn withholds(&self, entry: &HarnessEntry) -> bool {

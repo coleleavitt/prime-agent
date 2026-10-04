@@ -61,6 +61,22 @@ on `perf/session-catalog-resume`, and `docs/ravo-architecture.md` there.
 - Global-default auto-refine (TS `4c99bf8c2`), while the gate is on: the automatic review's prompt asks for a `scope`
   (the TS system prompt and closing guidance), and an approved review runs a global refine unless the reviewer answered
   `"scope": "local"`, with the TS instructions for either scope. With gating off the native (local) policy stays.
+- `ravo.run` (`run-service.ts`, `controller.ts`, `context-view.ts`, `archive.ts`, `handleRavoHostRequest`): the kernel
+  host requests `ravo.run` (task, instructions, `global`, `max_rounds`, `max_repairs`, `deadline_ms`, `token_budget`;
+  the TS validation messages), `ravo.status` (the latest run's status, or `{"phase": "idle"}`) and `ravo.cancel`. One
+  run per session at a time, in the background, available where refine is (a top-level session with a local harness
+  store). The controller loop: inspect, plan (a supervisor child after two rejections), implement or repair, evaluate
+  (the structural fast screen, one memoized judge call serving the deep gate and the five hygiene opponents, failure
+  and referee opponents over the run's recurring failures with one memoized referee pass, dormant passes for
+  persisted criteria the run does not observe), step the reducer, and on a committed certificate the commit gate (the
+  reducer replay, the stored RAVO state compared without recorded recurrences, apply, mark the champion provisional
+  with its claims, keep recurrences recorded meanwhile, save; a global run under the harness state lock) and the
+  archive's champion compare-and-set; otherwise diagnose and repair, until accepted or a round, repair, deadline
+  (20 min) or token (1.5M, 60k admission floor per call) limit, cancellation, or a stale state (`stale_cas`). Each
+  child is one JSON-only prompt to the session model (resolved and authorized through the model registry), retried
+  once on an invalid reply. Each phase is checkpointed to `<store>/ravo/runs/<runId>.json` (removed on acceptance) and
+  every step appended to the hash-chained archive `<store>/ravo/archive/{events.jsonl,state.json}`; each evaluated
+  proposal logs its outcome (`refinement.committed` / `refinement.rejected`, reason `ravo_run`).
 - Replay self-checks (`_startReplayVerification`): each boundary's newly derived, unverified cases run off the turn
   path in the sanitized environment, one batch at a time per session on a thread of their own, each (fingerprint,
   source) once per session and never one the ledger already holds verified; a reproduction is queued through
@@ -78,9 +94,14 @@ on `perf/session-catalog-resume`, and `docs/ravo-architecture.md` there.
 - The skill dry-run in the fast screen (`skill-dry-run.ts`); the screen is structural only.
 - Evidence drift and the stale-evidence re-plan; the RAVO archive (`refinement-ravo/`); the rejection-history and
   related-rejection prompt sections; per-session `local-refinements/<id>.jsonl`.
-- `ravo.run` / `/ravo` (`RavoRunService`, controller, retained worker runtime, context view, error-budget ledger), the
-  skill, the `ravo_run_update` daemon event and the agents-view line, and the ARC-AGI evaluator (benchmark code; keep it
-  outside the product).
+- Around `ravo.run`: the bundled `ravo` skill (a file under the repository's `skills/` is discovered by every build, the
+  native one included, so it needs a feature-contributed skill seam and packaging for it), the `/ravo` slash command
+  (the command table is the static `pa_types::slash_commands` vocabulary shared with the TUI), the `ravo_run_update`
+  daemon event and the agents-view line (the daemon event set is closed; status updates are a `debug` record under
+  `pa_ravo::run`), the retained worker runtime (children are single provider calls), resuming from a checkpoint,
+  probabilistic deep evaluators and the error-budget ledger's allocations (no product evaluator is probabilistic; the
+  ledger snapshot is the empty one), concurrent evaluators (they run one at a time), the skill dry-run in the fast
+  screen, and the ARC-AGI evaluator (benchmark code, outside the product; `arc_agi` is refused).
 
 ## Seams
 
@@ -105,6 +126,7 @@ on `perf/session-catalog-resume`, and `docs/ravo-architecture.md` there.
   evidence and settles the windows of the document being written; the global flush's span gets `trust.recurrences`,
   `trust.adjudications`, `trust.faulted`, `trust.clean`, `trust.contested`), `LedgerHandle::request_global_flush`
   (after a global verdict) and `pending_replay_verifications` (what a planned replay's record will carry).
+- `SessionFeature::register_host_handlers`: `ravo.run`, `ravo.status`, `ravo.cancel`.
 - `pa_ledger::LedgerObserver` (built into `FailureLedgerFeature::with_observers` by `pa-cli`) and
   `pa_ledger::LedgerHandle` (`attach_ledger`): `on_boundary` finds provisional regressions on each window's own clock
   (local lineage on the local and, with the global ledger on, the global ordinal; the global lineage on the global
@@ -123,6 +145,8 @@ on `perf/session-catalog-resume`, and `docs/ravo-architecture.md` there.
 - The `trustWindows` key of both harness states (field order of the TS objects, keys added by evidence and settlement
   in the order the TS spreads add them; byte-compatible, `tests/trust_golden.rs` against `trust.json` written by
   `trust-generate.ts` from the TS source under node) and the `trust` key of their entries.
+- `<store>/ravo/runs/<runId>.json` (run checkpoints) and `<store>/ravo/archive/` (`events.jsonl`, `state.json`,
+  `.archive.lock`) of the store a run targets.
 - The `ravo` and `rejectionCause` keys of the refinement results the session records.
 
 Known, deliberate differences: `localeCompare` is ICU's root order for printable ASCII (the identifiers RAVO sorts);
@@ -136,7 +160,9 @@ differently. A judge reply that is not JSON reports `serde_json`'s parse error w
 (`refinement.committed`, `refinement.applied_unmeasured`, `refinement.rejected`) is a `tracing` event under
 `pa_ravo::refinement`; each settled window (`harness.trust.settled`: proposal, scope, from, outcome, ordinal,
 fingerprints) and each moved score (`harness.trust.adjusted`: proposal, scope, entry, reason, delta, before, after,
-dormant, fingerprint) under `pa_ravo::harness_trust`. Trust adds no telemetry event: it is not user-invoked.
+dormant, fingerprint) under `pa_ravo::harness_trust`. Trust adds no telemetry event: it is not user-invoked. `ravo_run` (schema v4): `outcome` (the stop reason or `error`),
+`scope`, `rounds`, `repairs`, once a run settles; never the task, a proposal or child text. A run's spans: `ravo.run`,
+`ravo.round`, `ravo.proposal`, `ravo.evaluation` with the TS `ravo.*` attributes.
 
 ## Public API
 
