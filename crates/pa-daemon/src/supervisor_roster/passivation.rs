@@ -818,6 +818,7 @@ fn passivation_keeps_registration_marks_and_strips_live_fields() {
         "isCompacting": true,
         "attachedClients": 2,
         "directAttachedClients": 2,
+        "featureStatus": { "stub": { "line": "stub: running", "status": { "phase": "running" } } },
         "hasActiveHeartbeat": true,
         "hasRegisteredHeartbeat": true,
         "hasRegisteredCronJob": false,
@@ -839,6 +840,7 @@ fn passivation_keeps_registration_marks_and_strips_live_fields() {
     for key in [
         "activeSessionId",
         "directAttachedClients",
+        "featureStatus",
         "hasActiveHeartbeat",
         "hasRegisteredCronJob",
         "hasRunningRlmChildren",

@@ -253,11 +253,26 @@ impl AgentsViewMode {
         frame_row: usize,
     ) -> Vec<Line> {
         /// One rendered display entry: the spacer between section blocks, a section heading,
-        /// or one row (carrying its `self.rows` index — the click surface's row identity).
+        /// one row (carrying its `self.rows` index — the click surface's row identity), or one
+        /// of an agent row's feature status sub-lines (TS `ravo`/`dream` display items, under
+        /// their row and carrying its index).
         enum DisplayItem<'a> {
             Spacer,
             Heading(Section),
             Row(usize, &'a AgentsViewRow),
+            Status(usize, &'a AgentsViewRow, String),
+        }
+        /// A row's display entries: the row, then (agent rows only, as TS) one sub-line per
+        /// feature status by feature name.
+        fn push_row<'a>(display: &mut Vec<DisplayItem<'a>>, index: usize, row: &'a AgentsViewRow) {
+            display.push(DisplayItem::Row(index, row));
+            if row.kind == RowKind::Agent {
+                display.extend(
+                    feature_status_lines(&row.summary)
+                        .into_iter()
+                        .map(|line| DisplayItem::Status(index, row, line)),
+                );
+            }
         }
         // The click surface records this render's visible rows; the early exits below leave it
         // empty.
@@ -305,17 +320,14 @@ impl AgentsViewMode {
                         include = row.kind == RowKind::Agent && row.section == *section;
                     }
                     if include {
-                        display.push(DisplayItem::Row(index, row));
+                        push_row(&mut display, index, row);
                     }
                 }
             }
         } else {
-            display.extend(
-                self.rows
-                    .iter()
-                    .enumerate()
-                    .map(|(index, row)| DisplayItem::Row(index, row)),
-            );
+            for (index, row) in self.rows.iter().enumerate() {
+                push_row(&mut display, index, row);
+            }
         }
         // The viewport: reserve the column header and its spacer, center the slice on the
         // selected row, clip the overflow — a re-sorting rebuild keeps the selection on-screen.
@@ -337,8 +349,20 @@ impl AgentsViewMode {
         let show_leading = start > 0 && visible_rows > 1;
         let show_trailing = start + visible_rows < display.len() && visible_rows > 2;
         let content_rows = visible_rows - usize::from(show_leading) - usize::from(show_trailing);
-        let slice_start = if selected_display_index >= start as isize + content_rows as isize {
-            (selected_display_index + 1 - content_rows as isize) as usize
+        // The selected row's block (the row plus its status sub-lines) stays in the slice while
+        // it fits; the row itself always does. Without sub-lines the block is the row alone.
+        let block_last = match usize::try_from(selected_display_index) {
+            Ok(selected) => {
+                selected_display_index
+                    + display[selected + 1..]
+                        .iter()
+                        .take_while(|item| matches!(item, DisplayItem::Status(..)))
+                        .count() as isize
+            }
+            Err(_) => selected_display_index,
+        };
+        let slice_start = if block_last >= start as isize + content_rows as isize {
+            (block_last + 1 - content_rows as isize).min(selected_display_index) as usize
         } else {
             start
         };
@@ -348,6 +372,17 @@ impl AgentsViewMode {
         let shift = header_rows + usize::from(show_leading);
         let mut lines: Vec<Line> = Vec::with_capacity(content_rows);
         let mut click_rows: Vec<(usize, usize)> = Vec::new();
+        // The hover rides the session under the mouse: a hovered status sub-line bands its row.
+        let hovered_index = display[slice_start..slice_end].iter().enumerate().find_map(
+            |(local, item)| match item {
+                DisplayItem::Row(index, _) | DisplayItem::Status(index, _, _)
+                    if self.hover_row == Some(frame_row + local + shift) =>
+                {
+                    Some(*index)
+                }
+                _ => None,
+            },
+        );
         for item in &display[slice_start..slice_end] {
             let local = lines.len();
             match item {
@@ -365,11 +400,17 @@ impl AgentsViewMode {
                 DisplayItem::Row(index, row) => {
                     // The row's frame position carries the hover (operator directive
                     // 2026-09-29): the light band rides the row the mouse rests on.
-                    let frame_position = frame_row + local + shift;
-                    let hovered = self.hover_row == Some(frame_position);
+                    let hovered = hovered_index == Some(*index);
                     lines.push(self.render_row(row, &layout, width, hovered));
                     // Only selectable rows open on a click (a program
                     // row is read-only context).
+                    if row.selectable() {
+                        click_rows.push((local, *index));
+                    }
+                }
+                DisplayItem::Status(index, row, line) => {
+                    lines.push(self.render_status_line(row, line, width));
+                    // A sub-line is part of its session's click target.
                     if row.selectable() {
                         click_rows.push((local, *index));
                     }
@@ -584,16 +625,16 @@ impl AgentsViewMode {
             .cloned()
             .unwrap_or_default();
         line.push(theme.fg(ThemeColor::Dim, details));
-        // Installed features' live status (the roster summary's
-        // `featureStatus`): after the fixed columns, clipped by the row.
-        if let Some(status) = feature_status_text(&row.summary) {
-            line.push(crate::Span::styled(
-                "  ".to_string(),
-                ratatui::style::Style::default(),
-            ));
-            line.push(theme.fg(ThemeColor::Accent, status));
-        }
         finish_session_row(theme, line, selected, hovered, width)
+    }
+
+    /// One feature status sub-line under its agent row (TS `renderRavoRow`/`renderDreamRow`):
+    /// indented one level past the row, dim, hard-clipped to the width (no ellipsis), padded.
+    /// Never selection- or hover-painted: the band stays on the session row.
+    fn render_status_line(&self, row: &AgentsViewRow, line: &str, width: usize) -> Line {
+        let text = format!("{}{line}", "  ".repeat(row.depth + 1));
+        let text = crate::width::truncate_to_width(&text, width, "");
+        pad_line(vec![self.theme.fg(ThemeColor::Dim, text)], width)
     }
 
     /// The bottom hint/status line. `status_override` carries the
@@ -1078,48 +1119,55 @@ impl Renderer {
     }
 }
 
-/// The row's feature status lines (`featureStatus.<feature>.line`, by
-/// feature name), joined; `None` when no feature published one.
-pub(crate) fn feature_status_text(summary: &Value) -> Option<String> {
-    let statuses = summary.get("featureStatus")?.as_object()?;
-    let mut lines: Vec<(&String, &str)> = statuses
+/// The row's feature status lines (`featureStatus.<feature>.line`), by feature name: one
+/// display line each, a cleared (null or blank) line skipped, line breaks folded to one space
+/// (a status line occupies exactly one terminal row, TS `finalizeRenderedLine`).
+pub(crate) fn feature_status_lines(summary: &Value) -> Vec<String> {
+    let Some(statuses) = summary.get("featureStatus").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    let mut lines: Vec<(&String, String)> = statuses
         .iter()
         .filter_map(|(feature, entry)| {
-            entry
-                .get("line")
-                .and_then(Value::as_str)
-                .filter(|line| !line.trim().is_empty())
-                .map(|line| (feature, line))
+            let line = entry.get("line").and_then(Value::as_str)?;
+            let line = line
+                .split(['\r', '\n'])
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            (!line.trim().is_empty()).then_some((feature, line))
         })
         .collect();
     lines.sort_by(|a, b| a.0.cmp(b.0));
-    (!lines.is_empty()).then(|| {
-        lines
-            .into_iter()
-            .map(|(_, line)| line)
-            .collect::<Vec<_>>()
-            .join(" \u{b7} ")
-    })
+    lines.into_iter().map(|(_, line)| line).collect()
 }
 
 #[cfg(test)]
 mod feature_status_tests {
     use serde_json::json;
 
-    use super::feature_status_text;
+    use super::feature_status_lines;
 
     #[test]
-    fn feature_status_lines_join_by_feature_name_and_skip_cleared_ones() {
-        assert_eq!(feature_status_text(&json!({})), None);
+    fn feature_status_lines_order_by_feature_name_and_skip_cleared_ones() {
+        assert_eq!(feature_status_lines(&json!({})), Vec::<String>::new());
         assert_eq!(
-            feature_status_text(
-                &json!({ "featureStatus": { "zeta": { "line": "z" }, "alpha": { "line": "a running" }, "gone": { "line": null } } })
-            ),
-            Some("a running \u{b7} z".to_string())
+            feature_status_lines(&json!({ "featureStatus": {
+                "zeta": { "line": "z" },
+                "alpha": { "line": "a running" },
+                "gone": { "line": null },
+                "blank": { "line": "  " },
+                "multi": { "line": "one\r\ntwo\n" },
+            } })),
+            vec![
+                "a running".to_string(),
+                "one two".to_string(),
+                "z".to_string()
+            ]
         );
         assert_eq!(
-            feature_status_text(&json!({ "featureStatus": { "gone": { "line": null } } })),
-            None
+            feature_status_lines(&json!({ "featureStatus": { "gone": { "line": null } } })),
+            Vec::<String>::new()
         );
     }
 }
