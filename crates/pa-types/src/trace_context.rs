@@ -30,6 +30,12 @@ pub const FORWARDED_RECORD_TARGET: &str = "trace_context::forwarded";
 /// The event field holding a forwarded record's JSON object text.
 pub const FORWARDED_RECORD_FIELD: &str = "record";
 
+/// `tracing` target of an event that annotates the span it happens in
+/// instead of being logged: a recorder adds the event's fields to that
+/// span's attributes (dotted names kept), so code that does not own a span
+/// can still attach facts to it. Any other subscriber may ignore it.
+pub const SPAN_ATTRIBUTES_TARGET: &str = "trace_context::span_attributes";
+
 /// A span field naming a remote parent: a span that carries
 /// `traceparent = <W3C value>` becomes a child of that context instead of the
 /// span that is current where it opens (a daemon command handled for a client

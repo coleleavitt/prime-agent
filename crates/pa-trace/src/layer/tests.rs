@@ -272,3 +272,31 @@ fn spans_and_events_outside_the_workspace_are_not_recorded() {
         "no record, no file"
     );
 }
+
+#[test]
+fn a_span_attributes_event_annotates_its_span_and_logs_nothing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let entries = record(dir.path(), None, || {
+        // Outside every span: nothing to annotate, nothing written.
+        tracing::event!(
+            target: pa_types::trace_context::SPAN_ATTRIBUTES_TARGET,
+            tracing::Level::INFO,
+            stray = 1
+        );
+        let span = tracing::info_span!("tool.execute", tool.name = "ipython");
+        span.in_scope(|| {
+            tracing::event!(
+                target: pa_types::trace_context::SPAN_ATTRIBUTES_TARGET,
+                tracing::Level::INFO,
+                failure.fingerprint = "0123456789abcdef"
+            );
+        });
+    });
+    let (trace, span) = ids(&entries[0]);
+    assert_eq!(
+        entries,
+        vec![object(
+            json!({"traceId": trace, "spanId": span, "name": "tool.execute", "durationMs": "<ms>", "status": "ok", "attrs": {"tool.name": "ipython", "failure.fingerprint": "0123456789abcdef"}, "level": "info", "component": "trace", "msg": "span_end"})
+        )]
+    );
+}
