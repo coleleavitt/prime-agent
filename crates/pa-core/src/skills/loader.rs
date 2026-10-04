@@ -91,6 +91,15 @@ pub fn load_skills(options: &LoadSkillsOptions) -> LoadSkillsResult {
             return;
         }
         if let Some(winner_path) = name_winner.get(&skill.name) {
+            // The same skill installed in two roots (e.g. ~/.claude/skills
+            // and ~/.agents/skills) is not a conflict: byte-identical
+            // files skip silently.
+            if matches!(
+                (std::fs::read(winner_path), std::fs::read(&skill.file_path)),
+                (Ok(winner), Ok(loser)) if winner == loser
+            ) {
+                return;
+            }
             collision_diagnostics.push(ResourceDiagnostic::Collision {
                 message: format!("name \"{}\" collision", skill.name),
                 path: skill.file_path.display().to_string(),
@@ -334,5 +343,49 @@ mod tests {
             |d| matches!(d, ResourceDiagnostic::Warning { message, path }
                 if path.is_some() && path.as_ref().unwrap().contains("missing"))
         ));
+    }
+
+    #[test]
+    fn byte_identical_skills_across_roots_dedupe_silently_but_real_conflicts_report() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (root_a, root_b) = (tmp.path().join("a"), tmp.path().join("b"));
+        write_skill(&root_a, "same-skill", "identical");
+        write_skill(&root_b, "same-skill", "identical");
+        write_skill(&root_a, "diff-skill", "version a");
+        write_skill(&root_b, "diff-skill", "version b");
+        let empty = tmp.path().join("empty");
+        fs::create_dir_all(&empty).unwrap();
+        let result = load_skills(&LoadSkillsOptions {
+            cwd: empty.clone(),
+            agent_dir: empty,
+            skill_paths: vec![root_a.display().to_string(), root_b.display().to_string()],
+            include_defaults: false,
+        });
+        let mut names: Vec<&str> = result.skills.iter().map(|s| s.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["diff-skill", "same-skill"]);
+        let diff_a = root_a
+            .join("diff-skill")
+            .join("SKILL.md")
+            .display()
+            .to_string();
+        let diff_b = root_b
+            .join("diff-skill")
+            .join("SKILL.md")
+            .display()
+            .to_string();
+        assert_eq!(
+            result.diagnostics,
+            vec![ResourceDiagnostic::Collision {
+                message: "name \"diff-skill\" collision".to_string(),
+                path: diff_b.clone(),
+                collision: ResourceCollision {
+                    resource_type: "skill",
+                    name: "diff-skill".to_string(),
+                    winner_path: diff_a,
+                    loser_path: diff_b,
+                },
+            }]
+        );
     }
 }
