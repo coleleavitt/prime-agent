@@ -38,7 +38,17 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
      (`lock_store`); in a session that may auto-refine (with auto-refine on) the gate also gets a
      `pa_core::session_engine::turn_boundary::RefineRequester`, through which its feature queues refines of its own
      (carrying a `RefineTrigger` to the gate) that run at the next serviced turn boundary like the agent's `refine.run`.
-   Seams to add as features need them: system-prompt layer providers, turn-start observers.
+     A verdict may also `prepare_application` (update the re-read store before the edits apply), and a requester may
+     listen `on_dropped` for a pending refine an aborted turn drops unserviced.
+   - harness rendering: `SessionFeature::harness_render_filter` hands the session a
+     `pa_core::refinement::ranking::HarnessRenderFilter` whose withheld entries leave the model-facing harness digest
+     (one line it supplies stands in for them; the digest fingerprint marks them);
+   - automatic refine: `SessionFeature::auto_refine_policy` hands the session a
+     `pa_core::refinement::executor::AutoRefinePolicy` (the review's prompt texts and what an approval runs; the
+     review's whole reply is on `AutoRefineReview::reply`);
+   - harness entries keep the keys pa-core does not model (`HarnessEntry::extensions`), as the state keeps its own.
+  Seams to add as features need them: system-prompt layer providers, turn-start observers, feature-contributed
+  bundled skills, feature slash commands, feature daemon events.
 5. **Data ownership.** A crate owns its files under `~/.prime/agent/<feature>/` (or the session artifact dir) and its
    key in `harness_state.json` (`HarnessState::extensions["<feature>"]`). It never rewrites another crate's data.
    Formats stay byte-compatible with the fork's TS files where those already exist on disk.
