@@ -229,6 +229,18 @@ pub fn waker() -> Option<Waker> {
     lock_internal_event_reader().try_waker()
 }
 
+/// Prime Agent patch: the verdict of a keyboard enhancement query whose
+/// bounded answer window lapsed with no reply (the raw-path support check's
+/// no-answer error): `Some(true)` once a late flags reply arrived,
+/// `Some(false)` once a DA1 reply arrived first (the terminal does not
+/// support the protocol), `None` while nothing is pending. Each verdict is
+/// returned once. A parked [`poll_opt`] returns `Ok(false)` when a verdict
+/// lands, so an edge-driven reader can take it promptly.
+#[cfg(unix)]
+pub fn take_late_keyboard_enhancement_reply() -> Option<bool> {
+    read::take_capability_verdict()
+}
+
 /// Reads a single [`Event`](enum.Event.html).
 ///
 /// This function blocks until an [`Event`](enum.Event.html) is available. Combine it with the

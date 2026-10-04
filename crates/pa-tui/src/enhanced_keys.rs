@@ -27,8 +27,11 @@
 //! Crossterm parks user keys in its internal event queue, so early
 //! typing is preserved; the app reader never sees protocol bytes as key
 //! input. An answer after the 150ms fallback but within the 250ms query
-//! window still upgrades to kitty. Replies arriving after that window are
-//! filtered by crossterm, and the terminal stays in legacy mode.
+//! window still upgrades to kitty. A reply arriving after that window still
+//! concludes the query (the kitty detection contract has no deadline — a
+//! slow hop or a loaded host answers late, not never): the vendored reply
+//! watch stays armed, and the input reader takes the late verdict and
+//! pushes the flags at the answer ([`apply_late_capability_reply`]).
 //!
 //! The query runs ONCE per process (the first terminal surface), never
 //! again on a later start or resume: the terminal's kitty capability
@@ -50,12 +53,12 @@
 //! terminal concludes at its flags reply. A DA1-answering non-kitty
 //! terminal — the common non-kitty class; tmux and screen answer DA1
 //! locally in microseconds and never answer the flags query —
-//! concludes AT THE DA1 ARRIVAL (crossterm's flags filter matches the
-//! primary-device-attributes reply; a flags reply arriving after the
-//! DA1 can never upgrade: the check has returned and the once-per-
-//! process probe never re-examines parked replies). Only a fully-silent
-//! pty (no DA1 ever — CI harnesses) waits the 250ms deadline. The
-//! deadline stays 250ms because it is also the LATE-KITTY catch window:
+//! concludes AT THE DA1 ARRIVAL (the reply watch takes a DA1 that
+//! arrives first as the "unsupported" verdict; a flags reply arriving
+//! after the DA1 can never upgrade). Only a fully-silent pty (no DA1
+//! ever — CI harnesses) waits the 250ms deadline, and a reply after it
+//! still upgrades (see above). The deadline stays 250ms because it was
+//! also the LATE-KITTY catch window:
 //! a kitty terminal over a slow hop answers its flags at RTT (this
 //! fleet's own single public hop measures 24-29ms; the intercontinental
 //! SSH classes ride 80-250ms), so a shorter window would silently drop
@@ -273,6 +276,60 @@ fn record_kitty_supported() {
     KITTY_SUPPORTED.store(true, Ordering::SeqCst);
 }
 
+/// Whether a reply to the probe's query that arrived AFTER its bounded
+/// window said "supported" (see [`apply_late_capability_reply`]). Each
+/// late verdict is taken once.
+#[cfg(unix)]
+fn take_late_reply_supported() -> bool {
+    crossterm::event::take_late_keyboard_enhancement_reply() == Some(true)
+}
+
+/// No probe runs off unix, so no late verdict can exist.
+#[cfg(not(unix))]
+fn take_late_reply_supported() -> bool {
+    false
+}
+
+/// Apply a late answer to the kitty query: the probe's bounded window
+/// lapsed with no reply at all, and the reply arrived afterwards. Per the
+/// kitty detection contract a lapsed window is no verdict: the terminal
+/// answers the flags query before the device-attributes query, so a flags
+/// reply means "supported" whenever it lands, and only a DA1 reply that
+/// arrives first means "unsupported" (crossterm's reply watch tells the
+/// two apart). The input reader calls this on every wake — a parked
+/// reader is woken by the reply itself — once the probe has settled (in
+/// the window the probe takes the verdict). The capability is recorded
+/// either way; the push happens only on a mounted surface the exit has
+/// not released, the same stand-downs as the in-window answer.
+pub(crate) fn apply_late_capability_reply() {
+    if query_in_flight() {
+        return;
+    }
+    if take_late_reply_supported() {
+        record_kitty_supported();
+        enable_kitty_on_mounted_surface(&mut std::io::stdout());
+    }
+}
+
+/// Push the flags for a capability that resolved after the surface's
+/// start: only while a surface is mounted (bracketed paste is its marker,
+/// cleared under the same lock by every teardown) and the exit has not
+/// released the terminal — a push after the teardown's pop would leave
+/// the flags on for the parent shell.
+fn enable_kitty_on_mounted_surface(out: &mut Stdout) {
+    let _modes = lock_modes();
+    if EXIT_RELEASE.load(Ordering::SeqCst) || !BRACKETED_PASTE_ACTIVE.load(Ordering::SeqCst) {
+        return;
+    }
+    if !KITTY_ACTIVE.swap(true, Ordering::SeqCst) {
+        // The stale-level drain (see STALE_LEVEL_DRAIN), as every push.
+        for _ in 0..STALE_LEVEL_DRAIN {
+            let _ = write_all(out, POP_KITTY_FLAGS);
+        }
+        let _ = write_all(out, ENABLE_KITTY_FLAGS);
+    }
+}
+
 /// Enable the enhanced-key modes for a surface start: bracketed paste,
 /// the kitty protocol behind a query, a defensive modifyOtherKeys reset.
 /// A non-terminal stdout records no state.
@@ -288,6 +345,12 @@ pub(crate) fn enable(out: &mut Stdout) -> Result<()> {
         write_all(out, ENABLE_BRACKETED_PASTE)?;
     }
     write_all(out, MODIFY_OTHER_KEYS_RESET)?;
+    // A late flags reply that landed while no reader took it (a drain, a
+    // suspend) is the durable capability too: this start re-applies it. An
+    // in-flight probe owns its verdict.
+    if !QUERY_IN_FLIGHT.load(Ordering::SeqCst) && take_late_reply_supported() {
+        record_kitty_supported();
+    }
     match kitty_action(
         KITTY_SUPPORTED.load(Ordering::SeqCst),
         KITTY_PROBED.load(Ordering::SeqCst),
@@ -586,9 +649,7 @@ fn spawn_kitty_probe() {
                                 // record it even when the push stands down (a suspended
                                 // surface's resume re-applies the flags).
                                 record_kitty_supported();
-                                if BRACKETED_PASTE_ACTIVE.load(Ordering::SeqCst) {
-                                    enable_kitty(&mut std::io::stdout());
-                                }
+                                enable_kitty_on_mounted_surface(&mut std::io::stdout());
                             }
                             QUERY_IN_FLIGHT.store(false, Ordering::SeqCst);
                         })

@@ -23,6 +23,13 @@ use crate::event::{filter::Filter, source::EventSource, timeout::PollTimeout, In
 /// With the watch the check only reads the verdict, which needs no reader
 /// lock.
 ///
+/// A lapsed window is no verdict either: the query stays watched after the
+/// check returns its no-answer error, and a reply that arrives later still
+/// publishes its verdict, for the caller to take through
+/// [`crate::event::take_late_keyboard_enhancement_reply`] (a parked
+/// unbounded poll wakes when it lands). The kitty contract has no deadline;
+/// a slow hop or a loaded host answers late, not never.
+///
 /// The verdict follows the kitty detection contract: the terminal answers
 /// the flags query before the device-attributes query, so a flags reply
 /// means "supported", and a DA1 reply that arrives first means
@@ -74,15 +81,12 @@ pub(crate) fn take_capability_verdict() -> Option<bool> {
     capability_replies().verdict.take()
 }
 
-/// The check's window lapsed: atomically take a verdict that landed in the
-/// meantime, or stop watching (an unanswered query yields no verdict).
+/// The check's window lapsed: take a verdict that landed in the meantime.
+/// With none, the watch stays armed — the late reply's verdict is published
+/// for [`crate::event::take_late_keyboard_enhancement_reply`].
 #[cfg(unix)]
 pub(crate) fn lapse_capability_watch() -> Option<bool> {
-    let mut replies = capability_replies();
-    if replies.watch == ReplyWatch::Awaiting {
-        replies.watch = ReplyWatch::Off;
-    }
-    replies.verdict.take()
+    capability_replies().verdict.take()
 }
 
 /// What [`observe_capability_reply`] did with one parsed event.
@@ -195,7 +199,11 @@ impl InternalEventReader {
                         WatchedReply::Unwatched => {}
                         WatchedReply::Swallowed => continue,
                         WatchedReply::Verdict => {
-                            if filter.wakes_on_capability_verdict() {
+                            // A parked (unbounded) poller wakes too, like a
+                            // waker wake, so an edge-driven reader can take a
+                            // late verdict at once; bounded pollers keep their
+                            // timeouts (a drain must not end on a reply).
+                            if timeout.is_none() || filter.wakes_on_capability_verdict() {
                                 self.events.extend(self.skipped_events.drain(..));
                                 return Ok(false);
                             }
