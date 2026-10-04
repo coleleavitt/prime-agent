@@ -258,27 +258,46 @@ fn write_owner_only(path: &Path, bytes: &[u8]) -> io::Result<()> {
     set_owner_only(path)
 }
 
-#[cfg(unix)]
+/// `0600` on POSIX; Windows keeps the profile directory's ACLs.
+#[cfg_attr(
+    not(unix),
+    expect(
+        clippy::unnecessary_wraps,
+        reason = "POSIX modes only; the signature is the unix one"
+    )
+)]
 fn set_owner_only(path: &Path) -> io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(())
+    }
 }
 
-#[cfg(unix)]
+/// `0700` on POSIX; Windows keeps the profile directory's ACLs.
+#[cfg_attr(
+    not(unix),
+    expect(
+        clippy::unnecessary_wraps,
+        reason = "POSIX modes only; the signature is the unix one"
+    )
+)]
 fn set_owner_only_dir(path: &Path) -> io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-}
-
-/// POSIX modes only; Windows keeps the profile directory's ACLs.
-#[cfg(not(unix))]
-fn set_owner_only(_path: &Path) -> io::Result<()> {
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn set_owner_only_dir(_path: &Path) -> io::Result<()> {
-    Ok(())
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
