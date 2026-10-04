@@ -23,6 +23,7 @@ use pa_telemetry::{base_properties, lookup, Properties, TelemetryClient};
 
 use crate::kernel::shared::HostRequestHandlers;
 use crate::refinement::gate::RefinementGate;
+use crate::refinement::prompt_hook::{HarnessPromptHook, HarnessPromptHooks};
 use crate::session_engine::telemetry::TelemetryWiring;
 
 /// A feature hook's boxed future: hooks run inline on the session's tool
@@ -230,6 +231,18 @@ pub trait SessionFeature: Send + Sync {
         let _ = context;
         None
     }
+
+    /// The hook this feature adjusts the session's harness digest with (see
+    /// [`crate::refinement::prompt_hook`]); `None`, the default, leaves the
+    /// digest native. Called once, on the session-creation path; every
+    /// installed feature's hook applies, in installation order.
+    fn harness_prompt_hook(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+    ) -> Option<Arc<dyn HarnessPromptHook>> {
+        let _ = context;
+        None
+    }
 }
 
 static INSTALLED: OnceLock<Vec<Arc<dyn SessionFeature>>> = OnceLock::new();
@@ -359,6 +372,20 @@ pub(crate) fn session_refinement_gate(
         .find_map(|feature| feature.refinement_gate(context))
 }
 
+/// The harness digest hooks `features` offer the session, in order; empty
+/// when no feature adjusts the digest.
+pub(crate) fn session_harness_prompt_hooks(
+    features: &[Arc<dyn SessionFeature>],
+    context: &Arc<SessionFeatureContext>,
+) -> HarnessPromptHooks {
+    HarnessPromptHooks(
+        features
+            .iter()
+            .filter_map(|feature| feature.harness_prompt_hook(context))
+            .collect(),
+    )
+}
+
 /// Tell `features` a session was created with `history`; nothing happens
 /// when there are no features.
 pub(crate) fn observe_session_start(
@@ -465,6 +492,54 @@ mod tests {
         let mut handlers = HostRequestHandlers::default();
         Stub.register_host_handlers(&context, &mut handlers);
         assert!(handlers.get(STUB_REQUEST).is_some());
+    }
+
+    /// A harness-render hook a stub feature offers reaches the session's
+    /// digest hooks, after the features that offer none.
+    #[test]
+    fn a_feature_offers_a_harness_prompt_hook_through_the_seam() {
+        struct Ranked;
+        impl HarnessPromptHook for Ranked {
+            fn adjust(
+                &self,
+                _state: &crate::refinement::HarnessState,
+            ) -> crate::refinement::prompt_hook::HarnessPromptAdjustment {
+                crate::refinement::prompt_hook::HarnessPromptAdjustment {
+                    entry_rank: [("a".to_string(), -1)].into_iter().collect(),
+                    ..Default::default()
+                }
+            }
+        }
+        struct Hooked;
+        impl SessionFeature for Hooked {
+            fn name(&self) -> &'static str {
+                "hooked"
+            }
+            fn harness_prompt_hook(
+                &self,
+                _context: &Arc<SessionFeatureContext>,
+            ) -> Option<Arc<dyn HarnessPromptHook>> {
+                Some(Arc::new(Ranked))
+            }
+        }
+        let context = Arc::new(SessionFeatureContext {
+            agent_dir: PathBuf::from("/agent"),
+            cwd: PathBuf::from("/work"),
+            session_id: "s1".to_string(),
+            python_skill_import_names: Vec::new(),
+            model: stub_model(),
+            telemetry: None,
+            rlm_depth: 0,
+            session_artifact_dir: None,
+        });
+        assert!(session_harness_prompt_hooks(&[], &context).0.is_empty());
+        let features: Vec<Arc<dyn SessionFeature>> = vec![Arc::new(Stub), Arc::new(Hooked)];
+        let hooks = session_harness_prompt_hooks(&features, &context);
+        assert_eq!(hooks.0.len(), 1);
+        let adjustment = hooks
+            .adjust(&crate::refinement::empty_harness_state())
+            .expect("a ranking adjustment");
+        assert_eq!(adjustment.rank("a"), -1);
     }
 
     /// A feature's telemetry handle tracks catalogued events through the

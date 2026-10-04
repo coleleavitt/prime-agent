@@ -16,6 +16,7 @@ fn empty_state_digest_renders_placeholder() {
         include_ipython: true,
         include_shell_examples: false,
         include_refine: true,
+        prompt_hooks: crate::refinement::prompt_hook::HarnessPromptHooks::default(),
     };
     let digest = harness_digest_text(&context, HarnessQueryTerms::default());
     assert!(digest.starts_with("# Continual Harness State"));
@@ -25,6 +26,66 @@ fn empty_state_digest_renders_placeholder() {
     let message = harness_digest_message_text(&digest);
     assert!(message.starts_with("[harness-digest]"));
     assert!(message.ends_with("</harness_state>"));
+}
+
+/// A stub feature's hook reaches the rendered digest, and a hook that
+/// changes the render changes the state fingerprint (so the adjusted digest
+/// is re-delivered); an inert hook leaves both native.
+#[test]
+fn a_prompt_hook_adjusts_the_digest_and_its_fingerprint() {
+    use crate::refinement::prompt_hook::{
+        HarnessPromptAdjustment, HarnessPromptHook, HarnessPromptHooks, HarnessPromptSection,
+    };
+    struct Section(Vec<String>);
+    impl HarnessPromptHook for Section {
+        fn adjust(&self, _state: &crate::refinement::HarnessState) -> HarnessPromptAdjustment {
+            HarnessPromptAdjustment {
+                sections: vec![HarnessPromptSection {
+                    heading: "stub section:".to_string(),
+                    lines: self.0.clone(),
+                }],
+                ..HarnessPromptAdjustment::default()
+            }
+        }
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let context = |lines: Option<Vec<String>>| HarnessDigestContext {
+        global_dir: tmp.path().join("harness"),
+        local_dir: None,
+        include_ipython: true,
+        include_shell_examples: false,
+        include_refine: true,
+        prompt_hooks: HarnessPromptHooks(
+            lines
+                .map(|lines| {
+                    std::sync::Arc::new(Section(lines)) as std::sync::Arc<dyn HarnessPromptHook>
+                })
+                .into_iter()
+                .collect(),
+        ),
+    };
+    let render = |context: &HarnessDigestContext| {
+        HarnessDigestInputs {
+            context: context.clone(),
+            terms: HarnessQueryTerms::default(),
+        }
+        .render_with_fingerprint()
+    };
+    let native = render(&context(None));
+    assert_eq!(render(&context(Some(vec![" ".to_string()]))), native);
+    let adjusted = render(&context(Some(vec!["a gap".to_string()])));
+    assert!(
+        adjusted.digest.contains(
+            "No saved harness entries yet.\n\nstub section:\n- a gap\n\nrecent refinements: 0"
+        ),
+        "{}",
+        adjusted.digest
+    );
+    assert_ne!(adjusted.state_fingerprint, native.state_fingerprint);
+    assert_ne!(
+        render(&context(Some(vec!["another gap".to_string()]))).state_fingerprint,
+        adjusted.state_fingerprint
+    );
 }
 
 #[test]
@@ -401,6 +462,7 @@ async fn placement_rig(
             include_ipython: false,
             include_shell_examples: false,
             include_refine: false,
+            prompt_hooks: crate::refinement::prompt_hook::HarnessPromptHooks::default(),
         }),
     )
     .await

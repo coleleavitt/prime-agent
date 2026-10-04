@@ -38,6 +38,13 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
      (`lock_store`); in a session that may auto-refine (with auto-refine on) the gate also gets a
      `pa_core::session_engine::turn_boundary::RefineRequester`, through which its feature queues refines of its own
      (carrying a `RefineTrigger` to the gate) that run at the next serviced turn boundary like the agent's `refine.run`.
+   - harness digest: `SessionFeature::harness_prompt_hook` hands the session a
+     `pa_core::refinement::prompt_hook::HarnessPromptHook` that, at every render of the merged harness state into the
+     digest, answers a `HarnessPromptAdjustment`: a lead sort key per entry id (ahead of the native relevance/path order),
+     entries withheld from the listing (counted per kind on a `- +<n> <label> <kind> entries (<note>)` line), and
+     sections rendered after the entries (heading, then sanitized one-line bullets). Every installed feature's hook
+     applies (ranks add, groups and sections append); an empty adjustment renders the native digest byte for byte, a
+     non-empty one is folded into the digest's state fingerprint.
    Seams to add as features need them: system-prompt layer providers, turn-start observers.
 5. **Data ownership.** A crate owns its files under `~/.prime/agent/<feature>/` (or the session artifact dir) and its
    key in `harness_state.json` (`HarnessState::extensions["<feature>"]`). It never rewrites another crate's data.
