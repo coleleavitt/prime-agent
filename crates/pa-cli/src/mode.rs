@@ -292,11 +292,9 @@ pub(crate) mod tests {
     /// state and restored after (an assertion panic must never leave the
     /// process env mutated, and a host-exported opt-out must not bleed in).
     pub(crate) fn with_clean_telemetry_env(body: impl FnOnce() + std::panic::UnwindSafe) {
-        // The env is process-wide: tests that rewrite it take turns.
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // The env is process-wide: tests that rewrite it take turns, under
+        // the crate's one env lock (other tests set DO_NOT_TRACK under it).
+        let _guard = crate::config::env_lock();
         let vars = ["PRIME_AGENT_TELEMETRY", "DO_NOT_TRACK", "PI_OFFLINE"];
         let saved: Vec<(String, Option<String>)> = vars
             .iter()
