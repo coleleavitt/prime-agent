@@ -53,6 +53,8 @@ use crate::verification::ReplayVerifier;
 
 /// The kill switch: gating is on unless it says `0`, `off` or `false`.
 pub const RAVO_ENV: &str = "PRIME_AGENT_RAVO";
+/// The bundled kernel skill (under `skills/.features/`).
+pub const RAVO_SKILL: &str = "ravo";
 
 /// The adoption event: one gated refinement's final decision.
 pub const RAVO_GATE_DECISION_EVENT: &str = "ravo_gate_decision";
@@ -313,9 +315,39 @@ impl SessionFeature for RavoFeature {
         crate::run_host::register(&self.inner.run_host, context, handlers);
     }
 
-    /// Let running replay self-checks finish, so the ledger's exit flush
-    /// (installed after this feature) writes what they verified.
+    /// `/ravo` (TS `BUILTIN_SLASH_COMMANDS`' `ravo` entry).
+    fn slash_commands(&self) -> Vec<pa_types::slash_commands::BuiltinSlashCommand> {
+        vec![pa_types::slash_commands::BuiltinSlashCommand {
+            name: crate::command::RAVO_COMMAND,
+            description: crate::command::RAVO_COMMAND_DESCRIPTION,
+            execution: pa_types::slash_commands::SlashCommandExecution::Session,
+            argument_hint: Some(crate::command::RAVO_COMMAND_HINT),
+            aliases: &[],
+            takes_argument: true,
+        }]
+    }
+
+    fn execute_slash_command(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+        name: &str,
+        args: &str,
+    ) -> Option<FeatureFuture<Result<pa_core::features::FeatureCommandOutcome, String>>> {
+        (name == crate::command::RAVO_COMMAND)
+            .then(|| crate::run_host::execute_command(&self.inner.run_host, context, args))
+    }
+
+    /// The bundled `ravo` kernel skill (`skills/.features/ravo`).
+    fn bundled_skills(&self) -> Vec<&'static str> {
+        vec![RAVO_SKILL]
+    }
+
+    /// Stop every running `ravo.run` at its next boundary (TS cancelled it
+    /// on dispose), then let running replay self-checks finish, so the
+    /// ledger's exit flush (installed after this feature) writes what they
+    /// verified.
     fn flush(&self, deadline: std::time::Instant) {
+        self.inner.run_host.cancel_all();
         if !self.inner.wait_referee_runs(deadline) {
             tracing::debug!("replay self-checks and trust replays abandoned at the exit deadline");
         }
