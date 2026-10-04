@@ -21,7 +21,7 @@ use pa_dream::rollout::{
     attempt_rng_label, improvements_of, run_online_exploration, ExploreOptions, ExploreResult,
     ScoreImprovement,
 };
-use pa_dream::store::{read_tree, RecordedTree, TreeWriter};
+use pa_dream::store::{read_tree, DreamStoreError, RecordedTree, TreeWriter};
 use pa_dream::task::{
     Artifact, ArtifactShapeError, DynTask, Evaluation, ProposeParams, ScoredTask,
 };
@@ -299,6 +299,7 @@ fn explore(
         iteration: 0,
         proposer: None,
         tree_id: None,
+        cancel: None,
     })
     .expect("rollout")
 }
@@ -437,10 +438,10 @@ impl Proposer for Stamped<'_> {
         params: &ProposeParams,
         rng: &mut SeededRng,
         round: u32,
-    ) -> ProposeOutcome {
+    ) -> Result<ProposeOutcome, DreamStoreError> {
         self.attempt += 1;
-        let outcome = self.local.propose(parent, params, rng, round);
-        if self.attempt.is_multiple_of(self.accept) {
+        let outcome = self.local.propose(parent, params, rng, round)?;
+        Ok(if self.attempt.is_multiple_of(self.accept) {
             ProposeOutcome {
                 tokens: 270,
                 origin: Some(CandidateOrigin::Llm),
@@ -452,7 +453,7 @@ impl Proposer for Stamped<'_> {
                 origin: Some(CandidateOrigin::Local),
                 ..outcome
             }
-        }
+        })
     }
 }
 
@@ -484,6 +485,7 @@ fn an_injected_outcomes_origin_and_tokens_land_on_the_node_without_moving_the_tr
         iteration: 0,
         proposer: Some(&mut stamped),
         tree_id: None,
+        cancel: None,
     })
     .expect("rollout");
     let llm = result.revealed_count / 3;

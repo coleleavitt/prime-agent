@@ -7,14 +7,23 @@ description = "Dream-RSI: discovery trees, frozen replay, exploration-policy imp
 
 [dependencies]
 pa-types.workspace = true
+pa-agent.workspace = true
+pa-telemetry.workspace = true
+pa-core = { path = "../pa-core" }
+anyhow.workspace = true
+tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+tokio-util.workspace = true
 sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+pa-ai.workspace = true
 tempfile = "3"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["registry", "std"] }
 
 [lints]
 workspace = true

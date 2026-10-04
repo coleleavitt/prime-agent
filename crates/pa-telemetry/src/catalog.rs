@@ -1375,6 +1375,49 @@ const DREAM_RUN: EventRule = EventRule {
     ],
 };
 
+/// `dream_session_run` (v4): one in-session Dream-RSI run or experiment
+/// (the fork's `pa-dream` feature: the kernel skill's `dream.run` /
+/// `dream.experiment` or `/dream`) reaching its end. Kind, surface, task and
+/// outcome vocabularies, the two token-spending toggles, the seed count,
+/// whether a better policy was adopted, and the duration — never a path, a
+/// seed, a model, a run id or a score.
+const DREAM_SESSION_RUN: EventRule = EventRule {
+    name: "dream_session_run",
+    since: 4,
+    properties: &[
+        (
+            "kind",
+            required(enum_rule(&["run", "experiment", "unknown"], "unknown")),
+        ),
+        (
+            "surface",
+            required(enum_rule(&["skill", "command", "unknown"], "unknown")),
+        ),
+        (
+            "task",
+            required(enum_rule(
+                &[
+                    "circle-packing",
+                    "sum-difference",
+                    "python-speedup",
+                    "autocorrelation",
+                    "unknown",
+                ],
+                "unknown",
+            )),
+        ),
+        (
+            "outcome",
+            required(enum_rule(&["completed", "cancelled", "failed"], "failed")),
+        ),
+        ("llm_proposer", required(boolean())),
+        ("llm_dreamer", required(boolean())),
+        ("seeds", required(count())),
+        ("improved", required(boolean())),
+        ("duration_ms", required(duration())),
+    ],
+};
+
 /// `image delegation` (v2): one image-carrying turn delegated to a child
 /// running the resolved `settings.imageModel` (the supervisor-backed
 /// routing for text-only session models). Outcome only — never the
@@ -1673,6 +1716,7 @@ pub fn catalog() -> Vec<&'static EventRule> {
         &COMPUTER_USE_SESSION_STARTED,
         &COMPUTER_USE_ACTION,
         &DREAM_RUN,
+        &DREAM_SESSION_RUN,
         &TOOLFORGE_PUBLISH,
         &WORKFLOW_RUN_AGENT,
         &WORKFLOW_V2_REQUEST,
@@ -1809,6 +1853,7 @@ mod tests {
             Some(4)
         );
         assert_eq!(lookup("dream_run").map(|rule| rule.since), Some(4));
+        assert_eq!(lookup("dream_session_run").map(|rule| rule.since), Some(4));
         assert_eq!(
             lookup("observability command used").map(|rule| rule.since),
             Some(4)
@@ -2131,6 +2176,32 @@ mod tests {
         assert_eq!(properties.get("task"), Some(&json!("unknown")));
         assert_eq!(properties.get("outcome"), Some(&json!("failed")));
         assert!(properties.get("seed").is_none());
+    }
+
+    #[test]
+    fn sanitize_normalizes_dream_session_run() {
+        let mut properties = Properties::new();
+        for (key, value) in [
+            ("kind", json!("experiment")),
+            ("surface", json!("command")),
+            ("task", json!("autocorrelation")),
+            ("outcome", json!("cancelled")),
+            ("llm_proposer", json!(true)),
+            ("llm_dreamer", json!(false)),
+            ("seeds", json!(3u64)),
+            ("improved", json!(false)),
+            ("duration_ms", json!(9_000u64)),
+        ] {
+            properties.set(key, value);
+        }
+        assert_eq!(sanitize("dream_session_run", &mut properties), 0);
+        properties.set("kind", json!("loop"));
+        properties.set("outcome", json!("exploded"));
+        properties.set("model", json!("anthropic/x"));
+        assert_eq!(sanitize("dream_session_run", &mut properties), 3);
+        assert_eq!(properties.get("kind"), Some(&json!("unknown")));
+        assert_eq!(properties.get("outcome"), Some(&json!("failed")));
+        assert!(properties.get("model").is_none());
     }
 
     #[test]

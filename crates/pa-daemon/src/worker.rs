@@ -328,6 +328,7 @@ impl Worker {
             agent_message_digest_mode: false,
             agent_message_digest_pin: digest::DigestLanePin::default(),
             active_action: None,
+            feature_status: serde_json::Map::new(),
             running_tool_calls: std::collections::HashSet::new(),
             running_admission_ids: std::collections::HashSet::new(),
         };
@@ -569,6 +570,11 @@ impl Worker {
                     );
                 });
                 concrete.set_goal_admission(probe, sink, queue_purge);
+                let status_core = Arc::clone(&core);
+                let status_events = Arc::clone(&events);
+                concrete.set_feature_status_sink(std::sync::Arc::new(move |status| {
+                    crate::feature_status::publish(&status_core, &status_events, status);
+                }));
                 let late_core = Arc::clone(&core);
                 let late_events = Arc::clone(&events);
                 concrete.set_late_agent_message_sink(std::sync::Arc::new(

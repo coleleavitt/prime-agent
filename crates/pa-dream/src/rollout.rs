@@ -78,6 +78,9 @@ pub struct ExploreOptions<'a> {
     pub proposer: Option<&'a mut dyn Proposer>,
     /// Override the tree id (default `<task>-s<seed>-i<iteration>-<clock>`).
     pub tree_id: Option<String>,
+    /// Checked before every round: a cancelled run stops growing the tree
+    /// (the in-session path; the standalone runner passes `None`).
+    pub cancel: Option<&'a tokio_util::sync::CancellationToken>,
 }
 
 /// One rollout's outcome.
@@ -204,6 +207,12 @@ pub fn run_online_exploration(
     let mut last_improve_round = 0;
     let mut tokens = 0;
     for round in 1..=k1 {
+        if options
+            .cancel
+            .is_some_and(tokio_util::sync::CancellationToken::is_cancelled)
+        {
+            break;
+        }
         let cells = {
             let view = LiveObservation {
                 tree: &tree,
@@ -238,7 +247,8 @@ pub fn run_online_exploration(
             let mut rng = options
                 .rng
                 .fork(&attempt_rng_label(round, parent_seq, branch));
-            let outcome = proposer.propose(artifacts.get(&cell.node_id), &params, &mut rng, round);
+            let outcome =
+                proposer.propose(artifacts.get(&cell.node_id), &params, &mut rng, round)?;
             let attempt_span = tracing::info_span!(
                 "dream.attempt",
                 dream.node_id = %format!("{tree_id}-n{}", tree.size()),

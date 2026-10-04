@@ -151,6 +151,63 @@ fn slash_command_result(
     }
 }
 
+/// A command an installed feature owns: its result row now, and, when it
+/// started background work, the row reporting how that work ended once it
+/// settles (appended to the session file then). `None` when no feature
+/// owns the command.
+async fn execute_feature_command(
+    engine: &SessionEngine,
+    command: &SessionSlashCommand,
+    execution: &mut SessionCommandExecution,
+) -> Option<Result<(), String>> {
+    let run = crate::features::execute_feature_slash_command(
+        crate::features::installed(),
+        &engine.feature_context,
+        command.name,
+        &command.args,
+    )?;
+    Some(run.await.map(|outcome| {
+        execution.push_message(slash_command_result(
+            command,
+            outcome.text,
+            true,
+            "info",
+            None,
+            true,
+        ));
+        if let Some(completion) = outcome.completion {
+            spawn_completion_row(engine, command.clone(), completion);
+        }
+    }))
+}
+
+/// Await a feature command's background completion and append its durable
+/// row to the session (a reload shows how the work ended).
+fn spawn_completion_row(
+    engine: &SessionEngine,
+    command: SessionSlashCommand,
+    completion: crate::features::FeatureFuture<Result<String, String>>,
+) {
+    let session = std::sync::Arc::downgrade(engine.session.session_handle());
+    tokio::spawn(async move {
+        let row = match completion.await {
+            Ok(text) => slash_command_result(&command, text, true, "info", None, true),
+            Err(error) => session_command_failure_row(&command, &error),
+        };
+        // A session closed meanwhile has nowhere to record it.
+        let Some(session) = session.upgrade() else {
+            return;
+        };
+        let mut session = session.lock().await;
+        if session
+            .append_custom_message(&row.custom_type, row.content, row.display, row.details)
+            .is_ok()
+        {
+            let _ = session.flush_now();
+        }
+    });
+}
+
 /// The goal status line.
 fn goal_status_text(state: &crate::goals::GoalState) -> String {
     match &state.objective {
@@ -182,7 +239,9 @@ pub async fn execute_session_command(
         "refine" => execute_refine(engine, params, command, &mut execution).await,
         "goal" => execute_goal(engine, command, &mut execution).await,
         "autonomous" => execute_autonomous(params, command, &mut execution),
-        other => Err(format!("Unknown session command: {other}")),
+        other => execute_feature_command(engine, command, &mut execution)
+            .await
+            .unwrap_or_else(|| Err(format!("Unknown session command: {other}"))),
     };
     if let Err(message) = result {
         execution.push_message(slash_command_result(

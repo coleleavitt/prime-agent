@@ -10,6 +10,7 @@ use serde::{Serialize, Serializer};
 
 use crate::improve::CandidateOrigin;
 use crate::rng::SeededRng;
+use crate::store::DreamStoreError;
 use crate::task::{Artifact, DynTask, ProposeParams};
 
 /// One attempt's outcome.
@@ -24,13 +25,18 @@ pub struct ProposeOutcome {
 /// so a rollout stays a function of its seed.
 pub trait Proposer {
     /// Produce a child of `parent` (a fresh artifact when `None`).
+    ///
+    /// # Errors
+    ///
+    /// [`DreamStoreError::Aborted`] when the run was cancelled mid-attempt,
+    /// or a store error from the proposer's own logging; the rollout stops.
     fn propose(
         &mut self,
         parent: Option<&Artifact>,
         params: &ProposeParams,
         rng: &mut SeededRng,
         round: u32,
-    ) -> ProposeOutcome;
+    ) -> Result<ProposeOutcome, DreamStoreError>;
 }
 
 /// The zero-token local proposer.
@@ -52,12 +58,12 @@ impl Proposer for LocalProposer<'_> {
         params: &ProposeParams,
         rng: &mut SeededRng,
         round: u32,
-    ) -> ProposeOutcome {
-        ProposeOutcome {
+    ) -> Result<ProposeOutcome, DreamStoreError> {
+        Ok(ProposeOutcome {
             artifact: self.task.propose(parent, params, rng, round),
             tokens: 0,
             origin: None,
-        }
+        })
     }
 }
 
@@ -100,6 +106,15 @@ impl ProposalRejectReason {
             Self::TurnLimit => "turn-limit",
             Self::Budget => "budget",
         }
+    }
+
+    /// Parse a wire literal.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        PROPOSAL_REJECT_REASONS
+            .iter()
+            .copied()
+            .find(|reason| reason.as_str() == name)
     }
 
     fn index(self) -> usize {
@@ -164,6 +179,22 @@ pub struct ProposalTally {
 }
 
 impl ProposalTally {
+    /// One child result entered the tree (TS `tallyAccepted`).
+    pub fn accept(&mut self) {
+        self.llm_proposals += 1;
+        self.llm_accepted += 1;
+    }
+
+    /// One child result was refused; `fell_back` when the local mutator stood
+    /// in for it (TS `tallyRejected`).
+    pub fn reject(&mut self, reason: ProposalRejectReason, fell_back: bool) {
+        self.llm_proposals += 1;
+        self.llm_rejected.add(reason);
+        if fell_back {
+            self.local_fallbacks += 1;
+        }
+    }
+
     /// `self + other`.
     #[must_use]
     pub fn plus(&self, other: &Self) -> Self {

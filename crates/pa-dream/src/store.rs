@@ -32,6 +32,18 @@ pub enum DreamStoreError {
         #[source]
         source: io::Error,
     },
+    /// The run was cancelled (TS `DreamAbortError`). Only the in-session
+    /// path, which holds a cancellation token, ever produces it.
+    #[error("{0}")]
+    Aborted(String),
+}
+
+impl DreamStoreError {
+    /// Whether this is a cancellation rather than a failure.
+    #[must_use]
+    pub fn is_abort(&self) -> bool {
+        matches!(self, Self::Aborted(_))
+    }
 }
 
 impl DreamStoreError {

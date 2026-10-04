@@ -23,6 +23,10 @@ pub fn enabled_features() -> Vec<Arc<dyn SessionFeature>> {
         Arc::new(pa_workflow::WorkflowFeature),
         #[cfg(feature = "learning")]
         Arc::new(pa_learning::LearningFeature),
+        // In-session Dream-RSI: the `dream.*` host requests, `/dream`, the
+        // bundled `dream` skill (top-level sessions with harness state).
+        #[cfg(feature = "dream")]
+        Arc::new(pa_dream::session::DreamFeature::new()),
     ];
     #[cfg(feature = "ledger")]
     features.extend(ledger_features());
@@ -232,6 +236,8 @@ mod tests {
             "workflow",
             #[cfg(feature = "learning")]
             "learning",
+            #[cfg(feature = "dream")]
+            "dream",
             #[cfg(feature = "ravo")]
             "ravo",
             #[cfg(feature = "ledger")]

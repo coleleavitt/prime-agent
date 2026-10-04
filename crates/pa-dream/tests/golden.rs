@@ -126,6 +126,7 @@ fn a_circle_packing_rollout_writes_the_ts_tree_byte_for_byte() {
         iteration: 0,
         proposer: None,
         tree_id: None,
+        cancel: None,
     })
     .expect("rollout");
     let expected = golden("rollout-circle-packing.json");

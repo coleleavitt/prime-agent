@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use serde_json::{Map, Value};
+use tokio_util::sync::CancellationToken;
 
 use crate::dream_loop::{
     run_dream_loop, DreamHandlerCalls, DreamLoopOptions, DreamLoopResult, DreamRoundDreaming,
@@ -21,6 +22,7 @@ use crate::dream_loop::{
 use crate::dreams::DreamsLogContext;
 use crate::improve::CandidateVerdict;
 use crate::json;
+use crate::llm_loop::{DreamInitialRollout, DreamPhase};
 use crate::objective::{ReplayObjectiveConfig, DEFAULT_OBJECTIVE};
 use crate::policy::{policy_id, ExplorationPolicy, StopRule, DEFAULT_POLICY};
 use crate::proposer::{ProposalTally, RejectCounts};
@@ -45,7 +47,7 @@ pub const OBJECTIVE_NOTE: &str =
 pub const GUIDED_ARM_REJECTION_MESSAGE: &str = "dream-guided/fixed-guided need the in-session LLM proposer; run dream.experiment(...) from the kernel skill or /dream experiment --llm-proposer";
 
 /// One experiment arm.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, serde::Deserialize)]
 pub enum ExperimentArm {
     #[serde(rename = "dream")]
     Dream,
@@ -428,6 +430,18 @@ impl ExperimentPlan {
     }
 }
 
+/// `<task>-s<seed>-n<rounds>-<clock>`: an experiment's id (TS `experimentIdFor`).
+#[must_use]
+pub fn experiment_id_for(spec: &ExperimentSpec, clock: DreamClock<'_>) -> String {
+    format!(
+        "{}-s{}-n{}-{}",
+        spec.task.as_str(),
+        spec.seed,
+        spec.rounds,
+        clock()
+    )
+}
+
 /// Validate a spec, resolve the task once and lay out the arm stores.
 ///
 /// # Errors
@@ -475,13 +489,7 @@ pub fn plan_experiment(
             )));
         }
     }
-    let experiment_id = format!(
-        "{}-s{}-n{}-{}",
-        spec.task.as_str(),
-        spec.seed,
-        spec.rounds,
-        (options.clock)()
-    );
+    let experiment_id = experiment_id_for(spec, options.clock);
     let result_path = experiment_result_path(options.dir, &experiment_id);
     let existing = experiment_dir(options.dir, &experiment_id);
     if !options.overwrite && existing.exists() {
@@ -726,6 +734,46 @@ pub fn compute_headline(arms: &[ExperimentArmResult]) -> Option<ExperimentHeadli
     Some(headline)
 }
 
+/// Observability-only phase progress a runner relays from inside an arm.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExperimentArmProgress {
+    pub phase: DreamPhase,
+    pub iteration: u32,
+    pub best_node_score: f64,
+    pub tree_id: Option<String>,
+}
+
+/// What an in-session experiment reports as it runs (TS `ExperimentProgressEvent`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExperimentProgressEvent {
+    ArmStart {
+        arm: ExperimentArm,
+        arm_index: usize,
+        arm_count: usize,
+    },
+    Phase {
+        arm: ExperimentArm,
+        progress: ExperimentArmProgress,
+    },
+    Round {
+        arm: ExperimentArm,
+        round: u32,
+        round_best: f64,
+        cumulative_best: f64,
+        cumulative_probes: u32,
+        tokens: u64,
+    },
+    ArmEnd {
+        arm: ExperimentArm,
+        final_best: f64,
+        total_probes: u32,
+    },
+    Completed {
+        experiment_id: String,
+        result_path: PathBuf,
+    },
+}
+
 /// How an experiment drives one arm: the seam the in-session LLM runner
 /// implements (sharing round 1 across arms, guided prompts). Implementations
 /// run the arm's whole loop into `arm.dir` and report its records.
@@ -733,16 +781,34 @@ pub trait ExperimentArmRunner {
     /// The mode recorded on the arm's result.
     fn mode(&self, arm: &ExperimentArmPlan) -> ExperimentArmMode;
 
-    /// Run `plan.rounds` rollouts of `arm`.
+    /// An optional shared round 1, rolled out once into `plan.arms[0].dir` and
+    /// copied into every other arm's store; `None` (the default) lets every
+    /// arm roll out its own.
     ///
     /// # Errors
     ///
-    /// [`DreamStoreError`] when the arm's store cannot be written.
+    /// [`ExperimentError`] when an arm cannot be served or the rollout fails.
+    fn prepare(
+        &mut self,
+        plan: &ExperimentPlan,
+        clock: DreamClock<'_>,
+    ) -> Result<Option<DreamInitialRollout>, ExperimentError> {
+        let _ = (plan, clock);
+        Ok(None)
+    }
+
+    /// Run `plan.rounds` rollouts of `arm` (round 1 adopted from `shared` when given).
+    ///
+    /// # Errors
+    ///
+    /// [`DreamStoreError`] when the arm's store cannot be written or the run was cancelled.
     fn run(
         &mut self,
         plan: &ExperimentPlan,
         arm: &ExperimentArmPlan,
         clock: DreamClock<'_>,
+        shared: Option<&DreamInitialRollout>,
+        progress: &mut dyn FnMut(ExperimentArmProgress),
     ) -> Result<DreamLoopResult, DreamStoreError>;
 }
 
@@ -760,9 +826,29 @@ impl ExperimentArmRunner for LocalArmRunner {
         plan: &ExperimentPlan,
         arm: &ExperimentArmPlan,
         clock: DreamClock<'_>,
+        shared: Option<&DreamInitialRollout>,
+        _progress: &mut dyn FnMut(ExperimentArmProgress),
     ) -> Result<DreamLoopResult, DreamStoreError> {
+        if shared.is_some() {
+            return Err(DreamStoreError::Message(
+                "the local arm runner does not take a shared initial rollout".to_string(),
+            ));
+        }
         run_dream_loop(plan.loop_options(arm, clock))
     }
+}
+
+/// What an in-session experiment adds to a run (all off for the standalone runner).
+#[derive(Default)]
+pub struct ExperimentHooks<'a, 'p> {
+    /// Checked before every arm and before the result is written; a cancel
+    /// leaves no result.
+    pub cancel: Option<&'a CancellationToken>,
+    pub on_progress: Option<&'p mut dyn FnMut(ExperimentProgressEvent)>,
+    /// Open `dream.experiment` as a DETACHED root (the run outlives its turn).
+    pub detached: bool,
+    /// The launching turn's trace id, stamped on a detached root.
+    pub trigger_trace_id: Option<String>,
 }
 
 /// Write `result.json` (2-space JSON plus a newline) and return its path.
@@ -793,6 +879,66 @@ pub fn run_experiment_with_runner(
     runner: &mut dyn ExperimentArmRunner,
     allowed_arms: &[ExperimentArm],
 ) -> Result<ExperimentResult, ExperimentError> {
+    run_experiment_with_hooks(
+        spec,
+        options,
+        runner,
+        allowed_arms,
+        ExperimentHooks::default(),
+    )
+}
+
+fn experiment_span(plan: &ExperimentPlan, mode: &str, detached: bool) -> tracing::Span {
+    let arm_names: Vec<&str> = plan.arms.iter().map(|arm| arm.arm.as_str()).collect();
+    let arms = arm_names.join(",");
+    if detached {
+        tracing::info_span!(
+            parent: None,
+            "dream.experiment",
+            dream.experiment_id = %plan.experiment_id,
+            dream.task = plan.task_id.as_str(),
+            dream.seed = %plan.seed,
+            dream.rounds = plan.rounds,
+            dream.arms = %arms,
+            dream.mode = mode,
+            trigger.trace_id = tracing::field::Empty,
+            dream.stopped = tracing::field::Empty,
+            error = tracing::field::Empty,
+        )
+    } else {
+        tracing::info_span!(
+            "dream.experiment",
+            dream.experiment_id = %plan.experiment_id,
+            dream.task = plan.task_id.as_str(),
+            dream.seed = %plan.seed,
+            dream.rounds = plan.rounds,
+            dream.arms = %arms,
+            dream.mode = mode,
+            trigger.trace_id = tracing::field::Empty,
+            dream.stopped = tracing::field::Empty,
+            error = tracing::field::Empty,
+        )
+    }
+}
+
+/// [`run_experiment_with_runner`] with the in-session hooks (TS
+/// `runExperimentWithRunner`): cancellation before every arm and before the
+/// result, progress events, a shared round 1 through
+/// [`ExperimentArmRunner::prepare`], and a detached `dream.experiment` root
+/// marked `dream.stopped: aborted` on a cancel. A cancelled or failed
+/// experiment writes no `result.json`.
+///
+/// # Errors
+///
+/// [`ExperimentError`] from planning, an arm's store, or a cancel
+/// ([`DreamStoreError::Aborted`]).
+pub fn run_experiment_with_hooks(
+    spec: &ExperimentSpec,
+    options: &ExperimentRunOptions<'_>,
+    runner: &mut dyn ExperimentArmRunner,
+    allowed_arms: &[ExperimentArm],
+    mut hooks: ExperimentHooks<'_, '_>,
+) -> Result<ExperimentResult, ExperimentError> {
     let plan = plan_experiment(spec, options, allowed_arms)?;
     let existing = experiment_dir(&plan.dir, &plan.experiment_id);
     match std::fs::remove_dir_all(&existing) {
@@ -800,19 +946,67 @@ pub fn run_experiment_with_runner(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(DreamStoreError::io(&existing, error).into()),
     }
-    let arm_names: Vec<&str> = plan.arms.iter().map(|arm| arm.arm.as_str()).collect();
-    let span = tracing::info_span!(
-        "dream.experiment",
-        dream.experiment_id = %plan.experiment_id,
-        dream.task = plan.task_id.as_str(),
-        dream.seed = %plan.seed,
-        dream.rounds = plan.rounds,
-        dream.arms = %arm_names.join(","),
-        dream.mode = "local",
-    );
-    let _entered = span.enter();
+    let modes: Vec<ExperimentArmMode> = plan.arms.iter().map(|arm| runner.mode(arm)).collect();
+    let mode = if modes
+        .iter()
+        .any(|mode| mode.proposer == "llm" || mode.dreamer == "llm")
+    {
+        "llm"
+    } else {
+        "local"
+    };
+    let span = experiment_span(&plan, mode, hooks.detached);
+    if let Some(trigger) = hooks.trigger_trace_id.as_deref().filter(|_| hooks.detached) {
+        span.record("trigger.trace_id", trigger);
+    }
+    let result = {
+        let _entered = span.enter();
+        run_arms(&plan, &modes, options.clock, runner, &mut hooks)
+    };
+    if let Err(error) = &result {
+        if matches!(error, ExperimentError::Store(store) if store.is_abort())
+            || hooks.cancel.is_some_and(CancellationToken::is_cancelled)
+        {
+            span.record("dream.stopped", "aborted");
+        } else {
+            span.record("error", error.to_string().as_str());
+        }
+    }
+    result
+}
+
+fn run_arms(
+    plan: &ExperimentPlan,
+    modes: &[ExperimentArmMode],
+    clock: DreamClock<'_>,
+    runner: &mut dyn ExperimentArmRunner,
+    hooks: &mut ExperimentHooks<'_, '_>,
+) -> Result<ExperimentResult, ExperimentError> {
+    let cancel = hooks.cancel;
+    let check = |place: &str| -> Result<(), ExperimentError> {
+        if cancel.is_some_and(CancellationToken::is_cancelled) {
+            return Err(DreamStoreError::Aborted(format!(
+                "dream experiment aborted before {place}"
+            ))
+            .into());
+        }
+        Ok(())
+    };
+    let mut emit = |event: ExperimentProgressEvent| {
+        if let Some(progress) = hooks.on_progress.as_mut() {
+            progress(event);
+        }
+    };
+    check("the first arm")?;
+    let shared = runner.prepare(plan, clock)?;
     let mut arms = Vec::with_capacity(plan.arms.len());
     for arm in &plan.arms {
+        check(&format!("arm {}", arm.arm.as_str()))?;
+        emit(ExperimentProgressEvent::ArmStart {
+            arm: arm.arm,
+            arm_index: arm.index,
+            arm_count: plan.arms.len(),
+        });
         let arm_span = tracing::info_span!(
             "dream.experiment_arm",
             dream.experiment_id = %plan.experiment_id,
@@ -823,12 +1017,42 @@ pub fn run_experiment_with_runner(
         );
         let run = {
             let _arm = arm_span.enter();
-            let run = runner.run(&plan, arm, options.clock)?;
+            let mut relay = |progress: ExperimentArmProgress| {
+                emit(ExperimentProgressEvent::Phase {
+                    arm: arm.arm,
+                    progress,
+                });
+            };
+            let run = runner.run(plan, arm, clock, shared.as_ref(), &mut relay)?;
             arm_span.record("dream.run_id", run.run_id.as_str());
             run
         };
-        arms.push(build_arm_result(arm, runner.mode(arm), &run));
+        let result = build_arm_result(
+            arm,
+            modes
+                .get(arm.index)
+                .cloned()
+                .unwrap_or_else(ExperimentArmMode::local),
+            &run,
+        );
+        for row in &result.rounds {
+            emit(ExperimentProgressEvent::Round {
+                arm: arm.arm,
+                round: row.round,
+                round_best: row.round_best,
+                cumulative_best: row.cumulative_best,
+                cumulative_probes: row.cumulative_probes,
+                tokens: row.tokens,
+            });
+        }
+        emit(ExperimentProgressEvent::ArmEnd {
+            arm: arm.arm,
+            final_best: result.totals.final_best,
+            total_probes: result.totals.probes,
+        });
+        arms.push(result);
     }
+    check("writing the result")?;
     let result = ExperimentResult {
         schema: EXPERIMENT_SCHEMA,
         experiment_id: plan.experiment_id.clone(),
@@ -843,11 +1067,15 @@ pub fn run_experiment_with_runner(
         initial_policy: plan.initial_policy,
         headline: compute_headline(&arms),
         arms,
-        shared_initial_rollout: false,
+        shared_initial_rollout: shared.is_some(),
         created_ts: plan.created_ts,
         notes: plan.notes.clone(),
     };
-    write_experiment_result(&plan.dir, &result)?;
+    let result_path = write_experiment_result(&plan.dir, &result)?;
+    emit(ExperimentProgressEvent::Completed {
+        experiment_id: plan.experiment_id.clone(),
+        result_path,
+    });
     Ok(result)
 }
 

@@ -20,7 +20,8 @@ default = [
     "trace",
     "workflow",
 ]
-# `prime-agent dream`: Dream-RSI's standalone zero-token runner (pa-dream).
+# Dream-RSI (pa-dream): `prime-agent dream`, the standalone zero-token runner,
+# and the in-session `dream.*` host requests, `/dream` and the `dream` skill.
 dream = ["dep:pa-dream"]
 # The continual-learning gate: the learning index, `prime-agent learning`, and
 # the Engineer Trajectory Index's digest hook and RAVO recurrence filter

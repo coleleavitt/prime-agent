@@ -331,6 +331,7 @@ pub fn run_dream_loop(
                 iteration,
                 proposer: None,
                 tree_id,
+                cancel: None,
             })
         };
 

@@ -29,6 +29,7 @@ pub(crate) const ROSTER_SESSION_EVENT_TRIGGERS: &[&str] = &[
     "session_action_update",
     "session_info_changed",
     "thinking_level_changed",
+    "feature_status",
 ];
 
 /// Whether one broadcast frame triggers a roster flush: session events by event type, plus the
