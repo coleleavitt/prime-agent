@@ -1270,6 +1270,7 @@ dependencies = [
  "pa-core",
  "pa-daemon",
  "pa-telemetry",
+ "pa-toolforge",
  "pa-tui",
  "pa-types",
  "rsa",
@@ -1388,6 +1389,25 @@ dependencies = [
  "rustix 1.1.4",
  "serde",
  "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "pa-toolforge"
+version = "0.9.8"
+dependencies = [
+ "anyhow",
+ "nix",
+ "pa-agent",
+ "pa-core",
+ "pa-telemetry",
+ "pa-types",
+ "serde",
+ "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
  "tracing",

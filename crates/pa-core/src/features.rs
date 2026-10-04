@@ -11,7 +11,42 @@
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
+use pa_telemetry::Properties;
+
 use crate::kernel::shared::HostRequestHandlers;
+
+/// A session's adoption-telemetry emitter, handed to features so they can
+/// report their catalogued events without reaching for the session's client.
+/// Emission is fire-and-forget; the host stamps the platform base properties
+/// and drops the event while the session's live opt-out switch reads off.
+#[derive(Clone)]
+pub struct FeatureTelemetry {
+    track: Arc<TrackFn>,
+}
+
+/// A tracking function: event name and the feature's own properties.
+type TrackFn = dyn Fn(&str, Properties) + Send + Sync;
+
+impl FeatureTelemetry {
+    /// Wrap a tracking function (the composition root's, or a test's
+    /// recorder).
+    pub fn new(track: impl Fn(&str, Properties) + Send + Sync + 'static) -> Self {
+        Self {
+            track: Arc::new(track),
+        }
+    }
+
+    /// Track one catalogued event with the feature's own properties.
+    pub fn track(&self, name: &str, properties: Properties) {
+        (self.track)(name, properties);
+    }
+}
+
+impl std::fmt::Debug for FeatureTelemetry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("FeatureTelemetry")
+    }
+}
 
 /// What a feature may know about the session it is joining.
 #[derive(Debug, Clone)]
@@ -22,6 +57,11 @@ pub struct SessionFeatureContext {
     pub cwd: PathBuf,
     /// The session id.
     pub session_id: String,
+    /// Import names of the Python skills this session's kernel binds.
+    pub python_skill_import_names: Vec<String>,
+    /// The session's telemetry emitter; `None` when the session runs without
+    /// telemetry (opt-out, tests, one-shot paths).
+    pub telemetry: Option<FeatureTelemetry>,
 }
 
 /// One optional capability. Implementations live in their own crates and
@@ -74,6 +114,11 @@ mod tests {
 
     struct Stub;
 
+    /// Named, not inlined at the `register` call: the prompt guard
+    /// (`tests/prompt_guards.rs`) reads every `.register("…")` literal in
+    /// these sources as part of the documented kernel surface.
+    const STUB_REQUEST: &str = "stub.ping";
+
     impl SessionFeature for Stub {
         fn name(&self) -> &'static str {
             "stub"
@@ -86,7 +131,7 @@ mod tests {
         ) {
             let cwd = context.cwd.display().to_string();
             handlers.register(
-                "stub.ping",
+                STUB_REQUEST,
                 crate::kernel::shared::host_handler(move |_| {
                     let cwd = cwd.clone();
                     async move { Ok(serde_json::json!({ "cwd": cwd })) }
@@ -103,9 +148,32 @@ mod tests {
             agent_dir: PathBuf::from("/agent"),
             cwd: PathBuf::from("/work"),
             session_id: "s1".to_string(),
+            python_skill_import_names: Vec::new(),
+            telemetry: None,
         };
         let mut handlers = HostRequestHandlers::default();
         Stub.register_host_handlers(&context, &mut handlers);
-        assert!(handlers.get("stub.ping").is_some());
+        assert!(handlers.get(STUB_REQUEST).is_some());
+    }
+
+    /// A feature's telemetry reaches the session's tracker with its name and
+    /// properties intact.
+    #[test]
+    fn feature_telemetry_forwards_to_the_session_tracker() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorder = Arc::clone(&seen);
+        let telemetry = FeatureTelemetry::new(move |name, properties| {
+            recorder
+                .lock()
+                .unwrap()
+                .push((name.to_string(), properties));
+        });
+        let mut properties = Properties::new();
+        properties.set("count", serde_json::json!(2));
+        telemetry.track("stub event", properties.clone());
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![("stub event".to_string(), properties)]
+        );
     }
 }

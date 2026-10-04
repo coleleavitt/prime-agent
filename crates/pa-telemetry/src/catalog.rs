@@ -9,8 +9,10 @@
 //! version 2 is the #2117 vocabulary (the v2 enrichment on the legacy
 //! events and the onboarding/startup/installation stages). Schema version
 //! 3 adds the kernel telemetry bridge's skill-event vocabulary
-//! (`computer_use_session_started`, `computer_use_action`): new-event
-//! vocabulary bumps the version, additive property changes do not.
+//! (`computer_use_session_started`, `computer_use_action`); schema version 4
+//! adds the separately built features' adoption events (`toolforge
+//! publish`): new-event vocabulary bumps the version, additive property
+//! changes do not.
 //!
 //! [`sanitize`] is the platform adjust layer: before a batch reaches any
 //! sink, every catalogued event's properties are normalized against its
@@ -26,10 +28,11 @@ use crate::properties::Properties;
 
 /// The current schema version stamped on every event. Bumped to 2 when
 /// the #2117 tracking vocabulary landed and to 3 when the kernel
-/// telemetry bridge's skill-event vocabulary (`computer_use_*`) landed —
-/// new-event vocabulary bumps the version (the #2117 precedent);
+/// telemetry bridge's skill-event vocabulary (`computer_use_*`) landed, and
+/// to 4 when the feature crates' adoption events (`toolforge publish`)
+/// landed — new-event vocabulary bumps the version (the #2117 precedent);
 /// additive property changes alone do not.
-pub const SCHEMA_VERSION: u64 = 3;
+pub const SCHEMA_VERSION: u64 = 4;
 
 // ---------------------------------------------------------------------------
 // Rule kinds
@@ -1056,6 +1059,31 @@ const COMPUTER_USE_ACTION: EventRule = EventRule {
     ],
 };
 
+/// `toolforge publish` (v4): one `rlm.toolforge.publish` attempt (the
+/// `pa-toolforge` feature crate). Outcome categories and counts only —
+/// never the skill name, its source, its exit test or a path.
+const TOOLFORGE_PUBLISH: EventRule = EventRule {
+    name: "toolforge publish",
+    since: 4,
+    properties: &[
+        (
+            "status",
+            required(enum_rule(&["published", "rejected"], "rejected")),
+        ),
+        (
+            "rejection",
+            optional(nullable_enum_rule(
+                &["name", "shape", "negative", "positive", "error"],
+                "error",
+            )),
+        ),
+        ("installed", required(boolean())),
+        ("gate_run_count", required(count())),
+        ("version", optional(count())),
+        ("duration_ms", required(duration())),
+    ],
+};
+
 /// `image delegation` (v2): one image-carrying turn delegated to a child
 /// running the resolved `settings.imageModel` (the supervisor-backed
 /// routing for text-only session models). Outcome only — never the
@@ -1353,6 +1381,7 @@ pub fn catalog() -> Vec<&'static EventRule> {
         &TUI_IPYTHON_BASH_RENDERED,
         &COMPUTER_USE_SESSION_STARTED,
         &COMPUTER_USE_ACTION,
+        &TOOLFORGE_PUBLISH,
     ];
     all.extend(UPDATE_EVENTS.iter());
     all
@@ -1472,8 +1501,9 @@ mod tests {
     fn the_catalog_is_the_low_frequency_set() {
         // New-event vocabulary bumps the schema version: the #2117
         // vocabulary landed at v2, the kernel telemetry bridge's skill
-        // events at v3.
-        assert_eq!(SCHEMA_VERSION, 3);
+        // events at v3, the feature crates' adoption events at v4.
+        assert_eq!(SCHEMA_VERSION, 4);
+        assert_eq!(lookup("toolforge publish").map(|rule| rule.since), Some(4));
         for name in ["computer_use_session_started", "computer_use_action"] {
             let rule = catalog()
                 .into_iter()

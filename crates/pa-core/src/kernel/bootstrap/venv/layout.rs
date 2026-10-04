@@ -28,7 +28,7 @@ pub fn kernel_venv_dir() -> PathBuf {
     home_dir().join(".prime").join("agent").join("kernel-venv")
 }
 
-fn xdg_kernel_venv_dir() -> PathBuf {
+pub(super) fn xdg_kernel_venv_dir() -> PathBuf {
     let data_home = match std::env::var("XDG_DATA_HOME") {
         Ok(value) if !value.is_empty() => expand_home(&value),
         _ => home_dir().join(".local").join("share"),

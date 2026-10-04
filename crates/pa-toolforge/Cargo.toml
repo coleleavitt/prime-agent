@@ -1,0 +1,28 @@
+[package]
+name = "pa-toolforge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Toolforge: the gated publish path that turns agent-written Python into a durable kernel skill."
+
+[dependencies]
+pa-core = { path = "../pa-core" }
+pa-telemetry = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["signal"] }
+
+[dev-dependencies]
+pa-agent = { workspace = true }
+pa-types = { workspace = true }
+tempfile = "3"
+
+[lints]
+workspace = true
