@@ -129,8 +129,10 @@ pub fn is_truthy_env_flag(value: Option<&str>) -> bool {
     }
 }
 
-/// The env-mutating tests serialize on one lock (the `client_traces`
-/// convention): both HOME mutators in this crate's test binary take it.
+/// The env-mutating tests serialize on this one crate-wide lock: two
+/// private locks guarding the same variable do not serialize each other,
+/// so every test in this crate's binary that mutates the process env
+/// (HOME, the credential keys, ...) takes it.
 #[cfg(test)]
 pub(crate) fn env_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
