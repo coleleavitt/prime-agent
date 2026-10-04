@@ -1,4 +1,7 @@
+import tempfile
+import tomllib
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from rlm import repl, workflow_v2
@@ -138,3 +141,39 @@ class WorkflowV2Test(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(workflow_v2.CapabilityUnavailable):
                 await workflow_v2.request(request=validate_request())
+
+
+class WorkflowV2SchemaPackagingTest(unittest.TestCase):
+    def setUp(self):
+        workflow_v2._SCHEMA = None
+        self.addCleanup(setattr, workflow_v2, "_SCHEMA", None)
+
+    def test_the_wheel_ships_the_schema_where_the_package_reads_it(self):
+        root = Path(workflow_v2.__file__).resolve().parents[2]
+        pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+        wheel = pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]
+        packaged = workflow_v2._SCHEMA_PATHS[0]
+        self.assertEqual(
+            wheel.get("force-include", {}).get("schemas/workflow-v2.schema.json"),
+            packaged.relative_to(packaged.parents[2]).as_posix(),
+        )
+        self.assertEqual(packaged.parents[2], Path(workflow_v2.__file__).resolve().parents[1])
+        self.assertTrue((root / "schemas" / "workflow-v2.schema.json").is_file())
+
+    def test_the_packaged_copy_wins_and_the_checkout_copy_is_the_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            packaged = Path(tmp) / "packaged.json"
+            checkout = Path(tmp) / "checkout.json"
+            checkout.write_text('{"$defs": {"which": "checkout"}}', encoding="utf-8")
+            with patch.object(workflow_v2, "_SCHEMA_PATHS", (packaged, checkout)):
+                self.assertEqual(workflow_v2._schema()["$defs"], {"which": "checkout"})
+                workflow_v2._SCHEMA = None
+                packaged.write_text('{"$defs": {"which": "packaged"}}', encoding="utf-8")
+                self.assertEqual(workflow_v2._schema()["$defs"], {"which": "packaged"})
+
+    def test_a_missing_schema_is_capability_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = (Path(tmp) / "a.json", Path(tmp) / "b.json")
+            with patch.object(workflow_v2, "_SCHEMA_PATHS", missing):
+                with self.assertRaises(workflow_v2.CapabilityUnavailable):
+                    workflow_v2._schema()

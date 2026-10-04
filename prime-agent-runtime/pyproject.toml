@@ -21,6 +21,12 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/rlm"]
 
+# rlm.workflow_v2 validates against the closed Workflow V2 schema at run
+# time; the wheel ships it inside the package (a source checkout reads
+# schemas/ directly).
+[tool.hatch.build.targets.wheel.force-include]
+"schemas/workflow-v2.schema.json" = "rlm/schemas/workflow-v2.schema.json"
+
 [tool.coverage.run]
 branch = true
 relative_files = true
