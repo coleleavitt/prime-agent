@@ -1,0 +1,350 @@
+//! The store source against a temporary store and a loopback token
+//! endpoint: never the user's store, Claude Code's files, or the network.
+
+use std::collections::BTreeMap;
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Barrier, Mutex};
+
+use anthropic::token::{AccessToken, Credential, OAuthTokens, RefreshToken};
+use anthropic::Account;
+use chrono::{Duration, Utc};
+use pa_core::auth::{install_credential_source, AuthStorage, AuthStorageData, NoOAuth};
+use pa_core::features::{SessionFeature, SessionFeatureContext};
+use pa_core::models::{ModelRegistry, ResolvedRequestAuth};
+
+use super::*;
+
+const ROTATED_ACCESS: &str = "sk-ant-oat01-rotated-rotated-rotated-00";
+const ROTATED: &str = r#"{"access_token":"sk-ant-oat01-rotated-rotated-rotated-00","refresh_token":"sk-ant-ort01-rotated-rotated-rotated-00","expires_in":28800,"scope":"user:inference user:profile"}"#;
+const INVALID_GRANT: &str =
+    r#"{"error":"invalid_grant","error_description":"refresh token revoked"}"#;
+
+/// A loopback token endpoint answering every POST with `status` + `body`;
+/// returns its URL and the request count.
+fn token_endpoint(status: u16, body: &'static str) -> (String, Arc<AtomicUsize>) {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind a loopback port");
+    let url = format!(
+        "http://{}/v1/oauth/token",
+        listener.local_addr().expect("the bound address")
+    );
+    let hits = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&hits);
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let mut request = Vec::new();
+            let mut chunk = [0u8; 4096];
+            while let Ok(read) = stream.read(&mut chunk) {
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&chunk[..read]);
+                let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") else {
+                    continue;
+                };
+                let head = String::from_utf8_lossy(&request[..end]).to_ascii_lowercase();
+                let length = head
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length:"))
+                    .and_then(|value| value.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
+                if request.len() >= end + 4 + length {
+                    break;
+                }
+            }
+            counter.fetch_add(1, Ordering::SeqCst);
+            let response = format!(
+                "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+        }
+    });
+    (url, hits)
+}
+
+/// One OAuth row whose access token expires `access_in` from now. Ids
+/// are unique per test: the SDK remembers a refresh token Anthropic
+/// rejected for the life of the process.
+fn row(id: &str, access_in: Duration) -> Account {
+    Account::new(
+        id,
+        Credential::Oauth(OAuthTokens {
+            access: AccessToken::new(format!("sk-ant-oat01-{id}-store-access-000")),
+            refresh: RefreshToken::new(format!("sk-ant-ort01-{id}-store-refresh-000")),
+            expires_at: Utc::now() + access_in,
+            refresh_expires_at: Some(Utc::now() + Duration::days(20)),
+            scopes: vec!["user:inference".into()],
+            account: None,
+            organization: None,
+        }),
+    )
+}
+
+/// A temporary `~/.anthropic-accounts/accounts.json` holding `accounts`
+/// (none: no file), and a source over it that reaches only `token_url`
+/// and never Claude Code's credentials.
+fn source_over(
+    accounts: Vec<Account>,
+    token_url: &str,
+) -> (tempfile::TempDir, Arc<SharedStoreSource>) {
+    let home = tempfile::tempdir().expect("a temporary home");
+    let store_path = home
+        .path()
+        .join(".anthropic-accounts")
+        .join("accounts.json");
+    if !accounts.is_empty() {
+        std::fs::create_dir_all(store_path.parent().expect("the store dir"))
+            .expect("create the store dir");
+        AccountStore {
+            accounts,
+            ..AccountStore::default()
+        }
+        .save(&store_path)
+        .expect("seed the store");
+    }
+    let source = SharedStoreSource::new(SharedStoreConfig::isolated(
+        store_path,
+        token_url,
+        "http://127.0.0.1:9/api/oauth/profile",
+    ));
+    (home, Arc::new(source))
+}
+
+/// `auth.json` holding the provider's own (live) OAuth login.
+fn auth_json_login(provider: &str) -> AuthStorage {
+    let data = serde_json::json!({
+        provider: {
+            "type": "oauth", "access": "sk-ant-oat01-auth-json-access",
+            "refresh": "auth-json-refresh", "expires": 4_102_444_800_000i64
+        }
+    });
+    AuthStorage::in_memory_without_env(
+        &AuthStorageData(data.as_object().cloned().unwrap_or_default()),
+        Arc::new(NoOAuth),
+    )
+}
+
+fn model(provider: &str) -> pa_types::ai::Model {
+    serde_json::from_value(serde_json::json!({
+        "id": "claude-test", "name": "claude-test", "api": "anthropic-messages",
+        "provider": provider, "baseUrl": "http://127.0.0.1:9", "reasoning": false,
+        "input": ["text"],
+        "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+        "contextWindow": 1000, "maxTokens": 100
+    }))
+    .expect("a test model")
+}
+
+fn served(api_key: &str) -> ResolvedRequestAuth {
+    ResolvedRequestAuth {
+        ok: true,
+        api_key: Some(api_key.to_string()),
+        headers: None,
+        error: None,
+        oauth_refresh_failed: false,
+    }
+}
+
+#[test]
+fn the_provider_gets_the_store_token() {
+    let provider = "anthropic-store-live";
+    let (url, hits) = token_endpoint(200, ROTATED);
+    let (_home, source) = source_over(vec![row("a", Duration::hours(2))], &url);
+    install_credential_source(provider, source.clone());
+    let mut registry = ModelRegistry::in_memory(auth_json_login(provider));
+
+    assert_eq!(
+        registry.get_api_key_and_headers(&model(provider), None),
+        served("sk-ant-oat01-a-store-access-000")
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        source.usage(),
+        SourceUsage {
+            store: 1,
+            first: Some("store"),
+            ..SourceUsage::default()
+        }
+    );
+}
+
+#[test]
+fn an_expired_token_refreshes_once_under_concurrency() {
+    let provider = "anthropic-store-concurrent";
+    let (url, hits) = token_endpoint(200, ROTATED);
+    let (_home, source) = source_over(vec![row("concurrent", Duration::hours(-1))], &url);
+    install_credential_source(provider, source.clone());
+
+    // Two sessions' requests, each with its own auth view, at once.
+    let start = Arc::new(Barrier::new(2));
+    let requests: Vec<_> = (0..2)
+        .map(|_| {
+            let start = Arc::clone(&start);
+            std::thread::spawn(move || {
+                let mut registry = ModelRegistry::in_memory(auth_json_login(provider));
+                start.wait();
+                registry.get_api_key_and_headers(&model(provider), None)
+            })
+        })
+        .collect();
+    let resolved: Vec<_> = requests
+        .into_iter()
+        .map(|request| request.join().expect("the request thread"))
+        .collect();
+
+    assert_eq!(
+        resolved,
+        vec![served(ROTATED_ACCESS), served(ROTATED_ACCESS)]
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    // The second request read the first one's rotation from the store.
+    assert_eq!(
+        source.usage(),
+        SourceUsage {
+            store: 1,
+            refreshed: 1,
+            first: Some("refreshed"),
+            ..SourceUsage::default()
+        }
+    );
+    let stored = AccountStore::load(source.store_path()).expect("the store");
+    assert_eq!(
+        stored
+            .get("concurrent")
+            .and_then(Account::oauth)
+            .map(|tokens| tokens.refresh.expose().to_string()),
+        Some("sk-ant-ort01-rotated-rotated-rotated-00".to_string())
+    );
+}
+
+#[test]
+fn a_refresh_failure_is_the_oauth_authentication_error() {
+    let provider = "anthropic-store-revoked";
+    let (url, hits) = token_endpoint(400, INVALID_GRANT);
+    let (_home, source) = source_over(vec![row("revoked", Duration::hours(-1))], &url);
+    install_credential_source(provider, source.clone());
+    // auth.json's own login is never served in the store's place.
+    let mut registry = ModelRegistry::in_memory(auth_json_login(provider));
+
+    assert_eq!(
+        registry.get_api_key_and_headers(&model(provider), None),
+        ResolvedRequestAuth {
+            ok: false,
+            api_key: None,
+            headers: None,
+            error: Some(pa_core::auth::oauth_refresh_failed_message(provider)),
+            oauth_refresh_failed: true,
+        }
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        source.usage(),
+        SourceUsage {
+            failed: 1,
+            ..SourceUsage::default()
+        }
+    );
+}
+
+#[test]
+fn an_empty_store_leaves_auth_json_in_charge() {
+    let provider = "anthropic-store-empty";
+    let (url, hits) = token_endpoint(200, ROTATED);
+    let (_home, source) = source_over(Vec::new(), &url);
+    install_credential_source(provider, source.clone());
+    let mut registry = ModelRegistry::in_memory(auth_json_login(provider));
+
+    assert_eq!(source.status(), None);
+    assert_eq!(
+        registry.get_api_key_and_headers(&model(provider), None),
+        served("sk-ant-oat01-auth-json-access")
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
+    assert_eq!(source.usage(), SourceUsage::default());
+}
+
+#[test]
+fn the_status_names_the_store_and_follows_rotation() {
+    let (url, _hits) = token_endpoint(200, ROTATED);
+    let (_home, source) = source_over(vec![row("rotating", Duration::hours(-1))], &url);
+    let before = source.status().expect("a login");
+    assert_eq!(before.label, STORE_LABEL);
+
+    source.credential().expect("a refreshed credential");
+    let after = source.status().expect("a login");
+
+    assert_eq!(after.label, STORE_LABEL);
+    assert_ne!(after.revision, before.revision);
+}
+
+#[test]
+fn the_debug_form_of_a_credential_never_shows_the_token() {
+    let (url, _hits) = token_endpoint(200, ROTATED);
+    let (_home, source) = source_over(vec![row("a", Duration::hours(2))], &url);
+    let credential = source.credential().expect("a credential");
+
+    assert_eq!(
+        credential,
+        SourcedCredential {
+            api_key: "sk-ant-oat01-a-store-access-000".to_string(),
+            headers: BTreeMap::new(),
+        }
+    );
+    assert!(!format!("{credential:?}").contains("sk-ant"));
+}
+
+fn context(telemetry: pa_core::features::FeatureTelemetry) -> Arc<SessionFeatureContext> {
+    Arc::new(SessionFeatureContext {
+        agent_dir: std::path::PathBuf::from("/nonexistent/agent"),
+        cwd: std::path::PathBuf::from("/nonexistent/cwd"),
+        session_id: "session".to_string(),
+        python_skill_import_names: Vec::new(),
+        model: serde_json::from_value(serde_json::json!({
+            "id": "m1", "name": "M1", "api": "test", "provider": "p1",
+            "baseUrl": "http://localhost", "reasoning": false,
+            "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+            "contextWindow": 1000, "maxTokens": 100
+        }))
+        .expect("stub model"),
+        telemetry: Some(telemetry),
+        rlm_depth: 0,
+        session_artifact_dir: None,
+    })
+}
+
+#[test]
+fn the_adoption_event_is_reported_once_per_process() {
+    let (url, _hits) = token_endpoint(200, ROTATED);
+    let (_home, source) = source_over(vec![row("adoption", Duration::hours(-1))], &url);
+    let events: Arc<Mutex<Vec<(String, serde_json::Value)>>> = Arc::default();
+    let recorder = Arc::clone(&events);
+    let context = context(pa_core::features::FeatureTelemetry::new(
+        move |name, properties| {
+            recorder.lock_or_recover().push((
+                name.to_string(),
+                serde_json::to_value(&properties).expect("properties serialize"),
+            ));
+        },
+    ));
+    let feature = crate::AnthropicAuthFeature::new(Arc::clone(&source));
+
+    // Nothing to report until the store answers a request.
+    feature.on_agent_end(&context);
+    assert!(events.lock_or_recover().is_empty());
+
+    source.credential().expect("a refreshed credential");
+    source.credential().expect("the stored credential");
+    feature.on_agent_end(&context);
+    feature.on_agent_end(&context);
+
+    assert_eq!(
+        *events.lock_or_recover(),
+        vec![(
+            crate::TELEMETRY_EVENT.to_string(),
+            serde_json::json!({ "source": "refreshed", "refreshed": 1, "failed": 0 })
+        )]
+    );
+}

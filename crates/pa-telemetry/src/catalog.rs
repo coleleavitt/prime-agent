@@ -10,7 +10,7 @@
 //! events and the onboarding/startup/installation stages). Schema version
 //! 3 adds the kernel telemetry bridge's skill-event vocabulary
 //! (`computer_use_session_started`, `computer_use_action`); schema version 4
-//! adds the separately built features' adoption events (`dream_run`,
+//! adds the separately built features' adoption events (`anthropic_shared_auth`, `dream_run`,
 //! `failure_resolution_hint`, `learning_report`, `observability command used`, `ravo_gate_decision`, `ravo_run`, `toolforge
 //! publish`, `workflow_run_agent`, `workflow_durable_request`): new-event
 //! vocabulary bumps the version,
@@ -1327,6 +1327,35 @@ const LEARNING_REPORT: EventRule = EventRule {
     ],
 };
 
+/// `anthropic_shared_auth` (v4): the shared Anthropic account store
+/// (`~/.anthropic-accounts`, the fork's `pa-anthropic-auth`) serving the
+/// `anthropic` provider, reported once per process at the end of the first
+/// agent run after the store answered a request: how its first credential
+/// was obtained (or `failed` when none was), and the process's refresh and
+/// failure counts so far — never an account id, email, label or token.
+const ANTHROPIC_SHARED_AUTH: EventRule = EventRule {
+    name: "anthropic_shared_auth",
+    since: 4,
+    properties: &[
+        (
+            "source",
+            required(enum_rule(
+                &[
+                    "store",
+                    "refreshed",
+                    "adopted",
+                    "claude_code",
+                    "failed",
+                    "unknown",
+                ],
+                "unknown",
+            )),
+        ),
+        ("refreshed", required(count())),
+        ("failed", required(count())),
+    ],
+};
+
 /// `dream_run` (v4): one parsed `prime-agent dream` invocation (the fork's
 /// `pa-dream` feature). Subcommand, task and outcome vocabularies, rollout
 /// and probe counts, whether a better policy was adopted, and the duration —
@@ -1736,6 +1765,7 @@ pub fn catalog() -> Vec<&'static EventRule> {
         &RAVO_GATE_DECISION,
         &LEARNING_REPORT,
         &RAVO_RUN,
+        &ANTHROPIC_SHARED_AUTH,
     ];
     all.extend(UPDATE_EVENTS.iter());
     all
@@ -1875,6 +1905,10 @@ mod tests {
         );
         assert_eq!(lookup("ravo_gate_decision").map(|rule| rule.since), Some(4));
         assert_eq!(lookup("learning_report").map(|rule| rule.since), Some(4));
+        assert_eq!(
+            lookup("anthropic_shared_auth").map(|rule| rule.since),
+            Some(4)
+        );
         for name in ["computer_use_session_started", "computer_use_action"] {
             let rule = catalog()
                 .into_iter()
@@ -2211,6 +2245,24 @@ mod tests {
         assert_eq!(properties.get("task"), Some(&json!("unknown")));
         assert_eq!(properties.get("outcome"), Some(&json!("failed")));
         assert!(properties.get("seed").is_none());
+    }
+
+    #[test]
+    fn sanitize_normalizes_anthropic_shared_auth() {
+        let mut properties = Properties::new();
+        for (key, value) in [
+            ("source", json!("refreshed")),
+            ("refreshed", json!(1u64)),
+            ("failed", json!(0u64)),
+        ] {
+            properties.set(key, value);
+        }
+        assert_eq!(sanitize("anthropic_shared_auth", &mut properties), 0);
+        properties.set("source", json!("keychain"));
+        properties.set("account_id", json!("acct"));
+        assert_eq!(sanitize("anthropic_shared_auth", &mut properties), 2);
+        assert_eq!(properties.get("source"), Some(&json!("unknown")));
+        assert!(properties.get("account_id").is_none());
     }
 
     #[test]

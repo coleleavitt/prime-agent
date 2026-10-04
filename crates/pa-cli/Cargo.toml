@@ -9,6 +9,7 @@ description = "The prime-agent binary."
 # The fork's feature crates (docs/fork-feature-crates.md); `--no-default-features`
 # builds the native product.
 default = [
+    "anthropic-auth",
     "dream",
     "learning",
     "ledger",
@@ -20,6 +21,10 @@ default = [
     "trace",
     "workflow",
 ]
+# Anthropic subscription auth through the shared account store
+# (~/.anthropic-accounts, the store the opencode and pi plugins use): the
+# `anthropic` provider's credential source (crates/pa-anthropic-auth).
+anthropic-auth = ["dep:pa-anthropic-auth"]
 # Dream-RSI (pa-dream): `prime-agent dream`, the standalone zero-token runner,
 # and the in-session `dream.*` host requests, `/dream` and the `dream` skill.
 dream = ["dep:pa-dream"]
@@ -66,6 +71,7 @@ pa-session-index = { path = "../pa-session-index", optional = true }
 pa-ravo = { path = "../pa-ravo", optional = true }
 pa-learning = { path = "../pa-learning", optional = true }
 pa-mermaid = { path = "../pa-mermaid", optional = true }
+pa-anthropic-auth = { path = "../pa-anthropic-auth", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }
 tokio = { workspace = true }
 anyhow = { workspace = true }

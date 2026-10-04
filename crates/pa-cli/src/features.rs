@@ -27,6 +27,12 @@ pub fn enabled_features() -> Vec<Arc<dyn SessionFeature>> {
         // bundled `dream` skill (top-level sessions with harness state).
         #[cfg(feature = "dream")]
         Arc::new(pa_dream::session::DreamFeature::new()),
+        // The shared Anthropic account store's adoption report (the store
+        // itself serves through `install_credential_sources`).
+        #[cfg(feature = "anthropic-auth")]
+        Arc::new(pa_anthropic_auth::AnthropicAuthFeature::new(
+            pa_anthropic_auth::shared_source(),
+        )),
     ];
     #[cfg(feature = "ledger")]
     features.extend(ledger_features());
@@ -95,7 +101,8 @@ impl InstalledFeatures {
     }
 }
 
-/// Install the enabled features: the session seam, the TUI seams
+/// Install the enabled features: the session seam, the provider credential
+/// sources ([`install_credential_sources`]), the TUI seams
 /// ([`install_tui_features`]), (feature `trace`) the trace recorder as the
 /// process subscriber, and (feature `session-index`) the saved-session
 /// catalog cache. Called once by the binary before any
@@ -105,6 +112,7 @@ impl InstalledFeatures {
 #[must_use]
 pub fn install_enabled_features() -> InstalledFeatures {
     pa_core::features::install(enabled_features());
+    install_credential_sources();
     install_tui_features();
     #[cfg(feature = "session-index")]
     let session_index = {
@@ -122,6 +130,14 @@ pub fn install_enabled_features() -> InstalledFeatures {
         ))
         .ok(),
     }
+}
+
+/// Install the enabled features' provider credential sources: (feature
+/// `anthropic-auth`) the shared Anthropic account store for the `anthropic`
+/// provider. Idempotent; no I/O.
+pub fn install_credential_sources() {
+    #[cfg(feature = "anthropic-auth")]
+    pa_anthropic_auth::install();
 }
 
 /// Install the enabled features' TUI seams before the first frame: (feature `mermaid`)
@@ -239,11 +255,23 @@ mod tests {
             "learning",
             #[cfg(feature = "dream")]
             "dream",
+            #[cfg(feature = "anthropic-auth")]
+            "anthropic-auth",
             #[cfg(feature = "ravo")]
             "ravo",
             #[cfg(feature = "ledger")]
             "ledger",
         ];
         assert_eq!(names, expected);
+    }
+
+    /// `--no-default-features` installs no credential source, so auth.json
+    /// resolves every provider exactly as before. (The fork build is not
+    /// installed here: its source reads the real `~/.anthropic-accounts`.)
+    #[cfg(not(feature = "anthropic-auth"))]
+    #[test]
+    fn the_native_build_installs_no_credential_source() {
+        install_credential_sources();
+        assert!(pa_core::auth::credential_source("anthropic").is_none());
     }
 }
