@@ -20,6 +20,13 @@ fn args(values: &[&str]) -> Vec<String> {
 }
 
 fn write_executable(path: &Path, contents: &str) {
+    // Pin the shim's own command lookup (`cat`, `printf`): the resolution
+    // tests poison the process `PATH` under the env lock, and a shim spawned
+    // by a concurrent test inherits whatever `PATH` is live at that moment.
+    let contents = match contents.strip_prefix("#!/bin/sh\n") {
+        Some(body) => format!("#!/bin/sh\nPATH=/usr/bin:/bin\n{body}"),
+        None => contents.to_string(),
+    };
     fs::write(path, contents).expect("write shim");
     let mut permissions = fs::metadata(path).expect("stat shim").permissions();
     permissions.set_mode(0o755);

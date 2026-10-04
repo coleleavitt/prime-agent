@@ -78,13 +78,22 @@ struct TailscaleRun {
 
 /// Run the tailscale CLI once, returning stdout/stderr or an error descriptor.
 async fn run_tailscale(program: &OsStr, args: &[&str]) -> TailscaleRun {
-    let output = tokio::process::Command::new(program)
+    let mut command = tokio::process::Command::new(program);
+    command
         .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true)
-        .output();
+        .kill_on_drop(true);
+    // ETXTBSY is transient (a concurrent fork still holds a just-written
+    // binary's write handle), so the spawn rides it out instead of reporting
+    // an unrunnable CLI.
+    let output = async {
+        pa_core::platform::process::spawn_retrying_text_busy(&mut command)
+            .await?
+            .wait_with_output()
+            .await
+    };
     match tokio::time::timeout(TAILSCALE_TIMEOUT, output).await {
         Ok(Ok(output)) => TailscaleRun {
             code: output.status.code().unwrap_or(-1),

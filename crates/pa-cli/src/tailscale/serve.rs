@@ -175,10 +175,14 @@ fn valid_port(port: f64) -> bool {
 /// and stderr are inherited so funnel's first-enable prompt works). Returns the
 /// exit code, or 1 when the spawn fails or the call times out.
 async fn spawn_serve(program: &OsStr, args: &[&str]) -> i32 {
-    let status = tokio::process::Command::new(program)
-        .args(args)
-        .kill_on_drop(true)
-        .status();
+    let mut command = tokio::process::Command::new(program);
+    command.args(args).kill_on_drop(true);
+    let status = async {
+        pa_core::platform::process::spawn_retrying_text_busy(&mut command)
+            .await?
+            .wait()
+            .await
+    };
     match tokio::time::timeout(SERVE_TIMEOUT, status).await {
         Ok(Ok(status)) => status.code().unwrap_or(1),
         Ok(Err(_)) | Err(_) => 1,
