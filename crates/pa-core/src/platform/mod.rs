@@ -10,6 +10,7 @@ pub mod perms;
 pub mod private_fs;
 pub mod process;
 pub mod shell;
+pub mod sync_dir;
 
 pub use lock_dir::LockDir;
 pub use perms::{
@@ -20,6 +21,7 @@ pub use process::{
     kill_pid, kill_process_group_or_pid, pid_exists, set_new_process_group, set_no_window,
     termination_signal, Signal,
 };
+pub use sync_dir::sync_dir;
 // The rename-onto-destination primitive (bounded win32 destination-busy
 // retry, TS `renameOntoSync`) lives in pa-telemetry - the bottom crate every
 // persist owner (pa-telemetry install id, pa-core, pa-daemon) already
