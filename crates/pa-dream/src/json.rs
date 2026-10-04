@@ -11,7 +11,6 @@
 //!   float parser is best-effort, and a node score that came back one ulp off
 //!   would move a replay's best, the probation floor and every `V` downstream.
 
-use std::fmt::Write as _;
 use std::io;
 
 use serde::Serialize;
@@ -21,54 +20,7 @@ use serde_json::{Map, Number, Value};
 /// ECMAScript `Number::toString(x)` for a finite or non-finite double.
 #[must_use]
 pub fn js_number(value: f64) -> String {
-    if value.is_nan() {
-        return "NaN".to_string();
-    }
-    if value.is_infinite() {
-        return if value > 0.0 { "Infinity" } else { "-Infinity" }.to_string();
-    }
-    if value == 0.0 {
-        return "0".to_string();
-    }
-    let negative = value < 0.0;
-    // `{:e}` is the shortest round-trip digit string, as ECMAScript requires.
-    let exp_form = format!("{:e}", value.abs());
-    let (mantissa, exponent) = exp_form.split_once('e').unwrap_or((exp_form.as_str(), "0"));
-    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
-    let exponent: i64 = exponent.parse().unwrap_or(0);
-    let k = i64::try_from(digits.len()).unwrap_or(i64::MAX);
-    let n = exponent + 1;
-    let mut out = String::new();
-    if negative {
-        out.push('-');
-    }
-    if k <= n && n <= 21 {
-        out.push_str(&digits);
-        for _ in 0..(n - k) {
-            out.push('0');
-        }
-    } else if 0 < n && n <= 21 {
-        let split = usize::try_from(n).unwrap_or(0);
-        out.push_str(&digits[..split]);
-        out.push('.');
-        out.push_str(&digits[split..]);
-    } else if -6 < n && n <= 0 {
-        out.push_str("0.");
-        for _ in 0..(-n) {
-            out.push('0');
-        }
-        out.push_str(&digits);
-    } else {
-        let e = n - 1;
-        out.push_str(&digits[..1]);
-        if k > 1 {
-            out.push('.');
-            out.push_str(&digits[1..]);
-        }
-        let sign = if e >= 0 { '+' } else { '-' };
-        let _ = write!(out, "e{sign}{}", e.abs());
-    }
-    out
+    pa_types::js::js_number_to_string(value)
 }
 
 /// ECMAScript `x.toFixed(digits)`: `String(x)` when `x` is not finite or

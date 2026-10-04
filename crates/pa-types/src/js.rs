@@ -1,5 +1,7 @@
 //! JavaScript value semantics the TS product's parsing relies on.
 
+use std::fmt::Write as _;
+
 /// JS `Number(text)` for a string (ECMAScript `StringToNumber`): `text`
 /// without its JS white space and line terminators parses as `0` when
 /// empty, `±Infinity` (exact case, optional sign), an unsigned `0x`/`0o`/`0b`
@@ -44,6 +46,62 @@ pub fn js_number(text: &str) -> f64 {
 #[must_use]
 pub fn js_trim(text: &str) -> &str {
     text.trim_matches(is_js_white_space)
+}
+
+/// JS `String(x)` (ECMAScript `Number::toString(x)`, the text
+/// `JSON.stringify` writes for a finite double): shortest round-trip digits,
+/// plain notation from `1e-7` up to `1e21`, exponent form (`1e+21`, `1e-7`)
+/// outside it, and `0` for `-0`.
+#[must_use]
+pub fn js_number_to_string(value: f64) -> String {
+    if value.is_nan() {
+        return "NaN".to_string();
+    }
+    if value.is_infinite() {
+        return if value > 0.0 { "Infinity" } else { "-Infinity" }.to_string();
+    }
+    if value == 0.0 {
+        return "0".to_string();
+    }
+    let negative = value < 0.0;
+    // `{:e}` is the shortest round-trip digit string, as ECMAScript requires.
+    let exp_form = format!("{:e}", value.abs());
+    let (mantissa, exponent) = exp_form.split_once('e').unwrap_or((exp_form.as_str(), "0"));
+    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    let exponent: i64 = exponent.parse().unwrap_or(0);
+    let k = i64::try_from(digits.len()).unwrap_or(i64::MAX);
+    let n = exponent + 1;
+    let mut out = String::new();
+    if negative {
+        out.push('-');
+    }
+    if k <= n && n <= 21 {
+        out.push_str(&digits);
+        for _ in 0..(n - k) {
+            out.push('0');
+        }
+    } else if 0 < n && n <= 21 {
+        let split = usize::try_from(n).unwrap_or(0);
+        out.push_str(&digits[..split]);
+        out.push('.');
+        out.push_str(&digits[split..]);
+    } else if -6 < n && n <= 0 {
+        out.push_str("0.");
+        for _ in 0..(-n) {
+            out.push('0');
+        }
+        out.push_str(&digits);
+    } else {
+        let e = n - 1;
+        out.push_str(&digits[..1]);
+        if k > 1 {
+            out.push('.');
+            out.push_str(&digits[1..]);
+        }
+        let sign = if e >= 0 { '+' } else { '-' };
+        let _ = write!(out, "e{sign}{}", e.abs());
+    }
+    out
 }
 
 /// ECMAScript `WhiteSpace` and `LineTerminator` code points.
