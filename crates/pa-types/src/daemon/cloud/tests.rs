@@ -138,6 +138,29 @@ fn canonical_json_renders_numbers_like_javascript() {
     }
 }
 
+/// A number the TS side wrote (`JSON.stringify` prints the shortest digits
+/// that round-trip) must parse back to the same double, or the canonical
+/// bytes - and every digest over them - move by one ulp. JS `JSON.parse` is
+/// correctly rounded; `serde_json`'s default float parser is best-effort and
+/// misses for values like these (its `float_roundtrip` feature fixes it).
+#[test]
+fn canonical_json_keeps_ts_written_floats_byte_for_byte() {
+    for source in [
+        "499.57400010000003",
+        "1705.4650004999999",
+        "9266.173002900001",
+        "1.0715660391465826e-75",
+        "-1.81996730402717e-179",
+    ] {
+        let value: Value = serde_json::from_str(&format!("{{\"n\":{source}}}")).unwrap();
+        assert_eq!(
+            canonical_json(&value).unwrap(),
+            format!("{{\"n\":{source}}}"),
+            "source {source}"
+        );
+    }
+}
+
 #[test]
 fn canonical_json_depth_bound() {
     let mut value = json!(1);
