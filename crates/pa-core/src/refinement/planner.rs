@@ -288,6 +288,56 @@ fn now_iso() -> String {
     crate::session::manager::format_iso_now()
 }
 
+/// The id an edit applies under: its own, or for a create the slug of its
+/// title (or kind).
+fn computed_edit_id(edit: &RefinementEdit) -> Option<String> {
+    edit.id.clone().or_else(|| {
+        (edit.action == Some(RefinementAction::Create)).then(|| {
+            slug(
+                edit.title
+                    .as_deref()
+                    .unwrap_or(kind_name(edit.kind.unwrap_or(RefinementKind::Memory))),
+                kind_name(edit.kind.unwrap_or(RefinementKind::Memory)),
+            )
+        })
+    })
+}
+
+/// How many of a proposal's edits pass the apply path's structural
+/// validation (TS `countValidRefinementEdits`).
+#[must_use]
+pub fn count_valid_refinement_edits(proposal: &RefinementProposal) -> usize {
+    proposal
+        .edits
+        .iter()
+        .filter(|edit| validate_edit(edit, computed_edit_id(edit).as_deref()).is_none())
+        .count()
+}
+
+/// A proposal's edits as rows none of which applied, each refused with
+/// `error`, under the id apply would have given it (TS
+/// `rejectedRefinementResult`'s edit rows).
+#[must_use]
+pub fn refused_refinement_edits(
+    proposal: &RefinementProposal,
+    error: &str,
+) -> Vec<AppliedRefinementEdit> {
+    proposal
+        .edits
+        .iter()
+        .map(|edit| {
+            let mut row = AppliedRefinementEdit::planned(
+                edit,
+                edit.action.unwrap_or(RefinementAction::Create),
+                edit.kind.unwrap_or(RefinementKind::Memory),
+                computed_edit_id(edit).unwrap_or_default(),
+            );
+            row.error = Some(error.to_string());
+            row
+        })
+        .collect()
+}
+
 pub struct ApplyOptions {
     pub id: String,
     pub rollback_of: Option<String>,
@@ -316,16 +366,7 @@ pub fn apply_refinement_proposal(
     let mut proposal_modified_keys: std::collections::HashSet<String> =
         std::collections::HashSet::default();
     for edit in &proposal.edits {
-        let computed_id = edit.id.clone().or_else(|| {
-            (edit.action == Some(RefinementAction::Create)).then(|| {
-                slug(
-                    edit.title
-                        .as_deref()
-                        .unwrap_or(kind_name(edit.kind.unwrap_or(RefinementKind::Memory))),
-                    kind_name(edit.kind.unwrap_or(RefinementKind::Memory)),
-                )
-            })
-        });
+        let computed_id = computed_edit_id(edit);
         let id = computed_id.clone().unwrap_or_default();
         let validation_error = validate_edit(edit, computed_id.as_deref());
         let Some(kind) = edit.kind else {
@@ -1019,5 +1060,33 @@ mod tests {
         assert!(result.applied_edits[0].applied);
         assert!(result.applied_edits[0].error.is_none());
         assert!(state.entries[&RefinementKind::Factory].contains_key("sweep"));
+    }
+
+    /// The screen counts the edits apply would accept structurally, and a
+    /// refused proposal's rows carry the ids apply would have given them.
+    #[test]
+    fn valid_edit_count_and_refused_rows_follow_the_apply_path() {
+        let proposal = parse_proposal(
+            r#"{"summary":"s","edits":[
+                {"action":"create","kind":"memory","title":"Use Tactic A","content":"c"},
+                {"action":"update","kind":"skill","id":"sk","title":"t","content":"c"},
+                {"action":"delete","kind":"prompt","id":"p1"}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(count_valid_refinement_edits(&proposal), 2);
+        let rows = refused_refinement_edits(&proposal, "refused");
+        let ids: Vec<(&str, bool, Option<&str>)> = rows
+            .iter()
+            .map(|row| (row.id.as_str(), row.applied, row.error.as_deref()))
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                ("use_tactic_a", false, Some("refused")),
+                ("sk", false, Some("refused")),
+                ("p1", false, Some("refused")),
+            ]
+        );
     }
 }
