@@ -46,7 +46,10 @@ pub struct FeatureTelemetry {
 }
 
 impl FeatureTelemetry {
-    pub(crate) fn from_wiring(wiring: &TelemetryWiring) -> Self {
+    /// The handle over one session's telemetry wiring (the engine builds
+    /// it per session; a feature's tests build it over a mock-sink client).
+    #[must_use]
+    pub fn from_wiring(wiring: &TelemetryWiring) -> Self {
         Self {
             client: wiring.client.clone(),
             execution_mode: wiring.execution_mode.clone(),
