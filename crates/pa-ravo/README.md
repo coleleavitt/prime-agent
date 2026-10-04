@@ -29,6 +29,15 @@ on `perf/session-catalog-resume`, and `docs/ravo-architecture.md` there.
   authorized state, the charged recurring failures and the window clock of a non-failure refine.
 - The session feature: the refinement gate for every session (kill switch `PRIME_AGENT_RAVO=0|off|false`), the
   rejected result, the outcome log line, the adoption event, the failure-ledger observer.
+- Failure-triggered refines (`_queueFailureTriggeredRefine`, `mergeRefineRequests`, `withRefineRun`): a fingerprint
+  entering the recurring set queues a `recurrence` refine, a regressed champion a `regression` repair in its own scope
+  (local and global repairs separately), each fingerprint once per kind per session, only in sessions that may
+  auto-refine with auto-refine on. A request merges into a pending one of its scope (instructions appended, the stronger
+  reason, a failure refine only if both were, the union of triggers), parks behind one of the other scope (released at
+  the next boundary that finds the slot empty), and an agent `refine.run` joining it makes it directed. A refine is
+  charged its triggers (on the session's own record when the judged ledger lacks them) and, unless it is a failure
+  refine, the recent recurrences; a failure refine that claims nothing is `reject_unclaimed`; results carry
+  `triggerFingerprintIds`.
 - Replay self-checks (`_startReplayVerification`): each boundary's newly derived, unverified cases run off the turn
   path in the sanitized environment, one batch at a time per session on a thread of their own, each (fingerprint,
   source) once per session and never one the ledger already holds verified; a reproduction is queued through
@@ -37,9 +46,10 @@ on `perf/session-catalog-resume`, and `docs/ravo-architecture.md` there.
 
 ## Non-goals (this slice)
 
-- Failure-triggered refines (recurrence and regression repairs: queuing, dedupe per fingerprint, merging into a pending
-  `refine.run`, scope separation, `reject_unclaimed` in practice). The gate supports the `failure` kind; nothing queues
-  one yet, because the session has no seam through which a feature can request a refine.
+- Releasing a queued failure refine's fingerprints when it is cancelled before it applies (TS `refine_failed`): the
+  native turn boundary drops a pending refine on an aborted turn without telling the feature, so a dropped request's
+  fingerprints stay triggered for the rest of the session.
+- The trajectory-index mute of internalized recurrence reminders (`_trajectoryInternalizedReminders`, phase 4).
 - Trust windows (`trustWindows`, `harness-trust.ts`, `trust-adjudication.ts`): opening a window at commit, recording
   evidence, settling at flushes, the `trust.*` flush attributes.
 - The skill dry-run in the fast screen (`skill-dry-run.ts`); the screen is structural only.
@@ -57,6 +67,10 @@ on `perf/session-catalog-resume`, and `docs/ravo-architecture.md` there.
   at apply time and records `ravo` into the saved state and the report on the result.
 - `RefinementGate::lock_store`: a global refine holds the harness state lock (`pa_ledger::acquire_harness_state_lock`,
   the TS `proper-lockfile` protocol every ledger flush takes) from the re-read of the global store until its save.
+- `RefinementGate::attach_refine_requester`: the session's `RefineRequester`, through which RAVO queues its own refines
+  (with a `RefineTrigger` carrying `{reason, kind, triggerFingerprintIds}`) onto the pending refine the next serviced
+  turn boundary consumes. The ledger reports boundaries from its worker thread, so a request lands at the boundary the
+  host services after the worker processed the turn (TS queued synchronously at `message_end`).
 - `pa_ledger::LedgerObserver` (built into `FailureLedgerFeature::with_observers` by `pa-cli`) and
   `pa_ledger::LedgerHandle` (`attach_ledger`): `on_boundary` finds provisional regressions on each window's own clock
   (local lineage on the local and, with the global ledger on, the global ordinal; the global lineage on the global

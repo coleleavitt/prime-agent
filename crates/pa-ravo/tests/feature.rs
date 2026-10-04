@@ -18,8 +18,12 @@ use pa_core::session::manager::SessionManager;
 use pa_core::session_engine::refine::{
     execute_refinement_gated, RefineOptions, RefinementSource, RefinementTranscript,
 };
+use pa_core::session_engine::turn_boundary::{
+    PendingRefine, RefineRequester, RefineTrigger, TurnBoundaryRequests,
+};
 use pa_ledger::{
-    fingerprint_tool_result_text, FailureLedgerFeature, HarnessDocument, LedgerOptions, ReplayCase,
+    fingerprint_tool_result_text, format_recurrence_refine_instructions, recurring_failures,
+    FailureLedgerFeature, HarnessDocument, LedgerOptions, ReplayCase,
 };
 use pa_ravo::{
     RavoFeature, RavoOptions, ReplayEnvironment, ReplayOutcome, ReplayRunner,
@@ -179,6 +183,22 @@ const SECOND_PLAN: &str = r#"{"summary":"note another","rationale":"seen","expec
 
 impl Session {
     async fn refine(&mut self, plan: &str, judge: RefinerFn) -> RefinementResult {
+        self.refine_with(
+            &RefineOptions::default(),
+            RefinementSource::User,
+            plan,
+            judge,
+        )
+        .await
+    }
+
+    async fn refine_with(
+        &mut self,
+        options: &RefineOptions,
+        source: RefinementSource,
+        plan: &str,
+        judge: RefinerFn,
+    ) -> RefinementResult {
         let gate = self
             .ravo
             .refinement_gate(&self.context)
@@ -195,8 +215,8 @@ impl Session {
             },
             &self.global_dir,
             &model(),
-            &RefineOptions::default(),
-            RefinementSource::User,
+            options,
+            source,
             scripted(plan),
             None,
             Some(RefinementGating {
@@ -586,4 +606,121 @@ async fn a_global_refine_takes_the_harness_state_lock() {
     assert!(result.applied_edits.iter().all(|edit| edit.applied));
     // Released once the save landed.
     assert!(pa_ledger::acquire_harness_state_lock(&session.global_dir).is_ok());
+}
+
+/// The loop RAVO closes on its own: a failure entering the recurring set
+/// queues a recurrence refine (once per fingerprint per session) on the
+/// session's pending refine, the refine is held to its trigger, a repair
+/// the judge credits commits with a window, the claimed failure recurring
+/// inside it queues a regression repair, and a repair that claims nothing
+/// is refused as unclaimed.
+// One scenario end to end: the steps depend on each other's state.
+#[allow(clippy::too_many_lines)]
+#[tokio::test]
+async fn failures_queue_their_own_refines_and_repairs() {
+    let mut session = session();
+    let requests = Arc::new(TurnBoundaryRequests::new());
+    let gate = session.ravo.refinement_gate(&session.context).unwrap();
+    gate.attach_refine_requester(RefineRequester::new(&requests));
+    let fingerprint = fingerprint_tool_result_text(Some("bash"), "boom: exit 1", true)
+        .unwrap()
+        .id;
+
+    session.failing_turn();
+    assert_eq!(requests.take_refine().await, None);
+    session.failing_turn();
+    let recurrence = requests.take_refine().await.expect("a recurrence refine");
+    let records = recurring_failures(&session.stored().failures(), None);
+    assert_eq!(
+        recurrence,
+        PendingRefine {
+            instructions: Some(format_recurrence_refine_instructions(&records)),
+            global: false,
+            trigger: Some(RefineTrigger {
+                data: json!({
+                    "reason": "recurrence",
+                    "kind": "failure",
+                    "triggerFingerprintIds": [fingerprint]
+                }),
+                joined_by_agent: false,
+            }),
+        }
+    );
+    // Once per fingerprint per session.
+    session.failing_turn();
+    assert_eq!(requests.take_refine().await, None);
+
+    let options = RefineOptions {
+        global: recurrence.global,
+        instructions: recurrence.instructions.clone(),
+        rollback_id: None,
+        trigger: recurrence.trigger.clone(),
+    };
+    let claim = format!(
+        r#"{{"verdict":"pass","score":80,"failedCriteria":[],"addressedFingerprints":["{fingerprint}"],"rationale":"fixes it"}}"#
+    );
+    let result = session
+        .refine_with(
+            &options,
+            RefinementSource::SelfRefine,
+            MEMORY_PLAN,
+            scripted(&claim),
+        )
+        .await;
+    assert_eq!(
+        (
+            &result.extensions["ravo"]["decision"],
+            &result.extensions["triggerFingerprintIds"],
+        ),
+        (&json!("commit"), &json!([fingerprint]))
+    );
+
+    session.failing_turn();
+    let repair = requests.take_refine().await.expect("a regression repair");
+    let repair_request = repair.trigger.as_ref().unwrap().data.clone();
+    assert_eq!(
+        repair_request,
+        json!({
+            "reason": "regression",
+            "kind": "failure",
+            "triggerFingerprintIds": [fingerprint]
+        })
+    );
+    assert!(repair
+        .instructions
+        .as_deref()
+        .unwrap()
+        .starts_with("Automatic refine triggered by regression"));
+    let options = RefineOptions {
+        trigger: repair.trigger.clone(),
+        instructions: repair.instructions.clone(),
+        ..RefineOptions::default()
+    };
+    let unclaimed = session
+        .refine_with(
+            &options,
+            RefinementSource::SelfRefine,
+            SECOND_PLAN,
+            scripted(r#"{"verdict":"pass","score":90,"failedCriteria":[],"addressedFingerprints":[],"rationale":"unrelated"}"#),
+        )
+        .await;
+    assert_eq!(
+        (
+            &unclaimed.extensions["ravo"]["decision"],
+            &unclaimed.extensions["rejectionCause"],
+            &unclaimed.extensions["ravo"]["failureOpponents"],
+        ),
+        (
+            &json!("reject_unclaimed"),
+            &json!("gate"),
+            &json!([format!("failure:{fingerprint}")]),
+        )
+    );
+    assert_eq!(
+        session.decisions(),
+        [
+            json!({ "decision": "commit", "scope": "local", "reason": "recurrence", "cause": "none", "recurring": 1, "claimed": 1 }),
+            json!({ "decision": "reject_unclaimed", "scope": "local", "reason": "regression", "cause": "gate", "recurring": 1, "claimed": 0 }),
+        ]
+    );
 }

@@ -3,7 +3,7 @@
 //! observer that records provisional regressions into the lineages and
 //! holds a session's ledger flushes while one of its refines runs.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use pa_core::features::{FeatureFuture, FeatureTelemetry, SessionFeature, SessionFeatureContext};
@@ -14,11 +14,14 @@ use pa_core::refinement::planner::{refused_refinement_edits, RefinementProposal}
 use pa_core::refinement::ranking::{format_harness_state_for_prompt, HarnessStatePromptOptions};
 use pa_core::refinement::{HarnessScope, HarnessState, RefinementResult};
 use pa_core::session_engine::refine::RefinementSource;
+use pa_core::session_engine::turn_boundary::{PendingRefine, RefineRequester};
 use pa_ledger::{
-    acquire_harness_state_lock, find_provisional_regressions, local_harness_state_dir,
-    normalize_failure_ledger, observation_ordinal, record_provisional_regressions,
-    recurring_failures, FailureLedger, FailureRecord, HarnessDocument, LedgerBoundary, LedgerFlush,
-    LedgerHandle, LedgerObserver, LedgerScope, ProvisionalRegression,
+    acquire_harness_state_lock, find_provisional_regressions,
+    format_recurrence_refine_instructions, format_regression_refine_instructions,
+    local_harness_state_dir, normalize_failure_ledger, observation_ordinal,
+    record_provisional_regressions, recurring_failures, FailureLedger, FailureRecord,
+    HarnessDocument, LedgerBoundary, LedgerFlush, LedgerHandle, LedgerObserver, LedgerScope,
+    ProvisionalRegression,
 };
 use pa_telemetry::Properties;
 use pa_types::trace_context::SPAN_ATTRIBUTES_TARGET;
@@ -33,6 +36,7 @@ use crate::gate::{
 };
 use crate::reducer::RavoWindowClock;
 use crate::referee::ReplayRunner;
+use crate::trigger::{failure_refine, queue, read_trigger, FailureRequest, RequestKind};
 use crate::verification::ReplayVerifier;
 
 /// The kill switch: gating is on unless it says `0`, `off` or `false`.
@@ -80,6 +84,12 @@ struct Inner {
     refines: Mutex<HashMap<String, usize>>,
     regressions: Mutex<HashMap<String, PendingRegressions>>,
     verifier: Arc<ReplayVerifier>,
+    /// The sessions that accept RAVO's own refines.
+    requesters: Mutex<HashMap<String, RefineRequester>>,
+    /// `regression:<fp>` / `recurrence:<fp>` already queued, per session.
+    triggered: Mutex<HashMap<String, HashSet<String>>>,
+    /// Requests parked behind a pending one of the other scope.
+    parked: Mutex<HashMap<String, Vec<PendingRefine>>>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -106,6 +116,9 @@ impl RavoFeature {
                 refines: Mutex::new(HashMap::new()),
                 regressions: Mutex::new(HashMap::new()),
                 verifier: Arc::default(),
+                requesters: Mutex::new(HashMap::new()),
+                triggered: Mutex::new(HashMap::new()),
+                parked: Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -203,26 +216,47 @@ fn refine_reason(source: RefinementSource) -> RefineReason {
     }
 }
 
-/// What a non-failure refine is charged (TS `_gateRecurringFailures`):
-/// the fingerprints recurring in `ledger` that also recur in the session's
-/// own ledger and were last seen within the window behind `turn`.
+/// What a refine is charged (TS `_gateRecurringFailures`): the
+/// fingerprints recurring in `ledger` that queued it, and, unless it is a
+/// failure refine held to its triggers, those that also recur in the
+/// session's own ledger and were last seen within the window behind
+/// `turn`. A trigger that does not recur in `ledger` is charged on the
+/// session's own record (one counted while the global ledger was off).
 fn gate_recurring_failures(
     ledger: &FailureLedger,
     session_ledger: &FailureLedger,
     turn: u64,
+    request: Option<&FailureRequest>,
 ) -> Vec<FailureRecord> {
-    let charged: Vec<String> = recurring_failures(session_ledger, None)
-        .into_iter()
-        .filter(|record| {
-            turn.checked_sub(record.last_seen_turn)
-                .is_some_and(|age| age <= DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS)
-        })
-        .map(|record| record.fingerprint.id)
-        .collect();
-    recurring_failures(ledger, None)
+    let local = recurring_failures(session_ledger, None);
+    let triggers: &[String] = request.map_or(&[], |request| &request.trigger_fingerprint_ids);
+    let mut charged: Vec<String> = triggers.to_vec();
+    if request.is_none_or(|request| request.kind != RequestKind::Failure) {
+        charged.extend(
+            local
+                .iter()
+                .filter(|record| {
+                    turn.checked_sub(record.last_seen_turn)
+                        .is_some_and(|age| age <= DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS)
+                })
+                .map(|record| record.fingerprint.id.clone()),
+        );
+    }
+    let mut gated: Vec<FailureRecord> = recurring_failures(ledger, None)
         .into_iter()
         .filter(|record| charged.contains(&record.fingerprint.id))
-        .collect()
+        .collect();
+    let extra: Vec<FailureRecord> = local
+        .into_iter()
+        .filter(|record| {
+            triggers.contains(&record.fingerprint.id)
+                && !gated
+                    .iter()
+                    .any(|charged| charged.fingerprint.id == record.fingerprint.id)
+        })
+        .collect();
+    gated.extend(extra);
+    gated
 }
 
 fn state_failures(state: &HarnessState) -> FailureLedger {
@@ -242,6 +276,7 @@ impl SessionGate {
         scope: HarnessScope,
         baseline: &HarnessState,
         planning: &HarnessState,
+        request: Option<&FailureRequest>,
     ) -> (Vec<FailureRecord>, Option<u64>, Option<RavoWindowClock>) {
         let session_id = self.context.session_id.as_str();
         let ledger = self.inner.ledger.get();
@@ -255,7 +290,7 @@ impl SessionGate {
             .filter(|ledger| ledger.global_ledger_enabled())
             .map(|ledger| ledger.fresh_global_ledger(&self.context.agent_dir, Some(session_id)));
         let charged_against = global.clone().unwrap_or_else(|| state_failures(baseline));
-        let recurring = gate_recurring_failures(&charged_against, &session_ledger, turn);
+        let recurring = gate_recurring_failures(&charged_against, &session_ledger, turn, request);
         let (turn, clock) = match (&global, scope) {
             (Some(global), _) => (
                 Some(observation_ordinal(Some(global))),
@@ -307,6 +342,10 @@ impl RefinementGate for SessionGate {
         }
     }
 
+    fn attach_refine_requester(&self, requester: RefineRequester) {
+        lock(&self.inner.requesters).insert(self.context.session_id.clone(), requester);
+    }
+
     fn evaluate(
         &self,
         request: RefinementGateRequest,
@@ -314,11 +353,23 @@ impl RefinementGate for SessionGate {
         if !self.inner.enabled() {
             return Box::pin(async { Ok(None) });
         }
-        let reason = refine_reason(request.source);
+        let failure_request = request.trigger.as_ref().and_then(read_trigger);
+        let (reason, kind) = failure_request.as_ref().map_or_else(
+            || {
+                let reason = refine_reason(request.source);
+                (reason, reason.kind())
+            },
+            |failure| (failure.reason, failure.kind.refine_kind()),
+        );
+        let triggers = failure_request
+            .as_ref()
+            .map(|failure| failure.trigger_fingerprint_ids.clone())
+            .unwrap_or_default();
         let (recurring, turn, clock) = self.charges(
             request.scope,
             &request.baseline_state,
             &request.planning_state,
+            failure_request.as_ref(),
         );
         let inner = Arc::clone(&self.inner);
         let telemetry = self.context.telemetry.clone();
@@ -343,7 +394,7 @@ impl RefinementGate for SessionGate {
                     recurring_failures: &recurring,
                     turn,
                     turn_clock: clock,
-                    refine_kind: reason.kind(),
+                    refine_kind: kind,
                     model: request.model.clone(),
                     runner: inner.options.runner.as_ref(),
                     sys_path: &inner.options.replay_sys_path,
@@ -356,6 +407,7 @@ impl RefinementGate for SessionGate {
                 proposal_id: request.proposal_id,
                 scope: request.scope,
                 reason,
+                triggers,
                 telemetry,
                 rejection: Mutex::new(None),
             }) as Box<dyn RefinementGateVerdict>))
@@ -376,6 +428,8 @@ struct RavoVerdict {
     proposal_id: String,
     scope: HarnessScope,
     reason: RefineReason,
+    /// The failures whose recurrence or regression queued the refine.
+    triggers: Vec<String>,
     telemetry: Option<FeatureTelemetry>,
     rejection: Mutex<Option<Rejection>>,
 }
@@ -489,6 +543,12 @@ impl RavoVerdict {
             serde_json::to_value(report).unwrap_or(Value::Null),
         );
         extensions.insert("rejectionCause".to_string(), Value::from(cause.as_str()));
+        if !self.triggers.is_empty() {
+            extensions.insert(
+                "triggerFingerprintIds".to_string(),
+                Value::from(self.triggers.clone()),
+            );
+        }
         RefinementResult {
             id: self.proposal_id.clone(),
             summary: format!("RAVO gate rejected: {}", proposal.summary),
@@ -577,6 +637,12 @@ impl RefinementGateVerdict for RavoVerdict {
                 serde_json::to_value(&self.report).unwrap_or(Value::Null),
             );
         }
+        if !self.triggers.is_empty() {
+            result.extensions.insert(
+                "triggerFingerprintIds".to_string(),
+                Value::from(self.triggers.clone()),
+            );
+        }
         let decision = if !all_applied {
             FinalDecision::Partial
         } else if self.report.measurable {
@@ -593,6 +659,186 @@ struct RavoLedgerObserver {
     inner: Arc<Inner>,
 }
 
+impl RavoLedgerObserver {
+    /// Find the provisional champions a boundary's recurrences regressed,
+    /// each window on the clock it was stamped with, and queue them for the
+    /// flush of their scope; answers (local, global) regressions.
+    fn find_regressions(
+        &self,
+        context: &SessionFeatureContext,
+        boundary: &LedgerBoundary<'_>,
+    ) -> (Vec<ProvisionalRegression>, Vec<ProvisionalRegression>) {
+        if boundary.recurred_ids.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
+        let Some(artifact_dir) = context.session_artifact_dir.as_deref() else {
+            return (Vec::new(), Vec::new());
+        };
+        let local = HarnessDocument::load(&local_harness_state_dir(artifact_dir));
+        let local_ravo = local.get(RAVO_KEY);
+        let on_local_clock = find_provisional_regressions(
+            local_ravo,
+            boundary.recurred_ids,
+            boundary.local_ordinal,
+            RavoWindowClock::LocalOrdinal.as_str(),
+        );
+        let on_global_clock = boundary
+            .global_ordinal
+            .map(|ordinal| {
+                find_provisional_regressions(
+                    local_ravo,
+                    boundary.recurred_ids,
+                    ordinal,
+                    RavoWindowClock::Ordinal.as_str(),
+                )
+            })
+            .unwrap_or_default();
+        let global = boundary
+            .global_ordinal
+            .zip(boundary.global_state)
+            .map(|(ordinal, document)| {
+                find_provisional_regressions(
+                    document.get(RAVO_KEY),
+                    boundary.recurred_ids,
+                    ordinal,
+                    RavoWindowClock::Ordinal.as_str(),
+                )
+            })
+            .unwrap_or_default();
+        let mut pending = lock(&self.inner.regressions);
+        let pending = pending.entry(context.session_id.clone()).or_default();
+        if !on_local_clock.is_empty() {
+            pending
+                .local
+                .push((on_local_clock.clone(), boundary.local_ordinal));
+        }
+        if let (false, Some(ordinal)) = (on_global_clock.is_empty(), boundary.global_ordinal) {
+            pending.local.push((on_global_clock.clone(), ordinal));
+        }
+        if let (false, Some(ordinal)) = (global.is_empty(), boundary.global_ordinal) {
+            pending.global.push((global.clone(), ordinal));
+        }
+        let mut local = on_local_clock;
+        local.extend(on_global_clock);
+        (local, global)
+    }
+
+    /// A parked request runs once the one ahead of it is gone.
+    fn release_parked(&self, session_id: &str, requester: &RefineRequester) {
+        let mut parked = lock(&self.inner.parked);
+        let Some(queued) = parked
+            .get_mut(session_id)
+            .filter(|queued| !queued.is_empty())
+        else {
+            return;
+        };
+        requester.update(|pending| match pending {
+            Some(pending) => Some(pending),
+            None => Some(queued.remove(0)),
+        });
+    }
+
+    fn enqueue(&self, session_id: &str, requester: &RefineRequester, request: PendingRefine) {
+        let mut parked = lock(&self.inner.parked);
+        let parked = parked.entry(session_id.to_string()).or_default();
+        requester.update(|pending| Some(queue(pending, request, parked)));
+    }
+
+    /// Queue the refines a boundary triggers (TS
+    /// `_observeFailuresAtTurnBoundary`): a regression repair per scope of
+    /// the regressed champions, else a recurrence refine for the
+    /// fingerprints that entered the recurring set; each fingerprint
+    /// triggers each kind once per session.
+    fn queue_failure_refines(
+        &self,
+        session_id: &str,
+        requester: &RefineRequester,
+        boundary: &LedgerBoundary<'_>,
+        local: Vec<ProvisionalRegression>,
+        global: Vec<ProvisionalRegression>,
+    ) {
+        let mut triggered = lock(&self.inner.triggered);
+        let triggered = triggered.entry(session_id.to_string()).or_default();
+        let untriggered = |regressions: Vec<ProvisionalRegression>| -> Vec<ProvisionalRegression> {
+            regressions
+                .into_iter()
+                .filter(|regression| {
+                    regression
+                        .fingerprints
+                        .iter()
+                        .any(|id| !triggered.contains(&format!("regression:{id}")))
+                })
+                .collect()
+        };
+        let repairs: Vec<(Vec<ProvisionalRegression>, bool)> =
+            [(untriggered(local), false), (untriggered(global), true)]
+                .into_iter()
+                .filter(|(regressed, _)| !regressed.is_empty())
+                .collect();
+        if !repairs.is_empty() {
+            for (regressed, _) in &repairs {
+                for id in regressed
+                    .iter()
+                    .flat_map(|regression| &regression.fingerprints)
+                {
+                    triggered.insert(format!("regression:{id}"));
+                }
+            }
+            for (regressed, global) in repairs {
+                let mut ids: Vec<String> = Vec::new();
+                for id in regressed
+                    .iter()
+                    .flat_map(|regression| &regression.fingerprints)
+                {
+                    if !ids.contains(id) {
+                        ids.push(id.clone());
+                    }
+                }
+                let records: Vec<FailureRecord> = boundary
+                    .effective
+                    .failures
+                    .values()
+                    .filter(|record| ids.contains(&record.fingerprint.id))
+                    .cloned()
+                    .collect();
+                let instructions = format_regression_refine_instructions(&regressed, &records);
+                self.enqueue(
+                    session_id,
+                    requester,
+                    failure_refine(instructions, RefineReason::Regression, ids, global),
+                );
+            }
+            return;
+        }
+        let recurring: Vec<FailureRecord> = boundary
+            .newly_recurring
+            .iter()
+            .filter(|record| !triggered.contains(&format!("recurrence:{}", record.fingerprint.id)))
+            .cloned()
+            .collect();
+        if recurring.is_empty() {
+            return;
+        }
+        for record in &recurring {
+            triggered.insert(format!("recurrence:{}", record.fingerprint.id));
+        }
+        let ids = recurring
+            .iter()
+            .map(|record| record.fingerprint.id.clone())
+            .collect();
+        self.enqueue(
+            session_id,
+            requester,
+            failure_refine(
+                format_recurrence_refine_instructions(&recurring),
+                RefineReason::Recurrence,
+                ids,
+                false,
+            ),
+        );
+    }
+}
+
 impl LedgerObserver for RavoLedgerObserver {
     fn on_boundary(&self, context: &Arc<SessionFeatureContext>, boundary: &LedgerBoundary<'_>) {
         if let Some(handle) = self.inner.ledger.get() {
@@ -604,58 +850,15 @@ impl LedgerObserver for RavoLedgerObserver {
                 handle.clone(),
             );
         }
-        if boundary.recurred_ids.is_empty() {
-            return;
+        let requester = lock(&self.inner.requesters)
+            .get(&context.session_id)
+            .cloned();
+        if let Some(requester) = &requester {
+            self.release_parked(&context.session_id, requester);
         }
-        let Some(artifact_dir) = context.session_artifact_dir.as_deref() else {
-            return;
-        };
-        // Each window is checked on the clock it was stamped with.
-        let local = HarnessDocument::load(&local_harness_state_dir(artifact_dir));
-        let local_ravo = local.get(RAVO_KEY);
-        let on_local_clock = find_provisional_regressions(
-            local_ravo,
-            boundary.recurred_ids,
-            boundary.local_ordinal,
-            RavoWindowClock::LocalOrdinal.as_str(),
-        );
-        let on_global_clock = boundary.global_ordinal.map(|ordinal| {
-            find_provisional_regressions(
-                local_ravo,
-                boundary.recurred_ids,
-                ordinal,
-                RavoWindowClock::Ordinal.as_str(),
-            )
-        });
-        let global =
-            boundary
-                .global_ordinal
-                .zip(boundary.global_state)
-                .map(|(ordinal, document)| {
-                    (
-                        find_provisional_regressions(
-                            document.get(RAVO_KEY),
-                            boundary.recurred_ids,
-                            ordinal,
-                            RavoWindowClock::Ordinal.as_str(),
-                        ),
-                        ordinal,
-                    )
-                });
-        let mut pending = lock(&self.inner.regressions);
-        let pending = pending.entry(context.session_id.clone()).or_default();
-        if !on_local_clock.is_empty() {
-            pending.local.push((on_local_clock, boundary.local_ordinal));
-        }
-        if let (Some(regressions), Some(ordinal)) = (on_global_clock, boundary.global_ordinal) {
-            if !regressions.is_empty() {
-                pending.local.push((regressions, ordinal));
-            }
-        }
-        if let Some((regressions, ordinal)) = global {
-            if !regressions.is_empty() {
-                pending.global.push((regressions, ordinal));
-            }
+        let (local, global) = self.find_regressions(context, boundary);
+        if let Some(requester) = &requester {
+            self.queue_failure_refines(&context.session_id, requester, boundary, local, global);
         }
     }
 
@@ -718,5 +921,101 @@ impl LedgerObserver for RavoLedgerObserver {
             list.drain(..(*recorded).min(list.len()));
         }
         *recorded = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pa_ledger::{fingerprint_failure, FailureKind, FailureLedger, FailureRecord};
+
+    use super::*;
+
+    fn record(seed: &str, count: u64, last_seen_turn: u64) -> FailureRecord {
+        FailureRecord {
+            fingerprint: fingerprint_failure(FailureKind::ToolError, Some("bash"), None, seed),
+            count,
+            first_seen_turn: 1,
+            last_seen_turn,
+            first_seen_at: String::new(),
+            last_seen_at: String::new(),
+            excerpt: format!("{seed}: exit 1"),
+            addressed_by_proposal_ids: Vec::new(),
+            replay_cases: Vec::new(),
+            non_actionable_count: None,
+        }
+    }
+
+    fn ledger(records: &[&FailureRecord]) -> FailureLedger {
+        FailureLedger {
+            failures: records
+                .iter()
+                .map(|record| (record.fingerprint.id.clone(), (*record).clone()))
+                .collect(),
+            ..FailureLedger::default()
+        }
+    }
+
+    fn ids(records: &[FailureRecord]) -> Vec<&str> {
+        records
+            .iter()
+            .map(|record| record.fingerprint.id.as_str())
+            .collect()
+    }
+
+    /// TS `_gateRecurringFailures`: a failure refine is held to its
+    /// triggers, charged on the session's own record when the ledger it
+    /// is judged on does not have it recurring; any other refine is also
+    /// charged what recurs in both ledgers and was seen recently on this
+    /// branch.
+    #[test]
+    fn a_refine_is_charged_its_triggers_and_recent_recurrences() {
+        let recent = record("recent", 3, 30);
+        let stale = record("stale", 3, 5);
+        let ahead = record("ahead", 3, 45);
+        let local_only = record("local only", 2, 30);
+        let judged_on = ledger(&[&recent, &stale, &ahead]);
+        let session = ledger(&[&recent, &stale, &ahead, &local_only]);
+        let triggered = |kind: RequestKind, ids: &[&FailureRecord]| FailureRequest {
+            reason: RefineReason::Recurrence,
+            kind,
+            trigger_fingerprint_ids: ids
+                .iter()
+                .map(|record| record.fingerprint.id.clone())
+                .collect(),
+        };
+        // Directed, no trigger: recency only (age 0..=20 behind turn 40).
+        assert_eq!(
+            ids(&gate_recurring_failures(&judged_on, &session, 40, None)),
+            [recent.fingerprint.id.as_str()]
+        );
+        // A failure refine: its triggers only, the local-only one from the
+        // session's own ledger.
+        let failure = triggered(RequestKind::Failure, &[&stale, &local_only]);
+        assert_eq!(
+            ids(&gate_recurring_failures(
+                &judged_on,
+                &session,
+                40,
+                Some(&failure)
+            )),
+            [
+                stale.fingerprint.id.as_str(),
+                local_only.fingerprint.id.as_str()
+            ]
+        );
+        // Joined by the agent (directed): triggers plus recency.
+        let directed = triggered(RequestKind::Directed, &[&stale]);
+        assert_eq!(
+            ids(&gate_recurring_failures(
+                &judged_on,
+                &session,
+                40,
+                Some(&directed)
+            )),
+            [
+                recent.fingerprint.id.as_str(),
+                stale.fingerprint.id.as_str()
+            ]
+        );
     }
 }
