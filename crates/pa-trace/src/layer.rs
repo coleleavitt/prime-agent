@@ -369,6 +369,11 @@ struct FieldVisitor {
     remote_parent: Option<String>,
 }
 
+/// An event field named `<key>.json` carries JSON text, recorded under
+/// `<key>` as the value it parses to (an array or object a log record
+/// holds); text that does not parse stays a string under the full name.
+pub const JSON_FIELD_SUFFIX: &str = ".json";
+
 impl FieldVisitor {
     fn put(&mut self, field: &Field, value: Value) {
         match field.name() {
@@ -376,6 +381,15 @@ impl FieldVisitor {
             "error" => self.error = Some(value_text(value)),
             name if name == REMOTE_PARENT_FIELD => self.remote_parent = Some(value_text(value)),
             name => {
+                // `<key>.json`: JSON text recorded as the value it parses to.
+                if let (Some(key), Value::String(text)) =
+                    (name.strip_suffix(JSON_FIELD_SUFFIX), &value)
+                {
+                    if let Ok(parsed) = serde_json::from_str::<Value>(text) {
+                        self.fields.insert(key.to_string(), parsed);
+                        return;
+                    }
+                }
                 self.fields.insert(name.to_string(), value);
             }
         }
