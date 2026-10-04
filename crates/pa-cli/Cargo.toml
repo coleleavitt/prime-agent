@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 description = "The prime-agent binary."
 
+[features]
+# The fork's feature crates (docs/fork-feature-crates.md); `--no-default-features`
+# builds the native product.
+default = []
+
 [dependencies]
 pa-types = { path = "../pa-types" }
 pa-core = { path = "../pa-core" }

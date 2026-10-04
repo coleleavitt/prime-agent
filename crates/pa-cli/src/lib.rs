@@ -56,6 +56,7 @@ pub(crate) mod traces_login;
 /// The runtime boundary: everything a mode-runner crate implements to plug
 /// into the `prime-agent` binary, plus the entry point that drives it.
 pub use mode::{AppMode, MissingSubsystem, RunOptions, Runtime, UnavailableRuntime};
+pub mod features;
 pub(crate) mod piped_stdin;
 pub(crate) mod print_autonomous;
 pub(crate) mod print_boundary;

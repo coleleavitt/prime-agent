@@ -274,6 +274,16 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     if let Some(extra) = config.extra_host_handlers.clone() {
         handlers.merge(extra);
     }
+    // Separately built features installed by the composition root (none in
+    // the native product).
+    crate::features::register_session_host_handlers(
+        &crate::features::SessionFeatureContext {
+            agent_dir: config.agent_dir.clone(),
+            cwd: cwd.clone(),
+            session_id: session_id.clone(),
+        },
+        &mut handlers,
+    );
     // The `system_router.run` host handler the bundled system-router skill
     // reaches through `rlm.host_request` (#2484).
     super::system_router_host::register_system_router_handlers(
