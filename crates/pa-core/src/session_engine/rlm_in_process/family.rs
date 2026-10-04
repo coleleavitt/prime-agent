@@ -451,6 +451,8 @@ impl AgentMessageController for InProcessFamilyController {
             receiver_role: input.receiver_role,
             delivered_at: delivered.then(crate::session::manager::format_iso_now),
             queued_at: (!delivered).then(crate::session::manager::format_iso_now),
+            // The in-process host steers directly; it has no digest lane.
+            digest_at: None,
         })
     }
 }
