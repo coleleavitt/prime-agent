@@ -1,6 +1,7 @@
 //! Minimal structured logger shared by pa-ai and its consumers: entries go to an injectable sink;
 //! the library never writes files and logging must never throw into the caller.
 
+use pa_types::sync::RwLockExt;
 use std::sync::RwLock;
 
 use serde::{Serialize, Serializer};
@@ -48,7 +49,7 @@ static SINK: RwLock<Option<LogSink>> = RwLock::new(None);
 /// Install the process-wide log sink. Pass None to restore the default.
 #[allow(dead_code)] // logging surface for consumers once exposed
 pub fn set_log_sink(next: Option<LogSink>) {
-    *SINK.write().unwrap() = next;
+    *SINK.write_or_recover() = next;
 }
 
 fn emit(level: LogLevel, component: &str, msg: &str, fields: serde_json::Value) {
@@ -59,7 +60,7 @@ fn emit(level: LogLevel, component: &str, msg: &str, fields: serde_json::Value) 
         msg: msg.to_string(),
         fields,
     };
-    let sink = SINK.read().unwrap().clone();
+    let sink = SINK.read_or_recover().clone();
     if let Some(sink) = sink {
         sink(&entry);
     }

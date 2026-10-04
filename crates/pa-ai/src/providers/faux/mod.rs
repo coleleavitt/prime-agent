@@ -2,6 +2,7 @@
 //! per-session prompt-cache simulation, token-paced streaming with aborts, and queued response
 //! factories.
 
+use pa_types::sync::MutexExt;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
@@ -166,21 +167,17 @@ impl FauxSharedState {
     /// The next scripted step: the queued front, or — in repeat-last mode — the last served step
     /// once the queue ran dry, or `None` (the caller's exhaustion error). The dequeue and the
     /// last-served publish share one hold of the pending `Mutex`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the pending or last-served `Mutex` is poisoned.
     fn next_step(&self) -> Option<FauxResponseStep> {
         let repeat = self
             .repeat_last_response
             .load(std::sync::atomic::Ordering::Relaxed);
-        let mut pending = self.pending.lock().unwrap();
+        let mut pending = self.pending.lock_or_recover();
         match pending.pop_front_step() {
             Some(step) => {
-                *self.last_served.lock().unwrap() = Some(step.clone());
+                *self.last_served.lock_or_recover() = Some(step.clone());
                 Some(step)
             }
-            None if repeat => self.last_served.lock().unwrap().clone(),
+            None if repeat => self.last_served.lock_or_recover().clone(),
             None => None,
         }
     }
@@ -203,52 +200,32 @@ impl FauxProviderRegistration {
     }
 
     /// Call count across all requests against this registration.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the counter `Mutex` is poisoned.
     #[must_use]
     pub fn call_count(&self) -> u64 {
-        *self.state.call_count.lock().unwrap()
+        *self.state.call_count.lock_or_recover()
     }
 
     /// The API key each recorded request carried (per call, in order): summarizer arms that must
     /// follow the session's live key pin on it.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the recorded-keys `Mutex` is poisoned.
     #[must_use]
     pub fn received_api_keys(&self) -> Vec<Option<String>> {
-        self.state.received_api_keys.lock().unwrap().clone()
+        self.state.received_api_keys.lock_or_recover().clone()
     }
 
     /// Replace the queued responses.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the pending `Mutex` is poisoned.
     pub fn set_responses(&self, responses: Vec<FauxResponseStep>) {
-        *self.state.pending.lock().unwrap() = responses;
+        *self.state.pending.lock_or_recover() = responses;
     }
 
     /// Append to the queued responses.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the pending `Mutex` is poisoned.
     pub fn append_responses(&self, responses: Vec<FauxResponseStep>) {
-        self.state.pending.lock().unwrap().extend(responses);
+        self.state.pending.lock_or_recover().extend(responses);
     }
 
     /// Number of queued responses.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the pending `Mutex` is poisoned.
     #[must_use]
     pub fn get_pending_response_count(&self) -> usize {
-        self.state.pending.lock().unwrap().len()
+        self.state.pending.lock_or_recover().len()
     }
 
     /// Switch the registration into repeat-last mode: once the queued responses run out, the
@@ -395,7 +372,7 @@ fn with_usage_estimate(
 
     if let Some(session_id) = session_id {
         if !cache_retention_none.unwrap_or(false) {
-            let mut cache = prompt_cache.lock().unwrap();
+            let mut cache = prompt_cache.lock_or_recover();
             if let Some(previous_prompt) = cache.get(&session_id).cloned() {
                 let cached_chars = common_prefix_length(&previous_prompt, &prompt_text);
                 let cached_prefix: String = previous_prompt.chars().take(cached_chars).collect();
@@ -727,11 +704,10 @@ pub fn register_faux_provider(options: RegisterFauxProviderOptions) -> FauxProvi
         ) -> AssistantMessageEventStream {
             let (writer, reader) = create_assistant_message_event_stream();
             let step = self.state.next_step();
-            *self.state.call_count.lock().unwrap() += 1;
+            *self.state.call_count.lock_or_recover() += 1;
             self.state
                 .received_api_keys
-                .lock()
-                .unwrap()
+                .lock_or_recover()
                 .push(options.and_then(|options| options.api_key.clone()));
 
             let state = self.state.clone();
@@ -814,7 +790,7 @@ pub fn register_faux_provider(options: RegisterFauxProviderOptions) -> FauxProvi
                         Ok(message)
                     }
                     FauxResponseStep::Factory(factory) => {
-                        let call_count = *state.call_count.lock().unwrap();
+                        let call_count = *state.call_count.lock_or_recover();
                         factory(&context, options.as_ref(), call_count, &model)
                     }
                 };
