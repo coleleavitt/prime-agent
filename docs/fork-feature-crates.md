@@ -59,14 +59,17 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
      feature crates, so `pa-cli` adapts a crate's layout onto the seam's types.
    - bundled skills: `SessionFeature::bundled_skills` names directories under `skills/.features/` (hidden from every
      native skill scan, shipped inside `skills/`), loaded as built-in skills only while the feature is installed.
+   - per-session skill visibility: `SessionFeature::session_skill_visible(context, skill_name)` (default `true`)
+     hides a loaded skill from one session (TS `_modelVisibleSkills`): its system prompt's skill list, the harness
+     digest's refine examples and the kernel's bound skills all use the visible set, while `/skill:` expansion keeps
+     every loaded skill. A skill is visible only while every installed feature agrees.
    - session slash commands: `SessionFeature::slash_commands` (registered by `features::install` in the shared
      `pa_types::slash_commands` registry as session commands) and `execute_slash_command` (a result row, plus an
      optional completion awaited in the background and appended as a durable row).
    - live status: `pa_core::features::publish_feature_status(session_id, FeatureStatus { feature, line, status })`;
      the daemon worker puts it on the roster summary (`featureStatus.<feature>`) and sends a `feature_status`
      session event; the agents view shows each `line`.
-   Seams to add as features need them: system-prompt layer providers, turn-start observers, a per-session
-   skill visibility filter.
+   Seams to add as features need them: system-prompt layer providers, turn-start observers.
 5. **Data ownership.** A crate owns its files under `~/.prime/agent/<feature>/` (or the session artifact dir) and its
    key in `harness_state.json` (`HarnessState::extensions["<feature>"]`). It never rewrites another crate's data.
    Formats stay byte-compatible with the fork's TS files where those already exist on disk.

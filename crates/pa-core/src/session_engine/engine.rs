@@ -274,7 +274,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     };
     let model_context_window = model.context_window;
 
-    let python_skills = super::runtime_wiring::kernel_python_skills(&resources.skills);
     let session_id = wiring.session.lock().await.get_session_id().to_string();
     let mut handlers = wiring.handlers.clone();
     if let Some(extra) = config.extra_host_handlers.clone() {
@@ -295,14 +294,12 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         });
     // Separately built features installed by the composition root (none in
     // the native product).
-    let feature_context = Arc::new(crate::features::SessionFeatureContext {
+    let mut feature_context = crate::features::SessionFeatureContext {
         agent_dir: config.agent_dir.clone(),
         cwd: cwd.clone(),
         session_id: session_id.clone(),
-        python_skill_import_names: python_skills
-            .iter()
-            .map(|skill| skill.import_name.clone())
-            .collect(),
+        // Decided below, once the features chose the visible skills.
+        python_skill_import_names: Vec::new(),
         model: model.clone(),
         telemetry: config
             .telemetry
@@ -310,7 +307,21 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             .map(crate::features::FeatureTelemetry::from_wiring),
         rlm_depth: config.rlm_depth.unwrap_or(0),
         session_artifact_dir: session_artifact_dir.clone(),
-    });
+    };
+    // The skills the model sees (TS `_modelVisibleSkills`): the system
+    // prompt lists, the digest references and the kernel binds only these;
+    // `/skill:` expansion keeps every loaded skill.
+    let visible_skills = crate::features::session_visible_skills(
+        crate::features::installed(),
+        &feature_context,
+        &resources.skills,
+    );
+    let python_skills = super::runtime_wiring::kernel_python_skills(&visible_skills);
+    feature_context.python_skill_import_names = python_skills
+        .iter()
+        .map(|skill| skill.import_name.clone())
+        .collect();
+    let feature_context = Arc::new(feature_context);
     crate::features::register_session_host_handlers(&feature_context, &mut handlers);
     // The `system_router.run` host handler the bundled system-router skill
     // reaches through `rlm.host_request` (#2484).
@@ -490,7 +501,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 .iter()
                 .map(|file| (file.path.display().to_string(), file.content.clone()))
                 .collect(),
-            skills: resources.skills.clone(),
+            skills: visible_skills.clone(),
             selected_tools: Some(
                 active_tool_names
                     .iter()
@@ -520,7 +531,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         local_dir: local_harness_dir,
         include_ipython: active_tool_names.iter().any(|name| name == "ipython"),
         include_shell_examples: active_tool_names.iter().any(|name| name == "bash"),
-        include_refine: resources.skills.iter().any(|skill| {
+        include_refine: visible_skills.iter().any(|skill| {
             !skill.disable_model_invocation
                 && skill.name == crate::prompts::system_prompt::REFINE_SKILL_NAME
         }),

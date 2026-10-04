@@ -353,6 +353,19 @@ pub trait SessionFeature: Send + Sync {
         Vec::new()
     }
 
+    /// Whether the loaded skill `skill_name` is model-visible in this
+    /// session: listed in its system prompt and harness digest, and bound
+    /// in its kernel. A skill is visible only while every installed
+    /// feature agrees, so a feature answers for the skills it owns and
+    /// returns `true` for any other. The default, `true`, hides nothing.
+    /// Called on the session-creation path, before the kernel's skills are
+    /// decided: the context's `python_skill_import_names` is empty here.
+    /// `/skill:<name>` expansion still sees every loaded skill.
+    fn session_skill_visible(&self, context: &SessionFeatureContext, skill_name: &str) -> bool {
+        let _ = (context, skill_name);
+        true
+    }
+
     /// The hook this feature adjusts the session's harness digest with (see
     /// [`crate::refinement::prompt_hook`]); `None`, the default, leaves the
     /// digest native. Called once, on the session-creation path; every
@@ -396,6 +409,25 @@ pub fn installed_bundled_skills() -> Vec<String> {
         .iter()
         .flat_map(|feature| feature.bundled_skills())
         .map(str::to_string)
+        .collect()
+}
+
+/// The skills of `skills` every feature of `features` lets the session see
+/// ([`SessionFeature::session_skill_visible`]), in order; all of them when
+/// there are no features.
+pub(crate) fn session_visible_skills(
+    features: &[Arc<dyn SessionFeature>],
+    context: &SessionFeatureContext,
+    skills: &[crate::skills::Skill],
+) -> Vec<crate::skills::Skill> {
+    skills
+        .iter()
+        .filter(|skill| {
+            features
+                .iter()
+                .all(|feature| feature.session_skill_visible(context, &skill.name))
+        })
+        .cloned()
         .collect()
 }
 
