@@ -25,8 +25,9 @@ use venv::{
     resolve_writable_kernel_venv_dir, sync_python_skills, BootstrapPythonSkill,
 };
 pub use venv::{
-    invalidate_runtime_probe_cache, invalidate_runtime_probe_cache_for, kernel_venv_dir,
-    kernel_venv_python, resolve_runtime_identity,
+    install_python_skill_package, installed_kernel_python, invalidate_runtime_probe_cache,
+    invalidate_runtime_probe_cache_for, kernel_venv_dir, kernel_venv_python,
+    resolve_runtime_identity, PythonSkillPackageInstall, PythonSkillPackageInstallResult,
 };
 use venv::{kernel_base_ready, kernel_ready};
 

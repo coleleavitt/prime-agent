@@ -17,6 +17,7 @@ use super::{
 
 // The concern children (the flows + the shared record stay in the
 // composition root).
+mod install;
 mod layout;
 mod probe;
 mod runtime_source;
@@ -24,6 +25,10 @@ mod skills;
 mod uv;
 mod version;
 
+pub use install::{
+    install_python_skill_package, installed_kernel_python, PythonSkillPackageInstall,
+    PythonSkillPackageInstallResult,
+};
 use layout::home_dir;
 pub(crate) use layout::{expand_home, resolve_writable_kernel_venv_dir};
 pub use layout::{kernel_venv_dir, kernel_venv_python};
