@@ -116,14 +116,17 @@ async fn hard_timeout_aborts_unresponsive_servers() {
 
 #[tokio::test]
 async fn connection_failures_are_transport_errors() {
-    // Bind then close: nothing listens on this port anymore.
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
+    // Bound but never listening: connects are refused, and the port stays
+    // reserved for the whole test. (Bind-then-close freed it, and a
+    // parallel test's mock server could take it and answer this request.)
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let port = socket.local_addr().unwrap().port();
     let fetcher = CatalogFetcher::new();
     let error = fetcher
         .fetch(&format!("http://127.0.0.1:{port}/x"), None)
         .await
         .expect_err("connection refused");
     assert!(error.status().is_none());
+    drop(socket);
 }
