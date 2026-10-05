@@ -167,6 +167,21 @@ pub fn handle_public_command(args: &[String]) -> PublicCommandResult {
             run_internal_agent_command("rename", &rest)
         }
         "send" => run_internal_agent_command("send", &rest),
+        "create" => {
+            // A message after the separator is required: an agent without its first message
+            // would sit idle in the background.
+            let has_message = rest
+                .iter()
+                .position(|arg| arg == "--")
+                .is_some_and(|index| !rest[index + 1..].join(" ").trim().is_empty());
+            if !has_message {
+                return fail(
+                    format!("Usage: {APP_NAME} create [options] [name] -- <message>"),
+                    None,
+                );
+            }
+            run_internal_agent_command("create", &rest)
+        }
         "schedule" => run_nested_agent_command("schedule", "cron", &rest),
         "status" => run_status(&rest),
         "doctor" => run_doctor(&rest),

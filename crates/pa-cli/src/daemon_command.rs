@@ -1,5 +1,5 @@
 //! The daemon-backed command runner behind the public commands `list`,
-//! `sessions`, `stop`, `rename`, `send`, and `schedule`: argument parsing,
+//! `sessions`, `stop`, `rename`, `send`, `create`, and `schedule`: argument parsing,
 //! request shaping, and output rendering. `schedule` maps to the internal
 //! `cron` command and `stop` to `kill`.
 
@@ -32,6 +32,18 @@ pub(crate) fn run_daemon_command(command: &str, args: &[String]) -> Result<()> {
     if parsed.help {
         return Ok(());
     }
+    if command == "create" {
+        // `create` starts the background service on a cold invocation (the others report an
+        // absent daemon).
+        let spawn_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(crate::interactive_mode::ensure_daemon_running(
+                &parsed.socket_path,
+                &spawn_cwd,
+            ))?;
+    }
     let mut client = DaemonClient::connect(&parsed.socket_path)?;
     match command {
         "list" => run_list(&mut client, &parsed.positionals, parsed.json),
@@ -39,6 +51,7 @@ pub(crate) fn run_daemon_command(command: &str, args: &[String]) -> Result<()> {
         "kill" => run_kill(&mut client, &parsed.positionals, parsed.json),
         "rename" => run_rename(&mut client, &parsed.positionals, parsed.json),
         "send" => run_send(&mut client, &parsed.positionals, parsed.json),
+        "create" => run_create(&mut client, &parsed.positionals, parsed.json),
         "cron" => run_cron(&mut client, &parsed.positionals, parsed.json),
         other => bail!("Unknown daemon command: {other}"),
     }
@@ -60,7 +73,7 @@ fn parse_daemon_command(command: &str, args: &[String]) -> Result<ParsedDaemonCo
             continue;
         }
         if arg == "--" {
-            if command == "cron" || command == "send" {
+            if command == "cron" || command == "send" || command == "create" {
                 positionals.push(arg.to_string());
             }
             passthrough = true;
@@ -338,6 +351,102 @@ fn run_rename(client: &mut DaemonClient, args: &[String], json: bool) -> Result<
             );
         }
         None => print_json(&data),
+    }
+    Ok(())
+}
+
+/// `create [options] [name] -- <message>` (upstream #1991): create a top-level agent and start
+/// it with the message; nothing attaches, the agent runs in the background. The name parts
+/// before the separator join with spaces (TS `parseSessionArgs`); the message is everything
+/// after it.
+fn run_create(client: &mut DaemonClient, args: &[String], json: bool) -> Result<()> {
+    let separator = args.iter().position(|arg| arg == "--");
+    let message = separator
+        .map(|index| args[index + 1..].join(" ").trim().to_string())
+        .unwrap_or_default();
+    if message.is_empty() {
+        bail!("Initial message must not be empty");
+    }
+    let options = &args[..separator.unwrap_or(args.len())];
+    let mut name_parts: Vec<&str> = Vec::new();
+    let mut config = json!({
+        "cwd": std::env::current_dir()?.to_string_lossy(),
+    });
+    let mut index = 0;
+    while index < options.len() {
+        let arg = options[index].as_str();
+        index += 1;
+        let key = match arg {
+            "--cwd" => "cwd",
+            "--provider" => "provider",
+            "--model" => "model",
+            "--thinking" => "thinking",
+            "--name" => "name",
+            _ if arg.starts_with('-') => bail!("Unknown create option: {arg}"),
+            _ => {
+                name_parts.push(arg);
+                continue;
+            }
+        };
+        let value = options
+            .get(index)
+            .ok_or_else(|| anyhow!("{arg} requires a value"))?;
+        index += 1;
+        match key {
+            "name" => name_parts.push(value),
+            "cwd" => {
+                let cwd = std::path::absolute(crate::config::expand_tilde_path(value))?;
+                config["cwd"] = json!(cwd.to_string_lossy());
+            }
+            "thinking" => {
+                let level = crate::args::parse_thinking_level(value)
+                    .ok_or_else(|| anyhow!("Invalid thinking level \"{value}\""))?;
+                config["thinking"] = json!(level.wire_name());
+            }
+            _ => config[key] = json!(value),
+        }
+    }
+    let name = name_parts.join(" ").trim().to_string();
+    let response = client.request(DaemonCommand::Create {
+        id: None,
+        session_path: None,
+        continue_recent: None,
+        no_session: None,
+        name: (!name.is_empty()).then_some(name),
+        config: Some(config),
+        telemetry_disabled: None,
+        runtime_metadata: None,
+        lifecycle: None,
+        env: None,
+        launch_env: None,
+        rest: serde_json::Map::new(),
+    })?;
+    let data = require_success(response)?.unwrap_or(Value::Null);
+    let Some(summary) = live_session_summary(&data) else {
+        bail!("Daemon returned an invalid create response");
+    };
+    let active_session_id = summary
+        .get("activeSessionId")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let session_name = summary
+        .get("sessionName")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let prompt: DaemonCommand = serde_json::from_value(json!({
+        "type": "prompt",
+        "activeSessionId": active_session_id,
+        "message": message,
+    }))?;
+    require_success(client.request(prompt)?)?;
+    if json {
+        print_json(&data);
+        return Ok(());
+    }
+    match session_name {
+        Some(name) => println!("Created {active_session_id} ({name})"),
+        None => println!("Created {active_session_id}"),
     }
     Ok(())
 }

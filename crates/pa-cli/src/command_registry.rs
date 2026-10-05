@@ -78,6 +78,20 @@ pub const COMMAND_SPECS: &[CommandSpec] = &[
         "Rename an agent",
     ),
     CommandSpec::new(
+        &["create"],
+        "create [options] [name] -- <message>",
+        "Create and start an agent",
+    )
+    .description("Creates a top-level agent and starts it with the message; nothing attaches.")
+    .options(&[
+        "--cwd <dir>             Use a specific working directory",
+        "--provider <name>       Select a model provider",
+        "--model <id>            Select a model",
+        "--thinking <level>      Set the reasoning level",
+        "--daemon-socket <path>  Use a specific daemon socket",
+        "--json                  Print JSON",
+    ]),
+    CommandSpec::new(
         &["send"],
         "send [--from <agent>] <agent> <message>",
         "Send a steering message to an agent",
