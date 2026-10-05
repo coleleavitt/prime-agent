@@ -227,8 +227,16 @@ fn without_a_fallback_chain_the_turn_fails_on_the_session_model() {
     assert_eq!(
         turn_ends(&events),
         vec![
-            ("primary".to_string(), "mock-1".to_string(), "error".to_string()),
-            ("primary".to_string(), "mock-1".to_string(), "error".to_string()),
+            (
+                "primary".to_string(),
+                "mock-1".to_string(),
+                "error".to_string()
+            ),
+            (
+                "primary".to_string(),
+                "mock-1".to_string(),
+                "error".to_string()
+            ),
         ]
     );
     primary.unregister();
