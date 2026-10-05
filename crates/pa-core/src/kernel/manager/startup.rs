@@ -277,8 +277,12 @@ impl Inner {
         }
         let cwd = self.options.cwd.clone();
         let mut command = tokio::process::Command::new(&python);
+        // `-P`: the project cwd is not prepended to `sys.path`, so a repo-local `rlm/`,
+        // `dill.py`, or stdlib-named module cannot shadow the runtime's imports. The runtime
+        // appends the cwd last so project modules stay importable from cells. Process-local
+        // (unlike `PYTHONSAFEPATH`): `bash()` children resolve their own imports as before.
         command
-            .args(["-m", "rlm.repl"])
+            .args(["-P", "-m", "rlm.repl"])
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());

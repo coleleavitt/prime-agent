@@ -1,0 +1,1 @@
+- The Python kernel now starts with `-P`, so a project folder containing an `rlm/` package or a `dill.py` can no longer replace the kernel's own modules. Project modules are still importable from the kernel; they are searched last.

@@ -1995,6 +1995,14 @@ def main() -> None:
     stdin_fd = _setup_fds()
     _start_owner_watchdog()
 
+    # The host launches `python -P -m rlm.repl`, so the project cwd is not
+    # sys.path[0] and a repo-local `rlm/`, `dill.py` or stdlib-named module
+    # cannot shadow the runtime. Project modules stay importable from cells,
+    # at the lowest priority (after the stdlib and site-packages).
+    project_dir = os.getcwd()
+    if project_dir not in sys.path:
+        sys.path.append(project_dir)
+
     # Alias the executing module so an in-cell `from rlm.repl import emit`
     # binds the live module, not a second copy.
     sys.modules.setdefault("rlm.repl", sys.modules[__name__])
