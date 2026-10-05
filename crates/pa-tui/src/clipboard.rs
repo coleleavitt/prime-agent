@@ -169,9 +169,14 @@ fn pane_client(clients: &str, pane_window: &str) -> Option<String> {
 }
 
 /// TS `isRemoteSession`: any SSH or mosh transport means the local tools
-/// would target the wrong machine, so OSC 52 carries the copy home.
+/// would target the wrong machine, so OSC 52 carries the copy home. A Herdr
+/// pane (`HERDR_ENV=1`, upstream #682) is the same shape: the persistent
+/// Herdr server forwards a child's OSC 52 to its foreground client.
 fn is_remote_session(env: &Env) -> bool {
-    env.has("SSH_CONNECTION") || env.has("SSH_CLIENT") || env.has("MOSH_CONNECTION")
+    env.has("SSH_CONNECTION")
+        || env.has("SSH_CLIENT")
+        || env.has("MOSH_CONNECTION")
+        || env.value("HERDR_ENV").as_deref() == Some("1")
 }
 
 /// Whether this is a Wayland session.
@@ -191,6 +196,7 @@ impl Env {
             "SSH_CONNECTION",
             "SSH_CLIENT",
             "MOSH_CONNECTION",
+            "HERDR_ENV",
             "TERMUX_VERSION",
             "WAYLAND_DISPLAY",
             "XDG_SESSION_TYPE",
@@ -531,5 +537,28 @@ mod tests {
             }
             OscSink::Stdout => panic!("the buffer sink captured nothing"),
         }
+    }
+
+    /// A Herdr pane (`HERDR_ENV=1`, upstream #682) copies like SSH/Mosh: Herdr routes a child's
+    /// OSC 52 to the foreground `herdr --remote` client, while the server machine's own
+    /// clipboard tools would write the wrong machine. The process env must carry the marker.
+    #[test]
+    fn a_herdr_pane_is_a_terminal_mediated_session() {
+        let herdr = |value: Option<&'static str>| {
+            Env::scripted([
+                ("SSH_CONNECTION", None),
+                ("SSH_CLIENT", None),
+                ("MOSH_CONNECTION", None),
+                ("HERDR_ENV", value),
+                ("TERMUX_VERSION", None),
+                ("WAYLAND_DISPLAY", None),
+                ("XDG_SESSION_TYPE", None),
+                ("DISPLAY", None),
+            ])
+        };
+        assert!(is_remote_session(&herdr(Some("1"))));
+        assert!(!is_remote_session(&herdr(Some("0"))));
+        assert!(!is_remote_session(&herdr(None)));
+        assert!(Env::process().values.contains_key("HERDR_ENV"));
     }
 }
