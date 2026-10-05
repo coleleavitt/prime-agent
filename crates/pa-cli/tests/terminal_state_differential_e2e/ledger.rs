@@ -61,6 +61,12 @@ pub(crate) struct ModeLedger {
     osc_52_writes: usize,
     osc_133_markers: usize,
     osc_1337_images: usize,
+    /// The xterm title stack (`ESC[22;0t` saves, `ESC[23;0t` restores): a
+    /// window-title write is owned only under a save, and the stream must
+    /// hand the stack back at depth zero.
+    title_depth: usize,
+    /// A title was written under a save the stream has not yet restored.
+    title_unrestored: bool,
     /// Writes the product does not own: each is a finding.
     findings: Vec<String>,
 }
@@ -209,6 +215,26 @@ impl ModeLedger {
                         .push(format!("kitty protocol form with unknown prefix {other:?}"));
                 }
             },
+            b't' => {
+                // Window ops: only the title stack's save/restore is owned.
+                match String::from_utf8_lossy(params).split(';').next() {
+                    Some("22") => self.title_depth += 1,
+                    Some("23") => {
+                        if self.title_depth == 0 {
+                            self.findings
+                                .push("title-stack restore without a save".to_string());
+                        } else {
+                            self.title_depth -= 1;
+                            if self.title_depth == 0 {
+                                self.title_unrestored = false;
+                            }
+                        }
+                    }
+                    other => self.findings.push(format!(
+                        "window-op write ({other:?}): the product owns no restore for it"
+                    )),
+                }
+            }
             b'q' if !params.is_empty() => {
                 let shape = first_param(params);
                 self.findings.push(format!(
@@ -373,10 +399,14 @@ impl ModeLedger {
         } else if text.starts_with("1337;") {
             self.osc_1337_images += 1;
         } else if text.starts_with("0;") || text.starts_with("2;") {
-            self.findings.push(format!(
-                "window-title OSC write ({text:?}): the product owns no title \
-                 restore"
-            ));
+            if self.title_depth == 0 {
+                self.findings.push(format!(
+                    "window-title OSC write ({text:?}) without a title-stack save: \
+                     nothing restores the shell's title"
+                ));
+            } else {
+                self.title_unrestored = true;
+            }
         }
     }
 
@@ -455,6 +485,12 @@ impl ModeLedger {
                 "OSC 8 hyperlink left open (depth {}): the shell's own output \
                  becomes the link's label",
                 self.hyperlink_depth
+            ));
+        }
+        if self.title_depth != 0 || self.title_unrestored {
+            leaks.push(format!(
+                "window title left unrestored (title stack depth {})",
+                self.title_depth
             ));
         }
         leaks.extend(self.findings.iter().cloned());
@@ -598,6 +634,18 @@ fn the_ledger_catches_forbidden_writes() {
     assert!(
         findings.iter().any(|f| f.contains("window-title")),
         "the title write went unnoticed: {findings:?}"
+    );
+}
+
+#[test]
+fn the_ledger_owns_a_title_only_between_a_stack_save_and_restore() {
+    // The TS-parity title under the xterm title stack, restored at exit.
+    assert!(findings_of(b"\x1b[22;0t\x1b]0;prime-agent - x\x07\x1b[23;0t").is_empty());
+    // Saved and titled but never restored: the shell keeps our title.
+    let findings = findings_of(b"\x1b[22;0t\x1b]0;prime-agent - x\x07");
+    assert!(
+        findings.iter().any(|f| f.contains("unrestored")),
+        "the unrestored title went unnoticed: {findings:?}"
     );
 }
 
