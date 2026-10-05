@@ -282,21 +282,20 @@ where
         // gives up here instead of stacking per-provider budgets — unless a
         // fallback model is left to take over.
         let next_index = if retries_on_model > MAX_TOTAL_PROVIDER_RETRIES {
-            match fallback_index {
-                Some(index) => index,
-                None => {
-                    if switched {
-                        let _ = restore().await?;
-                    }
-                    emit(AutoRetryEvent::End {
-                        success: false,
-                        attempt: total_retries - 1,
-                        final_error: Some(chain_final_error(&tried, on_fallback, &message)),
-                        restored_model: None,
-                    })
-                    .await?;
-                    return Ok(message);
+            if let Some(index) = fallback_index {
+                index
+            } else {
+                if switched {
+                    let _ = restore().await?;
                 }
+                emit(AutoRetryEvent::End {
+                    success: false,
+                    attempt: total_retries - 1,
+                    final_error: Some(chain_final_error(&tried, on_fallback, &message)),
+                    restored_model: None,
+                })
+                .await?;
+                return Ok(message);
             }
         } else if retries_on_provider > failover.max_retries {
             match chain.get(candidate_index) {
