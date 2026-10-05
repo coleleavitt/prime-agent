@@ -15,6 +15,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::Mutex as AsyncMutex;
 
 use super::transport::BlockingTransportStream;
+use super::windows_security::{verify_pipe_owner, OwnerOnlySecurity};
 
 /// `winerror.h` `ERROR_PIPE_BUSY`: the pipe name exists but no instance is
 /// listening (pinned constant, no windows-sys dependency).
@@ -39,9 +40,7 @@ impl NamedPipeListener {
     /// fails when another process owns the name (a live Unix socket blocking
     /// `bind`); a stale pipe cannot exist - instances die with their process.
     pub(crate) fn bind(name: &str) -> io::Result<Self> {
-        let first = ServerOptions::new()
-            .first_pipe_instance(true)
-            .create(name)?;
+        let first = create_owner_only(ServerOptions::new().first_pipe_instance(true), name)?;
         Ok(Self {
             name: name.to_string(),
             pending: AsyncMutex::new(Some(first)),
@@ -53,7 +52,7 @@ impl NamedPipeListener {
     /// keeping clients off the busy path.
     pub(crate) async fn accept(&self) -> io::Result<NamedPipeServer> {
         let mut pending = self.pending.lock().await;
-        let next = ServerOptions::new().create(&self.name)?;
+        let next = create_owner_only(&ServerOptions::new(), &self.name)?;
         let server = pending
             .replace(next)
             .expect("a listening instance is always kept ready");
@@ -62,13 +61,27 @@ impl NamedPipeListener {
     }
 }
 
+/// Create one pipe instance that only this user can open (owner-only DACL, owner = this user;
+/// remote clients are rejected by the options' default).
+fn create_owner_only(options: &ServerOptions, name: &str) -> io::Result<NamedPipeServer> {
+    let mut security = OwnerOnlySecurity::for_current_user()?;
+    // SAFETY: `security.as_raw()` points at a SECURITY_ATTRIBUTES with a valid descriptor that
+    // outlives the call (`security` drops after it).
+    unsafe { options.create_with_security_attributes_raw(name, security.as_raw()) }
+}
+
 /// Open a client connection; a busy pipe (`ERROR_PIPE_BUSY`) is retried until the server frees one
 /// (Node's clients wait the same way through libuv's connect machinery).
 pub(crate) async fn connect(name: &str) -> io::Result<NamedPipeClient> {
     let deadline = tokio::time::Instant::now() + BUSY_RETRY_DEADLINE;
     loop {
         match ClientOptions::new().open(name) {
-            Ok(client) => return Ok(client),
+            Ok(client) => {
+                // A pipe another account created under this name (a squatter) must never
+                // receive the client's commands.
+                verify_pipe_owner(std::os::windows::io::AsRawHandle::as_raw_handle(&client))?;
+                return Ok(client);
+            }
             Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY) => {}
             Err(error) => return Err(error),
         }

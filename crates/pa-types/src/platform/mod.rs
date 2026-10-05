@@ -5,11 +5,15 @@
 
 pub mod dirs;
 pub mod identity;
+#[cfg(any(windows, test))]
+mod pipe_security;
 pub mod process;
 pub mod terminal;
 pub mod transport;
 #[cfg(windows)]
 pub(crate) mod windows_pipe;
+#[cfg(windows)]
+mod windows_security;
 
 pub use dirs::{agent_dir, home_dir};
 pub use identity::socket_identity;
@@ -21,3 +25,5 @@ pub use transport::{
     bind_transport, connect_blocking, connect_transport, BlockingTransportStream,
     TransportListener, TransportStream,
 };
+#[cfg(windows)]
+pub use windows_security::current_user_sid;
