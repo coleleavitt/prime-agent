@@ -99,6 +99,32 @@ fn print_mode_reports_provider_errors_as_exit_one() {
     assert!(!stderr.is_empty());
 }
 
+/// Upstream #2976/#2977: json mode derives the exit code from the terminal
+/// selection like text mode does (an errored or aborted assistant exits 1), and
+/// still prints nothing but the streamed json events.
+#[test]
+fn print_mode_json_exits_one_on_assistant_error_or_abort() {
+    let cases = [
+        ("error", serde_json::json!({ "responses": [] })),
+        (
+            "aborted",
+            serde_json::json!({ "responses": [{ "text": "partial", "stopReason": "aborted" }] }),
+        ),
+    ];
+    for (label, script) in cases {
+        let (stdout, stderr, code) = run(&["--mode", "json", "-p", "hi"], &script);
+        let last_type = stdout
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .next_back()
+            .and_then(|line| line["type"].as_str().map(str::to_string));
+        assert_eq!(
+            (label, code, last_type.as_deref(), stderr.as_str()),
+            (label, 1, Some("agent_end"), ""),
+        );
+    }
+}
+
 // Session persistence (headless print sessions must land on disk).
 
 fn isolated_home() -> tempfile::TempDir {
@@ -489,7 +515,9 @@ fn print_mode_overflow_json_streams_the_compaction_events() {
         &["--mode", "json", "-p", &seed, &probe],
         &script,
     );
-    assert_eq!(code, 0, "stderr: {stderr}");
+    // The retried turn errors and the recovery reports `failed`: json mode
+    // exits 1 like text mode (upstream #2976/#2977).
+    assert_eq!(code, 1, "stderr: {stderr}");
     let events: Vec<serde_json::Value> = stdout
         .lines()
         .map(serde_json::from_str)
