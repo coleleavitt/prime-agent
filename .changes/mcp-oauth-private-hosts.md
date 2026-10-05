@@ -1,0 +1,1 @@
+- MCP OAuth login refuses discovery documents that point a public MCP server at a private, loopback or link-local address. An MCP server you configure at such an address can still keep its OAuth flow on the local network.

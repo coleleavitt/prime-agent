@@ -1199,4 +1199,129 @@ mod tests {
             .collect();
         assert!(!urls.contains(&ORIGIN_REGISTER.to_string()));
     }
+
+    /// Upstream #2172: a public MCP server's discovery documents must not steer the flow at
+    /// literal private, loopback, or link-local hosts (SSRF): the `resource_metadata` pointer,
+    /// the PRM-selected issuer, and the metadata endpoints are all refused before any request
+    /// reaches them.
+    #[tokio::test]
+    async fn a_public_server_cannot_steer_discovery_at_private_hosts() {
+        let pointer = ScriptedHttp::new(vec![(
+            RESOURCE,
+            401,
+            Some(r#"Bearer resource_metadata="https://169.254.169.254/latest/meta-data""#),
+            "",
+        )]);
+        let issuer = ScriptedHttp::new(vec![
+            (RESOURCE, 401, None, ""),
+            (
+                PLANE_PRM_URL,
+                200,
+                None,
+                &json_response(&serde_json::json!({
+                    "resource": RESOURCE,
+                    "authorization_servers": ["https://10.0.0.7"],
+                })),
+            ),
+        ]);
+        let endpoints = ScriptedHttp::new(vec![
+            (ORIGIN_URL, 404, None, ""),
+            (
+                "https://srv.test/.well-known/oauth-protected-resource/mcp",
+                404,
+                None,
+                "",
+            ),
+            (
+                ORIGIN_META_URL,
+                200,
+                None,
+                &json_response(&serde_json::json!({
+                    "issuer": "https://srv.test",
+                    "authorization_endpoint": ORIGIN_AUTHORIZE,
+                    "token_endpoint": "https://127.0.0.1/token",
+                    "registration_endpoint": "https://[::1]/register",
+                })),
+            ),
+            (
+                "https://srv.test/.well-known/openid-configuration",
+                404,
+                None,
+                "",
+            ),
+        ]);
+        let mut outcomes = Vec::new();
+        for (http, url) in [
+            (&pointer, RESOURCE),
+            (&issuer, RESOURCE),
+            (&endpoints, ORIGIN_URL),
+        ] {
+            let error = mcp_login(http, &config("public", url), &test_ui())
+                .await
+                .unwrap_err()
+                .to_string();
+            let private_requests: Vec<String> = http
+                .seen
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(url, _)| url.clone())
+                .filter(|url| !url.contains("mcp.plane.so") && !url.contains("srv.test"))
+                .collect();
+            outcomes.push((
+                error.contains("private, loopback or link-local host"),
+                private_requests,
+            ));
+        }
+        assert_eq!(
+            outcomes,
+            vec![(true, Vec::<String>::new()); 3],
+            "every private discovery target is refused before it is requested"
+        );
+    }
+
+    /// The opt-in: an MCP server the user configured on a private address may keep its OAuth
+    /// flow on the local network.
+    #[tokio::test]
+    async fn a_configured_private_server_may_use_private_discovery_hosts() {
+        const PRIVATE_RESOURCE: &str = "https://10.0.0.5/mcp";
+        let http = ScriptedHttp::new(vec![
+            (PRIVATE_RESOURCE, 401, None, ""),
+            (
+                "https://10.0.0.5/.well-known/oauth-protected-resource/mcp",
+                200,
+                None,
+                &json_response(&serde_json::json!({
+                    "resource": PRIVATE_RESOURCE,
+                    "authorization_servers": ["https://10.0.0.6"],
+                })),
+            ),
+            (
+                "https://10.0.0.6/.well-known/oauth-authorization-server",
+                200,
+                None,
+                &json_response(&serde_json::json!({
+                    "issuer": "https://10.0.0.6",
+                    "authorization_endpoint": "https://10.0.0.6/authorize",
+                    "token_endpoint": "https://10.0.0.6/token",
+                })),
+            ),
+            (
+                "https://10.0.0.6/token",
+                200,
+                None,
+                &json_response(&serde_json::json!({ "access_token": "lan-access" })),
+            ),
+        ]);
+        let mut login_config = config("lan", PRIVATE_RESOURCE);
+        login_config.client_id = Some("lan-client".to_string());
+        let credentials = mcp_login(&http, &login_config, &test_ui()).await.unwrap();
+        let AuthCredential::Oauth { access, issuer, .. } = &credentials else {
+            panic!("oauth credential expected, got {credentials:?}");
+        };
+        assert_eq!(
+            (access.as_str(), issuer.as_deref()),
+            ("lan-access", Some("https://10.0.0.6"))
+        );
+    }
 }

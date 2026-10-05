@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 use url::Url;
 
 use super::oauth_http::{OAuthHttp, OAuthHttpMethod, OAuthHttpRequest};
+use super::url_checks::is_literal_private_or_loopback_host;
 
 /// The MCP endpoint's label in validation errors.
 const ENDPOINT_LABEL: &str = "MCP endpoint";
@@ -26,6 +27,41 @@ pub(crate) fn validated_https_url(value: &str, name: &str) -> Result<Url> {
         bail!("{name} must be an absolute HTTPS URL without credentials or a fragment");
     }
     Ok(url)
+}
+
+/// Which hosts the URLs discovery learns from the network may name. Discovery documents steer
+/// the metadata fetches, client registration, the browser, and the token POST; a public MCP
+/// server must not point them at the user's loopback or local network (SSRF). Configuring the
+/// MCP server itself on such an address is the explicit opt-in. The check is structural (literal
+/// addresses and `localhost`), like the catalog's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HostScope {
+    PublicOnly,
+    LocalNetworkAllowed,
+}
+
+impl HostScope {
+    fn for_endpoint(endpoint: &Url) -> Self {
+        if is_literal_private_or_loopback_host(endpoint.host_str().unwrap_or_default()) {
+            HostScope::LocalNetworkAllowed
+        } else {
+            HostScope::PublicOnly
+        }
+    }
+
+    /// [`validated_https_url`] for a URL a discovery document supplied.
+    fn validated_url(self, value: &str, name: &str) -> Result<Url> {
+        let url = validated_https_url(value, name)?;
+        if self == HostScope::PublicOnly
+            && is_literal_private_or_loopback_host(url.host_str().unwrap_or_default())
+        {
+            bail!(
+                "{name} {value} points at a private, loopback or link-local host; only an MCP \
+                 server configured at such an address may use one"
+            );
+        }
+        Ok(url)
+    }
 }
 
 /// The RFC 9728 resource indicator for an MCP endpoint: the origin when the
@@ -81,6 +117,7 @@ fn authorization_server_metadata(
     value: &serde_json::Value,
     issuer: &str,
     require_exact_issuer: bool,
+    scope: HostScope,
 ) -> Result<AuthServerMetadata> {
     let Some(object) = value.as_object() else {
         bail!("Authorization server metadata for {issuer} is invalid");
@@ -112,13 +149,13 @@ fn authorization_server_metadata(
     let Some(token_endpoint) = object.get("token_endpoint").and_then(|v| v.as_str()) else {
         bail!("Authorization server metadata for {issuer} is missing required endpoints");
     };
-    validated_https_url(authorization_endpoint, "Authorization endpoint")?;
-    validated_https_url(token_endpoint, "Token endpoint")?;
+    scope.validated_url(authorization_endpoint, "Authorization endpoint")?;
+    scope.validated_url(token_endpoint, "Token endpoint")?;
     let registration_endpoint = match object.get("registration_endpoint") {
         None => None,
         Some(value) => {
             let endpoint = value.as_str().unwrap_or_default();
-            validated_https_url(endpoint, "Registration endpoint")?;
+            scope.validated_url(endpoint, "Registration endpoint")?;
             Some(endpoint.to_string())
         }
     };
@@ -161,8 +198,9 @@ async fn discover_authorization_server(
     http: &dyn OAuthHttp,
     issuer: &str,
     require_exact_issuer: bool,
+    scope: HostScope,
 ) -> Result<AuthServerMetadata> {
-    let issuer_url = validated_https_url(issuer, "Authorization server issuer")?;
+    let issuer_url = scope.validated_url(issuer, "Authorization server issuer")?;
     if issuer_url.query().is_some() {
         bail!("Authorization server issuer must not contain a query string");
     }
@@ -181,7 +219,7 @@ async fn discover_authorization_server(
                     continue;
                 }
                 match json_metadata(&response, candidate).and_then(|value| {
-                    authorization_server_metadata(&value, issuer, require_exact_issuer)
+                    authorization_server_metadata(&value, issuer, require_exact_issuer, scope)
                 }) {
                     Ok(metadata) => return Ok(metadata),
                     Err(error) => last_error = Some(error.to_string()),
@@ -207,6 +245,7 @@ struct ProtectedResourceMetadata {
 fn resource_metadata(
     value: &serde_json::Value,
     resource: &str,
+    scope: HostScope,
 ) -> Result<ProtectedResourceMetadata> {
     let Some(object) = value.as_object() else {
         bail!("Protected-resource metadata is invalid");
@@ -228,7 +267,7 @@ fn resource_metadata(
         let Some(issuer) = server.as_str() else {
             bail!("Protected-resource metadata has an invalid authorization server");
         };
-        validated_https_url(issuer, "Authorization server issuer")?;
+        scope.validated_url(issuer, "Authorization server issuer")?;
         issuers.push(issuer.to_string());
     }
     Ok(ProtectedResourceMetadata {
@@ -293,7 +332,8 @@ pub(crate) struct Discovery {
 /// authorization-server fallback.
 pub(crate) async fn discover(http: &dyn OAuthHttp, url: &str) -> Result<Discovery> {
     let resource_url = validated_https_url(url, ENDPOINT_LABEL)?;
-    let protected = try_protected_resource_metadata(http, &resource_url).await?;
+    let scope = HostScope::for_endpoint(&resource_url);
+    let protected = try_protected_resource_metadata(http, &resource_url, scope).await?;
     if let Some((metadata, resource, issuer)) = protected {
         return Ok(Discovery {
             metadata,
@@ -306,6 +346,7 @@ pub(crate) async fn discover(http: &dyn OAuthHttp, url: &str) -> Result<Discover
             http,
             &resource_url.origin().ascii_serialization(),
             false,
+            scope,
         )
         .await?,
         resource: None,
@@ -320,6 +361,7 @@ type ProtectedDiscovery = Option<(AuthServerMetadata, String, String)>;
 async fn try_protected_resource_metadata(
     http: &dyn OAuthHttp,
     resource_url: &Url,
+    scope: HostScope,
 ) -> Result<ProtectedDiscovery> {
     // This probe deliberately has no Authorization header; it must never leak an existing token. A
     // failing probe is not an error.
@@ -334,7 +376,9 @@ async fn try_protected_resource_metadata(
         Err(_) => None,
     };
     let candidate = match &header_url {
-        Some(pointer) => validated_https_url(pointer, "resource_metadata")?.to_string(),
+        Some(pointer) => scope
+            .validated_url(pointer, "resource_metadata")?
+            .to_string(),
         None => resource_metadata_url(resource_url),
     };
     let request = OAuthHttpRequest {
@@ -348,9 +392,9 @@ async fn try_protected_resource_metadata(
         return Ok(None);
     }
     let resource = canonical_resource(resource_url);
-    let metadata = resource_metadata(&json_metadata(&response, &candidate)?, &resource)?;
+    let metadata = resource_metadata(&json_metadata(&response, &candidate)?, &resource, scope)?;
     let issuer = metadata.authorization_servers[0].clone();
-    let server = discover_authorization_server(http, &issuer, true).await?;
+    let server = discover_authorization_server(http, &issuer, true, scope).await?;
     Ok(Some((server, metadata.resource, issuer)))
 }
 
@@ -574,9 +618,14 @@ mod tests {
     #[test]
     fn metadata_validation_messages() {
         let issuer = "https://login.example/tenant";
-        let error = authorization_server_metadata(&serde_json::json!({}), issuer, true)
-            .unwrap_err()
-            .to_string();
+        let error = authorization_server_metadata(
+            &serde_json::json!({}),
+            issuer,
+            true,
+            HostScope::PublicOnly,
+        )
+        .unwrap_err()
+        .to_string();
         assert_eq!(
             error,
             format!("Authorization server metadata for {issuer} is missing its issuer")
@@ -585,6 +634,7 @@ mod tests {
             &serde_json::json!({ "issuer": "https://wrong.example" }),
             issuer,
             true,
+            HostScope::PublicOnly,
         )
         .unwrap_err()
         .to_string();
@@ -596,6 +646,7 @@ mod tests {
             &serde_json::json!({ "issuer": "https://other.example/tenant" }),
             issuer,
             false,
+            HostScope::PublicOnly,
         )
         .unwrap_err()
         .to_string();
@@ -603,10 +654,14 @@ mod tests {
             error,
             "Origin authorization server metadata issuer must stay on https://login.example"
         );
-        let error =
-            authorization_server_metadata(&serde_json::json!({ "issuer": issuer }), issuer, true)
-                .unwrap_err()
-                .to_string();
+        let error = authorization_server_metadata(
+            &serde_json::json!({ "issuer": issuer }),
+            issuer,
+            true,
+            HostScope::PublicOnly,
+        )
+        .unwrap_err()
+        .to_string();
         assert_eq!(
             error,
             format!("Authorization server metadata for {issuer} is missing required endpoints")
@@ -621,6 +676,7 @@ mod tests {
             }),
             issuer,
             true,
+            HostScope::PublicOnly,
         )
         .unwrap();
         assert_eq!(
@@ -640,6 +696,7 @@ mod tests {
         let error = resource_metadata(
             &serde_json::json!({ "resource": "https://other/mcp" }),
             "https://mcp.example/mcp",
+            HostScope::PublicOnly,
         )
         .unwrap_err()
         .to_string();
@@ -650,6 +707,7 @@ mod tests {
         let error = resource_metadata(
             &serde_json::json!({ "resource": "https://mcp.example/mcp" }),
             "https://mcp.example/mcp",
+            HostScope::PublicOnly,
         )
         .unwrap_err()
         .to_string();
