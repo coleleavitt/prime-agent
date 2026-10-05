@@ -39,7 +39,43 @@ fn every_command_prints_and_writes_what_pi_does() {
 }
 
 #[test]
-fn a_command_waits_out_a_live_lock_and_takes_over_an_expired_one() {
+fn a_command_waits_for_a_live_lock() {
+    let directory = tempfile::tempdir().expect("a temporary directory");
+    let path = directory.path().join("anthropic-auth.json");
+    let lock = directory
+        .path()
+        .join("anthropic-auth.json.config-write.lock");
+    let expires = chrono::Utc::now().timestamp_millis() + 60_000;
+    std::fs::write(
+        &lock,
+        format!("{{\"ownerId\":\"live\",\"expiresAt\":{expires}}}\n"),
+    )
+    .expect("a live lock");
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let writer = {
+        let path = path.clone();
+        std::thread::spawn(move || {
+            let settings = PluginSettings::new(path);
+            let result = run_fast(&settings, "on");
+            sender.send(()).expect("report");
+            result
+        })
+    };
+    // The writer is still waiting while the lock is held.
+    assert!(receiver
+        .recv_timeout(std::time::Duration::from_millis(200))
+        .is_err());
+    assert!(!path.exists());
+    std::fs::remove_file(&lock).expect("release the lock");
+    writer
+        .join()
+        .expect("the writer")
+        .expect("the command runs");
+    assert!(request_settings(&PluginSettings::new(path).read()).fast_mode);
+}
+
+#[test]
+fn a_command_takes_over_an_expired_lock() {
     let directory = tempfile::tempdir().expect("a temporary directory");
     let path = directory.path().join("anthropic-auth.json");
     let lock = directory
