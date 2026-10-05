@@ -196,11 +196,7 @@ impl Inner {
             }
             if let Some(text) = &result {
                 if text.len() > execution.max_chars {
-                    let mut clipped = text[..execution.max_chars.clamp(0, text.len())].to_string();
-                    // Trim at a char boundary when max_chars split a multi-byte char.
-                    while !clipped.is_char_boundary(clipped.len()) {
-                        clipped.pop();
-                    }
+                    let mut clipped = clip_at_char_boundary(text, execution.max_chars).to_string();
                     let _ = write!(
                         clipped,
                         "\n[... output truncated at {} chars ...]",
@@ -306,5 +302,26 @@ impl Inner {
         };
         callback(message);
         true
+    }
+}
+
+/// `text` cut to at most `max_bytes` bytes, backed off to a char boundary: a
+/// cut inside a multi-byte char must not panic (slicing `text[..max_bytes]`
+/// first does).
+fn clip_at_char_boundary(text: &str, max_bytes: usize) -> &str {
+    &text[..text.floor_char_boundary(max_bytes)]
+}
+
+#[cfg(test)]
+mod clip_tests {
+    use super::clip_at_char_boundary;
+
+    #[test]
+    fn a_cut_inside_a_multi_byte_char_backs_off_instead_of_panicking() {
+        // "é" is two bytes: a 3-byte limit lands inside the second one.
+        assert_eq!(clip_at_char_boundary("ééé", 3), "é");
+        assert_eq!(clip_at_char_boundary("ééé", 4), "éé");
+        assert_eq!(clip_at_char_boundary("abc", 10), "abc");
+        assert_eq!(clip_at_char_boundary("日本", 1), "");
     }
 }
