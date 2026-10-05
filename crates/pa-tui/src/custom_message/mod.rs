@@ -255,37 +255,34 @@ fn presented_artifact_entry(message: &Value, details: &Value) -> ChatEntry {
         .get("mimeType")
         .and_then(Value::as_str)
         .unwrap_or("application/octet-stream");
-    let body = match blocks
+    let body = if let Some(image) = blocks
         .iter()
         .find(|block| block.get("type").and_then(Value::as_str) == Some("image"))
     {
-        Some(image) => {
-            let image_mime = image
-                .get("mimeType")
-                .and_then(Value::as_str)
-                .unwrap_or(mime);
-            let dimensions = match (
-                details.get("width").and_then(Value::as_u64),
-                details.get("height").and_then(Value::as_u64),
-            ) {
-                (Some(width), Some(height)) => Some(crate::terminal_image::ImageDimensions {
-                    width_px: u32::try_from(width).unwrap_or(u32::MAX),
-                    height_px: u32::try_from(height).unwrap_or(u32::MAX),
-                }),
-                _ => image.get("data").and_then(Value::as_str).and_then(|data| {
-                    crate::terminal_image::get_image_dimensions_prefix(
-                        data,
-                        image_mime,
-                        crate::terminal_image::IMAGE_DIMENSIONS_PREFIX_BYTES,
-                    )
-                }),
-            };
-            crate::terminal_image::image_fallback(image_mime, dimensions, name)
-        }
-        None => {
-            let path = details.get("path").and_then(Value::as_str).unwrap_or("");
-            format!("{} \u{b7} {mime}\n{path}", name.unwrap_or("artifact"))
-        }
+        let image_mime = image
+            .get("mimeType")
+            .and_then(Value::as_str)
+            .unwrap_or(mime);
+        let dimensions = match (
+            details.get("width").and_then(Value::as_u64),
+            details.get("height").and_then(Value::as_u64),
+        ) {
+            (Some(width), Some(height)) => Some(crate::terminal_image::ImageDimensions {
+                width_px: u32::try_from(width).unwrap_or(u32::MAX),
+                height_px: u32::try_from(height).unwrap_or(u32::MAX),
+            }),
+            _ => image.get("data").and_then(Value::as_str).and_then(|data| {
+                crate::terminal_image::get_image_dimensions_prefix(
+                    data,
+                    image_mime,
+                    crate::terminal_image::IMAGE_DIMENSIONS_PREFIX_BYTES,
+                )
+            }),
+        };
+        crate::terminal_image::image_fallback(image_mime, dimensions, name)
+    } else {
+        let path = details.get("path").and_then(Value::as_str).unwrap_or("");
+        format!("{} \u{b7} {mime}\n{path}", name.unwrap_or("artifact"))
     };
     ChatEntry::CustomPanel(Box::new(CustomPanelRow {
         custom_type: "artifact".to_string(),

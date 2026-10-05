@@ -35,7 +35,7 @@ fn an_image_presents_its_preview_in_a_display_only_row() {
         capture_presented_artifact(&request, dir.path(), &artifacts, "sess-1", "pres-1", 7)
             .unwrap();
     let digest = Sha256::digest(png_bytes(1));
-    let artifact_id: String = digest.iter().take(8).map(|b| format!("{b:02x}")).collect();
+    let artifact_id = hex_prefix(&digest, 8);
     let captured_path = artifacts
         .join("presented-artifacts")
         .join(format!("{artifact_id}-render-one.png"));
@@ -69,7 +69,7 @@ fn an_image_presents_its_preview_in_a_display_only_row() {
     );
     // The preview is the user's: the model's request never carries the row.
     assert!(crate::session_engine::messages::convert_to_llm(&[
-        pa_types::session::AgentMessage::Custom(captured.message.clone())
+        pa_types::session::AgentMessage::Custom(captured.message)
     ])
     .is_empty());
     // The source can go away: the capture is the durable copy.

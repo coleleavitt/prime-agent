@@ -215,6 +215,18 @@ fn safe_artifact_name(name: &str) -> String {
     }
 }
 
+/// The lowercase hex of the first `bytes` bytes of `digest`.
+fn hex_prefix(digest: &[u8], bytes: usize) -> String {
+    use std::fmt::Write as _;
+    digest
+        .iter()
+        .take(bytes)
+        .fold(String::with_capacity(bytes * 2), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
+}
+
 /// A captured presentation: the display-only row and the kernel's receipt.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CapturedArtifact {
@@ -267,11 +279,7 @@ pub fn capture_presented_artifact(
         );
     }
     let digest = Sha256::digest(&bytes);
-    let artifact_id: String = digest
-        .iter()
-        .take(8)
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    let artifact_id = hex_prefix(&digest, 8);
     let name = source
         .file_name()
         .and_then(|name| name.to_str())
@@ -306,28 +314,25 @@ pub fn capture_presented_artifact(
         "sessionId": session_id,
         "name": name,
     });
-    let (kind, mime_type) = match &preview {
-        Some(preview) => {
-            blocks.push(UserContentBlock::Image(ImageContent {
-                data: preview.data.clone(),
-                mime_type: preview.mime_type.clone(),
-                rest: serde_json::Map::default(),
-            }));
-            ("image", preview.mime_type.clone())
-        }
-        None => {
-            blocks.push(UserContentBlock::Text(TextContent {
-                text: destination_text.clone(),
-                text_signature: None,
-                rest: serde_json::Map::default(),
-            }));
-            (
-                "file",
-                source_image
-                    .unwrap_or_else(|| fallback_mime_type(&name))
-                    .to_string(),
-            )
-        }
+    let (kind, mime_type) = if let Some(preview) = &preview {
+        blocks.push(UserContentBlock::Image(ImageContent {
+            data: preview.data.clone(),
+            mime_type: preview.mime_type.clone(),
+            rest: serde_json::Map::default(),
+        }));
+        ("image", preview.mime_type.clone())
+    } else {
+        blocks.push(UserContentBlock::Text(TextContent {
+            text: destination_text.clone(),
+            text_signature: None,
+            rest: serde_json::Map::default(),
+        }));
+        (
+            "file",
+            source_image
+                .unwrap_or_else(|| fallback_mime_type(&name))
+                .to_string(),
+        )
     };
     let mut receipt = json!({
         "artifactId": artifact_id,
@@ -443,18 +448,17 @@ pub fn register_artifact_present_handler(
                 .await??;
                 // Persist before answering: a failed write never shows an
                 // artifact that disappears on replay.
-                match presented.sink() {
-                    Some(sink) => sink(captured.message)?,
-                    None => {
-                        let message = captured.message;
-                        let mut session = context.session.lock().await;
-                        session.append_custom_message(
-                            &message.custom_type,
-                            message.content,
-                            message.display,
-                            message.details,
-                        )?;
-                    }
+                if let Some(sink) = presented.sink() {
+                    sink(captured.message)?;
+                } else {
+                    let message = captured.message;
+                    let mut session = context.session.lock().await;
+                    session.append_custom_message(
+                        &message.custom_type,
+                        message.content,
+                        message.display,
+                        message.details,
+                    )?;
                 }
                 Ok(captured.receipt)
             })
