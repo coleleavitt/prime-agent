@@ -4,8 +4,10 @@ Session supervision and wire serving.
 
 ## Scope
 ACP stdio transport (`acp`): the JSON-RPC serve surface for Agent
-Client Protocol clients, served over a daemon session (initialize, session/new, session/prompt, session/close,
-session/cancel, and the outgoing session/update notification with
+Client Protocol clients, served over a daemon session (initialize, session/new, session/list,
+session/load — a saved session's transcript replayed before the answer, attaching the worker
+that already serves it or switching the connection's own worker to the file —,
+session/prompt, session/close, session/cancel, and the outgoing session/update notification with
 namespaced `_meta` correlation), owned by this crate because
 wire-protocol serving is its area; the worker turn loop owns compaction
 arms, auto-refine, and goal continuation. The compact-trigger

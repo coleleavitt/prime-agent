@@ -1,7 +1,8 @@
 //! ACP wire types: the method surface, `session/update` payload shapes,
-//! and prompt-block parsing. The served surface is exactly what the TS
-//! product serves; ACP-spec methods it does not serve (`session/load`,
-//! `session/read`, `session/clone`, cwd adoption) are not invented here.
+//! and prompt-block parsing. The served surface is what the TS product
+//! serves plus the spec's `session/list` and `session/load` (upstream
+//! #1116/#1600/#2804); other ACP-spec methods (`session/read`,
+//! `session/clone`, cwd adoption) are not invented here.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -43,11 +44,16 @@ pub struct McpCapabilities {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionCapabilities {
     pub close: CloseCapability,
+    pub list: ListCapability,
 }
 
 /// `{}`: present means `session/close` is served.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct CloseCapability {}
+
+/// `{}`: present means `session/list` is served.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ListCapability {}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -132,6 +138,10 @@ pub struct AcpStopReasonResponse {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "sessionUpdate")]
 pub enum AcpSessionUpdate {
+    /// A chunk of a user message: `session/load` replays the transcript's
+    /// user turns with it.
+    #[serde(rename = "user_message_chunk")]
+    UserMessageChunk { content: UserContentBlock },
     /// A streaming chunk of the assistant's visible answer.
     #[serde(rename = "agent_message_chunk")]
     AgentMessageChunk {
@@ -208,6 +218,21 @@ impl TextBlock {
             text: text.into(),
         }
     }
+}
+
+/// The content of a replayed user message chunk: the text and image blocks
+/// a prompt admits (ACP `ContentBlock`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum UserContentBlock {
+    Text {
+        text: String,
+    },
+    Image {
+        data: String,
+        #[serde(rename = "mimeType")]
+        mime_type: String,
+    },
 }
 
 /// `{ "type": "content", "content": { ... } }` — the tool-call update shape.
@@ -329,6 +354,39 @@ impl NewSessionParams {
     }
 }
 
+/// The `session/load` request params.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoadSessionParams {
+    pub session_id: String,
+    pub cwd: Option<String>,
+    pub mcp_servers: Vec<Value>,
+}
+
+impl LoadSessionParams {
+    /// Parse `session/load` params; unknown fields are ignored like
+    /// `session/new`'s.
+    pub fn parse(params: &Value) -> LoadSessionParams {
+        let new = NewSessionParams::parse(params);
+        LoadSessionParams {
+            session_id: params
+                .get("sessionId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            cwd: new.cwd,
+            mcp_servers: new.mcp_servers,
+        }
+    }
+
+    /// The `session/new` admission view of the same params.
+    pub fn admission(&self) -> NewSessionParams {
+        NewSessionParams {
+            cwd: self.cwd.clone(),
+            mcp_servers: self.mcp_servers.clone(),
+        }
+    }
+}
+
 /// The `session/prompt` request params.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PromptParams {
@@ -387,7 +445,7 @@ pub fn initialize_result(product_version: &str) -> InitializeResult {
     InitializeResult {
         protocol_version: 1,
         agent_capabilities: AgentCapabilities {
-            load_session: false,
+            load_session: true,
             prompt_capabilities: PromptCapabilities {
                 image: true,
                 embedded_context: true,
@@ -395,6 +453,7 @@ pub fn initialize_result(product_version: &str) -> InitializeResult {
             mcp_capabilities: Some(McpCapabilities { http: true }),
             session_capabilities: SessionCapabilities {
                 close: CloseCapability::default(),
+                list: ListCapability::default(),
             },
         },
         agent_info: AgentInfo {
@@ -419,10 +478,10 @@ mod tests {
             json!({
                 "protocolVersion": 1,
                 "agentCapabilities": {
-                    "loadSession": false,
+                    "loadSession": true,
                     "promptCapabilities": { "image": true, "embeddedContext": true },
                     "mcpCapabilities": { "http": true },
-                    "sessionCapabilities": { "close": {} },
+                    "sessionCapabilities": { "close": {}, "list": {} },
                 },
                 "agentInfo": { "name": "prime-agent", "title": "Prime Agent", "version": "9.9.9" },
                 "_meta": { "ai.primeintellect.prime-agent": {} },

@@ -117,3 +117,10 @@ locked field-by-field by the offline e2e tests. All other scenarios
 (happy_path, cwd_mismatch, errors, second_initialize, tool_call,
 compact_command, cancel, autonomous_gate, mcp_stdio, mcp_replace,
 mcp_errors) match in full mode.
+
+## Declared divergences
+
+- `initialize` advertises `loadSession: true` and `sessionCapabilities.list`, and
+  `session/new` answers a persisted session's saved id (a `--no-session` session keeps a
+  fresh UUID): the Rust surface serves ACP `session/list` / `session/load` (upstream
+  #1116, #1600, #2804), which the TS v0.9.8 captures predate.

@@ -10,7 +10,9 @@
 use serde_json::{json, Value};
 
 use super::meta::{prime_agent_meta, PrimeAgentCompactionMeta, PrimeAgentSessionMeta};
-use super::types::{AcpSessionUpdate, AcpToolKind, AcpToolStatus, TextBlock};
+use super::types::{
+    AcpSessionUpdate, AcpToolKind, AcpToolStatus, TextBlock, ToolCallContent, UserContentBlock,
+};
 
 /// The model-facing Python REPL tool.
 const IPYTHON_TOOL_NAME: &str = "ipython";
@@ -138,29 +140,9 @@ pub fn wire_updates(event: &Value, state: &mut WireMappingState) -> Vec<AcpSessi
             let tool_name = event
                 .get("toolName")
                 .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
+                .unwrap_or_default();
             let args = event.get("args").cloned().unwrap_or(Value::Null);
-            let cell = if tool_name == IPYTHON_TOOL_NAME {
-                args.get("code").and_then(Value::as_str).map(str::to_string)
-            } else {
-                None
-            };
-            let title = if tool_name == IPYTHON_TOOL_NAME {
-                "Python cell".to_string()
-            } else {
-                tool_name.clone()
-            };
-            vec![AcpSessionUpdate::ToolCall {
-                tool_call_id,
-                title,
-                kind: AcpToolKind::of_tool(&tool_name),
-                status: AcpToolStatus::InProgress,
-                raw_input: match cell {
-                    Some(code) => json!({ "code": code }),
-                    None => args,
-                },
-            }]
+            vec![tool_call_start(tool_call_id, tool_name, args)]
         }
         "tool_execution_end" => {
             let tool_call_id = event
@@ -181,7 +163,7 @@ pub fn wire_updates(event: &Value, state: &mut WireMappingState) -> Vec<AcpSessi
                 } else {
                     AcpToolStatus::Completed
                 }),
-                content: text.map(|text| vec![super::types::ToolCallContent::new(text)]),
+                content: text.map(|text| vec![ToolCallContent::new(text)]),
                 meta: rich.map(|rich| {
                     prime_agent_meta(&PrimeAgentSessionMeta {
                         ipython: Some(rich),
@@ -221,7 +203,7 @@ pub fn wire_updates(event: &Value, state: &mut WireMappingState) -> Vec<AcpSessi
             vec![AcpSessionUpdate::ToolCallUpdate {
                 tool_call_id: bash_tool_call_id(state.active_bash_run_id.clone()),
                 status: Some(AcpToolStatus::InProgress),
-                content: Some(vec![super::types::ToolCallContent::new(chunk)]),
+                content: Some(vec![ToolCallContent::new(chunk)]),
                 meta: None,
             }]
         }
@@ -404,6 +386,216 @@ pub fn wire_updates(event: &Value, state: &mut WireMappingState) -> Vec<AcpSessi
             }]
         }
         _ => Vec::new(),
+    }
+}
+
+/// Replay a persisted transcript (the worker's `get_messages` rows) as the
+/// ACP updates `session/load` streams before its response: user turns as
+/// `user_message_chunk`, assistant text/thinking as message/thought chunks,
+/// tool calls and their results as `tool_call` / `tool_call_update`, user
+/// bash runs as a synthetic tool call, and a compaction summary as the
+/// compaction meta. Rows ACP cannot represent (custom messages, branch
+/// summaries) are skipped (upstream #2804's mapping).
+pub fn transcript_updates(messages: &[Value]) -> Vec<AcpSessionUpdate> {
+    let mut updates = Vec::new();
+    let mut assistant_sequence = 0u64;
+    let mut bash_sequence = 0u64;
+    for message in messages {
+        match message.get("role").and_then(Value::as_str) {
+            Some("user") => updates.extend(user_message_updates(message.get("content"))),
+            Some("assistant") => {
+                assistant_sequence += 1;
+                let message_id = format!("prime-agent-replay-assistant-{assistant_sequence}");
+                updates.extend(assistant_message_updates(message, &message_id));
+            }
+            Some("toolResult") => {
+                let is_error = message
+                    .get("isError")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                updates.push(AcpSessionUpdate::ToolCallUpdate {
+                    tool_call_id: message
+                        .get("toolCallId")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    status: Some(if is_error {
+                        AcpToolStatus::Failed
+                    } else {
+                        AcpToolStatus::Completed
+                    }),
+                    content: tool_result_text(Some(message))
+                        .map(|text| vec![ToolCallContent::new(text)]),
+                    meta: ipython_rich_output(Some(message)).map(|rich| {
+                        prime_agent_meta(&PrimeAgentSessionMeta {
+                            ipython: Some(rich),
+                            ..Default::default()
+                        })
+                    }),
+                });
+            }
+            Some("bashExecution") => {
+                bash_sequence += 1;
+                let tool_call_id = format!("prime-agent-replay-bash-{bash_sequence}");
+                let command = message
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let output = message
+                    .get("output")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let completed = message.get("exitCode").and_then(Value::as_i64) == Some(0)
+                    && !message
+                        .get("cancelled")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                updates.push(AcpSessionUpdate::ToolCall {
+                    tool_call_id: tool_call_id.clone(),
+                    title: command.clone(),
+                    kind: AcpToolKind::Execute,
+                    status: AcpToolStatus::InProgress,
+                    raw_input: json!({ "command": command }),
+                });
+                updates.push(AcpSessionUpdate::ToolCallUpdate {
+                    tool_call_id,
+                    status: Some(if completed {
+                        AcpToolStatus::Completed
+                    } else {
+                        AcpToolStatus::Failed
+                    }),
+                    content: (!output.is_empty()).then(|| vec![ToolCallContent::new(output)]),
+                    meta: None,
+                });
+            }
+            Some("compactionSummary") => {
+                updates.push(AcpSessionUpdate::SessionInfoUpdate {
+                    meta: prime_agent_meta(&PrimeAgentSessionMeta {
+                        compaction: Some(PrimeAgentCompactionMeta {
+                            tokens_before: message.get("tokensBefore").and_then(Value::as_u64),
+                            summary: message
+                                .get("summary")
+                                .and_then(Value::as_str)
+                                .map(str::to_string),
+                        }),
+                        ..Default::default()
+                    }),
+                });
+            }
+            _ => {}
+        }
+    }
+    updates
+}
+
+/// A user message's content: a bare string or text/image blocks; empty
+/// text drops out.
+fn user_message_updates(content: Option<&Value>) -> Vec<AcpSessionUpdate> {
+    let chunk = |content| AcpSessionUpdate::UserMessageChunk { content };
+    match content {
+        Some(Value::String(text)) if !text.is_empty() => {
+            vec![chunk(UserContentBlock::Text { text: text.clone() })]
+        }
+        Some(Value::Array(blocks)) => blocks
+            .iter()
+            .filter_map(|block| match block.get("type").and_then(Value::as_str) {
+                Some("text") => block
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .filter(|text| !text.is_empty())
+                    .map(|text| {
+                        chunk(UserContentBlock::Text {
+                            text: text.to_string(),
+                        })
+                    }),
+                Some("image") => {
+                    let data = block.get("data").and_then(Value::as_str)?;
+                    let mime_type = block.get("mimeType").and_then(Value::as_str)?;
+                    Some(chunk(UserContentBlock::Image {
+                        data: data.to_string(),
+                        mime_type: mime_type.to_string(),
+                    }))
+                }
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// An assistant message's blocks: text and thinking chunks under one
+/// message id, tool calls as in-progress `tool_call`s (the result row
+/// settles them).
+fn assistant_message_updates(message: &Value, message_id: &str) -> Vec<AcpSessionUpdate> {
+    let Some(blocks) = message.get("content").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    blocks
+        .iter()
+        .filter_map(|block| {
+            let text_of = |key: &str| {
+                block
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .filter(|text| !text.is_empty())
+                    .map(TextBlock::new)
+            };
+            match block.get("type").and_then(Value::as_str) {
+                Some("text") => {
+                    text_of("text").map(|content| AcpSessionUpdate::AgentMessageChunk {
+                        message_id: message_id.to_string(),
+                        content,
+                    })
+                }
+                Some("thinking") => {
+                    text_of("thinking").map(|content| AcpSessionUpdate::AgentThoughtChunk {
+                        message_id: message_id.to_string(),
+                        content,
+                    })
+                }
+                Some("toolCall") => {
+                    let tool_name = block
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let arguments = block.get("arguments").cloned().unwrap_or(Value::Null);
+                    Some(tool_call_start(
+                        block
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                        tool_name,
+                        arguments,
+                    ))
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// The `tool_call` a started tool execution opens, live or replayed: the
+/// Python REPL's cell travels as `rawInput.code`.
+fn tool_call_start(tool_call_id: String, tool_name: &str, args: Value) -> AcpSessionUpdate {
+    let is_ipython = tool_name == IPYTHON_TOOL_NAME;
+    let cell = is_ipython
+        .then(|| args.get("code").and_then(Value::as_str).map(str::to_string))
+        .flatten();
+    AcpSessionUpdate::ToolCall {
+        tool_call_id,
+        title: if is_ipython {
+            "Python cell".to_string()
+        } else {
+            tool_name.to_string()
+        },
+        kind: AcpToolKind::of_tool(tool_name),
+        status: AcpToolStatus::InProgress,
+        raw_input: match cell {
+            Some(code) => json!({ "code": code }),
+            None => args,
+        },
     }
 }
 
@@ -852,6 +1044,49 @@ mod tests {
                 "target": "peer-session",
                 "deliveryStatus": "queued",
             })
+        );
+    }
+
+    #[test]
+    fn transcript_replay_maps_every_representable_row() {
+        let messages = json!([
+            { "role": "user", "content": "Name a river." },
+            { "role": "user", "content": [
+                { "type": "text", "text": "" },
+                { "type": "text", "text": "and this" },
+                { "type": "image", "data": "AAAA", "mimeType": "image/png" },
+            ] },
+            { "role": "assistant", "content": [
+                { "type": "thinking", "thinking": "rivers" },
+                { "type": "text", "text": "The Nile." },
+                { "type": "toolCall", "id": "call-1", "name": "ipython", "arguments": { "code": "6*7" } },
+            ] },
+            { "role": "toolResult", "toolCallId": "call-1", "toolName": "ipython",
+              "content": [{ "type": "text", "text": "42" }], "isError": false },
+            { "role": "bashExecution", "command": "false", "output": "", "exitCode": 1 },
+            { "role": "custom", "customType": "goal", "content": "hidden" },
+            { "role": "compactionSummary", "summary": "earlier work", "tokensBefore": 900 },
+            { "role": "assistant", "content": [{ "type": "text", "text": "Everest." }] },
+        ]);
+        let updates: Vec<Value> = transcript_updates(messages.as_array().unwrap())
+            .iter()
+            .map(AcpSessionUpdate::to_bare_value)
+            .collect();
+        assert_eq!(
+            updates,
+            vec![
+                json!({ "sessionUpdate": "user_message_chunk", "content": { "type": "text", "text": "Name a river." } }),
+                json!({ "sessionUpdate": "user_message_chunk", "content": { "type": "text", "text": "and this" } }),
+                json!({ "sessionUpdate": "user_message_chunk", "content": { "type": "image", "data": "AAAA", "mimeType": "image/png" } }),
+                json!({ "sessionUpdate": "agent_thought_chunk", "messageId": "prime-agent-replay-assistant-1", "content": { "type": "text", "text": "rivers" } }),
+                json!({ "sessionUpdate": "agent_message_chunk", "messageId": "prime-agent-replay-assistant-1", "content": { "type": "text", "text": "The Nile." } }),
+                json!({ "sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "Python cell", "kind": "execute", "status": "in_progress", "rawInput": { "code": "6*7" } }),
+                json!({ "sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "completed", "content": [{ "type": "content", "content": { "type": "text", "text": "42" } }] }),
+                json!({ "sessionUpdate": "tool_call", "toolCallId": "prime-agent-replay-bash-1", "title": "false", "kind": "execute", "status": "in_progress", "rawInput": { "command": "false" } }),
+                json!({ "sessionUpdate": "tool_call_update", "toolCallId": "prime-agent-replay-bash-1", "status": "failed" }),
+                json!({ "sessionUpdate": "session_info_update", "_meta": { "ai.primeintellect.prime-agent": { "compaction": { "tokensBefore": 900, "summary": "earlier work" } } } }),
+                json!({ "sessionUpdate": "agent_message_chunk", "messageId": "prime-agent-replay-assistant-2", "content": { "type": "text", "text": "Everest." } }),
+            ]
         );
     }
 }
