@@ -18,6 +18,14 @@ _MAX_ATTACHMENT_DIMENSION = 1200
 _TRANSPARENCY_BACKGROUND = "#888888"
 _JPEG_QUALITIES = (82, 72, 60, 48, 36)
 
+# The question a text-only session's delegated read asks the image model.
+_VISION_READ_QUESTION = (
+    "Describe what this image shows and transcribe any text it contains, "
+    "including the details that matter for the task it was attached to."
+)
+# The host's reply when it has no `vision.read` (no image-model child can run).
+_VISION_READ_UNAVAILABLE = 'host request type "vision.read" is not available'
+
 # Matches IMAGE_MIME_TYPES in src/utils/mime.ts.
 _IMAGE_SIGNATURES = (
     ("image/png", b"\x89PNG\r\n\x1a\n"),
@@ -204,6 +212,40 @@ def _emit_attachment(filepath: Path, mime_type: str, size: int, dimensions: tupl
     return resize_note
 
 
+def _vision_error(model_id: str) -> RuntimeError:
+    return RuntimeError(
+        f"{model_id} does not support vision. "
+        "Tell the user to switch to a vision-capable model to load images into context."
+    )
+
+
+async def _read_with_image_model(model_id: str, validated) -> str:
+    """Have the host's image model read the images; only its text reading returns.
+
+    The images are prepared exactly as attachments would be (same size bounds), sent
+    in one `vision.read`, and never enter the session's context. A host without the
+    request (or an empty reading) keeps the vision-capability error; any other host
+    error is the actionable refusal itself (e.g. which setting to fix).
+    """
+    from rlm import host_request
+
+    images = []
+    for filepath, mime, size, dimensions in validated:
+        data_b64, emitted_mime_type, _resize_note = _resize_image(filepath, mime, size, dimensions)
+        images.append({"data": data_b64, "mime_type": emitted_mime_type})
+    try:
+        reading = await host_request("vision.read", {"images": images, "question": _VISION_READ_QUESTION})
+    except RuntimeError as error:
+        if _VISION_READ_UNAVAILABLE in str(error):
+            raise _vision_error(model_id) from error
+        raise
+    text = str(reading.get("text") or "").strip()
+    if not text:
+        raise _vision_error(model_id)
+    reader = reading.get("model") or "the image model"
+    return f"{text}\n\n(Read by {reader}; the session model cannot see images.)"
+
+
 async def run(*paths: str) -> str:
     """Load one or more on-disk images into the model's context as attachments.
 
@@ -220,14 +262,20 @@ async def run(*paths: str) -> str:
             Supported formats: PNG, JPEG, GIF, WebP. Other types (PDF, audio,
             video) are not supported and raise an error.
 
+    When the session model cannot see images, the host's configured image
+    model (`imageModel` in settings.json) reads them instead and its text
+    reading is returned; no image enters the context.
+
     Returns:
-        A short confirmation listing the images loaded into context.
+        A short confirmation listing the images loaded into context, or the
+        image model's reading on a text-only session model.
 
     Raises:
         FileNotFoundError: If a path does not exist or is not a regular file.
         ValueError: If a file is not a supported image, is too large, or cannot
             be compressed enough for safe inline rendering and replay.
-        RuntimeError: If the current model cannot accept images.
+        RuntimeError: If the current model cannot accept images and no image
+            model can read them for it.
     """
     if not paths:
         raise ValueError("attach_image requires at least one image path")
@@ -235,16 +283,12 @@ async def run(*paths: str) -> str:
     from rlm import host_request
 
     info = await host_request("model.info")
-    if "image" not in info.get("input", []):
-        model_id = info.get("id") or "the current model"
-        raise RuntimeError(
-            f"{model_id} does not support vision. "
-            "Tell the user to switch to a vision-capable model to load images into context."
-        )
 
-    # Validate every path before emitting anything, so a later failure never
-    # leaves a partial subset injected.
+    # Validate every path before emitting or delegating anything, so a later
+    # failure never leaves a partial subset injected or read.
     validated = [_validate_image(path) for path in paths]
+    if "image" not in info.get("input", []):
+        return await _read_with_image_model(info.get("id") or "the current model", validated)
     resize_notes = []
     for filepath, mime, size, dimensions in validated:
         note = _emit_attachment(filepath, mime, size, dimensions)

@@ -78,6 +78,10 @@ use config::{GoalRuntimeHandles, ProducerUsageSink, RestoredSessionModel, Startu
 // text-only with the child's description row).
 mod image_delegation;
 
+// `vision.read` (#2664): `attach_image` on a text-only session model reads its
+// images through the same image-model child.
+mod vision_read;
+
 // The `SessionEngine` trait impl moved to the child module whole -
 // one impl block per trait+type is a rustc constraint (E0119).
 mod session_engine_impl;

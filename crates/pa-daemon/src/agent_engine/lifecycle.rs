@@ -723,6 +723,7 @@ impl AgentSessionEngine {
         // watches ride the same engine seams the bash notices hold.
         self.register_digest_inbox_host_handlers(&mut handlers);
         self.register_watch_host_handlers(&mut handlers);
+        self.register_vision_read_host_handler(&mut handlers);
         Some(handlers)
     }
 

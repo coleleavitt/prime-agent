@@ -1477,6 +1477,25 @@ const IMAGE_DELEGATION: EventRule = EventRule {
     ],
 };
 
+/// `vision read` (v4): one `vision.read` kernel host request (the
+/// `attach_image` skill on a text-only session model delegating its images
+/// to a child on the resolved `settings.imageModel`). The parent session's
+/// id, the outcome (`refused` before any child spawned: no usable image
+/// model, blocked images, or the allowlist), and how many images it
+/// carried — never the question, the reading, a path, or a model id.
+const VISION_READ: EventRule = EventRule {
+    name: "vision read",
+    since: 4,
+    properties: &[
+        ("session_id", required(uuid())),
+        (
+            "outcome",
+            required(enum_rule(&["answered", "failed", "refused"], "failed")),
+        ),
+        ("image_count", required(count())),
+    ],
+};
+
 /// `tui image fallback` (v2): the interactive client's image-routing
 /// fallback dialog — an image-bearing prompt met a text-only model with
 /// no configured imageModel. The panel's mounting and its landed
@@ -1764,6 +1783,7 @@ pub fn catalog() -> Vec<&'static EventRule> {
         &MODEL_REFUSED,
         &SESSION_ARCHIVED,
         &IMAGE_DELEGATION,
+        &VISION_READ,
         &TUI_IMAGE_FALLBACK,
         &TUI_EXIT,
         &TUI_IPYTHON_BASH_RENDERED,
@@ -2041,6 +2061,22 @@ mod tests {
         assert_eq!(properties.get("trigger"), Some(&json!("unknown")));
         assert_eq!(properties.get("tool_bash_call_count"), Some(&json!(3u64)));
         assert!(properties.get("tool_name").is_none(), "unknown key dropped");
+        assert_eq!(adjusted, 2, "one fallback + one dropped key");
+    }
+
+    #[test]
+    fn vision_read_carries_only_its_outcome_and_count() {
+        let mut properties = Properties::new();
+        properties.set("session_id", json!("0197d0a0-8f5c-7f2a-b0e3-2d7e0d2b3b1a"));
+        properties.set("outcome", json!("exploded"));
+        properties.set("image_count", json!(2u64));
+        properties.set("model", json!("battery/mock-vision")); // not catalogued
+        let adjusted = sanitize("vision read", &mut properties);
+        let mut expected = Properties::new();
+        expected.set("session_id", json!("0197d0a0-8f5c-7f2a-b0e3-2d7e0d2b3b1a"));
+        expected.set("outcome", json!("failed"));
+        expected.set("image_count", json!(2u64));
+        assert_eq!(properties, expected);
         assert_eq!(adjusted, 2, "one fallback + one dropped key");
     }
 

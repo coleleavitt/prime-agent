@@ -83,6 +83,21 @@ impl AgentSessionEngine {
         Ok(route)
     }
 
+    /// The daemon's model allowlist is fail-closed on every model the
+    /// session runs on: a resolved image model excluded by `allowedModels`
+    /// must not serve a routed turn, a delegation child, or a `vision.read`.
+    pub(crate) fn assert_image_model_allowed(
+        &self,
+        resolved: &pa_core::models::ResolvedImageModel,
+    ) -> Result<(), String> {
+        let selector = format!("{}/{}", resolved.model.provider, resolved.model.id);
+        let allowlist = crate::model_allowlist::load(&self.cwd(), &self.config.agent_dir);
+        crate::model_allowlist::assert_allowed(&allowlist, &selector).map_err(|refusal| {
+            self.note_model_refused("image_route", &selector);
+            format!("{refusal:#}")
+        })
+    }
+
     /// Arm (or clear) the dispatched batch's image-model route: the
     /// resolved image model becomes the episode's serving target, applied
     /// at every model-turn attempt; a text-only session model with an
@@ -91,22 +106,9 @@ impl AgentSessionEngine {
         let route = self
             .resolve_image_turn_route(carries_images)
             .map_err(|error| format!("{error:#}"))?;
-        let route = match route {
-            Some(resolved) => {
-                // The daemon's model allowlist is fail-closed on every
-                // model the session runs on: a routed image model excluded
-                // by `allowedModels` must not bypass it.
-                let selector = format!("{}/{}", resolved.model.provider, resolved.model.id);
-                let allowlist = crate::model_allowlist::load(&self.cwd(), &self.config.agent_dir);
-                if let Err(refusal) = crate::model_allowlist::assert_allowed(&allowlist, &selector)
-                {
-                    self.note_model_refused("image_route", &selector);
-                    return Err(format!("{refusal:#}"));
-                }
-                Some(resolved)
-            }
-            None => None,
-        };
+        if let Some(resolved) = &route {
+            self.assert_image_model_allowed(resolved)?;
+        }
         let armed = match route {
             Some(resolved) => {
                 let agent_model = json_round_trip(&resolved.model)
