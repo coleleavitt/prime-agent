@@ -359,22 +359,29 @@ impl AgentSessionEngine {
                         // The stream's provider target follows the switch (the same slot
                         // `set_model` swaps).
                         {
-                            // A routed episode keeps serving the route's
-                            // target across the failover switch.
-                            if let Some(route) = self.armed_image_route() {
-                                let mut target = self.provider_target.write_or_recover();
-                                *target = Some(route.target);
+                            // A routed image episode fails over WITHIN the
+                            // routed model (the candidates derive from the
+                            // route's model), so the stream moves to the
+                            // candidate's provider too: re-pinning the
+                            // route's own target resent every "backup" retry
+                            // to the provider that just failed (#3312). The
+                            // routed tier re-clamps for the candidate row, as
+                            // the route's resolution clamped it at arm time.
+                            let (api_key, headers) = self.resolve_request_key_and_headers(&next);
+                            let session_tier = *self.service_tier.read_or_recover();
+                            let routed = self.armed_image_route().is_some();
+                            let service_tier = if routed {
+                                pa_types::ai::clamp_service_tier(Some(&next), session_tier)
                             } else {
-                                let (api_key, headers) =
-                                    self.resolve_request_key_and_headers(&next);
-                                let mut target = self.provider_target.write_or_recover();
-                                *target = Some(ProviderTarget {
-                                    service_tier: *self.service_tier.read_or_recover(),
-                                    api_key,
-                                    model: next.clone(),
-                                    headers,
-                                });
-                            }
+                                session_tier
+                            };
+                            let mut target = self.provider_target.write_or_recover();
+                            *target = Some(ProviderTarget {
+                                service_tier,
+                                api_key,
+                                model: next.clone(),
+                                headers,
+                            });
                         }
                         agent.set_model(agent_model).await;
                         agent.set_thinking_level(map_thinking_level(clamped)).await;
