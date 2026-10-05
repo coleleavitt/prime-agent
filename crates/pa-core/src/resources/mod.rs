@@ -128,6 +128,11 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
         .settings
         .take()
         .unwrap_or_else(|| SettingsManager::create(&options.cwd, &options.agent_dir));
+    // An untrusted workspace's SYSTEM.md / APPEND_SYSTEM.md stay out (the
+    // package resolution below gates its skills and prompt templates).
+    let project_cwd = settings
+        .project_scope_trusted()
+        .then_some(options.cwd.as_path());
     let resolution = resolution::resolve_session_resources(&options, settings)?;
 
     let mut resources = LoadedResources::default();
@@ -217,14 +222,14 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
 
     // System prompt: explicit source or discovered file content.
     let system_source = options.system_prompt.clone().or_else(|| {
-        discover_system_prompt_file(&options.cwd, &options.agent_dir)
+        discover_config_file(project_cwd, &options.agent_dir, "SYSTEM.md")
             .map(|p| p.to_string_lossy().to_string())
     });
     resources.system_prompt = system_source.and_then(|source| resolve_prompt_input(&source));
 
     // Append system prompt: explicit sources or discovered file.
     let append_sources: Vec<String> = if options.append_system_prompt.is_empty() {
-        discover_append_system_prompt_file(&options.cwd, &options.agent_dir)
+        discover_config_file(project_cwd, &options.agent_dir, "APPEND_SYSTEM.md")
             .map(|path| path.to_string_lossy().to_string())
             .into_iter()
             .collect()
@@ -279,31 +284,23 @@ fn dedupe_prompts(prompts: Vec<PromptTemplate>) -> Vec<PromptTemplate> {
 /// `cwd/{CONFIG_DIR_NAME}/SYSTEM.md` then agentDir/SYSTEM.md.
 #[must_use]
 pub fn discover_system_prompt_file(cwd: &Path, agent_dir: &Path) -> Option<PathBuf> {
-    let project = cwd.join(crate::settings::CONFIG_DIR_NAME).join("SYSTEM.md");
-    if project.exists() {
-        return Some(project);
-    }
-    let global = agent_dir.join("SYSTEM.md");
-    if global.exists() {
-        return Some(global);
-    }
-    None
+    discover_config_file(Some(cwd), agent_dir, "SYSTEM.md")
 }
 
 /// `cwd/{CONFIG_DIR_NAME}/APPEND_SYSTEM.md` then `agentDir/APPEND_SYSTEM.md`.
 #[must_use]
 pub fn discover_append_system_prompt_file(cwd: &Path, agent_dir: &Path) -> Option<PathBuf> {
-    let project = cwd
-        .join(crate::settings::CONFIG_DIR_NAME)
-        .join("APPEND_SYSTEM.md");
-    if project.exists() {
-        return Some(project);
-    }
-    let global = agent_dir.join("APPEND_SYSTEM.md");
-    if global.exists() {
-        return Some(global);
-    }
-    None
+    discover_config_file(Some(cwd), agent_dir, "APPEND_SYSTEM.md")
+}
+
+/// The project copy of a config file (when a project `cwd` is given), then
+/// the agent dir's.
+fn discover_config_file(cwd: Option<&Path>, agent_dir: &Path, name: &str) -> Option<PathBuf> {
+    let project = cwd.map(|cwd| cwd.join(crate::settings::CONFIG_DIR_NAME).join(name));
+    project
+        .into_iter()
+        .chain([agent_dir.join(name)])
+        .find(|path| path.exists())
 }
 
 #[cfg(test)]
@@ -376,6 +373,13 @@ mod tests {
         fs::write(
             cwd.join(".prime").join("agent").join("SYSTEM.md"),
             "custom system",
+        )
+        .unwrap();
+        // The fixture's project scope is its own: trusted.
+        crate::workspace_trust::record(
+            &cwd,
+            &agent_dir,
+            crate::workspace_trust::TrustDecision::Trusted,
         )
         .unwrap();
         let resources = load_resources(ResourceLoaderOptions {
@@ -464,6 +468,13 @@ mod tests {
                 .join("alpha")
                 .join("SKILL.md"),
             "---\nname: alpha\ndescription: Project alpha\n---\nBody",
+        )
+        .unwrap();
+        // The fixture's project skills are its own: trusted.
+        crate::workspace_trust::record(
+            &cwd,
+            &agent_dir,
+            crate::workspace_trust::TrustDecision::Trusted,
         )
         .unwrap();
 

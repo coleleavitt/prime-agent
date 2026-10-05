@@ -58,6 +58,7 @@ pub(crate) mod subscription_login;
 pub(crate) mod tailscale;
 pub(crate) mod telemetry_notice;
 pub(crate) mod traces_login;
+pub(crate) mod workspace_trust_gate;
 
 /// The runtime boundary: everything a mode-runner crate implements to plug
 /// into the `prime-agent` binary, plus the entry point that drives it.
@@ -250,6 +251,13 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
     }
 
     let agent_dir = crate::config::get_agent_dir();
+    // Workspace trust: project configuration that can run code or change
+    // the prompt loads only in a trusted workspace. The interactive client
+    // asks once; headless modes print what they skipped; daemon workers
+    // read the recorded decision. `model list` starts no session.
+    if parsed.list_models.is_none() {
+        workspace_trust_gate::gate_launch(&cwd, &agent_dir, app_mode, parsed.trust_workspace)?;
+    }
     // Telemetry opt-in resolution: env override, then settings; the
     // runtime config only carries the disabled case.
     let telemetry_disabled = crate::mode::telemetry_disabled(

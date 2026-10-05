@@ -82,4 +82,5 @@ pub mod swarm_eval;
 pub(crate) mod system_router;
 pub mod update;
 pub mod workspace_snapshot;
+pub mod workspace_trust;
 pub use kernel::ReplKernelManager;

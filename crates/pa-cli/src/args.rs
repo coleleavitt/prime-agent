@@ -165,6 +165,9 @@ pub struct Args {
     pub themes: Vec<String>,
     pub no_themes: bool,
     pub no_context_files: bool,
+    /// `--trust-workspace`: trust the cwd's project configuration (recorded
+    /// like `prime-agent trust`) instead of skipping it.
+    pub trust_workspace: bool,
     pub autonomous: bool,
     pub autonomous_gates: Option<Vec<String>>,
     pub autonomous_gate_retries: Option<u32>,
@@ -394,6 +397,7 @@ pub fn parse_args(args: &[String]) -> Args {
             "--no-prompt-templates" | "-np" => result.no_prompt_templates = true,
             "--no-themes" => result.no_themes = true,
             "--no-context-files" | "-nc" => result.no_context_files = true,
+            "--trust-workspace" => result.trust_workspace = true,
             "--autonomous" => result.autonomous = true,
             "--autonomous-gate" => {
                 result.autonomous = true;

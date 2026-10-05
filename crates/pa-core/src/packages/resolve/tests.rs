@@ -86,7 +86,15 @@ impl Fixture {
         self.reload();
     }
 
+    /// Re-read the settings with the fixture's workspace trusted: these
+    /// cases exercise resolution of the test's own project scope.
     fn reload(&mut self) {
+        crate::workspace_trust::record(
+            self.manager.cwd(),
+            &self.agent_dir,
+            crate::workspace_trust::TrustDecision::Trusted,
+        )
+        .unwrap();
         self.manager.reload_settings().unwrap();
     }
 }
@@ -277,6 +285,7 @@ fn agents_skills_scan_stops_at_git_repo_root() {
     );
 
     let mut nested_manager = Fixture::with_cwd(fixture.root, nested_cwd, fixture.agent_dir);
+    nested_manager.reload();
     let result = nested_manager.manager.resolve().unwrap();
     assert!(result
         .skills
@@ -305,6 +314,7 @@ fn agents_skills_scan_goes_to_fs_root_without_a_repo() {
     );
 
     let mut nested_manager = Fixture::with_cwd(fixture.root, nested_cwd, fixture.agent_dir);
+    nested_manager.reload();
     let result = nested_manager.manager.resolve().unwrap();
     assert!(result
         .skills

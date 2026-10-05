@@ -261,6 +261,29 @@ pub const COMMAND_SPECS: &[CommandSpec] = &[
         "Export a saved session to HTML",
     ),
     CommandSpec::new(&["config"], "config", "Configure package resources"),
+    CommandSpec::new(
+        &["trust"],
+        "trust [path] [--list]",
+        "Trust a workspace's project configuration",
+    )
+    .description(
+        "Project configuration that can run code or change the agent's instructions - \
+.prime/agent/settings.json keys such as shellPath, shellCommandPrefix, npmCommand, mcpServers \
+and packages, .prime/agent/SYSTEM.md and APPEND_SYSTEM.md, prompt templates, and project skills - \
+loads only in a trusted workspace. The decision is recorded in \
+~/.prime/agent/trusted-workspaces.json, pinned to the content it covered: a change asks again.",
+    )
+    .options(&["--list  List the recorded decisions"])
+    .examples(&["trust", "trust ~/src/project", "trust --list"]),
+    CommandSpec::new(
+        &["untrust"],
+        "untrust [path]",
+        "Stop loading a workspace's project configuration",
+    )
+    .description(
+        "Records that the workspace is not trusted: its gated project configuration is skipped \
+and the interactive client does not ask again until that configuration changes.",
+    ),
     #[cfg(feature = "trace")]
     CommandSpec::new(
         &["health"],
@@ -466,6 +489,10 @@ const TOP_LEVEL_OPTION_GROUPS: &[OptionGroup] = &[
             (
                 "-nc, --no-context-files",
                 "Disable AGENTS.md and CLAUDE.md discovery",
+            ),
+            (
+                "--trust-workspace",
+                "Trust this directory's project configuration",
             ),
         ],
     },

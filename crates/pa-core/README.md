@@ -86,6 +86,25 @@ inside its async entry point; callers must offload the entire operation with
 `tokio::task::spawn_blocking` and `Handle::block_on`. Foundation plumbing
 only: nothing wires it to a user-facing cloud toggle yet.
 
+Workspace trust (`workspace_trust`): the gate on project-scope configuration
+that can run code or change the agent's instructions. `SettingsManager::create`
+evaluates the cwd's trust against `<agentDir>/trusted-workspaces.json` (owner-only,
+keyed by the canonical cwd, each record pinned to a `sha256` over the gated
+content). An untrusted workspace keeps only the
+`UNTRUSTED_PROJECT_SETTINGS_KEYS` of its project settings (presentation and
+turn-behaviour keys; everything else, unknown keys included, waits for trust),
+and `load_resources` skips its `SYSTEM.md`/`APPEND_SYSTEM.md`, project
+prompt templates, and project skills (`.prime/agent/skills/`, ancestor
+`.agents/skills/`, settings `skills` paths), so an untrusted Python skill is
+never editable-installed into the kernel venv or imported. The hash covers
+every file of those skill trees except tool caches. A change to the gated content reads as `Changed` (asks again);
+a theme edit does not. Project-scope writes from an untrusted workspace are
+refused; the product's own project writes in a trusted one re-pin the record.
+`evaluate` never prompts or writes, so daemon workers just read the decision;
+the composition root asks (`record`, `list`). A corrupt store trusts nothing
+and is never overwritten. A run from the home directory, whose project config
+dir is the agent dir, needs no decision.
+
 ## Non-goals
 No provider HTTP (pa-ai), no loop policy (pa-agent), no daemon supervision (pa-daemon), no TUI (pa-tui). No update coordination (the pa-cli coordinator owns the FSM; the update-flow seam here is the daemon-free support layer: `update::version` (semver/channel policy), `update::install` (the managed install-root layout), `update::release` (the channel manifest fetch), `update::download` (sha256-verified archive download + staging)). The package manager installs sources and resolves resource paths only. No workspace snapshot upload, transport, or remote materialization (staging and verification live here; the cloud attach surface owns the transport when it ships).
 
