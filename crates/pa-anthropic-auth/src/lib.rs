@@ -19,8 +19,11 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use pa_core::features::{FeatureStatus, SessionFeature, SessionFeatureContext};
+use pa_core::features::{
+    FeatureCommandOutcome, FeatureFuture, FeatureStatus, SessionFeature, SessionFeatureContext,
+};
 use pa_telemetry::Properties;
+use pa_types::slash_commands::{BuiltinSlashCommand, SlashCommandExecution};
 use pa_types::sync::MutexExt;
 
 mod custody;
@@ -117,6 +120,61 @@ impl AnthropicAuthFeature {
 impl SessionFeature for AnthropicAuthFeature {
     fn name(&self) -> &'static str {
         "anthropic-auth"
+    }
+
+    /// The pi plugin's request-setting commands: `/claude-fast` and
+    /// `/claude-cache`.
+    fn slash_commands(&self) -> Vec<BuiltinSlashCommand> {
+        [
+            (
+                pi::commands::FAST_COMMAND,
+                pi::commands::FAST_DESCRIPTION,
+                pi::commands::FAST_HINT,
+            ),
+            (
+                pi::commands::CACHE_COMMAND,
+                pi::commands::CACHE_DESCRIPTION,
+                pi::commands::CACHE_HINT,
+            ),
+        ]
+        .into_iter()
+        .map(|(name, description, hint)| BuiltinSlashCommand {
+            name,
+            description,
+            execution: SlashCommandExecution::Session,
+            argument_hint: Some(hint),
+            aliases: &[],
+            takes_argument: true,
+        })
+        .collect()
+    }
+
+    fn execute_slash_command(
+        &self,
+        _context: &Arc<SessionFeatureContext>,
+        name: &str,
+        args: &str,
+    ) -> Option<FeatureFuture<Result<FeatureCommandOutcome, String>>> {
+        let run: fn(
+            &pi::settings::PluginSettings,
+            &str,
+        ) -> Result<String, pi::settings::SettingsError> = match name {
+            pi::commands::FAST_COMMAND => pi::commands::run_fast,
+            pi::commands::CACHE_COMMAND => pi::commands::run_cache,
+            _ => return None,
+        };
+        let (source, args) = (Arc::clone(&self.source), args.to_string());
+        Some(Box::pin(async move {
+            // The settings file is written under the plugin's lock.
+            tokio::task::spawn_blocking(move || run(&source.pi.settings, &args))
+                .await
+                .map_err(|error| error.to_string())?
+                .map(|text| FeatureCommandOutcome {
+                    text,
+                    completion: None,
+                })
+                .map_err(|error| error.to_string())
+        }))
     }
 
     fn on_agent_end(&self, context: &Arc<SessionFeatureContext>) {

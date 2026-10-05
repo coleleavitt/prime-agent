@@ -85,7 +85,18 @@ auth.json resolves the `anthropic` provider exactly as before.
   - settings (`pi/settings.rs`): the plugin's settings file, `anthropic-auth.json` in pi's agent directory
     (`PI_ANTHROPIC_AUTH_FILE`, else `$PI_AGENT_DIR` or `~/.pi/agent`; prime-agent's TS build loaded the plugin
     without an agent dir of its own, so both tools share it), read per request (memoized on size and mtime);
-    `claudeCache.enabled`/`mode`, `claudeFast.enabled`.
+    `claudeCache.enabled`/`mode`, `claudeFast.enabled`. A file that does not parse reads as defaults (pi fails the
+    request instead; a warning is logged).
+  - fast mode (core `fast.ts`, pi `commands.ts`): a persisted setting, not a model or a tier. On, a request to
+    Opus 4.6, 4.7, 4.8 or Opus 5 (any point release) carries `speed: "fast"` and `fast-mode-2026-02-01`; other models
+    are untouched. Toggled with `/claude-fast [on|off]` and the cache with `/claude-cache [on|off|mode
+    explicit|automatic|hybrid]`, session slash commands (`SessionFeature::slash_commands`) with pi's arguments and
+    texts, written to the settings file as pi's setters write it: under its `<file>.config-write.lock` (created
+    exclusively, `{"ownerId","expiresAt"}`, 10 s, waited for up to 12 s; an expired one is taken over), the changed
+    section merged, the fields pi normalizes on a rewrite (`version`, `main`, `refresh`/`quota`'s known fields,
+    `accounts`) and every other key kept in order, new keys in pi's order, atomically, owner-only,
+    `JSON.stringify(config, null, 2)` and a newline; a missing file is created as pi creates it. pi's runtime state
+    file is not written. A corrupt file is refused (pi's message), never overwritten.
   - headers (`shape.rs`, core `applyClaudeCodeHeaders` on a fresh request, so none of pa-ai's own betas): the Claude
     Code beta tuple by body shape (base; full-agent; structured-output), then `fast-mode` for `speed:"fast"`,
     `context-1m` for a 1M-capable model; the `claude-cli/<version> (external, <entrypoint>[, agent-sdk/..][,
@@ -132,7 +143,8 @@ auth.json resolves the `anthropic` provider exactly as before.
   the tokens here instead of auth.json: the account is identified at the profile endpoint (best effort), merged into
   the row holding the same login (else a new row named after the email), made `current`, and, when Claude Code is
   logged into the same account (whose login this one revokes), published to Claude Code.
-- `AnthropicAuthFeature`: a `SessionFeature` that reports adoption once per process.
+- `AnthropicAuthFeature`: a `SessionFeature` that reports adoption once per process and serves `/claude-fast` and
+  `/claude-cache`.
 
 ## Non-goals (here)
 
@@ -140,7 +152,7 @@ auth.json resolves the `anthropic` provider exactly as before.
   own it; prime-agent has no account command surface.
 - The usage endpoint poll (`/api/oauth/usage`), sticky-balanced routing, the killswitch and per-window minimum
   thresholds of the plugins' sidecar configuration: readings come from response headers only.
-- The rest of pi's request (fast mode's command, the cache keep-alive, content filtering). A `--api-key` `sk-ant-oat` token, or any
+- The rest of pi's request (the cache keep-alive, content filtering). A `--api-key` `sk-ant-oat` token, or any
   token the store did not serve, keeps pa-ai's native Claude Code mode.
 
 ## Public API
@@ -154,13 +166,15 @@ auth.json resolves the `anthropic` provider exactly as before.
   auth.json's login, logout).
 - `pa_ai::request_hooks::install_request_hooks` (the provider request hooks; `prepare` reads the caller's request,
   `RequestSource`, and sends exact bytes, `OutgoingRequest::body`; `response_event` rewrites the streamed events).
-- `pa_core::features::SessionFeature::on_agent_end` (the adoption event).
+- `pa_core::features::SessionFeature::on_agent_end` (the adoption event) and `slash_commands` /
+  `execute_slash_command` (`/claude-fast`, `/claude-cache`).
 
 ## Files
 
 Reads and writes `~/.anthropic-accounts/accounts.json` (and its lock) only through the SDK, under the SDK's rules,
 and `~/.anthropic-accounts/device.json` (the installation's device id, the plugins' format; created when missing,
-never overwritten); reads the pi plugin's settings file (`~/.pi/agent/anthropic-auth.json`, above);
+never overwritten); reads the pi plugin's settings file (`~/.pi/agent/anthropic-auth.json`, above) and writes it
+for `/claude-fast` and `/claude-cache` (with its `.config-write.lock`);
 through the Claude Code link, reads Claude Code's `.claude.json` / `.credentials.json` (or the macOS Keychain) and
 publishes a rotation of the linked account to it, as the plugins do. It owns no file under `~/.prime/agent/`.
 

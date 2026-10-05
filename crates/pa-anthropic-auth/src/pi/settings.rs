@@ -127,3 +127,275 @@ pub(crate) fn request_settings(config: &Map<String, Value>) -> RequestSettings {
         fast_mode: flag(config, "claudeFast", "enabled"),
     }
 }
+
+/// Why the settings file could not be changed.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum SettingsError {
+    /// The file exists but does not hold JSON (the plugin refuses it too).
+    #[error("account store at {path} is corrupt or unreadable ({cause}) — fix or remove it")]
+    Corrupt { path: String, cause: String },
+    /// Another writer held the plugin's configuration lock past the wait.
+    #[error("Timed out waiting for the account configuration write lock")]
+    LockTimeout,
+    /// Reading, writing or renaming failed.
+    #[error("could not write {path}: {cause}")]
+    Io { path: String, cause: String },
+}
+
+/// The plugin's configuration write lock (`acquireRefreshFileLock`,
+/// `config-write`): `<file>.config-write.lock`, created exclusively, holding
+/// its owner and expiry.
+struct ConfigLock {
+    path: PathBuf,
+    owner: String,
+}
+
+/// The lock's lifetime and how long a writer waits for it (the plugin's
+/// `ACCOUNT_CONFIG_LOCK_TTL_MS` / `_WAIT_MS`).
+const LOCK_TTL_MS: i64 = 10_000;
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(12);
+const LOCK_POLL: std::time::Duration = std::time::Duration::from_millis(25);
+
+impl ConfigLock {
+    fn acquire(settings: &std::path::Path) -> Result<Self, SettingsError> {
+        let io = |error: std::io::Error| SettingsError::Io {
+            path: settings.display().to_string(),
+            cause: error.to_string(),
+        };
+        if let Some(directory) = settings.parent() {
+            std::fs::create_dir_all(directory).map_err(io)?;
+        }
+        let path = PathBuf::from(format!("{}.config-write.lock", settings.display()));
+        let owner = uuid::Uuid::new_v4().to_string();
+        let deadline = std::time::Instant::now() + LOCK_WAIT;
+        loop {
+            let now = chrono::Utc::now().timestamp_millis();
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+            match options.open(&path) {
+                Ok(mut file) => {
+                    use std::io::Write;
+                    let record =
+                        serde_json::json!({ "ownerId": owner, "expiresAt": now + LOCK_TTL_MS });
+                    file.write_all(format!("{record}\n").as_bytes())
+                        .map_err(io)?;
+                    return Ok(Self { path, owner });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    // An expired lock (its owner died) is taken over.
+                    let expired = std::fs::read_to_string(&path)
+                        .ok()
+                        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                        .and_then(|owner| owner.get("expiresAt").and_then(Value::as_i64))
+                        .is_some_and(|expires| expires <= now);
+                    if expired {
+                        let _ = std::fs::remove_file(&path);
+                        continue;
+                    }
+                }
+                Err(error) => return Err(io(error)),
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(SettingsError::LockTimeout);
+            }
+            std::thread::sleep(LOCK_POLL);
+        }
+    }
+}
+
+impl Drop for ConfigLock {
+    fn drop(&mut self) {
+        let ours = std::fs::read_to_string(&self.path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .is_some_and(|owner| {
+                owner.get("ownerId").and_then(Value::as_str) == Some(self.owner.as_str())
+            });
+        if ours {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+/// The top-level keys the plugin writes, in its order (`configFromStorage`).
+const CONFIG_ORDER: [&str; 16] = [
+    "version",
+    "main",
+    "routing",
+    "fallbackOn",
+    "refresh",
+    "quota",
+    "claudeCache",
+    "dump",
+    "logging",
+    "claudeFast",
+    "costZeroing",
+    "cacheKeep",
+    "relay",
+    "killswitch",
+    "prime",
+    "accounts",
+];
+
+/// Keep only `fields` of a section, when it is an object.
+fn pick(value: &Value, fields: &[&str]) -> Value {
+    let Some(section) = value.as_object() else {
+        return Value::Object(Map::new());
+    };
+    Value::Object(
+        fields
+            .iter()
+            .filter_map(|field| {
+                section
+                    .get(*field)
+                    .map(|value| ((*field).to_string(), value.clone()))
+            })
+            .collect(),
+    )
+}
+
+/// The fields the plugin normalizes when it rewrites an existing file
+/// (`normalizeStorage` → `configFromStorage`): `version` 1, `main` its
+/// provider (and profile), `refresh` / `quota` their known fields (empty
+/// when absent), `accounts` (empty when absent). Every other key is kept.
+fn normalized(existing: &Map<String, Value>) -> Map<String, Value> {
+    let mut normal = Map::new();
+    normal.insert("version".to_string(), Value::from(1));
+    let mut main = serde_json::json!({ "type": "opencode", "provider": "anthropic" });
+    if let Some(profile) = existing.get("main").and_then(|main| main.get("profile")) {
+        main["profile"] = profile.clone();
+    }
+    normal.insert("main".to_string(), main);
+    normal.insert(
+        "refresh".to_string(),
+        pick(
+            existing.get("refresh").unwrap_or(&Value::Null),
+            &["enabled", "intervalMinutes", "refreshBeforeExpiryMinutes"],
+        ),
+    );
+    normal.insert(
+        "quota".to_string(),
+        pick(
+            existing.get("quota").unwrap_or(&Value::Null),
+            &[
+                "enabled",
+                "checkIntervalMinutes",
+                "refreshEveryNRequests",
+                "minimumRemaining",
+                "failClosedOnUnknownQuota",
+                "showToasts",
+            ],
+        ),
+    );
+    if !existing.get("accounts").is_some_and(Value::is_array) {
+        normal.insert("accounts".to_string(), Value::Array(Vec::new()));
+    }
+    normal
+}
+
+impl PluginSettings {
+    /// Change the settings file as the plugin's setters do (`loadAccounts`,
+    /// change one section, `saveAccounts`), under its configuration lock:
+    /// an existing file keeps its keys in order with the normalized fields
+    /// the plugin rewrites ([`normalized`]) and new keys after them in the
+    /// plugin's order; a missing one is created as the plugin creates it
+    /// (`version`, `main`, the changed section, `accounts`). Written
+    /// atomically, owner-only, as `JSON.stringify(config, null, 2)` and a
+    /// newline. The plugin's runtime state file is not written.
+    pub(crate) fn update(
+        &self,
+        change: impl FnOnce(&mut Map<String, Value>),
+    ) -> Result<(), SettingsError> {
+        let _lock = ConfigLock::acquire(&self.path)?;
+        let io = |error: std::io::Error| SettingsError::Io {
+            path: self.path.display().to_string(),
+            cause: error.to_string(),
+        };
+        let existing = match std::fs::read_to_string(&self.path) {
+            Ok(text) => match serde_json::from_str::<Value>(&text) {
+                Ok(Value::Object(map)) => Some(map),
+                Ok(_) => Some(Map::new()),
+                Err(error) => {
+                    return Err(SettingsError::Corrupt {
+                        path: self.path.display().to_string(),
+                        cause: error.to_string(),
+                    })
+                }
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(io(error)),
+        };
+        let config = match existing {
+            None => {
+                let mut fresh = Map::new();
+                fresh.insert("version".to_string(), Value::from(1));
+                fresh.insert(
+                    "main".to_string(),
+                    serde_json::json!({ "type": "opencode", "provider": "anthropic" }),
+                );
+                change(&mut fresh);
+                let mut ordered = Map::new();
+                for key in CONFIG_ORDER {
+                    if let Some(value) = fresh.remove(key) {
+                        ordered.insert(key.to_string(), value);
+                    }
+                }
+                ordered.extend(fresh);
+                if !ordered.contains_key("accounts") {
+                    ordered.insert("accounts".to_string(), Value::Array(Vec::new()));
+                }
+                ordered
+            }
+            Some(existing) => {
+                let mut changed = existing.clone();
+                change(&mut changed);
+                let mut normal = normalized(&existing);
+                // `{...existing, ...configFromStorage(storage)}`.
+                let mut config = Map::new();
+                for (key, value) in &changed {
+                    let value = normal.remove(key).unwrap_or_else(|| value.clone());
+                    config.insert(key.clone(), value);
+                }
+                for key in CONFIG_ORDER {
+                    if let Some(value) = normal.remove(key) {
+                        config.insert(key.to_string(), value);
+                    }
+                }
+                config
+            }
+        };
+        if let Some(directory) = self.path.parent() {
+            std::fs::create_dir_all(directory).map_err(io)?;
+        }
+        let temporary = PathBuf::from(format!(
+            "{}.{}.tmp",
+            self.path.display(),
+            uuid::Uuid::new_v4()
+        ));
+        let text = format!(
+            "{}\n",
+            serde_json::to_string_pretty(&Value::Object(config)).map_err(|error| {
+                SettingsError::Io {
+                    path: self.path.display().to_string(),
+                    cause: error.to_string(),
+                }
+            })?
+        );
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let written = options.open(&temporary).and_then(|mut file| {
+            use std::io::Write;
+            file.write_all(text.as_bytes())
+        });
+        if let Err(error) = written.and_then(|()| std::fs::rename(&temporary, &self.path)) {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(io(error));
+        }
+        *self.memo.lock_or_recover() = None;
+        Ok(())
+    }
+}

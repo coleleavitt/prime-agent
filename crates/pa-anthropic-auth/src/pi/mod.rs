@@ -14,6 +14,7 @@ use serde_json::Value;
 use crate::shape::{shape_headers, ShapeEnv, ShapeIdentity};
 use crate::SharedStoreSource;
 
+pub(crate) mod commands;
 pub(crate) mod context1m;
 pub(crate) mod convert;
 pub(crate) mod fallback;

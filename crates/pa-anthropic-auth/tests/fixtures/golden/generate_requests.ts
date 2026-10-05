@@ -419,4 +419,70 @@ for (const [index, testCase] of RESPONSES.entries()) {
   })
 }
 
-process.stdout.write(`${JSON.stringify({ version: '2.1.280', cases: results, responses }, null, 2)}\n`)
+// pi's settings commands (packages/pi/src/commands.ts) against the
+// settings file: what each prints and what the file holds after it.
+const { registerCommands } = await import(join(repo, 'packages/pi/src/commands.ts'))
+const handlers = new Map<string, (args: string, ctx: unknown) => Promise<void>>()
+registerCommands({
+  registerCommand: (name: string, def: { handler: (args: string, ctx: unknown) => Promise<void> }) => {
+    handlers.set(name, def.handler)
+  },
+})
+const { existsSync, readFileSync, rmSync } = await import('node:fs')
+const stateFile = join(scratch, 'pi-agent', 'anthropic-auth-state.json')
+type CommandRun = { command: string; args: string }
+const COMMAND_SEQUENCES: Array<{ name: string; initial: string | null; runs: CommandRun[] }> = [
+  {
+    name: 'fast-from-no-file',
+    initial: null,
+    runs: [
+      { command: 'claude-fast', args: '' },
+      { command: 'claude-fast', args: 'on' },
+      { command: 'claude-fast', args: ' on ' },
+      { command: 'claude-fast', args: 'off' },
+      { command: 'claude-fast', args: 'on now' },
+    ],
+  },
+  {
+    name: 'fast-over-an-existing-file',
+    initial: `${JSON.stringify({ routing: { mode: 'sticky' }, claudeFast: { enabled: false, note: 'kept' }, accounts: [], custom: [1, 2] }, null, 2)}\n`,
+    runs: [{ command: 'claude-fast', args: 'on' }],
+  },
+  {
+    name: 'cache-from-no-file',
+    initial: null,
+    runs: [
+      { command: 'claude-cache', args: '' },
+      { command: 'claude-cache', args: 'mode hybrid' },
+      { command: 'claude-cache', args: 'on' },
+      { command: 'claude-cache', args: 'mode automatic' },
+      { command: 'claude-cache', args: 'mode bogus' },
+      { command: 'claude-cache', args: 'off' },
+    ],
+  },
+]
+const commands = []
+for (const sequence of COMMAND_SEQUENCES) {
+  rmSync(settingsFile, { force: true })
+  rmSync(stateFile, { force: true })
+  if (sequence.initial !== null) writeFileSync(settingsFile, sequence.initial)
+  const steps = []
+  for (const run of sequence.runs) {
+    const notified: string[] = []
+    const ctx = {
+      ui: { notify: (message: string) => notified.push(message) },
+      sessionManager: { getSessionId: () => 'pi-session' },
+    }
+    const handler = handlers.get(run.command)
+    if (!handler) throw new Error(`no ${run.command}`)
+    await handler(run.args, ctx)
+    steps.push({
+      ...run,
+      text: notified.join('\n'),
+      file: existsSync(settingsFile) ? readFileSync(settingsFile, 'utf8') : null,
+    })
+  }
+  commands.push({ name: sequence.name, initial: sequence.initial, steps })
+}
+
+process.stdout.write(`${JSON.stringify({ version: '2.1.280', cases: results, responses, commands }, null, 2)}\n`)
