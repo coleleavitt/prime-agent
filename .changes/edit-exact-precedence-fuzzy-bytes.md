@@ -1,0 +1,1 @@
+- The edit tool no longer rejects a unique exact match as "Found 2 occurrences" when another span only matches after normalization (`it's` vs `it’s`), and a fuzzy (smart-quote, dash, NFKC, trailing-space) match now replaces only the matched text instead of writing the whole file back in normalized form; its diff shows the real original lines.

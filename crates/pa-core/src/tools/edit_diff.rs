@@ -91,20 +91,22 @@ pub fn normalize_for_fuzzy_match(text: &str) -> String {
         .map(js_trim_end)
         .collect::<Vec<_>>()
         .join("\n");
-    let mut out = String::with_capacity(trimmed.len());
-    for ch in trimmed.chars() {
-        let mapped = match ch {
-            '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' => '\'',
-            '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{201F}' => '"',
-            '\u{2010}' | '\u{2011}' | '\u{2012}' | '\u{2013}' | '\u{2014}' | '\u{2015}'
-            | '\u{2212}' => '-',
-            '\u{00A0}' | '\u{202F}' | '\u{205F}' | '\u{3000}' => ' ',
-            c if ('\u{2002}'..='\u{200A}').contains(&c) => ' ',
-            c => c,
-        };
-        out.push(mapped);
+    trimmed.chars().map(fuzzy_fold_char).collect()
+}
+
+/// The per-character fold applied after NFKC: smart quotes, Unicode dashes,
+/// and special spaces to their ASCII forms. It maps whitespace to whitespace
+/// and nothing else to whitespace, so it commutes with the trailing trim.
+fn fuzzy_fold_char(ch: char) -> char {
+    match ch {
+        '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' => '\'',
+        '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{201F}' => '"',
+        '\u{2010}' | '\u{2011}' | '\u{2012}' | '\u{2013}' | '\u{2014}' | '\u{2015}'
+        | '\u{2212}' => '-',
+        '\u{00A0}' | '\u{202F}' | '\u{205F}' | '\u{3000}' => ' ',
+        c if ('\u{2002}'..='\u{200A}').contains(&c) => ' ',
+        c => c,
     }
-    out
 }
 
 /// Strip UTF-8 BOM if present, returning both the BOM and the text without it.
@@ -118,49 +120,169 @@ pub fn strip_bom(content: &str) -> (&str, &str) {
 
 // Fuzzy matching
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FuzzyMatchResult {
-    pub found: bool,
-    /// The match start index (in `content_for_replacement`).
-    pub index: usize,
-    pub match_length: usize,
-    /// Whether fuzzy matching was used (false = exact match).
-    pub used_fuzzy_match: bool,
-    /// The content to use for replacement operations. When fuzzy matching is
-    /// used, this is the fuzzy-normalized content.
-    pub content_for_replacement: String,
+/// Fuzzy-normalized content plus the offsets at which it lines up with the
+/// original: each `(normalized, original)` pair means
+/// `normalize_for_fuzzy_match(&original[..o])` ends exactly where
+/// `normalized[..n]` does. A fuzzy match is located in normalized space and
+/// mapped back through these boundaries, so the replacement is spliced into
+/// the original content and nothing outside the match is normalized.
+struct FuzzyIndex {
+    normalized: String,
+    boundaries: Vec<(usize, usize)>,
 }
 
-/// Find `old_text` in `content`, trying exact match first, then fuzzy match.
-pub fn fuzzy_find_text(content: &str, old_text: &str) -> FuzzyMatchResult {
-    if let Some(exact_index) = content.find(old_text) {
-        return FuzzyMatchResult {
-            found: true,
-            index: exact_index,
-            match_length: old_text.len(),
-            used_fuzzy_match: false,
-            content_for_replacement: content.to_string(),
-        };
+impl FuzzyIndex {
+    fn new(content: &str) -> Self {
+        let mut normalized = String::with_capacity(content.len());
+        let mut boundaries = Vec::new();
+        let mut line_start = 0;
+        for (line_index, line) in content.split('\n').enumerate() {
+            if line_index > 0 {
+                // The newline itself maps 1:1.
+                boundaries.push((normalized.len(), line_start - 1));
+                normalized.push('\n');
+                boundaries.push((normalized.len(), line_start));
+            }
+            Self::push_line(line, line_start, &mut normalized, &mut boundaries);
+            line_start += line.len() + 1;
+        }
+        Self {
+            normalized,
+            boundaries,
+        }
     }
 
-    let fuzzy_content = normalize_for_fuzzy_match(content);
+    /// Append one line's normalized form. Boundaries fall between clusters
+    /// (a starter plus its combining marks), which NFKC normalizes
+    /// independently; a line where that does not hold keeps only its ends.
+    fn push_line(
+        line: &str,
+        line_start: usize,
+        normalized: &mut String,
+        boundaries: &mut Vec<(usize, usize)>,
+    ) {
+        let normalized_start = normalized.len();
+        let whole: String = line.chars().nfkc().map(fuzzy_fold_char).collect();
+        let visible_len = js_trim_end(&whole).len();
+
+        let mut cluster_ends: Vec<(usize, usize)> = Vec::new(); // (normalized len, original end)
+        let mut folded = String::with_capacity(whole.len());
+        let mut cluster_start = 0;
+        for (offset, ch) in line.char_indices().skip(1) {
+            if unicode_normalization::char::canonical_combining_class(ch) == 0 {
+                folded.extend(
+                    line[cluster_start..offset]
+                        .chars()
+                        .nfkc()
+                        .map(fuzzy_fold_char),
+                );
+                cluster_ends.push((folded.len(), offset));
+                cluster_start = offset;
+            }
+        }
+        folded.extend(line[cluster_start..].chars().nfkc().map(fuzzy_fold_char));
+        if folded != whole {
+            cluster_ends.clear();
+        }
+
+        boundaries.push((normalized_start, line_start));
+        boundaries.extend(
+            cluster_ends
+                .into_iter()
+                .filter(|&(len, _)| len <= visible_len)
+                .map(|(len, end)| (normalized_start + len, line_start + end)),
+        );
+        // Without a cluster boundary at the visible end, the end of the
+        // visible text maps to the end of the line.
+        if boundaries.last().map(|&(n, _)| n) != Some(normalized_start + visible_len) {
+            boundaries.push((normalized_start + visible_len, line_start + line.len()));
+        }
+        normalized.push_str(&whole[..visible_len]);
+    }
+
+    /// The original offset where a match starting at `normalized_offset`
+    /// begins: the latest aligned position, so the replaced span is minimal.
+    fn start_offset(&self, normalized_offset: usize) -> Option<usize> {
+        let end = self
+            .boundaries
+            .partition_point(|&(n, _)| n <= normalized_offset);
+        self.boundaries[..end]
+            .iter()
+            .rev()
+            .take_while(|&&(n, _)| n == normalized_offset)
+            .map(|&(_, o)| o)
+            .max()
+    }
+
+    /// The original offset where a match ending at `normalized_offset` ends:
+    /// the earliest aligned position, so trailing whitespace is kept.
+    fn end_offset(&self, normalized_offset: usize) -> Option<usize> {
+        let start = self
+            .boundaries
+            .partition_point(|&(n, _)| n < normalized_offset);
+        self.boundaries[start..]
+            .iter()
+            .take_while(|&&(n, _)| n == normalized_offset)
+            .map(|&(_, o)| o)
+            .min()
+    }
+}
+
+/// Outcome of locating one edit's `oldText` in the original content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextMatch {
+    /// The original-content span `[start, end)` to replace.
+    Unique {
+        start: usize,
+        end: usize,
+    },
+    NotFound,
+    Duplicate(usize),
+}
+
+/// Find `old_text` in `content`. An exact match takes precedence, and its
+/// uniqueness is judged among exact matches only; only when there is none is
+/// the text matched (and counted) in fuzzy-normalized space, with the match
+/// mapped back to an original-content span.
+fn find_text(content: &str, old_text: &str, fuzzy: &mut Option<FuzzyIndex>) -> TextMatch {
+    match content.matches(old_text).count() {
+        0 => {}
+        1 => {
+            let start = content.find(old_text).unwrap_or_default();
+            return TextMatch::Unique {
+                start,
+                end: start + old_text.len(),
+            };
+        }
+        occurrences => return TextMatch::Duplicate(occurrences),
+    }
+
     let fuzzy_old_text = normalize_for_fuzzy_match(old_text);
-    if let Some(fuzzy_index) = fuzzy_content.find(&fuzzy_old_text) {
-        return FuzzyMatchResult {
-            found: true,
-            index: fuzzy_index,
-            match_length: fuzzy_old_text.len(),
-            used_fuzzy_match: true,
-            content_for_replacement: fuzzy_content,
-        };
+    if fuzzy_old_text.is_empty() {
+        return TextMatch::NotFound;
     }
-
-    FuzzyMatchResult {
-        found: false,
-        index: 0,
-        match_length: 0,
-        used_fuzzy_match: false,
-        content_for_replacement: content.to_string(),
+    let index = fuzzy.get_or_insert_with(|| FuzzyIndex::new(content));
+    let mut found = index.normalized.match_indices(&fuzzy_old_text);
+    let Some((normalized_start, _)) = found.next() else {
+        return TextMatch::NotFound;
+    };
+    let others = found.count();
+    if others > 0 {
+        return TextMatch::Duplicate(others + 1);
+    }
+    let span = index
+        .start_offset(normalized_start)
+        .zip(index.end_offset(normalized_start + fuzzy_old_text.len()));
+    match span {
+        Some((start, end))
+            if start <= end
+                && normalize_for_fuzzy_match(&content[start..end]) == fuzzy_old_text =>
+        {
+            TextMatch::Unique { start, end }
+        }
+        // A boundary inside an NFKC expansion (or a cluster that does not
+        // normalize on its own) has no original offset to splice at.
+        _ => TextMatch::NotFound,
     }
 }
 
@@ -182,15 +304,6 @@ struct MatchedEdit {
 pub struct AppliedEditsResult {
     pub base_content: String,
     pub new_content: String,
-}
-
-fn count_occurrences(content: &str, old_text: &str) -> usize {
-    let fuzzy_content = normalize_for_fuzzy_match(content);
-    let fuzzy_old_text = normalize_for_fuzzy_match(old_text);
-    if fuzzy_old_text.is_empty() {
-        return 0;
-    }
-    fuzzy_content.matches(&fuzzy_old_text).count()
 }
 
 fn get_not_found_error(path: &str, edit_index: usize, total_edits: usize) -> String {
@@ -238,7 +351,9 @@ fn get_no_change_error(path: &str, total_edits: usize) -> String {
 
 /// Apply one or more exact-text replacements to LF-normalized content: all edits
 /// are matched against the same original content and applied in reverse order so
-/// offsets remain stable; a fuzzy edit runs in fuzzy-normalized content space.
+/// offsets remain stable. A fuzzy edit is located in fuzzy-normalized space but
+/// replaces only its own span of the original, so `base_content` is always the
+/// original content and the diff shows exactly what is written.
 pub fn apply_edits_to_normalized_content(
     normalized_content: &str,
     edits: &[Edit],
@@ -258,39 +373,28 @@ pub fn apply_edits_to_normalized_content(
         }
     }
 
-    let initial_matches: Vec<FuzzyMatchResult> = normalized_edits
-        .iter()
-        .map(|edit| fuzzy_find_text(normalized_content, &edit.old_text))
-        .collect();
-    let base_content = if initial_matches.iter().any(|m| m.used_fuzzy_match) {
-        normalize_for_fuzzy_match(normalized_content)
-    } else {
-        normalized_content.to_string()
-    };
-
+    let mut fuzzy = None;
     let mut matched_edits: Vec<MatchedEdit> = Vec::new();
     for (i, edit) in normalized_edits.iter().enumerate() {
-        let match_result = fuzzy_find_text(&base_content, &edit.old_text);
-        if !match_result.found {
-            return Err(get_not_found_error(path, i, normalized_edits.len()));
+        match find_text(normalized_content, &edit.old_text, &mut fuzzy) {
+            TextMatch::Unique { start, end } => matched_edits.push(MatchedEdit {
+                edit_index: i,
+                match_index: start,
+                match_length: end - start,
+                new_text: edit.new_text.clone(),
+            }),
+            TextMatch::NotFound => {
+                return Err(get_not_found_error(path, i, normalized_edits.len()));
+            }
+            TextMatch::Duplicate(occurrences) => {
+                return Err(get_duplicate_error(
+                    path,
+                    i,
+                    normalized_edits.len(),
+                    occurrences,
+                ));
+            }
         }
-
-        let occurrences = count_occurrences(&base_content, &edit.old_text);
-        if occurrences > 1 {
-            return Err(get_duplicate_error(
-                path,
-                i,
-                normalized_edits.len(),
-                occurrences,
-            ));
-        }
-
-        matched_edits.push(MatchedEdit {
-            edit_index: i,
-            match_index: match_result.index,
-            match_length: match_result.match_length,
-            new_text: edit.new_text.clone(),
-        });
     }
 
     matched_edits.sort_by_key(|edit| edit.match_index);
@@ -305,6 +409,7 @@ pub fn apply_edits_to_normalized_content(
         }
     }
 
+    let base_content = normalized_content.to_string();
     let mut new_content = base_content.clone();
     for edit in matched_edits.iter().rev() {
         new_content = format!(
@@ -556,4 +661,118 @@ pub fn errno_name(err: &std::io::Error) -> String {
 #[allow(dead_code)]
 fn access_readable(path: &str) -> Result<(), String> {
     crate::platform::perms::is_readable(Path::new(path)).map_err(|err| errno_name(&err))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn edit(old_text: &str, new_text: &str) -> Edit {
+        Edit {
+            old_text: old_text.to_string(),
+            new_text: new_text.to_string(),
+        }
+    }
+
+    // Upstream #1648: a unique exact match is not rejected because another
+    // span only matches after fuzzy normalization (`it's` vs `it’s`).
+    #[test]
+    fn unique_exact_match_wins_over_normalized_duplicates() {
+        let content = "it\u{2019}s here\nit's here\n";
+        let applied =
+            apply_edits_to_normalized_content(content, &[edit("it's here", "gone")], "f.txt")
+                .unwrap();
+        assert_eq!(
+            applied,
+            AppliedEditsResult {
+                base_content: content.to_string(),
+                new_content: "it\u{2019}s here\ngone\n".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn duplicates_are_still_rejected_in_their_own_space() {
+        let exact = apply_edits_to_normalized_content("ab\nab\n", &[edit("ab", "x")], "f.txt");
+        assert_eq!(
+            exact,
+            Err(get_duplicate_error("f.txt", 0, 1, 2)),
+            "genuine exact duplicates"
+        );
+        let fuzzy = apply_edits_to_normalized_content(
+            "it\u{2019}s\nit\u{2018}s\n",
+            &[edit("it's", "x")],
+            "f.txt",
+        );
+        assert_eq!(
+            fuzzy,
+            Err(get_duplicate_error("f.txt", 0, 1, 2)),
+            "fuzzy duplicates"
+        );
+    }
+
+    // Upstream #654/#657: a fuzzy match splices the replacement into the
+    // original content; nothing outside the matched span is normalized.
+    #[test]
+    fn fuzzy_edit_leaves_bytes_outside_the_match_untouched() {
+        let content =
+            "keep  \n\u{201C}quoted\u{201D} it\u{2019}s \u{2014} ok\n\u{BD} \u{FB01}le  \n";
+        let applied = apply_edits_to_normalized_content(
+            content,
+            &[edit("\"quoted\" it's - ok", "plain")],
+            "f.txt",
+        )
+        .unwrap();
+        assert_eq!(
+            applied,
+            AppliedEditsResult {
+                base_content: content.to_string(),
+                new_content: "keep  \nplain\n\u{BD} \u{FB01}le  \n".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn fuzzy_and_exact_edits_mix_against_the_original_content() {
+        let content = "a\u{2014}b  \ncafe\u{301} \u{2018}x\u{2019}\ntail\u{A0} \n";
+        let applied = apply_edits_to_normalized_content(
+            content,
+            &[edit("tail", "TAIL"), edit("caf\u{E9} 'x'", "menu")],
+            "f.txt",
+        )
+        .unwrap();
+        assert_eq!(
+            applied,
+            AppliedEditsResult {
+                base_content: content.to_string(),
+                new_content: "a\u{2014}b  \nmenu\nTAIL\u{A0} \n".to_string(),
+            }
+        );
+    }
+
+    // A fuzzy match ending on the last visible character keeps that
+    // line's trailing whitespace; including the newline consumes it.
+    #[test]
+    fn fuzzy_match_trailing_whitespace_semantics() {
+        let content = "alpha \u{2014}   \nbeta\n";
+        let without_newline =
+            apply_edits_to_normalized_content(content, &[edit("alpha -", "A")], "f.txt").unwrap();
+        assert_eq!(without_newline.new_content, "A   \nbeta\n");
+        let with_newline =
+            apply_edits_to_normalized_content(content, &[edit("alpha -\n", "A\n")], "f.txt")
+                .unwrap();
+        assert_eq!(with_newline.new_content, "A\nbeta\n");
+    }
+
+    // A fuzzy match that starts or ends inside an NFKC expansion has no
+    // original-content boundary, so it is reported as not found.
+    #[test]
+    fn fuzzy_match_inside_an_nfkc_expansion_is_not_found() {
+        let result = apply_edits_to_normalized_content(
+            "x\u{BD}y \u{2019}\n",
+            &[edit("\u{2044}2y '", "z")],
+            "f.txt",
+        );
+        assert_eq!(result, Err(get_not_found_error("f.txt", 0, 1)));
+    }
 }
