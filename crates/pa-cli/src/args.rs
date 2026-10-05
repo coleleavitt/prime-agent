@@ -191,6 +191,13 @@ pub struct Args {
     // the trailing _args matches the TS `fileArgs` wire surface
     pub file_args: Vec<String>,
     pub diagnostics: Vec<Diagnostic>,
+    /// `--name <name>`: open the current directory's session of that name, creating it when
+    /// none exists (upstream #1294).
+    pub name: Option<String>,
+    /// `--list-sessions`: print the current directory's saved sessions and exit.
+    pub list_sessions: bool,
+    /// `--delete-session <id|name>`: delete one saved session and exit.
+    pub delete_session: Option<String>,
 }
 
 impl Args {
@@ -331,6 +338,9 @@ pub fn parse_args(args: &[String]) -> Args {
                 result.append_system_prompt.push(value);
             }
             "--no-session" => result.no_session = true,
+            "--name" => result.name = Some(require_value!(arg)),
+            "--list-sessions" => result.list_sessions = true,
+            "--delete-session" => result.delete_session = Some(require_value!(arg)),
             "--fork" => result.fork = Some(require_value!(arg)),
             "--session-dir" => result.session_dir = Some(require_value!(arg)),
             "--models" => {
@@ -560,6 +570,28 @@ mod tests {
             .find(|d| d.is_error)
             .map(|d| d.message.as_str())
             .unwrap_or_default()
+    }
+
+    /// The named-session flags (upstream #1294) take their values; nothing else changes.
+    #[test]
+    fn named_session_flags_parse() {
+        let parsed = parse(&[
+            "--name",
+            "work",
+            "--list-sessions",
+            "--delete-session",
+            "old",
+        ]);
+        assert_eq!(
+            (
+                parsed.name.as_deref(),
+                parsed.list_sessions,
+                parsed.delete_session.as_deref(),
+                parsed.diagnostics.len(),
+            ),
+            (Some("work"), true, Some("old"), 0)
+        );
+        assert_eq!(last_error(&parse(&["--name"])), "--name requires a value");
     }
 
     #[test]

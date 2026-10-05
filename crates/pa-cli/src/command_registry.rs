@@ -465,6 +465,18 @@ const TOP_LEVEL_OPTION_GROUPS: &[OptionGroup] = &[
             ("--session-dir <dir>", "Use a custom session directory"),
             ("--no-session", "Do not save the session"),
             (
+                "--name <name>",
+                "Open this directory's session of that name, or start it",
+            ),
+            (
+                "--list-sessions",
+                "List this directory's saved sessions and exit",
+            ),
+            (
+                "--delete-session <id|name>",
+                "Delete a saved session and exit",
+            ),
+            (
                 "--plan",
                 "Start in plan mode: investigate and plan, file edits blocked",
             ),
