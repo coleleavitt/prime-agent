@@ -240,7 +240,7 @@ async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
     assert_eq!(compact_status["percent"], 0.06, "{payload}");
     assert_eq!(
         payload["refine_status_before"],
-        json!({ "pending": false, "in_flight": false }),
+        json!({ "pending": false, "in_flight": false, "preview_ids": [] }),
         "{payload}"
     );
     assert_eq!(payload["refine_run"]["scheduled"], true, "{payload}");
@@ -250,7 +250,7 @@ async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
     );
     assert_eq!(
         payload["refine_status_after"],
-        json!({ "pending": true, "in_flight": false }),
+        json!({ "pending": true, "in_flight": false, "preview_ids": [] }),
         "{payload}"
     );
     assert_eq!(payload["compact_run"]["scheduled"], false, "{payload}");
