@@ -77,6 +77,11 @@ _MAX_TOOL_SEARCH_SERVERS = 8
 # entries. Never applied to live tool schemas or results — argument names there
 # are server-defined and legitimately credential-like.
 _SECRET_KEY_PATTERN = re.compile(r"token|secret|password|credential|authorization|api[_-]?key|private[_-]?key", re.I)
+# Host view markers whose names match the pattern but whose boolean value is
+# never a credential: `pasteToken: true` marks the rows the user connects by
+# pasting a token in `/plugins`. Kept only when the value is a boolean, so a
+# string smuggled under the same key is still dropped.
+_BOOLEAN_MARKER_KEYS = frozenset({"pasteToken"})
 
 
 class McpStartupError(RuntimeError):
@@ -817,6 +822,15 @@ def _plugin_page(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _is_secret_key(key: Any, value: Any) -> bool:
+    """Whether one inventory key is dropped as secret-looking (allowlisted boolean markers are kept)."""
+    if not isinstance(key, str):
+        return False
+    if key in _BOOLEAN_MARKER_KEYS and isinstance(value, bool):
+        return False
+    return bool(_SECRET_KEY_PATTERN.search(key))
+
+
 def _sanitize_inventory_entry(entry: dict[str, Any]) -> dict[str, Any]:
     """Copy one inventory entry, dropping secret-looking keys defensively.
 
@@ -826,7 +840,7 @@ def _sanitize_inventory_entry(entry: dict[str, Any]) -> dict[str, Any]:
     """
     cleaned: dict[str, Any] = {}
     for key, value in entry.items():
-        if isinstance(key, str) and _SECRET_KEY_PATTERN.search(key):
+        if _is_secret_key(key, value):
             continue
         cleaned[key] = _sanitize_inventory_value(value)
     return cleaned

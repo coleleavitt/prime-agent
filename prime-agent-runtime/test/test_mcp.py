@@ -876,6 +876,31 @@ class McpDiscoveryInventoryTest(unittest.TestCase):
         self.assertEqual(notion["oauth"], {"kind": "oauth"})
         self.assertEqual(connections[1]["setupHint"], "configure API key")
 
+    def test_list_plugins_keeps_the_paste_token_marker_and_still_strips_secrets(self):
+        # `pasteToken: true` is the host's boolean marker for rows the user
+        # connects by pasting a token (#2678); its key contains "token", so the
+        # name heuristic ate it and paste-token logins could never be offered.
+        # Only the boolean marker survives: a string under the same key, and
+        # every real secret-named key, is still dropped.
+        plugins = [
+            {
+                "serviceId": "acme",
+                "pasteToken": True,
+                "accessToken": "tok",
+                "oauth": {"clientSecret": "cs", "pasteToken": True},
+            },
+            {"serviceId": "leaky", "pasteToken": "sk-live-secret", "status": "not_connected"},
+        ]
+        with self._patch_host({"mcp.list_plugins": {"plugins": plugins, "nextCursor": None}}):
+            page = run(mcp.list_plugins())
+        self.assertEqual(
+            page["plugins"],
+            [
+                {"serviceId": "acme", "pasteToken": True, "oauth": {"pasteToken": True}},
+                {"serviceId": "leaky", "status": "not_connected"},
+            ],
+        )
+
     def test_list_connections_rejects_malformed_host_data(self):
         # One table: each malformed host reply must fail the whole call instead
         # of passing a broken inventory shape through to the agent.
