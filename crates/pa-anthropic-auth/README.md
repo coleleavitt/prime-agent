@@ -30,6 +30,10 @@ auth.json resolves the `anthropic` provider exactly as before.
   uuid; else `account-<8 hex>`), `current` when nothing is pinned. Either way pa-core then removes `auth.json`'s
   entry (only while it still holds that token), so the store is the login's only custodian. A malformed login or
   an unusable store leaves it in `auth.json`.
+- Logout (`remove_login`, the plugins' account removal, napi `removeAccount`): `/logout anthropic` removes the
+  row the provider is served from now (the routing order's first candidate; while every login cools down, the
+  pinned one or the first) under the store lock. Nothing is revoked at Anthropic and Claude Code's own login is
+  left alone; the notice names the store and how many logins still serve the provider.
 - `install()`: installs the process's source (`shared_source()`, configured from the environment: the store path
   overrides `ANTHROPIC_ACCOUNTS_FILE` / `ANTHROPIC_ACCOUNTS_DIR`, the `ANTHROPIC_OAUTH_*` endpoint overrides,
   `ANTHROPIC_NATIVE_PUBLISH`) for the `anthropic` provider id. No I/O.
@@ -42,8 +46,8 @@ auth.json resolves the `anthropic` provider exactly as before.
 
 ## Non-goals (here)
 
-- Logout and account management (`/logout anthropic` still edits auth.json only; the store's rows are managed by
-  the plugins).
+- Account management beyond logout (enable, disable, reorder, pin, remote revoke): the plugins' account commands
+  own it; prime-agent has no account command surface.
 - Quota reads, quota-reserve routing, rotation on 429 or 401 recovery (`handleUnauthorized`), the keep-alive.
 - The request shape (headers, betas, system prompt, tool names): pa-ai's Claude Code mode owns it for every
   `sk-ant-oat` token, whatever its source. The source adds no headers.

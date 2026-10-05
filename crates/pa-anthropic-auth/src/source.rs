@@ -20,8 +20,8 @@ use anthropic::access::{
 use anthropic::credentials::NativePublish;
 use anthropic::{AccountStore, Endpoints, OAuthClient, SharedRefreshOptions};
 use pa_core::auth::{
-    CredentialSourceError, CredentialSourceStatus, ProviderCredentialSource, SourcedCredential,
-    StoredLoginCustody, StoredOAuthLogin,
+    CredentialSourceError, CredentialSourceStatus, ProviderCredentialSource, RemovedLogin,
+    SourcedCredential, StoredLoginCustody, StoredOAuthLogin,
 };
 use pa_types::sync::MutexExt;
 use sha2::{Digest, Sha256};
@@ -116,8 +116,9 @@ pub struct SharedStoreSource {
     pub(crate) config: SharedStoreConfig,
     /// Built on the first credential request (no startup cost).
     client: OnceLock<OAuthClient>,
-    /// One credential resolution at a time in this process.
-    flight: Mutex<()>,
+    /// One credential resolution (or custody change) at a time in this
+    /// process.
+    pub(crate) flight: Mutex<()>,
     status_memo: Mutex<Option<(FileStamp, Option<CredentialSourceStatus>)>>,
     usage: Mutex<SourceUsage>,
 }
@@ -221,6 +222,10 @@ impl ProviderCredentialSource for SharedStoreSource {
         self.adopt(login)
     }
 
+    fn remove_login(&self) -> Result<RemovedLogin, CredentialSourceError> {
+        self.remove_served_login()
+    }
+
     fn credential(&self) -> Result<SourcedCredential, CredentialSourceError> {
         let _flight = self.flight.lock_or_recover();
         let client = self.client();
@@ -252,6 +257,35 @@ impl ProviderCredentialSource for SharedStoreSource {
             }
         }
     }
+}
+
+/// The store's logins the provider can be served from: enabled OAuth rows
+/// with an inference scope (a row without scopes predates them), in store
+/// order.
+pub(crate) fn logins(store: &AccountStore) -> impl Iterator<Item = &anthropic::Account> {
+    store.accounts.iter().filter(|account| {
+        account.enabled
+            && account
+                .oauth()
+                .is_some_and(|tokens| tokens.scopes.is_empty() || tokens.grants_inference())
+    })
+}
+
+/// The login the provider is served from now: the routing order's first
+/// candidate (`current` first, then the first available), else, while
+/// every login is cooling down or spent, the pinned one or the first.
+pub(crate) fn served_login(
+    store: &AccountStore,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<&anthropic::Account> {
+    if let Ok(candidates) = access_candidates(store, &AccessRequest::default(), now) {
+        return candidates.first().copied();
+    }
+    let mut logins = logins(store).peekable();
+    let first = logins.peek().copied();
+    logins
+        .find(|account| store.current.as_deref() == Some(account.id.as_str()))
+        .or(first)
 }
 
 /// Run `future` to completion on a runtime of its own, on a thread of its

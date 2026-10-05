@@ -1,7 +1,9 @@
-//! A login `auth.json` still holds, moved into the store (the custody half
-//! of anthropic-napi's `importOAuthAccount`, as the pi plugin moves its
-//! host's refresh token): the store becomes the only custodian, so the
-//! two never both spend one rotating refresh token.
+//! Custody hand-offs between prime-agent and the store: a login `auth.json`
+//! still holds, moved into the store (the custody half of anthropic-napi's
+//! `importOAuthAccount`, as the pi plugin moves its host's refresh token),
+//! so the two never both spend one rotating refresh token; and `/logout`,
+//! which removes the login the store serves the provider (the plugins'
+//! account removal, `removeAccount`: the row goes, nothing is revoked).
 
 use anthropic::token::{
     is_valid_access_token, is_valid_refresh_token, AccessToken, Credential, OAuthTokens,
@@ -9,9 +11,10 @@ use anthropic::token::{
 };
 use anthropic::{account_identities, Account, AccountStore};
 use chrono::{TimeZone, Utc};
-use pa_core::auth::{StoredLoginCustody, StoredOAuthLogin};
+use pa_core::auth::{CredentialSourceError, RemovedLogin, StoredLoginCustody, StoredOAuthLogin};
+use pa_types::sync::MutexExt;
 
-use crate::source::block_on_own_runtime;
+use crate::source::{block_on_own_runtime, logins, served_login};
 use crate::SharedStoreSource;
 
 /// What the store did with an imported login (napi `ImportResult.status`).
@@ -134,6 +137,47 @@ impl SharedStoreSource {
                 StoredLoginCustody::Kept
             }
         }
+    }
+}
+
+impl SharedStoreSource {
+    /// [`pa_core::auth::ProviderCredentialSource::remove_login`]: remove the
+    /// row the provider is served from now (the routing order's first
+    /// candidate), under the store lock. Nothing is revoked at Anthropic,
+    /// and Claude Code's own login is left alone.
+    pub(crate) fn remove_served_login(&self) -> Result<RemovedLogin, CredentialSourceError> {
+        let _flight = self.flight.lock_or_recover();
+        let path = self.config.store_path.as_path();
+        if std::fs::symlink_metadata(path).is_err() {
+            return Err(CredentialSourceError::NotConfigured);
+        }
+        let now = Utc::now();
+        let remaining = AccountStore::mutate_allow_empty(path, |store| {
+            let Some(id) = served_login(store, now).map(|account| account.id.clone()) else {
+                return Ok(None);
+            };
+            store.remove(&id);
+            Ok(Some(logins(store).count()))
+        })
+        .map_err(|error| {
+            CredentialSourceError::Unavailable(format!(
+                "could not remove the login from the shared account store: {error}"
+            ))
+        })?;
+        let Some(remaining) = remaining else {
+            return Err(CredentialSourceError::NotConfigured);
+        };
+        let removed = format!(
+            "Removed the login from the shared account store ({}); other tools that share the store no longer see it.",
+            path.display()
+        );
+        Ok(RemovedLogin {
+            notice: Some(match remaining {
+                0 => removed,
+                1 => format!("{removed} 1 more login there still serves this provider."),
+                more => format!("{removed} {more} more logins there still serve this provider."),
+            }),
+        })
     }
 }
 

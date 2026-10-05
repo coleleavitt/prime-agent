@@ -558,3 +558,61 @@ fn a_malformed_auth_json_login_stays_in_auth_json() {
     assert!(!source.store_path().exists());
     assert!(registry.auth.get_all().get(provider).is_some());
 }
+
+#[test]
+fn logout_removes_the_login_the_provider_is_served_from() {
+    let (_home, source) = source_over(
+        vec![
+            row("first", Duration::hours(2)),
+            row("pinned", Duration::hours(2)),
+        ],
+        "http://127.0.0.1:9",
+    );
+    AccountStore::mutate(source.store_path(), |store| store.set_current("pinned"))
+        .expect("pin a login");
+    let removed = |remaining: &str| {
+        Ok(pa_core::auth::RemovedLogin {
+            notice: Some(format!(
+                "Removed the login from the shared account store ({}); other tools that share the store no longer see it.{remaining}",
+                source.store_path().display()
+            )),
+        })
+    };
+
+    assert_eq!(
+        source.remove_login(),
+        removed(" 1 more login there still serves this provider.")
+    );
+    assert_eq!(
+        rows(&source),
+        (
+            vec![(
+                "first".to_string(),
+                "sk-ant-ort01-first-store-refresh-000".to_string()
+            )],
+            None
+        )
+    );
+    assert_eq!(
+        source.credential().map(|credential| credential.api_key),
+        Ok("sk-ant-oat01-first-store-access-000".to_string())
+    );
+
+    assert_eq!(source.remove_login(), removed(""));
+    assert_eq!(source.status(), None);
+    assert_eq!(
+        source.remove_login(),
+        Err(CredentialSourceError::NotConfigured)
+    );
+}
+
+#[test]
+fn logout_without_a_store_removes_nothing() {
+    let (_home, source) = source_over(Vec::new(), "http://127.0.0.1:9");
+
+    assert_eq!(
+        source.remove_login(),
+        Err(CredentialSourceError::NotConfigured)
+    );
+    assert!(!source.store_path().exists());
+}
