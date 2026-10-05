@@ -682,6 +682,31 @@ mod tests {
         assert_eq!(list.positionals, args(&["-a"]));
     }
 
+    /// Upstream #902/#901: `help send` must list only options the `send` parser
+    /// accepts (it listed the retired `--steer`/`--follow-up`, which the parser
+    /// rejects as unknown options).
+    #[test]
+    fn every_send_option_in_help_parses() {
+        let spec = crate::command_registry::get_command_spec(&["send"]).expect("send spec");
+        let rejected: Vec<&str> = spec
+            .options
+            .iter()
+            .filter_map(|option| {
+                let mut words = option.split_whitespace();
+                let flag = words.next()?;
+                let mut argv = vec![flag];
+                if words.next().is_some_and(|word| word.starts_with('<')) {
+                    argv.push("sender");
+                }
+                argv.extend(["target", "hello"]);
+                let rejected = parse_daemon_command("send", &args(&argv))
+                    .map_or(true, |parsed| parse_send_args(&parsed.positionals).is_err());
+                rejected.then_some(flag)
+            })
+            .collect();
+        assert_eq!(rejected, Vec::<&str>::new());
+    }
+
     #[test]
     fn send_args_match_ts_usage_rules() {
         let parsed = parse_send_args(&args(&["--from", "me", "target", "hello", "there"])).unwrap();
