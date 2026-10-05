@@ -26,26 +26,54 @@ fn lookup(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
 }
 
 #[test]
-fn the_sidecar_is_the_pi_plugins() {
+fn the_sidecar_resolves_to_the_plugin_copy_the_user_has() {
     let home = Path::new("/home/someone");
+    let pi = PathBuf::from("/home/someone/.pi/agent/anthropic-auth.json");
+    let opencode = PathBuf::from("/home/someone/.config/opencode/anthropic-auth.json");
+    let none = |_: &Path| false;
+    let only_pi = |path: &Path| path == Path::new("/home/someone/.pi/agent/anthropic-auth.json");
+    let both = |_: &Path| true;
     assert_eq!(
         [
-            config_path_from_lookup(lookup(&[]), home),
-            config_path_from_lookup(lookup(&[(AGENT_DIR_ENV, " /agents/pi ")]), home),
-            config_path_from_lookup(
+            // Nothing exists: opencode's path, where a first write creates it.
+            resolve_config_path(lookup(&[]), home, none),
+            // Only opencode's exists (the common case): opencode's.
+            resolve_config_path(lookup(&[]), home, |path: &Path| path == opencode),
+            // pi's exists: pi's wins over opencode's.
+            resolve_config_path(lookup(&[]), home, only_pi),
+            resolve_config_path(lookup(&[]), home, both),
+            // Directory overrides move each candidate.
+            resolve_config_path(lookup(&[(AGENT_DIR_ENV, " /agents/pi ")]), home, both),
+            resolve_config_path(lookup(&[(OPENCODE_CONFIG_DIR_ENV, "/oc")]), home, none),
+            resolve_config_path(lookup(&[("XDG_CONFIG_HOME", "/xdg")]), home, none),
+            // Explicit file overrides win, pi's first; blank ones are ignored.
+            resolve_config_path(
                 lookup(&[
                     (CONFIG_FILE_ENV, " /etc/auth.json "),
+                    (OPENCODE_CONFIG_FILE_ENV, "/etc/oc.json"),
                     (AGENT_DIR_ENV, "/agents/pi")
                 ]),
-                home
+                home,
+                both
             ),
-            config_path_from_lookup(lookup(&[(CONFIG_FILE_ENV, "  ")]), home),
+            resolve_config_path(
+                lookup(&[(OPENCODE_CONFIG_FILE_ENV, "/etc/oc.json")]),
+                home,
+                both
+            ),
+            resolve_config_path(lookup(&[(CONFIG_FILE_ENV, "  ")]), home, none),
         ],
         [
-            PathBuf::from("/home/someone/.pi/agent/anthropic-auth.json"),
+            opencode.clone(),
+            opencode.clone(),
+            pi.clone(),
+            pi,
             PathBuf::from("/agents/pi/anthropic-auth.json"),
+            PathBuf::from("/oc/anthropic-auth.json"),
+            PathBuf::from("/xdg/opencode/anthropic-auth.json"),
             PathBuf::from("/etc/auth.json"),
-            PathBuf::from("/home/someone/.pi/agent/anthropic-auth.json"),
+            PathBuf::from("/etc/oc.json"),
+            opencode,
         ]
     );
 }

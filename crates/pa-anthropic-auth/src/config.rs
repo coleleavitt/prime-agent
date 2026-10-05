@@ -2,9 +2,14 @@
 //! the pi plugin reads it, so the routing mode, the quota policy and the
 //! killswitch a user sets for pi apply to prime-agent too:
 //!
-//! - the file: `PI_ANTHROPIC_AUTH_FILE`, else `$PI_AGENT_DIR/anthropic-auth.json`,
-//!   else `~/.pi/agent/anthropic-auth.json` (the pi plugin's `getPiAccountStoragePath`;
-//!   the opencode plugin keeps its own copy under `~/.config/opencode/`);
+//! - the file, resolved so prime-agent shares whichever plugin copy the user
+//!   actually has: an explicit `PI_ANTHROPIC_AUTH_FILE` or
+//!   `OPENCODE_ANTHROPIC_AUTH_FILE`; else the first that exists of pi's
+//!   (`$PI_AGENT_DIR` or `~/.pi/agent`) and opencode's (`$OPENCODE_CONFIG_DIR`,
+//!   else `$XDG_CONFIG_HOME/opencode` or `~/.config/opencode`)
+//!   `anthropic-auth.json`; else opencode's path, where a command's first
+//!   write creates it. Credentials are not here: they are the shared
+//!   `~/.anthropic-accounts` store every tool uses;
 //! - the sticky routing state beside it (`anthropic-auth-routing-state.json`,
 //!   or `PI_ANTHROPIC_AUTH_ROUTING_STATE_FILE`), shared with pi;
 //! - re-read when the file changes, so an edit (by a plugin, or by this
@@ -28,6 +33,10 @@ use pa_types::sync::MutexExt;
 
 /// The sidecar file override (the pi plugin's).
 pub const CONFIG_FILE_ENV: &str = "PI_ANTHROPIC_AUTH_FILE";
+/// The sidecar file override (the opencode plugin's).
+pub const OPENCODE_CONFIG_FILE_ENV: &str = "OPENCODE_ANTHROPIC_AUTH_FILE";
+/// The opencode config directory override (the opencode plugin's).
+pub const OPENCODE_CONFIG_DIR_ENV: &str = "OPENCODE_CONFIG_DIR";
 /// The pi agent directory the default sidecar lives in.
 pub const AGENT_DIR_ENV: &str = "PI_AGENT_DIR";
 /// The sticky routing state override (the pi plugin's).
@@ -46,22 +55,47 @@ pub(crate) struct RoutingConfig {
     pub(crate) killswitch: KillswitchConfig,
 }
 
-/// The sidecar path for an environment lookup and a home directory.
+/// The sidecar path for an environment lookup and a home directory, judged
+/// against the real filesystem.
 pub(crate) fn config_path_from_lookup(
     lookup: impl Fn(&str) -> Option<String>,
     home: &Path,
+) -> PathBuf {
+    resolve_config_path(lookup, home, Path::is_file)
+}
+
+/// The sidecar path: an explicit override, else the first existing plugin
+/// copy (pi's, then opencode's), else opencode's path.
+pub(crate) fn resolve_config_path(
+    lookup: impl Fn(&str) -> Option<String>,
+    home: &Path,
+    exists: impl Fn(&Path) -> bool,
 ) -> PathBuf {
     let trimmed = |key: &str| {
         lookup(key)
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
     };
-    if let Some(file) = trimmed(CONFIG_FILE_ENV) {
+    if let Some(file) = trimmed(CONFIG_FILE_ENV).or_else(|| trimmed(OPENCODE_CONFIG_FILE_ENV)) {
         return PathBuf::from(file);
     }
-    trimmed(AGENT_DIR_ENV)
+    let pi = trimmed(AGENT_DIR_ENV)
         .map_or_else(|| home.join(".pi").join("agent"), PathBuf::from)
-        .join(CONFIG_FILE_NAME)
+        .join(CONFIG_FILE_NAME);
+    let opencode = trimmed(OPENCODE_CONFIG_DIR_ENV)
+        .map_or_else(
+            || {
+                trimmed("XDG_CONFIG_HOME")
+                    .map_or_else(|| home.join(".config"), PathBuf::from)
+                    .join("opencode")
+            },
+            PathBuf::from,
+        )
+        .join(CONFIG_FILE_NAME);
+    if exists(&pi) {
+        return pi;
+    }
+    opencode
 }
 
 /// The sticky routing state for the sidecar at `config_path`

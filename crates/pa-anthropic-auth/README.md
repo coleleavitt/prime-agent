@@ -32,10 +32,12 @@ auth.json resolves the `anthropic` provider exactly as before.
     (`recover_unauthorized`: one claimed refresh of the row owning the rejected token; a retry only with a new
     version of the same login), and, when the store no longer holds the rejected token (another process rotated
     it), the store's current token re-read under its lock if it differs. Otherwise the 401 is reported.
-- The plugins' sidecar configuration (`config.rs`), read as the pi plugin reads it, so a setting made for pi applies
-  here too: `PI_ANTHROPIC_AUTH_FILE`, else `$PI_AGENT_DIR/anthropic-auth.json`, else `~/.pi/agent/anthropic-auth.json`
-  (the opencode plugin keeps its own copy, `~/.config/opencode/anthropic-auth.json`); the pi plugin's settings
-  file (`pi/settings.rs`) is the same file, resolved the same way. Re-read when the
+- The plugins' sidecar configuration (`config.rs`), shared with whichever plugin copy the user has: an explicit
+  `PI_ANTHROPIC_AUTH_FILE` or `OPENCODE_ANTHROPIC_AUTH_FILE`; else the first that exists of pi's
+  (`$PI_AGENT_DIR` or `~/.pi/agent`) and opencode's (`$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode` or
+  `~/.config/opencode`) `anthropic-auth.json`; else opencode's path, where a command's first write creates it. The
+  pi plugin's settings file (`pi/settings.rs`) is the same file, resolved the same way. (Credentials are not in this
+  file: they are the shared `~/.anthropic-accounts` store.) Re-read when the
   file's size or mtime changes; a missing, unreadable or non-object file is the defaults, a value of the wrong type
   its default. Read: `quota.enabled` (only `false` disables), `quota.checkIntervalMinutes` (5, floored at 1),
   `quota.refreshEveryNRequests` (off), `quota.minimumRemaining.{five_hour|5h, seven_day|1w}` (0, remaining percent),
