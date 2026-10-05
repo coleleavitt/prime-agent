@@ -13,7 +13,11 @@ use filedescriptor::{poll, pollfd, POLLIN};
 
 #[cfg(feature = "event-stream")]
 use crate::event::sys::Waker;
-use crate::event::{source::EventSource, sys::unix::parse::parse_event, InternalEvent};
+use crate::event::{
+    source::EventSource,
+    sys::unix::parse::{parse_event, KittyPrintableTwin},
+    InternalEvent,
+};
 use crate::terminal::sys::file_descriptor::{tty_fd, FileDesc};
 
 /// Holds a prototypical Waker and a receiver we can wait on when doing select().
@@ -214,6 +218,9 @@ impl EventSource for UnixInternalEventSource {
 struct Parser {
     buffer: Vec<u8>,
     internal_events: VecDeque<InternalEvent>,
+    /// The kitty-printable twin dedup (prime-agent patch): parser state, so a twin split across
+    /// reads still drops.
+    kitty_twin: KittyPrintableTwin,
 }
 
 impl Default for Parser {
@@ -236,6 +243,7 @@ impl Default for Parser {
             // method implementation, all events are consumed before the next TTY_BUFFER
             // is processed -> events pushed.
             internal_events: VecDeque::with_capacity(128),
+            kitty_twin: KittyPrintableTwin::default(),
         }
     }
 }
@@ -249,7 +257,9 @@ impl Parser {
 
             match parse_event(&self.buffer, more) {
                 Ok(Some(ie)) => {
-                    self.internal_events.push_back(ie);
+                    if self.kitty_twin.admit(&self.buffer) {
+                        self.internal_events.push_back(ie);
+                    }
                     self.buffer.clear();
                 }
                 Ok(None) => {
@@ -259,6 +269,7 @@ impl Parser {
                 Err(_) => {
                     // Event can't be parsed (not enough parameters, parameter is not a number, ...).
                     // Clear the buffer and continue with another sequence.
+                    self.kitty_twin.clear();
                     self.buffer.clear();
                 }
             }

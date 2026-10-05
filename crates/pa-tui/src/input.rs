@@ -223,42 +223,20 @@ fn forward(outputs: Vec<GuardOutput>, on_input: &mut dyn FnMut(ReaderInput) -> b
     true
 }
 
-/// The TS enhanced-key dispatch filters, applied to one terminal write:
+/// The TS enhanced-key dispatch filter, applied to one terminal write: key releases are dropped
+/// before any surface sees them (no surface opts in).
 ///
-/// - Key releases are dropped before any surface sees them (no surface opts in).
-/// - The kitty-printable dedup (TS `StdinBuffer` `pendingKittyPrintableCodepoint`): a
-///   duplicate-reporting kitty terminal sends BOTH the plain CSI-u form and the raw character for
-///   one keypress (TS #3780). crossterm folds both into the same unmodified `Char` key event, so
-///   the port drops an identical back-to-back plain-character pair — only within one terminal
-///   write, and only while the kitty protocol is active.
-///
-/// The pending state is chunk-local where TS keeps it across `process` calls: a cross-chunk pending
-/// would eat a fast-typed double character.
+/// The kitty-printable twin dedup (TS `StdinBuffer` `pendingKittyPrintableCodepoint`, #3780) is
+/// NOT here: crossterm folds a `CSI <cp>u` report and a raw character into the same unmodified
+/// `Char` press, so this layer cannot tell a duplicate-reporting terminal's twin from a typed
+/// repeat. The vendored crossterm parser drops the raw twin at the byte layer (its
+/// `KittyPrintableTwin`); an equality guess here ate dictated, IME-committed and batched-repeat
+/// pairs (#3250).
 fn filter_enhanced_key_events(events: Vec<Event>) -> Vec<Event> {
-    if !crate::enhanced_keys::kitty_active() {
-        return events
-            .into_iter()
-            .filter(|event| !is_key_release(event))
-            .collect();
-    }
-    let mut out = Vec::with_capacity(events.len());
-    let mut pending: Option<char> = None;
-    for event in events {
-        if is_key_release(&event) {
-            // The release also clears the pending: it never keeps a dedup alive.
-            pending = None;
-            continue;
-        }
-        let plain_press = plain_press_char(&event);
-        if plain_press.is_some_and(|c| pending == Some(c)) {
-            // The raw-text duplicate of the CSI-u form (one keypress).
-            pending = None;
-            continue;
-        }
-        pending = plain_press;
-        out.push(event);
-    }
-    out
+    events
+        .into_iter()
+        .filter(|event| !is_key_release(event))
+        .collect()
 }
 
 /// macOS-Terminal legacy-meta repair (TS `matchesKey`'s double-ESC branch): with "use option as
@@ -430,22 +408,6 @@ fn is_key_release(event: &Event) -> bool {
     )
 }
 
-/// The event shape the kitty CSI-u plain-printable form and its raw-text duplicate both parse
-/// to: an unmodified character press (the TS regex admits only modifier-free, event-type-free
-/// sequences, so lock states never join the dedup).
-fn plain_press_char(event: &Event) -> Option<char> {
-    let Event::Key(key) = event else {
-        return None;
-    };
-    if key.kind != KeyEventKind::Press || !key.modifiers.is_empty() || !key.state.is_empty() {
-        return None;
-    }
-    match key.code {
-        KeyCode::Char(c) => Some(c),
-        _ => None,
-    }
-}
-
 /// The plain-text contribution of one event for a marker-less burst: the bytes a paste carries.
 /// Enter is `\r` and Ctrl+letters are their control bytes, so the payload byte-matches the
 /// terminal stream. Anything else — mouse reports, resize, escape sequences, modified keys, key
@@ -600,69 +562,42 @@ mod tests {
         assert_eq!(ids, vec!["a", "b"]);
     }
 
-    /// The kitty-printable dedup (TS #3780): a duplicate-reporting kitty terminal sends the
-    /// CSI-u form and the raw character for one keypress, so the pair collapses. After a drop
-    /// the pending clears (a triple renders as two, never one).
+    /// Identical plain presses in one chunk are real input in BOTH modes (#3250): macOS
+    /// dictation ("will" must not type "wil"), IME commits and batched key repeat all arrive as
+    /// raw pairs in one read. The kitty twin dedup runs at the byte layer (the vendored crossterm
+    /// parser), where a `CSI <cp>u` report and a raw character are still distinguishable; this
+    /// filter drops releases and nothing else.
     #[test]
-    fn kitty_printable_duplicates_collapse_within_a_chunk() {
+    fn identical_plain_presses_survive_in_both_kitty_modes() {
         let _guard = crate::enhanced_keys::TEST_STATE_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        crate::enhanced_keys::set_kitty_active_for_tests(true);
-        // `CSI 64u` + `@` (the TS regression case): one press.
-        let filtered = filter_enhanced_key_events(vec![press('@'), press('@')]);
-        assert_eq!(filtered.len(), 1);
-        // A triple (`CSI 97u a a`): pending clears after the drop, so two presses survive.
-        let triple = filter_enhanced_key_events(vec![press('a'), press('a'), press('a')]);
-        assert_eq!(triple.len(), 2);
-        // A non-matching char after the CSI-u form is kept.
-        let mixed = filter_enhanced_key_events(vec![press('a'), press('b')]);
-        assert_eq!(mixed.len(), 2);
-        // A modified press never joins the dedup (the TS regex admits only modifier-free
-        // sequences — `CSI 97;5u` is ctrl+a).
-        let modified_then_plain = filter_enhanced_key_events(vec![
-            key_with_kind(
+        for kitty in [true, false] {
+            crate::enhanced_keys::set_kitty_active_for_tests(kitty);
+            let will = vec![press('w'), press('i'), press('l'), press('l')];
+            assert_eq!(
+                filter_enhanced_key_events(will.clone()),
+                will,
+                "kitty={kitty}"
+            );
+            let repeats = vec![press('a'), press('a'), press('a')];
+            assert_eq!(
+                filter_enhanced_key_events(repeats.clone()),
+                repeats,
+                "kitty={kitty}"
+            );
+            let release = key_with_kind(
                 KeyCode::Char('a'),
-                KeyModifiers::CONTROL,
-                KeyEventKind::Press,
-            ),
-            press('a'),
-        ]);
-        assert_eq!(modified_then_plain.len(), 2);
-        // A repeat event (`CSI 97;1:2u`) overwrites the pending, so the raw char after it is kept.
-        let repeat = key_with_kind(KeyCode::Char('a'), KeyModifiers::NONE, KeyEventKind::Repeat);
-        let after_repeat = filter_enhanced_key_events(vec![press('a'), repeat, press('a')]);
-        assert_eq!(after_repeat.len(), 3);
-        // A release between the pair breaks it (the pending never spans them).
-        let release = key_with_kind(
-            KeyCode::Char('a'),
-            KeyModifiers::NONE,
-            KeyEventKind::Release,
-        );
-        let spanned = filter_enhanced_key_events(vec![press('a'), release, press('a')]);
-        assert_eq!(spanned.len(), 2);
-        // Lock states ride the modifier mask in CSI-u (`CSI 97;65u`): TS never dedups them.
-        let caps_lock = Event::Key(KeyEvent {
-            code: KeyCode::Char('a'),
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Press,
-            state: crossterm::event::KeyEventState::CAPS_LOCK,
-        });
-        let with_caps = filter_enhanced_key_events(vec![caps_lock, press('a')]);
-        assert_eq!(with_caps.len(), 2);
+                KeyModifiers::NONE,
+                KeyEventKind::Release,
+            );
+            assert_eq!(
+                filter_enhanced_key_events(vec![press('a'), release, press('a')]),
+                vec![press('a'), press('a')],
+                "kitty={kitty}: only the release drops"
+            );
+        }
         crate::enhanced_keys::set_kitty_active_for_tests(false);
-    }
-
-    /// Without the kitty protocol the dedup is off: a plain terminal's identical pair is real
-    /// input (TS never sees a CSI-u form in legacy mode).
-    #[test]
-    fn plain_terminals_keep_identical_pairs() {
-        let _guard = crate::enhanced_keys::TEST_STATE_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        crate::enhanced_keys::set_kitty_active_for_tests(false);
-        let filtered = filter_enhanced_key_events(vec![press('a'), press('a')]);
-        assert_eq!(filtered.len(), 2);
     }
 
     #[test]

@@ -492,8 +492,10 @@ const DRAIN_IDLE: Duration = Duration::from_millis(50);
 const EXIT_DRAIN_MAX: Duration = Duration::from_millis(400);
 
 /// Whether the kitty keyboard protocol is active. The LF mapping (`\n` is
-/// shift+enter under kitty, enter in legacy mode) and the kitty-printable
-/// dedup only apply while kitty events can arrive.
+/// shift+enter under kitty, enter in legacy mode) and the macOS-Terminal
+/// meta repair only apply while kitty events can arrive. The kitty-printable
+/// twin dedup is not gated on it: it lives in the vendored crossterm parser,
+/// which arms only on an actual `CSI <cp>u` report.
 pub(crate) fn kitty_active() -> bool {
     KITTY_ACTIVE.load(Ordering::SeqCst)
 }
