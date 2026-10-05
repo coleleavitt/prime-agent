@@ -1214,6 +1214,21 @@ const COMPUTER_USE_ACTION: EventRule = EventRule {
     ],
 };
 
+/// `plan mode toggled` (v4): one plan-mode change in a depth-0 session
+/// (`/plan`, its key, or `--plan` at start). The new state and where the
+/// change came from only — never the session, the prompt, or a path.
+const PLAN_MODE_TOGGLED: EventRule = EventRule {
+    name: "plan mode toggled",
+    since: 4,
+    properties: &[
+        ("enabled", required(boolean())),
+        (
+            "source",
+            required(enum_rule(&["command", "flag"], "command")),
+        ),
+    ],
+};
+
 /// `toolforge publish` (v4): one `rlm.toolforge.publish` attempt (the
 /// `pa-toolforge` feature crate). Outcome categories and counts only —
 /// never the skill name, its source, its exit test or a path.
@@ -1808,6 +1823,7 @@ pub fn catalog() -> Vec<&'static EventRule> {
         &DREAM_RUN,
         &DREAM_SESSION_RUN,
         &TOOLFORGE_PUBLISH,
+        &PLAN_MODE_TOGGLED,
         &WORKFLOW_RUN_AGENT,
         &WORKFLOW_V2_REQUEST,
         &OBSERVABILITY_COMMAND_USED,

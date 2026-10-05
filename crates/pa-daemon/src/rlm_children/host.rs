@@ -175,6 +175,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
             let watcher_this = Arc::clone(&this);
             let watcher_record = Arc::clone(&record);
             let prompt = request.prompt.clone();
+            let plan_mode = request.plan_mode;
             let child_active_session_id = created.active_session_id.clone();
             let child_session_file = created.session_file.clone();
             // Capture the current turn boundary before detaching: spawn
@@ -190,6 +191,28 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     return;
                 }
                 watcher_record.lock().await.prompt_admitted = true;
+                // A child spawned during plan mode starts in it: the session
+                // command queues ahead of the task prompt (durable in the
+                // child's file, and its kernel guard arms first). A child
+                // that cannot enter plan mode never runs the task.
+                if plan_mode {
+                    if let Err(error) = watcher_this
+                        .prompt_child(&child_active_session_id, "/plan on", &[])
+                        .await
+                    {
+                        let _ = watcher_this
+                            .kill_child(&child_active_session_id, ChildCloseReason::Killed)
+                            .await;
+                        watcher_this
+                            .settle_failed(
+                                &watcher_record,
+                                format!("could not start the child in plan mode: {error:#}"),
+                                super::lifecycle::FailedArm::Prompt,
+                            )
+                            .await;
+                        return;
+                    }
+                }
                 if let Err(error) = watcher_this
                     .prompt_child(&child_active_session_id, &prompt, &[])
                     .await

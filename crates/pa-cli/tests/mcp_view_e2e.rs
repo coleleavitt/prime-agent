@@ -231,6 +231,7 @@ fn spawn_supervisor(dir: &Path) -> Supervisor {
 /// the login/logout arms answer through the client path).
 fn headless_options(socket: &Path, dir: &Path) -> pa_tui::interactive::InteractiveOptions {
     pa_tui::interactive::InteractiveOptions {
+        initial_plan_mode: false,
         models: None,
         socket_path: socket.to_path_buf(),
         cwd: dir.to_path_buf(),

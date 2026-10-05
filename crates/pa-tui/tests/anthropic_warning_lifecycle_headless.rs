@@ -432,6 +432,7 @@ fn options(
     auth: Option<pa_tui::provider_auth::ProviderAuthCommandsHandle>,
 ) -> InteractiveOptions {
     InteractiveOptions {
+        initial_plan_mode: false,
         socket_path: socket,
         cwd: PathBuf::from("/tmp"),
         session_dir: None,

@@ -79,6 +79,11 @@ pub struct SessionEngineConfig {
     /// request ids on the wire).
     pub semantic_edges: Option<super::semantic_edges::SemanticEdgeIdentity>,
     pub on_late_sent_agent_message: Option<crate::tools::ipython::LateSentAgentMessageHandler>,
+    /// Start in (or out of) plan mode: `--plan`, or an `rlm.spawn` child
+    /// inheriting its parent's mode. A value that differs from the
+    /// session's restored mode is recorded as a durable change row. `None`
+    /// restores the newest change on the session's branch (off when none).
+    pub plan_mode: Option<bool>,
 }
 
 pub struct SessionEngine {
@@ -129,6 +134,9 @@ pub struct SessionEngine {
     /// The embedding's feature-status sink, held here so the process
     /// registry's weak entry lives exactly as long as the engine.
     feature_status_sink: std::sync::Mutex<Option<crate::features::FeatureStatusSink>>,
+    /// The session's plan mode, shared with the tool gate, the host-request
+    /// gate, the per-turn context row, and the kernel's write guard.
+    plan_mode: super::plan_mode::PlanModeSwitch,
 }
 
 /// Skill overrides for built-in integrations the user is not logged into,
@@ -284,7 +292,18 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     };
     let model_context_window = model.context_window;
 
-    let session_id = wiring.session.lock().await.get_session_id().to_string();
+    let (session_id, restored_plan_mode) = {
+        let session = wiring.session.lock().await;
+        (session.get_session_id().to_string(), session.plan_mode())
+    };
+    // Plan mode: an explicit start state wins over the branch's newest
+    // change; a session that never changed it starts off.
+    let plan_mode = super::plan_mode::PlanModeSwitch::new(
+        config
+            .plan_mode
+            .unwrap_or_else(|| restored_plan_mode.unwrap_or(false)),
+    );
+    let _ = wiring.rlm.plan_mode.set(plan_mode.clone());
     let mut handlers = wiring.handlers.clone();
     if let Some(extra) = config.extra_host_handlers.clone() {
         handlers.merge(extra);
@@ -462,6 +481,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         )
             as crate::kernel::provisioner::UnavailableSkillsCallback)
     };
+    // Last, so the gate wraps every registered handler it names.
+    super::plan_mode::gate_host_requests(&mut handlers, &plan_mode);
     let provisioner = super::runtime_wiring::kernel_provisioner(
         session_id,
         handlers,
@@ -473,6 +494,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         config.on_background_work_settled.clone(),
         on_unavailable_skills,
         on_bootstrap_result,
+        plan_mode.clone(),
     );
     let mut tools = config.tools.clone();
     if !tools.iter().any(|tool| tool.name() == "ipython") {
@@ -576,6 +598,19 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         if existing_messages.is_empty() || !has_service_tier_entry {
             session.append_service_tier_change(Some(service_tier_preference))?;
         }
+        // An explicit start state the branch does not already hold is a
+        // change: record it so a resume restores it.
+        if let Some(explicit) = config.plan_mode {
+            if explicit != restored_plan_mode.unwrap_or(false) {
+                let row = super::plan_mode::plan_mode_change_row(explicit);
+                session.append_custom_message(
+                    &row.custom_type,
+                    row.content,
+                    row.display,
+                    row.details,
+                )?;
+            }
+        }
     }
     // Session entries cross through the shared wire shape (same conversion
     // the compaction rebuild uses).
@@ -629,6 +664,11 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // installed both hooks stay `None` and the loop runs as native.
     let (before_tool_call, after_tool_call) =
         crate::features::tool_call_hooks(crate::features::installed(), &feature_context);
+    // Plan mode refuses the host's own mutating tools ahead of every hook.
+    let before_tool_call = Some(super::plan_mode::gate_tool_calls(
+        plan_mode.clone(),
+        before_tool_call,
+    ));
     crate::features::observe_session_start(
         crate::features::installed(),
         &feature_context,
@@ -697,6 +737,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     )
     .await?;
     session.set_auto_refine(auto_refine_allowed, auto_refine_gates);
+    session.set_plan_mode_switch(plan_mode.clone());
     session.set_agent_dir(config.agent_dir.clone());
     let refinement_gate =
         crate::features::session_refinement_gate(crate::features::installed(), &feature_context);
@@ -838,7 +879,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             session_model: factory_session_model,
             allowed_models: factory_allowed_models,
         });
-    Ok(SessionEngine {
+    let engine = SessionEngine {
         session,
         skills: resources.skills,
         skill_diagnostics: resources.skill_diagnostics,
@@ -856,7 +897,12 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         provisioner,
         feature_context,
         feature_status_sink: std::sync::Mutex::new(None),
-    })
+        plan_mode,
+    };
+    if config.plan_mode == Some(true) && restored_plan_mode != Some(true) {
+        engine.track_plan_mode(true, "flag");
+    }
+    Ok(engine)
 }
 
 impl SessionEngine {
@@ -868,6 +914,71 @@ impl SessionEngine {
             .feature_status_sink
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(sink);
+    }
+
+    /// Whether plan mode is on.
+    #[must_use]
+    pub fn plan_mode_enabled(&self) -> bool {
+        self.plan_mode.is_enabled()
+    }
+
+    /// Switch plan mode: the kernel's write guard follows before the change
+    /// counts (a live kernel that cannot apply it rolls the switch back, so
+    /// the session never claims a protection that is not active), and the
+    /// model hears about it on its next turn (the per-turn row while on, a
+    /// one-shot notice once off). Returns whether the mode changed; the
+    /// caller records the durable change row.
+    ///
+    /// # Errors
+    ///
+    /// Returns the kernel's failure to apply the guard.
+    pub async fn set_plan_mode(&self, enabled: bool) -> Result<bool, String> {
+        if self.plan_mode.replace(enabled) == enabled {
+            return Ok(false);
+        }
+        if let Err(error) = self.provisioner.sync_plan_mode().await {
+            self.plan_mode.set(!enabled);
+            // Best effort: put the kernel back in step with the restored switch.
+            let _ = self.provisioner.sync_plan_mode().await;
+            return Err(format!(
+                "could not {} plan mode in the Python kernel: {error:#}",
+                if enabled { "enable" } else { "disable" }
+            ));
+        }
+        if enabled {
+            // Re-enabled before the "off" notice was delivered: the model
+            // must not hear plan mode is off on a turn where it is on.
+            self.session
+                .withdraw_next_turn_rows(super::plan_mode::PLAN_MODE_EXITED_CUSTOM_TYPE);
+        } else {
+            self.session
+                .queue_next_turn_row(super::plan_mode::plan_mode_exited_row());
+        }
+        Ok(true)
+    }
+
+    /// Adopt the plan mode a host restored from its own durable store (the
+    /// daemon worker's session file): no change row, no notice.
+    ///
+    /// # Errors
+    ///
+    /// Returns the kernel's failure to apply the guard.
+    pub async fn restore_plan_mode(&self, enabled: bool) -> anyhow::Result<()> {
+        if self.plan_mode.replace(enabled) == enabled {
+            return Ok(());
+        }
+        self.provisioner.sync_plan_mode().await
+    }
+
+    /// Report one plan-mode change to adoption telemetry (no-op without a
+    /// telemetry-enabled depth-0 session).
+    pub(crate) fn track_plan_mode(&self, enabled: bool, source: &'static str) {
+        if let Some(telemetry) = &self.feature_context.telemetry {
+            let mut properties = pa_telemetry::Properties::new();
+            properties.set("enabled", enabled.into());
+            properties.set("source", source.into());
+            telemetry.track(super::plan_mode::PLAN_MODE_TOGGLED_EVENT, &properties);
+        }
     }
 
     /// After a model switch, the `model.info` handler and the usage

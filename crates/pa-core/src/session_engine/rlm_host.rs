@@ -210,6 +210,8 @@ pub struct RlmSpawnRequest {
     /// placement a host admits until the cloud backend exists.
     pub target: RlmSpawnTarget,
     pub cell_source_code: Option<String>,
+    /// The parent's plan mode at spawn; the child starts in it.
+    pub plan_mode: bool,
 }
 
 /// Validated `rlm.create_session` request handed to the host.
@@ -410,6 +412,8 @@ pub struct RlmHostBridge {
     /// The spawn anchor [`register_run`] reads the in-flight turn from
     /// (`None` until the engine built the session's agent).
     pub(crate) semantic_spawn: std::sync::OnceLock<SemanticSpawnAnchor>,
+    /// The session's plan mode, read at every spawn (a child inherits it).
+    pub(crate) plan_mode: std::sync::OnceLock<super::plan_mode::PlanModeSwitch>,
 }
 
 impl RlmHostBridge {
@@ -427,6 +431,7 @@ impl RlmHostBridge {
             host,
             usage,
             semantic_spawn: std::sync::OnceLock::new(),
+            plan_mode: std::sync::OnceLock::new(),
         }
     }
 }
@@ -535,6 +540,12 @@ fn register_run(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmHostBridge>)
                 };
                 let mut request = spawn_request_from_payload(prompt, data)?;
                 request.cell_source_code = payload.cell_source_code.clone();
+                // A child spawned during plan mode must not be an edit
+                // escape hatch.
+                request.plan_mode = bridge
+                    .plan_mode
+                    .get()
+                    .is_some_and(super::plan_mode::PlanModeSwitch::is_enabled);
                 // Placement gate (see [`RlmSpawnTarget`]): cloud placement
                 // is refused here, before any `RlmSubagentHost` is
                 // consulted, so no host implementation can fall back to
@@ -605,6 +616,7 @@ fn spawn_request_from_payload(prompt: &str, data: &Value) -> anyhow::Result<RlmS
         spawned_by_request_id: None,
         target: target.unwrap_or_default(),
         cell_source_code: None,
+        plan_mode: false,
     })
 }
 
@@ -1222,6 +1234,35 @@ mod tests {
             error.to_string(),
             "rlm.progress.note message must be at most 512 characters"
         );
+    }
+
+    /// A child spawned while plan mode is on starts in plan mode (it must
+    /// not be an edit escape hatch); the request reads the live switch.
+    #[tokio::test]
+    async fn a_spawn_carries_the_parents_plan_mode() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let host = RecordingHost::new();
+        let spawn_requests = Arc::clone(&host.spawn_requests);
+        let wiring = wired(dir.path(), Some(host));
+        let mode = super::super::plan_mode::PlanModeSwitch::new(true);
+        let _ = wiring.rlm.plan_mode.set(mode.clone());
+        let spawn = || {
+            call(
+                &wiring,
+                "rlm.run",
+                json!({ "type": "rlm.run", "prompt": "look around", "kwargs": {} }),
+            )
+        };
+        spawn().await.unwrap();
+        mode.set(false);
+        spawn().await.unwrap();
+        let inherited: Vec<bool> = spawn_requests
+            .lock()
+            .await
+            .iter()
+            .map(|request| request.plan_mode)
+            .collect();
+        assert_eq!(inherited, vec![true, false]);
     }
 
     #[tokio::test]

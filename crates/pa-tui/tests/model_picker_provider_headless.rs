@@ -241,6 +241,7 @@ fn options(socket: PathBuf, catalog: Vec<Model>) -> InteractiveOptions {
     configured_providers.insert("prime-inference".to_string());
     configured_providers.insert("openrouter".to_string());
     InteractiveOptions {
+        initial_plan_mode: false,
         models: None,
         socket_path: socket,
         cwd: PathBuf::from("/tmp"),

@@ -257,6 +257,8 @@ impl WindowedSessionStore {
         // gate: set when the walk meets the marked-shown custom row (any
         // position on the active branch hydrates it, exactly like `goal`).
         let mut anthropic_warning_shown = false;
+        // The newest plan-mode change on the branch (hydrated like `goal`).
+        let mut plan_mode = None;
         let mut window_done = false;
         let mut seen = HashSet::new();
         let mut thinking = None;
@@ -412,7 +414,12 @@ impl WindowedSessionStore {
                             == Some(crate::goals::GOAL_STATE_CUSTOM_TYPE))
                         || (!anthropic_warning_shown
                             && meta.custom_type.as_deref()
-                                == Some(crate::session::ANTHROPIC_WARNING_SHOWN_CUSTOM_TYPE))))
+                                == Some(crate::session::ANTHROPIC_WARNING_SHOWN_CUSTOM_TYPE))
+                        || (plan_mode.is_none()
+                            && meta.custom_type.as_deref()
+                                == Some(
+                                    crate::session_engine::plan_mode::PLAN_MODE_CHANGE_CUSTOM_TYPE,
+                                ))))
             {
                 match serde_json::from_slice::<FileEntry>(&line) {
                     Ok(entry) => Some(entry),
@@ -427,6 +434,11 @@ impl WindowedSessionStore {
                 }
                 if !anthropic_warning_shown {
                     anthropic_warning_shown = entry.as_ref().is_some_and(valid_warning_shown);
+                }
+                if plan_mode.is_none() {
+                    plan_mode = entry
+                        .as_ref()
+                        .and_then(crate::session_engine::plan_mode::plan_mode_of_entry);
                 }
                 match entry.as_ref() {
                     Some(FileEntry::ThinkingLevelChange { payload, .. }) if thinking.is_none() => {
@@ -552,6 +564,7 @@ impl WindowedSessionStore {
             first_user: first_user_message.clone(),
             goal,
             anthropic_warning_shown,
+            plan_mode,
             non_bootstrap,
             retained_whole_file: !window_done,
         };
@@ -730,6 +743,11 @@ impl WindowedSessionStore {
     #[must_use]
     pub fn anthropic_warning_shown(&self) -> bool {
         self.snapshot.anthropic_warning_shown
+    }
+    /// The newest plan-mode change on the active branch.
+    #[must_use]
+    pub fn plan_mode(&self) -> Option<bool> {
+        self.snapshot.plan_mode
     }
     #[must_use]
     pub fn has_thinking_level(&self) -> bool {
@@ -946,6 +964,9 @@ pub(super) fn update_snapshot(snapshot: &mut Snapshot, entry: &FileEntry) {
     // current without a re-walk.
     if valid_warning_shown(entry) {
         snapshot.anthropic_warning_shown = true;
+    }
+    if let Some(enabled) = crate::session_engine::plan_mode::plan_mode_of_entry(entry) {
+        snapshot.plan_mode = Some(enabled);
     }
     match entry {
         FileEntry::ThinkingLevelChange { payload, .. } => {

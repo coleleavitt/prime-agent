@@ -13,6 +13,7 @@ mod compaction;
 mod digest_host;
 mod goal;
 mod model_resolution;
+mod plan_mode;
 mod quota_park;
 mod rlm_children;
 mod saved_context;

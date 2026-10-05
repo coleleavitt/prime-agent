@@ -517,6 +517,7 @@ fn command_options(
     update_commands: Option<UpdateCommandsHandle>,
 ) -> pa_tui::interactive::InteractiveOptions {
     pa_tui::interactive::InteractiveOptions {
+        initial_plan_mode: false,
         models: None,
         socket_path: socket.to_path_buf(),
         cwd: dir.to_path_buf(),

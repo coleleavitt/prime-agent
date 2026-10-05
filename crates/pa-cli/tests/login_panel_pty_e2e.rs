@@ -172,6 +172,7 @@ impl ProviderAuthCommands for ScriptedProviderAuth {
 
 fn child_options(socket: PathBuf) -> InteractiveOptions {
     InteractiveOptions {
+        initial_plan_mode: false,
         models: None,
         socket_path: socket,
         cwd: PathBuf::from("/tmp"),

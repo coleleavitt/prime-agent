@@ -511,6 +511,17 @@ async fn run_interactive_surface(
             });
         }
     }
+    // `--plan` goes through the session command, so the change is durable
+    // and the kernel guard arms before the first prompt's turn.
+    if options.initial_plan_mode {
+        session
+            .submit_prompt(
+                "/plan on",
+                crate::session_ui::SubmitBehavior::Steer,
+                &mut view,
+            )
+            .await?;
+    }
     if let Some(initial) = &options.initial_message {
         session
             .submit_prompt(initial, crate::session_ui::SubmitBehavior::Steer, &mut view)

@@ -171,6 +171,19 @@ impl SessionManager {
         branch
     }
 
+    /// The newest plan-mode change on the active branch (`None` when the
+    /// branch never changed it); a windowed store answers from the walk that
+    /// opened it, so a change older than the window still counts.
+    #[must_use]
+    pub fn plan_mode(&self) -> Option<bool> {
+        if let Some(window) = &self.window {
+            return window.plan_mode();
+        }
+        crate::session_engine::plan_mode::plan_mode_in_entries(
+            self.active_branch_entries().into_iter(),
+        )
+    }
+
     #[must_use]
     pub fn active_goal_state(&self) -> Option<crate::goals::GoalState> {
         if let Some(window) = &self.window {

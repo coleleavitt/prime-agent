@@ -35,6 +35,7 @@ impl AgentSession {
             prompt_messages.push(digest_row);
         }
         prompt_messages.extend(self.take_next_turn_rows().await);
+        prompt_messages.extend(self.plan_mode_context_row());
         let custom_row = session_message_to_loop(&SessionAgentMessage::Custom(message.clone()))
             .ok_or_else(|| anyhow::anyhow!("injected custom message conversion failed"))?;
         self.apply_image_model_routing(&[], &[]).await?;
@@ -208,6 +209,7 @@ impl AgentSession {
                 prompt_messages.push(digest_row);
             }
             prompt_messages.extend(self.take_next_turn_rows().await);
+            prompt_messages.extend(self.plan_mode_context_row());
             prompt_messages.push(user_prompt_message(&normalized, &images));
             // Each batched action contributes its user row after the
             // primary, through the same admission normalization (TS
@@ -266,6 +268,33 @@ impl AgentSession {
             }
         }
         Ok(PromptOutcome::Prompt)
+    }
+
+    /// Install the session's plan-mode switch (the engine wiring).
+    pub fn set_plan_mode_switch(&mut self, mode: super::plan_mode::PlanModeSwitch) {
+        self.plan_mode = Some(mode);
+    }
+
+    /// The plan-mode context row an admitted turn carries while plan mode is
+    /// on (a conversation row, never a system-prompt change).
+    fn plan_mode_context_row(&self) -> Option<pa_agent::types::AgentMessage> {
+        self.plan_mode
+            .as_ref()
+            .filter(|mode| mode.is_enabled())
+            .and_then(|_| {
+                session_message_to_loop(&SessionAgentMessage::Custom(
+                    super::plan_mode::plan_mode_context_row(),
+                ))
+            })
+    }
+
+    /// Drop queued rows of one custom type (a re-enabled plan mode
+    /// withdraws its pending "plan mode off" notice).
+    pub fn withdraw_next_turn_rows(&self, custom_type: &str) {
+        self.pending_next_turn_rows
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|row| row.custom_type != custom_type);
     }
 
     /// Queue one custom row for the next admitted turn: the row rides the

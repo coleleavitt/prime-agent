@@ -1,5 +1,5 @@
 //! Session slash-command execution: the daemon-side behavior behind
-//! `/compact`, `/refine`, `/goal`, `/autonomous`, and `/context-limit`. The host runtime owns
+//! `/compact`, `/refine`, `/goal`, `/autonomous`, `/context-limit`, and `/plan`. The host runtime owns
 //! persistence of what this returns; errors carry the exact TS message and
 //! the host renders the `Command failed: ...` result row.
 
@@ -240,6 +240,7 @@ pub async fn execute_session_command(
         "goal" => execute_goal(engine, command, &mut execution).await,
         "autonomous" => execute_autonomous(params, command, &mut execution),
         "context-limit" => execute_context_limit(engine, params, command, &mut execution).await,
+        "plan" => execute_plan(engine, command, &mut execution).await,
         other => execute_feature_command(engine, command, &mut execution)
             .await
             .unwrap_or_else(|| Err(format!("Unknown session command: {other}"))),
@@ -541,6 +542,52 @@ fn execute_autonomous(
         timestamp: now_millis(),
         rest: serde_json::Map::default(),
     });
+    Ok(())
+}
+
+/// `/plan [on|off|status]`: switch plan mode (bare `/plan` flips it). A
+/// change records the durable `plan_mode_change` row (what a resume
+/// restores); an unchanged mode or `status` answers with a result row.
+async fn execute_plan(
+    engine: &SessionEngine,
+    command: &SessionSlashCommand,
+    execution: &mut SessionCommandExecution,
+) -> Result<(), String> {
+    let target = match super::plan_mode::parse_plan_command(&command.args)? {
+        super::plan_mode::PlanCommand::Toggle => !engine.plan_mode_enabled(),
+        super::plan_mode::PlanCommand::On => true,
+        super::plan_mode::PlanCommand::Off => false,
+        super::plan_mode::PlanCommand::Status => {
+            let state = if engine.plan_mode_enabled() {
+                "on"
+            } else {
+                "off"
+            };
+            execution.push_message(slash_command_result(
+                command,
+                format!("Plan mode is {state}."),
+                true,
+                "info",
+                None,
+                true,
+            ));
+            return Ok(());
+        }
+    };
+    if engine.set_plan_mode(target).await? {
+        engine.track_plan_mode(target, "command");
+        execution.push_message(super::plan_mode::plan_mode_change_row(target));
+    } else {
+        let state = if target { "on" } else { "off" };
+        execution.push_message(slash_command_result(
+            command,
+            format!("Plan mode is already {state}."),
+            true,
+            "info",
+            None,
+            true,
+        ));
+    }
     Ok(())
 }
 

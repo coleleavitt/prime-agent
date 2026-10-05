@@ -439,6 +439,10 @@ const TOP_LEVEL_OPTION_GROUPS: &[OptionGroup] = &[
             ("--session-dir <dir>", "Use a custom session directory"),
             ("--no-session", "Do not save the session"),
             (
+                "--plan",
+                "Start in plan mode: investigate and plan, file edits blocked",
+            ),
+            (
                 "--goal <objective>",
                 "Seed a persistent goal for a new root session",
             ),

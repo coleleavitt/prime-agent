@@ -324,6 +324,7 @@ impl SessionUi {
     /// the original run.
     pub(super) fn create_options(&self) -> InteractiveOptions {
         InteractiveOptions {
+            initial_plan_mode: false,
             socket_path: self.client.socket_path().to_path_buf(),
             cwd: self.cwd.clone(),
             session_dir: self.session_dir.clone(),

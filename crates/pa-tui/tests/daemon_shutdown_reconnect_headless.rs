@@ -324,6 +324,7 @@ fn enter() -> KeyEvent {
 
 fn options_with_session(socket: PathBuf, session: SessionSelection) -> InteractiveOptions {
     InteractiveOptions {
+        initial_plan_mode: false,
         models: None,
         socket_path: socket,
         cwd: PathBuf::from("/tmp"),

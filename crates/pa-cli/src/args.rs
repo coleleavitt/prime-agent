@@ -180,6 +180,8 @@ pub struct Args {
     #[allow(clippy::option_option)] // the CLI flag's tri-state is genuinely a double Option
     pub list_models: Option<Option<String>>,
     pub offline: bool,
+    /// `--plan`: start the session in plan mode (edits blocked).
+    pub plan: bool,
     pub verbose: bool,
     pub messages: Vec<String>,
     #[allow(clippy::struct_field_names)]
@@ -473,6 +475,7 @@ pub fn parse_args(args: &[String]) -> Args {
             }
             "--verbose" => result.verbose = true,
             "--offline" => result.offline = true,
+            "--plan" => result.plan = true,
             _ if arg.starts_with("--resume=") => {
                 let value = &arg["--resume=".len()..];
                 if value.is_empty() {
@@ -567,6 +570,27 @@ mod tests {
         assert_eq!(last_error(&parsed), "Unknown option: --bogus-flag");
         let parsed = parse(&["--bogus-flag", "value"]);
         assert_eq!(last_error(&parsed), "Unknown option: --bogus-flag");
+    }
+
+    /// `--plan` is a boolean flag (the next token stays a message) and
+    /// reaches the session config.
+    #[test]
+    fn plan_flag_starts_in_plan_mode() {
+        let parsed = parse(&["--plan", "audit the parser"]);
+        assert_eq!(
+            (parsed.plan, parsed.messages.clone(), last_error(&parsed)),
+            (true, vec!["audit the parser".to_string()], "")
+        );
+        let config = crate::mode::runtime_config_from_args(
+            &parsed,
+            std::path::PathBuf::from("/work"),
+            std::path::PathBuf::from("/agent"),
+            None,
+            crate::mode::AppMode::Print,
+            /*telemetry_disabled*/ true,
+        );
+        assert!(config.plan_mode);
+        assert!(!parse(&["hello"]).plan);
     }
 
     #[test]

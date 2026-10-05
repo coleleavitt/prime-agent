@@ -217,6 +217,7 @@ pub fn kernel_provisioner(
     on_background_work_settled: Option<crate::kernel::shared::BackgroundWorkSettledCallback>,
     on_unavailable_skills: Option<crate::kernel::provisioner::UnavailableSkillsCallback>,
     on_bootstrap_result: Option<crate::kernel::provisioner::KernelBootstrapResultHandler>,
+    plan_mode: crate::kernel::plan_guard::PlanModeSwitch,
 ) -> Arc<KernelProvisioner> {
     let mut env = HashMap::with_capacity(1);
     env.insert(
@@ -241,7 +242,7 @@ pub fn kernel_provisioner(
             on_background_work_settled,
             on_unavailable_skills,
             on_bootstrap_result,
-            plan_mode: None,
+            plan_mode: Some(plan_mode),
         },
     ))
 }

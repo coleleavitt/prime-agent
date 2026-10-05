@@ -24,6 +24,7 @@ pub mod host_requests;
 pub mod image_model_routing;
 pub mod ipython_state;
 pub mod messages;
+pub mod plan_mode;
 pub mod provider_adapter;
 pub mod provider_failover;
 pub mod provider_park;
@@ -152,6 +153,9 @@ pub struct AgentSession {
     /// The kernel-state probe behind the post-compaction
     /// `ipython_state` notice; `None` without a kernel.
     kernel_state: Option<std::sync::Arc<dyn ipython_state::CompactionKernelProbe>>,
+    /// The session's plan mode: while on, every admitted turn carries the
+    /// plan-mode context row. `None` until the engine wiring installs it.
+    plan_mode: Option<plan_mode::PlanModeSwitch>,
     /// TS `_pendingNextTurnMessages`: custom rows the NEXT admitted
     /// turn carries ahead of its own prompt row.
     pending_next_turn_rows: std::sync::Arc<std::sync::Mutex<Vec<pa_types::session::CustomMessage>>>,
@@ -292,6 +296,7 @@ impl AgentSession {
             auto_refine: refine::AutoRefineGates::default(),
             compact_auto_refine: std::sync::Mutex::default(),
             kernel_state: None,
+            plan_mode: None,
             pending_next_turn_rows: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             skills: Vec::new(),
             skill_telemetry: None,

@@ -353,6 +353,9 @@ pub fn convert_to_llm(messages: &[AgentMessage]) -> Vec<AgentMessage> {
                         | REFINEMENT_OUTCOME_CUSTOM_TYPE
                         | PROVIDER_RETRY_OUTCOME_CUSTOM_TYPE
                         | CONTEXT_CAP_CLAMP_NOTICE_CUSTOM_TYPE
+                        // The user-facing record of a plan-mode change; the
+                        // model learns the mode from the per-turn rows.
+                        | super::plan_mode::PLAN_MODE_CHANGE_CUSTOM_TYPE
                 ) {
                     continue;
                 }
