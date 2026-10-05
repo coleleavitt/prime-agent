@@ -320,6 +320,7 @@ async fn run_stream(
         body: Some(body_json),
         signal: options.base.signal.clone(),
         timeout_ms: options.base.timeout_ms,
+        stall_timeout_ms: options.base.stream_stall_timeout_ms,
         connection: crate::utils_inner::stream_failure::ConnectionErrorProfile::RawFetch,
         transport: crate::utils_inner::http::Transport::Http1,
     })

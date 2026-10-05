@@ -8,8 +8,8 @@ use std::sync::OnceLock;
 use tokio_util::sync::CancellationToken;
 
 use crate::utils::stream_failure::{
-    ConnectionErrorKind, ConnectionErrorProfile, ProviderConnectionError, ProviderError,
-    ProviderHttpError,
+    stream_failure_message, ConnectionErrorKind, ConnectionErrorProfile, ProviderConnectionError,
+    ProviderError, ProviderHttpError, StreamFailureError, StreamFailureInfo, StreamFailureKind,
 };
 
 static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
@@ -47,6 +47,74 @@ pub enum Transport {
     H2Alpn,
 }
 
+/// Default silence budget between two body chunks (upstream #1362): a stream that has started and
+/// then sends nothing for five minutes is broken, not slow. Armed per read, so a long response
+/// that keeps arriving is never cut off.
+pub const DEFAULT_STREAM_STALL_TIMEOUT_MS: u64 = 300_000;
+
+/// Environment override for the stall budget in milliseconds (`0` disables), used when the caller
+/// sets no [`crate::types::StreamOptions::stream_stall_timeout_ms`].
+pub const STREAM_STALL_TIMEOUT_ENV: &str = "PRIME_AGENT_STREAM_STALL_TIMEOUT_MS";
+
+/// Resolve the per-read stall budget: the explicit option, else the environment value, else the
+/// default; `0` disables the guard, and an unparsable environment value falls back to the default.
+pub(crate) fn resolve_stall_timeout(
+    option_ms: Option<u64>,
+    env_value: Option<&str>,
+) -> Option<std::time::Duration> {
+    let ms = option_ms
+        .or_else(|| env_value.and_then(|value| value.trim().parse::<u64>().ok()))
+        .unwrap_or(DEFAULT_STREAM_STALL_TIMEOUT_MS);
+    (ms > 0).then(|| std::time::Duration::from_millis(ms))
+}
+
+/// [`resolve_stall_timeout`] against the process environment.
+pub(crate) fn stall_timeout_from_env(option_ms: Option<u64>) -> Option<std::time::Duration> {
+    let env_value = std::env::var(STREAM_STALL_TIMEOUT_ENV).ok();
+    resolve_stall_timeout(option_ms, env_value.as_deref())
+}
+
+/// The failure a silent stream settles with: a transient server-side failure (the retry ladder
+/// re-issues the request) that names the budget, so a stall is legible in the transcript.
+pub(crate) fn stream_stall_failure(budget: std::time::Duration) -> ProviderError {
+    let info = StreamFailureInfo {
+        kind: StreamFailureKind::ServerError,
+        provider_error_type: Some("stream_stall".to_string()),
+        ..StreamFailureInfo::unknown()
+    };
+    let detail = format!(
+        "the stream sent no data for {}ms and was abandoned",
+        budget.as_millis()
+    );
+    ProviderError::StreamFailure(StreamFailureError {
+        message: stream_failure_message(&info, Some(&detail)),
+        info,
+    })
+}
+
+/// Await one body read, racing the cancel signal and the per-read stall budget.
+pub(crate) async fn read_within_stall_budget<T>(
+    read: impl std::future::Future<Output = T>,
+    signal: Option<&CancellationToken>,
+    stall: Option<std::time::Duration>,
+) -> Result<T, ProviderError> {
+    let bounded = async {
+        match stall {
+            Some(budget) => tokio::time::timeout(budget, read)
+                .await
+                .map_err(|_| stream_stall_failure(budget)),
+            None => Ok(read.await),
+        }
+    };
+    match signal {
+        Some(signal) => tokio::select! {
+            () = signal.cancelled() => Err(ProviderError::Aborted),
+            result = bounded => result,
+        },
+        None => bounded.await,
+    }
+}
+
 /// An opened HTTP response: status, headers, and the byte stream.
 pub struct HttpResponse {
     pub status: u16,
@@ -59,6 +127,8 @@ pub struct HttpResponse {
     /// The incomplete UTF-8 sequence that ended the previous chunk, carried into the next one by
     /// [`HttpResponse::next_text`].
     utf8_carry: Vec<u8>,
+    /// The per-read silence budget (`None` disables it).
+    stall: Option<std::time::Duration>,
 }
 
 /// Decode `bytes` after the carried partial sequence: complete characters are returned, an
@@ -101,17 +171,8 @@ impl HttpResponse {
         {
             return Err(ProviderError::Aborted);
         }
-        let signal = self.signal.clone();
-        let chunk = match signal {
-            Some(signal) => {
-                let next = self.body.chunk();
-                tokio::select! {
-                    () = signal.cancelled() => return Err(ProviderError::Aborted),
-                    result = next => result,
-                }
-            }
-            None => self.body.chunk().await,
-        };
+        let chunk =
+            read_within_stall_budget(self.body.chunk(), self.signal.as_ref(), self.stall).await?;
         match chunk {
             Ok(Some(bytes)) => Ok(Some(decode_utf8_carrying(&mut self.utf8_carry, &bytes))),
             // A sequence still incomplete at end of stream is flushed lossily, not dropped.
@@ -133,17 +194,8 @@ impl HttpResponse {
         {
             return Err(ProviderError::Aborted);
         }
-        let signal = self.signal.clone();
-        let chunk = match signal {
-            Some(signal) => {
-                let next = self.body.chunk();
-                tokio::select! {
-                    () = signal.cancelled() => return Err(ProviderError::Aborted),
-                    result = next => result,
-                }
-            }
-            None => self.body.chunk().await,
-        };
+        let chunk =
+            read_within_stall_budget(self.body.chunk(), self.signal.as_ref(), self.stall).await?;
         match chunk {
             Ok(Some(bytes)) => Ok(Some(bytes.to_vec())),
             Ok(None) => Ok(None),
@@ -192,6 +244,9 @@ pub struct RequestOptions {
     pub body: Option<String>,
     pub signal: Option<CancellationToken>,
     pub timeout_ms: Option<u64>,
+    /// Per-read body stall budget in ms (`Some(0)` disables); `None` resolves through
+    /// [`STREAM_STALL_TIMEOUT_ENV`] and then [`DEFAULT_STREAM_STALL_TIMEOUT_MS`].
+    pub stall_timeout_ms: Option<u64>,
     /// The provider family's connection-error shape (fixed texts, names, and error codes the TS
     /// binary surfaces per SDK); the openai/anthropic `Sdk` default covers the Stainless-generated
     /// SDK family.
@@ -210,6 +265,7 @@ impl RequestOptions {
             body: None,
             signal: None,
             timeout_ms: None,
+            stall_timeout_ms: None,
             connection: ConnectionErrorProfile::Sdk,
             transport: Transport::Http1,
         }
@@ -307,6 +363,7 @@ pub async fn send(request: RequestOptions) -> Result<HttpResponse, ProviderError
         signal,
         connection: request.connection,
         utf8_carry: Vec::new(),
+        stall: stall_timeout_from_env(request.stall_timeout_ms),
     })
 }
 
@@ -382,5 +439,68 @@ mod tests {
     async fn invalid_and_truncated_bytes_still_decode_lossily() {
         let frames = vec![b"a\xffb".to_vec(), b"c\xe6\x97".to_vec()];
         assert_eq!(read_text_chunks(frames).await, "a\u{FFFD}bc\u{FFFD}");
+    }
+}
+
+#[cfg(test)]
+mod stall_tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    /// Upstream #1362's resolution: the explicit option wins, then the environment, then the
+    /// 300 s default; `0` (or an unparsable environment value's absence of meaning) disables or
+    /// falls back respectively.
+    #[test]
+    fn the_stall_budget_resolves_option_then_env_then_default() {
+        let default = Some(Duration::from_millis(DEFAULT_STREAM_STALL_TIMEOUT_MS));
+        assert_eq!(
+            [
+                resolve_stall_timeout(Some(1_000), Some("5")),
+                resolve_stall_timeout(Some(0), Some("5")),
+                resolve_stall_timeout(None, Some("2500")),
+                resolve_stall_timeout(None, Some("0")),
+                resolve_stall_timeout(None, Some(" nope ")),
+                resolve_stall_timeout(None, None),
+            ],
+            [
+                Some(Duration::from_millis(1_000)),
+                None,
+                Some(Duration::from_millis(2_500)),
+                None,
+                default,
+                default,
+            ]
+        );
+    }
+
+    /// The budget is per read, not per stream: a stream that keeps arriving within the budget is
+    /// never cut off however long it runs; only silence longer than the budget fails.
+    #[tokio::test(start_paused = true)]
+    async fn the_budget_bounds_each_read_not_the_whole_stream() {
+        let budget = Some(Duration::from_millis(200));
+        for _ in 0..5 {
+            let read = tokio::time::sleep(Duration::from_millis(150));
+            assert!(read_within_stall_budget(read, None, budget).await.is_ok());
+        }
+        let silent = std::future::pending::<()>();
+        assert_eq!(
+            read_within_stall_budget(silent, None, budget)
+                .await
+                .map_err(|error| error.to_string()),
+            Err(stream_stall_failure(Duration::from_millis(200)).to_string())
+        );
+    }
+
+    /// The cancel signal still wins over a pending read.
+    #[tokio::test(start_paused = true)]
+    async fn the_cancel_signal_still_aborts_a_pending_read() {
+        let signal = CancellationToken::new();
+        signal.cancel();
+        let read = std::future::pending::<()>();
+        assert!(matches!(
+            read_within_stall_budget(read, Some(&signal), Some(Duration::from_secs(1))).await,
+            Err(ProviderError::Aborted)
+        ));
     }
 }

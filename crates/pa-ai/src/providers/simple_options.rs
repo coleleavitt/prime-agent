@@ -50,6 +50,7 @@ pub fn build_base_options(
         on_response: base.on_response,
         headers: base.headers,
         timeout_ms: base.timeout_ms,
+        stream_stall_timeout_ms: base.stream_stall_timeout_ms,
         metadata: base.metadata,
     }
 }

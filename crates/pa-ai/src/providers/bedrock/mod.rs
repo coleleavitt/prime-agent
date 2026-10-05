@@ -574,6 +574,7 @@ async fn run_stream(
                 body: Some(payload.to_string()),
                 signal: options.base.signal.clone(),
                 timeout_ms: options.base.timeout_ms,
+                stall_timeout_ms: options.base.stream_stall_timeout_ms,
                 connection: ConnectionErrorProfile::AwsHttp1 {
                     host: host.clone(),
                     port: endpoint_port,
@@ -590,6 +591,7 @@ async fn run_stream(
                 body: Some(payload.to_string()),
                 signal: options.base.signal.clone(),
                 timeout_ms: options.base.timeout_ms,
+                stall_timeout_ms: options.base.stream_stall_timeout_ms,
                 connection: ConnectionErrorProfile::AwsHttp2 {
                     host: host.clone(),
                     port: endpoint_port,
@@ -606,6 +608,7 @@ async fn run_stream(
                     body: payload.to_string().into_bytes(),
                     signal: options.base.signal.clone(),
                     timeout_ms: options.base.timeout_ms,
+                    stall_timeout_ms: options.base.stream_stall_timeout_ms,
                     connection: ConnectionErrorProfile::AwsHttp2 {
                         host: host.clone(),
                         port: endpoint_port,

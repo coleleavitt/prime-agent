@@ -212,6 +212,8 @@ pub fn stream_once(
             },
             metadata: None,
             timeout_ms: None,
+            // The per-read body stall budget resolves in pa-ai (env override, then default).
+            stream_stall_timeout_ms: None,
         },
         reasoning: Some(model_thinking_level(options.reasoning)),
         thinking_budgets: None,

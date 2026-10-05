@@ -20,3 +20,5 @@ pub mod transform_messages;
 
 #[cfg(test)]
 mod json_content_type_tests;
+#[cfg(test)]
+mod stream_stall_tests;
