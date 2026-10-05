@@ -106,32 +106,97 @@ impl OAuthLoginUi for PanelSubscriptionLoginUi {
 
 /// Run the Anthropic flow, store the credential, and report the status. A
 /// cancelled surface stays silent; a failed flow reports the error row.
+// The native build's Anthropic login; `anthropic-auth` routes `/login
+// anthropic` to the shared store instead (`run_anthropic_shared_login`).
+#[cfg_attr(feature = "anthropic-auth", allow(dead_code))]
 pub(crate) async fn run_anthropic_login(
     agent_dir: &Path,
     provider_name: &str,
     http: &dyn ProviderHttp,
     ui: &dyn OAuthLoginUi,
 ) -> ProviderAuthOutcome {
+    match anthropic_credentials(provider_name, http, ui).await {
+        Ok(credentials) => store_anthropic_login(agent_dir, provider_name, credentials),
+        Err(outcome) => outcome,
+    }
+}
+
+/// The Anthropic flow up to the credential write: the credentials, or the
+/// outcome to report instead (cancelled: silent; failed: the error row).
+async fn anthropic_credentials(
+    provider_name: &str,
+    http: &dyn ProviderHttp,
+    ui: &dyn OAuthLoginUi,
+) -> Result<AnthropicCredentials, ProviderAuthOutcome> {
     let credentials = match login_anthropic(http, ui).await {
         Ok(credentials) => credentials,
         Err(message) if message == ANTHROPIC_LOGIN_CANCELLED => {
-            return ProviderAuthOutcome::Cancelled;
+            return Err(ProviderAuthOutcome::Cancelled);
         }
         Err(message) => {
-            return ProviderAuthOutcome::Error(format!(
+            return Err(ProviderAuthOutcome::Error(format!(
                 "Failed to login to {provider_name}: {message}"
-            ));
+            )));
         }
     };
     // The pane exited while the login ran: no credential write lands.
     if ui.is_cancelled() {
-        return ProviderAuthOutcome::Cancelled;
+        return Err(ProviderAuthOutcome::Cancelled);
     }
-    store_anthropic_login(agent_dir, provider_name, credentials)
+    Ok(credentials)
+}
+
+/// The Anthropic flow into the shared account store (`anthropic-auth`):
+/// the same browser flow, then the store takes custody of the login (the
+/// opencode and pi plugins see it too) instead of auth.json.
+#[cfg(feature = "anthropic-auth")]
+pub(crate) async fn run_anthropic_shared_login(
+    source: &pa_anthropic_auth::SharedStoreSource,
+    provider_name: &str,
+    http: &dyn ProviderHttp,
+    ui: &dyn OAuthLoginUi,
+) -> ProviderAuthOutcome {
+    match anthropic_credentials(provider_name, http, ui).await {
+        Ok(credentials) => store_shared_anthropic_login(source, provider_name, credentials).await,
+        Err(outcome) => outcome,
+    }
+}
+
+/// Put an Anthropic login into the shared store and report where it went
+/// (and, when it replaced Claude Code's login of the same account, that).
+#[cfg(feature = "anthropic-auth")]
+async fn store_shared_anthropic_login(
+    source: &pa_anthropic_auth::SharedStoreSource,
+    provider_name: &str,
+    credentials: AnthropicCredentials,
+) -> ProviderAuthOutcome {
+    let login = pa_anthropic_auth::NewLogin {
+        access: credentials.access,
+        refresh: credentials.refresh,
+        expires_ms: credentials.expires,
+    };
+    match source.store_login(login).await {
+        Ok(stored) => {
+            let saved = format!(
+                "Logged in to {provider_name}. Credentials saved to {}",
+                stored.store_path.display()
+            );
+            ProviderAuthOutcome::Status(match stored.claude_code_notice() {
+                Some(notice) => format!("{saved}\n{notice}"),
+                None => saved,
+            })
+        }
+        Err(message) => {
+            ProviderAuthOutcome::Error(format!("Failed to login to {provider_name}: {message}"))
+        }
+    }
 }
 
 /// TS `completeProviderAuthentication` for Anthropic: store the
 /// credential under the provider id and report the TS status.
+// The native build's Anthropic login; `anthropic-auth` routes `/login
+// anthropic` to the shared store instead (`run_anthropic_shared_login`).
+#[cfg_attr(feature = "anthropic-auth", allow(dead_code))]
 fn store_anthropic_login(
     agent_dir: &Path,
     provider_name: &str,
@@ -525,6 +590,81 @@ mod tests {
             auth.get_api_key("anthropic"),
             Some("anthropic-access".to_string())
         );
+    }
+
+    /// `anthropic-auth`: the login lands in the shared account store as its
+    /// current account (identified at the profile endpoint), and the store
+    /// then serves it; auth.json is not written.
+    #[cfg(feature = "anthropic-auth")]
+    #[tokio::test]
+    async fn the_shared_anthropic_login_lands_in_the_shared_store() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let agent = agent_dir(&dir);
+        let store_path = dir.path().join(".anthropic-accounts").join("accounts.json");
+        let source = pa_anthropic_auth::SharedStoreSource::new(
+            pa_anthropic_auth::SharedStoreConfig::isolated(
+                store_path.clone(),
+                "http://127.0.0.1:9/v1/oauth/token",
+                &profile_endpoint(),
+            ),
+        );
+        let credentials = AnthropicCredentials {
+            access: "sk-ant-oat01-shared-login-access".to_string(),
+            refresh: "sk-ant-ort01-shared-login-refresh".to_string(),
+            expires: 4_000_000_000_000,
+        };
+
+        let outcome =
+            store_shared_anthropic_login(&source, "Anthropic (Claude Pro/Max)", credentials).await;
+
+        assert_eq!(
+            outcome,
+            ProviderAuthOutcome::Status(format!(
+                "Logged in to Anthropic (Claude Pro/Max). Credentials saved to {}",
+                store_path.display()
+            ))
+        );
+        let store: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&store_path).expect("the store"))
+                .expect("the store parses");
+        assert_eq!(store["current"], "person@example.com");
+        assert!(!agent.join("auth.json").exists());
+        assert_eq!(
+            pa_core::auth::ProviderCredentialSource::credential(&source)
+                .map(|credential| credential.api_key),
+            Ok("sk-ant-oat01-shared-login-access".to_string())
+        );
+    }
+
+    /// A loopback profile endpoint naming the signed-in account.
+    #[cfg(feature = "anthropic-auth")]
+    fn profile_endpoint() -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind");
+        let url = format!(
+            "http://{}/api/oauth/profile",
+            listener.local_addr().expect("address")
+        );
+        std::thread::spawn(move || {
+            let body = r#"{"account":{"uuid":"acct-0001","email":"person@example.com"},"organization":{"uuid":"org-0001","name":"Org"}}"#;
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut request = Vec::new();
+                let mut chunk = [0u8; 1024];
+                while let Ok(read) = stream.read(&mut chunk) {
+                    request.extend_from_slice(&chunk[..read]);
+                    if read == 0 || request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        url
     }
 
     /// A cancelled pane never receives the credential — the abort-cleanup regression.

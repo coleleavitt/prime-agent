@@ -1,0 +1,89 @@
+//! Anthropic subscription auth through the shared account store.
+//!
+//! The fork's opencode and pi plugins keep Anthropic logins in one
+//! machine-wide store (`~/.anthropic-accounts/accounts.json`, through
+//! anthropic-napi); this crate makes prime-agent the third consumer of the
+//! same store, through the same Rust SDK (`vendor/anthropic`). One login
+//! serves every tool, and one refresh protocol rotates it: two custodians
+//! of the same Anthropic login would each spend the single-use refresh
+//! token and revoke the other's.
+//!
+//! [`install`] puts the store in charge of the `anthropic` provider id
+//! through pa-core's generic credential source seam; with no login in the
+//! store the native `auth.json` path is untouched. [`AnthropicAuthFeature`]
+//! reports adoption once per process.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
+
+use pa_core::features::{SessionFeature, SessionFeatureContext};
+use pa_telemetry::Properties;
+
+mod login;
+mod source;
+
+pub use login::{NewLogin, StoredLogin};
+pub use source::{SharedStoreConfig, SharedStoreSource, SourceUsage, STORE_LABEL};
+
+/// The provider id the store serves.
+pub const PROVIDER_ID: &str = "anthropic";
+
+/// The adoption event (`pa-telemetry`'s catalogue, v4).
+pub const TELEMETRY_EVENT: &str = "anthropic_shared_auth";
+
+/// The process's store source, configured from the environment on first
+/// use (no I/O).
+#[must_use]
+pub fn shared_source() -> Arc<SharedStoreSource> {
+    static SOURCE: OnceLock<Arc<SharedStoreSource>> = OnceLock::new();
+    SOURCE
+        .get_or_init(|| Arc::new(SharedStoreSource::new(SharedStoreConfig::from_env())))
+        .clone()
+}
+
+/// Install the process's store source for [`PROVIDER_ID`]. Called by the
+/// composition root before any session or worker starts; idempotent; no
+/// I/O.
+pub fn install() {
+    pa_core::auth::install_credential_source(PROVIDER_ID, shared_source());
+}
+
+/// The session feature that reports the store's adoption: once per
+/// process, at the end of the first agent run after the store answered a
+/// request. Never an account id, email, label or token.
+pub struct AnthropicAuthFeature {
+    source: Arc<SharedStoreSource>,
+    reported: AtomicBool,
+}
+
+impl AnthropicAuthFeature {
+    /// The feature over `source` (the installed [`shared_source`]).
+    #[must_use]
+    pub fn new(source: Arc<SharedStoreSource>) -> Self {
+        Self {
+            source,
+            reported: AtomicBool::new(false),
+        }
+    }
+}
+
+impl SessionFeature for AnthropicAuthFeature {
+    fn name(&self) -> &'static str {
+        "anthropic-auth"
+    }
+
+    fn on_agent_end(&self, context: &Arc<SessionFeatureContext>) {
+        let Some(telemetry) = &context.telemetry else {
+            return;
+        };
+        let usage = self.source.usage();
+        if !usage.answered() || self.reported.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let mut properties = Properties::new();
+        properties.set("source", usage.first.unwrap_or("failed").into());
+        properties.set("refreshed", usage.refreshed.into());
+        properties.set("failed", usage.failed.into());
+        telemetry.track(TELEMETRY_EVENT, &properties);
+    }
+}

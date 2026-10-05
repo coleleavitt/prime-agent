@@ -108,6 +108,16 @@ fn status_indicator(
     }
     // A non-stored source: env keys and config mark api-key providers configured; subscription rows
     // stay "unconfigured".
+    // An installed credential source's login configures either row type.
+    if status.source == Some(AuthSource::CredentialSource) {
+        return Some(AuthStatusIndicator {
+            style: AuthStatusStyle::Success,
+            label: status
+                .label
+                .clone()
+                .unwrap_or_else(|| "configured".to_string()),
+        });
+    }
     if let Some(source) = status.source {
         if source != AuthSource::Stored {
             return match auth_type {
@@ -164,6 +174,7 @@ fn api_key_source_label(source: AuthSource, label: Option<&str>) -> String {
         AuthSource::Fallback => "custom API key".to_string(),
         AuthSource::ModelsJsonKey => "key in models.json".to_string(),
         AuthSource::ModelsJsonCommand => "command in models.json".to_string(),
+        AuthSource::CredentialSource => label.unwrap_or("configured").to_string(),
         AuthSource::Stored | AuthSource::Stale => "unconfigured".to_string(),
     }
 }
@@ -584,15 +595,30 @@ fn login_blocking_on_panel(
                     ))
                 },
                 |runtime| {
-                    runtime.block_on(crate::subscription_login::run_anthropic_login(
+                    let http = pa_ai::oauth::ReqwestProviderHttp::new();
+                    let ui = crate::subscription_login::PanelSubscriptionLoginUi::new(
+                        panel,
+                        &provider_row.id,
+                    );
+                    // `anthropic-auth`: the login goes to the shared account store
+                    // that serves the provider.
+                    #[cfg(feature = "anthropic-auth")]
+                    let source = pa_anthropic_auth::shared_source();
+                    #[cfg(feature = "anthropic-auth")]
+                    let login = crate::subscription_login::run_anthropic_shared_login(
+                        &source,
+                        &provider_row.name,
+                        &http,
+                        &ui,
+                    );
+                    #[cfg(not(feature = "anthropic-auth"))]
+                    let login = crate::subscription_login::run_anthropic_login(
                         &agent_dir,
                         &provider_row.name,
-                        &pa_ai::oauth::ReqwestProviderHttp::new(),
-                        &crate::subscription_login::PanelSubscriptionLoginUi::new(
-                            panel,
-                            &provider_row.id,
-                        ),
-                    ))
+                        &http,
+                        &ui,
+                    );
+                    runtime.block_on(login)
                 },
             );
     }

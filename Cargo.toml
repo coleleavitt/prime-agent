@@ -21,7 +21,11 @@ members = [
     "crates/pa-learning",
     "crates/pa-session-index",
     "crates/pa-mermaid",
+    "crates/pa-anthropic-auth",
 ]
+# Vendored path dependencies with their own manifests stay outside the workspace
+# (third-party code: not linted by the workspace gates).
+exclude = ["vendor/anthropic"]
 
 # Crossterm 0.28.1's kitty support check holds the process-wide event reader
 # for 2s on terminals that do not answer. Keep its parser/queued input intact,

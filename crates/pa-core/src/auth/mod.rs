@@ -1,5 +1,6 @@
 //! Auth subsystem: credential storage, resolution priority, stale-marking.
 
+pub(crate) mod credential_source;
 pub(crate) mod manager;
 pub(crate) mod prime_directory;
 pub(crate) mod prime_inference;
@@ -10,6 +11,10 @@ pub(crate) mod resolve_config_value;
 pub(crate) mod storage;
 pub(crate) mod types;
 
+pub use credential_source::{
+    credential_source, install_credential_source, CredentialSourceError, CredentialSourceStatus,
+    ProviderCredentialSource, SourcedCredential,
+};
 pub use manager::{
     oauth_refresh_failed_message, AuthApiKeyResult, AuthStorage, NoOAuth, OAuthIntegration,
 };

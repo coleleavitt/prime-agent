@@ -78,7 +78,8 @@ Rust host port first. Live handoff notes: `MEMORY.md`.
 The fork's TS-only features are ported as removable feature crates (`docs/fork-feature-crates.md`): `pa-trace`,
 `pa-recall`, `pa-toolforge`, `pa-dream` (standalone + in-session, `/dream`), `pa-workflow` (V1 host; V2 wire +
 `validate`), `pa-ledger`, `pa-ravo` (gate, referee, trust windows, `ravo.run`, `/ravo`), `pa-learning`,
-`pa-session-index`, `pa-mermaid`. Native upstream-parity Mermaid rendering lives in `pa-tui/src/mermaid/`. On-disk
+`pa-session-index`, `pa-mermaid`, `pa-anthropic-auth` (the `anthropic` provider's OAuth from the shared
+`~/.anthropic-accounts` store via the vendored anthropic-rs SDK). Native upstream-parity Mermaid rendering lives in `pa-tui/src/mermaid/`. On-disk
 formats are byte-compatible with the TS fork, proven by node-generated goldens in each crate's `tests/`. Static bug
 rules for this repo's hazard classes: `codegraph-rules/` (`codegraph analyze rules`).
 

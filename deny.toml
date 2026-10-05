@@ -40,6 +40,10 @@ allow = [
   "Zlib",
   "Unicode-3.0",
   "CDLA-Permissive-2.0",
+  # xxhash-rust (BSL-1.0, permissive, OSI-approved): the vendored anthropic-rs
+  # SDK's CCH request signing (pa-anthropic-auth). Added 2026-10-04 for that
+  # one crate; drop it with the dependency.
+  "BSL-1.0",
 ]
 # Development-only tools are not shipped; we keep the graph tight instead of
 # adding private/exceptions stanzas.
