@@ -173,6 +173,9 @@ mod tests {
     /// The flag/env/default order is the co-existence contract (the launcher pins the env).
     #[test]
     fn daemon_socket_resolution_prefers_flag_then_env_then_default() {
+        // The default reads the agent dir: hold the env lock so a concurrent
+        // agent-dir test cannot move it between the two reads.
+        let _env = env_lock();
         let default = pa_daemon::socket::default_daemon_socket_path();
         std::env::set_var(ENV_DAEMON_SOCKET, "/tmp/rust-launcher.sock");
         assert_eq!(
@@ -185,6 +188,53 @@ mod tests {
         );
         std::env::remove_var(ENV_DAEMON_SOCKET);
         assert_eq!(resolve_daemon_socket_path(None), default);
+    }
+
+    /// Upstream #768/#786/#815: the default daemon endpoint is keyed by the
+    /// agent dir, so a second `PRIME_AGENT_CODING_AGENT_DIR` gets its own
+    /// daemon instead of attaching to the first one's. The product-default
+    /// agent dir keeps the unkeyed `daemon.sock`, and every key shares the
+    /// socket dir (only the file name grows).
+    #[cfg(unix)]
+    #[test]
+    fn default_daemon_socket_is_keyed_by_a_non_default_agent_dir() {
+        let _env = env_lock();
+        let _agent_dir = RestoreEnv::new(ENV_AGENT_DIR);
+        let socket_for = |agent_dir: Option<&Path>| {
+            match agent_dir {
+                Some(dir) => std::env::set_var(ENV_AGENT_DIR, dir),
+                None => std::env::remove_var(ENV_AGENT_DIR),
+            }
+            pa_daemon::socket::default_daemon_socket_path()
+        };
+        let default = socket_for(None);
+        let explicit_default = socket_for(Some(
+            &pa_types::platform::home_dir()
+                .unwrap()
+                .join(CONFIG_DIR_NAME),
+        ));
+        let a = socket_for(Some(Path::new("/tmp/agent-dir-a")));
+        let a_again = socket_for(Some(Path::new("/tmp/agent-dir-a")));
+        let b = socket_for(Some(Path::new("/tmp/agent-dir-b")));
+        let name = |path: &Path| path.file_name().unwrap().to_string_lossy().to_string();
+        assert_eq!(
+            (
+                name(&default),
+                explicit_default == default,
+                a == a_again,
+                a == b,
+                a.parent() == default.parent() && b.parent() == default.parent(),
+                name(&a).len(),
+            ),
+            (
+                "daemon.sock".to_string(),
+                true,
+                true,
+                false,
+                true,
+                "daemon-01234567.sock".len()
+            )
+        );
     }
 
     /// `expands_tilde` hands HOME back the way it found it: the rest of the
