@@ -123,6 +123,11 @@ def _prime_agent_wrap_skill_module(module):
         return module
     wrapped = _PrimeAgentCallableSkillModule(module.__name__)
     wrapped.__dict__.update(module.__dict__)
+    # A skill laid out as <skill>/<skill>.py exposes that submodule under the
+    # skill's own name, so <skill>.<skill>(...) hit a module, not run (#2221).
+    _prime_agent_short_name = module.__name__.rpartition(".")[2]
+    if not callable(getattr(wrapped, _prime_agent_short_name, None)):
+        setattr(wrapped, _prime_agent_short_name, run)
     try:
         wrapped.__signature__ = _prime_agent_inspect.signature(run)
     except Exception:
