@@ -13,8 +13,8 @@ use super::{
     CreateAgentCronJobInput, DispatchResultOptions, RecordRunOptions, SessionBinding,
 };
 use crate::cron::{
-    is_due_job, next_run_at_for_schedule, parse_agent_cron_schedule, parse_iso_millis,
-    AgentCronJob, JobStatus, ScheduleKind,
+    is_due_job, next_run_at_for_schedule, next_run_at_in_phase, parse_agent_cron_schedule,
+    parse_iso_millis, AgentCronJob, JobStatus, ScheduleKind,
 };
 
 impl AgentCronJobStore {
@@ -355,10 +355,14 @@ impl AgentCronJobStore {
                         } else {
                             job.status
                         };
-                        job.next_run_at = next_run_at_for_schedule(&job.schedule, now)
-                            .ok()
-                            .flatten()
-                            .map(iso_from_millis);
+                        // The claim already armed the next beat on the
+                        // schedule's phase; a skip keeps that phase (upstream
+                        // #890) instead of measuring a new interval from now.
+                        let next = match job.next_run_at.as_deref().and_then(parse_iso_millis) {
+                            Some(anchor) => next_run_at_in_phase(&job.schedule, anchor, now),
+                            None => next_run_at_for_schedule(&job.schedule, now),
+                        };
+                        job.next_run_at = next.ok().flatten().map(iso_from_millis);
                         job.last_skipped_at = Some(now_iso.clone());
                         job.updated_at.clone_from(&now_iso);
                     } else {

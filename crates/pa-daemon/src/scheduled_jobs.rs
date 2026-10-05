@@ -27,6 +27,10 @@ use crate::worker::{QueuedItem, SessionCore, Worker};
 /// turn must not pin the dispatch lane forever).
 const FIRE_SETTLE_TIMEOUT_MS: u64 = 15 * 60 * 1000;
 
+/// How often a deferred heartbeat re-checks a busy session between runner
+/// park signals.
+const DEFERRED_BEAT_RECHECK_MS: u64 = 250;
+
 /// The session-artifact directory for one session file: `<sessions>/../session-artifacts/<id>`.
 pub(crate) fn session_artifact_dir(session_file: &Path, session_id: &str) -> Option<PathBuf> {
     session_file
@@ -43,6 +47,9 @@ pub(crate) struct QueueHooks {
     store: Arc<AgentCronJobStore>,
     /// The worker recovery journal (the fire checkpoint's busy evidence).
     recovery: Arc<Mutex<Option<crate::journal::WorkerRecoveryJournal>>>,
+    /// The turn runner's park signal: a heartbeat deferred by a busy
+    /// session waits on it to deliver once the session is idle.
+    idle_notify: Arc<Notify>,
 }
 
 impl QueueHooks {
@@ -100,9 +107,42 @@ impl AgentCronSchedulerHooks for QueueHooks {
             self.cancel_jobs_for_dead_target(job);
             return Ok(Some("skipped"));
         }
-        let activity = self.activity();
-        if should_defer_heartbeat_cron_job(job, &activity) {
-            return Ok(Some("skipped"));
+        // A heartbeat that lands on a busy session waits for the session to
+        // go idle and then delivers (upstream #890), instead of losing the
+        // beat. The wait ends at the job's next scheduled beat (armed at
+        // claim on the original phase): a session still busy then coalesces
+        // this beat into that one, so deferred beats never stack.
+        let wait_deadline = job
+            .next_run_at
+            .as_deref()
+            .and_then(crate::util::iso_to_unix_ms)
+            .unwrap_or_else(|| crate::util::now_ms() + FIRE_SETTLE_TIMEOUT_MS);
+        loop {
+            let idle = self.idle_notify.notified();
+            tokio::pin!(idle);
+            idle.as_mut().enable();
+            if !should_defer_heartbeat_cron_job(job, &self.activity()) {
+                break;
+            }
+            let now = crate::util::now_ms();
+            let stopping = {
+                let core = self
+                    .core
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                !core.created || core.shutdown_requested
+            };
+            if stopping || now >= wait_deadline {
+                return Ok(Some("skipped"));
+            }
+            // The runner's park wakes the wait; the backstop re-checks the
+            // busy states that settle without a runner park (a user bash, a
+            // compaction, a retry).
+            let backstop = (wait_deadline - now).min(DEFERRED_BEAT_RECHECK_MS);
+            tokio::select! {
+                () = &mut idle => {}
+                () = tokio::time::sleep(std::time::Duration::from_millis(backstop)) => {}
+            }
         }
         let (done_tx, done_rx) = oneshot::channel();
         let heartbeat = is_heartbeat_cron_job(job);
@@ -230,6 +270,7 @@ impl ScheduledJobs {
         user_bash: Arc<crate::user_bash::UserBash>,
         events: Arc<crate::worker::EventPump>,
         recovery: Arc<Mutex<Option<crate::journal::WorkerRecoveryJournal>>>,
+        idle_notify: Arc<Notify>,
     ) -> Self {
         let mut store = AgentCronJobStore::for_session_artifacts();
         // `cronStore.onHeartbeatChange` broadcasts `{ type: "heartbeats_changed" }`
@@ -245,6 +286,7 @@ impl ScheduledJobs {
                 user_bash,
                 store: Arc::clone(&store),
                 recovery,
+                idle_notify,
             }),
             store,
             scheduler: tokio::sync::Mutex::new(None),

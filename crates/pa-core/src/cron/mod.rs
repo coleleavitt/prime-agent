@@ -586,6 +586,38 @@ pub fn next_run_at_for_schedule(
     }
 }
 
+/// The next run strictly after `after_millis` that keeps the schedule's
+/// phase anchored at `anchor_millis` (a run time the schedule produced):
+/// an interval schedule steps forward from the anchor in whole intervals,
+/// so a skipped beat re-arms on the original cadence instead of measuring a
+/// new interval from the skip (upstream #890). A cron schedule is anchored
+/// to the clock already; a one-shot has no next run.
+///
+/// # Errors
+///
+/// The [`next_run_at_for_schedule`] errors (a zero interval, a cron that
+/// never matches).
+pub fn next_run_at_in_phase(
+    schedule: &AgentCronSchedule,
+    anchor_millis: u64,
+    after_millis: u64,
+) -> anyhow::Result<Option<u64>> {
+    match schedule.kind {
+        ScheduleKind::Once => Ok(None),
+        ScheduleKind::Interval => match schedule.interval_ms {
+            Some(interval_ms) if interval_ms > 0 => {
+                if anchor_millis > after_millis {
+                    return Ok(Some(anchor_millis));
+                }
+                let steps = (after_millis - anchor_millis) / interval_ms + 1;
+                Ok(Some(anchor_millis + steps * interval_ms))
+            }
+            _ => next_run_at_for_schedule(schedule, after_millis),
+        },
+        ScheduleKind::Cron => next_run_at_for_schedule(schedule, after_millis),
+    }
+}
+
 /// One-line job summary (TS format; the local-rendered timestamps are
 /// approximated by UTC).
 #[must_use]

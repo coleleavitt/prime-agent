@@ -42,6 +42,12 @@ the session when it is busy:
 - `steer` (default): interrupt the current turn so the heartbeat runs promptly.
 - `follow_up`: wait for the current turn to finish before running the heartbeat.
 
+A beat that lands while the session cannot take it (a compaction, a retry, a
+running user bash, or a `follow_up` beat during a turn) waits and runs once the
+session is idle. If the session is still busy at the next scheduled beat, the
+waiting beat folds into that one. Either way the schedule keeps its original
+cadence: `every 5m` keeps firing on the same five-minute marks.
+
 ## Rules
 
 - Use this when the user asks you to start, create, schedule, or manage your own

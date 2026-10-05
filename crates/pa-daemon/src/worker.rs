@@ -382,6 +382,7 @@ impl Worker {
             std::sync::Arc::clone(&user_bash),
             Arc::clone(&events),
             Arc::clone(&recovery),
+            Arc::clone(&idle_notify),
         ));
         // The digest inbox lane (swarm PRs C/D/E): the receiving worker owns
         // the lane — the durable inbox, the controller with its counters, and
