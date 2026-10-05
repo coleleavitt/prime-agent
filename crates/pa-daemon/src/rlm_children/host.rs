@@ -1,5 +1,5 @@
 //! The host adapter concern: the `RlmSubagentHost` wire surface
-//! (`spawn`, `create_session`, `list_subagents`, `delete_subagent`,
+//! (`spawn`, `create_session`, `list_subagents`, `interrupt_subagent`, `delete_subagent`,
 //! `collect`, `rename`) over the supervisor's child-sessions registry,
 //! with the spawn-admission helpers only this surface uses.
 use super::{
@@ -8,9 +8,9 @@ use super::{
     spawn_name_unavailable, Arc, ChildCloseReason, ChildRecord, Context, DaemonCommand, Duration,
     Instant, Mutex, Path, PathBuf, Result, RlmChildResult, RlmChildTerminalNotice,
     RlmCreateSessionHandle, RlmCreateSessionRequest, RlmDeleteSubagentResult, RlmHostFuture,
-    RlmSpawnHandle, RlmSpawnRequest, RlmSubagentEntry, RlmSubagentHost, SpawnNameReservationGuard,
-    SupervisorChildSessions, SupervisorChildSessionsInner, Value, KILL_TIMEOUT_MS,
-    RENAME_TIMEOUT_MS, WATCH_SETTLE_GRACE_MS,
+    RlmInterruptSubagentResult, RlmSpawnHandle, RlmSpawnRequest, RlmSubagentEntry, RlmSubagentHost,
+    SpawnNameReservationGuard, SupervisorChildSessions, SupervisorChildSessionsInner, Value,
+    INTERRUPT_RUN_MARKER, KILL_TIMEOUT_MS, RENAME_TIMEOUT_MS, WATCH_SETTLE_GRACE_MS,
 };
 use pa_types::sync::MutexExt;
 
@@ -149,6 +149,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     answer_preview: None,
                     answer_captured: false,
                     replied_since_task: false,
+                    interrupted: false,
                     notice_delivered: false,
                     prompt_admitted: false,
                     error: None,
@@ -174,6 +175,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
             let watcher_this = Arc::clone(&this);
             let watcher_record = Arc::clone(&record);
             let prompt = request.prompt.clone();
+            let plan_mode = request.plan_mode;
             let child_active_session_id = created.active_session_id.clone();
             let child_session_file = created.session_file.clone();
             // Capture the current turn boundary before detaching: spawn
@@ -189,6 +191,28 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     return;
                 }
                 watcher_record.lock().await.prompt_admitted = true;
+                // A child spawned during plan mode starts in it: the session
+                // command queues ahead of the task prompt (durable in the
+                // child's file, and its kernel guard arms first). A child
+                // that cannot enter plan mode never runs the task.
+                if plan_mode {
+                    if let Err(error) = watcher_this
+                        .prompt_child(&child_active_session_id, "/plan on", &[])
+                        .await
+                    {
+                        let _ = watcher_this
+                            .kill_child(&child_active_session_id, ChildCloseReason::Killed)
+                            .await;
+                        watcher_this
+                            .settle_failed(
+                                &watcher_record,
+                                format!("could not start the child in plan mode: {error:#}"),
+                                super::lifecycle::FailedArm::Prompt,
+                            )
+                            .await;
+                        return;
+                    }
+                }
                 if let Err(error) = watcher_this
                     .prompt_child(&child_active_session_id, &prompt, &[])
                     .await
@@ -310,6 +334,54 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 entries.push(SupervisorChildSessions::entry(&record));
             }
             Ok(entries)
+        })
+    }
+
+    /// Abort only the child worker's in-flight run (the `abort` route with
+    /// the `interruptRun` marker: no queue suspension, no queue withdraw, no
+    /// compaction abort), keeping the child registered with its session,
+    /// descendants, and follow-up admission. The record lock rides the
+    /// round trip so the settle watcher cannot claim the no-reply notice
+    /// between the abort and the interrupted mark.
+    fn interrupt_subagent(&self, target: String) -> RlmHostFuture<RlmInterruptSubagentResult> {
+        let this = Arc::clone(&self.inner);
+        Box::pin(async move {
+            let mut matches = this.matching_records(&target).await;
+            let record = match matches.len() {
+                0 => return Ok(RlmInterruptSubagentResult::not_found()),
+                1 => matches.remove(0),
+                _ => bail!(
+                    "RLM subagent selector \"{target}\" is ambiguous in the current parent session"
+                ),
+            };
+            let mut record = record.lock().await;
+            let entry = SupervisorChildSessions::entry(&record);
+            if entry.is_terminal() {
+                return Ok(RlmInterruptSubagentResult::resolved(
+                    entry, /*aborted*/ false,
+                ));
+            }
+            let command = DaemonCommand::Abort {
+                id: None,
+                active_session_id: record.active_session_id.clone(),
+                rest: serde_json::Map::from_iter([(INTERRUPT_RUN_MARKER.to_string(), json!(true))]),
+            };
+            let aborted = match this.command(&command, KILL_TIMEOUT_MS).await {
+                Ok(data) => data
+                    .get("interrupted")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                // A passive child (its worker left after settling) has no
+                // run to abort.
+                Err(error) if format!("{error:#}").starts_with("Unknown active session:") => false,
+                Err(error) => {
+                    return Err(error).with_context(|| format!("interrupt RLM child \"{target}\""))
+                }
+            };
+            if aborted && record.settled_status.is_none() {
+                record.interrupted = true;
+            }
+            Ok(RlmInterruptSubagentResult::resolved(entry, aborted))
         })
     }
 

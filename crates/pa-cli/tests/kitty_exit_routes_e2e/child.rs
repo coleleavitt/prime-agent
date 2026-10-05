@@ -187,6 +187,7 @@ use pa_tui::interactive::{
 fn child_options(socket: PathBuf) -> InteractiveOptions {
     InteractiveOptions {
         resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
+        initial_plan_mode: false,
         models: None,
         socket_path: socket,
         cwd: PathBuf::from("/tmp"),

@@ -13,8 +13,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use pa_core::kernel::rlm_runtime::create_default_rlm_subagent_session_name;
 use pa_core::session_engine::rlm_host::{
     RlmChildResult, RlmCreateSessionHandle, RlmCreateSessionRequest, RlmDeleteSubagentResult,
-    RlmHostFuture, RlmSpawnHandle, RlmSpawnRequest, RlmSubagentActivity, RlmSubagentEntry,
-    RlmSubagentHost,
+    RlmHostFuture, RlmInterruptSubagentResult, RlmSpawnHandle, RlmSpawnRequest,
+    RlmSubagentActivity, RlmSubagentEntry, RlmSubagentHost,
 };
 use pa_core::session_engine::rlm_notices::{
     create_rlm_child_failure_message, create_rlm_child_terminal_notice, RlmChildTerminalNotice,
@@ -65,6 +65,9 @@ const CREATE_TIMEOUT_MS: u64 = 120_000;
 const PROMPT_TIMEOUT_MS: u64 = 30_000;
 const STATE_TIMEOUT_MS: u64 = 30_000;
 const KILL_TIMEOUT_MS: u64 = 30_000;
+/// The `abort` rest marker `rlm.interrupt_subagent` routes to a child
+/// worker: abort only the in-flight run and answer `{ "interrupted": bool }`.
+pub(crate) const INTERRUPT_RUN_MARKER: &str = "interruptRun";
 /// Budget for one session rename over the supervisor route (TS uses 30s).
 const RENAME_TIMEOUT_MS: u64 = 30_000;
 /// Grace over a collect budget passed to the worker `wait_for_idle`.
@@ -148,6 +151,10 @@ struct ChildRecord {
     /// A child agent message arrived since its task was admitted; the
     /// no-reply terminal notice is withheld once set.
     replied_since_task: bool,
+    /// `rlm.interrupt_subagent` aborted a run while the task was still
+    /// unsettled (TS `RlmChildRun.interrupted`): the parent asked for the
+    /// stop, so the no-reply terminal notice is withheld.
+    interrupted: bool,
     /// The terminal notice was claimed: exactly one of the settle watcher,
     /// the delete path, or a late natural settle delivers it.
     notice_delivered: bool,
@@ -605,6 +612,7 @@ impl SupervisorChildSessions {
                 answer_captured: answer_preview.is_some(),
                 answer_preview,
                 replied_since_task: false,
+                interrupted: false,
                 notice_delivered: false,
                 prompt_admitted: true,
                 error: None,
@@ -640,6 +648,7 @@ impl SupervisorChildSessions {
                 answer_preview: None,
                 answer_captured: false,
                 replied_since_task: false,
+                interrupted: false,
                 notice_delivered: false,
                 prompt_admitted: true,
                 error: None,

@@ -321,6 +321,53 @@ fn anthropic_warning_marker_hydrates_from_before_the_boundary() {
     assert!(!store.anthropic_warning_shown());
 }
 
+/// A plan-mode change deep in the discarded prefix still restores: the
+/// window answers from its walk (and the warm sidecar) like the goal, and
+/// an appended change folds into the served snapshot.
+#[test]
+fn plan_mode_change_hydrates_from_before_the_boundary() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("plan.jsonl");
+    let mut rows: Vec<serde_json::Value> = fixture()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    rows[2]["parentId"] = json!("plan");
+    rows.insert(
+        2,
+        json!({"type":"custom_message","id":"plan","parentId":"settings","customType":"plan_mode_change","content":"Plan mode on","display":true,"details":{"enabled":true}}),
+    );
+    let body: String = rows.into_iter().map(|row| row.to_string() + "\n").collect();
+    std::fs::write(&path, body).unwrap();
+    for _ in 0..2 {
+        let store = WindowedSessionStore::open(&path).unwrap().unwrap();
+        assert_eq!(store.plan_mode(), Some(true));
+    }
+    let off = json!({"type":"custom_message","id":"plan-off","parentId":"leaf","customType":"plan_mode_change","content":"Plan mode off","display":true,"details":{"enabled":false}});
+    append_cached(
+        &path,
+        format!("{off}\n").as_bytes(),
+        AppendOwnership::SessionLeaseHeld,
+    )
+    .unwrap();
+    assert_eq!(
+        WindowedSessionStore::open(&path)
+            .unwrap()
+            .unwrap()
+            .plan_mode(),
+        Some(false)
+    );
+    let plain = dir.path().join("plain.jsonl");
+    std::fs::write(&plain, fixture()).unwrap();
+    assert_eq!(
+        WindowedSessionStore::open(&plain)
+            .unwrap()
+            .unwrap()
+            .plan_mode(),
+        None
+    );
+}
+
 /// A `custom` row with the marker's type but `data.shown` false is not the
 /// marker: the gate's payload check keeps a future un-show payload (or a
 /// foreign row borrowing the type) from suppressing the warning.

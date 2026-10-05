@@ -131,6 +131,7 @@ async fn the_runtime_round_trips_workflow_v2_through_the_rust_host() {
     let mut session = SessionManager::in_memory(&cwd);
     session.materialize_session_file(Some(agent_dir.join("sessions")));
     let engine = create_session(SessionEngineConfig {
+        plan_mode: None,
         on_late_sent_agent_message: None,
         semantic_edges: None,
         cron_store: None,

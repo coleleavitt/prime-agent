@@ -117,3 +117,19 @@ locked field-by-field by the offline e2e tests. All other scenarios
 (happy_path, cwd_mismatch, errors, second_initialize, tool_call,
 compact_command, cancel, autonomous_gate, mcp_stdio, mcp_replace,
 mcp_errors) match in full mode.
+
+## Declared divergences
+
+- `initialize` advertises `loadSession: true` and `sessionCapabilities.list`, and
+  `session/new` answers a persisted session's saved id (a `--no-session` session keeps a
+  fresh UUID): the Rust surface serves ACP `session/list` / `session/load` (upstream
+  #1116, #1600, #2804), which the TS v0.9.8 captures predate.
+- A Python REPL `tool_call` is titled by its cell (first non-blank line, a leading cell
+  magic paired with the next line, `· +N lines`) and carries the cell as a fenced content
+  block that its `tool_call_update` repeats (upstream #1309); the captures show the constant
+  title and `rawInput` only.
+- A settled, costed assistant message is followed by a standard `usage_update`
+  (`used` of `size` context tokens; upstream #1351), which the captures predate.
+- After `session/new` / `session/load` answer, an uncorrelated `available_commands_update`
+  (no `_meta`, no `eventSequence`) advertises the session-executed builtins, skills and
+  prompt templates (upstream #1308).

@@ -39,6 +39,7 @@ The following programmatic tools are available in the REPL for subagent manageme
 - `rlm.create_session(prompt: str, name: str | None = None, model: str | None = None, thinking: str | None = None, cwd: str | None = None) -> RLMCreateSessionHandle`: creates another depth-0 session; only available to agents at depth 0 backed by a daemon; returns after the session is successfully created and the first prompt sent
 - `rlm.find_models(query: str = '', limit: int = 8) -> list[RLMModel]`
 - `rlm.list_subagents() -> list[RLMSubagent]`: direct child handles
+- `rlm.interrupt_subagent(target: str | RLMSubagent) -> RLMInterruptResult`: stop only a direct child's current run and keep the child (session, transcript, descendants) for a later `agent_message.send` follow-up; `outcome` is `interrupted`, `idle`, `terminal`, or `not_found` (then `subagent` is None)
 - `rlm.delete_subagent(target: str | RLMSubagent) -> RLMSubagent`
 - `rlm.rename(new_name: str, *, session_id=None) -> str`: rename the calling session (omit `session_id`) or a direct child (spawn handle, `list_subagents()` row, or session id; never the child's name); names must be unique among siblings, and the renamed session sees a transcript line for the change
 - `rlm.collect(targets=None, *, timeout_ms: int = 0) -> list[RLMChildResult]`: typed snapshots of direct children (status, settled flag, answer preview, error) without steering anyone; `timeout_ms=0` returns a non-blocking snapshot; a positive timeout blocks only this call until the children settle or the deadline passes

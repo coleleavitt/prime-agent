@@ -537,6 +537,9 @@ pub struct KernelManagerOptions {
     pub stderr_log_path: Option<std::path::PathBuf>,
     /// The host-environment inheritance policy (`kernel.environment`).
     pub environment: KernelEnvironment,
+    /// The session's plan mode: armed in every started kernel before it serves
+    /// a request, when on. `None` sends no plan-guard frame at all.
+    pub plan_guard: Option<crate::kernel::plan_guard::KernelPlanGuard>,
 }
 
 /// Shutdown options: whether to flush a final namespace snapshot and drain

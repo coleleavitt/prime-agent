@@ -72,10 +72,11 @@
 //! never arms modifyOtherKeys mode 2 and instead resets it
 //! (`\x1b[>4;0m`) at every surface start. TS parses the resulting
 //! `CSI 27;<mods>;<key>~` sequences itself (keys.ts
-//! `parseModifyOtherKeysSequence`), but crossterm 0.28 has no case for
-//! them and drops the whole pending input buffer on the parse error
-//! (`Parser::advance` clears on `Err`) — a terminal in mode 2 (a sticky
-//! mode any other pane or process may have armed) makes shift-modified
+//! `parseModifyOtherKeysSequence`), but crossterm 0.28 had no case for
+//! them and dropped the whole pending input buffer on the parse error
+//! (`Parser::advance` clears on `Err`; the vendored parser now reads the
+//! form as its CSI-u key, see `vendor/crossterm/PRIME_AGENT_PATCH.md`) — a terminal in mode 2 (a sticky
+//! mode any other pane or process may have armed) made shift-modified
 //! printables like `shift+=` vanish entirely. The reset returns such
 //! terminals to legacy encodings (shift+= arrives as the produced `+`),
 //! and the kitty path covers the enhanced-reporting surface crossterm

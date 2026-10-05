@@ -9,7 +9,7 @@
 //! Rust engine).
 //!
 //! Kernel-visible parity with the daemon host: the same
-//! [`RlmSpawnHandle`] shape, the same roster/collect/delete envelopes and
+//! [`RlmSpawnHandle`] shape, the same roster/collect/interrupt/delete envelopes and
 //! selector errors, spawn-name reservation across admission, deleted-child
 //! tombstones, terminal notices, child usage attribution, and the
 //! local-family surface (`agent_message`/`agent_observe` over the
@@ -528,6 +528,13 @@ impl RlmSubagentHost for InProcessRlmHost {
         &self,
     ) -> super::rlm_host::RlmHostFuture<Vec<super::rlm_host::RlmSubagentEntry>> {
         run::list_subagents(self.clone())
+    }
+
+    fn interrupt_subagent(
+        &self,
+        target: String,
+    ) -> super::rlm_host::RlmHostFuture<super::rlm_host::RlmInterruptSubagentResult> {
+        run::interrupt_subagent(self.clone(), target)
     }
 
     fn delete_subagent(

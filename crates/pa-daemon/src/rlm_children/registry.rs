@@ -229,13 +229,7 @@ impl SupervisorChildSessionsInner {
         target: &str,
         miss_kind: &str,
     ) -> Result<Arc<Mutex<ChildRecord>>> {
-        let children = self.children.lock().await;
-        let mut matches: Vec<Arc<Mutex<ChildRecord>>> = Vec::new();
-        for record in children.iter() {
-            if record.lock().await.matches(target) {
-                matches.push(Arc::clone(record));
-            }
-        }
+        let matches = self.matching_records(target).await;
         match matches.len() {
             0 => bail!(
                 "No direct RLM {miss_kind} matches \"{target}\" in the current parent session"
@@ -245,6 +239,19 @@ impl SupervisorChildSessionsInner {
                 "RLM {miss_kind} selector \"{target}\" is ambiguous in the current parent session"
             ),
         }
+    }
+
+    /// Every live record the selector matches (child id, session ids, or
+    /// name), registry order.
+    pub(super) async fn matching_records(&self, target: &str) -> Vec<Arc<Mutex<ChildRecord>>> {
+        let children = self.children.lock().await;
+        let mut matches: Vec<Arc<Mutex<ChildRecord>>> = Vec::new();
+        for record in children.iter() {
+            if record.lock().await.matches(target) {
+                matches.push(Arc::clone(record));
+            }
+        }
+        matches
     }
 
     /// Rebuild the children registry from the spawn ledger (TS
@@ -366,6 +373,7 @@ fn ledger_child_records(
             answer_preview: None,
             answer_captured: false,
             replied_since_task: false,
+            interrupted: false,
             notice_delivered: true,
             prompt_admitted: true,
             error: None,

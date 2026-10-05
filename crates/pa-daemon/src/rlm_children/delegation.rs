@@ -172,6 +172,7 @@ impl SupervisorChildSessionsInner {
             answer_preview: None,
             answer_captured: false,
             replied_since_task: true,
+            interrupted: false,
             notice_delivered: false,
             prompt_admitted: true,
             error: None,

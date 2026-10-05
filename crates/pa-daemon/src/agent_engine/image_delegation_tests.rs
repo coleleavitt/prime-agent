@@ -6,7 +6,7 @@ use crate::agent_engine::AgentEngineConfig;
 use crate::engine::EngineModelSelection;
 use pa_types::session::CustomMessage;
 
-fn image_content(data: &str) -> pa_agent::types::ImageContent {
+pub(crate) fn image_content(data: &str) -> pa_agent::types::ImageContent {
     pa_agent::types::ImageContent {
         data: data.to_string(),
         mime_type: "image/png".to_string(),
@@ -123,7 +123,7 @@ fn stripped_custom_row_keeps_text_and_drops_images() {
 /// daemon-backed (children present), so an image-attaching turn on the
 /// text-only session model takes the delegation path, never the model
 /// swap.
-fn delegating_engine_with_socket(
+pub(crate) fn delegating_engine_with_socket(
     dir: &std::path::Path,
     socket: &std::path::Path,
 ) -> crate::agent_engine::AgentSessionEngine {
@@ -240,7 +240,7 @@ fn done_error(events: &[crate::engine::EngineEvent]) -> String {
         .expect("the turn ends with a loud failure")
 }
 
-fn register_text_only_battery_model() -> pa_ai::faux::FauxProviderRegistration {
+pub(crate) fn register_text_only_battery_model() -> pa_ai::faux::FauxProviderRegistration {
     let registration =
         pa_ai::faux::register_faux_provider(pa_ai::faux::RegisterFauxProviderOptions {
             api: Some("mock-battery".to_string()),
@@ -343,12 +343,12 @@ fn depth_capped_delegation_fails_loud_without_a_fallback_swap() {
 /// received command is captured for the wire assertions. Runs on its
 /// own thread+runtime; each engine link request connects fresh, so
 /// the accept loop serves one command per connection.
-struct ScriptedSupervisor {
-    captured: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+pub(crate) struct ScriptedSupervisor {
+    pub(crate) captured: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
 }
 
 impl ScriptedSupervisor {
-    fn spawn(socket: std::path::PathBuf, answer: &'static str) -> Self {
+    pub(crate) fn spawn(socket: std::path::PathBuf, answer: &'static str) -> Self {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
         let captured: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
             std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));

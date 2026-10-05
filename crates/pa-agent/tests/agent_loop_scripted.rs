@@ -471,6 +471,8 @@ async fn provider_stream_failure_mid_turn_ends_run_and_retry_continues() {
 #[tokio::test]
 async fn user_abort_mid_stream_finalizes_aborted_assistant_message() {
     let (agent, provider, _events) = scripted_agent(vec![]).await;
+    // No run is active yet: the abort reports it touched nothing.
+    assert!(!agent.abort(), "an idle agent has no run to abort");
     // The provider streams partial text and then stalls; only an abort ends it.
     provider.push_stalled_turn("partial before abort");
 
@@ -481,10 +483,11 @@ async fn user_abort_mid_stream_finalizes_aborted_assistant_message() {
 
     // Wait until the partial text has been streamed, then abort like a user.
     tokio::time::sleep(Duration::from_millis(150)).await;
-    agent.abort();
+    assert!(agent.abort(), "the streaming run was active at the abort");
 
     prompt_task.await.unwrap().unwrap();
     agent.wait_for_idle().await;
+    assert!(!agent.abort(), "the settled run is no longer active");
 
     let state = agent.state().await;
     assert_eq!(state.messages.len(), 2);

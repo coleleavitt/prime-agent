@@ -152,6 +152,7 @@ fn test_options() -> Option<pa_core::kernel::shared::KernelManagerOptions> {
     let python = kernel_python()?;
     Some(pa_core::kernel::shared::KernelManagerOptions {
         environment: pa_core::kernel::shared::KernelEnvironment::Inherit,
+        plan_guard: None,
         python: Some(python),
         cwd: Some(std::env::temp_dir()),
         env: std::collections::HashMap::default(),

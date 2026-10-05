@@ -168,6 +168,7 @@ fn session_options(
 ) -> InteractiveOptions {
     InteractiveOptions {
         resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
+        initial_plan_mode: false,
         models: None,
         socket_path: socket.to_path_buf(),
         cwd: PathBuf::from("/tmp"),

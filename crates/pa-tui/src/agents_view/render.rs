@@ -880,6 +880,11 @@ impl Renderer {
                 // SGR button tracking while the view owns the terminal, released on every exit
                 // path.
                 crate::mouse_tracking::enable(&mut std::io::stdout())?;
+                // TS `AgentsViewMode` titles the window at its mount.
+                crate::terminal_title::set(
+                    &mut std::io::stdout(),
+                    &crate::terminal_title::agents_title(),
+                );
                 // One reader thread feeds the view; the registry joins the previous surface's
                 // reader before this one starts polling. The reader also observes Ctrl+C pairs:
                 // it stays alive when the view loop is wedged in a daemon request, so the

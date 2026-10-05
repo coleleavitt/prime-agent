@@ -21,7 +21,8 @@
 //! 4. synchronized output and SGR reset — a crash between a frame's
 //!    sync brackets or inside a styled write must not hand the shell a
 //!    terminal holding pending updates or a dangling color;
-//! 5. the alternate screen is left (`?1049l`), the cursor shows;
+//! 5. the alternate screen is left (`?1049l`), the window title the first surface saved
+//!    comes back ([`crate::terminal_title::restore`]), the cursor shows;
 //! 6. the kitty stack drains its stale levels AFTER the alt-screen
 //!    leave ([`crate::enhanced_keys::pop_stale_levels`]) — a
 //!    mode-counting relay (herdr's pane emulator) discards the
@@ -92,6 +93,8 @@ pub fn restore_terminal() {
         // The unconditional leave: the restore must not trust the ownership flag
         // — a desynced flag would keep the alt buffer up past the process death.
         crate::altscreen::force_leave(&mut out);
+        // The shell's own window title comes back off the title stack.
+        crate::terminal_title::restore(&mut out);
         // The stale-level drain: bare kitty pops AFTER the alt-screen
         // leave, where a mode-counting relay keeps them — the drain's
         // own pop above, written inside the alt screen, does not (see

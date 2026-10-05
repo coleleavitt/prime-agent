@@ -117,6 +117,93 @@ fn threshold_crossing_auto_compacts_with_the_event_pair() {
     assert_eq!((start_count, end_count), (1, 1));
 }
 
+/// `compaction.maxContextTokens` (#2100) on the daemon turn boundary: a cap
+/// far below the faux model's window fires the threshold compaction the
+/// window alone never would, and a sub-floor cap discloses its clamp with
+/// one display-only row ahead of the compaction — once per session.
+#[test]
+fn a_clamped_context_cap_fires_threshold_compaction_with_one_notice() {
+    let _faux = FAUX_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join("agent")).unwrap();
+    // Floor: keepRecentTokens 10 + reserveTokens 1 + 8192 = 8203.
+    std::fs::write(
+        dir.path().join("agent").join("settings.json"),
+        serde_json::json!({ "compaction": {
+            "enabled": true, "reserveTokens": 1, "keepRecentTokens": 10, "maxContextTokens": 100,
+        } })
+        .to_string(),
+    )
+    .unwrap();
+    let engine = AgentSessionEngine::new(AgentEngineConfig {
+        cwd: dir.path().to_path_buf(),
+        agent_dir: dir.path().join("agent"),
+        provider: None,
+        model: None,
+        api_key: None,
+        thinking: None,
+        session_dir: None,
+        session_file: None,
+        faux_script: Some(
+            serde_json::json!({ "responses": [
+                {"text": "first reply"}, {"text": "the summary"},
+                {"text": "second reply"}, {"text": "second summary"},
+            ] })
+            .to_string(),
+        ),
+        supervisor_link: None,
+        telemetry_disabled: None,
+        cron_store: None,
+        queued_steering_probe: None,
+    })
+    .unwrap();
+    let is_notice = |event: &EngineEvent| {
+        matches!(event, EngineEvent::CustomMessage(message)
+            if message["customType"] == "context_cap_clamp_notice")
+    };
+    let mut events: Vec<EngineEvent> = Vec::new();
+    // ~12k tokens: over the 8203-token clamped cap, far under the window.
+    admit(
+        &engine,
+        format!("big turn {}", "x".repeat(48_000)),
+        &mut events,
+    );
+    let notice_index = events
+        .iter()
+        .position(is_notice)
+        .expect("the clamp notice precedes the capped compaction");
+    let start_index = events
+        .iter()
+        .position(|event| {
+            matches!(event, EngineEvent::CompactionStart { event } if event["reason"] == "threshold")
+        })
+        .expect("the cap fires the threshold compaction");
+    assert_eq!(notice_index + 1, start_index);
+    let EngineEvent::CustomMessage(notice) = &events[notice_index] else {
+        unreachable!();
+    };
+    assert_eq!(
+        notice["content"],
+        "Configured context limit of 100 tokens is below keepRecentTokens (10) + reserveTokens (1) \
+         + 8192, which would make compaction thrash. Using 8203 tokens instead."
+    );
+    let mut later: Vec<EngineEvent> = Vec::new();
+    admit(
+        &engine,
+        format!("next turn {}", "y".repeat(48_000)),
+        &mut later,
+    );
+    assert!(
+        later
+            .iter()
+            .any(|event| matches!(event, EngineEvent::CompactionStart { .. })),
+        "the cap keeps firing"
+    );
+    assert!(!later.iter().any(is_notice), "the notice shows once");
+}
+
 /// The compaction summarizer stays on the session's provider when a
 /// fresh resolution drifts mid-session (R8). The settings default changes
 /// under the built session, so `resolve_model` lands on a dead provider —

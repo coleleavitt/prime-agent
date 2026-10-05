@@ -68,11 +68,19 @@ pub const TUI_KEYBINDINGS: &[(&str, KeybindingDefinition)] = &[
     ),
     (
         "tui.editor.deleteWordBackward",
-        def!(&["ctrl+w", "alt+backspace"], "Delete word backward", scope "editor"),
+        def!(
+            &["ctrl+w", "ctrl+backspace", "alt+backspace"],
+            "Delete word backward",
+            scope "editor"
+        ),
     ),
     (
         "tui.editor.deleteWordForward",
-        def!(&["alt+d", "alt+delete"], "Delete word forward", scope "editor"),
+        def!(
+            &["alt+d", "ctrl+delete", "alt+delete"],
+            "Delete word forward",
+            scope "editor"
+        ),
     ),
     (
         "tui.editor.deleteToLineStart",
@@ -312,6 +320,10 @@ pub const APP_KEYBINDINGS: &[(&str, KeybindingDefinition)] = &[
     (
         "app.model.cycleBackward",
         def!(&["shift+alt+m"], "Cycle to the previous scoped model"),
+    ),
+    (
+        "app.plan.toggle",
+        def!(&["shift+tab"], "Toggle plan mode (no edits)"),
     ),
     (
         "app.tools.expand",

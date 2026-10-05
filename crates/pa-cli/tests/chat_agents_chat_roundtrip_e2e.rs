@@ -149,6 +149,7 @@ fn write_faux_script(dir: &Path, replies: &[&str]) -> PathBuf {
 fn chat_options(socket: PathBuf, cwd: PathBuf) -> InteractiveOptions {
     InteractiveOptions {
         resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
+        initial_plan_mode: false,
         models: None,
         socket_path: socket,
         cwd,

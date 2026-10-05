@@ -622,6 +622,18 @@ pub(crate) fn parse_csi_special_key_code(buffer: &[u8]) -> io::Result<Option<Int
 
     let s = std::str::from_utf8(&buffer[2..buffer.len() - 1])
         .map_err(|_| could_not_parse_event_error())?;
+    // PRIME AGENT PATCH: xterm modifyOtherKeys (`CSI 27 ; modifiers ; codepoint ~`) is
+    // the CSI-u key `CSI codepoint ; modifiers u`. Upstream has no case for it, and the
+    // parse error drops the whole pending input buffer.
+    if let Some(params) = s.strip_prefix("27;") {
+        let mut params = params.split(';');
+        let (Some(modifiers), Some(codepoint), None) =
+            (params.next(), params.next(), params.next())
+        else {
+            return Err(could_not_parse_event_error());
+        };
+        return parse_csi_u_encoded_key_code(format!("\x1B[{codepoint};{modifiers}u").as_bytes());
+    }
     let mut split = s.split(';');
 
     // This CSI sequence can be a list of semicolon-separated numbers.
@@ -1038,6 +1050,32 @@ mod tests {
             parse_csi_special_key_code(b"\x1B[3~").unwrap(),
             Some(InternalEvent::Event(Event::Key(KeyCode::Delete.into()))),
         );
+    }
+
+    #[test]
+    fn test_parse_csi_modify_other_keys() {
+        assert_eq!(
+            parse_event(b"\x1B[27;5;127~", false).unwrap(),
+            Some(InternalEvent::Event(Event::Key(KeyEvent::new(
+                KeyCode::Backspace,
+                KeyModifiers::CONTROL
+            )))),
+        );
+        assert_eq!(
+            parse_event(b"\x1B[27;5;13~", false).unwrap(),
+            Some(InternalEvent::Event(Event::Key(KeyEvent::new(
+                KeyCode::Enter,
+                KeyModifiers::CONTROL
+            )))),
+        );
+        assert_eq!(
+            parse_event(b"\x1B[27;2;43~", false).unwrap(),
+            Some(InternalEvent::Event(Event::Key(KeyEvent::new(
+                KeyCode::Char('+'),
+                KeyModifiers::SHIFT
+            )))),
+        );
+        assert!(parse_event(b"\x1B[27;5~", false).is_err());
     }
 
     #[test]

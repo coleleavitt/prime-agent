@@ -38,7 +38,10 @@ pub(super) fn terminal_row(
             },
             now_ms(),
         )),
-        NoticeKind::DoneReplied | NoticeKind::Closed | NoticeKind::ParentGone => None,
+        NoticeKind::DoneReplied
+        | NoticeKind::DoneInterrupted
+        | NoticeKind::Closed
+        | NoticeKind::ParentGone => None,
     }
 }
 

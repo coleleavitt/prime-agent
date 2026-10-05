@@ -299,6 +299,8 @@ impl AgentSession {
         self.agent
             .set_messages(rebuilt_loop_messages(rebuilt))
             .await;
+        // The moved branch carries its own `/context-limit` state.
+        self.restore_context_limit_from_branch().await;
         Ok(())
     }
 

@@ -63,6 +63,7 @@ fn fake_runtime_path() -> std::path::PathBuf {
 fn manager(python: std::path::PathBuf) -> ReplKernelManager {
     ReplKernelManager::new(KernelManagerOptions {
         environment: pa_core::kernel::shared::KernelEnvironment::Inherit,
+        plan_guard: None,
         python: Some(python),
         cwd: Some(std::env::temp_dir()),
         env: HashMap::new(),

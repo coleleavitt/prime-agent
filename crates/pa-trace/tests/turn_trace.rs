@@ -119,6 +119,7 @@ fn fake_kernel(dir: &Path) -> Arc<ReplKernelManager> {
     std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755)).expect("chmod");
     Arc::new(ReplKernelManager::new(KernelManagerOptions {
         environment: pa_core::kernel::shared::KernelEnvironment::Inherit,
+        plan_guard: None,
         python: Some(python),
         cwd: Some(dir.to_path_buf()),
         env: HashMap::new(),

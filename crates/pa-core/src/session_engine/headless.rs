@@ -128,7 +128,8 @@ pub fn select_headless_terminal_result(messages: &[AgentMessage]) -> HeadlessTer
                 // without letting it hide earlier valid outcomes.
                 REFINEMENT_OUTCOME_CUSTOM_TYPE
                 | REFINEMENT_NOTICE_CUSTOM_TYPE
-                | HARNESS_DIGEST_CUSTOM_TYPE => {
+                | HARNESS_DIGEST_CUSTOM_TYPE
+                | super::messages::CONTEXT_CAP_CLAMP_NOTICE_CUSTOM_TYPE => {
                     index -= 1;
                 }
                 _ => break,

@@ -92,6 +92,7 @@ fn flush_rows_write_crlf_and_keep_zone_markers() {
 fn options(selection: ModelSelection) -> InteractiveOptions {
     InteractiveOptions {
         resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
+        initial_plan_mode: false,
         models: None,
         socket_path: PathBuf::from("/tmp/unused.sock"),
         cwd: PathBuf::from("/tmp"),

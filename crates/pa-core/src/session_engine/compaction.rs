@@ -24,6 +24,10 @@ pub struct CompactionSettings {
     /// `input + requested output > contextWindow`.
     pub reserve_tokens: u64,
     pub keep_recent_tokens: u64,
+    /// `compaction.maxContextTokens`: an optional hard cap on the context
+    /// tokens auto-compaction lets accumulate, below the window-derived
+    /// threshold on long-window models (see [`resolve_context_cap`]).
+    pub max_context_tokens: Option<u64>,
 }
 
 impl Default for CompactionSettings {
@@ -32,8 +36,44 @@ impl Default for CompactionSettings {
             enabled: true,
             reserve_tokens: DEFAULT_RESERVE_TOKENS,
             keep_recent_tokens: DEFAULT_KEEP_RECENT_TOKENS,
+            max_context_tokens: None,
         }
     }
+}
+
+/// Headroom above `keep_recent_tokens + reserve_tokens` a context cap must
+/// keep, so a capped compaction always frees room (the anti-thrash floor).
+pub const CONTEXT_CAP_FLOOR_MARGIN: u64 = 8_192;
+
+/// The context cap in force after the anti-thrash clamp.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolvedContextCap {
+    pub cap: u64,
+    /// The configured cap sat below the floor and was raised to it.
+    pub clamped: bool,
+}
+
+/// Resolve the configured `max_context_tokens`, raising a cap below
+/// `keep_recent_tokens + reserve_tokens + CONTEXT_CAP_FLOOR_MARGIN` to that
+/// floor (a lower cap would re-trigger right after every compaction).
+#[must_use]
+pub fn resolve_context_cap(settings: &CompactionSettings) -> Option<ResolvedContextCap> {
+    let configured = settings.max_context_tokens?;
+    let floor = settings
+        .keep_recent_tokens
+        .saturating_add(settings.reserve_tokens)
+        .saturating_add(CONTEXT_CAP_FLOOR_MARGIN);
+    Some(if configured < floor {
+        ResolvedContextCap {
+            cap: floor,
+            clamped: true,
+        }
+    } else {
+        ResolvedContextCap {
+            cap: configured,
+            clamped: false,
+        }
+    })
 }
 
 /// Context tokens from usage: `totalTokens` when present, else the sum.
@@ -146,8 +186,9 @@ fn div4(chars: u64) -> u64 {
 /// large windows). COMBINED-LIMIT: `context_window - max_output_tokens -
 /// max(reserve_tokens, COMBINED_LIMIT_HEADROOM_FLOOR)`: the output budget
 /// must still fit. TS checks only `contextWindow - reserveTokens`; reserving
-/// the output budget is a deliberate Rust-side fix. A non-positive threshold
-/// disables the trigger.
+/// the output budget is a deliberate Rust-side fix. A configured context cap
+/// ([`resolve_context_cap`]) lowers the threshold further. A non-positive
+/// threshold disables the trigger.
 #[must_use]
 pub fn compaction_threshold(
     context_window: u64,
@@ -159,7 +200,11 @@ pub fn compaction_threshold(
     let combined = context_window
         .saturating_sub(max_output_tokens)
         .saturating_sub(headroom);
-    percentage.min(combined)
+    let window_threshold = percentage.min(combined);
+    match resolve_context_cap(settings) {
+        Some(cap) => window_threshold.min(cap.cap),
+        None => window_threshold,
+    }
 }
 
 #[must_use]
@@ -595,6 +640,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 127_500,
             keep_recent_tokens: 10,
+            max_context_tokens: None,
         };
         let messages = vec![
             user_message("f14 auto seed turn", 1),
@@ -612,6 +658,7 @@ mod tests {
             enabled: false,
             reserve_tokens: 127_500,
             keep_recent_tokens: 10,
+            max_context_tokens: None,
         };
         assert!(!threshold_compaction_due(&messages, 128_000, 0, &disabled));
         assert!(!threshold_compaction_due(&messages, 0, 0, &settings));
@@ -679,6 +726,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 1,
             keep_recent_tokens: 10,
+            max_context_tokens: None,
         };
         assert_eq!(compaction_threshold(131_072, 32_768, &settings), 94_208);
         // An output budget that cannot fit any context disables the
@@ -701,6 +749,7 @@ mod tests {
             enabled: true,
             reserve_tokens: 127_500,
             keep_recent_tokens: 10,
+            max_context_tokens: None,
         };
         let messages = vec![
             compaction_summary(10),
@@ -850,5 +899,85 @@ mod tests {
         ];
         let usage = get_last_assistant_usage(&entries).unwrap();
         assert_eq!(usage.total_tokens, 150);
+    }
+
+    /// `compaction.maxContextTokens` (#2100): on a long-window model the
+    /// cap, not the window, decides when auto-compaction fires; a disabled
+    /// compaction never fires however low the cap.
+    #[test]
+    fn a_context_cap_fires_auto_compaction_early_on_a_long_window() {
+        let capped = CompactionSettings {
+            max_context_tokens: Some(200_000),
+            ..CompactionSettings::default()
+        };
+        assert_eq!(compaction_threshold(1_048_576, 32_000, &capped), 200_000);
+        let over_cap = vec![
+            user_message("long session", 1),
+            assistant_message(200_001, 2),
+        ];
+        let under_cap = vec![
+            user_message("long session", 1),
+            assistant_message(199_999, 2),
+        ];
+        assert_eq!(
+            (
+                threshold_compaction_due(&over_cap, 1_048_576, 32_000, &capped),
+                threshold_compaction_due(&under_cap, 1_048_576, 32_000, &capped),
+                threshold_compaction_due(
+                    &over_cap,
+                    1_048_576,
+                    32_000,
+                    &CompactionSettings::default()
+                ),
+            ),
+            (true, false, false)
+        );
+        let disabled = CompactionSettings {
+            enabled: false,
+            ..capped
+        };
+        assert!(!threshold_compaction_due(
+            &over_cap, 1_048_576, 32_000, &disabled
+        ));
+        assert!(!should_compact(900_000, 1_048_576, 32_000, &disabled));
+        // A cap above the window-derived point leaves that point in charge.
+        let loose = CompactionSettings {
+            max_context_tokens: Some(2_000_000),
+            ..CompactionSettings::default()
+        };
+        assert_eq!(
+            compaction_threshold(131_072, 32_768, &loose),
+            compaction_threshold(131_072, 32_768, &CompactionSettings::default())
+        );
+    }
+
+    /// A cap below `keepRecentTokens + reserveTokens + 8192` would compact
+    /// again right after every compaction: it is raised to that floor.
+    #[test]
+    fn a_sub_floor_context_cap_clamps_to_the_anti_thrash_floor() {
+        let settings = CompactionSettings {
+            max_context_tokens: Some(1_000),
+            ..CompactionSettings::default()
+        };
+        let floor = DEFAULT_KEEP_RECENT_TOKENS + DEFAULT_RESERVE_TOKENS + CONTEXT_CAP_FLOOR_MARGIN;
+        assert_eq!(
+            resolve_context_cap(&settings),
+            Some(ResolvedContextCap {
+                cap: floor,
+                clamped: true,
+            })
+        );
+        assert_eq!(compaction_threshold(1_048_576, 32_000, &settings), floor);
+        assert_eq!(
+            resolve_context_cap(&CompactionSettings {
+                max_context_tokens: Some(floor),
+                ..settings
+            }),
+            Some(ResolvedContextCap {
+                cap: floor,
+                clamped: false,
+            })
+        );
+        assert_eq!(resolve_context_cap(&CompactionSettings::default()), None);
     }
 }

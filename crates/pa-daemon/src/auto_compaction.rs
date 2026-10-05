@@ -47,19 +47,38 @@ impl AgentSessionEngine {
         let run_model = self
             .armed_image_route()
             .map_or_else(|| model.clone(), |route| route.target.model);
-        let due = {
+        let (due, clamp_notice) = {
             let guard = self.session.blocking_lock();
             match guard.as_deref() {
-                Some(engine) => self
-                    .runtime
-                    .block_on(async { engine.session.auto_compaction_due(&run_model).await }),
+                Some(engine) => {
+                    let due = self
+                        .runtime
+                        .block_on(async { engine.session.auto_compaction_due(&run_model).await });
+                    // A capped compaction about to run discloses, once per
+                    // session, that its configured cap was raised to the
+                    // anti-thrash floor (#2100).
+                    (
+                        due,
+                        due.then(|| engine.session.take_context_cap_clamp_notice())
+                            .flatten(),
+                    )
+                }
                 // No built session: the live context is empty, matching the
                 // TS pre-turn check on a fresh session.
-                None => false,
+                None => (false, None),
             }
         };
         if !due {
             return AutoCompactionRun::NotDue;
+        }
+        // The display-only row persists with its event; `convert_to_llm`
+        // keeps it out of model context.
+        if let Some(notice) = clamp_notice {
+            if !emit(EngineEvent::CustomMessage(
+                crate::session_commands::custom_message_value(&notice),
+            )) {
+                return AutoCompactionRun::Cancelled;
+            }
         }
         // TS `_runAutoCompaction` emits the start event before the
         // summarizer runs, so attached surfaces see the loader.

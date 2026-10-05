@@ -254,37 +254,43 @@ impl AgentSessionEngine {
     /// The delegation outcome's adoption telemetry (`image delegation`,
     /// the telemetry worker's locked catalog event): the delegating
     /// PARENT session's id and the outcome only — never child ids, model
-    /// ids, or prompt/answer content. Best-effort: no durable session id
-    /// (an unsaved headless session), no event.
+    /// ids, or prompt/answer content.
     fn note_image_delegation(&self, answered: bool) {
+        if let Some((client, session_id)) = self.delegation_telemetry() {
+            pa_core::session_engine::telemetry::track_image_delegation(
+                &client,
+                &session_id,
+                if answered { "answered" } else { "failed" },
+            );
+        }
+    }
+
+    /// The telemetry client and durable session id an image-delegation
+    /// event reports under. Best-effort: no durable session id (an unsaved
+    /// headless session) or telemetry switched off, no client.
+    pub(crate) fn delegation_telemetry(&self) -> Option<(pa_telemetry::TelemetryClient, String)> {
         let session_file = self
             .session_file
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
-        let Some(session_id) = session_file
+        let session_id = session_file
             .as_ref()
             .and_then(|path| path.file_stem())
             .and_then(|stem| stem.to_str())
-            .filter(|stem| !stem.is_empty())
-        else {
-            return;
-        };
+            .filter(|stem| !stem.is_empty())?
+            .to_string();
         let settings =
             pa_core::settings::SettingsManager::create(self.cwd(), &self.config.agent_dir);
         if !pa_core::session_engine::telemetry::telemetry_switch(&settings).enabled() {
-            return;
+            return None;
         }
         let client =
             pa_core::session_engine::telemetry::build_client(&settings, &self.config.agent_dir);
-        pa_core::session_engine::telemetry::track_image_delegation(
-            &client,
-            session_id,
-            if answered { "answered" } else { "failed" },
-        );
+        Some((client, session_id))
     }
 }
 
 #[cfg(test)]
 #[path = "image_delegation_tests.rs"]
-mod tests;
+pub(super) mod tests;

@@ -254,6 +254,7 @@ async fn tui_export_and_share_surface() {
 
     let options = pa_tui::interactive::InteractiveOptions {
         resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
+        initial_plan_mode: false,
         models: None,
         socket_path: supervisor.socket.clone(),
         cwd: dir.path().to_path_buf(),

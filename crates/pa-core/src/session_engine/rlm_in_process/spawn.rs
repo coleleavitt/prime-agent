@@ -191,6 +191,7 @@ async fn admission(
             // knobs keep the daemon child defaults.
             telemetry: None,
             prewarm_ipython_kernel: None,
+            plan_mode: Some(request.plan_mode),
             ..Default::default()
         })
         .await?,

@@ -1358,17 +1358,11 @@ impl SessionEngine for AgentSessionEngine {
             self.children.is_some(),
         ) {
             (Ok(Some(resolved)), true) => {
-                // The daemon's model allowlist is fail-closed on every
-                // model the session runs on (the same gate
-                // `arm_image_turn_route` asserts for the swap): a resolved
-                // image model excluded by `allowedModels` must not reach a
+                // The same allowlist gate `arm_image_turn_route` asserts for
+                // the swap: an excluded image model must not reach a
                 // delegation child either.
-                let selector = format!("{}/{}", resolved.model.provider, resolved.model.id);
-                let allowlist = crate::model_allowlist::load(&self.cwd(), &self.config.agent_dir);
-                if let Err(refusal) = crate::model_allowlist::assert_allowed(&allowlist, &selector)
-                {
-                    self.note_model_refused("image_route", &selector);
-                    emit(EngineEvent::Done(Err(format!("{refusal:#}"))));
+                if let Err(refusal) = self.assert_image_model_allowed(&resolved) {
+                    emit(EngineEvent::Done(Err(refusal)));
                     return;
                 }
                 self.run_image_delegation(&resolved, &turn_prompt, aborted, &mut emit)
@@ -1395,12 +1389,10 @@ impl SessionEngine for AgentSessionEngine {
         self.clear_image_route();
     }
 
-    fn abort_in_flight_turn(&self) {
+    fn abort_in_flight_turn(&self) -> bool {
         // The active run aborts and the in-flight fetch cancels; none in flight: nothing.
         let agent = self.turn_agent.lock_or_recover().clone();
-        if let Some(agent) = agent {
-            agent.abort();
-        }
+        agent.is_some_and(|agent| agent.abort())
     }
 
     /// `set_steering_mode` / `set_follow_up_mode`: the queue delivery modes

@@ -37,7 +37,7 @@ pub const PROMPT_RUN_FLAGS: [&str; 4] =
     ["--print", "-p", "--system-prompt", "--append-system-prompt"];
 
 /// parseArgs-known long flags that take no separate value.
-const GLOBAL_BOOLEAN_FLAGS: [&str; 12] = [
+const GLOBAL_BOOLEAN_FLAGS: [&str; 13] = [
     "--help",
     "--version",
     "--continue",
@@ -50,6 +50,7 @@ const GLOBAL_BOOLEAN_FLAGS: [&str; 12] = [
     "--autonomous",
     "--verbose",
     "--offline",
+    "--plan",
 ];
 
 fn consumes_following_token(args: &[String], index: usize) -> bool {

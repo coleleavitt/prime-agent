@@ -69,6 +69,7 @@ fn manager_options(
 ) -> KernelManagerOptions {
     KernelManagerOptions {
         environment: pa_core::kernel::shared::KernelEnvironment::Inherit,
+        plan_guard: None,
         python: Some(python),
         cwd: Some(std::env::temp_dir()),
         env: std::collections::HashMap::default(),

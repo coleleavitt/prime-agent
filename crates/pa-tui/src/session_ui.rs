@@ -478,10 +478,17 @@ impl SessionUi {
         }
     }
 
-    fn session_display(&self) -> String {
-        self.session_name
+    /// The top bar's chat name and the window title follow the session's display name (TS
+    /// `updateTerminalTitle` runs at every attach and display-name change).
+    fn sync_chat_name(&self, view: &mut AgentView) {
+        view.chrome.chat_name = self
+            .session_name
             .clone()
-            .unwrap_or_else(|| crate::chrome::display_name(&self.cwd.to_string_lossy()))
+            .unwrap_or_else(|| crate::chrome::display_name(&self.cwd.to_string_lossy()));
+        crate::terminal_title::set(
+            &mut std::io::stdout(),
+            &crate::terminal_title::session_title(self.session_name.as_deref(), &self.cwd),
+        );
     }
 
     pub(crate) async fn current_model_provider(&mut self) -> Option<String> {

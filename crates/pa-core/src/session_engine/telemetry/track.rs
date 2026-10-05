@@ -70,6 +70,22 @@ pub fn track_image_delegation(client: &TelemetryClient, session_id: &str, outcom
     client.track("image delegation", properties);
 }
 
+/// Track one `vision.read` request's outcome (`vision read`, schema v4):
+/// the reading parent session's id, the outcome, and the image count only —
+/// never the question, the reading, or a model id.
+pub fn track_vision_read(
+    client: &TelemetryClient,
+    session_id: &str,
+    outcome: &str,
+    image_count: usize,
+) {
+    let mut properties = base_properties("daemon");
+    properties.set("session_id", Value::from(session_id));
+    properties.set("outcome", Value::from(outcome));
+    properties.set("image_count", Value::from(image_count));
+    client.track("vision read", properties);
+}
+
 /// Track the disk-archive sweep's `daemon event` (schema v1, kind
 /// `sessions_archived`): a count only, never session payload.
 pub fn track_sessions_archived(client: &TelemetryClient, count: usize) {

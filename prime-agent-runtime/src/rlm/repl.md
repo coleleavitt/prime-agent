@@ -54,10 +54,11 @@ event.
 | `list_names` | `{"type":"list_names","id":str}` |
 | `mcp_status` | `{"type":"mcp_status","id":str,"servers":[str,...],"timeout_ms"?:number}` — host-side view query: per-server tool listing (opens each server on demand, bounded by `timeout_ms` per server; default 10s); the `done` frame carries `connections: [{server, tools: [{name, description}] | null, error: str | null}]` |
 | `bash_activity` | `{"type":"bash_activity","id":str,"action":"list"|"tail"|"kill","activityId"?:str,"lines"?:int}` — out-of-band even during a running cell; tail lines 1–200, response capped at 16 KiB; opaque IDs resolve only against this kernel’s handles |
+| `plan_guard` | `{"type":"plan_guard","id":str,"token":str,"enabled":bool,"writable_roots"?:[str,...]}` — host-only plan-mode switch, out-of-band even during a running cell; see Plan guard below |
 | `shutdown` | `{"type":"shutdown","id"?:str}` |
 
-Requests other than `interrupt`, `host_reply`, and `bash_activity` run strictly in order, one at
-a time. A malformed line
+Requests other than `interrupt`, `host_reply`, `bash_activity`, `factory_activity`, and
+`plan_guard` run strictly in order, one at a time. A malformed line
 produces `{"event":"error","id":null,"ename":"ProtocolError",...}` and the
 runtime keeps serving. Closing stdin is equivalent to `shutdown`.
 
@@ -248,6 +249,28 @@ dict verbatim. Replies are routed on the reader thread like `interrupt` —
 never through the request queue, since the awaiting cell is itself the
 in-flight execute. Replies for unknown ids are dropped. Cancellation-aware calls emit one exact-ID `host_cancel`, shield the same reply future, and keep it alive through their bounded drain. `rlm.repl.is_active()` reports whether the
 process is serving the protocol (importing the module does not count).
+
+## Plan guard
+
+`plan_guard` switches plan mode (`rlm.plan_guard`): while enabled, an
+irremovable `sys.addaudithook` hook refuses filesystem mutations outside the
+writable roots (temp dirs, `~/.cache`, `/dev`, and the request's
+`writable_roots`; `.git` metadata stays read-only inside them) and direct
+process spawns; `subprocess.Popen` runs under a
+read-only OS sandbox (`bwrap` on Linux, `sandbox-exec` on macOS) or, without
+one, only classifiable read-only commands. A refused operation raises
+`rlm.plan_guard.PlanModeError` in the cell. `bash()` checks its command
+before spawning.
+
+The runtime claims the one host controller before it announces `ready`, and
+only the reader thread holds it: cells cannot claim another. The first frame
+binds its `token` (the host sends one right after `ready`, before any cell);
+every later frame must carry the same token. The reply is
+`{"event":"done","id":str,"status":"ok","enabled":bool}`, or `status:"error"`
+with `reason` for a malformed frame or a wrong token. The protocol version
+stays `4`: a host that never sends the frame leaves the guard off, and a
+runtime that predates it answers a protocol error without an id, which the host
+bounds with a timeout.
 
 ## Snapshot / restore
 

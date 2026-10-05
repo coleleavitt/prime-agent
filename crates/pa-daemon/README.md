@@ -4,8 +4,10 @@ Session supervision and wire serving.
 
 ## Scope
 ACP stdio transport (`acp`): the JSON-RPC serve surface for Agent
-Client Protocol clients, served over a daemon session (initialize, session/new, session/prompt, session/close,
-session/cancel, and the outgoing session/update notification with
+Client Protocol clients, served over a daemon session (initialize, session/new, session/list,
+session/load — a saved session's transcript replayed before the answer, attaching the worker
+that already serves it or switching the connection's own worker to the file —,
+session/prompt, session/close, session/cancel, and the outgoing session/update notification with
 namespaced `_meta` correlation), owned by this crate because
 wire-protocol serving is its area; the worker turn loop owns compaction
 arms, auto-refine, and goal continuation. The compact-trigger
@@ -93,7 +95,9 @@ Supervisor-backed RLM child sessions
 `rlm.spawn`/`rlm.create_session` create real daemon sessions through the
 worker's supervisor link - one supervised worker process per child - and the
 parent-side registry serves `rlm.list_subagents`/`rlm.collect`/
-`rlm.delete_subagent` with TS-parity selector errors; child model resolution
+`rlm.interrupt_subagent`/`rlm.delete_subagent` with TS-parity selector errors
+(interrupt routes the `abort` command with the `interruptRun` marker: the
+child worker aborts only its in-flight run and keeps its queues admitted); child model resolution
 and thinking-level validation live in `rlm_child_model.rs`; the create
 command carries the RLM recursion identity (`rlmDepth`/`rlmMaxDepth`/
 `parentSessionPath`/`thinking`) so respawned children keep their depth. Per-session model binding: the

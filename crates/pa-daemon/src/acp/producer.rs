@@ -134,6 +134,29 @@ impl UpdateProducer {
         }
     }
 
+    /// Publish a connection-scoped update outside the turn correlation: no
+    /// `eventSequence` is spent and no `_meta` is stamped, so an
+    /// advertisement that lands at any point never renumbers or splits a
+    /// turn's ordered updates. The admission gate and the fence still apply.
+    pub async fn publish_uncorrelated(&self, update: &AcpSessionUpdate) -> bool {
+        let mut state = self.state.lock().await;
+        let frame = jsonrpc::notification(
+            "session/update",
+            &json!({ "sessionId": self.session_id, "update": update.to_bare_value() }),
+        );
+        match state.admission.mode {
+            AdmissionMode::Buffering => {
+                state.admission.held.push(frame);
+                true
+            }
+            AdmissionMode::Open => {
+                self.send(frame);
+                true
+            }
+            AdmissionMode::Closed => false,
+        }
+    }
+
     /// Stamp the update with its `eventSequence` and namespace payload.
     fn correlate(
         &self,

@@ -156,6 +156,9 @@ impl AcpChild {
             match self.lines.recv_timeout(timeout_left) {
                 Ok(line) => {
                     let frame: Value = serde_json::from_str(&line).expect("valid JSON line");
+                    if is_command_advertisement(&frame) {
+                        continue;
+                    }
                     if frame.get("id").and_then(Value::as_u64) == Some(id)
                         && (frame.get("result").is_some() || frame.get("error").is_some())
                     {
@@ -206,6 +209,13 @@ impl AcpChild {
             frame["params"]["update"]["sessionUpdate"] == kind
         });
     }
+}
+
+/// The asynchronous `available_commands_update` an admission sends (upstream
+/// #1308; asserted in `acp_session_load_e2e`): uncorrelated and racing the
+/// first turn by design, so the turn-shape assertions here skip it.
+fn is_command_advertisement(frame: &Value) -> bool {
+    frame["params"]["update"]["sessionUpdate"] == "available_commands_update"
 }
 
 /// The daemon-attached child's command on `home` and `socket`: the
@@ -302,12 +312,17 @@ fn acp_initialize_matches_the_ts_golden() {
     let result = &response["result"];
     assert_eq!(result["protocolVersion"], 1);
     let capabilities = &result["agentCapabilities"];
-    assert_eq!(capabilities["loadSession"], false);
+    // `session/load` and `session/list` are served (upstream #1116/#2804; TS
+    // v0.9.8 advertised neither — a declared divergence).
+    assert_eq!(capabilities["loadSession"], true);
     assert_eq!(
         capabilities["promptCapabilities"],
         json!({ "image": true, "embeddedContext": true })
     );
-    assert_eq!(capabilities["sessionCapabilities"], json!({ "close": {} }));
+    assert_eq!(
+        capabilities["sessionCapabilities"],
+        json!({ "close": {}, "list": {} })
+    );
     // ACP MCP server admission is served, so the http capability is advertised.
     assert_eq!(capabilities["mcpCapabilities"], json!({ "http": true }));
     let info = &result["agentInfo"];

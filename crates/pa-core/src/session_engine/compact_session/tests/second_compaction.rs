@@ -48,6 +48,7 @@ async fn second_compaction_updates_the_prior_summary_over_new_history() {
     session.append_message(user("turn two")).unwrap();
     let settings = super::super::compaction::CompactionSettings {
         keep_recent_tokens: 2,
+        max_context_tokens: None,
         ..Default::default()
     };
     // First compaction: initial prompt over turns zero and one,
@@ -214,6 +215,7 @@ async fn second_compaction_request_carries_the_anchor_and_strips_file_blocks() {
             custom_instructions: None,
             settings: super::super::compaction::CompactionSettings {
                 keep_recent_tokens: 2,
+                max_context_tokens: None,
                 ..Default::default()
             },
             abort: None,
@@ -274,6 +276,7 @@ async fn second_compaction_request_carries_the_anchor_and_strips_file_blocks() {
             custom_instructions: None,
             settings: super::super::compaction::CompactionSettings {
                 keep_recent_tokens: 10,
+                max_context_tokens: None,
                 ..Default::default()
             },
             abort: None,
@@ -373,6 +376,7 @@ async fn second_compaction_split_turn_history_updates_prefix_does_not() {
     session.append_message(user("turn one")).unwrap();
     let settings = super::super::compaction::CompactionSettings {
         keep_recent_tokens: 1,
+        max_context_tokens: None,
         ..Default::default()
     };
     let outcome = execute_compaction(
@@ -413,6 +417,7 @@ async fn second_compaction_split_turn_history_updates_prefix_does_not() {
             custom_instructions: None,
             settings: super::super::compaction::CompactionSettings {
                 keep_recent_tokens: 10,
+                max_context_tokens: None,
                 ..Default::default()
             },
             abort: None,

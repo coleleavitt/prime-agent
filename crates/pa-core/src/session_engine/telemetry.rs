@@ -41,7 +41,8 @@ mod track;
 pub use track::{
     track_catalog_refresh, track_compaction_abort_declared, track_daemon_event_summary,
     track_deleted_child_usage_captured, track_image_delegation, track_model_refused,
-    track_sessions_archived, track_worker_adoption, track_worker_children_closed,
+    track_sessions_archived, track_vision_read, track_worker_adoption,
+    track_worker_children_closed,
 };
 
 mod classify;
@@ -134,6 +135,14 @@ impl TelemetryWiring {
             }),
         );
     }
+}
+
+/// What one `/context-limit` run did (the token count never reports).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextLimitAction {
+    Status,
+    Set(u64),
+    Clear,
 }
 
 /// Installed session telemetry: the event subscription plus the in-memory
@@ -679,6 +688,23 @@ impl SessionTelemetry {
             );
         }
         self.client.track("session archived", properties);
+    }
+
+    /// `context_limit_command` (schema v4, #2100): one `/context-limit`
+    /// run — the action and whether the cap in force is clamped to the
+    /// anti-thrash floor; never the token count.
+    pub fn note_context_limit_command(&self, action: ContextLimitAction, clamped: bool) {
+        let mut properties = self.session_properties();
+        properties.set(
+            "action",
+            Value::from(match action {
+                ContextLimitAction::Status => "status",
+                ContextLimitAction::Set(_) => "set",
+                ContextLimitAction::Clear => "clear",
+            }),
+        );
+        properties.set("clamped", Value::from(clamped));
+        self.client.track("context_limit_command", properties);
     }
 
     /// A `/skill:<name>` submission expanded into its skill block (the

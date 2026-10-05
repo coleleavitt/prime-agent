@@ -54,6 +54,7 @@ async fn engine_runs_tool_loop_and_persists() {
     let cwd = tmp.path().join("project");
     std::fs::create_dir_all(&cwd).unwrap();
     let engine = create_session(SessionEngineConfig {
+        plan_mode: None,
         on_late_sent_agent_message: None,
         semantic_edges: None,
         cron_store: None,
@@ -153,6 +154,7 @@ async fn spawned_child_prompt_stamps_its_depth() {
     let cwd = tmp.path().join("project");
     std::fs::create_dir_all(&cwd).unwrap();
     let engine = create_session(SessionEngineConfig {
+        plan_mode: None,
         on_late_sent_agent_message: None,
         semantic_edges: None,
         cron_store: None,
@@ -220,6 +222,7 @@ async fn oauth_creds_unlock_generic_mcp_gating_in_new_sessions() {
         stream_fn: pa_agent::stream::StreamFn,
     ) -> SessionEngineConfig {
         SessionEngineConfig {
+            plan_mode: None,
             on_late_sent_agent_message: None,
             semantic_edges: None,
             cron_store: None,

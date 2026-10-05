@@ -306,6 +306,7 @@ async fn panel_expand_drill_in_and_back_re_expands_the_tree() {
     // (TS `getTrayLocationLabel`).
     let child_options = pa_tui::interactive::InteractiveOptions {
         resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
+        initial_plan_mode: false,
         models: None,
         socket_path: supervisor.socket.clone(),
         cwd: PathBuf::from("/tmp"),

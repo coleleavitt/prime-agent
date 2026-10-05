@@ -518,6 +518,7 @@ fn command_options(
 ) -> pa_tui::interactive::InteractiveOptions {
     pa_tui::interactive::InteractiveOptions {
         resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
+        initial_plan_mode: false,
         models: None,
         socket_path: socket.to_path_buf(),
         cwd: dir.to_path_buf(),

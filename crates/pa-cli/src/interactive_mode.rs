@@ -447,6 +447,7 @@ fn build_tui_options(
         onboarding_task(options, Some(provider_auth.clone()));
     let tui_options_value = InteractiveOptions {
         resource_exclusions: config.resource_exclusions(),
+        initial_plan_mode: config.plan_mode,
         code_block_indent,
         tree_filter_mode,
         branch_summary_skip_prompt,

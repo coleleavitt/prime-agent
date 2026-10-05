@@ -9,7 +9,7 @@ import time
 import types
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from . import toolforge, trace
 from .bash import BashHandle, BashResult, active_bash_commands, bash
@@ -77,6 +77,14 @@ class RLMSubagent:
     label: str | None = None
     last_activity_at: float | None = None
     activity_stale_ms: float | None = None
+
+
+@dataclass(frozen=True)
+class RLMInterruptResult:
+    """What ``interrupt_subagent()`` did: the child row (``None`` only for ``not_found``) and the outcome."""
+
+    subagent: RLMSubagent | None
+    outcome: Literal["interrupted", "idle", "terminal", "not_found"]
 
 
 @dataclass(frozen=True)
@@ -485,25 +493,49 @@ async def progress_note(message: str) -> RLMProgressNoteResult:
     return RLMProgressNoteResult(accepted=accepted, retry_after_ms=retry_after_ms)
 
 
+def _subagent_selector(target: Any) -> str:
+    """Normalize a direct-child selector for interrupt/delete: spawn handle, subagent row, or id/name string."""
+    if isinstance(target, (RLMSpawnHandle, RLMSubagent)):
+        return target.rlm_child_id
+    if isinstance(target, str):
+        selector = target.strip()
+        if not selector:
+            raise ValueError("target must not be empty")
+        return selector
+    raise TypeError(f"target must be RLMSpawnHandle, RLMSubagent, or str, got {type(target).__name__}")
+
+
+_INTERRUPT_OUTCOMES = frozenset({"interrupted", "idle", "terminal", "not_found"})
+
+
+async def interrupt_subagent(target: str | RLMSubagent | RLMSpawnHandle) -> RLMInterruptResult:
+    """Stop a direct child's current run while keeping the child.
+
+    Only the run active at call time is aborted; the child's session, transcript,
+    and descendants stay, and a later ``agent_message.send`` starts a new turn.
+    The outcome is ``interrupted`` (a run was aborted), ``idle`` (nothing was
+    running), ``terminal`` (the child already ended in error), or ``not_found``
+    (no direct child matches; ``subagent`` is then ``None``). ``target`` selects
+    the child like ``delete_subagent()``.
+    """
+    payload = await host_request("rlm.interrupt_subagent", {"target": _subagent_selector(target)})
+    outcome = payload.get("outcome")
+    if outcome not in _INTERRUPT_OUTCOMES:
+        raise RuntimeError("rlm.interrupt_subagent returned an invalid outcome")
+    raw_subagent = payload.get("subagent")
+    subagent = None if raw_subagent is None else _subagent_from_payload(raw_subagent, "rlm.interrupt_subagent")
+    if (outcome == "not_found") != (subagent is None):
+        raise RuntimeError("rlm.interrupt_subagent returned an inconsistent subagent")
+    return RLMInterruptResult(subagent=subagent, outcome=outcome)
+
+
 async def delete_subagent(target: str | RLMSubagent | RLMSpawnHandle) -> RLMSubagent:
     """Delete one running or retained direct child from the current parent session.
 
     ``target`` selects the child: the spawn handle returned by ``rlm.spawn``, a
     subagent row from ``list_subagents()``, or a child id/session name string.
     """
-    if isinstance(target, RLMSpawnHandle):
-        selector = target.rlm_child_id
-    elif isinstance(target, RLMSubagent):
-        selector = target.rlm_child_id
-    elif isinstance(target, str):
-        selector = target.strip()
-        if not selector:
-            raise ValueError("target must not be empty")
-    else:
-        raise TypeError(
-            f"target must be RLMSpawnHandle, RLMSubagent, or str, got {type(target).__name__}"
-        )
-    payload = await host_request("rlm.delete_subagent", {"target": selector})
+    payload = await host_request("rlm.delete_subagent", {"target": _subagent_selector(target)})
     return _subagent_from_payload(payload.get("subagent"), "rlm.delete_subagent")
 
 
@@ -877,6 +909,9 @@ class _RLMNamespace:
     async def progress_note(self, message: str) -> RLMProgressNoteResult:
         return await progress_note(message)
 
+    async def interrupt_subagent(self, target: str | RLMSubagent | RLMSpawnHandle) -> RLMInterruptResult:
+        return await interrupt_subagent(target)
+
     async def delete_subagent(self, target: str | RLMSubagent | RLMSpawnHandle) -> RLMSubagent:
         return await delete_subagent(target)
 
@@ -932,6 +967,7 @@ __all__ = [
     "McpToolError",
     "NotEnabled",
     "RLMCreateSessionHandle",
+    "RLMInterruptResult",
     "RLMModel",
     "RLMProgressNoteResult",
     "RLMSpawnHandle",
@@ -952,6 +988,7 @@ __all__ = [
     "inbox_configure",
     "inbox_list",
     "inbox_read",
+    "interrupt_subagent",
     "list_subagents",
     "progress_note",
     "rename",

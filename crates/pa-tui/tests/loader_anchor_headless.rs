@@ -201,6 +201,7 @@ fn attach_data(id: &str, prompt_age_ms: u64) -> Value {
 fn options(socket: PathBuf) -> InteractiveOptions {
     InteractiveOptions {
         resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
+        initial_plan_mode: false,
         models: None,
         socket_path: socket,
         cwd: PathBuf::from("/tmp"),

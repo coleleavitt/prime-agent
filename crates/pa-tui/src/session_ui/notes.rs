@@ -59,7 +59,7 @@ impl SessionUi {
     /// Re-apply the refreshed context usage to the chrome state.
     pub(crate) fn rebuild_tray(&mut self, view: &mut AgentView) {
         view.chrome.context = self.context;
-        view.chrome.chat_name = self.session_display();
+        self.sync_chat_name(view);
         self.dirty = true;
     }
 

@@ -164,6 +164,10 @@ pub fn key_event_to_id(key: &KeyEvent) -> Option<KeyId> {
 /// - The xterm 0x1c-0x1f control-byte complement: crossterm folds it into `Char('4'..='7') + CTRL`,
 ///   but TS keeps the literal ids (`\x1d` is "ctrl+]", `\x1f` is "ctrl+-"); the remap stays
 ///   legacy-only, because under kitty the same events are the real CSI-u ctrl+digit keys.
+/// - Raw BS (0x08): crossterm folds it into Ctrl+H. TS parseKey reads the byte as Ctrl+Backspace
+///   on Windows Terminal (which sends it for that chord) and as plain Backspace elsewhere (legacy
+///   terminals and tmux setups send it for Backspace); legacy-only, because under kitty Ctrl+H
+///   and Ctrl+Backspace arrive as their own CSI-u keys.
 fn ctrl_char_id(c: char, alt: bool, shift: bool, super_key: bool) -> String {
     let lower = c.to_ascii_lowercase();
     let shifted = shift || c.is_ascii_uppercase();
@@ -198,6 +202,13 @@ fn ctrl_char_id(c: char, alt: bool, shift: bool, super_key: bool) -> String {
     }
     if !crate::enhanced_keys::kitty_active() {
         match lower {
+            'h' if !super_key => {
+                return if windows_terminal_session(|name| std::env::var_os(name)) {
+                    "ctrl+backspace".to_string()
+                } else {
+                    "backspace".to_string()
+                };
+            }
             '4' => return "ctrl+\\".to_string(),
             '5' => return "ctrl+]".to_string(),
             '7' => return "ctrl+-".to_string(),
@@ -205,6 +216,15 @@ fn ctrl_char_id(c: char, alt: bool, shift: bool, super_key: bool) -> String {
         }
     }
     format!("ctrl+{super_prefix}{name}")
+}
+
+/// TS `isWindowsTerminalSession`: Windows Terminal sets `WT_SESSION`; an SSH hop means the
+/// keys come from whatever terminal the remote user runs.
+fn windows_terminal_session(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> bool {
+    var("WT_SESSION").is_some_and(|value| !value.is_empty())
+        && ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"]
+            .iter()
+            .all(|name| var(name).is_none_or(|value| value.is_empty()))
 }
 
 fn modified_name(name: &str, ctrl: bool, alt: bool, shift: bool, super_key: bool) -> String {
@@ -377,6 +397,59 @@ mod tests {
         crate::enhanced_keys::set_kitty_active_for_tests(true);
         assert_eq!(key_event_to_id(&ctrl_bracket).as_deref(), Some("ctrl+5"));
         crate::enhanced_keys::set_kitty_active_for_tests(false);
+    }
+
+    /// Raw BS (TS parseKey `\x08`): crossterm's Ctrl+H is Backspace in a legacy terminal, and
+    /// Ctrl+Backspace on Windows Terminal; under kitty it is the real Ctrl+H.
+    #[test]
+    fn raw_backspace_maps_by_terminal_and_kitty_mode() {
+        let _guard = crate::enhanced_keys::TEST_STATE_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let ctrl_h = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL);
+        let legacy_expected = if windows_terminal_session(|name| std::env::var_os(name)) {
+            "ctrl+backspace"
+        } else {
+            "backspace"
+        };
+        crate::enhanced_keys::set_kitty_active_for_tests(false);
+        assert_eq!(key_event_to_id(&ctrl_h).as_deref(), Some(legacy_expected));
+        crate::enhanced_keys::set_kitty_active_for_tests(true);
+        assert_eq!(key_event_to_id(&ctrl_h).as_deref(), Some("ctrl+h"));
+        crate::enhanced_keys::set_kitty_active_for_tests(false);
+        // The kitty / modifyOtherKeys / xterm forms of the word-delete chords.
+        let chords = [
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::CONTROL),
+            KeyEvent::new(KeyCode::Delete, KeyModifiers::CONTROL),
+        ];
+        assert_eq!(
+            chords.map(|event| key_event_to_id(&event)),
+            [
+                Some("ctrl+backspace".to_string()),
+                Some("ctrl+delete".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn windows_terminal_is_recognized_only_locally() {
+        let env = |vars: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                vars.iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| std::ffi::OsString::from(value))
+            }
+        };
+        assert_eq!(
+            [
+                windows_terminal_session(env(&[("WT_SESSION", "0f6c")])),
+                windows_terminal_session(env(&[])),
+                windows_terminal_session(env(&[("WT_SESSION", "")])),
+                windows_terminal_session(env(&[("WT_SESSION", "0f6c"), ("SSH_TTY", "/dev/pts/3")])),
+                windows_terminal_session(env(&[("WT_SESSION", "0f6c"), ("SSH_CLIENT", "")])),
+            ],
+            [true, false, false, false, true]
+        );
     }
 
     /// The LF mapping is kitty-mode-aware (TS parseKey): shift+enter under kitty, enter in legacy

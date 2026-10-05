@@ -22,6 +22,7 @@ async fn execute_compaction_with_pre_aborted_signal_never_runs_the_summarizer() 
             custom_instructions: None,
             settings: super::super::compaction::CompactionSettings {
                 keep_recent_tokens: 20,
+                max_context_tokens: None,
                 ..Default::default()
             },
             abort: Some(&signal),
@@ -75,6 +76,7 @@ async fn execute_compaction_with_late_abort_cancels_before_the_commit() {
             custom_instructions: None,
             settings: super::super::compaction::CompactionSettings {
                 keep_recent_tokens: 20,
+                max_context_tokens: None,
                 ..Default::default()
             },
             abort: Some(&signal),
@@ -153,6 +155,7 @@ async fn execute_compaction_skips_when_already_compacted() {
             custom_instructions: None,
             settings: super::super::compaction::CompactionSettings {
                 keep_recent_tokens: 200,
+                max_context_tokens: None,
                 ..Default::default()
             },
             abort: None,

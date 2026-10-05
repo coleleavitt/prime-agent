@@ -364,6 +364,7 @@ impl AgentSessionEngine {
         // branch's latest entry wins), seeding the published baseline so
         // it never announces itself.
         let seed;
+        let plan_mode;
         let mut shared_window = None;
         let mut shared_branch = None;
         {
@@ -374,6 +375,8 @@ impl AgentSessionEngine {
                 .clone();
             if let Some(entries) = &pending_branch {
                 seed = crate::goal_state_persist::goal_state_in_branch(entries);
+                plan_mode =
+                    pa_core::session_engine::plan_mode::plan_mode_in_entries(entries.iter());
             } else {
                 let (goal, window, branch) = tokio::task::spawn_blocking(move || {
                     // Window present -> snapshot goal + adopt; the full reader's branch entries
@@ -397,9 +400,22 @@ impl AgentSessionEngine {
                 })
                 .await?;
                 seed = goal;
+                // The engine's own session is in-memory: plan mode restores
+                // from the worker's durable file like the goal.
+                plan_mode = window
+                    .as_ref()
+                    .and_then(pa_core::session::window::WindowedSessionStore::plan_mode)
+                    .or_else(|| {
+                        branch.as_ref().and_then(|entries| {
+                            pa_core::session_engine::plan_mode::plan_mode_in_entries(entries.iter())
+                        })
+                    });
                 shared_window = window;
                 shared_branch = branch;
             }
+        }
+        if let Some(enabled) = plan_mode {
+            built.restore_plan_mode(enabled).await?;
         }
         if let Some(state) = seed {
             // The restore-resurrection guard: an active seed whose
@@ -723,6 +739,7 @@ impl AgentSessionEngine {
         // watches ride the same engine seams the bash notices hold.
         self.register_digest_inbox_host_handlers(&mut handlers);
         self.register_watch_host_handlers(&mut handlers);
+        self.register_vision_read_host_handler(&mut handlers);
         Some(handlers)
     }
 
@@ -856,6 +873,7 @@ impl AgentSessionEngine {
         let semantic_edges = self.semantic_identity.lock_or_recover().clone();
         let on_late_sent_agent_message = self.late_agent_message_sink.lock_or_recover().clone();
         pa_core::session_engine::engine::create_session(SessionEngineConfig {
+            plan_mode: None,
             on_late_sent_agent_message,
             semantic_edges,
             telemetry,

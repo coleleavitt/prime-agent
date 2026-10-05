@@ -637,6 +637,13 @@ impl SessionUi {
                 .await;
             return Ok(());
         }
+        // Plan mode flips through the session command (durable, and the
+        // kernel guard follows); the draft in the editor stays untouched.
+        if view.editor.keybindings().matches(&id, "app.plan.toggle") {
+            self.submit_prompt("/plan", SubmitBehavior::Steer, view)
+                .await?;
+            return Ok(());
+        }
         if view.editor.keybindings().matches(&id, "app.tools.expand") {
             self.cycle_detail(view);
             return Ok(());

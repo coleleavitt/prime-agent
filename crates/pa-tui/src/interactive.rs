@@ -299,6 +299,9 @@ pub struct InteractiveOptions {
     pub session: SessionSelection,
     /// Prompt sent immediately after attach (CLI message arguments).
     pub initial_message: Option<String>,
+    /// `--plan`: switch the session into plan mode (`/plan on`) right after
+    /// attach, before the initial prompt.
+    pub initial_plan_mode: bool,
     /// The `terminal.showImages` setting, default true: whether image blocks render their
     /// metadata rows or the `[Image: ...]` placeholders.
     pub show_images: bool,
@@ -373,6 +376,7 @@ impl std::fmt::Debug for InteractiveOptions {
             .field("no_session", &self.no_session)
             .field("session", &self.session)
             .field("initial_message", &self.initial_message)
+            .field("initial_plan_mode", &self.initial_plan_mode)
             .field("theme", &self.theme)
             .field("code_block_indent", &self.code_block_indent)
             .field("version", &self.version)

@@ -433,6 +433,7 @@ fn options(
 ) -> InteractiveOptions {
     InteractiveOptions {
         resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
+        initial_plan_mode: false,
         socket_path: socket,
         cwd: PathBuf::from("/tmp"),
         session_dir: None,

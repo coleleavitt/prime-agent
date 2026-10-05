@@ -179,11 +179,13 @@ impl AgentSession {
 
     /// The resolved compaction settings: the in-run continuation consult reads the threshold
     /// headroom without owning the session (a compaction in flight owns it across its model turn).
+    /// The `/context-limit` session override applies over the settings.
     pub fn compaction_settings(&self) -> compaction::CompactionSettings {
-        *self
+        let settings = *self
             .compaction
             .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.apply_context_limit(settings)
     }
 
     /// Install the session's semantic-edge recorder (the engine build's

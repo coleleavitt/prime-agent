@@ -143,6 +143,7 @@ async fn the_refused_open_renders_both_ways_out_as_the_notice_panel() {
     // The refused open hands back to the agents view.
     let options = pa_tui::interactive::InteractiveOptions {
         resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
+        initial_plan_mode: false,
         models: None,
         socket_path: daemon.socket.clone(),
         cwd: PathBuf::from("/tmp"),

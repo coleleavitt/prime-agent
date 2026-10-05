@@ -346,6 +346,19 @@ mod tests {
         assert_eq!(e.get_text(), "hello world");
     }
 
+    /// #1305: Ctrl+Backspace / Ctrl+Delete delete a word, like Ctrl+W / Alt+D.
+    #[test]
+    fn ctrl_backspace_and_ctrl_delete_delete_words() {
+        let mut e = ed();
+        e.set_text("hello world");
+        e.handle_input("ctrl+backspace");
+        assert_eq!(e.get_text(), "hello ");
+        e.set_text("hello world");
+        e.handle_input("ctrl+a");
+        e.handle_input("ctrl+delete");
+        assert_eq!(e.get_text(), " world");
+    }
+
     /// Forward delete drops the grapheme after the cursor (found red by the
     /// paste-marker suite: the pre-fix split kept the deleted span, so delete
     /// was a no-op everywhere).

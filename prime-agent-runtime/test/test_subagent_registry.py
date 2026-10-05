@@ -192,6 +192,84 @@ class RlmSubagentRegistryTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "invalid model entry"):
                 asyncio.run(rlm_module.find_models("opus"))
 
+    def test_interrupts_subagent_object_and_parses_the_outcome(self) -> None:
+        subagent = rlm_module.RLMSubagent(
+            rlm_child_id="sub-a1b2c3d4",
+            active_session_id="active-child",
+            session_id="session-child",
+            session_name="api-reviewer",
+            session_dir=Path("/tmp/parent/sub-a1b2c3d4"),
+            status="running",
+        )
+        host_request = AsyncMock(
+            return_value={
+                "subagent": {
+                    "rlm_child_id": subagent.rlm_child_id,
+                    "active_session_id": subagent.active_session_id,
+                    "session_id": subagent.session_id,
+                    "session_name": subagent.session_name,
+                    "session_dir": str(subagent.session_dir),
+                    "status": subagent.status,
+                },
+                "outcome": "interrupted",
+            }
+        )
+
+        with patch.object(rlm_module, "host_request", host_request):
+            result = asyncio.run(rlm_module.rlm.interrupt_subagent(subagent))
+
+        self.assertEqual(result, rlm_module.RLMInterruptResult(subagent=subagent, outcome="interrupted"))
+        host_request.assert_awaited_once_with("rlm.interrupt_subagent", {"target": "sub-a1b2c3d4"})
+
+    def test_interrupts_by_spawn_handle_and_reports_idle(self) -> None:
+        handle = rlm_module.RLMSpawnHandle(
+            rlm_child_id="sub-a1b2c3d4",
+            name="api-reviewer",
+            session_dir=Path("/tmp/parent/sub-a1b2c3d4"),
+            model="deepseek/deepseek-v4-flash",
+        )
+        host_request = AsyncMock(
+            return_value={
+                "subagent": {
+                    "rlm_child_id": handle.rlm_child_id,
+                    "active_session_id": None,
+                    "session_id": None,
+                    "session_name": handle.name,
+                    "session_dir": str(handle.session_dir),
+                    "status": "completed",
+                },
+                "outcome": "idle",
+            }
+        )
+
+        with patch.object(rlm_module, "host_request", host_request):
+            result = asyncio.run(rlm_module.interrupt_subagent(handle))
+
+        self.assertEqual(result.outcome, "idle")
+        self.assertEqual(result.subagent.rlm_child_id if result.subagent else None, handle.rlm_child_id)
+        host_request.assert_awaited_once_with("rlm.interrupt_subagent", {"target": "sub-a1b2c3d4"})
+
+    def test_interrupt_reports_not_found_and_rejects_inconsistent_responses(self) -> None:
+        host_request = AsyncMock(return_value={"subagent": None, "outcome": "not_found"})
+        with patch.object(rlm_module, "host_request", host_request):
+            result = asyncio.run(rlm_module.interrupt_subagent(" missing "))
+        self.assertEqual(result, rlm_module.RLMInterruptResult(subagent=None, outcome="not_found"))
+        host_request.assert_awaited_once_with("rlm.interrupt_subagent", {"target": "missing"})
+
+        for payload, message in (
+            ({"subagent": None, "outcome": "interrupted"}, "inconsistent subagent"),
+            ({"subagent": None, "outcome": "unknown"}, "invalid outcome"),
+            ({"subagent": {"status": "running"}, "outcome": "idle"}, "missing rlm_child_id"),
+        ):
+            with patch.object(rlm_module, "host_request", AsyncMock(return_value=payload)):
+                with self.assertRaisesRegex(RuntimeError, message):
+                    asyncio.run(rlm_module.interrupt_subagent("missing"))
+
+        with self.assertRaisesRegex(ValueError, "target must not be empty"):
+            asyncio.run(rlm_module.interrupt_subagent("   "))
+        with self.assertRaisesRegex(TypeError, "target must be RLMSpawnHandle, RLMSubagent, or str"):
+            asyncio.run(rlm_module.interrupt_subagent(123))
+
     def test_deletes_subagent_by_name_through_host(self) -> None:
         deleted_payload = {
             "rlm_child_id": "sub-a1b2c3d4",

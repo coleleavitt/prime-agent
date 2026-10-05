@@ -21,7 +21,7 @@ loop consults after every settled turn (the engine holds no autonomous
 logic of its own). The RLM recursion host seam
 (`session_engine::rlm_host`): the trait the kernel's `rlm.spawn`/
 `rlm.create_session`/`rlm.list_subagents`/`rlm.collect`/
-`rlm.delete_subagent` host requests call into, with the roster/collect/
+`rlm.interrupt_subagent`/`rlm.delete_subagent` host requests call into, with the roster/collect/
 selector-error vocabulary the daemon implements over the supervisor link,
 plus the typed `rlm.spawn` placement contract (`target` kwarg; the
 `RlmSpawnTarget` vocabulary and its design note live in

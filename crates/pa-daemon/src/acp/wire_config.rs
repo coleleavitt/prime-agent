@@ -24,6 +24,37 @@ pub(crate) struct HostedConfig {
     pub(crate) queue: tokio::sync::Mutex<()>,
     pub(crate) published: tokio::sync::Mutex<Vec<SessionConfigOption>>,
     pub(crate) models: tokio::sync::Mutex<Vec<pa_types::ai::Model>>,
+    /// The session model's context window as of the last state read (`0`:
+    /// unknown): the `usage_update` size.
+    pub(crate) context_window: std::sync::atomic::AtomicU64,
+}
+
+/// The live model's context window off one connection state: its context
+/// usage reading, else the discovered model it names (`0`: unknown).
+pub(super) fn state_context_window(state: Option<&Value>, models: &[pa_types::ai::Model]) -> u64 {
+    let Some(state) = state else {
+        return 0;
+    };
+    if let Some(window) = state
+        .get("contextUsage")
+        .and_then(|usage| usage.get("contextWindow"))
+        .and_then(Value::as_u64)
+    {
+        return window;
+    }
+    let field = |key: &str| {
+        state
+            .get("model")
+            .and_then(|model| model.get(key))
+            .and_then(Value::as_str)
+    };
+    models
+        .iter()
+        .find(|model| {
+            Some(model.id.as_str()) == field("id")
+                && Some(model.provider.as_str()) == field("provider")
+        })
+        .map_or(0, |model| model.context_window)
 }
 
 /// `session/set_config_option`: apply one picker selection through the
@@ -336,6 +367,10 @@ pub(super) async fn refresh_wire_config(
             "the post-apply refresh failed: the worker's live state could not be read",
         ));
     };
+    config.context_window.store(
+        state_context_window(Some(&state), &config.models.lock().await),
+        std::sync::atomic::Ordering::Relaxed,
+    );
     let options = picker_options_from_state(Some(&state), &config.models.lock().await);
     publish_config_options(producer, &config.published, options.clone()).await;
     Ok(options)
