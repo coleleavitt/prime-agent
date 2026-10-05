@@ -1,8 +1,8 @@
 //! The `rlm.*` kernel host-request bridge: wire validation, the child-session
 //! host seam, and handler registration for `rlm.spawn` (`rlm.run`),
 //! `rlm.create_session`, `rlm.find_models`, `rlm.list_subagents`,
-//! `rlm.collect`, `rlm.progress.note`, `rlm.delete_subagent`, and
-//! `rlm.rename`.
+//! `rlm.collect`, `rlm.progress.note`, `rlm.interrupt_subagent`,
+//! `rlm.delete_subagent`, and `rlm.rename`.
 //!
 //! Wire contract: the Python side (`rlm/__init__.py`) sends typed requests and
 //! parses strict `snake_case` replies. Pure normalization lives in
@@ -89,6 +89,15 @@ pub struct RlmSubagentEntry {
     pub activity_stale_ms: Option<u64>,
 }
 
+impl RlmSubagentEntry {
+    /// Whether the row's run already ended in error or cancellation (an
+    /// interrupt has nothing to abort there).
+    #[must_use]
+    pub fn is_terminal(&self) -> bool {
+        matches!(self.status, "error" | "cancelled")
+    }
+}
+
 /// Live child activity projected onto the roster row.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RlmSubagentActivity {
@@ -105,6 +114,57 @@ pub struct RlmDeleteSubagentResult {
     /// `deleted` | `skipped_running`; absent when the host reports neither.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outcome: Option<&'static str>,
+}
+
+/// What `rlm.interrupt_subagent` did to the selected child.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RlmInterruptOutcome {
+    /// The run active at call time was aborted; the child stays retained.
+    Interrupted,
+    /// The child had no active run; nothing was aborted.
+    Idle,
+    /// The child already ended in error; nothing was aborted.
+    Terminal,
+    /// No direct child matches the selector.
+    NotFound,
+}
+
+/// `rlm.interrupt_subagent` reply: the selected row (absent only for
+/// `not_found`) plus the outcome.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RlmInterruptSubagentResult {
+    pub subagent: Option<RlmSubagentEntry>,
+    pub outcome: RlmInterruptOutcome,
+}
+
+impl RlmInterruptSubagentResult {
+    /// The `not_found` reply (no row).
+    #[must_use]
+    pub fn not_found() -> Self {
+        Self {
+            subagent: None,
+            outcome: RlmInterruptOutcome::NotFound,
+        }
+    }
+
+    /// The reply for a resolved child: `terminal` for a child that already
+    /// ended in error (or was cancelled), else `interrupted` when `aborted`
+    /// is set, `idle` otherwise.
+    #[must_use]
+    pub fn resolved(subagent: RlmSubagentEntry, aborted: bool) -> Self {
+        let outcome = if subagent.is_terminal() {
+            RlmInterruptOutcome::Terminal
+        } else if aborted {
+            RlmInterruptOutcome::Interrupted
+        } else {
+            RlmInterruptOutcome::Idle
+        };
+        Self {
+            subagent: Some(subagent),
+            outcome,
+        }
+    }
 }
 
 /// One `rlm.collect` result envelope.
@@ -176,6 +236,12 @@ pub trait RlmSubagentHost: Send + Sync {
         request: RlmCreateSessionRequest,
     ) -> RlmHostFuture<RlmCreateSessionHandle>;
     fn list_subagents(&self) -> RlmHostFuture<Vec<RlmSubagentEntry>>;
+    /// Abort only the run the selected direct child has active at call
+    /// time, keeping the child (session, transcript, descendants, follow-up
+    /// ability). An interrupted initial task owes the parent no
+    /// completed-without-reply notice. A selector miss answers `not_found`
+    /// (not an error); an ambiguous selector errors like delete.
+    fn interrupt_subagent(&self, target: String) -> RlmHostFuture<RlmInterruptSubagentResult>;
     fn delete_subagent(&self, target: String) -> RlmHostFuture<RlmDeleteSubagentResult>;
     /// A timeout returns snapshots, never errors.
     fn collect(&self, targets: Vec<String>, timeout_ms: u64) -> RlmHostFuture<Vec<RlmChildResult>>;
@@ -219,6 +285,9 @@ impl RlmSubagentHost for NoRlmChildren {
     }
     fn list_subagents(&self) -> RlmHostFuture<Vec<RlmSubagentEntry>> {
         Box::pin(async { Ok(Vec::new()) })
+    }
+    fn interrupt_subagent(&self, _target: String) -> RlmHostFuture<RlmInterruptSubagentResult> {
+        Box::pin(async { Ok(RlmInterruptSubagentResult::not_found()) })
     }
     fn delete_subagent(&self, target: String) -> RlmHostFuture<RlmDeleteSubagentResult> {
         Box::pin(async move {
@@ -369,6 +438,7 @@ pub fn register_rlm_host_handlers(handlers: &mut HostRequestHandlers, bridge: &A
     register_run(handlers, bridge);
     register_create_session(handlers, bridge);
     register_list_subagents(handlers, bridge);
+    register_interrupt_subagent(handlers, bridge);
     register_delete_subagent(handlers, bridge);
     register_collect(handlers, bridge);
     register_rename(handlers, bridge);
@@ -610,6 +680,32 @@ fn register_list_subagents(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmH
     );
 }
 
+/// The trimmed, non-empty `target` selector of one subagent request.
+fn subagent_target(payload: &Value, request_type: &str) -> anyhow::Result<String> {
+    payload
+        .get("target")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|target| !target.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| anyhow::anyhow!("{request_type} target must be a non-empty string"))
+}
+
+fn register_interrupt_subagent(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmHostBridge>) {
+    let host = Arc::clone(&bridge.host);
+    handlers.register(
+        "rlm.interrupt_subagent",
+        host_handler(move |payload| {
+            let host = Arc::clone(&host);
+            Box::pin(async move {
+                let target = subagent_target(&payload.data, "rlm.interrupt_subagent")?;
+                let result = host.interrupt_subagent(target).await?;
+                serde_json::to_value(&result).map_err(anyhow::Error::new)
+            })
+        }),
+    );
+}
+
 fn register_delete_subagent(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmHostBridge>) {
     let host = Arc::clone(&bridge.host);
     handlers.register(
@@ -617,16 +713,8 @@ fn register_delete_subagent(handlers: &mut HostRequestHandlers, bridge: &Arc<Rlm
         host_handler(move |payload| {
             let host = Arc::clone(&host);
             Box::pin(async move {
-                let Some(target) = payload
-                    .data
-                    .get("target")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|target| !target.is_empty())
-                else {
-                    anyhow::bail!("rlm.delete_subagent target must be a non-empty string");
-                };
-                let result = host.delete_subagent(target.to_string()).await?;
+                let target = subagent_target(&payload.data, "rlm.delete_subagent")?;
+                let result = host.delete_subagent(target).await?;
                 serde_json::to_value(&result).map_err(anyhow::Error::new)
             })
         }),
@@ -831,6 +919,35 @@ mod tests {
                     last_activity_at: Some(1_000),
                     activity_stale_ms: None,
                 }])
+            })
+        }
+        fn interrupt_subagent(&self, target: String) -> RlmHostFuture<RlmInterruptSubagentResult> {
+            let targets = Arc::clone(&self.targets);
+            Box::pin(async move {
+                targets.lock().await.push(target.clone());
+                if target != "sub-1" {
+                    return Ok(RlmInterruptSubagentResult::not_found());
+                }
+                Ok(RlmInterruptSubagentResult::resolved(
+                    RlmSubagentEntry {
+                        rlm_child_id: "sub-1".into(),
+                        active_session_id: Some("live-2".into()),
+                        session_id: Some("s-2".into()),
+                        session_name: "worker".into(),
+                        session_dir: "/tmp/sub-1".into(),
+                        status: "running",
+                        activity: None,
+                        tool_use_count: None,
+                        duration_ms: None,
+                        answer_preview: None,
+                        replied_since_task: None,
+                        progress_note: None,
+                        label: None,
+                        last_activity_at: None,
+                        activity_stale_ms: None,
+                    },
+                    /*aborted*/ true,
+                ))
             })
         }
         fn delete_subagent(&self, target: String) -> RlmHostFuture<RlmDeleteSubagentResult> {
@@ -1435,6 +1552,97 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn interrupt_subagent_round_trip_and_validation() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let host = RecordingHost::new();
+        let targets = Arc::clone(&host.targets);
+        let wiring = wired(dir.path(), Some(host as Arc<dyn RlmSubagentHost>));
+        let interrupted = call(
+            &wiring,
+            "rlm.interrupt_subagent",
+            json!({ "target": "  sub-1  " }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            interrupted,
+            json!({
+                "subagent": {
+                    "rlm_child_id": "sub-1",
+                    "active_session_id": "live-2",
+                    "session_id": "s-2",
+                    "session_name": "worker",
+                    "session_dir": "/tmp/sub-1",
+                    "status": "running",
+                },
+                "outcome": "interrupted",
+            })
+        );
+        let missing = call(
+            &wiring,
+            "rlm.interrupt_subagent",
+            json!({ "target": "ghost" }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(missing, json!({ "subagent": null, "outcome": "not_found" }));
+        assert_eq!(
+            *targets.lock().await,
+            vec!["sub-1".to_string(), "ghost".to_string()]
+        );
+        let error = call(&wiring, "rlm.interrupt_subagent", json!({ "target": " " }))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "rlm.interrupt_subagent target must be a non-empty string"
+        );
+    }
+
+    #[test]
+    fn interrupt_outcome_follows_the_row_status_and_the_abort() {
+        let row = |status: &'static str| RlmSubagentEntry {
+            rlm_child_id: "sub-1".into(),
+            active_session_id: None,
+            session_id: None,
+            session_name: "worker".into(),
+            session_dir: "/tmp/sub-1".into(),
+            status,
+            activity: None,
+            tool_use_count: None,
+            duration_ms: None,
+            answer_preview: None,
+            replied_since_task: None,
+            progress_note: None,
+            label: None,
+            last_activity_at: None,
+            activity_stale_ms: None,
+        };
+        let outcomes: Vec<RlmInterruptOutcome> = [
+            ("running", true),
+            ("running", false),
+            ("completed", true),
+            ("completed", false),
+            ("error", true),
+            ("error", false),
+        ]
+        .into_iter()
+        .map(|(status, aborted)| RlmInterruptSubagentResult::resolved(row(status), aborted).outcome)
+        .collect();
+        assert_eq!(
+            outcomes,
+            vec![
+                RlmInterruptOutcome::Interrupted,
+                RlmInterruptOutcome::Idle,
+                RlmInterruptOutcome::Interrupted,
+                RlmInterruptOutcome::Idle,
+                RlmInterruptOutcome::Terminal,
+                RlmInterruptOutcome::Terminal,
+            ]
+        );
+    }
+
+    #[tokio::test]
     async fn rename_round_trip_and_validation() {
         let dir = tempfile::TempDir::new().unwrap();
         let host = RecordingHost::new();
@@ -1559,6 +1767,17 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "No direct RLM subagent matches \"ghost\" in the current parent session"
+        );
+        let interrupted = call(
+            &wiring,
+            "rlm.interrupt_subagent",
+            json!({ "target": "ghost" }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            interrupted,
+            json!({ "subagent": null, "outcome": "not_found" })
         );
         let error = call(&wiring, "rlm.run", json!({ "prompt": "p", "kwargs": {} }))
             .await

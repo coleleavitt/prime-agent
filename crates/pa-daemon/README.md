@@ -95,7 +95,9 @@ Supervisor-backed RLM child sessions
 `rlm.spawn`/`rlm.create_session` create real daemon sessions through the
 worker's supervisor link - one supervised worker process per child - and the
 parent-side registry serves `rlm.list_subagents`/`rlm.collect`/
-`rlm.delete_subagent` with TS-parity selector errors; child model resolution
+`rlm.interrupt_subagent`/`rlm.delete_subagent` with TS-parity selector errors
+(interrupt routes the `abort` command with the `interruptRun` marker: the
+child worker aborts only its in-flight run and keeps its queues admitted); child model resolution
 and thinking-level validation live in `rlm_child_model.rs`; the create
 command carries the RLM recursion identity (`rlmDepth`/`rlmMaxDepth`/
 `parentSessionPath`/`thinking`) so respawned children keep their depth. Per-session model binding: the

@@ -1442,15 +1442,23 @@ impl Agent {
         self.inner.current_signal()
     }
 
-    pub fn abort(&self) {
-        if let Some(run) = self
+    /// Abort the run active at call time, if any. The run slot is read and
+    /// aborted under one lock section, so a successor run admitted later is
+    /// never touched. Returns whether a run was active (TS `abort()`'s
+    /// boolean form behind `interruptCurrentExecution`).
+    pub fn abort(&self) -> bool {
+        match self
             .inner
             .run
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .as_ref()
         {
-            run.controller.abort();
+            Some(run) => {
+                run.controller.abort();
+                true
+            }
+            None => false,
         }
     }
 

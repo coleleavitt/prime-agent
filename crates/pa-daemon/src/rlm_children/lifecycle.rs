@@ -653,7 +653,9 @@ impl SupervisorChildSessionsInner {
             if record.settled_status.is_none() {
                 return false;
             }
-            if record.notice_delivered || record.replied_since_task {
+            // A reply already reached the parent, or the parent itself
+            // interrupted the task: no no-reply notice is owed.
+            if record.notice_delivered || record.replied_since_task || record.interrupted {
                 return true;
             }
             record.notice_delivered = true;

@@ -1389,12 +1389,10 @@ impl SessionEngine for AgentSessionEngine {
         self.clear_image_route();
     }
 
-    fn abort_in_flight_turn(&self) {
+    fn abort_in_flight_turn(&self) -> bool {
         // The active run aborts and the in-flight fetch cancels; none in flight: nothing.
         let agent = self.turn_agent.lock_or_recover().clone();
-        if let Some(agent) = agent {
-            agent.abort();
-        }
+        agent.is_some_and(|agent| agent.abort())
     }
 
     /// `set_steering_mode` / `set_follow_up_mode`: the queue delivery modes

@@ -76,7 +76,7 @@ impl Worker {
             "prompt_and_wait" => self.handle_prompt(payload, true).await,
             "steer" => self.handle_queue(payload, Lane::Steering),
             "follow_up" => self.handle_queue(payload, Lane::FollowUp),
-            "abort" => self.handle_abort(),
+            "abort" => self.handle_abort(payload),
             "abort_and_send_queued" => self.handle_abort_and_send_queued(),
             "start_side_question" => {
                 if let Err(response) = self.require_created("start_side_question") {
@@ -415,7 +415,15 @@ impl Worker {
         self.engine.abort_in_flight_turn();
     }
 
-    fn handle_abort(&self) -> DaemonResponse {
+    fn handle_abort(&self, payload: &Value) -> DaemonResponse {
+        // `rlm.interrupt_subagent`'s parent-routed form: abort only the run
+        // active now. The queues stay admitted (no suspension, no withdraw)
+        // and a compaction keeps running, so a later follow-up starts a new
+        // turn; the reply says whether a run was active.
+        if payload.get(crate::rlm_children::INTERRUPT_RUN_MARKER) == Some(&Value::Bool(true)) {
+            let interrupted = self.engine.abort_in_flight_turn();
+            return response_success(None, "abort", Some(json!({ "interrupted": interrupted })));
+        }
         self.request_abort();
         response_success(None, "abort", None)
     }

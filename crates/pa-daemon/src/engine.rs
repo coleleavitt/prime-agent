@@ -124,9 +124,11 @@ pub trait SessionEngine: Send + Sync {
     );
 
     /// Abort the in-flight turn eagerly: the live run's provider fetch
-    /// cancels immediately, not at the next streamed event. Engines without
-    /// a real agent loop no-op.
-    fn abort_in_flight_turn(&self) {}
+    /// cancels immediately, not at the next streamed event. Returns whether
+    /// a run was active. Engines without a real agent loop no-op (`false`).
+    fn abort_in_flight_turn(&self) -> bool {
+        false
+    }
 
     /// Switch the queue delivery modes live: apply the persisted mode to
     /// the engine's agent-level queues too.

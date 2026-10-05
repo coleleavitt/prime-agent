@@ -4754,3 +4754,164 @@ async fn an_undurable_reply_keeps_done_replied_pending_until_the_row_lands() {
     );
     rig.engine.session.agent().abort();
 }
+
+/// `rlm.interrupt_subagent` (#1502) on a running child: only the run active
+/// at call time aborts; the child stays registered with its session, the
+/// interrupted initial task settles without a completed-without-reply
+/// notice, and a later agent message starts a new turn on the same child.
+#[tokio::test]
+async fn interrupting_a_running_child_keeps_it_for_a_follow_up() {
+    use crate::session_engine::rlm_host::RlmInterruptOutcome;
+
+    let rig = TestRig::new().await;
+    rig.catalog
+        .provider("glm-5.3-turbo")
+        .push_stalled_turn("partial");
+    let handle = rig
+        .host
+        .spawn(spawn_request(
+            Some("worker"),
+            Some("test-provider/glm-5.3-turbo"),
+        ))
+        .await
+        .unwrap();
+    let child = rig.first_child().await;
+    let streaming_child = Arc::clone(&child);
+    eventually("the child streams", move || {
+        let engine = Arc::clone(&streaming_child.engine);
+        async move { engine.session.agent().state().await.is_streaming }
+    })
+    .await;
+    let session_id = child.session_id.clone();
+
+    let interrupted = rig
+        .host
+        .interrupt_subagent("worker".to_string())
+        .await
+        .unwrap();
+    assert_eq!(interrupted.outcome, RlmInterruptOutcome::Interrupted);
+    let row = interrupted.subagent.expect("the interrupted row");
+    assert_eq!(
+        (row.rlm_child_id.as_str(), row.status),
+        (handle.rlm_child_id.as_str(), "running")
+    );
+
+    // The interrupted initial task settles as a plain completion.
+    let collected = rig
+        .host
+        .collect(vec![handle.rlm_child_id.clone()], 10_000)
+        .await
+        .unwrap();
+    let result = one(&collected);
+    assert_eq!((result.status, result.settled), ("done", true));
+    // No misleading "completed without reply" notice reaches the parent.
+    let notices = rig
+        .parent_rows()
+        .await
+        .into_iter()
+        .filter(|entry| {
+            matches!(
+                entry,
+                pa_types::session::FileEntry::CustomMessage { payload, .. }
+                    if payload.custom_type
+                        == crate::session_engine::rlm_notices::RLM_CHILD_TERMINAL_NOTICE_CUSTOM_TYPE
+            )
+        })
+        .count();
+    assert_eq!(
+        notices, 0,
+        "an interrupted initial task owes the parent no terminal notice"
+    );
+    // The child is retained: same record, same session.
+    let roster = rig.host.list_subagents().await.unwrap();
+    assert_eq!(roster.len(), 1);
+    assert_eq!(
+        (roster[0].session_id.as_deref(), roster[0].status),
+        (Some(session_id.as_str()), "completed")
+    );
+    assert!(Arc::ptr_eq(&rig.first_child().await, &child));
+
+    // A follow-up starts a new turn on the retained child.
+    rig.catalog
+        .provider("glm-5.3-turbo")
+        .push_text_turn("follow-up answer");
+    let controller = InProcessFamilyController::new(Arc::clone(&rig.host), FamilySelf::Root);
+    let receipt = controller
+        .send_agent_message(AgentMessageSendInput {
+            target: "worker".to_string(),
+            message: "pick it up again".to_string(),
+            receiver_role: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(receipt.delivery_status.as_str(), "delivered");
+    let follow_up_child = Arc::clone(&child);
+    eventually("the follow-up turn answers", move || {
+        let engine = Arc::clone(&follow_up_child.engine);
+        async move {
+            let last = engine.session.last_assistant_message().await;
+            !engine.session.agent().state().await.is_streaming
+                && matches!(
+                    last,
+                    Some(pa_types::session::AgentMessage::Assistant(assistant))
+                        if assistant.content.iter().any(|block| matches!(
+                            block,
+                            pa_types::ai::AssistantContentBlock::Text(text)
+                                if text.text == "follow-up answer"
+                        ))
+                )
+        }
+    })
+    .await;
+}
+
+/// `rlm.interrupt_subagent` (#1502) with nothing to abort: a settled child
+/// answers `idle` and stays listed; an unknown selector answers
+/// `not_found` without a row.
+#[tokio::test]
+async fn interrupt_answers_idle_and_not_found_without_deleting() {
+    use crate::session_engine::rlm_host::RlmInterruptOutcome;
+
+    let rig = TestRig::new().await;
+    rig.catalog
+        .provider("glm-5.3-turbo")
+        .push_text_turn("child answer");
+    // The completed-without-reply notice drives one parent turn.
+    rig.catalog.provider("glm-5.3").push_text_turn("noted");
+    let handle = rig
+        .host
+        .spawn(spawn_request(
+            Some("worker"),
+            Some("test-provider/glm-5.3-turbo"),
+        ))
+        .await
+        .unwrap();
+    let collected = rig
+        .host
+        .collect(vec![handle.rlm_child_id.clone()], 10_000)
+        .await
+        .unwrap();
+    assert_eq!(one(&collected).status, "done");
+
+    let idle = rig
+        .host
+        .interrupt_subagent(handle.rlm_child_id.clone())
+        .await
+        .unwrap();
+    assert_eq!(idle.outcome, RlmInterruptOutcome::Idle);
+    assert_eq!(
+        idle.subagent.map(|row| (row.rlm_child_id, row.status)),
+        Some((handle.rlm_child_id.clone(), "completed"))
+    );
+    let missing = rig
+        .host
+        .interrupt_subagent("ghost".to_string())
+        .await
+        .unwrap();
+    assert_eq!(
+        (missing.outcome, missing.subagent.is_none()),
+        (RlmInterruptOutcome::NotFound, true)
+    );
+    assert_eq!(rig.host.list_subagents().await.unwrap().len(), 1);
+    rig.engine.session.agent().wait_for_idle().await;
+}

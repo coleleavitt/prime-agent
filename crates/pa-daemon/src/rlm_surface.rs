@@ -193,6 +193,35 @@ mod tests {
         );
     }
 
+    /// `rlm.interrupt_subagent`'s marked `abort` (#1502): with no run in
+    /// flight it answers `interrupted: false`, and unlike the plain abort it
+    /// leaves queued input admitted, so the child keeps taking follow-ups.
+    #[tokio::test]
+    async fn interrupt_marked_abort_reports_the_run_and_keeps_input_admitted() {
+        let worker = created_worker().await;
+        let interrupted = worker
+            .dispatch(
+                "abort",
+                &json!({ "activeSessionId": "rlm-session", "interruptRun": true }),
+            )
+            .await;
+        assert!(interrupted.success);
+        assert_eq!(interrupted.data, Some(json!({ "interrupted": false })));
+        let follow_up = worker.dispatch("prompt", &json!({ "message": "go" })).await;
+        assert!(follow_up.success, "prompt after interrupt: {follow_up:?}");
+
+        let plain = created_worker().await;
+        let aborted = plain
+            .dispatch("abort", &json!({ "activeSessionId": "rlm-session" }))
+            .await;
+        assert_eq!((aborted.success, aborted.data), (true, None));
+        let refused = plain.dispatch("prompt", &json!({ "message": "go" })).await;
+        assert_eq!(
+            refused.error.as_deref(),
+            Some(crate::worker::QUEUED_INPUT_SUSPENDED)
+        );
+    }
+
     #[tokio::test]
     async fn missing_required_fields_fail() {
         let worker = created_worker().await;

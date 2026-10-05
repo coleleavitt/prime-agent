@@ -37,6 +37,9 @@ pub struct ChildIdentity {
 pub(crate) enum NoticeKind {
     Done,
     DoneReplied,
+    /// A done settle of an initial task `rlm.interrupt_subagent` cut short:
+    /// the parent asked for the stop, so no completion notice is owed.
+    DoneInterrupted,
     Error,
     Cancelled,
     Closed,
@@ -105,6 +108,10 @@ pub(crate) struct ChildRunState {
     /// was admitted (TS `_parentReplyCount`): the no-reply terminal notice
     /// is withheld once set.
     pub(crate) replied_since_task: bool,
+    /// `rlm.interrupt_subagent` aborted a run while the initial task was
+    /// still unsettled (TS `RlmChildRun.interrupted`): the task's done
+    /// settle owes the parent no completed-without-reply notice.
+    pub(crate) interrupted: bool,
     /// Explicit replies awaiting their own strict durable admission.
     pub(crate) pending_replies: Vec<pa_types::session::CustomMessage>,
     /// The terminal-notice claim: single ownership of the notice AND the
@@ -180,6 +187,7 @@ impl InProcessChildRecord {
                 answer_preview: None,
                 error: None,
                 replied_since_task: false,
+                interrupted: false,
                 pending_replies: Vec::new(),
                 notice: None,
                 admission_error: None,
@@ -273,7 +281,8 @@ impl InProcessChildRecord {
         true
     }
 
-    /// Resolve the reply check in the same critical section as the Done claim.
+    /// Resolve the reply and interrupt checks in the same critical section
+    /// as the Done claim (a reply's pending admission still wins).
     pub(crate) async fn claim_done(&self) -> bool {
         let mut state = self.state().await;
         if state.notice.is_some() {
@@ -281,6 +290,8 @@ impl InProcessChildRecord {
         }
         state.notice = Some(if state.replied_since_task {
             NoticeKind::DoneReplied
+        } else if state.interrupted {
+            NoticeKind::DoneInterrupted
         } else {
             NoticeKind::Done
         });
@@ -330,7 +341,7 @@ impl InProcessChildRecord {
             return false;
         }
         state.settled_status = Some(match kind {
-            NoticeKind::Done | NoticeKind::DoneReplied => "done",
+            NoticeKind::Done | NoticeKind::DoneReplied | NoticeKind::DoneInterrupted => "done",
             NoticeKind::Error => "error",
             NoticeKind::Cancelled | NoticeKind::Closed | NoticeKind::ParentGone => "cancelled",
         });

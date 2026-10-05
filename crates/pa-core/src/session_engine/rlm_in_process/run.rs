@@ -16,7 +16,8 @@ use super::registry::{compact_rlm_text, record_matches, InProcessChildRecord, No
 use super::{now_ms, InProcessRlmHost};
 use crate::session_engine::agent_messaging::AGENT_MESSAGE_CUSTOM_TYPE;
 use crate::session_engine::rlm_host::{
-    RlmChildResult, RlmDeleteSubagentResult, RlmHostFuture, RlmSubagentEntry,
+    RlmChildResult, RlmDeleteSubagentResult, RlmHostFuture, RlmInterruptSubagentResult,
+    RlmSubagentEntry,
 };
 /// Settle-poll slice while the child still runs (the daemon watcher's
 /// cadence).
@@ -680,6 +681,50 @@ pub(super) fn collect(
         // (TS `collectRlmChildren` result order).
         results.extend(deleted_results);
         Ok(results)
+    })
+}
+
+/// `rlm.interrupt_subagent`: abort only the run the child's agent has
+/// active at call time, leaving the record, its engine (session,
+/// transcript, queues), and its descendants in place — a later agent
+/// message starts a new turn. An interrupt that lands while the initial
+/// task still runs marks the record in the same critical section as the
+/// abort, so the task's settle claims the silent done verdict instead of a
+/// misleading completed-without-reply notice. A selector miss answers
+/// `not_found`; an ambiguous selector keeps the delete error.
+pub(super) fn interrupt_subagent(
+    host: InProcessRlmHost,
+    target: String,
+) -> RlmHostFuture<RlmInterruptSubagentResult> {
+    Box::pin(async move {
+        let mut matches: Vec<Arc<InProcessChildRecord>> = host
+            .children()
+            .await
+            .into_iter()
+            .filter(|record| record_matches(record, &target))
+            .collect();
+        let record = match matches.len() {
+            0 => return Ok(RlmInterruptSubagentResult::not_found()),
+            1 => matches.remove(0),
+            _ => anyhow::bail!(
+                "RLM subagent selector \"{target}\" is ambiguous in the current parent session"
+            ),
+        };
+        let entry = record.entry(now_ms()).await;
+        if entry.is_terminal() {
+            return Ok(RlmInterruptSubagentResult::resolved(
+                entry, /*aborted*/ false,
+            ));
+        }
+        let aborted = {
+            let mut state = record.state().await;
+            let aborted = record.engine.session.agent().abort();
+            if aborted && state.settled_status.is_none() {
+                state.interrupted = true;
+            }
+            aborted
+        };
+        Ok(RlmInterruptSubagentResult::resolved(entry, aborted))
     })
 }
 

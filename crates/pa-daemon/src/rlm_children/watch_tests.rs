@@ -219,6 +219,16 @@ async fn spawn_fake_supervisor(
                                 ),
                             }
                         }
+                        // `rlm.interrupt_subagent`'s marked abort: the
+                        // fake child always has a run in flight.
+                        "abort" => {
+                            let _ = kill_tx.send(command.clone());
+                            response_success(
+                                Some(&id),
+                                command_type,
+                                Some(json!({ "interrupted": true })),
+                            )
+                        }
                         "follow_up" => {
                             let _ = follow_up_tx.send(command.clone());
                             response_success(
@@ -405,6 +415,71 @@ async fn a_settled_child_without_a_reply_delivers_the_terminal_notice() {
     let extra =
         tokio::time::timeout(std::time::Duration::from_millis(300), follow_up_rx.recv()).await;
     assert!(extra.is_err(), "no second notice may arrive");
+}
+
+/// `rlm.interrupt_subagent` (#1502) through the supervisor link: the
+/// marked `abort` reaches the child worker, the child stays registered,
+/// and the interrupted task's settle owes the parent no no-reply notice.
+/// An unknown selector answers `not_found` without a round trip.
+#[tokio::test]
+async fn interrupting_a_running_child_keeps_it_and_withholds_the_no_reply_notice() {
+    use pa_core::session_engine::rlm_host::RlmInterruptOutcome;
+
+    let (follow_up_tx, mut follow_up_rx) = mpsc::unbounded_channel();
+    let (sessions, mut command_rx) =
+        sessions_with_fake_supervisor(follow_up_tx, 300, FakeKill::Success, FakeChild::Healthy)
+            .await;
+    let settled = sessions.settle_notified();
+    let handle = spawn_child(&sessions).await;
+
+    let interrupted = sessions
+        .interrupt_subagent("f20-worker".to_string())
+        .await
+        .expect("the interrupt routes");
+    assert_eq!(interrupted.outcome, RlmInterruptOutcome::Interrupted);
+    assert_eq!(
+        interrupted
+            .subagent
+            .map(|row| (row.rlm_child_id, row.status)),
+        Some((handle.rlm_child_id.clone(), "running"))
+    );
+    let abort = command_rx.try_recv().expect("the marked abort was routed");
+    assert_eq!(
+        abort,
+        json!({
+            "type": "abort",
+            "activeSessionId": "child-live",
+            "interruptRun": true,
+        })
+    );
+
+    sessions.notify_turn_done();
+    tokio::time::timeout(Duration::from_secs(10), settled)
+        .await
+        .expect("the interrupted child settles");
+    let extra = tokio::time::timeout(Duration::from_millis(300), follow_up_rx.recv()).await;
+    assert!(
+        extra.is_err(),
+        "an interrupted task owes the parent no no-reply notice"
+    );
+    let roster = sessions.list_subagents().await.expect("child roster");
+    assert_eq!(
+        roster
+            .iter()
+            .map(|row| (row.rlm_child_id.clone(), row.status))
+            .collect::<Vec<_>>(),
+        vec![(handle.rlm_child_id.clone(), "completed")]
+    );
+
+    let missing = sessions
+        .interrupt_subagent("ghost".to_string())
+        .await
+        .expect("a miss is an outcome");
+    assert_eq!(
+        (missing.outcome, missing.subagent.is_none()),
+        (RlmInterruptOutcome::NotFound, true)
+    );
+    assert!(command_rx.try_recv().is_err(), "a miss routes nothing");
 }
 
 /// The settle grace re-marks only a BUSY child as running: a worker that
@@ -1080,6 +1155,7 @@ fn an_already_settled_child_never_re_scores_as_an_unreachable_error() {
         answer_preview: None,
         answer_captured: false,
         replied_since_task: false,
+        interrupted: false,
         notice_delivered: false,
         prompt_admitted: true,
         error: None,
