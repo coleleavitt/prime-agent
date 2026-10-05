@@ -23,6 +23,7 @@ use pa_telemetry::Properties;
 
 mod custody;
 mod hooks;
+mod keepalive;
 mod login;
 mod source;
 #[cfg(test)]

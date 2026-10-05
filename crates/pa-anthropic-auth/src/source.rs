@@ -11,7 +11,7 @@
 //! store's claim.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
 use anthropic::access::{
@@ -25,6 +25,8 @@ use pa_core::auth::{
 };
 use pa_types::sync::MutexExt;
 use sha2::{Digest, Sha256};
+
+use crate::keepalive::KeepAlive;
 
 /// The status rows' label for a login the shared store holds.
 pub const STORE_LABEL: &str = "shared account store";
@@ -46,6 +48,9 @@ pub struct SharedStoreConfig {
     pub profile_url: String,
     /// Refuse every OAuth call to a non-loopback host (tests).
     pub require_loopback: bool,
+    /// Run the keep-alive on the crate's own thread once a credential has
+    /// been served (off in tests and sandboxes, which call a pass directly).
+    pub background: bool,
 }
 
 impl SharedStoreConfig {
@@ -59,6 +64,7 @@ impl SharedStoreConfig {
             native_publish: NativePublish::from_env(),
             profile_url: anthropic::profile::profile_url_from_lookup(|key| std::env::var(key).ok()),
             require_loopback: false,
+            background: true,
         }
     }
 
@@ -75,7 +81,15 @@ impl SharedStoreConfig {
             native_publish: NativePublish::Off,
             profile_url: profile_url.to_string(),
             require_loopback: true,
+            background: false,
         }
+    }
+
+    /// The OAuth client over these endpoints and rules.
+    pub(crate) fn client(&self) -> OAuthClient {
+        OAuthClient::new(self.endpoints.clone())
+            .native_publish(self.native_publish.clone())
+            .require_loopback(self.require_loopback)
     }
 }
 
@@ -125,6 +139,10 @@ pub struct SharedStoreSource {
     /// store rows they belong to: only these take part in the request
     /// hooks.
     served: Mutex<std::collections::VecDeque<(String, String)>>,
+    /// The keep-alive's state, shared with its thread.
+    keepalive: Arc<KeepAlive>,
+    /// The keep-alive thread starts once.
+    keepalive_started: std::sync::Once,
 }
 
 /// How many served tokens the source remembers (the pi plugin's bound).
@@ -134,6 +152,7 @@ impl SharedStoreSource {
     /// A source over `config`. Does no I/O.
     #[must_use]
     pub fn new(config: SharedStoreConfig) -> Self {
+        let keepalive = Arc::new(KeepAlive::new(config.clone()));
         Self {
             config,
             client: OnceLock::new(),
@@ -141,7 +160,38 @@ impl SharedStoreSource {
             status_memo: Mutex::new(None),
             usage: Mutex::new(SourceUsage::default()),
             served: Mutex::new(std::collections::VecDeque::new()),
+            keepalive,
+            keepalive_started: std::sync::Once::new(),
         }
+    }
+
+    /// The keep-alive's state (its passes run on the crate's thread).
+    #[cfg(test)]
+    pub(crate) fn keepalive(&self) -> &KeepAlive {
+        &self.keepalive
+    }
+
+    /// Whether the keep-alive thread was started.
+    #[cfg(test)]
+    pub(crate) fn keepalive_started(&self) -> bool {
+        self.keepalive_started.is_completed()
+    }
+
+    /// Start the keep-alive thread, once, when the configuration runs one.
+    fn start_keepalive(&self) {
+        if !self.config.background {
+            return;
+        }
+        self.keepalive_started.call_once(|| {
+            let keepalive = Arc::clone(&self.keepalive);
+            let client = self.config.client();
+            let spawned = std::thread::Builder::new()
+                .name("anthropic-keepalive".to_string())
+                .spawn(move || keepalive.run(&client));
+            if let Err(error) = spawned {
+                tracing::warn!(%error, "the shared store's keep-alive thread did not start");
+            }
+        });
     }
 
     /// Remember a token this source handed out, for the store row
@@ -153,6 +203,9 @@ impl SharedStoreSource {
         while served.len() > SERVED_TOKENS_LIMIT {
             served.pop_front();
         }
+        drop(served);
+        self.keepalive.note_served(account_id);
+        self.start_keepalive();
     }
 
     /// Whether this source handed out `token`.
@@ -190,11 +243,7 @@ impl SharedStoreSource {
     }
 
     pub(crate) fn client(&self) -> &OAuthClient {
-        self.client.get_or_init(|| {
-            OAuthClient::new(self.config.endpoints.clone())
-                .native_publish(self.config.native_publish.clone())
-                .require_loopback(self.config.require_loopback)
-        })
+        self.client.get_or_init(|| self.config.client())
     }
 
     fn read_status(&self) -> Option<CredentialSourceStatus> {

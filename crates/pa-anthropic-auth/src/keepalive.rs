@@ -1,0 +1,163 @@
+//! The keep-alive, on the crate's own thread (started by the first served
+//! credential, never at install, never on a paint or startup path):
+//!
+//! - the plugins' machine-wide pass (`keepAliveOnce`, the opencode
+//!   plugin's ten-minute tick): idle logins whose refresh token nears its
+//!   expiry are refreshed, one process per machine at a time behind the
+//!   store's keep-alive lease;
+//! - ahead of expiry: a login this process served within the last hour
+//!   whose access token expires before the next tick is refreshed now
+//!   (claimed through the store), so a request never waits for it.
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH};
+
+use anthropic::{AccountStore, KeepAliveOptions, OAuthClient, SharedRefreshOptions};
+use chrono::{DateTime, Duration, Utc};
+use pa_types::sync::MutexExt;
+
+use crate::SharedStoreConfig;
+
+/// The pause before the first pass (the process is starting).
+const FIRST_TICK: StdDuration = StdDuration::from_mins(1);
+/// The pass cadence (the plugins' `refresh.intervalMinutes` default).
+const TICK: StdDuration = StdDuration::from_mins(10);
+/// The most a pass is delayed at random (the plugins' tick jitter).
+const TICK_JITTER_MS: u64 = 60_000;
+/// A login whose access token expires within this window is refreshed
+/// ahead: longer than a tick and its jitter plus the request path's own
+/// five-minute refresh leeway, so a request never meets one to refresh.
+pub(crate) const AHEAD_WINDOW_SECS: i64 = 20 * 60;
+/// A login served within this window counts as in use by this process.
+const IN_USE: StdDuration = StdDuration::from_hours(1);
+
+/// What one pass did, counts only (no account ids).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct KeepAliveTick {
+    /// Idle logins the machine-wide pass refreshed.
+    pub(crate) idle_refreshed: usize,
+    /// Logins in use here refreshed ahead of their expiry.
+    pub(crate) ahead_refreshed: usize,
+    /// Refreshes that failed.
+    pub(crate) failed: usize,
+    /// Another process holds the machine-wide pass's lease.
+    pub(crate) lease_held: bool,
+}
+
+/// The keep-alive's state: what it reaches, and the logins in use here.
+pub(crate) struct KeepAlive {
+    config: SharedStoreConfig,
+    in_use: Mutex<HashMap<String, Instant>>,
+}
+
+impl KeepAlive {
+    pub(crate) fn new(config: SharedStoreConfig) -> Self {
+        Self {
+            config,
+            in_use: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// A login was served to a request of this process.
+    pub(crate) fn note_served(&self, account_id: &str) {
+        self.in_use
+            .lock_or_recover()
+            .insert(account_id.to_string(), Instant::now());
+    }
+
+    /// One pass at `now`: the machine-wide pass, then the logins in use
+    /// here that expire within [`AHEAD_WINDOW_SECS`].
+    pub(crate) async fn tick(&self, client: &OAuthClient, now: DateTime<Utc>) -> KeepAliveTick {
+        let path = self.config.store_path.as_path();
+        let mut report = KeepAliveTick::default();
+        match client
+            .keep_alive_once(path, now, &KeepAliveOptions::default())
+            .await
+        {
+            Ok(pass) => {
+                report.idle_refreshed = pass.refreshed.len();
+                report.failed += pass.failed.len();
+                report.lease_held = matches!(
+                    pass.lease,
+                    anthropic::keepalive::KeepAliveLeaseOutcome::Held { .. }
+                );
+            }
+            Err(error) => {
+                tracing::warn!(%error, "the shared store's keep-alive pass failed");
+            }
+        }
+        let in_use: Vec<String> = {
+            let mut in_use = self.in_use.lock_or_recover();
+            in_use.retain(|_, served| served.elapsed() < IN_USE);
+            in_use.keys().cloned().collect()
+        };
+        for account_id in in_use {
+            let due = AccountStore::load(path).ok().and_then(|store| {
+                let account = store.get(&account_id)?;
+                let tokens = account.oauth()?;
+                (account.enabled
+                    && !account.refresh_token_is_dead()
+                    && tokens.expires_at <= now + Duration::seconds(AHEAD_WINDOW_SECS))
+                .then(|| tokens.clone())
+            });
+            let Some(tokens) = due else {
+                continue;
+            };
+            match client
+                .refresh_shared(path, &tokens, &SharedRefreshOptions::default())
+                .await
+            {
+                Ok(_) => report.ahead_refreshed += 1,
+                Err(error) => {
+                    report.failed += 1;
+                    tracing::warn!(
+                        error = %anthropic::token::redact_secrets(&error.to_string()),
+                        "refreshing a login ahead of its expiry failed"
+                    );
+                }
+            }
+        }
+        report
+    }
+
+    /// The keep-alive loop, run on the crate's own thread for the life of
+    /// the process.
+    pub(crate) fn run(&self, client: &OAuthClient) {
+        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            tracing::warn!("the shared store's keep-alive could not start a runtime");
+            return;
+        };
+        let mut pause = FIRST_TICK;
+        loop {
+            std::thread::sleep(pause);
+            let report = runtime.block_on(self.tick(client, Utc::now()));
+            if report != KeepAliveTick::default() {
+                tracing::info!(
+                    idle_refreshed = report.idle_refreshed,
+                    ahead_refreshed = report.ahead_refreshed,
+                    failed = report.failed,
+                    lease_held = report.lease_held,
+                    "shared store keep-alive pass"
+                );
+            }
+            pause = TICK + StdDuration::from_millis(jitter_ms());
+        }
+    }
+}
+
+/// A pseudo-random delay below [`TICK_JITTER_MS`] (spreads processes'
+/// passes; not a secret).
+fn jitter_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::from(elapsed.subsec_nanos()) % TICK_JITTER_MS
+        })
+}
+
+#[cfg(test)]
+mod tests;

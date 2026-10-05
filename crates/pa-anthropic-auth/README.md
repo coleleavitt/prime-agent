@@ -31,6 +31,12 @@ auth.json resolves the `anthropic` provider exactly as before.
     (`recover_unauthorized`: one claimed refresh of the row owning the rejected token; a retry only with a new
     version of the same login), and, when the store no longer holds the rejected token (another process rotated
     it), the store's current token re-read under its lock if it differs. Otherwise the 401 is reported.
+- Keep-alive, on the crate's own thread (`anthropic-keepalive`), started by the first served credential (never at
+  install, on a paint path or during startup); its first pass a minute later, then every ten minutes plus up to a
+  minute of jitter (the opencode plugin's tick): the SDK's machine-wide `keep_alive_once` (idle logins whose
+  refresh token nears its expiry, one process per machine behind the store's lease), then every login this process
+  served within the hour whose access token expires within 20 minutes is refreshed ahead (`refresh_shared`,
+  claimed), so no request waits on that refresh. Off in `SharedStoreConfig::isolated` (`background: false`).
 - Migration (`adopt_stored_login`, the custody half of anthropic-napi's `importOAuthAccount`, as the pi plugin
   moves its host's refresh token): an Anthropic OAuth login `auth.json` still holds is moved into the store on the
   first lookup. A live login is identified at the profile endpoint (an expired one is never refreshed to find out);
@@ -57,14 +63,14 @@ auth.json resolves the `anthropic` provider exactly as before.
 
 - Account management beyond logout (enable, disable, reorder, pin, remote revoke): the plugins' account commands
   own it; prime-agent has no account command surface.
-- Quota reads, quota-reserve routing, rotation on 429, the keep-alive.
+- Quota reads, quota-reserve routing, rotation on 429.
 - The request shape (headers, betas, system prompt, tool names): pa-ai's Claude Code mode owns it for every
   `sk-ant-oat` token, whatever its source. The source adds no headers.
 
 ## Public API
 
 `install`, `shared_source`, `PROVIDER_ID`, `SharedStoreSource` (`new`, `store_path`, `usage`, `store_login`),
-`SharedStoreConfig` (`from_env`, `isolated`), `NewLogin`, `StoredLogin` (`claude_code_notice`), `SourceUsage`, `STORE_LABEL`, `AnthropicAuthFeature`, `TELEMETRY_EVENT`.
+`SharedStoreConfig` (`from_env`, `isolated`; its `background` field runs the keep-alive thread), `NewLogin`, `StoredLogin` (`claude_code_notice`), `SourceUsage`, `STORE_LABEL`, `AnthropicAuthFeature`, `TELEMETRY_EVENT`.
 
 ## Seams
 
