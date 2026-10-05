@@ -307,3 +307,35 @@ impl SessionFile {
         }
     }
 }
+
+/// Copy the session file at `source` into `dir` as a NEW saved session: the header takes a
+/// fresh id and the copy lands at `<dir>/<id>.jsonl`, so an import never overwrites a saved
+/// session that shares the input's file name or embedded id (upstream #1087). Every line after
+/// the header is copied byte-for-byte.
+///
+/// # Errors
+///
+/// Returns an error when the source cannot be read, its first line is not a session header,
+/// or the copy cannot be written.
+pub(crate) fn copy_as_new_session(source: &Path, dir: &Path) -> Result<PathBuf> {
+    let content =
+        fs::read_to_string(source).with_context(|| format!("read {}", source.display()))?;
+    let (first, rest) = content.split_once('\n').unwrap_or((content.as_str(), ""));
+    let mut header: Value = serde_json::from_str(first.trim())
+        .with_context(|| format!("parse the session header of {}", source.display()))?;
+    let Some(object) = header
+        .as_object_mut()
+        .filter(|object| object.get("type").and_then(Value::as_str) == Some("session"))
+    else {
+        return Err(anyhow!("{} has no session header", source.display()));
+    };
+    let session_id = new_session_id();
+    object.insert("id".to_string(), Value::String(session_id.clone()));
+    let target = dir.join(session_file_name(&session_id));
+    let mut bytes = serde_json::to_string(&header)?;
+    bytes.push('\n');
+    bytes.push_str(rest);
+    fs::create_dir_all(dir).with_context(|| format!("create session dir {}", dir.display()))?;
+    fs::write(&target, bytes).with_context(|| format!("write {}", target.display()))?;
+    Ok(target)
+}
