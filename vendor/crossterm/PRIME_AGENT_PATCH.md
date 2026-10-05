@@ -97,3 +97,14 @@ the enhancement for the RTT>50ms class (the product's primary remote-SSH
 deployment shape) while buying only the silent class's raced-transition
 stall, which no user rides. The timed contract is locked by
 `crates/pa-cli/tests/kitty_verdict_time_e2e.rs`.
+
+# xterm modifyOtherKeys sequences (2026-10-05, #1305 word-delete chords)
+
+`src/event/sys/unix/parse.rs` (`parse_csi_special_key_code`): `CSI 27 ; <modifiers> ;
+<codepoint> ~` (xterm modifyOtherKeys, also tmux `extended-keys` in its xterm format) parses
+as the CSI-u key `CSI <codepoint> ; <modifiers> u` — Ctrl+Backspace `CSI 27;5;127~` is
+Backspace+CONTROL, Ctrl+Enter `CSI 27;5;13~` is Enter+CONTROL. Upstream has no case for
+the form, and its parse error clears the whole pending input buffer, so every key typed with
+it vanished. The product still resets mode 2 at each surface start; this covers a terminal
+that sends the form anyway. Pinned by `test_parse_csi_modify_other_keys` (the vendored crate is
+outside the workspace: run it from a scratch copy with an empty `[workspace]` table).
