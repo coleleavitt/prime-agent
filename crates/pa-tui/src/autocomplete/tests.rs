@@ -199,6 +199,31 @@ fn path_completion_lists_directories_first() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Directories sort first even when the completion value is quoted (upstream #1649): a quoted
+/// value ends in `"`, so a sort keyed on the value's trailing `/` interleaved them with files.
+#[test]
+fn quoted_path_completion_still_lists_directories_first() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    std::fs::create_dir_all(dir.path().join("zeta")).expect("mkdir");
+    std::fs::create_dir_all(dir.path().join("my dir")).expect("mkdir");
+    std::fs::write(dir.path().join("alpha.txt"), "a").expect("write");
+    std::fs::write(dir.path().join("my file.txt"), "b").expect("write");
+    let provider = provider(dir.path().to_str().unwrap());
+    let labels = |line: &str| -> Vec<String> {
+        let len = line.chars().count();
+        ready(provider.get_suggestions(&[line.to_string()], 0, len, false))
+            .items
+            .into_iter()
+            .map(|item| item.label)
+            .collect()
+    };
+    let expected = vec!["my dir/", "zeta/", "alpha.txt", "my file.txt"];
+    // The quoted forms (every value is quoted).
+    assert_eq!(labels("\"./"), expected);
+    // Unquoted: only the spaced names are quoted, and still sort by kind.
+    assert_eq!(labels("./"), expected);
+}
+
 /// Dot entries list only for an explicit dot-prefix anchor (operator ruling 2026-09-25):
 /// a directory browse never surfaces the cwd's dotfiles.
 #[test]
