@@ -18,8 +18,8 @@ use crate::utils::diagnostics::{
 pub enum StreamFailureKind {
     Refusal,
     Safety,
-    /// A payment/balance rejection (HTTP 402), deterministic by status (credits do not refill
-    /// inside a retry ladder).
+    /// A payment/balance rejection (HTTP 402, or a billing error type such as a 429
+    /// `insufficient_quota`): deterministic (credits do not refill inside a retry ladder).
     PaymentRequired,
     Overloaded,
     RateLimit,
@@ -533,6 +533,13 @@ pub fn classify_stream_failure(
     // wallet drains as `insufficient_credits`, `insufficient_balance`, or bare numeric codes.
     // Credits do not refill inside a retry ladder, so the status wins.
     if status == Some(402) {
+        return StreamFailureKind::PaymentRequired;
+    }
+    // OpenAI reports an exhausted credit balance or billing hard limit as a 429 (#795): the type,
+    // not the status, says it is a billing failure that no retry or park resolves.
+    let billing = regex::Regex::new(r"insufficient_quota|billing_hard_limit|billing_not_active")
+        .expect("static regex");
+    if billing.is_match(&type_lower) {
         return StreamFailureKind::PaymentRequired;
     }
     if type_lower == "refusal" {
