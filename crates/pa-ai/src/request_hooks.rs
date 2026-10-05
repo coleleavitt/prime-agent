@@ -8,9 +8,11 @@
 //! that supports the hooks (`anthropic-messages`) consults the hooks
 //! registered for the request's provider id around each send:
 //!
-//! 1. [`ProviderRequestHooks::current_credential`] before the request is
-//!    built: a fresher credential to send in place of the one the request
-//!    was resolved with (the store rotated it since);
+//! 1. [`ProviderRequestHooks::admit`] before the request is built: send it
+//!    as resolved, with another credential (by default
+//!    [`ProviderRequestHooks::current_credential`]: a fresher one the store
+//!    rotated since), or not at all (a local policy refusal, reported as the
+//!    provider error it carries);
 //! 2. [`ProviderRequestHooks::prepare`] with the built headers and payload;
 //! 3. [`ProviderRequestHooks::observe`] with every response's status and
 //!    headers;
@@ -43,6 +45,42 @@ pub struct OutgoingRequest<'a> {
     pub headers: &'a mut Vec<(String, String)>,
     /// The request body.
     pub payload: &'a mut serde_json::Value,
+}
+
+/// A request about to be built: what a hook may decide its credential
+/// from.
+pub struct PendingRequest<'a> {
+    /// The request's model.
+    pub model: &'a Model,
+    /// The credential the request was resolved with.
+    pub api_key: &'a str,
+    /// The size of the request's conversation context in its JSON form
+    /// (system prompt, messages, tools): a load estimate.
+    pub context_bytes: u64,
+}
+
+/// What the hooks decide for a pending request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Admission {
+    /// Send it with the credential it was resolved with.
+    Send,
+    /// Send it with this credential instead.
+    SendWith(String),
+    /// Do not send it: the request fails with this provider-shaped answer,
+    /// as if the provider had returned it.
+    Refuse(LocalRefusal),
+}
+
+/// A provider-shaped answer a hook gives instead of sending a request (a
+/// local policy block).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalRefusal {
+    /// The HTTP status reported (429 for a quota block, say).
+    pub status: u16,
+    /// Response headers (`retry-after`, ...).
+    pub headers: BTreeMap<String, String>,
+    /// The error body, in the provider's error shape.
+    pub body: String,
 }
 
 /// Why the provider turned a request down.
@@ -80,15 +118,23 @@ pub struct RejectedRequest<'a> {
 /// credential it did not issue (the request may carry a runtime key or
 /// another store's login). [`Self::prepare`] and [`Self::observe`] run
 /// inline on the request path and must return promptly (defer disk and
-/// network work); [`Self::current_credential`] and [`Self::rejected`] may
-/// block on disk and network (the provider calls them on the blocking
-/// pool).
+/// network work); [`Self::admit`], [`Self::current_credential`] and
+/// [`Self::rejected`] may block on disk and network (the provider calls
+/// them on the blocking pool).
 pub trait ProviderRequestHooks: Send + Sync {
     /// The credential to send in place of `api_key`, when the hook issued
     /// `api_key` and holds a fresher one for the request; `None` keeps it.
     fn current_credential(&self, model: &Model, api_key: &str) -> Option<String> {
         let _ = (model, api_key);
         None
+    }
+
+    /// Decide how a request with a credential the hook issued is sent: as
+    /// resolved, with another credential, or not at all. By default, with
+    /// [`Self::current_credential`]'s fresher credential when there is one.
+    fn admit(&self, request: &PendingRequest<'_>) -> Admission {
+        self.current_credential(request.model, request.api_key)
+            .map_or(Admission::Send, Admission::SendWith)
     }
 
     /// Adjust a request about to be sent with a credential the hook
@@ -130,6 +176,25 @@ pub fn install_request_hooks(provider_id: &str, hooks: Arc<dyn ProviderRequestHo
 #[must_use]
 pub fn request_hooks(provider_id: &str) -> Option<Arc<dyn ProviderRequestHooks>> {
     registry().read_or_recover().get(provider_id).cloned()
+}
+
+/// The size of `context` in its JSON form, counted without building it.
+pub(crate) fn context_bytes(context: &crate::types::Context) -> u64 {
+    struct Count(u64);
+    impl std::io::Write for Count {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 += bytes.len() as u64;
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = Count(0);
+    // Serializing plain data into a counter cannot fail; a failure counts
+    // what was written.
+    let _ = serde_json::to_writer(&mut count, context);
+    count.0
 }
 
 /// Rate-limit and overload error types a stream may open with.
