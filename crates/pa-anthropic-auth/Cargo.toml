@@ -23,6 +23,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # and the device file is JSON.
 serde_json.workspace = true
 sha2 = "0.10"
+# The settings file's typed write errors (already a workspace dependency).
+thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 # The id of an imported login without an identity (`account-<8 hex>`, as

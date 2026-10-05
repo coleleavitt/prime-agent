@@ -6,7 +6,6 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anthropic::claude_code::{stainless_arch, stainless_os};
-use anthropic::AccountStore;
 use chrono::Duration;
 use pa_types::sync::MutexExt;
 use serde_json::Value;
@@ -146,122 +145,8 @@ fn the_environment_forwards_like_the_plugin() {
     );
 }
 
-/// The store row `uuid` belongs to, with the golden's account uuid.
-fn golden_row(id: &str, account_uuid: &str) -> anthropic::Account {
-    let mut account = row(id, Duration::hours(2));
-    if let anthropic::token::Credential::Oauth(tokens) = &mut account.credential {
-        tokens.account = Some(anthropic::token::TokenAccount {
-            uuid: account_uuid.to_string(),
-            email_address: None,
-        });
-    }
-    account
-}
-
-#[test]
-fn a_store_request_goes_out_in_the_plugin_s_shape() {
-    let golden = golden();
-    let provider = "anthropic-shape";
-    let identity = &golden["identity"];
-    let (_home, source) = source_over(
-        vec![golden_row(
-            "shape",
-            identity["accountUuid"].as_str().expect("an account uuid"),
-        )],
-        "http://127.0.0.1:9",
-    );
-    // The installation's device id, as the plugins wrote it.
-    std::fs::write(
-        source
-            .store_path()
-            .parent()
-            .expect("the store dir")
-            .join("device.json"),
-        format!(
-            "{{\"version\":1,\"device_id\":\"{}\"}}\n",
-            identity["deviceId"].as_str().expect("a device id")
-        ),
-    )
-    .expect("write device.json");
-    pa_core::auth::install_credential_source(provider, source.clone());
-    pa_ai::request_hooks::install_request_hooks(provider, source.clone());
-    let (base, requests) = messages_endpoint(vec![(200, Vec::new(), OK_STREAM)]);
-    let served = pa_core::auth::ProviderCredentialSource::credential(source.as_ref())
-        .expect("the store's token")
-        .api_key;
-
-    let message = complete(&messages_model(provider, &base), &served);
-    assert_eq!(text_of(&message), "hello");
-
-    let request = requests.lock_or_recover()[0].clone();
-    let body: Value = serde_json::from_str(&request.body).expect("a JSON body");
-    let pi = &golden["piRequest"];
-    // The billing block leads the system blocks, byte for byte the plugin's
-    // for the same first user text.
-    assert_eq!(body["system"][0], pi["system0"]);
-    // Claude Code's key order, as far as both bodies carry the keys.
-    let ours: Vec<&str> = body
-        .as_object()
-        .expect("an object")
-        .keys()
-        .map(String::as_str)
-        .collect();
-    let theirs: Vec<&str> = pi["keys"]
-        .as_array()
-        .expect("keys")
-        .iter()
-        .filter_map(Value::as_str)
-        .collect();
-    assert_eq!(
-        ours.iter()
-            .filter(|key| theirs.contains(key))
-            .collect::<Vec<_>>(),
-        theirs
-            .iter()
-            .filter(|key| ours.contains(key))
-            .collect::<Vec<_>>()
-    );
-    // metadata.user_id: the plugin's, with this process's session id (the
-    // one the session header carries).
-    let session = request
-        .header("x-claude-code-session-id")
-        .expect("the session header")
-        .to_string();
-    assert_eq!(
-        body["metadata"],
-        serde_json::json!({
-            "user_id": metadata_user_id(&ShapeIdentity {
-                session_id: session.clone(),
-                ..identity_of(identity)
-            })
-        })
-    );
-    // The header set: the plugin's for its own request (same beta tuple),
-    // with this process's session and request ids; the transport's own
-    // headers aside.
-    let mut expected = expected_headers(&golden["headers"][1]["headers"]);
-    expected.insert("authorization".to_string(), format!("Bearer {served}"));
-    expected.insert("x-claude-code-session-id".to_string(), session);
-    let sent: BTreeMap<String, String> = request
-        .headers
-        .iter()
-        .filter(|(name, _)| {
-            ![
-                "host",
-                "content-length",
-                "accept-encoding",
-                "x-client-request-id",
-            ]
-            .contains(&name.as_str())
-        })
-        .cloned()
-        .collect();
-    assert_eq!(sent, expected);
-    assert!(
-        uuid::Uuid::parse_str(request.header("x-client-request-id").unwrap_or_default()).is_ok()
-    );
-    assert!(AccountStore::load(source.store_path()).is_ok());
-}
+// The whole request a store-served token sends: `pi/tests.rs`
+// (`a_store_request_leaves_as_pi_sends_the_same_conversation`).
 
 #[test]
 fn a_request_the_store_did_not_serve_keeps_its_shape() {

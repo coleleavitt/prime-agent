@@ -1,0 +1,1641 @@
+{
+  "version": "2.1.280",
+  "cases": [
+    {
+      "name": "text-with-pi-prompt",
+      "model": "claude-opus-4-8",
+      "context": {
+        "systemPrompt": "You are an expert coding assistant operating inside pi.\n\nAvailable tools:\n- read: Read file contents\n\nPi documentation (read only when the user asks about pi itself):\n- Main documentation: /docs/README.md\n\nGuidelines:\n- Be concise",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Say hello to the world, please.",
+            "timestamp": 1
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hello, world."
+              }
+            ],
+            "api": "anthropic-messages",
+            "provider": "anthropic",
+            "model": "claude-x",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "And once more."
+              }
+            ],
+            "timestamp": 1
+          }
+        ]
+      },
+      "options": {
+        "reasoning": "high"
+      },
+      "settings": {},
+      "token": "sk-ant-oat01-golden-case-00-000000000000",
+      "identity": {
+        "deviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "accountUuid": "00000000-0000-4000-8000-000000000001",
+        "sessionId": "e283f9bf-6240-46e9-af3e-1887d7934fdf"
+      },
+      "url": "https://api.anthropic.com/v1/messages?beta=true",
+      "headers": {
+        "accept": "application/json",
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,context-1m-2025-08-07",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-ant-oat01-golden-case-00-000000000000",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/2.1.280 (external, cli)",
+        "x-app": "cli",
+        "x-claude-code-session-id": "e283f9bf-6240-46e9-af3e-1887d7934fdf",
+        "x-stainless-arch": "x64",
+        "x-stainless-helper-method": "stream",
+        "x-stainless-lang": "js",
+        "x-stainless-os": "Linux",
+        "x-stainless-package-version": "0.112.1",
+        "x-stainless-retry-count": "0",
+        "x-stainless-runtime": "node",
+        "x-stainless-runtime-version": "v26.3.0",
+        "x-stainless-timeout": "600"
+      },
+      "bodyText": "{\"model\":\"claude-opus-4-8\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Pi documentation (read only when the user asks about pi itself):\\n- Main documentation: /docs/README.md\",\"cache_control\":{\"type\":\"ephemeral\"}},{\"type\":\"text\",\"text\":\"Say hello to the world, please.\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Hello, world.\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"And once more.\",\"cache_control\":{\"type\":\"ephemeral\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.280.49f; cc_entrypoint=cli; cch=00000;\"},{\"type\":\"text\",\"text\":\"You are Claude Code, Anthropic's official CLI for Claude.\"},{\"type\":\"text\",\"text\":\"You are an expert coding assistant operating inside pi.\\n\\nAvailable tools:\\n- read: Read file contents\\n\\nGuidelines:\\n- Be concise\",\"cache_control\":{\"type\":\"ephemeral\"}}],\"metadata\":{\"user_id\":\"{\\\"device_id\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"account_uuid\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"session_id\\\":\\\"e283f9bf-6240-46e9-af3e-1887d7934fdf\\\"}\"},\"max_tokens\":16384,\"thinking\":{\"type\":\"adaptive\",\"display\":\"summarized\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true}",
+      "filter": {
+        "blocksScanned": 7,
+        "charsScanned": 424,
+        "blocksFlagged": 0,
+        "blocksRewritten": 0,
+        "maxScoreBefore": 0.25,
+        "maxScoreAfter": 0.25,
+        "maxCategory": null,
+        "rawTotals": {
+          "reasoning_extraction": 0.25
+        },
+        "blocksEvicted": 0,
+        "charsEvicted": 0,
+        "finalThresholdMultiplier": 0.998,
+        "totalCappedContribution": 0.25,
+        "surrogateBefore": 0,
+        "surrogateAfter": 0,
+        "surrogateEscalations": 0,
+        "surrogateDanger": false
+      }
+    },
+    {
+      "name": "tool-use-and-results",
+      "model": "claude-sonnet-4-5",
+      "context": {
+        "systemPrompt": "You help with files.",
+        "tools": [
+          {
+            "name": "read",
+            "description": "Read a file",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          },
+          {
+            "name": "deep_research",
+            "description": "Research",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "q": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          {
+            "name": "my_tool",
+            "description": "Custom",
+            "parameters": {
+              "type": "object"
+            }
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "Read the config file.",
+            "timestamp": 1
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Reading it."
+              },
+              {
+                "type": "toolCall",
+                "id": "call_1|fc 1",
+                "name": "read",
+                "arguments": {
+                  "path": "config.toml"
+                }
+              },
+              {
+                "type": "toolCall",
+                "id": "call_2",
+                "name": "deep_research",
+                "arguments": {
+                  "q": "x"
+                }
+              }
+            ],
+            "api": "anthropic-messages",
+            "provider": "anthropic",
+            "model": "claude-x",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1
+          },
+          {
+            "role": "toolResult",
+            "toolCallId": "call_1|fc 1",
+            "toolName": "t",
+            "content": [
+              {
+                "type": "text",
+                "text": "key = 1"
+              }
+            ],
+            "isError": false,
+            "timestamp": 1
+          },
+          {
+            "role": "toolResult",
+            "toolCallId": "call_unknown",
+            "toolName": "t",
+            "content": [
+              {
+                "type": "text",
+                "text": "stray"
+              }
+            ],
+            "isError": false,
+            "timestamp": 1
+          },
+          {
+            "role": "toolResult",
+            "toolCallId": "call_2",
+            "toolName": "t",
+            "content": [],
+            "isError": true,
+            "timestamp": 1
+          },
+          {
+            "role": "user",
+            "content": "Now run something.",
+            "timestamp": 1
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "toolCall",
+                "id": "orphan",
+                "name": "my_tool",
+                "arguments": {}
+              }
+            ],
+            "api": "anthropic-messages",
+            "provider": "anthropic",
+            "model": "claude-x",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1
+          },
+          {
+            "role": "user",
+            "content": "Never mind; summarize.",
+            "timestamp": 1
+          }
+        ]
+      },
+      "options": {
+        "reasoning": "medium",
+        "thinkingBudgets": {
+          "medium": 3000
+        },
+        "maxTokens": 2048
+      },
+      "settings": {},
+      "token": "sk-ant-oat01-golden-case-01-000000000000",
+      "identity": {
+        "deviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "accountUuid": "00000000-0000-4000-8000-000000000001",
+        "sessionId": "e283f9bf-6240-46e9-af3e-1887d7934fdf"
+      },
+      "url": "https://api.anthropic.com/v1/messages?beta=true",
+      "headers": {
+        "accept": "application/json",
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,context-1m-2025-08-07",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-ant-oat01-golden-case-01-000000000000",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/2.1.280 (external, cli)",
+        "x-app": "cli",
+        "x-claude-code-session-id": "e283f9bf-6240-46e9-af3e-1887d7934fdf",
+        "x-stainless-arch": "x64",
+        "x-stainless-helper-method": "stream",
+        "x-stainless-lang": "js",
+        "x-stainless-os": "Linux",
+        "x-stainless-package-version": "0.112.1",
+        "x-stainless-retry-count": "0",
+        "x-stainless-runtime": "node",
+        "x-stainless-runtime-version": "v26.3.0",
+        "x-stainless-timeout": "600"
+      },
+      "bodyText": "{\"model\":\"claude-sonnet-4-5\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"You help with files.\",\"cache_control\":{\"type\":\"ephemeral\"}},{\"type\":\"text\",\"text\":\"Read the config file.\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Reading it.\"},{\"type\":\"tool_use\",\"id\":\"call_1_fc_1\",\"name\":\"Read\",\"input\":{\"path\":\"config.toml\"}},{\"type\":\"tool_use\",\"id\":\"call_2\",\"name\":\"prime_deep_research\",\"input\":{\"q\":\"x\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"call_1_fc_1\",\"content\":\"key = 1\",\"is_error\":false},{\"type\":\"tool_result\",\"tool_use_id\":\"call_2\",\"content\":[{\"type\":\"text\",\"text\":\"Error\"}],\"is_error\":true}]},{\"role\":\"user\",\"content\":\"Now run something.\"},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Never mind; summarize.\",\"cache_control\":{\"type\":\"ephemeral\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.280.e52; cc_entrypoint=cli; cch=00000;\"},{\"type\":\"text\",\"text\":\"You are Claude Code, Anthropic's official CLI for Claude.\",\"cache_control\":{\"type\":\"ephemeral\"}}],\"tools\":[{\"name\":\"Read\",\"description\":\"Read a file\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}},{\"name\":\"prime_deep_research\",\"description\":\"Research\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[]}},{\"name\":\"my_tool\",\"description\":\"Custom\",\"input_schema\":{\"type\":\"object\",\"properties\":{},\"required\":[]},\"cache_control\":{\"type\":\"ephemeral\"}}],\"metadata\":{\"user_id\":\"{\\\"device_id\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"account_uuid\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"session_id\\\":\\\"e283f9bf-6240-46e9-af3e-1887d7934fdf\\\"}\"},\"max_tokens\":2048,\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":2047},\"stream\":true}",
+      "filter": {
+        "blocksScanned": 11,
+        "charsScanned": 273,
+        "blocksFlagged": 0,
+        "blocksRewritten": 0,
+        "maxScoreBefore": 0,
+        "maxScoreAfter": 0,
+        "maxCategory": null,
+        "rawTotals": {},
+        "blocksEvicted": 0,
+        "charsEvicted": 0,
+        "finalThresholdMultiplier": 1,
+        "totalCappedContribution": 0,
+        "surrogateBefore": 0,
+        "surrogateAfter": 0,
+        "surrogateEscalations": 0,
+        "surrogateDanger": false
+      }
+    },
+    {
+      "name": "images",
+      "model": "claude-haiku-4-5",
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image",
+                "data": "iVBORw0KGgo=",
+                "mimeType": "image/png"
+              }
+            ],
+            "timestamp": 1
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "A picture."
+              }
+            ],
+            "api": "anthropic-messages",
+            "provider": "anthropic",
+            "model": "claude-x",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Compare with this:"
+              },
+              {
+                "type": "image",
+                "data": "iVBORw0KGgo=",
+                "mimeType": "image/png"
+              }
+            ],
+            "timestamp": 1
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "toolCall",
+                "id": "shot",
+                "name": "screenshot",
+                "arguments": {}
+              }
+            ],
+            "api": "anthropic-messages",
+            "provider": "anthropic",
+            "model": "claude-x",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1
+          },
+          {
+            "role": "toolResult",
+            "toolCallId": "shot",
+            "toolName": "t",
+            "content": [
+              {
+                "type": "image",
+                "data": "iVBORw0KGgo=",
+                "mimeType": "image/png"
+              }
+            ],
+            "isError": false,
+            "timestamp": 1
+          }
+        ]
+      },
+      "options": {},
+      "settings": {},
+      "token": "sk-ant-oat01-golden-case-02-000000000000",
+      "identity": {
+        "deviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "accountUuid": "00000000-0000-4000-8000-000000000001",
+        "sessionId": "e283f9bf-6240-46e9-af3e-1887d7934fdf"
+      },
+      "url": "https://api.anthropic.com/v1/messages?beta=true",
+      "headers": {
+        "accept": "application/json",
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-ant-oat01-golden-case-02-000000000000",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/2.1.280 (external, cli)",
+        "x-app": "cli",
+        "x-claude-code-session-id": "e283f9bf-6240-46e9-af3e-1887d7934fdf",
+        "x-stainless-arch": "x64",
+        "x-stainless-helper-method": "stream",
+        "x-stainless-lang": "js",
+        "x-stainless-os": "Linux",
+        "x-stainless-package-version": "0.112.1",
+        "x-stainless-retry-count": "0",
+        "x-stainless-runtime": "node",
+        "x-stainless-runtime-version": "v26.3.0",
+        "x-stainless-timeout": "600"
+      },
+      "bodyText": "{\"model\":\"claude-haiku-4-5\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"(see attached image)\"},{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"iVBORw0KGgo=\"}}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"A picture.\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Compare with this:\"},{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"iVBORw0KGgo=\"}}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"shot\",\"name\":\"screenshot\",\"input\":{}}]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"shot\",\"content\":[{\"type\":\"text\",\"text\":\"(see attached image)\"},{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"iVBORw0KGgo=\"}}],\"is_error\":false,\"cache_control\":{\"type\":\"ephemeral\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.280.16f; cc_entrypoint=cli; cch=00000;\"},{\"type\":\"text\",\"text\":\"You are Claude Code, Anthropic's official CLI for Claude.\",\"cache_control\":{\"type\":\"ephemeral\"}}],\"metadata\":{\"user_id\":\"{\\\"device_id\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"account_uuid\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"session_id\\\":\\\"e283f9bf-6240-46e9-af3e-1887d7934fdf\\\"}\"},\"max_tokens\":16384,\"stream\":true}",
+      "filter": {
+        "blocksScanned": 7,
+        "charsScanned": 208,
+        "blocksFlagged": 0,
+        "blocksRewritten": 0,
+        "maxScoreBefore": 0,
+        "maxScoreAfter": 0,
+        "maxCategory": null,
+        "rawTotals": {},
+        "blocksEvicted": 0,
+        "charsEvicted": 0,
+        "finalThresholdMultiplier": 1,
+        "totalCappedContribution": 0,
+        "surrogateBefore": 0,
+        "surrogateAfter": 0,
+        "surrogateEscalations": 0,
+        "surrogateDanger": false
+      }
+    },
+    {
+      "name": "thinking-blocks",
+      "model": "claude-opus-4-8",
+      "context": {
+        "systemPrompt": "You think.",
+        "messages": [
+          {
+            "role": "user",
+            "content": "First question.",
+            "timestamp": 1
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "Signed reasoning.",
+                "thinkingSignature": "EqQBCkgIBRABGAIiQ"
+              },
+              {
+                "type": "thinking",
+                "thinking": "Unsigned reasoning."
+              },
+              {
+                "type": "thinking",
+                "thinking": "   "
+              },
+              {
+                "type": "text",
+                "text": "Answer one."
+              }
+            ],
+            "api": "anthropic-messages",
+            "provider": "anthropic",
+            "model": "claude-x",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1
+          },
+          {
+            "role": "user",
+            "content": "Second question.",
+            "timestamp": 1
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "Foreign reasoning.",
+                "thinkingSignature": "reasoning_content"
+              },
+              {
+                "type": "thinking",
+                "thinking": "Encrypted.",
+                "thinkingSignature": "gAAAAABencrypted"
+              },
+              {
+                "type": "text",
+                "text": "Answer two."
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "anthropic",
+            "model": "claude-x",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1
+          },
+          {
+            "role": "user",
+            "content": "Third question.",
+            "timestamp": 1
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "A trailing assistant turn."
+              }
+            ],
+            "api": "anthropic-messages",
+            "provider": "anthropic",
+            "model": "claude-x",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1
+          }
+        ]
+      },
+      "options": {
+        "reasoning": "xhigh"
+      },
+      "settings": {},
+      "token": "sk-ant-oat01-golden-case-03-000000000000",
+      "identity": {
+        "deviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "accountUuid": "00000000-0000-4000-8000-000000000001",
+        "sessionId": "e283f9bf-6240-46e9-af3e-1887d7934fdf"
+      },
+      "url": "https://api.anthropic.com/v1/messages?beta=true",
+      "headers": {
+        "accept": "application/json",
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,context-1m-2025-08-07",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-ant-oat01-golden-case-03-000000000000",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/2.1.280 (external, cli)",
+        "x-app": "cli",
+        "x-claude-code-session-id": "e283f9bf-6240-46e9-af3e-1887d7934fdf",
+        "x-stainless-arch": "x64",
+        "x-stainless-helper-method": "stream",
+        "x-stainless-lang": "js",
+        "x-stainless-os": "Linux",
+        "x-stainless-package-version": "0.112.1",
+        "x-stainless-retry-count": "0",
+        "x-stainless-runtime": "node",
+        "x-stainless-runtime-version": "v26.3.0",
+        "x-stainless-timeout": "600"
+      },
+      "bodyText": "{\"model\":\"claude-opus-4-8\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"You think.\",\"cache_control\":{\"type\":\"ephemeral\"}},{\"type\":\"text\",\"text\":\"First question.\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"Signed reasoning.\",\"signature\":\"EqQBCkgIBRABGAIiQ\"},{\"type\":\"text\",\"text\":\"Unsigned reasoning.\"},{\"type\":\"text\",\"text\":\"Answer one.\"}]},{\"role\":\"user\",\"content\":\"Second question.\"},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Foreign reasoning.\"},{\"type\":\"text\",\"text\":\"Answer two.\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Third question.\",\"cache_control\":{\"type\":\"ephemeral\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.280.3c7; cc_entrypoint=cli; cch=00000;\"},{\"type\":\"text\",\"text\":\"You are Claude Code, Anthropic's official CLI for Claude.\",\"cache_control\":{\"type\":\"ephemeral\"}}],\"metadata\":{\"user_id\":\"{\\\"device_id\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"account_uuid\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"session_id\\\":\\\"e283f9bf-6240-46e9-af3e-1887d7934fdf\\\"}\"},\"max_tokens\":16384,\"thinking\":{\"type\":\"adaptive\",\"display\":\"summarized\"},\"output_config\":{\"effort\":\"xhigh\"},\"stream\":true}",
+      "filter": {
+        "blocksScanned": 11,
+        "charsScanned": 270,
+        "blocksFlagged": 0,
+        "blocksRewritten": 0,
+        "maxScoreBefore": 0,
+        "maxScoreAfter": 0,
+        "maxCategory": null,
+        "rawTotals": {},
+        "blocksEvicted": 0,
+        "charsEvicted": 0,
+        "finalThresholdMultiplier": 1,
+        "totalCappedContribution": 0,
+        "surrogateBefore": 0,
+        "surrogateAfter": 0,
+        "surrogateEscalations": 0,
+        "surrogateDanger": false
+      }
+    },
+    {
+      "name": "cache-hybrid",
+      "model": "claude-sonnet-5",
+      "context": {
+        "systemPrompt": "You cache.",
+        "tools": [
+          {
+            "name": "bash",
+            "description": "Run",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "cmd": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "cmd"
+              ]
+            }
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "Cache this, please.",
+            "timestamp": 1
+          }
+        ]
+      },
+      "options": {
+        "reasoning": "off"
+      },
+      "settings": {
+        "claudeCache": {
+          "enabled": true,
+          "mode": "hybrid"
+        }
+      },
+      "token": "sk-ant-oat01-golden-case-04-000000000000",
+      "identity": {
+        "deviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "accountUuid": "00000000-0000-4000-8000-000000000001",
+        "sessionId": "e283f9bf-6240-46e9-af3e-1887d7934fdf"
+      },
+      "url": "https://api.anthropic.com/v1/messages?beta=true",
+      "headers": {
+        "accept": "application/json",
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,context-1m-2025-08-07",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-ant-oat01-golden-case-04-000000000000",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/2.1.280 (external, cli)",
+        "x-app": "cli",
+        "x-claude-code-session-id": "e283f9bf-6240-46e9-af3e-1887d7934fdf",
+        "x-stainless-arch": "x64",
+        "x-stainless-helper-method": "stream",
+        "x-stainless-lang": "js",
+        "x-stainless-os": "Linux",
+        "x-stainless-package-version": "0.112.1",
+        "x-stainless-retry-count": "0",
+        "x-stainless-runtime": "node",
+        "x-stainless-runtime-version": "v26.3.0",
+        "x-stainless-timeout": "600"
+      },
+      "bodyText": "{\"model\":\"claude-sonnet-5\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"You cache.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}},{\"type\":\"text\",\"text\":\"Cache this, please.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.280.6e8; cc_entrypoint=cli; cch=00000;\"},{\"type\":\"text\",\"text\":\"You are Claude Code, Anthropic's official CLI for Claude.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}}],\"tools\":[{\"name\":\"Bash\",\"description\":\"Run\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"cmd\":{\"type\":\"string\"}},\"required\":[\"cmd\"]},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}}],\"metadata\":{\"user_id\":\"{\\\"device_id\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"account_uuid\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"session_id\\\":\\\"e283f9bf-6240-46e9-af3e-1887d7934fdf\\\"}\"},\"max_tokens\":16384,\"thinking\":{\"type\":\"adaptive\",\"display\":\"summarized\"},\"output_config\":{\"effort\":\"medium\"},\"stream\":true,\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}}",
+      "filter": {
+        "blocksScanned": 4,
+        "charsScanned": 167,
+        "blocksFlagged": 0,
+        "blocksRewritten": 0,
+        "maxScoreBefore": 0,
+        "maxScoreAfter": 0,
+        "maxCategory": null,
+        "rawTotals": {},
+        "blocksEvicted": 0,
+        "charsEvicted": 0,
+        "finalThresholdMultiplier": 1,
+        "totalCappedContribution": 0,
+        "surrogateBefore": 0,
+        "surrogateAfter": 0,
+        "surrogateEscalations": 0,
+        "surrogateDanger": false
+      }
+    },
+    {
+      "name": "cache-automatic",
+      "model": "claude-opus-4-6",
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Automatic caching.",
+            "timestamp": 1
+          }
+        ]
+      },
+      "options": {
+        "reasoning": "max"
+      },
+      "settings": {
+        "claudeCache": {
+          "enabled": true,
+          "mode": "automatic"
+        }
+      },
+      "token": "sk-ant-oat01-golden-case-05-000000000000",
+      "identity": {
+        "deviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "accountUuid": "00000000-0000-4000-8000-000000000001",
+        "sessionId": "e283f9bf-6240-46e9-af3e-1887d7934fdf"
+      },
+      "url": "https://api.anthropic.com/v1/messages?beta=true",
+      "headers": {
+        "accept": "application/json",
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,context-1m-2025-08-07",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-ant-oat01-golden-case-05-000000000000",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/2.1.280 (external, cli)",
+        "x-app": "cli",
+        "x-claude-code-session-id": "e283f9bf-6240-46e9-af3e-1887d7934fdf",
+        "x-stainless-arch": "x64",
+        "x-stainless-helper-method": "stream",
+        "x-stainless-lang": "js",
+        "x-stainless-os": "Linux",
+        "x-stainless-package-version": "0.112.1",
+        "x-stainless-retry-count": "0",
+        "x-stainless-runtime": "node",
+        "x-stainless-runtime-version": "v26.3.0",
+        "x-stainless-timeout": "600"
+      },
+      "bodyText": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Automatic caching.\",\"cache_control\":{\"type\":\"ephemeral\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.280.8ee; cc_entrypoint=cli; cch=00000;\"},{\"type\":\"text\",\"text\":\"You are Claude Code, Anthropic's official CLI for Claude.\",\"cache_control\":{\"type\":\"ephemeral\"}}],\"metadata\":{\"user_id\":\"{\\\"device_id\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"account_uuid\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"session_id\\\":\\\"e283f9bf-6240-46e9-af3e-1887d7934fdf\\\"}\"},\"max_tokens\":16384,\"thinking\":{\"type\":\"adaptive\",\"display\":\"summarized\"},\"output_config\":{\"effort\":\"max\"},\"stream\":true,\"cache_control\":{\"type\":\"ephemeral\"}}",
+      "filter": {
+        "blocksScanned": 3,
+        "charsScanned": 156,
+        "blocksFlagged": 0,
+        "blocksRewritten": 0,
+        "maxScoreBefore": 0,
+        "maxScoreAfter": 0,
+        "maxCategory": null,
+        "rawTotals": {},
+        "blocksEvicted": 0,
+        "charsEvicted": 0,
+        "finalThresholdMultiplier": 1,
+        "totalCappedContribution": 0,
+        "surrogateBefore": 0,
+        "surrogateAfter": 0,
+        "surrogateEscalations": 0,
+        "surrogateDanger": false
+      }
+    },
+    {
+      "name": "cache-explicit-fast",
+      "model": "claude-opus-4-8",
+      "context": {
+        "systemPrompt": "Fast.",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Go fast.",
+            "timestamp": 1
+          }
+        ]
+      },
+      "options": {},
+      "settings": {
+        "claudeCache": {
+          "enabled": true
+        },
+        "claudeFast": {
+          "enabled": true
+        }
+      },
+      "token": "sk-ant-oat01-golden-case-06-000000000000",
+      "identity": {
+        "deviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "accountUuid": "00000000-0000-4000-8000-000000000001",
+        "sessionId": "e283f9bf-6240-46e9-af3e-1887d7934fdf"
+      },
+      "url": "https://api.anthropic.com/v1/messages?beta=true",
+      "headers": {
+        "accept": "application/json",
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,fast-mode-2026-02-01,context-1m-2025-08-07",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-ant-oat01-golden-case-06-000000000000",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/2.1.280 (external, cli)",
+        "x-app": "cli",
+        "x-claude-code-session-id": "e283f9bf-6240-46e9-af3e-1887d7934fdf",
+        "x-stainless-arch": "x64",
+        "x-stainless-helper-method": "stream",
+        "x-stainless-lang": "js",
+        "x-stainless-os": "Linux",
+        "x-stainless-package-version": "0.112.1",
+        "x-stainless-retry-count": "0",
+        "x-stainless-runtime": "node",
+        "x-stainless-runtime-version": "v26.3.0",
+        "x-stainless-timeout": "600"
+      },
+      "bodyText": "{\"model\":\"claude-opus-4-8\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Fast.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}},{\"type\":\"text\",\"text\":\"Go fast.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.280.cf8; cc_entrypoint=cli; cch=00000;\"},{\"type\":\"text\",\"text\":\"You are Claude Code, Anthropic's official CLI for Claude.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}}],\"metadata\":{\"user_id\":\"{\\\"device_id\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"account_uuid\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"session_id\\\":\\\"e283f9bf-6240-46e9-af3e-1887d7934fdf\\\"}\"},\"max_tokens\":16384,\"stream\":true,\"speed\":\"fast\"}",
+      "filter": {
+        "blocksScanned": 4,
+        "charsScanned": 151,
+        "blocksFlagged": 0,
+        "blocksRewritten": 0,
+        "maxScoreBefore": 0,
+        "maxScoreAfter": 0,
+        "maxCategory": null,
+        "rawTotals": {},
+        "blocksEvicted": 0,
+        "charsEvicted": 0,
+        "finalThresholdMultiplier": 1,
+        "totalCappedContribution": 0,
+        "surrogateBefore": 0,
+        "surrogateAfter": 0,
+        "surrogateEscalations": 0,
+        "surrogateDanger": false
+      }
+    },
+    {
+      "name": "fast-on-an-unsupported-model",
+      "model": "claude-sonnet-4-6",
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Fast where it is not.",
+            "timestamp": 1
+          }
+        ]
+      },
+      "options": {
+        "reasoning": "xhigh"
+      },
+      "settings": {
+        "claudeFast": {
+          "enabled": true
+        },
+        "claudeCache": {
+          "enabled": false,
+          "mode": "hybrid"
+        }
+      },
+      "token": "sk-ant-oat01-golden-case-07-000000000000",
+      "identity": {
+        "deviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "accountUuid": "00000000-0000-4000-8000-000000000001",
+        "sessionId": "e283f9bf-6240-46e9-af3e-1887d7934fdf"
+      },
+      "url": "https://api.anthropic.com/v1/messages?beta=true",
+      "headers": {
+        "accept": "application/json",
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,context-1m-2025-08-07",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-ant-oat01-golden-case-07-000000000000",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/2.1.280 (external, cli)",
+        "x-app": "cli",
+        "x-claude-code-session-id": "e283f9bf-6240-46e9-af3e-1887d7934fdf",
+        "x-stainless-arch": "x64",
+        "x-stainless-helper-method": "stream",
+        "x-stainless-lang": "js",
+        "x-stainless-os": "Linux",
+        "x-stainless-package-version": "0.112.1",
+        "x-stainless-retry-count": "0",
+        "x-stainless-runtime": "node",
+        "x-stainless-runtime-version": "v26.3.0",
+        "x-stainless-timeout": "600"
+      },
+      "bodyText": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Fast where it is not.\",\"cache_control\":{\"type\":\"ephemeral\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.280.e52; cc_entrypoint=cli; cch=00000;\"},{\"type\":\"text\",\"text\":\"You are Claude Code, Anthropic's official CLI for Claude.\",\"cache_control\":{\"type\":\"ephemeral\"}}],\"metadata\":{\"user_id\":\"{\\\"device_id\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"account_uuid\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"session_id\\\":\\\"e283f9bf-6240-46e9-af3e-1887d7934fdf\\\"}\"},\"max_tokens\":16384,\"thinking\":{\"type\":\"adaptive\",\"display\":\"summarized\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true}",
+      "filter": {
+        "blocksScanned": 3,
+        "charsScanned": 159,
+        "blocksFlagged": 0,
+        "blocksRewritten": 0,
+        "maxScoreBefore": 0,
+        "maxScoreAfter": 0,
+        "maxCategory": null,
+        "rawTotals": {},
+        "blocksEvicted": 0,
+        "charsEvicted": 0,
+        "finalThresholdMultiplier": 1,
+        "totalCappedContribution": 0,
+        "surrogateBefore": 0,
+        "surrogateAfter": 0,
+        "surrogateEscalations": 0,
+        "surrogateDanger": false
+      }
+    },
+    {
+      "name": "no-account-uuid",
+      "model": "claude-opus-4-5",
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "No identity.",
+            "timestamp": 1
+          }
+        ]
+      },
+      "options": {
+        "reasoning": "off"
+      },
+      "settings": {},
+      "token": "sk-ant-oat01-golden-case-08-000000000000",
+      "identity": {
+        "deviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "accountUuid": null,
+        "sessionId": "3db9ede0-0eb1-498c-9e7b-ae84d6ac5b6f"
+      },
+      "url": "https://api.anthropic.com/v1/messages?beta=true",
+      "headers": {
+        "accept": "application/json",
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-ant-oat01-golden-case-08-000000000000",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/2.1.280 (external, cli)",
+        "x-app": "cli",
+        "x-claude-code-session-id": "3db9ede0-0eb1-498c-9e7b-ae84d6ac5b6f",
+        "x-stainless-arch": "x64",
+        "x-stainless-helper-method": "stream",
+        "x-stainless-lang": "js",
+        "x-stainless-os": "Linux",
+        "x-stainless-package-version": "0.112.1",
+        "x-stainless-retry-count": "0",
+        "x-stainless-runtime": "node",
+        "x-stainless-runtime-version": "v26.3.0",
+        "x-stainless-timeout": "600"
+      },
+      "bodyText": "{\"model\":\"claude-opus-4-5\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"No identity.\",\"cache_control\":{\"type\":\"ephemeral\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.280.8c3; cc_entrypoint=cli; cch=00000;\"},{\"type\":\"text\",\"text\":\"You are Claude Code, Anthropic's official CLI for Claude.\",\"cache_control\":{\"type\":\"ephemeral\"}}],\"max_tokens\":16384,\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":10240},\"stream\":true}",
+      "filter": {
+        "blocksScanned": 3,
+        "charsScanned": 150,
+        "blocksFlagged": 0,
+        "blocksRewritten": 0,
+        "maxScoreBefore": 0,
+        "maxScoreAfter": 0,
+        "maxCategory": null,
+        "rawTotals": {},
+        "blocksEvicted": 0,
+        "charsEvicted": 0,
+        "finalThresholdMultiplier": 1,
+        "totalCappedContribution": 0,
+        "surrogateBefore": 0,
+        "surrogateAfter": 0,
+        "surrogateEscalations": 0,
+        "surrogateDanger": false
+      }
+    },
+    {
+      "name": "server-fallback-opus-5-5",
+      "model": "claude-opus-5-5",
+      "context": {
+        "systemPrompt": "You help.",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Say hello to the world, please.",
+            "timestamp": 1
+          }
+        ]
+      },
+      "options": {
+        "reasoning": "off"
+      },
+      "settings": {},
+      "token": "sk-ant-oat01-golden-case-09-000000000000",
+      "identity": {
+        "deviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "accountUuid": "00000000-0000-4000-8000-000000000001",
+        "sessionId": "e283f9bf-6240-46e9-af3e-1887d7934fdf"
+      },
+      "url": "https://api.anthropic.com/v1/messages?beta=true",
+      "headers": {
+        "accept": "application/json",
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,context-1m-2025-08-07,server-side-fallback-2026-06-01,server-side-fallback-2026-07-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-ant-oat01-golden-case-09-000000000000",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/2.1.280 (external, cli)",
+        "x-app": "cli",
+        "x-claude-code-session-id": "e283f9bf-6240-46e9-af3e-1887d7934fdf",
+        "x-stainless-arch": "x64",
+        "x-stainless-helper-method": "stream",
+        "x-stainless-lang": "js",
+        "x-stainless-os": "Linux",
+        "x-stainless-package-version": "0.112.1",
+        "x-stainless-retry-count": "0",
+        "x-stainless-runtime": "node",
+        "x-stainless-runtime-version": "v26.3.0",
+        "x-stainless-timeout": "600"
+      },
+      "bodyText": "{\"model\":\"claude-opus-5-5\",\"max_tokens\":16384,\"stream\":true,\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.280.49f; cc_entrypoint=cli; cch=00000;\"},{\"type\":\"text\",\"text\":\"You are Claude Code, Anthropic's official CLI for Claude.\",\"cache_control\":{\"type\":\"ephemeral\"}}],\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"You help.\",\"cache_control\":{\"type\":\"ephemeral\"}},{\"type\":\"text\",\"text\":\"Say hello to the world, please.\",\"cache_control\":{\"type\":\"ephemeral\"}}]}],\"thinking\":{\"type\":\"adaptive\",\"display\":\"summarized\"},\"output_config\":{\"effort\":\"medium\"},\"metadata\":{\"user_id\":\"{\\\"device_id\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"account_uuid\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"session_id\\\":\\\"e283f9bf-6240-46e9-af3e-1887d7934fdf\\\"}\"},\"fallbacks\":\"default\"}",
+      "filter": {
+        "blocksScanned": 4,
+        "charsScanned": 178,
+        "blocksFlagged": 0,
+        "blocksRewritten": 0,
+        "maxScoreBefore": 0,
+        "maxScoreAfter": 0,
+        "maxCategory": null,
+        "rawTotals": {},
+        "blocksEvicted": 0,
+        "charsEvicted": 0,
+        "finalThresholdMultiplier": 1,
+        "totalCappedContribution": 0,
+        "surrogateBefore": 0,
+        "surrogateAfter": 0,
+        "surrogateEscalations": 0,
+        "surrogateDanger": false
+      }
+    },
+    {
+      "name": "server-fallback-fable-5-snapshot",
+      "model": "claude-fable-5-20260601",
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Fable.",
+            "timestamp": 1
+          }
+        ]
+      },
+      "options": {
+        "reasoning": "high"
+      },
+      "settings": {
+        "claudeFast": {
+          "enabled": true
+        }
+      },
+      "token": "sk-ant-oat01-golden-case-10-000000000000",
+      "identity": {
+        "deviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "accountUuid": "00000000-0000-4000-8000-000000000001",
+        "sessionId": "e283f9bf-6240-46e9-af3e-1887d7934fdf"
+      },
+      "url": "https://api.anthropic.com/v1/messages?beta=true",
+      "headers": {
+        "accept": "application/json",
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,context-1m-2025-08-07,server-side-fallback-2026-06-01,server-side-fallback-2026-07-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-ant-oat01-golden-case-10-000000000000",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/2.1.280 (external, cli)",
+        "x-app": "cli",
+        "x-claude-code-session-id": "e283f9bf-6240-46e9-af3e-1887d7934fdf",
+        "x-stainless-arch": "x64",
+        "x-stainless-helper-method": "stream",
+        "x-stainless-lang": "js",
+        "x-stainless-os": "Linux",
+        "x-stainless-package-version": "0.112.1",
+        "x-stainless-retry-count": "0",
+        "x-stainless-runtime": "node",
+        "x-stainless-runtime-version": "v26.3.0",
+        "x-stainless-timeout": "600"
+      },
+      "bodyText": "{\"model\":\"claude-fable-5-20260601\",\"max_tokens\":16384,\"stream\":true,\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.280.5b1; cc_entrypoint=cli; cch=00000;\"},{\"type\":\"text\",\"text\":\"You are Claude Code, Anthropic's official CLI for Claude.\",\"cache_control\":{\"type\":\"ephemeral\"}}],\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Fable.\",\"cache_control\":{\"type\":\"ephemeral\"}}]}],\"thinking\":{\"type\":\"adaptive\",\"display\":\"summarized\"},\"output_config\":{\"effort\":\"high\"},\"metadata\":{\"user_id\":\"{\\\"device_id\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"account_uuid\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"session_id\\\":\\\"e283f9bf-6240-46e9-af3e-1887d7934fdf\\\"}\"},\"fallbacks\":\"default\"}",
+      "filter": {
+        "blocksScanned": 3,
+        "charsScanned": 144,
+        "blocksFlagged": 0,
+        "blocksRewritten": 0,
+        "maxScoreBefore": 0,
+        "maxScoreAfter": 0,
+        "maxCategory": null,
+        "rawTotals": {},
+        "blocksEvicted": 0,
+        "charsEvicted": 0,
+        "finalThresholdMultiplier": 1,
+        "totalCappedContribution": 0,
+        "surrogateBefore": 0,
+        "surrogateAfter": 0,
+        "surrogateEscalations": 0,
+        "surrogateDanger": false
+      }
+    },
+    {
+      "name": "fallback-markers-replayed",
+      "model": "claude-opus-5",
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "First.",
+            "timestamp": 1
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "⁠",
+                "thinkingSignature": "cortexkit-server-fallback-v1:claude-opus-5|claude-opus-4-8"
+              },
+              {
+                "type": "thinking",
+                "thinking": "⁠",
+                "thinkingSignature": "cortexkit-server-fallback-v1:not a model|claude-opus-4-8"
+              },
+              {
+                "type": "text",
+                "text": "Served by the fallback."
+              }
+            ],
+            "api": "anthropic-messages",
+            "provider": "anthropic",
+            "model": "claude-x",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1
+          },
+          {
+            "role": "user",
+            "content": "Second.",
+            "timestamp": 1
+          }
+        ]
+      },
+      "options": {},
+      "settings": {},
+      "token": "sk-ant-oat01-golden-case-11-000000000000",
+      "identity": {
+        "deviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "accountUuid": "00000000-0000-4000-8000-000000000001",
+        "sessionId": "e283f9bf-6240-46e9-af3e-1887d7934fdf"
+      },
+      "url": "https://api.anthropic.com/v1/messages?beta=true",
+      "headers": {
+        "accept": "application/json",
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,context-1m-2025-08-07,server-side-fallback-2026-06-01,server-side-fallback-2026-07-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-ant-oat01-golden-case-11-000000000000",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/2.1.280 (external, cli)",
+        "x-app": "cli",
+        "x-claude-code-session-id": "e283f9bf-6240-46e9-af3e-1887d7934fdf",
+        "x-stainless-arch": "x64",
+        "x-stainless-helper-method": "stream",
+        "x-stainless-lang": "js",
+        "x-stainless-os": "Linux",
+        "x-stainless-package-version": "0.112.1",
+        "x-stainless-retry-count": "0",
+        "x-stainless-runtime": "node",
+        "x-stainless-runtime-version": "v26.3.0",
+        "x-stainless-timeout": "600"
+      },
+      "bodyText": "{\"model\":\"claude-opus-5\",\"max_tokens\":16384,\"stream\":true,\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.280.6a5; cc_entrypoint=cli; cch=00000;\"},{\"type\":\"text\",\"text\":\"You are Claude Code, Anthropic's official CLI for Claude.\",\"cache_control\":{\"type\":\"ephemeral\"}}],\"messages\":[{\"role\":\"user\",\"content\":\"First.\"},{\"role\":\"assistant\",\"content\":[{\"type\":\"fallback\",\"from\":{\"model\":\"claude-opus-5\"},\"to\":{\"model\":\"claude-opus-4-8\"}},{\"type\":\"text\",\"text\":\"Served by the fallback.\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Second.\",\"cache_control\":{\"type\":\"ephemeral\"}}]}],\"thinking\":{\"type\":\"adaptive\",\"display\":\"summarized\"},\"metadata\":{\"user_id\":\"{\\\"device_id\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"account_uuid\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"session_id\\\":\\\"e283f9bf-6240-46e9-af3e-1887d7934fdf\\\"}\"},\"fallbacks\":\"default\"}",
+      "filter": {
+        "blocksScanned": 7,
+        "charsScanned": 176,
+        "blocksFlagged": 0,
+        "blocksRewritten": 0,
+        "maxScoreBefore": 0,
+        "maxScoreAfter": 0,
+        "maxCategory": null,
+        "rawTotals": {},
+        "blocksEvicted": 0,
+        "charsEvicted": 0,
+        "finalThresholdMultiplier": 1,
+        "totalCappedContribution": 0,
+        "surrogateBefore": 0,
+        "surrogateAfter": 0,
+        "surrogateEscalations": 0,
+        "surrogateDanger": false
+      }
+    },
+    {
+      "name": "fallback-markers-dropped-off-a-fallback-model",
+      "model": "claude-sonnet-4-6",
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "First.",
+            "timestamp": 1
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "⁠",
+                "thinkingSignature": "cortexkit-server-fallback-v1:claude-opus-5|claude-opus-4-8"
+              },
+              {
+                "type": "text",
+                "text": "Served by the fallback."
+              }
+            ],
+            "api": "anthropic-messages",
+            "provider": "anthropic",
+            "model": "claude-x",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "⁠",
+                "thinkingSignature": "cortexkit-server-fallback-v1:claude-opus-5|claude-opus-4-8"
+              },
+              {
+                "type": "text",
+                "text": "From another provider."
+              }
+            ],
+            "api": "openai-responses",
+            "provider": "anthropic",
+            "model": "claude-x",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1
+          },
+          {
+            "role": "user",
+            "content": "Second.",
+            "timestamp": 1
+          }
+        ]
+      },
+      "options": {},
+      "settings": {},
+      "token": "sk-ant-oat01-golden-case-12-000000000000",
+      "identity": {
+        "deviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "accountUuid": "00000000-0000-4000-8000-000000000001",
+        "sessionId": "e283f9bf-6240-46e9-af3e-1887d7934fdf"
+      },
+      "url": "https://api.anthropic.com/v1/messages?beta=true",
+      "headers": {
+        "accept": "application/json",
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,context-1m-2025-08-07",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-ant-oat01-golden-case-12-000000000000",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/2.1.280 (external, cli)",
+        "x-app": "cli",
+        "x-claude-code-session-id": "e283f9bf-6240-46e9-af3e-1887d7934fdf",
+        "x-stainless-arch": "x64",
+        "x-stainless-helper-method": "stream",
+        "x-stainless-lang": "js",
+        "x-stainless-os": "Linux",
+        "x-stainless-package-version": "0.112.1",
+        "x-stainless-retry-count": "0",
+        "x-stainless-runtime": "node",
+        "x-stainless-runtime-version": "v26.3.0",
+        "x-stainless-timeout": "600"
+      },
+      "bodyText": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":16384,\"stream\":true,\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.280.6a5; cc_entrypoint=cli; cch=00000;\"},{\"type\":\"text\",\"text\":\"You are Claude Code, Anthropic's official CLI for Claude.\",\"cache_control\":{\"type\":\"ephemeral\"}}],\"messages\":[{\"role\":\"user\",\"content\":\"First.\"},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Served by the fallback.\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"⁠\"},{\"type\":\"text\",\"text\":\"From another provider.\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Second.\",\"cache_control\":{\"type\":\"ephemeral\"}}]}],\"metadata\":{\"user_id\":\"{\\\"device_id\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"account_uuid\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"session_id\\\":\\\"e283f9bf-6240-46e9-af3e-1887d7934fdf\\\"}\"}}",
+      "filter": {
+        "blocksScanned": 8,
+        "charsScanned": 198,
+        "blocksFlagged": 0,
+        "blocksRewritten": 0,
+        "maxScoreBefore": 0,
+        "maxScoreAfter": 0,
+        "maxCategory": null,
+        "rawTotals": {},
+        "blocksEvicted": 0,
+        "charsEvicted": 0,
+        "finalThresholdMultiplier": 1,
+        "totalCappedContribution": 0,
+        "surrogateBefore": 0,
+        "surrogateAfter": 0,
+        "surrogateEscalations": 0,
+        "surrogateDanger": false
+      }
+    },
+    {
+      "name": "blank-turns-and-docs-only-prompt",
+      "model": "claude-opus-4-8",
+      "context": {
+        "systemPrompt": "Pi documentation: see /docs.",
+        "messages": [
+          {
+            "role": "user",
+            "content": "   ",
+            "timestamp": 1
+          },
+          {
+            "role": "user",
+            "content": [],
+            "timestamp": 1
+          },
+          {
+            "role": "user",
+            "content": "Real question.",
+            "timestamp": 1
+          }
+        ]
+      },
+      "options": {
+        "maxTokens": 1,
+        "reasoning": "low"
+      },
+      "settings": {},
+      "token": "sk-ant-oat01-golden-case-13-000000000000",
+      "identity": {
+        "deviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "accountUuid": "00000000-0000-4000-8000-000000000001",
+        "sessionId": "e283f9bf-6240-46e9-af3e-1887d7934fdf"
+      },
+      "url": "https://api.anthropic.com/v1/messages?beta=true",
+      "headers": {
+        "accept": "application/json",
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,context-1m-2025-08-07",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-ant-oat01-golden-case-13-000000000000",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/2.1.280 (external, cli)",
+        "x-app": "cli",
+        "x-claude-code-session-id": "e283f9bf-6240-46e9-af3e-1887d7934fdf",
+        "x-stainless-arch": "x64",
+        "x-stainless-helper-method": "stream",
+        "x-stainless-lang": "js",
+        "x-stainless-os": "Linux",
+        "x-stainless-package-version": "0.112.1",
+        "x-stainless-retry-count": "0",
+        "x-stainless-runtime": "node",
+        "x-stainless-runtime-version": "v26.3.0",
+        "x-stainless-timeout": "600"
+      },
+      "bodyText": "{\"model\":\"claude-opus-4-8\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Pi documentation: see /docs.\",\"cache_control\":{\"type\":\"ephemeral\"}},{\"type\":\"text\",\"text\":\"\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Real question.\",\"cache_control\":{\"type\":\"ephemeral\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.280.d7b; cc_entrypoint=cli; cch=00000;\"},{\"type\":\"text\",\"text\":\"You are Claude Code, Anthropic's official CLI for Claude.\",\"cache_control\":{\"type\":\"ephemeral\"}}],\"metadata\":{\"user_id\":\"{\\\"device_id\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"account_uuid\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"session_id\\\":\\\"e283f9bf-6240-46e9-af3e-1887d7934fdf\\\"}\"},\"max_tokens\":1,\"thinking\":{\"type\":\"adaptive\",\"display\":\"summarized\"},\"output_config\":{\"effort\":\"low\"},\"stream\":true}",
+      "filter": {
+        "blocksScanned": 5,
+        "charsScanned": 180,
+        "blocksFlagged": 0,
+        "blocksRewritten": 0,
+        "maxScoreBefore": 0,
+        "maxScoreAfter": 0,
+        "maxCategory": null,
+        "rawTotals": {},
+        "blocksEvicted": 0,
+        "charsEvicted": 0,
+        "finalThresholdMultiplier": 1,
+        "totalCappedContribution": 0,
+        "surrogateBefore": 0,
+        "surrogateAfter": 0,
+        "surrogateEscalations": 0,
+        "surrogateDanger": false
+      }
+    }
+  ],
+  "responses": [
+    {
+      "name": "a-server-fallback-block",
+      "model": "claude-opus-5-5",
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Hi.",
+            "timestamp": 1
+          }
+        ]
+      },
+      "sse": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"fallback\",\"from\":{\"model\":\"claude-opus-5-5\"},\"to\":{\"model\":\"claude-opus-4-8\"}}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "⁠",
+          "thinkingSignature": "cortexkit-server-fallback-v1:claude-opus-5-5|claude-opus-4-8"
+        },
+        {
+          "type": "text",
+          "text": "hello"
+        }
+      ],
+      "stopReason": "stop"
+    },
+    {
+      "name": "an-unsafe-fallback-block-is-skipped",
+      "model": "claude-opus-5-5",
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Hi.",
+            "timestamp": 1
+          }
+        ]
+      },
+      "sse": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"fallback\",\"from\":{\"model\":\"claude-opus-5-5\"},\"to\":{\"model\":\"gpt-5\"}}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+      "content": [
+        {
+          "type": "text",
+          "text": "hello"
+        }
+      ],
+      "stopReason": "stop"
+    },
+    {
+      "name": "the-research-tool-alias-is-restored",
+      "model": "claude-opus-4-8",
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Research.",
+            "timestamp": 1
+          }
+        ],
+        "tools": [
+          {
+            "name": "deep_research",
+            "description": "Research",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        ]
+      },
+      "sse": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"prime_deep_research\",\"input\":{}}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"q\\\":\\\"x\\\"}\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":2}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "toolu_1",
+          "name": "deep_research",
+          "arguments": {
+            "q": "x"
+          }
+        }
+      ],
+      "stopReason": "toolUse"
+    }
+  ],
+  "commands": [
+    {
+      "name": "fast-from-no-file",
+      "initial": null,
+      "steps": [
+        {
+          "command": "claude-fast",
+          "args": "",
+          "text": "## Claude Fast Mode Status\n\n- Enabled: disabled\n- Persisted: ~/.config/opencode/anthropic-auth.json\n- Scope: adds Anthropic fast mode to supported Opus requests\n- Supported models: claude-opus-4-6, claude-opus-4-7, claude-opus-4-8, claude-opus-5, and claude-opus-5-5\n- Request changes: adds `speed: \"fast\"` and the `fast-mode-2026-02-01` beta header\n- Note: fast and standard speeds do not share prompt-cache prefixes",
+          "file": null
+        },
+        {
+          "command": "claude-fast",
+          "args": "on",
+          "text": "## Claude Fast Mode Enabled\n\n## Claude Fast Mode Status\n\n- Enabled: enabled\n- Persisted: ~/.config/opencode/anthropic-auth.json\n- Scope: adds Anthropic fast mode to supported Opus requests\n- Supported models: claude-opus-4-6, claude-opus-4-7, claude-opus-4-8, claude-opus-5, and claude-opus-5-5\n- Request changes: adds `speed: \"fast\"` and the `fast-mode-2026-02-01` beta header\n- Note: fast and standard speeds do not share prompt-cache prefixes",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"claudeFast\": {\n    \"enabled\": true\n  },\n  \"accounts\": []\n}\n"
+        },
+        {
+          "command": "claude-fast",
+          "args": " on ",
+          "text": "## Claude Fast Mode Enabled\n\n## Claude Fast Mode Status\n\n- Enabled: enabled\n- Persisted: ~/.config/opencode/anthropic-auth.json\n- Scope: adds Anthropic fast mode to supported Opus requests\n- Supported models: claude-opus-4-6, claude-opus-4-7, claude-opus-4-8, claude-opus-5, and claude-opus-5-5\n- Request changes: adds `speed: \"fast\"` and the `fast-mode-2026-02-01` beta header\n- Note: fast and standard speeds do not share prompt-cache prefixes",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"claudeFast\": {\n    \"enabled\": true\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        },
+        {
+          "command": "claude-fast",
+          "args": "off",
+          "text": "## Claude Fast Mode Disabled\n\n## Claude Fast Mode Status\n\n- Enabled: disabled\n- Persisted: ~/.config/opencode/anthropic-auth.json\n- Scope: adds Anthropic fast mode to supported Opus requests\n- Supported models: claude-opus-4-6, claude-opus-4-7, claude-opus-4-8, claude-opus-5, and claude-opus-5-5\n- Request changes: adds `speed: \"fast\"` and the `fast-mode-2026-02-01` beta header\n- Note: fast and standard speeds do not share prompt-cache prefixes",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"claudeFast\": {\n    \"enabled\": false\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        },
+        {
+          "command": "claude-fast",
+          "args": "on now",
+          "text": "## Claude Fast Mode Usage\n\nUsage: `/claude-fast`, `/claude-fast on`, or `/claude-fast off`.\n\n## Claude Fast Mode Status\n\n- Enabled: disabled\n- Persisted: ~/.config/opencode/anthropic-auth.json\n- Scope: adds Anthropic fast mode to supported Opus requests\n- Supported models: claude-opus-4-6, claude-opus-4-7, claude-opus-4-8, claude-opus-5, and claude-opus-5-5\n- Request changes: adds `speed: \"fast\"` and the `fast-mode-2026-02-01` beta header\n- Note: fast and standard speeds do not share prompt-cache prefixes",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"claudeFast\": {\n    \"enabled\": false\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        }
+      ]
+    },
+    {
+      "name": "fast-over-an-existing-file",
+      "initial": "{\n  \"routing\": {\n    \"mode\": \"sticky\"\n  },\n  \"claudeFast\": {\n    \"enabled\": false,\n    \"note\": \"kept\"\n  },\n  \"accounts\": [],\n  \"custom\": [\n    1,\n    2\n  ]\n}\n",
+      "steps": [
+        {
+          "command": "claude-fast",
+          "args": "on",
+          "text": "## Claude Fast Mode Enabled\n\n## Claude Fast Mode Status\n\n- Enabled: enabled\n- Persisted: ~/.config/opencode/anthropic-auth.json\n- Scope: adds Anthropic fast mode to supported Opus requests\n- Supported models: claude-opus-4-6, claude-opus-4-7, claude-opus-4-8, claude-opus-5, and claude-opus-5-5\n- Request changes: adds `speed: \"fast\"` and the `fast-mode-2026-02-01` beta header\n- Note: fast and standard speeds do not share prompt-cache prefixes",
+          "file": "{\n  \"routing\": {\n    \"mode\": \"sticky\"\n  },\n  \"claudeFast\": {\n    \"enabled\": true,\n    \"note\": \"kept\"\n  },\n  \"accounts\": [],\n  \"custom\": [\n    1,\n    2\n  ],\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        }
+      ]
+    },
+    {
+      "name": "cache-from-no-file",
+      "initial": null,
+      "steps": [
+        {
+          "command": "claude-cache",
+          "args": "",
+          "text": "## Claude Cache Status\n\n- Enabled: disabled\n- Mode: explicit\n- Persisted: ~/.config/opencode/anthropic-auth.json\n- Scope: main sessions only; subagent sessions keep default ephemeral cache behavior\n- Modes: explicit = existing OpenCode breakpoints; automatic = top-level cache_control only; hybrid = system + messages[0] + top-level cache_control\n- TTL: 1h when enabled for main sessions; default ephemeral cache behavior otherwise",
+          "file": null
+        },
+        {
+          "command": "claude-cache",
+          "args": "mode hybrid",
+          "text": "## Claude Cache Status\n\nMode updated to `hybrid`.\n\n## Claude Cache Status\n\n- Enabled: disabled\n- Mode: hybrid\n- Persisted: ~/.config/opencode/anthropic-auth.json\n- Scope: main sessions only; subagent sessions keep default ephemeral cache behavior\n- Modes: explicit = existing OpenCode breakpoints; automatic = top-level cache_control only; hybrid = system + messages[0] + top-level cache_control\n- TTL: 1h when enabled for main sessions; default ephemeral cache behavior otherwise",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"claudeCache\": {\n    \"enabled\": false,\n    \"mode\": \"hybrid\"\n  },\n  \"accounts\": []\n}\n"
+        },
+        {
+          "command": "claude-cache",
+          "args": "on",
+          "text": "## Claude Cache Enabled\n\n## Claude Cache Status\n\n- Enabled: enabled\n- Mode: hybrid\n- Persisted: ~/.config/opencode/anthropic-auth.json\n- Scope: main sessions only; subagent sessions keep default ephemeral cache behavior\n- Modes: explicit = existing OpenCode breakpoints; automatic = top-level cache_control only; hybrid = system + messages[0] + top-level cache_control\n- TTL: 1h when enabled for main sessions; default ephemeral cache behavior otherwise",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"claudeCache\": {\n    \"enabled\": true,\n    \"mode\": \"hybrid\"\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        },
+        {
+          "command": "claude-cache",
+          "args": "mode automatic",
+          "text": "## Claude Cache Status\n\nMode updated to `automatic`.\n\n## Claude Cache Status\n\n- Enabled: enabled\n- Mode: automatic\n- Persisted: ~/.config/opencode/anthropic-auth.json\n- Scope: main sessions only; subagent sessions keep default ephemeral cache behavior\n- Modes: explicit = existing OpenCode breakpoints; automatic = top-level cache_control only; hybrid = system + messages[0] + top-level cache_control\n- TTL: 1h when enabled for main sessions; default ephemeral cache behavior otherwise",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"claudeCache\": {\n    \"enabled\": true,\n    \"mode\": \"automatic\"\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        },
+        {
+          "command": "claude-cache",
+          "args": "mode bogus",
+          "text": "## Claude Cache Usage\n\nUsage: `/claude-cache`, `/claude-cache on`, `/claude-cache off`, or `/claude-cache mode explicit|automatic|hybrid`.\n\n## Claude Cache Status\n\n- Enabled: enabled\n- Mode: automatic\n- Persisted: ~/.config/opencode/anthropic-auth.json\n- Scope: main sessions only; subagent sessions keep default ephemeral cache behavior\n- Modes: explicit = existing OpenCode breakpoints; automatic = top-level cache_control only; hybrid = system + messages[0] + top-level cache_control\n- TTL: 1h when enabled for main sessions; default ephemeral cache behavior otherwise",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"claudeCache\": {\n    \"enabled\": true,\n    \"mode\": \"automatic\"\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        },
+        {
+          "command": "claude-cache",
+          "args": "off",
+          "text": "## Claude Cache Disabled\n\n## Claude Cache Status\n\n- Enabled: disabled\n- Mode: automatic\n- Persisted: ~/.config/opencode/anthropic-auth.json\n- Scope: main sessions only; subagent sessions keep default ephemeral cache behavior\n- Modes: explicit = existing OpenCode breakpoints; automatic = top-level cache_control only; hybrid = system + messages[0] + top-level cache_control\n- TTL: 1h when enabled for main sessions; default ephemeral cache behavior otherwise",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"claudeCache\": {\n    \"enabled\": false,\n    \"mode\": \"automatic\"\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        }
+      ]
+    }
+  ]
+}

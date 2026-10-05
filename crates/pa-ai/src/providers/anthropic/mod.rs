@@ -147,6 +147,9 @@ pub struct AnthropicOptions {
     pub thinking_display: Option<AnthropicThinkingDisplay>,
     pub interleaved_thinking: Option<bool>,
     pub tool_choice: Option<AnthropicToolChoice>,
+    /// The caller's options as given, for the provider request hooks
+    /// ([`crate::request_hooks::RequestSource`]).
+    pub caller: crate::request_hooks::CallerOptions,
 }
 
 /// Resolved anthropic compat (`Required<AnthropicMessagesCompat>`).
@@ -465,8 +468,14 @@ pub fn stream_simple_anthropic(
 
     let base = build_base_options(model, options, Some(&api_key));
     let reasoning = options.and_then(|options| options.reasoning);
+    let caller = crate::request_hooks::CallerOptions {
+        reasoning,
+        thinking_budgets: options.and_then(|options| options.thinking_budgets.clone()),
+        max_tokens: options.and_then(|options| options.base.max_tokens),
+    };
     if reasoning.is_none() || reasoning == Some(ModelThinkingLevel::Off) {
         let mut anthropic_options = AnthropicOptions::from_base(base);
+        anthropic_options.caller = caller;
         anthropic_options.thinking_enabled = Some(false);
         return stream_anthropic(model, context, Some(&anthropic_options));
     }
@@ -475,6 +484,7 @@ pub fn stream_simple_anthropic(
     if supports_adaptive_thinking(&model.id) {
         let effort = map_thinking_level_to_effort(model, reasoning);
         let mut anthropic_options = AnthropicOptions::from_base(base);
+        anthropic_options.caller = caller;
         anthropic_options.thinking_enabled = Some(true);
         anthropic_options.effort = Some(effort);
         return stream_anthropic(model, context, Some(&anthropic_options));
@@ -514,6 +524,7 @@ pub fn stream_simple_anthropic(
         }
     };
     let mut anthropic_options = AnthropicOptions::from_base(base);
+    anthropic_options.caller = caller;
     anthropic_options.base.max_tokens = Some(adjusted.0);
     anthropic_options.thinking_enabled = Some(true);
     anthropic_options.thinking_budget_tokens = Some(adjusted.1);
@@ -523,13 +534,17 @@ pub fn stream_simple_anthropic(
 impl AnthropicOptions {
     pub fn from_base(base: StreamOptions) -> Self {
         Self {
-            base,
             thinking_enabled: None,
             thinking_budget_tokens: None,
             effort: None,
             thinking_display: None,
             interleaved_thinking: None,
             tool_choice: None,
+            caller: crate::request_hooks::CallerOptions {
+                max_tokens: base.max_tokens,
+                ..Default::default()
+            },
+            base,
         }
     }
 }

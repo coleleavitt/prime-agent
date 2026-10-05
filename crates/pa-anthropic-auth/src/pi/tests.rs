@@ -1,0 +1,353 @@
+//! pi's request end to end through pa-ai: a store-served token's request
+//! leaves byte for byte as the plugin sends the same conversation.
+
+use std::collections::BTreeMap;
+
+use pa_types::sync::MutexExt;
+use serde_json::Value;
+
+use super::*;
+use crate::pi::convert::tests::{cases, golden, version, Case};
+use crate::shape::claude_code_headers;
+use crate::test_support::*;
+
+fn outgoing(case: &Case, version: &str) -> Outgoing {
+    build_outgoing(
+        &case.model,
+        &case.source(),
+        &BuildInputs {
+            settings: case.settings,
+            identity: &case.identity,
+            version,
+            disable_adaptive_flag: None,
+        },
+    )
+}
+
+#[test]
+fn every_conversation_leaves_byte_for_byte_as_pi_sends_it() {
+    let version = version();
+    for case in cases() {
+        assert_eq!(
+            outgoing(&case, &version).text,
+            case.body_text,
+            "{}",
+            case.name
+        );
+    }
+}
+
+#[test]
+fn every_request_carries_pi_s_headers() {
+    let version = version();
+    for case in cases() {
+        let outgoing = outgoing(&case, &version);
+        let headers: BTreeMap<String, String> = claude_code_headers(
+            &case.token,
+            &outgoing.payload,
+            &case.identity,
+            &version,
+            &ShapeEnv::default(),
+            "",
+            "request-id",
+        )
+        .into_iter()
+        .filter(|(name, _)| name != "x-client-request-id")
+        .map(|(name, value)| {
+            let value = if name == "anthropic-beta" {
+                anthropic::claude_code::merge_anthropic_betas(&value, &outgoing.extra_betas)
+            } else {
+                value
+            };
+            (name, value)
+        })
+        .collect();
+        assert_eq!(headers, case.headers, "{}", case.name);
+    }
+}
+
+/// Send `case` through pa-ai with the store's token for it; the captured
+/// request and the session id this process used.
+fn send(case: &Case, index: usize, settings: &serde_json::Value) -> (CapturedRequest, String) {
+    let provider = format!("anthropic-pi-{index}");
+    let (_home, source) = source_over(
+        vec![row_with_account(
+            &format!("pi-case-{index}"),
+            case.identity.account_uuid.as_deref(),
+        )],
+        "http://127.0.0.1:9",
+    );
+    write_device_id(
+        &source,
+        case.identity.device_id.as_deref().expect("a device id"),
+    );
+    write_pi_settings(&source, settings);
+    pa_core::auth::install_credential_source(&provider, source.clone());
+    pa_ai::request_hooks::install_request_hooks(&provider, source.clone());
+    let (base, requests) = messages_endpoint(vec![(200, Vec::new(), OK_STREAM)]);
+    let served = pa_core::auth::ProviderCredentialSource::credential(source.as_ref())
+        .expect("the store's token")
+        .api_key;
+    let options = pa_ai::types::SimpleStreamOptions {
+        base: pa_ai::types::StreamOptions {
+            api_key: Some(served),
+            max_tokens: case.options.max_tokens,
+            ..Default::default()
+        },
+        reasoning: case.options.reasoning,
+        thinking_budgets: case.options.thinking_budgets.clone(),
+    };
+    let message = complete_with(
+        &model_with_id(&provider, &base, &case.model),
+        &case.context,
+        options,
+    );
+    assert_eq!(text_of(&message), "hello", "{}", case.name);
+    let request = requests.lock_or_recover()[0].clone();
+    let session = request
+        .header("x-claude-code-session-id")
+        .expect("the session header")
+        .to_string();
+    (request, session)
+}
+
+#[test]
+fn a_store_request_leaves_as_pi_sends_the_same_conversation() {
+    let golden = golden();
+    for (index, case) in cases().iter().enumerate() {
+        let settings = golden["cases"][index]["settings"].clone();
+        let (request, session) = send(case, index, &settings);
+        // The plugin's body, with this process's session id in
+        // metadata.user_id (the one its session header carries).
+        assert_eq!(
+            request.body,
+            case.body_text.replace(&case.identity.session_id, &session),
+            "{}",
+            case.name
+        );
+        let mut expected = case.headers.clone();
+        expected.insert(
+            "authorization".to_string(),
+            format!("Bearer {}", request.bearer()),
+        );
+        expected.insert("x-claude-code-session-id".to_string(), session);
+        let sent: BTreeMap<String, String> = request
+            .headers
+            .iter()
+            .filter(|(name, _)| {
+                ![
+                    "host",
+                    "content-length",
+                    "accept-encoding",
+                    "x-client-request-id",
+                ]
+                .contains(&name.as_str())
+            })
+            .cloned()
+            .collect();
+        assert_eq!(sent, expected, "{}", case.name);
+    }
+}
+
+/// A store-served response, streamed through pa-ai: the content kept.
+fn stream_response(
+    index: usize,
+    model: &str,
+    context: &pa_ai::types::Context,
+    sse: &'static str,
+) -> Vec<Value> {
+    let provider = format!("anthropic-pi-response-{index}");
+    let (_home, source) = source_over(
+        vec![row_with_account(&format!("pi-response-{index}"), None)],
+        "http://127.0.0.1:9",
+    );
+    pa_ai::request_hooks::install_request_hooks(&provider, source.clone());
+    let (base, _requests) = messages_endpoint(vec![(200, Vec::new(), sse)]);
+    let served = pa_core::auth::ProviderCredentialSource::credential(source.as_ref())
+        .expect("the store's token")
+        .api_key;
+    let options = pa_ai::types::SimpleStreamOptions {
+        base: pa_ai::types::StreamOptions {
+            api_key: Some(served),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let message = complete_with(&model_with_id(&provider, &base, model), context, options);
+    assert_eq!(message.error_message, None);
+    message
+        .content
+        .iter()
+        .map(|block| serde_json::to_value(block).expect("a block"))
+        .collect()
+}
+
+#[test]
+fn a_store_response_keeps_what_pi_keeps() {
+    let golden = golden();
+    for (index, case) in golden["responses"]
+        .as_array()
+        .expect("responses")
+        .iter()
+        .enumerate()
+    {
+        let context: pa_ai::types::Context =
+            serde_json::from_value(case["context"].clone()).expect("a context");
+        let sse: &'static str = Box::leak(
+            case["sse"]
+                .as_str()
+                .expect("the stream")
+                .to_string()
+                .into_boxed_str(),
+        );
+        let kept = stream_response(
+            index,
+            case["model"].as_str().expect("a model"),
+            &context,
+            sse,
+        );
+        assert_eq!(Value::Array(kept), case["content"], "{}", case["name"]);
+    }
+}
+
+const CREDITS_429: &str = r#"{"type":"error","error":{"type":"rate_limit_error","message":"Extra usage is required for long context requests."}}"#;
+
+fn beta_of(request: &CapturedRequest) -> Vec<String> {
+    request
+        .header("anthropic-beta")
+        .unwrap_or_default()
+        .split(',')
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn a_credits_429_moves_the_token_s_later_requests_to_the_standard_window() {
+    let provider = "anthropic-pi-context1m";
+    let (_home, source) = source_over(
+        vec![row_with_account("pi-context1m", None)],
+        "http://127.0.0.1:9",
+    );
+    pa_core::auth::install_credential_source(provider, source.clone());
+    pa_ai::request_hooks::install_request_hooks(provider, source.clone());
+    let (base, requests) = messages_endpoint(vec![
+        (429, Vec::new(), CREDITS_429),
+        (200, Vec::new(), OK_STREAM),
+    ]);
+    let model = model_with_id(provider, &base, "claude-opus-4-8");
+    let served = || {
+        pa_core::auth::ProviderCredentialSource::credential(source.as_ref())
+            .expect("the store's token")
+            .api_key
+    };
+
+    let refused = complete(&model, &served());
+    assert!(refused.error_message.is_some());
+    let message = complete(&model, &served());
+    assert_eq!(text_of(&message), "hello");
+
+    let requests = requests.lock_or_recover().clone();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].bearer(), requests[1].bearer());
+    let context_1m = anthropic::claude_code::CONTEXT_1M_BETA.to_string();
+    assert_eq!(
+        (
+            beta_of(&requests[0]).contains(&context_1m),
+            beta_of(&requests[1]).contains(&context_1m)
+        ),
+        (true, false)
+    );
+    // The latch removes only the 1M beta.
+    let mut without = beta_of(&requests[0]);
+    without.retain(|beta| *beta != context_1m);
+    assert_eq!(beta_of(&requests[1]), without);
+}
+
+fn feature_context() -> std::sync::Arc<pa_core::features::SessionFeatureContext> {
+    std::sync::Arc::new(pa_core::features::SessionFeatureContext {
+        agent_dir: std::path::PathBuf::from("/nonexistent/agent"),
+        cwd: std::path::PathBuf::from("/nonexistent/cwd"),
+        session_id: "pi-commands".to_string(),
+        python_skill_import_names: Vec::new(),
+        model: serde_json::from_value(
+            serde_json::to_value(model_with_id(
+                "anthropic",
+                "http://127.0.0.1:9",
+                "claude-opus-4-8",
+            ))
+            .expect("a model"),
+        )
+        .expect("the agent's model"),
+        telemetry: None,
+        rlm_depth: 0,
+        session_artifact_dir: None,
+    })
+}
+
+fn run_command(feature: &crate::AnthropicAuthFeature, name: &str, args: &str) -> String {
+    use pa_core::features::SessionFeature;
+    let future = feature
+        .execute_slash_command(&feature_context(), name, args)
+        .expect("the feature's command");
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime")
+        .block_on(future)
+        .expect("the command runs")
+        .text
+}
+
+#[test]
+fn claude_fast_turns_fast_mode_on_and_off_for_the_store_s_requests() {
+    use pa_core::features::SessionFeature;
+    let provider = "anthropic-pi-fast";
+    let (_home, source) = source_over(
+        vec![row_with_account("pi-fast", None)],
+        "http://127.0.0.1:9",
+    );
+    pa_core::auth::install_credential_source(provider, source.clone());
+    pa_ai::request_hooks::install_request_hooks(provider, source.clone());
+    let feature = crate::AnthropicAuthFeature::new(source.clone());
+    let names: Vec<&str> = feature
+        .slash_commands()
+        .iter()
+        .map(|command| command.name)
+        .collect();
+    assert_eq!(names, vec!["claude-fast", "claude-cache"]);
+    let (base, requests) = messages_endpoint(vec![
+        (200, Vec::new(), OK_STREAM),
+        (200, Vec::new(), OK_STREAM),
+    ]);
+    let model = model_with_id(provider, &base, "claude-opus-4-8");
+    let served = || {
+        pa_core::auth::ProviderCredentialSource::credential(source.as_ref())
+            .expect("the store's token")
+            .api_key
+    };
+
+    assert!(run_command(&feature, "claude-fast", "on").starts_with("## Claude Fast Mode Enabled"));
+    complete(&model, &served());
+    assert!(run_command(&feature, "claude-fast", "off").starts_with("## Claude Fast Mode Disabled"));
+    complete(&model, &served());
+
+    let requests = requests.lock_or_recover().clone();
+    let speed = |request: &CapturedRequest| {
+        serde_json::from_str::<Value>(&request.body).expect("a body")["speed"].clone()
+    };
+    let fast_beta = anthropic::claude_code::FAST_MODE_BETA.to_string();
+    assert_eq!(
+        (
+            speed(&requests[0]),
+            beta_of(&requests[0]).contains(&fast_beta)
+        ),
+        (Value::String("fast".to_string()), true)
+    );
+    assert_eq!(
+        (
+            speed(&requests[1]),
+            beta_of(&requests[1]).contains(&fast_beta)
+        ),
+        (Value::Null, false)
+    );
+}

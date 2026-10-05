@@ -61,6 +61,8 @@ pub struct SharedStoreConfig {
     /// Prefer logins whose recorded usage is below this percentage in both
     /// windows (`ANTHROPIC_QUOTA_RESERVE_PCT`; the napi `reservePct`).
     pub quota_reserve: Option<f64>,
+    /// Where the pi plugin's request path reads and writes (its settings).
+    pub pi: crate::PiConfig,
 }
 
 impl SharedStoreConfig {
@@ -80,6 +82,7 @@ impl SharedStoreConfig {
                 != Ok("1"))
             .then(|| anthropic::claude_version::LATEST_VERSION_URL.to_string()),
             quota_reserve: crate::quota::reserve_from_env(),
+            pi: crate::PiConfig::from_env(),
         }
     }
 
@@ -90,6 +93,8 @@ impl SharedStoreConfig {
     pub fn isolated(store_path: PathBuf, token_url: &str, profile_url: &str) -> Self {
         let mut endpoints = Endpoints::prod();
         endpoints.token_url = token_url.to_string();
+        // The plugin's files beside the temporary store.
+        let pi = crate::PiConfig::under(store_path.parent().unwrap_or(std::path::Path::new(".")));
         Self {
             store_path,
             endpoints,
@@ -99,6 +104,7 @@ impl SharedStoreConfig {
             background: false,
             version_url: None,
             quota_reserve: None,
+            pi,
         }
     }
 
@@ -188,6 +194,8 @@ pub struct SharedStoreSource {
     keepalive: Arc<KeepAlive>,
     /// The keep-alive thread starts once.
     keepalive_started: std::sync::Once,
+    /// The pi plugin's request path.
+    pub(crate) pi: crate::pi::PiRequests,
 }
 
 /// How many served tokens the source remembers (the pi plugin's bound).
@@ -210,6 +218,7 @@ impl SharedStoreSource {
     #[must_use]
     pub fn new(config: SharedStoreConfig) -> Self {
         let keepalive = Arc::new(KeepAlive::new(config.clone()));
+        let pi = crate::pi::PiRequests::new(&config.pi);
         Self {
             config,
             client: OnceLock::new(),
@@ -224,6 +233,7 @@ impl SharedStoreSource {
             writes: OnceLock::new(),
             keepalive,
             keepalive_started: std::sync::Once::new(),
+            pi,
         }
     }
 

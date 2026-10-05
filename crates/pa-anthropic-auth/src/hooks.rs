@@ -11,9 +11,10 @@ use anthropic::{AccountStore, SharedRefreshOptions};
 use pa_ai::request_hooks::{OutgoingRequest, ProviderRequestHooks, RejectedRequest, Rejection};
 use pa_ai::types::{Model, ProviderResponse};
 use pa_types::sync::MutexExt;
+use serde_json::Value;
 
 use crate::quota::cooldown_until;
-use crate::shape::{shape_request, ShapeEnv, ShapeIdentity};
+use crate::shape::ShapeIdentity;
 use crate::source::{block_on_own_runtime, UsageEvent};
 use crate::SharedStoreSource;
 
@@ -132,13 +133,14 @@ impl ProviderRequestHooks for SharedStoreSource {
             account_uuid: served.account_uuid,
             session_id: self.session_id(&served.account_id),
         };
-        shape_request(
-            request,
-            &identity,
-            &self.claude_code_version(),
-            &ShapeEnv::from_env(),
-            &uuid::Uuid::new_v4().to_string(),
-        );
+        crate::pi::prepare(self, request, &identity);
+    }
+
+    fn response_event(&self, _model: &Model, api_key: &str, event: Value) -> Vec<Value> {
+        if !self.served(api_key) {
+            return vec![event];
+        }
+        crate::pi::response_event(event)
     }
 
     fn current_credential(&self, _model: &Model, api_key: &str) -> Option<String> {
@@ -152,6 +154,12 @@ impl ProviderRequestHooks for SharedStoreSource {
         if !self.served(rejected.api_key) {
             return None;
         }
+        self.pi.context1m.observe(
+            &rejected.model.id,
+            rejected.api_key,
+            rejected.status,
+            rejected.body,
+        );
         match rejected.rejection {
             Rejection::Unauthorized => self.recover_unauthorized(rejected.api_key),
             Rejection::RateLimited => self.rotate_after_rate_limit(rejected),

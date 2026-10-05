@@ -237,8 +237,13 @@ pub(crate) fn messages_endpoint(replies: Vec<Reply>) -> (String, Arc<Mutex<Vec<C
 
 /// An `anthropic-messages` model of `provider` at `base_url`.
 pub(crate) fn messages_model(provider: &str, base_url: &str) -> pa_types::ai::Model {
+    model_with_id(provider, base_url, "claude-opus-5-5")
+}
+
+/// [`messages_model`] for the model `id`.
+pub(crate) fn model_with_id(provider: &str, base_url: &str, id: &str) -> pa_types::ai::Model {
     serde_json::from_value(serde_json::json!({
-        "id": "claude-opus-5-5", "name": "Claude Opus 5.5", "api": "anthropic-messages",
+        "id": id, "name": id, "api": "anthropic-messages",
         "provider": provider, "baseUrl": base_url, "reasoning": true,
         "input": ["text"],
         "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
@@ -269,11 +274,21 @@ pub(crate) fn complete(
         },
         ..Default::default()
     };
+    complete_with(model, &context, options)
+}
+
+/// Send `context` through pa-ai with `options` and return the final
+/// message.
+pub(crate) fn complete_with(
+    model: &pa_types::ai::Model,
+    context: &pa_ai::types::Context,
+    options: pa_ai::types::SimpleStreamOptions,
+) -> pa_ai::types::AssistantMessage {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("a runtime")
-        .block_on(pa_ai::complete_simple(model, &context, Some(options)))
+        .block_on(pa_ai::complete_simple(model, context, Some(options)))
         .expect("the anthropic provider")
 }
 
@@ -287,4 +302,42 @@ pub(crate) fn text_of(message: &pa_ai::types::AssistantMessage) -> String {
             _ => None,
         })
         .collect()
+}
+
+/// [`row`] for an account the store knows the uuid of (none: unknown).
+pub(crate) fn row_with_account(id: &str, account_uuid: Option<&str>) -> Account {
+    let mut account = row(id, Duration::hours(2));
+    if let (Credential::Oauth(tokens), Some(uuid)) = (&mut account.credential, account_uuid) {
+        tokens.account = Some(anthropic::token::TokenAccount {
+            uuid: uuid.to_string(),
+            email_address: None,
+        });
+    }
+    account
+}
+
+/// The installation's device id beside `source`'s store, as the plugins
+/// write it.
+pub(crate) fn write_device_id(source: &SharedStoreSource, device_id: &str) {
+    std::fs::write(
+        source
+            .store_path()
+            .parent()
+            .expect("the store dir")
+            .join("device.json"),
+        format!("{{\"version\":1,\"device_id\":\"{device_id}\"}}\n"),
+    )
+    .expect("write device.json");
+}
+
+/// The pi plugin's settings file beside `source`'s store.
+pub(crate) fn write_pi_settings(source: &SharedStoreSource, settings: &serde_json::Value) {
+    std::fs::write(
+        &source.config.pi.settings_path,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(settings).expect("settings")
+        ),
+    )
+    .expect("write the pi settings");
 }

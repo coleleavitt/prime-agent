@@ -49,21 +49,62 @@ auth.json resolves the `anthropic` provider exactly as before.
     through to auth.json or reads as "no API key").
   - Quota reserve: `ANTHROPIC_QUOTA_RESERVE_PCT` (0-100; the napi `reservePct`) prefers logins whose fresh
     recorded usage is below it in both windows; when every login is at it, the store's plain pick serves.
-- Request shape (`prepare`, `shape.rs`): a request the store's token authenticates goes out as the pi plugin sends
-  it (anthropic-auth core `applyClaudeCodeHeaders` on a fresh request, pi `buildAnthropicRequest`):
-  - headers: the plugin's Claude Code beta tuple by body shape (base; full-agent; structured-output), then
-    `fast-mode` for `speed:"fast"`, `context-1m` for a 1M-capable model, then the request's own betas; the
-    `claude-cli/<version> (external, <entrypoint>[, agent-sdk/..][, client-app/..])` user agent; the Claude Code
-    `x-stainless-*` set (`js`, `node`, package 0.112.1, runtime v26.3.0, host os/arch, `helper-method: stream`);
-    `x-claude-code-session-id` (this process's per-account session) and a fresh `x-client-request-id`; the
-    environment-forwarded headers (`CLAUDE_CODE_CONTAINER_ID`, `CLAUDE_CODE_REMOTE_SESSION_ID`,
-    `CLAUDE_AGENT_SDK_CLIENT_APP`, `CLAUDE_CODE_ADDITIONAL_PROTECTION`); headers the shape does not set (a
-    provider's configured headers, prime-agent's request ids) follow, `x-api-key` never;
-  - body: the billing block `x-anthropic-billing-header: cc_version=<version>.<suffix>; cc_entrypoint=cli;
-    cch=00000;` first among the system blocks (the suffix samples UTF-16 positions 4, 7, 20 of the first user
-    text), `metadata.user_id` (`{"device_id","account_uuid","session_id"}`; the device id from `device.json` beside
-    the store, created like the plugins' when missing; the account uuid the store holds; omitted without one), and
-    Claude Code's key order;
+- Request shape (`prepare`; `pi/`, `shape.rs`): a request the store's token authenticates goes out as the pi plugin
+  sends it (anthropic-auth pi `streamCortexKitAnthropic` → `sendAnthropicRequestUnrecorded`):
+  - body (`pi/convert.rs`, pi's `buildAnthropicRequest`), rebuilt from the caller's conversation and options that
+    pa-ai hands the hook (`RequestSource`; pa-ai's own conversion is discarded): pi's message converter (orphaned tool
+    calls and stray results dropped, tool ids sanitized, Claude Code tool casing and the `deep_research` wire alias,
+    text/image user turns, signed thinking replayed only from Anthropic-origin messages, other thinking as text,
+    OpenAI reasoning dropped, trailing assistant turns stripped), the system-prompt split (pi's documentation
+    paragraph moves to a cached block ahead of the first user turn; an unknown prompt moves whole), the billing block
+    (`x-anthropic-billing-header: cc_version=<version>.<suffix>; cc_entrypoint=cli; cch=00000;`, the suffix sampling
+    UTF-16 positions 4, 7, 20 of the first user text) and Claude Code's identity block, pi's thinking shape (the
+    5-series' summarized adaptive thinking, effort for adaptive models, a budget below `max_tokens` for the older
+    families; the caller's level as given, `off` included, as pi tests it), `max_tokens` 16384 unless the caller set
+    one, pi's cache breakpoints and its cache mode (`claudeCache`), `metadata.user_id` (`{"device_id","account_uuid",
+    "session_id"}`; the device id from `device.json` beside the store, created like the plugins' when missing; the
+    account uuid the store holds; omitted without one). Sent as `JSON.stringify` bytes in Claude Code's key order
+    (`OutgoingRequest::body`). Golden: `tests/fixtures/golden/pi_requests.json`, recorded by
+    `generate_requests.ts` from pi's own provider entry point against an in-process fetch.
+  - server-side fallback (`pi/fallback.rs`, pi `stream.ts`): a request to Opus 5 (any point release) or Fable 5
+    carries `fallbacks: "default"` and both server-side-fallback betas (`server-side-fallback-2026-06-01`, then
+    `-07-01`) after the tuple. The `fallback` block a served fallback streams is kept as pi's marker (a thinking
+    block holding a word joiner, signed `cortexkit-server-fallback-v1:<from>|<to>`; through pa-ai's
+    `response_event`); a later request replays a marker as the `fallback` block when it goes to a fallback model
+    again and drops it otherwise. A body the fallback or a marker changed goes out in pi's own key order (as pi
+    serializes it then), not Claude Code's.
+  - the 1M-context credits latch (`pi/context1m.rs`, pi `stream.ts` after Claude Code 2.1.260's
+    `longContext1mCreditsBlocked`): a 1M-capable model's request carries `context-1m` until Anthropic answers one
+    with HTTP 429 "extra usage / usage credits are required for long context" (read from the rejection's body); from
+    then on that token's requests leave without `context-1m` (the 200k window). Keyed by the token's fingerprint
+    (SHA-256, 16 hex) in memory for the life of the process, as the plugin keeps it: never written to the store or a
+    file, so a rotated token or a new process starts unlatched. The 429 that latches is reported (or moved to
+    another login) as before; nothing is re-sent for it.
+  - the streamed `prime_deep_research` tool name is restored to `deep_research` (pi `fromClaudeCodeToolName`; pi
+    restores it only when the caller declared `deep_research`, which the alias implies).
+  - settings (`pi/settings.rs`): the plugin's settings file, `anthropic-auth.json` in pi's agent directory
+    (`PI_ANTHROPIC_AUTH_FILE`, else `$PI_AGENT_DIR` or `~/.pi/agent`; prime-agent's TS build loaded the plugin
+    without an agent dir of its own, so both tools share it), read per request (memoized on size and mtime);
+    `claudeCache.enabled`/`mode`, `claudeFast.enabled`. A file that does not parse reads as defaults (pi fails the
+    request instead; a warning is logged).
+  - fast mode (core `fast.ts`, pi `commands.ts`): a persisted setting, not a model or a tier. On, a request to
+    Opus 4.6, 4.7, 4.8 or Opus 5 (any point release) carries `speed: "fast"` and `fast-mode-2026-02-01`; other models
+    are untouched. Toggled with `/claude-fast [on|off]` and the cache with `/claude-cache [on|off|mode
+    explicit|automatic|hybrid]`, session slash commands (`SessionFeature::slash_commands`) with pi's arguments and
+    texts, written to the settings file as pi's setters write it: under its `<file>.config-write.lock` (created
+    exclusively, `{"ownerId","expiresAt"}`, 10 s, waited for up to 12 s; an expired one is taken over), the changed
+    section merged, the fields pi normalizes on a rewrite (`version`, `main`, `refresh`/`quota`'s known fields,
+    `accounts`) and every other key kept in order, new keys in pi's order, atomically, owner-only,
+    `JSON.stringify(config, null, 2)` and a newline; a missing file is created as pi creates it. pi's runtime state
+    file is not written. A corrupt file is refused (pi's message), never overwritten.
+  - headers (`shape.rs`, core `applyClaudeCodeHeaders` on a fresh request, so none of pa-ai's own betas): the Claude
+    Code beta tuple by body shape (base; full-agent; structured-output), then `fast-mode` for `speed:"fast"`,
+    `context-1m` for a 1M-capable model; the `claude-cli/<version> (external, <entrypoint>[, agent-sdk/..][,
+    client-app/..])` user agent; the Claude Code `x-stainless-*` set (`js`, `node`, package 0.112.1, runtime v26.3.0,
+    host os/arch, `helper-method: stream`); `x-claude-code-session-id` (this process's per-account session) and a
+    fresh `x-client-request-id`; the environment-forwarded headers (`CLAUDE_CODE_CONTAINER_ID`,
+    `CLAUDE_CODE_REMOTE_SESSION_ID`, `CLAUDE_AGENT_SDK_CLIENT_APP`, `CLAUDE_CODE_ADDITIONAL_PROTECTION`); headers the
+    shape does not set (a provider's configured headers) follow, `x-api-key` never;
   - the version: the npm registry's latest Claude Code (the SDK's `claude_version`), read on the keep-alive thread
     at its start and hourly, never below the verified floor (2.1.280);
     `OPENCODE_ANTHROPIC_AUTH_DISABLE_VERSION_CHECK=1` keeps the floor.
@@ -74,7 +115,8 @@ auth.json resolves the `anthropic` provider exactly as before.
   transport artefacts (the SDK's own package version and the Node runtime's version, on every Anthropic request,
   OAuth or not), which the Rust port does not emulate for any provider. So every piece above is fork behaviour and
   comes through the request hooks, only for the store's tokens; `--no-default-features` sends what it always
-  sent. Golden: `tests/fixtures/golden/request_shape.json`, generated from the plugin's own code by `generate.ts`.
+  sent. Goldens: `tests/fixtures/golden/request_shape.json` (headers, betas, billing, user agent; `generate.ts`) and
+  `pi_requests.json` (whole requests; `generate_requests.ts`).
 - Keep-alive, on the crate's own thread (`anthropic-keepalive`), started by the first served credential (never at
   install, on a paint path or during startup); its first pass a minute later, then every ten minutes plus up to a
   minute of jitter (the opencode plugin's tick): the SDK's machine-wide `keep_alive_once` (idle logins whose
@@ -101,7 +143,8 @@ auth.json resolves the `anthropic` provider exactly as before.
   the tokens here instead of auth.json: the account is identified at the profile endpoint (best effort), merged into
   the row holding the same login (else a new row named after the email), made `current`, and, when Claude Code is
   logged into the same account (whose login this one revokes), published to Claude Code.
-- `AnthropicAuthFeature`: a `SessionFeature` that reports adoption once per process.
+- `AnthropicAuthFeature`: a `SessionFeature` that reports adoption once per process and serves `/claude-fast` and
+  `/claude-cache`.
 
 ## Non-goals (here)
 
@@ -109,28 +152,29 @@ auth.json resolves the `anthropic` provider exactly as before.
   own it; prime-agent has no account command surface.
 - The usage endpoint poll (`/api/oauth/usage`), sticky-balanced routing, the killswitch and per-window minimum
   thresholds of the plugins' sidecar configuration: readings come from response headers only.
-- The rest of pi's request (its own message conversion and system-prompt split, server-side fallback with its
-  `fallbacks` body field and betas, the 1M-context credits latch, fast mode, the cache-keep relay, content
-  filtering): pa-ai's Claude Code mode builds the request; the shape above is applied on top. A `--api-key`
-  `sk-ant-oat` token, or any token the store did not serve, keeps pa-ai's native Claude Code mode.
+- The rest of pi's request (the cache keep-alive, content filtering). A `--api-key` `sk-ant-oat` token, or any
+  token the store did not serve, keeps pa-ai's native Claude Code mode.
 
 ## Public API
 
 `install`, `shared_source`, `PROVIDER_ID`, `QUOTA_RESERVE_ENV`, `SharedStoreSource` (`new`, `store_path`, `usage`, `store_login`),
-`SharedStoreConfig` (`from_env`, `isolated`; `background` runs the keep-alive thread, `version_url` the version lookup, `quota_reserve` the reserve), `NewLogin`, `StoredLogin` (`claude_code_notice`), `SourceUsage`, `STORE_LABEL`, `AnthropicAuthFeature`, `TELEMETRY_EVENT`.
+`SharedStoreConfig` (`from_env`, `isolated`; `background` runs the keep-alive thread, `version_url` the version lookup, `quota_reserve` the reserve, `pi` the plugin's request-path files), `PiConfig` (`from_env`, `under`), `NewLogin`, `StoredLogin` (`claude_code_notice`), `SourceUsage`, `STORE_LABEL`, `AnthropicAuthFeature`, `TELEMETRY_EVENT`.
 
 ## Seams
 
 - `pa_core::auth::install_credential_source` (the provider credential source seam: credential, custody of
   auth.json's login, logout).
-- `pa_ai::request_hooks::install_request_hooks` (the provider request hooks).
-- `pa_core::features::SessionFeature::on_agent_end` (the adoption event).
+- `pa_ai::request_hooks::install_request_hooks` (the provider request hooks; `prepare` reads the caller's request,
+  `RequestSource`, and sends exact bytes, `OutgoingRequest::body`; `response_event` rewrites the streamed events).
+- `pa_core::features::SessionFeature::on_agent_end` (the adoption event) and `slash_commands` /
+  `execute_slash_command` (`/claude-fast`, `/claude-cache`).
 
 ## Files
 
 Reads and writes `~/.anthropic-accounts/accounts.json` (and its lock) only through the SDK, under the SDK's rules,
 and `~/.anthropic-accounts/device.json` (the installation's device id, the plugins' format; created when missing,
-never overwritten);
+never overwritten); reads the pi plugin's settings file (`~/.pi/agent/anthropic-auth.json`, above) and writes it
+for `/claude-fast` and `/claude-cache` (with its `.config-write.lock`);
 through the Claude Code link, reads Claude Code's `.claude.json` / `.credentials.json` (or the macOS Keychain) and
 publishes a rotation of the linked account to it, as the plugins do. It owns no file under `~/.prime/agent/`.
 

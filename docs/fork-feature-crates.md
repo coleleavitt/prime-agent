@@ -85,9 +85,13 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
    - provider requests: `pa_ai::request_hooks::install_request_hooks(provider_id, Arc<dyn ProviderRequestHooks>)`
      (process-wide, before any request) lets the store behind a provider id's credentials take part in every
      request the provider sends with a credential it issued: `current_credential` (a fresher one, before the request
-     is built), `prepare` (the built headers and JSON payload), `observe` (each response's status and headers), and
-     `rejected` (a credential to re-send with after a 401, at most once, or a 429 / a stream opening with a
-     rate-limit or overload error, while it names a credential the request has not used). Hooks ignore credentials
+     is built), `prepare` (the built headers and JSON payload, the request as the caller asked for it — its
+     `Context` and the caller's options before provider defaults, `RequestSource` — and the exact body bytes to send
+     in place of the payload's serialization, `OutgoingRequest::body`), `observe` (each response's status and
+     headers), `response_event` (each parsed event of the streamed response, rewritten, dropped or expanded before
+     the provider reads it), and `rejected` (with the error body: a credential to re-send with after a 401, at most once, or a
+     429 / a stream opening with a rate-limit or overload error, while it names a credential the request has not
+     used). Hooks ignore credentials
      they did not issue; the `anthropic-messages` provider consults them; nothing is registered natively.
    Seams to add as features need them: system-prompt layer providers, turn-start observers.
 5. **Data ownership.** A crate owns its files under `~/.prime/agent/<feature>/` (or the session artifact dir) and its
