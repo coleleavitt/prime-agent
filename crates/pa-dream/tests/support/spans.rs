@@ -107,6 +107,10 @@ pub fn capture<T>(body: impl FnOnce() -> T) -> (T, Vec<SpanRecord>) {
     INSTALL.call_once(|| {
         let _ = tracing::subscriber::set_global_default(tracing_subscriber::registry().with(Sink));
     });
+    // A callsite first hit by another test while the global default was being
+    // installed can cache "never" interest and stay silent for the binary's
+    // life; recompute every callsite's interest against the installed sink.
+    tracing::callsite::rebuild_interest_cache();
     let records = Records::default();
     ACTIVE.with(|active| *active.borrow_mut() = Some(Arc::clone(&records)));
     let value = body();
