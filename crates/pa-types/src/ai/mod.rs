@@ -692,6 +692,15 @@ pub struct Model {
     pub context_window: u64,
     #[serde(rename = "maxTokens")]
     pub max_tokens: u64,
+    /// `max_tokens` came from user configuration (a models.json definition or a model override)
+    /// rather than the catalog: requests send it as configured instead of capping it at the
+    /// default per-request ceiling (#755). Absent on catalog models.
+    #[serde(
+        rename = "maxTokensExplicit",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_tokens_explicit: Option<bool>,
     /// Flagship model surfaced above non-featured models of the same provider.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub featured: Option<bool>,

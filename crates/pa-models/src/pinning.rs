@@ -129,6 +129,7 @@ mod tests {
                 cost: pa_ai::types::zero_model_cost(),
                 context_window: 1,
                 max_tokens: 1,
+                max_tokens_explicit: None,
                 featured: None,
                 headers,
                 compat: None,

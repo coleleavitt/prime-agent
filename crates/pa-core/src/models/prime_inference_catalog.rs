@@ -292,6 +292,7 @@ pub fn build_prime_inference_models_with_minimum(
             },
             context_window,
             max_tokens,
+            max_tokens_explicit: None,
             featured: template.and_then(|t| t.featured),
             headers: None,
             compat: Some(compat),

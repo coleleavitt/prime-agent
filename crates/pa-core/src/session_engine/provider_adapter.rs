@@ -51,6 +51,7 @@ pub(crate) fn agent_model_to_ai_model(model: &AgentModel) -> Model {
         },
         context_window: model.context_window,
         max_tokens: model.max_tokens,
+        max_tokens_explicit: None,
         featured: None,
         headers: None,
         compat: None,
