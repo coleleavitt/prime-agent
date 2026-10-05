@@ -87,10 +87,16 @@ impl PackageManager {
             &project_overrides[0],
             project_base_dir,
         );
+        // An untrusted workspace's prompt templates stay out until trusted.
+        let project_trusted = self.settings().project_scope_trusted();
         add_resources(
             accumulator,
             ResourceType::Prompts,
-            collect_auto_prompt_entries(&project_dirs[1]),
+            if project_trusted {
+                collect_auto_prompt_entries(&project_dirs[1])
+            } else {
+                Vec::new()
+            },
             &project_metadata,
             &project_overrides[1],
             project_base_dir,

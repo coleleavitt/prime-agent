@@ -14,6 +14,19 @@ The `prime-agent` executable surface (flags, subcommands, exit codes). Internal 
 ## Depends on
 pa-types, pa-ai, pa-agent, pa-core, pa-daemon, pa-tui (one-way, composition root).
 
+## Workspace trust
+`workspace_trust_gate.rs` runs before any session starts for the cwd. A workspace
+whose gated project configuration (see `pa_core::workspace_trust`) has no
+decision for its current content is asked about once on the interactive
+terminal (`y` trusts; any other answer is remembered as a denial; end of input
+decides nothing); print/json/rpc/acp modes never ask - they print one notice to
+stderr naming what was skipped and run without it. `--trust-workspace` records
+trust for the cwd before the run. `prime-agent trust [path] [--list]` and
+`prime-agent untrust [path]` manage decisions ahead of time. The supervisor and
+its workers never ask: they read the recorded decision. Each recorded decision
+emits `workspace_trust_decision` (source, decision, whether the content
+changed) from a detached thread, so the launch never waits on delivery.
+
 ## Print runtime
 The headless print/json modes (`print_runtime.rs`) drive the in-process
 session engine directly: prompt admission, the turn-boundary compaction

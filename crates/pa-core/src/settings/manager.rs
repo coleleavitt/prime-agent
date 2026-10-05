@@ -1,9 +1,12 @@
 //! `SettingsManager`: loads global + project settings, merges them, tracks
 //! modified fields, and writes back only what this session changed.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
+
+use crate::workspace_trust::WorkspaceTrustStatus;
 
 use super::load::from_value_lenient;
 use super::merge::{deep_merge, migrate};
@@ -37,38 +40,81 @@ pub struct SettingsManager {
     /// Load failures per scope; a scope whose file failed to parse is never written back.
     global_load_error: Option<String>,
     project_load_error: Option<String>,
+    /// The workspace (`cwd`, `agent_dir`) whose trust gates the project
+    /// scope; `None` for stores with no workspace (in-memory, embedded).
+    trust_workspace: Option<(PathBuf, PathBuf)>,
+    /// The evaluated workspace trust; `None` when nothing gates the scope.
+    workspace_trust: Option<WorkspaceTrustStatus>,
 }
 
 impl SettingsManager {
+    /// A manager over an explicit store. The project scope applies as
+    /// stored: a store has no workspace to evaluate trust for.
     pub fn from_storage(storage: Arc<dyn SettingsStorage>) -> Self {
-        let mut errors = Vec::new();
-        let (global, global_raw, global_load_error) =
-            load_scope(storage.as_ref(), SettingsScope::Global, &mut errors);
-        let (project, _, project_load_error) =
-            load_scope(storage.as_ref(), SettingsScope::Project, &mut errors);
-        let merged = deep_merge(&global, &project);
-        Self {
-            storage,
-            global,
-            project,
-            merged,
-            runtime_overrides: Settings::default(),
-            global_raw,
-            errors,
-            global_load_error,
-            project_load_error,
-        }
+        Self::load(storage, None)
     }
 
+    fn load(
+        storage: Arc<dyn SettingsStorage>,
+        trust_workspace: Option<(PathBuf, PathBuf)>,
+    ) -> Self {
+        let mut manager = Self {
+            storage,
+            global: Settings::default(),
+            project: Settings::default(),
+            merged: Settings::default(),
+            runtime_overrides: Settings::default(),
+            global_raw: None,
+            errors: Vec::new(),
+            global_load_error: None,
+            project_load_error: None,
+            trust_workspace,
+            workspace_trust: None,
+        };
+        manager.read_scopes();
+        manager
+    }
+
+    /// Read both scopes and the workspace trust, then re-derive the
+    /// effective settings. An untrusted workspace keeps only the
+    /// [`crate::workspace_trust::UNTRUSTED_PROJECT_SETTINGS_KEYS`] of its
+    /// project scope.
+    fn read_scopes(&mut self) {
+        let mut errors = std::mem::take(&mut self.errors);
+        let (global, global_raw, global_load_error) =
+            load_scope(self.storage.as_ref(), SettingsScope::Global, &mut errors);
+        let (project, _, project_load_error) =
+            load_scope(self.storage.as_ref(), SettingsScope::Project, &mut errors);
+        self.workspace_trust = self
+            .trust_workspace
+            .as_ref()
+            .map(|(cwd, agent_dir)| crate::workspace_trust::evaluate(cwd, agent_dir));
+        self.project = if self.project_scope_trusted() {
+            project
+        } else {
+            untrusted_project_view(&project)
+        };
+        self.global = global;
+        self.global_raw = global_raw;
+        self.global_load_error = global_load_error;
+        self.project_load_error = project_load_error;
+        self.errors = errors;
+        self.merged = deep_merge(&self.global, &self.project);
+    }
+
+    /// The settings of the workspace at `cwd`, gated by its trust: an
+    /// untrusted workspace contributes only its safe project keys.
     pub fn create(
         cwd: impl AsRef<std::path::Path>,
         agent_dir: impl AsRef<std::path::Path>,
     ) -> Self {
-        let cwd = std::path::PathBuf::from(cwd.as_ref());
-        let agent_dir = std::path::PathBuf::from(agent_dir.as_ref());
-        let storage: Arc<dyn SettingsStorage> =
-            Arc::new(super::storage::FileSettingsStorage::new(cwd, agent_dir));
-        Self::from_storage(storage)
+        let cwd = PathBuf::from(cwd.as_ref());
+        let agent_dir = PathBuf::from(agent_dir.as_ref());
+        let storage: Arc<dyn SettingsStorage> = Arc::new(super::storage::FileSettingsStorage::new(
+            cwd.clone(),
+            agent_dir.clone(),
+        ));
+        Self::load(storage, Some((cwd, agent_dir)))
     }
 
     /// A new manager over the same settings store (a fresh read; the
@@ -76,9 +122,58 @@ impl SettingsManager {
     /// telemetry switch.
     #[must_use]
     pub fn reopen(&self) -> Self {
-        let mut fresh = Self::from_storage(Arc::clone(&self.storage));
+        let mut fresh = Self::load(Arc::clone(&self.storage), self.trust_workspace.clone());
         fresh.apply_overrides(&self.runtime_overrides);
         fresh
+    }
+
+    /// Whether the project scope applies in full: no workspace gates it,
+    /// or the workspace is trusted (or carries nothing to gate).
+    #[must_use]
+    pub fn project_scope_trusted(&self) -> bool {
+        self.workspace_trust
+            .as_ref()
+            .is_none_or(WorkspaceTrustStatus::is_trusted)
+    }
+
+    /// The evaluated trust of this manager's workspace (`None` for a
+    /// store without a workspace).
+    #[must_use]
+    pub fn workspace_trust(&self) -> Option<&WorkspaceTrustStatus> {
+        self.workspace_trust.as_ref()
+    }
+
+    /// Project-scope writes from an untrusted workspace are refused: the
+    /// in-memory project view is filtered, so a computed write would drop
+    /// the gated values on disk.
+    fn project_writes_blocked(&mut self) -> bool {
+        if self.project_scope_trusted() {
+            return false;
+        }
+        self.errors.push(SettingsError {
+            scope: SettingsScope::Project,
+            message: "Project settings not saved: this workspace is not trusted (run `prime-agent trust`)".to_string(),
+        });
+        true
+    }
+
+    /// After the product writes gated project settings in a trusted
+    /// workspace, re-pin the trust record to the new content.
+    fn refresh_workspace_trust(&mut self) {
+        let Some((cwd, agent_dir)) = self.trust_workspace.clone() else {
+            return;
+        };
+        if self.workspace_trust.as_ref().map(|status| status.state)
+            != Some(crate::workspace_trust::TrustState::Trusted)
+        {
+            return;
+        }
+        if let Err(error) = crate::workspace_trust::refresh_trusted(&cwd, &agent_dir) {
+            self.errors.push(SettingsError {
+                scope: SettingsScope::Project,
+                message: format!("Workspace trust not refreshed: {error:#}"),
+            });
+        }
     }
 
     /// In-memory manager (tests, embedded hosts).
@@ -134,18 +229,7 @@ impl SettingsManager {
     /// Never returns `Err`; load problems are recorded as load errors on
     /// the manager instead.
     pub fn reload(&mut self) -> Result<()> {
-        let mut errors = std::mem::take(&mut self.errors);
-        let (global, global_raw, global_load_error) =
-            load_scope(self.storage.as_ref(), SettingsScope::Global, &mut errors);
-        let (project, _, project_load_error) =
-            load_scope(self.storage.as_ref(), SettingsScope::Project, &mut errors);
-        self.global = global;
-        self.project = project;
-        self.global_raw = global_raw;
-        self.global_load_error = global_load_error;
-        self.project_load_error = project_load_error;
-        self.errors = errors;
-        self.merged = deep_merge(&self.global, &self.project);
+        self.read_scopes();
         Ok(())
     }
 
@@ -454,6 +538,9 @@ impl SettingsManager {
     }
 
     pub fn set_project_packages(&mut self, packages: Vec<serde_json::Value>) {
+        if self.project_writes_blocked() {
+            return;
+        }
         self.project.packages = Some(packages.clone());
         self.persist_scope_field(
             SettingsScope::Project,
@@ -461,6 +548,7 @@ impl SettingsManager {
             &serde_json::Value::Array(packages),
         );
         self.merged = deep_merge(&self.global, &self.project);
+        self.refresh_workspace_trust();
     }
 
     /// Replace one resource-path array (`skills`/`prompts`/`themes`) in the global settings file.
@@ -483,6 +571,9 @@ impl SettingsManager {
 
     /// Replace one resource-path array in the project settings file.
     pub fn set_project_resource_array(&mut self, field: &str, values: Vec<String>) {
+        if self.project_writes_blocked() {
+            return;
+        }
         let array: Vec<serde_json::Value> =
             values.into_iter().map(serde_json::Value::String).collect();
         match field {
@@ -497,6 +588,7 @@ impl SettingsManager {
             &serde_json::Value::Array(array),
         );
         self.merged = deep_merge(&self.global, &self.project);
+        self.refresh_workspace_trust();
     }
 
     /// Write one field into a scope's file, merging with the current on-disk document
@@ -950,6 +1042,17 @@ fn strings(array: &[serde_json::Value]) -> Vec<String> {
 /// One loaded scope: the leniently-parsed settings, the migrated raw document,
 /// and the load error (`Some` when the document exists but cannot be read/parsed).
 #[allow(clippy::type_complexity)]
+/// The project scope of an untrusted workspace: only the safe keys survive.
+fn untrusted_project_view(project: &Settings) -> Settings {
+    let Ok(serde_json::Value::Object(mut document)) = serde_json::to_value(project) else {
+        return Settings::default();
+    };
+    document.retain(|key, value| {
+        !value.is_null() && crate::workspace_trust::is_untrusted_safe_settings_key(key)
+    });
+    from_value_lenient(&serde_json::Value::Object(document))
+}
+
 fn load_scope(
     storage: &dyn SettingsStorage,
     scope: SettingsScope,

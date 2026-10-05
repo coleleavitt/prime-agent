@@ -12,7 +12,7 @@
 //! (`computer_use_session_started`, `computer_use_action`); schema version 4
 //! adds the separately built features' adoption events (`anthropic_shared_auth`, `dream_run`,
 //! `failure_resolution_hint`, `learning_report`, `observability command used`, `ravo_gate_decision`, `ravo_run`, `toolforge
-//! publish`, `workflow_run_agent`, `workflow_durable_request`): new-event
+//! publish`, `workflow_run_agent`, `workflow_durable_request`, `workspace_trust_decision`): new-event
 //! vocabulary bumps the version,
 //! additive property changes do not.
 //!
@@ -1327,6 +1327,29 @@ const LEARNING_REPORT: EventRule = EventRule {
     ],
 };
 
+/// `workspace_trust_decision` (v4): the user decided whether a workspace's
+/// project configuration (executable settings keys, system-prompt files,
+/// prompt templates, project skills) may load. Where the decision came from
+/// and what it was - never the workspace path or what it contains.
+const WORKSPACE_TRUST_DECISION: EventRule = EventRule {
+    name: "workspace_trust_decision",
+    since: 4,
+    properties: &[
+        (
+            "source",
+            required(enum_rule(
+                &["prompt", "flag", "command", "unknown"],
+                "unknown",
+            )),
+        ),
+        (
+            "decision",
+            required(enum_rule(&["trusted", "denied", "unknown"], "unknown")),
+        ),
+        ("content_changed", required(boolean())),
+    ],
+};
+
 /// `anthropic_shared_auth` (v4): the shared Anthropic account store
 /// (`~/.anthropic-accounts`, the fork's `pa-anthropic-auth`) serving the
 /// `anthropic` provider, reported once per process at the end of the first
@@ -1780,6 +1803,7 @@ pub fn catalog() -> Vec<&'static EventRule> {
         &LEARNING_REPORT,
         &RAVO_RUN,
         &ANTHROPIC_SHARED_AUTH,
+        &WORKSPACE_TRUST_DECISION,
     ];
     all.extend(UPDATE_EVENTS.iter());
     all
@@ -2259,6 +2283,29 @@ mod tests {
         assert_eq!(properties.get("task"), Some(&json!("unknown")));
         assert_eq!(properties.get("outcome"), Some(&json!("failed")));
         assert!(properties.get("seed").is_none());
+    }
+
+    #[test]
+    fn sanitize_normalizes_workspace_trust_decision() {
+        assert_eq!(
+            lookup("workspace_trust_decision").map(|rule| rule.since),
+            Some(4)
+        );
+        let mut properties = Properties::new();
+        properties.set("source", json!("prompt"));
+        properties.set("decision", json!("trusted"));
+        properties.set("content_changed", json!(false));
+        assert_eq!(sanitize("workspace_trust_decision", &mut properties), 0);
+        // No path or content rides the event.
+        let mut properties = Properties::new();
+        properties.set("source", json!("/home/user/repo"));
+        properties.set("decision", json!("maybe"));
+        properties.set("content_changed", json!(true));
+        properties.set("workspace", json!("/home/user/repo"));
+        assert_eq!(sanitize("workspace_trust_decision", &mut properties), 3);
+        assert_eq!(properties.get("source"), Some(&json!("unknown")));
+        assert_eq!(properties.get("decision"), Some(&json!("unknown")));
+        assert!(properties.get("workspace").is_none());
     }
 
     #[test]

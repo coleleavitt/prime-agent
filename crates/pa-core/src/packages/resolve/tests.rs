@@ -86,7 +86,15 @@ impl Fixture {
         self.reload();
     }
 
+    /// Re-read the settings with the fixture's workspace trusted: these
+    /// cases exercise resolution of the test's own project scope.
     fn reload(&mut self) {
+        crate::workspace_trust::record(
+            self.manager.cwd(),
+            &self.agent_dir,
+            crate::workspace_trust::TrustDecision::Trusted,
+        )
+        .unwrap();
         self.manager.reload_settings().unwrap();
     }
 }
