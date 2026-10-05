@@ -156,6 +156,39 @@ fn run_in_home(
     )
 }
 
+/// Upstream #1111: `--no-skills` and `--no-context-files` were parsed and then
+/// ignored. Each now drops its discovered resources from the session (the
+/// system prompt is the observable surface), while a run without them keeps both.
+#[test]
+fn print_mode_no_skills_and_no_context_files_drop_the_discovered_resources() {
+    let home = isolated_home();
+    std::fs::write(home.path().join("AGENTS.md"), "context-marker-1111\n").unwrap();
+    let skill = home.path().join(".agents/skills/marker-skill-1111");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: marker-skill-1111\ndescription: A discovered marker skill\n---\nBody.\n",
+    )
+    .unwrap();
+    let script = serde_json::json!({ "responses": [{ "systemPrompt": true }] });
+    let markers = |args: &[&str]| {
+        let (stdout, stderr, code) = run_in_home(home.path(), args, &script);
+        assert_eq!(code, 0, "stderr: {stderr}");
+        (
+            stdout.contains("context-marker-1111"),
+            stdout.contains("marker-skill-1111"),
+        )
+    };
+    assert_eq!(
+        (
+            markers(&["-p", "hi"]),
+            markers(&["--no-context-files", "-p", "hi"]),
+            markers(&["--no-skills", "-p", "hi"]),
+        ),
+        ((true, true), (false, true), (true, false))
+    );
+}
+
 fn session_files(home: &std::path::Path) -> Vec<std::path::PathBuf> {
     let dir = home.join(".prime/agent/sessions");
     let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)

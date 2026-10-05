@@ -86,6 +86,9 @@ pub(crate) struct CreateSessionResources {
     pub(crate) append_system_prompt: Vec<String>,
     pub(crate) skills: Vec<String>,
     pub(crate) prompt_templates: Vec<String>,
+    /// `noSkills`/`noPromptTemplates`/`noContextFiles`.
+    #[serde(flatten)]
+    pub(crate) resource_exclusions: pa_types::daemon::SessionResourceExclusions,
     pub(crate) autonomous: Option<pa_core::autonomous::AgentAutonomousConfig>,
     /// The creating client's mode (`interactive`, `acp`, ...) for the
     /// session's telemetry; absent reports `unknown` (TS parity).
@@ -147,5 +150,21 @@ mod tests {
         let resources =
             CreateSessionResources::deserialize(&serde_json::json!({ "cwd": "/tmp" })).unwrap();
         assert_eq!(resources.execution_mode, None);
+    }
+
+    /// Upstream #1111: the create config's resource exclusions reach the engine.
+    #[test]
+    fn create_resources_read_the_resource_exclusions() {
+        let payload =
+            serde_json::json!({ "cwd": "/tmp", "noSkills": true, "noContextFiles": true });
+        let resources = CreateSessionResources::deserialize(&payload).unwrap();
+        assert_eq!(
+            resources.resource_exclusions,
+            pa_types::daemon::SessionResourceExclusions {
+                no_skills: true,
+                no_prompt_templates: false,
+                no_context_files: true,
+            }
+        );
     }
 }

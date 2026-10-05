@@ -167,6 +167,7 @@ fn session_options(
     restore_dock_focus: bool,
 ) -> InteractiveOptions {
     InteractiveOptions {
+        resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         models: None,
         socket_path: socket.to_path_buf(),
         cwd: PathBuf::from("/tmp"),

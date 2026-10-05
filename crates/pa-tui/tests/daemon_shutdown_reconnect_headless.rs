@@ -324,6 +324,7 @@ fn enter() -> KeyEvent {
 
 fn options_with_session(socket: PathBuf, session: SessionSelection) -> InteractiveOptions {
     InteractiveOptions {
+        resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         models: None,
         socket_path: socket,
         cwd: PathBuf::from("/tmp"),

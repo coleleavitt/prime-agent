@@ -255,6 +255,9 @@ impl Supervisor {
             "appendSystemPrompt",
             "skills",
             "promptTemplates",
+            "noSkills",
+            "noPromptTemplates",
+            "noContextFiles",
             "autonomous",
             "executionMode",
         ] {

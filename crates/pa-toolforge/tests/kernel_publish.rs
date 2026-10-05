@@ -144,6 +144,7 @@ async fn a_published_skill_is_callable_in_the_cell_that_published_it() {
         conversation_log_path: None,
         additional_skill_paths: Vec::new(),
         additional_prompt_paths: Vec::new(),
+        resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         extra_builtin_skill_overrides: Vec::new(),
         rlm_subagent_host: None,
         rlm_depth: None,

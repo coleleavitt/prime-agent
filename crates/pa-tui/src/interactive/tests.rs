@@ -91,6 +91,7 @@ fn flush_rows_write_crlf_and_keep_zone_markers() {
 
 fn options(selection: ModelSelection) -> InteractiveOptions {
     InteractiveOptions {
+        resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         models: None,
         socket_path: PathBuf::from("/tmp/unused.sock"),
         cwd: PathBuf::from("/tmp"),
@@ -166,6 +167,27 @@ fn create_config_binds_a_new_child_to_its_parent() {
             "executionMode": "interactive",
             "parentSessionPath": "/x/p.jsonl",
             "rlmDepth": 2
+        })
+    );
+}
+
+/// Upstream #1111: the resource exclusions ride every create (and so a resume's)
+/// under the TS names; unset flags stay off the wire.
+#[test]
+fn create_config_carries_the_resource_exclusions() {
+    let mut opts = options(ModelSelection::default());
+    opts.resource_exclusions = pa_types::daemon::SessionResourceExclusions {
+        no_skills: true,
+        no_prompt_templates: false,
+        no_context_files: true,
+    };
+    assert_eq!(
+        opts.create_config(),
+        json!({
+            "cwd": "/tmp",
+            "executionMode": "interactive",
+            "noSkills": true,
+            "noContextFiles": true
         })
     );
 }

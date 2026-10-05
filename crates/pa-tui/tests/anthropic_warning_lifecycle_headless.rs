@@ -432,6 +432,7 @@ fn options(
     auth: Option<pa_tui::provider_auth::ProviderAuthCommandsHandle>,
 ) -> InteractiveOptions {
     InteractiveOptions {
+        resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         socket_path: socket,
         cwd: PathBuf::from("/tmp"),
         session_dir: None,

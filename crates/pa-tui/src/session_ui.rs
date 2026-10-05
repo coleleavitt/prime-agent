@@ -143,6 +143,8 @@ pub(crate) struct SessionUi {
     /// The `--models` scope patterns carried into every `create` config: the daemon resolves them
     /// per create, so a `/new` session keeps the scope.
     models: Option<Vec<String>>,
+    /// The CLI's resource exclusions: `/new` carries them into its create.
+    resource_exclusions: pa_types::daemon::SessionResourceExclusions,
     /// The `/model` picker's catalog: a startup snapshot (the bundled
     /// fallback), replaced by the daemon's `get_model_catalog` response.
     model_catalog: Vec<pa_types::ai::Model>,

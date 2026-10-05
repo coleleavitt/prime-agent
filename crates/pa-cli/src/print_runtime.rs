@@ -193,6 +193,12 @@ fn daemon_acp_create(
                 .into();
         }
     }
+    if let (Some(object), Ok(serde_json::Value::Object(exclusions))) = (
+        create_config.as_object_mut(),
+        serde_json::to_value(config.resource_exclusions()),
+    ) {
+        object.extend(exclusions);
+    }
     if let Some(autonomous) = &config.autonomous {
         create_config["autonomous"] = serde_json::json!(autonomous_runtime_config(autonomous));
     }
@@ -599,6 +605,7 @@ async fn build_headless_engine_with(
                 .iter()
                 .map(|path| path.display().to_string())
                 .collect(),
+            resource_exclusions: config.resource_exclusions(),
             extra_builtin_skill_overrides: vec![],
             rlm_subagent_host: None,
             rlm_depth: None,
@@ -1517,6 +1524,7 @@ async fn build_faux_engine_with(
             conversation_log_path: None,
             additional_skill_paths: vec![],
             additional_prompt_paths: vec![],
+            resource_exclusions: config.resource_exclusions(),
             extra_builtin_skill_overrides: vec![],
             rlm_subagent_host: None,
             rlm_depth: None,
