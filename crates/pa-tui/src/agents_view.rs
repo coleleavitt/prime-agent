@@ -262,6 +262,8 @@ pub struct AgentsViewLink {
     /// already holds on its FIRST frame, and a loaded catalog skips the re-fetch.
     saved_sessions: Vec<Value>,
     saved_catalog_loaded: bool,
+    /// The saved-catalog project filter the previous run left on.
+    saved_scope: SavedScope,
 }
 
 impl AgentsViewLink {
@@ -272,6 +274,7 @@ impl AgentsViewLink {
             events,
             saved_sessions: Vec::new(),
             saved_catalog_loaded: false,
+            saved_scope: SavedScope::default(),
         })
     }
 
@@ -402,12 +405,48 @@ struct AgentsViewMode {
     /// The left press a release may fire: the pressed row and whether it turned into a drag —
     /// a dragged release never opens.
     pressed_click: Option<PressedMouseClick>,
-    /// The view actions this run performed (`program_shown`, `renamed`), reported on the outcome
-    /// for the composition root's adoption events.
+    /// The view actions this run performed (`program_shown`, `renamed`, `saved_scope_toggled`),
+    /// reported on the outcome for the composition root's adoption events.
     actions: Vec<&'static str>,
     /// The daemon's heartbeat catalog (the dock's source, TS
     /// `heartbeats`): each row counts its own session's jobs.
     heartbeats: Vec<crate::heartbeats_picker::HeartbeatEntry>,
+    /// Which projects' saved sessions the Inactive rows list; the flow's link carries it across
+    /// re-entries.
+    saved_scope: SavedScope,
+}
+
+/// The saved-catalog project filter (upstream #826): every project's saved sessions (the TS
+/// view's `"all"` scope, the default) or only those whose cwd is the view's cwd (the daemon's
+/// `"current"` scope rule). Live roster rows are never filtered.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum SavedScope {
+    #[default]
+    AllProjects,
+    CurrentProject,
+}
+
+impl SavedScope {
+    fn toggled(self) -> Self {
+        match self {
+            SavedScope::AllProjects => SavedScope::CurrentProject,
+            SavedScope::CurrentProject => SavedScope::AllProjects,
+        }
+    }
+
+    fn hint_word(self) -> &'static str {
+        match self {
+            SavedScope::AllProjects => "all",
+            SavedScope::CurrentProject => "project",
+        }
+    }
+
+    fn status(self) -> &'static str {
+        match self {
+            SavedScope::AllProjects => "Saved sessions: all projects",
+            SavedScope::CurrentProject => "Saved sessions: current project",
+        }
+    }
 }
 
 /// The press state of one left click, row-scoped: the release must land on the same row.
@@ -531,6 +570,7 @@ impl AgentsViewMode {
             pressed_click: None,
             actions: Vec::new(),
             heartbeats: Vec::new(),
+            saved_scope: SavedScope::default(),
         }
     }
 }
@@ -554,6 +594,7 @@ async fn open_roster_link(
             events,
             saved_sessions,
             saved_catalog_loaded,
+            saved_scope: _,
         }) = link
         {
             (client, events, saved_sessions, saved_catalog_loaded)
@@ -695,6 +736,9 @@ async fn run_agents_view_surface(
     surface_mounted: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<AgentsViewRun> {
     crossterm::style::force_color_output(true);
+    let carried_scope = link
+        .as_ref()
+        .map_or_else(SavedScope::default, |link| link.saved_scope);
     // This pane may arrive already in TUI state (the chat's teardown preserves it), so a
     // roster-link failure here must hand the terminal back before the error escapes.
     let (client, mut events, roster, saved_sessions, saved_catalog_loaded) =
@@ -718,6 +762,7 @@ async fn run_agents_view_surface(
     // below).
     mode.saved = saved_sessions;
     mode.saved_catalog_loaded = saved_catalog_loaded;
+    mode.saved_scope = carried_scope;
     mode.rebuild_rows();
     // The notice from the log's bounded tail paints on the FIRST frame, before the interval's
     // first tick.
@@ -1190,6 +1235,7 @@ async fn run_agents_view_surface(
             events,
             saved_sessions: mode.saved.clone(),
             saved_catalog_loaded: mode.saved_catalog_loaded,
+            saved_scope: mode.saved_scope,
         })
     } else {
         client.close();

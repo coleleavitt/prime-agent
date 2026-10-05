@@ -5,13 +5,28 @@ use super::{
     build_rows, compute_rollups, filter_empty_sessions, filter_unified_sessions,
     parse_search_query, reconcile_unified_sessions, resolve_selection, scope_ancestors, scope_root,
     scope_to_subtree, AgentsViewMode, AgentsViewRow, AgentsViewScope, Composer, OpenedRow, PathBuf,
-    PressedMouseClick, RowKind, ScopeRoot, SelectionEdge, SelectionKey, SessionSelection, Value,
-    ANCHOR_LOADING_HINT,
+    PressedMouseClick, RowKind, SavedScope, ScopeRoot, SelectionEdge, SelectionKey,
+    SessionSelection, Value, ANCHOR_LOADING_HINT,
 };
 
 impl AgentsViewMode {
     pub(super) fn records(&self) -> Vec<crate::agents_view_state::UnifiedRecord> {
-        reconcile_unified_sessions(&self.roster, &self.saved)
+        match self.saved_scope {
+            SavedScope::AllProjects => reconcile_unified_sessions(&self.roster, &self.saved),
+            SavedScope::CurrentProject => {
+                let here: Vec<Value> = self
+                    .saved
+                    .iter()
+                    .filter(|row| {
+                        row.get("cwd")
+                            .and_then(Value::as_str)
+                            .is_some_and(|cwd| std::path::Path::new(cwd) == self.options.cwd)
+                    })
+                    .cloned()
+                    .collect();
+                reconcile_unified_sessions(&self.roster, &here)
+            }
+        }
     }
 
     /// Rebuild rows from the current roster, catalog, and query. A scoped run lists the scope
@@ -439,6 +454,15 @@ impl AgentsViewMode {
             && self.keybindings.matches(key, "tui.select.cancel")
             && self.dismiss_incident_notice()
         {
+            return;
+        }
+        // `app.agents.toggleScope` (default ctrl+f, empty editor only): flip the saved catalog
+        // between every project and the view's cwd (upstream #826).
+        if !has_query && self.keybindings.matches(key, "app.agents.toggleScope") {
+            self.saved_scope = self.saved_scope.toggled();
+            self.set_status(self.saved_scope.status());
+            self.actions.push("saved_scope_toggled");
+            self.rebuild_rows();
             return;
         }
         // `app.agents.rename` (default ctrl+r, empty editor only, before the delete arm):

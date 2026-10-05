@@ -7,14 +7,14 @@ use super::*;
 fn hints_render_the_effective_bindings() {
     let mode = mode_with_parent_and_child();
     assert_eq!(
-        flat(&mode.render_hints(120, None)),
-        "\u{2191}/\u{2193} navigate   Home/End first/last   Enter/\u{2192} open   Ctrl+R rename   Space reply   Ctrl+X stop   Ctrl+N new"
+        flat(&mode.render_hints(140, None)),
+        "\u{2191}/\u{2193} navigate   Home/End first/last   Enter/\u{2192} open   Ctrl+R rename   Space reply   Ctrl+X stop   Ctrl+N new   Ctrl+F saved:all"
     );
     let mode = mode_with_user_bindings(&[("app.agents.new", "ctrl+t")]);
-    let hints = flat(&mode.render_hints(120, None));
+    let hints = flat(&mode.render_hints(140, None));
     assert_eq!(
         hints,
-        "\u{2191}/\u{2193} navigate   Home/End first/last   Enter/\u{2192} open   Ctrl+R rename   Space reply   Ctrl+X stop   Ctrl+T new"
+        "\u{2191}/\u{2193} navigate   Home/End first/last   Enter/\u{2192} open   Ctrl+R rename   Space reply   Ctrl+X stop   Ctrl+T new   Ctrl+F saved:all"
     );
     assert!(!hints.contains("Ctrl+N"), "the default new hint is gone");
     let mode = mode_with_user_bindings(&[("app.agents.delete", "ctrl+k")]);

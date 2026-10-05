@@ -414,6 +414,10 @@ pub const APP_KEYBINDINGS: &[(&str, KeybindingDefinition)] = &[
         ),
     ),
     (
+        "app.agents.toggleScope",
+        def!(&["ctrl+f"], "Filter saved sessions to the current project"),
+    ),
+    (
         "app.tree.foldOrUp",
         def!(&["ctrl+left", "alt+left"], "Fold tree branch or move up"),
     ),
