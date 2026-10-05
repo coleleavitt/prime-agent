@@ -697,15 +697,15 @@ impl SessionEngine {
         let pending = self.turn_boundary.take_refine().await?;
         // A pinned plan applies once; the run supersedes every other preview.
         let pinned_plan = match &pending.plan_id {
-            Some(plan_id) => match self.turn_boundary.take_refine_preview(plan_id) {
-                Some(preview) => Some(preview),
-                None => {
+            Some(plan_id) => {
+                let Some(preview) = self.turn_boundary.take_refine_preview(plan_id) else {
                     self.turn_boundary.clear_refine_previews();
                     return Some(Err(anyhow::anyhow!(
                         "refine plan {plan_id} expired before it could apply; call refine.preview() again"
                     )));
-                }
-            },
+                };
+                Some(preview)
+            }
             None => None,
         };
         self.turn_boundary.clear_refine_previews();

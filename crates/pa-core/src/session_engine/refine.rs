@@ -360,52 +360,49 @@ pub async fn execute_refinement_gated(
     } else {
         HarnessScope::Local
     };
-    let (plan, planning_state, baseline_state) = match pinned {
-        // The approved plan applies exactly as previewed: no re-plan, and
-        // the preview's baseline rejects a store changed since.
-        Some(pinned) => {
-            let inputs = refine_planning_inputs(
-                &RefinementSessionDirs::of(session),
-                refinement_history,
-                global_harness_dir,
-                &RefineOptions {
-                    global: global_scope,
-                    ..RefineOptions::default()
-                },
-            )?;
-            (
-                RefinementPlan {
-                    proposal: pinned.proposal,
-                    id: pinned.plan_id,
-                    rollback_of: None,
-                    rollback_scope: None,
-                },
-                inputs.planning_state,
-                pinned.baseline_state,
-            )
-        }
-        None => {
-            let inputs = refine_planning_inputs(
-                &RefinementSessionDirs::of(session),
-                refinement_history,
-                global_harness_dir,
-                options,
-            )?;
-            let plan = plan_refinement(
-                messages,
-                &inputs.planning_state,
-                &inputs.history,
-                model,
-                &core_options,
-                refine_call,
-            )
-            .await?;
-            (
-                strip_display_prefixes(plan),
-                inputs.planning_state,
-                inputs.baseline_state,
-            )
-        }
+    // The approved plan applies exactly as previewed: no re-plan, and the
+    // preview's baseline rejects a store changed since.
+    let (plan, planning_state, baseline_state) = if let Some(pinned) = pinned {
+        let inputs = refine_planning_inputs(
+            &RefinementSessionDirs::of(session),
+            refinement_history,
+            global_harness_dir,
+            &RefineOptions {
+                global: global_scope,
+                ..RefineOptions::default()
+            },
+        )?;
+        (
+            RefinementPlan {
+                proposal: pinned.proposal,
+                id: pinned.plan_id,
+                rollback_of: None,
+                rollback_scope: None,
+            },
+            inputs.planning_state,
+            pinned.baseline_state,
+        )
+    } else {
+        let inputs = refine_planning_inputs(
+            &RefinementSessionDirs::of(session),
+            refinement_history,
+            global_harness_dir,
+            options,
+        )?;
+        let plan = plan_refinement(
+            messages,
+            &inputs.planning_state,
+            &inputs.history,
+            model,
+            &core_options,
+            refine_call,
+        )
+        .await?;
+        (
+            strip_display_prefixes(plan),
+            inputs.planning_state,
+            inputs.baseline_state,
+        )
     };
 
     let target_scope = plan.rollback_scope.unwrap_or(requested_scope);
@@ -722,7 +719,7 @@ fn refine_planning_inputs(
     // Planning state: global, or merged global+local for local refinements.
     let global_state = load_harness_state(global_harness_dir, HarnessScope::Global);
     let planning_state = if requested_scope == HarnessScope::Global {
-        global_state.clone()
+        global_state
     } else {
         let local_state = load_harness_state(&local_harness_dir, HarnessScope::Local);
         merge_harness_states(&global_state, Some(&local_state))

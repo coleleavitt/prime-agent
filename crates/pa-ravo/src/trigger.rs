@@ -155,7 +155,10 @@ pub(crate) fn merge_requests(previous: &PendingRefine, incoming: &PendingRefine)
         },
     );
     // An approved (previewed) plan stays pinned through the merge.
-    merged.plan_id = previous.plan_id.clone().or_else(|| incoming.plan_id.clone());
+    merged.plan_id = previous
+        .plan_id
+        .clone()
+        .or_else(|| incoming.plan_id.clone());
     merged
 }
 
