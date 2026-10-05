@@ -31,7 +31,17 @@ pub(in crate::kernel::bootstrap) fn packaged_runtime_dir() -> Option<PathBuf> {
     .find(|candidate| candidate.join("pyproject.toml").exists())
 }
 
-fn runtime_candidate_dirs() -> Vec<PathBuf> {
+/// Env override naming the runtime checkout to install; when set it is the
+/// only candidate (a dev pointing at a specific checkout).
+pub(in crate::kernel::bootstrap) const RUNTIME_SOURCE_ENV: &str = "PRIME_AGENT_RUNTIME_SOURCE";
+
+/// Every directory searched for the runtime source, in order.
+pub(in crate::kernel::bootstrap) fn runtime_candidate_dirs() -> Vec<PathBuf> {
+    if let Ok(explicit) = std::env::var(RUNTIME_SOURCE_ENV) {
+        if !explicit.is_empty() {
+            return vec![expand_home(&explicit)];
+        }
+    }
     let mut candidates = packaged_runtime_dir().into_iter().collect::<Vec<_>>();
     // Source checkouts keep the sidecar at the workspace root (TS resolves
     // module-relative monorepo candidates the same way).
@@ -41,7 +51,7 @@ fn runtime_candidate_dirs() -> Vec<PathBuf> {
     candidates
 }
 
-pub(super) fn resolve_runtime_source_dir() -> Option<PathBuf> {
+pub(in crate::kernel::bootstrap) fn resolve_runtime_source_dir() -> Option<PathBuf> {
     runtime_candidate_dirs()
         .into_iter()
         .find(|candidate| candidate.join("pyproject.toml").exists())

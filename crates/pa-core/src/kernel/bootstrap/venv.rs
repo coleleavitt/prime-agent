@@ -43,9 +43,12 @@ pub(crate) use probe::{
     has_prime_agent_runtime, missing_python_skill_import_labels, missing_rlm_extra_import_labels,
 };
 use probe::{has_prime_agent_runtime_memoized, installed_runtime_identity};
+use runtime_source::collect_python_files;
 pub use runtime_source::resolve_runtime_identity;
-use runtime_source::{collect_python_files, resolve_runtime_source_dir};
-pub(super) use runtime_source::{package_dir, packaged_runtime_dir};
+pub(super) use runtime_source::{
+    package_dir, packaged_runtime_dir, resolve_runtime_source_dir, runtime_candidate_dirs,
+    RUNTIME_SOURCE_ENV,
+};
 #[cfg(test)]
 use skills::{
     file_content_hash, read_python_skill_dependency_names, read_python_skill_project_name,
@@ -114,11 +117,11 @@ pub(crate) async fn bootstrap_venv(
     std::fs::create_dir_all(venv.parent().unwrap_or(Path::new("/")))?;
     let uv = ensure_uv()?;
     let python = kernel_venv_python(venv);
-    let source_dir = resolve_runtime_source_dir();
-    let runtime_requirement = source_dir.as_ref().map_or_else(
-        || RUNTIME_REQUIREMENT.to_string(),
-        |p| p.to_string_lossy().to_string(),
-    );
+    // Always a local checkout: the package is not published to a registry,
+    // so a bare-name install could only fail (#2203).
+    let source_dir = resolve_runtime_source_dir()
+        .ok_or_else(|| anyhow!("the prime-agent-runtime source directory was not found"))?;
+    let runtime_requirement = source_dir.to_string_lossy().to_string();
     let runtime_identity = resolve_runtime_identity();
 
     let venv_str = venv.to_string_lossy().to_string();
