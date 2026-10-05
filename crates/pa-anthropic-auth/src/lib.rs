@@ -30,6 +30,7 @@ mod hooks;
 mod keepalive;
 mod login;
 mod quota;
+mod routing;
 mod shape;
 mod source;
 #[cfg(test)]
@@ -137,6 +138,13 @@ impl SessionFeature for AnthropicAuthFeature {
         let (polled, poll_failed) = self.source.quota.poll_counts();
         properties.set("polled", polled.into());
         properties.set("poll_failed", poll_failed.into());
+        let counts = &self.source.counts;
+        for (name, count) in [
+            ("quota_routed", &counts.quota_routed),
+            ("blocked", &counts.blocked),
+        ] {
+            properties.set(name, count.load(Ordering::SeqCst).into());
+        }
         telemetry.track(TELEMETRY_EVENT, &properties);
     }
 }

@@ -30,6 +30,7 @@ use sha2::{Digest, Sha256};
 use crate::config::{config_path_from_lookup, ConfigFile, RoutingConfig};
 use crate::keepalive::{Job, KeepAlive};
 use crate::quota::{poll_usage, quota_line, PollRun, QuotaLine, QuotaTracker, StoreWrite};
+use crate::routing::{Route, RouteRequest, RoutingCounts};
 
 /// The status rows' label for a login the shared store holds.
 pub const STORE_LABEL: &str = "shared account store";
@@ -73,6 +74,10 @@ impl SharedStoreConfig {
     /// Reads no file.
     #[must_use]
     pub fn from_env() -> Self {
+        let config_path = config_path_from_lookup(
+            |key| std::env::var(key).ok(),
+            &pa_types::platform::dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")),
+        );
         Self {
             store_path: anthropic::default_store_path(),
             endpoints: Endpoints::from_env(),
@@ -85,10 +90,7 @@ impl SharedStoreConfig {
                 != Ok("1"))
             .then(|| anthropic::claude_version::LATEST_VERSION_URL.to_string()),
             quota_reserve: crate::quota::reserve_from_env(),
-            config_path: Some(config_path_from_lookup(
-                |key| std::env::var(key).ok(),
-                &pa_types::platform::dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")),
-            )),
+            config_path: Some(config_path),
         }
     }
 
@@ -194,6 +196,8 @@ pub struct SharedStoreSource {
     settings: ConfigFile,
     /// The row this process served last.
     last_served: Mutex<Option<String>>,
+    /// What the routing did (counts only).
+    pub(crate) counts: RoutingCounts,
     /// The keep-alive thread's work queue, once it runs.
     jobs: OnceLock<std::sync::mpsc::Sender<Job>>,
     /// The keep-alive's state, shared with its thread.
@@ -246,6 +250,7 @@ impl SharedStoreSource {
             sessions: Mutex::new(std::collections::HashMap::new()),
             quota,
             last_served: Mutex::new(None),
+            counts: RoutingCounts::default(),
             jobs: OnceLock::new(),
             keepalive,
             keepalive_started: std::sync::Once::new(),
@@ -425,6 +430,46 @@ impl SharedStoreSource {
             expires_at: tokens.expires_at,
             source: AccessSource::Store,
         })
+    }
+
+    /// The token for `request` as the routing picks its login (refreshed
+    /// when expired): `Ok(None)` when the store cannot produce one (the
+    /// request goes out with what it has), `Err` when nothing may serve it
+    /// (a local refusal).
+    pub(crate) fn routed_token(
+        &self,
+        request: &RouteRequest<'_>,
+    ) -> Result<Option<String>, pa_ai::request_hooks::LocalRefusal> {
+        let route = self.route(request);
+        let _flight = self.flight.lock_or_recover();
+        let resolved = match route {
+            Route::Refuse(refusal) => return Err(refusal),
+            Route::Report => return Ok(None),
+            Route::Store => self.resolve(),
+            Route::Login(account_id) => {
+                let login = block_on_own_runtime(get_access_token(
+                    self.client(),
+                    &self.config.store_path,
+                    &AccessRequest {
+                        account: Some(account_id.clone()),
+                        ..AccessRequest::default()
+                    },
+                    &SharedRefreshOptions::default(),
+                ));
+                match login {
+                    Ok(Ok(grant)) if grant.account_id == account_id => Ok(Ok(grant)),
+                    // That login cannot produce a token now: the store's
+                    // own pick (which rotates past a dead login).
+                    _ => self.resolve(),
+                }
+            }
+        };
+        let Ok(Ok(grant)) = resolved else {
+            return Ok(None);
+        };
+        self.record(Some(grant.source));
+        self.remember(&grant.access_token, &grant.account_id);
+        Ok(Some(grant.access_token))
     }
 
     /// Remember a token this source handed out, for the store row

@@ -41,12 +41,13 @@ fn bearers(requests: &Mutex<Vec<CapturedRequest>>) -> Vec<String> {
 #[test]
 fn a_429_moves_to_the_next_login_in_the_store_s_order() {
     let provider = "anthropic-quota-429";
-    let (_home, source) = source_over(
+    let (usage_url, _usage_hits) = token_endpoint(200, USAGE);
+    let (_home, source) = source_configured(
         vec![
             row("limited", Duration::hours(2)),
             row("next", Duration::hours(2)),
         ],
-        "http://127.0.0.1:9",
+        |config| config.endpoints.usage_url = usage_url.clone(),
     );
     pin(&source, "limited");
     install(provider, &source);
@@ -488,9 +489,10 @@ fn a_429_is_confirmed_by_a_poll_before_the_request_moves_on() {
             "sk-ant-oat01-onward-store-access-000".to_string()
         ]
     );
-    // The request's own due poll, then the 429's confirmation (a poll
-    // regardless of the reading's age).
-    assert_eq!(usage_hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+    // The request's own due poll, the 429's confirmation (a poll
+    // regardless of the reading's age), and the next login's poll before
+    // it may take the request (its quota was unknown).
+    assert_eq!(usage_hits.load(std::sync::atomic::Ordering::SeqCst), 3);
     assert_eq!(
         recorded(&source, "confirmed"),
         Some((Some(30.0), Some(60.0)))

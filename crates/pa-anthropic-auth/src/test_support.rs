@@ -135,6 +135,84 @@ pub(crate) fn sidecar(home: &std::path::Path, document: &serde_json::Value) -> s
 /// weekly window at 25%.
 pub(crate) const USAGE: &str = r#"{"five_hour":{"utilization":30,"resets_at":"2099-01-01T00:00:00Z"},"seven_day":{"utilization":60,"resets_at":"2099-01-05T00:00:00Z"},"limits":[{"kind":"weekly_scoped","group":"weekly","percent":25,"resets_at":"2099-01-05T00:00:00Z","scope":{"model":{"id":"claude-fable-5","display_name":"Fable"}}}]}"#;
 
+/// Usage poll answers by the bearer token asked with (a missing token is
+/// answered 500).
+pub(crate) type UsageBodies = Arc<Mutex<std::collections::HashMap<String, String>>>;
+
+/// A loopback usage endpoint answering each poll from `bodies` by its
+/// bearer token; returns its URL and the poll count.
+pub(crate) fn usage_endpoint(bodies: UsageBodies) -> (String, Arc<AtomicUsize>) {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind a loopback port");
+    let url = format!(
+        "http://{}/api/oauth/usage",
+        listener.local_addr().expect("the bound address")
+    );
+    let hits = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&hits);
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let mut request = Vec::new();
+            let mut chunk = [0u8; 4096];
+            let head = loop {
+                let Ok(read) = stream.read(&mut chunk) else {
+                    break String::new();
+                };
+                request.extend_from_slice(&chunk[..read]);
+                if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                    break String::from_utf8_lossy(&request[..end]).to_string();
+                }
+                if read == 0 {
+                    break String::new();
+                }
+            };
+            let bearer = head
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("authorization")
+                        .then(|| value.trim().trim_start_matches("Bearer ").to_string())
+                })
+                .unwrap_or_default();
+            counter.fetch_add(1, Ordering::SeqCst);
+            let body = bodies.lock_or_recover().get(&bearer).cloned();
+            let (status, body) = body.map_or((500, "{}".to_string()), |body| (200, body));
+            let response = format!(
+                "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+        }
+    });
+    (url, hits)
+}
+
+/// A usage poll answer: the 5h and 7d windows' used percent, the 5h
+/// window's reset, and a Fable weekly window's used percent when given.
+pub(crate) fn usage_body(five: f64, seven: f64, five_reset: &str, fable: Option<f64>) -> String {
+    let limits: Vec<serde_json::Value> = fable
+        .map(|percent| {
+            serde_json::json!({
+                "kind": "weekly_scoped", "group": "weekly", "percent": percent,
+                "resets_at": "2099-01-05T00:00:00Z",
+                "scope": { "model": { "id": "claude-fable-5", "display_name": "Fable" } }
+            })
+        })
+        .into_iter()
+        .collect();
+    serde_json::json!({
+        "five_hour": { "utilization": five, "resets_at": five_reset },
+        "seven_day": { "utilization": seven, "resets_at": "2099-01-05T00:00:00Z" },
+        "limits": limits,
+    })
+    .to_string()
+}
+
+/// The access token [`row`] gives the row `id`.
+pub(crate) fn access_of(id: &str) -> String {
+    format!("sk-ant-oat01-{id}-store-access-000")
+}
+
 /// A loopback endpoint that accepts connections and never answers.
 pub(crate) fn hanging_endpoint() -> String {
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind a loopback port");

@@ -5,8 +5,6 @@
 //! - the file: `PI_ANTHROPIC_AUTH_FILE`, else `$PI_AGENT_DIR/anthropic-auth.json`,
 //!   else `~/.pi/agent/anthropic-auth.json` (the pi plugin's `getPiAccountStoragePath`;
 //!   the opencode plugin keeps its own copy under `~/.config/opencode/`);
-//! - the sticky routing state beside it (`anthropic-auth-routing-state.json`,
-//!   or `PI_ANTHROPIC_AUTH_ROUTING_STATE_FILE`), shared with pi;
 //! - read only, never written (the plugins' commands own it), and re-read
 //!   when the file changes, so an edit applies to the next request;
 //! - what is read: `routing.mode`, `quota.{enabled, checkIntervalMinutes,

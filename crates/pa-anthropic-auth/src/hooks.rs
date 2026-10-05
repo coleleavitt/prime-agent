@@ -15,6 +15,7 @@ use pa_ai::types::{Model, ProviderResponse};
 use pa_types::sync::MutexExt;
 
 use crate::quota::cooldown_until;
+use crate::routing::RouteRequest;
 use crate::shape::{shape_request, ShapeEnv, ShapeIdentity};
 use crate::source::{block_on_own_runtime, PollWait, UsageEvent};
 use crate::SharedStoreSource;
@@ -35,10 +36,12 @@ impl SharedStoreSource {
     /// After a 429 (or a rate-limited stream opening): the row cools down
     /// until the server lets it serve again and is unpinned (napi
     /// `markRateLimited`), its quota reading is recorded and confirmed by a
-    /// usage poll, and the request moves to the next login in the store's
-    /// order, when there is one other than the limited row.
+    /// usage poll, and the request moves to the first other login that
+    /// passes the quota policy (polled first when its reading is due), as
+    /// pi's fallback pass does, when there is one.
     fn rotate_after_rate_limit(&self, rejected: &RejectedRequest<'_>) -> Option<String> {
         let served = self.served_token(rejected.api_key)?;
+        let model = rejected.model.id.as_str();
         let headers: Vec<(String, String)> = rejected
             .headers
             .iter()
@@ -66,11 +69,17 @@ impl SharedStoreSource {
         if !matches!(marked, Ok(true)) {
             return None;
         }
-        // The plugins confirm a 429 with a usage poll before moving on: its
-        // reading lands on the row, so an exhausted login stays skipped
-        // after its cooldown.
+        // The plugins confirm a 429 with a usage poll before moving on:
+        // its reading lands on the row, so an exhausted login stays
+        // skipped after its cooldown.
         self.queue_poll(&served.account_id, PollWait::Result);
-        let next = self.store_token()?;
+        let next = self
+            .routed_token(&RouteRequest {
+                model,
+                exclude: Some(&served.account_id),
+            })
+            .ok()
+            .flatten()?;
         let moved = next != rejected.api_key
             && self
                 .served_token(&next)
@@ -151,9 +160,14 @@ impl ProviderRequestHooks for SharedStoreSource {
         if !self.served(request.api_key) {
             return Admission::Send;
         }
-        self.settings();
-        let Some(current) = self.store_token() else {
-            return Admission::Send;
+        let routed = self.routed_token(&RouteRequest {
+            model: &request.model.id,
+            exclude: None,
+        });
+        let current = match routed {
+            Ok(Some(current)) => current,
+            Ok(None) => return Admission::Send,
+            Err(refusal) => return Admission::Refuse(refusal),
         };
         // The request's login is polled for its usage when its reading is
         // due (or every N requests), on the keep-alive thread.

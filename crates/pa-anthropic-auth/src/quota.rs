@@ -40,7 +40,7 @@ use anthropic::account::QuotaObservation;
 use anthropic::backoff::FailureFacts;
 use anthropic::quota::{
     is_quota_bearing_header_frame, normalize_quota_headers, QuotaFieldSource, QuotaPolicy,
-    QuotaSnapshot,
+    QuotaSnapshot, QuotaWindow,
 };
 use anthropic::quota_manager::{PollDecision, PollOutcome, QuotaManager};
 use anthropic::retry::retry_after_ms;
@@ -184,6 +184,34 @@ impl QuotaTracker {
         }
     }
 
+    /// Learn what the store recorded for `account` (another process's
+    /// reading); a newer reading of this process's own wins.
+    pub(crate) fn seed(&self, account: &Account, now: DateTime<Utc>) {
+        let Some(recorded) = account.quota.as_ref().and_then(recorded_snapshot) else {
+            return;
+        };
+        self.manager.lock_or_recover().seed(
+            &account.id,
+            lineage(account).as_deref(),
+            Some(&recorded),
+            None,
+            now.timestamp_millis(),
+        );
+    }
+
+    /// Whether `account_id`'s reading is due for a poll (for `model`'s
+    /// scoped window, when given).
+    pub(crate) fn is_stale(
+        &self,
+        account_id: &str,
+        model: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> bool {
+        self.manager
+            .lock_or_recover()
+            .is_stale(account_id, model, now.timestamp_millis())
+    }
+
     /// Count one request sent with a store token; its number.
     pub(crate) fn count_request(&self) -> u64 {
         self.requests.fetch_add(1, Ordering::SeqCst) + 1
@@ -229,6 +257,30 @@ pub(crate) fn lineage(account: &Account) -> Option<String> {
         .as_ref()
         .map(|account| account.uuid.clone())
         .filter(|uuid| !uuid.trim().is_empty())
+}
+
+/// A store row's recorded percentages as a snapshot (no resets, no scoped
+/// windows, no producer: the store keeps only the percentages).
+fn recorded_snapshot(recorded: &QuotaObservation) -> Option<QuotaSnapshot> {
+    let checked_at = recorded.checked_at?.timestamp_millis();
+    let window = |used: Option<f64>| {
+        used.filter(|used| used.is_finite()).map(|used| {
+            let used = used.clamp(0.0, 100.0);
+            QuotaWindow {
+                used_percent: used,
+                remaining_percent: 100.0 - used,
+                resets_at: None,
+                checked_at,
+            }
+        })
+    };
+    let snapshot = QuotaSnapshot {
+        five_hour: window(recorded.five_hour_percent),
+        seven_day: window(recorded.seven_day_percent),
+        checked_at: Some(checked_at),
+        ..QuotaSnapshot::default()
+    };
+    (snapshot.five_hour.is_some() || snapshot.seven_day.is_some()).then_some(snapshot)
 }
 
 /// What one usage poll did.
