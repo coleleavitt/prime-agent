@@ -28,113 +28,27 @@
 //     bun generate_requests.ts > pi_requests.json
 // Generated from anthropic-auth 7f5d88a ("pi: replay thinking signatures
 // only from Anthropic-origin messages") on linux x64.
-import { mkdirSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import {
+  ACCOUNT_UUID,
+  assistant,
+  type Case,
+  IMAGE,
+  mock,
+  model,
+  OK_STREAM,
+  PI_PROMPT,
+  repo,
+  runRequestCases,
+  scratch,
+  settingsFile,
+  sse,
+  streamCortexKitAnthropic,
+  toolResult,
+  user,
+} from './golden_harness.ts'
 
-const repo = process.env.ANTHROPIC_AUTH_REPO
-if (!repo) throw new Error('ANTHROPIC_AUTH_REPO is required')
-const scratch = homedir()
-const settingsFile = join(scratch, 'pi-agent', 'anthropic-auth.json')
-mkdirSync(join(scratch, 'pi-agent'), { recursive: true })
-process.env.PI_ANTHROPIC_AUTH_FILE = settingsFile
-process.env.PI_ANTHROPIC_AUTH_CACHEKEEP_REGISTRY_DIR = join(scratch, 'cachekeep')
-
-const ACCOUNT_UUID = '00000000-0000-4000-8000-000000000001'
-const DEVICE_ID = 'a'.repeat(64)
-
-const OK_STREAM = [
-  { type: 'message_start', message: { id: 'msg_1', usage: { input_tokens: 1, output_tokens: 1 } } },
-  { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
-  { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'hello' } },
-  { type: 'content_block_stop', index: 0 },
-  { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 2 } },
-  { type: 'message_stop' },
-]
-
-function sse(events: unknown[]) {
-  return events
-    .map((event) => `event: ${(event as { type: string }).type}\ndata: ${JSON.stringify(event)}\n\n`)
-    .join('')
-}
-
-type Recorded = { url: string; headers: Record<string, string>; body: string }
-let recorded: Recorded[] = []
-let bootstrapUuid: string | null = ACCOUNT_UUID
-let replies: Array<{ status: number; body: string }> = []
-
-globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
-  const url = String(input instanceof Request ? input.url : input)
-  if (url.includes('/api/claude_cli/bootstrap')) {
-    return bootstrapUuid
-      ? new Response(JSON.stringify({ oauth_account: { account_uuid: bootstrapUuid } }), { status: 200 })
-      : new Response('{}', { status: 403 })
-  }
-  if (url.includes('/v1/messages')) {
-    const headers: Record<string, string> = {}
-    new Headers(init?.headers).forEach((value, name) => {
-      headers[name] = value
-    })
-    recorded.push({ url, headers, body: String(init?.body) })
-    const reply = replies.shift() ?? { status: 200, body: sse(OK_STREAM) }
-    return new Response(reply.body, {
-      status: reply.status,
-      headers: { 'content-type': reply.status === 200 ? 'text/event-stream' : 'application/json' },
-    })
-  }
-  return new Response('{}', { status: 404 })
-}) as typeof fetch
-
-const { streamCortexKitAnthropic } = await import(join(repo, 'packages/pi/src/stream.ts'))
-
-function model(id: string) {
-  return {
-    id,
-    name: id,
-    api: 'cortexkit-anthropic-messages',
-    provider: 'anthropic',
-    baseUrl: 'https://api.anthropic.com',
-    reasoning: true,
-    input: ['text', 'image'],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 1_000_000,
-    maxTokens: 128_000,
-  }
-}
-
-const usage = {
-  input: 0,
-  output: 0,
-  cacheRead: 0,
-  cacheWrite: 0,
-  totalTokens: 0,
-  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-}
-function assistant(content: unknown[], api = 'anthropic-messages') {
-  return { role: 'assistant', content, api, provider: 'anthropic', model: 'claude-x', usage, stopReason: 'stop', timestamp: 1 }
-}
-function user(content: unknown) {
-  return { role: 'user', content, timestamp: 1 }
-}
-function toolResult(toolCallId: string, content: unknown[], isError = false) {
-  return { role: 'toolResult', toolCallId, toolName: 't', content, isError, timestamp: 1 }
-}
-const IMAGE = { type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png' }
-const PI_PROMPT = [
-  'You are an expert coding assistant operating inside pi.',
-  'Available tools:\n- read: Read file contents',
-  'Pi documentation (read only when the user asks about pi itself):\n- Main documentation: /docs/README.md',
-  'Guidelines:\n- Be concise',
-].join('\n\n')
-
-type Case = {
-  name: string
-  model: string
-  context: Record<string, unknown>
-  options?: Record<string, unknown>
-  settings?: Record<string, unknown>
-  accountUuid?: boolean
-}
 
 export const CASES: Case[] = [
   {
@@ -313,40 +227,7 @@ export const CASES: Case[] = [
   },
 ]
 
-const results = []
-for (const [index, testCase] of CASES.entries()) {
-  writeFileSync(settingsFile, `${JSON.stringify(testCase.settings ?? {}, null, 2)}\n`)
-  bootstrapUuid = testCase.accountUuid === false ? null : ACCOUNT_UUID
-  recorded = []
-  // One token per case: the plugin keeps one identity per token.
-  const token = `sk-ant-oat01-golden-case-${String(index).padStart(2, '0')}-000000000000`
-  const stream = streamCortexKitAnthropic(model(testCase.model), testCase.context, {
-    apiKey: token,
-    sessionId: `ses-${testCase.name}`,
-    ...(testCase.options ?? {}),
-  })
-  const message = await stream.result()
-  if (message.stopReason === 'error') throw new Error(`${testCase.name}: ${message.errorMessage}`)
-  const request = recorded.at(-1)
-  if (!request) throw new Error(`${testCase.name}: no Messages request`)
-  const { 'x-client-request-id': _requestId, ...headers } = request.headers
-  results.push({
-    name: testCase.name,
-    model: testCase.model,
-    context: testCase.context,
-    options: testCase.options ?? {},
-    settings: testCase.settings ?? {},
-    token,
-    identity: {
-      deviceId: DEVICE_ID,
-      accountUuid: testCase.accountUuid === false ? null : ACCOUNT_UUID,
-      sessionId: headers['x-claude-code-session-id'],
-    },
-    url: request.url,
-    headers,
-    bodyText: request.body,
-  })
-}
+const results = await runRequestCases(CASES, 'golden-case')
 
 // What pi keeps of a streamed response (the assistant message content).
 type ResponseCase = {
@@ -401,8 +282,8 @@ const RESPONSES: ResponseCase[] = [
 const responses = []
 for (const [index, testCase] of RESPONSES.entries()) {
   writeFileSync(settingsFile, '{}\n')
-  bootstrapUuid = ACCOUNT_UUID
-  replies = [{ status: 200, body: sse(testCase.events) }]
+  mock.bootstrapUuid = ACCOUNT_UUID
+  mock.replies = [{ status: 200, body: sse(testCase.events) }]
   const stream = streamCortexKitAnthropic(model(testCase.model), testCase.context, {
     apiKey: `sk-ant-oat01-golden-response-${String(index).padStart(2, '0')}-0000000000`,
     sessionId: `ses-${testCase.name}`,
@@ -428,7 +309,7 @@ registerCommands({
     handlers.set(name, def.handler)
   },
 })
-const { existsSync, readFileSync, rmSync } = await import('node:fs')
+const { existsSync, readFileSync } = await import('node:fs')
 const stateFile = join(scratch, 'pi-agent', 'anthropic-auth-state.json')
 type CommandRun = { command: string; args: string }
 const COMMAND_SEQUENCES: Array<{ name: string; initial: string | null; runs: CommandRun[] }> = [
