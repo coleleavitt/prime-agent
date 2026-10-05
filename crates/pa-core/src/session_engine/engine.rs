@@ -234,6 +234,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // Request timing: the settings half of the flag is read once here
     // (`settings` moves into the loader); the `PI_REQUEST_TIMING` half stays live.
     let request_timing_settings = settings.get_request_timing();
+    let length_continuations = settings.get_length_continuations();
     let kernel_environment = settings.get_kernel_environment();
     // Captured before `settings` moves into the resource loader: the
     // factory host bridge's preflight facts (the daemon `allowedModels`
@@ -713,6 +714,22 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         follow_up_mode: config.follow_up_mode,
         before_tool_call,
         after_tool_call,
+        // Opt-in (`lengthContinuations`, TS v0.9.8 had none): a reply cut
+        // off at the output-token limit continues in a visible follow-up
+        // turn, bounded by the setting.
+        length_continuation: (length_continuations > 0).then(|| {
+            pa_agent::agent_loop::LengthContinuation {
+                max_continuations: length_continuations,
+                message: std::sync::Arc::new(|attempt, max| {
+                    crate::autonomous::autonomous_continuation_loop_row(
+                        &format!(
+                            "[auto-continue {attempt}/{max}: the previous reply was cut off at the output-token limit]\n\nContinue exactly where the previous reply stopped. Do not repeat what was already written."
+                        ),
+                        pa_agent::now_ms().max(0) as u64,
+                    )
+                }),
+            }
+        }),
         ..Default::default()
     });
     crate::features::observe_agent_events(crate::features::installed(), &feature_context, &agent)

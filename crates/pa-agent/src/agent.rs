@@ -105,6 +105,9 @@ pub struct AgentOptions {
     pub follow_up_mode: Option<QueueMode>,
     pub session_id: Option<String>,
     pub tool_execution: Option<ToolExecutionMode>,
+    /// Auto-continue replies cut off at the output-token limit; `None`
+    /// (the default) ends the run on a truncated reply.
+    pub length_continuation: Option<crate::agent_loop::LengthContinuation>,
 }
 
 struct MutableAgentState {
@@ -427,6 +430,7 @@ pub(crate) struct AgentInner {
     after_tool_call: Option<AfterToolCallFn>,
     should_stop_after_turn: Option<ShouldStopAfterTurnFn>,
     should_stop_before_turn: Option<ShouldStopBeforeTurnFn>,
+    length_continuation: Option<crate::agent_loop::LengthContinuation>,
     /// The natural-turn-end continuation hook: settable after construction so the session engine
     /// can install it. A plain mutex: cloned at run-config build, never held across an await.
     get_continuation_messages: Mutex<Option<GetContinuationMessagesFn>>,
@@ -683,6 +687,9 @@ impl AgentInner {
         config.tool_execution = self.tool_execution;
         config.before_tool_call.clone_from(&self.before_tool_call);
         config.after_tool_call.clone_from(&self.after_tool_call);
+        config
+            .length_continuation
+            .clone_from(&self.length_continuation);
         config
     }
 
@@ -1167,6 +1174,7 @@ impl Agent {
             after_tool_call: options.after_tool_call,
             should_stop_after_turn: options.should_stop_after_turn,
             should_stop_before_turn: options.should_stop_before_turn,
+            length_continuation: options.length_continuation,
             get_continuation_messages: Mutex::new(options.get_continuation_messages),
             model_override: Mutex::new(None),
             session_id: options.session_id,

@@ -388,6 +388,10 @@ pub struct Settings {
     /// Log per-request provider timing phases to the diagnostic log (TS
     /// `requestTiming`; unset means OFF, exactly the TS default).
     pub request_timing: Option<bool>,
+    /// `lengthContinuations`: how many times in a row a reply cut off at the
+    /// output-token limit auto-continues (upstream #969). Unset or 0 is
+    /// OFF, the TS v0.9.8 behavior (a truncated reply ends the turn).
+    pub length_continuations: Option<u64>,
     /// Unknown keys survive load/save round-trips (forward compatibility).
     #[serde(flatten, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,

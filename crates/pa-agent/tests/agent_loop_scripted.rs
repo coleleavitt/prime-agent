@@ -759,3 +759,138 @@ fn scripted_event_shapes_round_trip_through_the_event_enum() {
             if matches!(**event, AssistantMessageEvent::Error { .. })
     )));
 }
+
+/// A text turn that ends at the output-token limit (`stopReason: length`).
+fn length_turn(provider: &ScriptedProvider, text: &str) {
+    let mut steps = pa_agent::scripted::text_turn_steps(&test_model(), text);
+    if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut() {
+        if let AssistantMessageEvent::Done { reason, message } = &mut **event {
+            *reason = StopReason::Length;
+            message.stop_reason = StopReason::Length;
+        }
+    }
+    provider.push_turn(pa_agent::scripted::ScriptedTurn::Events(steps));
+}
+
+/// The run's transcript as `(role, text)` rows.
+fn transcript(messages: &[AgentMessage]) -> Vec<(&'static str, String)> {
+    messages
+        .iter()
+        .map(|message| match message {
+            AgentMessage::Standard(Message::User(user)) => (
+                "user",
+                match &user.content {
+                    UserContent::Text(text) => text.clone(),
+                    UserContent::Parts(parts) => parts
+                        .iter()
+                        .filter_map(|part| match part {
+                            pa_agent::types::UserPart::Text(text) => Some(text.text.clone()),
+                            pa_agent::types::UserPart::Image(_) => None,
+                        })
+                        .collect(),
+                },
+            ),
+            AgentMessage::Standard(Message::Assistant(assistant)) => (
+                "assistant",
+                assistant
+                    .content
+                    .iter()
+                    .filter_map(|block| match block {
+                        AssistantContent::Text(text) => Some(text.text.clone()),
+                        _ => None,
+                    })
+                    .collect(),
+            ),
+            _ => ("other", String::new()),
+        })
+        .collect()
+}
+
+fn length_continuation_agent(provider: &Arc<ScriptedProvider>, max: u32) -> Agent {
+    Agent::new(AgentOptions {
+        stream_fn: Some(provider.stream_fn()),
+        length_continuation: Some(pa_agent::agent_loop::LengthContinuation {
+            max_continuations: max,
+            message: Arc::new(|attempt, max| {
+                AgentMessage::Standard(Message::User(pa_agent::types::UserMessage {
+                    content: UserContent::Text(format!("continue {attempt}/{max}")),
+                    timestamp: 0,
+                }))
+            }),
+        }),
+        ..Default::default()
+    })
+}
+
+/// Upstream #969: a reply cut off at the output-token limit continues in a
+/// follow-up turn of the same run, bounded by the policy; the bound ends
+/// the run on the last truncated reply.
+#[tokio::test]
+async fn a_length_truncated_reply_auto_continues_up_to_the_bound() {
+    let provider = Arc::new(ScriptedProvider::new(test_model()));
+    let agent = length_continuation_agent(&provider, 2);
+    agent.set_model(test_model()).await;
+    length_turn(&provider, "part one");
+    length_turn(&provider, "part two");
+    length_turn(&provider, "part three");
+    provider.push_text_turn("never requested");
+    agent.prompt("write it all").await.unwrap();
+    agent.wait_for_idle().await;
+    assert_eq!(
+        transcript(&agent.state().await.messages),
+        vec![
+            ("user", "write it all".to_string()),
+            ("assistant", "part one".to_string()),
+            ("user", "continue 1/2".to_string()),
+            ("assistant", "part two".to_string()),
+            ("user", "continue 2/2".to_string()),
+            ("assistant", "part three".to_string()),
+        ]
+    );
+    assert_eq!(provider.calls().len(), 3);
+}
+
+/// The continuation stops on a natural completion, and a fresh prompt
+/// starts a fresh bound.
+#[tokio::test]
+async fn a_length_continuation_ends_at_the_natural_stop_and_resets_per_run() {
+    let provider = Arc::new(ScriptedProvider::new(test_model()));
+    let agent = length_continuation_agent(&provider, 1);
+    agent.set_model(test_model()).await;
+    length_turn(&provider, "cut");
+    provider.push_text_turn("done");
+    agent.prompt("first").await.unwrap();
+    agent.wait_for_idle().await;
+    length_turn(&provider, "cut again");
+    provider.push_text_turn("done again");
+    agent.prompt("second").await.unwrap();
+    agent.wait_for_idle().await;
+    assert_eq!(
+        transcript(&agent.state().await.messages),
+        vec![
+            ("user", "first".to_string()),
+            ("assistant", "cut".to_string()),
+            ("user", "continue 1/1".to_string()),
+            ("assistant", "done".to_string()),
+            ("user", "second".to_string()),
+            ("assistant", "cut again".to_string()),
+            ("user", "continue 1/1".to_string()),
+            ("assistant", "done again".to_string()),
+        ]
+    );
+}
+
+/// Without the policy (the default, TS v0.9.8 behavior) a truncated reply
+/// ends the run.
+#[tokio::test]
+async fn a_length_truncated_reply_ends_the_run_without_the_policy() {
+    let (agent, provider, _events) = scripted_agent(vec![]).await;
+    length_turn(&provider, "cut");
+    provider.push_text_turn("never requested");
+    agent.prompt("go").await.unwrap();
+    agent.wait_for_idle().await;
+    assert_eq!(
+        transcript(&agent.state().await.messages),
+        vec![("user", "go".to_string()), ("assistant", "cut".to_string())]
+    );
+}

@@ -19,6 +19,9 @@ pub const RECENT_MODELS_LIMIT: usize = 20;
 pub const DEFAULT_IDLE_EVICTION_MINUTES: u64 = 90;
 pub const DEFAULT_SESSION_ARCHIVE_MAX_AGE_DAYS: u64 = 30;
 pub const DEFAULT_SESSION_ARCHIVE_MAX_SESSIONS: usize = 200;
+/// The ceiling on `lengthContinuations`: a model that keeps hitting the
+/// output-token limit stops after this many continuations whatever the setting.
+pub const MAX_LENGTH_CONTINUATIONS: u32 = 10;
 
 #[derive(Debug, Clone)]
 pub struct SettingsError {
@@ -987,6 +990,16 @@ impl SettingsManager {
     #[must_use]
     pub fn get_request_timing(&self) -> bool {
         self.merged.request_timing.unwrap_or(false)
+    }
+
+    /// `lengthContinuations`: the bound on consecutive auto-continuations
+    /// of a reply cut off at the output-token limit, clamped to
+    /// [`MAX_LENGTH_CONTINUATIONS`]. 0 (the default) is off.
+    #[must_use]
+    pub fn get_length_continuations(&self) -> u32 {
+        self.merged.length_continuations.map_or(0, |count| {
+            count.min(u64::from(MAX_LENGTH_CONTINUATIONS)) as u32
+        })
     }
 
     /// `kernel.environment`, from the global scope only: a project's settings file must not

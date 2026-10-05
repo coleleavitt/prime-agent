@@ -373,3 +373,116 @@ async fn create_session_registers_goal_and_heartbeat_handlers() {
         "tools: {names:?}"
     );
 }
+
+/// Upstream #969: with `lengthContinuations` set, a reply cut off at the
+/// output-token limit continues in a visible follow-up turn; unset (the TS
+/// v0.9.8 default) the truncated reply ends the turn.
+#[tokio::test]
+async fn the_length_continuations_setting_auto_continues_a_truncated_reply() {
+    async fn run(settings: Option<&str>) -> Vec<String> {
+        let model = pa_agent::types::Model {
+            id: "m".into(),
+            name: "m".into(),
+            api: "test".into(),
+            provider: "test".into(),
+            base_url: "http://localhost".into(),
+            reasoning: false,
+            cost: pa_agent::types::UsageCost::default(),
+            context_window: 1_000,
+            max_tokens: 100,
+        };
+        let provider = Arc::new(ScriptedProvider::new(model.clone()));
+        let mut steps = pa_agent::scripted::text_turn_steps(&model, "the first half");
+        if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut() {
+            if let pa_agent::stream::AssistantMessageEvent::Done { reason, message } = &mut **event
+            {
+                *reason = pa_agent::types::StopReason::Length;
+                message.stop_reason = pa_agent::types::StopReason::Length;
+            }
+        }
+        provider.push_turn(pa_agent::scripted::ScriptedTurn::Events(steps));
+        provider.push_text_turn("the second half");
+        let tmp = tempfile::tempdir().unwrap();
+        let agent_dir = tmp.path().join("agent");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        if let Some(settings) = settings {
+            std::fs::write(agent_dir.join("settings.json"), settings).unwrap();
+        }
+        let engine = create_session(SessionEngineConfig {
+            cwd: tmp.path().to_path_buf(),
+            agent_dir,
+            model: Some(model),
+            stream_fn: Some(provider.stream_fn()),
+            tools: Vec::new(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        engine
+            .session
+            .prompt("write it", crate::session_engine::PromptOptions::default())
+            .await
+            .unwrap();
+        engine.session.agent().wait_for_idle().await;
+        engine
+            .session
+            .agent()
+            .state()
+            .await
+            .messages
+            .iter()
+            .map(|message| match message {
+                pa_agent::types::AgentMessage::Standard(pa_agent::types::Message::User(user)) => {
+                    format!(
+                        "user: {}",
+                        match &user.content {
+                            pa_agent::types::UserContent::Text(text) => text.clone(),
+                            pa_agent::types::UserContent::Parts(parts) => parts
+                                .iter()
+                                .filter_map(|part| match part {
+                                    pa_agent::types::UserPart::Text(text) =>
+                                        Some(text.text.clone()),
+                                    pa_agent::types::UserPart::Image(_) => None,
+                                })
+                                .collect(),
+                        }
+                    )
+                }
+                pa_agent::types::AgentMessage::Standard(pa_agent::types::Message::Assistant(
+                    assistant,
+                )) => format!(
+                    "assistant: {}",
+                    assistant
+                        .content
+                        .iter()
+                        .filter_map(|block| match block {
+                            pa_agent::types::AssistantContent::Text(text) =>
+                                Some(text.text.clone()),
+                            _ => None,
+                        })
+                        .collect::<String>()
+                ),
+                _ => "other".to_string(),
+            })
+            // The harness digest row leads every transcript.
+            .filter(|row| row != "other")
+            .collect()
+    }
+    let on = run(Some(r#"{"lengthContinuations": 2}"#)).await;
+    assert_eq!(
+        on,
+        vec![
+            "user: write it".to_string(),
+            "assistant: the first half".to_string(),
+            "user: [auto-continue 1/2: the previous reply was cut off at the output-token limit]\n\nContinue exactly where the previous reply stopped. Do not repeat what was already written.".to_string(),
+            "assistant: the second half".to_string(),
+        ]
+    );
+    assert_eq!(
+        run(None).await,
+        vec![
+            "user: write it".to_string(),
+            "assistant: the first half".to_string(),
+        ]
+    );
+}
