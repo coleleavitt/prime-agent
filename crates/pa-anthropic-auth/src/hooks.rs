@@ -6,16 +6,21 @@
 //! `recoverSharedAccessTokenAfter401`). Only tokens this source served are
 //! touched: a runtime key or another store's login is sent as it is.
 
+use std::sync::atomic::Ordering;
+
 use anthropic::quota::{is_quota_bearing_header_frame, normalize_quota_headers};
 use anthropic::{AccountStore, SharedRefreshOptions};
-use pa_ai::request_hooks::{OutgoingRequest, ProviderRequestHooks, RejectedRequest, Rejection};
+use pa_ai::request_hooks::{
+    Admission, OutgoingRequest, PendingRequest, ProviderRequestHooks, RejectedRequest, Rejection,
+};
 use pa_ai::types::{Model, ProviderResponse};
 use pa_types::sync::MutexExt;
 use serde_json::Value;
 
 use crate::quota::cooldown_until;
+use crate::routing::RouteRequest;
 use crate::shape::ShapeIdentity;
-use crate::source::{block_on_own_runtime, UsageEvent};
+use crate::source::{block_on_own_runtime, PollWait, UsageEvent};
 use crate::SharedStoreSource;
 
 impl SharedStoreSource {
@@ -31,41 +36,73 @@ impl SharedStoreSource {
         Some(grant.access_token)
     }
 
-    /// After a 429 (or a rate-limited stream opening): the row cools down
-    /// until the server lets it serve again and is unpinned (napi
-    /// `markRateLimited`), its quota reading is recorded, and the request
-    /// moves to the next login in the store's order, when there is one
-    /// other than the limited row.
+    /// After a 429 (or a rate-limited stream opening), as the plugins'
+    /// routing does:
+    ///
+    /// - a sticky session (pi's sticky pass): a 429 or a `rate_limit_error`
+    ///   opening is checked with a usage poll of the login; only a confirmed
+    ///   long-lived exhaustion moves the session to another login, anything
+    ///   else (an overload, a short 5h hold, an unconfirmed limit) keeps it
+    ///   there and the 429 is reported;
+    /// - otherwise the row cools down until the server lets it serve again
+    ///   and is unpinned (napi `markRateLimited`), its quota reading is
+    ///   recorded and confirmed by a usage poll, and the request moves to
+    ///   the first other login that passes the quota policy (polled first
+    ///   when its reading is due), when there is one.
     fn rotate_after_rate_limit(&self, rejected: &RejectedRequest<'_>) -> Option<String> {
         let served = self.served_token(rejected.api_key)?;
-        let headers: Vec<(String, String)> = rejected
-            .headers
-            .iter()
-            .map(|(name, value)| (name.clone(), value.clone()))
-            .collect();
-        let now = chrono::Utc::now();
-        let until = cooldown_until(&headers, now);
-        let marked = AccountStore::mutate(&self.config.store_path, |store| {
-            if is_quota_bearing_header_frame(&headers) {
-                store.record_quota_snapshot_for_access_token(
-                    rejected.api_key,
-                    &normalize_quota_headers(&headers, now.timestamp_millis()),
-                    now,
+        let model = rejected.model.id.as_str();
+        if self.routes_sticky() {
+            let confirmable =
+                rejected.status == 429 || rejected.provider_error_type == Some("rate_limit_error");
+            if !confirmable || !self.sticky_migrates_after(&served.account_id, model) {
+                tracing::info!(
+                    status = rejected.status,
+                    "a sticky shared store login was rate-limited; keeping the session on it"
                 );
+                return None;
             }
-            let Ok(account) = store.get_mut(&served.account_id) else {
-                return Ok(false);
-            };
-            account.mark_rate_limited(until);
-            if store.current.as_deref() == Some(served.account_id.as_str()) {
-                store.current = None;
+        } else {
+            let headers: Vec<(String, String)> = rejected
+                .headers
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect();
+            let now = chrono::Utc::now();
+            let until = cooldown_until(&headers, now);
+            let marked = AccountStore::mutate(&self.config.store_path, |store| {
+                if is_quota_bearing_header_frame(&headers) {
+                    store.record_quota_snapshot_for_access_token(
+                        rejected.api_key,
+                        &normalize_quota_headers(&headers, now.timestamp_millis()),
+                        now,
+                    );
+                }
+                let Ok(account) = store.get_mut(&served.account_id) else {
+                    return Ok(false);
+                };
+                account.mark_rate_limited(until);
+                if store.current.as_deref() == Some(served.account_id.as_str()) {
+                    store.current = None;
+                }
+                Ok(true)
+            });
+            if !matches!(marked, Ok(true)) {
+                return None;
             }
-            Ok(true)
-        });
-        if !matches!(marked, Ok(true)) {
-            return None;
+            // The plugins confirm a 429 with a usage poll before moving on:
+            // its reading lands on the row, so an exhausted login stays
+            // skipped after its cooldown.
+            self.queue_poll(&served.account_id, PollWait::Result);
         }
-        let next = self.store_token()?;
+        let next = self
+            .routed_token(&RouteRequest {
+                model,
+                context_bytes: self.counts.last_context_bytes.load(Ordering::SeqCst),
+                exclude: Some(&served.account_id),
+            })
+            .ok()
+            .flatten()?;
         let moved = next != rejected.api_key
             && self
                 .served_token(&next)
@@ -143,11 +180,41 @@ impl ProviderRequestHooks for SharedStoreSource {
         crate::pi::response_event(event)
     }
 
-    fn current_credential(&self, _model: &Model, api_key: &str) -> Option<String> {
-        if !self.served(api_key) {
-            return None;
+    fn admit(&self, request: &PendingRequest<'_>) -> Admission {
+        if !self.served(request.api_key) {
+            return Admission::Send;
         }
-        self.store_token().filter(|current| current != api_key)
+        self.counts
+            .last_context_bytes
+            .store(request.context_bytes, Ordering::SeqCst);
+        let routed = self.routed_token(&RouteRequest {
+            model: &request.model.id,
+            context_bytes: request.context_bytes,
+            exclude: None,
+        });
+        let current = match routed {
+            Ok(Some(current)) => current,
+            Ok(None) => return Admission::Send,
+            Err(refusal) => return Admission::Refuse(refusal),
+        };
+        // The request's login is polled for its usage when its reading is
+        // due (or every N requests), on the keep-alive thread.
+        if let Some(served) = self.served_token(&current) {
+            let count = self.quota.count_request();
+            if self.quota.claim_due_poll(
+                &served.account_id,
+                count,
+                Some(&request.model.id),
+                chrono::Utc::now(),
+            ) {
+                self.run_poll(&served.account_id, PollWait::Background);
+            }
+        }
+        if current == request.api_key {
+            Admission::Send
+        } else {
+            Admission::SendWith(current)
+        }
     }
 
     fn rejected(&self, rejected: &RejectedRequest<'_>) -> Option<String> {
@@ -177,6 +244,7 @@ impl ProviderRequestHooks for SharedStoreSource {
             .collect();
         for write in self.quota.observe(
             &served.account_id,
+            served.account_uuid.as_deref(),
             api_key,
             response.status,
             &headers,

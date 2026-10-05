@@ -19,34 +19,16 @@ use serde_json::{Map, Value};
 use super::convert::{CacheMode, RequestSettings};
 
 /// The settings file's name (`ACCOUNT_FILE_NAME`).
-pub(crate) const SETTINGS_FILE: &str = "anthropic-auth.json";
+pub(crate) const SETTINGS_FILE: &str = crate::config::CONFIG_FILE_NAME;
 
-/// The settings file pi's plugin uses in this environment.
+/// The settings file pi's plugin uses in this environment: the sidecar
+/// the routing reads too (`config.rs`), one file resolved one way.
 #[must_use]
 pub(crate) fn settings_path_from_env() -> PathBuf {
-    settings_path_from_lookup(|name| std::env::var(name).ok())
-}
-
-/// [`settings_path_from_env`] over an environment reader.
-pub(crate) fn settings_path_from_lookup(lookup: impl Fn(&str) -> Option<String>) -> PathBuf {
-    let non_empty = |name: &str| {
-        lookup(name)
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-    };
-    if let Some(file) = non_empty("PI_ANTHROPIC_AUTH_FILE") {
-        return PathBuf::from(file);
-    }
-    let directory = non_empty("PI_AGENT_DIR").map_or_else(
-        || {
-            pa_types::platform::home_dir()
-                .unwrap_or_else(|| PathBuf::from("/"))
-                .join(".pi")
-                .join("agent")
-        },
-        PathBuf::from,
-    );
-    directory.join(SETTINGS_FILE)
+    crate::config::config_path_from_lookup(
+        |name| std::env::var(name).ok(),
+        &pa_types::platform::dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")),
+    )
 }
 
 type Stamp = (u64, SystemTime);

@@ -248,7 +248,9 @@ fn the_adoption_event_is_reported_once_per_process() {
             crate::TELEMETRY_EVENT.to_string(),
             serde_json::json!({
                 "source": "refreshed", "refreshed": 1, "failed": 0,
-                "migrated": 0, "recovered": 0, "rotated": 0
+                "migrated": 0, "recovered": 0, "rotated": 0,
+                "polled": 0, "poll_failed": 0, "quota_routed": 0, "blocked": 0,
+                "sticky_assigned": 0, "sticky_migrated": 0
             })
         )]
     );

@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use pa_agent::types::AgentMessage;
 use pa_core::features::{
     FeatureCommandOutcome, FeatureFuture, FeatureStatus, SessionFeature, SessionFeatureContext,
 };
@@ -26,6 +27,7 @@ use pa_telemetry::Properties;
 use pa_types::slash_commands::{BuiltinSlashCommand, SlashCommandExecution};
 use pa_types::sync::MutexExt;
 
+mod config;
 mod custody;
 mod device;
 mod hooks;
@@ -33,6 +35,7 @@ mod keepalive;
 mod login;
 mod pi;
 mod quota;
+mod routing;
 mod shape;
 mod source;
 #[cfg(test)]
@@ -177,6 +180,14 @@ impl SessionFeature for AnthropicAuthFeature {
         }))
     }
 
+    fn on_session_start(&self, context: &Arc<SessionFeatureContext>, _history: &[AgentMessage]) {
+        // The session this process serves is the sticky routing key; a
+        // child agent's session rides its parent's login.
+        if context.rlm_depth == 0 {
+            *self.source.session.lock_or_recover() = Some(context.session_id.clone());
+        }
+    }
+
     fn on_agent_end(&self, context: &Arc<SessionFeatureContext>) {
         self.publish_quota(context);
         let Some(telemetry) = &context.telemetry else {
@@ -193,6 +204,18 @@ impl SessionFeature for AnthropicAuthFeature {
         properties.set("migrated", usage.migrated.into());
         properties.set("recovered", usage.recovered.into());
         properties.set("rotated", usage.rotated.into());
+        let (polled, poll_failed) = self.source.quota.poll_counts();
+        properties.set("polled", polled.into());
+        properties.set("poll_failed", poll_failed.into());
+        let counts = &self.source.counts;
+        for (name, count) in [
+            ("quota_routed", &counts.quota_routed),
+            ("blocked", &counts.blocked),
+            ("sticky_assigned", &counts.sticky_assigned),
+            ("sticky_migrated", &counts.sticky_migrated),
+        ] {
+            properties.set(name, count.load(Ordering::SeqCst).into());
+        }
         telemetry.track(TELEMETRY_EVENT, &properties);
     }
 }

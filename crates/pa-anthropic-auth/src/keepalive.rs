@@ -8,14 +8,16 @@
 //! - the live Claude Code version the requests claim (the npm registry's
 //!   `latest`, read at the thread's start and hourly; never below the
 //!   verified floor);
-//! - the request path's store writes (quota readings, use), between passes;
+//! - the request path's store writes (quota readings, use) and usage polls
+//!   (`quota.rs`), between passes, at most one poll a second (the plugins'
+//!   quota API gate);
 //! - ahead of expiry: a login this process served within the last hour
 //!   whose access token expires before the next tick is refreshed now
 //!   (claimed through the store), so a request never waits for it.
 
 use std::collections::HashMap;
-use std::sync::mpsc::{Receiver, RecvTimeoutError};
-use std::sync::Mutex;
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH};
 
 use anthropic::claude_version::{fetch_latest_claude_code_version_from, ClaudeCodeVersionTracker};
@@ -23,8 +25,22 @@ use anthropic::{AccountStore, KeepAliveOptions, OAuthClient, SharedRefreshOption
 use chrono::{DateTime, Duration, Utc};
 use pa_types::sync::MutexExt;
 
-use crate::quota::StoreWrite;
+use crate::quota::{poll_usage, PollRun, QuotaTracker, StoreWrite};
 use crate::SharedStoreConfig;
+
+/// The least time between two usage polls (the plugins' `API_CALL_GAP_MS`).
+const POLL_GAP: StdDuration = StdDuration::from_secs(1);
+
+/// Work the request path hands to the keep-alive thread.
+pub(crate) enum Job {
+    /// A store bookkeeping write.
+    Write(StoreWrite),
+    /// A usage poll of one row; `done` hears how it went.
+    Poll {
+        account_id: String,
+        done: Option<Sender<PollRun>>,
+    },
+}
 
 /// The pause before the first pass (the process is starting).
 const FIRST_TICK: StdDuration = StdDuration::from_mins(1);
@@ -58,14 +74,17 @@ pub(crate) struct KeepAlive {
     in_use: Mutex<HashMap<String, Instant>>,
     /// The live Claude Code version (floored), refreshed on this thread.
     version: Mutex<ClaudeCodeVersionTracker>,
+    /// The quota readings the polls land in (shared with the source).
+    quota: Arc<QuotaTracker>,
 }
 
 impl KeepAlive {
-    pub(crate) fn new(config: SharedStoreConfig) -> Self {
+    pub(crate) fn new(config: SharedStoreConfig, quota: Arc<QuotaTracker>) -> Self {
         Self {
             config,
             in_use: Mutex::new(HashMap::new()),
             version: Mutex::new(ClaudeCodeVersionTracker::new()),
+            quota,
         }
     }
 
@@ -159,7 +178,7 @@ impl KeepAlive {
 
     /// The keep-alive loop, run on the crate's own thread for the life of
     /// the process.
-    pub(crate) fn run(&self, client: &OAuthClient, writes: &Receiver<StoreWrite>) {
+    pub(crate) fn run(&self, client: &OAuthClient, jobs: &Receiver<Job>) {
         let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -169,11 +188,33 @@ impl KeepAlive {
         };
         runtime.block_on(self.refresh_version(Utc::now()));
         let mut next = Instant::now() + FIRST_TICK;
+        let mut last_poll: Option<Instant> = None;
         loop {
-            // The request path's store writes run here between passes.
-            match writes.recv_timeout(next.saturating_duration_since(Instant::now())) {
-                Ok(write) => {
+            // The request path's writes and polls run here between passes.
+            match jobs.recv_timeout(next.saturating_duration_since(Instant::now())) {
+                Ok(Job::Write(write)) => {
                     write.apply(&self.config.store_path);
+                    continue;
+                }
+                Ok(Job::Poll { account_id, done }) => {
+                    if let Some(wait) = last_poll
+                        .map(|at| POLL_GAP.saturating_sub(at.elapsed()))
+                        .filter(|wait| !wait.is_zero())
+                    {
+                        std::thread::sleep(wait);
+                    }
+                    let run = runtime.block_on(poll_usage(
+                        &self.config.store_path,
+                        client,
+                        &self.quota,
+                        &account_id,
+                    ));
+                    if run != PollRun::Skipped {
+                        last_poll = Some(Instant::now());
+                    }
+                    if let Some(done) = done {
+                        let _ = done.send(run);
+                    }
                     continue;
                 }
                 Err(RecvTimeoutError::Timeout) => {}

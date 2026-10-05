@@ -84,8 +84,9 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
      the source to remove it (`remove_login`, with an optional notice) besides any `auth.json` entry.
    - provider requests: `pa_ai::request_hooks::install_request_hooks(provider_id, Arc<dyn ProviderRequestHooks>)`
      (process-wide, before any request) lets the store behind a provider id's credentials take part in every
-     request the provider sends with a credential it issued: `current_credential` (a fresher one, before the request
-     is built), `prepare` (the built headers and JSON payload, the request as the caller asked for it — its
+     request the provider sends with a credential it issued: `admit` (before the request is built, with the size of
+     its conversation context: send it as resolved, with another credential — by default `current_credential`'s
+     fresher one — or not at all, a `LocalRefusal` reported as the provider error it carries), `prepare` (the built headers and JSON payload, the request as the caller asked for it — its
      `Context` and the caller's options before provider defaults, `RequestSource` — and the exact body bytes to send
      in place of the payload's serialization, `OutgoingRequest::body`), `observe` (each response's status and
      headers), `response_event` (each parsed event of the streamed response, rewritten, dropped or expanded before

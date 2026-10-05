@@ -22,8 +22,9 @@ use crate::providers::anthropic::{
     should_use_fine_grained_tool_streaming_beta, AnthropicOptions,
 };
 use crate::request_hooks::{
-    request_hooks, CallerOptions, CredentialAttempts, OutgoingRequest, ProviderRequestHooks,
-    RejectedRequest, Rejection, RequestSource, RATE_LIMIT_STREAM_ERRORS,
+    context_bytes, request_hooks, Admission, CallerOptions, CredentialAttempts, OutgoingRequest,
+    PendingRequest, ProviderRequestHooks, RejectedRequest, Rejection, RequestSource,
+    RATE_LIMIT_STREAM_ERRORS,
 };
 use crate::types::{
     done_reason, error_reason, AssistantContent, AssistantMessage, Context, Model, StopReason,
@@ -205,12 +206,21 @@ async fn run_stream(
         .clone()
         .or_else(|| get_env_api_key(&model.provider))
         .unwrap_or_default();
-    // The provider id's request hooks (none natively): a fresher credential
-    // first, then each send's shape, response and rejection.
+    // The provider id's request hooks (none natively): the request's
+    // admission (a fresher credential, or a local refusal) first, then each
+    // send's shape, response and rejection.
     let hooks = request_hooks(&model.provider);
     if let Some(hooks) = &hooks {
-        if let Some(current) = current_credential(hooks, model, &api_key).await {
-            api_key = current;
+        match admit(hooks, model, &api_key, context).await {
+            Admission::Send => {}
+            Admission::SendWith(current) => api_key = current,
+            Admission::Refuse(refusal) => {
+                return Err(ProviderError::from_http_status_body(
+                    refusal.status,
+                    &refusal.body,
+                    refusal.headers.into_iter().collect(),
+                ));
+            }
         }
     }
 
@@ -805,18 +815,26 @@ async fn run_stream(
     Ok(())
 }
 
-/// The hooks' fresher credential for a request about to be built, asked
-/// on the blocking pool (it may read the hooks' store).
-async fn current_credential(
+/// The hooks' admission of a request about to be built, asked on the
+/// blocking pool (it may read the hooks' store). A hook that panicked
+/// admits the request as resolved.
+async fn admit(
     hooks: &Arc<dyn ProviderRequestHooks>,
     model: &Model,
     api_key: &str,
-) -> Option<String> {
+    context: &Context,
+) -> Admission {
+    let context_bytes = context_bytes(context);
     let (hooks, model, api_key) = (Arc::clone(hooks), model.clone(), api_key.to_string());
-    tokio::task::spawn_blocking(move || hooks.current_credential(&model, &api_key))
-        .await
-        .ok()
-        .flatten()
+    tokio::task::spawn_blocking(move || {
+        hooks.admit(&PendingRequest {
+            model: &model,
+            api_key: &api_key,
+            context_bytes,
+        })
+    })
+    .await
+    .unwrap_or(Admission::Send)
 }
 
 /// The credential to re-send a rejected request with, when the hooks name

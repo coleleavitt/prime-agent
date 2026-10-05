@@ -24,31 +24,92 @@ auth.json resolves the `anthropic` provider exactly as before.
     (`oauth_refresh_failed`, "Run /login"), never auth.json's login in its place.
 - Request hooks (`pa_ai::request_hooks`, for the `anthropic` provider id): only for an access token this source
   served (remembered, the latest 64, as the pi plugin remembers them), never a runtime key.
-  - `current_credential`: each request carries the store's token for it now (`get_access_token`, under the
-    in-process flight lock), so a token another process rotated since the session resolved it is replaced before
-    the send.
+  - `admit`: each request carries the token of the login the routing picks for it now (below; `get_access_token`
+    for that login, under the in-process flight lock), so a token another process rotated since the session
+    resolved it is replaced before the send; a request no login may serve is refused locally (never sent) with the
+    plugins' 429 (or 401) answer.
   - `rejected` after a 401 (once per request, pa-ai's rule): anthropic-napi's `handleUnauthorized`
     (`recover_unauthorized`: one claimed refresh of the row owning the rejected token; a retry only with a new
     version of the same login), and, when the store no longer holds the rejected token (another process rotated
     it), the store's current token re-read under its lock if it differs. Otherwise the 401 is reported.
+- The plugins' sidecar configuration (`config.rs`), read as the pi plugin reads it, so a setting made for pi applies
+  here too: `PI_ANTHROPIC_AUTH_FILE`, else `$PI_AGENT_DIR/anthropic-auth.json`, else `~/.pi/agent/anthropic-auth.json`
+  (the opencode plugin keeps its own copy, `~/.config/opencode/anthropic-auth.json`). Read only, re-read when the
+  file's size or mtime changes; a missing, unreadable or non-object file is the defaults, a value of the wrong type
+  its default. Read: `quota.enabled` (only `false` disables), `quota.checkIntervalMinutes` (5, floored at 1),
+  `quota.refreshEveryNRequests` (off), `quota.minimumRemaining.{five_hour|5h, seven_day|1w}` (0, remaining percent),
+  `quota.failClosedOnUnknownQuota` (true), `routing.mode` and `killswitch` (see routing).
 - Quota and rate limits (`quota.rs`), as the plugins keep them in the store:
   - `observe`: every response to a store-served request is read for the `anthropic-ratelimit-unified-*` windows
     (`normalize_quota_headers`); a changed reading is recorded on the row holding the token (napi
     `recordQuotaHeaders`) and a served request marks its row used (`markUsed`, at most every five minutes). The
     writes run on the keep-alive thread (inline only when no thread runs).
+  - The usage poll (`GET /api/oauth/usage`, the plugins' `QuotaManager`, through the SDK's `OAuthClient::usage` and
+    sans-I/O `QuotaManager`): the 5h/7d windows with their resets, the model-scoped weekly windows, extra-usage credits
+    and the binding window of one login. Cadence: a login's reading is due one `quota.checkIntervalMinutes` (sidecar,
+    default 5, at least 1) after it was taken, a minute after the reset of a window below its minimum, once per
+    interval while only headers were seen (they carry no scoped windows), and on every
+    `quota.refreshEveryNRequests`-th request (default off). Triggers: a request whose login is due queues a poll of
+    that login (it is not waited for); a 429 is confirmed by a poll of the limited login, waited for (bounded, 30 s)
+    before the request moves on. Backoff (the plugins'): one minute doubling to fifteen for a 429/5xx/network
+    failure, five minutes for any other, none for a 401/403; one poll in flight per login. Polls run on the
+    keep-alive thread (at most one a second, the plugins' quota API gate), never on a request, paint or startup
+    path (inline only when no thread runs). The access token polled with is the row's live one, else the store's
+    claimed refresh of that row. The result merges with the header readings (a newer header window wins, the
+    poll's scoped windows and credits stay), and its percentages are recorded on the row holding that token
+    (`record_quota_snapshot_for_access_token`, as the pi plugin's `recordQuota`), so every tool's selection sees
+    them. Not ported: the plugins' cross-process poll lock (`opencode-*-quota-refresh` file locks) and persisting
+    the full snapshot in a state file; the SDK's request carries `anthropic-version` and no `claude-code/<version>`
+    user agent.
   - Display: at each agent end of an Anthropic session the agents view gets the line `Claude quota: 5h 48% / 7d 55%
     used` (`publish_feature_status`, feature `anthropic-auth`; status `{fiveHourPercent, sevenDayPercent, checkedAt,
-    source: "headers"|"store"}`), from the last served login's latest reading, else what the store recorded for it;
-    published again only when it changes. prime-agent has no other usage/limits surface.
+    source: "headers"|"poll"|"store"}`), from the last served login's latest reading (headers and polls merged; the
+    source names the newest producer), else what the store recorded for it; published again only when it changes.
+    prime-agent has no other usage/limits surface.
   - 429 switching (`rejected(RateLimited)`, also a 200 whose stream opens with `rate_limit_error` /
-    `overloaded_error`): the row cools down (`retry-after`, else the reset of the window the server named binding,
-    else the later window reset, else a minute) and is unpinned (napi `markRateLimited`), the reading is recorded,
-    and the request moves to the next login in the store's order (pa-ai re-sends it while the hooks name a login
-    the request has not used). No other login: the 429 is reported, and the login keeps serving its live token
-    (a cooling-down login is still a login: `status` lists every enabled OAuth inference row, so nothing falls
-    through to auth.json or reads as "no API key").
+    `overloaded_error`), outside a sticky session: the row cools down (`retry-after`, else the reset of the window
+    the server named binding, else the later window reset, else a minute) and is unpinned (napi `markRateLimited`),
+    the reading is recorded and confirmed by a usage poll, and the request moves to the first other login that
+    passes the quota policy (pi's fallback pass: polled first when due; unknown quota fails closed by default), as
+    pa-ai re-sends it while the hooks name a login the request has not used. No such login: the 429 is reported,
+    and the login keeps serving its live token (a cooling-down login is still a login: `status` lists every
+    enabled OAuth inference row, so nothing falls through to auth.json or reads as "no API key"). In a sticky
+    session see routing.
   - Quota reserve: `ANTHROPIC_QUOTA_RESERVE_PCT` (0-100; the napi `reservePct`) prefers logins whose fresh
     recorded usage is below it in both windows; when every login is at it, the store's plain pick serves.
+- Routing (`routing.rs`, for store-served tokens; replaces the plain store pick per request). Candidates: the
+  store's logins in its routing order (`current` first; cooling-down, exhausted and dead-refresh rows out; under
+  the quota reserve when any is); the first plays the plugins' main account, the rest their fallbacks; their quota
+  is this process's readings over what the store recorded. By the sidecar's `routing.mode`:
+  - `main-first` (default; pi's ordered pass): the first serves unless a fresh reading has it spent (a 5h/7d
+    window, or the request model's scoped window, at 0% left; a stale spent reading is re-polled first) or the
+    killswitch blocks it; then the first other login passing the quota policy (`quota.minimumRemaining` per
+    window; unknown quota fails closed unless `failClosedOnUnknownQuota: false`), the model's scoped window and
+    the killswitch, each polled first when due; none: the first serves anyway, unless the killswitch blocks it.
+  - `fallback-first`: those other logins first, then the first.
+  - `sticky-balanced` (the plugins' `StickySessionRouter`, via the SDK's port): the session (the top-level session
+    this process serves, from `on_session_start`; a child agent rides its parent's login) is assigned the login
+    with the most spendable quota per hour until reset (per-window reserve: the larger of `minimumRemaining` and,
+    when armed, the killswitch threshold) over the prompt bytes already assigned to it (the context size pa-ai
+    reports), persisted by SHA-256 of the session id in `anthropic-auth-routing-state.json` beside the sidecar
+    (`PI_ANTHROPIC_AUTH_ROUTING_STATE_FILE`; shared with pi, cross-process locked), and kept across processes and
+    restarts. Candidates not fresh are polled first (waited for). It moves only on a fresh reading showing the 7d
+    or the model's scoped window spent, or the 5h window spent more than 15 minutes before its reset (within 15
+    minutes the request is refused locally with a 429 and a session-jittered `retry-after`, keeping the session),
+    a killswitch block, the login leaving the pool, or a model change. A 429 (or `rate_limit_error` opening) on
+    it is confirmed by a poll: only that move takes the request to another login; otherwise the 429 is reported
+    and the session stays (no cooldown). A complete pool with no eligible login is refused locally with the
+    plugins' 429 (`No OAuth account currently satisfies sticky-balanced quota policy. Retry in …`, the scoped
+    model's weekly message, or a 401 naming logins that need a re-login); an incomplete pool (a reading still
+    unknown or stale after its poll) is routed by the ordered pass instead of pi's retryable connection error.
+  - Killswitch (`killswitch.enabled`, the opencode plugin's): a login whose remaining 5h/7d percent is below its
+    threshold (`killswitch.accounts[<store id>]`, else `killswitch.main`, else 5%/10%), or whose scoped window for
+    the request model is at or below its scoped threshold (default 0%), never serves; unknown quota blocks under
+    `failClosedOnUnknownQuota`. Readings are polled first when due (its eager refresh). When no login can serve,
+    the request is refused locally with a 429: `Killswitch: no routable accounts. Retry in Xm Ys.` (the earliest
+    future reset plus a minute, else 300 s), or `<Model> weekly limit reached, no routable accounts. …` when the
+    model's scoped window drove the block. pi applies the killswitch only in its sticky pass; prime-agent applies
+    it in every mode, as opencode does. Its thresholds apply to every login by store id (no main account here).
 - Request shape (`prepare`; `pi/`, `shape.rs`): a request the store's token authenticates goes out as the pi plugin
   sends it (anthropic-auth pi `streamCortexKitAnthropic` → `sendAnthropicRequestUnrecorded`):
   - body (`pi/convert.rs`, pi's `buildAnthropicRequest`), rebuilt from the caller's conversation and options that
@@ -150,28 +211,36 @@ auth.json resolves the `anthropic` provider exactly as before.
 
 - Account management beyond logout (enable, disable, reorder, pin, remote revoke): the plugins' account commands
   own it; prime-agent has no account command surface.
-- The usage endpoint poll (`/api/oauth/usage`), sticky-balanced routing, the killswitch and per-window minimum
-  thresholds of the plugins' sidecar configuration: readings come from response headers only.
+- Writing the sidecar or the plugins' commands (`/claude-routing`, `/claude-killswitch`, `/claude-quota`; a
+  sticky session's `reset`): prime-agent reads the settings the plugins write. The sidecar's other sections
+  (`fallbackOn`, `refresh`, relay, prime, dump, logging) and its fallback `accounts` (API-key routes included) are
+  not read: the store's logins are the pool.
 - The rest of pi's request (the cache keep-alive, content filtering). A `--api-key` `sk-ant-oat` token, or any
   token the store did not serve, keeps pa-ai's native Claude Code mode.
 
 ## Public API
 
 `install`, `shared_source`, `PROVIDER_ID`, `QUOTA_RESERVE_ENV`, `SharedStoreSource` (`new`, `store_path`, `usage`, `store_login`),
-`SharedStoreConfig` (`from_env`, `isolated`; `background` runs the keep-alive thread, `version_url` the version lookup, `quota_reserve` the reserve, `pi` the plugin's request-path files), `PiConfig` (`from_env`, `under`), `NewLogin`, `StoredLogin` (`claude_code_notice`), `SourceUsage`, `STORE_LABEL`, `AnthropicAuthFeature`, `TELEMETRY_EVENT`.
+`SharedStoreConfig` (`from_env`, `isolated`; `background` runs the keep-alive thread, `version_url` the version lookup, `quota_reserve` the reserve, `pi` the plugin's request-path files, `config_path` the plugins' sidecar, `routing_state_path` the sticky routing state), `PiConfig` (`from_env`, `under`), `NewLogin`, `StoredLogin` (`claude_code_notice`), `SourceUsage`, `STORE_LABEL`, `AnthropicAuthFeature`, `TELEMETRY_EVENT`.
 
 ## Seams
 
 - `pa_core::auth::install_credential_source` (the provider credential source seam: credential, custody of
   auth.json's login, logout).
-- `pa_ai::request_hooks::install_request_hooks` (the provider request hooks; `prepare` reads the caller's request,
-  `RequestSource`, and sends exact bytes, `OutgoingRequest::body`; `response_event` rewrites the streamed events).
+- `pa_ai::request_hooks::install_request_hooks` (the provider request hooks; `admit`, the generic admission seam:
+  another credential, or a local refusal; `prepare` reads the caller's request, `RequestSource`, and sends exact
+  bytes, `OutgoingRequest::body`; `response_event` rewrites the streamed events).
+- `pa_core::features::SessionFeature::on_session_start` (the sticky routing key).
 - `pa_core::features::SessionFeature::on_agent_end` (the adoption event) and `slash_commands` /
   `execute_slash_command` (`/claude-fast`, `/claude-cache`).
 
 ## Files
 
-Reads and writes `~/.anthropic-accounts/accounts.json` (and its lock) only through the SDK, under the SDK's rules,
+Reads the plugins' sidecar configuration (`~/.pi/agent/anthropic-auth.json`, `PI_AGENT_DIR` / `PI_ANTHROPIC_AUTH_FILE`;
+never written: the plugins' commands own it; missing, unreadable or malformed: the plugins' defaults; re-read when it
+changes) and reads and writes the sticky routing state beside it (`anthropic-auth-routing-state.json` and its
+`.flock`, the plugins' format through the SDK's router: hashed session ids, written atomically `0600`, only in
+`sticky-balanced` mode). Reads and writes `~/.anthropic-accounts/accounts.json` (and its lock) only through the SDK, under the SDK's rules,
 and `~/.anthropic-accounts/device.json` (the installation's device id, the plugins' format; created when missing,
 never overwritten); reads the pi plugin's settings file (`~/.pi/agent/anthropic-auth.json`, above) and writes it
 for `/claude-fast` and `/claude-cache` (with its `.config-write.lock`);
@@ -183,5 +252,8 @@ publishes a rotation of the linked account to it, as the plugins do. It owns no 
 `anthropic_shared_auth` (schema v4), once per process at the first agent end after the store answered a request:
 `source` (how the first credential was obtained: `store`, `refreshed`, `adopted`, `claude_code`, or `failed`),
 `refreshed` and `failed` (the process's counts so far), and (additive, optional in the catalogue) `migrated`
-(auth.json logins moved into the store), `recovered` (401s re-sent with a recovered token) and `rotated` (429s moved
-to another login). Never an account id, email, label or token.
+(auth.json logins moved into the store), `recovered` (401s re-sent with a recovered token), `rotated` (429s moved
+to another login), `polled` (usage polls sent), `poll_failed` (of those, the ones that failed), `quota_routed`
+(requests sent past the first login by quota policy or killswitch), `blocked` (requests refused locally),
+`sticky_assigned` and `sticky_migrated` (sticky sessions assigned a login, and moved). Never an account id, email,
+label, session id or token.

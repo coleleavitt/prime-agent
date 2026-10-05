@@ -8,8 +8,8 @@ use serde_json::json;
 
 use crate::providers::anthropic::{stream_anthropic, AnthropicOptions};
 use crate::request_hooks::{
-    install_request_hooks, CallerOptions, OutgoingRequest, ProviderRequestHooks, RejectedRequest,
-    Rejection,
+    install_request_hooks, Admission, CallerOptions, LocalRefusal, OutgoingRequest, PendingRequest,
+    ProviderRequestHooks, RejectedRequest, Rejection,
 };
 use crate::types::{AssistantContent, Context, Model, StopReason, StreamOptions, TextContent};
 
@@ -465,5 +465,100 @@ async fn without_hooks_an_unmodeled_block_is_skipped_as_before() {
     assert_eq!(
         (message.stop_reason, text(&message)),
         (StopReason::Stop, vec![])
+    );
+}
+
+/// Stub hooks admitting every request one way, recording what they saw.
+struct AdmittingHooks {
+    admission: Admission,
+    seen: Mutex<Vec<(String, u64)>>,
+}
+
+impl ProviderRequestHooks for AdmittingHooks {
+    fn admit(&self, request: &PendingRequest<'_>) -> Admission {
+        self.seen
+            .lock_or_recover()
+            .push((request.api_key.to_string(), request.context_bytes));
+        self.admission.clone()
+    }
+}
+
+/// Stub hooks that only know a fresher credential.
+struct FresherHooks;
+
+impl ProviderRequestHooks for FresherHooks {
+    fn current_credential(&self, _model: &Model, api_key: &str) -> Option<String> {
+        (api_key == "sk-ant-oat01-stale").then(|| "sk-ant-oat01-fresh".to_string())
+    }
+}
+
+#[tokio::test]
+async fn an_admission_can_name_another_credential_and_sees_the_context_size() {
+    let provider = "hooks-admit-send-with";
+    let (base, bearers) = messages_endpoint(vec![(200, OK_STREAM)]).await;
+    let hooks = Arc::new(AdmittingHooks {
+        admission: Admission::SendWith("sk-ant-oat01-chosen".to_string()),
+        seen: Mutex::new(Vec::new()),
+    });
+    install_request_hooks(provider, hooks.clone());
+    let empty = Context {
+        system_prompt: None,
+        messages: vec![],
+        tools: None,
+    };
+
+    let message = run(&model(provider, &base), "sk-ant-oat01-resolved").await;
+
+    assert_eq!(
+        (message.stop_reason, text(&message)),
+        (StopReason::Stop, hello())
+    );
+    assert_eq!(*bearers.lock_or_recover(), vec!["sk-ant-oat01-chosen"]);
+    assert_eq!(
+        *hooks.seen.lock_or_recover(),
+        vec![(
+            "sk-ant-oat01-resolved".to_string(),
+            serde_json::to_vec(&empty).unwrap().len() as u64
+        )]
+    );
+}
+
+#[tokio::test]
+async fn a_refused_request_is_never_sent_and_fails_with_the_refusal() {
+    let provider = "hooks-admit-refuse";
+    let (base, bearers) = messages_endpoint(vec![(200, OK_STREAM)]).await;
+    let hooks = Arc::new(AdmittingHooks {
+        admission: Admission::Refuse(LocalRefusal {
+            status: 429,
+            headers: [("retry-after".to_string(), "60".to_string())].into(),
+            body: r#"{"type":"error","error":{"type":"rate_limit_error","message":"blocked by policy"}}"#
+                .to_string(),
+        }),
+        seen: Mutex::new(Vec::new()),
+    });
+    install_request_hooks(provider, hooks.clone());
+
+    let message = run(&model(provider, &base), "sk-ant-oat01-a").await;
+
+    assert_eq!(message.stop_reason, StopReason::Error);
+    assert!(message
+        .error_message
+        .as_deref()
+        .is_some_and(|error| error.contains("blocked by policy")));
+    assert_eq!(*bearers.lock_or_recover(), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn the_default_admission_sends_the_hooks_fresher_credential() {
+    let provider = "hooks-admit-default";
+    let (base, bearers) = messages_endpoint(vec![(200, OK_STREAM), (200, OK_STREAM)]).await;
+    install_request_hooks(provider, Arc::new(FresherHooks));
+
+    run(&model(provider, &base), "sk-ant-oat01-stale").await;
+    run(&model(provider, &base), "sk-ant-oat01-other").await;
+
+    assert_eq!(
+        *bearers.lock_or_recover(),
+        vec!["sk-ant-oat01-fresh", "sk-ant-oat01-other"]
     );
 }

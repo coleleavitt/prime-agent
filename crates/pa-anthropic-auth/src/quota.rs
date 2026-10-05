@@ -6,6 +6,18 @@
 //!   holding the token (anthropic-napi `recordQuotaHeaders`), and a served
 //!   request marks its row used (`markUsed`, at most every five minutes);
 //!   the writes run on the keep-alive thread, never on the request;
+//! - the usage poll (`GET /api/oauth/usage`, the plugins' `QuotaManager`):
+//!   the windows, their resets, the model-scoped weekly windows and the
+//!   extra-usage credits of one login, polled on the keep-alive thread when
+//!   the login's reading is due (the sidecar's `quota.checkIntervalMinutes`,
+//!   five by default; a minute after the reset of a window below its
+//!   minimum; never-polled header readings once per interval; every
+//!   `quota.refreshEveryNRequests` requests), with the plugins' backoff
+//!   (one to fifteen minutes, five for a non-transient failure, none for a
+//!   401/403) and at most one poll a second; the result merges with the
+//!   header readings (a newer header window wins) and its percentages are
+//!   recorded on the row holding the token it was read with, as the pi
+//!   plugin's `recordQuota` does;
 //! - the latest reading is the quota line the agents view shows for an
 //!   Anthropic session (`publish_feature_status`; prime-agent has no other
 //!   usage surface);
@@ -17,14 +29,23 @@
 //! - an optional quota reserve (`ANTHROPIC_QUOTA_RESERVE_PCT`, the napi
 //!   `reservePct`) prefers logins whose recorded usage is below it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
+use anthropic::access::{get_access_token, AccessRequest};
 use anthropic::account::QuotaObservation;
-use anthropic::quota::{is_quota_bearing_header_frame, normalize_quota_headers, QuotaSnapshot};
+use anthropic::backoff::FailureFacts;
+use anthropic::quota::{
+    is_quota_bearing_header_frame, normalize_quota_headers, QuotaFieldSource, QuotaPolicy,
+    QuotaSnapshot, QuotaWindow,
+};
+use anthropic::quota_manager::{PollDecision, PollOutcome, QuotaManager};
 use anthropic::retry::retry_after_ms;
-use anthropic::AccountStore;
+use anthropic::token::AccessToken;
+use anthropic::{Account, AccountStore, OAuthClient, SharedRefreshOptions};
 use chrono::{DateTime, Duration, Utc};
 use pa_types::sync::MutexExt;
 
@@ -34,6 +55,9 @@ pub const QUOTA_RESERVE_ENV: &str = "ANTHROPIC_QUOTA_RESERVE_PCT";
 const DEFAULT_COOLDOWN_SECS: i64 = 60;
 /// A row's use is recorded at most this often.
 const MARK_USED_EVERY: std::time::Duration = std::time::Duration::from_mins(5);
+/// An access token this close to expiry is not polled with (the plugins'
+/// `ACCESS_TOKEN_EXPIRY_MARGIN_MS`).
+const ACCESS_EXPIRY_MARGIN_MS: i64 = 60_000;
 
 /// A store write the request path hands to the keep-alive thread.
 #[derive(Debug, Clone, PartialEq)]
@@ -74,21 +98,34 @@ impl StoreWrite {
     }
 }
 
-/// What the request path read about quota, per login.
+/// What this process knows about each login's quota.
 #[derive(Default)]
 pub(crate) struct QuotaTracker {
-    /// The latest header reading per store row.
+    /// The latest header reading per store row (what was last recorded).
     readings: Mutex<HashMap<String, QuotaSnapshot>>,
     /// When each row's use was last recorded.
     used: Mutex<HashMap<String, Instant>>,
+    /// Header readings and usage polls per row, merged: the SDK's port of
+    /// the plugins' `QuotaManager` (cadence, backoff, identity fencing).
+    manager: Mutex<QuotaManager>,
+    /// Requests this process sent with the store's tokens (the cadence of
+    /// `quota.refreshEveryNRequests`).
+    requests: AtomicU64,
+    /// Rows with a poll queued that has not run yet.
+    queued: Mutex<HashSet<String>>,
+    /// Usage polls sent.
+    polled: AtomicU64,
+    /// Usage polls that failed.
+    poll_failed: AtomicU64,
 }
 
 impl QuotaTracker {
-    /// Read a response for the row `account_id` (its token `access_token`):
-    /// the store writes it calls for.
+    /// Read a response for the row `account_id` (its token `access_token`,
+    /// its account `lineage`): the store writes it calls for.
     pub(crate) fn observe(
         &self,
         account_id: &str,
+        lineage: Option<&str>,
         access_token: &str,
         status: u16,
         headers: &[(String, String)],
@@ -97,6 +134,12 @@ impl QuotaTracker {
         let mut writes = Vec::new();
         if is_quota_bearing_header_frame(headers) {
             let snapshot = normalize_quota_headers(headers, now.timestamp_millis());
+            self.manager.lock_or_recover().push_headers(
+                account_id,
+                lineage,
+                &snapshot,
+                now.timestamp_millis(),
+            );
             let mut readings = self.readings.lock_or_recover();
             let changed = readings
                 .get(account_id)
@@ -124,10 +167,231 @@ impl QuotaTracker {
         writes
     }
 
-    /// The latest header reading for `account_id`.
-    pub(crate) fn reading(&self, account_id: &str) -> Option<QuotaSnapshot> {
-        self.readings.lock_or_recover().get(account_id).cloned()
+    /// What is known about `account_id`'s quota: header readings and usage
+    /// polls merged, else what the store recorded for it.
+    pub(crate) fn snapshot(&self, account_id: &str) -> Option<QuotaSnapshot> {
+        self.manager
+            .lock_or_recover()
+            .get(account_id)
+            .map(|entry| entry.quota.clone())
     }
+
+    /// Adopt the sidecar's quota policy (cadence, minimums).
+    pub(crate) fn set_policy(&self, policy: &QuotaPolicy) {
+        let mut manager = self.manager.lock_or_recover();
+        if manager.policy() != policy {
+            manager.set_policy(policy.clone());
+        }
+    }
+
+    /// Learn what the store recorded for `account` (another process's
+    /// reading) while this process knows nothing of its own: the store
+    /// keeps only percentages, so it never replaces a reading with resets
+    /// and scoped windows (the store's own selection already skips a row
+    /// it records spent).
+    pub(crate) fn seed(&self, account: &Account, now: DateTime<Utc>) {
+        let Some(recorded) = account.quota.as_ref().and_then(recorded_snapshot) else {
+            return;
+        };
+        let mut manager = self.manager.lock_or_recover();
+        if manager.get(&account.id).is_some() {
+            return;
+        }
+        manager.seed(
+            &account.id,
+            lineage(account).as_deref(),
+            Some(&recorded),
+            None,
+            now.timestamp_millis(),
+        );
+    }
+
+    /// Whether `account_id`'s reading is due for a poll (for `model`'s
+    /// scoped window, when given).
+    pub(crate) fn is_stale(
+        &self,
+        account_id: &str,
+        model: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> bool {
+        self.manager
+            .lock_or_recover()
+            .is_stale(account_id, model, now.timestamp_millis())
+    }
+
+    /// Count one request sent with a store token; its number.
+    pub(crate) fn count_request(&self) -> u64 {
+        self.requests.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    /// Whether `account_id` is due for a poll for request number
+    /// `request_count` of `model`, and not queued yet (it is now).
+    pub(crate) fn claim_due_poll(
+        &self,
+        account_id: &str,
+        request_count: u64,
+        model: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> bool {
+        let due = self.manager.lock_or_recover().needs_refresh(
+            account_id,
+            request_count,
+            model,
+            now.timestamp_millis(),
+        );
+        due && self.claim_poll(account_id)
+    }
+
+    /// Usage polls sent, and how many failed.
+    pub(crate) fn poll_counts(&self) -> (u64, u64) {
+        (
+            self.polled.load(Ordering::SeqCst),
+            self.poll_failed.load(Ordering::SeqCst),
+        )
+    }
+
+    /// Mark a poll of `account_id` queued; `false` when one already is.
+    pub(crate) fn claim_poll(&self, account_id: &str) -> bool {
+        self.queued.lock_or_recover().insert(account_id.to_string())
+    }
+}
+
+/// The account identity a row's quota belongs to (its account uuid).
+pub(crate) fn lineage(account: &Account) -> Option<String> {
+    account
+        .oauth()?
+        .account
+        .as_ref()
+        .map(|account| account.uuid.clone())
+        .filter(|uuid| !uuid.trim().is_empty())
+}
+
+/// A store row's recorded percentages as a snapshot (no resets, no scoped
+/// windows, no producer: the store keeps only the percentages).
+fn recorded_snapshot(recorded: &QuotaObservation) -> Option<QuotaSnapshot> {
+    let checked_at = recorded.checked_at?.timestamp_millis();
+    let window = |used: Option<f64>| {
+        used.filter(|used| used.is_finite()).map(|used| {
+            let used = used.clamp(0.0, 100.0);
+            QuotaWindow {
+                used_percent: used,
+                remaining_percent: 100.0 - used,
+                resets_at: None,
+                checked_at,
+            }
+        })
+    };
+    let snapshot = QuotaSnapshot {
+        five_hour: window(recorded.five_hour_percent),
+        seven_day: window(recorded.seven_day_percent),
+        checked_at: Some(checked_at),
+        ..QuotaSnapshot::default()
+    };
+    (snapshot.five_hour.is_some() || snapshot.seven_day.is_some()).then_some(snapshot)
+}
+
+/// What one usage poll did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PollRun {
+    /// The reading landed (in this process and on the row).
+    Applied,
+    /// Not sent: one is in flight, the poll is backed off, the row is gone
+    /// or has no usable token.
+    Skipped,
+    /// Sent, and it failed.
+    Failed,
+}
+
+/// One usage poll for the row `account_id` (the plugins' `refreshMain` /
+/// `refreshFallback`): its live access token (refreshed under the store's
+/// claim when it has expired), the poll, the merge, the row's percentages.
+pub(crate) async fn poll_usage(
+    store_path: &Path,
+    client: &OAuthClient,
+    book: &QuotaTracker,
+    account_id: &str,
+) -> PollRun {
+    let run = async {
+        let now = Utc::now();
+        let Some(row) = AccountStore::load(store_path)
+            .ok()
+            .and_then(|store| store.get(account_id).cloned())
+        else {
+            return PollRun::Skipped;
+        };
+        let ticket = {
+            let mut manager = book.manager.lock_or_recover();
+            manager.bind_lineage(account_id, lineage(&row).as_deref());
+            match manager.begin_poll(account_id, now.timestamp_millis()) {
+                PollDecision::Poll(ticket) => ticket,
+                PollDecision::InFlight | PollDecision::Cached(_) | PollDecision::BackedOff => {
+                    return PollRun::Skipped;
+                }
+            }
+        };
+        let live = row
+            .oauth()
+            .filter(|tokens| {
+                tokens.expires_at > now + Duration::milliseconds(ACCESS_EXPIRY_MARGIN_MS)
+            })
+            .map(|tokens| tokens.access.expose().to_string());
+        let token = match live {
+            Some(token) => Some(token),
+            None => get_access_token(
+                client,
+                store_path,
+                &AccessRequest {
+                    account: Some(account_id.to_string()),
+                    ..AccessRequest::default()
+                },
+                &SharedRefreshOptions::default(),
+            )
+            .await
+            .ok()
+            .filter(|grant| grant.account_id == account_id)
+            .map(|grant| grant.access_token),
+        };
+        let Some(token) = token else {
+            book.manager.lock_or_recover().abandon_poll(ticket);
+            return PollRun::Skipped;
+        };
+        book.manager
+            .lock_or_recover()
+            .mark_poll_dispatched(&ticket, Utc::now().timestamp_millis());
+        book.polled.fetch_add(1, Ordering::SeqCst);
+        let result = client
+            .usage(&AccessToken::new(token.clone()))
+            .await
+            .map(|usage| QuotaSnapshot::from_usage_response(&usage, Utc::now().timestamp_millis()))
+            .map_err(|error| FailureFacts::from_error(&error));
+        let outcome = book.manager.lock_or_recover().complete_poll(
+            ticket,
+            Utc::now().timestamp_millis(),
+            result,
+        );
+        match outcome {
+            PollOutcome::Applied(entry) => {
+                StoreWrite::Quota {
+                    access_token: token,
+                    snapshot: Box::new(entry.quota),
+                }
+                .apply(store_path);
+                PollRun::Applied
+            }
+            PollOutcome::Superseded(_) => PollRun::Skipped,
+            PollOutcome::Failed { backoff } => {
+                book.poll_failed.fetch_add(1, Ordering::SeqCst);
+                tracing::debug!(
+                    backed_off = backoff.is_some(),
+                    "a shared store login's usage poll failed"
+                );
+                PollRun::Failed
+            }
+        }
+    }
+    .await;
+    book.queued.lock_or_recover().remove(account_id);
+    run
 }
 
 /// The used percentages of a reading.
@@ -153,7 +417,8 @@ pub(crate) struct QuotaLine {
     pub(crate) status: serde_json::Value,
 }
 
-/// The line for a header reading, else the row's recorded observation.
+/// The line for this process's reading (header readings and usage polls
+/// merged), else the row's recorded observation.
 pub(crate) fn quota_line(
     reading: Option<&QuotaSnapshot>,
     recorded: Option<&QuotaObservation>,
@@ -161,7 +426,13 @@ pub(crate) fn quota_line(
     let (five, seven, checked_at, source) = match (reading, recorded) {
         (Some(reading), _) if reading.has_standard_windows() => {
             let (five, seven) = percents(reading);
-            (five, seven, Some(reading.checked_at_max()), "headers")
+            let source = match reading.source {
+                Some(QuotaFieldSource::Poll) => "poll",
+                Some(QuotaFieldSource::Headers) => "headers",
+                // What the store recorded, learned from the row.
+                None => "store",
+            };
+            (five, seven, Some(reading.checked_at_max()), source)
         }
         (_, Some(recorded))
             if recorded.five_hour_percent.is_some() || recorded.seven_day_percent.is_some() =>

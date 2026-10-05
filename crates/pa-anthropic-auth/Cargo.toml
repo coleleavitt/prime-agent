@@ -15,6 +15,8 @@ pa-core = { path = "../pa-core" }
 # The provider request hooks (pa_ai::request_hooks): the store's token per
 # request and the 401 recovery.
 pa-ai.workspace = true
+# The session feature's session-start hook names the history's type.
+pa-agent.workspace = true
 pa-types.workspace = true
 pa-telemetry.workspace = true
 # The store's API takes chrono instants (the version anthropic resolves).
@@ -32,7 +34,6 @@ tracing.workspace = true
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
-pa-agent.workspace = true
 tempfile = "3"
 
 [lints]
