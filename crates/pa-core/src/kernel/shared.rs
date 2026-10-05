@@ -317,6 +317,10 @@ pub struct ExecuteResult {
     pub status: ExecuteStatus,
     pub error: Option<KernelError>,
     pub duration_ms: u64,
+    /// The cell ignored the interrupt and was force-aborted after the grace
+    /// window: the kernel is still busy running it, so the next cell would
+    /// find it busy until the process is killed.
+    pub kernel_unresponsive: bool,
 }
 
 /// Options for one `execute` call.

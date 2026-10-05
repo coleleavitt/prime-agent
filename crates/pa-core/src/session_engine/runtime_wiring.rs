@@ -304,15 +304,25 @@ impl KernelExecutor for KernelManagerExecutor {
                     },
                 )
                 .await
-                .map_err(|error| {
-                    match error.downcast::<crate::kernel::shared::KernelExitedError>() {
-                        Ok(exited) => KernelExecError::KernelExited(exited),
-                        Err(error) => KernelExecError::Other(error),
-                    }
-                })?;
+                .map_err(classify_execute_error)?;
             Ok(convert_execute_result(result))
         })
     }
+}
+
+/// Type the manager's execute failure for the tool: a dead kernel, a kernel
+/// still busy with an interrupted cell, or anything else.
+fn classify_execute_error(error: anyhow::Error) -> KernelExecError {
+    let error = match error.downcast::<crate::kernel::shared::KernelExitedError>() {
+        Ok(exited) => return KernelExecError::KernelExited(exited),
+        Err(error) => error,
+    };
+    if error.is::<crate::kernel::shared::KernelBusyAfterInterruptError>() {
+        return KernelExecError::BusyAfterInterrupt(
+            crate::tools::ipython::KernelBusyAfterInterruptError::default(),
+        );
+    }
+    KernelExecError::Other(error)
 }
 
 fn convert_status(
@@ -354,6 +364,7 @@ fn convert_execute_result(
         sent_agent_messages: result.sent_agent_messages.unwrap_or_default(),
         bash_commands: result.bash_commands,
         executed_bash_commands: result.executed_bash_commands,
+        kernel_unresponsive: result.kernel_unresponsive,
     }
 }
 
@@ -367,5 +378,25 @@ pub fn ipython_tool_options(
         provisioner,
         ui: None,
         on_late_sent_agent_message,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_managers_busy_after_interrupt_failure_reaches_the_tool_typed() {
+        // Untyped, the tool's busy-kernel handling (wait/kill choice, or
+        // the headless replacement) never ran: every later call failed.
+        let busy = classify_execute_error(anyhow::Error::new(
+            crate::kernel::shared::KernelBusyAfterInterruptError,
+        ));
+        assert!(busy.is_busy_after_interrupt(), "{}", busy.message());
+        let other = classify_execute_error(anyhow::anyhow!("Kernel has been shut down"));
+        assert_eq!(
+            (other.is_busy_after_interrupt(), other.message()),
+            (false, "Kernel has been shut down".to_string())
+        );
     }
 }

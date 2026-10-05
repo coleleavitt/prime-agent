@@ -62,6 +62,8 @@ pub struct ExecuteResult {
     /// The `bash()` commands that finished while the cell ran, with exit
     /// codes; reported to observers as the `bashCommands` host fact.
     pub executed_bash_commands: Vec<crate::kernel::shared::KernelExecutedBashCommand>,
+    /// The cell ignored the interrupt: the kernel is still running it.
+    pub kernel_unresponsive: bool,
 }
 
 /// The wire form of one sent agent message (TS `KernelSentAgentMessage`):
@@ -232,6 +234,13 @@ pub fn kernel_crash_recovery_notice(exit: &crate::kernel::shared::KernelUnexpect
     )
 }
 
+/// The notice on a cancelled cell whose kernel ignored the interrupt and
+/// was killed so later calls do not find it busy.
+#[must_use]
+pub fn unresponsive_kernel_killed_notice() -> &'static str {
+    "<ipython_kernel_reset>\nThe cancelled cell did not stop after the interrupt, so the Python kernel was killed. A fresh kernel starts on the next call: variables come back from the last snapshot, but imports, live handles, async tasks, and open resources from before are gone; recreate them before using them.\n</ipython_kernel_reset>"
+}
+
 pub fn kernel_restart_notice() -> &'static str {
     "<ipython_kernel_reset>\nThe Python kernel was restarted after a previous interrupted cell kept running. Variables, imports, async tasks, and open resources from before the restart are no longer available; recreate them before using them.\n</ipython_kernel_reset>"
 }
@@ -327,9 +336,14 @@ async fn execute_with_busy_kernel_choice(
                 if !err.is_busy_after_interrupt() || aborted {
                     return Err(err);
                 }
-                // No UI (headless): cancel immediately.
+                // No UI (headless): nobody can choose to wait, and every
+                // later call would hit the same wedged cell. Replace the
+                // kernel (TS #2135).
                 let Some(ui) = ui else {
-                    return Err(err);
+                    on_working_message(Some("Restarting Python kernel..."));
+                    provisioner.kill().await;
+                    *kernel_restarted = true;
+                    continue;
                 };
                 let choice = ui
                     .select(
@@ -457,7 +471,22 @@ pub async fn execute_ipython(
         Err(err) => return Err(anyhow::anyhow!("{}", err.message())),
     };
 
+    // Escalate past an ignored interrupt: a wedged kernel would answer every
+    // later call with busy-after-interrupt. A cancel escalates when no UI
+    // offers the wait/kill choice (TS #2135).
+    let kill_unresponsive = r.kernel_unresponsive && options.ui.is_none();
+    if kill_unresponsive {
+        options.provisioner.kill().await;
+    }
     let mut text = format_execute_text(&r, r.background_output.as_deref());
+    if kill_unresponsive {
+        let notice = unresponsive_kernel_killed_notice().to_string();
+        text = if text.is_empty() {
+            notice
+        } else {
+            format!("{text}\n\n{notice}")
+        };
+    }
     if kernel_restarted {
         text = if text.is_empty() {
             kernel_restart_notice().to_string()
@@ -486,6 +515,9 @@ pub async fn execute_ipython(
         },
         "kernelRestarted": kernel_restarted,
     });
+    if kill_unresponsive {
+        details["kernelKilled"] = json!(true);
+    }
     if let Some(duration) = r.duration_ms {
         details["durationMs"] = json!(duration);
     }

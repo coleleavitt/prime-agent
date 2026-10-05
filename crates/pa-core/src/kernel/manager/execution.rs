@@ -3,10 +3,10 @@
 
 use super::{
     anyhow, json, lock, parse_sent_agent_message, AbortSignal, ActiveExecution, Arc, AsyncWriteExt,
-    Duration, ExecuteResult, ExecuteStatus, Inner, Instant, InternalExecuteResult, KernelState,
-    LateSentAgentMessageCallback, Value, AGENT_MESSAGE_DISPLAY_MIME,
-    KERNEL_BUSY_AFTER_INTERRUPT_MESSAGE, KERNEL_BUSY_INTERRUPT_INTERVAL_MS,
-    KERNEL_BUSY_REUSE_WAIT_MS, MAX_BACKGROUND_OUTPUT_CHARS, MAX_LATE_SENT_AGENT_MESSAGE_HANDLERS,
+    Duration, ExecuteResult, ExecuteStatus, Inner, Instant, InternalExecuteResult,
+    KernelBusyAfterInterruptError, KernelState, LateSentAgentMessageCallback, Value,
+    AGENT_MESSAGE_DISPLAY_MIME, KERNEL_BUSY_INTERRUPT_INTERVAL_MS, KERNEL_BUSY_REUSE_WAIT_MS,
+    MAX_BACKGROUND_OUTPUT_CHARS, MAX_LATE_SENT_AGENT_MESSAGE_HANDLERS,
 };
 use std::fmt::Write as _;
 
@@ -47,7 +47,11 @@ impl Inner {
                 return;
             }
         }
-        lock(&execution.buffers).status = ExecuteStatus::Aborted;
+        {
+            let mut buffers = lock(&execution.buffers);
+            buffers.status = ExecuteStatus::Aborted;
+            buffers.force_aborted = true;
+        }
         self.resolve_execution(execution, false);
     }
 
@@ -101,7 +105,7 @@ impl Inner {
             }
         }
         if lock(&self.guarded).active_execution.is_some() {
-            return Err(anyhow!("{KERNEL_BUSY_AFTER_INTERRUPT_MESSAGE}"));
+            return Err(anyhow::Error::new(KernelBusyAfterInterruptError));
         }
         Ok(())
     }
@@ -240,6 +244,7 @@ impl Inner {
                 status,
                 error: buffers.error.take(),
                 duration_ms: execution.started.elapsed().as_millis() as u64,
+                kernel_unresponsive: buffers.force_aborted,
             };
             drop(buffers);
             if let Some(tx) = lock(&execution.result_tx).take() {
