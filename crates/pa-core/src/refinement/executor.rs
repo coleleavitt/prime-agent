@@ -35,8 +35,70 @@ pub fn generate_refinement_id() -> String {
     format!("refine_{}", &digits[..digits.len().min(17)])
 }
 
+/// Characters of an entry's content (and a skill's serialized reference and
+/// arguments) the refine prompt's overview shows.
+pub(crate) const OVERVIEW_SNIPPET_CHARS: usize = 240;
+
+/// Entries per kind the refine prompt's overview lists.
+const OVERVIEW_ENTRIES_PER_KIND: usize = 40;
+
+/// The overview's view of one text: its first [`OVERVIEW_SNIPPET_CHARS`]
+/// characters (cut on a char boundary) and how many characters it hides.
+fn snippet(text: &str) -> (String, usize) {
+    let total = text.chars().count();
+    if total <= OVERVIEW_SNIPPET_CHARS {
+        (text.to_string(), 0)
+    } else {
+        (
+            text.chars().take(OVERVIEW_SNIPPET_CHARS).collect(),
+            total - OVERVIEW_SNIPPET_CHARS,
+        )
+    }
+}
+
+/// A snippet as the overview renders it: a truncated one says how much is
+/// not shown, so the refiner can tell a fragment from a whole entry.
+fn render_snippet(text: &str) -> String {
+    match snippet(text) {
+        (shown, 0) => shown,
+        (shown, hidden) => format!("{shown}... (+{hidden} chars not shown)"),
+    }
+}
+
+/// The entry's content as the overview shows it: whitespace runs collapsed.
+fn overview_content(entry: &super::HarnessEntry) -> String {
+    entry
+        .content
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The serialized skill reference/arguments the overview shows, if any.
+fn overview_skill_maps(entry: &super::HarnessEntry) -> [Option<String>; 2] {
+    let serialize = |map: &serde_json::Map<String, serde_json::Value>| {
+        (entry.kind == RefinementKind::Skill && !map.is_empty())
+            .then(|| serde_json::to_string(map).unwrap_or_default())
+    };
+    [serialize(&entry.reference), serialize(&entry.arguments)]
+}
+
+/// Characters of `entry` the refine overview does not show (content plus a
+/// skill's reference and arguments); `0` when the refiner saw it whole.
+#[must_use]
+pub(crate) fn overview_hidden_chars(entry: &super::HarnessEntry) -> usize {
+    let content_hidden = snippet(&overview_content(entry)).1;
+    overview_skill_maps(entry)
+        .iter()
+        .flatten()
+        .map(|text| snippet(text).1)
+        .sum::<usize>()
+        + content_hidden
+}
+
 /// Harness overview section for the refine prompt (per-kind, 40-entry cap,
-/// 240-char content/ref/args snippets).
+/// 240-char content/ref/args snippets, each truncation marked with the hidden
+/// length).
 #[must_use]
 pub fn overview_for_prompt(state: &HarnessState) -> String {
     let mut lines: Vec<String> = Vec::new();
@@ -47,27 +109,15 @@ pub fn overview_for_prompt(state: &HarnessState) -> String {
             .map(|records| records.values().collect())
             .unwrap_or_default();
         lines.push(format!("{kind}: {}", entries.len()));
-        for entry in entries.iter().take(40) {
-            let content: String = entry
-                .content
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ");
-            let content: String = content.chars().take(240).collect();
-            let arguments_text =
-                if entry.kind == RefinementKind::Skill && !entry.arguments.is_empty() {
-                    let serialized = serde_json::to_string(&entry.arguments).unwrap_or_default();
-                    format!(" args={}", &serialized[..serialized.len().min(240)])
-                } else {
-                    String::new()
-                };
-            let reference_text =
-                if entry.kind == RefinementKind::Skill && !entry.reference.is_empty() {
-                    let serialized = serde_json::to_string(&entry.reference).unwrap_or_default();
-                    format!(" ref={}", &serialized[..serialized.len().min(240)])
-                } else {
-                    String::new()
-                };
+        for entry in entries.iter().take(OVERVIEW_ENTRIES_PER_KIND) {
+            let content = render_snippet(&overview_content(entry));
+            let [reference, arguments] = overview_skill_maps(entry);
+            let arguments_text = arguments
+                .map(|text| format!(" args={}", render_snippet(&text)))
+                .unwrap_or_default();
+            let reference_text = reference
+                .map(|text| format!(" ref={}", render_snippet(&text)))
+                .unwrap_or_default();
             let scope = match entry.scope {
                 Some(HarnessScope::Local) => "local",
                 _ => "global",
@@ -77,7 +127,7 @@ pub fn overview_for_prompt(state: &HarnessState) -> String {
                 entry.id, entry.title, entry.path, entry.version, reference_text, arguments_text
             ));
         }
-        let overflow = entries.len().saturating_sub(40);
+        let overflow = entries.len().saturating_sub(OVERVIEW_ENTRIES_PER_KIND);
         if overflow > 0 {
             lines.push(format!("- +{overflow} more {kind} entries"));
         }
@@ -556,6 +606,140 @@ mod tests {
         assert!(id["refine_".len()..]
             .chars()
             .all(|char| char.is_ascii_digit()));
+    }
+
+    fn entry(kind: RefinementKind, id: &str, content: &str) -> super::super::HarnessEntry {
+        super::super::HarnessEntry {
+            id: id.to_string(),
+            kind,
+            title: "Title".to_string(),
+            content: content.to_string(),
+            path: "general".to_string(),
+            scope: Some(HarnessScope::Local),
+            reference: serde_json::Map::default(),
+            arguments: serde_json::Map::default(),
+            metadata: serde_json::Map::default(),
+            source: "test".to_string(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            version: 1,
+            extensions: serde_json::Map::new(),
+        }
+    }
+
+    fn state_with(entries: Vec<super::super::HarnessEntry>) -> HarnessState {
+        let mut state = super::super::empty_harness_state();
+        for entry in entries {
+            state
+                .entries
+                .get_mut(&entry.kind)
+                .unwrap()
+                .insert(entry.id.clone(), entry);
+        }
+        state
+    }
+
+    #[test]
+    fn the_overview_marks_a_truncated_entry_with_the_hidden_length() {
+        // #1317/#1290: the refiner saw 240 chars of a long entry with no
+        // marker, so it could not tell a fragment from a whole entry.
+        let long = "x".repeat(300);
+        let overview = overview_for_prompt(&state_with(vec![
+            entry(RefinementKind::Memory, "long", &long),
+            entry(RefinementKind::Memory, "short", "whole"),
+        ]));
+        assert!(
+            overview.contains(&format!(
+                "- [local:long] Title (general, v1): {}... (+60 chars not shown)",
+                "x".repeat(240)
+            )),
+            "{overview}"
+        );
+        assert!(
+            overview.contains("- [local:short] Title (general, v1): whole\n")
+                || overview.ends_with("- [local:short] Title (general, v1): whole"),
+            "{overview}"
+        );
+    }
+
+    #[test]
+    fn skill_args_and_ref_snippets_cut_on_char_boundaries() {
+        // #1290: the args/ref snippets were byte-sliced at 240, which panics
+        // inside a multi-byte character.
+        let mut skill = entry(RefinementKind::Skill, "s1", "Run it.");
+        skill.arguments.insert(
+            "path".to_string(),
+            serde_json::json!({ "description": "é".repeat(300) }),
+        );
+        skill.reference.insert(
+            "call_pattern".to_string(),
+            serde_json::json!("ü".repeat(300)),
+        );
+        let overview = overview_for_prompt(&state_with(vec![skill]));
+        let args = serde_json::to_string(
+            &serde_json::json!({ "path": { "description": "é".repeat(300) } }),
+        )
+        .unwrap();
+        let shown: String = args.chars().take(240).collect();
+        let hidden = args.chars().count() - 240;
+        assert!(
+            overview.contains(&format!(" args={shown}... (+{hidden} chars not shown)")),
+            "{overview}"
+        );
+    }
+
+    #[test]
+    fn an_update_to_an_entry_the_refiner_saw_truncated_is_refused() {
+        // #1317: the refiner was asked for full replacement content of
+        // entries it saw 240 chars of, and its updates destroyed the rest.
+        let long = format!("{} tail the refiner never saw", "keep ".repeat(60));
+        let mut state = state_with(vec![
+            entry(RefinementKind::Memory, "long", &long),
+            entry(RefinementKind::Memory, "short", "old"),
+        ]);
+        let update = |id: &str| super::super::planner::RefinementEdit {
+            action: Some(super::super::RefinementAction::Update),
+            kind: Some(RefinementKind::Memory),
+            id: Some(id.to_string()),
+            title: Some("Title".to_string()),
+            content: Some("APPEND - prior clauses stand".to_string()),
+            ..Default::default()
+        };
+        let result = apply_refinement_proposal(
+            &mut state,
+            &RefinementProposal {
+                summary: "edit".to_string(),
+                edits: vec![update("long"), update("short")],
+                ..Default::default()
+            },
+            ApplyOptions {
+                id: "r1".to_string(),
+                rollback_of: None,
+                scope: Some(HarnessScope::Local),
+                baseline_state: None,
+                factory_enabled: false,
+            },
+        );
+        assert_eq!(
+            result
+                .applied_edits
+                .iter()
+                .map(|edit| (edit.id.as_str(), edit.applied, edit.error.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    "long",
+                    false,
+                    Some("entry was truncated in the refiner's view (+86 chars not shown); an update would replace content it never saw".to_string())
+                ),
+                ("short", true, None),
+            ]
+        );
+        assert_eq!(state.entries[&RefinementKind::Memory]["long"].content, long);
+        assert_eq!(
+            state.entries[&RefinementKind::Memory]["short"].content,
+            "APPEND - prior clauses stand"
+        );
     }
 
     #[test]

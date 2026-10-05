@@ -1304,26 +1304,34 @@ def _revive_with_live_globals(
 
 
 def _snapshot_unpickler(dill: Any) -> type:
-    """Unpickler that refuses to reopen a pickled raw fd number in this kernel.
+    """Unpickler that never reopens a pickled file handle in this kernel.
 
-    dill serializes a pipe/socket-backed file as its fd NUMBER; restoring a
-    saved closed one reopens that number here and closes it again, killing
-    whatever owns the fd now (e.g. the event loop's self-pipe). The refusal
-    fails just that record; every other name still restores.
+    dill serializes a file object as its name (a path, or the fd NUMBER for a
+    pipe/socket-backed file) plus its mode, and restore reopens it. A path
+    saved with a 'w' mode reopens with O_TRUNC and zeroes the user's file on
+    every restart (#3082); a saved closed fd number reopens and closes that
+    number here, killing whatever owns the fd now (e.g. the event loop's
+    self-pipe). Only the process-wide std streams are safe to hand back. The
+    refusal fails just that record; every other name still restores.
     """
     create_filehandle = dill._dill._create_filehandle
+    std_streams = {"<stdin>", "<stdout>", "<stderr>"}
 
-    def refuse_raw_fd(name: Any, *args: Any) -> Any:
+    def refuse_filehandle(name: Any, *args: Any) -> Any:
         if isinstance(name, int):
             raise pickle.UnpicklingError(
                 f"refusing to reopen raw file descriptor {name} from a snapshot"
             )
-        return create_filehandle(name, *args)
+        if isinstance(name, str) and name in std_streams:
+            return create_filehandle(name, *args)
+        raise pickle.UnpicklingError(
+            f"refusing to reopen file {name!r} from a snapshot (reopening could truncate it)"
+        )
 
     class GuardedUnpickler(dill.Unpickler):
         def find_class(self, module: str, name: str) -> Any:
             target = super().find_class(module, name)
-            return refuse_raw_fd if target is create_filehandle else target
+            return refuse_filehandle if target is create_filehandle else target
 
     return GuardedUnpickler
 

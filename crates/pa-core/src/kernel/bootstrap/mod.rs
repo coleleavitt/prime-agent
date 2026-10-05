@@ -119,6 +119,26 @@ fn format_bootstrap_failure(error: &anyhow::Error) -> anyhow::Error {
     anyhow!(message)
 }
 
+/// The bootstrap failure when no runtime source exists to install from: the
+/// searched paths, the recovery steps, and that the existing venv is intact.
+fn missing_runtime_source_error(venv: &std::path::Path) -> anyhow::Error {
+    let searched = venv::runtime_candidate_dirs()
+        .iter()
+        .map(|dir| format!("  {}", dir.display()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let searched = if searched.is_empty() {
+        "  (no candidate directories)".to_string()
+    } else {
+        searched
+    };
+    anyhow!(
+        "Failed to set up the Python kernel runtime: the prime-agent-runtime source directory was not found. Searched:\n{searched}\nThe existing kernel venv at {} was left untouched. Restart prime-agent from a valid install (reinstall it if the runtime directory beside the binary is gone), set {} to a prime-agent-runtime checkout, or set PRIME_AGENT_KERNEL_PYTHON to a Python with a current prime-agent-runtime installed.",
+        venv.display(),
+        venv::RUNTIME_SOURCE_ENV,
+    )
+}
+
 /// One in-flight bootstrap per unique options set, joined by concurrent callers.
 type InFlightBootstrap = Option<(
     String,
@@ -142,6 +162,7 @@ pub async fn ensure_kernel_python(options: EnsureKernelPythonOptions) -> anyhow:
     let key = [
         std::env::var("PRIME_AGENT_KERNEL_PYTHON").unwrap_or_default(),
         std::env::var("PRIME_AGENT_KERNEL_VENV").unwrap_or_default(),
+        std::env::var(venv::RUNTIME_SOURCE_ENV).unwrap_or_default(),
         std::env::var("HOME").unwrap_or_default(),
         std::env::var("XDG_DATA_HOME").unwrap_or_default(),
         serde_json::to_string(&python_skills).unwrap_or_default(),
@@ -222,6 +243,13 @@ async fn ensure_kernel_python_uncached(
     }
 
     let venv = resolve_writable_kernel_venv_dir()?;
+    // Resolve the runtime source before looking at the venv: without it the
+    // runtime identity is unknown, every venv looks stale, and the rebuild
+    // below would delete the venv other sessions share before an install
+    // that cannot succeed (#2203).
+    if venv::resolve_runtime_source_dir().is_none() {
+        return Err(missing_runtime_source_error(&venv));
+    }
     let python = kernel_venv_python(&venv);
     let python_str = python.to_string_lossy().to_string();
     let runtime_identity = resolve_runtime_identity();

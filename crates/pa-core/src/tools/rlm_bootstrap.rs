@@ -97,6 +97,13 @@ class _PrimeAgentCallableSkillModule(_prime_agent_types.ModuleType):
             return await result
         return result
 
+    def __reduce__(self):
+        # Pickle by reference, like a plain module: pickle dispatches on the
+        # exact type, so this subclass was unpicklable and every snapshot
+        # dropped any variable referencing a skill (#1278). The reducer is a
+        # stdlib function, so the payload never carries this class.
+        return (_prime_agent_importlib.import_module, (self.__name__,))
+
 class _PrimeAgentUnavailableSkill:
     def __init__(self, name, error):
         self.__name__ = name
@@ -123,6 +130,11 @@ def _prime_agent_wrap_skill_module(module):
         return module
     wrapped = _PrimeAgentCallableSkillModule(module.__name__)
     wrapped.__dict__.update(module.__dict__)
+    # A skill laid out as <skill>/<skill>.py exposes that submodule under the
+    # skill's own name, so <skill>.<skill>(...) hit a module, not run (#2221).
+    _prime_agent_short_name = module.__name__.rpartition(".")[2]
+    if not callable(getattr(wrapped, _prime_agent_short_name, None)):
+        setattr(wrapped, _prime_agent_short_name, run)
     try:
         wrapped.__signature__ = _prime_agent_inspect.signature(run)
     except Exception:

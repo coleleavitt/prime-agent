@@ -10,6 +10,43 @@ use super::{
 
 pub(crate) use crate::platform::process::Signal;
 
+/// Granularity of the host-request-aware execution timer: how often it
+/// checks whether the kernel is waiting on the host.
+const HOST_AWARE_TIMER_TICK: Duration = Duration::from_millis(250);
+
+/// Abort `fired` once `budget` has elapsed, unless `settled` aborts first.
+/// With `inner`, time while the kernel has a host request in flight (a
+/// sub-agent run, a collect) does not count against the budget.
+async fn run_execution_timer(
+    budget: Duration,
+    inner: Option<std::sync::Weak<super::Inner>>,
+    fired: AbortSignal,
+    settled: AbortSignal,
+) {
+    let Some(inner) = inner else {
+        tokio::select! {
+            () = tokio::time::sleep(budget) => fired.abort(),
+            () = settled.cancelled() => {}
+        }
+        return;
+    };
+    let mut used = Duration::ZERO;
+    while used < budget {
+        let step = budget.saturating_sub(used).min(HOST_AWARE_TIMER_TICK);
+        tokio::select! {
+            () = tokio::time::sleep(step) => {}
+            () = settled.cancelled() => return,
+        }
+        let Some(inner) = inner.upgrade() else {
+            return;
+        };
+        if lock(&inner.guarded).host_request_cancellations.is_empty() {
+            used += step;
+        }
+    }
+    fired.abort();
+}
+
 /// Append stream text up to `max_chars` Unicode scalars, keeping the buffered count in sync.
 pub(crate) fn append_truncated(
     buffer: &mut String,
@@ -119,21 +156,37 @@ impl ReplKernelManager {
         }
 
         // Bound the execution with an out-of-band abort (interrupt + grace).
-        let timeout_signal = execution_timeout_ms.map(|ms| {
-            let signal = AbortSignal::new();
-            let timer_signal = signal.clone();
-            tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(ms)).await;
-                timer_signal.abort();
-            });
-            signal
+        // The timer aborts `fired`; `settled` stops it once the cell is done.
+        let timeout = execution_timeout_ms.map(|ms| {
+            let fired = AbortSignal::new();
+            let settled = AbortSignal::new();
+            let inner = opts
+                .timeout_excludes_host_requests
+                .then(|| Arc::downgrade(&self.inner));
+            tokio::spawn(run_execution_timer(
+                Duration::from_millis(ms),
+                inner,
+                fired.clone(),
+                settled.clone(),
+            ));
+            (fired, settled)
         });
-        let merged = merge_signals(opts.signal.as_ref(), timeout_signal.clone());
+        let merged = merge_signals(
+            opts.signal.as_ref(),
+            timeout.as_ref().map(|(fired, _)| fired.clone()),
+        );
         let mut opts = opts;
         opts.signal = merged;
-        let result = self.execute_inner(request, code, opts, started).await;
-        if let Some(signal) = &timeout_signal {
-            signal.abort();
+        let mut result = self.execute_inner(request, code, opts, started).await;
+        if let Some((fired, settled)) = &timeout {
+            settled.abort();
+            if fired.is_aborted() {
+                if let Ok(settled) = &mut result {
+                    if settled.result.status == ExecuteStatus::Aborted {
+                        settled.result.timed_out = true;
+                    }
+                }
+            }
         }
         result
     }

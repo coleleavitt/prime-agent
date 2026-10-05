@@ -128,24 +128,30 @@
       }
     },
     {
-      "name": "busy-then-cancel-no-ui",
-      "code": "print('never')",
+      "name": "busy-then-replace-no-ui",
+      "code": "print('after restart')",
       "ctxMode": "none",
       "mockResults": [
         {
           "thrown": "KernelBusyAfterInterruptError",
           "message": "The Python kernel is still running the previously interrupted cell. Wait and try again, or kill the kernel to start fresh."
+        },
+        {
+          "status": "ok",
+          "stdout": "after restart\n",
+          "stderr": "",
+          "durationMs": 123
         }
       ],
       "provisionerCalls": {
-        "ensure": 1,
-        "execute": 1,
-        "kill": 0
+        "ensure": 2,
+        "execute": 2,
+        "kill": 1
       },
       "result": {
-        "ok": false,
-        "isError": true,
-        "error": "The Python kernel is still running the previously interrupted cell. Wait and try again, or kill the kernel to start fresh."
+        "ok": true,
+        "isError": false,
+        "outputText": "<ipython_kernel_reset>\nThe Python kernel was restarted after a previous interrupted cell kept running. Variables, imports, async tasks, and open resources from before the restart are no longer available; recreate them before using them.\n</ipython_kernel_reset>\n\nafter restart\n"
       }
     },
     {

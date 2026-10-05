@@ -632,6 +632,57 @@ async fn custom_override_never_touches_the_disk_memo() {
     );
 }
 
+/// A missing runtime source fails the bootstrap with the searched paths and
+/// leaves the shared venv alone: it used to delete the venv, then fail
+/// installing the unpublished registry package (#2203).
+#[cfg(unix)]
+#[tokio::test]
+async fn a_missing_runtime_source_fails_clearly_and_keeps_the_shared_venv() {
+    let _guard = PRIME_AGENT_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let venv = dir.path().join("kernel-venv");
+    std::fs::create_dir_all(venv.join("bin")).unwrap();
+    std::fs::write(venv.join("in-use-by-other-sessions"), "keep").unwrap();
+    let missing_source = dir
+        .path()
+        .join("deleted-worktree")
+        .join("prime-agent-runtime");
+    let saved: Vec<(&str, Option<String>)> = [
+        "PRIME_AGENT_KERNEL_PYTHON",
+        "PRIME_AGENT_KERNEL_VENV",
+        RUNTIME_SOURCE_ENV,
+    ]
+    .into_iter()
+    .map(|key| (key, std::env::var(key).ok()))
+    .collect();
+    std::env::remove_var("PRIME_AGENT_KERNEL_PYTHON");
+    std::env::set_var("PRIME_AGENT_KERNEL_VENV", &venv);
+    std::env::set_var(RUNTIME_SOURCE_ENV, &missing_source);
+    let resolved =
+        super::super::ensure_kernel_python(super::super::EnsureKernelPythonOptions::default())
+            .await;
+    for (key, value) in saved {
+        match value {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
+    }
+    let message = format!("{:#}", resolved.expect_err("no runtime source to install"));
+    assert!(
+        message.starts_with(&format!(
+            "Failed to set up the Python kernel runtime: the prime-agent-runtime source directory was not found. Searched:\n  {}\nThe existing kernel venv at {} was left untouched.",
+            missing_source.display(),
+            venv.display()
+        )),
+        "{message}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(venv.join("in-use-by-other-sessions")).ok(),
+        Some("keep".to_string()),
+        "the shared venv survives"
+    );
+}
+
 /// The Windows venv layout (`<venv>/Lib/site-packages/rlm`, no python-version layer) is a
 /// fingerprint input: mutations under it change the memo key.
 #[test]

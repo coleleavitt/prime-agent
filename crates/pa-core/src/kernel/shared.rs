@@ -317,6 +317,13 @@ pub struct ExecuteResult {
     pub status: ExecuteStatus,
     pub error: Option<KernelError>,
     pub duration_ms: u64,
+    /// The execution timeout fired: the cell was interrupted by the host,
+    /// not by the caller's own signal.
+    pub timed_out: bool,
+    /// The cell ignored the interrupt and was force-aborted after the grace
+    /// window: the kernel is still busy running it, so the next cell would
+    /// find it busy until the process is killed.
+    pub kernel_unresponsive: bool,
 }
 
 /// Options for one `execute` call.
@@ -334,6 +341,10 @@ pub struct ExecuteOptions {
     pub internal: bool,
     /// The protocol repair's own request; exempt from waiting on the repair it belongs to.
     pub protocol_repair: bool,
+    /// The execution timeout counts only time the kernel spends on its own:
+    /// it pauses while a host request (a sub-agent run, a collect) is in
+    /// flight, so a cell awaiting delegated work is never timed out for it.
+    pub timeout_excludes_host_requests: bool,
 }
 
 /// The error raised when a new cell cannot start because the previously
