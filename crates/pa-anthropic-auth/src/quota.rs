@@ -185,12 +185,19 @@ impl QuotaTracker {
     }
 
     /// Learn what the store recorded for `account` (another process's
-    /// reading); a newer reading of this process's own wins.
+    /// reading) while this process knows nothing of its own: the store
+    /// keeps only percentages, so it never replaces a reading with resets
+    /// and scoped windows (the store's own selection already skips a row
+    /// it records spent).
     pub(crate) fn seed(&self, account: &Account, now: DateTime<Utc>) {
         let Some(recorded) = account.quota.as_ref().and_then(recorded_snapshot) else {
             return;
         };
-        self.manager.lock_or_recover().seed(
+        let mut manager = self.manager.lock_or_recover();
+        if manager.get(&account.id).is_some() {
+            return;
+        }
+        manager.seed(
             &account.id,
             lineage(account).as_deref(),
             Some(&recorded),

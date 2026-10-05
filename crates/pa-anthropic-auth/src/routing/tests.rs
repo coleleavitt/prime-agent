@@ -449,3 +449,32 @@ fn after_a_429_a_login_of_unknown_quota_takes_the_request_only_failing_open() {
         assert_eq!(bearers, expected, "fail closed: {fail_closed}");
     }
 }
+
+#[test]
+fn another_process_s_reading_never_erases_what_a_poll_learned() {
+    let provider = "anthropic-route-seed";
+    let fixture = fixture(provider, &["seeded"], &json!({ "accounts": [] }));
+    fixture.usage("seeded", usage_body(10.0, 10.0, FAR, Some(20.0)));
+    let (_bearers, _) = fixture.send(provider, "claude-opus-5-5", ok(1), 1);
+    // Another tool records a newer coarse reading on the row.
+    AccountStore::mutate(fixture.source.store_path(), |store| {
+        store.get_mut("seeded")?.quota = Some(anthropic::account::QuotaObservation {
+            five_hour_percent: Some(40.0),
+            seven_day_percent: Some(40.0),
+            checked_at: Some(chrono::Utc::now() + Duration::seconds(5)),
+        });
+        Ok(())
+    })
+    .expect("record another reading");
+
+    let (_bearers, _) = fixture.send(provider, "claude-opus-5-5", ok(1), 1);
+
+    let known = fixture.source.quota.snapshot("seeded").expect("a reading");
+    assert_eq!(
+        (
+            known.scoped.map(|scoped| scoped.len()),
+            known.five_hour.and_then(|window| window.resets_at)
+        ),
+        (Some(1), Some(FAR.to_string()))
+    );
+}
