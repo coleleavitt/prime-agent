@@ -63,6 +63,7 @@ fn supervisor_end_to_end_scripted_session_lifecycle() {
             "agent_roster",
             "direct_peer_transport",
             "session_model_selection",
+            "fork_export",
         ])
     );
 

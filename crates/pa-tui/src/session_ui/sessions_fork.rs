@@ -2,7 +2,7 @@
 //! the session resume/list/switch surfaces.
 use super::{
     anyhow, info_commands, key_event_to_id, AgentView, DaemonClient, DaemonCommand, DockFold,
-    Duration, InfoContent, InteractiveOptions, KeyEvent, Map, RebuildKind, Result,
+    Duration, ForkLaunch, InfoContent, InteractiveOptions, KeyEvent, Map, RebuildKind, Result,
     SessionSelection, SessionUi, TreeSelector, TreeSelectorAction, UserMessageSelector,
     UserMessageSelectorAction, Value, UI_REQUEST_TIMEOUT_MS,
 };
@@ -222,7 +222,8 @@ impl SessionUi {
         match action {
             UserMessageSelectorAction::Select(entry_id) => {
                 view.fork_selector = None;
-                self.fork(&entry_id, None, view).await?;
+                let launch = self.fork_launch;
+                self.fork(&entry_id, None, launch, view).await?;
             }
             UserMessageSelectorAction::Cancel => {
                 view.fork_selector = None;
@@ -233,13 +234,43 @@ impl SessionUi {
         Ok(())
     }
 
-    /// The worker copies the path into a new session and switches to it.
+    /// Fork at `entry_id`. By default the worker writes the fork file (`fork_export`) and this
+    /// client opens it as a new session, so the original keeps running and stays listed; a
+    /// daemon without `fork_export`, a session without a file, or `--replace` takes the TS path:
+    /// the worker copies the path into a new session and switches to it in place.
     async fn fork(
         &mut self,
         entry_id: &str,
         position: Option<pa_types::daemon::ForkPosition>,
+        launch: ForkLaunch,
         view: &mut AgentView,
     ) -> Result<()> {
+        if launch == ForkLaunch::NewSession && self.client.supports_server_capability("fork_export")
+        {
+            match self
+                .bounded_request(
+                    Duration::from_millis(UI_REQUEST_TIMEOUT_MS * 3),
+                    DaemonCommand::ForkExport {
+                        id: None,
+                        active_session_id: self.active_session_id.clone(),
+                        entry_id: entry_id.to_string(),
+                        position,
+                        rest: Map::default(),
+                    },
+                )
+                .await
+            {
+                Ok(data) => return self.open_exported_fork(&data, view).await,
+                // An in-memory session has no file to hand over: fork it in place.
+                Err(error)
+                    if format!("{error:#}")
+                        .contains(pa_types::daemon::FORK_EXPORT_NOT_PERSISTED) => {}
+                Err(error) => {
+                    self.note(&format!("fork failed: {error:#}"), view);
+                    return Ok(());
+                }
+            }
+        }
         let data = match self
             .bounded_request(
                 Duration::from_millis(UI_REQUEST_TIMEOUT_MS * 3),
@@ -273,8 +304,39 @@ impl SessionUi {
         Ok(())
     }
 
+    /// Open an exported fork file as a new session and switch this client to it (the `/new`
+    /// rebind); the original keeps running in the daemon, detached from this client.
+    async fn open_exported_fork(&mut self, data: &Value, view: &mut AgentView) -> Result<()> {
+        let Some(path) = data.get("sessionPath").and_then(Value::as_str) else {
+            self.note("fork failed: the daemon did not name the fork file", view);
+            return Ok(());
+        };
+        let selection = SessionSelection::Resume(std::path::PathBuf::from(path));
+        let id = match create_session(&self.client, &self.create_options(), Some(&selection)).await
+        {
+            Ok(id) => id,
+            Err(error) => {
+                self.note(&format!("fork failed: {error:#}"), view);
+                return Ok(());
+            }
+        };
+        self.attach_session(&id, DockFold::Fresh).await?;
+        self.rebuild_view(view, &RebuildKind::Rebind);
+        match data.get("selectedText").and_then(Value::as_str) {
+            Some(text) => view.editor.set_text(text),
+            None => view.editor.set_text(""),
+        }
+        self.note("Forked to new session; the original keeps running", view);
+        self.dirty = true;
+        Ok(())
+    }
+
     /// Fork at the current leaf.
-    pub(super) async fn handle_clone_command(&mut self, view: &mut AgentView) -> Result<()> {
+    pub(super) async fn handle_clone_command(
+        &mut self,
+        launch: ForkLaunch,
+        view: &mut AgentView,
+    ) -> Result<()> {
         let data = self
             .bounded_request(
                 Duration::from_millis(UI_REQUEST_TIMEOUT_MS),
@@ -293,8 +355,13 @@ impl SessionUi {
             self.note("Nothing to clone yet", view);
             return Ok(());
         }
-        self.fork(leaf_id, Some(pa_types::daemon::ForkPosition::At), view)
-            .await?;
+        self.fork(
+            leaf_id,
+            Some(pa_types::daemon::ForkPosition::At),
+            launch,
+            view,
+        )
+        .await?;
         self.note("Cloned to new session", view);
         self.dirty = true;
         Ok(())

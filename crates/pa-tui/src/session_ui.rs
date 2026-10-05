@@ -399,6 +399,30 @@ pub(crate) struct SessionUi {
     /// What the open model picker's apply changes: `/model` saves the default, `/switch` only
     /// this session (upstream #840).
     model_picker_scope: ModelSwitchScope,
+    /// What the open `/fork` selector's pick does (`/fork` vs `/fork --replace`).
+    fork_launch: ForkLaunch,
+}
+
+/// What a `/fork` or `/clone` does with the session it forks from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ForkLaunch {
+    /// The default (upstream #1389): the fork opens as a new session; the original keeps
+    /// running with its subagents and heartbeats, and stays listed.
+    NewSession,
+    /// `--replace`, the TS v0.9.8 behaviour: the fork replaces the original in place (the
+    /// original stops; its file stays on disk).
+    ReplaceInPlace,
+}
+
+impl ForkLaunch {
+    /// The `/fork` / `/clone` argument: none, or `--replace`.
+    pub(crate) fn from_args(args: &str) -> Option<Self> {
+        match args.trim() {
+            "" => Some(ForkLaunch::NewSession),
+            "--replace" => Some(ForkLaunch::ReplaceInPlace),
+            _ => None,
+        }
+    }
 }
 
 /// Which model setting a model switch changes.

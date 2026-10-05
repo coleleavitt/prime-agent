@@ -847,3 +847,153 @@ impl Drop for DaemonKillOnDrop<'_> {
         let _ = self.child.wait();
     }
 }
+
+/// Upstream #1389: `fork_export` writes the fork file and leaves the original running. The
+/// original keeps its address, identity and file and answers the next turn; the fork opens as
+/// its own session (its own worker), and both are listed.
+#[test]
+fn a_fork_export_leaves_the_original_running_and_listed() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let socket = dir.path().join("daemon.sock");
+    let agent_dir = dir.path().join("agent");
+    let session_dir = agent_dir.join("sessions");
+    std::fs::create_dir_all(&session_dir).expect("agent dir");
+    let _daemon = spawn_daemon(&socket, &agent_dir);
+    let script = dir.path().join("script.json");
+    std::fs::write(
+        &script,
+        serde_json::json!({ "responses": [
+            { "text": "original turn one", "delayMs": 10 },
+            { "text": "original still answers", "delayMs": 10 },
+        ] })
+        .to_string(),
+    )
+    .expect("write script");
+    let config = serde_json::json!({
+        "cwd": dir.path().to_string_lossy(),
+        "sessionDir": session_dir.to_string_lossy(),
+        "script": script.to_string_lossy(),
+    });
+    let mut client = Client::connect(&socket);
+    client.send_command(
+        "c1",
+        &serde_json::json!({ "type": "create", "config": config }),
+    );
+    let created = client.read_response("c1");
+    assert_eq!(created["success"], true, "create failed: {created}");
+    let original_active = created["data"]["id"]
+        .as_str()
+        .expect("the original's active id")
+        .to_string();
+    let original_durable = created["data"]["sessionId"]
+        .as_str()
+        .expect("the original's durable id")
+        .to_string();
+    let original_file = created["data"]["sessionFile"]
+        .as_str()
+        .expect("the original's session file")
+        .to_string();
+    client.scripted_turn("p1", &original_active, "first message");
+    client.scripted_turn("p2", &original_active, "fork point message");
+    client.send_command(
+        "g1",
+        &serde_json::json!({
+            "type": "get_user_messages_for_forking",
+            "activeSessionId": original_active,
+        }),
+    );
+    let points = client.read_response("g1");
+    let entry_id = points["data"]["messages"]
+        .as_array()
+        .and_then(|messages| {
+            messages
+                .iter()
+                .find(|message| message["text"] == "fork point message")
+                .map(|message| message["entryId"].clone())
+        })
+        .unwrap_or_else(|| panic!("the fork point message: {points}"));
+
+    client.send_command(
+        "f1",
+        &serde_json::json!({
+            "type": "fork_export",
+            "activeSessionId": original_active,
+            "entryId": entry_id,
+        }),
+    );
+    let exported = client.read_response("f1");
+    assert_eq!(exported["success"], true, "fork_export failed: {exported}");
+    assert_eq!(exported["data"]["cancelled"], false, "{exported}");
+    assert_eq!(
+        exported["data"]["selectedText"],
+        serde_json::json!("fork point message")
+    );
+    let fork_file = exported["data"]["sessionPath"]
+        .as_str()
+        .expect("the fork file")
+        .to_string();
+    assert_ne!(fork_file, original_file);
+
+    // The original kept everything: address, durable id, file, and it still answers.
+    client.send_command(
+        "s1",
+        &serde_json::json!({ "type": "get_session_stats", "activeSessionId": original_active }),
+    );
+    let stats = client.read_response("s1");
+    assert_eq!(
+        (
+            stats["data"]["sessionId"].as_str(),
+            stats["data"]["sessionFile"].as_str(),
+        ),
+        (
+            Some(original_durable.as_str()),
+            Some(original_file.as_str())
+        ),
+        "{stats}"
+    );
+    client.scripted_turn("p3", &original_active, "after the fork");
+    assert_eq!(
+        message_texts(&mut client, "m1", &original_active),
+        vec![
+            "first message".to_string(),
+            "original turn one".to_string(),
+            "fork point message".to_string(),
+            "original still answers".to_string(),
+            "after the fork".to_string(),
+            // The script ran out: the scripted engine echoes.
+            "echo: after the fork".to_string(),
+        ]
+    );
+
+    // The fork opens as its own session: a new address over the fork file, both listed.
+    client.send_command(
+        "c2",
+        &serde_json::json!({ "type": "create", "sessionPath": fork_file, "config": config }),
+    );
+    let fork_created = client.read_response("c2");
+    assert_eq!(
+        fork_created["success"], true,
+        "fork open failed: {fork_created}"
+    );
+    let fork_active = fork_created["data"]["id"]
+        .as_str()
+        .expect("the fork's active id")
+        .to_string();
+    assert_ne!(fork_active, original_active);
+    assert_eq!(
+        message_texts(&mut client, "m2", &fork_active),
+        vec!["first message".to_string(), "original turn one".to_string()]
+    );
+    client.send_command("l1", &serde_json::json!({ "type": "list" }));
+    let listed = client.read_response("l1");
+    let mut active: Vec<String> = listed["data"]["sessions"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .filter_map(|row| row["activeSessionId"].as_str().map(str::to_string))
+        .collect();
+    active.sort();
+    let mut expected = vec![original_active, fork_active];
+    expected.sort();
+    assert_eq!(active, expected, "{listed}");
+}

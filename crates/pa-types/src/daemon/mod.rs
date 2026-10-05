@@ -21,6 +21,10 @@ pub const DAEMON_PROTOCOL_VERSION: u64 = 7;
 pub const DAEMON_SCHEMA_REVISION: u64 = 30;
 pub const DAEMON_SCHEMA_ID: &str = "protocol-7-schema-30-8e4b17c2a9f5";
 
+/// The `fork_export` refusal for a session without a file: the client's cue to fork in place
+/// instead (upstream #1389).
+pub const FORK_EXPORT_NOT_PERSISTED: &str = "Session is not persisted; fork it in place";
+
 pub type DaemonClientId = String;
 pub type DaemonCommandId = String;
 pub type DaemonEventId = String;

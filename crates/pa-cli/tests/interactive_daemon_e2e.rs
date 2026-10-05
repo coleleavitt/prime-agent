@@ -2182,8 +2182,9 @@ async fn tui_session_tree_navigates_forks_and_clones() {
             pa_tui::interactive::HeadlessStep::SettleIdle,
             enter.clone(),
             pa_tui::interactive::HeadlessStep::SettleIdle,
-            // `/fork` opens the selector; Enter forks before the selected (latest) user message.
-            pa_tui::interactive::HeadlessStep::Submit("/fork".to_string()),
+            // `/fork --replace` (the TS in-place fork) opens the selector; Enter forks before the
+            // selected (latest) user message, and the fork replaces this session in place.
+            pa_tui::interactive::HeadlessStep::Submit("/fork --replace".to_string()),
             pa_tui::interactive::HeadlessStep::SettleIdle,
             enter.clone(),
             pa_tui::interactive::HeadlessStep::SettleIdle,
@@ -2270,6 +2271,116 @@ async fn tui_session_tree_navigates_forks_and_clones() {
         "the fork wrote a new session file: {} files",
         session_files.len()
     );
+    drop(supervisor);
+}
+
+/// Upstream #1389: a plain `/fork` opens the fork as a NEW session and switches this client to
+/// it; the original keeps running and stays listed (the TS in-place replacement is
+/// `/fork --replace`).
+#[tokio::test]
+async fn tui_fork_opens_a_new_session_and_leaves_the_original_running() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let agent_dir = dir.path().join("agent");
+    let session_dir = agent_dir.join("sessions");
+    std::fs::create_dir_all(&session_dir).expect("session dir");
+    let supervisor = spawn_supervisor(dir.path());
+    let script = serde_json::json!({
+        "engine": "faux",
+        "responses": [
+            { "text": "first answer", "delayMs": 10 },
+            { "text": "second answer", "delayMs": 10 },
+        ],
+    });
+    std::fs::write(dir.path().join("script.json"), script.to_string()).expect("write script");
+    let options = pa_tui::interactive::InteractiveOptions {
+        resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
+        initial_plan_mode: false,
+        models: None,
+        socket_path: supervisor.socket.clone(),
+        cwd: dir.path().to_path_buf(),
+        session_dir: Some(session_dir.clone()),
+        script_path: Some(dir.path().join("script.json")),
+        model_selection: pa_tui::interactive::ModelSelection::default(),
+        model_catalog: Vec::new(),
+        model_configured_providers: std::collections::HashSet::default(),
+        model_recent_models: Vec::new(),
+        default_thinking_level: None,
+        no_session: false,
+        session: pa_tui::interactive::SessionSelection::New,
+        initial_message: None,
+        theme: "prime".to_string(),
+        code_block_indent: "  ".to_string(),
+        tree_filter_mode: "default".to_string(),
+        branch_summary_skip_prompt: true,
+        show_images: true,
+        fullscreen_mouse: true,
+        version: "0.0.0".to_string(),
+        onboarding: None,
+        telemetry_disabled: None,
+        client_auth: None,
+        traces: None,
+        provider_auth: None,
+        update_commands: None,
+        telemetry: None,
+        keybindings: pa_tui::keybindings::KeybindingsManager::new(),
+        session_rlm_depth: None,
+        prompt_stash: std::sync::Arc::default(),
+        session_has_children: false,
+        restore_dock_focus: false,
+        client_settings: None,
+    };
+    let enter = pa_tui::interactive::HeadlessStep::Key(crossterm::event::KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    ));
+    let plan = pa_tui::interactive::HeadlessPlan {
+        steps: vec![
+            pa_tui::interactive::HeadlessStep::Submit("first question".to_string()),
+            pa_tui::interactive::HeadlessStep::WaitIdle { timeout_ms: 30_000 },
+            pa_tui::interactive::HeadlessStep::Submit("second question".to_string()),
+            pa_tui::interactive::HeadlessStep::WaitIdle { timeout_ms: 30_000 },
+            pa_tui::interactive::HeadlessStep::Submit("/fork".to_string()),
+            pa_tui::interactive::HeadlessStep::SettleIdle,
+            enter,
+            pa_tui::interactive::HeadlessStep::SettleIdle,
+        ],
+        width: 100,
+        height: 34,
+    };
+    let outcome = run_headless_bounded(options, plan)
+        .await
+        .expect("interactive run");
+    let rendered = outcome.frames.join("\n");
+    assert!(
+        rendered.contains("Forked to new session; the original keeps running"),
+        "the fork note rendered:\n{rendered}"
+    );
+    let (client, _events) = pa_tui::daemon_client::DaemonClient::connect(&supervisor.socket)
+        .await
+        .expect("connect supervisor");
+    let listed = client
+        .request_ok(DaemonCommand::List {
+            id: None,
+            all: None,
+            cwd: None,
+            session_dir: None,
+            include_client_owned: None,
+            include_remote_mesh: None,
+            rest: serde_json::Map::default(),
+        })
+        .await
+        .expect("list");
+    client.close();
+    let rows = listed["sessions"].as_array().expect("rows");
+    let mut message_counts: Vec<u64> = rows
+        .iter()
+        .map(|row| row["messageCount"].as_u64().unwrap_or_default())
+        .collect();
+    message_counts.sort_unstable();
+    // The fork carries the branch before the second question; the original kept all four.
+    assert_eq!(message_counts, vec![2, 4], "{listed}");
     drop(supervisor);
 }
 

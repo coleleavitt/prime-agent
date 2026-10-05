@@ -1000,6 +1000,18 @@ pub enum DaemonCommand {
         #[serde(flatten)]
         rest: JsonMap,
     },
+    /// `fork`'s branch copy without the replacement: answers `{ sessionPath, selectedText? }`
+    /// and leaves the live session running (capability `fork_export`).
+    ForkExport {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        active_session_id: String,
+        entry_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        position: Option<ForkPosition>,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
     NavigateTree {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,

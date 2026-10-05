@@ -2,8 +2,8 @@
 //! command-catalog refresh/fold, and the shared connection-state read.
 use super::{
     create_session, effort_picker, info_commands, terminal_columns, AgentView, AuthSelectorKind,
-    ChatEntry, CommandCatalogUpdate, DaemonCommand, DockFold, Duration, InfoContent, Map,
-    ModelSwitchScope, PendingConfirm, RebuildKind, Result, SessionUi, SlashCommandExecution,
+    ChatEntry, CommandCatalogUpdate, DaemonCommand, DockFold, Duration, ForkLaunch, InfoContent,
+    Map, ModelSwitchScope, PendingConfirm, RebuildKind, Result, SessionUi, SlashCommandExecution,
     SlashCommandRegistry, StatusKind, SubmitBehavior, Value, UI_REQUEST_TIMEOUT_MS,
 };
 
@@ -237,22 +237,21 @@ impl SessionUi {
                     self.note("Usage: /tree", view);
                 }
             }
-            "fork" => {
-                if resolved.args.is_empty() {
+            "fork" => match ForkLaunch::from_args(&resolved.args) {
+                Some(launch) => {
                     self.track_feature_outcome("fork", "initiated", None);
+                    self.fork_launch = launch;
                     self.open_fork_selector(view).await?;
-                } else {
-                    self.note("Usage: /fork", view);
                 }
-            }
-            "clone" => {
-                if resolved.args.is_empty() {
+                None => self.note("Usage: /fork [--replace]", view),
+            },
+            "clone" => match ForkLaunch::from_args(&resolved.args) {
+                Some(launch) => {
                     self.track_feature_outcome("clone", "initiated", None);
-                    self.handle_clone_command(view).await?;
-                } else {
-                    self.note("Usage: /clone", view);
+                    self.handle_clone_command(launch, view).await?;
                 }
-            }
+                None => self.note("Usage: /clone [--replace]", view),
+            },
             "copy" => {
                 if resolved.args.is_empty() {
                     self.handle_copy_command(view).await?;

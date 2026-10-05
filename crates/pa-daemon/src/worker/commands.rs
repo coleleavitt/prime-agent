@@ -31,6 +31,7 @@ impl Worker {
                 | "set_session_entry_label"
                 | "navigate_tree"
                 | "fork"
+                | "fork_export"
                 | "export_html"
                 | "export_jsonl"
         ) && self
@@ -148,6 +149,7 @@ impl Worker {
             "set_session_entry_label" => self.tree_navigation.set_session_entry_label(payload),
             "navigate_tree" => self.handle_navigate_tree(payload).await,
             "fork" => self.handle_fork(payload).await,
+            "fork_export" => self.handle_fork_export(payload).await,
             "abort_branch_summary" => {
                 self.tree_navigation.abort();
                 response_success(None, "abort_branch_summary", None)
