@@ -46,7 +46,30 @@ async def complete() -> dict[str, Any]:
 
     Use only when the objective has actually been achieved and no required
     work remains — not because the budget is nearly exhausted or because you
-    are stopping work. Pause, resume, and budget-limit transitions are
-    controlled by the user and the host.
+    are stopping work. When progress is blocked on the user or an external
+    event, use `pause()` instead.
     """
     return await host_request("goal.complete")
+
+
+async def pause(reason: str) -> dict[str, Any]:
+    """Pause the active goal while it is blocked on the user or an external event.
+
+    Use when further progress depends entirely on input you cannot produce
+    (an approval, a credential, an answer) instead of repeating the same
+    holding update every turn. The harness stops continuing a paused goal.
+    `reason` says what the goal is waiting for (non-empty, at most 1000
+    characters). Fails when no goal is active.
+    """
+    if not isinstance(reason, str):
+        raise TypeError(f"reason must be str, got {type(reason).__name__}")
+    return await host_request("goal.pause", {"reason": reason})
+
+
+async def resume() -> dict[str, Any]:
+    """Resume a goal you paused with `pause()` once the awaited input arrived.
+
+    Only a goal paused by the agent can be resumed here; a goal the user
+    paused with /goal pause waits for the user's /goal resume.
+    """
+    return await host_request("goal.resume")

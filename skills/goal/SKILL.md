@@ -15,6 +15,8 @@ await goal.get()
 await goal.create("ship the release notes")
 # Only pass token_budget when the user explicitly asks for one:
 # await goal.create("ship the release notes", token_budget=200000)
+await goal.pause("waiting for the user to approve the migration")
+await goal.resume()
 await goal.complete()
 ```
 
@@ -35,12 +37,22 @@ await goal.complete()
   call it merely because the budget is nearly exhausted or because you are
   stopping work. When the result includes a `completion_budget_report`, report
   that final usage to the user.
+- `await goal.pause(reason)` — pause the active goal while further progress
+  depends entirely on the user or an external event (an approval, a credential,
+  an answer). `reason` says what it is waiting for. The harness stops sending
+  continuations while the goal is paused.
+- `await goal.resume()` — resume a goal you paused once the awaited input
+  arrived. A goal the user paused (`/goal pause`) can only be resumed by the
+  user (`/goal resume`).
 
 ## Rules
 
-- Goal status transitions other than completion (pause, resume, clear,
-  budget-limiting) are controlled by the user and the host; there is no API for
-  them here.
+- When blocked on the user, call `await goal.pause(...)` and end the turn
+  rather than repeating the same holding update every continuation; call
+  `await goal.resume()` when the input arrives.
+- Other goal status transitions (clear, budget-limiting, resuming a user
+  pause) are controlled by the user and the host; there is no API for them
+  here.
 - When an active goal is actually complete, call `await goal.complete()`; do
   not merely say it is done — the harness keeps continuing the goal until the
   completion call arrives.

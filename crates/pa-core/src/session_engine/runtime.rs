@@ -127,35 +127,43 @@ impl SessionRuntime {
                 })
             }),
         );
-        let driver = self.goal_driver.clone();
-        let goal_session = session;
         // TS `_completeGoalFromHost` clears the queued goal contexts: a continuation
-        // queued behind the completing turn never runs post-completion.
-        let goal_complete_purge = self.goal_complete_purge.clone();
-        handlers.register(
-            "goal.complete",
-            host_handler(move |payload| {
-                let driver = driver.clone();
-                let session = goal_session.clone();
-                let purge = goal_complete_purge.clone();
-                Box::pin(async move {
-                    let response = {
-                        let mut driver = driver.lock().await;
-                        let mut session = session.lock().await;
-                        handle_goal_host_request(
-                            "goal.complete",
-                            &payload.data,
-                            &mut driver,
-                            &mut session,
-                        )?
-                    };
-                    if let Some(purge) = purge {
-                        purge();
-                    }
-                    host_ok(&response)
-                })
-            }),
-        );
+        // queued behind the completing turn never runs post-completion. An
+        // agent pause clears them the same way (a paused goal runs nothing).
+        let goal_sessions = [session.clone(), session.clone(), session];
+        for (request_type, goal_session) in ["goal.complete", "goal.pause", "goal.resume"]
+            .into_iter()
+            .zip(goal_sessions)
+        {
+            let driver = self.goal_driver.clone();
+            let purge = (request_type != "goal.resume")
+                .then(|| self.goal_complete_purge.clone())
+                .flatten();
+            handlers.register(
+                request_type,
+                host_handler(move |payload| {
+                    let driver = driver.clone();
+                    let session = goal_session.clone();
+                    let purge = purge.clone();
+                    Box::pin(async move {
+                        let response = {
+                            let mut driver = driver.lock().await;
+                            let mut session = session.lock().await;
+                            handle_goal_host_request(
+                                request_type,
+                                &payload.data,
+                                &mut driver,
+                                &mut session,
+                            )?
+                        };
+                        if let Some(purge) = purge {
+                            purge();
+                        }
+                        host_ok(&response)
+                    })
+                }),
+            );
+        }
         let store = self.cron_store.clone();
         let active_session_id = self.active_session_id.clone();
         let binding_session_id = self.binding.session_id.clone();
@@ -282,6 +290,21 @@ mod tests {
             .unwrap();
         assert_eq!(response["goal"]["objective"], "finish the port");
         assert_eq!(response["remaining_tokens"], 1000);
+
+        // Upstream #888: the model pauses a blocked goal and resumes it.
+        let pause = handlers.get("goal.pause").unwrap().clone();
+        let response = pause(payload(serde_json::json!({
+            "type": "goal.pause",
+            "reason": "waiting for review"
+        })))
+        .await
+        .unwrap();
+        assert_eq!(response["goal"]["status"], "paused");
+        let resume = handlers.get("goal.resume").unwrap().clone();
+        let response = resume(payload(serde_json::json!({ "type": "goal.resume" })))
+            .await
+            .unwrap();
+        assert_eq!(response["goal"]["status"], "active");
 
         let complete = handlers.get("goal.complete").unwrap().clone();
         let response = complete(payload(serde_json::json!({ "type": "goal.complete" })))
