@@ -246,7 +246,10 @@ fn the_adoption_event_is_reported_once_per_process() {
         *events.lock_or_recover(),
         vec![(
             crate::TELEMETRY_EVENT.to_string(),
-            serde_json::json!({ "source": "refreshed", "refreshed": 1, "failed": 0 })
+            serde_json::json!({
+                "source": "refreshed", "refreshed": 1, "failed": 0,
+                "migrated": 0, "recovered": 0, "rotated": 0
+            })
         )]
     );
 }
@@ -384,6 +387,7 @@ fn an_auth_json_login_moves_into_an_empty_store() {
     );
     // auth.json no longer holds it: the store is the only custodian.
     assert_eq!(registry.auth.get_all().get(provider), None);
+    assert_eq!(source.usage().migrated, 1);
 }
 
 #[test]

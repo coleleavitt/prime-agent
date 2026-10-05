@@ -138,4 +138,6 @@ publishes a rotation of the linked account to it, as the plugins do. It owns no 
 
 `anthropic_shared_auth` (schema v4), once per process at the first agent end after the store answered a request:
 `source` (how the first credential was obtained: `store`, `refreshed`, `adopted`, `claude_code`, or `failed`),
-`refreshed` and `failed` (the process's counts so far). Never an account id, email, label or token.
+`refreshed` and `failed` (the process's counts so far), and (additive, optional in the catalogue) `migrated`
+(auth.json logins moved into the store), `recovered` (401s re-sent with a recovered token) and `rotated` (429s moved
+to another login). Never an account id, email, label or token.

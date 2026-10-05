@@ -77,6 +77,7 @@ fn a_429_moves_to_the_next_login_in_the_store_s_order() {
         until >= before + Duration::seconds(119) && until <= Utc::now() + Duration::seconds(121)
     );
     assert_eq!(store.current, None);
+    assert_eq!(source.usage().rotated, 1);
     // The next request goes to the next login straight away.
     assert_eq!(
         source.credential().map(|credential| credential.api_key),
@@ -270,8 +271,14 @@ fn the_cooldown_follows_the_server() {
                     "anthropic-ratelimit-unified-representative-claim",
                     "five_hour".to_string()
                 ),
-                ("anthropic-ratelimit-unified-5h-reset", five_hour_reset.to_string()),
-                ("anthropic-ratelimit-unified-7d-reset", seven_day_reset.to_string()),
+                (
+                    "anthropic-ratelimit-unified-5h-reset",
+                    five_hour_reset.to_string()
+                ),
+                (
+                    "anthropic-ratelimit-unified-7d-reset",
+                    seven_day_reset.to_string()
+                ),
             ]),
             now
         )
@@ -281,8 +288,14 @@ fn the_cooldown_follows_the_server() {
     assert_eq!(
         cooldown_until(
             &headers(&[
-                ("anthropic-ratelimit-unified-5h-reset", five_hour_reset.to_string()),
-                ("anthropic-ratelimit-unified-7d-reset", seven_day_reset.to_string()),
+                (
+                    "anthropic-ratelimit-unified-5h-reset",
+                    five_hour_reset.to_string()
+                ),
+                (
+                    "anthropic-ratelimit-unified-7d-reset",
+                    seven_day_reset.to_string()
+                ),
             ]),
             now
         )

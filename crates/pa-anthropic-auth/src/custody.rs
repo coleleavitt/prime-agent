@@ -14,7 +14,7 @@ use chrono::{TimeZone, Utc};
 use pa_core::auth::{CredentialSourceError, RemovedLogin, StoredLoginCustody, StoredOAuthLogin};
 use pa_types::sync::MutexExt;
 
-use crate::source::{block_on_own_runtime, logins, served_login};
+use crate::source::{block_on_own_runtime, logins, served_login, UsageEvent};
 use crate::SharedStoreSource;
 
 /// What the store did with an imported login (napi `ImportResult.status`).
@@ -120,6 +120,7 @@ impl SharedStoreSource {
     pub(crate) fn adopt(&self, login: &StoredOAuthLogin) -> StoredLoginCustody {
         match block_on_own_runtime(self.import_login(login)) {
             Ok(Ok(Some(status))) => {
+                self.count(UsageEvent::Migrated);
                 tracing::info!(
                     status = status.code(),
                     "moved auth.json's Anthropic login into the shared account store"

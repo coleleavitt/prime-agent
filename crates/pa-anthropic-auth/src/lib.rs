@@ -130,6 +130,9 @@ impl SessionFeature for AnthropicAuthFeature {
         properties.set("source", usage.first.unwrap_or("failed").into());
         properties.set("refreshed", usage.refreshed.into());
         properties.set("failed", usage.failed.into());
+        properties.set("migrated", usage.migrated.into());
+        properties.set("recovered", usage.recovered.into());
+        properties.set("rotated", usage.rotated.into());
         telemetry.track(TELEMETRY_EVENT, &properties);
     }
 }

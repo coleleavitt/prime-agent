@@ -1332,7 +1332,9 @@ const LEARNING_REPORT: EventRule = EventRule {
 /// `anthropic` provider, reported once per process at the end of the first
 /// agent run after the store answered a request: how its first credential
 /// was obtained (or `failed` when none was), and the process's refresh and
-/// failure counts so far — never an account id, email, label or token.
+/// failure counts so far, plus (additive) the auth.json logins it moved
+/// into the store, the 401s it recovered and the 429s it moved to another
+/// login — never an account id, email, label or token.
 const ANTHROPIC_SHARED_AUTH: EventRule = EventRule {
     name: "anthropic_shared_auth",
     since: 4,
@@ -1353,6 +1355,9 @@ const ANTHROPIC_SHARED_AUTH: EventRule = EventRule {
         ),
         ("refreshed", required(count())),
         ("failed", required(count())),
+        ("migrated", optional(count())),
+        ("recovered", optional(count())),
+        ("rotated", optional(count())),
     ],
 };
 
@@ -2254,6 +2259,9 @@ mod tests {
             ("source", json!("refreshed")),
             ("refreshed", json!(1u64)),
             ("failed", json!(0u64)),
+            ("migrated", json!(1u64)),
+            ("recovered", json!(2u64)),
+            ("rotated", json!(0u64)),
         ] {
             properties.set(key, value);
         }

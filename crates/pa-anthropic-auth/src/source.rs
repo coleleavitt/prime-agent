@@ -125,6 +125,12 @@ pub struct SourceUsage {
     /// Requests the store could not serve (refresh failed, revoked,
     /// unreadable, network).
     pub failed: u64,
+    /// auth.json logins moved into the store.
+    pub migrated: u64,
+    /// Requests re-sent after a 401 with a recovered token.
+    pub recovered: u64,
+    /// Requests moved to another login after a 429.
+    pub rotated: u64,
     /// The way the first served credential was obtained.
     pub first: Option<&'static str>,
 }
@@ -135,6 +141,17 @@ impl SourceUsage {
     pub fn answered(&self) -> bool {
         self.first.is_some() || self.failed > 0
     }
+}
+
+/// A custody or recovery event the adoption report counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UsageEvent {
+    /// An auth.json login moved into the store.
+    Migrated,
+    /// A 401 recovered with a new token.
+    Recovered,
+    /// A 429 moved to another login.
+    Rotated,
 }
 
 /// The store file's identity for the status memo: `(len, mtime)`. The
@@ -407,6 +424,16 @@ impl SharedStoreSource {
         let mut usage = self.usage.lock_or_recover();
         usage.refreshed += 1;
         usage.first.get_or_insert(AccessSource::Refreshed.code());
+    }
+
+    /// Count one custody or recovery event.
+    pub(crate) fn count(&self, event: UsageEvent) {
+        let mut usage = self.usage.lock_or_recover();
+        match event {
+            UsageEvent::Migrated => usage.migrated += 1,
+            UsageEvent::Recovered => usage.recovered += 1,
+            UsageEvent::Rotated => usage.rotated += 1,
+        }
     }
 
     /// The store file this source reads.

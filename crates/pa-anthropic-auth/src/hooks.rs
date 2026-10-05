@@ -14,7 +14,7 @@ use pa_types::sync::MutexExt;
 
 use crate::quota::cooldown_until;
 use crate::shape::{shape_request, ShapeEnv, ShapeIdentity};
-use crate::source::block_on_own_runtime;
+use crate::source::{block_on_own_runtime, UsageEvent};
 use crate::SharedStoreSource;
 
 impl SharedStoreSource {
@@ -74,6 +74,9 @@ impl SharedStoreSource {
             status = rejected.status,
             "a shared store login was rate-limited"
         );
+        if moved {
+            self.count(UsageEvent::Rotated);
+        }
         moved.then_some(next)
     }
 
@@ -99,6 +102,7 @@ impl SharedStoreSource {
                 self.remember(&token, account_id);
             }
             self.count_refreshed();
+            self.count(UsageEvent::Recovered);
             tracing::info!("the shared store's token was rejected with 401; refreshed");
             return Some(token);
         }
@@ -111,6 +115,7 @@ impl SharedStoreSource {
         }
         let current = self.store_token()?;
         (current != rejected).then(|| {
+            self.count(UsageEvent::Recovered);
             tracing::info!("the shared store's token was rejected with 401; re-read a newer one");
             current
         })

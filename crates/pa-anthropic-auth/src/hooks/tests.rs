@@ -56,6 +56,7 @@ fn a_401_is_retried_once_with_a_claimed_refresh() {
         refresh_token_of(&source, "recover"),
         Some("sk-ant-ort01-rotated-rotated-rotated-00".to_string())
     );
+    assert_eq!((source.usage().refreshed, source.usage().recovered), (1, 1));
 }
 
 #[test]
