@@ -36,7 +36,7 @@ from collections.abc import Awaitable, Callable, Iterator
 from typing import Any
 
 from . import factory as factory_module
-from . import trace
+from . import plan_guard, trace
 from .bash import _kill_live_handles
 
 PROTOCOL_VERSION = 4
@@ -1697,15 +1697,47 @@ _REQUIRED_FIELDS = {
     "mcp_status": ("id",),
     "bash_activity": ("id", "action"),
     "factory_activity": ("id", "action"),
+    "plan_guard": ("id", "token"),
     "shutdown": (),
 }
+
+
+PlanGuardController = Callable[[str, bool, list[str], list[str]], bool]
+
+
+def _handle_plan_guard(req: dict[str, Any], controller: PlanGuardController | None) -> None:
+    """Out-of-band: plan mode must apply even while a cell runs."""
+    rid = req["id"]
+    enabled = req.get("enabled")
+    roots = req.get("writable_roots", [])
+    protected = req.get("protected_roots", [])
+    if not isinstance(enabled, bool):
+        _send({"event": "done", "id": rid, "status": "error", "reason": "plan_guard enabled must be a boolean"})
+        return
+    for field, value in (("writable_roots", roots), ("protected_roots", protected)):
+        if not isinstance(value, list) or not all(isinstance(root, str) for root in value):
+            _send({"event": "done", "id": rid, "status": "error", "reason": f"plan_guard {field} must be strings"})
+            return
+    if controller is None:
+        _send({"event": "done", "id": rid, "status": "error", "reason": "plan guard is unavailable"})
+        return
+    try:
+        now = controller(req["token"], enabled, roots, protected)
+    except Exception as exc:  # noqa: BLE001 - every failure answers the host
+        _send({"event": "done", "id": rid, "status": "error", "reason": f"{type(exc).__name__}: {_safe_str(exc)}"})
+        return
+    _send({"event": "done", "id": rid, "status": "ok", "enabled": now})
 
 
 def _protocol_error(message: str) -> None:
     _send({"event": "error", "id": None, "ename": "ProtocolError", "evalue": message, "traceback": []})
 
 
-def _handle_request_line(raw: bytes, queue: asyncio.Queue[dict[str, Any]]) -> None:
+def _handle_request_line(
+    raw: bytes,
+    queue: asyncio.Queue[dict[str, Any]],
+    plan_guard_controller: PlanGuardController | None = None,
+) -> None:
     assert _loop is not None
     req = json.loads(raw)
     if not isinstance(req, dict):
@@ -1749,6 +1781,14 @@ def _handle_request_line(raw: bytes, queue: asyncio.Queue[dict[str, Any]]) -> No
         # Like host_reply, this bypasses the cell FIFO. Handles remain owned
         # by the runtime, not by an arbitrary PID supplied by the client.
         _handle_bash_activity(req)
+        return
+    if rtype == "plan_guard":
+        if len(req["id"]) > 256:
+            _protocol_error("plan_guard ids must stay under 256 characters")
+            return
+        # The token reaches only the controller the runtime claimed at
+        # startup; the frame never enters the cell queue or any namespace.
+        _handle_plan_guard(req, plan_guard_controller)
         return
     if rtype == "factory_activity":
         from .factory import ACTIVITY_ACTIONS, ACTIVITY_TIMEOUT_MS_CAP
@@ -1795,7 +1835,11 @@ def _handle_request_line(raw: bytes, queue: asyncio.Queue[dict[str, Any]]) -> No
     _loop.call_soon_threadsafe(queue.put_nowait, req)
 
 
-def _read_requests(stdin_fd: int, queue: asyncio.Queue[dict[str, Any]]) -> None:
+def _read_requests(
+    stdin_fd: int,
+    queue: asyncio.Queue[dict[str, Any]],
+    plan_guard_controller: PlanGuardController | None = None,
+) -> None:
     assert _loop is not None
     with os.fdopen(stdin_fd, "rb") as stream:
         for raw in stream:
@@ -1806,7 +1850,7 @@ def _read_requests(stdin_fd: int, queue: asyncio.Queue[dict[str, Any]]) -> None:
                 # The whole per-line handling sits inside the backstop: hostile
                 # input (RecursionError from pathological nesting, unhashable
                 # field types, ...) must never kill the reader thread.
-                _handle_request_line(raw, queue)
+                _handle_request_line(raw, queue, plan_guard_controller)
             except BaseException as err:  # noqa: BLE001
                 _protocol_error(f"{type(err).__name__}: {_safe_str(err)}")
     # Host closed stdin: shut the runtime down. The marker distinguishes
@@ -2014,7 +2058,12 @@ def main() -> None:
     asyncio.set_event_loop(_loop)
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
     signal.signal(signal.SIGINT, _sigint_handler)
-    threading.Thread(target=_read_requests, args=(stdin_fd, queue), daemon=True).start()
+    # Claimed before any cell can run: the one plan-mode controller lives only
+    # in the reader thread, which answers the host's `plan_guard` frames.
+    plan_guard_controller = plan_guard.claim_host_controller()
+    threading.Thread(
+        target=_read_requests, args=(stdin_fd, queue, plan_guard_controller), daemon=True
+    ).start()
 
     _send({"event": "ready", "protocol": PROTOCOL_VERSION, "python": platform.python_version()})
 

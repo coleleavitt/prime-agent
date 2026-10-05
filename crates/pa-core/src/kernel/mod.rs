@@ -9,6 +9,7 @@ pub mod cancellation;
 pub mod live_kernels;
 pub mod manager;
 pub mod orphan_journal;
+pub mod plan_guard;
 pub mod protocol;
 pub mod provisioner;
 pub mod rlm_runtime;

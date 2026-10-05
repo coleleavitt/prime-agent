@@ -26,7 +26,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, NamedTuple, NoReturn, cast
 
-from . import _winjob, trace
+from . import _winjob, plan_guard, trace
 
 _IS_POSIX = os.name == "posix"
 
@@ -333,6 +333,12 @@ class BashHandle:
             raise
 
     def _spawn(self, command: str) -> None:
+        # Plan mode: refuse before any fd or process exists. With an OS sandbox
+        # the spawn below runs read-only; without one only a classifiable
+        # read-only script runs, and the guard checks the status wrapper is
+        # exactly this runtime's own around it.
+        plan_guard.check_bash(self._script)
+        guard_kwargs: dict[str, str] = {"_plan_guard_inner": self._script} if plan_guard.is_enabled() else {}
         self._done = threading.Event()
         self._eof = threading.Event()
         self._completion_terminal = threading.Event()
@@ -405,6 +411,7 @@ class BashHandle:
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
                     stdin=status_write,
+                    **guard_kwargs,
                 )
             else:
                 self._proc = _winjob.spawn_in_job(

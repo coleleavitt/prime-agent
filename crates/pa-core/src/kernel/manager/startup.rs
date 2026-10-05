@@ -363,6 +363,34 @@ impl Inner {
                  Update prime-agent-runtime in the kernel Python (PRIME_AGENT_KERNEL_PYTHON) to match this prime-agent."
             ));
         }
+        // Plan mode arms before the kernel serves anything (restore, the
+        // runtime bootstrap, cells). With plan mode off no frame is sent: the
+        // runtime starts unguarded, and a later toggle arms it.
+        if self
+            .options
+            .plan_guard
+            .as_ref()
+            .is_some_and(|guard| guard.mode.is_enabled())
+        {
+            if let Err(error) = self.apply_plan_guard().await {
+                if self.start_stale(generation) {
+                    return Err(error);
+                }
+                // A runtime without the guard passed a stale probe memo: a
+                // retry re-probes (the probe asserts `rlm.plan_guard`).
+                crate::kernel::bootstrap::invalidate_runtime_probe_cache_for(&python);
+                let can_retry_startup = lock(&self.guarded).state != KernelState::Shutdown;
+                let performed = self
+                    .perform_shutdown(KernelShutdownOptions::default())
+                    .await;
+                if performed && can_retry_startup {
+                    lock(&self.guarded).state = KernelState::Idle;
+                }
+                return Err(
+                    error.context("plan mode is on, but the kernel could not arm its write guard")
+                );
+            }
+        }
         {
             let mut g = lock(&self.guarded);
             g.state = KernelState::Running;

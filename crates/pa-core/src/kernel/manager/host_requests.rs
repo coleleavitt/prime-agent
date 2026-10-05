@@ -238,6 +238,7 @@ mod tests {
             }),
         );
         let manager = ReplKernelManager::new(KernelManagerOptions {
+            plan_guard: None,
             host_handlers,
             ..KernelManagerOptions::default()
         });

@@ -122,6 +122,10 @@ impl Inner {
                     let _ = waiter.send(fields);
                     return;
                 }
+                if let Some(waiter) = lock(&self.guarded).plan_guard_waiters.remove(&id) {
+                    let _ = waiter.send(fields);
+                    return;
+                }
                 let status = fields
                     .get("status")
                     .and_then(Value::as_str)

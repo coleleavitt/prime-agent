@@ -129,6 +129,9 @@ pub struct IpythonKernelProvisionerOptions {
     /// Publishes the per-boot result for the `kernel_bootstrap_*` counters.
     /// Telemetry only; kernel behavior never depends on it.
     pub on_bootstrap_result: Option<KernelBootstrapResultHandler>,
+    /// The session's plan mode: every booted kernel arms the runtime write
+    /// guard while it is on (see [`crate::kernel::plan_guard`]).
+    pub plan_mode: Option<crate::kernel::plan_guard::PlanModeSwitch>,
 }
 
 /// Why and how long one startup failed, published through the shared startup
@@ -532,6 +535,37 @@ impl IpythonKernelProvisioner {
             .prune_oversized_variables()
             .await
             .and_then(|r| r.pruned)
+    }
+
+    /// Apply the plan-mode switch's current state to this provisioner's
+    /// kernel: the running one, or the one an in-flight boot produces (a boot
+    /// that read the switch before a toggle must not keep the old state). No
+    /// kernel at all is fine: the next boot reads the switch.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the kernel runtime cannot apply the guard.
+    pub async fn sync_plan_mode(&self) -> anyhow::Result<()> {
+        if self.inner.options.plan_mode.is_none() {
+            return Ok(());
+        }
+        let (manager, startup) = {
+            let state = self.lock_state();
+            (state.manager.clone(), state.startup.clone())
+        };
+        let manager = match (manager, startup) {
+            (Some(manager), _) => Some(manager),
+            (None, Some(mut startup)) => {
+                let _ = startup.wait_for(Option::is_some).await;
+                let settled = startup.borrow().clone();
+                settled.and_then(Result::ok)
+            }
+            (None, None) => None,
+        };
+        if let Some(manager) = manager {
+            manager.sync_plan_guard().await?;
+        }
+        Ok(())
     }
 
     /// Live user-defined names in the kernel namespace, or `None` if listing
@@ -1046,6 +1080,16 @@ async fn start_kernel_impl(
         snapshot,
         bootstrap_code: Some(bootstrap_code.clone()),
         stderr_log_path,
+        // The guarded kernel still writes its namespace snapshot into the
+        // session artifact dir; the workspace stays read-only even when it
+        // sits under a temp dir.
+        plan_guard: options.plan_mode.as_ref().map(|mode| {
+            crate::kernel::plan_guard::KernelPlanGuard {
+                mode: mode.clone(),
+                writable_roots: snapshot_dir.iter().cloned().collect(),
+                protected_roots: vec![inner.cwd.clone()],
+            }
+        }),
     });
 
     emit_startup_progress(inner, on_progress, memo, "Starting Python kernel...");

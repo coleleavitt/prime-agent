@@ -317,6 +317,8 @@ struct Guarded {
     /// Resolvers for out-of-band `factory_activity` done events (the
     /// factory bridge's lane; ids never collide with cell requests).
     factory_activity_waiters: HashMap<String, oneshot::Sender<Value>>,
+    /// Resolvers for out-of-band `plan_guard` done events.
+    plan_guard_waiters: HashMap<String, oneshot::Sender<Value>>,
     host_inflight: Vec<tokio::task::JoinHandle<()>>,
     active_execution: Option<Arc<ActiveExecution>>,
     /// Source of the most recently started cell, retained after it finishes so
@@ -368,6 +370,10 @@ pub(crate) struct Inner {
     stderr_closed_flag: AtomicBool,
     /// File receiving pre-ready kernel stderr, with its remaining write budget.
     stderr_log: Mutex<Option<Arc<Mutex<StderrLog>>>>,
+    /// The host-held plan-guard token, minted on first use; never sent in a cell.
+    plan_guard_token: Mutex<Option<String>>,
+    /// Serializes plan-guard frames (see `apply_plan_guard`).
+    plan_guard_lock: tokio::sync::Mutex<()>,
 }
 
 struct StderrLog {
@@ -411,6 +417,7 @@ mod delegations;
 mod events;
 mod execution;
 mod host_requests;
+mod plan_guard;
 mod repair;
 mod requests;
 mod snapshot;
@@ -458,6 +465,7 @@ impl ReplKernelManager {
                 pending_done_waiters: HashMap::new(),
                 bash_activity_waiters: HashMap::new(),
                 factory_activity_waiters: HashMap::new(),
+                plan_guard_waiters: HashMap::new(),
                 host_inflight: Vec::new(),
                 active_execution: None,
                 last_cell_code: None,
@@ -475,6 +483,8 @@ impl ReplKernelManager {
             stderr_closed: Notify::new(),
             stderr_closed_flag: AtomicBool::new(false),
             stderr_log: Mutex::new(None),
+            plan_guard_token: Mutex::new(None),
+            plan_guard_lock: tokio::sync::Mutex::new(()),
         });
         Self { inner }
     }

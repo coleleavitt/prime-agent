@@ -489,6 +489,9 @@ pub struct KernelManagerOptions {
     pub bootstrap_code: Option<String>,
     /// File receiving the kernel process's stderr, rotated once at each spawn.
     pub stderr_log_path: Option<std::path::PathBuf>,
+    /// The session's plan mode: armed in every started kernel before it serves
+    /// a request, when on. `None` sends no plan-guard frame at all.
+    pub plan_guard: Option<crate::kernel::plan_guard::KernelPlanGuard>,
 }
 
 /// Shutdown options: whether to flush a final namespace snapshot and drain

@@ -241,6 +241,7 @@ pub fn kernel_provisioner(
             on_background_work_settled,
             on_unavailable_skills,
             on_bootstrap_result,
+            plan_mode: None,
         },
     ))
 }
