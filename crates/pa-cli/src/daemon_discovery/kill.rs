@@ -247,6 +247,7 @@ pub(super) fn listener_signature(listeners: &[DiscoveredDaemonProcess]) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::daemon_discovery::Containment;
     use std::collections::HashSet;
     use std::path::PathBuf;
 
@@ -257,6 +258,7 @@ mod tests {
             agent_dir: dir.join("agent"),
             socket_dir: dir.join("agent").join("sockets"),
             default_socket_path: dir.join("agent").join("sockets").join("daemon.sock"),
+            containment: Containment::current(),
         }
     }
 
@@ -277,13 +279,14 @@ mod tests {
 
     #[test]
     fn residual_sweep_never_touches_a_never_touch_dir() {
-        // The ambient mission daemon's workers listen under these dirs; a
+        // The ambient real daemon's workers listen under these dirs; a
         // sweep rooted on them must see no listeners and harm nothing.
         for dir in ["/tmp/mission-tmp/prime-agent-1000", "/tmp/prime-agent-1000"] {
             let root = DaemonStateRoot {
                 agent_dir: PathBuf::from(dir),
                 socket_dir: PathBuf::from(dir),
                 default_socket_path: PathBuf::from(dir).join("daemon.sock"),
+                containment: Containment::current(),
             };
             let assert = || Ok(());
             let mut stopped: Vec<(String, String)> = Vec::new();

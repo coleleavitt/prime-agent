@@ -341,6 +341,8 @@ fn run(binary: &Path, args: &[&str], sandbox: &Path) -> InvocationOutput {
         // doctor, shutdown) must never see this box's real sockets, and
         // `shutdown --force` on the TS binary has no containment guard.
         .env("TMPDIR", sandbox.join("tmp"))
+        // The Rust binary's guard, as a second layer behind the TMPDIR pin.
+        .env(pa_cli::DISCOVERY_CONTAINMENT_ENV, "1")
         .env("PI_OFFLINE", "1")
         .current_dir(sandbox.join("cwd"))
         .current_dir(sandbox.join("cwd"))
