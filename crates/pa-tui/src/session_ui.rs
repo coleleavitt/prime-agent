@@ -335,6 +335,9 @@ pub(crate) struct SessionUi {
     pub(crate) daemon_closing_notice: Option<String>,
     pub(crate) transport_lost: Option<String>,
     pub(crate) pending_rebind: Option<String>,
+    /// The supervisor dropped events for the attached session: the loop re-attaches the
+    /// same session and rebuilds the view from the fresh snapshot.
+    pub(crate) pending_resync: bool,
     /// The re-attach window expired: dispatch is blocked and submits
     /// surface the error instead of leaving the UI on a silent spinner.
     pub(crate) reconnection_failed: Option<String>,

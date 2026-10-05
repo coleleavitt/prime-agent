@@ -363,6 +363,11 @@ impl SessionUi {
                     self.pending_rebind = Some(active_session_id);
                 }
             }
+            DaemonClientEvent::SessionResyncRequired { active_session_id } => {
+                if active_session_id == self.active_session_id {
+                    self.pending_resync = true;
+                }
+            }
             DaemonClientEvent::SessionListItem { .. }
             | DaemonClientEvent::SessionListProgress { .. } => {}
         }

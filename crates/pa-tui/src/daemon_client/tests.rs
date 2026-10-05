@@ -689,3 +689,23 @@ async fn without_capability_upgrade_is_a_no_op() {
     assert_eq!(client.direct_session_id(), None);
     client.close();
 }
+
+/// Upstream #2444/#1940: the supervisor's lag signal parses into the resync event
+/// the view re-attaches on.
+#[test]
+fn session_resync_required_parses_for_the_view() {
+    let value = json!({
+        "type": "session_resync_required",
+        "activeSessionId": "sess-1",
+        "reason": "lagged",
+    });
+    assert_eq!(
+        format!("{:?}", client_event_from_value(&value)),
+        format!(
+            "{:?}",
+            Some(DaemonClientEvent::SessionResyncRequired {
+                active_session_id: "sess-1".to_string()
+            })
+        )
+    );
+}

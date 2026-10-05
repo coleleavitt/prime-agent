@@ -175,6 +175,7 @@ impl SessionUi {
             daemon_closing_notice: None,
             transport_lost: None,
             pending_rebind: None,
+            pending_resync: false,
             reconnection_failed: None,
             exit_guard: crate::exit_guard::ExitGuard::new(),
             escape_repeat_action: None,
