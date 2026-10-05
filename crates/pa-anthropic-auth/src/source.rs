@@ -51,6 +51,11 @@ pub struct SharedStoreConfig {
     /// Run the keep-alive on the crate's own thread once a credential has
     /// been served (off in tests and sandboxes, which call a pass directly).
     pub background: bool,
+    /// Where the live Claude Code version is read (the npm registry's
+    /// `latest`, on the keep-alive thread, hourly); `None` keeps the
+    /// verified floor (`OPENCODE_ANTHROPIC_AUTH_DISABLE_VERSION_CHECK=1`,
+    /// the plugins' switch).
+    pub version_url: Option<String>,
 }
 
 impl SharedStoreConfig {
@@ -65,6 +70,10 @@ impl SharedStoreConfig {
             profile_url: anthropic::profile::profile_url_from_lookup(|key| std::env::var(key).ok()),
             require_loopback: false,
             background: true,
+            version_url: (std::env::var(anthropic::claude_version::DISABLE_VERSION_CHECK_ENV)
+                .as_deref()
+                != Ok("1"))
+            .then(|| anthropic::claude_version::LATEST_VERSION_URL.to_string()),
         }
     }
 
@@ -82,6 +91,7 @@ impl SharedStoreConfig {
             profile_url: profile_url.to_string(),
             require_loopback: true,
             background: false,
+            version_url: None,
         }
     }
 
@@ -136,9 +146,14 @@ pub struct SharedStoreSource {
     status_memo: Mutex<Option<(FileStamp, Option<CredentialSourceStatus>)>>,
     usage: Mutex<SourceUsage>,
     /// The access tokens this source served (newest last, bounded) and the
-    /// store rows they belong to: only these take part in the request
-    /// hooks.
-    served: Mutex<std::collections::VecDeque<(String, String)>>,
+    /// logins they belong to: only these take part in the request hooks.
+    served: Mutex<std::collections::VecDeque<ServedToken>>,
+    /// The installation's device id, read (or created) with the first
+    /// served token.
+    device_id: OnceLock<Option<String>>,
+    /// This process's session id per store row (the plugin's per-account
+    /// Claude Code identity).
+    sessions: Mutex<std::collections::HashMap<String, String>>,
     /// The keep-alive's state, shared with its thread.
     keepalive: Arc<KeepAlive>,
     /// The keep-alive thread starts once.
@@ -147,6 +162,16 @@ pub struct SharedStoreSource {
 
 /// How many served tokens the source remembers (the pi plugin's bound).
 const SERVED_TOKENS_LIMIT: usize = 64;
+
+/// A token this source served and the login it belongs to.
+#[derive(Clone)]
+pub(crate) struct ServedToken {
+    token: String,
+    /// The store row.
+    pub(crate) account_id: String,
+    /// The account's uuid, when the store knows it.
+    pub(crate) account_uuid: Option<String>,
+}
 
 impl SharedStoreSource {
     /// A source over `config`. Does no I/O.
@@ -160,6 +185,8 @@ impl SharedStoreSource {
             status_memo: Mutex::new(None),
             usage: Mutex::new(SourceUsage::default()),
             served: Mutex::new(std::collections::VecDeque::new()),
+            device_id: OnceLock::new(),
+            sessions: Mutex::new(std::collections::HashMap::new()),
             keepalive,
             keepalive_started: std::sync::Once::new(),
         }
@@ -195,11 +222,29 @@ impl SharedStoreSource {
     }
 
     /// Remember a token this source handed out, for the store row
-    /// `account_id`.
+    /// `account_id` (its account uuid read from the store). Blocking: reads
+    /// the store, and the device id the first time.
     pub(crate) fn remember(&self, token: &str, account_id: &str) {
+        let account_uuid = AccountStore::load(&self.config.store_path)
+            .ok()
+            .and_then(|store| {
+                store
+                    .get(account_id)?
+                    .oauth()?
+                    .account
+                    .as_ref()
+                    .map(|account| account.uuid.clone())
+            })
+            .filter(|uuid| !uuid.trim().is_empty());
+        self.device_id
+            .get_or_init(|| crate::device::load_or_create(&self.config.store_path));
         let mut served = self.served.lock_or_recover();
-        served.retain(|(known, _)| known != token);
-        served.push_back((token.to_string(), account_id.to_string()));
+        served.retain(|known| known.token != token);
+        served.push_back(ServedToken {
+            token: token.to_string(),
+            account_id: account_id.to_string(),
+            account_uuid,
+        });
         while served.len() > SERVED_TOKENS_LIMIT {
             served.pop_front();
         }
@@ -210,16 +255,35 @@ impl SharedStoreSource {
 
     /// Whether this source handed out `token`.
     pub(crate) fn served(&self, token: &str) -> bool {
-        self.served_account(token).is_some()
+        self.served_token(token).is_some()
     }
 
-    /// The store row a token this source handed out belongs to.
-    pub(crate) fn served_account(&self, token: &str) -> Option<String> {
+    /// The login a token this source handed out belongs to.
+    pub(crate) fn served_token(&self, token: &str) -> Option<ServedToken> {
         self.served
             .lock_or_recover()
             .iter()
-            .find(|(known, _)| known == token)
-            .map(|(_, account)| account.clone())
+            .find(|known| known.token == token)
+            .cloned()
+    }
+
+    /// The installation's device id, once a token was served (no I/O).
+    pub(crate) fn device_id(&self) -> Option<String> {
+        self.device_id.get().cloned().flatten()
+    }
+
+    /// This process's session id for the store row `account_id`.
+    pub(crate) fn session_id(&self, account_id: &str) -> String {
+        self.sessions
+            .lock_or_recover()
+            .entry(account_id.to_string())
+            .or_insert_with(|| uuid::Uuid::new_v4().to_string())
+            .clone()
+    }
+
+    /// The Claude Code version the requests claim now.
+    pub(crate) fn claude_code_version(&self) -> String {
+        self.keepalive.claude_code_version()
     }
 
     /// Count a refresh this process made outside a credential lookup (the

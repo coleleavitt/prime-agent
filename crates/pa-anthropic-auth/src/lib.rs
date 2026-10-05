@@ -22,9 +22,11 @@ use pa_core::features::{SessionFeature, SessionFeatureContext};
 use pa_telemetry::Properties;
 
 mod custody;
+mod device;
 mod hooks;
 mod keepalive;
 mod login;
+mod shape;
 mod source;
 #[cfg(test)]
 mod test_support;

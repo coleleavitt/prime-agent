@@ -103,3 +103,46 @@ fn the_keepalive_thread_starts_with_the_first_served_credential() {
     pa_core::auth::ProviderCredentialSource::credential(&source).expect("served");
     assert!(source.keepalive_started());
 }
+
+/// A keep-alive whose version lookup reaches `url`.
+fn version_reader(url: &str) -> super::KeepAlive {
+    let mut config = SharedStoreConfig::isolated(
+        std::path::PathBuf::from("/nonexistent/accounts.json"),
+        "http://127.0.0.1:9/v1/oauth/token",
+        "http://127.0.0.1:9/api/oauth/profile",
+    );
+    config.version_url = Some(url.to_string());
+    super::KeepAlive::new(config)
+}
+
+fn read_version(keepalive: &super::KeepAlive) -> String {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime")
+        .block_on(keepalive.refresh_version(Utc::now()));
+    keepalive.claude_code_version()
+}
+
+#[test]
+fn the_live_claude_code_version_is_read_and_cached() {
+    let (url, hits) = token_endpoint(
+        200,
+        r#"{"name":"@anthropic-ai/claude-code","version":"2.1.400"}"#,
+    );
+    let keepalive = version_reader(&url);
+    assert_eq!(keepalive.claude_code_version(), "2.1.280");
+
+    assert_eq!(read_version(&keepalive), "2.1.400");
+    // Cached for the hour: no second lookup.
+    assert_eq!(read_version(&keepalive), "2.1.400");
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn an_older_or_unreadable_version_keeps_the_floor() {
+    let (older, _) = token_endpoint(200, r#"{"version":"2.1.100"}"#);
+    assert_eq!(read_version(&version_reader(&older)), "2.1.280");
+    let (failing, _) = token_endpoint(500, "{}");
+    assert_eq!(read_version(&version_reader(&failing)), "2.1.280");
+}

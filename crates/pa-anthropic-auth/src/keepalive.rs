@@ -5,6 +5,9 @@
 //!   plugin's ten-minute tick): idle logins whose refresh token nears its
 //!   expiry are refreshed, one process per machine at a time behind the
 //!   store's keep-alive lease;
+//! - the live Claude Code version the requests claim (the npm registry's
+//!   `latest`, read at the thread's start and hourly; never below the
+//!   verified floor);
 //! - ahead of expiry: a login this process served within the last hour
 //!   whose access token expires before the next tick is refreshed now
 //!   (claimed through the store), so a request never waits for it.
@@ -13,6 +16,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH};
 
+use anthropic::claude_version::{fetch_latest_claude_code_version_from, ClaudeCodeVersionTracker};
 use anthropic::{AccountStore, KeepAliveOptions, OAuthClient, SharedRefreshOptions};
 use chrono::{DateTime, Duration, Utc};
 use pa_types::sync::MutexExt;
@@ -49,6 +53,8 @@ pub(crate) struct KeepAliveTick {
 pub(crate) struct KeepAlive {
     config: SharedStoreConfig,
     in_use: Mutex<HashMap<String, Instant>>,
+    /// The live Claude Code version (floored), refreshed on this thread.
+    version: Mutex<ClaudeCodeVersionTracker>,
 }
 
 impl KeepAlive {
@@ -56,6 +62,33 @@ impl KeepAlive {
         Self {
             config,
             in_use: Mutex::new(HashMap::new()),
+            version: Mutex::new(ClaudeCodeVersionTracker::new()),
+        }
+    }
+
+    /// The version requests claim now: the registry's latest once read,
+    /// never below the verified floor.
+    pub(crate) fn claude_code_version(&self) -> String {
+        self.version.lock_or_recover().current().to_string()
+    }
+
+    /// Read the live Claude Code version when the cached one is older than
+    /// an hour (the plugins' `getClaudeCodeVersion`). A failure keeps the
+    /// current one.
+    pub(crate) async fn refresh_version(&self, now: DateTime<Utc>) {
+        let Some(url) = &self.config.version_url else {
+            return;
+        };
+        if self.version.lock_or_recover().is_fresh(now) {
+            return;
+        }
+        let latest = fetch_latest_claude_code_version_from(
+            &anthropic::oauth::default_oauth_http_client(),
+            url,
+        )
+        .await;
+        if let Some(latest) = latest {
+            self.version.lock_or_recover().adopt(&latest, now);
         }
     }
 
@@ -131,9 +164,11 @@ impl KeepAlive {
             tracing::warn!("the shared store's keep-alive could not start a runtime");
             return;
         };
+        runtime.block_on(self.refresh_version(Utc::now()));
         let mut pause = FIRST_TICK;
         loop {
             std::thread::sleep(pause);
+            runtime.block_on(self.refresh_version(Utc::now()));
             let report = runtime.block_on(self.tick(client, Utc::now()));
             if report != KeepAliveTick::default() {
                 tracing::info!(

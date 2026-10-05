@@ -19,6 +19,9 @@ pa-types.workspace = true
 pa-telemetry.workspace = true
 # The store's API takes chrono instants (the version anthropic resolves).
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# The request shape edits the Messages body (pa-ai hands it over as JSON),
+# and the device file is JSON.
+serde_json.workspace = true
 sha2 = "0.10"
 tokio.workspace = true
 tracing.workspace = true
@@ -28,7 +31,6 @@ uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 pa-agent.workspace = true
-serde_json.workspace = true
 tempfile = "3"
 
 [lints]

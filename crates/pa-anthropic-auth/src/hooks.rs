@@ -1,16 +1,18 @@
 //! The store in the `anthropic` provider's requests (pa-ai's provider
 //! request hooks): each request carries the store's current token for the
-//! login, and a 401 gets the plugins' one claimed recovery
+//! login and the pi plugin's request shape (`shape.rs`), and a 401 gets the
+//! plugins' one claimed recovery
 //! (anthropic-napi's `handleUnauthorized`, the pi plugin's
 //! `recoverSharedAccessTokenAfter401`). Only tokens this source served are
 //! touched: a runtime key or another store's login is sent as it is.
 
 use anthropic::access::{get_access_token, AccessRequest};
 use anthropic::SharedRefreshOptions;
-use pa_ai::request_hooks::{ProviderRequestHooks, RejectedRequest, Rejection};
+use pa_ai::request_hooks::{OutgoingRequest, ProviderRequestHooks, RejectedRequest, Rejection};
 use pa_ai::types::Model;
 use pa_types::sync::MutexExt;
 
+use crate::shape::{shape_request, ShapeEnv, ShapeIdentity};
 use crate::source::block_on_own_runtime;
 use crate::SharedStoreSource;
 
@@ -75,6 +77,24 @@ impl SharedStoreSource {
 }
 
 impl ProviderRequestHooks for SharedStoreSource {
+    fn prepare(&self, request: &mut OutgoingRequest<'_>) {
+        let Some(served) = self.served_token(request.api_key) else {
+            return;
+        };
+        let identity = ShapeIdentity {
+            device_id: self.device_id(),
+            account_uuid: served.account_uuid,
+            session_id: self.session_id(&served.account_id),
+        };
+        shape_request(
+            request,
+            &identity,
+            &self.claude_code_version(),
+            &ShapeEnv::from_env(),
+            &uuid::Uuid::new_v4().to_string(),
+        );
+    }
+
     fn current_credential(&self, _model: &Model, api_key: &str) -> Option<String> {
         if !self.served(api_key) {
             return None;
