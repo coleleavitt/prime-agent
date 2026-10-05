@@ -56,6 +56,39 @@ pub struct HttpResponse {
     /// The request's connection-error profile: body-read failures on the AWS http2 profile surface
     /// the TS bedrock transport's mid-stream texts.
     pub(crate) connection: ConnectionErrorProfile,
+    /// The incomplete UTF-8 sequence that ended the previous chunk, carried into the next one by
+    /// [`HttpResponse::next_text`].
+    utf8_carry: Vec<u8>,
+}
+
+/// Decode `bytes` after the carried partial sequence: complete characters are returned, an
+/// incomplete trailing sequence stays in `carry` for the next chunk, and invalid bytes decode to
+/// U+FFFD as `String::from_utf8_lossy` would.
+fn decode_utf8_carrying(carry: &mut Vec<u8>, bytes: &[u8]) -> String {
+    carry.extend_from_slice(bytes);
+    let mut out = String::with_capacity(carry.len());
+    let mut start = 0;
+    loop {
+        match std::str::from_utf8(&carry[start..]) {
+            Ok(text) => {
+                out.push_str(text);
+                start = carry.len();
+                break;
+            }
+            Err(error) => {
+                let valid_end = start + error.valid_up_to();
+                out.push_str(&String::from_utf8_lossy(&carry[start..valid_end]));
+                let Some(invalid_len) = error.error_len() else {
+                    start = valid_end;
+                    break;
+                };
+                out.push(char::REPLACEMENT_CHARACTER);
+                start = valid_end + invalid_len;
+            }
+        }
+    }
+    carry.drain(..start);
+    out
 }
 
 impl HttpResponse {
@@ -80,7 +113,12 @@ impl HttpResponse {
             None => self.body.chunk().await,
         };
         match chunk {
-            Ok(Some(bytes)) => Ok(Some(String::from_utf8_lossy(&bytes).to_string())),
+            Ok(Some(bytes)) => Ok(Some(decode_utf8_carrying(&mut self.utf8_carry, &bytes))),
+            // A sequence still incomplete at end of stream is flushed lossily, not dropped.
+            Ok(None) if !self.utf8_carry.is_empty() => {
+                let rest = std::mem::take(&mut self.utf8_carry);
+                Ok(Some(String::from_utf8_lossy(&rest).into_owned()))
+            }
             Ok(None) => Ok(None),
             Err(error) => Err(self.body_error(&error)),
         }
@@ -268,6 +306,7 @@ pub async fn send(request: RequestOptions) -> Result<HttpResponse, ProviderError
         body: response,
         signal,
         connection: request.connection,
+        utf8_carry: Vec::new(),
     })
 }
 
@@ -296,4 +335,52 @@ pub async fn post_json(
             .map_err(|error| ProviderError::Message(format!("Invalid JSON response: {error}")))?
     };
     Ok((status, parsed))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_mock_http::{serve, MockResponse};
+
+    /// Read the whole body chunk by chunk through `next_text`.
+    async fn read_text_chunks(frames: Vec<Vec<u8>>) -> String {
+        let server = serve(vec![MockResponse {
+            status: 200,
+            content_type: "text/event-stream",
+            frames,
+            hold_open: false,
+        }])
+        .await;
+        let mut response = send(RequestOptions::new(reqwest::Method::GET, server.base_url()))
+            .await
+            .expect("mock response");
+        response.read_all_text().await.expect("body")
+    }
+
+    /// A multi-byte character split across network chunks decodes intact instead of turning
+    /// into two U+FFFD replacement characters.
+    #[tokio::test]
+    async fn a_character_split_across_chunks_decodes_intact() {
+        let text = "data: café 日本 🦀\n\n";
+        let bytes = text.as_bytes();
+        let e_acute = text.find('é').unwrap();
+        let kanji = text.find('日').unwrap();
+        let crab = text.find('🦀').unwrap();
+        let frames = vec![
+            bytes[..=e_acute].to_vec(),
+            bytes[e_acute + 1..kanji + 2].to_vec(),
+            bytes[kanji + 2..=crab].to_vec(),
+            bytes[crab + 1..crab + 2].to_vec(),
+            bytes[crab + 2..].to_vec(),
+        ];
+        assert_eq!(read_text_chunks(frames).await, text);
+    }
+
+    /// Genuinely invalid bytes still decode lossily (one U+FFFD each), and a truncated
+    /// sequence at end of stream is flushed as a replacement character rather than dropped.
+    #[tokio::test]
+    async fn invalid_and_truncated_bytes_still_decode_lossily() {
+        let frames = vec![b"a\xffb".to_vec(), b"c\xe6\x97".to_vec()];
+        assert_eq!(read_text_chunks(frames).await, "a\u{FFFD}bc\u{FFFD}");
+    }
 }
