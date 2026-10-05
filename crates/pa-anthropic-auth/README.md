@@ -73,6 +73,13 @@ auth.json resolves the `anthropic` provider exactly as before.
     `response_event`); a later request replays a marker as the `fallback` block when it goes to a fallback model
     again and drops it otherwise. A body the fallback or a marker changed goes out in pi's own key order (as pi
     serializes it then), not Claude Code's.
+  - the 1M-context credits latch (`pi/context1m.rs`, pi `stream.ts` after Claude Code 2.1.260's
+    `longContext1mCreditsBlocked`): a 1M-capable model's request carries `context-1m` until Anthropic answers one
+    with HTTP 429 "extra usage / usage credits are required for long context" (read from the rejection's body); from
+    then on that token's requests leave without `context-1m` (the 200k window). Keyed by the token's fingerprint
+    (SHA-256, 16 hex) in memory for the life of the process, as the plugin keeps it: never written to the store or a
+    file, so a rotated token or a new process starts unlatched. The 429 that latches is reported (or moved to
+    another login) as before; nothing is re-sent for it.
   - the streamed `prime_deep_research` tool name is restored to `deep_research` (pi `fromClaudeCodeToolName`; pi
     restores it only when the caller declared `deep_research`, which the alias implies).
   - settings (`pi/settings.rs`): the plugin's settings file, `anthropic-auth.json` in pi's agent directory
@@ -133,8 +140,7 @@ auth.json resolves the `anthropic` provider exactly as before.
   own it; prime-agent has no account command surface.
 - The usage endpoint poll (`/api/oauth/usage`), sticky-balanced routing, the killswitch and per-window minimum
   thresholds of the plugins' sidecar configuration: readings come from response headers only.
-- The rest of pi's request (the 1M-context credits latch, fast mode's command, the cache keep-alive, content
-  filtering). A `--api-key` `sk-ant-oat` token, or any
+- The rest of pi's request (fast mode's command, the cache keep-alive, content filtering). A `--api-key` `sk-ant-oat` token, or any
   token the store did not serve, keeps pa-ai's native Claude Code mode.
 
 ## Public API

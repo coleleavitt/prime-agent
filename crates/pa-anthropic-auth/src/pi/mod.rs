@@ -14,6 +14,7 @@ use serde_json::Value;
 use crate::shape::{shape_headers, ShapeEnv, ShapeIdentity};
 use crate::SharedStoreSource;
 
+pub(crate) mod context1m;
 pub(crate) mod convert;
 pub(crate) mod fallback;
 pub(crate) mod settings;
@@ -51,12 +52,15 @@ impl PiConfig {
 #[derive(Debug)]
 pub(crate) struct PiRequests {
     pub(crate) settings: PluginSettings,
+    /// The tokens latched to the standard context window.
+    pub(crate) context1m: context1m::Context1mLatch,
 }
 
 impl PiRequests {
     pub(crate) fn new(config: &PiConfig) -> Self {
         Self {
             settings: PluginSettings::new(config.settings_path.clone()),
+            context1m: context1m::Context1mLatch::default(),
         }
     }
 }
@@ -158,6 +162,7 @@ pub(crate) fn prepare(
         &ShapeEnv::from_env(),
         &uuid::Uuid::new_v4().to_string(),
         &outgoing.extra_betas,
+        source.pi.context1m.is_clamped(request.api_key),
     );
 }
 

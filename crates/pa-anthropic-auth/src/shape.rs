@@ -329,8 +329,9 @@ fn replaced(name: &str) -> bool {
 }
 
 /// pi's headers for an outgoing request (a fresh `Headers` through
-/// `applyClaudeCodeHeaders`, so none of the request's own betas; pi's
-/// `extra_betas` merged after the tuple), ahead of
+/// `applyClaudeCodeHeaders`, so none of the request's own betas;
+/// `context-1m` suppressed for a latched token; pi's `extra_betas` merged
+/// after the tuple), ahead of
 /// the request's other headers (the ones the shape does not set, kept in
 /// order: a provider's configured headers).
 pub(crate) fn shape_headers(
@@ -340,6 +341,7 @@ pub(crate) fn shape_headers(
     env: &ShapeEnv,
     request_id: &str,
     extra_betas: &[&str],
+    suppress_context_1m: bool,
 ) {
     let mut headers = claude_code_headers(
         request.api_key,
@@ -355,7 +357,13 @@ pub(crate) fn shape_headers(
         .iter_mut()
         .find(|(name, _)| name == "anthropic-beta")
     {
-        *betas = anthropic::claude_code::merge_anthropic_betas(betas, extra_betas);
+        // The credits latch: the tuple without `context-1m`.
+        let tuple = if suppress_context_1m {
+            select_betas(Some(request.payload), &[], true)
+        } else {
+            std::mem::take(betas)
+        };
+        *betas = anthropic::claude_code::merge_anthropic_betas(&tuple, extra_betas);
     }
     headers.extend(
         request

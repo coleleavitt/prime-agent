@@ -209,3 +209,56 @@ fn a_store_response_keeps_what_pi_keeps() {
         assert_eq!(Value::Array(kept), case["content"], "{}", case["name"]);
     }
 }
+
+const CREDITS_429: &str = r#"{"type":"error","error":{"type":"rate_limit_error","message":"Extra usage is required for long context requests."}}"#;
+
+fn beta_of(request: &CapturedRequest) -> Vec<String> {
+    request
+        .header("anthropic-beta")
+        .unwrap_or_default()
+        .split(',')
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn a_credits_429_moves_the_token_s_later_requests_to_the_standard_window() {
+    let provider = "anthropic-pi-context1m";
+    let (_home, source) = source_over(
+        vec![row_with_account("pi-context1m", None)],
+        "http://127.0.0.1:9",
+    );
+    pa_core::auth::install_credential_source(provider, source.clone());
+    pa_ai::request_hooks::install_request_hooks(provider, source.clone());
+    let (base, requests) = messages_endpoint(vec![
+        (429, Vec::new(), CREDITS_429),
+        (200, Vec::new(), OK_STREAM),
+    ]);
+    let model = model_with_id(provider, &base, "claude-opus-4-8");
+    let served = || {
+        pa_core::auth::ProviderCredentialSource::credential(source.as_ref())
+            .expect("the store's token")
+            .api_key
+    };
+
+    let refused = complete(&model, &served());
+    assert!(refused.error_message.is_some());
+    let message = complete(&model, &served());
+    assert_eq!(text_of(&message), "hello");
+
+    let requests = requests.lock_or_recover().clone();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].bearer(), requests[1].bearer());
+    let context_1m = anthropic::claude_code::CONTEXT_1M_BETA.to_string();
+    assert_eq!(
+        (
+            beta_of(&requests[0]).contains(&context_1m),
+            beta_of(&requests[1]).contains(&context_1m)
+        ),
+        (true, false)
+    );
+    // The latch removes only the 1M beta.
+    let mut without = beta_of(&requests[0]);
+    without.retain(|beta| *beta != context_1m);
+    assert_eq!(beta_of(&requests[1]), without);
+}

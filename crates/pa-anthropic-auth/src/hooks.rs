@@ -154,6 +154,12 @@ impl ProviderRequestHooks for SharedStoreSource {
         if !self.served(rejected.api_key) {
             return None;
         }
+        self.pi.context1m.observe(
+            &rejected.model.id,
+            rejected.api_key,
+            rejected.status,
+            rejected.body,
+        );
         match rejected.rejection {
             Rejection::Unauthorized => self.recover_unauthorized(rejected.api_key),
             Rejection::RateLimited => self.rotate_after_rate_limit(rejected),
