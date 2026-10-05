@@ -628,6 +628,18 @@ pub(crate) enum OpenStreamBlock {
     None,
 }
 
+/// The block a dropped stream was inside when the connection ended: the last content block of
+/// the message under construction.
+pub(crate) fn open_stream_block(output: &crate::types::AssistantMessage) -> OpenStreamBlock {
+    use crate::types::AssistantContent;
+    match output.content.last() {
+        Some(AssistantContent::Thinking(_)) => OpenStreamBlock::Thinking,
+        Some(AssistantContent::Text(_)) => OpenStreamBlock::Text,
+        Some(AssistantContent::ToolCall(_)) => OpenStreamBlock::ToolCall,
+        None => OpenStreamBlock::None,
+    }
+}
+
 /// Failure for a stream the provider ended without its terminal marker:
 /// the connection closed mid-block with no stop signal and no error frame
 /// (the silent drop class: the turn would otherwise settle as a completed

@@ -20,8 +20,8 @@ use crate::types::{
 };
 use crate::utils_inner::json_parse::{parse_streaming_json, StreamingJsonAccumulator};
 use crate::utils_inner::stream_failure::{
-    classify_stream_failure, ProviderError, StreamFailureError, StreamFailureInfo,
-    StreamFailureKind,
+    classify_stream_failure, open_stream_block, stream_drop_failure, ProviderError,
+    StreamFailureError, StreamFailureInfo, StreamFailureKind,
 };
 
 /// Streaming slot state for one output item.
@@ -919,8 +919,16 @@ impl<'a> ResponsesStreamProcessor<'a> {
     }
 
     /// Check invariants after the stream ended (port of the trailing checks).
+    ///
+    /// A stream that ends without `response.completed` / `response.incomplete` was cut off
+    /// mid-response: it fails closed instead of settling the partial message as a normal stop
+    /// (#1623, #2089). xAI keeps the TS failure text; every other Responses provider (`openai`,
+    /// `openai-codex`, `azure-openai-responses`) reports the retryable `stream_drop` class, like the completions path.
     pub fn finish(&self) -> Result<(), ProviderError> {
-        if self.model.provider == "xai" && !self.saw_terminal_response {
+        if self.saw_terminal_response {
+            return Ok(());
+        }
+        if self.model.provider == "xai" {
             return Err(ProviderError::StreamFailure(StreamFailureError {
                 message: "xAI Responses stream ended before a terminal response event".to_string(),
                 info: StreamFailureInfo {
@@ -929,7 +937,9 @@ impl<'a> ResponsesStreamProcessor<'a> {
                 },
             }));
         }
-        Ok(())
+        Err(ProviderError::StreamFailure(stream_drop_failure(
+            open_stream_block(self.output),
+        )))
     }
 }
 

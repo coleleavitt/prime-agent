@@ -30,7 +30,7 @@ use crate::utils_inner::json_parse::{
 };
 use crate::utils_inner::sse::{ServerSentEvent, SseDecoder};
 use crate::utils_inner::stream_failure::{
-    record_stream_failure, stream_drop_failure, OpenStreamBlock, ProviderError,
+    open_stream_block, record_stream_failure, stream_drop_failure, ProviderError,
 };
 
 struct StreamingState {
@@ -718,16 +718,6 @@ fn mark_done_marker(event: &ServerSentEvent, state: &mut StreamingState) -> bool
         true
     } else {
         false
-    }
-}
-
-/// The block a dropped stream was inside when the connection ended.
-fn open_stream_block(output: &AssistantMessage) -> OpenStreamBlock {
-    match output.content.last() {
-        Some(AssistantContent::Thinking(_)) => OpenStreamBlock::Thinking,
-        Some(AssistantContent::Text(_)) => OpenStreamBlock::Text,
-        Some(AssistantContent::ToolCall(_)) => OpenStreamBlock::ToolCall,
-        None => OpenStreamBlock::None,
     }
 }
 

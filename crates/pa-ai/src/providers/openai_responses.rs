@@ -491,7 +491,7 @@ impl Provider for OpenAIResponsesProvider {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A responses-served model with a wire `compat` object (the whole model need not be
@@ -565,6 +565,67 @@ mod tests {
         assert_eq!(
             params.get("reasoning"),
             Some(&json!({ "effort": "xhigh", "summary": "auto" }))
+        );
+    }
+
+    /// A Responses SSE body that streams text and then ends without `response.completed`
+    /// (or `response.incomplete`): the connection was cut mid-response.
+    pub(crate) const TRUNCATED_RESPONSES_SSE: &str = concat!(
+        "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"status\":\"in_progress\"}}\n\n",
+        "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\n",
+        "data: {\"type\":\"response.content_part.added\",\"output_index\":0,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
+        "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"content_index\":0,\"delta\":\"Hello\"}\n\n",
+    );
+
+    /// The `stream_drop` failure text a cut-off Responses stream settles with (mid text block).
+    pub(crate) fn truncated_text_failure_message() -> String {
+        crate::utils_inner::stream_failure::stream_drop_failure(
+            crate::utils_inner::stream_failure::OpenStreamBlock::Text,
+        )
+        .message
+    }
+
+    /// #1623 / #2089: a Responses stream that ends without a terminal event is a truncated
+    /// response, not a normal stop. Only xAI failed closed before; `openai` settled `Stop` with the
+    /// partial text.
+    #[tokio::test]
+    async fn a_stream_without_a_terminal_event_fails_closed() {
+        let server = crate::test_mock_http::serve(vec![crate::test_mock_http::MockResponse::sse(
+            TRUNCATED_RESPONSES_SSE,
+        )])
+        .await;
+        let model: Model = serde_json::from_value(serde_json::json!({
+            "id": "gpt-5", "name": "gpt-5", "api": "openai-responses", "provider": "openai",
+            "baseUrl": server.base_url(), "reasoning": false, "input": ["text"],
+            "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+            "contextWindow": 1000, "maxTokens": 100,
+        }))
+        .unwrap();
+        let options = OpenAIResponsesOptions::from_base(StreamOptions {
+            api_key: Some("test".into()),
+            ..Default::default()
+        });
+        let message = stream_openai_responses(&model, &Context::default(), Some(&options))
+            .result()
+            .await;
+        assert_eq!(
+            (message.stop_reason, message.error_message),
+            (StopReason::Error, Some(truncated_text_failure_message())),
+        );
+        let requests = server.requests();
+        let request = &requests[0];
+        let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+        assert_eq!(
+            (
+                request.head.lines().next(),
+                request.header("authorization"),
+                body.get("stream"),
+            ),
+            (
+                Some("POST /responses HTTP/1.1"),
+                Some("Bearer test".to_string()),
+                Some(&serde_json::json!(true)),
+            ),
         );
     }
 }
