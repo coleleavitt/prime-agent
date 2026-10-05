@@ -411,3 +411,59 @@ async fn a_rejection_carries_the_error_body() {
     assert_eq!(message.stop_reason, StopReason::Error);
     assert_eq!(*hooks.rejected_bodies.lock_or_recover(), vec![RATE_LIMITED]);
 }
+
+/// A stream whose only block is one the provider does not model.
+const WIDGET_STREAM: &str = concat!(
+    "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n",
+    "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"widget\",\"label\":\"hello\"}}\n\n",
+    "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+    "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n",
+    "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+);
+
+/// Stub hooks that expand the `widget` block into a text block.
+struct WidgetHooks;
+
+impl ProviderRequestHooks for WidgetHooks {
+    fn response_event(
+        &self,
+        _model: &Model,
+        _api_key: &str,
+        event: serde_json::Value,
+    ) -> Vec<serde_json::Value> {
+        if event["content_block"]["type"] != "widget" {
+            return vec![event];
+        }
+        let label = event["content_block"]["label"].clone();
+        vec![
+            json!({"type": "content_block_start", "index": event["index"], "content_block": {"type": "text", "text": ""}}),
+            json!({"type": "content_block_delta", "index": event["index"], "delta": {"type": "text_delta", "text": label}}),
+        ]
+    }
+}
+
+#[tokio::test]
+async fn a_hook_rewrites_the_streamed_events_the_provider_reads() {
+    let provider = "hooks-response-event";
+    let (base, _bearers) = messages_endpoint(vec![(200, WIDGET_STREAM)]).await;
+    install_request_hooks(provider, Arc::new(WidgetHooks));
+
+    let message = run(&model(provider, &base), "sk-ant-oat01-a").await;
+
+    assert_eq!(
+        (message.stop_reason, text(&message)),
+        (StopReason::Stop, hello())
+    );
+}
+
+#[tokio::test]
+async fn without_hooks_an_unmodeled_block_is_skipped_as_before() {
+    let (base, _bearers) = messages_endpoint(vec![(200, WIDGET_STREAM)]).await;
+
+    let message = run(&model("hooks-response-none", &base), "sk-ant-oat01-a").await;
+
+    assert_eq!(
+        (message.stop_reason, text(&message)),
+        (StopReason::Stop, vec![])
+    );
+}

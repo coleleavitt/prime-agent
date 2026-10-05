@@ -17,7 +17,8 @@
 //!    hook may rebuild the body itself and send exact bytes
 //!    ([`OutgoingRequest::body`]);
 //! 3. [`ProviderRequestHooks::observe`] with every response's status and
-//!    headers;
+//!    headers, and [`ProviderRequestHooks::response_event`] with each event
+//!    of the streamed response (the events the provider then reads);
 //! 4. [`ProviderRequestHooks::rejected`] when the provider rejected the
 //!    credential (HTTP 401) or rate-limited it (HTTP 429, or a stream that
 //!    opens with a rate-limit or overload error; with the error body): a
@@ -138,6 +139,21 @@ pub trait ProviderRequestHooks: Send + Sync {
     /// Observe the response to a request sent with `api_key`.
     fn observe(&self, model: &Model, api_key: &str, response: &crate::types::ProviderResponse) {
         let _ = (model, api_key, response);
+    }
+
+    /// The events the provider reads for one parsed event of the streamed
+    /// response to a request sent with `api_key` (the default: the event as
+    /// read). A hook may rewrite an event, drop it, or expand it (a block
+    /// the provider does not model into ones it does), and must return
+    /// promptly: it runs inline for every event.
+    fn response_event(
+        &self,
+        model: &Model,
+        api_key: &str,
+        event: serde_json::Value,
+    ) -> Vec<serde_json::Value> {
+        let _ = (model, api_key);
+        vec![event]
     }
 
     /// The provider rejected a request sent with a credential the hook

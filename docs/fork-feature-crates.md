@@ -88,7 +88,8 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
      is built), `prepare` (the built headers and JSON payload, the request as the caller asked for it — its
      `Context` and the caller's options before provider defaults, `RequestSource` — and the exact body bytes to send
      in place of the payload's serialization, `OutgoingRequest::body`), `observe` (each response's status and
-     headers), and `rejected` (with the error body: a credential to re-send with after a 401, at most once, or a
+     headers), `response_event` (each parsed event of the streamed response, rewritten, dropped or expanded before
+     the provider reads it), and `rejected` (with the error body: a credential to re-send with after a 401, at most once, or a
      429 / a stream opening with a rate-limit or overload error, while it names a credential the request has not
      used). Hooks ignore credentials
      they did not issue; the `anthropic-messages` provider consults them; nothing is registered natively.

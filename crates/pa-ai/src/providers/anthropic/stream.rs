@@ -726,10 +726,20 @@ async fn run_stream(
 
     // The TS try/catch encloses this whole streaming section, including the abort and stop-reason
     // checks; the catch settles partial tool calls before the error event carries the message.
+    // The hooks' view of each streamed event (none natively: as read).
+    let respond = |event: Value| -> Vec<Value> {
+        match &hooks {
+            Some(hooks) => hooks.response_event(model, &api_key, event),
+            None => vec![event],
+        }
+    };
     let stream_result: Result<(), ProviderError> = async {
         for sse in std::mem::take(&mut opening) {
             handle_sse(&sse, request_id.as_deref(), |event| {
-                handle_event!(event).map_err(|error| error.0)
+                for event in respond(event) {
+                    handle_event!(event).map_err(|error| error.0)?;
+                }
+                Ok(())
             })?;
         }
         loop {
@@ -738,13 +748,19 @@ async fn run_stream(
             };
             for sse in decoder.push_text(&chunk) {
                 handle_sse(&sse, request_id.as_deref(), |event| {
-                    handle_event!(event).map_err(|error| error.0)
+                    for event in respond(event) {
+                        handle_event!(event).map_err(|error| error.0)?;
+                    }
+                    Ok(())
                 })?;
             }
         }
         for sse in decoder.finish() {
             handle_sse(&sse, request_id.as_deref(), |event| {
-                handle_event!(event).map_err(|error| error.0)
+                for event in respond(event) {
+                    handle_event!(event).map_err(|error| error.0)?;
+                }
+                Ok(())
             })?;
         }
         if saw_message_start && !saw_message_end {
