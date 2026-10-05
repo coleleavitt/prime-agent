@@ -55,10 +55,6 @@ impl SessionUi {
                 }
                 return Ok(());
             }
-            "exit" => {
-                self.exit_requested = true;
-                return Ok(());
-            }
             _ => {}
         }
 
@@ -132,7 +128,8 @@ impl SessionUi {
             "new" => {
                 self.start_new_session(view).await?;
             }
-            // `/quit` detaches and exits (the session keeps running in the daemon).
+            // `/quit` (and its `/exit` alias) detaches and exits (the session keeps running in the
+            // daemon).
             "quit" => {
                 self.exit_requested = true;
             }

@@ -146,7 +146,7 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
     BuiltinSlashCommand { name: "resume", description: "Open the agents view, or resume a session by id or path", execution: SlashCommandExecution::Client, argument_hint: Some("[id|path]"), aliases: &[], takes_argument: true },
     BuiltinSlashCommand { name: "reload", description: "Reload keybindings, skills, prompts, and themes", execution: SlashCommandExecution::Client, argument_hint: None, aliases: &[], takes_argument: false },
     BuiltinSlashCommand { name: "speed", description: "Toggle footer readout of model output tok/sec (latest response and session average)", execution: SlashCommandExecution::Client, argument_hint: Some("[on|off]"), aliases: &[], takes_argument: true },
-    BuiltinSlashCommand { name: "quit", description: "Quit Prime Agent", execution: SlashCommandExecution::Client, argument_hint: None, aliases: &[], takes_argument: false },
+    BuiltinSlashCommand { name: "quit", description: "Quit Prime Agent", execution: SlashCommandExecution::Client, argument_hint: None, aliases: &["exit"], takes_argument: false },
 ];
 
 /// The registry with alias resolution maps prebuilt.
@@ -335,6 +335,24 @@ mod tests {
         // /clear remains the no-argument alias.
         assert!(!registry.takes_argument("clear"));
         assert!(registry.takes_argument("new"));
+    }
+
+    /// `/exit` resolves to `/quit` through the alias path (upstream #1094 / #1142): no
+    /// standalone `exit` command, so the menu lists `/quit` once.
+    #[test]
+    fn exit_is_an_alias_of_quit() {
+        let registry = SlashCommandRegistry::builtin();
+        assert_eq!(
+            registry.parse("/exit"),
+            Some(ResolvedSlashCommand {
+                name: "quit",
+                original_name: "exit".to_owned(),
+                is_alias: true,
+                args: String::new(),
+            })
+        );
+        assert!(registry.is_builtin("exit"));
+        assert!(!registry.all().iter().any(|command| command.name == "exit"));
     }
 
     #[test]
