@@ -1,0 +1,305 @@
+// The generator of `pi_requests.json` beside this file: the whole request
+// the pi plugin sends for representative conversations, for
+// `src/pi/convert/tests.rs` (and the modules after it) to compare with the
+// request pa-anthropic-auth builds from the same conversation, byte for
+// byte.
+//
+// Nothing is reimplemented here: each case runs pi's own provider entry
+// point (`streamCortexKitAnthropic`, packages/pi/src/stream.ts) with the
+// network replaced by an in-process `fetch` that records the Messages
+// request and answers with a scripted stream. The settings file
+// (`PI_ANTHROPIC_AUTH_FILE`) is written per case; the account store and
+// the plugin's logs live under a scratch HOME; no request leaves the
+// process. The Claude Code identity's account uuid comes from the mocked
+// bootstrap endpoint, the device id from the scratch HOME's device.json;
+// the per-token session id is the plugin's random one, recorded from the
+// request's `x-claude-code-session-id`.
+//
+// To regenerate (bun; a scratch HOME; a checkout of anthropic-auth at the
+// commit below with `packages/core` built to `dist/` and node_modules
+// installed):
+//   mkdir -p <scratch>/.anthropic-accounts <scratch>/tmp
+//   printf '{"version":1,"device_id":"%s"}\n' "$(printf 'a%.0s' $(seq 64))" \
+//     > <scratch>/.anthropic-accounts/device.json
+//   chmod 700 <scratch>/.anthropic-accounts; chmod 600 <scratch>/.anthropic-accounts/device.json
+//   env -i HOME=<scratch> TMPDIR=<scratch>/tmp PATH="$PATH" \
+//     REFUSAL_LOG_DIR=<scratch>/refusal ANTHROPIC_AUTH_REPO=<the checkout> \
+//     OPENCODE_ANTHROPIC_AUTH_DISABLE_VERSION_CHECK=1 \
+//     bun generate_requests.ts > pi_requests.json
+// Generated from anthropic-auth 7f5d88a ("pi: replay thinking signatures
+// only from Anthropic-origin messages") on linux x64.
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
+const repo = process.env.ANTHROPIC_AUTH_REPO
+if (!repo) throw new Error('ANTHROPIC_AUTH_REPO is required')
+const scratch = homedir()
+const settingsFile = join(scratch, 'pi-agent', 'anthropic-auth.json')
+mkdirSync(join(scratch, 'pi-agent'), { recursive: true })
+process.env.PI_ANTHROPIC_AUTH_FILE = settingsFile
+process.env.PI_ANTHROPIC_AUTH_CACHEKEEP_REGISTRY_DIR = join(scratch, 'cachekeep')
+
+const ACCOUNT_UUID = '00000000-0000-4000-8000-000000000001'
+const DEVICE_ID = 'a'.repeat(64)
+
+const OK_STREAM = [
+  { type: 'message_start', message: { id: 'msg_1', usage: { input_tokens: 1, output_tokens: 1 } } },
+  { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+  { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'hello' } },
+  { type: 'content_block_stop', index: 0 },
+  { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 2 } },
+  { type: 'message_stop' },
+]
+
+function sse(events: unknown[]) {
+  return events
+    .map((event) => `event: ${(event as { type: string }).type}\ndata: ${JSON.stringify(event)}\n\n`)
+    .join('')
+}
+
+type Recorded = { url: string; headers: Record<string, string>; body: string }
+let recorded: Recorded[] = []
+let bootstrapUuid: string | null = ACCOUNT_UUID
+let replies: Array<{ status: number; body: string }> = []
+
+globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+  const url = String(input instanceof Request ? input.url : input)
+  if (url.includes('/api/claude_cli/bootstrap')) {
+    return bootstrapUuid
+      ? new Response(JSON.stringify({ oauth_account: { account_uuid: bootstrapUuid } }), { status: 200 })
+      : new Response('{}', { status: 403 })
+  }
+  if (url.includes('/v1/messages')) {
+    const headers: Record<string, string> = {}
+    new Headers(init?.headers).forEach((value, name) => {
+      headers[name] = value
+    })
+    recorded.push({ url, headers, body: String(init?.body) })
+    const reply = replies.shift() ?? { status: 200, body: sse(OK_STREAM) }
+    return new Response(reply.body, {
+      status: reply.status,
+      headers: { 'content-type': reply.status === 200 ? 'text/event-stream' : 'application/json' },
+    })
+  }
+  return new Response('{}', { status: 404 })
+}) as typeof fetch
+
+const { streamCortexKitAnthropic } = await import(join(repo, 'packages/pi/src/stream.ts'))
+
+function model(id: string) {
+  return {
+    id,
+    name: id,
+    api: 'cortexkit-anthropic-messages',
+    provider: 'anthropic',
+    baseUrl: 'https://api.anthropic.com',
+    reasoning: true,
+    input: ['text', 'image'],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 1_000_000,
+    maxTokens: 128_000,
+  }
+}
+
+const usage = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 0,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+}
+function assistant(content: unknown[], api = 'anthropic-messages') {
+  return { role: 'assistant', content, api, provider: 'anthropic', model: 'claude-x', usage, stopReason: 'stop', timestamp: 1 }
+}
+function user(content: unknown) {
+  return { role: 'user', content, timestamp: 1 }
+}
+function toolResult(toolCallId: string, content: unknown[], isError = false) {
+  return { role: 'toolResult', toolCallId, toolName: 't', content, isError, timestamp: 1 }
+}
+const IMAGE = { type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png' }
+const PI_PROMPT = [
+  'You are an expert coding assistant operating inside pi.',
+  'Available tools:\n- read: Read file contents',
+  'Pi documentation (read only when the user asks about pi itself):\n- Main documentation: /docs/README.md',
+  'Guidelines:\n- Be concise',
+].join('\n\n')
+
+type Case = {
+  name: string
+  model: string
+  context: Record<string, unknown>
+  options?: Record<string, unknown>
+  settings?: Record<string, unknown>
+  accountUuid?: boolean
+}
+
+export const CASES: Case[] = [
+  {
+    name: 'text-with-pi-prompt',
+    model: 'claude-opus-4-8',
+    context: {
+      systemPrompt: PI_PROMPT,
+      messages: [
+        user('Say hello to the world, please.'),
+        assistant([{ type: 'text', text: 'Hello, world.' }]),
+        user([{ type: 'text', text: 'And once more.' }]),
+      ],
+    },
+    options: { reasoning: 'high' },
+  },
+  {
+    name: 'tool-use-and-results',
+    model: 'claude-sonnet-4-5',
+    context: {
+      systemPrompt: 'You help with files.',
+      tools: [
+        { name: 'read', description: 'Read a file', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } },
+        { name: 'deep_research', description: 'Research', parameters: { type: 'object', properties: { q: { type: 'string' } } } },
+        { name: 'my_tool', description: 'Custom', parameters: { type: 'object' } },
+      ],
+      messages: [
+        user('Read the config file.'),
+        assistant([
+          { type: 'text', text: 'Reading it.' },
+          { type: 'toolCall', id: 'call_1|fc 1', name: 'read', arguments: { path: 'config.toml' } },
+          { type: 'toolCall', id: 'call_2', name: 'deep_research', arguments: { q: 'x' } },
+        ]),
+        toolResult('call_1|fc 1', [{ type: 'text', text: 'key = 1' }]),
+        toolResult('call_unknown', [{ type: 'text', text: 'stray' }]),
+        toolResult('call_2', [], true),
+        user('Now run something.'),
+        assistant([{ type: 'toolCall', id: 'orphan', name: 'my_tool', arguments: {} }]),
+        user('Never mind; summarize.'),
+      ],
+    },
+    options: { reasoning: 'medium', thinkingBudgets: { medium: 3000 }, maxTokens: 2048 },
+  },
+  {
+    name: 'images',
+    model: 'claude-haiku-4-5',
+    context: {
+      messages: [
+        user([IMAGE]),
+        assistant([{ type: 'text', text: 'A picture.' }]),
+        user([{ type: 'text', text: 'Compare with this:' }, IMAGE]),
+        assistant([{ type: 'toolCall', id: 'shot', name: 'screenshot', arguments: {} }]),
+        toolResult('shot', [IMAGE]),
+      ],
+    },
+  },
+  {
+    name: 'thinking-blocks',
+    model: 'claude-opus-4-8',
+    context: {
+      systemPrompt: 'You think.',
+      messages: [
+        user('First question.'),
+        assistant([
+          { type: 'thinking', thinking: 'Signed reasoning.', thinkingSignature: 'EqQBCkgIBRABGAIiQ' },
+          { type: 'thinking', thinking: 'Unsigned reasoning.' },
+          { type: 'thinking', thinking: '   ' },
+          { type: 'text', text: 'Answer one.' },
+        ]),
+        user('Second question.'),
+        assistant(
+          [
+            { type: 'thinking', thinking: 'Foreign reasoning.', thinkingSignature: 'reasoning_content' },
+            { type: 'thinking', thinking: 'Encrypted.', thinkingSignature: 'gAAAAABencrypted' },
+            { type: 'text', text: 'Answer two.' },
+          ],
+          'openai-completions',
+        ),
+        user('Third question.'),
+        assistant([{ type: 'text', text: 'A trailing assistant turn.' }]),
+      ],
+    },
+    options: { reasoning: 'xhigh' },
+  },
+  {
+    name: 'cache-hybrid',
+    model: 'claude-sonnet-5',
+    context: {
+      systemPrompt: 'You cache.',
+      tools: [{ name: 'bash', description: 'Run', parameters: { type: 'object', properties: { cmd: { type: 'string' } }, required: ['cmd'] } }],
+      messages: [user('Cache this, please.')],
+    },
+    options: { reasoning: 'off' },
+    settings: { claudeCache: { enabled: true, mode: 'hybrid' } },
+  },
+  {
+    name: 'cache-automatic',
+    model: 'claude-opus-4-6',
+    context: { messages: [user('Automatic caching.')] },
+    options: { reasoning: 'max' },
+    settings: { claudeCache: { enabled: true, mode: 'automatic' } },
+  },
+  {
+    name: 'cache-explicit-fast',
+    model: 'claude-opus-4-8',
+    context: { systemPrompt: 'Fast.', messages: [user('Go fast.')] },
+    settings: { claudeCache: { enabled: true }, claudeFast: { enabled: true } },
+  },
+  {
+    name: 'fast-on-an-unsupported-model',
+    model: 'claude-sonnet-4-6',
+    context: { messages: [user('Fast where it is not.')] },
+    options: { reasoning: 'xhigh' },
+    settings: { claudeFast: { enabled: true }, claudeCache: { enabled: false, mode: 'hybrid' } },
+  },
+  {
+    name: 'no-account-uuid',
+    model: 'claude-opus-4-5',
+    context: { messages: [user('No identity.')] },
+    options: { reasoning: 'off' },
+    accountUuid: false,
+  },
+  {
+    name: 'blank-turns-and-docs-only-prompt',
+    model: 'claude-opus-4-8',
+    context: {
+      systemPrompt: 'Pi documentation: see /docs.',
+      messages: [user('   '), user([]), user('Real question.')],
+    },
+    options: { maxTokens: 1 , reasoning: 'low'},
+  },
+]
+
+const results = []
+for (const [index, testCase] of CASES.entries()) {
+  writeFileSync(settingsFile, `${JSON.stringify(testCase.settings ?? {}, null, 2)}\n`)
+  bootstrapUuid = testCase.accountUuid === false ? null : ACCOUNT_UUID
+  recorded = []
+  // One token per case: the plugin keeps one identity per token.
+  const token = `sk-ant-oat01-golden-case-${String(index).padStart(2, '0')}-000000000000`
+  const stream = streamCortexKitAnthropic(model(testCase.model), testCase.context, {
+    apiKey: token,
+    sessionId: `ses-${testCase.name}`,
+    ...(testCase.options ?? {}),
+  })
+  const message = await stream.result()
+  if (message.stopReason === 'error') throw new Error(`${testCase.name}: ${message.errorMessage}`)
+  const request = recorded.at(-1)
+  if (!request) throw new Error(`${testCase.name}: no Messages request`)
+  const { 'x-client-request-id': _requestId, ...headers } = request.headers
+  results.push({
+    name: testCase.name,
+    model: testCase.model,
+    context: testCase.context,
+    options: testCase.options ?? {},
+    settings: testCase.settings ?? {},
+    token,
+    identity: {
+      deviceId: DEVICE_ID,
+      accountUuid: testCase.accountUuid === false ? null : ACCOUNT_UUID,
+      sessionId: headers['x-claude-code-session-id'],
+    },
+    url: request.url,
+    headers,
+    bodyText: request.body,
+  })
+}
+
+process.stdout.write(`${JSON.stringify({ version: '2.1.280', cases: results }, null, 2)}\n`)

@@ -13,7 +13,7 @@ use pa_ai::types::{Model, ProviderResponse};
 use pa_types::sync::MutexExt;
 
 use crate::quota::cooldown_until;
-use crate::shape::{shape_request, ShapeEnv, ShapeIdentity};
+use crate::shape::ShapeIdentity;
 use crate::source::{block_on_own_runtime, UsageEvent};
 use crate::SharedStoreSource;
 
@@ -132,13 +132,7 @@ impl ProviderRequestHooks for SharedStoreSource {
             account_uuid: served.account_uuid,
             session_id: self.session_id(&served.account_id),
         };
-        shape_request(
-            request,
-            &identity,
-            &self.claude_code_version(),
-            &ShapeEnv::from_env(),
-            &uuid::Uuid::new_v4().to_string(),
-        );
+        crate::pi::prepare(self, request, &identity);
     }
 
     fn current_credential(&self, _model: &Model, api_key: &str) -> Option<String> {

@@ -9,18 +9,17 @@
 //!   own betas), the `claude-cli/<version> (external, <entrypoint>)` user
 //!   agent, the Claude Code `x-stainless-*` set, `x-claude-code-session-id`
 //!   and a fresh `x-client-request-id`, the environment-forwarded headers;
-//! - the body: the billing block (`x-anthropic-billing-header: cc_version=
-//!   <version>.<suffix>; cc_entrypoint=cli; cch=00000;`) as the first system
-//!   block, `metadata.user_id` (device id, account uuid, session id; only
-//!   when the account uuid is known), and Claude Code's body key order.
+//! - the pieces of pi's body built in `pi/convert.rs`: the billing block
+//!   (`x-anthropic-billing-header: cc_version=<version>.<suffix>;
+//!   cc_entrypoint=cli; cch=00000;`) and `metadata.user_id` (device id,
+//!   account uuid, session id; only when the account uuid is known).
 //!
 //! Pure functions over the request; the identity and the version are the
 //! caller's (see `hooks.rs`). Golden: `tests/fixtures/golden/`.
 
 use anthropic::claude_code::{
-    encode_header_value, order_claude_code_body, stainless_arch, stainless_os,
-    CLAUDE_CODE_STAINLESS_PACKAGE_VERSION, CLAUDE_CODE_STAINLESS_RUNTIME_VERSION, CONTEXT_1M_BETA,
-    EFFORT_BETA, FAST_MODE_BETA,
+    encode_header_value, stainless_arch, stainless_os, CLAUDE_CODE_STAINLESS_PACKAGE_VERSION,
+    CLAUDE_CODE_STAINLESS_RUNTIME_VERSION, CONTEXT_1M_BETA, EFFORT_BETA, FAST_MODE_BETA,
 };
 use anthropic::claude_version::{claude_code_user_agent, UserAgentDetails};
 use anthropic::models::model_supports_context_1m;
@@ -297,53 +296,6 @@ pub(crate) fn metadata_user_id(identity: &ShapeIdentity) -> Option<String> {
     ))
 }
 
-/// The plugin's body: the billing block first among the system blocks,
-/// `metadata.user_id` set (or removed when unknown), Claude Code's key
-/// order.
-pub(crate) fn shape_body(body: Value, identity: &ShapeIdentity, version: &str) -> Value {
-    let Value::Object(mut map) = body else {
-        return body;
-    };
-    let messages = map
-        .get("messages")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let billing = serde_json::json!({ "type": "text", "text": billing_text(&messages, version) });
-    match map.get_mut("system") {
-        Some(Value::Array(system)) => system.insert(0, billing),
-        Some(Value::String(text)) => {
-            let text = std::mem::take(text);
-            map.insert(
-                "system".to_string(),
-                serde_json::json!([billing, { "type": "text", "text": text }]),
-            );
-        }
-        _ => {
-            map.insert("system".to_string(), Value::Array(vec![billing]));
-        }
-    }
-    match metadata_user_id(identity) {
-        Some(user_id) => {
-            let metadata = map
-                .entry("metadata")
-                .or_insert_with(|| Value::Object(serde_json::Map::new()));
-            if !metadata.is_object() {
-                *metadata = Value::Object(serde_json::Map::new());
-            }
-            if let Some(metadata) = metadata.as_object_mut() {
-                metadata.insert("user_id".to_string(), Value::String(user_id));
-            }
-        }
-        None => {
-            if let Some(metadata) = map.get_mut("metadata").and_then(Value::as_object_mut) {
-                metadata.remove("user_id");
-            }
-        }
-    }
-    order_claude_code_body(Value::Object(map))
-}
-
 /// Header names the shape replaces (compared case-insensitively), besides
 /// `x-api-key`, which an OAuth request never carries.
 fn replaced(name: &str) -> bool {
@@ -376,32 +328,24 @@ fn replaced(name: &str) -> bool {
         || SET.iter().any(|known| name.eq_ignore_ascii_case(known))
 }
 
-/// Shape an outgoing request: the body first (the betas read its shape),
-/// then the plugin's header set ahead of the request's other headers (the
-/// ones the shape does not set, kept in order).
-pub(crate) fn shape_request(
+/// pi's headers for an outgoing request (a fresh `Headers` through
+/// `applyClaudeCodeHeaders`, so none of the request's own betas), ahead of
+/// the request's other headers (the ones the shape does not set, kept in
+/// order: a provider's configured headers).
+pub(crate) fn shape_headers(
     request: &mut pa_ai::request_hooks::OutgoingRequest<'_>,
     identity: &ShapeIdentity,
     version: &str,
     env: &ShapeEnv,
     request_id: &str,
 ) {
-    let body = std::mem::take(request.payload);
-    *request.payload = shape_body(body, identity, version);
-    let incoming_betas = request
-        .headers
-        .iter()
-        .filter(|(name, _)| name.eq_ignore_ascii_case("anthropic-beta"))
-        .map(|(_, value)| value.as_str())
-        .collect::<Vec<_>>()
-        .join(",");
     let mut headers = claude_code_headers(
         request.api_key,
         request.payload,
         identity,
         version,
         env,
-        &incoming_betas,
+        "",
         request_id,
     );
     headers.extend(

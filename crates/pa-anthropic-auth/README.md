@@ -49,21 +49,35 @@ auth.json resolves the `anthropic` provider exactly as before.
     through to auth.json or reads as "no API key").
   - Quota reserve: `ANTHROPIC_QUOTA_RESERVE_PCT` (0-100; the napi `reservePct`) prefers logins whose fresh
     recorded usage is below it in both windows; when every login is at it, the store's plain pick serves.
-- Request shape (`prepare`, `shape.rs`): a request the store's token authenticates goes out as the pi plugin sends
-  it (anthropic-auth core `applyClaudeCodeHeaders` on a fresh request, pi `buildAnthropicRequest`):
-  - headers: the plugin's Claude Code beta tuple by body shape (base; full-agent; structured-output), then
-    `fast-mode` for `speed:"fast"`, `context-1m` for a 1M-capable model, then the request's own betas; the
-    `claude-cli/<version> (external, <entrypoint>[, agent-sdk/..][, client-app/..])` user agent; the Claude Code
-    `x-stainless-*` set (`js`, `node`, package 0.112.1, runtime v26.3.0, host os/arch, `helper-method: stream`);
-    `x-claude-code-session-id` (this process's per-account session) and a fresh `x-client-request-id`; the
-    environment-forwarded headers (`CLAUDE_CODE_CONTAINER_ID`, `CLAUDE_CODE_REMOTE_SESSION_ID`,
-    `CLAUDE_AGENT_SDK_CLIENT_APP`, `CLAUDE_CODE_ADDITIONAL_PROTECTION`); headers the shape does not set (a
-    provider's configured headers, prime-agent's request ids) follow, `x-api-key` never;
-  - body: the billing block `x-anthropic-billing-header: cc_version=<version>.<suffix>; cc_entrypoint=cli;
-    cch=00000;` first among the system blocks (the suffix samples UTF-16 positions 4, 7, 20 of the first user
-    text), `metadata.user_id` (`{"device_id","account_uuid","session_id"}`; the device id from `device.json` beside
-    the store, created like the plugins' when missing; the account uuid the store holds; omitted without one), and
-    Claude Code's key order;
+- Request shape (`prepare`; `pi/`, `shape.rs`): a request the store's token authenticates goes out as the pi plugin
+  sends it (anthropic-auth pi `streamCortexKitAnthropic` → `sendAnthropicRequestUnrecorded`):
+  - body (`pi/convert.rs`, pi's `buildAnthropicRequest`), rebuilt from the caller's conversation and options that
+    pa-ai hands the hook (`RequestSource`; pa-ai's own conversion is discarded): pi's message converter (orphaned tool
+    calls and stray results dropped, tool ids sanitized, Claude Code tool casing and the `deep_research` wire alias,
+    text/image user turns, signed thinking replayed only from Anthropic-origin messages, other thinking as text,
+    OpenAI reasoning dropped, trailing assistant turns stripped), the system-prompt split (pi's documentation
+    paragraph moves to a cached block ahead of the first user turn; an unknown prompt moves whole), the billing block
+    (`x-anthropic-billing-header: cc_version=<version>.<suffix>; cc_entrypoint=cli; cch=00000;`, the suffix sampling
+    UTF-16 positions 4, 7, 20 of the first user text) and Claude Code's identity block, pi's thinking shape (the
+    5-series' summarized adaptive thinking, effort for adaptive models, a budget below `max_tokens` for the older
+    families; the caller's level as given, `off` included, as pi tests it), `max_tokens` 16384 unless the caller set
+    one, pi's cache breakpoints and its cache mode (`claudeCache`), `metadata.user_id` (`{"device_id","account_uuid",
+    "session_id"}`; the device id from `device.json` beside the store, created like the plugins' when missing; the
+    account uuid the store holds; omitted without one). Sent as `JSON.stringify` bytes in Claude Code's key order
+    (`OutgoingRequest::body`). Golden: `tests/fixtures/golden/pi_requests.json`, recorded by
+    `generate_requests.ts` from pi's own provider entry point against an in-process fetch.
+  - settings (`pi/settings.rs`): the plugin's settings file, `anthropic-auth.json` in pi's agent directory
+    (`PI_ANTHROPIC_AUTH_FILE`, else `$PI_AGENT_DIR` or `~/.pi/agent`; prime-agent's TS build loaded the plugin
+    without an agent dir of its own, so both tools share it), read per request (memoized on size and mtime);
+    `claudeCache.enabled`/`mode`, `claudeFast.enabled`.
+  - headers (`shape.rs`, core `applyClaudeCodeHeaders` on a fresh request, so none of pa-ai's own betas): the Claude
+    Code beta tuple by body shape (base; full-agent; structured-output), then `fast-mode` for `speed:"fast"`,
+    `context-1m` for a 1M-capable model; the `claude-cli/<version> (external, <entrypoint>[, agent-sdk/..][,
+    client-app/..])` user agent; the Claude Code `x-stainless-*` set (`js`, `node`, package 0.112.1, runtime v26.3.0,
+    host os/arch, `helper-method: stream`); `x-claude-code-session-id` (this process's per-account session) and a
+    fresh `x-client-request-id`; the environment-forwarded headers (`CLAUDE_CODE_CONTAINER_ID`,
+    `CLAUDE_CODE_REMOTE_SESSION_ID`, `CLAUDE_AGENT_SDK_CLIENT_APP`, `CLAUDE_CODE_ADDITIONAL_PROTECTION`); headers the
+    shape does not set (a provider's configured headers) follow, `x-api-key` never;
   - the version: the npm registry's latest Claude Code (the SDK's `claude_version`), read on the keep-alive thread
     at its start and hourly, never below the verified floor (2.1.280);
     `OPENCODE_ANTHROPIC_AUTH_DISABLE_VERSION_CHECK=1` keeps the floor.
@@ -74,7 +88,8 @@ auth.json resolves the `anthropic` provider exactly as before.
   transport artefacts (the SDK's own package version and the Node runtime's version, on every Anthropic request,
   OAuth or not), which the Rust port does not emulate for any provider. So every piece above is fork behaviour and
   comes through the request hooks, only for the store's tokens; `--no-default-features` sends what it always
-  sent. Golden: `tests/fixtures/golden/request_shape.json`, generated from the plugin's own code by `generate.ts`.
+  sent. Goldens: `tests/fixtures/golden/request_shape.json` (headers, betas, billing, user agent; `generate.ts`) and
+  `pi_requests.json` (whole requests; `generate_requests.ts`).
 - Keep-alive, on the crate's own thread (`anthropic-keepalive`), started by the first served credential (never at
   install, on a paint path or during startup); its first pass a minute later, then every ten minutes plus up to a
   minute of jitter (the opencode plugin's tick): the SDK's machine-wide `keep_alive_once` (idle logins whose
@@ -109,28 +124,28 @@ auth.json resolves the `anthropic` provider exactly as before.
   own it; prime-agent has no account command surface.
 - The usage endpoint poll (`/api/oauth/usage`), sticky-balanced routing, the killswitch and per-window minimum
   thresholds of the plugins' sidecar configuration: readings come from response headers only.
-- The rest of pi's request (its own message conversion and system-prompt split, server-side fallback with its
-  `fallbacks` body field and betas, the 1M-context credits latch, fast mode, the cache-keep relay, content
-  filtering): pa-ai's Claude Code mode builds the request; the shape above is applied on top. A `--api-key`
-  `sk-ant-oat` token, or any token the store did not serve, keeps pa-ai's native Claude Code mode.
+- The rest of pi's request (server-side fallback with its `fallbacks` body field and betas, the 1M-context credits
+  latch, fast mode's command, the cache keep-alive, content filtering). A `--api-key` `sk-ant-oat` token, or any
+  token the store did not serve, keeps pa-ai's native Claude Code mode.
 
 ## Public API
 
 `install`, `shared_source`, `PROVIDER_ID`, `QUOTA_RESERVE_ENV`, `SharedStoreSource` (`new`, `store_path`, `usage`, `store_login`),
-`SharedStoreConfig` (`from_env`, `isolated`; `background` runs the keep-alive thread, `version_url` the version lookup, `quota_reserve` the reserve), `NewLogin`, `StoredLogin` (`claude_code_notice`), `SourceUsage`, `STORE_LABEL`, `AnthropicAuthFeature`, `TELEMETRY_EVENT`.
+`SharedStoreConfig` (`from_env`, `isolated`; `background` runs the keep-alive thread, `version_url` the version lookup, `quota_reserve` the reserve, `pi` the plugin's request-path files), `PiConfig` (`from_env`, `under`), `NewLogin`, `StoredLogin` (`claude_code_notice`), `SourceUsage`, `STORE_LABEL`, `AnthropicAuthFeature`, `TELEMETRY_EVENT`.
 
 ## Seams
 
 - `pa_core::auth::install_credential_source` (the provider credential source seam: credential, custody of
   auth.json's login, logout).
-- `pa_ai::request_hooks::install_request_hooks` (the provider request hooks).
+- `pa_ai::request_hooks::install_request_hooks` (the provider request hooks; `prepare` reads the caller's request,
+  `RequestSource`, and sends exact bytes, `OutgoingRequest::body`).
 - `pa_core::features::SessionFeature::on_agent_end` (the adoption event).
 
 ## Files
 
 Reads and writes `~/.anthropic-accounts/accounts.json` (and its lock) only through the SDK, under the SDK's rules,
 and `~/.anthropic-accounts/device.json` (the installation's device id, the plugins' format; created when missing,
-never overwritten);
+never overwritten); reads the pi plugin's settings file (`~/.pi/agent/anthropic-auth.json`, above);
 through the Claude Code link, reads Claude Code's `.claude.json` / `.credentials.json` (or the macOS Keychain) and
 publishes a rotation of the linked account to it, as the plugins do. It owns no file under `~/.prime/agent/`.
 

@@ -28,6 +28,7 @@ mod device;
 mod hooks;
 mod keepalive;
 mod login;
+mod pi;
 mod quota;
 mod shape;
 mod source;
@@ -35,6 +36,7 @@ mod source;
 mod test_support;
 
 pub use login::{NewLogin, StoredLogin};
+pub use pi::PiConfig;
 pub use quota::QUOTA_RESERVE_ENV;
 pub use source::{SharedStoreConfig, SharedStoreSource, SourceUsage, STORE_LABEL};
 
