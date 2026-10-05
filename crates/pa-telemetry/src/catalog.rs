@@ -1335,8 +1335,9 @@ const LEARNING_REPORT: EventRule = EventRule {
 /// failure counts so far, plus (additive) the auth.json logins it moved
 /// into the store, the 401s it recovered, the 429s it moved to another
 /// login, the usage polls it sent and saw fail, and its routing: requests
-/// sent past the first login by quota policy or killswitch, and requests
-/// refused locally — never an account id, email, label or token.
+/// sent past the first login by quota policy or killswitch, requests
+/// refused locally, sticky sessions assigned and moved — never an account
+/// id, email, label, session id or token.
 const ANTHROPIC_SHARED_AUTH: EventRule = EventRule {
     name: "anthropic_shared_auth",
     since: 4,
@@ -1364,6 +1365,8 @@ const ANTHROPIC_SHARED_AUTH: EventRule = EventRule {
         ("poll_failed", optional(count())),
         ("quota_routed", optional(count())),
         ("blocked", optional(count())),
+        ("sticky_assigned", optional(count())),
+        ("sticky_migrated", optional(count())),
     ],
 };
 
@@ -2272,6 +2275,8 @@ mod tests {
             ("poll_failed", json!(1u64)),
             ("quota_routed", json!(2u64)),
             ("blocked", json!(1u64)),
+            ("sticky_assigned", json!(4u64)),
+            ("sticky_migrated", json!(1u64)),
         ] {
             properties.set(key, value);
         }

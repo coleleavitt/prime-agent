@@ -51,6 +51,24 @@ fn the_sidecar_is_the_pi_plugins() {
 }
 
 #[test]
+fn the_routing_state_lives_beside_the_sidecar() {
+    let config = Path::new("/home/someone/.pi/agent/anthropic-auth.json");
+    assert_eq!(
+        [
+            routing_state_path_from_lookup(lookup(&[]), config),
+            routing_state_path_from_lookup(
+                lookup(&[(ROUTING_STATE_ENV, "/tmp/state.json")]),
+                config
+            ),
+        ],
+        [
+            PathBuf::from("/home/someone/.pi/agent/anthropic-auth-routing-state.json"),
+            PathBuf::from("/tmp/state.json"),
+        ]
+    );
+}
+
+#[test]
 fn every_setting_the_routing_reads_is_parsed() {
     let document = json!({
         "accounts": [],

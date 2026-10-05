@@ -2,10 +2,10 @@
 //! loopback usage endpoint and a mock Messages endpoint.
 
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anthropic::AccountStore;
-use chrono::Duration;
+use chrono::{Duration, Utc};
 use pa_core::auth::ProviderCredentialSource;
 use pa_types::sync::MutexExt;
 use serde_json::json;
@@ -23,17 +23,21 @@ struct Fixture {
     _home: tempfile::TempDir,
     source: Arc<SharedStoreSource>,
     bodies: UsageBodies,
+    polls: Arc<std::sync::atomic::AtomicUsize>,
+    state: std::path::PathBuf,
 }
 
 fn fixture(provider: &str, ids: &[&str], sidecar_document: &serde_json::Value) -> Fixture {
     let bodies = UsageBodies::default();
-    let (usage_url, _polls) = usage_endpoint(Arc::clone(&bodies));
+    let (usage_url, polls) = usage_endpoint(Arc::clone(&bodies));
     let dir = tempfile::tempdir().expect("a temporary dir");
     let config_path = sidecar(dir.path(), sidecar_document);
+    let state = dir.path().join("anthropic-auth-routing-state.json");
     let rows = ids.iter().map(|id| row(id, Duration::hours(2))).collect();
     let (home, source) = source_configured(rows, |config| {
         config.endpoints.usage_url = usage_url.clone();
         config.config_path = Some(config_path);
+        config.routing_state_path = Some(state.clone());
     });
     std::mem::forget(dir);
     AccountStore::mutate(source.store_path(), |store| store.set_current(ids[0]))
@@ -44,6 +48,8 @@ fn fixture(provider: &str, ids: &[&str], sidecar_document: &serde_json::Value) -
         _home: home,
         source,
         bodies,
+        polls,
+        state,
     }
 }
 
@@ -206,6 +212,209 @@ fn a_scoped_killswitch_block_names_the_model_s_weekly_limit() {
     assert!(
         error.contains("Fable weekly limit reached, no routable accounts. Retry in "),
         "{error}"
+    );
+}
+
+fn sticky(provider: &str, ids: &[&str], quota: &serde_json::Value) -> Fixture {
+    let fixture = fixture(
+        provider,
+        ids,
+        &json!({ "accounts": [], "routing": { "mode": "sticky-balanced" }, "quota": quota }),
+    );
+    *fixture.source.session.lock_or_recover() = Some(format!("{provider}-session"));
+    fixture
+}
+
+#[test]
+fn a_sticky_session_is_assigned_by_headroom_and_kept() {
+    let provider = "anthropic-route-sticky";
+    let fixture = sticky(provider, &["busy", "roomy"], &json!({}));
+    fixture.usage("busy", usage_body(80.0, 10.0, FAR, None));
+    fixture.usage("roomy", usage_body(10.0, 10.0, FAR, None));
+
+    let (bearers, _) = fixture.send(provider, "claude-opus-5-5", ok(2), 2);
+
+    assert_eq!(bearers, vec![access_of("roomy"), access_of("roomy")]);
+    let state: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&fixture.state).expect("the sticky state"))
+            .expect("JSON");
+    let assignments = state["assignments"].as_object().expect("assignments");
+    assert_eq!(
+        assignments
+            .values()
+            .map(|assignment| assignment["accountId"].clone())
+            .collect::<Vec<_>>(),
+        vec![json!("roomy")]
+    );
+    // The session id is stored hashed, never as is.
+    assert!(!assignments.contains_key(&format!("{provider}-session")));
+    assert_eq!(
+        fixture.source.counts.sticky_assigned.load(Ordering::SeqCst),
+        1
+    );
+    // Both logins polled once to assign; nothing more while fresh.
+    assert_eq!(fixture.polls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn an_unconfirmed_429_keeps_the_sticky_session_on_its_login() {
+    let provider = "anthropic-route-sticky-retain";
+    let fixture = sticky(provider, &["kept", "other"], &json!({}));
+    fixture.usage("kept", usage_body(10.0, 10.0, FAR, None));
+    fixture.usage("other", usage_body(50.0, 50.0, FAR, None));
+
+    let (bearers, message) = fixture.send(
+        provider,
+        "claude-opus-5-5",
+        vec![(429, vec![("retry-after", "30".to_string())], RATE_LIMITED)],
+        1,
+    );
+
+    assert_eq!(bearers, vec![access_of("kept")]);
+    assert_eq!(message.stop_reason, pa_ai::types::StopReason::Error);
+    // No cooldown: the session stays where it is.
+    let store = AccountStore::load(fixture.source.store_path()).expect("the store");
+    assert_eq!(
+        store
+            .get("kept")
+            .and_then(|account| account.rate_limited_until),
+        None
+    );
+}
+
+#[test]
+fn a_confirmed_exhaustion_moves_the_sticky_session() {
+    let provider = "anthropic-route-sticky-migrate";
+    let fixture = sticky(provider, &["spent", "next"], &json!({}));
+    fixture.usage("spent", usage_body(10.0, 10.0, FAR, None));
+    fixture.usage("next", usage_body(50.0, 50.0, FAR, None));
+    let (base, seen) = messages_endpoint(vec![
+        (200, Vec::new(), OK_STREAM),
+        (429, Vec::new(), RATE_LIMITED),
+        (200, Vec::new(), OK_STREAM),
+    ]);
+    let model = messages_model(provider, &base);
+    let served = fixture.source.credential().expect("a login").api_key;
+
+    complete(&model, &served);
+    // The login's week runs out: the poll after the 429 confirms it.
+    fixture.usage("spent", usage_body(10.0, 100.0, FAR, None));
+    let message = complete(&model, &served);
+
+    assert_eq!(text_of(&message), "hello");
+    assert_eq!(
+        seen.lock_or_recover()
+            .iter()
+            .map(CapturedRequest::bearer)
+            .collect::<Vec<_>>(),
+        vec![access_of("spent"), access_of("spent"), access_of("next")]
+    );
+    assert_eq!(
+        fixture.source.counts.sticky_migrated.load(Ordering::SeqCst),
+        1
+    );
+}
+
+#[test]
+fn a_sticky_pool_with_no_eligible_login_is_refused() {
+    let provider = "anthropic-route-sticky-none";
+    let fixture = sticky(
+        provider,
+        &["low", "lower"],
+        &json!({ "minimumRemaining": { "5h": 50 } }),
+    );
+    fixture.usage("low", usage_body(60.0, 10.0, FAR, None));
+    fixture.usage("lower", usage_body(70.0, 10.0, FAR, None));
+
+    let (bearers, message) = fixture.send(provider, "claude-opus-5-5", ok(1), 1);
+
+    assert_eq!(bearers, Vec::<String>::new());
+    let error = message.error_message.unwrap_or_default();
+    assert!(
+        error.contains(
+            "No OAuth account currently satisfies sticky-balanced quota policy. Retry in "
+        ),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_sticky_login_whose_5h_window_resets_shortly_holds_the_session() {
+    use sha2::Digest;
+    let provider = "anthropic-route-sticky-hold";
+    let fixture = sticky(provider, &["held", "spare"], &json!({}));
+    // The session sits on `held` (as an earlier process assigned it).
+    let now = Utc::now().timestamp_millis();
+    let key = sha2::Sha256::digest(format!("{provider}-session").as_bytes())
+        .iter()
+        .fold(String::new(), |mut key, byte| {
+            use std::fmt::Write;
+            let _ = write!(key, "{byte:02x}");
+            key
+        });
+    let state = json!({ "version": 1, "updatedAt": now, "assignments": { key: {
+        "accountId": "held", "family": "opus", "affinityModelId": "claude-opus-5-5",
+        "assignedAt": now, "lastSeenAt": now, "initialInputBytes": 10, "quotaCheckedAt": now
+    } } });
+    std::fs::write(&fixture.state, state.to_string()).expect("seed the sticky state");
+    // Its 5h window is spent and resets in ten minutes.
+    let soon = (Utc::now() + Duration::minutes(10)).to_rfc3339();
+    fixture.usage("held", usage_body(100.0, 10.0, &soon, None));
+    fixture.usage("spare", usage_body(10.0, 10.0, FAR, None));
+
+    let (bearers, message) = fixture.send(provider, "claude-opus-5-5", ok(1), 1);
+
+    assert_eq!(bearers, Vec::<String>::new());
+    let error = message.error_message.unwrap_or_default();
+    assert!(
+        error.contains("Sticky OAuth account five-hour quota resets shortly"),
+        "{error}"
+    );
+}
+
+#[test]
+fn the_session_feature_names_the_sticky_session() {
+    let (_home, source) = source_over(
+        vec![row("session", Duration::hours(2))],
+        "http://127.0.0.1:9",
+    );
+    let feature = crate::AnthropicAuthFeature::new(Arc::clone(&source));
+    let context = |session: &str, depth: u32| {
+        Arc::new(pa_core::features::SessionFeatureContext {
+            agent_dir: std::path::PathBuf::from("/nonexistent/agent"),
+            cwd: std::path::PathBuf::from("/nonexistent/cwd"),
+            session_id: session.to_string(),
+            python_skill_import_names: Vec::new(),
+            model: serde_json::from_value(json!({
+                "id": "claude-opus-5-5", "name": "Claude Opus 5.5", "api": "anthropic-messages",
+                "provider": "anthropic", "baseUrl": "http://localhost", "reasoning": true,
+                "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+                "contextWindow": 1000, "maxTokens": 100
+            }))
+            .expect("stub model"),
+            telemetry: None,
+            rlm_depth: depth,
+            session_artifact_dir: None,
+        })
+    };
+    let seen: Arc<Mutex<Vec<Option<String>>>> = Arc::default();
+
+    for (session, depth) in [("parent", 0), ("child", 1), ("next", 0)] {
+        pa_core::features::SessionFeature::on_session_start(
+            &feature,
+            &context(session, depth),
+            &[],
+        );
+        seen.lock_or_recover().push(source.session());
+    }
+
+    assert_eq!(
+        *seen.lock_or_recover(),
+        vec![
+            Some("parent".to_string()),
+            Some("parent".to_string()),
+            Some("next".to_string())
+        ]
     );
 }
 

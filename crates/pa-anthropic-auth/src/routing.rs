@@ -18,8 +18,20 @@
 //!   none: the first serves anyway (its own answer decides), unless the
 //!   killswitch blocks it.
 //! - `fallback-first`: those other logins first, then the first.
-//! - `sticky-balanced`: routed by the ordered pass (the sticky router is
-//!   not wired yet).
+//! - `sticky-balanced` (the plugins' `StickySessionRouter`, through the
+//!   SDK's port): each session is assigned a login by spendable quota per
+//!   hour until reset (the reserve per window: the larger of the quota
+//!   minimum and, when armed, the killswitch threshold) over the prompt
+//!   bytes already assigned to it, persisted by hashed session id in the
+//!   sidecar's `anthropic-auth-routing-state.json` (shared with pi), and
+//!   kept across processes and restarts until a fresh reading shows its 7d
+//!   or scoped window spent, its 5h window spent with more than 15 minutes to
+//!   the reset (at 15 minutes or less the request is held with a jittered
+//!   `retry-after` instead), the killswitch blocks it, the login leaves the
+//!   store, or the model changes. A complete pool with no eligible login
+//!   answers the plugins' 429 (or 401 when logins need a re-login); an
+//!   incomplete one (a reading missing or stale after its poll) falls back
+//!   to the ordered pass.
 //! - The killswitch (`killswitch.enabled`): a login whose remaining 5h/7d
 //!   percent is below its threshold (`killswitch.accounts[<store id>]`, else
 //!   `killswitch.main`, else 5%/10%), or whose scoped window for the request
@@ -30,16 +42,22 @@
 //!   (`Killswitch: no routable accounts. Retry in …`, or the scoped model's
 //!   weekly-limit message), never sent.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anthropic::access::{access_candidates, AccessErrorKind, AccessRequest};
 use anthropic::killswitch::killswitch_retry_after_secs;
 use anthropic::quota::{QuotaSnapshot, QuotaWindowName};
-use anthropic::sticky_routing::RoutingMode;
+use anthropic::sticky_routing::{
+    decide_sticky_quota_failure, sticky_no_route, sticky_quota_snapshot_is_fresh,
+    sticky_retry_after_with_jitter, sticky_route_family_for_model, RoutingMode, StickyPolicy,
+    StickyQuotaFailureDecision, StickyResolveRequest, StickyRouteCandidate, StickySessionRouter,
+};
 use anthropic::{Account, AccountStore};
 use chrono::{DateTime, Utc};
 use pa_ai::request_hooks::LocalRefusal;
+use pa_types::sync::MutexExt;
 
 use crate::config::RoutingConfig;
 use crate::source::{PollWait, SharedStoreSource};
@@ -49,18 +67,28 @@ use crate::source::{PollWait, SharedStoreSource};
 pub(crate) struct RouteRequest<'a> {
     /// The request's model id.
     pub(crate) model: &'a str,
+    /// The size of its conversation context (the sticky load estimate).
+    pub(crate) context_bytes: u64,
     /// The login this request already failed on (a 429 moving on).
     pub(crate) exclude: Option<&'a str>,
 }
 
-/// What the routing did, counts only (the adoption event's facts).
+/// What the routing did (counts only, the adoption event's facts) and the
+/// load it last saw.
 #[derive(Debug, Default)]
 pub(crate) struct RoutingCounts {
     /// Requests sent past the first login by the quota policy or the
     /// killswitch.
     pub(crate) quota_routed: AtomicU64,
-    /// Requests refused locally (the killswitch).
+    /// Requests refused locally (killswitch, sticky pool with no login).
     pub(crate) blocked: AtomicU64,
+    /// Sessions assigned a login (new or moved).
+    pub(crate) sticky_assigned: AtomicU64,
+    /// Sessions moved to another login.
+    pub(crate) sticky_migrated: AtomicU64,
+    /// The context size of the request admitted last (the load a session
+    /// moved after a 429 carries to its new login).
+    pub(crate) last_context_bytes: AtomicU64,
 }
 
 /// Where a request goes.
@@ -122,7 +150,17 @@ impl SharedStoreSource {
         for account in &candidates {
             self.quota.seed(account, now);
         }
-        self.ordered(&candidates, request, &settings)
+        let session = self.session();
+        match (settings.mode, session, &self.config.routing_state_path) {
+            (RoutingMode::StickyBalanced, Some(session), Some(state)) => self
+                .sticky(&store, &candidates, request, &settings, &session, state)
+                .unwrap_or_else(|| self.ordered(&candidates, request, &settings)),
+            (
+                RoutingMode::MainFirst | RoutingMode::FallbackFirst | RoutingMode::StickyBalanced,
+                _,
+                _,
+            ) => self.ordered(&candidates, request, &settings),
+        }
     }
 
     /// The store's logins in routing order: available, under the quota
@@ -286,6 +324,177 @@ impl SharedStoreSource {
             None => format!("Killswitch: no routable accounts. {hint}"),
         };
         rate_limited(&message, retry_after)
+    }
+
+    /// The sticky pass for `session`; `None` hands the request to the
+    /// ordered pass (an incomplete pool, an unusable state file).
+    // Long by design: one decision, pi's `buildStickyRoutes` then its
+    // resolution, kept in the plugin's order.
+    #[allow(clippy::too_many_lines)]
+    fn sticky(
+        &self,
+        store: &AccountStore,
+        candidates: &[&Account],
+        request: &RouteRequest<'_>,
+        settings: &RoutingConfig,
+        session: &str,
+        state: &Path,
+    ) -> Option<Route> {
+        let model = Some(request.model);
+        let policy = StickyPolicy {
+            quota: settings.quota.clone(),
+            killswitch: Some(settings.killswitch.clone()),
+        };
+        let fresh = |quota: Option<&QuotaSnapshot>| {
+            sticky_quota_snapshot_is_fresh(
+                quota,
+                &policy.quota,
+                Utc::now().timestamp_millis(),
+                model,
+            )
+        };
+        let passes_killswitch = |id: &str, quota: Option<&QuotaSnapshot>| {
+            settings.killswitch.passes(
+                quota,
+                Some(id),
+                model,
+                settings.quota.fail_closed_on_unknown,
+            )
+        };
+        let routes: Vec<(&Account, Option<QuotaSnapshot>)> = candidates
+            .iter()
+            .map(|account| {
+                if !fresh(self.quota.snapshot(&account.id).as_ref()) {
+                    self.queue_poll(&account.id, PollWait::Result);
+                }
+                (*account, self.quota.snapshot(&account.id))
+            })
+            .collect();
+        let now = Utc::now().timestamp_millis();
+        let retain: HashSet<String> = routes
+            .iter()
+            .filter(|(account, quota)| {
+                let migrate = fresh(quota.as_ref())
+                    && matches!(
+                        decide_sticky_quota_failure(quota.as_ref(), model, now),
+                        StickyQuotaFailureDecision::Migrate(_)
+                    );
+                !migrate && passes_killswitch(&account.id, quota.as_ref())
+            })
+            .map(|(account, _)| account.id.clone())
+            .collect();
+        let eligible: Vec<StickyRouteCandidate> = routes
+            .iter()
+            .zip(0_i64..)
+            .filter_map(|((account, quota), order)| {
+                let quota = quota.as_ref()?;
+                (policy.quota.passes(Some(quota))
+                    && !quota.model_scope_is_exhausted(model)
+                    && passes_killswitch(&account.id, Some(quota)))
+                .then(|| StickyRouteCandidate {
+                    account_id: account.id.clone(),
+                    quota: Some(quota.clone()),
+                    order,
+                })
+            })
+            .collect();
+        let incomplete = routes.iter().any(|(_, quota)| !fresh(quota.as_ref()));
+        let exclude: HashSet<String> = request.exclude.map(str::to_string).into_iter().collect();
+        let resolved = StickySessionRouter::new(state).resolve(
+            &StickyResolveRequest {
+                session_id: session,
+                family: sticky_route_family_for_model(request.model),
+                model_id: model,
+                affinity_model_id: None,
+                candidates: &eligible,
+                retain_account_ids: &retain,
+                policy: &policy,
+                input_bytes: request.context_bytes,
+                preferred_account_id: None,
+                exclude_account_ids: Some(&exclude),
+            },
+            now,
+        );
+        let resolution = match resolved {
+            Ok(Some(resolution)) => resolution,
+            Ok(None) if incomplete => return None,
+            Ok(None) => {
+                self.counts.blocked.fetch_add(1, Ordering::SeqCst);
+                let reauth: Vec<String> = store
+                    .accounts
+                    .iter()
+                    .filter(|account| account.enabled && account.refresh_token_is_dead())
+                    .map(|account| account.label.clone().unwrap_or_else(|| account.id.clone()))
+                    .collect();
+                let quotas: Vec<QuotaSnapshot> =
+                    routes.into_iter().filter_map(|(_, quota)| quota).collect();
+                let no_route = sticky_no_route(false, &reauth, &quotas, model, now);
+                let mut headers =
+                    BTreeMap::from([("content-type".to_string(), "application/json".to_string())]);
+                if let Some(seconds) = no_route.retry_after_secs {
+                    headers.insert("retry-after".to_string(), seconds.to_string());
+                }
+                let refusal = LocalRefusal {
+                    status: no_route.status,
+                    headers,
+                    body: no_route.body().to_string(),
+                };
+                return Some(Route::Refuse(refusal));
+            }
+            Err(error) => {
+                tracing::warn!(%error, "the sticky routing state is unusable; routing in order");
+                return None;
+            }
+        };
+        if resolution.created || resolution.migrated {
+            self.counts.sticky_assigned.fetch_add(1, Ordering::SeqCst);
+        }
+        if resolution.migrated {
+            self.counts.sticky_migrated.fetch_add(1, Ordering::SeqCst);
+        }
+        let quota = self.quota.snapshot(&resolution.account_id);
+        if fresh(quota.as_ref()) {
+            if let StickyQuotaFailureDecision::Hold { retry_after_secs } =
+                decide_sticky_quota_failure(quota.as_ref(), model, now)
+            {
+                #[allow(clippy::cast_precision_loss)]
+                // seconds until a reset within 15 minutes
+                let retry_after = sticky_retry_after_with_jitter(session, retry_after_secs as f64);
+                return Some(Route::Refuse(rate_limited(
+                    "Sticky OAuth account five-hour quota resets shortly; retaining session affinity.",
+                    retry_after,
+                )));
+            }
+        }
+        Some(Route::Login(resolution.account_id))
+    }
+
+    /// What a 429 on the sticky login means for the session (pi's sticky
+    /// pass): the login is polled; a confirmed long-lived exhaustion moves
+    /// the session (`true`), anything else keeps it on the login and the
+    /// 429 is reported.
+    pub(crate) fn sticky_migrates_after(&self, account_id: &str, model: &str) -> bool {
+        self.queue_poll(account_id, PollWait::Result);
+        matches!(
+            decide_sticky_quota_failure(
+                self.quota.snapshot(account_id).as_ref(),
+                Some(model),
+                Utc::now().timestamp_millis()
+            ),
+            StickyQuotaFailureDecision::Migrate(_)
+        )
+    }
+
+    /// Whether the sidecar routes sessions sticky now (and can).
+    pub(crate) fn routes_sticky(&self) -> bool {
+        self.settings().mode == RoutingMode::StickyBalanced
+            && self.session().is_some()
+            && self.config.routing_state_path.is_some()
+    }
+
+    /// The session this process serves (the stickiness key).
+    pub(crate) fn session(&self) -> Option<String> {
+        self.session.lock_or_recover().clone()
     }
 }
 

@@ -5,6 +5,8 @@
 //! - the file: `PI_ANTHROPIC_AUTH_FILE`, else `$PI_AGENT_DIR/anthropic-auth.json`,
 //!   else `~/.pi/agent/anthropic-auth.json` (the pi plugin's `getPiAccountStoragePath`;
 //!   the opencode plugin keeps its own copy under `~/.config/opencode/`);
+//! - the sticky routing state beside it (`anthropic-auth-routing-state.json`,
+//!   or `PI_ANTHROPIC_AUTH_ROUTING_STATE_FILE`), shared with pi;
 //! - read only, never written (the plugins' commands own it), and re-read
 //!   when the file changes, so an edit applies to the next request;
 //! - what is read: `routing.mode`, `quota.{enabled, checkIntervalMinutes,
@@ -27,6 +29,8 @@ use pa_types::sync::MutexExt;
 pub const CONFIG_FILE_ENV: &str = "PI_ANTHROPIC_AUTH_FILE";
 /// The pi agent directory the default sidecar lives in.
 pub const AGENT_DIR_ENV: &str = "PI_AGENT_DIR";
+/// The sticky routing state override (the pi plugin's).
+pub const ROUTING_STATE_ENV: &str = "PI_ANTHROPIC_AUTH_ROUTING_STATE_FILE";
 /// The sidecar's file name.
 const CONFIG_FILE_NAME: &str = "anthropic-auth.json";
 
@@ -57,6 +61,20 @@ pub(crate) fn config_path_from_lookup(
     trimmed(AGENT_DIR_ENV)
         .map_or_else(|| home.join(".pi").join("agent"), PathBuf::from)
         .join(CONFIG_FILE_NAME)
+}
+
+/// The sticky routing state for the sidecar at `config_path`
+/// (`<stem>-routing-state.json` beside it, or the override).
+pub(crate) fn routing_state_path_from_lookup(
+    lookup: impl Fn(&str) -> Option<String>,
+    config_path: &Path,
+) -> PathBuf {
+    lookup(ROUTING_STATE_ENV)
+        .filter(|value| !value.is_empty())
+        .map_or_else(
+            || anthropic::sticky_routing::sticky_routing_state_path(config_path),
+            PathBuf::from,
+        )
 }
 
 /// The settings a sidecar document carries (anything but an object is the

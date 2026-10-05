@@ -27,7 +27,9 @@ use pa_core::auth::{
 use pa_types::sync::MutexExt;
 use sha2::{Digest, Sha256};
 
-use crate::config::{config_path_from_lookup, ConfigFile, RoutingConfig};
+use crate::config::{
+    config_path_from_lookup, routing_state_path_from_lookup, ConfigFile, RoutingConfig,
+};
 use crate::keepalive::{Job, KeepAlive};
 use crate::quota::{poll_usage, quota_line, PollRun, QuotaLine, QuotaTracker, StoreWrite};
 use crate::routing::{Route, RouteRequest, RoutingCounts};
@@ -67,6 +69,10 @@ pub struct SharedStoreConfig {
     /// mode, quota policy, killswitch), read only; `None` reads none and
     /// keeps the plugins' defaults.
     pub config_path: Option<PathBuf>,
+    /// The sticky routing state (`anthropic-auth-routing-state.json`
+    /// beside the sidecar, shared with pi); `None` routes no session
+    /// sticky.
+    pub routing_state_path: Option<PathBuf>,
 }
 
 impl SharedStoreConfig {
@@ -90,6 +96,10 @@ impl SharedStoreConfig {
                 != Ok("1"))
             .then(|| anthropic::claude_version::LATEST_VERSION_URL.to_string()),
             quota_reserve: crate::quota::reserve_from_env(),
+            routing_state_path: Some(routing_state_path_from_lookup(
+                |key| std::env::var(key).ok(),
+                &config_path,
+            )),
             config_path: Some(config_path),
         }
     }
@@ -111,6 +121,7 @@ impl SharedStoreConfig {
             version_url: None,
             quota_reserve: None,
             config_path: None,
+            routing_state_path: None,
         }
     }
 
@@ -196,6 +207,9 @@ pub struct SharedStoreSource {
     settings: ConfigFile,
     /// The row this process served last.
     last_served: Mutex<Option<String>>,
+    /// The session this process serves (the sticky routing key), as the
+    /// session feature reports it.
+    pub(crate) session: Mutex<Option<String>>,
     /// What the routing did (counts only).
     pub(crate) counts: RoutingCounts,
     /// The keep-alive thread's work queue, once it runs.
@@ -250,6 +264,7 @@ impl SharedStoreSource {
             sessions: Mutex::new(std::collections::HashMap::new()),
             quota,
             last_served: Mutex::new(None),
+            session: Mutex::new(None),
             counts: RoutingCounts::default(),
             jobs: OnceLock::new(),
             keepalive,

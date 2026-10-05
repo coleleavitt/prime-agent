@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use pa_agent::types::AgentMessage;
 use pa_core::features::{FeatureStatus, SessionFeature, SessionFeatureContext};
 use pa_telemetry::Properties;
 use pa_types::sync::MutexExt;
@@ -119,6 +120,14 @@ impl SessionFeature for AnthropicAuthFeature {
         "anthropic-auth"
     }
 
+    fn on_session_start(&self, context: &Arc<SessionFeatureContext>, _history: &[AgentMessage]) {
+        // The session this process serves is the sticky routing key; a
+        // child agent's session rides its parent's login.
+        if context.rlm_depth == 0 {
+            *self.source.session.lock_or_recover() = Some(context.session_id.clone());
+        }
+    }
+
     fn on_agent_end(&self, context: &Arc<SessionFeatureContext>) {
         self.publish_quota(context);
         let Some(telemetry) = &context.telemetry else {
@@ -142,6 +151,8 @@ impl SessionFeature for AnthropicAuthFeature {
         for (name, count) in [
             ("quota_routed", &counts.quota_routed),
             ("blocked", &counts.blocked),
+            ("sticky_assigned", &counts.sticky_assigned),
+            ("sticky_migrated", &counts.sticky_migrated),
         ] {
             properties.set(name, count.load(Ordering::SeqCst).into());
         }
