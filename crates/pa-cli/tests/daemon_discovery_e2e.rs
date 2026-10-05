@@ -103,13 +103,23 @@ fn spawn_daemon(socket: &Path, agent_dir: &Path, tmp_dir: &Path) -> Daemon {
 
 /// Run the CLI with its state root pinned inside `root`: agent dir and TMPDIR
 /// resolve there, so the invocation's `DaemonStateRoot` can never be the
-/// ambient environment's real paths.
+/// ambient environment's real paths. The containment marker is the second
+/// layer: should the root ever resolve onto a real daemon dir, discovery
+/// refuses it.
 fn run_cli(root: &Path, args: &[&str]) -> Output {
+    run_cli_with_containment(root, args, "1")
+}
+
+/// [`run_cli`] with an explicit containment marker; `"0"` (with cargo's
+/// runtime marker removed) is how the shipped binary runs.
+fn run_cli_with_containment(root: &Path, args: &[&str], containment: &str) -> Output {
     let agent_dir = root.join("agent");
     std::fs::create_dir_all(&agent_dir).expect("agent dir");
     let mut command = Command::new(cli_binary());
     command
         .args(args)
+        .env(pa_cli::DISCOVERY_CONTAINMENT_ENV, containment)
+        .env_remove("CARGO_MANIFEST_DIR")
         .env("PRIME_AGENT_CODING_AGENT_DIR", &agent_dir)
         .env("TMPDIR", root)
         .env(
@@ -512,6 +522,69 @@ fn discovery_and_shutdown_from_another_root_leave_a_foreign_daemon_alive() {
 
     // The supervisor exits and stops listening.
     wait_until_stopped(&socket_a, &mut daemon);
+}
+
+#[test]
+fn the_shipped_binary_stops_the_daemon_on_its_own_default_socket() {
+    // The product resolves `<TMPDIR>/prime-agent-<uid>/daemon.sock`; with
+    // TMPDIR pinned to the fixture that is a fixture path, never the real
+    // one. Outside any harness (marker `0`, no cargo marker) the binary must
+    // see and stop that default daemon - the `/tmp/prime-agent-1000`
+    // regression made `shutdown` report "No background services found."
+    let fixture = tempfile::tempdir().expect("fixture");
+    let uid = {
+        use std::os::unix::fs::MetadataExt as _;
+        let probe = fixture.path().join("uid-probe");
+        std::fs::write(&probe, b"").expect("uid probe");
+        std::fs::metadata(&probe).expect("uid probe metadata").uid()
+    };
+    let agent_dir = fixture.path().join("agent");
+    let socket = fixture
+        .path()
+        .join(format!("prime-agent-{uid}"))
+        .join("daemon.sock");
+    std::fs::create_dir_all(socket.parent().expect("socket dir")).expect("socket dir");
+    let mut daemon = spawn_daemon(&socket, &agent_dir, fixture.path());
+
+    let status = run_cli_with_containment(fixture.path(), &["status", "--json"], "0");
+    assert_eq!(status.status.code(), Some(0), "stderr: {}", stderr(&status));
+    let rows: Value = serde_json::from_str(&stdout(&status)).expect("status json");
+    let defaults: Vec<(&str, bool)> = rows
+        .as_array()
+        .expect("status rows")
+        .iter()
+        .map(|row| {
+            (
+                row["socketPath"].as_str().expect("socket path"),
+                row["isDefault"].as_bool().expect("is default"),
+            )
+        })
+        .collect();
+    assert_eq!(defaults, vec![(socket.to_str().expect("utf-8 path"), true)]);
+
+    let shutdown =
+        run_cli_with_containment(fixture.path(), &["shutdown", "--force", "--json"], "0");
+    assert_eq!(
+        shutdown.status.code(),
+        Some(0),
+        "shutdown stdout: {} stderr: {}",
+        stdout(&shutdown),
+        stderr(&shutdown)
+    );
+    let report: Value = serde_json::from_str(&stdout(&shutdown)).expect("shutdown json report");
+    assert_eq!(
+        reported_socket_paths(&report),
+        vec![socket.to_string_lossy().to_string()]
+    );
+    assert!(
+        report
+            .get("failed")
+            .and_then(Value::as_array)
+            .is_none_or(Vec::is_empty),
+        "stopping the default daemon must not fail: {}",
+        stdout(&shutdown)
+    );
+    wait_until_stopped(&socket, &mut daemon);
 }
 
 /// Wait for the daemon's socket to stop accepting connections and its

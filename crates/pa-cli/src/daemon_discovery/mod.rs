@@ -1,10 +1,13 @@
 //! Daemon discovery: find every product daemon in this state root and probe
 //! it for identity and session count — the OS census of listening sockets
 //! plus a sweep of the default socket dir (orphaned files included).
-//! Containment is operator-mandated: everything is scoped to one
-//! [`DaemonStateRoot`], and [`NEVER_TOUCH_SOCKET_DIRS`] is checked always.
+//! Everything is scoped to one [`DaemonStateRoot`]. Under a test harness a
+//! [`Containment`] guard also refuses this box's real daemon dirs outright,
+//! whatever the root says; the shipped binary has no such list (TS parity) and
+//! always manages the daemon in its own default socket dir.
 
 use std::collections::BTreeSet;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use pa_types::daemon::DaemonCommand;
@@ -30,23 +33,27 @@ pub(crate) struct DiscoveredDaemonProcess {
 }
 
 /// The state root an invocation reads: the agent dir and the default socket
-/// dir, both following HOME/TMPDIR/agent-dir overrides.
+/// dir, both following HOME/TMPDIR/agent-dir overrides, plus the containment
+/// guard the invocation runs under.
 #[derive(Debug, Clone)]
 pub(crate) struct DaemonStateRoot {
     pub agent_dir: PathBuf,
     pub socket_dir: PathBuf,
     pub default_socket_path: PathBuf,
+    pub containment: Containment,
 }
 
-/// Directories the discovery code must never touch, unconditionally
-/// (operator-mandated containment guard; see the module docs). These hold
-/// this box's live mission infrastructure; an ambient `HOME`/`TMPDIR`
-/// leaking into a test process makes `current_state_root()` resolve onto
-/// them, so root matching alone cannot be trusted. `/tmp/prime-agent-1000`
-/// is also the product-default socket dir for uid 1000 (deliberate,
-/// mission-local); the `-0` entries are the uid-0 twins — without them the
-/// protection silently disappears at uid 0.
-pub(crate) const NEVER_TOUCH_SOCKET_DIRS: &[&str] = &[
+/// Set to `1` by test harnesses on every `prime-agent` they spawn: discovery
+/// then refuses [`TEST_NEVER_TOUCH_SOCKET_DIRS`]. `0` opts a `cargo run` out.
+pub const DISCOVERY_CONTAINMENT_ENV: &str = "PRIME_AGENT_DISCOVERY_CONTAINMENT";
+
+/// Socket dirs a test must never discover, probe, signal, or unlink: this
+/// box's live daemons. A sandbox `HOME` with the ambient `TMPDIR` resolves
+/// `current_state_root()` onto `/tmp/prime-agent-<uid>`, so root matching
+/// alone cannot keep a test off the real daemon. The `-0` entries are the
+/// uid-0 twins. These are also the product-default socket dirs for uid
+/// 1000/0, so the list must never apply to the shipped binary.
+pub(crate) const TEST_NEVER_TOUCH_SOCKET_DIRS: &[&str] = &[
     "/tmp/prime-agent-1000",
     "/tmp/mission-tmp/prime-agent-1000",
     "/tmp/mission-daemon",
@@ -54,10 +61,71 @@ pub(crate) const NEVER_TOUCH_SOCKET_DIRS: &[&str] = &[
     "/tmp/mission-tmp/prime-agent-0",
 ];
 
+/// The socket dirs an invocation refuses outright, ahead of root matching.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Containment {
+    never_touch: Vec<PathBuf>,
+}
+
+impl Containment {
+    /// The shipped binary: nothing beyond the state root is refused, so the
+    /// daemon in the invocation's own default socket dir is always reachable.
+    pub(crate) fn product() -> Self {
+        Self {
+            never_touch: Vec::new(),
+        }
+    }
+
+    /// Any process under a test harness.
+    pub(crate) fn test_harness() -> Self {
+        Self {
+            never_touch: TEST_NEVER_TOUCH_SOCKET_DIRS
+                .iter()
+                .map(PathBuf::from)
+                .collect(),
+        }
+    }
+
+    /// This process's guard: always on in unit tests, else read from the env.
+    pub(crate) fn current() -> Self {
+        if cfg!(test) {
+            return Self::test_harness();
+        }
+        Self::resolve(|key| std::env::var_os(key), Self::test_harness())
+    }
+
+    /// `harness` when a harness set [`DISCOVERY_CONTAINMENT_ENV`] to `1`, or
+    /// when cargo launched the process (`cargo test`/`cargo run` set
+    /// `CARGO_MANIFEST_DIR` at runtime and every child inherits it) - the
+    /// backstop for a harness that forgot the marker. `0` turns it off.
+    /// Otherwise [`Containment::product`].
+    fn resolve(env: impl Fn(&str) -> Option<OsString>, harness: Self) -> Self {
+        let under_test = match env(DISCOVERY_CONTAINMENT_ENV) {
+            Some(value) if value == "1" => true,
+            Some(value) if value == "0" => false,
+            _ => env("CARGO_MANIFEST_DIR").is_some(),
+        };
+        if under_test {
+            harness
+        } else {
+            Self::product()
+        }
+    }
+
+    pub(crate) fn forbids(&self, path: &Path) -> bool {
+        self.never_touch.iter().any(|dir| path.starts_with(dir))
+    }
+}
+
+/// True when `path` is refused for this root: by the root's own guard, or -
+/// in unit tests, whatever a fixture root says - by the test list.
+fn root_forbids(root: &DaemonStateRoot, path: &Path) -> bool {
+    root.containment.forbids(path) || is_never_touch(path)
+}
+
+/// The root-less check for probes and unlinks: this process's guard.
 pub(crate) fn is_never_touch(path: &Path) -> bool {
-    NEVER_TOUCH_SOCKET_DIRS
-        .iter()
-        .any(|dir| path.starts_with(Path::new(dir)))
+    Containment::current().forbids(path)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -110,13 +178,14 @@ pub(crate) fn current_state_root() -> DaemonStateRoot {
         agent_dir: config::get_agent_dir(),
         socket_dir: pa_daemon::platform::socket_dir(),
         default_socket_path: pa_daemon::platform::default_daemon_socket_path(),
+        containment: Containment::current(),
     }
 }
 
 /// A socket belongs to the root when it is the default path, sits in the socket
 /// dir, or anywhere inside the agent dir (TS ownership registry not ported).
 fn state_root_matches(root: &DaemonStateRoot, socket_path: &Path) -> bool {
-    if is_never_touch(socket_path) {
+    if root_forbids(root, socket_path) {
         return false;
     }
     #[cfg(windows)]
@@ -183,14 +252,14 @@ pub(crate) fn is_daemon_process_listening(
 /// Socket files in the given socket dir: live daemons and orphaned files alike.
 /// Never-touch paths are filtered here too.
 #[cfg(unix)]
-fn scan_socket_dir(socket_dir: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(socket_dir) else {
+fn scan_socket_dir(root: &DaemonStateRoot) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(&root.socket_dir) else {
         return Vec::new();
     };
     let mut sockets = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
-        if is_socket_file(&path) && !is_never_touch(&path) {
+        if is_socket_file(&path) && !root_forbids(root, &path) {
             sockets.push(path);
         }
     }
@@ -202,7 +271,7 @@ fn scan_socket_dir(socket_dir: &Path) -> Vec<PathBuf> {
 /// default pipe (see [`discover_daemons_with`]; TS `scanSocketDir` returns
 /// [] on win32).
 #[cfg(not(unix))]
-fn scan_socket_dir(_socket_dir: &Path) -> Vec<PathBuf> {
+fn scan_socket_dir(_root: &DaemonStateRoot) -> Vec<PathBuf> {
     Vec::new()
 }
 
@@ -291,8 +360,8 @@ pub(crate) struct ProbeResult {
 /// session count over `list` (30s when greeted, else 1500ms).
 pub(crate) fn probe_daemon(socket_path: &Path) -> ProbeResult {
     if is_never_touch(socket_path) {
-        // Containment: never even connect to a forbidden path, whatever
-        // the caller's root says.
+        // Containment: under a test harness, never even connect to a
+        // forbidden path, whatever the caller's root says.
         return ProbeResult::default();
     }
     let Ok(mut client) = DaemonClient::connect_probe(socket_path) else {
@@ -434,7 +503,7 @@ fn discover_daemons_with(root: &DaemonStateRoot, named_pipes: bool) -> Vec<Daemo
         .keys()
         .cloned()
         .chain(
-            scan_socket_dir(&root.socket_dir)
+            scan_socket_dir(root)
                 .into_iter()
                 .filter(|path| !is_worker_socket_path(path, &root.socket_dir)),
         )
@@ -524,6 +593,7 @@ mod tests {
             agent_dir: dir.join("agent"),
             socket_dir: dir.join("agent").join("sockets"),
             default_socket_path: dir.join("agent").join("sockets").join("daemon.sock"),
+            containment: Containment::current(),
         }
     }
 
@@ -563,12 +633,15 @@ mod tests {
 
     #[test]
     fn never_touch_paths_are_excluded_even_when_the_root_points_at_them() {
-        for dir in NEVER_TOUCH_SOCKET_DIRS {
+        // A fixture root claiming product containment still loses to the
+        // unit-test floor: this is a pure path check, nothing is opened.
+        for dir in TEST_NEVER_TOUCH_SOCKET_DIRS {
             let dir = Path::new(dir);
             let root = DaemonStateRoot {
                 agent_dir: dir.to_path_buf(),
                 socket_dir: dir.to_path_buf(),
                 default_socket_path: dir.join("daemon.sock"),
+                containment: Containment::product(),
             };
             assert!(
                 !state_root_matches(&root, &root.default_socket_path),
@@ -588,14 +661,15 @@ mod tests {
 
     #[test]
     fn a_scan_rooted_on_a_never_touch_dir_surfaces_no_listeners() {
-        // The ambient mission daemon's workers listen under these dirs, owned
+        // The ambient real daemon's workers listen under these dirs, owned
         // by real `prime-agent` processes: root matching alone would find them.
-        for dir in NEVER_TOUCH_SOCKET_DIRS {
+        for dir in TEST_NEVER_TOUCH_SOCKET_DIRS {
             let dir = *dir;
             let root = DaemonStateRoot {
                 agent_dir: PathBuf::from(dir),
                 socket_dir: PathBuf::from(dir),
                 default_socket_path: PathBuf::from(dir).join("daemon.sock"),
+                containment: Containment::current(),
             };
             assert!(
                 scan_listening_daemons(&root).is_empty(),
@@ -610,6 +684,100 @@ mod tests {
         // would probe the live mission daemon once and fail the assert.
         let probe = probe_daemon(Path::new("/tmp/mission-daemon/daemon.sock"));
         assert!(!probe.reachable);
+    }
+
+    #[test]
+    fn unit_tests_always_run_under_the_harness_guard() {
+        assert_eq!(Containment::current(), Containment::test_harness());
+    }
+
+    /// The env a shipped binary sees: neither the harness marker nor cargo.
+    fn product_env(_key: &str) -> Option<OsString> {
+        None
+    }
+
+    #[test]
+    fn a_product_invocation_never_refuses_its_own_default_socket_dir() {
+        // Pure path checks against the product resolution: the uid-1000
+        // and uid-0 default socket dirs are reachable, nothing is opened.
+        let product = Containment::resolve(product_env, Containment::test_harness());
+        assert_eq!(product, Containment::product());
+        for socket in [
+            "/tmp/prime-agent-1000/daemon.sock",
+            "/tmp/prime-agent-0/daemon.sock",
+        ] {
+            assert!(!product.forbids(Path::new(socket)), "{socket}");
+        }
+    }
+
+    #[test]
+    fn the_harness_marker_and_cargo_switch_the_guard_on() {
+        let harness = Containment::test_harness;
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |key: &str| {
+                pairs
+                    .iter()
+                    .find(|(name, _)| *name == key)
+                    .map(|(_, value)| OsString::from(value))
+            }
+        };
+        let marker = env(&[(DISCOVERY_CONTAINMENT_ENV, "1")]);
+        assert_eq!(Containment::resolve(marker, harness()), harness());
+        let cargo = env(&[("CARGO_MANIFEST_DIR", "/src/pa-cli")]);
+        assert_eq!(Containment::resolve(cargo, harness()), harness());
+        let opted_out = env(&[
+            (DISCOVERY_CONTAINMENT_ENV, "0"),
+            ("CARGO_MANIFEST_DIR", "/src/pa-cli"),
+        ]);
+        assert_eq!(
+            Containment::resolve(opted_out, harness()),
+            Containment::product()
+        );
+        let unknown = env(&[(DISCOVERY_CONTAINMENT_ENV, "yes")]);
+        assert_eq!(
+            Containment::resolve(unknown, harness()),
+            Containment::product()
+        );
+    }
+
+    /// Bind a socket that accepts and drops every connection: a reachable,
+    /// non-greeting daemon (the probe skips the hello wait).
+    #[cfg(unix)]
+    fn serve_dropping_connections(socket: &Path) {
+        let listener = std::os::unix::net::UnixListener::bind(socket).expect("bind");
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                drop(stream);
+            }
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_product_invocation_discovers_the_live_daemon_in_its_default_dir() {
+        // A temp dir stands in for `/tmp/prime-agent-<uid>`: the harness
+        // list names it the way the real list names the uid-1000 default.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut root = fixture_root(tmp.path());
+        std::fs::create_dir_all(&root.socket_dir).expect("socket dir");
+        serve_dropping_connections(&root.default_socket_path);
+        let stand_in_harness = Containment {
+            never_touch: vec![root.socket_dir.clone()],
+        };
+
+        root.containment = Containment::resolve(product_env, stand_in_harness.clone());
+        let infos = discover_daemons(&root);
+        assert_eq!(infos.len(), 1, "the product sees its default daemon");
+        assert_eq!(infos[0].socket_path, root.default_socket_path);
+        assert!(infos[0].is_default);
+        assert_eq!(infos[0].status, DaemonStatus::Stale);
+
+        let marker = |key: &str| (key == DISCOVERY_CONTAINMENT_ENV).then(|| OsString::from("1"));
+        root.containment = Containment::resolve(marker, stand_in_harness);
+        assert!(
+            discover_daemons(&root).is_empty(),
+            "a harness-spawned invocation still refuses the guarded dir"
+        );
     }
 
     #[cfg(unix)]
@@ -647,13 +815,7 @@ mod tests {
 
         // An idle daemon with no tracked workers. Accepted connections are
         // dropped at once, so the probe is reachable without the hello wait.
-        let listener =
-            std::os::unix::net::UnixListener::bind(&root.default_socket_path).expect("bind");
-        std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                drop(stream);
-            }
-        });
+        serve_dropping_connections(&root.default_socket_path);
         assert!(
             discover_daemons_with(&root, false).is_empty(),
             "the unix arm only sees socket-dir files and listeners"

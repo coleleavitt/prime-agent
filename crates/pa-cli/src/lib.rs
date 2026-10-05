@@ -61,6 +61,9 @@ pub(crate) mod traces_login;
 
 /// The runtime boundary: everything a mode-runner crate implements to plug
 /// into the `prime-agent` binary, plus the entry point that drives it.
+/// The marker test harnesses set on every `prime-agent` that runs daemon
+/// discovery (`status`, `doctor`, `shutdown`).
+pub use daemon_discovery::DISCOVERY_CONTAINMENT_ENV;
 pub use mode::{AppMode, MissingSubsystem, RunOptions, Runtime, UnavailableRuntime};
 pub mod features;
 pub(crate) mod piped_stdin;
