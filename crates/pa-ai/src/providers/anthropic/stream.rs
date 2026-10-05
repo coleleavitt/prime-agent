@@ -12,12 +12,18 @@ use crate::event_stream::AssistantMessageEventStream;
 use crate::event_stream::{
     create_assistant_message_event_stream, AssistantMessageEvent, AssistantMessageEventWriter,
 };
+use std::sync::Arc;
+
 use crate::models::{calculate_cost, CostOverrides};
 use crate::providers::anthropic::convert::map_stop_reason;
 use crate::providers::anthropic::params::build_params;
 use crate::providers::anthropic::{
     build_request_headers, from_claude_code_name, get_cache_control,
     should_use_fine_grained_tool_streaming_beta, AnthropicOptions,
+};
+use crate::request_hooks::{
+    request_hooks, CredentialAttempts, OutgoingRequest, ProviderRequestHooks, RejectedRequest,
+    Rejection, RATE_LIMIT_STREAM_ERRORS,
 };
 use crate::types::{
     done_reason, error_reason, AssistantContent, AssistantMessage, Context, Model, StopReason,
@@ -194,24 +200,24 @@ async fn run_stream(
     let base_options = options
         .map(|options| options.base.clone())
         .unwrap_or_default();
-    let api_key = base_options
+    let mut api_key = base_options
         .api_key
         .clone()
         .or_else(|| get_env_api_key(&model.provider))
         .unwrap_or_default();
+    // The provider id's request hooks (none natively): a fresher credential
+    // first, then each send's shape, response and rejection.
+    let hooks = request_hooks(&model.provider);
+    if let Some(hooks) = &hooks {
+        if let Some(current) = current_credential(hooks, model, &api_key).await {
+            api_key = current;
+        }
+    }
 
     let interleaved_thinking = options
         .and_then(|options| options.interleaved_thinking)
         .unwrap_or(true);
     let use_fine_grained = should_use_fine_grained_tool_streaming_beta(model, context);
-    let (headers, is_oauth) = build_request_headers(
-        model,
-        &api_key,
-        interleaved_thinking,
-        use_fine_grained,
-        base_options.headers.as_ref(),
-        base_options.session_id.as_deref(),
-    );
 
     let (_retention, cache_control) = get_cache_control(model, base_options.cache_retention);
     let uses_anthropic_cache_pricing = has_standard_anthropic_cache_pricing(model);
@@ -224,58 +230,127 @@ async fn run_stream(
         _ => None,
     };
 
-    let mut params = build_params(model, context, is_oauth, options, cache_control.as_ref());
-    if let Some(on_payload) = &base_options.on_payload {
-        if let Some(next) = on_payload(params.clone(), model) {
-            params = next;
-        }
-    }
-
     let url = format!("{}/v1/messages", model.base_url.trim_end_matches('/'));
-    let mut response: HttpResponse = send(RequestOptions {
-        method: reqwest::Method::POST,
-        url,
-        headers,
-        body: Some(params.to_string()),
-        signal: base_options.signal.clone(),
-        timeout_ms: base_options.timeout_ms,
-        connection: crate::utils_inner::stream_failure::ConnectionErrorProfile::Sdk,
-        transport: crate::utils_inner::http::Transport::Http1,
-    })
-    .await?;
-
-    if let Some(on_response) = &base_options.on_response {
-        on_response(
-            crate::types::ProviderResponse {
-                status: response.status,
-                // Collected into the ordered map: the hook payload can serialize, and the HTTP
-                // header arrival order is not a stable serialization order.
-                headers: response.headers.clone().into_iter().collect(),
-            },
+    let mut attempts = CredentialAttempts::new(&api_key);
+    let mut decoder = SseDecoder::new();
+    // With hooks, the events read while checking how the stream opened.
+    let mut opening: Vec<ServerSentEvent> = Vec::new();
+    let (mut response, request_id, is_oauth): (HttpResponse, Option<String>, bool) = loop {
+        let (mut headers, is_oauth) = build_request_headers(
             model,
+            &api_key,
+            interleaved_thinking,
+            use_fine_grained,
+            base_options.headers.as_ref(),
+            base_options.session_id.as_deref(),
         );
-    }
-    let request_id = response
-        .headers
-        .get("request-id")
-        .or_else(|| response.headers.get("x-request-id"))
-        .cloned();
 
-    if response.status >= 400 {
-        let body = response.read_all_text().await.unwrap_or_default();
-        return Err(ProviderError::from_http_status_body(
-            response.status,
-            &body,
-            response.headers.clone(),
-        ));
-    }
+        let mut params = build_params(model, context, is_oauth, options, cache_control.as_ref());
+        if let Some(on_payload) = &base_options.on_payload {
+            if let Some(next) = on_payload(params.clone(), model) {
+                params = next;
+            }
+        }
+        if let Some(hooks) = &hooks {
+            hooks.prepare(&mut OutgoingRequest {
+                model,
+                api_key: &api_key,
+                headers: &mut headers,
+                payload: &mut params,
+            });
+        }
+
+        let mut response: HttpResponse = send(RequestOptions {
+            method: reqwest::Method::POST,
+            url: url.clone(),
+            headers,
+            body: Some(params.to_string()),
+            signal: base_options.signal.clone(),
+            timeout_ms: base_options.timeout_ms,
+            connection: crate::utils_inner::stream_failure::ConnectionErrorProfile::Sdk,
+            transport: crate::utils_inner::http::Transport::Http1,
+        })
+        .await?;
+
+        let provider_response = crate::types::ProviderResponse {
+            status: response.status,
+            // Collected into the ordered map: the hook payload can serialize, and the HTTP
+            // header arrival order is not a stable serialization order.
+            headers: response.headers.clone().into_iter().collect(),
+        };
+        if let Some(on_response) = &base_options.on_response {
+            on_response(provider_response.clone(), model);
+        }
+        if let Some(hooks) = &hooks {
+            hooks.observe(model, &api_key, &provider_response);
+        }
+        let request_id = response
+            .headers
+            .get("request-id")
+            .or_else(|| response.headers.get("x-request-id"))
+            .cloned();
+
+        if response.status >= 400 {
+            let body = response.read_all_text().await.unwrap_or_default();
+            let rejection = match response.status {
+                401 => Some(Rejection::Unauthorized),
+                429 => Some(Rejection::RateLimited),
+                _ => None,
+            };
+            if let (Some(hooks), Some(rejection)) = (&hooks, rejection) {
+                if let Some(next) = resend_credential(
+                    hooks,
+                    model,
+                    &api_key,
+                    rejection,
+                    &provider_response,
+                    response_error_type(&body).as_deref(),
+                    &mut attempts,
+                )
+                .await
+                {
+                    api_key = next;
+                    continue;
+                }
+            }
+            return Err(ProviderError::from_http_status_body(
+                response.status,
+                &body,
+                response.headers.clone(),
+            ));
+        }
+
+        // A stream may open with a rate-limit or overload error on a 200:
+        // with hooks, read its first event before reporting the start.
+        if let Some(hooks) = &hooks {
+            opening = read_opening_events(&mut response, &mut decoder).await?;
+            if let Some(error_type) = opening_rate_limit(&opening) {
+                if let Some(next) = resend_credential(
+                    hooks,
+                    model,
+                    &api_key,
+                    Rejection::RateLimited,
+                    &provider_response,
+                    Some(&error_type),
+                    &mut attempts,
+                )
+                .await
+                {
+                    api_key = next;
+                    decoder = SseDecoder::new();
+                    opening.clear();
+                    continue;
+                }
+            }
+        }
+        break (response, request_id, is_oauth);
+    };
 
     writer.push(AssistantMessageEvent::Start {
         partial: output.clone(),
     });
 
     let mut blocks = IndexedBlocks::new();
-    let mut decoder = SseDecoder::new();
     let mut saw_message_start = false;
     let mut saw_message_end = false;
 
@@ -642,6 +717,11 @@ async fn run_stream(
     // The TS try/catch encloses this whole streaming section, including the abort and stop-reason
     // checks; the catch settles partial tool calls before the error event carries the message.
     let stream_result: Result<(), ProviderError> = async {
+        for sse in std::mem::take(&mut opening) {
+            handle_sse(&sse, request_id.as_deref(), |event| {
+                handle_event!(event).map_err(|error| error.0)
+            })?;
+        }
         loop {
             let Some(chunk) = response.next_text().await? else {
                 break;
@@ -697,6 +777,95 @@ async fn run_stream(
     }
 
     Ok(())
+}
+
+/// The hooks' fresher credential for a request about to be built, asked
+/// on the blocking pool (it may read the hooks' store).
+async fn current_credential(
+    hooks: &Arc<dyn ProviderRequestHooks>,
+    model: &Model,
+    api_key: &str,
+) -> Option<String> {
+    let (hooks, model, api_key) = (Arc::clone(hooks), model.clone(), api_key.to_string());
+    tokio::task::spawn_blocking(move || hooks.current_credential(&model, &api_key))
+        .await
+        .ok()
+        .flatten()
+}
+
+/// The credential to re-send a rejected request with, when the hooks name
+/// one this request may still use (asked on the blocking pool).
+async fn resend_credential(
+    hooks: &Arc<dyn ProviderRequestHooks>,
+    model: &Model,
+    api_key: &str,
+    rejection: Rejection,
+    response: &crate::types::ProviderResponse,
+    provider_error_type: Option<&str>,
+    attempts: &mut CredentialAttempts,
+) -> Option<String> {
+    if !attempts.may_retry(rejection) {
+        return None;
+    }
+    let (hooks, model, api_key, status, headers, error_type) = (
+        Arc::clone(hooks),
+        model.clone(),
+        api_key.to_string(),
+        response.status,
+        response.headers.clone(),
+        provider_error_type.map(str::to_string),
+    );
+    let next = tokio::task::spawn_blocking(move || {
+        hooks.rejected(&RejectedRequest {
+            model: &model,
+            api_key: &api_key,
+            rejection,
+            status,
+            provider_error_type: error_type.as_deref(),
+            headers: &headers,
+        })
+    })
+    .await
+    .ok()
+    .flatten()?;
+    attempts.admit(rejection, &next).then_some(next)
+}
+
+/// The `error.type` of an error response body, when it names one.
+fn response_error_type(body: &str) -> Option<String> {
+    let parsed: Value = serde_json::from_str(body).ok()?;
+    parsed
+        .get("error")?
+        .get("type")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// Read until the stream's first complete event (or its end): the events
+/// read, in order, for the main loop to handle first.
+async fn read_opening_events(
+    response: &mut HttpResponse,
+    decoder: &mut SseDecoder,
+) -> Result<Vec<ServerSentEvent>, ProviderError> {
+    loop {
+        let Some(chunk) = response.next_text().await? else {
+            return Ok(decoder.finish());
+        };
+        let events = decoder.push_text(&chunk);
+        if !events.is_empty() {
+            return Ok(events);
+        }
+    }
+}
+
+/// The rate-limit or overload error type a stream opened with, if any.
+fn opening_rate_limit(opening: &[ServerSentEvent]) -> Option<String> {
+    let first = opening.first()?;
+    if first.event.as_deref() != Some("error") {
+        return None;
+    }
+    response_error_type(&first.data)
+        .filter(|error_type| RATE_LIMIT_STREAM_ERRORS.contains(&error_type.as_str()))
 }
 
 fn recalculate_cost(model: &Model, output: &mut AssistantMessage, cache_write_cost: Option<f64>) {

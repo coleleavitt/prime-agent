@@ -12,6 +12,7 @@ pub mod models;
 pub mod models_generated;
 pub mod oauth;
 pub mod registry;
+pub mod request_hooks;
 pub mod types;
 
 mod event_stream;

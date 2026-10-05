@@ -9,7 +9,7 @@ Provider trait + per-provider streaming clients (anthropic, openai-completions/r
 No agent loop, no tool execution, no session state, no UI. Receives/returns `pa-types` messages.
 
 ## Public API
-`Provider` trait, `ProviderRegistry`, model lookup/resolution, faux provider. Per-provider internals are `pub(crate)`.
+`Provider` trait, `ProviderRegistry`, model lookup/resolution, faux provider. `request_hooks`: the provider request hooks registry (`install_request_hooks(provider_id, Arc<dyn ProviderRequestHooks>)`) a composition root fills for a provider id whose credentials come from a store outside the process: a fresher credential before each request, the built request's headers and payload, each response's status and headers, and a credential to re-send a rejected request with (a 401 once; a 429 or a rate-limited stream opening while the hooks name an unused credential, up to `MAX_CREDENTIAL_ATTEMPTS` sends). The `anthropic-messages` provider consults them; nothing is registered natively, and an unclaimed credential is sent as before. Per-provider internals are `pub(crate)`.
 
 ## Depends on
 pa-types (one-way).
