@@ -98,6 +98,21 @@ impl AcpChild {
         }
     }
 
+    /// Read frames until a `session/update` of `kind` arrives (the
+    /// readiness signal, never a timer); the frames before it are dropped.
+    fn wait_update(&mut self, kind: &str) -> Value {
+        let deadline = Instant::now() + TIMEOUT;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            assert!(!left.is_zero(), "no {kind} update arrived");
+            let line = self.lines.recv_timeout(left).expect("the ACP stream open");
+            let frame: Value = serde_json::from_str(&line).expect("valid JSON line");
+            if frame["params"]["update"]["sessionUpdate"] == kind {
+                return frame["params"]["update"].clone();
+            }
+        }
+    }
+
     fn call(&mut self, method: &str, params: &Value) -> (Value, Vec<Value>) {
         let id = self.request(method, params);
         self.wait_response(id)
@@ -354,6 +369,19 @@ fn acp_session_load_attaches_a_session_a_live_worker_serves() {
         .as_str()
         .unwrap_or_else(|| panic!("{created}"))
         .to_string();
+    // The admitted session advertises what a prompt can execute (upstream
+    // #1308): the session builtins, not the TUI-only ones.
+    let advertised = first.wait_update("available_commands_update");
+    let names: Vec<&str> = advertised["availableCommands"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{advertised}"))
+        .iter()
+        .filter_map(|command| command["name"].as_str())
+        .collect();
+    assert!(
+        names.contains(&"compact") && names.contains(&"goal") && !names.contains(&"model"),
+        "{advertised}"
+    );
     prompt_ends_turn(&mut first, &session_id, "Name a river.");
     first.finish();
     let saved = std::fs::read_dir(sandbox.sessions_dir())

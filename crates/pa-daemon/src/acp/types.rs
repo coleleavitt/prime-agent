@@ -189,6 +189,13 @@ pub enum AcpSessionUpdate {
         #[serde(rename = "_meta")]
         meta: Value,
     },
+    /// The commands a client can offer for completion (ACP
+    /// `available_commands_update`; upstream #1308).
+    #[serde(rename = "available_commands_update")]
+    AvailableCommandsUpdate {
+        #[serde(rename = "availableCommands")]
+        available_commands: Vec<AvailableCommand>,
+    },
     /// The context window's fill after a costed response (ACP
     /// `usage_update`; upstream #1351): `used` of `size` tokens.
     #[serde(rename = "usage_update")]
@@ -226,6 +233,21 @@ impl TextBlock {
             text: text.into(),
         }
     }
+}
+
+/// One advertised command: `name` without its slash, the argument hint as
+/// the ACP unstructured `input`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AvailableCommand {
+    pub name: String,
+    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input: Option<AvailableCommandInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AvailableCommandInput {
+    pub hint: String,
 }
 
 /// The content of a replayed user message chunk: the text and image blocks

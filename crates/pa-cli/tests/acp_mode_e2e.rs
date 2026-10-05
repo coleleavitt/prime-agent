@@ -156,6 +156,9 @@ impl AcpChild {
             match self.lines.recv_timeout(timeout_left) {
                 Ok(line) => {
                     let frame: Value = serde_json::from_str(&line).expect("valid JSON line");
+                    if is_command_advertisement(&frame) {
+                        continue;
+                    }
                     if frame.get("id").and_then(Value::as_u64) == Some(id)
                         && (frame.get("result").is_some() || frame.get("error").is_some())
                     {
@@ -206,6 +209,13 @@ impl AcpChild {
             frame["params"]["update"]["sessionUpdate"] == kind
         });
     }
+}
+
+/// The asynchronous `available_commands_update` an admission sends (upstream
+/// #1308; asserted in `acp_session_load_e2e`): uncorrelated and racing the
+/// first turn by design, so the turn-shape assertions here skip it.
+fn is_command_advertisement(frame: &Value) -> bool {
+    frame["params"]["update"]["sessionUpdate"] == "available_commands_update"
 }
 
 /// The daemon-attached child's command on `home` and `socket`: the

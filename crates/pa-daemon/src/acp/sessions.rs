@@ -650,6 +650,7 @@ async fn admit_session(
             release_inherited_pause(link, state, &daemon_session_id, &pause_id, &lease_key).await;
         }
         let _ = tx.send(jsonrpc::response(&id, &result));
+        spawn_command_advertisement(link, daemon_session_id, producer);
         return;
     }
     let _ = tx.send(jsonrpc::response(&id, &result));
@@ -657,6 +658,85 @@ async fn admit_session(
         release_inherited_pause(link, state, &daemon_session_id, &pause_id, &lease_key).await;
     }
     producer.commit_session_new_response().await;
+    spawn_command_advertisement(link, daemon_session_id, producer);
+}
+
+/// Advertise the session's commands once it is admitted (upstream #1308),
+/// off the admission path: the worker builds its command list lazily, and a
+/// failed read costs completion, never the session. A closed session's
+/// fenced producer drops the update.
+fn spawn_command_advertisement(
+    link: &Arc<DaemonLink>,
+    daemon_session_id: String,
+    producer: Arc<UpdateProducer>,
+) {
+    let link = Arc::clone(link);
+    tokio::spawn(async move {
+        let response = link
+            .request(DaemonCommand::GetCommands {
+                id: None,
+                active_session_id: daemon_session_id,
+                rest: Map::default(),
+            })
+            .await;
+        let connection_commands = response
+            .ok()
+            .filter(|response| response.success)
+            .and_then(|response| response.data)
+            .and_then(|data| data.get("commands").and_then(Value::as_array).cloned())
+            .unwrap_or_default();
+        let update = types::AcpSessionUpdate::AvailableCommandsUpdate {
+            available_commands: available_commands(&connection_commands),
+        };
+        // Connection-scoped and asynchronous: it never takes a turn's
+        // correlation sequence.
+        let _ = producer.publish_uncorrelated(&update).await;
+    });
+}
+
+/// The commands a prompt actually executes, one entry per name in the
+/// order a submission resolves them: the session-executed builtins (the
+/// client-side ones open a TUI and have no headless behavior), then skills,
+/// then prompt templates. A name another route already claimed is left
+/// out, so a client never completes to a description that will not run.
+fn available_commands(connection_commands: &[Value]) -> Vec<types::AvailableCommand> {
+    let input = |hint: Option<&str>| {
+        hint.filter(|hint| !hint.is_empty())
+            .map(|hint| types::AvailableCommandInput {
+                hint: hint.to_string(),
+            })
+    };
+    let builtins = pa_types::slash_commands::SlashCommandRegistry::builtin_cached()
+        .all()
+        .iter()
+        .filter(|command| {
+            command.execution == pa_types::slash_commands::SlashCommandExecution::Session
+        })
+        .map(|command| types::AvailableCommand {
+            name: command.name.to_string(),
+            description: command.description.to_string(),
+            input: input(command.argument_hint),
+        });
+    let source_rank = |command: &&Value| match command.get("source").and_then(Value::as_str) {
+        Some("skill") => 0,
+        Some("prompt") => 1,
+        _ => 2,
+    };
+    let mut ranked: Vec<&Value> = connection_commands.iter().collect();
+    ranked.sort_by_key(source_rank);
+    let connection = ranked.into_iter().filter_map(|command| {
+        let text = |key: &str| command.get(key).and_then(Value::as_str);
+        Some(types::AvailableCommand {
+            name: text("name").filter(|name| !name.is_empty())?.to_string(),
+            description: text("description").unwrap_or_default().to_string(),
+            input: input(text("argumentHint")),
+        })
+    });
+    let mut seen = std::collections::HashSet::new();
+    builtins
+        .chain(connection)
+        .filter(|command| seen.insert(command.name.clone()))
+        .collect()
 }
 
 /// Release the input pause a close left for the next admission; a failed
@@ -697,5 +777,52 @@ async fn release_inherited_pause(
                 hosted.stop_failure = Some(error.to_string());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn advertised_commands_are_the_executable_ones_once_each() {
+        let connection = json!([
+            { "name": "review", "source": "prompt", "description": "Review a diff", "argumentHint": "[path]" },
+            { "name": "skill:code-review", "source": "skill", "description": "Review code" },
+            { "name": "skill:code-review", "source": "prompt", "description": "A shadowed template" },
+            { "name": "compact", "source": "prompt", "description": "A template named like a builtin" },
+            { "name": "skill:bare", "source": "skill" },
+        ]);
+        let commands: Vec<Value> = available_commands(connection.as_array().unwrap())
+            .iter()
+            .map(|command| serde_json::to_value(command).unwrap())
+            .collect();
+        let mut expected: Vec<Value> =
+            pa_types::slash_commands::SlashCommandRegistry::builtin_cached()
+                .all()
+                .iter()
+                .filter(|command| {
+                    command.execution == pa_types::slash_commands::SlashCommandExecution::Session
+                })
+                .map(|command| {
+                    let mut entry =
+                        json!({ "name": command.name, "description": command.description });
+                    if let Some(hint) = command.argument_hint {
+                        entry["input"] = json!({ "hint": hint });
+                    }
+                    entry
+                })
+                .collect();
+        expected.extend([
+            json!({ "name": "skill:code-review", "description": "Review code" }),
+            json!({ "name": "skill:bare", "description": "" }),
+            json!({ "name": "review", "description": "Review a diff", "input": { "hint": "[path]" } }),
+        ]);
+        assert_eq!(commands, expected);
+        assert!(
+            commands.iter().any(|command| command["name"] == "compact")
+                && !commands.iter().any(|command| command["name"] == "model"),
+            "session builtins only: {commands:?}"
+        );
     }
 }

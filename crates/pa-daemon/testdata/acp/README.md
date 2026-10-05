@@ -130,3 +130,6 @@ mcp_errors) match in full mode.
   title and `rawInput` only.
 - A settled, costed assistant message is followed by a standard `usage_update`
   (`used` of `size` context tokens; upstream #1351), which the captures predate.
+- After `session/new` / `session/load` answer, an uncorrelated `available_commands_update`
+  (no `_meta`, no `eventSequence`) advertises the session-executed builtins, skills and
+  prompt templates (upstream #1308).
