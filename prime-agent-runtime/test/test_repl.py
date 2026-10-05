@@ -800,6 +800,48 @@ class ReplTest(unittest.TestCase):
             self.assertEqual(one(events, "done")["status"], "ok")
             self.assertEqual(one(events, "result")["text"], "'woken'")
 
+    def test_restore_never_reopens_pickled_file_paths(self):
+        # dill saves a file object as (path, mode, ...) and restore reopens it
+        # by path; a 'w' handle (open or already closed) reopens with O_TRUNC
+        # and zeroes the user's file on every kernel restart (#3082).
+        sys.path.insert(0, SRC)
+        self.addCleanup(sys.path.remove, SRC)
+        from rlm import repl as repl_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            closed_target = os.path.join(tmp, "closed.txt")
+            open_target = os.path.join(tmp, "open.txt")
+            with open(closed_target, "w") as closed_handle:
+                closed_handle.write("closed contents\n")
+            open_handle = open(open_target, "w")
+            self.addCleanup(open_handle.close)
+            open_handle.write("open contents\n")
+            open_handle.flush()
+            path = os.path.join(tmp, "kernel-state.dill")
+            manifest_path = os.path.join(tmp, "kernel-state.json")
+            result = repl_module._snapshot_state(
+                {"closed_handle": closed_handle, "open_handle": open_handle, "keep": 7},
+                path,
+                manifest_path,
+                repl_module.DEFAULT_SNAPSHOT_MAX_BYTES,
+                repl_module.DEFAULT_SNAPSHOT_MAX_VARIABLE_BYTES,
+                False,
+            )
+            self.assertEqual(sorted(result["saved"]), ["closed_handle", "keep", "open_handle"])
+
+            ns: dict = {}
+            restored = repl_module._restore_state(ns, path)
+            self.assertEqual(restored["restored"], ["keep"])
+            failed = {entry["name"]: entry["reason"] for entry in restored["failed"]}
+            self.assertEqual(sorted(failed), ["closed_handle", "open_handle"])
+            for reason in failed.values():
+                self.assertIn("refusing to reopen file", reason)
+            self.assertEqual(ns, {"keep": 7})
+            with open(closed_target) as fh:
+                self.assertEqual(fh.read(), "closed contents\n")
+            with open(open_target) as fh:
+                self.assertEqual(fh.read(), "open contents\n")
+
     def test_stdin_eof_flushes_final_snapshot(self):
         # Host death (EOF, no shutdown request) must persist the namespace
         # tail that postdates the last explicit snapshot.
