@@ -284,6 +284,7 @@ fn claude_fast_turns_fast_mode_on_and_off_for_the_store_s_requests() {
         vec![
             "claude-fast",
             "claude-cache",
+            "claude-cachekeep",
             "claude-routing",
             "claude-killswitch",
             "claude-quota"

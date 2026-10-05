@@ -171,6 +171,8 @@ impl ProviderRequestHooks for SharedStoreSource {
             session_id: self.session_id(&served.account_id),
         };
         crate::pi::prepare(self, request, &identity);
+        // The plugin tracks each send for its cache keep-alive.
+        self.track_cachekeep(request, &served.account_id);
     }
 
     fn response_event(&self, _model: &Model, api_key: &str, event: Value) -> Vec<Value> {

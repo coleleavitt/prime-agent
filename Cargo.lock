@@ -1351,6 +1351,7 @@ dependencies = [
  "pa-core",
  "pa-telemetry",
  "pa-types",
+ "reqwest",
  "serde_json",
  "sha2",
  "tempfile",

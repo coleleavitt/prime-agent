@@ -400,6 +400,9 @@ impl SharedStoreSource {
             .collect();
         let incomplete = routes.iter().any(|(_, quota)| !fresh(quota.as_ref()));
         let exclude: HashSet<String> = request.exclude.map(str::to_string).into_iter().collect();
+        // A new assignment prefers the login the session's cache is kept
+        // warm on (the opencode plugin's `trackedOAuthRoute`).
+        let preferred = self.cachekeep.tracked_login(session);
         let resolved = StickySessionRouter::new(state).resolve(
             &StickyResolveRequest {
                 session_id: session,
@@ -410,7 +413,7 @@ impl SharedStoreSource {
                 retain_account_ids: &retain,
                 policy: &policy,
                 input_bytes: request.context_bytes,
-                preferred_account_id: None,
+                preferred_account_id: preferred.as_deref(),
                 exclude_account_ids: Some(&exclude),
             },
             now,

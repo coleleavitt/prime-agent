@@ -120,7 +120,9 @@ pub(crate) fn source_configured(
         "http://127.0.0.1:9/api/oauth/profile",
     );
     configure(&mut config);
-    (home, Arc::new(SharedStoreSource::new(config)))
+    let source = Arc::new(SharedStoreSource::new(config));
+    source.attach();
+    (home, source)
 }
 
 /// A sidecar `anthropic-auth.json` holding `document` in `home`, for

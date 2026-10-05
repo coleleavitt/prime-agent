@@ -75,6 +75,10 @@ pub struct SharedStoreConfig {
     /// beside the sidecar, shared with pi); `None` routes no session
     /// sticky.
     pub routing_state_path: Option<PathBuf>,
+    /// The cache keep-alive's session registry, shared with pi
+    /// (`PI_ANTHROPIC_AUTH_CACHEKEEP_REGISTRY_DIR`, else
+    /// `<tmp>/opencode-anthropic-auth/cachekeep-sessions/pi`).
+    pub cachekeep_registry_dir: PathBuf,
 }
 
 impl SharedStoreConfig {
@@ -107,6 +111,7 @@ impl SharedStoreConfig {
                 &config_path,
             )),
             config_path: Some(config_path),
+            cachekeep_registry_dir: crate::cachekeep::registry_dir_from_env(),
         }
     }
 
@@ -130,6 +135,7 @@ impl SharedStoreConfig {
             quota_reserve: None,
             // The sidecar is the plugin's settings file there too.
             config_path: Some(pi.settings_path.clone()),
+            cachekeep_registry_dir: pi.settings_path.with_file_name("cachekeep-sessions"),
             pi,
             routing_state_path: None,
         }
@@ -230,6 +236,16 @@ pub struct SharedStoreSource {
     keepalive_started: std::sync::Once,
     /// The pi plugin's request path.
     pub(crate) pi: crate::pi::PiRequests,
+    /// The cache keep-alive's tracked sessions.
+    pub(crate) cachekeep: crate::cachekeep::CacheKeep,
+    /// This process's record in the keep-alive's session registry.
+    pub(crate) cachekeep_registry: crate::cachekeep::Registry,
+    /// The keep-alive scheduler's wake-ups, once its thread runs.
+    pub(crate) cachekeep_jobs: OnceLock<std::sync::mpsc::Sender<()>>,
+    /// The scheduler's thread starts once.
+    cachekeep_started: std::sync::Once,
+    /// This source, for the threads it starts (set by [`Self::attach`]).
+    this: OnceLock<std::sync::Weak<SharedStoreSource>>,
 }
 
 /// How many served tokens the source remembers (the pi plugin's bound).
@@ -265,6 +281,7 @@ impl SharedStoreSource {
         let quota = Arc::new(QuotaTracker::default());
         let keepalive = Arc::new(KeepAlive::new(config.clone(), Arc::clone(&quota)));
         let pi = crate::pi::PiRequests::new(&config.pi);
+        let config_registry_dir = config.cachekeep_registry_dir.clone();
         Self {
             settings: ConfigFile::new(config.config_path.clone()),
             config,
@@ -283,7 +300,51 @@ impl SharedStoreSource {
             keepalive,
             keepalive_started: std::sync::Once::new(),
             pi,
+            cachekeep: crate::cachekeep::CacheKeep::default(),
+            cachekeep_registry: crate::cachekeep::Registry::new(config_registry_dir),
+            cachekeep_jobs: OnceLock::new(),
+            cachekeep_started: std::sync::Once::new(),
+            this: OnceLock::new(),
         }
+    }
+
+    /// Let the threads this source starts (the cache keep-alive's
+    /// scheduler) reach it while it lives. Called where the source is
+    /// shared; without it no scheduler starts (a tick is then run by hand).
+    pub(crate) fn attach(self: &Arc<Self>) {
+        let _ = self.this.set(Arc::downgrade(self));
+    }
+
+    /// Start the cache keep-alive's scheduler thread, once, when the
+    /// configuration runs background work and the source is attached.
+    pub(crate) fn start_cachekeep(&self) {
+        if !self.config.background {
+            return;
+        }
+        let Some(this) = self.this.get().cloned() else {
+            return;
+        };
+        self.cachekeep_started.call_once(|| {
+            let (sender, changes) = std::sync::mpsc::channel();
+            let spawned = std::thread::Builder::new()
+                .name("anthropic-cachekeep".to_string())
+                .spawn(move || crate::cachekeep::prewarm::run(&this, &changes));
+            match spawned {
+                Ok(_) => {
+                    let _ = self.cachekeep_jobs.set(sender);
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "the cache keep-alive's thread did not start");
+                }
+            }
+        });
+    }
+
+    /// The installation's device id (read, or created, once).
+    pub(crate) fn load_device_id(&self) -> Option<String> {
+        self.device_id
+            .get_or_init(|| crate::device::load_or_create(&self.config.store_path))
+            .clone()
     }
 
     /// The keep-alive's state (its passes run on the crate's thread).

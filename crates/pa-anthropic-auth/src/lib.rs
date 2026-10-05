@@ -27,6 +27,7 @@ use pa_telemetry::Properties;
 use pa_types::slash_commands::{BuiltinSlashCommand, SlashCommandExecution};
 use pa_types::sync::MutexExt;
 
+mod cachekeep;
 mod config;
 mod custody;
 mod device;
@@ -58,7 +59,11 @@ pub const TELEMETRY_EVENT: &str = "anthropic_shared_auth";
 pub fn shared_source() -> Arc<SharedStoreSource> {
     static SOURCE: OnceLock<Arc<SharedStoreSource>> = OnceLock::new();
     SOURCE
-        .get_or_init(|| Arc::new(SharedStoreSource::new(SharedStoreConfig::from_env())))
+        .get_or_init(|| {
+            let source = Arc::new(SharedStoreSource::new(SharedStoreConfig::from_env()));
+            source.attach();
+            source
+        })
         .clone()
 }
 
@@ -122,7 +127,7 @@ impl AnthropicAuthFeature {
 
 /// The feature's slash commands: name, description, argument hint (`None`:
 /// takes no argument).
-const COMMANDS: [(&str, &str, Option<&str>); 5] = [
+const COMMANDS: [(&str, &str, Option<&str>); 6] = [
     (
         pi::commands::FAST_COMMAND,
         pi::commands::FAST_DESCRIPTION,
@@ -132,6 +137,11 @@ const COMMANDS: [(&str, &str, Option<&str>); 5] = [
         pi::commands::CACHE_COMMAND,
         pi::commands::CACHE_DESCRIPTION,
         Some(pi::commands::CACHE_HINT),
+    ),
+    (
+        cachekeep::COMMAND,
+        cachekeep::DESCRIPTION,
+        Some(cachekeep::HINT),
     ),
     (
         pi::account_commands::ROUTING_COMMAND,
@@ -155,8 +165,8 @@ impl SessionFeature for AnthropicAuthFeature {
         "anthropic-auth"
     }
 
-    /// The plugins' commands: `/claude-fast` and `/claude-cache` (request
-    /// settings), `/claude-routing`, `/claude-killswitch` and
+    /// The plugins' commands: `/claude-fast`, `/claude-cache` and
+    /// `/claude-cachekeep` (request settings), `/claude-routing`, `/claude-killswitch` and
     /// `/claude-quota` (the store's logins).
     fn slash_commands(&self) -> Vec<BuiltinSlashCommand> {
         COMMANDS

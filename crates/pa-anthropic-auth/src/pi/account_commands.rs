@@ -745,6 +745,13 @@ impl crate::SharedStoreSource {
             super::commands::CACHE_COMMAND => {
                 super::commands::run_cache(settings, args).map_err(|error| error.to_string())
             }
+            crate::cachekeep::COMMAND => crate::cachekeep::run_command(
+                settings,
+                args,
+                || self.cachekeep_sessions(),
+                *chrono::Local::now().offset(),
+            )
+            .map_err(|error| error.to_string()),
             ROUTING_COMMAND => run_routing(settings, args, || {
                 let Some(state) = &self.config.routing_state_path else {
                     return Ok(());

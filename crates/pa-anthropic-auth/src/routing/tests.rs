@@ -478,3 +478,37 @@ fn another_process_s_reading_never_erases_what_a_poll_learned() {
         (Some(1), Some(FAR.to_string()))
     );
 }
+
+#[test]
+fn a_new_sticky_assignment_prefers_the_login_the_session_s_cache_is_kept_on() {
+    let provider = "anthropic-route-sticky-cachekeep";
+    let fixture = sticky(provider, &["roomy-cold", "busy-warm"], &json!({}));
+    fixture.usage("roomy-cold", usage_body(10.0, 10.0, FAR, None));
+    fixture.usage("busy-warm", usage_body(80.0, 10.0, FAR, None));
+    // The session's cache is kept warm on the busier login (an earlier
+    // request of this process went there).
+    fixture
+        .source
+        .cachekeep
+        .track(
+            &crate::cachekeep::Track {
+                session_id: Some(&format!("{provider}-session")),
+                url: "http://127.0.0.1:9/v1/messages",
+                headers: &[],
+                body_text: "{}",
+                account_id: "busy-warm",
+            },
+            &crate::cachekeep::Settings {
+                enabled: true,
+                always: true,
+                window: None,
+                hybrid_cache: true,
+            },
+            &Utc::now().fixed_offset(),
+        )
+        .expect("tracked");
+
+    let (bearers, _) = fixture.send(provider, "claude-opus-5-5", ok(1), 1);
+
+    assert_eq!(bearers, vec![access_of("busy-warm")]);
+}

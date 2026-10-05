@@ -18,6 +18,9 @@ pa-ai.workspace = true
 # The session feature's session-start hook names the history's type.
 pa-agent.workspace = true
 pa-types.workspace = true
+# The cache keep-alive's prewarm request: the reqwest the SDK and pa-ai
+# already build (same version and TLS; a Cargo.lock edge only).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 pa-telemetry.workspace = true
 # The store's API takes chrono instants (the version anthropic resolves).
 chrono = { version = "0.4", default-features = false, features = ["clock"] }

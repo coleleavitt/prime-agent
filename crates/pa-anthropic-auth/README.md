@@ -207,6 +207,31 @@ auth.json resolves the `anthropic` provider exactly as before.
   logged into the same account (whose login this one revokes), published to Claude Code.
 - `AnthropicAuthFeature`: a `SessionFeature` that reports adoption once per process and serves the plugins'
   commands (below).
+- Cache keep-alive (`cachekeep.rs`, core `cachekeep.ts` / `cachekeep-registry.ts` as pi's `stream.ts` runs them, the
+  plugin's timing): with `/claude-cache mode hybrid` on and `/claude-cachekeep always` (or a local `HH-HH` window,
+  overnight allowed), each store-served request with a session id is remembered as sent (`prepare`, in memory, no
+  I/O). Five minutes before its one-hour cache expires the same request goes again as a prewarm (`max_tokens: 0`,
+  no `stream`, budgeted thinking / structured output format / forced tool choice dropped, Claude Code's key order,
+  the billing `cch` placeholder kept) with pi's headers rebuilt for it (the tuple chosen by the prewarm body plus
+  `extended-cache-ttl`, and `fast-mode` for a fast body), then an hour after each success. A failure retries with
+  the plugin's jittered backoff (1 min doubling to 15) while the last success's cache lives; past it the session is
+  dropped (a cold write would be paid), as is a body with no breakpoints. At most 32 sessions and 16 Mi UTF-16 units
+  of bodies (oldest out); a session belongs to the day its window opened. Unlike the plugin:
+  - the prewarm authenticates with the store's current token for the login the session's request was served with
+    (`get_access_token` for that row, refreshed under the store's claim when expired), never a remembered one;
+  - the scheduler runs on the crate's own thread (`anthropic-cachekeep`, started by the first tracked request,
+    ticking every minute and parked while nothing is tracked), never on a request, paint or startup path;
+  - a sticky session's new assignment prefers the login its cache is kept warm on (the opencode plugin's
+    `trackedOAuthRoute`, `preferred_account_id`; the quota branch's "no CacheKeep pre-assignment" gap).
+  The registry (`<tmp>/opencode-anthropic-auth/cachekeep-sessions/pi`, `PI_ANTHROPIC_AUTH_CACHEKEEP_REGISTRY_DIR`,
+  shared with pi): one `<pid>-<uuid>.json` per process (`{"version":1,"updatedAt","sessions":[...]}`, atomic, `0600`
+  in a `0700` directory), rewritten after each change and tick, removed when nothing is tracked; records older
+  than three minutes are ignored. `/claude-cachekeep [always|off|HH-HH|subagents on|off]` writes `cacheKeep` as
+  pi's setters do and prints pi's status over every live process's sessions (`Next prewarm` in local time, en-US).
+  Golden (`pi_extras.json`): the prewarm bodies, the whole prewarm request pi's own scheduler sends 55 minutes
+  after a hybrid request, its registry record, and the command's texts and file writes. Not ported: the plugin's
+  per-prewarm request dumps and cache diagnostics, a record removed at process exit (the lease expires it), and
+  subagent tracking (pi only persists the flag).
 - Account commands (`pi/account_commands.rs`; session slash commands, the plugins' arguments and texts, golden:
   `tests/fixtures/golden/pi_extras.json`, recorded by `generate_extras.ts` from the plugins' own handlers):
   - `/claude-routing [main-first|fallback-first|sticky-balanced|mode <m>|reset]` (pi's): the mode written to the
@@ -229,13 +254,13 @@ auth.json resolves the `anthropic` provider exactly as before.
 - The plugins' other commands (`/claude-account`, `/claude-dump`, `/claude-logging`, `/claude-prime`). The
   sidecar's other sections (`fallbackOn`, `refresh`, relay, prime, dump, logging) and its fallback `accounts`
   (API-key routes included) are not read: the store's logins are the pool.
-- The rest of pi's request (the cache keep-alive, content filtering). A `--api-key` `sk-ant-oat` token, or any
-  token the store did not serve, keeps pa-ai's native Claude Code mode.
+- The rest of pi's request (the opt-in relay transport, content filtering). A `--api-key` `sk-ant-oat` token, or
+  any token the store did not serve, keeps pa-ai's native Claude Code mode.
 
 ## Public API
 
 `install`, `shared_source`, `PROVIDER_ID`, `QUOTA_RESERVE_ENV`, `SharedStoreSource` (`new`, `store_path`, `usage`, `store_login`),
-`SharedStoreConfig` (`from_env`, `isolated`; `background` runs the keep-alive thread, `version_url` the version lookup, `quota_reserve` the reserve, `pi` the plugin's request-path files, `config_path` the plugins' sidecar, `routing_state_path` the sticky routing state), `PiConfig` (`from_env`, `under`), `NewLogin`, `StoredLogin` (`claude_code_notice`), `SourceUsage`, `STORE_LABEL`, `AnthropicAuthFeature`, `TELEMETRY_EVENT`.
+`SharedStoreConfig` (`from_env`, `isolated`; `background` runs the keep-alive thread, `version_url` the version lookup, `quota_reserve` the reserve, `pi` the plugin's request-path files, `config_path` the plugins' sidecar, `routing_state_path` the sticky routing state, `cachekeep_registry_dir` the keep-alive's session registry), `PiConfig` (`from_env`, `under`), `NewLogin`, `StoredLogin` (`claude_code_notice`), `SourceUsage`, `STORE_LABEL`, `AnthropicAuthFeature`, `TELEMETRY_EVENT`.
 
 ## Seams
 
@@ -246,8 +271,8 @@ auth.json resolves the `anthropic` provider exactly as before.
   bytes, `OutgoingRequest::body`; `response_event` rewrites the streamed events).
 - `pa_core::features::SessionFeature::on_session_start` (the sticky routing key).
 - `pa_core::features::SessionFeature::on_agent_end` (the adoption event) and `slash_commands` /
-  `execute_slash_command` (`/claude-fast`, `/claude-cache`, `/claude-routing`, `/claude-killswitch`,
-  `/claude-quota`).
+  `execute_slash_command` (`/claude-fast`, `/claude-cache`, `/claude-cachekeep`, `/claude-routing`,
+  `/claude-killswitch`, `/claude-quota`).
 
 ## Files
 
@@ -258,8 +283,9 @@ defaults; re-read when it changes) and reads and writes the sticky routing state
 `sticky-balanced` mode). Reads and writes `~/.anthropic-accounts/accounts.json` (and its lock) only through the SDK, under the SDK's rules,
 and `~/.anthropic-accounts/device.json` (the installation's device id, the plugins' format; created when missing,
 never overwritten); reads the pi plugin's settings file (`~/.pi/agent/anthropic-auth.json`, above) and writes it
-for `/claude-fast`, `/claude-cache`, `/claude-routing` and `/claude-killswitch` (with its `.config-write.lock`);
-`/claude-routing reset` removes one assignment from the sticky routing state;
+for `/claude-fast`, `/claude-cache`, `/claude-cachekeep`, `/claude-routing` and `/claude-killswitch` (with its `.config-write.lock`);
+`/claude-routing reset` removes one assignment from the sticky routing state; writes this process's record in
+the cache keep-alive's session registry (above) and reads the others';
 through the Claude Code link, reads Claude Code's `.claude.json` / `.credentials.json` (or the macOS Keychain) and
 publishes a rotation of the linked account to it, as the plugins do. It owns no file under `~/.prime/agent/`.
 
