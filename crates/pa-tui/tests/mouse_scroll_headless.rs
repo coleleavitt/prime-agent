@@ -1,6 +1,6 @@
 //! Headless e2e for the mouse-wheel scroll surface (TS
-//! `handleFullscreenInput`): wheel up/down scroll the transcript three
-//! lines per turn, the wheel is consumed without scrolling while a
+//! `handleFullscreenInput`): wheel up/down scroll the transcript one row
+//! per wheel report (upstream #887), the wheel is consumed without scrolling while a
 //! picker owns the frame, and tracking-off reports are consumed either way.
 #![cfg(unix)]
 // Casts: structurally bounded terminal-layout arithmetic; guarded conversions add panic paths.
@@ -337,6 +337,42 @@ fn wheel_turns_scroll_the_transcript() {
         tail.contains("row 38"),
         "wheel-down returned the window to the tail:\n{tail}"
     );
+}
+
+/// One wheel report moves the transcript window by exactly one row (upstream #887; TS v0.9.8
+/// moved three, which jumps on terminals that send several reports per notch): every transcript
+/// line of the paused frame is the tail frame's line one row higher.
+#[test]
+fn one_wheel_report_scrolls_one_row() {
+    let steps = vec![
+        HeadlessStep::WaitRender {
+            needle: "answer 39".to_string(),
+            timeout_ms: 5_000,
+        },
+        HeadlessStep::Mouse(WHEEL_UP.to_string()),
+    ];
+    let frames = run_plan(steps, true);
+    let tail = frames
+        .iter()
+        .rfind(|frame| !frame.contains("to follow") && frame.contains("answer 39"))
+        .expect("a tail frame");
+    let paused = frames
+        .iter()
+        .find(|frame| frame.contains("to follow"))
+        .expect("a paused frame");
+    let row_of = |frame: &str, needle: &str| {
+        frame
+            .lines()
+            .position(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("{needle:?} is on screen:\n{frame}"))
+    };
+    for needle in ["row 34", "answer 35", "row 36"] {
+        assert_eq!(
+            row_of(paused, needle),
+            row_of(tail, needle) + 1,
+            "one wheel report moved {needle:?} by one row:\ntail:\n{tail}\npaused:\n{paused}"
+        );
+    }
 }
 
 /// The TS overlay-focus gate: the wheel is consumed while the picker owns
