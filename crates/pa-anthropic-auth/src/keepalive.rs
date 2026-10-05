@@ -8,11 +8,13 @@
 //! - the live Claude Code version the requests claim (the npm registry's
 //!   `latest`, read at the thread's start and hourly; never below the
 //!   verified floor);
+//! - the request path's store writes (quota readings, use), between passes;
 //! - ahead of expiry: a login this process served within the last hour
 //!   whose access token expires before the next tick is refreshed now
 //!   (claimed through the store), so a request never waits for it.
 
 use std::collections::HashMap;
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::Mutex;
 use std::time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -21,6 +23,7 @@ use anthropic::{AccountStore, KeepAliveOptions, OAuthClient, SharedRefreshOption
 use chrono::{DateTime, Duration, Utc};
 use pa_types::sync::MutexExt;
 
+use crate::quota::StoreWrite;
 use crate::SharedStoreConfig;
 
 /// The pause before the first pass (the process is starting).
@@ -156,7 +159,7 @@ impl KeepAlive {
 
     /// The keep-alive loop, run on the crate's own thread for the life of
     /// the process.
-    pub(crate) fn run(&self, client: &OAuthClient) {
+    pub(crate) fn run(&self, client: &OAuthClient, writes: &Receiver<StoreWrite>) {
         let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -165,9 +168,19 @@ impl KeepAlive {
             return;
         };
         runtime.block_on(self.refresh_version(Utc::now()));
-        let mut pause = FIRST_TICK;
+        let mut next = Instant::now() + FIRST_TICK;
         loop {
-            std::thread::sleep(pause);
+            // The request path's store writes run here between passes.
+            match writes.recv_timeout(next.saturating_duration_since(Instant::now())) {
+                Ok(write) => {
+                    write.apply(&self.config.store_path);
+                    continue;
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    std::thread::sleep(next.saturating_duration_since(Instant::now()));
+                }
+            }
             runtime.block_on(self.refresh_version(Utc::now()));
             let report = runtime.block_on(self.tick(client, Utc::now()));
             if report != KeepAliveTick::default() {
@@ -179,7 +192,7 @@ impl KeepAlive {
                     "shared store keep-alive pass"
                 );
             }
-            pause = TICK + StdDuration::from_millis(jitter_ms());
+            next = Instant::now() + TICK + StdDuration::from_millis(jitter_ms());
         }
     }
 }

@@ -15,23 +15,27 @@
 //! it is. [`AnthropicAuthFeature`]
 //! reports adoption once per process.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
-use pa_core::features::{SessionFeature, SessionFeatureContext};
+use pa_core::features::{FeatureStatus, SessionFeature, SessionFeatureContext};
 use pa_telemetry::Properties;
+use pa_types::sync::MutexExt;
 
 mod custody;
 mod device;
 mod hooks;
 mod keepalive;
 mod login;
+mod quota;
 mod shape;
 mod source;
 #[cfg(test)]
 mod test_support;
 
 pub use login::{NewLogin, StoredLogin};
+pub use quota::QUOTA_RESERVE_ENV;
 pub use source::{SharedStoreConfig, SharedStoreSource, SourceUsage, STORE_LABEL};
 
 /// The provider id the store serves.
@@ -65,6 +69,8 @@ pub fn install() {
 pub struct AnthropicAuthFeature {
     source: Arc<SharedStoreSource>,
     reported: AtomicBool,
+    /// The quota line last published per session.
+    published: Mutex<HashMap<String, String>>,
 }
 
 impl AnthropicAuthFeature {
@@ -74,6 +80,34 @@ impl AnthropicAuthFeature {
         Self {
             source,
             reported: AtomicBool::new(false),
+            published: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Publish the store's quota for an Anthropic session when it changed:
+    /// the agents view shows the line (prime-agent has no other usage
+    /// surface). Never an account id.
+    fn publish_quota(&self, context: &SessionFeatureContext) {
+        if context.model.provider != PROVIDER_ID {
+            return;
+        }
+        let Some(quota) = self.source.quota_line() else {
+            return;
+        };
+        let mut published = self.published.lock_or_recover();
+        if published.get(&context.session_id) == Some(&quota.line) {
+            return;
+        }
+        let delivered = pa_core::features::publish_feature_status(
+            &context.session_id,
+            FeatureStatus {
+                feature: self.name().to_string(),
+                line: Some(quota.line.clone()),
+                status: quota.status,
+            },
+        );
+        if delivered {
+            published.insert(context.session_id.clone(), quota.line);
         }
     }
 }
@@ -84,6 +118,7 @@ impl SessionFeature for AnthropicAuthFeature {
     }
 
     fn on_agent_end(&self, context: &Arc<SessionFeatureContext>) {
+        self.publish_quota(context);
         let Some(telemetry) = &context.telemetry else {
             return;
         };

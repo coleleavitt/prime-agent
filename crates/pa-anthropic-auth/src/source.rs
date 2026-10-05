@@ -15,7 +15,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
 use anthropic::access::{
-    access_candidates, get_access_token, AccessErrorKind, AccessRequest, AccessSource,
+    access_candidates, get_access_token, AccessError, AccessErrorKind, AccessGrant, AccessRequest,
+    AccessSource,
 };
 use anthropic::credentials::NativePublish;
 use anthropic::{AccountStore, Endpoints, OAuthClient, SharedRefreshOptions};
@@ -27,6 +28,7 @@ use pa_types::sync::MutexExt;
 use sha2::{Digest, Sha256};
 
 use crate::keepalive::KeepAlive;
+use crate::quota::{quota_line, QuotaLine, QuotaTracker, StoreWrite};
 
 /// The status rows' label for a login the shared store holds.
 pub const STORE_LABEL: &str = "shared account store";
@@ -56,6 +58,9 @@ pub struct SharedStoreConfig {
     /// verified floor (`OPENCODE_ANTHROPIC_AUTH_DISABLE_VERSION_CHECK=1`,
     /// the plugins' switch).
     pub version_url: Option<String>,
+    /// Prefer logins whose recorded usage is below this percentage in both
+    /// windows (`ANTHROPIC_QUOTA_RESERVE_PCT`; the napi `reservePct`).
+    pub quota_reserve: Option<f64>,
 }
 
 impl SharedStoreConfig {
@@ -74,6 +79,7 @@ impl SharedStoreConfig {
                 .as_deref()
                 != Ok("1"))
             .then(|| anthropic::claude_version::LATEST_VERSION_URL.to_string()),
+            quota_reserve: crate::quota::reserve_from_env(),
         }
     }
 
@@ -92,6 +98,7 @@ impl SharedStoreConfig {
             require_loopback: true,
             background: false,
             version_url: None,
+            quota_reserve: None,
         }
     }
 
@@ -154,6 +161,12 @@ pub struct SharedStoreSource {
     /// This process's session id per store row (the plugin's per-account
     /// Claude Code identity).
     sessions: Mutex<std::collections::HashMap<String, String>>,
+    /// The quota readings of this process's responses.
+    pub(crate) quota: QuotaTracker,
+    /// The row this process served last.
+    last_served: Mutex<Option<String>>,
+    /// The keep-alive thread's store writes, once it runs.
+    writes: OnceLock<std::sync::mpsc::Sender<StoreWrite>>,
     /// The keep-alive's state, shared with its thread.
     keepalive: Arc<KeepAlive>,
     /// The keep-alive thread starts once.
@@ -171,6 +184,8 @@ pub(crate) struct ServedToken {
     pub(crate) account_id: String,
     /// The account's uuid, when the store knows it.
     pub(crate) account_uuid: Option<String>,
+    /// The quota the store recorded for the row when the token was served.
+    pub(crate) quota: Option<anthropic::account::QuotaObservation>,
 }
 
 impl SharedStoreSource {
@@ -187,6 +202,9 @@ impl SharedStoreSource {
             served: Mutex::new(std::collections::VecDeque::new()),
             device_id: OnceLock::new(),
             sessions: Mutex::new(std::collections::HashMap::new()),
+            quota: QuotaTracker::default(),
+            last_served: Mutex::new(None),
+            writes: OnceLock::new(),
             keepalive,
             keepalive_started: std::sync::Once::new(),
         }
@@ -212,30 +230,125 @@ impl SharedStoreSource {
         self.keepalive_started.call_once(|| {
             let keepalive = Arc::clone(&self.keepalive);
             let client = self.config.client();
+            let (sender, writes) = std::sync::mpsc::channel();
             let spawned = std::thread::Builder::new()
                 .name("anthropic-keepalive".to_string())
-                .spawn(move || keepalive.run(&client));
-            if let Err(error) = spawned {
-                tracing::warn!(%error, "the shared store's keep-alive thread did not start");
+                .spawn(move || keepalive.run(&client, &writes));
+            match spawned {
+                Ok(_) => {
+                    let _ = self.writes.set(sender);
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "the shared store's keep-alive thread did not start");
+                }
             }
         });
+    }
+
+    /// Hand a store write to the keep-alive thread (applied here, blocking,
+    /// when no thread runs: tests and sandboxes).
+    pub(crate) fn queue_write(&self, write: StoreWrite) {
+        match self.writes.get() {
+            Some(sender) => {
+                if let Err(unsent) = sender.send(write) {
+                    unsent.0.apply(&self.config.store_path);
+                }
+            }
+            None => write.apply(&self.config.store_path),
+        }
+    }
+
+    /// The quota line of the login this process served last: its latest
+    /// response reading, else what the store recorded for it.
+    pub(crate) fn quota_line(&self) -> Option<QuotaLine> {
+        let account_id = self.last_served.lock_or_recover().clone()?;
+        let recorded = self
+            .served
+            .lock_or_recover()
+            .iter()
+            .rev()
+            .find(|known| known.account_id == account_id)
+            .and_then(|known| known.quota.clone());
+        quota_line(self.quota.reading(&account_id).as_ref(), recorded.as_ref())
+    }
+
+    /// The store's token for a request now: the routing order's pick
+    /// (refreshed when expired), preferring logins under the quota reserve
+    /// when one is set (every login at it: the plain pick). While every
+    /// login is cooling down or spent, the pinned (or first) login's live
+    /// token serves and the provider's answer decides.
+    pub(crate) fn resolve(&self) -> Result<Result<AccessGrant, AccessError>, String> {
+        let client = self.client();
+        let path = self.config.store_path.as_path();
+        let options = SharedRefreshOptions::default();
+        let reserved = self.config.quota_reserve.map(|reserve| {
+            let request = AccessRequest {
+                reserve_percent: Some(reserve),
+                ..AccessRequest::default()
+            };
+            block_on_own_runtime(get_access_token(client, path, &request, &options))
+        });
+        let resolved = match reserved {
+            Some(Ok(Err(error))) if error.kind == AccessErrorKind::QuotaReserve => {
+                tracing::info!("every login is at the quota reserve; the store's pick serves");
+                None
+            }
+            other => other,
+        }
+        .unwrap_or_else(|| {
+            block_on_own_runtime(get_access_token(
+                client,
+                path,
+                &AccessRequest::default(),
+                &options,
+            ))
+        });
+        if let Ok(Err(error)) = &resolved {
+            if matches!(
+                error.kind,
+                AccessErrorKind::Transient | AccessErrorKind::QuotaReserve
+            ) {
+                if let Some(grant) = self.cooling_down_token() {
+                    return Ok(Ok(grant));
+                }
+            }
+        }
+        resolved
+    }
+
+    /// The served login's stored token while it is live (every login cooling
+    /// down or spent).
+    fn cooling_down_token(&self) -> Option<AccessGrant> {
+        let store = AccountStore::load(&self.config.store_path).ok()?;
+        let now = chrono::Utc::now();
+        let account = served_login(&store, now)?;
+        let tokens = account.oauth().filter(|tokens| !tokens.is_expired(now))?;
+        Some(AccessGrant {
+            access_token: tokens.access.expose().to_string(),
+            account_id: account.id.clone(),
+            email: account.email.clone(),
+            expires_at: tokens.expires_at,
+            source: AccessSource::Store,
+        })
     }
 
     /// Remember a token this source handed out, for the store row
     /// `account_id` (its account uuid read from the store). Blocking: reads
     /// the store, and the device id the first time.
     pub(crate) fn remember(&self, token: &str, account_id: &str) {
-        let account_uuid = AccountStore::load(&self.config.store_path)
+        let row = AccountStore::load(&self.config.store_path)
             .ok()
-            .and_then(|store| {
-                store
-                    .get(account_id)?
-                    .oauth()?
+            .and_then(|store| store.get(account_id).cloned());
+        let account_uuid = row
+            .as_ref()
+            .and_then(|row| {
+                row.oauth()?
                     .account
                     .as_ref()
                     .map(|account| account.uuid.clone())
             })
             .filter(|uuid| !uuid.trim().is_empty());
+        let quota = row.and_then(|row| row.quota);
         self.device_id
             .get_or_init(|| crate::device::load_or_create(&self.config.store_path));
         let mut served = self.served.lock_or_recover();
@@ -244,11 +357,13 @@ impl SharedStoreSource {
             token: token.to_string(),
             account_id: account_id.to_string(),
             account_uuid,
+            quota,
         });
         while served.len() > SERVED_TOKENS_LIMIT {
             served.pop_front();
         }
         drop(served);
+        *self.last_served.lock_or_recover() = Some(account_id.to_string());
         self.keepalive.note_served(account_id);
         self.start_keepalive();
     }
@@ -318,9 +433,12 @@ impl SharedStoreSource {
                 return None;
             }
         };
-        let request = AccessRequest::default();
-        let candidates = access_candidates(&store, &request, chrono::Utc::now()).ok()?;
-        // The revision changes whenever a candidate's access token rotates.
+        // A login cooling down after a 429 is still a login.
+        let candidates: Vec<&anthropic::Account> = logins(&store).collect();
+        if candidates.is_empty() {
+            return None;
+        }
+        // The revision changes whenever a login's access token rotates.
         let mut hasher = Sha256::new();
         for account in &candidates {
             hasher.update(account.id.as_bytes());
@@ -382,15 +500,7 @@ impl ProviderCredentialSource for SharedStoreSource {
 
     fn credential(&self) -> Result<SourcedCredential, CredentialSourceError> {
         let _flight = self.flight.lock_or_recover();
-        let client = self.client();
-        let path = self.config.store_path.as_path();
-        let resolved = block_on_own_runtime(get_access_token(
-            client,
-            path,
-            &AccessRequest::default(),
-            &SharedRefreshOptions::default(),
-        ));
-        match resolved {
+        match self.resolve() {
             Ok(Ok(grant)) => {
                 self.record(Some(grant.source));
                 self.remember(&grant.access_token, &grant.account_id);

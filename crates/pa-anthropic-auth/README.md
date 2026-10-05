@@ -31,6 +31,24 @@ auth.json resolves the `anthropic` provider exactly as before.
     (`recover_unauthorized`: one claimed refresh of the row owning the rejected token; a retry only with a new
     version of the same login), and, when the store no longer holds the rejected token (another process rotated
     it), the store's current token re-read under its lock if it differs. Otherwise the 401 is reported.
+- Quota and rate limits (`quota.rs`), as the plugins keep them in the store:
+  - `observe`: every response to a store-served request is read for the `anthropic-ratelimit-unified-*` windows
+    (`normalize_quota_headers`); a changed reading is recorded on the row holding the token (napi
+    `recordQuotaHeaders`) and a served request marks its row used (`markUsed`, at most every five minutes). The
+    writes run on the keep-alive thread (inline only when no thread runs).
+  - Display: at each agent end of an Anthropic session the agents view gets the line `Claude quota: 5h 48% / 7d 55%
+    used` (`publish_feature_status`, feature `anthropic-auth`; status `{fiveHourPercent, sevenDayPercent, checkedAt,
+    source: "headers"|"store"}`), from the last served login's latest reading, else what the store recorded for it;
+    published again only when it changes. prime-agent has no other usage/limits surface.
+  - 429 switching (`rejected(RateLimited)`, also a 200 whose stream opens with `rate_limit_error` /
+    `overloaded_error`): the row cools down (`retry-after`, else the reset of the window the server named binding,
+    else the later window reset, else a minute) and is unpinned (napi `markRateLimited`), the reading is recorded,
+    and the request moves to the next login in the store's order (pa-ai re-sends it while the hooks name a login
+    the request has not used). No other login: the 429 is reported, and the login keeps serving its live token
+    (a cooling-down login is still a login: `status` lists every enabled OAuth inference row, so nothing falls
+    through to auth.json or reads as "no API key").
+  - Quota reserve: `ANTHROPIC_QUOTA_RESERVE_PCT` (0-100; the napi `reservePct`) prefers logins whose fresh
+    recorded usage is below it in both windows; when every login is at it, the store's plain pick serves.
 - Request shape (`prepare`, `shape.rs`): a request the store's token authenticates goes out as the pi plugin sends
   it (anthropic-auth core `applyClaudeCodeHeaders` on a fresh request, pi `buildAnthropicRequest`):
   - headers: the plugin's Claude Code beta tuple by body shape (base; full-agent; structured-output), then
@@ -89,7 +107,8 @@ auth.json resolves the `anthropic` provider exactly as before.
 
 - Account management beyond logout (enable, disable, reorder, pin, remote revoke): the plugins' account commands
   own it; prime-agent has no account command surface.
-- Quota reads, quota-reserve routing, rotation on 429.
+- The usage endpoint poll (`/api/oauth/usage`), sticky-balanced routing, the killswitch and per-window minimum
+  thresholds of the plugins' sidecar configuration: readings come from response headers only.
 - The rest of pi's request (its own message conversion and system-prompt split, server-side fallback with its
   `fallbacks` body field and betas, the 1M-context credits latch, fast mode, the cache-keep relay, content
   filtering): pa-ai's Claude Code mode builds the request; the shape above is applied on top. A `--api-key`
@@ -97,8 +116,8 @@ auth.json resolves the `anthropic` provider exactly as before.
 
 ## Public API
 
-`install`, `shared_source`, `PROVIDER_ID`, `SharedStoreSource` (`new`, `store_path`, `usage`, `store_login`),
-`SharedStoreConfig` (`from_env`, `isolated`; its `background` field runs the keep-alive thread), `NewLogin`, `StoredLogin` (`claude_code_notice`), `SourceUsage`, `STORE_LABEL`, `AnthropicAuthFeature`, `TELEMETRY_EVENT`.
+`install`, `shared_source`, `PROVIDER_ID`, `QUOTA_RESERVE_ENV`, `SharedStoreSource` (`new`, `store_path`, `usage`, `store_login`),
+`SharedStoreConfig` (`from_env`, `isolated`; `background` runs the keep-alive thread, `version_url` the version lookup, `quota_reserve` the reserve), `NewLogin`, `StoredLogin` (`claude_code_notice`), `SourceUsage`, `STORE_LABEL`, `AnthropicAuthFeature`, `TELEMETRY_EVENT`.
 
 ## Seams
 
