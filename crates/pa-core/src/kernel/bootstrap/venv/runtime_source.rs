@@ -2,7 +2,7 @@
 //! sidecar layout, the source-checkout fallback, and the content identity
 //! that invalidates an existing venv on any runtime change.
 
-use super::{expand_home, Digest, Path, PathBuf, RUNTIME_REQUIREMENT};
+use super::{expand_home, Digest, Path, PathBuf, RUNTIME_CONSTRAINTS_FILE, RUNTIME_REQUIREMENT};
 
 /// Directory of the installed `prime-agent-runtime` sources. The Rust binary ships the same sidecar
 /// layout the compiled TS executable uses.
@@ -49,7 +49,8 @@ pub(super) fn resolve_runtime_source_dir() -> Option<PathBuf> {
 
 /// Content identity of the runtime: a hash of every `rlm/*.py` file, the
 /// packaged machine library under `src/rlm/machines` (wheel package data:
-/// machine changes are runtime changes), and `pyproject.toml`, so any
+/// machine changes are runtime changes), `pyproject.toml`, and the shipped install constraints
+/// (new pins are a runtime change), so any
 /// runtime change invalidates an existing venv. Falls back to the bare
 /// package name when the runtime resolves to a registry install (no local
 /// source).
@@ -70,9 +71,13 @@ pub fn resolve_runtime_identity() -> String {
     })
 }
 
-fn hash_runtime_source(source_dir: &Path) -> anyhow::Result<String> {
+pub(super) fn hash_runtime_source(source_dir: &Path) -> anyhow::Result<String> {
     let rlm_dir = source_dir.join("src").join("rlm");
     let mut files = vec![source_dir.join("pyproject.toml")];
+    let constraints = source_dir.join(RUNTIME_CONSTRAINTS_FILE);
+    if constraints.is_file() {
+        files.push(constraints);
+    }
     collect_python_files(&rlm_dir, &mut files)?;
     collect_package_data_files(&rlm_dir.join("machines"), &mut files)?;
     files.sort();

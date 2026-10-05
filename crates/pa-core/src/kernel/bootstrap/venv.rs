@@ -43,6 +43,8 @@ pub(crate) use probe::{
     has_prime_agent_runtime, missing_python_skill_import_labels, missing_rlm_extra_import_labels,
 };
 use probe::{has_prime_agent_runtime_memoized, installed_runtime_identity};
+#[cfg(test)]
+use runtime_source::hash_runtime_source;
 pub use runtime_source::resolve_runtime_identity;
 use runtime_source::{collect_python_files, resolve_runtime_source_dir};
 pub(super) use runtime_source::{package_dir, packaged_runtime_dir};
@@ -64,6 +66,10 @@ use version::{recorded_skills_cover, BOOTSTRAP_SCHEMA};
 
 const PYTHON_VERSION: &str = "3.11";
 const RUNTIME_REQUIREMENT: &str = "prime-agent-runtime";
+/// The pins the runtime ships for its base install (runtime dependencies, the snapshot engine,
+/// the default extras), generated from a resolution at least 7 days old. A source without the
+/// file (a registry install) installs unpinned, as before.
+const RUNTIME_CONSTRAINTS_FILE: &str = "kernel-constraints.txt";
 pub(crate) const BOOTSTRAP_LOCK_NAME: &str = ".bootstrap.lock";
 pub(crate) const BOOTSTRAP_LOCK_RETRY_MS: u64 = 100;
 pub(crate) const BOOTSTRAP_LOCK_STALE_WITHOUT_PID_MS: u64 = 30_000;
@@ -114,26 +120,10 @@ pub(crate) async fn bootstrap_venv(
     std::fs::create_dir_all(venv.parent().unwrap_or(Path::new("/")))?;
     let uv = ensure_uv()?;
     let python = kernel_venv_python(venv);
-    let source_dir = resolve_runtime_source_dir();
-    let runtime_requirement = source_dir.as_ref().map_or_else(
-        || RUNTIME_REQUIREMENT.to_string(),
-        |p| p.to_string_lossy().to_string(),
-    );
+    let install_args = base_install_args(&python, resolve_runtime_source_dir().as_deref());
     let runtime_identity = resolve_runtime_identity();
 
     let venv_str = venv.to_string_lossy().to_string();
-    let python_str = python.to_string_lossy().to_string();
-    let mut install_args = vec![
-        "pip".to_string(),
-        "install".to_string(),
-        "--python".to_string(),
-        python_str,
-        runtime_requirement,
-    ];
-    install_args.push(STATE_SNAPSHOT_REQUIREMENT.to_string());
-    for uv_arg in default_rlm_extra_uv_args() {
-        install_args.push(uv_arg.to_string());
-    }
 
     run_async(
         &uv,
@@ -165,6 +155,33 @@ pub(crate) async fn bootstrap_venv(
         options,
     )
     .await
+}
+
+/// The `uv pip install` arguments of the base install: the runtime (its local source, else the
+/// registry name), the snapshot engine, the default extras, and the runtime's shipped constraints
+/// when the source carries them.
+fn base_install_args(python: &Path, source_dir: Option<&Path>) -> Vec<String> {
+    let runtime_requirement = source_dir.map_or_else(
+        || RUNTIME_REQUIREMENT.to_string(),
+        |p| p.to_string_lossy().to_string(),
+    );
+    let mut install_args = vec![
+        "pip".to_string(),
+        "install".to_string(),
+        "--python".to_string(),
+        python.to_string_lossy().to_string(),
+        runtime_requirement,
+        STATE_SNAPSHOT_REQUIREMENT.to_string(),
+    ];
+    install_args.extend(default_rlm_extra_uv_args().iter().map(ToString::to_string));
+    if let Some(constraints) = source_dir
+        .map(|dir| dir.join(RUNTIME_CONSTRAINTS_FILE))
+        .filter(|path| path.is_file())
+    {
+        install_args.push("--constraint".to_string());
+        install_args.push(constraints.to_string_lossy().to_string());
+    }
+    install_args
 }
 
 /// Install/refresh the editable Python skills recorded in the version file. Only skills missing or

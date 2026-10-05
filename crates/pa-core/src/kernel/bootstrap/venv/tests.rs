@@ -1100,3 +1100,65 @@ async fn skill_sync_falls_back_to_per_skill_installs_on_batch_failure() {
         .collect::<Vec<_>>();
     assert_eq!(recorded, vec!["edit"], "only the healthy skill is recorded");
 }
+
+/// Upstream #965: the base install (runtime, snapshot engine, default extras) resolves against
+/// the constraints file the runtime ships, so a bootstrap never picks up whatever transitive
+/// release appeared since the runtime was tested.
+#[test]
+fn the_base_install_is_pinned_by_the_runtime_constraints() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("prime-agent-runtime");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(source.join(RUNTIME_CONSTRAINTS_FILE), "dill==0.4.1\n").unwrap();
+    let python = dir.path().join("venv/bin/python");
+    let mut expected: Vec<String> = [
+        "pip",
+        "install",
+        "--python",
+        python.to_str().unwrap(),
+        source.to_str().unwrap(),
+        "dill",
+    ]
+    .iter()
+    .map(ToString::to_string)
+    .collect();
+    expected.extend(default_rlm_extra_uv_args().iter().map(ToString::to_string));
+    expected.push("--constraint".to_string());
+    expected.push(
+        source
+            .join(RUNTIME_CONSTRAINTS_FILE)
+            .to_string_lossy()
+            .into_owned(),
+    );
+    assert_eq!(base_install_args(&python, Some(&source)), expected);
+}
+
+/// The shipped constraints pin every requirement the base install names (an extra added to
+/// `DEFAULT_RLM_EXTRA_PACKAGES` without a pin would float again), and a change to the pins is a
+/// runtime change that rebuilds existing venvs.
+#[test]
+fn the_shipped_constraints_pin_every_base_requirement() {
+    let runtime = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prime-agent-runtime");
+    let constraints =
+        std::fs::read_to_string(runtime.join(RUNTIME_CONSTRAINTS_FILE)).unwrap_or_default();
+    let pinned: std::collections::HashSet<String> = constraints
+        .lines()
+        .filter_map(|line| line.split_once("=="))
+        .map(|(name, _)| name.trim().to_ascii_lowercase())
+        .collect();
+    let unpinned: Vec<&str> = ["mcp", "tyro", STATE_SNAPSHOT_REQUIREMENT]
+        .into_iter()
+        .chain(default_rlm_extra_uv_args())
+        .filter(|name| !pinned.contains(*name))
+        .collect();
+    assert_eq!(unpinned, Vec::<&str>::new());
+
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("prime-agent-runtime");
+    std::fs::create_dir_all(source.join("src/rlm")).unwrap();
+    std::fs::write(source.join("pyproject.toml"), "[project]\n").unwrap();
+    std::fs::write(source.join(RUNTIME_CONSTRAINTS_FILE), "dill==0.4.0\n").unwrap();
+    let before = hash_runtime_source(&source).unwrap();
+    std::fs::write(source.join(RUNTIME_CONSTRAINTS_FILE), "dill==0.4.1\n").unwrap();
+    assert_ne!(before, hash_runtime_source(&source).unwrap());
+}

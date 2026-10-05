@@ -1,0 +1,1 @@
+- The kernel Python environment now installs its runtime dependencies and default packages at pinned versions shipped with the runtime (`prime-agent-runtime/kernel-constraints.txt`), instead of whatever was newest at install time. Existing kernel environments rebuild once.
