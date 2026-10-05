@@ -66,6 +66,15 @@ auth.json resolves the `anthropic` provider exactly as before.
     account uuid the store holds; omitted without one). Sent as `JSON.stringify` bytes in Claude Code's key order
     (`OutgoingRequest::body`). Golden: `tests/fixtures/golden/pi_requests.json`, recorded by
     `generate_requests.ts` from pi's own provider entry point against an in-process fetch.
+  - server-side fallback (`pi/fallback.rs`, pi `stream.ts`): a request to Opus 5 (any point release) or Fable 5
+    carries `fallbacks: "default"` and both server-side-fallback betas (`server-side-fallback-2026-06-01`, then
+    `-07-01`) after the tuple. The `fallback` block a served fallback streams is kept as pi's marker (a thinking
+    block holding a word joiner, signed `cortexkit-server-fallback-v1:<from>|<to>`; through pa-ai's
+    `response_event`); a later request replays a marker as the `fallback` block when it goes to a fallback model
+    again and drops it otherwise. A body the fallback or a marker changed goes out in pi's own key order (as pi
+    serializes it then), not Claude Code's.
+  - the streamed `prime_deep_research` tool name is restored to `deep_research` (pi `fromClaudeCodeToolName`; pi
+    restores it only when the caller declared `deep_research`, which the alias implies).
   - settings (`pi/settings.rs`): the plugin's settings file, `anthropic-auth.json` in pi's agent directory
     (`PI_ANTHROPIC_AUTH_FILE`, else `$PI_AGENT_DIR` or `~/.pi/agent`; prime-agent's TS build loaded the plugin
     without an agent dir of its own, so both tools share it), read per request (memoized on size and mtime);
@@ -124,8 +133,8 @@ auth.json resolves the `anthropic` provider exactly as before.
   own it; prime-agent has no account command surface.
 - The usage endpoint poll (`/api/oauth/usage`), sticky-balanced routing, the killswitch and per-window minimum
   thresholds of the plugins' sidecar configuration: readings come from response headers only.
-- The rest of pi's request (server-side fallback with its `fallbacks` body field and betas, the 1M-context credits
-  latch, fast mode's command, the cache keep-alive, content filtering). A `--api-key` `sk-ant-oat` token, or any
+- The rest of pi's request (the 1M-context credits latch, fast mode's command, the cache keep-alive, content
+  filtering). A `--api-key` `sk-ant-oat` token, or any
   token the store did not serve, keeps pa-ai's native Claude Code mode.
 
 ## Public API
@@ -138,7 +147,7 @@ auth.json resolves the `anthropic` provider exactly as before.
 - `pa_core::auth::install_credential_source` (the provider credential source seam: credential, custody of
   auth.json's login, logout).
 - `pa_ai::request_hooks::install_request_hooks` (the provider request hooks; `prepare` reads the caller's request,
-  `RequestSource`, and sends exact bytes, `OutgoingRequest::body`).
+  `RequestSource`, and sends exact bytes, `OutgoingRequest::body`; `response_event` rewrites the streamed events).
 - `pa_core::features::SessionFeature::on_agent_end` (the adoption event).
 
 ## Files

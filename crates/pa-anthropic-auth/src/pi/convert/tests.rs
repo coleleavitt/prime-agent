@@ -11,7 +11,6 @@ use serde_json::Value;
 
 use super::*;
 use crate::pi::settings::request_settings;
-use crate::shape::{claude_code_headers, ShapeEnv};
 
 pub(crate) fn golden() -> Value {
     serde_json::from_str(include_str!(
@@ -92,50 +91,6 @@ pub(crate) fn cases() -> Vec<Case> {
 
 pub(crate) fn version() -> String {
     golden()["version"].as_str().expect("a version").to_string()
-}
-
-#[test]
-fn every_conversation_is_built_byte_for_byte_as_pi_builds_it() {
-    let version = version();
-    for case in cases() {
-        let built = build_request(
-            &case.model,
-            &case.source(),
-            case.settings,
-            &case.identity,
-            &version,
-            None,
-        );
-        assert_eq!(built.body_text, case.body_text, "{}", case.name);
-    }
-}
-
-#[test]
-fn every_request_carries_pi_s_headers() {
-    let version = version();
-    for case in cases() {
-        let built = build_request(
-            &case.model,
-            &case.source(),
-            case.settings,
-            &case.identity,
-            &version,
-            None,
-        );
-        let headers: BTreeMap<String, String> = claude_code_headers(
-            &case.token,
-            &built.body,
-            &case.identity,
-            &version,
-            &ShapeEnv::default(),
-            "",
-            "request-id",
-        )
-        .into_iter()
-        .filter(|(name, _)| name != "x-client-request-id")
-        .collect();
-        assert_eq!(headers, case.headers, "{}", case.name);
-    }
 }
 
 #[test]

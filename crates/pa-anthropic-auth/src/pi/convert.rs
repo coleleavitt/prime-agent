@@ -37,8 +37,8 @@ const CLAUDE_CODE_TOOLS: [&str; 10] = [
     "WebSearch",
 ];
 /// The research tool name Anthropic reserves, and its wire alias.
-const DEEP_RESEARCH_TOOL: &str = "deep_research";
-const DEEP_RESEARCH_WIRE_TOOL: &str = "prime_deep_research";
+pub(crate) const DEEP_RESEARCH_TOOL: &str = "deep_research";
+pub(crate) const DEEP_RESEARCH_WIRE_TOOL: &str = "prime_deep_research";
 /// APIs whose thinking signatures Anthropic issued.
 const ANTHROPIC_SIGNATURE_APIS: [&str; 2] = ["anthropic-messages", "cortexkit-anthropic-messages"];
 /// Claude Code's identity block.

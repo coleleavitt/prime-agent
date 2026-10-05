@@ -257,6 +257,52 @@ export const CASES: Case[] = [
     accountUuid: false,
   },
   {
+    name: 'server-fallback-opus-5-5',
+    model: 'claude-opus-5-5',
+    context: { systemPrompt: 'You help.', messages: [user('Say hello to the world, please.')] },
+    options: { reasoning: 'off' },
+  },
+  {
+    name: 'server-fallback-fable-5-snapshot',
+    model: 'claude-fable-5-20260601',
+    context: { messages: [user('Fable.')] },
+    options: { reasoning: 'high' },
+    settings: { claudeFast: { enabled: true } },
+  },
+  {
+    name: 'fallback-markers-replayed',
+    model: 'claude-opus-5',
+    context: {
+      messages: [
+        user('First.'),
+        assistant([
+          { type: 'thinking', thinking: '\u2060', thinkingSignature: 'cortexkit-server-fallback-v1:claude-opus-5|claude-opus-4-8' },
+          { type: 'thinking', thinking: '\u2060', thinkingSignature: 'cortexkit-server-fallback-v1:not a model|claude-opus-4-8' },
+          { type: 'text', text: 'Served by the fallback.' },
+        ]),
+        user('Second.'),
+      ],
+    },
+  },
+  {
+    name: 'fallback-markers-dropped-off-a-fallback-model',
+    model: 'claude-sonnet-4-6',
+    context: {
+      messages: [
+        user('First.'),
+        assistant([
+          { type: 'thinking', thinking: '\u2060', thinkingSignature: 'cortexkit-server-fallback-v1:claude-opus-5|claude-opus-4-8' },
+          { type: 'text', text: 'Served by the fallback.' },
+        ]),
+        assistant([
+          { type: 'thinking', thinking: '\u2060', thinkingSignature: 'cortexkit-server-fallback-v1:claude-opus-5|claude-opus-4-8' },
+          { type: 'text', text: 'From another provider.' },
+        ], 'openai-responses'),
+        user('Second.'),
+      ],
+    },
+  },
+  {
     name: 'blank-turns-and-docs-only-prompt',
     model: 'claude-opus-4-8',
     context: {
@@ -302,4 +348,75 @@ for (const [index, testCase] of CASES.entries()) {
   })
 }
 
-process.stdout.write(`${JSON.stringify({ version: '2.1.280', cases: results }, null, 2)}\n`)
+// What pi keeps of a streamed response (the assistant message content).
+type ResponseCase = {
+  name: string
+  model: string
+  context: Record<string, unknown>
+  events: unknown[]
+}
+const RESPONSES: ResponseCase[] = [
+  {
+    name: 'a-server-fallback-block',
+    model: 'claude-opus-5-5',
+    context: { messages: [user('Hi.')] },
+    events: [
+      OK_STREAM[0],
+      { type: 'content_block_start', index: 0, content_block: { type: 'fallback', from: { model: 'claude-opus-5-5' }, to: { model: 'claude-opus-4-8' } } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } },
+      { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'hello' } },
+      { type: 'content_block_stop', index: 1 },
+      ...OK_STREAM.slice(4),
+    ],
+  },
+  {
+    name: 'an-unsafe-fallback-block-is-skipped',
+    model: 'claude-opus-5-5',
+    context: { messages: [user('Hi.')] },
+    events: [
+      OK_STREAM[0],
+      { type: 'content_block_start', index: 0, content_block: { type: 'fallback', from: { model: 'claude-opus-5-5' }, to: { model: 'gpt-5' } } },
+      { type: 'content_block_stop', index: 0 },
+      ...OK_STREAM.slice(1),
+    ],
+  },
+  {
+    name: 'the-research-tool-alias-is-restored',
+    model: 'claude-opus-4-8',
+    context: {
+      messages: [user('Research.')],
+      tools: [{ name: 'deep_research', description: 'Research', parameters: { type: 'object', properties: {} } }],
+    },
+    events: [
+      OK_STREAM[0],
+      { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'toolu_1', name: 'prime_deep_research', input: {} } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"q":"x"}' } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 2 } },
+      { type: 'message_stop' },
+    ],
+  },
+]
+const responses = []
+for (const [index, testCase] of RESPONSES.entries()) {
+  writeFileSync(settingsFile, '{}\n')
+  bootstrapUuid = ACCOUNT_UUID
+  replies = [{ status: 200, body: sse(testCase.events) }]
+  const stream = streamCortexKitAnthropic(model(testCase.model), testCase.context, {
+    apiKey: `sk-ant-oat01-golden-response-${String(index).padStart(2, '0')}-0000000000`,
+    sessionId: `ses-${testCase.name}`,
+  })
+  const message = await stream.result()
+  if (message.stopReason === 'error') throw new Error(`${testCase.name}: ${message.errorMessage}`)
+  responses.push({
+    name: testCase.name,
+    model: testCase.model,
+    context: testCase.context,
+    sse: sse(testCase.events),
+    content: message.content,
+    stopReason: message.stopReason,
+  })
+}
+
+process.stdout.write(`${JSON.stringify({ version: '2.1.280', cases: results, responses }, null, 2)}\n`)

@@ -11,6 +11,7 @@ use anthropic::{AccountStore, SharedRefreshOptions};
 use pa_ai::request_hooks::{OutgoingRequest, ProviderRequestHooks, RejectedRequest, Rejection};
 use pa_ai::types::{Model, ProviderResponse};
 use pa_types::sync::MutexExt;
+use serde_json::Value;
 
 use crate::quota::cooldown_until;
 use crate::shape::ShapeIdentity;
@@ -133,6 +134,13 @@ impl ProviderRequestHooks for SharedStoreSource {
             session_id: self.session_id(&served.account_id),
         };
         crate::pi::prepare(self, request, &identity);
+    }
+
+    fn response_event(&self, _model: &Model, api_key: &str, event: Value) -> Vec<Value> {
+        if !self.served(api_key) {
+            return vec![event];
+        }
+        crate::pi::response_event(event)
     }
 
     fn current_credential(&self, _model: &Model, api_key: &str) -> Option<String> {
