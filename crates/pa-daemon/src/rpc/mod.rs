@@ -14,7 +14,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use serde_json::Value;
-use tokio::io::AsyncBufReadExt;
 
 use protocol::{ParsedLine, RpcCommand};
 use session::{RpcEngineFactory, RpcEngineHandle, RpcSession};
@@ -223,9 +222,22 @@ async fn serve_stdin(state: Arc<commands::RpcState>) -> i32 {
     let mut line = String::new();
     loop {
         line.clear();
-        match stdin.read_line(&mut line).await {
-            Ok(0) | Err(_) => break,
-            Ok(_) => {}
+        // Bounded: a newline-free stdin stream cannot grow memory; an oversized command line is
+        // reported on stderr and skipped.
+        let read = crate::bounded_line::next_command_line(
+            &mut stdin,
+            &mut line,
+            crate::bounded_line::LOCAL_COMMAND_MAX_LINE_BYTES,
+            || {
+                eprintln!(
+                    "Skipped an RPC command line longer than {} bytes",
+                    crate::bounded_line::LOCAL_COMMAND_MAX_LINE_BYTES
+                );
+            },
+        )
+        .await;
+        if !read {
+            break;
         }
         if line.trim().is_empty() {
             continue;

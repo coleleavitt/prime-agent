@@ -210,6 +210,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // Request timing: the settings half of the flag is read once here
     // (`settings` moves into the loader); the `PI_REQUEST_TIMING` half stays live.
     let request_timing_settings = settings.get_request_timing();
+    let kernel_environment = settings.get_kernel_environment();
     // Captured before `settings` moves into the resource loader: the
     // factory host bridge's preflight facts (the daemon `allowedModels`
     // pin), like the request-timing snapshot above; and the
@@ -459,6 +460,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         config.on_background_work_settled.clone(),
         on_unavailable_skills,
         on_bootstrap_result,
+        kernel_environment,
     );
     let mut tools = config.tools.clone();
     if !tools.iter().any(|tool| tool.name() == "ipython") {

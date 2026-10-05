@@ -254,12 +254,15 @@ impl Inner {
         // bash.py journals its process groups under this pid so the host can
         // reap them if the runtime dies without running its shutdown hook.
         // The daemon worker's identity never reaches the kernel or what it
-        // spawns (see `DAEMON_WORKER_IDENTITY_ENV_PREFIXES`).
+        // spawns (see `DAEMON_WORKER_IDENTITY_ENV_PREFIXES`), nor, under the
+        // `scrub-credentials` policy, the provider API keys.
+        let environment = self.options.environment;
         let mut env: HashMap<String, String> = std::env::vars()
             .filter(|(key, _)| {
                 !DAEMON_WORKER_IDENTITY_ENV_PREFIXES
                     .iter()
                     .any(|prefix| key.starts_with(prefix))
+                    && environment.inherits(key)
             })
             .collect();
         for (key, value) in &self.options.env {
@@ -277,8 +280,12 @@ impl Inner {
         }
         let cwd = self.options.cwd.clone();
         let mut command = tokio::process::Command::new(&python);
+        // `-P`: the project cwd is not prepended to `sys.path`, so a repo-local `rlm/`,
+        // `dill.py`, or stdlib-named module cannot shadow the runtime's imports. The runtime
+        // appends the cwd last so project modules stay importable from cells. Process-local
+        // (unlike `PYTHONSAFEPATH`): `bash()` children resolve their own imports as before.
         command
-            .args(["-m", "rlm.repl"])
+            .args(["-P", "-m", "rlm.repl"])
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());

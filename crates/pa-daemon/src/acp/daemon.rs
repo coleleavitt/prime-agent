@@ -447,9 +447,22 @@ pub async fn run_daemon_attached_acp_mode(options: DaemonAcpOptions) -> anyhow::
     let mut input_line = String::new();
     loop {
         input_line.clear();
-        match stdin.read_line(&mut input_line).await {
-            Ok(0) | Err(_) => break,
-            Ok(_) => {}
+        // Bounded: a newline-free stdin stream cannot grow memory; an oversized frame is
+        // reported on stderr and skipped.
+        let read = crate::bounded_line::next_command_line(
+            &mut stdin,
+            &mut input_line,
+            crate::bounded_line::LOCAL_COMMAND_MAX_LINE_BYTES,
+            || {
+                eprintln!(
+                    "Skipped an ACP frame longer than {} bytes",
+                    crate::bounded_line::LOCAL_COMMAND_MAX_LINE_BYTES
+                );
+            },
+        )
+        .await;
+        if !read {
+            break;
         }
         if input_line.trim().is_empty() {
             continue;

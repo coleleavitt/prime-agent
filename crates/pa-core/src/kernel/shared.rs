@@ -481,6 +481,41 @@ pub struct KernelSnapshotConfig {
     pub debounce_ms: Option<u64>,
 }
 
+/// What the kernel (and every `bash()` it spawns) inherits from the host environment: the
+/// `kernel.environment` setting.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum KernelEnvironment {
+    /// The full host environment (minus the daemon worker identity). The default.
+    #[default]
+    Inherit,
+    /// The host environment without the model-provider API keys Prime Agent itself manages
+    /// ([`pa_ai::env_api_keys::provider_api_key_env_vars`]); the kernel reaches models through
+    /// the host, never through those keys.
+    ScrubCredentials,
+}
+
+impl KernelEnvironment {
+    /// The setting value (`"inherit"` | `"scrub-credentials"`); anything else is the default.
+    #[must_use]
+    pub fn from_setting(value: Option<&str>) -> Self {
+        match value {
+            Some("scrub-credentials") => KernelEnvironment::ScrubCredentials,
+            Some(_) | None => KernelEnvironment::Inherit,
+        }
+    }
+
+    /// Whether the kernel inherits host variable `key`.
+    #[must_use]
+    pub fn inherits(self, key: &str) -> bool {
+        match self {
+            KernelEnvironment::Inherit => true,
+            KernelEnvironment::ScrubCredentials => {
+                !pa_ai::env_api_keys::provider_api_key_env_vars().contains(&key)
+            }
+        }
+    }
+}
+
 /// Options for constructing a [`ReplKernelManager`].
 #[derive(Clone, Default)]
 pub struct KernelManagerOptions {
@@ -500,6 +535,8 @@ pub struct KernelManagerOptions {
     pub bootstrap_code: Option<String>,
     /// File receiving the kernel process's stderr, rotated once at each spawn.
     pub stderr_log_path: Option<std::path::PathBuf>,
+    /// The host-environment inheritance policy (`kernel.environment`).
+    pub environment: KernelEnvironment,
 }
 
 /// Shutdown options: whether to flush a final namespace snapshot and drain

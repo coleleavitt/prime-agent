@@ -1,0 +1,1 @@
+- Windows: each user now gets their own daemon pipe (`\\.\pipe\prime-agent-daemon-<user key>`) instead of one shared machine-wide name. Daemon and worker pipes are created so that only their owner can open them, and clients refuse to connect to a pipe owned by another account. After upgrading, stop a daemon still running on the old shared pipe once.

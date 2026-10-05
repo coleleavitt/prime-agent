@@ -1,0 +1,1 @@
+- The daemon, RPC mode and ACP mode now cap the length of one incoming command line from a local client (256 MiB, enough for prompts with pasted images). A client that sends an endless line without a newline is disconnected (daemon socket) or has that line skipped (RPC and ACP stdin), instead of using up memory.

@@ -1,7 +1,6 @@
 //! Per-OS daemon endpoint naming: Unix socket files under
 //! `<tmpdir>/prime-agent-<uid>/`; Windows named pipes in the `\\.\\pipe\\`
-//! namespace (fixed daemon pipe, hashed worker pipes) - the TS product's
-//! exact split.
+//! namespace (a per-user daemon pipe, hashed worker pipes).
 use std::path::{Path, PathBuf};
 
 use crate::paths::hash_key;
@@ -39,7 +38,7 @@ fn current_uid() -> Option<String> {
 }
 
 /// Default supervisor endpoint: `daemon.sock` in the socket dir (Unix) or
-/// the fixed daemon pipe name (Windows).
+/// the per-user daemon pipe name (Windows).
 #[cfg(unix)]
 #[must_use]
 pub fn default_daemon_socket_path() -> PathBuf {
@@ -49,7 +48,22 @@ pub fn default_daemon_socket_path() -> PathBuf {
 #[cfg(not(unix))]
 #[must_use]
 pub fn default_daemon_socket_path() -> PathBuf {
-    PathBuf::from(r"\\.\pipe\prime-agent-daemon")
+    // The SID cannot be spoofed through the environment; USERNAME is the fallback if the token
+    // query ever fails. The name only separates users - the pipe's owner-only ACL and the
+    // client's owner check are what keep other accounts out.
+    let user = pa_types::platform::current_user_sid()
+        .unwrap_or_else(|_| std::env::var("USERNAME").unwrap_or_default());
+    per_user_daemon_pipe_path(&user)
+}
+
+/// The Windows daemon pipe for one user: a fixed machine-global name let every account on the
+/// machine reach (or squat) the same daemon endpoint.
+#[cfg(any(windows, test))]
+fn per_user_daemon_pipe_path(user: &str) -> PathBuf {
+    PathBuf::from(format!(
+        r"\\.\pipe\prime-agent-daemon-{}",
+        hash_key(user, 12)
+    ))
 }
 
 /// Worker endpoint next to the supervisor's: hashed supervisor key plus the
@@ -96,14 +110,32 @@ mod tests {
         assert!(a.starts_with(socket_dir()));
     }
 
-    /// The Windows endpoint names (TS win32 arms): the fixed daemon pipe
-    /// name and the hashed worker pipe name in the `\\.\\pipe\\` namespace.
+    /// Upstream #2785: the Windows daemon pipe is per-user (a hash of the user's SID), never the
+    /// machine-global fixed name every account shared.
+    #[test]
+    fn the_windows_daemon_pipe_is_per_user() {
+        let alice = per_user_daemon_pipe_path("S-1-5-21-1-2-3-1001");
+        let bob = per_user_daemon_pipe_path("S-1-5-21-1-2-3-1002");
+        assert_eq!(
+            (alice.to_string_lossy().into_owned(), alice == bob,),
+            (
+                format!(
+                    r"\\.\pipe\prime-agent-daemon-{}",
+                    hash_key("S-1-5-21-1-2-3-1001", 12)
+                ),
+                false,
+            )
+        );
+    }
+
+    /// The Windows endpoint names: this user's daemon pipe and the hashed worker pipe name in
+    /// the `\\.\\pipe\\` namespace.
     #[test]
     #[cfg(windows)]
-    fn windows_endpoints_are_the_ts_pipe_names() {
+    fn windows_endpoints_are_the_pipe_names() {
         assert_eq!(
             default_daemon_socket_path(),
-            PathBuf::from(r"\\.\pipe\prime-agent-daemon")
+            per_user_daemon_pipe_path(&pa_types::platform::current_user_sid().expect("user sid"))
         );
         let supervisor = Path::new(r"\\.\pipe\prime-agent-daemon");
         let a = worker_socket_path(supervisor, "0123456789abcdef");

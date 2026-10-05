@@ -1,0 +1,1 @@
+- Kernel snapshots no longer save variables that look like credentials (by name or value) or copies of the environment. A new global setting, `kernel.environment`, can be set to `scrub-credentials` so the Python kernel and its `bash()` commands do not inherit the model-provider API keys Prime Agent manages; the default (`inherit`) is unchanged. See `docs/kernel-environment.md`.

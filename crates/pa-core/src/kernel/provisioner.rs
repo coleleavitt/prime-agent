@@ -129,6 +129,8 @@ pub struct IpythonKernelProvisionerOptions {
     /// Publishes the per-boot result for the `kernel_bootstrap_*` counters.
     /// Telemetry only; kernel behavior never depends on it.
     pub on_bootstrap_result: Option<KernelBootstrapResultHandler>,
+    /// The host-environment inheritance policy (`kernel.environment`).
+    pub environment: crate::kernel::shared::KernelEnvironment,
 }
 
 /// Why and how long one startup failed, published through the shared startup
@@ -1046,6 +1048,7 @@ async fn start_kernel_impl(
         snapshot,
         bootstrap_code: Some(bootstrap_code.clone()),
         stderr_log_path,
+        environment: options.environment,
     });
 
     emit_startup_progress(inner, on_progress, memo, "Starting Python kernel...");

@@ -897,6 +897,18 @@ impl SettingsManager {
         self.merged.request_timing.unwrap_or(false)
     }
 
+    /// `kernel.environment`, from the global scope only: a project's settings file must not
+    /// widen what the kernel inherits past the user's own choice.
+    #[must_use]
+    pub fn get_kernel_environment(&self) -> crate::kernel::shared::KernelEnvironment {
+        crate::kernel::shared::KernelEnvironment::from_setting(
+            self.global
+                .kernel
+                .as_ref()
+                .and_then(|kernel| kernel.environment.as_deref()),
+        )
+    }
+
     #[must_use]
     pub fn get_session_dir(&self) -> Option<std::path::PathBuf> {
         let session_dir = self.merged.session_dir.as_ref()?;
@@ -1015,6 +1027,41 @@ mod tests {
         );
         manager.reload().unwrap();
         assert_eq!(manager.get_default_model(), Some("z-ai/glm-5.3"));
+    }
+
+    /// `kernel.environment` (upstream #2174): the default inherits everything, the global
+    /// setting can opt into `scrub-credentials`, and a project file can neither set nor undo it.
+    #[test]
+    fn kernel_environment_reads_the_global_scope_only() {
+        use crate::kernel::shared::KernelEnvironment;
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().join("cwd");
+        let agent_dir = dir.path().join("agent");
+        std::fs::create_dir_all(cwd.join(".prime/agent")).unwrap();
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        let read = |global: &str, project: &str| {
+            std::fs::write(agent_dir.join("settings.json"), global).unwrap();
+            std::fs::write(cwd.join(".prime/agent/settings.json"), project).unwrap();
+            SettingsManager::create(&cwd, &agent_dir).get_kernel_environment()
+        };
+        let scrub = r#"{ "kernel": { "environment": "scrub-credentials" } }"#;
+        let inherit = r#"{ "kernel": { "environment": "inherit" } }"#;
+        assert_eq!(
+            [
+                read("{}", "{}"),
+                read(scrub, "{}"),
+                read("{}", scrub),
+                read(scrub, inherit),
+                read(r#"{ "kernel": { "environment": "bogus" } }"#, "{}"),
+            ],
+            [
+                KernelEnvironment::Inherit,
+                KernelEnvironment::ScrubCredentials,
+                KernelEnvironment::Inherit,
+                KernelEnvironment::ScrubCredentials,
+                KernelEnvironment::Inherit,
+            ]
+        );
     }
 
     /// `factory.enabled` reads the GLOBAL scope only (the agent-dir

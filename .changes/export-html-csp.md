@@ -1,0 +1,1 @@
+- Exported HTML sessions now carry a strict Content Security Policy and no longer load remote images when opened. A remote markdown image is shown as a link you can choose to open, so a shared export cannot be used as a tracking pixel or reveal who viewed it.

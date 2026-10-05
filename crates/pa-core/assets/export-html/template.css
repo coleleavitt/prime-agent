@@ -1018,3 +1018,7 @@
       body { background: white; color: black; }
       #content { max-width: none; }
     }
+
+    .remote-image {
+      font-style: italic;
+    }

@@ -79,7 +79,7 @@ use pa_types::daemon::{
 };
 use pa_types::platform::transport::{bind_transport, connect_transport, TransportStream};
 use serde_json::{json, Map, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
@@ -140,6 +140,9 @@ pub struct Supervisor {
     /// state machine's tests bounded without sleeping the production
     /// 10 minutes.
     tcp_idle_timeout_budget: std::sync::Mutex<Option<Duration>>,
+    /// The local-connection line-cap override: `None` rides
+    /// [`crate::bounded_line::LOCAL_COMMAND_MAX_LINE_BYTES`]; tests pin a small cap.
+    local_line_cap_budget: std::sync::Mutex<Option<usize>>,
     /// The durable session-binding table (the stale-active-id rebind
     /// surface): every active id the supervisor has routed stays
     /// addressable through its session's durable identity, so a client
@@ -298,6 +301,7 @@ impl Supervisor {
             bound_socket_identity: std::sync::Mutex::new(None),
             worker_connect_budget: std::sync::Mutex::new(None),
             tcp_idle_timeout_budget: std::sync::Mutex::new(None),
+            local_line_cap_budget: std::sync::Mutex::new(None),
             session_bindings: crate::session_bindings::SessionBindingTable::new(),
             opening_files: std::sync::Mutex::new(std::collections::HashMap::new()),
             telemetry: std::sync::Mutex::new(None),
