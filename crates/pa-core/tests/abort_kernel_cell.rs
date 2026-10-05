@@ -175,6 +175,7 @@ async fn abort_during_a_kernel_cell_settles_the_turn_immediately() {
         queued_goal_context_purge: None,
         queued_steering_probe: None,
         image_model_router: None,
+        rlm_token_allowance: None,
     })
     .await
     .expect("create_session");

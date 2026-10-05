@@ -175,6 +175,12 @@ impl Worker {
                 }
                 _ => (None, None, None, None),
             };
+        // The delegation grant a subagent create carries (upstream #1192).
+        let rlm_token_allowance = payload
+            .get("runtimeMetadata")
+            .filter(|metadata| metadata.get("kind").and_then(Value::as_str) == Some("subagent"))
+            .and_then(|metadata| metadata.get("rlmTokenAllowance"))
+            .and_then(Value::as_u64);
         let thinking = payload
             .get("thinking")
             .and_then(Value::as_str)
@@ -559,6 +565,7 @@ impl Worker {
             thinking,
             child_script: child_script.clone(),
             semantic_spawn,
+            rlm_token_allowance,
         }) {
             return response_failure(None, "create", &error.to_string(), None);
         }

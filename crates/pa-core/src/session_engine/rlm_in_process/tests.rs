@@ -216,6 +216,7 @@ fn spawn_request(name: Option<&str>, model: Option<&str>) -> RlmSpawnRequest {
         target: super::super::rlm_host::RlmSpawnTarget::Local,
         spawned_by_request_id: None,
         cell_source_code: None,
+        token_budget: None,
     }
 }
 

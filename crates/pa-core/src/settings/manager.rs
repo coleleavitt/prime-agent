@@ -874,6 +874,19 @@ impl SettingsManager {
         self.global.rlm_max_depth
     }
 
+    /// `rlmTokenBudget`, from the global scope only (like `rlmMaxDepth`): a
+    /// project's settings cannot fund or unfund a delegation tree. `None`
+    /// (unset, zero, or malformed) is off.
+    #[must_use]
+    pub fn get_rlm_token_budget(
+        &self,
+    ) -> Option<crate::session_engine::rlm_token_budget::RlmTokenBudgetConfig> {
+        self.global
+            .rlm_token_budget
+            .as_ref()
+            .and_then(crate::session_engine::rlm_token_budget::RlmTokenBudgetConfig::from_setting)
+    }
+
     /// The daemon mesh listener's TCP port (global scope only, TS #2517):
     /// an integer between 1 and 65535, else unset.
     #[must_use]

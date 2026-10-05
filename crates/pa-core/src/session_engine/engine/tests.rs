@@ -87,6 +87,7 @@ async fn engine_runs_tool_loop_and_persists() {
         on_background_work_settled: None,
         prewarm_ipython_kernel: None,
         queued_goal_context_purge: None,
+        rlm_token_allowance: None,
     })
     .await
     .unwrap();
@@ -187,6 +188,7 @@ async fn spawned_child_prompt_stamps_its_depth() {
         on_background_work_settled: None,
         prewarm_ipython_kernel: None,
         queued_goal_context_purge: None,
+        rlm_token_allowance: None,
     })
     .await
     .unwrap();
@@ -255,6 +257,7 @@ async fn oauth_creds_unlock_generic_mcp_gating_in_new_sessions() {
             on_background_work_settled: None,
             prewarm_ipython_kernel: None,
             queued_goal_context_purge: None,
+            rlm_token_allowance: None,
         }
     }
 
@@ -550,5 +553,92 @@ async fn the_repetition_guard_setting_picks_the_guarded_channels() {
     assert_eq!(
         reply(Some(r#"{"repetitionGuard": false}"#)).await,
         (pa_agent::types::StopReason::Stop, None)
+    );
+}
+
+/// Upstream #1192: a subagent funded by a grant stops at the first turn
+/// boundary after its own spend reaches the grant (the crossing turn is
+/// kept); a root takes its pool from the global `rlmTokenBudget` setting
+/// and is never stopped by it.
+#[tokio::test]
+async fn a_funded_subagent_stops_once_its_grant_is_spent() {
+    async fn run(
+        allowance: Option<u64>,
+        depth: u32,
+        settings: Option<&str>,
+    ) -> (usize, Option<u64>) {
+        let model = pa_agent::types::Model {
+            id: "m".into(),
+            name: "m".into(),
+            api: "test".into(),
+            provider: "test".into(),
+            base_url: "http://localhost".into(),
+            reasoning: false,
+            cost: pa_agent::types::UsageCost::default(),
+            context_window: 1_000,
+            max_tokens: 100,
+        };
+        let provider = Arc::new(ScriptedProvider::new(model.clone()));
+        // Two tool-call turns of 80 tokens each, then a natural stop.
+        for call in ["call-1", "call-2"] {
+            let mut steps = pa_agent::scripted::tool_call_turn_steps(
+                &model,
+                None,
+                vec![(call, "echo", serde_json::json!({ "text": "hi" }))],
+            );
+            if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut() {
+                if let pa_agent::stream::AssistantMessageEvent::Done { message, .. } = &mut **event
+                {
+                    message.usage.input = 60;
+                    message.usage.output = 20;
+                }
+            }
+            provider.push_turn(pa_agent::scripted::ScriptedTurn::Events(steps));
+        }
+        provider.push_text_turn("all done");
+        let tmp = tempfile::tempdir().unwrap();
+        let agent_dir = tmp.path().join("agent");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        if let Some(settings) = settings {
+            std::fs::write(agent_dir.join("settings.json"), settings).unwrap();
+        }
+        let engine = create_session(SessionEngineConfig {
+            cwd: tmp.path().to_path_buf(),
+            agent_dir,
+            model: Some(model),
+            stream_fn: Some(provider.stream_fn()),
+            tools: vec![bridge_tool(echo_definition())],
+            rlm_depth: Some(depth),
+            rlm_token_allowance: allowance,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        engine
+            .session
+            .prompt("go", crate::session_engine::PromptOptions::default())
+            .await
+            .unwrap();
+        engine.session.agent().wait_for_idle().await;
+        (
+            provider.calls().len(),
+            engine
+                .rlm
+                .token_budget
+                .get()
+                .map(|budget| budget.remaining()),
+        )
+    }
+    // A 100-token grant: the second 80-token turn crosses it and the run
+    // stops there; the third request never goes out.
+    assert_eq!(run(Some(100), 1, None).await, (2, Some(0)));
+    // An unfunded subagent and an unbudgeted root run to the natural stop.
+    assert_eq!(run(None, 1, None).await, (3, None));
+    assert_eq!(run(None, 0, None).await, (3, None));
+    // A budgeted root keeps its whole pool for delegation and is never
+    // stopped by its own spend.
+    assert_eq!(
+        run(None, 0, Some(r#"{"rlmTokenBudget": 500}"#)).await,
+        (3, Some(500))
     );
 }

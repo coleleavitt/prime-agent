@@ -618,6 +618,7 @@ async fn build_headless_engine_with(
             queued_goal_context_purge: None,
             queued_steering_probe: None,
             image_model_router: Some(image_model_router),
+            rlm_token_allowance: None,
         },
     )
     .await
@@ -1539,6 +1540,7 @@ async fn build_faux_engine_with(
             queued_goal_context_purge: None,
             queued_steering_probe: None,
             image_model_router: None,
+            rlm_token_allowance: None,
         },
     )
     .await
