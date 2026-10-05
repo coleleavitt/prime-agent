@@ -11,6 +11,8 @@ fn shared_wrap_matches_original_output_and_counts() {
         "a\nb\n",
         "one\ttwo",
         "界界界",
+        "ab 世界你好",
+        "hello日本語のtext。「引用」",
         "e\u{301} a\u{200d}b",
         "👨‍👩‍👧‍👦 🇯🇵 👍🏽 #️⃣",
         "\u{feff}a b\u{0085}c",
@@ -134,6 +136,19 @@ fn trim_end(line: &Line) -> Line {
 
 fn tokenize(line: &Line) -> Vec<Line> {
     let mut tokens: Vec<Line> = Vec::new();
+    // Non-whitespace runs split further into CJK wrap units (upstream #814).
+    let mut push = |text: String, style: Style| {
+        let mut rest = text.as_str();
+        while !rest.is_empty() {
+            let len = if rest.chars().all(is_whitespace_char) {
+                rest.len()
+            } else {
+                wrap_unit_len(rest)
+            };
+            tokens.push(vec![Span::styled(rest[..len].to_string(), style)]);
+            rest = &rest[len..];
+        }
+    };
     for span in line {
         let mut current = String::new();
         let mut current_ws: Option<bool> = None;
@@ -142,7 +157,7 @@ fn tokenize(line: &Line) -> Vec<Line> {
             match current_ws {
                 Some(prev) if prev == ws => current.push(c),
                 Some(_) => {
-                    tokens.push(vec![Span::styled(std::mem::take(&mut current), span.style)]);
+                    push(std::mem::take(&mut current), span.style);
                     current.push(c);
                     current_ws = Some(ws);
                 }
@@ -153,8 +168,35 @@ fn tokenize(line: &Line) -> Vec<Line> {
             }
         }
         if !current.is_empty() {
-            tokens.push(vec![Span::styled(current, span.style)]);
+            push(current, span.style);
         }
     }
     tokens
+}
+
+fn row_texts(rows: &[Line]) -> Vec<String> {
+    rows.iter()
+        .map(|row| row.iter().map(|span| span.content.as_str()).collect())
+        .collect()
+}
+
+// Upstream #814: a CJK run is not one unbreakable word. UAX #14 allows a
+// break before and after every ideograph, kana, or Hangul syllable, except
+// before closing punctuation and after opening punctuation.
+#[test]
+fn cjk_runs_break_between_characters() {
+    let line = vec![Span::raw("ab 世界你好")];
+    assert_eq!(row_texts(&wrap_line(&line, 7)), ["ab 世界", "你好"]);
+    assert_eq!(wrapped_line_count(&line, 7), 2);
+
+    let mixed = vec![Span::raw("hello日本語のtext")];
+    assert_eq!(row_texts(&wrap_line(&mixed, 9)), ["hello日本", "語のtext"]);
+
+    // 。 never starts a row and 「 never ends one.
+    let punctuated = vec![Span::raw("世界。「你好」")];
+    assert_eq!(
+        row_texts(&wrap_line(&punctuated, 8)),
+        ["世界。", "「你好」"]
+    );
+    assert_eq!(wrapped_text_count("ab 世界你好\n世界。「你好」", 8), 4);
 }

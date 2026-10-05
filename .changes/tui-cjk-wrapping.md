@@ -1,0 +1,1 @@
+- Chat text and markdown now wrap Chinese, Japanese, and Korean text between characters instead of treating a whole CJK run as one word, so mixed Latin/CJK lines no longer wrap early or split mid-row; closing punctuation such as `。` never starts a row and opening brackets such as `「` never end one.

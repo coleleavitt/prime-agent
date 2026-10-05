@@ -1,5 +1,5 @@
 //! Shared wrap boundaries for styled output and counts without output row allocation.
-use super::{char_width, is_whitespace_char, str_width};
+use super::{char_width, is_whitespace_char, str_width, wrap_unit_len};
 use crate::{Line, Span};
 use ratatui::style::Style;
 
@@ -29,10 +29,14 @@ fn traverse<'a>(
         let mut rest = text;
         while !rest.is_empty() {
             let is_ws = is_whitespace_char(rest.chars().next().expect("nonempty token"));
-            let end = rest
+            let mut end = rest
                 .char_indices()
                 .find(|(_, c)| is_whitespace_char(*c) != is_ws)
                 .map_or(rest.len(), |(index, _)| index);
+            if !is_ws {
+                // A CJK run breaks between characters, not only at whitespace.
+                end = wrap_unit_len(&rest[..end]);
+            }
             let token = &rest[..end];
             rest = &rest[end..];
             let token_width = str_width(token);

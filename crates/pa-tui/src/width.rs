@@ -348,6 +348,139 @@ pub fn is_whitespace_char(c: char) -> bool {
     c == '\u{feff}' || (c != '\u{0085}' && c.is_whitespace())
 }
 
+/// UAX #14 ideographic-class characters (ID, plus Hangul syllables and
+/// fullwidth forms): CJK ideographs, kana, Bopomofo, Hangul, CJK symbols.
+/// A line may break before and after each of them.
+fn is_ideographic_break_class(c: char) -> bool {
+    matches!(
+        c,
+        '\u{2E80}'..='\u{2FFF}'
+            | '\u{3001}'..='\u{303F}'
+            | '\u{3040}'..='\u{31FF}'
+            | '\u{3200}'..='\u{4DBF}'
+            | '\u{4E00}'..='\u{9FFF}'
+            | '\u{A000}'..='\u{A4CF}'
+            | '\u{AC00}'..='\u{D7A3}'
+            | '\u{F900}'..='\u{FAFF}'
+            | '\u{FE30}'..='\u{FE4F}'
+            | '\u{FF01}'..='\u{FF60}'
+            | '\u{FF66}'..='\u{FFDC}'
+            | '\u{20000}'..='\u{2FFFD}'
+            | '\u{30000}'..='\u{3FFFD}'
+    )
+}
+
+/// Characters a line never starts with (UAX #14 CL, CP, EX, IS and common
+/// NS): closing brackets and sentence punctuation, ASCII and CJK.
+fn prohibits_break_before(c: char) -> bool {
+    matches!(
+        c,
+        ')' | ']'
+            | '}'
+            | '!'
+            | ','
+            | '.'
+            | ':'
+            | ';'
+            | '?'
+            | '\u{3001}' // 、
+            | '\u{3002}' // 。
+            | '\u{3005}' // 々
+            | '\u{3009}' // 〉
+            | '\u{300B}' // 》
+            | '\u{300D}' // 」
+            | '\u{300F}' // 』
+            | '\u{3011}' // 】
+            | '\u{3015}' // 〕
+            | '\u{3017}' // 〗
+            | '\u{3019}' // 〙
+            | '\u{301B}' // 〛
+            | '\u{301E}'
+            | '\u{301F}'
+            | '\u{303B}' // 〻
+            | '\u{309D}' // ゝ
+            | '\u{309E}' // ゞ
+            | '\u{30FB}' // ・
+            | '\u{30FD}' // ヽ
+            | '\u{30FE}' // ヾ
+            | '\u{FE50}'
+            ..='\u{FE57}'
+            | '\u{FF01}' // ！
+            | '\u{FF09}' // ）
+            | '\u{FF0C}' // ，
+            | '\u{FF0E}' // ．
+            | '\u{FF1A}' // ：
+            | '\u{FF1B}' // ；
+            | '\u{FF1F}' // ？
+            | '\u{FF3D}' // ］
+            | '\u{FF5D}' // ｝
+            | '\u{FF60}'
+            | '\u{FF61}'
+            | '\u{FF63}'
+            | '\u{FF64}'
+    )
+}
+
+/// Characters a line never ends with (UAX #14 OP): opening brackets.
+fn prohibits_break_after(c: char) -> bool {
+    matches!(
+        c,
+        '(' | '['
+            | '{'
+            | '\u{3008}' // 〈
+            | '\u{300A}' // 《
+            | '\u{300C}' // 「
+            | '\u{300E}' // 『
+            | '\u{3010}' // 【
+            | '\u{3014}' // 〔
+            | '\u{3016}' // 〖
+            | '\u{3018}' // 〘
+            | '\u{301A}' // 〚
+            | '\u{301D}'
+            | '\u{FF08}' // （
+            | '\u{FF3B}' // ［
+            | '\u{FF5B}' // ｛
+            | '\u{FF5F}'
+            | '\u{FF62}'
+            | '\u{200D}' // ZWJ joins whatever follows
+    )
+}
+
+/// Whether a wrap may break between two adjacent non-whitespace characters:
+/// at an ideograph, kana, or Hangul syllable on either side, never before
+/// closing punctuation or a zero-width mark, never after opening punctuation.
+fn breaks_between(prev: char, next: char) -> bool {
+    (is_ideographic_break_class(prev) || is_ideographic_break_class(next))
+        && !prohibits_break_before(next)
+        && !prohibits_break_after(prev)
+        && char_width(next) > 0
+}
+
+/// Byte length of the first wrap unit of a non-whitespace run: up to the
+/// first CJK break opportunity, or the whole run. Escape sequences are
+/// transparent, and a break falls before them so a style or link opener
+/// stays with the text it opens.
+pub(crate) fn wrap_unit_len(word: &str) -> usize {
+    let mut prev: Option<char> = None;
+    let mut escapes_start: Option<usize> = None;
+    let mut index = 0;
+    while index < word.len() {
+        if let Some(len) = escape_len(&word[index..]) {
+            escapes_start.get_or_insert(index);
+            index += len;
+            continue;
+        }
+        let c = word[index..].chars().next().expect("char at boundary");
+        if prev.is_some_and(|prev| breaks_between(prev, c)) {
+            return escapes_start.unwrap_or(index);
+        }
+        prev = Some(c);
+        escapes_start = None;
+        index += c.len_utf8();
+    }
+    word.len()
+}
+
 const PUNCTUATION: &str = "(){}[]<>.,;:'\"!?+-=*/\\|&%^$#@~`";
 
 #[must_use]
