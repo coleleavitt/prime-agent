@@ -36,6 +36,7 @@ mod autonomous_continuation;
 pub(crate) mod backpressure;
 pub(crate) mod bash_notices;
 pub(crate) mod boot_reap;
+pub(crate) mod bounded_line;
 pub mod branch_navigation;
 pub(crate) mod child_status_notices;
 pub mod cloud_family;

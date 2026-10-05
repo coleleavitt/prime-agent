@@ -7,83 +7,16 @@ use super::{
     broadcast, command_type_name, current_protocol_info, daemon_closing_shutdown_event,
     input_admission_id, json, parse_supervisor_command_line, response_failure, response_line,
     response_success, salvage_command_type, salvage_id, subscribers, update_gate_refuses, util,
-    Arc, AsyncBufReadExt, AsyncWriteExt, BufReader, ClientRouting, ClientTrust, DaemonCommand,
-    DaemonOutbound, DaemonRuntimeIdentity, Duration, EnvelopeParseError, Map, Ordering, Outbound,
-    ResidentWorker, Result, RouteAdmission, Supervisor, TransportStream, TypedCreateRejection,
-    Value, DAEMON_APP_VERSION, DAEMON_SCHEMA_ID, DAEMON_SCHEMA_REVISION, ROUTE_TIMEOUT_MS,
+    Arc, AsyncWriteExt, BufReader, ClientRouting, ClientTrust, DaemonCommand, DaemonOutbound,
+    DaemonRuntimeIdentity, Duration, EnvelopeParseError, Map, Ordering, Outbound, ResidentWorker,
+    Result, RouteAdmission, Supervisor, TransportStream, TypedCreateRejection, Value,
+    DAEMON_APP_VERSION, DAEMON_SCHEMA_ID, DAEMON_SCHEMA_REVISION, ROUTE_TIMEOUT_MS,
     UPDATE_PREPARING_MESSAGE,
 };
 
 /// TS `OWNED_WORKER_DISCONNECT_GRACE_MS`: how long a client-owned worker
 /// keeps running after its owner's last connection closes.
 const OWNED_WORKER_DISCONNECT_GRACE: Duration = Duration::from_secs(30);
-
-/// The outcome of one connection-line read. `Overflow` is the untrusted
-/// bound: the peer sent more bytes without a newline than the line cap
-/// allows, and the connection is destroyed instead of buffering without
-/// limit (TS #2517's `maxLineLength`).
-enum ConnectionLine {
-    Line,
-    Eof,
-    Overflow,
-}
-
-/// Read the next newline-terminated line into `line`. Local (unix)
-/// connections read without a bound - the socket file is already
-/// owner-restricted local trust. Untrusted TCP connections read with the
-/// per-line cap: bytes accumulate into `line_bytes` (raw, so a multi-byte
-/// UTF-8 character split across TCP segments cannot corrupt the line),
-/// and a line that outgrows the cap reports [`ConnectionLine::Overflow`]
-/// without draining a peer's unbounded stream.
-///
-/// # Errors
-///
-/// Returns the reader's I/O error (the caller breaks the connection loop).
-async fn read_connection_line(
-    reader: &mut BufReader<Box<dyn pa_types::platform::transport::AsyncReadHalf>>,
-    line: &mut String,
-    line_bytes: &mut Vec<u8>,
-    max: Option<usize>,
-) -> std::io::Result<ConnectionLine> {
-    let Some(max) = max else {
-        let read = reader.read_line(line).await?;
-        return Ok(if read == 0 {
-            ConnectionLine::Eof
-        } else {
-            ConnectionLine::Line
-        });
-    };
-    loop {
-        let available = match reader.fill_buf().await {
-            Ok(available) => available,
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(error) => return Err(error),
-        };
-        if available.is_empty() {
-            return Ok(ConnectionLine::Eof);
-        }
-        let Some(newline) = available.iter().position(|byte| *byte == b'\n') else {
-            if line_bytes.len() + available.len() > max {
-                return Ok(ConnectionLine::Overflow);
-            }
-            line_bytes.extend_from_slice(available);
-            let used = available.len();
-            reader.consume(used);
-            continue;
-        };
-        if line_bytes.len() + newline + 1 > max {
-            return Ok(ConnectionLine::Overflow);
-        }
-        line_bytes.extend_from_slice(&available[..=newline]);
-        let used = newline + 1;
-        reader.consume(used);
-        line.push_str(&String::from_utf8_lossy(line_bytes));
-        // The next read starts a fresh line; the accumulated raw bytes
-        // die with this one.
-        line_bytes.clear();
-        return Ok(ConnectionLine::Line);
-    }
-}
 
 async fn write_line<W: AsyncWriteExt + Unpin>(writer: &mut W, value: &Value) -> Result<usize> {
     let mut line = serde_json::to_string(value)?;
@@ -173,6 +106,28 @@ impl Supervisor {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .unwrap_or(crate::tcp::DAEMON_TCP_IDLE_TIMEOUT)
+    }
+
+    /// The per-line byte cap for one client connection.
+    fn connection_line_cap(&self, trust: &crate::supervisor::ClientTrust) -> usize {
+        match trust {
+            crate::supervisor::ClientTrust::Remote { .. } => crate::tcp::DAEMON_TCP_MAX_LINE_CHARS,
+            crate::supervisor::ClientTrust::Local => self
+                .local_line_cap_budget
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .unwrap_or(crate::bounded_line::LOCAL_COMMAND_MAX_LINE_BYTES),
+        }
+    }
+
+    /// Test-only: pin this supervisor's local line cap so the overflow path is exercised
+    /// without streaming the production 256 MiB (the test drives a unix socket pair).
+    #[cfg(all(test, unix))]
+    pub(crate) fn pin_local_line_cap_for_tests(&self, cap: usize) {
+        *self
+            .local_line_cap_budget
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(cap);
     }
 
     /// Test-only: pin this supervisor's TCP idle window so the deadline
@@ -373,6 +328,9 @@ impl Supervisor {
             crate::backpressure::CLIENT_DISPATCH_CONCURRENCY,
         ));
         let mut line_bytes: Vec<u8> = Vec::new();
+        // Every client line is bounded: untrusted TCP at the remote cap, local (unix socket /
+        // named pipe) peers at the local cap, so a newline-free stream cannot grow memory.
+        let line_cap = self.connection_line_cap(&trust);
         // Whether this connection has an admission deadline at all (untrusted
         // TCP only): a precomputed bool keeps the select arm's precondition
         // from borrowing the shared option the arm's future mutates.
@@ -405,18 +363,18 @@ impl Supervisor {
             let mut write_deadline = tcp_deadline_rx.as_ref().map(|rx| *rx.borrow());
             tokio::select! {
                 biased;
-                read = read_connection_line(&mut reader, &mut line, &mut line_bytes, trust.tcp_auth_token().map(|_| crate::tcp::DAEMON_TCP_MAX_LINE_CHARS)), if dispatch_slots.available_permits() > 0 => {
+                read = crate::bounded_line::read_bounded_line(&mut reader, &mut line, &mut line_bytes, line_cap), if dispatch_slots.available_permits() > 0 => {
                     match read {
                         Err(_error) => break,
-                        Ok(ConnectionLine::Overflow) => {
+                        Ok(crate::bounded_line::BoundedLine::Overflow) => {
+                            let transport = if trust.tcp_auth_token().is_some() { "TCP" } else { "local" };
                             self.log_line(&format!(
-                                "Refused TCP command line longer than {} chars; closing connection",
-                                crate::tcp::DAEMON_TCP_MAX_LINE_CHARS
+                                "Refused {transport} command line longer than {line_cap} bytes; closing connection"
                             ));
-                            return Err(anyhow!("TCP command line exceeded the length bound"));
+                            return Err(anyhow!("{transport} command line exceeded the length bound"));
                         }
-                        Ok(ConnectionLine::Eof) => break,
-                        Ok(ConnectionLine::Line) => {}
+                        Ok(crate::bounded_line::BoundedLine::Eof) => break,
+                        Ok(crate::bounded_line::BoundedLine::Line) => {}
                     }
                     saw_socket_traffic = true;
                     let trimmed = line.trim().to_string();
@@ -1441,6 +1399,7 @@ mod tests {
     #[cfg(unix)]
     use std::sync::Arc;
     use std::time::Duration;
+    use tokio::io::AsyncBufReadExt as _;
 
     #[cfg(unix)]
     #[tokio::test]
@@ -1504,6 +1463,58 @@ mod tests {
             "the log names the requesting client and its command: {log}"
         );
         connection.abort();
+    }
+
+    /// Upstream #830: a local (unix-socket) client that streams bytes without a newline is cut at
+    /// the local line cap instead of growing the supervisor's memory without limit.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_local_client_line_past_the_cap_closes_the_connection() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let options = SupervisorOptions {
+            tcp_port: None,
+            tcp_bind_host: None,
+            remote_agent_mesh: None,
+            socket_path: dir.path().join("daemon.sock"),
+            agent_dir: dir.path().join("agent"),
+        };
+        let log_path = crate::paths::daemon_log_path(&options.socket_path, &options.agent_dir);
+        let supervisor = Arc::new(Supervisor::new(options).expect("supervisor"));
+        supervisor.pin_local_line_cap_for_tests(1024);
+        let (server_side, client_side) = tokio::net::UnixStream::pair().expect("socket pair");
+        let connection = {
+            let supervisor = Arc::clone(&supervisor);
+            let stream: Box<dyn TransportStream> = Box::new(server_side);
+            tokio::spawn(async move {
+                supervisor
+                    .handle_client(stream, crate::supervisor::ClientTrust::Local)
+                    .await
+            })
+        };
+        let (client_read, mut client_write) = client_side.into_split();
+        let mut client = BufReader::new(client_read);
+        let mut hello = String::new();
+        client.read_line(&mut hello).await.expect("hello line");
+        client_write
+            .write_all(&[b'x'; 4096])
+            .await
+            .expect("send the unterminated stream");
+        let outcome = tokio::time::timeout(Duration::from_secs(10), connection)
+            .await
+            .expect("the connection closes at the cap instead of buffering")
+            .expect("connection task")
+            .map_err(|error| error.to_string());
+        let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+        assert_eq!(
+            (
+                outcome,
+                log.contains("Refused local command line longer than 1024 bytes")
+            ),
+            (
+                Err("local command line exceeded the length bound".to_string()),
+                true
+            )
+        );
     }
 
     #[cfg(unix)]
