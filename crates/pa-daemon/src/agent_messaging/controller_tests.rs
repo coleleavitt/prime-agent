@@ -47,6 +47,11 @@ async fn spawn_fake_supervisor(
                     let command = value["command"].clone();
                     let command_type = command["type"].as_str().unwrap_or_default().to_string();
                     let response = match command_type.as_str() {
+                        "list" => response_success(
+                            Some(&id),
+                            "list",
+                            Some(json!({ "sessions": roster["sessions"] })),
+                        ),
                         "list_agent_peers" => response_success(
                             Some(&id),
                             "list_agent_peers",
@@ -934,4 +939,62 @@ async fn family_resolves_a_moved_parent_by_the_session_file_alias() {
     assert_eq!(family.len(), 1, "{family:?}");
     assert_eq!(family[0].relationship, AgentFamilyRelationship::Parent);
     assert_eq!(family[0].id, "rrr777");
+}
+
+/// Upstream #1066: `agent_observe.list_agents()` rows carry the resident
+/// session's `cwd`; a member with no live session omits it (its saved cwd
+/// may be stale or client-owned).
+#[tokio::test]
+async fn observe_list_rows_carry_the_live_cwd_only() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("sup.sock");
+    spawn_fake_supervisor(
+        socket.clone(),
+        json!({ "sessions": [
+            { "activeSessionId": "aaa111", "sessionId": "sess-a", "cwd": "/work/alpha" },
+            { "activeSessionId": "kid111", "sessionId": "sess-kid", "runtimeKind": "subagent",
+              "parentActiveSessionId": "aaa111", "parentSessionId": "sess-a", "cwd": "/work/kid" },
+            { "id": "kid222", "sessionId": "sess-kid2", "runtimeKind": "subagent",
+              "parentActiveSessionId": "aaa111", "parentSessionId": "sess-a", "cwd": "/stale" },
+        ]}),
+        None,
+    )
+    .await;
+    let observer = LinkAgentObserveController::new(
+        Arc::new(SupervisorLink::new(socket)),
+        "aaa111".to_string(),
+        Arc::new(std::sync::Mutex::new(own_summary())),
+        None,
+    );
+    let mut handlers = pa_core::kernel::shared::HostRequestHandlers::default();
+    pa_core::session_engine::agent_messaging::register_agent_observe_host_handlers(
+        Arc::new(observer),
+        &mut handlers,
+    );
+    let list = handlers.get("agent_observe.list").unwrap().clone();
+    let listed = list(pa_core::kernel::shared::HostRequestPayload {
+        data: json!({}),
+        cell_source_code: None,
+    })
+    .await
+    .unwrap();
+    let cwds: Vec<(Value, Value)> = listed["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            (
+                row["sessionId"].clone(),
+                row.get("cwd").cloned().unwrap_or(Value::Null),
+            )
+        })
+        .collect();
+    assert_eq!(
+        cwds,
+        vec![
+            (json!("sess-a"), json!("/work/alpha")),
+            (json!("sess-kid"), json!("/work/kid")),
+            (json!("sess-kid2"), Value::Null),
+        ]
+    );
 }

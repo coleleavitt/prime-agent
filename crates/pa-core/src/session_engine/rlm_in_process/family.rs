@@ -292,6 +292,14 @@ impl InProcessFamilyController {
             AgentObserveActivity::Idle
         };
         let session_id = engine.session.session_id().await;
+        let cwd = engine
+            .session
+            .shared_persistence()
+            .lock()
+            .await
+            .get_cwd()
+            .display()
+            .to_string();
         AgentObserveSummary {
             active_session_id: Some(session_id.clone()),
             session_id,
@@ -310,6 +318,7 @@ impl InProcessFamilyController {
             attached_clients: 0,
             queued_count,
             is_session_active: true,
+            cwd: Some(cwd),
         }
     }
 

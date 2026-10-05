@@ -72,6 +72,10 @@ pub struct AgentObserveSummary {
     pub attached_clients: usize,
     pub queued_count: usize,
     pub is_session_active: bool,
+    /// The resident session's working directory (upstream #1066); `None`
+    /// for members with no live session, whose saved cwd may be stale or
+    /// client-owned.
+    pub cwd: Option<String>,
 }
 
 impl AgentObserveSummary {
@@ -92,6 +96,9 @@ impl AgentObserveSummary {
         });
         if let Some(activity) = self.activity {
             row["activity"] = json!(activity.as_str());
+        }
+        if let Some(cwd) = &self.cwd {
+            row["cwd"] = json!(cwd);
         }
         row
     }

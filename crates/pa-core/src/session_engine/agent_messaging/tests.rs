@@ -20,6 +20,7 @@ fn observe_rows_carry_the_typed_status_and_activity() {
         attached_clients: 1,
         queued_count: 0,
         is_session_active: true,
+        cwd: None,
     };
     let value = row.to_value();
     assert_eq!(value["status"], "running");

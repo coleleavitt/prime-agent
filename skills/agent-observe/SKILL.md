@@ -33,8 +33,10 @@ if child is not None:
   agent carries `sessionId`, optional `sessionName`, `relationship`
   (`parent`/`sibling`/`child`), `status`, `isSessionActive`, and the counts and
   message previews known for it: `latestMessage` for a live session,
-  `firstMessage` for an inactive child. A member with no live session has
-  no `activeSessionId` and no live detail; address it with `agent_message.send`
+  `firstMessage` for an inactive child. A live member also carries `cwd`, its
+  worker's working directory (advisory: it can lag a just-changed directory,
+  and it is a full local path). A member with no live session has
+  no `activeSessionId`, no `cwd`, and no live detail; address it with `agent_message.send`
   using its `relationship` plus its `sessionName`, or its `sessionId` when the
   member has no name. For direct children,
   `await rlm.list_subagents()` also exposes parent-owned lifecycle handles.

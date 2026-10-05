@@ -264,6 +264,13 @@ pub(super) fn summaries_from_roster(
                 attached_clients,
                 queued_count: queued,
                 is_session_active,
+                // Upstream #1066: the live worker's cwd only; a passivated
+                // row's saved cwd may be stale.
+                cwd: session
+                    .get("cwd")
+                    .and_then(Value::as_str)
+                    .filter(|cwd| has_live_session && !cwd.is_empty())
+                    .map(str::to_string),
             })
         })
         .collect()
