@@ -589,3 +589,57 @@ fn a_reopened_session_without_a_cwd_runs_in_its_recorded_cwd() {
         "create: {created}"
     );
 }
+
+/// Upstream #723 (fork variant): a supervisor whose binary was replaced on disk
+/// (`cargo install` over a running daemon) still answers, and must still spawn
+/// workers. The fixture runs the supervisor from a hard link of the built binary
+/// and unlinks it, so `current_exe()` names `<path> (deleted)`.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_supervisor_whose_binary_was_replaced_still_spawns_workers() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let socket = dir.path().join("daemon.sock");
+    let agent_dir = dir.path().join("agent");
+    let sessions = agent_dir.join("sessions");
+    std::fs::create_dir_all(&sessions).expect("sessions dir");
+    let binary = dir.path().join("pa-daemon");
+    std::fs::hard_link(env!("CARGO_BIN_EXE_pa-daemon"), &binary).expect("link the binary");
+    let child = Command::new(&binary)
+        .arg("supervisor")
+        .arg("--socket")
+        .arg(&socket)
+        .arg("--agent-dir")
+        .arg(&agent_dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .env(
+            pa_daemon::worker::WORKER_SUPERVISOR_LOST_EXIT_MS_ENV,
+            "15000",
+        )
+        .spawn()
+        .expect("spawn pa-daemon supervisor");
+    let _daemon = Daemon {
+        child,
+        socket: socket.clone(),
+    };
+    let mut client = Client::connect(&socket);
+    std::fs::remove_file(&binary).expect("replace the binary");
+    let script_path = write_script(dir.path(), &["unused"]);
+    client.send_command(
+        "c1",
+        &json!({
+            "type": "create",
+            "config": {
+                "cwd": dir.path().to_string_lossy(),
+                "sessionDir": sessions.to_string_lossy(),
+                "script": script_path.to_string_lossy(),
+            },
+        }),
+    );
+    let created = client.read_response("c1");
+    assert_eq!(
+        (created["success"].clone(), created["error"].clone()),
+        (json!(true), Value::Null),
+        "create: {created}"
+    );
+}
