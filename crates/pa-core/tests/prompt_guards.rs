@@ -621,3 +621,56 @@ fn generic_mcp_skill_renders_in_the_prompt_inventory() {
         .assembled
         .contains("await mcp.list_tools(\"notion\")"));
 }
+
+// Image input
+
+/// A text-only session model reads images through the configured image model
+/// (`vision.read`): no model-facing text may still claim `attach_image` simply
+/// fails there, and each must name the condition (a vision-capable `imageModel`).
+#[test]
+fn attach_image_texts_describe_the_image_model_path() {
+    let core_line = CORE_LAYER
+        .lines()
+        .find(|line| line.starts_with("- `attach_image("))
+        .expect("the core layer documents attach_image");
+    assert_eq!(
+        core_line,
+        "- `attach_image(*paths: str) -> str`: loads images directly into context if the agent's \
+         model is vision-capable; on a text-only model, a configured vision-capable `imageModel` \
+         reads them and returns its text description (errors when none is configured)"
+    );
+
+    let skill = sorted_bundled_skills()
+        .into_iter()
+        .find(|skill| skill.name == "attach-image")
+        .expect("attach-image is bundled");
+    assert!(
+        !skill.description.contains("errors clearly otherwise"),
+        "attach-image description still claims text-only models fail: {}",
+        skill.description
+    );
+    assert!(
+        skill.description.contains("imageModel"),
+        "attach-image description names the image-model path: {}",
+        skill.description
+    );
+
+    let mut options = BuildSystemPromptOptions {
+        cwd: "/w".to_string(),
+        vision_capable: Some(false),
+        ..Default::default()
+    };
+    let text_only = system_prompt_breakdown(&options).assembled;
+    assert!(
+        text_only.contains(
+            "Image input: this model cannot see images; `attach_image` has the configured \
+             vision-capable `imageModel` read them and returns its text description (it errors \
+             when no such image model is configured)."
+        ),
+        "text-only environment line: {text_only}"
+    );
+    options.vision_capable = Some(true);
+    assert!(system_prompt_breakdown(&options).assembled.contains(
+        "Image input: this model can see images; `attach_image` loads them into context."
+    ));
+}

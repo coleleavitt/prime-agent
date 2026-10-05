@@ -22,7 +22,7 @@ The harness often sends messages to the agent. These are user messages starting 
     - `.duration: float`
 - `edit.run(path: str, old_str: str, new_str: str) -> str`: the primary method for editing files. async, exact-unique-match; the `edit` module is callable with the same arguments (`await edit(path=..., old_str=..., new_str=...)`)
 - `websearch.run(query: str, *, max_output: int = 8192, timeout: int | None, num_results: int | None) -> str`: search the web; the `websearch` module is callable with the same arguments
-- `attach_image(*paths: str) -> str`: loads images directly into context if the agent's model is vision-capable, errors otherwise
+- `attach_image(*paths: str) -> str`: loads images directly into context if the agent's model is vision-capable; on a text-only model, a configured vision-capable `imageModel` reads them and returns its text description (errors when none is configured)
 - `computer_use.get_state(emit: bool = True) -> dict`: the bundled computer-use skill's discovery snapshot of apps, permissions, allowlist, and platform
 - `computer_use.get_app(app: str | dict) -> App`: bind one desktop app by name, bundle id, or path (may launch it); the bound `App` exposes `get_ax_state`, `get_screenshot`, `click`, `drag`, `scroll`, `press_key`, `type_text`, `set_value`, `select_text`, `perform_secondary_action`, and `paste` (allowlist-gated and lock-aware; load the computer-use skill for its manual and safety policy)
 - `computer_use.list_apps() -> list[dict]`: running apps as id/name/running records
