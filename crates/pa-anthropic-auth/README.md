@@ -22,6 +22,14 @@ auth.json resolves the `anthropic` provider exactly as before.
   - No login in the store: the lookup falls through to auth.json. A login that cannot produce a token (refresh
     failed, revoked, store unreadable, network down): the provider's OAuth authentication failure
     (`oauth_refresh_failed`, "Run /login"), never auth.json's login in its place.
+- Migration (`adopt_stored_login`, the custody half of anthropic-napi's `importOAuthAccount`, as the pi plugin
+  moves its host's refresh token): an Anthropic OAuth login `auth.json` still holds is moved into the store on the
+  first lookup. A live login is identified at the profile endpoint (an expired one is never refreshed to find out);
+  a row already holding the token, or a login of the same account (account and organization), wins and the import
+  is discarded; otherwise it becomes a new row named like napi's (email, org-qualified on collision; else the account
+  uuid; else `account-<8 hex>`), `current` when nothing is pinned. Either way pa-core then removes `auth.json`'s
+  entry (only while it still holds that token), so the store is the login's only custodian. A malformed login or
+  an unusable store leaves it in `auth.json`.
 - `install()`: installs the process's source (`shared_source()`, configured from the environment: the store path
   overrides `ANTHROPIC_ACCOUNTS_FILE` / `ANTHROPIC_ACCOUNTS_DIR`, the `ANTHROPIC_OAUTH_*` endpoint overrides,
   `ANTHROPIC_NATIVE_PUBLISH`) for the `anthropic` provider id. No I/O.
@@ -35,7 +43,7 @@ auth.json resolves the `anthropic` provider exactly as before.
 ## Non-goals (here)
 
 - Logout and account management (`/logout anthropic` still edits auth.json only; the store's rows are managed by
-  the plugins), and importing an existing auth.json Anthropic login into the store (napi `importOAuthAccount`).
+  the plugins).
 - Quota reads, quota-reserve routing, rotation on 429 or 401 recovery (`handleUnauthorized`), the keep-alive.
 - The request shape (headers, betas, system prompt, tool names): pa-ai's Claude Code mode owns it for every
   `sk-ant-oat` token, whatever its source. The source adds no headers.

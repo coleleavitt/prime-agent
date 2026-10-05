@@ -19,6 +19,7 @@ use std::sync::{Arc, OnceLock};
 use pa_core::features::{SessionFeature, SessionFeatureContext};
 use pa_telemetry::Properties;
 
+mod custody;
 mod login;
 mod source;
 

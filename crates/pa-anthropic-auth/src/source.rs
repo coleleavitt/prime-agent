@@ -21,6 +21,7 @@ use anthropic::credentials::NativePublish;
 use anthropic::{AccountStore, Endpoints, OAuthClient, SharedRefreshOptions};
 use pa_core::auth::{
     CredentialSourceError, CredentialSourceStatus, ProviderCredentialSource, SourcedCredential,
+    StoredLoginCustody, StoredOAuthLogin,
 };
 use pa_types::sync::MutexExt;
 use sha2::{Digest, Sha256};
@@ -216,29 +217,20 @@ impl ProviderCredentialSource for SharedStoreSource {
         status
     }
 
+    fn adopt_stored_login(&self, login: &StoredOAuthLogin) -> StoredLoginCustody {
+        self.adopt(login)
+    }
+
     fn credential(&self) -> Result<SourcedCredential, CredentialSourceError> {
         let _flight = self.flight.lock_or_recover();
         let client = self.client();
         let path = self.config.store_path.as_path();
-        // The lookup is synchronous and may run on an async worker: the
-        // store's async API runs on a runtime of its own, on its own thread.
-        let resolved = std::thread::scope(|scope| {
-            scope
-                .spawn(|| {
-                    let runtime = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .map_err(|error| error.to_string())?;
-                    Ok(runtime.block_on(get_access_token(
-                        client,
-                        path,
-                        &AccessRequest::default(),
-                        &SharedRefreshOptions::default(),
-                    )))
-                })
-                .join()
-                .unwrap_or_else(|_| Err("the credential lookup panicked".to_string()))
-        });
+        let resolved = block_on_own_runtime(get_access_token(
+            client,
+            path,
+            &AccessRequest::default(),
+            &SharedRefreshOptions::default(),
+        ));
         match resolved {
             Ok(Ok(grant)) => {
                 self.record(Some(grant.source));
@@ -260,6 +252,28 @@ impl ProviderCredentialSource for SharedStoreSource {
             }
         }
     }
+}
+
+/// Run `future` to completion on a runtime of its own, on a thread of its
+/// own: the source's synchronous entry points may run on an async worker,
+/// where blocking on the caller's runtime would deadlock it.
+pub(crate) fn block_on_own_runtime<F>(future: F) -> Result<F::Output, String>
+where
+    F: std::future::Future + Send,
+    F::Output: Send,
+{
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|error| error.to_string())?;
+                Ok(runtime.block_on(future))
+            })
+            .join()
+            .unwrap_or_else(|_| Err("the store call panicked".to_string()))
+    })
 }
 
 #[cfg(test)]

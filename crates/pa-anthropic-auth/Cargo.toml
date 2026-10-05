@@ -19,6 +19,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 sha2 = "0.10"
 tokio.workspace = true
 tracing.workspace = true
+# The id of an imported login without an identity (`account-<8 hex>`, as
+# anthropic-napi names it).
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 pa-agent.workspace = true

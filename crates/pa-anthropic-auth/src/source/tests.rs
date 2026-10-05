@@ -401,3 +401,160 @@ fn a_login_joins_the_store_as_its_current_account() {
         Ok("sk-ant-oat01-new-login-access-000".to_string())
     );
 }
+
+const PROFILE: &str = r#"{"account":{"uuid":"acct-0001","email":"person@example.com"},"organization":{"uuid":"org-0001","name":"Org"}}"#;
+
+/// `auth.json` holding a well-formed Anthropic login (the native
+/// `/login anthropic` shape), its access token live for `access_in`.
+fn auth_json_native_login(provider: &str, access_in: Duration) -> AuthStorage {
+    let data = serde_json::json!({
+        provider: {
+            "type": "oauth", "access": "sk-ant-oat01-auth-json-native-access-000",
+            "refresh": "sk-ant-ort01-auth-json-native-refresh-000",
+            "expires": (Utc::now() + access_in).timestamp_millis()
+        }
+    });
+    AuthStorage::in_memory_without_env(
+        &AuthStorageData(data.as_object().cloned().unwrap_or_default()),
+        Arc::new(NoOAuth),
+    )
+}
+
+/// A source over a store in a fresh home (seeded with `accounts`), whose
+/// profile endpoint is `profile_url`.
+fn source_with_profile(
+    accounts: Vec<Account>,
+    token_url: &str,
+    profile_url: &str,
+) -> (tempfile::TempDir, Arc<SharedStoreSource>) {
+    let (home, seeded) = source_over(accounts, token_url);
+    let source = SharedStoreSource::new(SharedStoreConfig::isolated(
+        seeded.store_path().to_path_buf(),
+        token_url,
+        profile_url,
+    ));
+    (home, Arc::new(source))
+}
+
+/// The store's rows as `(id, refresh token)`, and its `current`.
+fn rows(source: &SharedStoreSource) -> (Vec<(String, String)>, Option<String>) {
+    let store = AccountStore::load(source.store_path()).expect("the store");
+    (
+        store
+            .accounts
+            .iter()
+            .map(|a| {
+                (
+                    a.id.clone(),
+                    a.oauth()
+                        .map(|t| t.refresh.expose().to_string())
+                        .unwrap_or_default(),
+                )
+            })
+            .collect(),
+        store.current.clone(),
+    )
+}
+
+#[test]
+fn an_auth_json_login_moves_into_an_empty_store() {
+    let provider = "anthropic-migrate-empty";
+    let (profile_url, profile_hits) = token_endpoint(200, PROFILE);
+    let (_home, source) = source_with_profile(Vec::new(), "http://127.0.0.1:9", &profile_url);
+    install_credential_source(provider, source.clone());
+    let mut registry =
+        ModelRegistry::in_memory(auth_json_native_login(provider, Duration::hours(2)));
+
+    assert_eq!(
+        registry.get_api_key_and_headers(&model(provider), None),
+        served("sk-ant-oat01-auth-json-native-access-000")
+    );
+    assert_eq!(profile_hits.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        rows(&source),
+        (
+            vec![(
+                "person@example.com".to_string(),
+                "sk-ant-ort01-auth-json-native-refresh-000".to_string()
+            )],
+            Some("person@example.com".to_string())
+        )
+    );
+    // auth.json no longer holds it: the store is the only custodian.
+    assert_eq!(registry.auth.get_all().get(provider), None);
+}
+
+#[test]
+fn the_store_s_own_login_of_the_same_account_wins_over_auth_json() {
+    let provider = "anthropic-migrate-kept";
+    let (profile_url, _profile_hits) = token_endpoint(200, PROFILE);
+    let mut own = row("own", Duration::hours(2));
+    if let Credential::Oauth(tokens) = &mut own.credential {
+        tokens.account = Some(anthropic::token::TokenAccount {
+            uuid: "acct-0001".to_string(),
+            email_address: Some("person@example.com".to_string()),
+        });
+        tokens.organization = Some(anthropic::token::TokenOrganization {
+            uuid: "org-0001".to_string(),
+        });
+    }
+    let (_home, source) = source_with_profile(vec![own], "http://127.0.0.1:9", &profile_url);
+    install_credential_source(provider, source.clone());
+    let mut registry =
+        ModelRegistry::in_memory(auth_json_native_login(provider, Duration::hours(2)));
+
+    assert_eq!(
+        registry.get_api_key_and_headers(&model(provider), None),
+        served("sk-ant-oat01-own-store-access-000")
+    );
+    assert_eq!(
+        rows(&source),
+        (
+            vec![(
+                "own".to_string(),
+                "sk-ant-ort01-own-store-refresh-000".to_string()
+            )],
+            None
+        )
+    );
+    assert_eq!(registry.auth.get_all().get(provider), None);
+}
+
+#[test]
+fn an_expired_auth_json_login_moves_in_without_an_identity_lookup() {
+    let provider = "anthropic-migrate-expired";
+    let (profile_url, profile_hits) = token_endpoint(200, PROFILE);
+    let (url, token_hits) = token_endpoint(200, ROTATED);
+    let (_home, source) = source_with_profile(Vec::new(), &url, &profile_url);
+    install_credential_source(provider, source.clone());
+    let mut registry =
+        ModelRegistry::in_memory(auth_json_native_login(provider, Duration::hours(-1)));
+
+    // The store refreshes it (once, claimed) like any of its own logins.
+    assert_eq!(
+        registry.get_api_key_and_headers(&model(provider), None),
+        served(ROTATED_ACCESS)
+    );
+    assert_eq!(profile_hits.load(Ordering::SeqCst), 0);
+    assert_eq!(token_hits.load(Ordering::SeqCst), 1);
+    let (stored, current) = rows(&source);
+    assert_eq!(stored.len(), 1);
+    assert!(stored[0].0.starts_with("account-"), "{stored:?}");
+    assert_eq!(current.as_deref(), Some(stored[0].0.as_str()));
+    assert_eq!(registry.auth.get_all().get(provider), None);
+}
+
+#[test]
+fn a_malformed_auth_json_login_stays_in_auth_json() {
+    let provider = "anthropic-migrate-malformed";
+    let (_home, source) = source_over(Vec::new(), "http://127.0.0.1:9");
+    install_credential_source(provider, source.clone());
+    let mut registry = ModelRegistry::in_memory(auth_json_login(provider));
+
+    assert_eq!(
+        registry.get_api_key_and_headers(&model(provider), None),
+        served("sk-ant-oat01-auth-json-access")
+    );
+    assert!(!source.store_path().exists());
+    assert!(registry.auth.get_all().get(provider).is_some());
+}
