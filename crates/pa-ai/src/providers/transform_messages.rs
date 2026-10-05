@@ -193,7 +193,13 @@ pub fn transform_messages_with_normalizer(
             existing.clear();
         };
 
-    for msg in transformed {
+    // Slots, so a late real result hoisted ahead of an interposed user
+    // message is taken out of its original position.
+    let mut slots: Vec<Option<Message>> = transformed.into_iter().map(Some).collect();
+    for index in 0..slots.len() {
+        let Some(msg) = slots[index].take() else {
+            continue;
+        };
         match &msg {
             Message::Assistant(assistant) => {
                 insert_synthetic_tool_results(
@@ -236,6 +242,29 @@ pub fn transform_messages_with_normalizer(
                 result.push(msg);
             }
             Message::User(_) => {
+                // Upstream #1102: a user/custom message persisted between a
+                // tool call and its late real result (a restart marker while
+                // the tool was aborted) must not cost the real result. Results
+                // for the pending calls that arrive before the next assistant
+                // turn are hoisted ahead of this message; only the calls still
+                // unanswered get a synthetic result.
+                if !pending_tool_calls.is_empty() {
+                    for slot in slots.iter_mut().skip(index + 1) {
+                        let late_id = match slot.as_ref() {
+                            Some(Message::Assistant(_)) => break,
+                            Some(Message::ToolResult(late)) => &late.tool_call_id,
+                            None | Some(Message::User(_)) => continue,
+                        };
+                        let answers_pending = !existing_tool_result_ids.contains(late_id)
+                            && pending_tool_calls
+                                .iter()
+                                .any(|tool_call| &tool_call.id == late_id);
+                        if answers_pending {
+                            existing_tool_result_ids.insert(late_id.clone());
+                            result.extend(slot.take());
+                        }
+                    }
+                }
                 insert_synthetic_tool_results(
                     &mut result,
                     &mut pending_tool_calls,
@@ -372,5 +401,106 @@ mod tests {
         let transformed =
             transform_messages_with_normalizer(&messages, &test_model(), &|_, _, _| None);
         assert_eq!(transformed.len(), 2);
+    }
+
+    fn tool_result(id: &str, text: &str, timestamp: u64) -> Message {
+        Message::ToolResult(ToolResultMessage {
+            tool_call_id: id.into(),
+            tool_name: "echo".into(),
+            content: vec![UserOrToolContent::Text(TextContent {
+                text: text.into(),
+                text_signature: None,
+                rest: Map::default(),
+            })],
+            details: None,
+            is_error: true,
+            timestamp,
+            rest: Map::default(),
+        })
+    }
+
+    // Upstream #1102: a user/custom message persisted between a tool call
+    // and its late real result (an update-restart marker while the tool was
+    // aborted) must not replace the real result with a synthetic one and
+    // then drop the real one as an orphan. The real result is hoisted ahead
+    // of the interposed message; only genuinely missing results are
+    // synthesized.
+    #[test]
+    fn late_real_tool_result_is_hoisted_before_an_interposed_user_message() {
+        let Message::Assistant(two_calls) = assistant_with_tool_call("call-1") else {
+            unreachable!()
+        };
+        let mut two_calls = two_calls;
+        let AssistantContent::ToolCall(first) = two_calls.content[0].clone() else {
+            unreachable!()
+        };
+        two_calls.content.push(AssistantContent::ToolCall(ToolCall {
+            id: "call-2".into(),
+            ..first
+        }));
+        let messages = vec![
+            user("hi"),
+            Message::Assistant(two_calls.clone()),
+            user("restart marker"),
+            tool_result("call-1", "Request was aborted", 7),
+            user("after"),
+        ];
+        let transformed =
+            transform_messages_with_normalizer(&messages, &test_model(), &|_, _, _| None);
+        let Message::ToolResult(synthetic) = &transformed[3] else {
+            panic!(
+                "expected the synthetic result for call-2, got {:?}",
+                transformed[3]
+            );
+        };
+        assert_eq!(
+            transformed,
+            vec![
+                user("hi"),
+                Message::Assistant(two_calls),
+                tool_result("call-1", "Request was aborted", 7),
+                Message::ToolResult(ToolResultMessage {
+                    tool_call_id: "call-2".into(),
+                    tool_name: "echo".into(),
+                    content: vec![UserOrToolContent::Text(TextContent {
+                        text: "No result provided".into(),
+                        text_signature: None,
+                        rest: Map::default(),
+                    })],
+                    details: None,
+                    is_error: true,
+                    timestamp: synthetic.timestamp,
+                    rest: Map::default(),
+                }),
+                user("restart marker"),
+                user("after"),
+            ]
+        );
+    }
+
+    // A late result past the next assistant turn is not hoisted: that turn
+    // already moved on, so the result stays an orphan.
+    #[test]
+    fn a_result_after_the_next_assistant_turn_is_not_hoisted() {
+        let messages = vec![
+            assistant_with_tool_call("call-1"),
+            user("marker"),
+            assistant_with_tool_call("call-2"),
+            tool_result("call-1", "late", 3),
+            tool_result("call-2", "ok", 4),
+        ];
+        let transformed =
+            transform_messages_with_normalizer(&messages, &test_model(), &|_, _, _| None);
+        let ids: Vec<&str> = transformed
+            .iter()
+            .filter_map(|message| match message {
+                Message::ToolResult(result) => Some(result.tool_call_id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ids, ["call-1", "call-2"]);
+        assert!(matches!(&transformed[1], Message::ToolResult(result)
+            if matches!(&result.content[0], UserOrToolContent::Text(text) if text.text == "No result provided")));
+        assert_eq!(transformed.len(), 5);
     }
 }

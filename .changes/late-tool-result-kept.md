@@ -1,0 +1,1 @@
+- A tool result that arrives after a message was recorded between the tool call and its result (for example a restart marker while the tool was being aborted) is now kept and sent to the model in its place, instead of being replaced by a "No result provided" placeholder and dropped.
