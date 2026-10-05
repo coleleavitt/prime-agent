@@ -197,7 +197,7 @@ pub(crate) fn run_cache(settings: &PluginSettings, args: &str) -> Result<String,
 }
 
 /// `{...(config[key] ?? {}), ...fields}`.
-fn merge_section<const N: usize>(
+pub(crate) fn merge_section<const N: usize>(
     config: &mut Map<String, Value>,
     key: &str,
     fields: [(&str, Value); N],

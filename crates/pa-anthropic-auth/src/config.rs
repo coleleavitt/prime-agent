@@ -7,8 +7,9 @@
 //!   the opencode plugin keeps its own copy under `~/.config/opencode/`);
 //! - the sticky routing state beside it (`anthropic-auth-routing-state.json`,
 //!   or `PI_ANTHROPIC_AUTH_ROUTING_STATE_FILE`), shared with pi;
-//! - read only, never written (the plugins' commands own it), and re-read
-//!   when the file changes, so an edit applies to the next request;
+//! - re-read when the file changes, so an edit (by a plugin, or by this
+//!   crate's commands through `pi/settings.rs`, the same file) applies to
+//!   the next request;
 //! - what is read: `routing.mode`, `quota.{enabled, checkIntervalMinutes,
 //!   refreshEveryNRequests, minimumRemaining, failClosedOnUnknownQuota}` and
 //!   `killswitch.{enabled, main, accounts}`, with the plugins' defaults

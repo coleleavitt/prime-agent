@@ -459,3 +459,47 @@ pub(crate) fn write_pi_settings(source: &SharedStoreSource, settings: &serde_jso
     )
     .expect("write the pi settings");
 }
+
+/// A top-level session's feature context over an Anthropic model.
+pub(crate) fn feature_context() -> Arc<pa_core::features::SessionFeatureContext> {
+    Arc::new(pa_core::features::SessionFeatureContext {
+        agent_dir: std::path::PathBuf::from("/nonexistent/agent"),
+        cwd: std::path::PathBuf::from("/nonexistent/cwd"),
+        session_id: "pi-commands".to_string(),
+        python_skill_import_names: Vec::new(),
+        model: serde_json::from_value(
+            serde_json::to_value(model_with_id(
+                "anthropic",
+                "http://127.0.0.1:9",
+                "claude-opus-4-8",
+            ))
+            .expect("a model"),
+        )
+        .expect("the agent's model"),
+        telemetry: None,
+        rlm_depth: 0,
+        session_artifact_dir: None,
+    })
+}
+
+/// Run the feature's slash command `name` with `args`; its text.
+pub(crate) fn run_command(feature: &crate::AnthropicAuthFeature, name: &str, args: &str) -> String {
+    use pa_core::features::SessionFeature;
+    let future = feature
+        .execute_slash_command(&feature_context(), name, args)
+        .expect("the feature's command");
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime")
+        .block_on(future)
+        .expect("the command runs")
+        .text
+}
+
+/// The plugins' account commands, quota summaries and cache keep-alive as
+/// they ran (`tests/fixtures/golden/pi_extras.json`).
+pub(crate) fn golden_extras() -> serde_json::Value {
+    serde_json::from_str(include_str!("../tests/fixtures/golden/pi_extras.json"))
+        .expect("the golden parses")
+}

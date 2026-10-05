@@ -120,63 +120,84 @@ impl AnthropicAuthFeature {
     }
 }
 
+/// The feature's slash commands: name, description, argument hint (`None`:
+/// takes no argument).
+const COMMANDS: [(&str, &str, Option<&str>); 5] = [
+    (
+        pi::commands::FAST_COMMAND,
+        pi::commands::FAST_DESCRIPTION,
+        Some(pi::commands::FAST_HINT),
+    ),
+    (
+        pi::commands::CACHE_COMMAND,
+        pi::commands::CACHE_DESCRIPTION,
+        Some(pi::commands::CACHE_HINT),
+    ),
+    (
+        pi::account_commands::ROUTING_COMMAND,
+        pi::account_commands::ROUTING_DESCRIPTION,
+        Some(pi::account_commands::ROUTING_HINT),
+    ),
+    (
+        pi::account_commands::KILLSWITCH_COMMAND,
+        pi::account_commands::KILLSWITCH_DESCRIPTION,
+        Some(pi::account_commands::KILLSWITCH_HINT),
+    ),
+    (
+        pi::account_commands::QUOTA_COMMAND,
+        pi::account_commands::QUOTA_DESCRIPTION,
+        None,
+    ),
+];
+
 impl SessionFeature for AnthropicAuthFeature {
     fn name(&self) -> &'static str {
         "anthropic-auth"
     }
 
-    /// The pi plugin's request-setting commands: `/claude-fast` and
-    /// `/claude-cache`.
+    /// The plugins' commands: `/claude-fast` and `/claude-cache` (request
+    /// settings), `/claude-routing`, `/claude-killswitch` and
+    /// `/claude-quota` (the store's logins).
     fn slash_commands(&self) -> Vec<BuiltinSlashCommand> {
-        [
-            (
-                pi::commands::FAST_COMMAND,
-                pi::commands::FAST_DESCRIPTION,
-                pi::commands::FAST_HINT,
-            ),
-            (
-                pi::commands::CACHE_COMMAND,
-                pi::commands::CACHE_DESCRIPTION,
-                pi::commands::CACHE_HINT,
-            ),
-        ]
-        .into_iter()
-        .map(|(name, description, hint)| BuiltinSlashCommand {
-            name,
-            description,
-            execution: SlashCommandExecution::Session,
-            argument_hint: Some(hint),
-            aliases: &[],
-            takes_argument: true,
-        })
-        .collect()
+        COMMANDS
+            .iter()
+            .map(|&(name, description, hint)| BuiltinSlashCommand {
+                name,
+                description,
+                execution: SlashCommandExecution::Session,
+                argument_hint: hint,
+                aliases: &[],
+                takes_argument: hint.is_some(),
+            })
+            .collect()
     }
 
     fn execute_slash_command(
         &self,
-        _context: &Arc<SessionFeatureContext>,
+        context: &Arc<SessionFeatureContext>,
         name: &str,
         args: &str,
     ) -> Option<FeatureFuture<Result<FeatureCommandOutcome, String>>> {
-        let run: fn(
-            &pi::settings::PluginSettings,
-            &str,
-        ) -> Result<String, pi::settings::SettingsError> = match name {
-            pi::commands::FAST_COMMAND => pi::commands::run_fast,
-            pi::commands::CACHE_COMMAND => pi::commands::run_cache,
-            _ => return None,
-        };
+        let name = COMMANDS
+            .iter()
+            .map(|(known, _, _)| *known)
+            .find(|known| *known == name)?;
+        // The sticky routing key: the top-level session this process serves.
+        let session = self
+            .source
+            .session()
+            .unwrap_or_else(|| context.session_id.clone());
         let (source, args) = (Arc::clone(&self.source), args.to_string());
         Some(Box::pin(async move {
-            // The settings file is written under the plugin's lock.
-            tokio::task::spawn_blocking(move || run(&source.pi.settings, &args))
+            // The settings file is written under the plugins' lock; the
+            // store and the routing state are read and written on disk.
+            tokio::task::spawn_blocking(move || source.run_command(name, &args, &session))
                 .await
                 .map_err(|error| error.to_string())?
                 .map(|text| FeatureCommandOutcome {
                     text,
                     completion: None,
                 })
-                .map_err(|error| error.to_string())
         }))
     }
 

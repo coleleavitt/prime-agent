@@ -268,7 +268,7 @@ pub(crate) fn lineage(account: &Account) -> Option<String> {
 
 /// A store row's recorded percentages as a snapshot (no resets, no scoped
 /// windows, no producer: the store keeps only the percentages).
-fn recorded_snapshot(recorded: &QuotaObservation) -> Option<QuotaSnapshot> {
+pub(crate) fn recorded_snapshot(recorded: &QuotaObservation) -> Option<QuotaSnapshot> {
     let checked_at = recorded.checked_at?.timestamp_millis();
     let window = |used: Option<f64>| {
         used.filter(|used| used.is_finite()).map(|used| {

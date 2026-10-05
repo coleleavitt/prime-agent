@@ -128,8 +128,9 @@ impl SharedStoreConfig {
             background: false,
             version_url: None,
             quota_reserve: None,
+            // The sidecar is the plugin's settings file there too.
+            config_path: Some(pi.settings_path.clone()),
             pi,
-            config_path: None,
             routing_state_path: None,
         }
     }

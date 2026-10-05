@@ -263,41 +263,6 @@ fn a_credits_429_moves_the_token_s_later_requests_to_the_standard_window() {
     assert_eq!(beta_of(&requests[1]), without);
 }
 
-fn feature_context() -> std::sync::Arc<pa_core::features::SessionFeatureContext> {
-    std::sync::Arc::new(pa_core::features::SessionFeatureContext {
-        agent_dir: std::path::PathBuf::from("/nonexistent/agent"),
-        cwd: std::path::PathBuf::from("/nonexistent/cwd"),
-        session_id: "pi-commands".to_string(),
-        python_skill_import_names: Vec::new(),
-        model: serde_json::from_value(
-            serde_json::to_value(model_with_id(
-                "anthropic",
-                "http://127.0.0.1:9",
-                "claude-opus-4-8",
-            ))
-            .expect("a model"),
-        )
-        .expect("the agent's model"),
-        telemetry: None,
-        rlm_depth: 0,
-        session_artifact_dir: None,
-    })
-}
-
-fn run_command(feature: &crate::AnthropicAuthFeature, name: &str, args: &str) -> String {
-    use pa_core::features::SessionFeature;
-    let future = feature
-        .execute_slash_command(&feature_context(), name, args)
-        .expect("the feature's command");
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("a runtime")
-        .block_on(future)
-        .expect("the command runs")
-        .text
-}
-
 #[test]
 fn claude_fast_turns_fast_mode_on_and_off_for_the_store_s_requests() {
     use pa_core::features::SessionFeature;
@@ -314,7 +279,16 @@ fn claude_fast_turns_fast_mode_on_and_off_for_the_store_s_requests() {
         .iter()
         .map(|command| command.name)
         .collect();
-    assert_eq!(names, vec!["claude-fast", "claude-cache"]);
+    assert_eq!(
+        names,
+        vec![
+            "claude-fast",
+            "claude-cache",
+            "claude-routing",
+            "claude-killswitch",
+            "claude-quota"
+        ]
+    );
     let (base, requests) = messages_endpoint(vec![
         (200, Vec::new(), OK_STREAM),
         (200, Vec::new(), OK_STREAM),

@@ -34,7 +34,8 @@ auth.json resolves the `anthropic` provider exactly as before.
     it), the store's current token re-read under its lock if it differs. Otherwise the 401 is reported.
 - The plugins' sidecar configuration (`config.rs`), read as the pi plugin reads it, so a setting made for pi applies
   here too: `PI_ANTHROPIC_AUTH_FILE`, else `$PI_AGENT_DIR/anthropic-auth.json`, else `~/.pi/agent/anthropic-auth.json`
-  (the opencode plugin keeps its own copy, `~/.config/opencode/anthropic-auth.json`). Read only, re-read when the
+  (the opencode plugin keeps its own copy, `~/.config/opencode/anthropic-auth.json`); the pi plugin's settings
+  file (`pi/settings.rs`) is the same file, resolved the same way. Re-read when the
   file's size or mtime changes; a missing, unreadable or non-object file is the defaults, a value of the wrong type
   its default. Read: `quota.enabled` (only `false` disables), `quota.checkIntervalMinutes` (5, floored at 1),
   `quota.refreshEveryNRequests` (off), `quota.minimumRemaining.{five_hour|5h, seven_day|1w}` (0, remaining percent),
@@ -204,17 +205,30 @@ auth.json resolves the `anthropic` provider exactly as before.
   the tokens here instead of auth.json: the account is identified at the profile endpoint (best effort), merged into
   the row holding the same login (else a new row named after the email), made `current`, and, when Claude Code is
   logged into the same account (whose login this one revokes), published to Claude Code.
-- `AnthropicAuthFeature`: a `SessionFeature` that reports adoption once per process and serves `/claude-fast` and
-  `/claude-cache`.
+- `AnthropicAuthFeature`: a `SessionFeature` that reports adoption once per process and serves the plugins'
+  commands (below).
+- Account commands (`pi/account_commands.rs`; session slash commands, the plugins' arguments and texts, golden:
+  `tests/fixtures/golden/pi_extras.json`, recorded by `generate_extras.ts` from the plugins' own handlers):
+  - `/claude-routing [main-first|fallback-first|sticky-balanced|mode <m>|reset]` (pi's): the mode written to the
+    sidecar's `routing.mode` (the routing reads it on the next request); `reset` forgets this session's sticky
+    assignment (the top-level session's key, hashed, in the routing state), so its next request is assigned again.
+  - `/claude-killswitch [on|off|set <login>:<5h>,<1w>[,<scoped>] ...]` (the opencode plugin's; pi has none): the
+    killswitch section written as opencode writes it; its table lists `main` and the store's logins by id (the
+    thresholds the routing applies per store id; `set all:` sets `main` and every login).
+  - `/claude-quota` (pi's text, `buildClaudeQuotaSummary`): every OAuth login of the store (the one the store
+    serves first as `main`, the others `fallback`, disabled ones marked), named by label else id, with this
+    process's readings (headers and polls) else what the store recorded; the last token refresh and the row's
+    current error. Not shown: the plan tier (the store keeps no profile).
+  - Every write goes through the plugins' setters' path (`PluginSettings::update`: the `.config-write.lock`, the
+    normalized fields, key order, atomic `0600`, `JSON.stringify(config, null, 2)`).
 
 ## Non-goals (here)
 
 - Account management beyond logout (enable, disable, reorder, pin, remote revoke): the plugins' account commands
   own it; prime-agent has no account command surface.
-- Writing the sidecar or the plugins' commands (`/claude-routing`, `/claude-killswitch`, `/claude-quota`; a
-  sticky session's `reset`): prime-agent reads the settings the plugins write. The sidecar's other sections
-  (`fallbackOn`, `refresh`, relay, prime, dump, logging) and its fallback `accounts` (API-key routes included) are
-  not read: the store's logins are the pool.
+- The plugins' other commands (`/claude-account`, `/claude-dump`, `/claude-logging`, `/claude-prime`). The
+  sidecar's other sections (`fallbackOn`, `refresh`, relay, prime, dump, logging) and its fallback `accounts`
+  (API-key routes included) are not read: the store's logins are the pool.
 - The rest of pi's request (the cache keep-alive, content filtering). A `--api-key` `sk-ant-oat` token, or any
   token the store did not serve, keeps pa-ai's native Claude Code mode.
 
@@ -232,18 +246,20 @@ auth.json resolves the `anthropic` provider exactly as before.
   bytes, `OutgoingRequest::body`; `response_event` rewrites the streamed events).
 - `pa_core::features::SessionFeature::on_session_start` (the sticky routing key).
 - `pa_core::features::SessionFeature::on_agent_end` (the adoption event) and `slash_commands` /
-  `execute_slash_command` (`/claude-fast`, `/claude-cache`).
+  `execute_slash_command` (`/claude-fast`, `/claude-cache`, `/claude-routing`, `/claude-killswitch`,
+  `/claude-quota`).
 
 ## Files
 
 Reads the plugins' sidecar configuration (`~/.pi/agent/anthropic-auth.json`, `PI_AGENT_DIR` / `PI_ANTHROPIC_AUTH_FILE`;
-never written: the plugins' commands own it; missing, unreadable or malformed: the plugins' defaults; re-read when it
-changes) and reads and writes the sticky routing state beside it (`anthropic-auth-routing-state.json` and its
+written only by the commands, as the plugins' setters write it; missing, unreadable or malformed: the plugins'
+defaults; re-read when it changes) and reads and writes the sticky routing state beside it (`anthropic-auth-routing-state.json` and its
 `.flock`, the plugins' format through the SDK's router: hashed session ids, written atomically `0600`, only in
 `sticky-balanced` mode). Reads and writes `~/.anthropic-accounts/accounts.json` (and its lock) only through the SDK, under the SDK's rules,
 and `~/.anthropic-accounts/device.json` (the installation's device id, the plugins' format; created when missing,
 never overwritten); reads the pi plugin's settings file (`~/.pi/agent/anthropic-auth.json`, above) and writes it
-for `/claude-fast` and `/claude-cache` (with its `.config-write.lock`);
+for `/claude-fast`, `/claude-cache`, `/claude-routing` and `/claude-killswitch` (with its `.config-write.lock`);
+`/claude-routing reset` removes one assignment from the sticky routing state;
 through the Claude Code link, reads Claude Code's `.claude.json` / `.credentials.json` (or the macOS Keychain) and
 publishes a rotation of the linked account to it, as the plugins do. It owns no file under `~/.prime/agent/`.
 

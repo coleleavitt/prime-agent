@@ -1,0 +1,482 @@
+{
+  "version": "2.1.280",
+  "commands": [
+    {
+      "name": "routing-from-no-file",
+      "initial": null,
+      "steps": [
+        {
+          "command": "claude-routing",
+          "args": "",
+          "text": "## Claude Routing Status\n\n- Mode: `main-first`\n- Behavior: Try the main account first. Use fallback accounts only when quota policy or fallback errors require it.\n\nUsage: `/claude-routing`, `/claude-routing main-first`, `/claude-routing fallback-first`, `/claude-routing sticky-balanced`, or `/claude-routing reset`.",
+          "file": null
+        },
+        {
+          "command": "claude-routing",
+          "args": "sticky-balanced",
+          "text": "## Claude Routing Updated\n\nMode updated to `sticky-balanced`.\n\n- Mode: `sticky-balanced`\n- Behavior: Assign each session to a quota-weighted OAuth account, keep it sticky across transient failures, and migrate only for confirmed long-lived exhaustion or permanent account failure.\n\nUsage: `/claude-routing`, `/claude-routing main-first`, `/claude-routing fallback-first`, `/claude-routing sticky-balanced`, or `/claude-routing reset`.",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"routing\": {\n    \"mode\": \"sticky-balanced\"\n  },\n  \"accounts\": []\n}\n"
+        },
+        {
+          "command": "claude-routing",
+          "args": "mode fallback-first",
+          "text": "## Claude Routing Updated\n\nMode updated to `fallback-first`.\n\n- Mode: `fallback-first`\n- Behavior: Try usable fallback accounts before the main account. If no fallback succeeds, try the main account.\n\nUsage: `/claude-routing`, `/claude-routing main-first`, `/claude-routing fallback-first`, `/claude-routing sticky-balanced`, or `/claude-routing reset`.",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"routing\": {\n    \"mode\": \"fallback-first\"\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        },
+        {
+          "command": "claude-routing",
+          "args": " MAIN-FIRST ",
+          "text": "## Claude Routing Updated\n\nMode updated to `main-first`.\n\n- Mode: `main-first`\n- Behavior: Try the main account first. Use fallback accounts only when quota policy or fallback errors require it.\n\nUsage: `/claude-routing`, `/claude-routing main-first`, `/claude-routing fallback-first`, `/claude-routing sticky-balanced`, or `/claude-routing reset`.",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"routing\": {\n    \"mode\": \"main-first\"\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        },
+        {
+          "command": "claude-routing",
+          "args": "reset",
+          "text": "## Claude Routing Assignment Reset\n\nThe current session will be assigned again on its next request.\n\n- Mode: `main-first`\n- Behavior: Try the main account first. Use fallback accounts only when quota policy or fallback errors require it.\n\nUsage: `/claude-routing`, `/claude-routing main-first`, `/claude-routing fallback-first`, `/claude-routing sticky-balanced`, or `/claude-routing reset`.",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"routing\": {\n    \"mode\": \"main-first\"\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        },
+        {
+          "command": "claude-routing",
+          "args": "mode bogus",
+          "text": "## Claude Routing Usage\n\nUsage: `/claude-routing`, `/claude-routing main-first`, `/claude-routing fallback-first`, `/claude-routing sticky-balanced`, or `/claude-routing reset`.\n\n- Mode: `main-first`\n- Behavior: Try the main account first. Use fallback accounts only when quota policy or fallback errors require it.\n\nUsage: `/claude-routing`, `/claude-routing main-first`, `/claude-routing fallback-first`, `/claude-routing sticky-balanced`, or `/claude-routing reset`.",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"routing\": {\n    \"mode\": \"main-first\"\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        },
+        {
+          "command": "claude-routing",
+          "args": "reset now",
+          "text": "## Claude Routing Usage\n\nUsage: `/claude-routing`, `/claude-routing main-first`, `/claude-routing fallback-first`, `/claude-routing sticky-balanced`, or `/claude-routing reset`.\n\n- Mode: `main-first`\n- Behavior: Try the main account first. Use fallback accounts only when quota policy or fallback errors require it.\n\nUsage: `/claude-routing`, `/claude-routing main-first`, `/claude-routing fallback-first`, `/claude-routing sticky-balanced`, or `/claude-routing reset`.",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"routing\": {\n    \"mode\": \"main-first\"\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        }
+      ]
+    },
+    {
+      "name": "routing-over-an-existing-file",
+      "initial": "{\n  \"quota\": {\n    \"enabled\": true,\n    \"extra\": 1\n  },\n  \"routing\": {\n    \"mode\": \"sticky\",\n    \"note\": \"kept\"\n  },\n  \"accounts\": [],\n  \"custom\": true\n}\n",
+      "steps": [
+        {
+          "command": "claude-routing",
+          "args": "",
+          "text": "## Claude Routing Status\n\n- Mode: `main-first`\n- Behavior: Try the main account first. Use fallback accounts only when quota policy or fallback errors require it.\n\nUsage: `/claude-routing`, `/claude-routing main-first`, `/claude-routing fallback-first`, `/claude-routing sticky-balanced`, or `/claude-routing reset`.",
+          "file": "{\n  \"quota\": {\n    \"enabled\": true,\n    \"extra\": 1\n  },\n  \"routing\": {\n    \"mode\": \"sticky\",\n    \"note\": \"kept\"\n  },\n  \"accounts\": [],\n  \"custom\": true\n}\n"
+        },
+        {
+          "command": "claude-routing",
+          "args": "sticky-balanced",
+          "text": "## Claude Routing Updated\n\nMode updated to `sticky-balanced`.\n\n- Mode: `sticky-balanced`\n- Behavior: Assign each session to a quota-weighted OAuth account, keep it sticky across transient failures, and migrate only for confirmed long-lived exhaustion or permanent account failure.\n\nUsage: `/claude-routing`, `/claude-routing main-first`, `/claude-routing fallback-first`, `/claude-routing sticky-balanced`, or `/claude-routing reset`.",
+          "file": "{\n  \"quota\": {\n    \"enabled\": true\n  },\n  \"routing\": {\n    \"mode\": \"sticky-balanced\",\n    \"note\": \"kept\"\n  },\n  \"accounts\": [],\n  \"custom\": true,\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"refresh\": {}\n}\n"
+        }
+      ]
+    },
+    {
+      "name": "killswitch-from-no-file",
+      "initial": null,
+      "steps": [
+        {
+          "command": "claude-killswitch",
+          "args": "",
+          "text": "## Killswitch\n\nStatus: **OFF**\n\n## Killswitch Commands\n\n```\n/claude-killswitch              — show status\n/claude-killswitch on           — enable with current or default thresholds\n/claude-killswitch off          — disable\n/claude-killswitch set all:5,10 — set all accounts to 5h≥5%, 1w≥10%\n/claude-killswitch set main:3,8,0 — set 5h≥3%, 1w≥8%, scoped≤0%\n/claude-killswitch set main:3,8 work-alt:5,10 — per-account\n```",
+          "file": null
+        },
+        {
+          "command": "claude-killswitch",
+          "args": "on",
+          "text": "## Killswitch Enabled\n\n## Killswitch\n\nStatus: **ON**\n\n| Account | 5h threshold | 1w threshold | Scoped |\n| ------- | ------------ | ------------ | ------ |\n| main | ≥ 5% | ≥ 10% | ≤ 0% |\n| acct-a | ≥ 5% | ≥ 10% | ≤ 0% |\n| acct-b | ≥ 5% | ≥ 10% | ≤ 0% |",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"killswitch\": {\n    \"enabled\": true,\n    \"main\": {\n      \"five_hour\": 5,\n      \"seven_day\": 10\n    }\n  },\n  \"accounts\": []\n}\n"
+        },
+        {
+          "command": "claude-killswitch",
+          "args": "set main:3,8,0 acct-b:5,10",
+          "text": "## Killswitch Updated\n\n## Killswitch\n\nStatus: **ON**\n\n| Account | 5h threshold | 1w threshold | Scoped |\n| ------- | ------------ | ------------ | ------ |\n| main | ≥ 3% | ≥ 8% | ≤ 0% |\n| acct-a | ≥ 3% | ≥ 8% | ≤ 0% |\n| acct-b | ≥ 5% | ≥ 10% | ≤ 0% |",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"killswitch\": {\n    \"enabled\": true,\n    \"main\": {\n      \"five_hour\": 3,\n      \"seven_day\": 8,\n      \"scoped\": 0\n    },\n    \"accounts\": {\n      \"acct-b\": {\n        \"five_hour\": 5,\n        \"seven_day\": 10\n      }\n    }\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        },
+        {
+          "command": "claude-killswitch",
+          "args": "set all:7,12",
+          "text": "## Killswitch Updated\n\n## Killswitch\n\nStatus: **ON**\n\n| Account | 5h threshold | 1w threshold | Scoped |\n| ------- | ------------ | ------------ | ------ |\n| main | ≥ 7% | ≥ 12% | ≤ 0% |\n| acct-a | ≥ 7% | ≥ 12% | ≤ 0% |\n| acct-b | ≥ 7% | ≥ 12% | ≤ 0% |",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"killswitch\": {\n    \"enabled\": true,\n    \"main\": {\n      \"five_hour\": 7,\n      \"seven_day\": 12\n    },\n    \"accounts\": {\n      \"acct-b\": {\n        \"five_hour\": 7,\n        \"seven_day\": 12\n      },\n      \"acct-a\": {\n        \"five_hour\": 7,\n        \"seven_day\": 12\n      }\n    }\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        },
+        {
+          "command": "claude-killswitch",
+          "args": "off",
+          "text": "## Killswitch Disabled",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"killswitch\": {\n    \"enabled\": false,\n    \"main\": {\n      \"five_hour\": 7,\n      \"seven_day\": 12\n    },\n    \"accounts\": {\n      \"acct-b\": {\n        \"five_hour\": 7,\n        \"seven_day\": 12\n      },\n      \"acct-a\": {\n        \"five_hour\": 7,\n        \"seven_day\": 12\n      }\n    }\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        },
+        {
+          "command": "claude-killswitch",
+          "args": "",
+          "text": "## Killswitch\n\nStatus: **OFF**\n\n## Killswitch Commands\n\n```\n/claude-killswitch              — show status\n/claude-killswitch on           — enable with current or default thresholds\n/claude-killswitch off          — disable\n/claude-killswitch set all:5,10 — set all accounts to 5h≥5%, 1w≥10%\n/claude-killswitch set main:3,8,0 — set 5h≥3%, 1w≥8%, scoped≤0%\n/claude-killswitch set main:3,8 work-alt:5,10 — per-account\n```",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"killswitch\": {\n    \"enabled\": false,\n    \"main\": {\n      \"five_hour\": 7,\n      \"seven_day\": 12\n    },\n    \"accounts\": {\n      \"acct-b\": {\n        \"five_hour\": 7,\n        \"seven_day\": 12\n      },\n      \"acct-a\": {\n        \"five_hour\": 7,\n        \"seven_day\": 12\n      }\n    }\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        },
+        {
+          "command": "claude-killswitch",
+          "args": "set nope",
+          "text": "## Killswitch\n\nStatus: **OFF**\n\n## Killswitch Commands\n\n```\n/claude-killswitch              — show status\n/claude-killswitch on           — enable with current or default thresholds\n/claude-killswitch off          — disable\n/claude-killswitch set all:5,10 — set all accounts to 5h≥5%, 1w≥10%\n/claude-killswitch set main:3,8,0 — set 5h≥3%, 1w≥8%, scoped≤0%\n/claude-killswitch set main:3,8 work-alt:5,10 — per-account\n```",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"killswitch\": {\n    \"enabled\": false,\n    \"main\": {\n      \"five_hour\": 7,\n      \"seven_day\": 12\n    },\n    \"accounts\": {\n      \"acct-b\": {\n        \"five_hour\": 7,\n        \"seven_day\": 12\n      },\n      \"acct-a\": {\n        \"five_hour\": 7,\n        \"seven_day\": 12\n      }\n    }\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        },
+        {
+          "command": "claude-killswitch",
+          "args": "on",
+          "text": "## Killswitch Enabled\n\n## Killswitch\n\nStatus: **ON**\n\n| Account | 5h threshold | 1w threshold | Scoped |\n| ------- | ------------ | ------------ | ------ |\n| main | ≥ 7% | ≥ 12% | ≤ 0% |\n| acct-a | ≥ 7% | ≥ 12% | ≤ 0% |\n| acct-b | ≥ 7% | ≥ 12% | ≤ 0% |",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"killswitch\": {\n    \"enabled\": true,\n    \"main\": {\n      \"five_hour\": 7,\n      \"seven_day\": 12\n    },\n    \"accounts\": {\n      \"acct-b\": {\n        \"five_hour\": 7,\n        \"seven_day\": 12\n      },\n      \"acct-a\": {\n        \"five_hour\": 7,\n        \"seven_day\": 12\n      }\n    }\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        }
+      ]
+    },
+    {
+      "name": "killswitch-over-an-existing-file",
+      "initial": "{\n  \"killswitch\": {\n    \"accounts\": {\n      \"acct-a\": {\n        \"5h\": 2,\n        \"1w\": 4\n      }\n    },\n    \"enabled\": false\n  },\n  \"accounts\": []\n}\n",
+      "steps": [
+        {
+          "command": "claude-killswitch",
+          "args": "on",
+          "text": "## Killswitch Enabled\n\n## Killswitch\n\nStatus: **ON**\n\n| Account | 5h threshold | 1w threshold | Scoped |\n| ------- | ------------ | ------------ | ------ |\n| main | ≥ 5% | ≥ 10% | ≤ 0% |\n| acct-a | ≥ 2% | ≥ 4% | ≤ 0% |\n| acct-b | ≥ 5% | ≥ 10% | ≤ 0% |",
+          "file": "{\n  \"killswitch\": {\n    \"accounts\": {\n      \"acct-a\": {\n        \"5h\": 2,\n        \"1w\": 4\n      }\n    },\n    \"enabled\": true,\n    \"main\": {\n      \"five_hour\": 5,\n      \"seven_day\": 10\n    }\n  },\n  \"accounts\": [],\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        },
+        {
+          "command": "claude-killswitch",
+          "args": "set acct-a:1,2,3",
+          "text": "## Killswitch Updated\n\n## Killswitch\n\nStatus: **ON**\n\n| Account | 5h threshold | 1w threshold | Scoped |\n| ------- | ------------ | ------------ | ------ |\n| main | ≥ 5% | ≥ 10% | ≤ 0% |\n| acct-a | ≥ 1% | ≥ 2% | ≤ 3% |\n| acct-b | ≥ 5% | ≥ 10% | ≤ 0% |",
+          "file": "{\n  \"killswitch\": {\n    \"accounts\": {\n      \"acct-a\": {\n        \"five_hour\": 1,\n        \"seven_day\": 2,\n        \"scoped\": 3\n      }\n    },\n    \"enabled\": true,\n    \"main\": {\n      \"five_hour\": 5,\n      \"seven_day\": 10\n    }\n  },\n  \"accounts\": [],\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        }
+      ]
+    },
+    {
+      "name": "cachekeep-from-no-file",
+      "initial": null,
+      "steps": [
+        {
+          "command": "claude-cachekeep",
+          "args": "",
+          "text": "## Claude Cache Keep Status\n\nCache keep: disabled\nSchedule: not configured\nMode requirement: `/claude-cache mode hybrid` must be active.\nHybrid active: no\nTracked sessions: 0",
+          "file": null
+        },
+        {
+          "command": "claude-cachekeep",
+          "args": "always",
+          "text": "## Claude Cache Keep Enabled\n\nCache keep: enabled\nSchedule: always (while this process is running)\nMode requirement: `/claude-cache mode hybrid` must be active.\nHybrid active: no\nTracked sessions: 0",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"cacheKeep\": {\n    \"enabled\": true,\n    \"always\": true\n  },\n  \"accounts\": []\n}\n"
+        },
+        {
+          "command": "claude-cachekeep",
+          "args": "9-17",
+          "text": "## Claude Cache Keep Enabled\n\nCache keep: enabled\nSchedule: 09-17\nMode requirement: `/claude-cache mode hybrid` must be active.\nHybrid active: no\nTracked sessions: 0",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"cacheKeep\": {\n    \"enabled\": true,\n    \"always\": false,\n    \"startHour\": 9,\n    \"endHour\": 17\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        },
+        {
+          "command": "claude-cachekeep",
+          "args": "22-6",
+          "text": "## Claude Cache Keep Enabled\n\nCache keep: enabled\nSchedule: 22-06\nMode requirement: `/claude-cache mode hybrid` must be active.\nHybrid active: no\nTracked sessions: 0",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"cacheKeep\": {\n    \"enabled\": true,\n    \"always\": false,\n    \"startHour\": 22,\n    \"endHour\": 6\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        },
+        {
+          "command": "claude-cachekeep",
+          "args": "subagents on",
+          "text": "## Claude Cache Keep Status\n\nCache keep: enabled\nSchedule: 22-06\nMode requirement: `/claude-cache mode hybrid` must be active.\nHybrid active: no\nTracked sessions: 0\n\nSubagent tracking: enabled",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"cacheKeep\": {\n    \"enabled\": true,\n    \"always\": false,\n    \"startHour\": 22,\n    \"endHour\": 6,\n    \"subagents\": true\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        },
+        {
+          "command": "claude-cachekeep",
+          "args": "off",
+          "text": "## Claude Cache Keep Disabled\n\nCache keep: disabled\nSchedule: 22-06\nMode requirement: `/claude-cache mode hybrid` must be active.\nHybrid active: no\nTracked sessions: 0",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"cacheKeep\": {\n    \"enabled\": false,\n    \"always\": false,\n    \"startHour\": 22,\n    \"endHour\": 6,\n    \"subagents\": true\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        },
+        {
+          "command": "claude-cachekeep",
+          "args": "7-7",
+          "text": "## Claude Cache Keep Usage\n\nUsage: `/claude-cachekeep`, `/claude-cachekeep always`, `/claude-cachekeep off`, or `/claude-cachekeep HH-HH`.\n\nCache keep: disabled\nSchedule: 22-06\nMode requirement: `/claude-cache mode hybrid` must be active.\nHybrid active: no\nTracked sessions: 0",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"cacheKeep\": {\n    \"enabled\": false,\n    \"always\": false,\n    \"startHour\": 22,\n    \"endHour\": 6,\n    \"subagents\": true\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        },
+        {
+          "command": "claude-cachekeep",
+          "args": "sometimes",
+          "text": "## Claude Cache Keep Usage\n\nUsage: `/claude-cachekeep`, `/claude-cachekeep always`, `/claude-cachekeep off`, or `/claude-cachekeep HH-HH`.\n\nCache keep: disabled\nSchedule: 22-06\nMode requirement: `/claude-cache mode hybrid` must be active.\nHybrid active: no\nTracked sessions: 0",
+          "file": "{\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"cacheKeep\": {\n    \"enabled\": false,\n    \"always\": false,\n    \"startHour\": 22,\n    \"endHour\": 6,\n    \"subagents\": true\n  },\n  \"accounts\": [],\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        }
+      ]
+    },
+    {
+      "name": "cachekeep-with-hybrid-cache-and-tracked-sessions",
+      "initial": "{\n  \"claudeCache\": {\n    \"enabled\": true,\n    \"mode\": \"hybrid\"\n  },\n  \"cacheKeep\": {\n    \"enabled\": true,\n    \"startHour\": 1,\n    \"endHour\": 2,\n    \"note\": \"kept\"\n  },\n  \"accounts\": []\n}\n",
+      "steps": [
+        {
+          "command": "claude-cachekeep",
+          "args": "",
+          "registry": true,
+          "text": "## Claude Cache Keep Status\n\nCache keep: enabled\nSchedule: 01-02\nMode requirement: `/claude-cache mode hybrid` must be active.\nHybrid active: yes\nTracked sessions: 2\nSessions:\n- ses-other-a\n- ses-other-b\nNext prewarm: 5/18/2026, 10:55:00 AM",
+          "file": "{\n  \"claudeCache\": {\n    \"enabled\": true,\n    \"mode\": \"hybrid\"\n  },\n  \"cacheKeep\": {\n    \"enabled\": true,\n    \"startHour\": 1,\n    \"endHour\": 2,\n    \"note\": \"kept\"\n  },\n  \"accounts\": []\n}\n"
+        },
+        {
+          "command": "claude-cachekeep",
+          "args": "always",
+          "registry": true,
+          "text": "## Claude Cache Keep Enabled\n\nCache keep: enabled\nSchedule: always (while this process is running)\nMode requirement: `/claude-cache mode hybrid` must be active.\nHybrid active: yes\nTracked sessions: 2\nSessions:\n- ses-other-a\n- ses-other-b\nNext prewarm: 5/18/2026, 10:55:00 AM",
+          "file": "{\n  \"claudeCache\": {\n    \"enabled\": true,\n    \"mode\": \"hybrid\"\n  },\n  \"cacheKeep\": {\n    \"enabled\": true,\n    \"note\": \"kept\",\n    \"always\": true\n  },\n  \"accounts\": [],\n  \"version\": 1,\n  \"main\": {\n    \"type\": \"opencode\",\n    \"provider\": \"anthropic\"\n  },\n  \"refresh\": {},\n  \"quota\": {}\n}\n"
+        }
+      ]
+    }
+  ],
+  "quota": [
+    {
+      "name": "no-accounts",
+      "accounts": [],
+      "now": 1779098400000,
+      "text": "## Claude Quotas\n\nNo Claude OAuth accounts found yet."
+    },
+    {
+      "name": "one-login-headers-only",
+      "accounts": [
+        {
+          "name": "work",
+          "role": "main",
+          "enabled": true,
+          "quota": {
+            "five_hour": {
+              "usedPercent": 48,
+              "remainingPercent": 52,
+              "resetsAt": "2026-05-18T12:01:01.000Z",
+              "checkedAt": 1779098370000
+            },
+            "seven_day": {
+              "usedPercent": 55.25,
+              "remainingPercent": 44.75,
+              "resetsAt": "2026-05-21T10:00:00.000Z",
+              "checkedAt": 1779093000000
+            }
+          }
+        }
+      ],
+      "now": 1779098400000,
+      "text": "## Claude Quotas\n\n### work (main)\n  - 5h: 52% remaining (48% used, resets in 2h 2m, checked just now)\n  - 1w: 44.8% remaining (55.3% used, resets in 72h, checked 1h 30m ago)"
+    },
+    {
+      "name": "polled-logins",
+      "accounts": [
+        {
+          "name": "main-login",
+          "role": "main",
+          "enabled": true,
+          "tierLabel": "Max 20x",
+          "lastRefreshedAt": 1779094740000,
+          "quota": {
+            "five_hour": {
+              "usedPercent": 100,
+              "remainingPercent": 0,
+              "resetsAt": "2026-05-18T10:00:59.000Z",
+              "checkedAt": 1779098160000
+            },
+            "seven_day": {
+              "usedPercent": 33.33,
+              "remainingPercent": 66.67,
+              "resetsAt": "2026-05-24T10:45:00.000Z",
+              "checkedAt": 1779098160000
+            },
+            "scoped": [
+              {
+                "id": "claude-weekly-scoped-fable",
+                "title": "Fable only",
+                "modelId": "claude-fable-5",
+                "modelName": "Fable",
+                "usedPercent": 12.06,
+                "remainingPercent": 87.94,
+                "resetsAt": "2026-05-18T10:30:00.000Z",
+                "checkedAt": 1779091200000
+              }
+            ],
+            "extraUsage": {
+              "used": {
+                "amountMinor": 123456,
+                "currency": "USD",
+                "exponent": 2
+              },
+              "limit": {
+                "amountMinor": 500000,
+                "currency": "USD",
+                "exponent": 2
+              },
+              "exhausted": false
+            },
+            "bindingWindow": "five_hour",
+            "fallbackAdvised": true
+          }
+        },
+        {
+          "name": "spare",
+          "role": "fallback",
+          "enabled": false,
+          "error": "refresh token revoked",
+          "quota": {
+            "seven_day": {
+              "usedPercent": 0,
+              "remainingPercent": 100,
+              "resetsAt": "2026-05-18T09:59:55.000Z",
+              "checkedAt": 1779098400000
+            },
+            "scoped": [
+              {
+                "id": "claude-weekly-scoped-opus",
+                "title": "Opus only",
+                "modelName": "Opus",
+                "usedPercent": 100,
+                "remainingPercent": 0,
+                "checkedAt": 1779098100000
+              }
+            ],
+            "extraUsage": {
+              "used": {
+                "amountMinor": 9999,
+                "currency": "EUR",
+                "exponent": 2
+              },
+              "limit": {
+                "amountMinor": 9999,
+                "currency": "EUR",
+                "exponent": 2
+              },
+              "exhausted": true
+            },
+            "bindingWindow": "claude-weekly-scoped-opus"
+          }
+        },
+        {
+          "name": "credits",
+          "role": "fallback",
+          "enabled": true,
+          "quota": {
+            "extraUsage": {
+              "used": {
+                "amountMinor": 150000,
+                "currency": "JPY",
+                "exponent": 0
+              },
+              "limit": {
+                "amountMinor": 25,
+                "currency": "GBP",
+                "exponent": 2
+              },
+              "exhausted": false
+            }
+          }
+        },
+        {
+          "name": "odd-money",
+          "role": "fallback",
+          "quota": {
+            "extraUsage": {
+              "used": {
+                "amountMinor": 1,
+                "currency": "XQZ",
+                "exponent": 2
+              },
+              "limit": {
+                "amountMinor": 1234567,
+                "currency": "NOTACODE",
+                "exponent": 2
+              },
+              "exhausted": false
+            }
+          }
+        },
+        {
+          "name": "unknown",
+          "role": "fallback"
+        }
+      ],
+      "now": 1779098400000,
+      "text": "## Claude Quotas\n\n### main-login (main)\n  - Tier: Max 20x\n  - Last token refresh: 1h 1m ago\n  - 5h: 0% remaining (100% used, resets in 1m, checked 4m ago) •\n  - 1w: 66.7% remaining (33.3% used, resets in 144h 45m, checked 4m ago)\n  - Fable only: 87.9% remaining (12.1% used, resets in 30m, checked 2h ago)\n  - credits $1,234.56/$5,000.00\n  - → fallback advised\n\n### spare (fallback disabled)\n  - Error: refresh token revoked\n  - 5h: unknown\n  - 1w: 100% remaining (0% used, resets now, checked just now)\n  - Opus only: 0% remaining (100% used, checked 5m ago) •\n  - credits €99.99/€99.99 · exhausted\n\n### credits (fallback)\n  - 5h: unknown\n  - 1w: unknown\n  - credits ¥150,000/£0.25\n\n### odd-money (fallback)\n  - 5h: unknown\n  - 1w: unknown\n  - credits XQZ 0.01/1234567 NOTACODE\n\n### unknown (fallback)\n  - 5h: unknown\n  - 1w: unknown"
+    }
+  ],
+  "prewarmBodies": [
+    {
+      "name": "rewritten-hybrid-request",
+      "bodyText": "{\"model\":\"claude-opus-4-7\",\"max_tokens\":64000,\"stream\":true,\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":4096},\"output_config\":{\"format\":{\"type\":\"json_schema\"}},\"tool_choice\":{\"type\":\"any\"},\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.177.3bf; cc_entrypoint=cli; cch=abcde;\"},{\"type\":\"text\",\"text\":\"identity\"},{\"type\":\"text\",\"text\":\"stable\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}}],\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}",
+      "result": {
+        "ok": true,
+        "bodyText": "{\"model\":\"claude-opus-4-7\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}],\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.177.3bf; cc_entrypoint=cli; cch=00000;\"},{\"type\":\"text\",\"text\":\"identity\"},{\"type\":\"text\",\"text\":\"stable\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}}],\"max_tokens\":0}"
+      }
+    },
+    {
+      "name": "adaptive-thinking-and-auto-tool-choice-kept",
+      "bodyText": "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\",\"cache_control\":{\"type\":\"ephemeral\"}}]}],\"model\":\"claude-opus-5\",\"thinking\":{\"type\":\"adaptive\"},\"tool_choice\":{\"type\":\"auto\"},\"output_config\":{\"effort\":\"high\"},\"speed\":\"fast\",\"stream\":true,\"max_tokens\":1}",
+      "result": {
+        "ok": true,
+        "bodyText": "{\"model\":\"claude-opus-5\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\",\"cache_control\":{\"type\":\"ephemeral\"}}]}],\"tool_choice\":{\"type\":\"auto\"},\"max_tokens\":0,\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"speed\":\"fast\"}"
+      }
+    },
+    {
+      "name": "no-breakpoints",
+      "bodyText": "{\"model\":\"claude-opus-4-7\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}",
+      "result": {
+        "ok": false,
+        "reason": "body has no explicit cache breakpoints"
+      }
+    },
+    {
+      "name": "not-json",
+      "bodyText": "{\"model\":",
+      "result": {
+        "ok": false,
+        "reason": "body is not valid JSON"
+      }
+    }
+  ],
+  "cachekeep": {
+    "token": "sk-ant-oat01-cachekeep-00-000000000000",
+    "model": "claude-opus-4-8",
+    "sessionId": "ses-cachekeep",
+    "trackedAt": 1779098400000,
+    "identity": {
+      "deviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "accountUuid": "00000000-0000-4000-8000-000000000001",
+      "sessionId": "217229a2-b20a-46a9-b249-ab23e5638244"
+    },
+    "prewarmsAt54Minutes": 0,
+    "registryRecord": "{\"version\":1,\"updatedAt\":1779098400000,\"sessions\":[{\"id\":\"ses-cachekeep\",\"cacheExpiresAt\":1779102000000,\"nextPrewarmAt\":1779101700000}]}\n",
+    "original": {
+      "url": "https://api.anthropic.com/v1/messages?beta=true",
+      "headers": {
+        "accept": "application/json",
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,context-1m-2025-08-07",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-ant-oat01-cachekeep-00-000000000000",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/2.1.280 (external, cli)",
+        "x-app": "cli",
+        "x-claude-code-session-id": "217229a2-b20a-46a9-b249-ab23e5638244",
+        "x-stainless-arch": "x64",
+        "x-stainless-helper-method": "stream",
+        "x-stainless-lang": "js",
+        "x-stainless-os": "Linux",
+        "x-stainless-package-version": "0.112.1",
+        "x-stainless-retry-count": "0",
+        "x-stainless-runtime": "node",
+        "x-stainless-runtime-version": "v26.3.0",
+        "x-stainless-timeout": "600"
+      },
+      "bodyText": "{\"model\":\"claude-opus-4-8\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"You keep caches warm.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}},{\"type\":\"text\",\"text\":\"Remember this long and stable prefix, please.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.280.5c2; cc_entrypoint=cli; cch=00000;\"},{\"type\":\"text\",\"text\":\"You are Claude Code, Anthropic's official CLI for Claude.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}}],\"metadata\":{\"user_id\":\"{\\\"device_id\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"account_uuid\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"session_id\\\":\\\"217229a2-b20a-46a9-b249-ab23e5638244\\\"}\"},\"max_tokens\":16384,\"thinking\":{\"type\":\"adaptive\",\"display\":\"summarized\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}}"
+    },
+    "prewarm": {
+      "url": "https://api.anthropic.com/v1/messages?beta=true",
+      "headers": {
+        "accept": "application/json",
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,context-1m-2025-08-07",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-ant-oat01-cachekeep-00-000000000000",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/2.1.280 (external, cli)",
+        "x-app": "cli",
+        "x-claude-code-session-id": "217229a2-b20a-46a9-b249-ab23e5638244",
+        "x-stainless-arch": "x64",
+        "x-stainless-helper-method": "stream",
+        "x-stainless-lang": "js",
+        "x-stainless-os": "Linux",
+        "x-stainless-package-version": "0.112.1",
+        "x-stainless-retry-count": "0",
+        "x-stainless-runtime": "node",
+        "x-stainless-runtime-version": "v26.3.0",
+        "x-stainless-timeout": "600"
+      },
+      "bodyText": "{\"model\":\"claude-opus-4-8\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"You keep caches warm.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}},{\"type\":\"text\",\"text\":\"Remember this long and stable prefix, please.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.280.5c2; cc_entrypoint=cli; cch=00000;\"},{\"type\":\"text\",\"text\":\"You are Claude Code, Anthropic's official CLI for Claude.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}}],\"metadata\":{\"user_id\":\"{\\\"device_id\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"account_uuid\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"session_id\\\":\\\"217229a2-b20a-46a9-b249-ab23e5638244\\\"}\"},\"max_tokens\":0,\"thinking\":{\"type\":\"adaptive\",\"display\":\"summarized\"},\"output_config\":{\"effort\":\"high\"},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}}"
+    }
+  }
+}
