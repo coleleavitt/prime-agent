@@ -1498,6 +1498,8 @@ async fn a_composed_remote_family_routes_sends_beyond_the_local_graph() {
                 queued_count: 0,
                 is_session_active: true,
                 cwd: None,
+                pending_tool_calls:
+                    crate::session_engine::agent_messaging::AgentObservePendingToolCalls::default(),
             }
         }
     }

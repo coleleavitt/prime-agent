@@ -450,6 +450,9 @@ pub(crate) fn session_summary(
         anthropic_warning_shown: store
             .map(crate::session_store::SessionFile::anthropic_warning_shown),
         feature_status: (!core.feature_status.is_empty()).then(|| core.feature_status.clone()),
+        pending_tool_call_count: (!core.running_tool_calls.is_empty())
+            .then_some(core.running_tool_calls.len() as u32),
+        oldest_pending_tool_call_started_at: core.running_tool_calls.values().min().copied(),
     }
 }
 

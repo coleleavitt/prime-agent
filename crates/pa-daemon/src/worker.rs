@@ -326,7 +326,7 @@ impl Worker {
             agent_message_digest_pin: digest::DigestLanePin::default(),
             active_action: None,
             feature_status: serde_json::Map::new(),
-            running_tool_calls: std::collections::HashSet::new(),
+            running_tool_calls: std::collections::HashMap::new(),
             running_admission_ids: std::collections::HashSet::new(),
         };
         let active_session_id = config.active_session_id.clone();

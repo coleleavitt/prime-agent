@@ -3,8 +3,8 @@
 //! the preview text helpers.
 use super::{
     json, row_is_child, row_is_parent, row_is_sibling, AgentFamilyRelationship, AgentFamilyStatus,
-    AgentObserveActivity, AgentObserveController, AgentObserveMessagePreview, AgentObserveSummary,
-    Arc, FamilyIdentity, SupervisorLink, Value,
+    AgentObserveActivity, AgentObserveController, AgentObserveMessagePreview,
+    AgentObservePendingToolCalls, AgentObserveSummary, Arc, FamilyIdentity, SupervisorLink, Value,
 };
 
 /// `agent_observe.*` controller for daemon workers: message previews and
@@ -82,19 +82,26 @@ impl AgentObserveController for LinkAgentObserveController {
     async fn list_agents(&self) -> anyhow::Result<Vec<AgentObserveSummary>> {
         let (sessions, identity) = self.roster_and_identity().await?;
         let child_ids = self.registry_child_active_ids().await;
-        Ok(summaries_from_roster(sessions, &identity, &child_ids))
+        Ok(summaries_from_roster(
+            sessions,
+            &identity,
+            &child_ids,
+            crate::util::now_ms(),
+        ))
     }
 
     async fn get_agent(&self, target: &str) -> anyhow::Result<Option<AgentObserveSummary>> {
         let (sessions, identity) = self.roster_and_identity().await?;
         let child_ids = self.registry_child_active_ids().await;
-        Ok(summaries_from_roster(sessions, &identity, &child_ids)
-            .into_iter()
-            .find(|summary| {
-                summary.active_session_id.as_deref() == Some(target)
-                    || summary.session_id == target
-                    || summary.session_name.as_deref() == Some(target)
-            }))
+        Ok(
+            summaries_from_roster(sessions, &identity, &child_ids, crate::util::now_ms())
+                .into_iter()
+                .find(|summary| {
+                    summary.active_session_id.as_deref() == Some(target)
+                        || summary.session_id == target
+                        || summary.session_name.as_deref() == Some(target)
+                }),
+        )
     }
 
     async fn recent_messages(
@@ -151,6 +158,7 @@ pub(super) fn summaries_from_roster(
     sessions: Vec<Value>,
     identity: &FamilyIdentity,
     registry_child_active_ids: &[String],
+    now_ms: u64,
 ) -> Vec<AgentObserveSummary> {
     sessions
         .into_iter()
@@ -271,6 +279,17 @@ pub(super) fn summaries_from_roster(
                     .and_then(Value::as_str)
                     .filter(|cwd| has_live_session && !cwd.is_empty())
                     .map(str::to_string),
+                pending_tool_calls: AgentObservePendingToolCalls::measure(
+                    session
+                        .get("pendingToolCallCount")
+                        .and_then(Value::as_u64)
+                        .filter(|_| has_live_session)
+                        .unwrap_or_default() as usize,
+                    session
+                        .get("oldestPendingToolCallStartedAt")
+                        .and_then(Value::as_u64),
+                    now_ms,
+                ),
             })
         })
         .collect()

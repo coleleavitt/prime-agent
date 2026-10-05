@@ -534,6 +534,51 @@ async fn abort_during_tool_execution_produces_aborted_tool_result() {
     assert!(!state.is_streaming);
 }
 
+/// Upstream #891: the state snapshot records when each in-flight tool call
+/// started, so observers can report how long a call has been running; the
+/// start times clear with the in-flight set.
+#[tokio::test]
+async fn in_flight_tool_calls_record_their_start_time() {
+    let slow = EchoTool::with_options("slow_tool", 60_000, false);
+    let (agent, provider, _events) = scripted_agent(vec![slow.clone()]).await;
+    provider.push_tool_call_turn(
+        None,
+        vec![("call-1", "slow_tool", serde_json::json!({ "text": "x" }))],
+    );
+    let before = pa_agent::now_ms();
+    let prompt_task = tokio::spawn({
+        let agent = agent.clone();
+        async move { agent.prompt("go").await }
+    });
+    // Observable readiness: the tool call is in flight.
+    let state = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let state = agent.state().await;
+            if !state.pending_tool_calls.is_empty() {
+                return state;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the tool call starts");
+    let after = pa_agent::now_ms();
+    let started: Vec<&String> = state.pending_tool_call_started_at.keys().collect();
+    assert_eq!(started, vec!["call-1"]);
+    let at = state.pending_tool_call_started_at["call-1"];
+    assert!(
+        (before..=after).contains(&at),
+        "{before} <= {at} <= {after}"
+    );
+
+    agent.abort();
+    prompt_task.await.unwrap().unwrap();
+    agent.wait_for_idle().await;
+    let state = agent.state().await;
+    assert!(state.pending_tool_calls.is_empty());
+    assert!(state.pending_tool_call_started_at.is_empty());
+}
+
 #[tokio::test]
 async fn max_iterations_stops_after_configured_turn_count() {
     let echo = EchoTool::new("echo");

@@ -594,6 +594,8 @@ fn passivated_summary(summary: Value) -> Value {
         "hasRunningRlmChildren",
         "isBashRunning",
         "isRunningTools",
+        "oldestPendingToolCallStartedAt",
+        "pendingToolCallCount",
         "workerState",
         "workerPid",
     ] {

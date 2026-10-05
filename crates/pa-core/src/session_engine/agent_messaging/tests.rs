@@ -21,6 +21,7 @@ fn observe_rows_carry_the_typed_status_and_activity() {
         queued_count: 0,
         is_session_active: true,
         cwd: None,
+        pending_tool_calls: AgentObservePendingToolCalls::default(),
     };
     let value = row.to_value();
     assert_eq!(value["status"], "running");
@@ -40,6 +41,49 @@ fn observe_rows_carry_the_typed_status_and_activity() {
         value.get("activity").is_none(),
         "a member with no live session omits the activity field"
     );
+}
+
+/// Upstream #891: the observe row always carries the in-flight tool-call
+/// count, and the oldest call's start and elapsed time while one runs; the
+/// elapsed time clamps at zero when the clock moved backwards.
+#[test]
+fn observe_rows_carry_in_flight_tool_call_progress() {
+    let mut row = AgentObserveSummary {
+        active_session_id: Some("live-1".to_string()),
+        session_id: "sess-1".to_string(),
+        session_name: None,
+        relationship: Some(AgentFamilyRelationship::Child),
+        runtime_kind: Some("subagent".to_string()),
+        status: AgentFamilyStatus::Running,
+        activity: Some(AgentObserveActivity::Tool),
+        is_current: false,
+        is_streaming: true,
+        is_compacting: false,
+        attached_clients: 0,
+        queued_count: 0,
+        is_session_active: true,
+        cwd: None,
+        pending_tool_calls: AgentObservePendingToolCalls::measure(1, Some(5_000), 65_000),
+    };
+    let progress = |value: &Value| {
+        [
+            "pendingToolCallCount",
+            "oldestPendingToolCallStartedAt",
+            "pendingToolCallElapsedMs",
+        ]
+        .map(|key| value.get(key).cloned())
+    };
+    assert_eq!(
+        progress(&row.to_value()),
+        [Some(json!(1)), Some(json!(5_000)), Some(json!(60_000))]
+    );
+    row.pending_tool_calls = AgentObservePendingToolCalls::measure(1, Some(9_000), 8_000);
+    assert_eq!(
+        progress(&row.to_value()),
+        [Some(json!(1)), Some(json!(9_000)), Some(json!(0))]
+    );
+    row.pending_tool_calls = AgentObservePendingToolCalls::measure(0, Some(9_000), 8_000);
+    assert_eq!(progress(&row.to_value()), [Some(json!(0)), None, None]);
 }
 
 #[test]

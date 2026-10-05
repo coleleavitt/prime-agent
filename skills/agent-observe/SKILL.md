@@ -40,6 +40,17 @@ if child is not None:
   using its `relationship` plus its `sessionName`, or its `sessionId` when the
   member has no name. For direct children,
   `await rlm.list_subagents()` also exposes parent-owned lifecycle handles.
+- Every agent also carries `pendingToolCallCount`, the tool calls it is
+  executing right now (0 for a member with no live session). While one is in
+  flight, `oldestPendingToolCallStartedAt` (epoch ms) and
+  `pendingToolCallElapsedMs` say how long the longest-running call has run, so
+  a child wedged in one call can be told apart from one a few seconds in:
+
+  ```python
+  agent = (await agent_observe.get_agent(handle.name))["agent"]
+  if agent["pendingToolCallCount"] and agent.get("pendingToolCallElapsedMs", 0) > 10 * 60 * 1000:
+      ...  # ask the child what it is waiting on
+  ```
 - `await agent_observe.get_agent(target)` returns `agent`, where `agent`
   contains one live agent summary. `target` is resolved like other live-session
   selectors: active id, session id/name, or unambiguous suffix.

@@ -146,6 +146,14 @@ pub struct SessionSummary {
     /// older clients ignore it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feature_status: Option<serde_json::Map<String, serde_json::Value>>,
+    /// The tool calls in flight right now (upstream #891); absent when
+    /// none are. Additive: older clients ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_tool_call_count: Option<u32>,
+    /// The epoch-ms start of the longest-running in-flight tool call;
+    /// absent when none is in flight.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oldest_pending_tool_call_started_at: Option<u64>,
 }
 
 /// The session action snapshot (TS `SessionActionSnapshot`).

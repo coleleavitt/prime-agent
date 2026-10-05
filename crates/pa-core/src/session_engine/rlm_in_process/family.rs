@@ -20,8 +20,8 @@ use crate::session_engine::agent_messaging::{
     register_agent_observe_host_handlers, AgentFamilyMember, AgentFamilyRelationship,
     AgentMessageController, AgentMessageDeliveryStatus, AgentMessagePromptPayload,
     AgentMessageReceipt, AgentMessageSendInput, AgentObserveActivity, AgentObserveController,
-    AgentObserveMessagePreview, AgentObserveSummary, AgentSessionMessageRowPayload,
-    DEFAULT_AGENT_MESSAGE_MAX_PENDING_PER_SESSION,
+    AgentObserveMessagePreview, AgentObservePendingToolCalls, AgentObserveSummary,
+    AgentSessionMessageRowPayload, DEFAULT_AGENT_MESSAGE_MAX_PENDING_PER_SESSION,
 };
 use crate::session_engine::engine::SessionEngine;
 use pa_types::session::{AgentMessage as SessionAgentMessage, CustomMessage, FileEntry};
@@ -319,6 +319,15 @@ impl InProcessFamilyController {
             queued_count,
             is_session_active: true,
             cwd: Some(cwd),
+            pending_tool_calls: AgentObservePendingToolCalls::measure(
+                state.pending_tool_calls.len(),
+                state
+                    .pending_tool_call_started_at
+                    .values()
+                    .min()
+                    .and_then(|started| u64::try_from(*started).ok()),
+                now_ms(),
+            ),
         }
     }
 

@@ -72,6 +72,9 @@ pub struct AgentStateSnapshot {
     pub streaming_message: Option<AgentMessage>,
     pub pending_tool_calls: HashSet<String>,
     pub error_message: Option<String>,
+    /// When each in-flight tool call started (epoch ms, keyed like
+    /// `pending_tool_calls`): observers report how long a call has run.
+    pub pending_tool_call_started_at: std::collections::HashMap<String, i64>,
 }
 
 #[derive(Default)]
@@ -112,7 +115,8 @@ struct MutableAgentState {
     messages: Vec<AgentMessage>,
     is_streaming: bool,
     streaming_message: Option<Arc<AgentMessage>>,
-    pending_tool_calls: HashSet<String>,
+    /// The in-flight tool calls and their start times (epoch ms).
+    pending_tool_calls: std::collections::HashMap<String, i64>,
     error_message: Option<String>,
 }
 
@@ -126,7 +130,7 @@ impl Default for MutableAgentState {
             messages: Vec::new(),
             is_streaming: false,
             streaming_message: None,
-            pending_tool_calls: HashSet::new(),
+            pending_tool_calls: std::collections::HashMap::new(),
             error_message: None,
         }
     }
@@ -471,7 +475,10 @@ impl AgentInner {
                 shared.state.messages.push(message.clone());
             }
             AgentEvent::ToolExecutionStart { tool_call_id, .. } => {
-                shared.state.pending_tool_calls.insert(tool_call_id.clone());
+                shared
+                    .state
+                    .pending_tool_calls
+                    .insert(tool_call_id.clone(), crate::now_ms());
             }
             AgentEvent::ToolExecutionEnd { tool_call_id, .. } => {
                 shared.state.pending_tool_calls.remove(tool_call_id);
@@ -1215,8 +1222,9 @@ impl Agent {
             messages: shared.state.messages.clone(),
             is_streaming: shared.state.is_streaming,
             streaming_message: shared.state.streaming_message.as_deref().cloned(),
-            pending_tool_calls: shared.state.pending_tool_calls.clone(),
+            pending_tool_calls: shared.state.pending_tool_calls.keys().cloned().collect(),
             error_message: shared.state.error_message.clone(),
+            pending_tool_call_started_at: shared.state.pending_tool_calls.clone(),
         }
     }
 

@@ -601,7 +601,8 @@ impl TurnRunner {
                     // the frames sequence under: the roster feed never reads a
                     // half-applied transition.
                     EngineEvent::ToolExecutionStart { tool_call_id, .. } => {
-                        core.running_tool_calls.insert(tool_call_id.clone());
+                        core.running_tool_calls
+                            .insert(tool_call_id.clone(), crate::util::now_ms());
                     }
                     EngineEvent::ToolExecutionEnd { tool_call_id, .. } => {
                         core.running_tool_calls.remove(tool_call_id);
