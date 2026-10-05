@@ -14,7 +14,132 @@ use pa_core::session_engine::agent_messaging::{
 };
 
 use crate::protocol::{response_failure, response_success, DaemonResponse};
-use crate::worker::Worker;
+use crate::worker::{QueuedItem, Worker};
+
+/// The body prefix of a drop notice (upstream #2329): a dropped notice is
+/// never itself reported, so two sessions can never trade notices.
+const DROP_NOTICE_PREFIX: &str = "[agent-message-failed]";
+
+/// The supervisor round-trip budget of one drop notice (a closing
+/// session awaits its notices, so the bound keeps the close prompt).
+const DROP_NOTICE_TIMEOUT_MS: u64 = 2_000;
+
+/// Why queued agent messages were dropped before delivery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AgentMessageDropReason {
+    Cleared,
+    Paused,
+    Closed,
+}
+
+impl AgentMessageDropReason {
+    fn describe(self) -> &'static str {
+        match self {
+            AgentMessageDropReason::Cleared => "the target cleared its queued agent messages",
+            AgentMessageDropReason::Paused => "the target paused agent messaging",
+            AgentMessageDropReason::Closed => "the target session closed",
+        }
+    }
+}
+
+/// One dropped agent message an agent sender can be told about: the
+/// sender's live session and the message id its receipt carried.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DroppedAgentMessage {
+    sender_active_session_id: String,
+    message_id: String,
+}
+
+impl DroppedAgentMessage {
+    /// The sender route of a queued agent-message item; `None` for client
+    /// prompts, CLI senders (no live session to notify), and drop notices.
+    pub(crate) fn of(item: &QueuedItem) -> Option<Self> {
+        if item
+            .agent_message
+            .as_deref()?
+            .starts_with(DROP_NOTICE_PREFIX)
+        {
+            return None;
+        }
+        let details = item.custom_message.as_ref()?.get("details")?;
+        let sender = details
+            .get("from")?
+            .get("activeSessionId")?
+            .as_str()
+            .filter(|id| !id.is_empty())?;
+        let message_id = details.get("id")?.as_str()?;
+        Some(DroppedAgentMessage {
+            sender_active_session_id: sender.to_string(),
+            message_id: message_id.to_string(),
+        })
+    }
+}
+
+/// Where a worker's drop notices go: the supervisor routes each one to
+/// its sender as an agent message from this session.
+pub(crate) struct DropNoticeRoute {
+    socket: std::path::PathBuf,
+    from_active_session_id: String,
+}
+
+impl DropNoticeRoute {
+    /// Tell each agent sender whose queued messages were dropped (upstream
+    /// #2329): one notice per sender, so a busy sender sees it at its next
+    /// boundary and an idle one wakes. Returns once every notice was handed
+    /// to the supervisor (or failed); a failure is logged, never retried.
+    pub(crate) async fn notify(
+        self,
+        dropped: Vec<DroppedAgentMessage>,
+        reason: AgentMessageDropReason,
+    ) {
+        let mut by_sender: Vec<(String, Vec<String>)> = Vec::new();
+        for message in dropped {
+            if message.sender_active_session_id == self.from_active_session_id {
+                continue;
+            }
+            match by_sender
+                .iter_mut()
+                .find(|(sender, _)| *sender == message.sender_active_session_id)
+            {
+                Some((_, ids)) => ids.push(message.message_id),
+                None => {
+                    by_sender.push((message.sender_active_session_id, vec![message.message_id]));
+                }
+            }
+        }
+        let link = crate::supervisor_link::SupervisorLink::new(self.socket);
+        for (sender, ids) in by_sender {
+            let sent = link
+                .request_success(
+                    json!({
+                        "type": "send_message",
+                        "targetActiveSessionId": sender,
+                        "message": drop_notice_text(&ids, reason),
+                        "fromActiveSessionId": self.from_active_session_id,
+                        "agentOrigin": true,
+                    }),
+                    std::time::Duration::from_millis(DROP_NOTICE_TIMEOUT_MS),
+                )
+                .await;
+            if let Err(error) = sent {
+                eprintln!("pa-daemon: agent-message drop notice to {sender} failed: {error:#}");
+            }
+        }
+    }
+}
+
+/// The notice body one sender receives for its dropped messages.
+fn drop_notice_text(message_ids: &[String], reason: AgentMessageDropReason) -> String {
+    let count = message_ids.len();
+    let plural = if count == 1 { "" } else { "s" };
+    format!(
+        "{DROP_NOTICE_PREFIX} {count} agent message{plural} you sent here {verb} dropped before delivery: {}. Dropped: {}. {it} never reached this session's context; resend if still needed.",
+        reason.describe(),
+        message_ids.join(", "),
+        verb = if count == 1 { "was" } else { "were" },
+        it = if count == 1 { "It" } else { "They" },
+    )
+}
 
 /// The worker's agent-message ingestion state: the pause flag.
 pub(crate) struct AgentMessageIngest {
@@ -75,8 +200,8 @@ impl Worker {
             return response;
         }
         self.agent_messages.set_paused(true);
-        let cleared = self.clear_queued_agent_messages();
-        let _ = cleared;
+        let (_, dropped) = self.clear_queued_agent_messages();
+        self.spawn_drop_notices(dropped, AgentMessageDropReason::Paused);
         response_success(
             None,
             "agent_messages_pause",
@@ -103,7 +228,8 @@ impl Worker {
         if let Err(response) = self.require_created("agent_messages_clear") {
             return response;
         }
-        let cleared = self.clear_queued_agent_messages();
+        let (cleared, dropped) = self.clear_queued_agent_messages();
+        self.spawn_drop_notices(dropped, AgentMessageDropReason::Cleared);
         response_success(None, "agent_messages_clear", Some(cleared))
     }
 
@@ -122,16 +248,46 @@ impl Worker {
         Ok(())
     }
 
+    /// The drop-notice route for this worker: the supervisor socket and
+    /// this session's live id (`None` without a supervisor link).
+    pub(crate) fn drop_notice_route(&self) -> Option<DropNoticeRoute> {
+        let socket = self.config.supervisor_socket_path.clone();
+        (!socket.as_os_str().is_empty()).then(|| DropNoticeRoute {
+            socket,
+            from_active_session_id: self.config.active_session_id.clone(),
+        })
+    }
+
+    /// The fire-and-forget form for command arms: the reply never waits on
+    /// the notices.
+    fn spawn_drop_notices(
+        &self,
+        dropped: Vec<DroppedAgentMessage>,
+        reason: AgentMessageDropReason,
+    ) {
+        if dropped.is_empty() {
+            return;
+        }
+        if let Some(route) = self.drop_notice_route() {
+            tokio::spawn(route.notify(dropped, reason));
+        }
+    }
+
     /// Remove the queued agent-message items from both lanes (never
-    /// client-queued prompts), in the `{ steering, followUp }` shape.
-    fn clear_queued_agent_messages(&self) -> Value {
+    /// client-queued prompts), in the `{ steering, followUp }` shape, plus
+    /// the dropped messages' sender routes.
+    fn clear_queued_agent_messages(&self) -> (Value, Vec<DroppedAgentMessage>) {
         let mut core = self.core.lock_or_recover();
         let mut steering = Vec::new();
         let mut follow_up = Vec::new();
+        let mut dropped = Vec::new();
         let mut retained_steering = std::collections::VecDeque::new();
         while let Some(item) = core.steering.pop_front() {
             match item.agent_message {
-                Some(_) => steering.push(item.message),
+                Some(_) => {
+                    dropped.extend(DroppedAgentMessage::of(&item));
+                    steering.push(item.message);
+                }
                 None => retained_steering.push_back(item),
             }
         }
@@ -139,7 +295,10 @@ impl Worker {
         let mut retained_follow_up = std::collections::VecDeque::new();
         while let Some(item) = core.follow_up.pop_front() {
             match item.agent_message {
-                Some(_) => follow_up.push(item.message),
+                Some(_) => {
+                    dropped.extend(DroppedAgentMessage::of(&item));
+                    follow_up.push(item.message);
+                }
                 None => retained_follow_up.push_back(item),
             }
         }
@@ -151,7 +310,10 @@ impl Worker {
             operation: "queue_mutated",
         });
         let _ = self.emit_action_update(&snapshot);
-        json!({ "steering": steering, "followUp": follow_up })
+        (
+            json!({ "steering": steering, "followUp": follow_up }),
+            dropped,
+        )
     }
 }
 
@@ -302,6 +464,179 @@ mod tests {
                 "steering": [],
                 "followUp": ["[agent-message from peer-1]\n\nqueued for later"],
             })
+        );
+    }
+
+    /// A scripted supervisor that records every command it receives and
+    /// answers each with success.
+    async fn recording_supervisor(
+        socket: std::path::PathBuf,
+    ) -> tokio::sync::mpsc::UnboundedReceiver<serde_json::Value> {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let listener = pa_types::platform::transport::bind_transport(&socket)
+            .await
+            .unwrap();
+        tokio::spawn(async move {
+            while let Ok(stream) = listener.accept().await {
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    let (reader, mut writer) = stream.split();
+                    let mut reader = BufReader::new(reader);
+                    writer
+                        .write_all(
+                            b"{\"type\":\"daemon_hello\",\"protocol\":{\"name\":\"prime-agent.daemon\",\"version\":7}}\n",
+                        )
+                        .await
+                        .unwrap();
+                    let mut line = String::new();
+                    while reader.read_line(&mut line).await.unwrap_or(0) > 0 {
+                        let value: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+                        line.clear();
+                        let id = value["id"].as_str().unwrap_or_default().to_string();
+                        let command = value["command"].clone();
+                        let kind = command["type"].as_str().unwrap_or_default().to_string();
+                        let _ = tx.send(command);
+                        let mut reply = serde_json::to_string(&crate::protocol::response_success(
+                            Some(&id),
+                            &kind,
+                            Some(json!({})),
+                        ))
+                        .unwrap();
+                        reply.push('\n');
+                        if writer.write_all(reply.as_bytes()).await.is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        rx
+    }
+
+    /// Upstream #2329: a sender whose queued agent messages are dropped
+    /// (here by a clear and by a pause) is told, with the message ids and the
+    /// reason, through a supervisor-routed message from the target. A CLI
+    /// sender (no live session) has no one to tell.
+    #[tokio::test]
+    async fn dropped_queued_messages_notify_their_agent_senders() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let socket = dir.path().join("sup.sock");
+        let mut commands = recording_supervisor(socket.clone()).await;
+        let config = crate::worker::WorkerConfig {
+            socket_path: dir.path().join("worker.sock"),
+            supervisor_socket_path: socket,
+            token: "token".to_string(),
+            worker_instance_id: String::new(),
+            active_session_id: "ami-session".to_string(),
+            agent_dir: dir.path().join("agent"),
+            recovery_journal_path: dir.path().join("recovery.jsonl"),
+            telemetry_disabled: None,
+            script: Some(json!({ "responses": ["ack"] })),
+        };
+        let worker = Arc::new(Worker::new(config, None));
+        let created = worker
+            .dispatch(
+                "create",
+                &json!({ "noSession": true, "cwd": "/tmp", "name": "ami" }),
+            )
+            .await;
+        assert!(created.success, "create failed: {created:?}");
+        let deliver = |message: &'static str, sender: serde_json::Value| {
+            let worker = Arc::clone(&worker);
+            async move {
+                let receipt = worker
+                    .dispatch(
+                        "worker_deliver_message",
+                        &json!({
+                            "targetActiveSessionId": "ami-session",
+                            "message": message,
+                            "sender": sender,
+                        }),
+                    )
+                    .await;
+                assert!(receipt.success, "delivery failed: {receipt:?}");
+                receipt.data.unwrap()["id"].as_str().unwrap().to_string()
+            }
+        };
+        let first = deliver("one", json!({ "activeSessionId": "peer-1" })).await;
+        let second = deliver("two", json!({ "activeSessionId": "peer-1" })).await;
+        deliver("from the cli", json!({ "clientId": "cli-1" })).await;
+        assert!(
+            worker
+                .dispatch("agent_messages_clear", &json!({}))
+                .await
+                .success
+        );
+        let notice = tokio::time::timeout(std::time::Duration::from_secs(10), commands.recv())
+            .await
+            .expect("the clear notifies the sender")
+            .unwrap();
+        assert_eq!(
+            notice,
+            json!({
+                "type": "send_message",
+                "targetActiveSessionId": "peer-1",
+                "message": format!(
+                    "[agent-message-failed] 2 agent messages you sent here were dropped before delivery: the target cleared its queued agent messages. Dropped: {first}, {second}. They never reached this session's context; resend if still needed."
+                ),
+                "fromActiveSessionId": "ami-session",
+                "agentOrigin": true,
+            })
+        );
+
+        let third = deliver("three", json!({ "activeSessionId": "peer-2" })).await;
+        assert!(
+            worker
+                .dispatch("agent_messages_pause", &json!({}))
+                .await
+                .success
+        );
+        let notice = tokio::time::timeout(std::time::Duration::from_secs(10), commands.recv())
+            .await
+            .expect("the pause notifies the sender")
+            .unwrap();
+        assert_eq!(
+            (notice["targetActiveSessionId"].clone(), notice["message"].clone()),
+            (
+                json!("peer-2"),
+                json!(format!(
+                    "[agent-message-failed] 1 agent message you sent here was dropped before delivery: the target paused agent messaging. Dropped: {third}. It never reached this session's context; resend if still needed."
+                ))
+            )
+        );
+        assert!(
+            commands.try_recv().is_err(),
+            "the CLI sender is never notified"
+        );
+
+        // A killed target drops its queue for good: the close notifies too.
+        assert!(
+            worker
+                .dispatch("agent_messages_resume", &json!({}))
+                .await
+                .success
+        );
+        let fourth = deliver("four", json!({ "activeSessionId": "peer-3" })).await;
+        assert!(worker.dispatch("kill", &json!({})).await.success);
+        let notice = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let command = commands.recv().await.unwrap();
+                if command["type"] == "send_message" {
+                    return command;
+                }
+            }
+        })
+        .await
+        .expect("the close notifies the sender");
+        assert_eq!(
+            (notice["targetActiveSessionId"].clone(), notice["message"].clone()),
+            (
+                json!("peer-3"),
+                json!(format!(
+                    "[agent-message-failed] 1 agent message you sent here was dropped before delivery: the target session closed. Dropped: {fourth}. It never reached this session's context; resend if still needed."
+                ))
+            )
         );
     }
 }
