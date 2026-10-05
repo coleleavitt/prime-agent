@@ -225,12 +225,13 @@ fn replayed_updates(frames: &[Value]) -> Vec<Value> {
         .collect()
 }
 
-fn prompt_ends_turn(client: &mut AcpChild, session_id: &str, text: &str) {
-    let (response, _) = client.call(
+fn prompt_ends_turn(client: &mut AcpChild, session_id: &str, text: &str) -> Vec<Value> {
+    let (response, notifications) = client.call(
         "session/prompt",
         &json!({ "sessionId": session_id, "prompt": [{ "type": "text", "text": text }] }),
     );
     assert_eq!(response["result"]["stopReason"], "end_turn", "{response}");
+    notifications
 }
 
 #[test]
@@ -389,7 +390,18 @@ fn acp_session_load_attaches_a_session_a_live_worker_serves() {
             json!({ "sessionUpdate": "agent_message_chunk", "messageId": "prime-agent-replay-assistant-1", "content": { "type": "text", "text": "The Nile." } }),
         ]
     );
-    prompt_ends_turn(&mut second, &session_id, "Name a mountain.");
+    let turn = prompt_ends_turn(&mut second, &session_id, "Name a mountain.");
+    // The costed answer reports the context fill (upstream #1351).
+    let usage = turn
+        .iter()
+        .map(|frame| &frame["params"]["update"])
+        .find(|update| update["sessionUpdate"] == "usage_update")
+        .unwrap_or_else(|| panic!("a usage_update after the answer: {turn:?}"));
+    assert!(
+        usage["used"].as_u64().is_some_and(|used| used > 0)
+            && usage["size"].as_u64() > usage["used"].as_u64(),
+        "{usage}"
+    );
     let transcript = std::fs::read_to_string(&saved).unwrap();
     assert!(
         transcript.contains("Name a mountain.") && transcript.contains("Everest."),

@@ -189,6 +189,10 @@ pub enum AcpSessionUpdate {
         #[serde(rename = "_meta")]
         meta: Value,
     },
+    /// The context window's fill after a costed response (ACP
+    /// `usage_update`; upstream #1351): `used` of `size` tokens.
+    #[serde(rename = "usage_update")]
+    UsageUpdate { used: u64, size: u64 },
     /// The session's configuration options changed (TS #2455): the
     /// full set with current values, connection-scoped.
     #[serde(rename = "config_option_update")]

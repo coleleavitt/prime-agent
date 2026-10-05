@@ -405,6 +405,23 @@ pub fn wire_updates(event: &Value, state: &mut WireMappingState) -> Vec<AcpSessi
     }
 }
 
+/// The context usage a settled assistant message reports (upstream #1351):
+/// the message's own usage is the whole context at its end (nothing trails
+/// it yet), against the session model's window. Nothing when the window is
+/// unknown, or the message is aborted, errored, or carries no tokens — an
+/// unknown reading is skipped, never reported as zero.
+pub fn usage_update(event: &Value, context_window: u64) -> Option<AcpSessionUpdate> {
+    if event.get("type").and_then(Value::as_str) != Some("message_end") || context_window == 0 {
+        return None;
+    }
+    let usage = pa_types::usage::valid_assistant_usage(event.get("message")?)?;
+    let used = pa_types::usage::calculate_context_tokens(&usage);
+    (used > 0).then_some(AcpSessionUpdate::UsageUpdate {
+        used,
+        size: context_window,
+    })
+}
+
 /// Replay a persisted transcript (the worker's `get_messages` rows) as the
 /// ACP updates `session/load` streams before its response: user turns as
 /// `user_message_chunk`, assistant text/thinking as message/thought chunks,
@@ -1280,5 +1297,42 @@ mod tests {
                 json!({ "sessionUpdate": "agent_message_chunk", "messageId": "prime-agent-replay-assistant-2", "content": { "type": "text", "text": "Everest." } }),
             ]
         );
+    }
+
+    #[test]
+    fn a_costed_assistant_message_reports_the_context_usage() {
+        let end = |message: Value| json!({ "type": "message_end", "message": message });
+        let costed = end(json!({
+            "role": "assistant",
+            "stopReason": "stop",
+            "usage": { "input": 20_000, "output": 846, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 20_846 },
+        }));
+        assert_eq!(
+            usage_update(&costed, 1_000_000).map(|update| update.to_bare_value()),
+            Some(json!({ "sessionUpdate": "usage_update", "used": 20_846, "size": 1_000_000 }))
+        );
+        // Unknown window, an errored or tokenless message, a user message,
+        // or another event: nothing.
+        assert!(usage_update(&costed, 0).is_none());
+        assert!(usage_update(
+            &end(
+                json!({ "role": "assistant", "stopReason": "error", "usage": { "totalTokens": 5 } })
+            ),
+            1_000
+        )
+        .is_none());
+        assert!(usage_update(
+            &end(
+                json!({ "role": "assistant", "stopReason": "stop", "usage": { "totalTokens": 0 } })
+            ),
+            1_000
+        )
+        .is_none());
+        assert!(usage_update(
+            &end(json!({ "role": "user", "usage": { "totalTokens": 5 } })),
+            1_000
+        )
+        .is_none());
+        assert!(usage_update(&json!({ "type": "agent_end" }), 1_000).is_none());
     }
 }

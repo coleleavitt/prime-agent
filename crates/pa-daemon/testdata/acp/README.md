@@ -128,3 +128,5 @@ mcp_errors) match in full mode.
   magic paired with the next line, `· +N lines`) and carries the cell as a fenced content
   block that its `tool_call_update` repeats (upstream #1309); the captures show the constant
   title and `rawInput` only.
+- A settled, costed assistant message is followed by a standard `usage_update`
+  (`used` of `size` context tokens; upstream #1351), which the captures predate.

@@ -21,7 +21,8 @@ use super::meta::{self, PrimeAgentEventPhase, PrimeAgentSessionMeta};
 use super::producer::{self, UpdateProducer};
 use super::types;
 use super::wire_config::{
-    fetch_available_models, fetch_connection_state, picker_options_from_state, HostedConfig,
+    fetch_available_models, fetch_connection_state, picker_options_from_state,
+    state_context_window, HostedConfig,
 };
 use super::wire_events::{self, WireMappingState};
 
@@ -521,10 +522,12 @@ async fn admit_session(
     };
     let producer = UpdateProducer::new(acp_session_id.clone(), tx.clone());
     let published = picker_options_from_state(state_value.as_ref(), &models);
+    let context_window = state_context_window(state_value.as_ref(), &models);
     let config = Arc::new(HostedConfig {
         queue: tokio::sync::Mutex::new(()),
         published: tokio::sync::Mutex::new(published),
         models: tokio::sync::Mutex::new(models),
+        context_window: std::sync::atomic::AtomicU64::new(context_window),
     });
     let mut hosted = HostedSession {
         acp_session_id: acp_session_id.clone(),

@@ -376,7 +376,14 @@ pub async fn run_daemon_attached_acp_mode(options: DaemonAcpOptions) -> anyhow::
                                 }
                             }
                             let turn_id = current.producer.active_prompt_turn().await;
-                            for update in wire_events::wire_updates(&event, &mut current.mapping) {
+                            let context_window = current
+                                .config
+                                .context_window
+                                .load(std::sync::atomic::Ordering::Relaxed);
+                            let updates = wire_events::wire_updates(&event, &mut current.mapping)
+                                .into_iter()
+                                .chain(wire_events::usage_update(&event, context_window));
+                            for update in updates {
                                 let _ = current
                                     .producer
                                     .publish(&update, turn_id, PrimeAgentEventPhase::Event, None)
@@ -1710,6 +1717,7 @@ mod tests {
                 queue: tokio::sync::Mutex::new(()),
                 published: tokio::sync::Mutex::new(Vec::new()),
                 models: tokio::sync::Mutex::new(Vec::new()),
+                context_window: std::sync::atomic::AtomicU64::new(0),
             }),
             cancelling: false,
             stop_failure: None,
