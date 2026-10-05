@@ -1393,6 +1393,76 @@ class HarnessStateDurabilityTest(unittest.TestCase):
         "trustWindows": {"abc123": {"clean": 3}},
     }
 
+    def test_a_file_that_failed_to_parse_is_backed_up_before_a_save_replaces_it(self) -> None:
+        # A corrupt file loaded as empty, and the next save wiped every entry
+        # with no copy left (#961).
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "harness_state.json"
+            corrupt = '{"schema": 1, "entries": {"memory": {"kept": {"title": "T", "content": "C"'
+            state_path.write_text(corrupt, encoding="utf-8")
+            state = HarnessState(state_path)
+            self.assertIsNotNone(state.load_error)
+            state.create_memory("Fresh", "Written after the corrupt load.", id="fresh")
+            backups = sorted(Path(temp_dir).glob("harness_state.json.corrupt-*"))
+            self.assertEqual([path.read_text(encoding="utf-8") for path in backups], [corrupt])
+            self.assertEqual([entry.id for entry in HarnessState(state_path).list()], ["fresh"])
+            # One backup per corrupt file: the next save writes over a valid file.
+            state.create_memory("Second", "No new backup.", id="second")
+            self.assertEqual(len(list(Path(temp_dir).glob("harness_state.json.corrupt-*"))), 1)
+
+    def test_concurrent_kernels_never_lose_each_others_writes(self) -> None:
+        # Parent and child kernels both read-modify-write the same file; with
+        # no lock a write landing between another's reload and save was lost.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "harness_state.json"
+            writer = (
+                "import sys\n"
+                "from rlm.harness import HarnessState\n"
+                "state = HarnessState(sys.argv[1])\n"
+                "for i in range(40):\n"
+                "    state.upsert('memory', f'w{sys.argv[2]}-{i}', 'x', id=f'w{sys.argv[2]}_{i}')\n"
+            )
+            env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")}
+            procs = [
+                subprocess.Popen([sys.executable, "-c", writer, str(state_path), str(n)], env=env)
+                for n in range(4)
+            ]
+            for proc in procs:
+                self.assertEqual(proc.wait(timeout=120), 0)
+            ids = sorted(entry.id for entry in HarnessState(state_path).list("memory"))
+            self.assertEqual(ids, sorted(f"w{n}_{i}" for n in range(4) for i in range(40)))
+            self.assertFalse(Path(f"{state_path}.lock").exists())
+
+    def test_a_write_waits_for_the_hosts_lock_and_reclaims_a_stale_one(self) -> None:
+        import threading
+        import time
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "harness_state.json"
+            state = HarnessState(state_path)
+            lock_path = Path(f"{state_path}.lock")
+            # A live holder (the host's proper-lockfile directory): the write waits.
+            lock_path.mkdir()
+            released = threading.Event()
+
+            def release() -> None:
+                time.sleep(0.3)
+                released.set()
+                lock_path.rmdir()
+
+            threading.Thread(target=release).start()
+            state.create_memory("Waited", "After the holder released.", id="waited")
+            self.assertTrue(released.is_set())
+            # A crashed holder's leftover (mtime past the stale window) is reclaimed.
+            lock_path.mkdir()
+            old = time.time() - 60
+            os.utime(lock_path, (old, old))
+            state.create_memory("Reclaimed", "Past a stale lock.", id="reclaimed")
+            self.assertEqual(
+                sorted(entry.id for entry in HarnessState(state_path).list("memory")), ["reclaimed", "waited"]
+            )
+            self.assertFalse(lock_path.exists())
+
     def test_kernel_write_preserves_unmodelled_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             state_path = Path(temp_dir) / "harness_state.json"

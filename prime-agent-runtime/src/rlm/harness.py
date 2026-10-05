@@ -10,17 +10,22 @@ Execution still belongs to Prime Agent's TypeScript host and the existing
 from __future__ import annotations
 
 import copy
+import functools
 import json
 import math
 import os
 import re
+import shutil
 import stat
+import threading
+import time
 import unicodedata
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
-from typing import Any, Literal
+from typing import Any, Callable, Iterator, Literal, TypeVar
 
 from .factory import require_factory_enabled, validate_factory_spec
 
@@ -38,6 +43,82 @@ _state_cache: dict[tuple[Path, HarnessScope], "HarnessState"] = {}
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# The host's cross-process lock on the state file (TS `proper-lockfile`, the
+# Rust `LockDir`): an empty directory at `<file>.lock`, stale once its mtime is
+# older than this. Parent and child kernels, and the host, serialize on it.
+_STATE_LOCK_STALE_S = 10.0
+# A writer waits this long for the lock: past the stale window, so a crashed
+# holder's leftover is always reclaimed before the wait gives up.
+_STATE_LOCK_WAIT_S = 15.0
+_STATE_LOCK_RETRY_S = 0.005
+
+
+def _state_lock_path(file_path: Path) -> Path:
+    return Path(f"{file_path}.lock")
+
+
+def _try_reclaim_lock(lock_path: Path) -> None:
+    """Remove a lock artifact that is not a live lock: a regular file, or a
+    directory whose mtime is older than the stale window."""
+    try:
+        info = os.lstat(lock_path)
+    except FileNotFoundError:
+        return
+    if stat.S_ISREG(info.st_mode):
+        try:
+            os.unlink(lock_path)
+        except FileNotFoundError:
+            pass
+        return
+    if stat.S_ISDIR(info.st_mode) and time.time() - info.st_mtime > _STATE_LOCK_STALE_S:
+        try:
+            os.rmdir(lock_path)
+        except (FileNotFoundError, OSError):
+            pass
+
+
+@contextmanager
+def _state_file_lock(file_path: Path) -> Iterator[None]:
+    lock_path = _state_lock_path(file_path)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + _STATE_LOCK_WAIT_S
+    while True:
+        try:
+            os.mkdir(lock_path)
+            break
+        except FileExistsError:
+            _try_reclaim_lock(lock_path)
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"harness state is locked by another process: {lock_path} "
+                    f"(held longer than {_STATE_LOCK_WAIT_S:.0f}s)"
+                ) from None
+            time.sleep(_STATE_LOCK_RETRY_S)
+    try:
+        yield
+    finally:
+        try:
+            os.rmdir(lock_path)
+        except OSError:
+            pass
+
+
+_Method = TypeVar("_Method", bound=Callable[..., Any])
+
+
+def _locked_write(method: _Method) -> _Method:
+    """Run a read-modify-write mutator under the state file's cross-process
+    lock, so a concurrent writer (a child kernel, the host) can never land
+    between this mutator's reload and its save."""
+
+    @functools.wraps(method)
+    def wrapper(self: "HarnessState", *args: Any, **kwargs: Any) -> Any:
+        with self._write_lock():
+            return method(self, *args, **kwargs)
+
+    return wrapper  # type: ignore[return-value]
 
 
 def _slug(raw: str, fallback: str) -> str:
@@ -449,7 +530,30 @@ class HarnessState:
         # mtime of the file as of the last load/save, used to detect out-of-process
         # writes (e.g. the host `/refine` command) and avoid clobbering them.
         self._loaded_mtime: int | None = None
+        # Why the file on disk failed to parse at the last load, if it did. A
+        # save never overwrites such a file without backing it up first.
+        self.load_error: str | None = None
+        # Reentrant within the process: mutators nest (create -> _upsert -> save).
+        self._lock_guard = threading.RLock()
+        self._lock_depth = 0
         self.load()
+
+    @contextmanager
+    def _write_lock(self) -> Iterator[None]:
+        with self._lock_guard:
+            if self.file_path is None or self._lock_depth > 0:
+                self._lock_depth += 1
+                try:
+                    yield
+                finally:
+                    self._lock_depth -= 1
+                return
+            with _state_file_lock(self.file_path):
+                self._lock_depth += 1
+                try:
+                    yield
+                finally:
+                    self._lock_depth -= 1
 
     def _ensure_local_writable(self) -> None:
         if self._local_write_error is not None:
@@ -479,18 +583,24 @@ class HarnessState:
         if self.file_path is None or not self.file_path.exists():
             self._loaded_mtime = None
             self._extra = {}
+            self.load_error = None
             return self
         mtime = self._disk_mtime()
+        self.load_error = None
         try:
             with self.file_path.open("r", encoding="utf-8") as f:
                 data = json.load(f)
-        except (OSError, ValueError):
+        except (OSError, ValueError) as err:
             # A corrupt or unreadable state file must not crash the kernel or block
-            # refinement. Treat it as empty; the next save() rewrites it cleanly.
+            # refinement: reads see it as empty. It is not empty, though: save()
+            # backs it up before writing over it.
+            self.load_error = f"{type(err).__name__}: {err}"
             data = {}
         # json.load returns non-dict types for valid JSON like `null`, `[]`, or a bare
         # string; coerce those to an empty object before attribute access.
         if not isinstance(data, dict):
+            if self.load_error is None:
+                self.load_error = f"top-level JSON is {_type_name(data)}, not an object"
             data = {}
 
         self._extra = {key: value for key, value in data.items() if key not in _MODELLED_TOP_LEVEL}
@@ -571,11 +681,39 @@ class HarnessState:
             return None
         return target
 
+    def _backup_unparsed_file(self) -> None:
+        """Copy a state file that failed to parse aside before a save replaces it."""
+        assert self.file_path is not None
+        if self.load_error is None or not self.file_path.exists():
+            return
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        backup = self.file_path.with_name(f"{self.file_path.name}.corrupt-{stamp}-{os.getpid()}")
+        shutil.copy2(self.file_path, backup)
+        self.load_error = None
+
     def save(self) -> "HarnessState":
         if self.file_path is None:
             # in_memory fallback: nothing to persist.
             return self
+        with self._write_lock():
+            return self._save_locked()
+
+    def _save_locked(self) -> "HarnessState":
+        assert self.file_path is not None
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.load_error is None and self._disk_mtime() != self._loaded_mtime:
+            # Another writer replaced the file since our load: re-check that it
+            # parses before writing over it (our in-memory state is what the
+            # caller asked to persist; a corrupt newcomer must still be kept).
+            try:
+                with self.file_path.open("r", encoding="utf-8") as f:
+                    if not isinstance(json.load(f), dict):
+                        self.load_error = "top-level JSON is not an object"
+            except FileNotFoundError:
+                pass
+            except (OSError, ValueError) as err:
+                self.load_error = f"{type(err).__name__}: {err}"
+        self._backup_unparsed_file()
         data = {
             **self._extra,
             "schema": 1,
@@ -610,6 +748,7 @@ class HarnessState:
         self._loaded_mtime = self._disk_mtime()
         return self
 
+    @_locked_write
     def upsert(
         self,
         kind: HarnessKind,
@@ -741,6 +880,7 @@ class HarnessState:
             raise ValueError(f"unknown harness kind {kind!r}; expected one of {_KINDS}")
         return self.entries[kind].get(id)
 
+    @_locked_write
     def delete(self, kind: HarnessKind, id: str, *, global_: bool = False, **kwargs: Any) -> bool:
         id, global_ = _strip_scope_prefix(id, global_)
         if target := self._global_target(global_, kwargs):
@@ -767,6 +907,7 @@ class HarnessState:
             records.extend(self.entries[current_kind].values())
         return sorted(records, key=lambda entry: (entry.kind, entry.path, entry.title, entry.id))
 
+    @_locked_write
     def create(
         self,
         kind: HarnessKind,
@@ -817,6 +958,7 @@ class HarnessState:
             source=source,
         )
 
+    @_locked_write
     def update(
         self,
         kind: HarnessKind,
@@ -1091,6 +1233,7 @@ class HarnessState:
     def delete_factory(self, id: str, *, global_: bool = False, **kwargs: Any) -> bool:
         return self.delete("factory", id, global_=global_, **kwargs)
 
+    @_locked_write
     def record_refinement(
         self,
         trigger: str,
