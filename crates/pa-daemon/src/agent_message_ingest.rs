@@ -290,12 +290,18 @@ mod tests {
         assert!(delivered.success, "delivery failed: {delivered:?}");
         let cleared = worker.dispatch("agent_messages_clear", &json!({})).await;
         // The removed text is the queued turn's prompt (TS `payload.text`).
+        let mut cleared = cleared.data.expect("cleared data");
+        for text in cleared["followUp"].as_array_mut().into_iter().flatten() {
+            *text = json!(crate::worker::without_sent_stamp(
+                text.as_str().unwrap_or_default()
+            ));
+        }
         assert_eq!(
-            cleared.data,
-            Some(json!({
+            cleared,
+            json!({
                 "steering": [],
                 "followUp": ["[agent-message from peer-1]\n\nqueued for later"],
-            }))
+            })
         );
     }
 }

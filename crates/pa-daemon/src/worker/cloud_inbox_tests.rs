@@ -3,6 +3,13 @@
 //! idempotent duplicate answer, and the restart survival of both the
 //! dedupe key and the visible lane.
 use super::agent_message_tests::{created_worker, queue_texts};
+
+fn unstamped(texts: &[String]) -> Vec<String> {
+    texts
+        .iter()
+        .map(|text| crate::worker::without_sent_stamp(text))
+        .collect()
+}
 use super::*;
 
 fn keyed_payload(message: &str, request_id: &str) -> Value {
@@ -43,7 +50,10 @@ async fn keyed_delivery_records_the_admission_in_one_flush() {
     // The rendered prompt is on the steering lane (one visible message).
     assert_eq!(
         queue_texts(&worker.core, Lane::Steering),
-        vec!["[agent-message from cloud kid]\n\ncloud hello"]
+        vec![format!(
+            "[agent-message from cloud kid]\nSent: {}\n\ncloud hello",
+            data["deliveredAt"].as_str().unwrap()
+        )]
     );
     // The journal holds the queue snapshot AND the cloud admission for
     // the request id, one durable batch.
@@ -194,7 +204,7 @@ async fn restart_restores_the_lane_and_the_inbox_key() {
     // The visible message survived the restart: exactly one restored lane
     // item.
     assert_eq!(
-        queue_texts(&respawned.core, Lane::Steering),
+        unstamped(&queue_texts(&respawned.core, Lane::Steering)),
         vec!["[agent-message from cloud kid]\n\nparked cloud note"]
     );
     // The dedupe key survived too: a replayed duplicate answers the
@@ -423,7 +433,7 @@ async fn failed_fsync_quarantines_until_restart_and_reconciles_both_disk_outcome
             .starts_with(crate::cloud_family::CLOUD_COMMIT_UNCERTAIN));
         assert!(worker.input_pauses.paused(), "keep the runner parked");
         assert_eq!(
-            queue_texts(&worker.core, Lane::Steering),
+            unstamped(&queue_texts(&worker.core, Lane::Steering)),
             vec!["[agent-message from cloud kid]\n\nneighbor"]
         );
         let journal_path = &config.recovery_journal_path;
@@ -520,7 +530,7 @@ async fn failed_fsync_quarantines_until_restart_and_reconciles_both_disk_outcome
             created.success,
             "restart must restore prior queue: {created:?}"
         );
-        let texts = queue_texts(&respawned.core, Lane::Steering);
+        let texts = unstamped(&queue_texts(&respawned.core, Lane::Steering));
         assert!(texts.contains(&"[agent-message from cloud kid]\n\nneighbor".to_string()));
         let prior = respawned
             .dispatch(

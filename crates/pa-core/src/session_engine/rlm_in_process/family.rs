@@ -390,10 +390,14 @@ impl AgentMessageController for InProcessFamilyController {
             AgentFamilyRelationship::Child => Some(AgentFamilyRelationship::Parent),
             AgentFamilyRelationship::Sibling => Some(AgentFamilyRelationship::Sibling),
         };
+        // One acceptance time: the prompt's `Sent:` stamp and the
+        // receipt's delivered/queued time.
+        let sent_at = crate::session::manager::format_iso_now();
         let prompt = create_agent_session_message_prompt(&AgentMessagePromptPayload {
             message: message.clone(),
             sender_name: sender_name.clone(),
             from_relationship,
+            sent_at: Some(sent_at.clone()),
         });
         let target_session_id = node.session_id.clone();
         let id = create_agent_session_message_id();
@@ -467,8 +471,8 @@ impl AgentMessageController for InProcessFamilyController {
             delivery_status: delivery,
             delivery_mode: Some("steer"),
             receiver_role: input.receiver_role,
-            delivered_at: delivered.then(crate::session::manager::format_iso_now),
-            queued_at: (!delivered).then(crate::session::manager::format_iso_now),
+            delivered_at: delivered.then(|| sent_at.clone()),
+            queued_at: (!delivered).then_some(sent_at),
             // The in-process host steers directly; it has no digest lane.
             digest_at: None,
         })

@@ -1000,6 +1000,20 @@ fn is_injected_prompt_item(item: &QueuedItem) -> bool {
 #[path = "worker_resume_settings_tests.rs"]
 mod worker_resume_settings_tests;
 
+/// A rendered agent-message prompt with its `Sent:` acceptance stamp
+/// (upstream #1189) removed: tests that pin the prompt's sender and body
+/// without the wall-clock time compare against the unstamped TS form.
+#[cfg(test)]
+pub(crate) fn without_sent_stamp(prompt: &str) -> String {
+    match prompt.split_once("\nSent: ") {
+        Some((header, rest)) => match rest.split_once('\n') {
+            Some((_, body)) => format!("{header}\n{body}"),
+            None => prompt.to_string(),
+        },
+        None => prompt.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod agent_message_tests;
 #[cfg(all(test, unix))]

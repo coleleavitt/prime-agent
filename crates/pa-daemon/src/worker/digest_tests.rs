@@ -118,7 +118,10 @@ async fn digest_lane_is_off_by_default_and_delivers_push() {
     assert!(receipt["deliveredAt"].as_str().is_some());
     assert_eq!(
         queue_texts(&worker.core, Lane::Steering),
-        vec!["[agent-message from source-agent]\n\npushed"]
+        vec![format!(
+            "[agent-message from source-agent]\nSent: {}\n\npushed",
+            receipt["deliveredAt"].as_str().unwrap()
+        )]
     );
     let snapshot = worker.agent_digest.inbox_snapshot();
     assert_eq!(snapshot["total"], json!(0));

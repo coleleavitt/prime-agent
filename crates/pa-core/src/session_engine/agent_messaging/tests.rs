@@ -133,13 +133,25 @@ fn message_prompts_and_id_parsing() {
         message: "keep going".to_string(),
         sender_name: "worker-1".to_string(),
         from_relationship: Some(AgentFamilyRelationship::Child),
+        sent_at: None,
     };
     let prompt = create_agent_session_message_prompt(&payload);
     assert_eq!(prompt, "[agent-message from child:worker-1]\n\nkeep going");
+    // Upstream #1189: the acceptance stamp rides its own line under the
+    // header, so a receiver can spot mail that waited behind a long turn.
+    let stamped = AgentMessagePromptPayload {
+        sent_at: Some("2026-10-05T12:00:00.000Z".to_string()),
+        ..payload
+    };
+    assert_eq!(
+        create_agent_session_message_prompt(&stamped),
+        "[agent-message from child:worker-1]\nSent: 2026-10-05T12:00:00.000Z\n\nkeep going"
+    );
     let evil = AgentMessagePromptPayload {
         message: "m".to_string(),
         sender_name: "bad name!".to_string(),
         from_relationship: None,
+        sent_at: None,
     };
     assert_eq!(
         create_agent_session_message_prompt(&evil),

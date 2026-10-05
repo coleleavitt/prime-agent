@@ -216,7 +216,11 @@ async fn a_delivered_agent_message_turn_emits_the_custom_row() {
     assert_eq!(events[starts[0]]["message"]["role"], "custom");
     assert_eq!(events[starts[0]]["message"]["customType"], "agent_message");
     assert_eq!(
-        events[starts[0]]["message"]["content"],
+        crate::worker::without_sent_stamp(
+            events[starts[0]]["message"]["content"]
+                .as_str()
+                .unwrap_or_default()
+        ),
         "[agent-message from child:research-lane]\n\nthe research is done"
     );
     let user_rows = events.iter().any(|event| {
