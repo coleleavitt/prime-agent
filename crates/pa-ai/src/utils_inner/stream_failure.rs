@@ -18,8 +18,8 @@ use crate::utils::diagnostics::{
 pub enum StreamFailureKind {
     Refusal,
     Safety,
-    /// A payment/balance rejection (HTTP 402), deterministic by status (credits do not refill
-    /// inside a retry ladder).
+    /// A payment/balance rejection (HTTP 402, or a billing error type such as a 429
+    /// `insufficient_quota`): deterministic (credits do not refill inside a retry ladder).
     PaymentRequired,
     Overloaded,
     RateLimit,
@@ -535,6 +535,13 @@ pub fn classify_stream_failure(
     if status == Some(402) {
         return StreamFailureKind::PaymentRequired;
     }
+    // OpenAI reports an exhausted credit balance or billing hard limit as a 429 (#795): the type,
+    // not the status, says it is a billing failure that no retry or park resolves.
+    let billing = regex::Regex::new(r"insufficient_quota|billing_hard_limit|billing_not_active")
+        .expect("static regex");
+    if billing.is_match(&type_lower) {
+        return StreamFailureKind::PaymentRequired;
+    }
     if type_lower == "refusal" {
         return StreamFailureKind::Refusal;
     }
@@ -626,6 +633,18 @@ pub(crate) enum OpenStreamBlock {
     ToolCall,
     /// No content block had opened yet (the stream died before any).
     None,
+}
+
+/// The block a dropped stream was inside when the connection ended: the last content block of
+/// the message under construction.
+pub(crate) fn open_stream_block(output: &crate::types::AssistantMessage) -> OpenStreamBlock {
+    use crate::types::AssistantContent;
+    match output.content.last() {
+        Some(AssistantContent::Thinking(_)) => OpenStreamBlock::Thinking,
+        Some(AssistantContent::Text(_)) => OpenStreamBlock::Text,
+        Some(AssistantContent::ToolCall(_)) => OpenStreamBlock::ToolCall,
+        None => OpenStreamBlock::None,
+    }
 }
 
 /// Failure for a stream the provider ended without its terminal marker:

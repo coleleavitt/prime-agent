@@ -51,6 +51,7 @@ pub(crate) fn agent_model_to_ai_model(model: &AgentModel) -> Model {
         },
         context_window: model.context_window,
         max_tokens: model.max_tokens,
+        max_tokens_explicit: None,
         featured: None,
         headers: None,
         compat: None,
@@ -212,6 +213,8 @@ pub fn stream_once(
             },
             metadata: None,
             timeout_ms: None,
+            // The per-read body stall budget resolves in pa-ai (env override, then default).
+            stream_stall_timeout_ms: None,
         },
         reasoning: Some(model_thinking_level(options.reasoning)),
         thinking_budgets: None,

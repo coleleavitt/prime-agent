@@ -17,3 +17,8 @@ pub mod openai_responses_shared;
 pub mod openai_responses_stream;
 pub mod simple_options;
 pub mod transform_messages;
+
+#[cfg(test)]
+mod json_content_type_tests;
+#[cfg(test)]
+mod stream_stall_tests;

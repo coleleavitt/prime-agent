@@ -484,3 +484,40 @@ fn stream_drop_failures_disclose_the_class_and_block() {
         "Provider dropped the response stream (stream_drop): the stream ended before any response content or stop signal"
     );
 }
+
+/// #795: the `openai` API reports an exhausted credit balance as `429 insufficient_quota`. Credits do not
+/// refill inside a retry ladder, so it classifies as the permanent payment failure (like a 402),
+/// not as a retryable/parkable rate limit; a plain 429 throttle stays a rate limit.
+#[test]
+fn a_429_insufficient_quota_is_a_payment_failure_not_a_rate_limit() {
+    let body = r#"{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","param":null,"code":"insufficient_quota"}}"#;
+    let kind_of = |status: u16, body: &str| {
+        extract_stream_failure_info(&ProviderError::from_http_status_body(
+            status,
+            body,
+            HashMap::new(),
+        ))
+        .kind
+    };
+    assert_eq!(
+        [
+            kind_of(429, body),
+            classify_stream_failure(Some("insufficient_quota"), Some(429)),
+            classify_stream_failure(Some("billing_hard_limit_reached"), Some(429)),
+            classify_stream_failure(Some("billing_not_active"), Some(429)),
+            kind_of(
+                429,
+                r#"{"error":{"type":"rate_limit_error","message":"slow down"}}"#
+            ),
+            classify_stream_failure(None, Some(429)),
+        ],
+        [
+            StreamFailureKind::PaymentRequired,
+            StreamFailureKind::PaymentRequired,
+            StreamFailureKind::PaymentRequired,
+            StreamFailureKind::PaymentRequired,
+            StreamFailureKind::RateLimit,
+            StreamFailureKind::RateLimit,
+        ]
+    );
+}

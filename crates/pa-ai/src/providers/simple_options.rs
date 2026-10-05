@@ -14,10 +14,19 @@ pub const MIN_OUTPUT_TOKENS: u64 = 1_024;
 
 /// The default per-request output budget for a model (TS `buildBaseOptions`):
 /// the model's max output capped at [`REQUEST_MAX_TOKENS_CAP`], or `None` when
-/// the model declares no max output (providers that default server-side).
+/// the model declares no max output (providers that default server-side). A
+/// `maxTokens` the user configured explicitly ([`Model::max_tokens_explicit`])
+/// is sent as configured: the cap is a default for catalog values, not a limit
+/// on configuration (#755).
 #[must_use]
 pub fn default_request_max_tokens(model: &Model) -> Option<u64> {
-    (model.max_tokens > 0).then(|| model.max_tokens.min(REQUEST_MAX_TOKENS_CAP))
+    if model.max_tokens == 0 {
+        return None;
+    }
+    if model.max_tokens_explicit == Some(true) {
+        return Some(model.max_tokens);
+    }
+    Some(model.max_tokens.min(REQUEST_MAX_TOKENS_CAP))
 }
 
 pub fn build_base_options(
@@ -50,6 +59,7 @@ pub fn build_base_options(
         on_response: base.on_response,
         headers: base.headers,
         timeout_ms: base.timeout_ms,
+        stream_stall_timeout_ms: base.stream_stall_timeout_ms,
         metadata: base.metadata,
     }
 }
@@ -161,6 +171,23 @@ mod tests {
             "contextWindow": 200_000, "maxTokens": max_tokens,
         }))
         .expect("test model")
+    }
+
+    /// #755 / #839: an explicitly configured `maxTokens` (models.json definition or override)
+    /// goes on the wire as configured; the 32 000 default ceiling applies only to catalog values.
+    #[test]
+    fn an_explicit_max_tokens_is_not_capped_at_the_default_ceiling() {
+        let catalog = model("openai-completions", "glm-5.2", 131_072);
+        let mut wire = serde_json::to_value(&catalog).expect("model serializes");
+        wire["maxTokensExplicit"] = json!(true);
+        let configured: Model = serde_json::from_value(wire).expect("configured model");
+        assert_eq!(
+            (
+                default_request_max_tokens(&configured),
+                default_request_max_tokens(&catalog),
+            ),
+            (Some(131_072), Some(REQUEST_MAX_TOKENS_CAP)),
+        );
     }
 
     #[test]

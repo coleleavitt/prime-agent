@@ -30,7 +30,7 @@ use crate::utils_inner::json_parse::{
 };
 use crate::utils_inner::sse::{ServerSentEvent, SseDecoder};
 use crate::utils_inner::stream_failure::{
-    record_stream_failure, stream_drop_failure, OpenStreamBlock, ProviderError,
+    open_stream_block, record_stream_failure, stream_drop_failure, ProviderError,
 };
 
 struct StreamingState {
@@ -582,7 +582,7 @@ async fn run_stream(
     }
 
     let url = format!("{}/chat/completions", model.base_url.trim_end_matches('/'));
-    let headers = build_headers(
+    let mut headers = build_headers(
         model,
         &api_key,
         base_options.headers.as_ref(),
@@ -591,6 +591,7 @@ async fn run_stream(
         base_options.session_id.as_deref(),
     );
 
+    crate::utils_inner::headers::ensure_json_content_type(&mut headers);
     let mut response: HttpResponse = send(RequestOptions {
         method: reqwest::Method::POST,
         url,
@@ -598,6 +599,7 @@ async fn run_stream(
         body: Some(params.to_string()),
         signal: base_options.signal.clone(),
         timeout_ms: base_options.timeout_ms,
+        stall_timeout_ms: base_options.stream_stall_timeout_ms,
         connection: crate::utils_inner::stream_failure::ConnectionErrorProfile::Sdk,
         transport: crate::utils_inner::http::Transport::Http1,
     })
@@ -718,16 +720,6 @@ fn mark_done_marker(event: &ServerSentEvent, state: &mut StreamingState) -> bool
         true
     } else {
         false
-    }
-}
-
-/// The block a dropped stream was inside when the connection ended.
-fn open_stream_block(output: &AssistantMessage) -> OpenStreamBlock {
-    match output.content.last() {
-        Some(AssistantContent::Thinking(_)) => OpenStreamBlock::Thinking,
-        Some(AssistantContent::Text(_)) => OpenStreamBlock::Text,
-        Some(AssistantContent::ToolCall(_)) => OpenStreamBlock::ToolCall,
-        None => OpenStreamBlock::None,
     }
 }
 

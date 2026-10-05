@@ -283,6 +283,7 @@ async fn run_stream(
         body: Some(payload.to_string()),
         signal: options.base.signal.clone(),
         timeout_ms: options.base.timeout_ms,
+        stall_timeout_ms: options.base.stream_stall_timeout_ms,
         connection: crate::utils_inner::stream_failure::ConnectionErrorProfile::MistralSdk,
         transport: crate::utils_inner::http::Transport::Http1,
     })
@@ -846,6 +847,7 @@ mod tests {
             cost: crate::types::zero_model_cost(),
             context_window: 128_000,
             max_tokens: 8192,
+            max_tokens_explicit: None,
             featured: None,
             headers: None,
             compat: None,

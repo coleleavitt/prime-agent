@@ -47,6 +47,8 @@ pub(crate) struct H2RequestOptions {
     pub body: Vec<u8>,
     pub signal: Option<CancellationToken>,
     pub timeout_ms: Option<u64>,
+    /// Per-read body stall budget in ms (see `utils_inner::http::RequestOptions`).
+    pub stall_timeout_ms: Option<u64>,
     /// The AWS http2 connection-error profile for the failures.
     pub connection: ConnectionErrorProfile,
 }
@@ -60,6 +62,8 @@ pub(crate) struct H2Response {
     observer: crate::providers::bedrock::goaway::GoAwayObserver,
     signal: Option<CancellationToken>,
     connection: ConnectionErrorProfile,
+    /// The per-read silence budget (`None` disables it).
+    stall: Option<std::time::Duration>,
 }
 
 impl H2Response {
@@ -72,16 +76,12 @@ impl H2Response {
         {
             return Err(ProviderError::Aborted);
         }
-        let chunk = match &self.signal {
-            Some(signal) => {
-                let next = futures::StreamExt::next(&mut self.body);
-                tokio::select! {
-                    () = signal.cancelled() => return Err(ProviderError::Aborted),
-                    chunk = next => chunk,
-                }
-            }
-            None => futures::StreamExt::next(&mut self.body).await,
-        };
+        let chunk = crate::utils_inner::http::read_within_stall_budget(
+            futures::StreamExt::next(&mut self.body),
+            self.signal.as_ref(),
+            self.stall,
+        )
+        .await?;
         match chunk {
             Some(Ok(bytes)) => {
                 // h2 flow control: the connection window must be released or long event streams
@@ -178,6 +178,7 @@ pub(crate) async fn send_h2(options: H2RequestOptions) -> Result<H2Response, Pro
         body,
         signal,
         timeout_ms,
+        stall_timeout_ms,
         connection,
     } = options;
 
@@ -275,6 +276,7 @@ pub(crate) async fn send_h2(options: H2RequestOptions) -> Result<H2Response, Pro
             observer,
             signal,
             connection,
+            stall: crate::utils_inner::http::stall_timeout_from_env(stall_timeout_ms),
         })
     };
 
@@ -464,6 +466,7 @@ mod h2_wire_tests {
             body: b"{}".to_vec(),
             signal: None,
             timeout_ms: None,
+            stall_timeout_ms: None,
             connection: ConnectionErrorProfile::AwsHttp2 { host, port },
         }
     }

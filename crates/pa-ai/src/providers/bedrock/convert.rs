@@ -1,7 +1,10 @@
 //! Bedrock Converse request conversion: messages, system prompt, tool config, and model-capability
 //! classification.
 
+use std::sync::LazyLock;
+
 use base64::Engine as _;
+use regex::Regex;
 use serde_json::{json, Map, Value};
 
 use crate::models::clamp_thinking_level;
@@ -80,10 +83,30 @@ pub fn supports_prompt_caching(model: &Model) -> bool {
         // force cache points via environment variable.
         return std::env::var("AWS_BEDROCK_FORCE_CACHE").as_deref() == Ok("1");
     }
+    // Catalog metadata first: Bedrock bills cache writes only for models that take cache points,
+    // so a Claude entry the catalog prices cache writes for supports them.
+    if model.cost.cache_write.as_f64() > 0.0 {
+        return true;
+    }
     candidates.iter().any(|s| {
-        s.contains("-4-") || s.contains("claude-3-7-sonnet") || s.contains("claude-3-5-haiku")
+        CACHEABLE_CURRENT_RELEASE.is_match(s)
+            || s.contains("-4-")
+            || s.contains("claude-3-7-sonnet")
+            || s.contains("claude-3-5-haiku")
     })
 }
+
+/// The documented Claude 5 / Mythos releases that take Bedrock cache points
+/// (<https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html>), matched against
+/// the dashed match candidates. The list stays explicit: a future major or minor is not capability
+/// evidence. A release ends the candidate, or is followed by a version (`-v1`), a date
+/// (`-20250929`), or a parenthesised qualifier (`Claude Fable 5.1 (Global)`).
+static CACHEABLE_CURRENT_RELEASE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?:^|[./-])claude-(?:opus-5(?:-5)?|sonnet-5|(?:fable|mythos)-5(?:-1)?|mythos-preview)(?:$|-(?:v\d+|20\d{6})(?:-|$)|-\()",
+    )
+    .expect("the cacheable-release pattern compiles")
+});
 
 pub fn supports_thinking_signature(model: &Model) -> bool {
     is_anthropic_claude_model(model)
@@ -436,5 +459,110 @@ mod supports_always_on_adaptive_thinking_tests {
             "us.anthropic.claude-opus-5-v1",
             Some("Claude Opus 5")
         ));
+    }
+}
+
+#[cfg(test)]
+mod supports_prompt_caching_tests {
+    use super::supports_prompt_caching;
+    use crate::types::{zero_model_cost, Model, ModelCost, ModelInput};
+    use pa_types::JsNumber;
+
+    fn bedrock_model(id: &str, name: &str, cost: ModelCost) -> Model {
+        Model {
+            id: id.into(),
+            name: name.into(),
+            api: "bedrock-converse-stream".into(),
+            provider: "amazon-bedrock".into(),
+            base_url: String::new(),
+            reasoning: true,
+            thinking_level_map: None,
+            input: vec![ModelInput::Text],
+            cost,
+            context_window: 200_000,
+            max_tokens: 8192,
+            max_tokens_explicit: None,
+            featured: None,
+            headers: None,
+            compat: None,
+        }
+    }
+
+    /// #2548 (upstream #2978, #1082): cache points for the Claude 5 / Opus 5.x / Mythos releases,
+    /// whether the id or (for an application inference profile) only the name identifies them.
+    /// Every candidate here is a Claude reference, so `AWS_BEDROCK_FORCE_CACHE` is never consulted.
+    #[test]
+    fn claude_5_and_mythos_releases_get_cache_points_by_id_or_name() {
+        let cases: &[(&str, &str, bool)] = &[
+            ("us.anthropic.claude-opus-5", "Claude Opus 5", true),
+            ("us.anthropic.claude-opus-5-5", "Claude Opus 5.5", true),
+            ("eu.anthropic.claude-sonnet-5", "Claude Sonnet 5", true),
+            ("global.anthropic.claude-fable-5", "Claude Fable 5", true),
+            ("us.anthropic.claude-fable-5-1", "Claude Fable 5.1", true),
+            ("us.anthropic.claude-mythos-5", "Claude Mythos 5", true),
+            ("us.anthropic.claude-mythos-5-1", "Claude Mythos 5.1", true),
+            (
+                "us.anthropic.claude-mythos-preview",
+                "Claude Mythos Preview",
+                true,
+            ),
+            ("us.anthropic.claude-opus-5-v1:0", "profile", true),
+            ("custom-profile", "Claude Fable 5.1 (Global)", true),
+            (
+                "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/test",
+                "Claude Fable 5.1",
+                true,
+            ),
+            (
+                "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/test",
+                "Claude Sonnet 4.6",
+                true,
+            ),
+            (
+                "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                "Claude Sonnet 4.5",
+                true,
+            ),
+            (
+                "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+                "Claude 3.7 Sonnet",
+                true,
+            ),
+            (
+                "us.anthropic.claude-3-5-haiku-20241022-v1:0",
+                "Claude 3.5 Haiku",
+                true,
+            ),
+            (
+                "us.anthropic.claude-3-sonnet-20240229-v1:0",
+                "Claude 3 Sonnet",
+                false,
+            ),
+            // A future major/minor is not capability evidence without catalog pricing.
+            ("us.anthropic.claude-opus-50", "Claude Opus 50", false),
+            ("us.anthropic.claude-opus-5-99", "Claude Opus 5.99", false),
+        ];
+        let actual: Vec<(&str, &str, bool)> = cases
+            .iter()
+            .map(|&(id, name, _)| {
+                let model = bedrock_model(id, name, zero_model_cost());
+                (id, name, supports_prompt_caching(&model))
+            })
+            .collect();
+        assert_eq!(actual, cases.to_vec());
+    }
+
+    /// Catalog metadata wins over string matching: a Claude entry the catalog prices cache
+    /// writes for supports cache points even when its id matches no known family.
+    #[test]
+    fn catalog_cache_write_pricing_enables_cache_points_for_claude() {
+        let priced = ModelCost {
+            input: JsNumber(5.0),
+            output: JsNumber(25.0),
+            cache_read: JsNumber(0.5),
+            cache_write: JsNumber(6.25),
+        };
+        let model = bedrock_model("us.anthropic.claude-opus-6", "Claude Opus 6", priced);
+        assert!(supports_prompt_caching(&model));
     }
 }

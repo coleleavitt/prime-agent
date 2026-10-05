@@ -320,6 +320,7 @@ async fn run_stream(
         body: Some(body_json),
         signal: options.base.signal.clone(),
         timeout_ms: options.base.timeout_ms,
+        stall_timeout_ms: options.base.stream_stall_timeout_ms,
         connection: crate::utils_inner::stream_failure::ConnectionErrorProfile::RawFetch,
         transport: crate::utils_inner::http::Transport::Http1,
     })
@@ -879,6 +880,7 @@ mod tests {
             cost: crate::types::zero_model_cost(),
             context_window: 400_000,
             max_tokens: 128_000,
+            max_tokens_explicit: None,
             featured: None,
             headers: None,
             compat: None,

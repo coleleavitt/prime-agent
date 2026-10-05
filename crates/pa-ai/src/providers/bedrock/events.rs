@@ -438,6 +438,7 @@ mod tests {
             cost: zero_model_cost(),
             context_window: 200_000,
             max_tokens: 8192,
+            max_tokens_explicit: None,
             featured: None,
             headers: None,
             compat: None,

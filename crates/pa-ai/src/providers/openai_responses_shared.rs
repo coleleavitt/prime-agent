@@ -400,6 +400,7 @@ mod tests {
             cost: crate::types::zero_model_cost(),
             context_window: 400_000,
             max_tokens: 128_000,
+            max_tokens_explicit: None,
             featured: None,
             headers: None,
             compat: None,
@@ -657,5 +658,58 @@ mod tests {
             panic!("missing message item in {items:?}");
         };
         assert_eq!(message.get("id"), Some(&json!("msg_1")));
+    }
+
+    /// Feed the truncated Responses SSE body to a processor for `model` and return `finish()`.
+    fn finish_truncated(model: &Model) -> Result<(), crate::ProviderError> {
+        let (writer, _stream) = crate::event_stream::AssistantMessageEventStream::new();
+        let mut output =
+            crate::event_stream::initial_assistant_message(&model.api, &model.provider, &model.id);
+        let mut processor = ResponsesStreamProcessor::new(
+            model,
+            &mut output,
+            &writer,
+            ResponsesStreamHooks::default(),
+        );
+        let mut decoder = crate::utils_inner::sse::SseDecoder::new();
+        for sse in
+            decoder.push_text(crate::providers::openai_responses::tests::TRUNCATED_RESPONSES_SSE)
+        {
+            processor
+                .handle_event(&serde_json::from_str(&sse.data).unwrap())
+                .unwrap();
+        }
+        processor.finish()
+    }
+
+    /// #1623 / #2089: every Responses provider (`openai`, `openai-codex`, `azure-openai-responses`) fails closed when the stream
+    /// ends without a terminal response event, as the retryable `stream_drop` class; xAI keeps its
+    /// TS failure text.
+    #[test]
+    fn finish_fails_closed_without_a_terminal_response_for_every_provider() {
+        let expected_drop =
+            Some(crate::providers::openai_responses::tests::truncated_text_failure_message());
+        let mut outcomes = Vec::new();
+        for provider in ["openai", "openai-codex", "azure-openai-responses", "xai"] {
+            let mut model = codex_model();
+            model.provider = provider.into();
+            let message = match finish_truncated(&model) {
+                Err(crate::ProviderError::StreamFailure(failure)) => Some(failure.message),
+                other => panic!("{provider}: expected a stream failure, got {other:?}"),
+            };
+            outcomes.push((provider, message));
+        }
+        assert_eq!(
+            outcomes,
+            vec![
+                ("openai", expected_drop.clone()),
+                ("openai-codex", expected_drop.clone()),
+                ("azure-openai-responses", expected_drop),
+                (
+                    "xai",
+                    Some("xAI Responses stream ended before a terminal response event".into())
+                ),
+            ]
+        );
     }
 }

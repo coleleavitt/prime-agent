@@ -344,6 +344,7 @@ async fn run_stream(
     }
     headers.push(("api-key".into(), api_key));
 
+    crate::utils_inner::headers::ensure_json_content_type(&mut headers);
     let mut response: HttpResponse = send(RequestOptions {
         method: reqwest::Method::POST,
         url,
@@ -351,6 +352,7 @@ async fn run_stream(
         body: Some(params.to_string()),
         signal: options.base.signal.clone(),
         timeout_ms: options.base.timeout_ms,
+        stall_timeout_ms: options.base.stream_stall_timeout_ms,
         connection: crate::utils_inner::stream_failure::ConnectionErrorProfile::Sdk,
         transport: crate::utils_inner::http::Transport::Http1,
     })
@@ -577,5 +579,40 @@ mod tests {
         let params = build_params(&model, &Context::default(), &options, "deploy");
         assert_eq!(params.get("store"), Some(&json!(false)));
         assert_eq!(params.get("prompt_cache_key"), None);
+    }
+
+    /// #1623 / #2089: Azure Responses streams fail closed on a missing terminal event too.
+    #[tokio::test]
+    async fn a_stream_without_a_terminal_event_fails_closed() {
+        use crate::providers::openai_responses::tests::{
+            truncated_text_failure_message, TRUNCATED_RESPONSES_SSE,
+        };
+        let server = crate::test_mock_http::serve(vec![crate::test_mock_http::MockResponse::sse(
+            TRUNCATED_RESPONSES_SSE,
+        )])
+        .await;
+        let model = serde_json::from_value::<Model>(json!({
+            "id": "gpt-5", "name": "gpt-5",
+            "api": "azure-openai-responses", "provider": "azure-openai-responses",
+            "baseUrl": "", "reasoning": false, "input": ["text"],
+            "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+            "contextWindow": 128_000, "maxTokens": 16_384
+        }))
+        .unwrap();
+        let mut options = AzureOpenAIResponsesOptions::from_base(StreamOptions {
+            api_key: Some("test".into()),
+            ..Default::default()
+        });
+        options.azure_base_url = Some(format!("{}/openai/v1", server.base_url()));
+        let message = stream_azure_openai_responses(&model, &Context::default(), Some(&options))
+            .result()
+            .await;
+        assert_eq!(
+            (message.stop_reason, message.error_message),
+            (
+                crate::types::StopReason::Error,
+                Some(truncated_text_failure_message())
+            ),
+        );
     }
 }

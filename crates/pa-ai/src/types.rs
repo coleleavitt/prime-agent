@@ -79,6 +79,11 @@ pub struct StreamOptions {
     pub on_response: Option<OnResponseHook>,
     pub headers: Option<std::collections::HashMap<String, String>>,
     pub timeout_ms: Option<u64>,
+    /// Per-read silence budget on the response body in ms (upstream `streamStallTimeoutMs`):
+    /// a stream that sends nothing for this long fails as a retryable stream failure instead of
+    /// hanging. `Some(0)` disables it; `None` falls back to `PRIME_AGENT_STREAM_STALL_TIMEOUT_MS`
+    /// and then the 300 000 ms default.
+    pub stream_stall_timeout_ms: Option<u64>,
     pub metadata: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
@@ -97,6 +102,7 @@ impl std::fmt::Debug for StreamOptions {
             .field("on_response", &self.on_response.is_some())
             .field("headers", &self.headers)
             .field("timeout_ms", &self.timeout_ms)
+            .field("stream_stall_timeout_ms", &self.stream_stall_timeout_ms)
             .field("metadata", &self.metadata)
             .finish()
     }

@@ -337,6 +337,8 @@ pub fn apply_model_override(model: &Model, over: &ModelOverride) -> Model {
     }
     if let Some(max_tokens) = over.max_tokens {
         result.max_tokens = max_tokens;
+        // A configured value is sent as configured, not capped at the default ceiling (#755).
+        result.max_tokens_explicit = Some(true);
     }
     if let Some(cost) = &over.cost {
         let base = &result.cost;
@@ -447,6 +449,9 @@ pub fn load_custom_models(
                 ),
                 context_window: model_def.context_window.unwrap_or(128_000),
                 max_tokens: model_def.max_tokens.unwrap_or(16_384),
+                // Only a definition that states `maxTokens` configures it; the 16 384 fallback is
+                // a default and keeps the default ceiling (#755).
+                max_tokens_explicit: model_def.max_tokens.map(|_| true),
                 featured: None,
                 headers: None,
                 compat,
@@ -606,5 +611,68 @@ mod tests {
         assert_eq!(merged.context_window, 2000);
         assert_eq!(merged.cost.output.0, 9.0);
         assert_eq!(merged.cost.input.0, 1.0);
+    }
+
+    /// #755 / #839: a `maxTokens` that can only have come from configuration (a models.json
+    /// definition that states it, or a model override) is marked explicit, so requests send it
+    /// as configured instead of capping it at 32 000; a definition without one, and an override
+    /// that does not touch it, keep the default ceiling.
+    #[test]
+    fn configured_max_tokens_are_explicit_and_reach_the_request_uncapped() {
+        let result = load_custom_models(
+            r#"{ "providers": { "glm-h200": {
+                "baseUrl": "http://localhost:8000/v1",
+                "apiKey": "none",
+                "api": "openai-completions",
+                "models": [
+                    { "id": "glm-5.2", "maxTokens": 131072 },
+                    { "id": "defaulted" }
+                ]
+            } } }"#,
+            &|_| false,
+            &|_| None,
+        );
+        assert!(result.error.is_none());
+        let catalog: Model = serde_json::from_value(serde_json::json!({
+            "id": "m", "name": "M", "api": "openai-completions", "provider": "p",
+            "baseUrl": "http://x", "reasoning": false, "input": [],
+            "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+            "contextWindow": 400_000, "maxTokens": 128_000
+        }))
+        .unwrap();
+        let overridden = apply_model_override(
+            &catalog,
+            &ModelOverride {
+                max_tokens: Some(100_000),
+                ..Default::default()
+            },
+        );
+        let renamed = apply_model_override(
+            &catalog,
+            &ModelOverride {
+                name: Some("Renamed".to_string()),
+                ..Default::default()
+            },
+        );
+        let sent = |model: &Model| {
+            (
+                model.max_tokens_explicit,
+                pa_ai::default_request_max_tokens(model),
+            )
+        };
+        assert_eq!(
+            [
+                sent(&result.models[0]),
+                sent(&result.models[1]),
+                sent(&overridden),
+                sent(&renamed),
+            ],
+            [
+                (Some(true), Some(131_072)),
+                (None, Some(16_384)),
+                (Some(true), Some(100_000)),
+                (None, Some(32_000)),
+            ]
+        );
     }
 }
