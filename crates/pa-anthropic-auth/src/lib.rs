@@ -23,6 +23,7 @@ use pa_core::features::{FeatureStatus, SessionFeature, SessionFeatureContext};
 use pa_telemetry::Properties;
 use pa_types::sync::MutexExt;
 
+mod config;
 mod custody;
 mod device;
 mod hooks;
@@ -133,6 +134,9 @@ impl SessionFeature for AnthropicAuthFeature {
         properties.set("migrated", usage.migrated.into());
         properties.set("recovered", usage.recovered.into());
         properties.set("rotated", usage.rotated.into());
+        let (polled, poll_failed) = self.source.quota.poll_counts();
+        properties.set("polled", polled.into());
+        properties.set("poll_failed", poll_failed.into());
         telemetry.track(TELEMETRY_EVENT, &properties);
     }
 }

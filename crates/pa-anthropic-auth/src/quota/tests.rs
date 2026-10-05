@@ -304,3 +304,222 @@ fn the_cooldown_follows_the_server() {
     );
     assert_eq!(cooldown_until(&[], now), now + Duration::seconds(60));
 }
+
+fn usage_at(url: &str) -> impl FnOnce(&mut SharedStoreConfig) + '_ {
+    move |config| config.endpoints.usage_url = url.to_string()
+}
+
+fn recorded(source: &SharedStoreSource, id: &str) -> Option<(Option<f64>, Option<f64>)> {
+    stored(source)
+        .get(id)
+        .and_then(|account| account.quota.clone())
+        .map(|quota| (quota.five_hour_percent, quota.seven_day_percent))
+}
+
+#[test]
+fn a_due_login_is_polled_and_the_reading_lands_on_its_row() {
+    let provider = "anthropic-quota-poll";
+    let (usage_base, usage_requests) = messages_endpoint(vec![(200, Vec::new(), USAGE)]);
+    let usage_url = format!("{usage_base}/api/oauth/usage");
+    let (_home, source) = source_configured(
+        vec![row("polled", Duration::hours(2))],
+        usage_at(&usage_url),
+    );
+    install(provider, &source);
+    let (base, _requests) = messages_endpoint(vec![(200, Vec::new(), OK_STREAM)]);
+    let served = source.credential().expect("the login").api_key;
+
+    complete(&messages_model(provider, &base), &served);
+
+    let polls = usage_requests.lock_or_recover().clone();
+    assert_eq!(
+        polls
+            .iter()
+            .map(|poll| (
+                poll.bearer(),
+                poll.header("anthropic-beta").map(str::to_string)
+            ))
+            .collect::<Vec<_>>(),
+        vec![(served, Some("oauth-2025-04-20".to_string()))]
+    );
+    assert_eq!(recorded(&source, "polled"), Some((Some(30.0), Some(60.0))));
+    let line = source.quota_line().expect("a quota line");
+    assert_eq!(
+        (line.line.as_str(), &line.status["source"]),
+        (
+            "Claude quota: 5h 30% / 7d 60% used",
+            &serde_json::json!("poll")
+        )
+    );
+    assert_eq!(source.quota.poll_counts(), (1, 0));
+}
+
+#[test]
+fn a_fresh_reading_waits_for_its_interval_and_every_n_requests_forces_a_poll() {
+    let provider = "anthropic-quota-poll-cadence";
+    let (usage_url, usage_hits) = token_endpoint(200, USAGE);
+    let dir = tempfile::tempdir().expect("a temporary dir");
+    let config_path = sidecar(
+        dir.path(),
+        &serde_json::json!({ "accounts": [], "quota": { "refreshEveryNRequests": 3 } }),
+    );
+    let (_home, source) = source_configured(vec![row("cadence", Duration::hours(2))], |config| {
+        config.endpoints.usage_url = usage_url.clone();
+        config.config_path = Some(config_path);
+    });
+    install(provider, &source);
+    let (base, _requests) = messages_endpoint(vec![(200, Vec::new(), OK_STREAM); 4]);
+    let served = source.credential().expect("the login").api_key;
+    let model = messages_model(provider, &base);
+
+    let mut hits = Vec::new();
+    for _ in 0..4 {
+        complete(&model, &served);
+        hits.push(usage_hits.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    // The first request finds nothing known; the second a fresh reading;
+    // the third is the third request; the fourth a fresh reading again.
+    assert_eq!(hits, vec![1, 1, 2, 2]);
+}
+
+#[test]
+fn a_failed_poll_backs_off() {
+    let provider = "anthropic-quota-poll-backoff";
+    let (usage_url, usage_hits) = token_endpoint(500, r#"{"error":"busy"}"#);
+    let (_home, source) = source_configured(
+        vec![row("backoff", Duration::hours(2))],
+        usage_at(&usage_url),
+    );
+    install(provider, &source);
+    let (base, _requests) = messages_endpoint(vec![(200, Vec::new(), OK_STREAM); 3]);
+    let served = source.credential().expect("the login").api_key;
+    let model = messages_model(provider, &base);
+
+    for _ in 0..3 {
+        complete(&model, &served);
+    }
+
+    assert_eq!(usage_hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(source.quota.poll_counts(), (1, 1));
+    assert_eq!(recorded(&source, "backoff"), None);
+}
+
+#[test]
+fn a_newer_header_reading_wins_over_the_poll_and_keeps_its_scoped_windows() {
+    let provider = "anthropic-quota-poll-merge";
+    let (usage_url, _usage_hits) = token_endpoint(200, USAGE);
+    let (_home, source) = source_configured(
+        vec![row("merged", Duration::hours(2))],
+        usage_at(&usage_url),
+    );
+    install(provider, &source);
+    let (base, _requests) = messages_endpoint(vec![
+        (200, Vec::new(), OK_STREAM),
+        (
+            200,
+            vec![
+                (
+                    "anthropic-ratelimit-unified-5h-utilization",
+                    "0.48".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-7d-utilization",
+                    "0.553".to_string(),
+                ),
+            ],
+            OK_STREAM,
+        ),
+    ]);
+    let served = source.credential().expect("the login").api_key;
+    let model = messages_model(provider, &base);
+
+    complete(&model, &served);
+    complete(&model, &served);
+
+    let line = source.quota_line().expect("a quota line");
+    assert_eq!(
+        (line.line.as_str(), &line.status["source"]),
+        (
+            "Claude quota: 5h 48% / 7d 55% used",
+            &serde_json::json!("headers")
+        )
+    );
+    assert_eq!(
+        source
+            .quota
+            .snapshot("merged")
+            .and_then(|quota| quota.scoped)
+            .map(|scoped| scoped
+                .into_iter()
+                .map(|window| (window.model_name, window.remaining_percent))
+                .collect::<Vec<_>>()),
+        Some(vec![("Fable".to_string(), 75.0)])
+    );
+    assert_eq!(recorded(&source, "merged"), Some((Some(48.0), Some(55.0))));
+}
+
+#[test]
+fn a_429_is_confirmed_by_a_poll_before_the_request_moves_on() {
+    let provider = "anthropic-quota-429-poll";
+    let (usage_url, usage_hits) = token_endpoint(200, USAGE);
+    let (_home, source) = source_configured(
+        vec![
+            row("confirmed", Duration::hours(2)),
+            row("onward", Duration::hours(2)),
+        ],
+        usage_at(&usage_url),
+    );
+    pin(&source, "confirmed");
+    install(provider, &source);
+    let (base, requests) = messages_endpoint(vec![
+        (429, vec![("retry-after", "120".to_string())], RATE_LIMITED),
+        (200, Vec::new(), OK_STREAM),
+    ]);
+    let served = source.credential().expect("the pinned login").api_key;
+
+    let message = complete(&messages_model(provider, &base), &served);
+
+    assert_eq!(text_of(&message), "hello");
+    assert_eq!(
+        bearers(&requests),
+        vec![
+            "sk-ant-oat01-confirmed-store-access-000".to_string(),
+            "sk-ant-oat01-onward-store-access-000".to_string()
+        ]
+    );
+    // The request's own due poll, then the 429's confirmation (a poll
+    // regardless of the reading's age).
+    assert_eq!(usage_hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(
+        recorded(&source, "confirmed"),
+        Some((Some(30.0), Some(60.0)))
+    );
+}
+
+#[test]
+fn polls_run_on_the_keepalive_thread_never_on_the_request() {
+    let provider = "anthropic-quota-poll-background";
+    let usage_url = hanging_endpoint();
+    let (_home, source) =
+        source_configured(vec![row("background", Duration::hours(2))], |config| {
+            config.endpoints.usage_url = usage_url.clone();
+            config.background = true;
+        });
+    install(provider, &source);
+    let (base, _requests) = messages_endpoint(vec![(200, Vec::new(), OK_STREAM)]);
+    let served = source.credential().expect("the login").api_key;
+    let model = messages_model(provider, &base);
+
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = done.send(text_of(&complete(&model, &served)));
+    });
+
+    // The poll hangs on the keep-alive thread; the request is answered
+    // well inside the poll's 20 s HTTP timeout.
+    assert_eq!(
+        finished.recv_timeout(std::time::Duration::from_secs(10)),
+        Ok("hello".to_string())
+    );
+}

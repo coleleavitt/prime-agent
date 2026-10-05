@@ -88,6 +88,17 @@ pub(crate) fn source_over(
     accounts: Vec<Account>,
     token_url: &str,
 ) -> (tempfile::TempDir, Arc<SharedStoreSource>) {
+    source_configured(accounts, |config| {
+        config.endpoints.token_url = token_url.to_string();
+    })
+}
+
+/// [`source_over`] with the isolated configuration adjusted by `configure`
+/// (a loopback usage endpoint, a sidecar in the temporary home, ...).
+pub(crate) fn source_configured(
+    accounts: Vec<Account>,
+    configure: impl FnOnce(&mut SharedStoreConfig),
+) -> (tempfile::TempDir, Arc<SharedStoreSource>) {
     let home = tempfile::tempdir().expect("a temporary home");
     let store_path = home
         .path()
@@ -103,12 +114,41 @@ pub(crate) fn source_over(
         .save(&store_path)
         .expect("seed the store");
     }
-    let source = SharedStoreSource::new(SharedStoreConfig::isolated(
+    let mut config = SharedStoreConfig::isolated(
         store_path,
-        token_url,
+        "http://127.0.0.1:9/v1/oauth/token",
         "http://127.0.0.1:9/api/oauth/profile",
-    ));
-    (home, Arc::new(source))
+    );
+    configure(&mut config);
+    (home, Arc::new(SharedStoreSource::new(config)))
+}
+
+/// A sidecar `anthropic-auth.json` holding `document` in `home`, for
+/// [`SharedStoreConfig::config_path`].
+pub(crate) fn sidecar(home: &std::path::Path, document: &serde_json::Value) -> std::path::PathBuf {
+    let path = home.join("anthropic-auth.json");
+    std::fs::write(&path, document.to_string()).expect("write the sidecar");
+    path
+}
+
+/// A usage poll answer: 5h 30% (resetting in 2099), 7d 60%, and a Fable
+/// weekly window at 25%.
+pub(crate) const USAGE: &str = r#"{"five_hour":{"utilization":30,"resets_at":"2099-01-01T00:00:00Z"},"seven_day":{"utilization":60,"resets_at":"2099-01-05T00:00:00Z"},"limits":[{"kind":"weekly_scoped","group":"weekly","percent":25,"resets_at":"2099-01-05T00:00:00Z","scope":{"model":{"id":"claude-fable-5","display_name":"Fable"}}}]}"#;
+
+/// A loopback endpoint that accepts connections and never answers.
+pub(crate) fn hanging_endpoint() -> String {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind a loopback port");
+    let url = format!(
+        "http://{}/api/oauth/usage",
+        listener.local_addr().expect("the bound address")
+    );
+    std::thread::spawn(move || {
+        let mut held = Vec::new();
+        for stream in listener.incoming() {
+            held.push(stream);
+        }
+    });
+    url
 }
 
 /// One request a mock endpoint received: its headers (names lowercased, in

@@ -27,8 +27,9 @@ use pa_core::auth::{
 use pa_types::sync::MutexExt;
 use sha2::{Digest, Sha256};
 
-use crate::keepalive::KeepAlive;
-use crate::quota::{quota_line, QuotaLine, QuotaTracker, StoreWrite};
+use crate::config::{config_path_from_lookup, ConfigFile, RoutingConfig};
+use crate::keepalive::{Job, KeepAlive};
+use crate::quota::{poll_usage, quota_line, PollRun, QuotaLine, QuotaTracker, StoreWrite};
 
 /// The status rows' label for a login the shared store holds.
 pub const STORE_LABEL: &str = "shared account store";
@@ -61,6 +62,10 @@ pub struct SharedStoreConfig {
     /// Prefer logins whose recorded usage is below this percentage in both
     /// windows (`ANTHROPIC_QUOTA_RESERVE_PCT`; the napi `reservePct`).
     pub quota_reserve: Option<f64>,
+    /// The plugins' sidecar configuration (`anthropic-auth.json`: routing
+    /// mode, quota policy, killswitch), read only; `None` reads none and
+    /// keeps the plugins' defaults.
+    pub config_path: Option<PathBuf>,
 }
 
 impl SharedStoreConfig {
@@ -80,6 +85,10 @@ impl SharedStoreConfig {
                 != Ok("1"))
             .then(|| anthropic::claude_version::LATEST_VERSION_URL.to_string()),
             quota_reserve: crate::quota::reserve_from_env(),
+            config_path: Some(config_path_from_lookup(
+                |key| std::env::var(key).ok(),
+                &pa_types::platform::dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")),
+            )),
         }
     }
 
@@ -99,6 +108,7 @@ impl SharedStoreConfig {
             background: false,
             version_url: None,
             quota_reserve: None,
+            config_path: None,
         }
     }
 
@@ -178,12 +188,14 @@ pub struct SharedStoreSource {
     /// This process's session id per store row (the plugin's per-account
     /// Claude Code identity).
     sessions: Mutex<std::collections::HashMap<String, String>>,
-    /// The quota readings of this process's responses.
-    pub(crate) quota: QuotaTracker,
+    /// The quota readings of this process's responses and usage polls.
+    pub(crate) quota: Arc<QuotaTracker>,
+    /// The sidecar's routing, quota and killswitch settings.
+    settings: ConfigFile,
     /// The row this process served last.
     last_served: Mutex<Option<String>>,
-    /// The keep-alive thread's store writes, once it runs.
-    writes: OnceLock<std::sync::mpsc::Sender<StoreWrite>>,
+    /// The keep-alive thread's work queue, once it runs.
+    jobs: OnceLock<std::sync::mpsc::Sender<Job>>,
     /// The keep-alive's state, shared with its thread.
     keepalive: Arc<KeepAlive>,
     /// The keep-alive thread starts once.
@@ -192,6 +204,17 @@ pub struct SharedStoreSource {
 
 /// How many served tokens the source remembers (the pi plugin's bound).
 const SERVED_TOKENS_LIMIT: usize = 64;
+/// The longest a request waits for a usage poll it needs the result of.
+const POLL_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Whether a poll's caller waits for its result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PollWait {
+    /// Queue it and go on.
+    Background,
+    /// Wait for it (bounded by [`POLL_WAIT`]).
+    Result,
+}
 
 /// A token this source served and the login it belongs to.
 #[derive(Clone)]
@@ -209,8 +232,10 @@ impl SharedStoreSource {
     /// A source over `config`. Does no I/O.
     #[must_use]
     pub fn new(config: SharedStoreConfig) -> Self {
-        let keepalive = Arc::new(KeepAlive::new(config.clone()));
+        let quota = Arc::new(QuotaTracker::default());
+        let keepalive = Arc::new(KeepAlive::new(config.clone(), Arc::clone(&quota)));
         Self {
+            settings: ConfigFile::new(config.config_path.clone()),
             config,
             client: OnceLock::new(),
             flight: Mutex::new(()),
@@ -219,9 +244,9 @@ impl SharedStoreSource {
             served: Mutex::new(std::collections::VecDeque::new()),
             device_id: OnceLock::new(),
             sessions: Mutex::new(std::collections::HashMap::new()),
-            quota: QuotaTracker::default(),
+            quota,
             last_served: Mutex::new(None),
-            writes: OnceLock::new(),
+            jobs: OnceLock::new(),
             keepalive,
             keepalive_started: std::sync::Once::new(),
         }
@@ -247,13 +272,13 @@ impl SharedStoreSource {
         self.keepalive_started.call_once(|| {
             let keepalive = Arc::clone(&self.keepalive);
             let client = self.config.client();
-            let (sender, writes) = std::sync::mpsc::channel();
+            let (sender, jobs) = std::sync::mpsc::channel();
             let spawned = std::thread::Builder::new()
                 .name("anthropic-keepalive".to_string())
-                .spawn(move || keepalive.run(&client, &writes));
+                .spawn(move || keepalive.run(&client, &jobs));
             match spawned {
                 Ok(_) => {
-                    let _ = self.writes.set(sender);
+                    let _ = self.jobs.set(sender);
                 }
                 Err(error) => {
                     tracing::warn!(%error, "the shared store's keep-alive thread did not start");
@@ -265,14 +290,67 @@ impl SharedStoreSource {
     /// Hand a store write to the keep-alive thread (applied here, blocking,
     /// when no thread runs: tests and sandboxes).
     pub(crate) fn queue_write(&self, write: StoreWrite) {
-        match self.writes.get() {
+        match self.jobs.get() {
             Some(sender) => {
-                if let Err(unsent) = sender.send(write) {
-                    unsent.0.apply(&self.config.store_path);
+                if let Err(unsent) = sender.send(Job::Write(write)) {
+                    if let Job::Write(write) = unsent.0 {
+                        write.apply(&self.config.store_path);
+                    }
                 }
             }
             None => write.apply(&self.config.store_path),
         }
+    }
+
+    /// Poll `account_id`'s usage on the keep-alive thread (here, blocking,
+    /// when no thread runs: tests and sandboxes). With [`PollWait::Result`]
+    /// the caller waits for it (bounded) and hears how it went; a poll
+    /// already queued for the row is not queued again.
+    pub(crate) fn queue_poll(&self, account_id: &str, wait: PollWait) -> Option<PollRun> {
+        if !self.quota.claim_poll(account_id) {
+            return None;
+        }
+        self.run_poll(account_id, wait)
+    }
+
+    /// Run a poll [`QuotaTracker::claim_poll`] (or `claim_due_poll`)
+    /// queued for `account_id`.
+    pub(crate) fn run_poll(&self, account_id: &str, wait: PollWait) -> Option<PollRun> {
+        let inline = || {
+            block_on_own_runtime(poll_usage(
+                &self.config.store_path,
+                self.client(),
+                &self.quota,
+                account_id,
+            ))
+            .ok()
+        };
+        let Some(sender) = self.jobs.get() else {
+            return inline();
+        };
+        let (done, outcome) = match wait {
+            PollWait::Result => {
+                let (done, outcome) = std::sync::mpsc::channel();
+                (Some(done), Some(outcome))
+            }
+            PollWait::Background => (None, None),
+        };
+        let job = Job::Poll {
+            account_id: account_id.to_string(),
+            done,
+        };
+        if sender.send(job).is_err() {
+            return inline();
+        }
+        outcome.and_then(|outcome| outcome.recv_timeout(POLL_WAIT).ok())
+    }
+
+    /// The sidecar's settings now (re-read when the file changed), with the
+    /// quota policy handed to the quota readings.
+    pub(crate) fn settings(&self) -> Arc<RoutingConfig> {
+        let settings = self.settings.current();
+        self.quota.set_policy(&settings.quota);
+        settings
     }
 
     /// The quota line of the login this process served last: its latest
@@ -286,7 +364,7 @@ impl SharedStoreSource {
             .rev()
             .find(|known| known.account_id == account_id)
             .and_then(|known| known.quota.clone());
-        quota_line(self.quota.reading(&account_id).as_ref(), recorded.as_ref())
+        quota_line(self.quota.snapshot(&account_id).as_ref(), recorded.as_ref())
     }
 
     /// The store's token for a request now: the routing order's pick

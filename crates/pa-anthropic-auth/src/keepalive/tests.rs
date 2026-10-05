@@ -112,7 +112,7 @@ fn version_reader(url: &str) -> super::KeepAlive {
         "http://127.0.0.1:9/api/oauth/profile",
     );
     config.version_url = Some(url.to_string());
-    super::KeepAlive::new(config)
+    super::KeepAlive::new(config, std::sync::Arc::default())
 }
 
 fn read_version(keepalive: &super::KeepAlive) -> String {

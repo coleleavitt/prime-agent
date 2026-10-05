@@ -31,15 +31,40 @@ auth.json resolves the `anthropic` provider exactly as before.
     (`recover_unauthorized`: one claimed refresh of the row owning the rejected token; a retry only with a new
     version of the same login), and, when the store no longer holds the rejected token (another process rotated
     it), the store's current token re-read under its lock if it differs. Otherwise the 401 is reported.
+- The plugins' sidecar configuration (`config.rs`), read as the pi plugin reads it, so a setting made for pi applies
+  here too: `PI_ANTHROPIC_AUTH_FILE`, else `$PI_AGENT_DIR/anthropic-auth.json`, else `~/.pi/agent/anthropic-auth.json`
+  (the opencode plugin keeps its own copy, `~/.config/opencode/anthropic-auth.json`). Read only, re-read when the
+  file's size or mtime changes; a missing, unreadable or non-object file is the defaults, a value of the wrong type
+  its default. Read: `quota.enabled` (only `false` disables), `quota.checkIntervalMinutes` (5, floored at 1),
+  `quota.refreshEveryNRequests` (off), `quota.minimumRemaining.{five_hour|5h, seven_day|1w}` (0, remaining percent),
+  `quota.failClosedOnUnknownQuota` (true), `routing.mode` and `killswitch` (see routing).
 - Quota and rate limits (`quota.rs`), as the plugins keep them in the store:
   - `observe`: every response to a store-served request is read for the `anthropic-ratelimit-unified-*` windows
     (`normalize_quota_headers`); a changed reading is recorded on the row holding the token (napi
     `recordQuotaHeaders`) and a served request marks its row used (`markUsed`, at most every five minutes). The
     writes run on the keep-alive thread (inline only when no thread runs).
+  - The usage poll (`GET /api/oauth/usage`, the plugins' `QuotaManager`, through the SDK's `OAuthClient::usage` and
+    sans-I/O `QuotaManager`): the 5h/7d windows with their resets, the model-scoped weekly windows, extra-usage credits
+    and the binding window of one login. Cadence: a login's reading is due one `quota.checkIntervalMinutes` (sidecar,
+    default 5, at least 1) after it was taken, a minute after the reset of a window below its minimum, once per
+    interval while only headers were seen (they carry no scoped windows), and on every
+    `quota.refreshEveryNRequests`-th request (default off). Triggers: a request whose login is due queues a poll of
+    that login (it is not waited for); a 429 is confirmed by a poll of the limited login, waited for (bounded, 30 s)
+    before the request moves on. Backoff (the plugins'): one minute doubling to fifteen for a 429/5xx/network
+    failure, five minutes for any other, none for a 401/403; one poll in flight per login. Polls run on the
+    keep-alive thread (at most one a second, the plugins' quota API gate), never on a request, paint or startup
+    path (inline only when no thread runs). The access token polled with is the row's live one, else the store's
+    claimed refresh of that row. The result merges with the header readings (a newer header window wins, the
+    poll's scoped windows and credits stay), and its percentages are recorded on the row holding that token
+    (`record_quota_snapshot_for_access_token`, as the pi plugin's `recordQuota`), so every tool's selection sees
+    them. Not ported: the plugins' cross-process poll lock (`opencode-*-quota-refresh` file locks) and persisting
+    the full snapshot in a state file; the SDK's request carries `anthropic-version` and no `claude-code/<version>`
+    user agent.
   - Display: at each agent end of an Anthropic session the agents view gets the line `Claude quota: 5h 48% / 7d 55%
     used` (`publish_feature_status`, feature `anthropic-auth`; status `{fiveHourPercent, sevenDayPercent, checkedAt,
-    source: "headers"|"store"}`), from the last served login's latest reading, else what the store recorded for it;
-    published again only when it changes. prime-agent has no other usage/limits surface.
+    source: "headers"|"poll"|"store"}`), from the last served login's latest reading (headers and polls merged; the
+    source names the newest producer), else what the store recorded for it; published again only when it changes.
+    prime-agent has no other usage/limits surface.
   - 429 switching (`rejected(RateLimited)`, also a 200 whose stream opens with `rate_limit_error` /
     `overloaded_error`): the row cools down (`retry-after`, else the reset of the window the server named binding,
     else the later window reset, else a minute) and is unpinned (napi `markRateLimited`), the reading is recorded,
@@ -107,8 +132,7 @@ auth.json resolves the `anthropic` provider exactly as before.
 
 - Account management beyond logout (enable, disable, reorder, pin, remote revoke): the plugins' account commands
   own it; prime-agent has no account command surface.
-- The usage endpoint poll (`/api/oauth/usage`), sticky-balanced routing, the killswitch and per-window minimum
-  thresholds of the plugins' sidecar configuration: readings come from response headers only.
+- Sticky-balanced routing, the killswitch and per-window minimum thresholds of the plugins' sidecar configuration.
 - The rest of pi's request (its own message conversion and system-prompt split, server-side fallback with its
   `fallbacks` body field and betas, the 1M-context credits latch, fast mode, the cache-keep relay, content
   filtering): pa-ai's Claude Code mode builds the request; the shape above is applied on top. A `--api-key`
@@ -117,7 +141,7 @@ auth.json resolves the `anthropic` provider exactly as before.
 ## Public API
 
 `install`, `shared_source`, `PROVIDER_ID`, `QUOTA_RESERVE_ENV`, `SharedStoreSource` (`new`, `store_path`, `usage`, `store_login`),
-`SharedStoreConfig` (`from_env`, `isolated`; `background` runs the keep-alive thread, `version_url` the version lookup, `quota_reserve` the reserve), `NewLogin`, `StoredLogin` (`claude_code_notice`), `SourceUsage`, `STORE_LABEL`, `AnthropicAuthFeature`, `TELEMETRY_EVENT`.
+`SharedStoreConfig` (`from_env`, `isolated`; `background` runs the keep-alive thread, `version_url` the version lookup, `quota_reserve` the reserve, `config_path` the plugins' sidecar), `NewLogin`, `StoredLogin` (`claude_code_notice`), `SourceUsage`, `STORE_LABEL`, `AnthropicAuthFeature`, `TELEMETRY_EVENT`.
 
 ## Seams
 
@@ -128,7 +152,9 @@ auth.json resolves the `anthropic` provider exactly as before.
 
 ## Files
 
-Reads and writes `~/.anthropic-accounts/accounts.json` (and its lock) only through the SDK, under the SDK's rules,
+Reads the plugins' sidecar configuration (`~/.pi/agent/anthropic-auth.json`, `PI_AGENT_DIR` / `PI_ANTHROPIC_AUTH_FILE`;
+never written: the plugins' commands own it; missing, unreadable or malformed: the plugins' defaults; re-read when it
+changes). Reads and writes `~/.anthropic-accounts/accounts.json` (and its lock) only through the SDK, under the SDK's rules,
 and `~/.anthropic-accounts/device.json` (the installation's device id, the plugins' format; created when missing,
 never overwritten);
 through the Claude Code link, reads Claude Code's `.claude.json` / `.credentials.json` (or the macOS Keychain) and
@@ -139,5 +165,6 @@ publishes a rotation of the linked account to it, as the plugins do. It owns no 
 `anthropic_shared_auth` (schema v4), once per process at the first agent end after the store answered a request:
 `source` (how the first credential was obtained: `store`, `refreshed`, `adopted`, `claude_code`, or `failed`),
 `refreshed` and `failed` (the process's counts so far), and (additive, optional in the catalogue) `migrated`
-(auth.json logins moved into the store), `recovered` (401s re-sent with a recovered token) and `rotated` (429s moved
-to another login). Never an account id, email, label or token.
+(auth.json logins moved into the store), `recovered` (401s re-sent with a recovered token), `rotated` (429s moved
+to another login), `polled` (usage polls sent) and `poll_failed` (of those, the ones that failed). Never an account
+id, email, label or token.

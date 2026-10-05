@@ -8,13 +8,15 @@
 
 use anthropic::quota::{is_quota_bearing_header_frame, normalize_quota_headers};
 use anthropic::{AccountStore, SharedRefreshOptions};
-use pa_ai::request_hooks::{OutgoingRequest, ProviderRequestHooks, RejectedRequest, Rejection};
+use pa_ai::request_hooks::{
+    Admission, OutgoingRequest, PendingRequest, ProviderRequestHooks, RejectedRequest, Rejection,
+};
 use pa_ai::types::{Model, ProviderResponse};
 use pa_types::sync::MutexExt;
 
 use crate::quota::cooldown_until;
 use crate::shape::{shape_request, ShapeEnv, ShapeIdentity};
-use crate::source::{block_on_own_runtime, UsageEvent};
+use crate::source::{block_on_own_runtime, PollWait, UsageEvent};
 use crate::SharedStoreSource;
 
 impl SharedStoreSource {
@@ -32,9 +34,9 @@ impl SharedStoreSource {
 
     /// After a 429 (or a rate-limited stream opening): the row cools down
     /// until the server lets it serve again and is unpinned (napi
-    /// `markRateLimited`), its quota reading is recorded, and the request
-    /// moves to the next login in the store's order, when there is one
-    /// other than the limited row.
+    /// `markRateLimited`), its quota reading is recorded and confirmed by a
+    /// usage poll, and the request moves to the next login in the store's
+    /// order, when there is one other than the limited row.
     fn rotate_after_rate_limit(&self, rejected: &RejectedRequest<'_>) -> Option<String> {
         let served = self.served_token(rejected.api_key)?;
         let headers: Vec<(String, String)> = rejected
@@ -64,6 +66,10 @@ impl SharedStoreSource {
         if !matches!(marked, Ok(true)) {
             return None;
         }
+        // The plugins confirm a 429 with a usage poll before moving on: its
+        // reading lands on the row, so an exhausted login stays skipped
+        // after its cooldown.
+        self.queue_poll(&served.account_id, PollWait::Result);
         let next = self.store_token()?;
         let moved = next != rejected.api_key
             && self
@@ -141,11 +147,32 @@ impl ProviderRequestHooks for SharedStoreSource {
         );
     }
 
-    fn current_credential(&self, _model: &Model, api_key: &str) -> Option<String> {
-        if !self.served(api_key) {
-            return None;
+    fn admit(&self, request: &PendingRequest<'_>) -> Admission {
+        if !self.served(request.api_key) {
+            return Admission::Send;
         }
-        self.store_token().filter(|current| current != api_key)
+        self.settings();
+        let Some(current) = self.store_token() else {
+            return Admission::Send;
+        };
+        // The request's login is polled for its usage when its reading is
+        // due (or every N requests), on the keep-alive thread.
+        if let Some(served) = self.served_token(&current) {
+            let count = self.quota.count_request();
+            if self.quota.claim_due_poll(
+                &served.account_id,
+                count,
+                Some(&request.model.id),
+                chrono::Utc::now(),
+            ) {
+                self.run_poll(&served.account_id, PollWait::Background);
+            }
+        }
+        if current == request.api_key {
+            Admission::Send
+        } else {
+            Admission::SendWith(current)
+        }
     }
 
     fn rejected(&self, rejected: &RejectedRequest<'_>) -> Option<String> {
@@ -169,6 +196,7 @@ impl ProviderRequestHooks for SharedStoreSource {
             .collect();
         for write in self.quota.observe(
             &served.account_id,
+            served.account_uuid.as_deref(),
             api_key,
             response.status,
             &headers,
