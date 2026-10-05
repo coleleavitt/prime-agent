@@ -62,6 +62,10 @@ pub const REFINEMENT_OUTCOME_CUSTOM_TYPE: &str = "refinement_outcome";
 /// operator ruling 2026-09-23: one terminal row per episode instead of TS's per-attempt error
 /// rows). Wire twin of `pa_core::session_engine::messages::PROVIDER_RETRY_OUTCOME_CUSTOM_TYPE`.
 pub const PROVIDER_RETRY_OUTCOME_CUSTOM_TYPE: &str = "provider_retry_outcome";
+/// A user-visible artifact the kernel's `present_artifact()` showed
+/// (upstream #1062; wire twin of
+/// `pa_core::session_engine::presented_artifact::PRESENTED_ARTIFACT_CUSTOM_TYPE`).
+pub const PRESENTED_ARTIFACT_CUSTOM_TYPE: &str = "prime-agent.presented-artifact";
 
 /// Which agent-message side a row renders: the received transcript rows, or the
 /// sent/queued ipython cell receipts. The direction word folds into the
@@ -193,6 +197,7 @@ pub fn custom_message_entries(message: &Value) -> Vec<ChatEntry> {
             }]
         }
         REFINEMENT_OUTCOME_CUSTOM_TYPE => refinement::refinement_outcome_entries(message, details),
+        PRESENTED_ARTIFACT_CUSTOM_TYPE => vec![presented_artifact_entry(message, details)],
         AGENT_MESSAGE_CUSTOM_TYPE => agent_message_entry(details).map_or_else(
             || vec![generic_panel_entry(custom_type, message)],
             |entry| vec![entry],
@@ -229,6 +234,63 @@ pub fn custom_message_entries(message: &Value) -> Vec<ChatEntry> {
         // (those types persist with `display: false` and render nothing).
         _ => vec![generic_panel_entry(custom_type, message)],
     }
+}
+
+/// A presented artifact's panel: the label line, then the image through the
+/// transcript's image path (the textual fallback with its dimensions), or
+/// the captured file's name, type, and path.
+fn presented_artifact_entry(message: &Value, details: &Value) -> ChatEntry {
+    let blocks = message
+        .get("content")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let label = blocks
+        .first()
+        .and_then(|block| block.get("text"))
+        .and_then(Value::as_str)
+        .unwrap_or("Artifact");
+    let name = details.get("name").and_then(Value::as_str);
+    let mime = details
+        .get("mimeType")
+        .and_then(Value::as_str)
+        .unwrap_or("application/octet-stream");
+    let body = match blocks
+        .iter()
+        .find(|block| block.get("type").and_then(Value::as_str) == Some("image"))
+    {
+        Some(image) => {
+            let image_mime = image
+                .get("mimeType")
+                .and_then(Value::as_str)
+                .unwrap_or(mime);
+            let dimensions = match (
+                details.get("width").and_then(Value::as_u64),
+                details.get("height").and_then(Value::as_u64),
+            ) {
+                (Some(width), Some(height)) => Some(crate::terminal_image::ImageDimensions {
+                    width_px: u32::try_from(width).unwrap_or(u32::MAX),
+                    height_px: u32::try_from(height).unwrap_or(u32::MAX),
+                }),
+                _ => image.get("data").and_then(Value::as_str).and_then(|data| {
+                    crate::terminal_image::get_image_dimensions_prefix(
+                        data,
+                        image_mime,
+                        crate::terminal_image::IMAGE_DIMENSIONS_PREFIX_BYTES,
+                    )
+                }),
+            };
+            crate::terminal_image::image_fallback(image_mime, dimensions, name)
+        }
+        None => {
+            let path = details.get("path").and_then(Value::as_str).unwrap_or("");
+            format!("{} \u{b7} {mime}\n{path}", name.unwrap_or("artifact"))
+        }
+    };
+    ChatEntry::CustomPanel(Box::new(CustomPanelRow {
+        custom_type: "artifact".to_string(),
+        content: format!("{label}\n{body}"),
+    }))
 }
 
 /// TS `CustomMessageComponent` fallthrough: the `[<customType>]` guttered
@@ -490,6 +552,49 @@ mod tests {
                 "{custom_type} rendered {entries:?}"
             );
         }
+    }
+
+    /// Upstream #1062: a presented artifact renders its label and the image
+    /// through the transcript's image path (never the generic `[image]`).
+    #[test]
+    fn presented_artifacts_render_the_label_and_the_preview() {
+        let entries = decoded(&json!({
+            "role": "custom",
+            "customType": PRESENTED_ARTIFACT_CUSTOM_TYPE,
+            "content": [
+                { "type": "text", "text": "Direction A" },
+                { "type": "image", "data": "aGk=", "mimeType": "image/png" }
+            ],
+            "display": true,
+            "details": { "name": "render.png", "kind": "image", "mimeType": "image/png",
+                         "width": 1600, "height": 900, "path": "/s/presented-artifacts/x-render.png" },
+        }));
+        assert_eq!(
+            entries,
+            vec![ChatEntry::CustomPanel(Box::new(CustomPanelRow {
+                custom_type: "artifact".to_string(),
+                content: "Direction A\n[Image: render.png [image/png] 1600x900]".to_string(),
+            }))]
+        );
+        let entries = decoded(&json!({
+            "role": "custom",
+            "customType": PRESENTED_ARTIFACT_CUSTOM_TYPE,
+            "content": [
+                { "type": "text", "text": "Artifact: report.csv" },
+                { "type": "text", "text": "/s/presented-artifacts/y-report.csv" }
+            ],
+            "display": true,
+            "details": { "name": "report.csv", "kind": "file", "mimeType": "text/plain",
+                         "path": "/s/presented-artifacts/y-report.csv" },
+        }));
+        assert_eq!(
+            entries,
+            vec![ChatEntry::CustomPanel(Box::new(CustomPanelRow {
+                custom_type: "artifact".to_string(),
+                content: "Artifact: report.csv\nreport.csv \u{b7} text/plain\n/s/presented-artifacts/y-report.csv"
+                    .to_string(),
+            }))]
+        );
     }
 
     #[test]

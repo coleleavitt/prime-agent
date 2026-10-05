@@ -24,6 +24,15 @@ impl AgentSessionEngine {
         *self.bash_consumed_sink.lock_or_recover() = Some(consumed);
     }
 
+    /// Wire the worker's presented-artifact row sink (`artifact.present`):
+    /// called once at construction, before the first session build.
+    pub fn set_presented_artifact_sink(
+        &self,
+        sink: pa_core::session_engine::presented_artifact::PresentedArtifactSink,
+    ) {
+        *self.presented_artifact_sink.lock_or_recover() = Some(sink);
+    }
+
     /// The `bash.completed`/`bash.consumed` kernel host handlers (TS
     /// `createAsyncBashCompletionHostHandler`/`createAsyncBashConsumedHostHandler`).
     /// Registered only when both seams are wired — no worker queue leaves the requests

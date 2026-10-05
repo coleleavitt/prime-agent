@@ -190,6 +190,7 @@ impl AgentSessionEngine {
             compaction_summary_sink: std::sync::Mutex::new(None),
             model_refusal_telemetry,
             semantic_identity: std::sync::Mutex::new(None),
+            presented_artifact_sink: std::sync::Mutex::new(None),
         })
     }
 
@@ -943,6 +944,9 @@ impl AgentSessionEngine {
                             },
                         )
                     }));
+            }
+            if let Some(sink) = self.presented_artifact_sink.lock_or_recover().clone() {
+                engine.presented_artifacts.set_sink(sink);
             }
             if let Some(sink) = self
                 .feature_status_sink

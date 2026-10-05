@@ -322,4 +322,10 @@ pub struct AgentSessionEngine {
     /// re-registration stays idempotent.
     pub(crate) semantic_identity:
         std::sync::Mutex<Option<pa_core::session_engine::semantic_edges::SemanticEdgeIdentity>>,
+    /// The worker's presented-artifact row sink (`artifact.present`,
+    /// #1062): the durable session lives in the worker store, so every
+    /// session build routes the row there. `None` outside a daemon worker.
+    pub(crate) presented_artifact_sink: std::sync::Mutex<
+        Option<pa_core::session_engine::presented_artifact::PresentedArtifactSink>,
+    >,
 }

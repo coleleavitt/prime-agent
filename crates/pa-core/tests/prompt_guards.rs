@@ -170,6 +170,8 @@ fn prompt_token_for_host_request(request: &str) -> Option<String> {
             "agent_observe.list" | "agent_message.list_agents" => "agent_observe.list_agents",
             "agent_observe.get" => "agent_observe.get_agent",
             "agent_observe.recent" => "agent_observe.recent_messages",
+            // The bundled present-artifact skill's request.
+            "artifact.present" => "present_artifact",
             other => other,
         }
         .to_string(),
@@ -545,6 +547,10 @@ const NET_NEW_BUNDLED_SKILLS: &[&str] = &[
     // PR #3226: computer use - the TS product has no computer-use feature,
     // so parity is not applicable; this is the declared net-new exception.
     "computer-use",
+    // Upstream #1062 (closed upstream, not in the TS v0.9.8 package):
+    // `present_artifact()`, the user-visible inline preview over the
+    // `artifact.present` host request.
+    "present-artifact",
 ];
 
 #[test]
