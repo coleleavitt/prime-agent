@@ -193,6 +193,12 @@ fn daemon_acp_create(
                 .into();
         }
     }
+    if let (Some(object), Ok(serde_json::Value::Object(exclusions))) = (
+        create_config.as_object_mut(),
+        serde_json::to_value(config.resource_exclusions()),
+    ) {
+        object.extend(exclusions);
+    }
     if let Some(autonomous) = &config.autonomous {
         create_config["autonomous"] = serde_json::json!(autonomous_runtime_config(autonomous));
     }
@@ -599,6 +605,7 @@ async fn build_headless_engine_with(
                 .iter()
                 .map(|path| path.display().to_string())
                 .collect(),
+            resource_exclusions: config.resource_exclusions(),
             extra_builtin_skill_overrides: vec![],
             rlm_subagent_host: None,
             rlm_depth: None,
@@ -1347,13 +1354,16 @@ async fn run_prompts_and_emit(
     let messages: Vec<pa_types::session::AgentMessage> =
         state.messages.iter().filter_map(json_round_trip).collect();
     let result = pa_core::session_engine::headless::select_headless_terminal_result(&messages);
-    // The print-mode exit contract: json mode never derives the exit code from the
-    // terminal selection — only the autonomous gates exit non-zero; text mode prints
-    // the primary message (error to stderr with exit 1, settled answer to stdout).
+    // The print-mode exit contract: both output modes derive the exit code from the
+    // terminal selection (an errored/aborted assistant, a failed session command, or a
+    // failed compaction exits 1; upstream #2976/#2977). Only text mode renders it: the
+    // error to stderr, the settled answer to stdout, and the compaction outcomes to
+    // stderr; json mode already streamed the events and prints nothing more.
     let mut exit_code = 0;
-    if !json_mode {
-        if let Some(primary) = result.primary {
-            if let Some(stderr) = primary.stderr_text(&mut exit_code) {
+    if let Some(primary) = result.primary {
+        let stderr = primary.stderr_text(&mut exit_code);
+        if !json_mode {
+            if let Some(stderr) = stderr {
                 eprintln!("{stderr}");
             }
             if exit_code == 0 {
@@ -1362,11 +1372,13 @@ async fn run_prompts_and_emit(
                 }
             }
         }
-        for outcome in result.compaction_outcomes {
+    }
+    for outcome in result.compaction_outcomes {
+        if !json_mode {
             eprintln!("{}", outcome.content);
-            if outcome.outcome == "failed" {
-                exit_code = 1;
-            }
+        }
+        if outcome.outcome == "failed" {
+            exit_code = 1;
         }
     }
     // The autonomous contract applies to both output modes.
@@ -1512,6 +1524,7 @@ async fn build_faux_engine_with(
             conversation_log_path: None,
             additional_skill_paths: vec![],
             additional_prompt_paths: vec![],
+            resource_exclusions: config.resource_exclusions(),
             extra_builtin_skill_overrides: vec![],
             rlm_subagent_host: None,
             rlm_depth: None,

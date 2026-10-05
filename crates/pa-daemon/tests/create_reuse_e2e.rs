@@ -520,3 +520,126 @@ fn concurrent_creates_for_one_file_share_a_single_launch() {
         "one launch must serve the concurrent opens: {sessions:?}"
     );
 }
+
+/// Upstream #1124/#1128: reopening a saved session without a config cwd (the agents
+/// view resume) runs it in the cwd its header recorded, not in the directory the
+/// supervisor was launched from.
+#[test]
+fn a_reopened_session_without_a_cwd_runs_in_its_recorded_cwd() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let socket = dir.path().join("daemon.sock");
+    let agent_dir = dir.path().join("agent");
+    let sessions = agent_dir.join("sessions");
+    let saved_cwd = dir.path().join("project");
+    let launch_cwd = dir.path().join("daemon-launch");
+    for path in [&sessions, &saved_cwd, &launch_cwd] {
+        std::fs::create_dir_all(path).expect("fixture dir");
+    }
+    let session_file = sessions.join("saved.jsonl");
+    std::fs::write(
+        &session_file,
+        format!(
+            "{}\n",
+            json!({
+                "type": "session",
+                "version": 3,
+                "id": "0190aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee",
+                "timestamp": "2026-10-01T00:00:00.000Z",
+                "cwd": saved_cwd.to_string_lossy(),
+            })
+        ),
+    )
+    .expect("write session file");
+    let child = Command::new(env!("CARGO_BIN_EXE_pa-daemon"))
+        .arg("supervisor")
+        .arg("--socket")
+        .arg(&socket)
+        .arg("--agent-dir")
+        .arg(&agent_dir)
+        .current_dir(&launch_cwd)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .env(
+            pa_daemon::worker::WORKER_SUPERVISOR_LOST_EXIT_MS_ENV,
+            "15000",
+        )
+        .spawn()
+        .expect("spawn pa-daemon supervisor");
+    let _daemon = Daemon {
+        child,
+        socket: socket.clone(),
+    };
+    let mut client = Client::connect(&socket);
+    let script_path = write_script(dir.path(), &["unused"]);
+    client.send_command(
+        "c1",
+        &json!({
+            "type": "create",
+            "sessionPath": session_file.to_string_lossy(),
+            "config": {
+                "sessionDir": sessions.to_string_lossy(),
+                "script": script_path.to_string_lossy(),
+            },
+        }),
+    );
+    let created = client.read_response("c1");
+    assert_eq!(
+        (created["success"].clone(), created["data"]["cwd"].clone()),
+        (json!(true), json!(saved_cwd.to_string_lossy())),
+        "create: {created}"
+    );
+}
+
+/// Upstream #723 (fork variant): a supervisor whose binary was replaced on disk
+/// (`cargo install` over a running daemon) still answers, and must still spawn
+/// workers. The fixture runs the supervisor from a hard link of the built binary
+/// and unlinks it, so `current_exe()` names `<path> (deleted)`.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_supervisor_whose_binary_was_replaced_still_spawns_workers() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let socket = dir.path().join("daemon.sock");
+    let agent_dir = dir.path().join("agent");
+    let sessions = agent_dir.join("sessions");
+    std::fs::create_dir_all(&sessions).expect("sessions dir");
+    let binary = dir.path().join("pa-daemon");
+    std::fs::hard_link(env!("CARGO_BIN_EXE_pa-daemon"), &binary).expect("link the binary");
+    let child = Command::new(&binary)
+        .arg("supervisor")
+        .arg("--socket")
+        .arg(&socket)
+        .arg("--agent-dir")
+        .arg(&agent_dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .env(
+            pa_daemon::worker::WORKER_SUPERVISOR_LOST_EXIT_MS_ENV,
+            "15000",
+        )
+        .spawn()
+        .expect("spawn pa-daemon supervisor");
+    let _daemon = Daemon {
+        child,
+        socket: socket.clone(),
+    };
+    let mut client = Client::connect(&socket);
+    std::fs::remove_file(&binary).expect("replace the binary");
+    let script_path = write_script(dir.path(), &["unused"]);
+    client.send_command(
+        "c1",
+        &json!({
+            "type": "create",
+            "config": {
+                "cwd": dir.path().to_string_lossy(),
+                "sessionDir": sessions.to_string_lossy(),
+                "script": script_path.to_string_lossy(),
+            },
+        }),
+    );
+    let created = client.read_response("c1");
+    assert_eq!(
+        (created["success"].clone(), created["error"].clone()),
+        (json!(true), Value::Null),
+        "create: {created}"
+    );
+}

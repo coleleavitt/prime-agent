@@ -465,8 +465,14 @@ impl Supervisor {
                     // event-before-response socket order survives the hop.
                     if let Some(payload) = targeted {
                         saw_socket_traffic = true;
-                        if let Err(error) =
-                            deadline_write(write_deadline, write_line(&mut writer, &payload)).await
+                        let written =
+                            deadline_write(write_deadline, write_line(&mut writer, &payload)).await;
+                        // The drain point: a connection that lost session frames while
+                        // its queue was full learns it now, behind every frame that did fit.
+                        if written.is_ok() && targeted_rx.is_empty() {
+                            attached.queue_pending_resyncs();
+                        }
+                        if let Err(error) = written
                         {
                             // An event-write failure must not strand an
                             // accepted shutdown: if this connection owns
@@ -487,6 +493,13 @@ impl Supervisor {
                         }
                     } else {
                         break;
+                    }
+                }
+                // A frame dropped after the queue already drained (the publisher's lag
+                // mark raced the writer's drain check): queue the resync now.
+                () = attached.lagged().notified() => {
+                    if targeted_rx.is_empty() {
+                        attached.queue_pending_resyncs();
                     }
                 }
                 dispatched = dispatch_rx.recv() => {

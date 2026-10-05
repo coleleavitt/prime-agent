@@ -291,6 +291,9 @@ pub struct InteractiveOptions {
     /// suffixes — that ride the create config's `models` field; the daemon resolves them into
     /// the session's scoped list. `None` leaves the scope unset.
     pub models: Option<Vec<String>>,
+    /// `--no-skills`/`--no-prompt-templates`/`--no-context-files`: ride every
+    /// create config (and so a resume's) under the TS names.
+    pub resource_exclusions: pa_types::daemon::SessionResourceExclusions,
     /// Create without a session file (`--no-session`).
     pub no_session: bool,
     pub session: SessionSelection,
@@ -365,6 +368,7 @@ impl std::fmt::Debug for InteractiveOptions {
             .field("script_path", &self.script_path)
             .field("model_selection", &self.model_selection)
             .field("models", &self.models)
+            .field("resource_exclusions", &self.resource_exclusions)
             .field("model_catalog", &self.model_catalog)
             .field("no_session", &self.no_session)
             .field("session", &self.session)
@@ -415,6 +419,12 @@ impl InteractiveOptions {
         // create.
         if let Some(models) = &self.models {
             config["models"] = json!(models);
+        }
+        if let (Some(object), Ok(Value::Object(exclusions))) = (
+            config.as_object_mut(),
+            serde_json::to_value(self.resource_exclusions),
+        ) {
+            object.extend(exclusions);
         }
         // `telemetryDisabled` rides the runtime config: a resume's create reads it back.
         if self.telemetry_disabled == Some(true) {

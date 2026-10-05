@@ -523,20 +523,17 @@ impl Worker {
         // The paused gate (TS `sendAgentSessionMessage` refuses with the
         // same error while `agent_messages_pause` holds the flag).
         self.refuse_delivery_if_paused()?;
-        // TS `acceptAgentMessagePrompt` runs with `resumeIfIdle: false`: on
-        // a suspended idle session the delivery is rejected with the same
-        // admission error as a plain prompt, and only the busy carve-out
-        // (`_isBusyForSessionInput`) queues it parked.
+        // An agent message wakes a suspended idle session (upstream #1646):
+        // after an abort or manual compact, a child's completion reply to its
+        // idle parent must start the parent's turn, not bounce off the
+        // suspension (TS v0.9.8 `acceptAgentMessagePrompt` passed
+        // `resumeIfIdle: false` and stranded it until a human typed). A
+        // busy or compacting session keeps the delivery parked behind the
+        // suspension, as before.
         {
-            let core = self.core.lock_or_recover();
+            let mut core = self.core.lock_or_recover();
             if core.queued_input_suspended && !core.busy && !core.compacting {
-                drop(core);
-                return Err(response_failure(
-                    None,
-                    "worker_deliver_message",
-                    QUEUED_INPUT_SUSPENDED,
-                    None,
-                ));
+                core.queued_input_suspended = false;
             }
         }
         let sender = payload.get("sender").cloned().unwrap_or(Value::Null);

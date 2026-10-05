@@ -305,6 +305,7 @@ async fn panel_expand_drill_in_and_back_re_expands_the_tree() {
     // The drilled-in child's transcript: the tray carries the subagent session's `depth N` label
     // (TS `getTrayLocationLabel`).
     let child_options = pa_tui::interactive::InteractiveOptions {
+        resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         models: None,
         socket_path: supervisor.socket.clone(),
         cwd: PathBuf::from("/tmp"),

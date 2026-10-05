@@ -29,6 +29,22 @@ pub type DaemonEventSequence = u64;
 pub type DaemonClientCapability = String;
 pub type DaemonServerCapability = String;
 
+/// The CLI's resource exclusions (`--no-skills`, `--no-prompt-templates`,
+/// `--no-context-files`) under the TS `AgentSessionRuntimeConfig` create-config
+/// names. Each drops the discovered resources of its kind while explicitly
+/// passed paths (`--skill`, `--prompt-template`) still load (TS
+/// `DefaultResourceLoader`). Unset flags stay off the wire.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SessionResourceExclusions {
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub no_skills: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub no_prompt_templates: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub no_context_files: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DaemonProtocolInfo {

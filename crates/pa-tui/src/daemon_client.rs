@@ -101,6 +101,11 @@ pub enum DaemonClientEvent {
     /// `model_catalog_changed`: a background daemon-side catalog refresh
     /// changed the served snapshot. Rust-only extension (no TS counterpart).
     ModelCatalogChanged,
+    /// `session_resync_required`: the supervisor dropped session events for this
+    /// connection (its queue overflowed), so the view's transcript and turn state may be
+    /// missing frames such as `agent_end`; the view re-attaches the session to resync.
+    /// Rust-only extension (the TS daemon streamed a `resync` snapshot instead).
+    SessionResyncRequired { active_session_id: String },
     /// `session_binding`: the supervisor rebound a session to a new active id; the view
     /// re-attaches.
     SessionBinding {
@@ -212,6 +217,13 @@ pub(crate) fn client_event_from_value(value: &Value) -> Option<DaemonClientEvent
         }),
         "heartbeats_changed" => Some(DaemonClientEvent::HeartbeatsChanged),
         "model_catalog_changed" => Some(DaemonClientEvent::ModelCatalogChanged),
+        "session_resync_required" => Some(DaemonClientEvent::SessionResyncRequired {
+            active_session_id: value
+                .get("activeSessionId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        }),
         "session_binding" => Some(DaemonClientEvent::SessionBinding {
             previous_active_session_id: value
                 .get("previousActiveSessionId")

@@ -202,6 +202,46 @@ async fn deliver_message_follow_up_lane_and_subagent_sender() {
     assert!(queue_texts(&worker.core, Lane::Steering).is_empty());
 }
 
+/// Upstream #1646: after an abort suspends queued input, a child's reply to
+/// its idle parent is admitted (and resumes the session) instead of being
+/// rejected with the suspension error, so the parent learns the child finished.
+#[tokio::test]
+async fn deliver_message_to_an_idle_session_after_abort_resumes_it() {
+    let worker = created_worker().await;
+    let aborted = worker.dispatch("abort", &json!({})).await;
+    assert!(aborted.success, "abort failed: {aborted:?}");
+    assert!(worker.core.lock().unwrap().queued_input_suspended);
+    let response = worker
+        .dispatch(
+            "worker_deliver_message",
+            &json!({
+                "targetActiveSessionId": "target-session",
+                "message": "child finished",
+                "sender": {
+                    "activeSessionId": "child-session",
+                    "sessionName": "child",
+                    "runtimeKind": "subagent",
+                    "parentActiveSessionId": "target-session",
+                },
+            }),
+        )
+        .await;
+    let status = response
+        .data
+        .as_ref()
+        .and_then(|data| data["deliveryStatus"].as_str().map(str::to_string));
+    assert_eq!(
+        (
+            response.success,
+            response.error.clone(),
+            status,
+            worker.core.lock().unwrap().queued_input_suspended,
+        ),
+        (true, None, Some("delivered".to_string()), false),
+        "{response:?}"
+    );
+}
+
 /// A busy session reports `queued` with `queuedAt` (`queueIfBusy`).
 #[tokio::test]
 async fn deliver_message_while_busy_queues() {

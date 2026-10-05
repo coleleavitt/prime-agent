@@ -91,6 +91,19 @@ pub struct RuntimeConfig {
     pub initial_goal: Option<InitialGoal>,
 }
 
+impl RuntimeConfig {
+    /// The `--no-skills`/`--no-prompt-templates`/`--no-context-files` flags,
+    /// for the in-process engine and the daemon create config alike.
+    #[must_use]
+    pub fn resource_exclusions(&self) -> pa_types::daemon::SessionResourceExclusions {
+        pa_types::daemon::SessionResourceExclusions {
+            no_skills: self.no_skills,
+            no_prompt_templates: self.no_prompt_templates,
+            no_context_files: self.no_context_files,
+        }
+    }
+}
+
 /// Session selection options that stay client-side.
 #[derive(Debug, Clone, Default)]
 #[allow(clippy::struct_excessive_bools)] // the selection's flag set is the deliberate client-side surface

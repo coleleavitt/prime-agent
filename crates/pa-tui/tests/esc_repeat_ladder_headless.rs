@@ -364,6 +364,7 @@ impl pa_tui::client_settings::ClientSettings for StubSettings {
 
 fn options(socket: PathBuf) -> InteractiveOptions {
     InteractiveOptions {
+        resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         socket_path: socket,
         cwd: PathBuf::from("/tmp"),
         session_dir: None,

@@ -38,11 +38,15 @@ fn current_uid() -> Option<String> {
 }
 
 /// Default supervisor endpoint: `daemon.sock` in the socket dir (Unix) or
-/// the per-user daemon pipe name (Windows).
+/// the per-user daemon pipe name (Windows), keyed by the agent dir when it is
+/// not the product default (see [`agent_dir_socket_suffix`]).
 #[cfg(unix)]
 #[must_use]
 pub fn default_daemon_socket_path() -> PathBuf {
-    socket_dir().join("daemon.sock")
+    socket_dir().join(match current_agent_dir_socket_suffix() {
+        Some(suffix) => format!("daemon-{suffix}.sock"),
+        None => "daemon.sock".to_string(),
+    })
 }
 
 #[cfg(not(unix))]
@@ -53,7 +57,11 @@ pub fn default_daemon_socket_path() -> PathBuf {
     // client's owner check are what keep other accounts out.
     let user = pa_types::platform::current_user_sid()
         .unwrap_or_else(|_| std::env::var("USERNAME").unwrap_or_default());
-    per_user_daemon_pipe_path(&user)
+    let pipe = per_user_daemon_pipe_path(&user);
+    match current_agent_dir_socket_suffix() {
+        Some(suffix) => PathBuf::from(format!("{}-{suffix}", pipe.display())),
+        None => pipe,
+    }
 }
 
 /// The Windows daemon pipe for one user: a fixed machine-global name let every account on the
@@ -64,6 +72,37 @@ fn per_user_daemon_pipe_path(user: &str) -> PathBuf {
         r"\\.\pipe\prime-agent-daemon-{}",
         hash_key(user, 12)
     ))
+}
+
+/// [`agent_dir_socket_suffix`] for this process's agent dir; an unresolvable
+/// agent dir keeps the unkeyed default.
+fn current_agent_dir_socket_suffix() -> Option<String> {
+    let agent_dir = crate::paths::agent_dir().ok()?;
+    let default_agent_dir = crate::paths::home_dir()
+        .ok()
+        .map(|home| home.join(crate::paths::CONFIG_DIR_NAME));
+    agent_dir_socket_suffix(&agent_dir, default_agent_dir.as_deref())
+}
+
+/// The daemon identity includes the agent state dir (upstream #768/#786/#815):
+/// two installs sharing the uid-keyed socket (a `PRIME_AGENT_CODING_AGENT_DIR`
+/// install beside the default one) would otherwise attach to whichever daemon
+/// started first and run their sessions under its state. The product-default
+/// agent dir keeps the unkeyed endpoint, so existing daemons stay reachable;
+/// any other dir gets an 8-char hash of its absolute path. The hash goes into
+/// the socket file name, not the directory, so worker socket paths (which
+/// live in the shared socket dir) do not grow.
+#[must_use]
+pub fn agent_dir_socket_suffix(
+    agent_dir: &Path,
+    default_agent_dir: Option<&Path>,
+) -> Option<String> {
+    let absolute = |path: &Path| std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let agent_dir = absolute(agent_dir);
+    if default_agent_dir.is_some_and(|default| absolute(default) == agent_dir) {
+        return None;
+    }
+    Some(hash_key(&agent_dir.to_string_lossy(), 8))
 }
 
 /// Worker endpoint next to the supervisor's: hashed supervisor key plus the

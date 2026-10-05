@@ -134,10 +134,24 @@ impl Supervisor {
             return Err(anyhow!("Supervisor is shutting down"));
         }
         let config_object = config.as_ref().and_then(Value::as_object);
+        // The worker's cwd: the explicit config cwd, else a reopened session's
+        // recorded cwd (its header; upstream #1124/#1128 - the agents view
+        // resume omits the cwd so the saved directory wins), else this
+        // supervisor's own cwd. A recorded directory that no longer exists
+        // falls through (the agents view sends its own cwd with a notice then).
         let cwd_value = config_object
             .and_then(|config| config.get("cwd"))
             .and_then(Value::as_str)
             .map(str::to_string)
+            .or_else(|| {
+                session_path
+                    .as_deref()
+                    .and_then(|path| {
+                        crate::session_store::read_session_header_bounded(Path::new(path))
+                    })
+                    .map(|header| header.cwd)
+                    .filter(|cwd| !cwd.is_empty() && Path::new(cwd).is_dir())
+            })
             .or_else(|| {
                 std::env::current_dir()
                     .ok()
@@ -241,6 +255,9 @@ impl Supervisor {
             "appendSystemPrompt",
             "skills",
             "promptTemplates",
+            "noSkills",
+            "noPromptTemplates",
+            "noContextFiles",
             "autonomous",
             "executionMode",
         ] {

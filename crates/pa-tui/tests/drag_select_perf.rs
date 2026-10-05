@@ -187,6 +187,7 @@ fn attach_data(id: &str, messages: usize) -> Value {
 
 fn options(socket: PathBuf) -> InteractiveOptions {
     InteractiveOptions {
+        resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         models: None,
         socket_path: socket,
         cwd: PathBuf::from("/tmp"),

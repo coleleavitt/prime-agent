@@ -6,5 +6,6 @@
 mod paths;
 
 pub use paths::{
-    default_daemon_socket_path, socket_dir, socket_identity, worker_socket_path, SocketIdentity,
+    agent_dir_socket_suffix, default_daemon_socket_path, socket_dir, socket_identity,
+    worker_socket_path, SocketIdentity,
 };

@@ -37,6 +37,8 @@ pub struct SessionEngineConfig {
     pub conversation_log_path: Option<PathBuf>,
     pub additional_skill_paths: Vec<String>,
     pub additional_prompt_paths: Vec<String>,
+    /// The CLI's `--no-skills`/`--no-prompt-templates`/`--no-context-files`.
+    pub resource_exclusions: pa_types::daemon::SessionResourceExclusions,
     pub extra_builtin_skill_overrides: Vec<String>,
     pub rlm_subagent_host: Option<Arc<dyn super::rlm_host::RlmSubagentHost>>,
     /// The session's depth in the RLM recursion tree (0 for top-level
@@ -242,9 +244,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         extra_builtin_skill_overrides,
         additional_skill_paths: config.additional_skill_paths.clone(),
         additional_prompt_paths: config.additional_prompt_paths.clone(),
-        no_skills: false,
-        no_prompt_templates: false,
-        no_context_files: false,
+        no_skills: config.resource_exclusions.no_skills,
+        no_prompt_templates: config.resource_exclusions.no_prompt_templates,
+        no_context_files: config.resource_exclusions.no_context_files,
         system_prompt: config.custom_system_prompt.clone(),
         append_system_prompt: Vec::new(),
         ..Default::default()

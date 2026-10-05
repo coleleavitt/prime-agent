@@ -1,14 +1,64 @@
 //! Session-event subscribers: the send-time routing index (TS `handleWorkerFrame`:
 //! the delivery set is the session's attached clients, evaluated in the socket-write
 //! pass). Publishers resolve the set under one lock and enqueue into per-connection
-//! bounded queues; a full queue drops with one log line per stall cycle.
+//! bounded queues; a full queue drops with one log line per stall cycle and marks the
+//! session lagged for that connection, so the connection's writer sends one
+//! [`SESSION_RESYNC_REQUIRED`] frame once its queue drains (TS daemons queue a
+//! `resync` catch-up snapshot on backpressure and send it on `drain`).
 
 use pa_types::sync::MutexExt;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
-use serde_json::Value;
-use tokio::sync::mpsc;
+use serde_json::{json, Value};
+use tokio::sync::{mpsc, Notify};
+
+/// The frame type telling a client it lost session events (its queue overflowed) and
+/// must re-fetch the session's state. Rust-only (the TS daemon streamed a `resync`
+/// snapshot instead); clients that do not know it ignore it.
+pub(crate) const SESSION_RESYNC_REQUIRED: &str = "session_resync_required";
+
+/// The resync frame for one session.
+pub(crate) fn session_resync_required_frame(active_session_id: &str) -> Value {
+    json!({
+        "type": SESSION_RESYNC_REQUIRED,
+        "activeSessionId": active_session_id,
+        "reason": "lagged",
+    })
+}
+
+/// The sessions whose frames one connection's queue dropped since its last resync,
+/// plus the wake for the connection's writer.
+#[derive(Default)]
+pub(crate) struct LaggedSessions {
+    ids: Mutex<BTreeSet<String>>,
+    notify: Notify,
+}
+
+impl LaggedSessions {
+    fn mark(&self, active_session_id: &str) {
+        let inserted = self
+            .ids
+            .lock_or_recover()
+            .insert(active_session_id.to_string());
+        if inserted {
+            self.notify.notify_one();
+        }
+    }
+
+    /// Resolves once a session was marked lagged (a stored permit covers a mark that
+    /// landed while the writer was busy).
+    pub(crate) async fn notified(&self) {
+        self.notify.notified().await;
+    }
+}
+
+/// What the registry holds per connection: the bounded queue and the lag marks.
+#[derive(Clone)]
+struct SubscriberLink {
+    queue: mpsc::Sender<Arc<Value>>,
+    lagged: Arc<LaggedSessions>,
+}
 
 /// One connection's subscription state: the session list and the bounded queue its
 /// targeted frames ride. The list leads the registry on attach and lags on detach, so
@@ -16,7 +66,7 @@ use tokio::sync::mpsc;
 pub(crate) struct ClientSubscriptions {
     connection_id: String,
     sessions: Mutex<Vec<String>>,
-    queue: mpsc::Sender<Arc<Value>>,
+    link: SubscriberLink,
 }
 
 impl ClientSubscriptions {
@@ -24,8 +74,32 @@ impl ClientSubscriptions {
         Arc::new(Self {
             connection_id,
             sessions: Mutex::new(Vec::new()),
-            queue,
+            link: SubscriberLink {
+                queue,
+                lagged: Arc::new(LaggedSessions::default()),
+            },
         })
+    }
+
+    /// This connection's lag marks (the writer awaits [`LaggedSessions::notified`]).
+    pub(crate) fn lagged(&self) -> &LaggedSessions {
+        &self.link.lagged
+    }
+
+    /// The writer's drain hook, called once this connection's queue is empty: one
+    /// [`session_resync_required_frame`] per session it lost frames for (and still has
+    /// attached) goes into the queue, behind nothing, so it cannot be dropped. A frame
+    /// that does not fit (a publisher refilled the queue meanwhile) keeps its mark for
+    /// the next drain.
+    pub(crate) fn queue_pending_resyncs(&self) {
+        let lagged = std::mem::take(&mut *self.link.lagged.ids.lock_or_recover());
+        let attached = self.session_ids();
+        for active_session_id in lagged.into_iter().filter(|id| attached.contains(id)) {
+            let frame = Arc::new(session_resync_required_frame(&active_session_id));
+            if self.link.queue.try_send(frame).is_err() {
+                self.link.lagged.mark(&active_session_id);
+            }
+        }
     }
 
     /// The attached-session list (pause bookkeeping, detach-on-disconnect
@@ -50,7 +124,7 @@ impl ClientSubscriptions {
                 sessions.push(active_session_id.to_string());
             }
         }
-        registry.register(active_session_id, &self.connection_id, self.queue.clone());
+        registry.register(active_session_id, &self.connection_id, self.link.clone());
     }
 
     /// Detach: the registry first (delivery stops at the detach instant),
@@ -73,7 +147,7 @@ impl ClientSubscriptions {
     ) -> bool {
         let was_attached = self.contains(selector);
         if was_attached {
-            registry.move_subscription(selector, current, &self.connection_id, self.queue.clone());
+            registry.move_subscription(selector, current, &self.connection_id, self.link.clone());
             let mut sessions = self.sessions.lock_or_recover();
             sessions.retain(|id| id != selector);
             if !sessions.iter().any(|id| id == current) {
@@ -94,7 +168,7 @@ impl ClientSubscriptions {
 
 /// One subscriber's queue, with the one-line-per-stall-cycle loss flag.
 struct Subscriber {
-    queue: mpsc::Sender<Arc<Value>>,
+    link: SubscriberLink,
     logged_full: bool,
 }
 
@@ -118,12 +192,7 @@ impl SessionSubscribers {
         }
     }
 
-    fn register(
-        &self,
-        active_session_id: &str,
-        connection_id: &str,
-        queue: mpsc::Sender<Arc<Value>>,
-    ) {
+    fn register(&self, active_session_id: &str, connection_id: &str, link: SubscriberLink) {
         let mut sessions = self.sessions.lock_or_recover();
         sessions
             .entry(active_session_id.to_string())
@@ -131,7 +200,7 @@ impl SessionSubscribers {
             .insert(
                 connection_id.to_string(),
                 Subscriber {
-                    queue,
+                    link,
                     logged_full: false,
                 },
             );
@@ -150,13 +219,7 @@ impl SessionSubscribers {
     /// Move one connection's subscription between session ids atomically
     /// (the rebind seam): a publisher never observes the connection under
     /// both ids or neither.
-    fn move_subscription(
-        &self,
-        from: &str,
-        to: &str,
-        connection_id: &str,
-        queue: mpsc::Sender<Arc<Value>>,
-    ) {
+    fn move_subscription(&self, from: &str, to: &str, connection_id: &str, link: SubscriberLink) {
         let mut sessions = self.sessions.lock_or_recover();
         if let Some(subscribers) = sessions.get_mut(from) {
             subscribers.remove(connection_id);
@@ -167,7 +230,7 @@ impl SessionSubscribers {
         sessions.entry(to.to_string()).or_default().insert(
             connection_id.to_string(),
             Subscriber {
-                queue,
+                link,
                 logged_full: false,
             },
         );
@@ -175,7 +238,8 @@ impl SessionSubscribers {
 
     /// The send-time delivery pass: enqueue to every attached connection under the
     /// registry lock. A full queue drops the frame (the stall-cycle lands in the daemon
-    /// log); a closed queue prunes its entry.
+    /// log) and marks the session lagged for that connection; a closed queue prunes
+    /// its entry.
     pub(crate) fn publish(&self, active_session_id: &str, payload: &Arc<Value>) -> PublishOutcome {
         let mut outcome = PublishOutcome::default();
         let mut sessions = self.sessions.lock_or_recover();
@@ -183,13 +247,14 @@ impl SessionSubscribers {
             return outcome;
         };
         subscribers.retain(|connection_id, subscriber| {
-            match subscriber.queue.try_send(Arc::clone(payload)) {
+            match subscriber.link.queue.try_send(Arc::clone(payload)) {
                 Ok(()) => {
                     outcome.delivered += 1;
                     subscriber.logged_full = false;
                     true
                 }
                 Err(mpsc::error::TrySendError::Full(_)) => {
+                    subscriber.link.lagged.mark(active_session_id);
                     if !subscriber.logged_full {
                         subscriber.logged_full = true;
                         outcome.lagged.push(connection_id.clone());
@@ -309,6 +374,63 @@ mod tests {
         assert!(outcome.lagged.is_empty());
         let outcome = registry.publish("session-1", &frame("f7"));
         assert_eq!(outcome.lagged.len(), 1);
+    }
+
+    /// Upstream #2444/#1940/#1901: a connection whose queue dropped frames (a lost
+    /// `tool_execution_end`/`agent_end` among them) gets one resync frame per lagged
+    /// session once its queue drains, and its writer is woken for it.
+    #[tokio::test]
+    async fn a_dropped_frame_queues_one_resync_after_the_drain() {
+        let registry = SessionSubscribers::new();
+        let (tx, mut rx) = queue(2);
+        let client = ClientSubscriptions::new("slow".into(), tx);
+        client.attach(&registry, "session-1");
+        client.attach(&registry, "session-2");
+        for tag in ["f0", "f1", "agent_end", "agent_end"] {
+            registry.publish("session-1", &frame(tag));
+        }
+        // The writer was woken by the drop (a stored permit).
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            client.lagged().notified(),
+        )
+        .await
+        .expect("the lag mark wakes the writer");
+        let delivered = drained(&mut rx);
+        client.queue_pending_resyncs();
+        // One resync, for the lagged session only; the mark is consumed.
+        let resyncs = drained(&mut rx);
+        client.queue_pending_resyncs();
+        assert_eq!(
+            (delivered, resyncs, drained(&mut rx)),
+            (
+                vec![
+                    serde_json::json!({ "type": "f0" }),
+                    serde_json::json!({ "type": "f1" })
+                ],
+                vec![serde_json::json!({
+                    "type": "session_resync_required",
+                    "activeSessionId": "session-1",
+                    "reason": "lagged",
+                })],
+                Vec::new(),
+            )
+        );
+    }
+
+    /// A session detached before the drain needs no resync.
+    #[tokio::test]
+    async fn a_detached_session_gets_no_resync() {
+        let registry = SessionSubscribers::new();
+        let (tx, mut rx) = queue(1);
+        let client = ClientSubscriptions::new("slow".into(), tx);
+        client.attach(&registry, "session-1");
+        registry.publish("session-1", &frame("f0"));
+        registry.publish("session-1", &frame("dropped"));
+        client.detach(&registry, "session-1");
+        drained(&mut rx);
+        client.queue_pending_resyncs();
+        assert_eq!(drained(&mut rx), Vec::<Value>::new());
     }
 
     #[tokio::test]

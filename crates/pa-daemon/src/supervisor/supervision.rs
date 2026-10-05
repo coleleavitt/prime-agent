@@ -427,6 +427,21 @@ impl Supervisor {
         let stderr_log_path =
             crate::worker_stderr::log_path(&self.options.agent_dir, &resident.worker_id);
         let stderr_log = crate::worker_stderr::open_for_spawn(&stderr_log_path)?;
+        // Linux spawns the supervisor's own loaded image through `/proc/self/exe`: a binary
+        // replaced on disk outside the update flow (`cargo install`, a package manager) leaves
+        // `current_exe()` naming `<path> (deleted)`, and every worker spawn would fail while
+        // the supervisor still answers (upstream #723). The worker then also runs the same
+        // build as its supervisor. argv[0] keeps the product path, so the process census
+        // (`boot_reap::is_worker_argv`) still recognizes the worker.
+        #[cfg(target_os = "linux")]
+        let mut command = {
+            use std::os::unix::process::CommandExt as _;
+            let mut command = std::process::Command::new("/proc/self/exe");
+            let shown = executable.to_string_lossy();
+            command.arg0(shown.strip_suffix(" (deleted)").unwrap_or(&shown));
+            Command::from(command)
+        };
+        #[cfg(not(target_os = "linux"))]
         let mut command = Command::new(&executable);
         command
             .arg("worker")

@@ -526,9 +526,9 @@ fn discovery_and_shutdown_from_another_root_leave_a_foreign_daemon_alive() {
 
 #[test]
 fn the_shipped_binary_stops_the_daemon_on_its_own_default_socket() {
-    // The product resolves `<TMPDIR>/prime-agent-<uid>/daemon.sock`; with
-    // TMPDIR pinned to the fixture that is a fixture path, never the real
-    // one. Outside any harness (marker `0`, no cargo marker) the binary must
+    // The product resolves `<TMPDIR>/prime-agent-<uid>/daemon-<key>.sock`
+    // (keyed by the fixture's non-default agent dir); with TMPDIR pinned to
+    // the fixture that is a fixture path, never the real one. Outside any harness (marker `0`, no cargo marker) the binary must
     // see and stop that default daemon - the `/tmp/prime-agent-1000`
     // regression made `shutdown` report "No background services found."
     let fixture = tempfile::tempdir().expect("fixture");
@@ -539,10 +539,11 @@ fn the_shipped_binary_stops_the_daemon_on_its_own_default_socket() {
         std::fs::metadata(&probe).expect("uid probe metadata").uid()
     };
     let agent_dir = fixture.path().join("agent");
+    let key = pa_daemon::platform::agent_dir_socket_suffix(&agent_dir, None).expect("keyed");
     let socket = fixture
         .path()
         .join(format!("prime-agent-{uid}"))
-        .join("daemon.sock");
+        .join(format!("daemon-{key}.sock"));
     std::fs::create_dir_all(socket.parent().expect("socket dir")).expect("socket dir");
     let mut daemon = spawn_daemon(&socket, &agent_dir, fixture.path());
 

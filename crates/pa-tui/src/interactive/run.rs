@@ -1068,6 +1068,8 @@ async fn run_interactive_surface(
                     // after a new attach succeeds); the next supersede notice or submit-path retry
                     // re-attaches once a worker can serve the session.
                     if let Some(current) = session.pending_rebind.take() {
+                        // The rebind's fresh attach is also the resync.
+                        session.pending_resync = false;
                         match session
                             .attach_session(&current, crate::session_ui::DockFold::FirstFrame)
                             .await
@@ -1078,6 +1080,26 @@ async fn run_interactive_surface(
                             ),
                             Err(error) => session.note(
                                 &format!("session rebind failed: {error:#}"),
+                                &mut view,
+                            ),
+                        }
+                    }
+                    // Lost session events (the supervisor's queue for this connection
+                    // overflowed): re-attach the same session and rebuild from its snapshot,
+                    // so a dropped `tool_execution_end`/`agent_end` cannot leave the view
+                    // waiting on a turn that already ended. A rebind above already did it.
+                    if std::mem::take(&mut session.pending_resync) {
+                        let current = session.active_session_id.clone();
+                        match session
+                            .attach_session(&current, crate::session_ui::DockFold::Held)
+                            .await
+                        {
+                            Ok(()) => session.rebuild_view(
+                                &mut view,
+                                &crate::session_ui::RebuildKind::Resync,
+                            ),
+                            Err(error) => session.note(
+                                &format!("session resync failed: {error:#}"),
                                 &mut view,
                             ),
                         }

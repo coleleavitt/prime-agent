@@ -143,6 +143,8 @@ pub(crate) struct SessionUi {
     /// The `--models` scope patterns carried into every `create` config: the daemon resolves them
     /// per create, so a `/new` session keeps the scope.
     models: Option<Vec<String>>,
+    /// The CLI's resource exclusions: `/new` carries them into its create.
+    resource_exclusions: pa_types::daemon::SessionResourceExclusions,
     /// The `/model` picker's catalog: a startup snapshot (the bundled
     /// fallback), replaced by the daemon's `get_model_catalog` response.
     model_catalog: Vec<pa_types::ai::Model>,
@@ -335,6 +337,9 @@ pub(crate) struct SessionUi {
     pub(crate) daemon_closing_notice: Option<String>,
     pub(crate) transport_lost: Option<String>,
     pub(crate) pending_rebind: Option<String>,
+    /// The supervisor dropped events for the attached session: the loop re-attaches the
+    /// same session and rebuilds the view from the fresh snapshot.
+    pub(crate) pending_resync: bool,
     /// The re-attach window expired: dispatch is blocked and submits
     /// surface the error instead of leaving the UI on a silent spinner.
     pub(crate) reconnection_failed: Option<String>,
