@@ -96,6 +96,7 @@ async fn run_cell(manager: &ReplKernelManager, code: &str) -> Value {
 async fn host_cancel_fires_the_named_request_token_and_the_reply_still_settles() {
     let dir = tempfile::TempDir::new().expect("temp dir");
     let manager = ReplKernelManager::new(KernelManagerOptions {
+        environment: pa_core::kernel::shared::KernelEnvironment::Inherit,
         python: Some(fake_runtime_path(&dir)),
         cwd: Some(dir.path().to_path_buf()),
         env: HashMap::new(),

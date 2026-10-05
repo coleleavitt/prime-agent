@@ -2,44 +2,69 @@
 
 use std::path::PathBuf;
 
+/// Providers keyed by one API-key environment variable.
+const SINGLE_KEY_PROVIDERS: &[(&str, &str)] = &[
+    ("openai", "OPENAI_API_KEY"),
+    ("azure-openai-responses", "AZURE_OPENAI_API_KEY"),
+    ("prime-inference", "PRIME_API_KEY"),
+    ("deepseek", "DEEPSEEK_API_KEY"),
+    ("google", "GEMINI_API_KEY"),
+    ("google-vertex", "GOOGLE_CLOUD_API_KEY"),
+    ("groq", "GROQ_API_KEY"),
+    ("cerebras", "CEREBRAS_API_KEY"),
+    ("xai", "XAI_API_KEY"),
+    ("openrouter", "OPENROUTER_API_KEY"),
+    ("vercel-ai-gateway", "AI_GATEWAY_API_KEY"),
+    ("zai", "ZAI_API_KEY"),
+    ("mistral", "MISTRAL_API_KEY"),
+    ("minimax", "MINIMAX_API_KEY"),
+    ("minimax-cn", "MINIMAX_CN_API_KEY"),
+    ("moonshotai", "MOONSHOT_API_KEY"),
+    ("moonshotai-cn", "MOONSHOT_API_KEY"),
+    ("huggingface", "HF_TOKEN"),
+    ("fireworks", "FIREWORKS_API_KEY"),
+    ("opencode", "OPENCODE_API_KEY"),
+    ("opencode-go", "OPENCODE_API_KEY"),
+    ("kimi-coding", "KIMI_API_KEY"),
+    ("cloudflare-workers-ai", "CLOUDFLARE_API_KEY"),
+    ("cloudflare-ai-gateway", "CLOUDFLARE_API_KEY"),
+    ("xiaomi", "XIAOMI_API_KEY"),
+    ("xiaomi-token-plan-cn", "XIAOMI_TOKEN_PLAN_CN_API_KEY"),
+    ("xiaomi-token-plan-ams", "XIAOMI_TOKEN_PLAN_AMS_API_KEY"),
+    ("xiaomi-token-plan-sgp", "XIAOMI_TOKEN_PLAN_SGP_API_KEY"),
+];
+/// `github-copilot`'s own variable; it also falls back to the generic `GH_TOKEN`/`GITHUB_TOKEN`.
+const COPILOT_KEY_ENV_VARS: [&str; 3] = ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"];
+/// `ANTHROPIC_OAUTH_TOKEN` takes precedence over `ANTHROPIC_API_KEY`.
+const ANTHROPIC_KEY_ENV_VARS: [&str; 2] = ["ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"];
+
 #[must_use]
 pub fn get_api_key_env_vars(provider: &str) -> Option<Vec<&'static str>> {
     match provider {
-        "github-copilot" => Some(vec!["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]),
-        // ANTHROPIC_OAUTH_TOKEN takes precedence over ANTHROPIC_API_KEY.
-        "anthropic" => Some(vec!["ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]),
-        other => {
-            let env_var = match other {
-                "openai" => "OPENAI_API_KEY",
-                "azure-openai-responses" => "AZURE_OPENAI_API_KEY",
-                "prime-inference" => "PRIME_API_KEY",
-                "deepseek" => "DEEPSEEK_API_KEY",
-                "google" => "GEMINI_API_KEY",
-                "google-vertex" => "GOOGLE_CLOUD_API_KEY",
-                "groq" => "GROQ_API_KEY",
-                "cerebras" => "CEREBRAS_API_KEY",
-                "xai" => "XAI_API_KEY",
-                "openrouter" => "OPENROUTER_API_KEY",
-                "vercel-ai-gateway" => "AI_GATEWAY_API_KEY",
-                "zai" => "ZAI_API_KEY",
-                "mistral" => "MISTRAL_API_KEY",
-                "minimax" => "MINIMAX_API_KEY",
-                "minimax-cn" => "MINIMAX_CN_API_KEY",
-                "moonshotai" | "moonshotai-cn" => "MOONSHOT_API_KEY",
-                "huggingface" => "HF_TOKEN",
-                "fireworks" => "FIREWORKS_API_KEY",
-                "opencode" | "opencode-go" => "OPENCODE_API_KEY",
-                "kimi-coding" => "KIMI_API_KEY",
-                "cloudflare-workers-ai" | "cloudflare-ai-gateway" => "CLOUDFLARE_API_KEY",
-                "xiaomi" => "XIAOMI_API_KEY",
-                "xiaomi-token-plan-cn" => "XIAOMI_TOKEN_PLAN_CN_API_KEY",
-                "xiaomi-token-plan-ams" => "XIAOMI_TOKEN_PLAN_AMS_API_KEY",
-                "xiaomi-token-plan-sgp" => "XIAOMI_TOKEN_PLAN_SGP_API_KEY",
-                _ => return None,
-            };
-            Some(vec![env_var])
-        }
+        "github-copilot" => Some(COPILOT_KEY_ENV_VARS.to_vec()),
+        "anthropic" => Some(ANTHROPIC_KEY_ENV_VARS.to_vec()),
+        other => SINGLE_KEY_PROVIDERS
+            .iter()
+            .find(|(provider, _)| *provider == other)
+            .map(|(_, env_var)| vec![*env_var]),
     }
+}
+
+/// Every environment variable Prime Agent reads as a model-provider API key, deduplicated: the
+/// credentials a kernel with the `scrub-credentials` environment policy does not inherit. The
+/// generic GitHub tokens (`GH_TOKEN`, `GITHUB_TOKEN`) are excluded: `github-copilot` only falls
+/// back to them, and tools such as `gh` legitimately use them.
+#[must_use]
+pub fn provider_api_key_env_vars() -> Vec<&'static str> {
+    let mut vars: Vec<&'static str> = ANTHROPIC_KEY_ENV_VARS
+        .iter()
+        .chain(&COPILOT_KEY_ENV_VARS[..1])
+        .copied()
+        .chain(SINGLE_KEY_PROVIDERS.iter().map(|(_, env_var)| *env_var))
+        .collect();
+    vars.sort_unstable();
+    vars.dedup();
+    vars
 }
 
 /// Find configured env vars for a provider. Ambient credential sources (AWS profiles, Google ADC)

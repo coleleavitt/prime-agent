@@ -21,6 +21,7 @@ import json
 import linecache
 import os
 import pickle
+import re
 import platform
 import select
 import signal
@@ -61,6 +62,74 @@ _PAYLOAD_CAP = 16 * 1024 * 1024
 
 # Names the session bootstrap re-creates on every start; never snapshotted.
 _ALWAYS_SKIP = {"rlm", "mcp", "bash", "asyncio", "In", "Out", "get_ipython", "exit", "quit", "open"}
+# A snapshot is a file that outlives the session (upstream #2174): it never
+# persists a secret-looking name, a value carrying a credential, or a copy of
+# the environment. Names are split into lowercase words (snake_case and
+# camelCase) so `n_tokens` or `authors` stay while `access_token` does not.
+_SECRET_NAME_WORDS = frozenset(
+    {
+        "secret", "secrets", "token", "password", "passwd", "pwd", "passphrase",
+        "credential", "credentials", "apikey", "auth", "bearer", "cookie", "cookies",
+    }
+)
+_SECRET_NAME_PAIRS = frozenset({("api", "key"), ("private", "key"), ("access", "key"), ("secret", "key")})
+# Well-known credential shapes, matched on the serialized bytes (dill stores
+# strings as UTF-8, so nested values are covered too).
+_SECRET_VALUE_RE = re.compile(
+    rb"sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
+    rb"|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|hf_[A-Za-z0-9]{30,}"
+    rb"|-----BEGIN [A-Z ]*PRIVATE KEY-----|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\."
+)
+# Values shorter than this in secret-named env vars are not scanned for (too
+# likely to collide with ordinary data).
+_MIN_ENV_SECRET_LEN = 8
+
+
+def _name_words(name: str) -> list[str]:
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
+    return [word for word in re.split(r"[^A-Za-z0-9]+", spaced.lower()) if word]
+
+
+def _is_secret_name(name: str) -> bool:
+    words = _name_words(name)
+    return any(word in _SECRET_NAME_WORDS for word in words) or any(
+        pair in _SECRET_NAME_PAIRS for pair in zip(words, words[1:])
+    )
+
+
+def _live_env_secrets() -> list[bytes]:
+    """Values of secret-named environment variables, as they would appear serialized."""
+    return [
+        value.encode("utf-8", "surrogateescape")
+        for key, value in os.environ.items()
+        if len(value) >= _MIN_ENV_SECRET_LEN and _is_secret_name(key)
+    ]
+
+
+def _is_environment_copy(value: Any) -> bool:
+    """`os.environ` itself, or a mapping holding most of the live environment."""
+    if isinstance(value, os._Environ):
+        return True
+    if not isinstance(value, dict) or len(os.environ) < 5:
+        return False
+    try:
+        shared = sum(1 for key, item in os.environ.items() if value.get(key, None) == item)
+    except Exception:  # noqa: BLE001 - an exotic dict subclass is simply not an env copy
+        return False
+    return shared * 2 >= len(os.environ)
+
+
+def _secret_skip_reason(name: str, value: Any, blob: bytes | None, env_secrets: list[bytes]) -> str | None:
+    """Why `name` must not be persisted, or None. `blob` None checks the name and value shape only."""
+    if _is_secret_name(name):
+        return "secret-looking name; not persisted"
+    if blob is None:
+        return "environment copy; not persisted" if _is_environment_copy(value) else None
+    if _SECRET_VALUE_RE.search(blob) or any(secret in blob for secret in env_secrets):
+        return "contains a secret-looking value; not persisted"
+    return None
+
+
 # IPython-injected names that may appear in a snapshot payload; never restored.
 _RESTORE_SKIP = {"In", "Out", "get_ipython"}
 # The target of the last successful snapshot, remembered so an EOF shutdown
@@ -1066,6 +1135,7 @@ def _snapshot_state(
                 # into the staged temp. The record header is charged against the aggregate
                 # cap up front, so a completed record can never overflow it (no prefix re-dump).
                 total = fh.write(_SNAPSHOT_MAGIC)
+                env_secrets = _live_env_secrets()
                 for name in list(ns.keys()):
                     if name.startswith("_") or name in _ALWAYS_SKIP:
                         continue
@@ -1073,6 +1143,10 @@ def _snapshot_state(
                     if value is missing:
                         # A background thread deleted the name after the key listing.
                         skipped.append({"name": name, "reason": "deleted during snapshot"})
+                        continue
+                    reason = _secret_skip_reason(name, value, None, env_secrets)
+                    if reason is not None:
+                        skipped.append({"name": name, "reason": reason})
                         continue
                     try:
                         encoded = name.encode("utf-8")
@@ -1101,6 +1175,10 @@ def _snapshot_state(
                         continue
                     except Exception as err:  # noqa: BLE001 - one unpicklable name must not abort the snapshot
                         skipped.append({"name": name, "reason": f"{type(err).__name__}: {_safe_str(err)[:200]}"})
+                        continue
+                    reason = _secret_skip_reason(name, value, blob, env_secrets)
+                    if reason is not None:
+                        skipped.append({"name": name, "reason": reason})
                         continue
                     if total + 12 + len(encoded) + len(blob) > max_bytes:
                         # Only reachable in prune mode, where the measurement cap ignores the budget.

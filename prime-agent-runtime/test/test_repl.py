@@ -2612,6 +2612,57 @@ class RestoreApplyShieldTest(unittest.TestCase):
             signal.raise_signal(signal.SIGINT)
 
 
+class SnapshotSecretsTest(unittest.TestCase):
+    """Upstream #2174: a kernel snapshot is a file on disk that outlives the session; it never
+    persists secret-looking names, values carrying a credential, or copies of the environment."""
+
+    def test_secrets_and_environment_copies_are_never_persisted(self):
+        sys.path.insert(0, SRC)
+        self.addCleanup(sys.path.remove, SRC)
+        from rlm.repl import _snapshot_state
+
+        live_key = "live-provider-key-0123456789"
+        ns = {
+            "api_key": "anything",
+            "GITHUB_TOKEN": "anything",
+            "db_password": "anything",
+            "clientSecret": "anything",
+            "headers": {"Authorization": "Bearer sk-ant-api03-abcdefghijklmnopqrstuvwxyz"},
+            "creds": ["AKIAABCDEFGHIJKLMNOP"],
+            "pem": "-----BEGIN RSA PRIVATE KEY-----\nMIIE...",
+            "copied": "prefix " + live_key,
+            "env": dict(os.environ),
+            "environ": os.environ,
+            "n_tokens": 12,
+            "authors": ["ada"],
+            "result": {"rows": [1, 2, 3]},
+        }
+        with mock.patch.dict(os.environ, {"EXAMPLE_PROVIDER_API_KEY": live_key}):
+            ns["env"] = dict(os.environ)
+            with tempfile.TemporaryDirectory() as tmp:
+                path = os.path.join(tmp, "kernel-state.dill")
+                result = _snapshot_state(
+                    ns,
+                    path,
+                    os.path.join(tmp, "kernel-state.json"),
+                    max_bytes=1 << 24,
+                    max_variable_bytes=1 << 22,
+                    prune_oversized=False,
+                )
+                with open(path, "rb") as fh:
+                    payload = fh.read()
+        self.assertEqual(result["saved"], ["authors", "n_tokens", "result"])
+        self.assertEqual(
+            sorted(entry["name"] for entry in result["skipped"]),
+            sorted(
+                ["api_key", "GITHUB_TOKEN", "db_password", "clientSecret", "headers", "creds", "pem",
+                 "copied", "env", "environ"]
+            ),
+        )
+        self.assertNotIn(live_key.encode(), payload)
+        self.assertNotIn(b"sk-ant-api03", payload)
+
+
 class SnapshotTempCleanupTest(unittest.TestCase):
     def test_keyboard_interrupt_during_payload_write_removes_temp_file(self):
         from unittest import mock as unittest_mock

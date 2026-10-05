@@ -172,6 +172,16 @@ pub struct TerminalSettings {
     pub fullscreen_mouse: Option<bool>,
 }
 
+/// `kernel`: the Python kernel's settings.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KernelSettings {
+    /// What the kernel and its `bash()` children inherit from the host environment:
+    /// `"inherit"` (default: everything) or `"scrub-credentials"` (without the model-provider
+    /// API keys Prime Agent manages). Read from the global scope only.
+    pub environment: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageSettings {
@@ -344,6 +354,7 @@ pub struct Settings {
     pub enable_builtin_skills: Option<bool>,
     pub terminal: Option<TerminalSettings>,
     pub images: Option<ImageSettings>,
+    pub kernel: Option<KernelSettings>,
     pub enabled_models: Option<Vec<String>>,
     /// Rust-only daemon-level model allowlist: a model outside fails loudly instead
     /// of resolving, with no fallback. `None` is unrestricted.
