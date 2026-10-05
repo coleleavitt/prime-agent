@@ -8,7 +8,8 @@ use serde_json::json;
 
 use crate::providers::anthropic::{stream_anthropic, AnthropicOptions};
 use crate::request_hooks::{
-    install_request_hooks, OutgoingRequest, ProviderRequestHooks, RejectedRequest, Rejection,
+    install_request_hooks, CallerOptions, OutgoingRequest, ProviderRequestHooks, RejectedRequest,
+    Rejection,
 };
 use crate::types::{AssistantContent, Context, Model, StopReason, StreamOptions, TextContent};
 
@@ -31,11 +32,21 @@ type Reply = (u16, &'static str);
 /// A mock Messages endpoint answering requests with `replies` in order;
 /// returns its base URL and the bearer tokens it saw, in order.
 async fn messages_endpoint(replies: Vec<Reply>) -> (String, Arc<Mutex<Vec<String>>>) {
+    let (base, bearers, _bodies) = messages_endpoint_with_bodies(replies).await;
+    (base, bearers)
+}
+
+/// [`messages_endpoint`], also returning the request bodies it read.
+async fn messages_endpoint_with_bodies(
+    replies: Vec<Reply>,
+) -> (String, Arc<Mutex<Vec<String>>>, Arc<Mutex<Vec<String>>>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let bearers = Arc::new(Mutex::new(Vec::new()));
+    let bodies = Arc::new(Mutex::new(Vec::new()));
     let seen = Arc::clone(&bearers);
+    let read_bodies = Arc::clone(&bodies);
     tokio::spawn(async move {
         for (status, body) in replies {
             let (mut socket, _) = listener.accept().await.unwrap();
@@ -64,6 +75,9 @@ async fn messages_endpoint(replies: Vec<Reply>) -> (String, Arc<Mutex<Vec<String
                             .unwrap_or_default()
                             .to_string();
                         seen.lock_or_recover().push(bearer);
+                        read_bodies
+                            .lock_or_recover()
+                            .push(String::from_utf8_lossy(&request[end + 4..]).to_string());
                         break;
                     }
                 }
@@ -80,7 +94,7 @@ async fn messages_endpoint(replies: Vec<Reply>) -> (String, Arc<Mutex<Vec<String
             socket.write_all(response.as_bytes()).await.unwrap();
         }
     });
-    (base, bearers)
+    (base, bearers, bodies)
 }
 
 fn model(provider: &str, base_url: &str) -> Model {
@@ -292,4 +306,108 @@ async fn without_hooks_a_401_is_reported_as_before() {
 
     assert_eq!(message.stop_reason, StopReason::Error);
     assert_eq!(*bearers.lock_or_recover(), vec!["sk-ant-oat01-a"]);
+}
+
+/// What a stub hook saw of a request's source.
+#[derive(Debug, Clone, PartialEq)]
+struct SeenSource {
+    system_prompt: Option<String>,
+    messages: usize,
+    options: CallerOptions,
+    session_id: Option<String>,
+}
+
+/// Stub hooks that read each request's source and send exact body bytes,
+/// and record the error bodies of rejections.
+#[derive(Default)]
+struct SourceHooks {
+    sources: Mutex<Vec<SeenSource>>,
+    rejected_bodies: Mutex<Vec<String>>,
+}
+
+impl ProviderRequestHooks for SourceHooks {
+    fn prepare(&self, request: &mut OutgoingRequest<'_>) {
+        let source = request.source;
+        self.sources.lock_or_recover().push(SeenSource {
+            system_prompt: source.context.system_prompt.clone(),
+            messages: source.context.messages.len(),
+            options: source.options.clone(),
+            session_id: source.session_id.map(str::to_string),
+        });
+        *request.body = Some(format!("{{\"rebuilt\":{}}}", request.payload["model"]));
+    }
+
+    fn rejected(&self, rejected: &RejectedRequest<'_>) -> Option<String> {
+        self.rejected_bodies
+            .lock_or_recover()
+            .push(rejected.body.to_string());
+        None
+    }
+}
+
+#[tokio::test]
+async fn a_hook_reads_the_callers_request_and_sends_its_own_body() {
+    let provider = "hooks-source-body";
+    let (base, _bearers, bodies) = messages_endpoint_with_bodies(vec![(200, OK_STREAM)]).await;
+    let hooks = Arc::new(SourceHooks::default());
+    install_request_hooks(provider, hooks.clone());
+    let mut model = model(provider, &base);
+    model.reasoning = true;
+    let options = crate::types::SimpleStreamOptions {
+        base: StreamOptions {
+            api_key: Some("sk-ant-oat01-a".to_string()),
+            session_id: Some("session-1".to_string()),
+            ..Default::default()
+        },
+        reasoning: Some(crate::types::ModelThinkingLevel::Off),
+        thinking_budgets: Some(crate::types::ThinkingBudgets {
+            low: Some(100),
+            ..Default::default()
+        }),
+    };
+    let context = Context {
+        system_prompt: Some("You help.".to_string()),
+        messages: vec![],
+        tools: None,
+    };
+
+    let mut reader = super::stream_simple_anthropic(&model, &context, Some(&options));
+    while reader.next_event().await.is_some() {}
+    let message = reader.result().await;
+
+    assert_eq!(message.stop_reason, StopReason::Stop);
+    assert_eq!(
+        *bodies.lock_or_recover(),
+        vec![r#"{"rebuilt":"claude-test"}"#]
+    );
+    assert_eq!(
+        *hooks.sources.lock_or_recover(),
+        vec![SeenSource {
+            system_prompt: Some("You help.".to_string()),
+            messages: 0,
+            // As given: no provider default for max_tokens.
+            options: CallerOptions {
+                reasoning: Some(crate::types::ModelThinkingLevel::Off),
+                thinking_budgets: Some(crate::types::ThinkingBudgets {
+                    low: Some(100),
+                    ..Default::default()
+                }),
+                max_tokens: None,
+            },
+            session_id: Some("session-1".to_string()),
+        }]
+    );
+}
+
+#[tokio::test]
+async fn a_rejection_carries_the_error_body() {
+    let provider = "hooks-rejected-body";
+    let (base, _bearers) = messages_endpoint(vec![(429, RATE_LIMITED)]).await;
+    let hooks = Arc::new(SourceHooks::default());
+    install_request_hooks(provider, hooks.clone());
+
+    let message = run(&model(provider, &base), "sk-ant-oat01-a").await;
+
+    assert_eq!(message.stop_reason, StopReason::Error);
+    assert_eq!(*hooks.rejected_bodies.lock_or_recover(), vec![RATE_LIMITED]);
 }

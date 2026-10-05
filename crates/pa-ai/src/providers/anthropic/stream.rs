@@ -22,8 +22,8 @@ use crate::providers::anthropic::{
     should_use_fine_grained_tool_streaming_beta, AnthropicOptions,
 };
 use crate::request_hooks::{
-    request_hooks, CredentialAttempts, OutgoingRequest, ProviderRequestHooks, RejectedRequest,
-    Rejection, RATE_LIMIT_STREAM_ERRORS,
+    request_hooks, CallerOptions, CredentialAttempts, OutgoingRequest, ProviderRequestHooks,
+    RejectedRequest, Rejection, RequestSource, RATE_LIMIT_STREAM_ERRORS,
 };
 use crate::types::{
     done_reason, error_reason, AssistantContent, AssistantMessage, Context, Model, StopReason,
@@ -214,6 +214,9 @@ async fn run_stream(
         }
     }
 
+    let caller: CallerOptions = options
+        .map(|options| options.caller.clone())
+        .unwrap_or_default();
     let interleaved_thinking = options
         .and_then(|options| options.interleaved_thinking)
         .unwrap_or(true);
@@ -251,12 +254,19 @@ async fn run_stream(
                 params = next;
             }
         }
+        let mut body: Option<String> = None;
         if let Some(hooks) = &hooks {
             hooks.prepare(&mut OutgoingRequest {
                 model,
                 api_key: &api_key,
                 headers: &mut headers,
                 payload: &mut params,
+                body: &mut body,
+                source: RequestSource {
+                    context,
+                    options: &caller,
+                    session_id: base_options.session_id.as_deref(),
+                },
             });
         }
 
@@ -264,7 +274,7 @@ async fn run_stream(
             method: reqwest::Method::POST,
             url: url.clone(),
             headers,
-            body: Some(params.to_string()),
+            body: Some(body.unwrap_or_else(|| params.to_string())),
             signal: base_options.signal.clone(),
             timeout_ms: base_options.timeout_ms,
             connection: crate::utils_inner::stream_failure::ConnectionErrorProfile::Sdk,
@@ -304,7 +314,7 @@ async fn run_stream(
                     &api_key,
                     rejection,
                     &provider_response,
-                    response_error_type(&body).as_deref(),
+                    &body,
                     &mut attempts,
                 )
                 .await
@@ -324,14 +334,14 @@ async fn run_stream(
         // with hooks, read its first event before reporting the start.
         if let Some(hooks) = &hooks {
             opening = read_opening_events(&mut response, &mut decoder).await?;
-            if let Some(error_type) = opening_rate_limit(&opening) {
+            if let Some(error_data) = opening_rate_limit(&opening) {
                 if let Some(next) = resend_credential(
                     hooks,
                     model,
                     &api_key,
                     Rejection::RateLimited,
                     &provider_response,
-                    Some(&error_type),
+                    &error_data,
                     &mut attempts,
                 )
                 .await
@@ -801,19 +811,20 @@ async fn resend_credential(
     api_key: &str,
     rejection: Rejection,
     response: &crate::types::ProviderResponse,
-    provider_error_type: Option<&str>,
+    error_body: &str,
     attempts: &mut CredentialAttempts,
 ) -> Option<String> {
     if !attempts.may_retry(rejection) {
         return None;
     }
-    let (hooks, model, api_key, status, headers, error_type) = (
+    let (hooks, model, api_key, status, headers, error_type, error_body) = (
         Arc::clone(hooks),
         model.clone(),
         api_key.to_string(),
         response.status,
         response.headers.clone(),
-        provider_error_type.map(str::to_string),
+        response_error_type(error_body),
+        error_body.to_string(),
     );
     let next = tokio::task::spawn_blocking(move || {
         hooks.rejected(&RejectedRequest {
@@ -823,6 +834,7 @@ async fn resend_credential(
             status,
             provider_error_type: error_type.as_deref(),
             headers: &headers,
+            body: &error_body,
         })
     })
     .await
@@ -858,7 +870,8 @@ async fn read_opening_events(
     }
 }
 
-/// The rate-limit or overload error type a stream opened with, if any.
+/// The error event a stream opened with (its data), when it names a rate
+/// limit or overload.
 fn opening_rate_limit(opening: &[ServerSentEvent]) -> Option<String> {
     let first = opening.first()?;
     if first.event.as_deref() != Some("error") {
@@ -866,6 +879,7 @@ fn opening_rate_limit(opening: &[ServerSentEvent]) -> Option<String> {
     }
     response_error_type(&first.data)
         .filter(|error_type| RATE_LIMIT_STREAM_ERRORS.contains(&error_type.as_str()))
+        .map(|_| first.data.clone())
 }
 
 fn recalculate_cost(model: &Model, output: &mut AssistantMessage, cache_write_cost: Option<f64>) {
