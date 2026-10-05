@@ -80,7 +80,8 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
      failure. The status rows show its label; `AuthSource::CredentialSource` names it. An OAuth login `auth.json`
      still holds for the provider is offered to the source on each lookup (`adopt_stored_login`, a one-time
      migration); when the source takes custody, the entry is removed from `auth.json` (only while it still holds
-     that login).
+     that login). `/logout` lists a provider whose source reports a login (`credential_source_providers`) and asks
+     the source to remove it (`remove_login`, with an optional notice) besides any `auth.json` entry.
    Seams to add as features need them: system-prompt layer providers, turn-start observers.
 5. **Data ownership.** A crate owns its files under `~/.prime/agent/<feature>/` (or the session artifact dir) and its
    key in `harness_state.json` (`HarnessState::extensions["<feature>"]`). It never rewrites another crate's data.

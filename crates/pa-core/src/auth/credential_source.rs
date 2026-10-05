@@ -57,6 +57,26 @@ pub trait ProviderCredentialSource: Send + Sync {
         let _ = login;
         StoredLoginCustody::Kept
     }
+
+    /// `/logout` for the provider: remove the login the source serves it
+    /// now. May block on disk.
+    ///
+    /// # Errors
+    ///
+    /// [`CredentialSourceError::NotConfigured`] when the source holds no
+    /// login (the default: a source that cannot remove logins), otherwise
+    /// [`CredentialSourceError::Unavailable`] with a secret-free reason.
+    fn remove_login(&self) -> Result<RemovedLogin, CredentialSourceError> {
+        Err(CredentialSourceError::NotConfigured)
+    }
+}
+
+/// A login a source removed on `/logout`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemovedLogin {
+    /// What the logout should tell the user beyond "logged out" (where the
+    /// login was, what still serves the provider), without secrets.
+    pub notice: Option<String>,
 }
 
 /// An OAuth login `auth.json` holds, offered to the provider's source.
@@ -152,6 +172,14 @@ pub fn install_credential_source(provider_id: &str, source: Arc<dyn ProviderCred
 #[must_use]
 pub fn credential_source(provider_id: &str) -> Option<Arc<dyn ProviderCredentialSource>> {
     registry().read_or_recover().get(provider_id).cloned()
+}
+
+/// The provider ids with an installed source, sorted.
+#[must_use]
+pub fn credential_source_providers() -> Vec<String> {
+    let mut providers: Vec<String> = registry().read_or_recover().keys().cloned().collect();
+    providers.sort();
+    providers
 }
 
 #[cfg(test)]
@@ -405,6 +433,19 @@ mod tests {
         auth.set_runtime_api_key(provider, "runtime-key".to_string());
 
         assert_eq!(auth.get_api_key(provider), Some("runtime-key".to_string()));
+    }
+
+    #[test]
+    fn a_source_lists_its_provider_and_by_default_removes_no_login() {
+        let provider = "stub-source-listed";
+        let source = StubSource::serving("rev-1", "source-access");
+        install_credential_source(provider, source.clone());
+
+        assert!(credential_source_providers().contains(&provider.to_string()));
+        assert_eq!(
+            source.remove_login(),
+            Err(CredentialSourceError::NotConfigured)
+        );
     }
 
     fn stored_login() -> StoredOAuthLogin {
