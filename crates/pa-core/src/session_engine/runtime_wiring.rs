@@ -292,16 +292,19 @@ impl KernelExecutor for KernelManagerExecutor {
         let manager = self.manager.clone();
         let code = code.to_string();
         let signal = options.signal;
+        let timeout_ms = options.timeout_ms;
         let on_late_sent_agent_message = options.on_late_sent_agent_message;
         Box::pin(async move {
             let result = manager
-                .execute(
+                .execute_bounded(
                     &code,
                     crate::kernel::shared::ExecuteOptions {
                         signal: signal.map(crate::kernel::cancellation::AbortSignal::from_token),
                         on_late_sent_agent_message,
+                        timeout_excludes_host_requests: true,
                         ..Default::default()
                     },
+                    timeout_ms,
                 )
                 .await
                 .map_err(classify_execute_error)?;
@@ -364,6 +367,7 @@ fn convert_execute_result(
         sent_agent_messages: result.sent_agent_messages.unwrap_or_default(),
         bash_commands: result.bash_commands,
         executed_bash_commands: result.executed_bash_commands,
+        timed_out: result.timed_out,
         kernel_unresponsive: result.kernel_unresponsive,
     }
 }
@@ -378,6 +382,11 @@ pub fn ipython_tool_options(
         provisioner,
         ui: None,
         on_late_sent_agent_message,
+        cell_timeout_ms: crate::tools::ipython::resolve_cell_timeout_ms(
+            std::env::var(crate::tools::ipython::IPYTHON_CELL_TIMEOUT_ENV)
+                .ok()
+                .as_deref(),
+        ),
     }
 }
 

@@ -143,6 +143,7 @@ impl InternalExecuteResult {
                 status: ExecuteStatus::Aborted,
                 error: None,
                 duration_ms: started.elapsed().as_millis() as u64,
+                timed_out: false,
                 kernel_unresponsive: false,
             },
             done_fields: None,

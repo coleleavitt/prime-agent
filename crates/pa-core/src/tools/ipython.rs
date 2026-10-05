@@ -62,6 +62,8 @@ pub struct ExecuteResult {
     /// The `bash()` commands that finished while the cell ran, with exit
     /// codes; reported to observers as the `bashCommands` host fact.
     pub executed_bash_commands: Vec<crate::kernel::shared::KernelExecutedBashCommand>,
+    /// The per-cell execution timeout fired and interrupted the cell.
+    pub timed_out: bool,
     /// The cell ignored the interrupt: the kernel is still running it.
     pub kernel_unresponsive: bool,
 }
@@ -167,6 +169,10 @@ pub type LateSentAgentMessageHandler =
 
 pub struct KernelExecuteOptions<'a> {
     pub signal: Option<AbortSignal>,
+    /// Interrupt the cell after this many milliseconds of kernel time
+    /// (time spent waiting on host requests such as sub-agent runs does not
+    /// count). `None` runs unbounded.
+    pub timeout_ms: Option<u64>,
     /// Streams cell output while the cell runs.
     pub on_stream: StreamFn<'a>,
     pub on_late_sent_agent_message: Option<crate::kernel::shared::LateSentAgentMessageCallback>,
@@ -231,6 +237,39 @@ pub fn kernel_crash_recovery_notice(exit: &crate::kernel::shared::KernelUnexpect
         "<ipython_kernel_reset>\nThe Python kernel was restarted after it exited unexpectedly ({}) at {}; variables were revived from the last snapshot, but imports, live handles, open resources, and background tasks from before are gone.\n</ipython_kernel_reset>",
         exit.cause(),
         crate::session::manager::format_iso(i64::try_from(exit.at_ms).unwrap_or(i64::MAX)),
+    )
+}
+
+/// The per-cell execution timeout used when nothing configures one: ten
+/// minutes of kernel time, far above a full test suite run.
+pub const DEFAULT_IPYTHON_CELL_TIMEOUT_MS: u64 = 600_000;
+
+/// Env override for the per-cell execution timeout, in milliseconds; `0`
+/// disables it.
+pub const IPYTHON_CELL_TIMEOUT_ENV: &str = "PRIME_AGENT_IPYTHON_TIMEOUT_MS";
+
+/// The per-cell execution timeout from `raw` (the env value): unset or
+/// unparsable falls back to the default, `0` disables the timeout.
+#[must_use]
+pub fn resolve_cell_timeout_ms(raw: Option<&str>) -> Option<u64> {
+    match raw.map(str::trim).map(str::parse::<u64>) {
+        Some(Ok(0)) => None,
+        Some(Ok(ms)) => Some(ms),
+        Some(Err(_)) | None => Some(DEFAULT_IPYTHON_CELL_TIMEOUT_MS),
+    }
+}
+
+/// The notice on a cell the execution timeout interrupted.
+#[must_use]
+pub fn cell_timeout_notice(timeout_ms: u64, kernel_killed: bool) -> String {
+    let seconds = timeout_ms.div_ceil(1_000);
+    let outcome = if kernel_killed {
+        "The kernel did not stop after the interrupt, so it was killed. A fresh kernel starts on the next call: variables come back from the last snapshot, but imports, live handles, async tasks, and open resources from before are gone; recreate them before using them."
+    } else {
+        "The kernel stopped the cell; its state is preserved."
+    };
+    format!(
+        "<ipython_timeout>\nThe cell exceeded the {seconds}s execution timeout and was interrupted (time spent waiting on sub-agents does not count). {outcome} Common causes: a subprocess without timeout=, a git command waiting for an editor (set GIT_EDITOR=true), a network call without a timeout. Retry with a bounded command, or run long work in the background. The limit is set by {IPYTHON_CELL_TIMEOUT_ENV}.\n</ipython_timeout>"
     )
 }
 
@@ -321,6 +360,7 @@ async fn execute_with_busy_kernel_choice(
                 code,
                 KernelExecuteOptions {
                     signal: execute.signal.clone(),
+                    timeout_ms: execute.timeout_ms,
                     on_stream: execute.on_stream,
                     on_late_sent_agent_message: execute.on_late_sent_agent_message.clone(),
                 },
@@ -374,6 +414,8 @@ pub struct IpythonToolOptions {
     /// UI surface; `None` in headless sessions.
     pub ui: Option<Arc<dyn IpythonToolUi>>,
     pub on_late_sent_agent_message: Option<LateSentAgentMessageHandler>,
+    /// Per-cell execution timeout in milliseconds; `None` runs unbounded.
+    pub cell_timeout_ms: Option<u64>,
 }
 
 pub fn ipython_tool_schema() -> serde_json::Value {
@@ -447,6 +489,7 @@ pub async fn execute_ipython(
         code,
         KernelExecuteOptions {
             signal,
+            timeout_ms: options.cell_timeout_ms,
             on_stream: Some(&stream_update),
             on_late_sent_agent_message,
         },
@@ -472,15 +515,24 @@ pub async fn execute_ipython(
     };
 
     // Escalate past an ignored interrupt: a wedged kernel would answer every
-    // later call with busy-after-interrupt. A cancel escalates when no UI
-    // offers the wait/kill choice (TS #2135).
-    let kill_unresponsive = r.kernel_unresponsive && options.ui.is_none();
+    // later call with busy-after-interrupt. A timeout always escalates (no
+    // one chose to wait); a cancel escalates when no UI offers the
+    // wait/kill choice (TS #2135).
+    let kill_unresponsive = r.kernel_unresponsive && (r.timed_out || options.ui.is_none());
     if kill_unresponsive {
         options.provisioner.kill().await;
     }
     let mut text = format_execute_text(&r, r.background_output.as_deref());
-    if kill_unresponsive {
-        let notice = unresponsive_kernel_killed_notice().to_string();
+    let escalation_notice = if r.timed_out {
+        options
+            .cell_timeout_ms
+            .map(|ms| cell_timeout_notice(ms, kill_unresponsive))
+    } else if kill_unresponsive {
+        Some(unresponsive_kernel_killed_notice().to_string())
+    } else {
+        None
+    };
+    if let Some(notice) = escalation_notice {
         text = if text.is_empty() {
             notice
         } else {
@@ -515,6 +567,9 @@ pub async fn execute_ipython(
         },
         "kernelRestarted": kernel_restarted,
     });
+    if r.timed_out {
+        details["timedOut"] = json!(true);
+    }
     if kill_unresponsive {
         details["kernelKilled"] = json!(true);
     }
@@ -706,6 +761,14 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_cell_timeout_defaults_to_ten_minutes_and_zero_disables_it() {
+        assert_eq!(
+            [None, Some("90000"), Some(" 0 "), Some("soon")].map(resolve_cell_timeout_ms),
+            [Some(600_000), Some(90_000), None, Some(600_000)]
+        );
+    }
+
     /// Serves scripted cell outcomes; a crash outcome "replaces" the
     /// kernel, leaving its exit unreported like the real provisioner.
     struct CrashingProvisioner {
@@ -787,6 +850,7 @@ mod tests {
             }),
             ui: None,
             on_late_sent_agent_message: None,
+            cell_timeout_ms: None,
         };
 
         let crashed = execute_ipython(&options, "import os; os._exit(7)", None, None, None)

@@ -244,6 +244,7 @@ impl Inner {
                 status,
                 error: buffers.error.take(),
                 duration_ms: execution.started.elapsed().as_millis() as u64,
+                timed_out: false,
                 kernel_unresponsive: buffers.force_aborted,
             };
             drop(buffers);

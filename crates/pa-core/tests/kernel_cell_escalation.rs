@@ -10,16 +10,19 @@
 // Drives a real kernel process; unix-only like the sibling kernel targets.
 #![cfg(unix)]
 
-//! Verifier integration tests for the ipython tool's escalation past an ignored interrupt (#2135):
-//! a kernel that ignores the interrupt after a cancel is killed so the next call gets a fresh
-//! kernel instead of "still running the previously interrupted cell". The kernel Python is ambient
-//! product state; skipped when absent.
+//! Verifier integration tests for the ipython tool's per-cell execution timeout (#2290) and the
+//! escalation past an ignored interrupt (#2135): a hung cell is interrupted at the timeout; a
+//! kernel that ignores the interrupt (after a timeout or a cancel) is killed so the next call gets
+//! a fresh kernel instead of "still running the previously interrupted cell"; time the cell spends
+//! waiting on a host request (a sub-agent run) does not count. The kernel Python is ambient product
+//! state; skipped when absent.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use pa_core::kernel::provisioner::{IpythonKernelProvisioner, IpythonKernelProvisionerOptions};
+use pa_core::kernel::shared::{host_handler, HostRequestHandlers};
 use pa_core::{create_ipython_tool_definition, IpythonToolOptions, ToolContentBlock};
 use serde_json::{json, Value};
 
@@ -56,12 +59,22 @@ struct Harness {
 }
 
 impl Harness {
-    fn new(python: PathBuf) -> Self {
+    fn new(python: PathBuf, cell_timeout_ms: Option<u64>) -> Self {
         let dir = tempfile::TempDir::new().unwrap();
+        let mut host_handlers = HostRequestHandlers::new();
+        // Stands in for a sub-agent run: answers well after the cell timeout.
+        host_handlers.register(
+            "probe.slow",
+            host_handler(|_| async {
+                tokio::time::sleep(Duration::from_millis(3_000)).await;
+                Ok(json!({ "answered": true }))
+            }),
+        );
         let provisioner = IpythonKernelProvisioner::new(
             dir.path(),
             IpythonKernelProvisionerOptions {
                 python: Some(python),
+                host_handlers,
                 ..Default::default()
             },
         );
@@ -71,6 +84,7 @@ impl Harness {
                 provisioner: Arc::new(provisioner),
                 ui: None,
                 on_late_sent_agent_message: None,
+                cell_timeout_ms,
             },
         );
         Self { _dir: dir, tool }
@@ -107,11 +121,97 @@ impl Harness {
 }
 
 #[tokio::test]
+async fn a_cell_that_ignores_the_timeout_interrupt_is_killed_and_the_next_call_gets_a_fresh_kernel()
+{
+    let Some(python) = kernel_python() else {
+        return;
+    };
+    let harness = Harness::new(python, Some(1_500));
+    let (_, details, _) = harness.run("x = 41", None).await.unwrap();
+    assert_eq!(details["status"], "ok");
+
+    let (text, details, is_error) = harness.run(UNRESPONSIVE_CELL, None).await.unwrap();
+    assert_eq!(
+        (
+            details["status"].clone(),
+            details["timedOut"].clone(),
+            details["kernelKilled"].clone(),
+            is_error
+        ),
+        (json!("aborted"), json!(true), json!(true), true),
+        "{text}"
+    );
+    assert!(
+        text.contains("exceeded the 2s execution timeout")
+            && text.contains("did not stop after the interrupt, so it was killed"),
+        "{text}"
+    );
+
+    // The next call is served by a fresh kernel, not "still running the
+    // previously interrupted cell".
+    let (text, details, is_error) = harness.run("1 + 1", None).await.unwrap();
+    assert_eq!(
+        (details["status"].clone(), is_error, text.as_str()),
+        (json!("ok"), false, "2"),
+    );
+}
+
+#[tokio::test]
+async fn a_cell_that_honors_the_timeout_interrupt_keeps_the_kernel_state() {
+    let Some(python) = kernel_python() else {
+        return;
+    };
+    let harness = Harness::new(python, Some(1_500));
+    harness.run("x = 41", None).await.unwrap();
+    let (text, details, _) = harness
+        .run("import time\ntime.sleep(120)", None)
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            details["status"].clone(),
+            details["timedOut"].clone(),
+            details.get("kernelKilled").cloned()
+        ),
+        (json!("aborted"), json!(true), None),
+        "{text}"
+    );
+    assert!(text.contains("its state is preserved"), "{text}");
+    let (text, _, _) = harness.run("x + 1", None).await.unwrap();
+    assert_eq!(text, "42");
+}
+
+#[tokio::test]
+async fn time_waiting_on_a_host_request_does_not_count_against_the_timeout() {
+    let Some(python) = kernel_python() else {
+        return;
+    };
+    let harness = Harness::new(python, Some(1_500));
+    let (text, details, is_error) = harness
+        .run(
+            "from rlm import host_request\n(await host_request('probe.slow'))['answered']",
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            details["status"].clone(),
+            details.get("timedOut").cloned(),
+            is_error,
+            text.as_str()
+        ),
+        (json!("ok"), None, false, "True"),
+    );
+}
+
+#[tokio::test]
 async fn a_cancelled_cell_that_ignores_the_interrupt_is_killed_so_later_calls_are_not_busy() {
     let Some(python) = kernel_python() else {
         return;
     };
-    let harness = Harness::new(python);
+    // No timeout: only the caller's cancel interrupts the cell.
+    let harness = Harness::new(python, None);
     harness.run("x = 41", None).await.unwrap();
     let signal = tokio_util::sync::CancellationToken::new();
     let canceller = {
@@ -124,8 +224,12 @@ async fn a_cancelled_cell_that_ignores_the_interrupt_is_killed_so_later_calls_ar
     let (text, details, _) = harness.run(UNRESPONSIVE_CELL, Some(signal)).await.unwrap();
     canceller.await.unwrap();
     assert_eq!(
-        (details["status"].clone(), details["kernelKilled"].clone()),
-        (json!("aborted"), json!(true)),
+        (
+            details["status"].clone(),
+            details.get("timedOut").cloned(),
+            details["kernelKilled"].clone()
+        ),
+        (json!("aborted"), None, json!(true)),
         "{text}"
     );
     assert!(
