@@ -122,8 +122,15 @@ pub fn overview_for_prompt(state: &HarnessState) -> String {
                 Some(HarnessScope::Local) => "local",
                 _ => "global",
             };
+            // A disabled entry is marked so the refiner neither recreates
+            // it under a new id nor mistakes it for active guidance.
+            let disabled_text = if entry.is_enabled() {
+                ""
+            } else {
+                " [disabled]"
+            };
             lines.push(format!(
-                "- [{scope}:{}] {} ({}, v{}){}{}: {content}",
+                "- [{scope}:{}]{disabled_text} {} ({}, v{}){}{}: {content}",
                 entry.id, entry.title, entry.path, entry.version, reference_text, arguments_text
             ));
         }

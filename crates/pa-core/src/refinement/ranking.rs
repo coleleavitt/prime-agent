@@ -282,10 +282,20 @@ pub fn format_harness_state_for_prompt(
             })
             .map(|(_, entry)| entry)
             .collect();
+        // Disabled entries stay stored but are never advertised (#1118): a
+        // disabled subagent spec must not be matched against a task.
+        let all_count = entries.len();
+        let mut entries: Vec<HarnessEntry> = entries
+            .into_iter()
+            .filter(HarnessEntry::is_enabled)
+            .collect();
+        let disabled_suffix = match all_count - entries.len() {
+            0 => String::new(),
+            disabled => format!(" (+{disabled} disabled, not available)"),
+        };
         // The ranked corpus is the kind's own entries: they compete for the
         // same top-k slots, so document frequency discounts terms ubiquitous
         // within the kind rather than across unrelated kinds.
-        let mut entries: Vec<HarnessEntry> = entries;
         let ranked_idf = match query_terms.as_ref() {
             Some(terms) if !terms.is_empty() => Some(harness_query_term_idf(&entries, terms)),
             _ => None,
@@ -301,14 +311,14 @@ pub fn format_harness_state_for_prompt(
         total_entries += entries.len();
         let kind_name = kind;
         if kind_name == "subagent" && !entries.is_empty() && include_ipython {
-            lines.push(format!("{kind_name}: {} (invoke a spec by turning it into a concise task prompt and spawning with `await rlm.spawn('<task>', name='<worker>')`; admission returns a child handle, never the answer)", entries.len()));
+            lines.push(format!("{kind_name}: {}{disabled_suffix} (invoke a spec by turning it into a concise task prompt and spawning with `await rlm.spawn('<task>', name='<worker>')`; admission returns a child handle, never the answer)", entries.len()));
         } else if kind_name == "factory" && !entries.is_empty() && include_ipython {
             lines.push(format!(
-                "{kind_name}: {} (state-machine workflow specs; run one with `await rlm.factory.run('<id>')`; watch with `await rlm.factory.status(run_id)`, stop with `await rlm.factory.stop(run_id)`, resume a paused run with `await rlm.factory.resume(run_id)`)",
+                "{kind_name}: {}{disabled_suffix} (state-machine workflow specs; run one with `await rlm.factory.run('<id>')`; watch with `await rlm.factory.status(run_id)`, stop with `await rlm.factory.stop(run_id)`, resume a paused run with `await rlm.factory.resume(run_id)`)",
                 entries.len()
             ));
         } else {
-            lines.push(format!("{kind_name}: {}", entries.len()));
+            lines.push(format!("{kind_name}: {}{disabled_suffix}", entries.len()));
         }
         if let Some(terms) = query_terms.as_ref() {
             if !terms.is_empty() && entries.len() > max_entries_per_kind {
@@ -652,6 +662,52 @@ mod tests {
             version: 1,
             extensions: serde_json::Map::new(),
         }
+    }
+
+    /// #1118: a disabled entry never reaches the digest; its kind line
+    /// counts it as unavailable. Without disabled entries the digest is
+    /// unchanged.
+    #[test]
+    fn disabled_entries_stay_out_of_the_digest() {
+        let mut state = crate::refinement::empty_harness_state();
+        let active = make_entry("active", "Active", "use tactic A", "general");
+        let mut retired = make_entry("retired", "Retired", "stale guidance", "general");
+        let memories = state.entries.entry(RefinementKind::Memory).or_default();
+        memories.insert(active.id.clone(), active);
+        memories.insert(retired.id.clone(), retired.clone());
+        let options = HarnessStatePromptOptions::default();
+        let all_enabled = format_harness_state_for_prompt(&state, &options);
+        assert!(all_enabled.contains("memory: 2\n"), "{all_enabled}");
+        retired.set_enabled(false);
+        state
+            .entries
+            .entry(RefinementKind::Memory)
+            .or_default()
+            .insert(retired.id.clone(), retired);
+        let digest = format_harness_state_for_prompt(&state, &options);
+        assert!(
+            digest.contains("memory: 1 (+1 disabled, not available)\n"),
+            "{digest}"
+        );
+        assert!(digest.contains("Active"), "{digest}");
+        assert!(
+            !digest.contains("Retired") && !digest.contains("stale guidance"),
+            "{digest}"
+        );
+        // Re-enabled: byte-identical to the never-disabled digest (an
+        // explicit `enabled: true` is not a difference).
+        let mut restored = state.clone();
+        restored
+            .entries
+            .get_mut(&RefinementKind::Memory)
+            .unwrap()
+            .get_mut("retired")
+            .unwrap()
+            .set_enabled(true);
+        assert_eq!(
+            format_harness_state_for_prompt(&restored, &options),
+            all_enabled
+        );
     }
 
     #[test]

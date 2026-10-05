@@ -5,13 +5,14 @@
 use std::collections::HashMap;
 
 /// Session-executed commands (their behavior lives in the session engine).
-pub const SESSION_SLASH_COMMAND_NAMES: [&str; 6] = [
+pub const SESSION_SLASH_COMMAND_NAMES: [&str; 7] = [
     "compact",
     "refine",
     "goal",
     "autonomous",
     "context-limit",
     "plan",
+    "harness",
 ];
 
 /// Durable row custom types (TS `messages.ts`): the command echo and its
@@ -136,6 +137,7 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
     BuiltinSlashCommand { name: "new", description: "Start a new session, optionally named and/or with an initial prompt", execution: SlashCommandExecution::Client, argument_hint: Some("[--name \"session name\" --] [prompt]"), aliases: &["clear"], takes_argument: true },
     BuiltinSlashCommand { name: "compact", description: "Compact the session context; optional instructions focus the summary", execution: SlashCommandExecution::Session, argument_hint: Some("[instructions]"), aliases: &[], takes_argument: false },
     BuiltinSlashCommand { name: "refine", description: "Refine continual harness prompt notes, skills, subagents, and memory", execution: SlashCommandExecution::Session, argument_hint: None, aliases: &[], takes_argument: false },
+    BuiltinSlashCommand { name: "harness", description: "Enable or disable continual harness entries (opens selector UI)", execution: SlashCommandExecution::Session, argument_hint: Some("[list|enable <entry>|disable <entry>]"), aliases: &[], takes_argument: true },
     BuiltinSlashCommand { name: "goal", description: "Set or view a persistent goal; supports pause, resume, and clear", execution: SlashCommandExecution::Session, argument_hint: Some("[objective]"), aliases: &[], takes_argument: true },
     BuiltinSlashCommand { name: "autonomous", description: "Set or view autonomous mode with an optional budget", execution: SlashCommandExecution::Session, argument_hint: Some("[status|off|on [--max-continuations <n>] [--max-turns <n>] [--max-tokens <n>] [--timeout-ms <n>] [--gate <command>]]"), aliases: &[], takes_argument: true },
     BuiltinSlashCommand { name: "plan", description: "Toggle plan mode (blocks file edits)", execution: SlashCommandExecution::Session, argument_hint: Some("[on|off|status]"), aliases: &[], takes_argument: true },

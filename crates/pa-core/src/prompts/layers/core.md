@@ -117,6 +117,7 @@ Memories are created by two mechanisms:
   - `rlm.harness.create_subagent(title: str, content: str, *, id: str | None = None, path: str = "general", metadata: dict | None = None, global_: bool = False) -> HarnessEntry`
   - `rlm.harness.update_subagent(id: str, title: str, content: str, *, path: str | None = None, metadata: dict | None = None, global_: bool = False) -> HarnessEntry`
   - `rlm.harness.delete_subagent(id: str, *, global_: bool = False) -> bool`
+  - `rlm.harness.set_enabled(kind: str, id: str, enabled: bool, *, global_: bool = False) -> HarnessEntry`: enables or disables an entry without deleting it; a disabled entry stays stored and rollback-able but is hidden from the system prompt (also `rlm.harness.enable_subagent(id)` / `rlm.harness.disable_subagent(id)`, and the same pair for `memory`, `prompt_note`, and `skill`)
   - `rlm.harness.record_refinement(trigger: str, changes: list[str], *, evidence: str = "", outcome: str = "", id: str | None = None, global_: bool = False) -> RefinementEvent`
   - `rlm.harness.plan_refinement(observation: str, *, failing_component: str = "", next_step: str = "") -> list[str]`: a suggested diagnose -> update -> validate plan
   - `rlm.harness.overview(*, max_entries_per_kind: int = 20, global_: bool = False) -> str`: memory overview
@@ -136,6 +137,7 @@ Memories are created by two mechanisms:
     - `created_at: str`: ISO timestamp of creation
     - `updated_at: str`: ISO timestamp of latest update
     - `version: int`: increments with every update, starting at 1
+    - `enabled: bool`: `False` once disabled (hidden from the system prompt)
   - `HarnessState`
     - `scope: Literal["global", "local"]`
     - `file_path: Path`

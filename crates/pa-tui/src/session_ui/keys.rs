@@ -86,6 +86,10 @@ impl SessionUi {
         }
         let overlay_focused = view.model_picker.is_some()
             || view.effort_picker.is_some()
+            || matches!(
+                view.harness_selector,
+                Some(crate::view::HarnessSelectorState::Open(_))
+            )
             || view.heartbeats_picker.is_some()
             || view.goal_panel.is_some()
             || view.bash_view.is_some()
@@ -340,6 +344,12 @@ impl SessionUi {
         }
         if view.effort_picker.is_some() {
             return self.handle_effort_picker_key(key, view).await;
+        }
+        if matches!(
+            view.harness_selector,
+            Some(crate::view::HarnessSelectorState::Open(_))
+        ) {
+            return self.handle_harness_selector_key(key, view);
         }
         if view.mcp_view.is_some() {
             return self.handle_mcp_view_key(key, view);

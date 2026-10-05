@@ -202,6 +202,7 @@ const HARNESS_TOKENS: &[&str] = &[
     "rlm.harness.create_subagent",
     "rlm.harness.update_subagent",
     "rlm.harness.delete_subagent",
+    "rlm.harness.set_enabled",
     "rlm.harness.record_refinement",
     "rlm.harness.plan_refinement",
     "rlm.harness.overview",

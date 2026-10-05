@@ -131,6 +131,9 @@ pub enum TurnUpdate {
     },
     /// Other state churn: the footer status only.
     StatusUpdate,
+    /// A `/harness` result (#1118): off the transcript; the open selector
+    /// redraws from it, otherwise it surfaces as a note.
+    HarnessResult(crate::harness_selector::HarnessResult),
 }
 
 /// Why one `auto_retry_start` fired (the TS wire `reason` field).
@@ -430,6 +433,9 @@ pub fn working_message_from_update(partial: &Value) -> Option<String> {
 /// session-command echo/result rows render; an invalid payload renders
 /// the malformed notice; everything else renders nothing.
 fn custom_row_update(message: &Value) -> Option<TurnUpdate> {
+    if let Some(result) = crate::harness_selector::harness_result(message) {
+        return Some(TurnUpdate::HarnessResult(result));
+    }
     let entries = custom_message_entries(message);
     match entries.first() {
         Some(entry) => Some(TurnUpdate::CustomRow(entry.clone())),

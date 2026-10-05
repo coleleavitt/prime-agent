@@ -69,6 +69,12 @@ impl AgentView {
                 kind: PickerKind::Effort,
             });
             Some(dock)
+        } else if let Some(crate::view::HarnessSelectorState::Open(selector)) =
+            &self.harness_selector
+        {
+            let mut dock = prompt_context;
+            dock.extend(selector.render(&self.theme, width, self.editor.keybindings()));
+            Some(dock)
         } else if let Some(mcp_view) = self.mcp_view.as_mut() {
             let mut dock = prompt_context;
             dock.extend(mcp_view.render(&self.theme, width, self.editor.keybindings()));
@@ -281,6 +287,10 @@ impl AgentView {
         if self.onboarding.is_some()
             || self.model_picker.is_some()
             || self.effort_picker.is_some()
+            || matches!(
+                self.harness_selector,
+                Some(crate::view::HarnessSelectorState::Open(_))
+            )
             || self.heartbeats_picker.is_some()
             || self.goal_panel.is_some()
             || self.bash_view.is_some()

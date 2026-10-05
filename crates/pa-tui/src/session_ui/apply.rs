@@ -408,6 +408,7 @@ impl SessionUi {
             TurnUpdate::CustomRow(entry) => {
                 view.push_entry(entry);
             }
+            TurnUpdate::HarnessResult(result) => self.apply_harness_result(result, view),
             TurnUpdate::AssistantMessage {
                 message,
                 streaming,

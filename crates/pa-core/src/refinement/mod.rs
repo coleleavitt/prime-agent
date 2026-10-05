@@ -565,6 +565,7 @@ fn scope_prefix(scope: HarnessScope, id: &str) -> String {
     )
 }
 
+pub mod entries;
 pub mod executor;
 pub mod gate;
 pub mod planner;
