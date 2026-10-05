@@ -1,0 +1,1 @@
+- `rlm.find_models()` with no query now samples every provider round-robin instead of returning the alphabetically first models of a single provider, and a multi-word query such as `"5.6 gpt sol"` matches regardless of word order.
