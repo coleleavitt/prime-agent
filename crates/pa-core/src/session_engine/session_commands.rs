@@ -1,5 +1,5 @@
 //! Session slash-command execution: the daemon-side behavior behind
-//! `/compact`, `/refine`, `/goal`, and `/autonomous`. The host runtime owns
+//! `/compact`, `/refine`, `/goal`, `/autonomous`, and `/context-limit`. The host runtime owns
 //! persistence of what this returns; errors carry the exact TS message and
 //! the host renders the `Command failed: ...` result row.
 
@@ -239,6 +239,7 @@ pub async fn execute_session_command(
         "refine" => execute_refine(engine, params, command, &mut execution).await,
         "goal" => execute_goal(engine, command, &mut execution).await,
         "autonomous" => execute_autonomous(params, command, &mut execution),
+        "context-limit" => execute_context_limit(engine, params, command, &mut execution).await,
         other => execute_feature_command(engine, command, &mut execution)
             .await
             .unwrap_or_else(|| Err(format!("Unknown session command: {other}"))),
@@ -278,6 +279,68 @@ async fn sync_live_context(engine: &SessionEngine) {
         .filter_map(super::session_message_to_loop)
         .collect();
     engine.session.agent().set_messages(loop_messages).await;
+}
+
+/// `/context-limit [tokens|off]` (#2100): no argument reports the cap in
+/// force; a positive token count sets the session override, `off` clears
+/// it (settings apply again). The override persists as a model-invisible
+/// `context_limit_state` entry; the result row is display-only.
+async fn execute_context_limit(
+    engine: &SessionEngine,
+    params: &SessionCommandParams<'_>,
+    command: &SessionSlashCommand,
+    execution: &mut SessionCommandExecution,
+) -> Result<(), String> {
+    use super::telemetry::ContextLimitAction;
+    let arg = command.args.trim();
+    let (action, header) = match arg {
+        "" => (ContextLimitAction::Status, None),
+        "off" => (
+            ContextLimitAction::Clear,
+            Some("Session context limit cleared"),
+        ),
+        tokens => match tokens.parse::<u64>() {
+            Ok(tokens) if tokens > 0 => (
+                ContextLimitAction::Set(tokens),
+                Some("Session context limit set"),
+            ),
+            _ => return Err("Usage: /context-limit [tokens|off]".to_string()),
+        },
+    };
+    let limit = match action {
+        ContextLimitAction::Status => None,
+        ContextLimitAction::Clear => Some(None),
+        ContextLimitAction::Set(tokens) => Some(Some(tokens)),
+    };
+    if let Some(limit) = limit {
+        engine
+            .session
+            .set_session_context_limit(limit)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    let thinking = super::provider_adapter::model_thinking_level(
+        engine.session.agent().state().await.thinking_level,
+    );
+    let status = engine.session.context_limit_status(
+        params.model,
+        super::compaction::request_output_budget(params.model, thinking),
+    );
+    if let Some(telemetry) = &engine.telemetry {
+        telemetry.note_context_limit_command(
+            action,
+            status.resolved.is_some_and(|resolved| resolved.clamped),
+        );
+    }
+    execution.push_message(slash_command_result(
+        command,
+        status.render(header),
+        true,
+        "info",
+        None,
+        true,
+    ));
+    Ok(())
 }
 
 /// `/compact`: summarize and cut, or skip silently (TS `CompactionSkippedError`).

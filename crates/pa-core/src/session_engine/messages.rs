@@ -26,6 +26,9 @@ pub const REFINEMENT_NOTICE_CUSTOM_TYPE: &str = "refinement_notice";
 /// DIVERGENCE, operator ruling 2026-09-23): a user-facing disclosure, never
 /// model context — `convert_to_llm` drops it.
 pub const PROVIDER_RETRY_OUTCOME_CUSTOM_TYPE: &str = "provider_retry_outcome";
+/// The once-per-session disclosure that a configured context cap sat below
+/// the anti-thrash floor and was raised (display-only, never model context).
+pub const CONTEXT_CAP_CLAMP_NOTICE_CUSTOM_TYPE: &str = "context_cap_clamp_notice";
 pub const HEARTBEAT_PROMPT_CUSTOM_TYPE: &str = "heartbeat_prompt";
 /// The durable row a detached kernel bash completion admits as the
 /// woken turn's injected prompt.
@@ -132,6 +135,30 @@ pub fn create_provider_retry_outcome_message(
             "attempts": attempts,
             "finalError": error,
         })),
+        timestamp: now_millis(),
+        rest: serde_json::Map::default(),
+    }
+}
+
+/// The context-cap clamp disclosure (TS `_noteClampedContextCapOnce`):
+/// never model context — `convert_to_llm` drops it.
+#[must_use]
+pub fn create_context_cap_clamp_notice(
+    configured: u64,
+    keep_recent_tokens: u64,
+    reserve_tokens: u64,
+    cap: u64,
+) -> pa_types::session::CustomMessage {
+    let margin = super::compaction::CONTEXT_CAP_FLOOR_MARGIN;
+    pa_types::session::CustomMessage {
+        custom_type: CONTEXT_CAP_CLAMP_NOTICE_CUSTOM_TYPE.to_string(),
+        content: UserContent::Text(format!(
+            "Configured context limit of {configured} tokens is below keepRecentTokens \
+             ({keep_recent_tokens}) + reserveTokens ({reserve_tokens}) + {margin}, which would \
+             make compaction thrash. Using {cap} tokens instead."
+        )),
+        display: true,
+        details: None,
         timestamp: now_millis(),
         rest: serde_json::Map::default(),
     }
@@ -325,6 +352,7 @@ pub fn convert_to_llm(messages: &[AgentMessage]) -> Vec<AgentMessage> {
                         | COMPACTION_OUTCOME_CUSTOM_TYPE
                         | REFINEMENT_OUTCOME_CUSTOM_TYPE
                         | PROVIDER_RETRY_OUTCOME_CUSTOM_TYPE
+                        | CONTEXT_CAP_CLAMP_NOTICE_CUSTOM_TYPE
                 ) {
                     continue;
                 }

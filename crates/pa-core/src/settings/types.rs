@@ -95,6 +95,9 @@ pub struct CompactionSettings {
     pub enabled: Option<bool>,
     pub reserve_tokens: Option<u64>,
     pub keep_recent_tokens: Option<u64>,
+    /// Optional hard cap on context tokens before auto-compaction fires
+    /// (`compaction.maxContextTokens`; no default).
+    pub max_context_tokens: Option<u64>,
     pub agent_callable: Option<bool>,
 }
 

@@ -137,6 +137,14 @@ impl TelemetryWiring {
     }
 }
 
+/// What one `/context-limit` run did (the token count never reports).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextLimitAction {
+    Status,
+    Set(u64),
+    Clear,
+}
+
 /// Installed session telemetry: the event subscription plus the in-memory
 /// state the live agent events feed. The handle outlives the agent events and
 /// finalizes the session on `end()`.
@@ -680,6 +688,23 @@ impl SessionTelemetry {
             );
         }
         self.client.track("session archived", properties);
+    }
+
+    /// `context_limit_command` (schema v4, #2100): one `/context-limit`
+    /// run — the action and whether the cap in force is clamped to the
+    /// anti-thrash floor; never the token count.
+    pub fn note_context_limit_command(&self, action: ContextLimitAction, clamped: bool) {
+        let mut properties = self.session_properties();
+        properties.set(
+            "action",
+            Value::from(match action {
+                ContextLimitAction::Status => "status",
+                ContextLimitAction::Set(_) => "set",
+                ContextLimitAction::Clear => "clear",
+            }),
+        );
+        properties.set("clamped", Value::from(clamped));
+        self.client.track("context_limit_command", properties);
     }
 
     /// A `/skill:<name>` submission expanded into its skill block (the

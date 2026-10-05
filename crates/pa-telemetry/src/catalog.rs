@@ -1116,6 +1116,22 @@ const RAVO_RUN: EventRule = EventRule {
     ],
 };
 
+/// `context_limit_command` (v4): one `/context-limit` session command
+/// (upstream #2100's auto-compaction cap): the action and whether the cap
+/// in force sits clamped at the anti-thrash floor — never the token count.
+const CONTEXT_LIMIT_COMMAND: EventRule = EventRule {
+    name: "context_limit_command",
+    since: 4,
+    properties: &[
+        ("session_id", required(uuid())),
+        (
+            "action",
+            required(enum_rule(&["status", "set", "clear", "unknown"], "unknown")),
+        ),
+        ("clamped", required(boolean())),
+    ],
+};
+
 /// `observability command used` (v4): one `prime-agent trace` /
 /// `prime-agent health` run (the fork's trace feature crate, wired by pa-cli
 /// behind its `trace` feature; the native build never sends it). The
@@ -1800,6 +1816,7 @@ pub fn catalog() -> Vec<&'static EventRule> {
         &LEARNING_REPORT,
         &RAVO_RUN,
         &ANTHROPIC_SHARED_AUTH,
+        &CONTEXT_LIMIT_COMMAND,
     ];
     all.extend(UPDATE_EVENTS.iter());
     all

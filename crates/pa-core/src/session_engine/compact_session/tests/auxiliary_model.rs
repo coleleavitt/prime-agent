@@ -55,6 +55,7 @@ async fn compaction_auxiliary_selector_equal_to_the_session_model_runs_on_the_se
             custom_instructions: None,
             settings: super::super::compaction::CompactionSettings {
                 keep_recent_tokens: 20,
+                max_context_tokens: None,
                 ..Default::default()
             },
             abort: None,
@@ -104,6 +105,7 @@ async fn compaction_auxiliary_selector_unusable_falls_back_to_the_session_model(
             custom_instructions: None,
             settings: super::super::compaction::CompactionSettings {
                 keep_recent_tokens: 20,
+                max_context_tokens: None,
                 ..Default::default()
             },
             abort: None,

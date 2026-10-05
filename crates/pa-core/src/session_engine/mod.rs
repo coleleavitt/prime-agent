@@ -12,6 +12,7 @@ pub mod compaction;
 pub mod compaction_exec;
 pub mod compaction_trace;
 pub mod compaction_utils;
+pub mod context_limit;
 pub mod engine;
 pub mod error_classify;
 pub mod factory_host;
@@ -135,6 +136,8 @@ pub struct AgentSession {
     /// Compaction settings; defaults until the engine wiring resolves
     /// them.
     compaction: std::sync::RwLock<compaction::CompactionSettings>,
+    /// The `/context-limit` session layer over `compaction`.
+    context_limit: std::sync::Mutex<context_limit::ContextLimitState>,
     /// Auxiliary-model routing for compaction summaries; `None` keeps
     /// every summarizer on the session model.
     auxiliary_model: Option<auxiliary_model::AuxiliaryModelContext>,
@@ -283,6 +286,7 @@ impl AgentSession {
             harness_digest,
             digest_pending: std::sync::atomic::AtomicBool::new(false),
             compaction: std::sync::RwLock::new(compaction::CompactionSettings::default()),
+            context_limit: std::sync::Mutex::default(),
             auxiliary_model: None,
             auto_refine_allowed: false,
             auto_refine: refine::AutoRefineGates::default(),

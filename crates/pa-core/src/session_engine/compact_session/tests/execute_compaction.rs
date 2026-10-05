@@ -19,6 +19,7 @@ async fn execute_compaction_persists_and_rebuilds() {
             custom_instructions: Some("focus on the goal"),
             settings: super::super::compaction::CompactionSettings {
                 keep_recent_tokens: 20,
+                max_context_tokens: None,
                 ..Default::default()
             },
             abort: None,
@@ -95,6 +96,7 @@ async fn rebuilt_live_context_prevents_repeat_auto_compaction_until_new_usage() 
     let settings = super::super::compaction::CompactionSettings {
         reserve_tokens: 127_500,
         keep_recent_tokens: 20,
+        max_context_tokens: None,
         ..Default::default()
     };
     assert!(super::super::compaction::threshold_compaction_due(
@@ -193,6 +195,7 @@ async fn execute_compaction_streams_summary_deltas_to_the_sink() {
             custom_instructions: None,
             settings: super::super::compaction::CompactionSettings {
                 keep_recent_tokens: 20,
+                max_context_tokens: None,
                 ..Default::default()
             },
             abort: None,
@@ -297,6 +300,7 @@ async fn split_turn_compaction_streams_in_final_order_and_converges() {
             custom_instructions: None,
             settings: super::super::compaction::CompactionSettings {
                 keep_recent_tokens: 10,
+                max_context_tokens: None,
                 ..Default::default()
             },
             abort: None,
@@ -407,6 +411,7 @@ async fn execute_compaction_attaches_harness_digest_snapshot() {
             custom_instructions: None,
             settings: super::super::compaction::CompactionSettings {
                 keep_recent_tokens: 20,
+                max_context_tokens: None,
                 ..Default::default()
             },
             abort: None,
@@ -518,6 +523,7 @@ async fn execute_compaction_fails_on_an_error_summarizer_response() {
             custom_instructions: None,
             settings: super::super::compaction::CompactionSettings {
                 keep_recent_tokens: 20,
+                max_context_tokens: None,
                 ..Default::default()
             },
             abort: None,
@@ -557,6 +563,7 @@ async fn durable_compaction_row_carries_the_ts_record() {
             custom_instructions: None,
             settings: super::super::compaction::CompactionSettings {
                 keep_recent_tokens: 20,
+                max_context_tokens: None,
                 ..Default::default()
             },
             abort: None,

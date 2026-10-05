@@ -205,6 +205,20 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // Captured before `settings` moves into the resource loader: the
     // compaction budget and the auto-refine gates.
     let compaction_settings = settings.settings().compaction.clone().unwrap_or_default();
+    let layer_cap = |layer: &crate::settings::Settings| {
+        layer
+            .compaction
+            .as_ref()
+            .and_then(|compaction| compaction.max_context_tokens)
+            .is_some()
+    };
+    let context_cap_source = if layer_cap(settings.project_settings()) {
+        super::context_limit::ContextLimitSource::Project
+    } else if layer_cap(settings.global_settings()) {
+        super::context_limit::ContextLimitSource::Global
+    } else {
+        super::context_limit::ContextLimitSource::None
+    };
     let auto_refine_gates =
         super::refine::AutoRefineGates::from_settings(settings.settings().auto_refine.as_ref());
     // Request timing: the settings half of the flag is read once here
@@ -711,7 +725,12 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         keep_recent_tokens: compaction_settings
             .keep_recent_tokens
             .unwrap_or(crate::session_engine::compaction::DEFAULT_KEEP_RECENT_TOKENS),
+        // Project over global by the settings merge; a session
+        // `/context-limit` override layers on top (`compaction_settings()`).
+        max_context_tokens: compaction_settings.max_context_tokens,
     });
+    session.set_context_limit_settings_source(context_cap_source);
+    session.restore_context_limit_from_branch().await;
     // Summarizer passes resolve their model through the `auxiliaryModel` setting
     // with the session model as fallback, so one-off prompts stay off the prompt-cache prefix.
     session.set_auxiliary_model_context(

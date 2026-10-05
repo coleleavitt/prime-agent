@@ -434,6 +434,7 @@ mod tests {
             .unwrap();
         engine.set_compaction_settings(crate::session_engine::compaction::CompactionSettings {
             keep_recent_tokens: 2,
+            max_context_tokens: None,
             ..Default::default()
         });
         engine.set_kernel_state_probe(Some(std::sync::Arc::new(probe)));
