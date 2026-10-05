@@ -14,10 +14,13 @@
 // the version check is off (the compiled floor is the version).
 //
 // To regenerate (bun; a sandbox HOME; the plugin repo at
-// ANTHROPIC_AUTH_REPO, default ~/WebstormProjects/forks/anthropic-auth, with
-// `packages/core` built to `dist/`):
-//   env -i HOME=<empty dir> PATH="$PATH" OPENCODE_ANTHROPIC_AUTH_DISABLE_VERSION_CHECK=1 \
-//     bun generate.ts > request_shape.json
+// ANTHROPIC_AUTH_REPO, default ~/WebstormProjects/forks/anthropic-auth under
+// the real HOME, with `packages/core` built to `dist/`):
+//   env -i HOME=<empty dir> PATH="$PATH" ANTHROPIC_AUTH_REPO=<the plugin repo> \
+//     OPENCODE_ANTHROPIC_AUTH_DISABLE_VERSION_CHECK=1 bun generate.ts > request_shape.json
+// Generated from anthropic-auth 7f5d88a ("pi: replay thinking signatures only
+// from Anthropic-origin messages") on linux x64 (the stainless os/arch the
+// Rust tests replace with the host's).
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
