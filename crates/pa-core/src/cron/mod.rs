@@ -13,6 +13,7 @@ pub const DEFAULT_HEARTBEAT_SCHEDULE: &str = "every 5m";
 pub const DEFAULT_HEARTBEAT_DELIVERY_MODE: DeliveryMode = DeliveryMode::Steer;
 const ONE_SECOND_MS: u64 = 1000;
 const ONE_MINUTE_MS: u64 = 60 * ONE_SECOND_MS;
+const ONE_DAY_MS: u64 = 24 * 60 * ONE_MINUTE_MS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -564,7 +565,8 @@ pub fn should_defer_heartbeat_cron_job(
 ///
 /// # Errors
 ///
-/// Returns an error when the interval is zero or the cron matches nothing within one year.
+/// Returns an error when the interval is zero or the cron matches nothing
+/// within a full 400-year Gregorian cycle.
 pub fn next_run_at_for_schedule(
     schedule: &AgentCronSchedule,
     after_millis: u64,
@@ -625,21 +627,125 @@ struct CronFields {
     hour: BTreeSet<u32>,
     day_of_month: BTreeSet<u32>,
     month: BTreeSet<u32>,
+    /// Weekdays with Sunday as 0 (a `7` in the expression is folded to 0).
     day_of_week: BTreeSet<u32>,
+    /// Raw day-of-month text starts with `*` (Vixie `DOM_STAR`, `*/N` included).
+    day_of_month_starred: bool,
+    /// Raw day-of-week text starts with `*` (Vixie `DOW_STAR`).
+    day_of_week_starred: bool,
 }
 
+/// Search horizon in years. The Gregorian calendar, weekdays included,
+/// repeats every 400 years (146 097 days = 20 871 weeks), so a schedule
+/// with no match in one full cycle never matches.
+const GREGORIAN_CYCLE_YEARS: i64 = 400;
+
+/// A UTC wall-clock cursor for the field-jumping search.
+#[derive(Debug, Clone, Copy)]
+struct CronCursor {
+    year: i64,
+    month: u32,
+    day: u32,
+    hour: u32,
+    minute: u32,
+}
+
+impl CronCursor {
+    fn from_millis(timestamp_ms: u64) -> Self {
+        let days = (timestamp_ms / ONE_DAY_MS) as i64;
+        let (year, month, day) = civil_from_days(days);
+        let minute_of_day = (timestamp_ms % ONE_DAY_MS) / ONE_MINUTE_MS;
+        Self {
+            year,
+            month,
+            day,
+            hour: (minute_of_day / 60) as u32,
+            minute: (minute_of_day % 60) as u32,
+        }
+    }
+
+    fn to_millis(self) -> u64 {
+        let days = days_from_civil(self.year, self.month, self.day);
+        let minutes = days * 24 * 60 + i64::from(self.hour) * 60 + i64::from(self.minute);
+        minutes as u64 * ONE_MINUTE_MS
+    }
+
+    fn start_of_month(&mut self, year: i64, month: u32) {
+        *self = Self {
+            year,
+            month,
+            day: 1,
+            hour: 0,
+            minute: 0,
+        };
+    }
+
+    fn next_day(&mut self) {
+        if self.day >= days_in_month(self.year, self.month) {
+            if self.month == 12 {
+                self.start_of_month(self.year + 1, 1);
+            } else {
+                self.start_of_month(self.year, self.month + 1);
+            }
+        } else {
+            self.day += 1;
+            self.hour = 0;
+            self.minute = 0;
+        }
+    }
+}
+
+/// First run strictly after `after_millis` (at a whole minute, UTC).
+///
+/// Jumps field by field (month, day, hour, minute) instead of scanning
+/// minute by minute, and searches one full Gregorian cycle, so sparse
+/// schedules such as leap day resolve and impossible ones fail fast.
 fn next_cron_run_after(expression: &str, after_millis: u64) -> anyhow::Result<u64> {
     let fields = parse_cron_expression(expression)?;
-    // Start at the next whole minute.
-    let mut candidate = (after_millis / ONE_MINUTE_MS + 1) * ONE_MINUTE_MS;
-    let deadline = candidate + 366 * 24 * 60 * ONE_MINUTE_MS;
-    while candidate <= deadline {
-        if matches_cron_fields(candidate, &fields) {
-            return Ok(candidate);
+    let mut cursor = CronCursor::from_millis((after_millis / ONE_MINUTE_MS + 1) * ONE_MINUTE_MS);
+    let final_year = cursor.year + GREGORIAN_CYCLE_YEARS;
+    while cursor.year <= final_year {
+        if !fields.month.contains(&cursor.month) {
+            if let Some(&month) = fields.month.range(cursor.month + 1..).next() {
+                cursor.start_of_month(cursor.year, month);
+            } else {
+                let first = *fields.month.first().expect("month field is never empty");
+                cursor.start_of_month(cursor.year + 1, first);
+            }
+            continue;
         }
-        candidate += ONE_MINUTE_MS;
+        if !matches_cron_day(&fields, cursor.year, cursor.month, cursor.day) {
+            cursor.next_day();
+            continue;
+        }
+        if !fields.hour.contains(&cursor.hour) {
+            match fields.hour.range(cursor.hour + 1..).next() {
+                Some(&hour) => {
+                    cursor.hour = hour;
+                    cursor.minute = 0;
+                }
+                None => cursor.next_day(),
+            }
+            continue;
+        }
+        if !fields.minute.contains(&cursor.minute) {
+            match fields.minute.range(cursor.minute + 1..).next() {
+                Some(&minute) => cursor.minute = minute,
+                None => match fields.hour.range(cursor.hour + 1..).next() {
+                    Some(&hour) => {
+                        cursor.hour = hour;
+                        cursor.minute = 0;
+                    }
+                    None => cursor.next_day(),
+                },
+            }
+            continue;
+        }
+        return Ok(cursor.to_millis());
     }
-    anyhow::bail!("Cron schedule did not match within one year: {expression}")
+    anyhow::bail!(
+        "Cron schedule has no future occurrence in a 400-year Gregorian cycle: {expression}"
+    )
 }
 
 fn parse_cron_expression(expression: &str) -> anyhow::Result<CronFields> {
@@ -654,7 +760,12 @@ fn parse_cron_expression(expression: &str) -> anyhow::Result<CronFields> {
         hour: parse_cron_field(parts[1], 0, 23)?,
         day_of_month: parse_cron_field(parts[2], 1, 31)?,
         month: parse_cron_field(parts[3], 1, 12)?,
-        day_of_week: parse_cron_field(parts[4], 0, 7)?,
+        day_of_week: parse_cron_field(parts[4], 0, 7)?
+            .into_iter()
+            .map(|weekday| weekday % 7)
+            .collect(),
+        day_of_month_starred: parts[2].starts_with('*'),
+        day_of_week_starred: parts[4].starts_with('*'),
     })
 }
 
@@ -710,44 +821,84 @@ fn parse_cron_number(value: Option<&str>, min: u32, max: u32) -> anyhow::Result<
     Ok(parsed)
 }
 
+/// Vixie/POSIX day matching: when both day fields are restricted either
+/// may match; when either is starred (`*`, `*/N`) both must match.
+fn matches_cron_day(fields: &CronFields, year: i64, month: u32, day: u32) -> bool {
+    if day > days_in_month(year, month) {
+        return false;
+    }
+    let weekday = (days_from_civil(year, month, day) + 4).rem_euclid(7) as u32; // 1970-01-01 was a Thursday.
+    let dom = fields.day_of_month.contains(&day);
+    let dow = fields.day_of_week.contains(&weekday);
+    if fields.day_of_month_starred || fields.day_of_week_starred {
+        dom && dow
+    } else {
+        dom || dow
+    }
+}
+
 /// UTC civil-time matching for the five-field cron expression.
+#[cfg(test)]
 fn matches_cron_fields(timestamp_ms: u64, fields: &CronFields) -> bool {
-    let (minute, hour, day, month, weekday) = civil_time(timestamp_ms);
-    let day_matches =
-        fields.day_of_week.contains(&weekday) || (weekday == 0 && fields.day_of_week.contains(&7));
-    fields.minute.contains(&minute)
-        && fields.hour.contains(&hour)
-        && fields.day_of_month.contains(&day)
-        && fields.month.contains(&month)
-        && day_matches
+    let cursor = CronCursor::from_millis(timestamp_ms);
+    fields.minute.contains(&cursor.minute)
+        && fields.hour.contains(&cursor.hour)
+        && fields.month.contains(&cursor.month)
+        && matches_cron_day(fields, cursor.year, cursor.month, cursor.day)
 }
 
 /// (minute, hour, day-of-month, month, weekday) in UTC. Weekday: 0=Sunday.
+#[cfg(test)]
 fn civil_time(timestamp_ms: u64) -> (u32, u32, u32, u32, u32) {
-    let days = timestamp_ms / (24 * 60 * ONE_MINUTE_MS);
-    let seconds_of_day = (timestamp_ms % (24 * 60 * ONE_MINUTE_MS)) / ONE_SECOND_MS;
-    let minute = (seconds_of_day / 60) % 60;
-    let hour = seconds_of_day / 3600;
-    // Civil date from days-since-epoch (Howard Hinnant's algorithm).
-    let z = days as i64 + 719_468;
+    let cursor = CronCursor::from_millis(timestamp_ms);
+    let weekday = ((timestamp_ms / ONE_DAY_MS + 4) % 7) as u32; // 1970-01-01 was a Thursday.
+    (
+        cursor.minute,
+        cursor.hour,
+        cursor.day,
+        cursor.month,
+        weekday,
+    )
+}
+
+const fn is_leap_year(year: i64) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
+const fn days_in_month(year: i64, month: u32) -> u32 {
+    match month {
+        2 if is_leap_year(year) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
+}
+
+/// Civil date (year, month, day) from days since the Unix epoch
+/// (Howard Hinnant's algorithm).
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z.rem_euclid(146_097);
     let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
     let y = yoe + era * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
     let year = if month <= 2 { y + 1 } else { y };
-    let weekday = ((days + 4) % 7) as u32; // 1970-01-01 was a Thursday.
-    let _ = year;
-    (
-        minute as u32,
-        hour as u32,
-        day as u32,
-        month as u32,
-        weekday,
-    )
+    (year, month, day)
+}
+
+/// Days since the Unix epoch for a civil date (inverse of [`civil_from_days`]).
+fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = i64::from(if month > 2 { month - 3 } else { month + 9 });
+    let doy = (153 * mp + 2) / 5 + i64::from(day) - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
 }
 
 fn normalize_cron_alias(text: &str) -> String {
@@ -786,14 +937,7 @@ pub(crate) fn parse_iso_millis(text: &str) -> Option<u64> {
     if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
         return None;
     }
-    // Days since epoch via civil-date inverse.
-    let y = if month <= 2 { year - 1 } else { year };
-    let era = y.div_euclid(400);
-    let yoe = y.rem_euclid(400);
-    let mp = i64::from(if month > 2 { month - 3 } else { month + 9 });
-    let doy = (153 * mp + 2) / 5 + i64::from(day) - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era * 146_097 + doe - 719_468;
+    let days = days_from_civil(year, month, day);
     let (time, offset_ms) = parse_time_with_offset(time)?;
     let millis = days * 24 * 60 * 60 * 1000 + time - offset_ms;
     Some(millis as u64)
@@ -1138,5 +1282,142 @@ mod tests {
         assert!(
             formatted.contains("runs=3 schedule=\"every 5m\" prompt=\"keep working\" error=boom")
         );
+    }
+
+    fn iso(text: &str) -> u64 {
+        parse_iso_millis(text).unwrap()
+    }
+
+    // Issue #940 / PRs #912, #977: a leap-day schedule created years
+    // before the next leap day resolves instead of failing the one-year
+    // scan, and an impossible date fails instead of scanning forever.
+    #[test]
+    fn sparse_schedules_resolve_past_one_year() {
+        assert_eq!(
+            next_cron_run_after("0 0 29 2 *", iso("2025-03-01T00:00:00Z")).unwrap(),
+            iso("2028-02-29T00:00:00Z")
+        );
+        // 2100 is not a leap year: the next Feb 29 after 2096 is in 2104.
+        assert_eq!(
+            next_cron_run_after("30 6 29 2 *", iso("2096-03-01T00:00:00Z")).unwrap(),
+            iso("2104-02-29T06:30:00Z")
+        );
+        let error = next_cron_run_after("0 0 30 2 *", BASE).unwrap_err();
+        assert!(error.to_string().contains("0 0 30 2 *"), "{error}");
+    }
+
+    // Issue #940: when both day fields are restricted, POSIX/Vixie cron
+    // fires when either matches; a starred field (including `*/N`) keeps
+    // AND semantics.
+    #[test]
+    fn day_of_month_and_day_of_week_are_ored_when_both_restricted() {
+        // 2023-11-14 is a Tuesday. "13th or Friday": next is Friday the 17th.
+        assert_eq!(
+            next_cron_run_after("0 0 13 * 5", BASE).unwrap(),
+            iso("2023-11-17T00:00:00Z")
+        );
+        // "1st or Sunday 7": the next Sunday (19th) comes before Dec 1.
+        assert_eq!(
+            next_cron_run_after("0 0 1 * 7", BASE).unwrap(),
+            iso("2023-11-19T00:00:00Z")
+        );
+        // Starred day-of-month (stepped) keeps AND: odd days that are Mondays.
+        assert_eq!(
+            next_cron_run_after("0 0 */2 * 1", BASE).unwrap(),
+            iso("2023-11-27T00:00:00Z")
+        );
+        // Starred day-of-week keeps day-of-month only.
+        assert_eq!(
+            next_cron_run_after("0 0 13 * *", BASE).unwrap(),
+            iso("2023-12-13T00:00:00Z")
+        );
+    }
+
+    /// Reference implementation for the property test: an independent
+    /// minute-by-minute scan straight from the POSIX/Vixie definition.
+    fn reference_next(expression: &str, after: u64, horizon_minutes: u64) -> Option<u64> {
+        let raw: Vec<&str> = expression.split_whitespace().collect();
+        let set = |text: &str, min: u32, max: u32| parse_cron_field(text, min, max).unwrap();
+        let minutes = set(raw[0], 0, 59);
+        let hours = set(raw[1], 0, 23);
+        let month_days = set(raw[2], 1, 31);
+        let months = set(raw[3], 1, 12);
+        let week_days: BTreeSet<u32> = set(raw[4], 0, 7).into_iter().map(|d| d % 7).collect();
+        let month_day_starred = raw[2].starts_with('*');
+        let week_day_starred = raw[4].starts_with('*');
+        let start = (after / ONE_MINUTE_MS + 1) * ONE_MINUTE_MS;
+        (0..horizon_minutes)
+            .map(|offset| start + offset * ONE_MINUTE_MS)
+            .find(|&at| {
+                let (minute, hour, day, month, weekday) = civil_time(at);
+                let in_month = month_days.contains(&day);
+                let in_week = week_days.contains(&weekday);
+                let day_ok = if month_day_starred || week_day_starred {
+                    in_month && in_week
+                } else {
+                    in_month || in_week
+                };
+                minutes.contains(&minute)
+                    && hours.contains(&hour)
+                    && months.contains(&month)
+                    && day_ok
+            })
+    }
+
+    fn cron_field(min: u32, max: u32) -> impl proptest::strategy::Strategy<Value = String> {
+        use proptest::prelude::*;
+        prop_oneof![
+            Just("*".to_string()),
+            (1..=(max - min).max(1)).prop_map(|step| format!("*/{step}")),
+            (min..=max).prop_map(|value| value.to_string()),
+            (min..=max, min..=max).prop_map(|(a, b)| format!("{}-{}", a.min(b), a.max(b))),
+            (min..=max, min..=max, 1..=4u32).prop_map(|(a, b, step)| format!(
+                "{}-{}/{step}",
+                a.min(b),
+                a.max(b)
+            )),
+            proptest::collection::vec(min..=max, 1..4).prop_map(|values| values
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(",")),
+        ]
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig {
+            cases: 96,
+            rng_seed: proptest::test_runner::RngSeed::Fixed(0x0940_0977),
+            ..proptest::prelude::ProptestConfig::default()
+        })]
+
+        // The field-jumping search agrees with the brute-force reference
+        // on every schedule the reference can resolve within ~2 months,
+        // and never reports an earlier run when the reference finds none.
+        #[test]
+        fn next_run_matches_reference_scan(
+            minute in cron_field(0, 59),
+            hour in cron_field(0, 23),
+            dom in cron_field(1, 31),
+            month in cron_field(1, 12),
+            dow in cron_field(0, 7),
+            after in 946_684_800_000u64..4_102_444_800_000u64,
+        ) {
+            let expression = format!("{minute} {hour} {dom} {month} {dow}");
+            let horizon = 62 * 24 * 60;
+            let expected = reference_next(&expression, after, horizon);
+            let actual = next_cron_run_after(&expression, after).ok();
+            if let Some(at) = expected {
+                proptest::prop_assert_eq!(actual, Some(at), "{}", expression);
+            } else {
+                let window_end = (after / ONE_MINUTE_MS + 1 + horizon) * ONE_MINUTE_MS;
+                proptest::prop_assert!(
+                    actual.is_none_or(|at| at >= window_end),
+                    "{} -> {:?}",
+                    expression,
+                    actual
+                );
+            }
+        }
     }
 }
