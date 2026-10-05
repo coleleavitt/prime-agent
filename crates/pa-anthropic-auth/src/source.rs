@@ -121,7 +121,14 @@ pub struct SharedStoreSource {
     pub(crate) flight: Mutex<()>,
     status_memo: Mutex<Option<(FileStamp, Option<CredentialSourceStatus>)>>,
     usage: Mutex<SourceUsage>,
+    /// The access tokens this source served (newest last, bounded) and the
+    /// store rows they belong to: only these take part in the request
+    /// hooks.
+    served: Mutex<std::collections::VecDeque<(String, String)>>,
 }
+
+/// How many served tokens the source remembers (the pi plugin's bound).
+const SERVED_TOKENS_LIMIT: usize = 64;
 
 impl SharedStoreSource {
     /// A source over `config`. Does no I/O.
@@ -133,7 +140,41 @@ impl SharedStoreSource {
             flight: Mutex::new(()),
             status_memo: Mutex::new(None),
             usage: Mutex::new(SourceUsage::default()),
+            served: Mutex::new(std::collections::VecDeque::new()),
         }
+    }
+
+    /// Remember a token this source handed out, for the store row
+    /// `account_id`.
+    pub(crate) fn remember(&self, token: &str, account_id: &str) {
+        let mut served = self.served.lock_or_recover();
+        served.retain(|(known, _)| known != token);
+        served.push_back((token.to_string(), account_id.to_string()));
+        while served.len() > SERVED_TOKENS_LIMIT {
+            served.pop_front();
+        }
+    }
+
+    /// Whether this source handed out `token`.
+    pub(crate) fn served(&self, token: &str) -> bool {
+        self.served_account(token).is_some()
+    }
+
+    /// The store row a token this source handed out belongs to.
+    pub(crate) fn served_account(&self, token: &str) -> Option<String> {
+        self.served
+            .lock_or_recover()
+            .iter()
+            .find(|(known, _)| known == token)
+            .map(|(_, account)| account.clone())
+    }
+
+    /// Count a refresh this process made outside a credential lookup (the
+    /// 401 recovery).
+    pub(crate) fn count_refreshed(&self) {
+        let mut usage = self.usage.lock_or_recover();
+        usage.refreshed += 1;
+        usage.first.get_or_insert(AccessSource::Refreshed.code());
     }
 
     /// The store file this source reads.
@@ -187,7 +228,7 @@ impl SharedStoreSource {
 
     /// Count one answered request: how its credential was obtained, or
     /// `None` for a failure.
-    fn record(&self, served: Option<AccessSource>) {
+    pub(crate) fn record(&self, served: Option<AccessSource>) {
         let mut usage = self.usage.lock_or_recover();
         let Some(source) = served else {
             usage.failed += 1;
@@ -239,6 +280,7 @@ impl ProviderCredentialSource for SharedStoreSource {
         match resolved {
             Ok(Ok(grant)) => {
                 self.record(Some(grant.source));
+                self.remember(&grant.access_token, &grant.account_id);
                 Ok(SourcedCredential {
                     api_key: grant.access_token,
                     headers: std::collections::BTreeMap::new(),

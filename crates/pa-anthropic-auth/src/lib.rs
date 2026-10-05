@@ -9,8 +9,10 @@
 //! token and revoke the other's.
 //!
 //! [`install`] puts the store in charge of the `anthropic` provider id
-//! through pa-core's generic credential source seam; with no login in the
-//! store the native `auth.json` path is untouched. [`AnthropicAuthFeature`]
+//! through pa-core's generic credential source seam and pa-ai's provider
+//! request hooks; with no login in the store the native `auth.json` path is
+//! untouched, and a request whose token the store did not serve is sent as
+//! it is. [`AnthropicAuthFeature`]
 //! reports adoption once per process.
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,8 +22,11 @@ use pa_core::features::{SessionFeature, SessionFeatureContext};
 use pa_telemetry::Properties;
 
 mod custody;
+mod hooks;
 mod login;
 mod source;
+#[cfg(test)]
+mod test_support;
 
 pub use login::{NewLogin, StoredLogin};
 pub use source::{SharedStoreConfig, SharedStoreSource, SourceUsage, STORE_LABEL};
@@ -42,11 +47,13 @@ pub fn shared_source() -> Arc<SharedStoreSource> {
         .clone()
 }
 
-/// Install the process's store source for [`PROVIDER_ID`]. Called by the
+/// Install the process's store source for [`PROVIDER_ID`]: its credential
+/// source (pa-core) and its request hooks (pa-ai). Called by the
 /// composition root before any session or worker starts; idempotent; no
 /// I/O.
 pub fn install() {
     pa_core::auth::install_credential_source(PROVIDER_ID, shared_source());
+    pa_ai::request_hooks::install_request_hooks(PROVIDER_ID, shared_source());
 }
 
 /// The session feature that reports the store's adoption: once per

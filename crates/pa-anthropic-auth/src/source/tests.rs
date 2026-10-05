@@ -2,12 +2,10 @@
 //! endpoint: never the user's store, Claude Code's files, or the network.
 
 use std::collections::BTreeMap;
-use std::io::{Read, Write};
-use std::net::TcpListener;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Barrier, Mutex};
 
-use anthropic::token::{AccessToken, Credential, OAuthTokens, RefreshToken};
+use anthropic::token::Credential;
 use anthropic::Account;
 use chrono::{Duration, Utc};
 use pa_core::auth::{install_credential_source, AuthStorage, AuthStorageData, NoOAuth};
@@ -15,103 +13,7 @@ use pa_core::features::{SessionFeature, SessionFeatureContext};
 use pa_core::models::{ModelRegistry, ResolvedRequestAuth};
 
 use super::*;
-
-const ROTATED_ACCESS: &str = "sk-ant-oat01-rotated-rotated-rotated-00";
-const ROTATED: &str = r#"{"access_token":"sk-ant-oat01-rotated-rotated-rotated-00","refresh_token":"sk-ant-ort01-rotated-rotated-rotated-00","expires_in":28800,"scope":"user:inference user:profile"}"#;
-const INVALID_GRANT: &str =
-    r#"{"error":"invalid_grant","error_description":"refresh token revoked"}"#;
-
-/// A loopback token endpoint answering every POST with `status` + `body`;
-/// returns its URL and the request count.
-fn token_endpoint(status: u16, body: &'static str) -> (String, Arc<AtomicUsize>) {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind a loopback port");
-    let url = format!(
-        "http://{}/v1/oauth/token",
-        listener.local_addr().expect("the bound address")
-    );
-    let hits = Arc::new(AtomicUsize::new(0));
-    let counter = Arc::clone(&hits);
-    std::thread::spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(mut stream) = stream else { return };
-            let mut request = Vec::new();
-            let mut chunk = [0u8; 4096];
-            while let Ok(read) = stream.read(&mut chunk) {
-                if read == 0 {
-                    break;
-                }
-                request.extend_from_slice(&chunk[..read]);
-                let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") else {
-                    continue;
-                };
-                let head = String::from_utf8_lossy(&request[..end]).to_ascii_lowercase();
-                let length = head
-                    .lines()
-                    .find_map(|line| line.strip_prefix("content-length:"))
-                    .and_then(|value| value.trim().parse::<usize>().ok())
-                    .unwrap_or(0);
-                if request.len() >= end + 4 + length {
-                    break;
-                }
-            }
-            counter.fetch_add(1, Ordering::SeqCst);
-            let response = format!(
-                "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            let _ = stream.write_all(response.as_bytes());
-        }
-    });
-    (url, hits)
-}
-
-/// One OAuth row whose access token expires `access_in` from now. Ids
-/// are unique per test: the SDK remembers a refresh token Anthropic
-/// rejected for the life of the process.
-fn row(id: &str, access_in: Duration) -> Account {
-    Account::new(
-        id,
-        Credential::Oauth(OAuthTokens {
-            access: AccessToken::new(format!("sk-ant-oat01-{id}-store-access-000")),
-            refresh: RefreshToken::new(format!("sk-ant-ort01-{id}-store-refresh-000")),
-            expires_at: Utc::now() + access_in,
-            refresh_expires_at: Some(Utc::now() + Duration::days(20)),
-            scopes: vec!["user:inference".into()],
-            account: None,
-            organization: None,
-        }),
-    )
-}
-
-/// A temporary `~/.anthropic-accounts/accounts.json` holding `accounts`
-/// (none: no file), and a source over it that reaches only `token_url`
-/// and never Claude Code's credentials.
-fn source_over(
-    accounts: Vec<Account>,
-    token_url: &str,
-) -> (tempfile::TempDir, Arc<SharedStoreSource>) {
-    let home = tempfile::tempdir().expect("a temporary home");
-    let store_path = home
-        .path()
-        .join(".anthropic-accounts")
-        .join("accounts.json");
-    if !accounts.is_empty() {
-        std::fs::create_dir_all(store_path.parent().expect("the store dir"))
-            .expect("create the store dir");
-        AccountStore {
-            accounts,
-            ..AccountStore::default()
-        }
-        .save(&store_path)
-        .expect("seed the store");
-    }
-    let source = SharedStoreSource::new(SharedStoreConfig::isolated(
-        store_path,
-        token_url,
-        "http://127.0.0.1:9/api/oauth/profile",
-    ));
-    (home, Arc::new(source))
-}
+use crate::test_support::*;
 
 /// `auth.json` holding the provider's own (live) OAuth login.
 fn auth_json_login(provider: &str) -> AuthStorage {

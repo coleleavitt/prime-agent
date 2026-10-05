@@ -22,6 +22,15 @@ auth.json resolves the `anthropic` provider exactly as before.
   - No login in the store: the lookup falls through to auth.json. A login that cannot produce a token (refresh
     failed, revoked, store unreadable, network down): the provider's OAuth authentication failure
     (`oauth_refresh_failed`, "Run /login"), never auth.json's login in its place.
+- Request hooks (`pa_ai::request_hooks`, for the `anthropic` provider id): only for an access token this source
+  served (remembered, the latest 64, as the pi plugin remembers them), never a runtime key.
+  - `current_credential`: each request carries the store's token for it now (`get_access_token`, under the
+    in-process flight lock), so a token another process rotated since the session resolved it is replaced before
+    the send.
+  - `rejected` after a 401 (once per request, pa-ai's rule): anthropic-napi's `handleUnauthorized`
+    (`recover_unauthorized`: one claimed refresh of the row owning the rejected token; a retry only with a new
+    version of the same login), and, when the store no longer holds the rejected token (another process rotated
+    it), the store's current token re-read under its lock if it differs. Otherwise the 401 is reported.
 - Migration (`adopt_stored_login`, the custody half of anthropic-napi's `importOAuthAccount`, as the pi plugin
   moves its host's refresh token): an Anthropic OAuth login `auth.json` still holds is moved into the store on the
   first lookup. A live login is identified at the profile endpoint (an expired one is never refreshed to find out);
@@ -48,7 +57,7 @@ auth.json resolves the `anthropic` provider exactly as before.
 
 - Account management beyond logout (enable, disable, reorder, pin, remote revoke): the plugins' account commands
   own it; prime-agent has no account command surface.
-- Quota reads, quota-reserve routing, rotation on 429 or 401 recovery (`handleUnauthorized`), the keep-alive.
+- Quota reads, quota-reserve routing, rotation on 429, the keep-alive.
 - The request shape (headers, betas, system prompt, tool names): pa-ai's Claude Code mode owns it for every
   `sk-ant-oat` token, whatever its source. The source adds no headers.
 
@@ -59,7 +68,9 @@ auth.json resolves the `anthropic` provider exactly as before.
 
 ## Seams
 
-- `pa_core::auth::install_credential_source` (the provider credential source seam).
+- `pa_core::auth::install_credential_source` (the provider credential source seam: credential, custody of
+  auth.json's login, logout).
+- `pa_ai::request_hooks::install_request_hooks` (the provider request hooks).
 - `pa_core::features::SessionFeature::on_agent_end` (the adoption event).
 
 ## Files
