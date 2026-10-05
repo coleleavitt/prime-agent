@@ -546,3 +546,65 @@ fn unchanged_thinking_level_answers_without_a_roster_push() {
         "an unchanged level must not flush the roster (only effective changes do): {pushed:?}"
     );
 }
+
+/// Upstream #840: `set_model` always saved the switched model as the configured default.
+/// `persistDefault: false` (the TUI's `/switch`) switches the live session and records its
+/// `model_change` row but leaves the settings default alone; a plain `set_model` still saves
+/// it (the TS `/model`).
+#[test]
+fn a_session_only_model_switch_keeps_the_saved_default() {
+    let mut harness = setup("session-model");
+    let session_id = harness.session_id.clone();
+    let session_file = harness.session_file();
+    let settings_path = harness.agent_dir.join("settings.json");
+    let saved_default = |path: &Path| -> (Option<Value>, Option<Value>) {
+        let settings: Value = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_else(|| json!({}));
+        (
+            settings.get("defaultProvider").cloned(),
+            settings.get("defaultModel").cloned(),
+        )
+    };
+    let before = saved_default(&settings_path);
+
+    harness.client.send_command(
+        "switch",
+        &json!({
+            "type": "set_model",
+            "activeSessionId": session_id,
+            "provider": "battery",
+            "modelId": "mock-2",
+            "persistDefault": false,
+        }),
+    );
+    let switched = harness.client.request("switch");
+    assert_eq!(switched["success"], true, "set_model failed: {switched}");
+    assert_eq!(switched["data"]["id"], json!("mock-2"), "{switched}");
+    assert_eq!(saved_default(&settings_path), before);
+    let model_rows: Vec<Value> = std::fs::read_to_string(&session_file)
+        .expect("read session file")
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("parse entry"))
+        .filter(|entry| entry["type"] == "model_change")
+        .map(|entry| entry["modelId"].clone())
+        .collect();
+    assert_eq!(model_rows.last(), Some(&json!("mock-2")), "{model_rows:?}");
+
+    harness.client.send_command(
+        "model",
+        &json!({
+            "type": "set_model",
+            "activeSessionId": session_id,
+            "provider": "battery",
+            "modelId": "mock-1",
+        }),
+    );
+    let switched = harness.client.request("model");
+    assert_eq!(switched["success"], true, "set_model failed: {switched}");
+    assert_eq!(
+        saved_default(&settings_path),
+        (Some(json!("battery")), Some(json!("mock-1")))
+    );
+}

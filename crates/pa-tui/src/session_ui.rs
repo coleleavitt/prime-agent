@@ -396,6 +396,19 @@ pub(crate) struct SessionUi {
     /// when it lands on the same row without a drag between.
     pub(crate) pressed_click: Option<PressedClick>,
     click_adoption_emitted: bool,
+    /// What the open model picker's apply changes: `/model` saves the default, `/switch` only
+    /// this session (upstream #840).
+    model_picker_scope: ModelSwitchScope,
+}
+
+/// Which model setting a model switch changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ModelSwitchScope {
+    /// `/model`, the shortcut, onboarding: the live session AND the saved default the next
+    /// session starts on (the TS `/model`).
+    SavedDefault,
+    /// `/switch`: the live session only; the saved default and the `/new` model stay put.
+    SessionOnly,
 }
 
 /// The reattach outcome for `reattach_after_recovery`: the budget expiry (a queued attach waiting

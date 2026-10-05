@@ -2,8 +2,8 @@
 //! parked model sign-in, and the `/mcp` auth flow.
 use super::{
     key_event_to_id, picker_viewport_rows, AgentView, AuthSelectorAction, AuthSelectorKind,
-    DaemonCommand, Duration, KeyEvent, Map, ModelSelectionApplied, Result, SessionUi,
-    UI_REQUEST_TIMEOUT_MS,
+    DaemonCommand, Duration, KeyEvent, Map, ModelSelectionApplied, ModelSwitchScope, Result,
+    SessionUi, UI_REQUEST_TIMEOUT_MS,
 };
 
 /// The outcome of one daemon `set_model` attempt: the switch landed, the provider is not signed in
@@ -24,6 +24,8 @@ pub(super) struct PendingModelSignIn {
     model_id: String,
     /// The picked model's user-edited effort, applied after the retry.
     effort: Option<String>,
+    /// What the retried switch changes (the picker's scope).
+    scope: ModelSwitchScope,
 }
 
 impl SessionUi {
@@ -498,6 +500,7 @@ impl SessionUi {
     pub(crate) async fn begin_model_sign_in(
         &mut self,
         applied: &ModelSelectionApplied,
+        scope: ModelSwitchScope,
         view: &mut AgentView,
     ) {
         let provider = &applied.provider;
@@ -521,6 +524,7 @@ impl SessionUi {
             provider: provider.clone(),
             model_id: model_id.clone(),
             effort: applied.effort.clone(),
+            scope,
         });
         self.note(
             &format!("Sign in to {provider} to use {provider}/{model_id}"),
@@ -542,9 +546,10 @@ impl SessionUi {
             provider,
             model_id,
             effort,
+            scope,
         } = pending;
         self.spawn_model_catalog_refresh();
-        match self.try_set_model(&provider, &model_id, view).await {
+        match self.try_set_model(&provider, &model_id, scope, view).await {
             SetModelOutcome::Switched => {
                 if let Some(level) = &effort {
                     self.apply_thinking_level(level, view).await;

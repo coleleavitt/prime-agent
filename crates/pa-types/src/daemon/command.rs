@@ -824,6 +824,10 @@ pub enum DaemonCommand {
         active_session_id: String,
         provider: String,
         model_id: String,
+        /// `Some(false)` switches the session only and keeps the saved default (the daemon
+        /// advertises `session_model_selection`); absent saves it, as TS `/model` did.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        persist_default: Option<bool>,
         #[serde(flatten)]
         rest: JsonMap,
     },

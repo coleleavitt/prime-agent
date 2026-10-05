@@ -328,6 +328,8 @@ pub fn default_server_capabilities() -> Vec<DaemonServerCapability> {
                 "abort_and_send_queued",
                 "agent_roster",
                 "direct_peer_transport",
+                // `set_model { persistDefault: false }` switches one session only (#840).
+                "session_model_selection",
             ]
             .iter()
             .map(std::string::ToString::to_string),

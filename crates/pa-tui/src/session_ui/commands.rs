@@ -3,8 +3,8 @@
 use super::{
     create_session, effort_picker, info_commands, terminal_columns, AgentView, AuthSelectorKind,
     ChatEntry, CommandCatalogUpdate, DaemonCommand, DockFold, Duration, InfoContent, Map,
-    PendingConfirm, RebuildKind, Result, SessionUi, SlashCommandExecution, SlashCommandRegistry,
-    StatusKind, SubmitBehavior, Value, UI_REQUEST_TIMEOUT_MS,
+    ModelSwitchScope, PendingConfirm, RebuildKind, Result, SessionUi, SlashCommandExecution,
+    SlashCommandRegistry, StatusKind, SubmitBehavior, Value, UI_REQUEST_TIMEOUT_MS,
 };
 
 impl SessionUi {
@@ -156,15 +156,27 @@ impl SessionUi {
                 }
             }
             // `/model` opens the model picker (menu-only: the TS inline-arg form is deliberately
-            // removed — a partial + Tab opens the picker filtered instead).
-            "model" => {
+            // removed — a partial + Tab opens the picker filtered instead); `/switch` opens the
+            // same picker for a session-only switch (upstream #840).
+            "model" | "switch" => {
+                let (usage, scope) = if resolved.name == "switch" {
+                    (
+                        "Usage: /switch (Tab filters the picker)",
+                        ModelSwitchScope::SessionOnly,
+                    )
+                } else {
+                    (
+                        "Usage: /model (Tab filters the picker)",
+                        ModelSwitchScope::SavedDefault,
+                    )
+                };
                 if !resolved.args.trim().is_empty() {
                     view.editor
                         .set_text(&format!("/{} {}", resolved.original_name, resolved.args));
-                    self.error_row("Usage: /model (Tab filters the picker)", view);
+                    self.error_row(usage, view);
                     return Ok(());
                 }
-                self.open_model_picker(view, "").await?;
+                self.open_model_picker(view, "", scope).await?;
                 self.track_menu_opened("model", "command");
                 self.track_feature_outcome("model", "initiated", None);
             }
