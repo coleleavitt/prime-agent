@@ -9,20 +9,33 @@
 //! token and revoke the other's.
 //!
 //! [`install`] puts the store in charge of the `anthropic` provider id
-//! through pa-core's generic credential source seam; with no login in the
-//! store the native `auth.json` path is untouched. [`AnthropicAuthFeature`]
+//! through pa-core's generic credential source seam and pa-ai's provider
+//! request hooks; with no login in the store the native `auth.json` path is
+//! untouched, and a request whose token the store did not serve is sent as
+//! it is. [`AnthropicAuthFeature`]
 //! reports adoption once per process.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
-use pa_core::features::{SessionFeature, SessionFeatureContext};
+use pa_core::features::{FeatureStatus, SessionFeature, SessionFeatureContext};
 use pa_telemetry::Properties;
+use pa_types::sync::MutexExt;
 
+mod custody;
+mod device;
+mod hooks;
+mod keepalive;
 mod login;
+mod quota;
+mod shape;
 mod source;
+#[cfg(test)]
+mod test_support;
 
 pub use login::{NewLogin, StoredLogin};
+pub use quota::QUOTA_RESERVE_ENV;
 pub use source::{SharedStoreConfig, SharedStoreSource, SourceUsage, STORE_LABEL};
 
 /// The provider id the store serves.
@@ -41,11 +54,13 @@ pub fn shared_source() -> Arc<SharedStoreSource> {
         .clone()
 }
 
-/// Install the process's store source for [`PROVIDER_ID`]. Called by the
+/// Install the process's store source for [`PROVIDER_ID`]: its credential
+/// source (pa-core) and its request hooks (pa-ai). Called by the
 /// composition root before any session or worker starts; idempotent; no
 /// I/O.
 pub fn install() {
     pa_core::auth::install_credential_source(PROVIDER_ID, shared_source());
+    pa_ai::request_hooks::install_request_hooks(PROVIDER_ID, shared_source());
 }
 
 /// The session feature that reports the store's adoption: once per
@@ -54,6 +69,8 @@ pub fn install() {
 pub struct AnthropicAuthFeature {
     source: Arc<SharedStoreSource>,
     reported: AtomicBool,
+    /// The quota line last published per session.
+    published: Mutex<HashMap<String, String>>,
 }
 
 impl AnthropicAuthFeature {
@@ -63,6 +80,34 @@ impl AnthropicAuthFeature {
         Self {
             source,
             reported: AtomicBool::new(false),
+            published: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Publish the store's quota for an Anthropic session when it changed:
+    /// the agents view shows the line (prime-agent has no other usage
+    /// surface). Never an account id.
+    fn publish_quota(&self, context: &SessionFeatureContext) {
+        if context.model.provider != PROVIDER_ID {
+            return;
+        }
+        let Some(quota) = self.source.quota_line() else {
+            return;
+        };
+        let mut published = self.published.lock_or_recover();
+        if published.get(&context.session_id) == Some(&quota.line) {
+            return;
+        }
+        let delivered = pa_core::features::publish_feature_status(
+            &context.session_id,
+            FeatureStatus {
+                feature: self.name().to_string(),
+                line: Some(quota.line.clone()),
+                status: quota.status,
+            },
+        );
+        if delivered {
+            published.insert(context.session_id.clone(), quota.line);
         }
     }
 }
@@ -73,6 +118,7 @@ impl SessionFeature for AnthropicAuthFeature {
     }
 
     fn on_agent_end(&self, context: &Arc<SessionFeatureContext>) {
+        self.publish_quota(context);
         let Some(telemetry) = &context.telemetry else {
             return;
         };
@@ -84,6 +130,9 @@ impl SessionFeature for AnthropicAuthFeature {
         properties.set("source", usage.first.unwrap_or("failed").into());
         properties.set("refreshed", usage.refreshed.into());
         properties.set("failed", usage.failed.into());
+        properties.set("migrated", usage.migrated.into());
+        properties.set("recovered", usage.recovered.into());
+        properties.set("rotated", usage.rotated.into());
         telemetry.track(TELEMETRY_EVENT, &properties);
     }
 }

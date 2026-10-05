@@ -2,12 +2,10 @@
 //! endpoint: never the user's store, Claude Code's files, or the network.
 
 use std::collections::BTreeMap;
-use std::io::{Read, Write};
-use std::net::TcpListener;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Barrier, Mutex};
 
-use anthropic::token::{AccessToken, Credential, OAuthTokens, RefreshToken};
+use anthropic::token::Credential;
 use anthropic::Account;
 use chrono::{Duration, Utc};
 use pa_core::auth::{install_credential_source, AuthStorage, AuthStorageData, NoOAuth};
@@ -15,103 +13,7 @@ use pa_core::features::{SessionFeature, SessionFeatureContext};
 use pa_core::models::{ModelRegistry, ResolvedRequestAuth};
 
 use super::*;
-
-const ROTATED_ACCESS: &str = "sk-ant-oat01-rotated-rotated-rotated-00";
-const ROTATED: &str = r#"{"access_token":"sk-ant-oat01-rotated-rotated-rotated-00","refresh_token":"sk-ant-ort01-rotated-rotated-rotated-00","expires_in":28800,"scope":"user:inference user:profile"}"#;
-const INVALID_GRANT: &str =
-    r#"{"error":"invalid_grant","error_description":"refresh token revoked"}"#;
-
-/// A loopback token endpoint answering every POST with `status` + `body`;
-/// returns its URL and the request count.
-fn token_endpoint(status: u16, body: &'static str) -> (String, Arc<AtomicUsize>) {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind a loopback port");
-    let url = format!(
-        "http://{}/v1/oauth/token",
-        listener.local_addr().expect("the bound address")
-    );
-    let hits = Arc::new(AtomicUsize::new(0));
-    let counter = Arc::clone(&hits);
-    std::thread::spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(mut stream) = stream else { return };
-            let mut request = Vec::new();
-            let mut chunk = [0u8; 4096];
-            while let Ok(read) = stream.read(&mut chunk) {
-                if read == 0 {
-                    break;
-                }
-                request.extend_from_slice(&chunk[..read]);
-                let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") else {
-                    continue;
-                };
-                let head = String::from_utf8_lossy(&request[..end]).to_ascii_lowercase();
-                let length = head
-                    .lines()
-                    .find_map(|line| line.strip_prefix("content-length:"))
-                    .and_then(|value| value.trim().parse::<usize>().ok())
-                    .unwrap_or(0);
-                if request.len() >= end + 4 + length {
-                    break;
-                }
-            }
-            counter.fetch_add(1, Ordering::SeqCst);
-            let response = format!(
-                "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            let _ = stream.write_all(response.as_bytes());
-        }
-    });
-    (url, hits)
-}
-
-/// One OAuth row whose access token expires `access_in` from now. Ids
-/// are unique per test: the SDK remembers a refresh token Anthropic
-/// rejected for the life of the process.
-fn row(id: &str, access_in: Duration) -> Account {
-    Account::new(
-        id,
-        Credential::Oauth(OAuthTokens {
-            access: AccessToken::new(format!("sk-ant-oat01-{id}-store-access-000")),
-            refresh: RefreshToken::new(format!("sk-ant-ort01-{id}-store-refresh-000")),
-            expires_at: Utc::now() + access_in,
-            refresh_expires_at: Some(Utc::now() + Duration::days(20)),
-            scopes: vec!["user:inference".into()],
-            account: None,
-            organization: None,
-        }),
-    )
-}
-
-/// A temporary `~/.anthropic-accounts/accounts.json` holding `accounts`
-/// (none: no file), and a source over it that reaches only `token_url`
-/// and never Claude Code's credentials.
-fn source_over(
-    accounts: Vec<Account>,
-    token_url: &str,
-) -> (tempfile::TempDir, Arc<SharedStoreSource>) {
-    let home = tempfile::tempdir().expect("a temporary home");
-    let store_path = home
-        .path()
-        .join(".anthropic-accounts")
-        .join("accounts.json");
-    if !accounts.is_empty() {
-        std::fs::create_dir_all(store_path.parent().expect("the store dir"))
-            .expect("create the store dir");
-        AccountStore {
-            accounts,
-            ..AccountStore::default()
-        }
-        .save(&store_path)
-        .expect("seed the store");
-    }
-    let source = SharedStoreSource::new(SharedStoreConfig::isolated(
-        store_path,
-        token_url,
-        "http://127.0.0.1:9/api/oauth/profile",
-    ));
-    (home, Arc::new(source))
-}
+use crate::test_support::*;
 
 /// `auth.json` holding the provider's own (live) OAuth login.
 fn auth_json_login(provider: &str) -> AuthStorage {
@@ -344,7 +246,10 @@ fn the_adoption_event_is_reported_once_per_process() {
         *events.lock_or_recover(),
         vec![(
             crate::TELEMETRY_EVENT.to_string(),
-            serde_json::json!({ "source": "refreshed", "refreshed": 1, "failed": 0 })
+            serde_json::json!({
+                "source": "refreshed", "refreshed": 1, "failed": 0,
+                "migrated": 0, "recovered": 0, "rotated": 0
+            })
         )]
     );
 }
@@ -400,4 +305,220 @@ fn a_login_joins_the_store_as_its_current_account() {
         source.credential().map(|credential| credential.api_key),
         Ok("sk-ant-oat01-new-login-access-000".to_string())
     );
+}
+
+const PROFILE: &str = r#"{"account":{"uuid":"acct-0001","email":"person@example.com"},"organization":{"uuid":"org-0001","name":"Org"}}"#;
+
+/// `auth.json` holding a well-formed Anthropic login (the native
+/// `/login anthropic` shape), its access token live for `access_in`.
+fn auth_json_native_login(provider: &str, access_in: Duration) -> AuthStorage {
+    let data = serde_json::json!({
+        provider: {
+            "type": "oauth", "access": "sk-ant-oat01-auth-json-native-access-000",
+            "refresh": "sk-ant-ort01-auth-json-native-refresh-000",
+            "expires": (Utc::now() + access_in).timestamp_millis()
+        }
+    });
+    AuthStorage::in_memory_without_env(
+        &AuthStorageData(data.as_object().cloned().unwrap_or_default()),
+        Arc::new(NoOAuth),
+    )
+}
+
+/// A source over a store in a fresh home (seeded with `accounts`), whose
+/// profile endpoint is `profile_url`.
+fn source_with_profile(
+    accounts: Vec<Account>,
+    token_url: &str,
+    profile_url: &str,
+) -> (tempfile::TempDir, Arc<SharedStoreSource>) {
+    let (home, seeded) = source_over(accounts, token_url);
+    let source = SharedStoreSource::new(SharedStoreConfig::isolated(
+        seeded.store_path().to_path_buf(),
+        token_url,
+        profile_url,
+    ));
+    (home, Arc::new(source))
+}
+
+/// The store's rows as `(id, refresh token)`, and its `current`.
+fn rows(source: &SharedStoreSource) -> (Vec<(String, String)>, Option<String>) {
+    let store = AccountStore::load(source.store_path()).expect("the store");
+    (
+        store
+            .accounts
+            .iter()
+            .map(|a| {
+                (
+                    a.id.clone(),
+                    a.oauth()
+                        .map(|t| t.refresh.expose().to_string())
+                        .unwrap_or_default(),
+                )
+            })
+            .collect(),
+        store.current.clone(),
+    )
+}
+
+#[test]
+fn an_auth_json_login_moves_into_an_empty_store() {
+    let provider = "anthropic-migrate-empty";
+    let (profile_url, profile_hits) = token_endpoint(200, PROFILE);
+    let (_home, source) = source_with_profile(Vec::new(), "http://127.0.0.1:9", &profile_url);
+    install_credential_source(provider, source.clone());
+    let mut registry =
+        ModelRegistry::in_memory(auth_json_native_login(provider, Duration::hours(2)));
+
+    assert_eq!(
+        registry.get_api_key_and_headers(&model(provider), None),
+        served("sk-ant-oat01-auth-json-native-access-000")
+    );
+    assert_eq!(profile_hits.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        rows(&source),
+        (
+            vec![(
+                "person@example.com".to_string(),
+                "sk-ant-ort01-auth-json-native-refresh-000".to_string()
+            )],
+            Some("person@example.com".to_string())
+        )
+    );
+    // auth.json no longer holds it: the store is the only custodian.
+    assert_eq!(registry.auth.get_all().get(provider), None);
+    assert_eq!(source.usage().migrated, 1);
+}
+
+#[test]
+fn the_store_s_own_login_of_the_same_account_wins_over_auth_json() {
+    let provider = "anthropic-migrate-kept";
+    let (profile_url, _profile_hits) = token_endpoint(200, PROFILE);
+    let mut own = row("own", Duration::hours(2));
+    if let Credential::Oauth(tokens) = &mut own.credential {
+        tokens.account = Some(anthropic::token::TokenAccount {
+            uuid: "acct-0001".to_string(),
+            email_address: Some("person@example.com".to_string()),
+        });
+        tokens.organization = Some(anthropic::token::TokenOrganization {
+            uuid: "org-0001".to_string(),
+        });
+    }
+    let (_home, source) = source_with_profile(vec![own], "http://127.0.0.1:9", &profile_url);
+    install_credential_source(provider, source.clone());
+    let mut registry =
+        ModelRegistry::in_memory(auth_json_native_login(provider, Duration::hours(2)));
+
+    assert_eq!(
+        registry.get_api_key_and_headers(&model(provider), None),
+        served("sk-ant-oat01-own-store-access-000")
+    );
+    assert_eq!(
+        rows(&source),
+        (
+            vec![(
+                "own".to_string(),
+                "sk-ant-ort01-own-store-refresh-000".to_string()
+            )],
+            None
+        )
+    );
+    assert_eq!(registry.auth.get_all().get(provider), None);
+}
+
+#[test]
+fn an_expired_auth_json_login_moves_in_without_an_identity_lookup() {
+    let provider = "anthropic-migrate-expired";
+    let (profile_url, profile_hits) = token_endpoint(200, PROFILE);
+    let (url, token_hits) = token_endpoint(200, ROTATED);
+    let (_home, source) = source_with_profile(Vec::new(), &url, &profile_url);
+    install_credential_source(provider, source.clone());
+    let mut registry =
+        ModelRegistry::in_memory(auth_json_native_login(provider, Duration::hours(-1)));
+
+    // The store refreshes it (once, claimed) like any of its own logins.
+    assert_eq!(
+        registry.get_api_key_and_headers(&model(provider), None),
+        served(ROTATED_ACCESS)
+    );
+    assert_eq!(profile_hits.load(Ordering::SeqCst), 0);
+    assert_eq!(token_hits.load(Ordering::SeqCst), 1);
+    let (stored, current) = rows(&source);
+    assert_eq!(stored.len(), 1);
+    assert!(stored[0].0.starts_with("account-"), "{stored:?}");
+    assert_eq!(current.as_deref(), Some(stored[0].0.as_str()));
+    assert_eq!(registry.auth.get_all().get(provider), None);
+}
+
+#[test]
+fn a_malformed_auth_json_login_stays_in_auth_json() {
+    let provider = "anthropic-migrate-malformed";
+    let (_home, source) = source_over(Vec::new(), "http://127.0.0.1:9");
+    install_credential_source(provider, source.clone());
+    let mut registry = ModelRegistry::in_memory(auth_json_login(provider));
+
+    assert_eq!(
+        registry.get_api_key_and_headers(&model(provider), None),
+        served("sk-ant-oat01-auth-json-access")
+    );
+    assert!(!source.store_path().exists());
+    assert!(registry.auth.get_all().get(provider).is_some());
+}
+
+#[test]
+fn logout_removes_the_login_the_provider_is_served_from() {
+    let (_home, source) = source_over(
+        vec![
+            row("first", Duration::hours(2)),
+            row("pinned", Duration::hours(2)),
+        ],
+        "http://127.0.0.1:9",
+    );
+    AccountStore::mutate(source.store_path(), |store| store.set_current("pinned"))
+        .expect("pin a login");
+    let removed = |remaining: &str| {
+        Ok(pa_core::auth::RemovedLogin {
+            notice: Some(format!(
+                "Removed the login from the shared account store ({}); other tools that share the store no longer see it.{remaining}",
+                source.store_path().display()
+            )),
+        })
+    };
+
+    assert_eq!(
+        source.remove_login(),
+        removed(" 1 more login there still serves this provider.")
+    );
+    assert_eq!(
+        rows(&source),
+        (
+            vec![(
+                "first".to_string(),
+                "sk-ant-ort01-first-store-refresh-000".to_string()
+            )],
+            None
+        )
+    );
+    assert_eq!(
+        source.credential().map(|credential| credential.api_key),
+        Ok("sk-ant-oat01-first-store-access-000".to_string())
+    );
+
+    assert_eq!(source.remove_login(), removed(""));
+    assert_eq!(source.status(), None);
+    assert_eq!(
+        source.remove_login(),
+        Err(CredentialSourceError::NotConfigured)
+    );
+}
+
+#[test]
+fn logout_without_a_store_removes_nothing() {
+    let (_home, source) = source_over(Vec::new(), "http://127.0.0.1:9");
+
+    assert_eq!(
+        source.remove_login(),
+        Err(CredentialSourceError::NotConfigured)
+    );
+    assert!(!source.store_path().exists());
 }

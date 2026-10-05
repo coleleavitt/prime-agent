@@ -11,19 +11,24 @@
 //! store's claim.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
 use anthropic::access::{
-    access_candidates, get_access_token, AccessErrorKind, AccessRequest, AccessSource,
+    access_candidates, get_access_token, AccessError, AccessErrorKind, AccessGrant, AccessRequest,
+    AccessSource,
 };
 use anthropic::credentials::NativePublish;
 use anthropic::{AccountStore, Endpoints, OAuthClient, SharedRefreshOptions};
 use pa_core::auth::{
-    CredentialSourceError, CredentialSourceStatus, ProviderCredentialSource, SourcedCredential,
+    CredentialSourceError, CredentialSourceStatus, ProviderCredentialSource, RemovedLogin,
+    SourcedCredential, StoredLoginCustody, StoredOAuthLogin,
 };
 use pa_types::sync::MutexExt;
 use sha2::{Digest, Sha256};
+
+use crate::keepalive::KeepAlive;
+use crate::quota::{quota_line, QuotaLine, QuotaTracker, StoreWrite};
 
 /// The status rows' label for a login the shared store holds.
 pub const STORE_LABEL: &str = "shared account store";
@@ -45,6 +50,17 @@ pub struct SharedStoreConfig {
     pub profile_url: String,
     /// Refuse every OAuth call to a non-loopback host (tests).
     pub require_loopback: bool,
+    /// Run the keep-alive on the crate's own thread once a credential has
+    /// been served (off in tests and sandboxes, which call a pass directly).
+    pub background: bool,
+    /// Where the live Claude Code version is read (the npm registry's
+    /// `latest`, on the keep-alive thread, hourly); `None` keeps the
+    /// verified floor (`OPENCODE_ANTHROPIC_AUTH_DISABLE_VERSION_CHECK=1`,
+    /// the plugins' switch).
+    pub version_url: Option<String>,
+    /// Prefer logins whose recorded usage is below this percentage in both
+    /// windows (`ANTHROPIC_QUOTA_RESERVE_PCT`; the napi `reservePct`).
+    pub quota_reserve: Option<f64>,
 }
 
 impl SharedStoreConfig {
@@ -58,6 +74,12 @@ impl SharedStoreConfig {
             native_publish: NativePublish::from_env(),
             profile_url: anthropic::profile::profile_url_from_lookup(|key| std::env::var(key).ok()),
             require_loopback: false,
+            background: true,
+            version_url: (std::env::var(anthropic::claude_version::DISABLE_VERSION_CHECK_ENV)
+                .as_deref()
+                != Ok("1"))
+            .then(|| anthropic::claude_version::LATEST_VERSION_URL.to_string()),
+            quota_reserve: crate::quota::reserve_from_env(),
         }
     }
 
@@ -74,7 +96,17 @@ impl SharedStoreConfig {
             native_publish: NativePublish::Off,
             profile_url: profile_url.to_string(),
             require_loopback: true,
+            background: false,
+            version_url: None,
+            quota_reserve: None,
         }
+    }
+
+    /// The OAuth client over these endpoints and rules.
+    pub(crate) fn client(&self) -> OAuthClient {
+        OAuthClient::new(self.endpoints.clone())
+            .native_publish(self.native_publish.clone())
+            .require_loopback(self.require_loopback)
     }
 }
 
@@ -93,6 +125,12 @@ pub struct SourceUsage {
     /// Requests the store could not serve (refresh failed, revoked,
     /// unreadable, network).
     pub failed: u64,
+    /// auth.json logins moved into the store.
+    pub migrated: u64,
+    /// Requests re-sent after a 401 with a recovered token.
+    pub recovered: u64,
+    /// Requests moved to another login after a 429.
+    pub rotated: u64,
     /// The way the first served credential was obtained.
     pub first: Option<&'static str>,
 }
@@ -105,6 +143,17 @@ impl SourceUsage {
     }
 }
 
+/// A custody or recovery event the adoption report counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UsageEvent {
+    /// An auth.json login moved into the store.
+    Migrated,
+    /// A 401 recovered with a new token.
+    Recovered,
+    /// A 429 moved to another login.
+    Rotated,
+}
+
 /// The store file's identity for the status memo: `(len, mtime)`. The
 /// store is replaced by rename on every write, so an unchanged stamp is an
 /// unchanged document.
@@ -115,22 +164,275 @@ pub struct SharedStoreSource {
     pub(crate) config: SharedStoreConfig,
     /// Built on the first credential request (no startup cost).
     client: OnceLock<OAuthClient>,
-    /// One credential resolution at a time in this process.
-    flight: Mutex<()>,
+    /// One credential resolution (or custody change) at a time in this
+    /// process.
+    pub(crate) flight: Mutex<()>,
     status_memo: Mutex<Option<(FileStamp, Option<CredentialSourceStatus>)>>,
     usage: Mutex<SourceUsage>,
+    /// The access tokens this source served (newest last, bounded) and the
+    /// logins they belong to: only these take part in the request hooks.
+    served: Mutex<std::collections::VecDeque<ServedToken>>,
+    /// The installation's device id, read (or created) with the first
+    /// served token.
+    device_id: OnceLock<Option<String>>,
+    /// This process's session id per store row (the plugin's per-account
+    /// Claude Code identity).
+    sessions: Mutex<std::collections::HashMap<String, String>>,
+    /// The quota readings of this process's responses.
+    pub(crate) quota: QuotaTracker,
+    /// The row this process served last.
+    last_served: Mutex<Option<String>>,
+    /// The keep-alive thread's store writes, once it runs.
+    writes: OnceLock<std::sync::mpsc::Sender<StoreWrite>>,
+    /// The keep-alive's state, shared with its thread.
+    keepalive: Arc<KeepAlive>,
+    /// The keep-alive thread starts once.
+    keepalive_started: std::sync::Once,
+}
+
+/// How many served tokens the source remembers (the pi plugin's bound).
+const SERVED_TOKENS_LIMIT: usize = 64;
+
+/// A token this source served and the login it belongs to.
+#[derive(Clone)]
+pub(crate) struct ServedToken {
+    token: String,
+    /// The store row.
+    pub(crate) account_id: String,
+    /// The account's uuid, when the store knows it.
+    pub(crate) account_uuid: Option<String>,
+    /// The quota the store recorded for the row when the token was served.
+    pub(crate) quota: Option<anthropic::account::QuotaObservation>,
 }
 
 impl SharedStoreSource {
     /// A source over `config`. Does no I/O.
     #[must_use]
     pub fn new(config: SharedStoreConfig) -> Self {
+        let keepalive = Arc::new(KeepAlive::new(config.clone()));
         Self {
             config,
             client: OnceLock::new(),
             flight: Mutex::new(()),
             status_memo: Mutex::new(None),
             usage: Mutex::new(SourceUsage::default()),
+            served: Mutex::new(std::collections::VecDeque::new()),
+            device_id: OnceLock::new(),
+            sessions: Mutex::new(std::collections::HashMap::new()),
+            quota: QuotaTracker::default(),
+            last_served: Mutex::new(None),
+            writes: OnceLock::new(),
+            keepalive,
+            keepalive_started: std::sync::Once::new(),
+        }
+    }
+
+    /// The keep-alive's state (its passes run on the crate's thread).
+    #[cfg(test)]
+    pub(crate) fn keepalive(&self) -> &KeepAlive {
+        &self.keepalive
+    }
+
+    /// Whether the keep-alive thread was started.
+    #[cfg(test)]
+    pub(crate) fn keepalive_started(&self) -> bool {
+        self.keepalive_started.is_completed()
+    }
+
+    /// Start the keep-alive thread, once, when the configuration runs one.
+    fn start_keepalive(&self) {
+        if !self.config.background {
+            return;
+        }
+        self.keepalive_started.call_once(|| {
+            let keepalive = Arc::clone(&self.keepalive);
+            let client = self.config.client();
+            let (sender, writes) = std::sync::mpsc::channel();
+            let spawned = std::thread::Builder::new()
+                .name("anthropic-keepalive".to_string())
+                .spawn(move || keepalive.run(&client, &writes));
+            match spawned {
+                Ok(_) => {
+                    let _ = self.writes.set(sender);
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "the shared store's keep-alive thread did not start");
+                }
+            }
+        });
+    }
+
+    /// Hand a store write to the keep-alive thread (applied here, blocking,
+    /// when no thread runs: tests and sandboxes).
+    pub(crate) fn queue_write(&self, write: StoreWrite) {
+        match self.writes.get() {
+            Some(sender) => {
+                if let Err(unsent) = sender.send(write) {
+                    unsent.0.apply(&self.config.store_path);
+                }
+            }
+            None => write.apply(&self.config.store_path),
+        }
+    }
+
+    /// The quota line of the login this process served last: its latest
+    /// response reading, else what the store recorded for it.
+    pub(crate) fn quota_line(&self) -> Option<QuotaLine> {
+        let account_id = self.last_served.lock_or_recover().clone()?;
+        let recorded = self
+            .served
+            .lock_or_recover()
+            .iter()
+            .rev()
+            .find(|known| known.account_id == account_id)
+            .and_then(|known| known.quota.clone());
+        quota_line(self.quota.reading(&account_id).as_ref(), recorded.as_ref())
+    }
+
+    /// The store's token for a request now: the routing order's pick
+    /// (refreshed when expired), preferring logins under the quota reserve
+    /// when one is set (every login at it: the plain pick). While every
+    /// login is cooling down or spent, the pinned (or first) login's live
+    /// token serves and the provider's answer decides.
+    pub(crate) fn resolve(&self) -> Result<Result<AccessGrant, AccessError>, String> {
+        let client = self.client();
+        let path = self.config.store_path.as_path();
+        let options = SharedRefreshOptions::default();
+        let reserved = self.config.quota_reserve.map(|reserve| {
+            let request = AccessRequest {
+                reserve_percent: Some(reserve),
+                ..AccessRequest::default()
+            };
+            block_on_own_runtime(get_access_token(client, path, &request, &options))
+        });
+        let resolved = match reserved {
+            Some(Ok(Err(error))) if error.kind == AccessErrorKind::QuotaReserve => {
+                tracing::info!("every login is at the quota reserve; the store's pick serves");
+                None
+            }
+            other => other,
+        }
+        .unwrap_or_else(|| {
+            block_on_own_runtime(get_access_token(
+                client,
+                path,
+                &AccessRequest::default(),
+                &options,
+            ))
+        });
+        if let Ok(Err(error)) = &resolved {
+            if matches!(
+                error.kind,
+                AccessErrorKind::Transient | AccessErrorKind::QuotaReserve
+            ) {
+                if let Some(grant) = self.cooling_down_token() {
+                    return Ok(Ok(grant));
+                }
+            }
+        }
+        resolved
+    }
+
+    /// The served login's stored token while it is live (every login cooling
+    /// down or spent).
+    fn cooling_down_token(&self) -> Option<AccessGrant> {
+        let store = AccountStore::load(&self.config.store_path).ok()?;
+        let now = chrono::Utc::now();
+        let account = served_login(&store, now)?;
+        let tokens = account.oauth().filter(|tokens| !tokens.is_expired(now))?;
+        Some(AccessGrant {
+            access_token: tokens.access.expose().to_string(),
+            account_id: account.id.clone(),
+            email: account.email.clone(),
+            expires_at: tokens.expires_at,
+            source: AccessSource::Store,
+        })
+    }
+
+    /// Remember a token this source handed out, for the store row
+    /// `account_id` (its account uuid read from the store). Blocking: reads
+    /// the store, and the device id the first time.
+    pub(crate) fn remember(&self, token: &str, account_id: &str) {
+        let row = AccountStore::load(&self.config.store_path)
+            .ok()
+            .and_then(|store| store.get(account_id).cloned());
+        let account_uuid = row
+            .as_ref()
+            .and_then(|row| {
+                row.oauth()?
+                    .account
+                    .as_ref()
+                    .map(|account| account.uuid.clone())
+            })
+            .filter(|uuid| !uuid.trim().is_empty());
+        let quota = row.and_then(|row| row.quota);
+        self.device_id
+            .get_or_init(|| crate::device::load_or_create(&self.config.store_path));
+        let mut served = self.served.lock_or_recover();
+        served.retain(|known| known.token != token);
+        served.push_back(ServedToken {
+            token: token.to_string(),
+            account_id: account_id.to_string(),
+            account_uuid,
+            quota,
+        });
+        while served.len() > SERVED_TOKENS_LIMIT {
+            served.pop_front();
+        }
+        drop(served);
+        *self.last_served.lock_or_recover() = Some(account_id.to_string());
+        self.keepalive.note_served(account_id);
+        self.start_keepalive();
+    }
+
+    /// Whether this source handed out `token`.
+    pub(crate) fn served(&self, token: &str) -> bool {
+        self.served_token(token).is_some()
+    }
+
+    /// The login a token this source handed out belongs to.
+    pub(crate) fn served_token(&self, token: &str) -> Option<ServedToken> {
+        self.served
+            .lock_or_recover()
+            .iter()
+            .find(|known| known.token == token)
+            .cloned()
+    }
+
+    /// The installation's device id, once a token was served (no I/O).
+    pub(crate) fn device_id(&self) -> Option<String> {
+        self.device_id.get().cloned().flatten()
+    }
+
+    /// This process's session id for the store row `account_id`.
+    pub(crate) fn session_id(&self, account_id: &str) -> String {
+        self.sessions
+            .lock_or_recover()
+            .entry(account_id.to_string())
+            .or_insert_with(|| uuid::Uuid::new_v4().to_string())
+            .clone()
+    }
+
+    /// The Claude Code version the requests claim now.
+    pub(crate) fn claude_code_version(&self) -> String {
+        self.keepalive.claude_code_version()
+    }
+
+    /// Count a refresh this process made outside a credential lookup (the
+    /// 401 recovery).
+    pub(crate) fn count_refreshed(&self) {
+        let mut usage = self.usage.lock_or_recover();
+        usage.refreshed += 1;
+        usage.first.get_or_insert(AccessSource::Refreshed.code());
+    }
+
+    /// Count one custody or recovery event.
+    pub(crate) fn count(&self, event: UsageEvent) {
+        let mut usage = self.usage.lock_or_recover();
+        match event {
+            UsageEvent::Migrated => usage.migrated += 1,
+            UsageEvent::Recovered => usage.recovered += 1,
+            UsageEvent::Rotated => usage.rotated += 1,
         }
     }
 
@@ -147,11 +449,7 @@ impl SharedStoreSource {
     }
 
     pub(crate) fn client(&self) -> &OAuthClient {
-        self.client.get_or_init(|| {
-            OAuthClient::new(self.config.endpoints.clone())
-                .native_publish(self.config.native_publish.clone())
-                .require_loopback(self.config.require_loopback)
-        })
+        self.client.get_or_init(|| self.config.client())
     }
 
     fn read_status(&self) -> Option<CredentialSourceStatus> {
@@ -162,9 +460,12 @@ impl SharedStoreSource {
                 return None;
             }
         };
-        let request = AccessRequest::default();
-        let candidates = access_candidates(&store, &request, chrono::Utc::now()).ok()?;
-        // The revision changes whenever a candidate's access token rotates.
+        // A login cooling down after a 429 is still a login.
+        let candidates: Vec<&anthropic::Account> = logins(&store).collect();
+        if candidates.is_empty() {
+            return None;
+        }
+        // The revision changes whenever a login's access token rotates.
         let mut hasher = Sha256::new();
         for account in &candidates {
             hasher.update(account.id.as_bytes());
@@ -185,7 +486,7 @@ impl SharedStoreSource {
 
     /// Count one answered request: how its credential was obtained, or
     /// `None` for a failure.
-    fn record(&self, served: Option<AccessSource>) {
+    pub(crate) fn record(&self, served: Option<AccessSource>) {
         let mut usage = self.usage.lock_or_recover();
         let Some(source) = served else {
             usage.failed += 1;
@@ -216,32 +517,20 @@ impl ProviderCredentialSource for SharedStoreSource {
         status
     }
 
+    fn adopt_stored_login(&self, login: &StoredOAuthLogin) -> StoredLoginCustody {
+        self.adopt(login)
+    }
+
+    fn remove_login(&self) -> Result<RemovedLogin, CredentialSourceError> {
+        self.remove_served_login()
+    }
+
     fn credential(&self) -> Result<SourcedCredential, CredentialSourceError> {
         let _flight = self.flight.lock_or_recover();
-        let client = self.client();
-        let path = self.config.store_path.as_path();
-        // The lookup is synchronous and may run on an async worker: the
-        // store's async API runs on a runtime of its own, on its own thread.
-        let resolved = std::thread::scope(|scope| {
-            scope
-                .spawn(|| {
-                    let runtime = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .map_err(|error| error.to_string())?;
-                    Ok(runtime.block_on(get_access_token(
-                        client,
-                        path,
-                        &AccessRequest::default(),
-                        &SharedRefreshOptions::default(),
-                    )))
-                })
-                .join()
-                .unwrap_or_else(|_| Err("the credential lookup panicked".to_string()))
-        });
-        match resolved {
+        match self.resolve() {
             Ok(Ok(grant)) => {
                 self.record(Some(grant.source));
+                self.remember(&grant.access_token, &grant.account_id);
                 Ok(SourcedCredential {
                     api_key: grant.access_token,
                     headers: std::collections::BTreeMap::new(),
@@ -260,6 +549,57 @@ impl ProviderCredentialSource for SharedStoreSource {
             }
         }
     }
+}
+
+/// The store's logins the provider can be served from: enabled OAuth rows
+/// with an inference scope (a row without scopes predates them), in store
+/// order.
+pub(crate) fn logins(store: &AccountStore) -> impl Iterator<Item = &anthropic::Account> {
+    store.accounts.iter().filter(|account| {
+        account.enabled
+            && account
+                .oauth()
+                .is_some_and(|tokens| tokens.scopes.is_empty() || tokens.grants_inference())
+    })
+}
+
+/// The login the provider is served from now: the routing order's first
+/// candidate (`current` first, then the first available), else, while
+/// every login is cooling down or spent, the pinned one or the first.
+pub(crate) fn served_login(
+    store: &AccountStore,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<&anthropic::Account> {
+    if let Ok(candidates) = access_candidates(store, &AccessRequest::default(), now) {
+        return candidates.first().copied();
+    }
+    let mut logins = logins(store).peekable();
+    let first = logins.peek().copied();
+    logins
+        .find(|account| store.current.as_deref() == Some(account.id.as_str()))
+        .or(first)
+}
+
+/// Run `future` to completion on a runtime of its own, on a thread of its
+/// own: the source's synchronous entry points may run on an async worker,
+/// where blocking on the caller's runtime would deadlock it.
+pub(crate) fn block_on_own_runtime<F>(future: F) -> Result<F::Output, String>
+where
+    F: std::future::Future + Send,
+    F::Output: Send,
+{
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|error| error.to_string())?;
+                Ok(runtime.block_on(future))
+            })
+            .join()
+            .unwrap_or_else(|_| Err("the store call panicked".to_string()))
+    })
 }
 
 #[cfg(test)]

@@ -77,7 +77,18 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
      the fallback resolver, it reports a login cheaply and offline (`status`: a label and a non-secret revision that
      stale marks bind to) and produces the request credential plus any headers it needs (`credential`, refreshing
      under its own lock); `NotConfigured` falls through, any other failure is the provider's OAuth authentication
-     failure. The status rows show its label; `AuthSource::CredentialSource` names it.
+     failure. The status rows show its label; `AuthSource::CredentialSource` names it. An OAuth login `auth.json`
+     still holds for the provider is offered to the source on each lookup (`adopt_stored_login`, a one-time
+     migration); when the source takes custody, the entry is removed from `auth.json` (only while it still holds
+     that login). `/logout` lists a provider whose source reports a login (`credential_source_providers`) and asks
+     the source to remove it (`remove_login`, with an optional notice) besides any `auth.json` entry.
+   - provider requests: `pa_ai::request_hooks::install_request_hooks(provider_id, Arc<dyn ProviderRequestHooks>)`
+     (process-wide, before any request) lets the store behind a provider id's credentials take part in every
+     request the provider sends with a credential it issued: `current_credential` (a fresher one, before the request
+     is built), `prepare` (the built headers and JSON payload), `observe` (each response's status and headers), and
+     `rejected` (a credential to re-send with after a 401, at most once, or a 429 / a stream opening with a
+     rate-limit or overload error, while it names a credential the request has not used). Hooks ignore credentials
+     they did not issue; the `anthropic-messages` provider consults them; nothing is registered natively.
    Seams to add as features need them: system-prompt layer providers, turn-start observers.
 5. **Data ownership.** A crate owns its files under `~/.prime/agent/<feature>/` (or the session artifact dir) and its
    key in `harness_state.json` (`HarnessState::extensions["<feature>"]`). It never rewrites another crate's data.

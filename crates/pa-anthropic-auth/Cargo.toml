@@ -12,17 +12,25 @@ description = "Anthropic subscription auth through the shared anthropic-rs accou
 # loopback login server, federation, keyring or device keys.
 anthropic = { path = "../../vendor/anthropic", default-features = false, features = ["store", "client"] }
 pa-core = { path = "../pa-core" }
+# The provider request hooks (pa_ai::request_hooks): the store's token per
+# request and the 401 recovery.
+pa-ai.workspace = true
 pa-types.workspace = true
 pa-telemetry.workspace = true
 # The store's API takes chrono instants (the version anthropic resolves).
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# The request shape edits the Messages body (pa-ai hands it over as JSON),
+# and the device file is JSON.
+serde_json.workspace = true
 sha2 = "0.10"
 tokio.workspace = true
 tracing.workspace = true
+# The id of an imported login without an identity (`account-<8 hex>`, as
+# anthropic-napi names it).
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 pa-agent.workspace = true
-serde_json.workspace = true
 tempfile = "3"
 
 [lints]

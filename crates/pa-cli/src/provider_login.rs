@@ -459,6 +459,30 @@ impl ProviderAuth {
                 available: true,
             });
         }
+        // A login an installed credential source holds (outside auth.json)
+        // logs out too.
+        for provider_id in pa_core::auth::credential_source_providers() {
+            if rows.iter().any(|row| row.id == provider_id) {
+                continue;
+            }
+            let Some(status) =
+                pa_core::auth::credential_source(&provider_id).and_then(|source| source.status())
+            else {
+                continue;
+            };
+            rows.push(ProviderRow {
+                name: display_name(&provider_id),
+                id: provider_id,
+                auth_type: AuthType::Oauth,
+                status: Some(AuthStatusIndicator {
+                    style: AuthStatusStyle::Success,
+                    label: status.label,
+                }),
+                flow: AuthFlow::TerminalFlow,
+                configured: true,
+                available: true,
+            });
+        }
         rows.sort_by(|a, b| a.name.cmp(&b.name));
         rows
     }
@@ -678,18 +702,35 @@ fn login_blocking_on_panel(
 
 fn logout_blocking(provider_row: &ProviderRow, agent_dir: &Path) -> ProviderAuthOutcome {
     let mut auth = pa_core::auth::AuthStorage::create(agent_dir);
-    if auth.get_all().get(&provider_row.id).is_none() {
+    let stored = auth.get_all().get(&provider_row.id).is_some();
+    // An installed credential source's login (outside auth.json) is the
+    // source's to remove.
+    let source = pa_core::auth::credential_source(&provider_row.id)
+        .filter(|source| source.status().is_some());
+    if !stored && source.is_none() {
         return ProviderAuthOutcome::Status(format!("{} is not configured.", provider_row.name));
     }
-    auth.logout(&provider_row.id);
-    if let Some(error) = auth.drain_errors().pop() {
-        return ProviderAuthOutcome::Error(format!("Logout failed: {error}"));
+    let mut notice = None;
+    if let Some(source) = source {
+        match source.remove_login() {
+            Ok(removed) => notice = removed.notice,
+            Err(pa_core::auth::CredentialSourceError::NotConfigured) => {}
+            Err(pa_core::auth::CredentialSourceError::Unavailable(error)) => {
+                return ProviderAuthOutcome::Error(format!("Logout failed: {error}"));
+            }
+        }
+    }
+    if stored {
+        auth.logout(&provider_row.id);
+        if let Some(error) = auth.drain_errors().pop() {
+            return ProviderAuthOutcome::Error(format!("Logout failed: {error}"));
+        }
     }
     match provider_row.auth_type {
-        AuthType::Oauth => ProviderAuthOutcome::Status(format!(
-            "Logged out of {}",
-            provider_row.name
-        )),
+        AuthType::Oauth => ProviderAuthOutcome::Status(match notice {
+            Some(notice) => format!("Logged out of {}\n{notice}", provider_row.name),
+            None => format!("Logged out of {}", provider_row.name),
+        }),
         AuthType::ApiKey => ProviderAuthOutcome::Status(format!(
             "Removed stored API key for {}. Environment variables and models.json config are unchanged.",
             provider_row.name

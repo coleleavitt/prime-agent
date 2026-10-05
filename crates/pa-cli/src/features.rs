@@ -132,9 +132,9 @@ pub fn install_enabled_features() -> InstalledFeatures {
     }
 }
 
-/// Install the enabled features' provider credential sources: (feature
-/// `anthropic-auth`) the shared Anthropic account store for the `anthropic`
-/// provider. Idempotent; no I/O.
+/// Install the enabled features' provider credential sources and request
+/// hooks: (feature `anthropic-auth`) the shared Anthropic account store for
+/// the `anthropic` provider. Idempotent; no I/O.
 pub fn install_credential_sources() {
     #[cfg(feature = "anthropic-auth")]
     pa_anthropic_auth::install();
@@ -273,5 +273,6 @@ mod tests {
     fn the_native_build_installs_no_credential_source() {
         install_credential_sources();
         assert!(pa_core::auth::credential_source("anthropic").is_none());
+        assert!(pa_ai::request_hooks::request_hooks("anthropic").is_none());
     }
 }

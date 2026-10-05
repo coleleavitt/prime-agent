@@ -25,6 +25,8 @@ mod stream;
 pub use stream::stream_anthropic;
 
 #[cfg(test)]
+mod request_hooks_tests;
+#[cfg(test)]
 mod stream_tests;
 
 pub const API_ANTHROPIC_MESSAGES: &str = "anthropic-messages";

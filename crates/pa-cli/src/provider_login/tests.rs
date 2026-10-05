@@ -275,7 +275,11 @@ async fn login_stores_an_api_key_and_logout_removes_it() {
                     .to_string()
             )
         );
-    assert!(auth.logout_options().await.is_empty());
+    assert!(auth
+        .logout_options()
+        .await
+        .iter()
+        .all(|row| row.id != "openai"));
 }
 
 #[tokio::test]
@@ -319,7 +323,95 @@ async fn a_stored_web_search_key_pairs_with_the_logout_row() {
                     .to_string()
             )
         );
-    assert!(auth.logout_options().await.is_empty());
+    assert!(auth
+        .logout_options()
+        .await
+        .iter()
+        .all(|row| row.id != "serper"));
+}
+
+/// A credential source with one removable login.
+struct OneLoginSource {
+    logged_in: std::sync::atomic::AtomicBool,
+}
+
+impl pa_core::auth::ProviderCredentialSource for OneLoginSource {
+    fn status(&self) -> Option<pa_core::auth::CredentialSourceStatus> {
+        self.logged_in
+            .load(std::sync::atomic::Ordering::SeqCst)
+            .then(|| pa_core::auth::CredentialSourceStatus {
+                label: "stub store".to_string(),
+                revision: "rev-1".to_string(),
+            })
+    }
+
+    fn credential(
+        &self,
+    ) -> Result<pa_core::auth::SourcedCredential, pa_core::auth::CredentialSourceError> {
+        Err(pa_core::auth::CredentialSourceError::NotConfigured)
+    }
+
+    fn remove_login(
+        &self,
+    ) -> Result<pa_core::auth::RemovedLogin, pa_core::auth::CredentialSourceError> {
+        self.logged_in
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        Ok(pa_core::auth::RemovedLogin {
+            notice: Some("Removed from the stub store.".to_string()),
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_credential_source_login_logs_out_through_the_source() {
+    let provider = "stub-logout-source";
+    pa_core::auth::install_credential_source(
+        provider,
+        std::sync::Arc::new(OneLoginSource {
+            logged_in: std::sync::atomic::AtomicBool::new(true),
+        }),
+    );
+    let dir = tempfile::tempdir().expect("temp dir");
+    let agent = dir.path().join("agent");
+    std::fs::create_dir_all(&agent).expect("agent dir");
+    let auth = ProviderAuth::new(dir.path(), agent);
+
+    let row = auth
+        .logout_options()
+        .await
+        .into_iter()
+        .find(|row| row.id == provider)
+        .expect("the source's logout row");
+    assert_eq!(
+        row,
+        ProviderRow {
+            id: provider.to_string(),
+            name: provider.to_string(),
+            auth_type: AuthType::Oauth,
+            status: Some(AuthStatusIndicator {
+                style: AuthStatusStyle::Success,
+                label: "stub store".to_string(),
+            }),
+            flow: AuthFlow::TerminalFlow,
+            configured: true,
+            available: true,
+        }
+    );
+    assert_eq!(
+        auth.logout(&row).await,
+        ProviderAuthOutcome::Status(format!(
+            "Logged out of {provider}\nRemoved from the stub store."
+        ))
+    );
+    assert!(auth
+        .logout_options()
+        .await
+        .iter()
+        .all(|row| row.id != provider));
+    assert_eq!(
+        auth.logout(&row).await,
+        ProviderAuthOutcome::Status(format!("{provider} is not configured."))
+    );
 }
 
 #[test]

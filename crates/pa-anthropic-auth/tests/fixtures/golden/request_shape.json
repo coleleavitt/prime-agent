@@ -1,0 +1,498 @@
+{
+  "version": "2.1.280",
+  "token": "sk-ant-oat01-golden-golden-golden-golden-00",
+  "identity": {
+    "deviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "accountUuid": "00000000-0000-4000-8000-000000000001",
+    "sessionId": "11111111-2222-4333-8444-555555555555"
+  },
+  "headers": [
+    {
+      "body": {
+        "model": "claude-opus-5-5",
+        "stream": true
+      },
+      "identity": {
+        "deviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "accountUuid": "00000000-0000-4000-8000-000000000001",
+        "sessionId": "11111111-2222-4333-8444-555555555555"
+      },
+      "incomingBetas": "claude-code-20250219,oauth-2025-04-20",
+      "headers": {
+        "accept": "application/json",
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,context-1m-2025-08-07",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-ant-oat01-golden-golden-golden-golden-00",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/2.1.280 (external, cli)",
+        "x-app": "cli",
+        "x-claude-code-session-id": "11111111-2222-4333-8444-555555555555",
+        "x-stainless-arch": "x64",
+        "x-stainless-helper-method": "stream",
+        "x-stainless-lang": "js",
+        "x-stainless-os": "Linux",
+        "x-stainless-package-version": "0.112.1",
+        "x-stainless-retry-count": "0",
+        "x-stainless-runtime": "node",
+        "x-stainless-runtime-version": "v26.3.0",
+        "x-stainless-timeout": "600"
+      }
+    },
+    {
+      "body": {
+        "model": "claude-opus-5-5",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "You help.",
+                "cache_control": {
+                  "type": "ephemeral"
+                }
+              },
+              {
+                "type": "text",
+                "text": "Say hello to the world, please.",
+                "cache_control": {
+                  "type": "ephemeral"
+                }
+              }
+            ]
+          }
+        ],
+        "system": [
+          {
+            "type": "text",
+            "text": "x-anthropic-billing-header: cc_version=2.1.280.49f; cc_entrypoint=cli; cch=00000;"
+          },
+          {
+            "type": "text",
+            "text": "You are Claude Code, Anthropic's official CLI for Claude.",
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          }
+        ],
+        "metadata": {
+          "user_id": "{\"device_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"account_uuid\":\"00000000-0000-4000-8000-000000000001\",\"session_id\":\"11111111-2222-4333-8444-555555555555\"}"
+        },
+        "max_tokens": 32000,
+        "thinking": {
+          "type": "adaptive",
+          "display": "summarized"
+        },
+        "stream": true
+      },
+      "identity": {
+        "deviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "accountUuid": "00000000-0000-4000-8000-000000000001",
+        "sessionId": "11111111-2222-4333-8444-555555555555"
+      },
+      "incomingBetas": "",
+      "headers": {
+        "accept": "application/json",
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,context-1m-2025-08-07",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-ant-oat01-golden-golden-golden-golden-00",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/2.1.280 (external, cli)",
+        "x-app": "cli",
+        "x-claude-code-session-id": "11111111-2222-4333-8444-555555555555",
+        "x-stainless-arch": "x64",
+        "x-stainless-helper-method": "stream",
+        "x-stainless-lang": "js",
+        "x-stainless-os": "Linux",
+        "x-stainless-package-version": "0.112.1",
+        "x-stainless-retry-count": "0",
+        "x-stainless-runtime": "node",
+        "x-stainless-runtime-version": "v26.3.0",
+        "x-stainless-timeout": "600"
+      }
+    }
+  ],
+  "betas": [
+    {
+      "body": {
+        "model": "claude-opus-5-5",
+        "stream": true
+      },
+      "extra": [],
+      "betas": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,context-1m-2025-08-07"
+    },
+    {
+      "body": {
+        "model": "claude-opus-5-5",
+        "stream": true
+      },
+      "extra": [
+        "claude-code-20250219",
+        "oauth-2025-04-20",
+        "x-extra"
+      ],
+      "betas": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,context-1m-2025-08-07,x-extra"
+    },
+    {
+      "body": {
+        "model": "claude-haiku-4-5"
+      },
+      "extra": [],
+      "betas": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07"
+    },
+    {
+      "body": {
+        "model": "claude-haiku-4-5"
+      },
+      "extra": [
+        "claude-code-20250219",
+        "oauth-2025-04-20",
+        "x-extra"
+      ],
+      "betas": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,x-extra"
+    },
+    {
+      "body": {
+        "model": "claude-haiku-4-5[1m]"
+      },
+      "extra": [],
+      "betas": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,context-1m-2025-08-07"
+    },
+    {
+      "body": {
+        "model": "claude-haiku-4-5[1m]"
+      },
+      "extra": [
+        "claude-code-20250219",
+        "oauth-2025-04-20",
+        "x-extra"
+      ],
+      "betas": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,context-1m-2025-08-07,x-extra"
+    },
+    {
+      "body": {
+        "model": "claude-opus-4-8-20260101",
+        "speed": "fast"
+      },
+      "extra": [],
+      "betas": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,fast-mode-2026-02-01,context-1m-2025-08-07"
+    },
+    {
+      "body": {
+        "model": "claude-opus-4-8-20260101",
+        "speed": "fast"
+      },
+      "extra": [
+        "claude-code-20250219",
+        "oauth-2025-04-20",
+        "x-extra"
+      ],
+      "betas": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,fast-mode-2026-02-01,context-1m-2025-08-07,x-extra"
+    },
+    {
+      "body": {
+        "model": "claude-sonnet-5",
+        "tools": [
+          {
+            "name": "t"
+          }
+        ],
+        "system": [],
+        "thinking": {
+          "type": "adaptive"
+        },
+        "context_management": {},
+        "output_config": {
+          "effort": "high"
+        },
+        "diagnostics": {}
+      },
+      "extra": [],
+      "betas": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,advisor-tool-2026-03-01,advanced-tool-use-2025-11-20,context-1m-2025-08-07"
+    },
+    {
+      "body": {
+        "model": "claude-sonnet-5",
+        "tools": [
+          {
+            "name": "t"
+          }
+        ],
+        "system": [],
+        "thinking": {
+          "type": "adaptive"
+        },
+        "context_management": {},
+        "output_config": {
+          "effort": "high"
+        },
+        "diagnostics": {}
+      },
+      "extra": [
+        "claude-code-20250219",
+        "oauth-2025-04-20",
+        "x-extra"
+      ],
+      "betas": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,advisor-tool-2026-03-01,advanced-tool-use-2025-11-20,context-1m-2025-08-07,x-extra"
+    },
+    {
+      "body": {
+        "model": "m",
+        "output_config": {
+          "format": {
+            "type": "json_schema"
+          }
+        }
+      },
+      "extra": [],
+      "betas": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,structured-outputs-2025-12-15"
+    },
+    {
+      "body": {
+        "model": "m",
+        "output_config": {
+          "format": {
+            "type": "json_schema"
+          }
+        }
+      },
+      "extra": [
+        "claude-code-20250219",
+        "oauth-2025-04-20",
+        "x-extra"
+      ],
+      "betas": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,structured-outputs-2025-12-15,x-extra"
+    },
+    {
+      "body": {
+        "model": "claude-sonnet-4-5",
+        "output_config": {
+          "effort": "max"
+        }
+      },
+      "extra": [],
+      "betas": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,context-1m-2025-08-07"
+    },
+    {
+      "body": {
+        "model": "claude-sonnet-4-5",
+        "output_config": {
+          "effort": "max"
+        }
+      },
+      "extra": [
+        "claude-code-20250219",
+        "oauth-2025-04-20",
+        "x-extra"
+      ],
+      "betas": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07,context-1m-2025-08-07,x-extra"
+    }
+  ],
+  "billing": [
+    {
+      "messages": [
+        {
+          "role": "user",
+          "content": "Say hello to the world, please."
+        }
+      ],
+      "version": "2.1.280",
+      "text": "x-anthropic-billing-header: cc_version=2.1.280.49f; cc_entrypoint=cli; cch=00000;"
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "content": "Say hello to the world, please."
+        }
+      ],
+      "version": "2.1.300",
+      "text": "x-anthropic-billing-header: cc_version=2.1.300.aa5; cc_entrypoint=cli; cch=00000;"
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "isMeta": true,
+          "content": "meta text first"
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "image",
+              "source": {}
+            },
+            {
+              "type": "text",
+              "text": "Read the file at path one"
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ]
+        }
+      ],
+      "version": "2.1.280",
+      "text": "x-anthropic-billing-header: cc_version=2.1.280.cb1; cc_entrypoint=cli; cch=00000;"
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "isMeta": true,
+          "content": "meta text first"
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "image",
+              "source": {}
+            },
+            {
+              "type": "text",
+              "text": "Read the file at path one"
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ]
+        }
+      ],
+      "version": "2.1.300",
+      "text": "x-anthropic-billing-header: cc_version=2.1.300.356; cc_entrypoint=cli; cch=00000;"
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "content": "héllo wörld 😀 and more text here"
+        }
+      ],
+      "version": "2.1.280",
+      "text": "x-anthropic-billing-header: cc_version=2.1.280.b84; cc_entrypoint=cli; cch=00000;"
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "content": "héllo wörld 😀 and more text here"
+        }
+      ],
+      "version": "2.1.300",
+      "text": "x-anthropic-billing-header: cc_version=2.1.300.66f; cc_entrypoint=cli; cch=00000;"
+    },
+    {
+      "messages": [
+        {
+          "role": "assistant",
+          "content": "no user"
+        }
+      ],
+      "version": "2.1.280",
+      "text": "x-anthropic-billing-header: cc_version=2.1.280.d7b; cc_entrypoint=cli; cch=00000;"
+    },
+    {
+      "messages": [
+        {
+          "role": "assistant",
+          "content": "no user"
+        }
+      ],
+      "version": "2.1.300",
+      "text": "x-anthropic-billing-header: cc_version=2.1.300.ca9; cc_entrypoint=cli; cch=00000;"
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "content": "abc"
+        }
+      ],
+      "version": "2.1.280",
+      "text": "x-anthropic-billing-header: cc_version=2.1.280.d7b; cc_entrypoint=cli; cch=00000;"
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "content": "abc"
+        }
+      ],
+      "version": "2.1.300",
+      "text": "x-anthropic-billing-header: cc_version=2.1.300.ca9; cc_entrypoint=cli; cch=00000;"
+    }
+  ],
+  "userAgent": [
+    {
+      "env": {},
+      "userAgent": "claude-cli/2.1.280 (external, cli)"
+    },
+    {
+      "env": {
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-ts"
+      },
+      "userAgent": "claude-cli/2.1.280 (external, sdk-ts)"
+    },
+    {
+      "env": {
+        "CLAUDE_CODE_ENTRYPOINT": " ",
+        "CLAUDE_AGENT_SDK_VERSION": "0.2.1",
+        "CLAUDE_AGENT_SDK_CLIENT_APP": "app"
+      },
+      "userAgent": "claude-cli/2.1.280 (external, cli, agent-sdk/0.2.1, client-app/app)"
+    }
+  ],
+  "metadata": [
+    {
+      "identity": {
+        "deviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "accountUuid": "00000000-0000-4000-8000-000000000001",
+        "sessionId": "11111111-2222-4333-8444-555555555555"
+      },
+      "userId": "{\"device_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"account_uuid\":\"00000000-0000-4000-8000-000000000001\",\"session_id\":\"11111111-2222-4333-8444-555555555555\"}"
+    },
+    {
+      "identity": {
+        "deviceId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "sessionId": "ses-anonymous"
+      },
+      "userId": null
+    }
+  ],
+  "piRequest": {
+    "model": "claude-opus-5-5",
+    "context": {
+      "systemPrompt": "You help.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Say hello to the world, please.",
+          "timestamp": 0
+        }
+      ]
+    },
+    "bodyText": "{\"model\":\"claude-opus-5-5\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"You help.\",\"cache_control\":{\"type\":\"ephemeral\"}},{\"type\":\"text\",\"text\":\"Say hello to the world, please.\",\"cache_control\":{\"type\":\"ephemeral\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.280.49f; cc_entrypoint=cli; cch=00000;\"},{\"type\":\"text\",\"text\":\"You are Claude Code, Anthropic's official CLI for Claude.\",\"cache_control\":{\"type\":\"ephemeral\"}}],\"metadata\":{\"user_id\":\"{\\\"device_id\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"account_uuid\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"session_id\\\":\\\"11111111-2222-4333-8444-555555555555\\\"}\"},\"max_tokens\":32000,\"thinking\":{\"type\":\"adaptive\",\"display\":\"summarized\"},\"stream\":true}",
+    "keys": [
+      "model",
+      "messages",
+      "system",
+      "metadata",
+      "max_tokens",
+      "thinking",
+      "stream"
+    ],
+    "system0": {
+      "type": "text",
+      "text": "x-anthropic-billing-header: cc_version=2.1.280.49f; cc_entrypoint=cli; cch=00000;"
+    },
+    "metadata": {
+      "user_id": "{\"device_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"account_uuid\":\"00000000-0000-4000-8000-000000000001\",\"session_id\":\"11111111-2222-4333-8444-555555555555\"}"
+    }
+  }
+}

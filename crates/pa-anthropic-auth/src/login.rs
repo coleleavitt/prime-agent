@@ -65,6 +65,28 @@ impl StoredLogin {
 }
 
 impl SharedStoreSource {
+    /// The account behind an access token, from the profile endpoint (best
+    /// effort: empty when the endpoint is refused, unreachable or silent).
+    pub(crate) async fn fetch_identity(
+        &self,
+        access: &str,
+    ) -> anthropic::profile::OAuthAccountIdentity {
+        if anthropic::endpoints::check_oauth_url(
+            &self.config.profile_url,
+            self.config.require_loopback,
+        )
+        .is_err()
+        {
+            return anthropic::profile::OAuthAccountIdentity::default();
+        }
+        anthropic::profile::fetch_oauth_account_identity_from(
+            &anthropic::oauth::default_oauth_http_client(),
+            &self.config.profile_url,
+            access,
+        )
+        .await
+    }
+
     /// Take custody of a fresh login: identify the account (the profile
     /// endpoint, best effort), merge it into the row holding the same login
     /// (or a new row), make it current, and publish it to Claude Code when
@@ -87,21 +109,7 @@ impl SharedStoreSource {
             account: None,
             organization: None,
         };
-        let identity = if anthropic::endpoints::check_oauth_url(
-            &self.config.profile_url,
-            self.config.require_loopback,
-        )
-        .is_ok()
-        {
-            anthropic::profile::fetch_oauth_account_identity_from(
-                &anthropic::oauth::default_oauth_http_client(),
-                &self.config.profile_url,
-                tokens.access.expose(),
-            )
-            .await
-        } else {
-            anthropic::profile::OAuthAccountIdentity::default()
-        };
+        let identity = self.fetch_identity(tokens.access.expose()).await;
         if let Some(uuid) = identity.account_uuid.clone() {
             tokens.account = Some(TokenAccount {
                 uuid,

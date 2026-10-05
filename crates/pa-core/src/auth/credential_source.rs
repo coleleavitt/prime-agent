@@ -43,6 +43,69 @@ pub trait ProviderCredentialSource: Send + Sync {
     /// [`CredentialSourceError::Unavailable`]: the provider's
     /// authentication failure.
     fn credential(&self) -> Result<SourcedCredential, CredentialSourceError>;
+
+    /// Offered the OAuth login `auth.json` holds for the provider, once per
+    /// lookup while one is there: the source may take custody of it (a
+    /// one-time migration into the source's store). On
+    /// [`StoredLoginCustody::Adopted`] the lookup removes `auth.json`'s
+    /// entry (only while it still holds this login), so the two never both
+    /// refresh it; on [`StoredLoginCustody::Kept`] `auth.json` keeps it and
+    /// serves it as before while the source reports no login.
+    ///
+    /// The default keeps every stored login. May block on disk and network.
+    fn adopt_stored_login(&self, login: &StoredOAuthLogin) -> StoredLoginCustody {
+        let _ = login;
+        StoredLoginCustody::Kept
+    }
+
+    /// `/logout` for the provider: remove the login the source serves it
+    /// now. May block on disk.
+    ///
+    /// # Errors
+    ///
+    /// [`CredentialSourceError::NotConfigured`] when the source holds no
+    /// login (the default: a source that cannot remove logins), otherwise
+    /// [`CredentialSourceError::Unavailable`] with a secret-free reason.
+    fn remove_login(&self) -> Result<RemovedLogin, CredentialSourceError> {
+        Err(CredentialSourceError::NotConfigured)
+    }
+}
+
+/// A login a source removed on `/logout`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemovedLogin {
+    /// What the logout should tell the user beyond "logged out" (where the
+    /// login was, what still serves the provider), without secrets.
+    pub notice: Option<String>,
+}
+
+/// An OAuth login `auth.json` holds, offered to the provider's source.
+#[derive(Clone, PartialEq, Eq)]
+pub struct StoredOAuthLogin {
+    /// The access token.
+    pub access: String,
+    /// The refresh token.
+    pub refresh: String,
+    /// When the access token expires, epoch milliseconds.
+    pub expires_ms: i64,
+}
+
+impl std::fmt::Debug for StoredOAuthLogin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StoredOAuthLogin")
+            .field("expires_ms", &self.expires_ms)
+            .finish_non_exhaustive()
+    }
+}
+
+/// What a source did with a stored login it was offered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredLoginCustody {
+    /// The source holds the login (or a login of the same account it keeps
+    /// instead): `auth.json`'s copy is removed.
+    Adopted,
+    /// The source did not take it: `auth.json` keeps it.
+    Kept,
 }
 
 /// What a source reports about its login, without secrets.
@@ -111,6 +174,14 @@ pub fn credential_source(provider_id: &str) -> Option<Arc<dyn ProviderCredential
     registry().read_or_recover().get(provider_id).cloned()
 }
 
+/// The provider ids with an installed source, sorted.
+#[must_use]
+pub fn credential_source_providers() -> Vec<String> {
+    let mut providers: Vec<String> = registry().read_or_recover().keys().cloned().collect();
+    providers.sort();
+    providers
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -130,6 +201,9 @@ mod tests {
         status: Mutex<Option<CredentialSourceStatus>>,
         result: Mutex<Result<SourcedCredential, CredentialSourceError>>,
         calls: AtomicUsize,
+        /// The answer to a stored login; `Adopted` also starts serving.
+        custody: Mutex<StoredLoginCustody>,
+        offered: Mutex<Vec<StoredOAuthLogin>>,
     }
 
     impl StubSource {
@@ -141,6 +215,8 @@ mod tests {
                     headers: BTreeMap::from([("x-stub".to_string(), "1".to_string())]),
                 })),
                 calls: AtomicUsize::new(0),
+                custody: Mutex::new(StoredLoginCustody::Kept),
+                offered: Mutex::new(Vec::new()),
             })
         }
 
@@ -162,6 +238,43 @@ mod tests {
         fn credential(&self) -> Result<SourcedCredential, CredentialSourceError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.result.lock_or_recover().clone()
+        }
+
+        fn adopt_stored_login(&self, login: &StoredOAuthLogin) -> StoredLoginCustody {
+            self.offered.lock_or_recover().push(login.clone());
+            let custody = *self.custody.lock_or_recover();
+            if custody == StoredLoginCustody::Adopted {
+                *self.status.lock_or_recover() = Some(status("adopted"));
+            }
+            custody
+        }
+    }
+
+    /// A source that adopts every stored login after another process
+    /// wrote a newer one into the same `auth.json`.
+    struct RacedSource {
+        auth_path: std::path::PathBuf,
+        provider: &'static str,
+    }
+
+    impl ProviderCredentialSource for RacedSource {
+        fn status(&self) -> Option<CredentialSourceStatus> {
+            None
+        }
+
+        fn credential(&self) -> Result<SourcedCredential, CredentialSourceError> {
+            Err(CredentialSourceError::NotConfigured)
+        }
+
+        fn adopt_stored_login(&self, _login: &StoredOAuthLogin) -> StoredLoginCustody {
+            let newer = serde_json::json!({
+                self.provider: {
+                    "type": "oauth", "access": "newer-access", "refresh": "newer-refresh",
+                    "expires": 4_102_444_800_000i64
+                }
+            });
+            std::fs::write(&self.auth_path, newer.to_string()).expect("write the newer login");
+            StoredLoginCustody::Adopted
         }
     }
 
@@ -323,6 +436,97 @@ mod tests {
     }
 
     #[test]
+    fn a_source_lists_its_provider_and_by_default_removes_no_login() {
+        let provider = "stub-source-listed";
+        let source = StubSource::serving("rev-1", "source-access");
+        install_credential_source(provider, source.clone());
+
+        assert!(credential_source_providers().contains(&provider.to_string()));
+        assert_eq!(
+            source.remove_login(),
+            Err(CredentialSourceError::NotConfigured)
+        );
+    }
+
+    fn stored_login() -> StoredOAuthLogin {
+        StoredOAuthLogin {
+            access: "auth-json-access".to_string(),
+            refresh: "r".to_string(),
+            expires_ms: 4_102_444_800_000,
+        }
+    }
+
+    #[test]
+    fn a_source_that_adopts_the_stored_login_takes_it_out_of_auth_json() {
+        let provider = "stub-source-adopts";
+        let source = StubSource::serving("rev-1", "source-access");
+        let serving = source.result.lock_or_recover().clone();
+        source.set(None, serving);
+        *source.custody.lock_or_recover() = StoredLoginCustody::Adopted;
+        install_credential_source(provider, source.clone());
+        let mut auth = storage_with_login(provider);
+
+        assert_eq!(
+            auth.get_api_key_with_source_token(provider, false),
+            served(provider, "adopted", "source-access")
+        );
+        assert_eq!(*source.offered.lock_or_recover(), vec![stored_login()]);
+        assert_eq!(auth.get_all().get(provider), None);
+
+        // Nothing is left to offer.
+        auth.get_api_key(provider);
+        assert_eq!(source.offered.lock_or_recover().len(), 1);
+    }
+
+    #[test]
+    fn a_source_that_keeps_the_stored_login_leaves_auth_json_serving() {
+        let provider = "stub-source-keeps";
+        let source = StubSource::serving("rev-1", "source-access");
+        source.set(None, Err(CredentialSourceError::NotConfigured));
+        install_credential_source(provider, source.clone());
+        let mut auth = storage_with_login(provider);
+
+        assert_eq!(
+            auth.get_api_key(provider),
+            Some("auth-json-access".to_string())
+        );
+        assert_eq!(*source.offered.lock_or_recover(), vec![stored_login()]);
+        assert!(auth.get_all().get(provider).is_some());
+    }
+
+    #[test]
+    fn a_login_written_during_the_adoption_stays_in_auth_json() {
+        let provider = "stub-source-raced";
+        let dir = tempfile::tempdir().expect("a temp agent dir");
+        let auth_path = dir.path().join("auth.json");
+        let stored = serde_json::json!({
+            provider: {
+                "type": "oauth", "access": "auth-json-access", "refresh": "r",
+                "expires": 4_102_444_800_000i64
+            }
+        });
+        std::fs::write(&auth_path, stored.to_string()).expect("seed auth.json");
+        install_credential_source(
+            provider,
+            Arc::new(RacedSource {
+                auth_path: auth_path.clone(),
+                provider,
+            }),
+        );
+        let mut auth = AuthStorage::from_storage(
+            Arc::new(crate::auth::FileAuthStorageBackend::new(&auth_path)),
+            Arc::new(NoOAuth),
+        );
+
+        auth.get_api_key(provider);
+
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&auth_path).expect("auth.json"))
+                .expect("auth.json parses");
+        assert_eq!(on_disk[provider]["refresh"], "newer-refresh");
+    }
+
+    #[test]
     fn the_debug_form_never_shows_the_credential() {
         let credential = SourcedCredential {
             api_key: "secret-access".to_string(),
@@ -332,6 +536,10 @@ mod tests {
         assert_eq!(
             format!("{credential:?}"),
             r#"SourcedCredential { api_key: "<redacted>", headers: ["x-stub"] }"#
+        );
+        assert_eq!(
+            format!("{:?}", stored_login()),
+            "StoredOAuthLogin { expires_ms: 4102444800000, .. }"
         );
     }
 }
