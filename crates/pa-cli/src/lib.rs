@@ -254,8 +254,10 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
     // Workspace trust: project configuration that can run code or change
     // the prompt loads only in a trusted workspace. The interactive client
     // asks once; headless modes print what they skipped; daemon workers
-    // read the recorded decision.
-    workspace_trust_gate::gate_launch(&cwd, &agent_dir, app_mode, parsed.trust_workspace)?;
+    // read the recorded decision. `model list` starts no session.
+    if parsed.list_models.is_none() {
+        workspace_trust_gate::gate_launch(&cwd, &agent_dir, app_mode, parsed.trust_workspace)?;
+    }
     // Telemetry opt-in resolution: env override, then settings; the
     // runtime config only carries the disabled case.
     let telemetry_disabled = crate::mode::telemetry_disabled(
