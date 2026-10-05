@@ -89,22 +89,24 @@ pub(crate) fn sanitize_control_bytes(target: String) -> String {
 }
 
 /// The env-based hyperlink-capability gate (TS `detectCapabilities`):
-/// enabled only in terminals positively known to implement OSC 8, forced
-/// off under tmux/screen, and off in unknown terminals (a swallowed OSC 8
-/// hides the URL).
+/// enabled only in terminals positively known to implement OSC 8, off in
+/// unknown terminals (a swallowed OSC 8 hides the URL). Inside tmux it follows
+/// what tmux negotiated with its client (upstream #876: tmux 3.4+ forwards OSC 8
+/// when `#{client_termfeatures}` lists `hyperlinks`); a `tmux`/`screen` TERM
+/// without a tmux session (screen, or a remote shell under one) stays off.
 #[must_use]
 pub fn hyperlinks_enabled() -> bool {
     if let Some(overridden) = OVERRIDE.with(|c| *c.borrow()) {
         return overridden;
     }
+    if std::env::var_os("TMUX").is_some() {
+        return tmux_client_has_hyperlinks();
+    }
     let term_program = std::env::var("TERM_PROGRAM")
         .unwrap_or_default()
         .to_lowercase();
     let term = std::env::var("TERM").unwrap_or_default().to_lowercase();
-    let in_tmux_or_screen = std::env::var_os("TMUX").is_some()
-        || term.starts_with("tmux")
-        || term.starts_with("screen");
-    if in_tmux_or_screen {
+    if term.starts_with("tmux") || term.starts_with("screen") {
         return false;
     }
     if std::env::var_os("KITTY_WINDOW_ID").is_some() || term_program == "kitty" {
@@ -123,6 +125,34 @@ pub fn hyperlinks_enabled() -> bool {
         return true;
     }
     matches!(term_program.as_str(), "vscode" | "alacritty")
+}
+
+/// The tmux feature probe's bound (the TS probe's 250ms): a slow or wedged server means no
+/// links, never a stalled first frame.
+const TMUX_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Whether the tmux client this pane renders to negotiated OSC 8, asked once per process
+/// (`hyperlinks_enabled` runs on every link render).
+fn tmux_client_has_hyperlinks() -> bool {
+    static PROBED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *PROBED.get_or_init(|| {
+        let pane = std::env::var("TMUX_PANE").ok();
+        let mut args = vec!["display-message", "-p"];
+        if let Some(pane) = pane.as_deref() {
+            args.extend(["-t", pane]);
+        }
+        args.push("#{client_termfeatures}");
+        crate::clipboard::tmux_output_within(&args, TMUX_PROBE_TIMEOUT)
+            .is_some_and(|features| termfeatures_include_hyperlinks(&features))
+    })
+}
+
+/// Whether a `#{client_termfeatures}` answer lists `hyperlinks` (comma-separated features;
+/// `:`-joined groups too, as the TS probe parsed them).
+fn termfeatures_include_hyperlinks(features: &str) -> bool {
+    features
+        .split([',', ':'])
+        .any(|feature| feature.trim() == "hyperlinks")
 }
 
 thread_local! {
@@ -482,6 +512,17 @@ fn escape_complete(seq: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tmux_termfeatures_parse_the_hyperlinks_feature() {
+        assert!(termfeatures_include_hyperlinks(
+            "256,RGB,bpaste,clipboard,hyperlinks\n"
+        ));
+        assert!(termfeatures_include_hyperlinks("RGB:hyperlinks"));
+        assert!(!termfeatures_include_hyperlinks("256,RGB,title"));
+        assert!(!termfeatures_include_hyperlinks("nohyperlinks"));
+        assert!(!termfeatures_include_hyperlinks(""));
+    }
     use crate::Span;
 
     fn line(text: &str) -> Line {
