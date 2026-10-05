@@ -894,3 +894,83 @@ async fn a_length_truncated_reply_ends_the_run_without_the_policy() {
         vec![("user", "go".to_string()), ("assistant", "cut".to_string())]
     );
 }
+
+fn guarded_agent(provider: &Arc<ScriptedProvider>) -> Agent {
+    Agent::new(AgentOptions {
+        stream_fn: Some(provider.stream_fn()),
+        repetition_guard: Some(pa_agent::repetition_guard::RepetitionGuardConfig {
+            guard_text: true,
+            ..Default::default()
+        }),
+        ..Default::default()
+    })
+}
+
+/// Upstream #1798: a degenerate looping stream is stopped by the guard
+/// instead of streaming to the cap: the reply settles as an error naming
+/// the guard (`stopReasonRaw: repetition_loop`), trimmed to its first
+/// repeats, and the run ends.
+#[tokio::test]
+async fn the_repetition_guard_stops_a_looping_stream() {
+    let provider = Arc::new(ScriptedProvider::new(test_model()));
+    let agent = guarded_agent(&provider);
+    agent.set_model(test_model()).await;
+    provider.push_text_turn(&format!("Thinking it over: {}", "the ".repeat(5_000)));
+    provider.push_text_turn("never requested");
+    agent.prompt("go").await.unwrap();
+    agent.wait_for_idle().await;
+    let state = agent.state().await;
+    let reply = assistant_text(state.messages.last().unwrap());
+    // The guard fires at the first 256-byte check past the 2000-char span
+    // floor: 507 repeats in, far short of the 5000 the stream would send.
+    assert_eq!(
+        (
+            reply.stop_reason,
+            reply.stop_reason_raw.as_deref(),
+            reply.error_message.as_deref(),
+        ),
+        (
+            StopReason::Error,
+            Some("repetition_loop"),
+            Some("Generation stopped by the repetition guard: the output repeated one 4-character unit 507 times in a row"),
+        )
+    );
+    assert_eq!(
+        transcript(&state.messages),
+        vec![
+            ("user", "go".to_string()),
+            ("assistant", "Thinking it over: the the".to_string()),
+        ]
+    );
+    assert_eq!(provider.calls().len(), 1);
+}
+
+/// The guard never stops real output with repeated structure, and without
+/// the guard (the default) a loop streams to its end.
+#[tokio::test]
+async fn the_repetition_guard_passes_real_output_and_is_off_by_default() {
+    let provider = Arc::new(ScriptedProvider::new(test_model()));
+    let agent = guarded_agent(&provider);
+    agent.set_model(test_model()).await;
+    let code = (0..120).fold(String::new(), |mut code, row| {
+        use std::fmt::Write as _;
+        let _ = write!(
+            code,
+            "    assert_eq!(table[{row}], expected[{row}]);\n    }}\n"
+        );
+        code
+    });
+    provider.push_text_turn(&code);
+    agent.prompt("write the test").await.unwrap();
+    agent.wait_for_idle().await;
+    let reply = assistant_text(agent.state().await.messages.last().unwrap()).clone();
+    assert_eq!(reply.stop_reason, StopReason::Stop);
+
+    let (agent, provider, _events) = scripted_agent(vec![]).await;
+    let looping = "the ".repeat(5_000);
+    provider.push_text_turn(&looping);
+    agent.prompt("go").await.unwrap();
+    agent.wait_for_idle().await;
+    let reply = assistant_text(agent.state().await.messages.last().unwrap()).clone();
+    assert_eq!(reply.stop_reason, StopReason::Stop);
+}

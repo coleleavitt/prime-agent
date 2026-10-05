@@ -235,6 +235,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // (`settings` moves into the loader); the `PI_REQUEST_TIMING` half stays live.
     let request_timing_settings = settings.get_request_timing();
     let length_continuations = settings.get_length_continuations();
+    let repetition_guard = settings.get_repetition_guard();
     let kernel_environment = settings.get_kernel_environment();
     // Captured before `settings` moves into the resource loader: the
     // factory host bridge's preflight facts (the daemon `allowedModels`
@@ -730,6 +731,10 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 }),
             }
         }),
+        // On (reasoning only) unless `repetitionGuard` says otherwise: a
+        // degenerate looping generation settles as a guarded error instead
+        // of streaming to the output cap.
+        repetition_guard,
         ..Default::default()
     });
     crate::features::observe_agent_events(crate::features::installed(), &feature_context, &agent)

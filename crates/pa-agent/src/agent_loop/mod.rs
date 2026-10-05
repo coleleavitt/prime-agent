@@ -145,6 +145,9 @@ pub struct AgentLoopConfig {
     /// Auto-continuation of output-limit truncations; `None` ends the run
     /// on a truncated reply (the TS behavior).
     pub length_continuation: Option<LengthContinuation>,
+    /// Stop a degenerate looping generation mid-stream (upstream #1798);
+    /// `None` streams every response to its natural end.
+    pub repetition_guard: Option<crate::repetition_guard::RepetitionGuardConfig>,
 }
 
 impl AgentLoopConfig {
@@ -172,6 +175,7 @@ impl AgentLoopConfig {
             before_tool_call: None,
             after_tool_call: None,
             length_continuation: None,
+            repetition_guard: None,
         }
     }
 

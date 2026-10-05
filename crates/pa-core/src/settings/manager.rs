@@ -992,6 +992,34 @@ impl SettingsManager {
         self.merged.request_timing.unwrap_or(false)
     }
 
+    /// `repetitionGuard` (upstream #1798): the guard's channels, `None`
+    /// when off. Unset or unrecognized values keep the default, which
+    /// guards reasoning only (a user can legitimately ask for repetitive
+    /// reply text).
+    #[must_use]
+    pub fn get_repetition_guard(
+        &self,
+    ) -> Option<pa_agent::repetition_guard::RepetitionGuardConfig> {
+        let default = pa_agent::repetition_guard::RepetitionGuardConfig::default();
+        match self.merged.repetition_guard.as_ref() {
+            Some(serde_json::Value::Bool(false)) => None,
+            Some(serde_json::Value::String(mode)) if mode == "off" => None,
+            Some(serde_json::Value::Bool(true)) => {
+                Some(pa_agent::repetition_guard::RepetitionGuardConfig {
+                    guard_text: true,
+                    ..default
+                })
+            }
+            Some(serde_json::Value::String(mode)) if mode == "all" => {
+                Some(pa_agent::repetition_guard::RepetitionGuardConfig {
+                    guard_text: true,
+                    ..default
+                })
+            }
+            _ => Some(default),
+        }
+    }
+
     /// `lengthContinuations`: the bound on consecutive auto-continuations
     /// of a reply cut off at the output-token limit, clamped to
     /// [`MAX_LENGTH_CONTINUATIONS`]. 0 (the default) is off.

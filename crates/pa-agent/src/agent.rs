@@ -108,6 +108,9 @@ pub struct AgentOptions {
     /// Auto-continue replies cut off at the output-token limit; `None`
     /// (the default) ends the run on a truncated reply.
     pub length_continuation: Option<crate::agent_loop::LengthContinuation>,
+    /// Stop a degenerate looping generation mid-stream; `None` (the
+    /// default) streams every response to its natural end.
+    pub repetition_guard: Option<crate::repetition_guard::RepetitionGuardConfig>,
 }
 
 struct MutableAgentState {
@@ -431,6 +434,7 @@ pub(crate) struct AgentInner {
     should_stop_after_turn: Option<ShouldStopAfterTurnFn>,
     should_stop_before_turn: Option<ShouldStopBeforeTurnFn>,
     length_continuation: Option<crate::agent_loop::LengthContinuation>,
+    repetition_guard: Option<crate::repetition_guard::RepetitionGuardConfig>,
     /// The natural-turn-end continuation hook: settable after construction so the session engine
     /// can install it. A plain mutex: cloned at run-config build, never held across an await.
     get_continuation_messages: Mutex<Option<GetContinuationMessagesFn>>,
@@ -690,6 +694,7 @@ impl AgentInner {
         config
             .length_continuation
             .clone_from(&self.length_continuation);
+        config.repetition_guard = self.repetition_guard;
         config
     }
 
@@ -1175,6 +1180,7 @@ impl Agent {
             should_stop_after_turn: options.should_stop_after_turn,
             should_stop_before_turn: options.should_stop_before_turn,
             length_continuation: options.length_continuation,
+            repetition_guard: options.repetition_guard,
             get_continuation_messages: Mutex::new(options.get_continuation_messages),
             model_override: Mutex::new(None),
             session_id: options.session_id,
