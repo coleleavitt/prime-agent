@@ -33,9 +33,12 @@ impl AuthStorage {
             }
         }
 
-        // 1b. An installed credential source owns the provider while it
-        // reports a login: its failure is the authentication failure, never
-        // a fall-through to a credential it may have superseded.
+        // 1b. A login auth.json still holds is offered to the provider's
+        // installed credential source first (a one-time migration into
+        // it). The source then owns the provider while it reports a login:
+        // its failure is the authentication failure, never a fall-through
+        // to a credential it may have superseded.
+        self.offer_stored_login_to_source(provider_id);
         if let Some(candidate) = self.credential_source_candidate(provider_id) {
             if !self.is_stale(provider_id, &candidate) {
                 match credential_source(provider_id)

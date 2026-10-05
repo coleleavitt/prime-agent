@@ -13,7 +13,7 @@ pub(crate) mod types;
 
 pub use credential_source::{
     credential_source, install_credential_source, CredentialSourceError, CredentialSourceStatus,
-    ProviderCredentialSource, SourcedCredential,
+    ProviderCredentialSource, SourcedCredential, StoredLoginCustody, StoredOAuthLogin,
 };
 pub use manager::{
     oauth_refresh_failed_message, AuthApiKeyResult, AuthStorage, NoOAuth, OAuthIntegration,

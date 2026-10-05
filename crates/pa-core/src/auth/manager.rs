@@ -793,6 +793,52 @@ impl AuthStorage {
         self.remove(provider);
     }
 
+    /// Offer the provider's stored OAuth login to its installed credential
+    /// source; when the source takes custody, remove the entry, but only
+    /// while the file still holds that login (a newer login written in the
+    /// meantime stays).
+    pub(crate) fn offer_stored_login_to_source(&mut self, provider: &str) {
+        let Some(source) = super::credential_source(provider) else {
+            return;
+        };
+        let Some(AuthCredential::Oauth {
+            access,
+            refresh: Some(refresh),
+            expires,
+            ..
+        }) = self.data.credential(provider)
+        else {
+            return;
+        };
+        let login = super::StoredOAuthLogin {
+            access,
+            refresh,
+            expires_ms: expires,
+        };
+        if source.adopt_stored_login(&login) != super::StoredLoginCustody::Adopted
+            || self.load_error.is_some()
+        {
+            return;
+        }
+        let result = self.storage.with_lock(&mut |current| {
+            let mut data = parse_storage_data(current.as_deref())?;
+            let unchanged = matches!(
+                data.credential(provider),
+                Some(AuthCredential::Oauth { refresh: Some(stored), .. }) if stored == login.refresh
+            );
+            if !unchanged {
+                return Ok(((), None));
+            }
+            data.remove(provider);
+            Ok(((), Some(serde_json::to_string_pretty(&data.0)?)))
+        });
+        if let Err(error) = result {
+            self.errors.push(error.to_string());
+            return;
+        }
+        self.reload();
+    }
+
     fn persist_provider_change(&mut self, provider: &str, credential: Option<AuthCredential>) {
         if self.load_error.is_some() {
             return;
