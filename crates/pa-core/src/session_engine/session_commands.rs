@@ -388,6 +388,7 @@ async fn execute_refine(
         instructions: options.instructions,
         rollback_id: options.rollback_id,
         trigger: None,
+        pinned_plan: None,
     };
     let result = match engine
         .session

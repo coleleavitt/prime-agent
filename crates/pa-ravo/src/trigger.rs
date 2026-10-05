@@ -101,6 +101,7 @@ fn to_pending(
             data: serde_json::to_value(request).unwrap_or_default(),
             joined_by_agent: false,
         }),
+        plan_id: None,
     }
 }
 
@@ -140,7 +141,7 @@ pub(crate) fn merge_requests(previous: &PendingRefine, incoming: &PendingRefine)
         }
         (queued, added) => added.clone().or_else(|| queued.clone()),
     };
-    to_pending(
+    let mut merged = to_pending(
         instructions,
         previous.global,
         &FailureRequest {
@@ -152,7 +153,10 @@ pub(crate) fn merge_requests(previous: &PendingRefine, incoming: &PendingRefine)
             },
             trigger_fingerprint_ids: triggers,
         },
-    )
+    );
+    // An approved (previewed) plan stays pinned through the merge.
+    merged.plan_id = previous.plan_id.clone().or_else(|| incoming.plan_id.clone());
+    merged
 }
 
 /// Queue `request` on the session's pending refine: alone, merged into a
@@ -190,6 +194,7 @@ mod tests {
             instructions: Some(instructions.to_string()),
             global,
             trigger: None,
+            plan_id: None,
         }
     }
 
@@ -222,6 +227,7 @@ mod tests {
                     }),
                     joined_by_agent: false,
                 }),
+                plan_id: None,
             }
         );
         // The agent's own pending request makes the merge directed.

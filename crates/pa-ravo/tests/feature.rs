@@ -644,6 +644,7 @@ async fn failures_queue_their_own_refines_and_repairs() {
                 }),
                 joined_by_agent: false,
             }),
+            plan_id: None,
         }
     );
     // Once per fingerprint per session.
@@ -655,6 +656,7 @@ async fn failures_queue_their_own_refines_and_repairs() {
         instructions: recurrence.instructions.clone(),
         rollback_id: None,
         trigger: recurrence.trigger.clone(),
+        pinned_plan: None,
     };
     let claim = format!(
         r#"{{"verdict":"pass","score":80,"failedCriteria":[],"addressedFingerprints":["{fingerprint}"],"rationale":"fixes it"}}"#

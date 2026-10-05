@@ -345,61 +345,68 @@ pub async fn execute_refinement_gated(
         refinement_history,
     } = transcript;
     let local_harness_dir = local_harness_state_dir(session);
+    // A pinned plan applies to the scope it was previewed for.
+    let pinned = options.pinned_plan.clone();
+    let global_scope = pinned
+        .as_ref()
+        .map_or(options.global, |pinned| pinned.global);
     let core_options = CoreRefineOptions {
-        global: options.global,
+        global: global_scope,
         instructions: options.instructions.clone(),
         rollback_id: options.rollback_id.clone(),
     };
-    let requested_scope = if options.global {
+    let requested_scope = if global_scope {
         HarnessScope::Global
     } else {
         HarnessScope::Local
     };
-    // A local refinement needs the session's own directory: its harness state
-    // and artifact paths live there. The daemon's engine session is deliberately
-    // non-persisted but carries the session's directory, so local refinement runs.
-    if options.rollback_id.is_none()
-        && requested_scope == HarnessScope::Local
-        && !session.has_session_dir()
-    {
-        anyhow::bail!(
-            "Local harness refinement requires a session directory; use global refinement instead."
-        );
-    }
-    // Planning state: global, or merged global+local for local refinements.
-    let global_state = load_harness_state(global_harness_dir, HarnessScope::Global);
-    let planning_state = if requested_scope == HarnessScope::Global {
-        global_state.clone()
-    } else {
-        let local_state = load_harness_state(&local_harness_dir, HarnessScope::Local);
-        merge_harness_states(&global_state, Some(&local_state))
+    let (plan, planning_state, baseline_state) = match pinned {
+        // The approved plan applies exactly as previewed: no re-plan, and
+        // the preview's baseline rejects a store changed since.
+        Some(pinned) => {
+            let inputs = refine_planning_inputs(
+                &RefinementSessionDirs::of(session),
+                refinement_history,
+                global_harness_dir,
+                &RefineOptions {
+                    global: global_scope,
+                    ..RefineOptions::default()
+                },
+            )?;
+            (
+                RefinementPlan {
+                    proposal: pinned.proposal,
+                    id: pinned.plan_id,
+                    rollback_of: None,
+                    rollback_scope: None,
+                },
+                inputs.planning_state,
+                pinned.baseline_state,
+            )
+        }
+        None => {
+            let inputs = refine_planning_inputs(
+                &RefinementSessionDirs::of(session),
+                refinement_history,
+                global_harness_dir,
+                options,
+            )?;
+            let plan = plan_refinement(
+                messages,
+                &inputs.planning_state,
+                &inputs.history,
+                model,
+                &core_options,
+                refine_call,
+            )
+            .await?;
+            (
+                strip_display_prefixes(plan),
+                inputs.planning_state,
+                inputs.baseline_state,
+            )
+        }
     };
-    let global = load_global_refinement_history(global_harness_dir);
-    let history = crate::refinement::merge_refinement_history(&global, refinement_history);
-    // Baseline captured before the (slow) LLM pass, so concurrent kernel
-    // writes are rejected instead of clobbered.
-    let baseline_scope = options
-        .rollback_id
-        .as_ref()
-        .and_then(|id| history.iter().find(|item| &item.id == id))
-        .and_then(crate::refinement::infer_refinement_result_scope)
-        .unwrap_or(requested_scope);
-    let baseline_dir = match baseline_scope {
-        HarnessScope::Global => global_harness_dir.to_path_buf(),
-        HarnessScope::Local => local_harness_dir.clone(),
-    };
-    let baseline_state = load_harness_state(&baseline_dir, baseline_scope);
-
-    let mut plan = plan_refinement(
-        messages,
-        &planning_state,
-        &history,
-        model,
-        &core_options,
-        refine_call,
-    )
-    .await?;
-    plan = strip_display_prefixes(plan);
 
     let target_scope = plan.rollback_scope.unwrap_or(requested_scope);
     let gate = gating.as_ref().map(|gating| Arc::clone(&gating.gate));
@@ -559,6 +566,187 @@ pub struct RefineOptions {
     pub rollback_id: Option<String>,
     /// Why a feature requested this refine, for the session's gate.
     pub trigger: Option<super::turn_boundary::RefineTrigger>,
+    /// A plan approved through `refine.preview` (upstream #899): applied
+    /// as previewed instead of re-planning; its scope wins over `global`.
+    pub pinned_plan: Option<PreviewedRefinement>,
+}
+
+/// A planned refinement held for approval (`refine.preview`, upstream
+/// #899): the proposal exactly as previewed plus the target store's state
+/// at planning time, so an apply onto a store that changed since the
+/// preview is rejected instead of clobbering it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreviewedRefinement {
+    pub plan_id: String,
+    pub global: bool,
+    pub instructions: Option<String>,
+    pub proposal: crate::refinement::planner::RefinementProposal,
+    pub baseline_state: crate::refinement::HarnessState,
+}
+
+impl PreviewedRefinement {
+    /// The kernel-facing payload (`refine.preview`'s reply): snake-cased,
+    /// one row per proposed edit.
+    #[must_use]
+    pub fn to_payload(&self) -> serde_json::Value {
+        let edits: Vec<serde_json::Value> = self
+            .proposal
+            .edits
+            .iter()
+            .map(|edit| {
+                json!({
+                    "action": edit.action,
+                    "kind": edit.kind,
+                    "id": edit.id,
+                    "title": edit.title,
+                    "content": edit.content,
+                    "reason": edit.reason,
+                })
+            })
+            .collect();
+        json!({
+            "plan_id": self.plan_id,
+            "summary": self.proposal.summary,
+            "rationale": self.proposal.rationale,
+            "expected_outcome": self.proposal.expected_outcome,
+            "scope": if self.global { "global" } else { "local" },
+            "edits": edits,
+        })
+    }
+}
+
+/// Plan a refinement without applying it (`refine.preview`): the same
+/// planning pass, planning state, and history a `/refine` run uses; nothing
+/// is written. The returned plan applies later through
+/// [`RefineOptions::pinned_plan`].
+///
+/// # Errors
+///
+/// Returns the planning errors of [`execute_refinement`] (a local preview
+/// without a session directory, a failed or unparseable planning call).
+pub async fn preview_refinement(
+    session: RefinementSessionDirs,
+    transcript: RefinementTranscript<'_>,
+    global_harness_dir: &Path,
+    model: &pa_types::ai::Model,
+    global: bool,
+    instructions: Option<String>,
+    refine_call: crate::refinement::executor::RefinerFn,
+) -> anyhow::Result<PreviewedRefinement> {
+    let options = RefineOptions {
+        global,
+        instructions: instructions.clone(),
+        ..RefineOptions::default()
+    };
+    let inputs = refine_planning_inputs(
+        &session,
+        transcript.refinement_history,
+        global_harness_dir,
+        &options,
+    )?;
+    let core_options = CoreRefineOptions {
+        global,
+        instructions: instructions.clone(),
+        rollback_id: None,
+    };
+    let plan = strip_display_prefixes(
+        plan_refinement(
+            transcript.messages,
+            &inputs.planning_state,
+            &inputs.history,
+            model,
+            &core_options,
+            refine_call,
+        )
+        .await?,
+    );
+    Ok(PreviewedRefinement {
+        plan_id: plan.id,
+        global,
+        instructions,
+        proposal: plan.proposal,
+        baseline_state: inputs.baseline_state,
+    })
+}
+
+/// The session directory facts a refinement plans with, read once so the
+/// (slow) planning pass never holds the session lock.
+#[derive(Debug, Clone)]
+pub struct RefinementSessionDirs {
+    pub local_harness_dir: PathBuf,
+    pub has_session_dir: bool,
+}
+
+impl RefinementSessionDirs {
+    #[must_use]
+    pub fn of(session: &SessionManager) -> Self {
+        Self {
+            local_harness_dir: local_harness_state_dir(session),
+            has_session_dir: session.has_session_dir(),
+        }
+    }
+}
+
+/// The planning inputs one refinement reads before its (slow) planning
+/// pass: the planning state, the merged history, and the target store's
+/// baseline.
+struct RefinePlanningInputs {
+    planning_state: crate::refinement::HarnessState,
+    history: Vec<RefinementResult>,
+    baseline_state: crate::refinement::HarnessState,
+}
+
+fn refine_planning_inputs(
+    session: &RefinementSessionDirs,
+    refinement_history: &[RefinementResult],
+    global_harness_dir: &Path,
+    options: &RefineOptions,
+) -> anyhow::Result<RefinePlanningInputs> {
+    let local_harness_dir = session.local_harness_dir.clone();
+    let requested_scope = if options.global {
+        HarnessScope::Global
+    } else {
+        HarnessScope::Local
+    };
+    // A local refinement needs the session's own directory: its harness state
+    // and artifact paths live there. The daemon's engine session is deliberately
+    // non-persisted but carries the session's directory, so local refinement runs.
+    if options.rollback_id.is_none()
+        && requested_scope == HarnessScope::Local
+        && !session.has_session_dir
+    {
+        anyhow::bail!(
+            "Local harness refinement requires a session directory; use global refinement instead."
+        );
+    }
+    // Planning state: global, or merged global+local for local refinements.
+    let global_state = load_harness_state(global_harness_dir, HarnessScope::Global);
+    let planning_state = if requested_scope == HarnessScope::Global {
+        global_state.clone()
+    } else {
+        let local_state = load_harness_state(&local_harness_dir, HarnessScope::Local);
+        merge_harness_states(&global_state, Some(&local_state))
+    };
+    let global = load_global_refinement_history(global_harness_dir);
+    let history = crate::refinement::merge_refinement_history(&global, refinement_history);
+    // Baseline captured before the (slow) LLM pass, so concurrent kernel
+    // writes are rejected instead of clobbered.
+    let baseline_scope = options
+        .rollback_id
+        .as_ref()
+        .and_then(|id| history.iter().find(|item| &item.id == id))
+        .and_then(crate::refinement::infer_refinement_result_scope)
+        .unwrap_or(requested_scope);
+    let baseline_dir = match baseline_scope {
+        HarnessScope::Global => global_harness_dir.to_path_buf(),
+        HarnessScope::Local => local_harness_dir,
+    };
+    let baseline_state = load_harness_state(&baseline_dir, baseline_scope);
+    Ok(RefinePlanningInputs {
+        planning_state,
+        history,
+        baseline_state,
+    })
 }
 
 /// The compact-trigger round's resolution: decline, deferred behind an
@@ -694,6 +882,7 @@ impl AgentSession {
             instructions: Some(run.instructions),
             rollback_id: None,
             trigger: None,
+            pinned_plan: None,
         };
         self.refine(
             &options,
@@ -736,6 +925,7 @@ mod tests {
     use super::*;
     use crate::refinement::executor::RefinerFn;
     use pa_types::ai::{AssistantContentBlock, AssistantMessage, Model, StopReason, TextContent};
+    use std::collections::BTreeMap;
     use tempfile::TempDir;
 
     fn text_assistant(text: &str) -> AssistantMessage {
@@ -1077,6 +1267,178 @@ Reviewer instructions: record it"
             .collect();
         assert_eq!(custom_messages.len(), 2);
         assert_eq!(load_refinement_history(&session, &global_dir).len(), 1);
+    }
+
+    /// A refiner seam that must never run (a pinned plan never re-plans).
+    fn no_replan() -> RefinerFn {
+        Box::new(|_model, _system, _prompt| {
+            Box::pin(async { anyhow::bail!("a pinned plan must not re-plan") })
+        })
+    }
+
+    /// Upstream #899: `refine.preview` plans without writing anything, and the
+    /// approved plan applies exactly as previewed (no second planning call).
+    #[tokio::test]
+    async fn a_previewed_plan_applies_exactly_without_replanning() {
+        let dir = TempDir::new().unwrap();
+        let mut session = persisted_session(&dir);
+        let global_dir = dir.path().join("harness");
+        let reply = r#"{"summary":"note it","rationale":"repeated","expectedOutcome":"recall","edits":[{"action":"create","kind":"memory","id":"local:m1","title":"Tactic","content":"Use tactic A","reason":"seen twice"}]}"#;
+        let preview = preview_refinement(
+            RefinementSessionDirs::of(&session),
+            RefinementTranscript {
+                messages: &[user_message("do a thing twice")],
+                refinement_history: &[],
+            },
+            &global_dir,
+            &test_model(),
+            false,
+            Some("note the tactic".to_string()),
+            seam(reply),
+        )
+        .await
+        .unwrap();
+        let mut payload = preview.to_payload();
+        let plan_id = payload["plan_id"].as_str().unwrap().to_string();
+        assert!(plan_id.starts_with("refine_"), "{plan_id}");
+        payload["plan_id"] = json!("<id>");
+        assert_eq!(
+            payload,
+            json!({
+                "plan_id": "<id>",
+                "summary": "note it",
+                "rationale": "repeated",
+                "expected_outcome": "recall",
+                "scope": "local",
+                "edits": [{
+                    "action": "create", "kind": "memory", "id": "m1",
+                    "title": "Tactic", "content": "Use tactic A", "reason": "seen twice"
+                }]
+            })
+        );
+        // Nothing was written by the preview.
+        let harness_dir =
+            crate::refinement::get_local_harness_state_dir(Some(session.get_session_dir()))
+                .unwrap();
+        assert!(load_harness_state(&harness_dir, HarnessScope::Local)
+            .entries
+            .values()
+            .all(BTreeMap::is_empty));
+
+        let result = execute_refinement(
+            &mut session,
+            RefinementTranscript {
+                messages: &[user_message("do a thing twice")],
+                refinement_history: &[],
+            },
+            &global_dir,
+            &test_model(),
+            &RefineOptions {
+                pinned_plan: Some(preview),
+                ..RefineOptions::default()
+            },
+            RefinementSource::SelfRefine,
+            no_replan(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.id, plan_id);
+        assert_eq!(result.applied_edits.len(), 1);
+        assert!(result.applied_edits[0].applied);
+        let state = load_harness_state(&harness_dir, HarnessScope::Local);
+        assert_eq!(
+            state.entries[&crate::refinement::RefinementKind::Memory]["m1"].content,
+            "Use tactic A"
+        );
+    }
+
+    /// A store edited between the preview and the apply is not clobbered:
+    /// the preview's baseline rejects the stale edit.
+    #[tokio::test]
+    async fn a_previewed_plan_is_rejected_when_the_store_changed_since() {
+        let dir = TempDir::new().unwrap();
+        let mut session = persisted_session(&dir);
+        let global_dir = dir.path().join("harness");
+        let first = r#"{"summary":"v1","edits":[{"action":"create","kind":"memory","id":"m1","title":"T","content":"one"}]}"#;
+        execute_refinement(
+            &mut session,
+            RefinementTranscript {
+                messages: &[user_message("x")],
+                refinement_history: &[],
+            },
+            &global_dir,
+            &test_model(),
+            &RefineOptions::default(),
+            RefinementSource::User,
+            seam(first),
+            None,
+        )
+        .await
+        .unwrap();
+        let update = r#"{"summary":"v2","edits":[{"action":"update","kind":"memory","id":"m1","title":"T","content":"two"}]}"#;
+        let preview = preview_refinement(
+            RefinementSessionDirs::of(&session),
+            RefinementTranscript {
+                messages: &[user_message("x")],
+                refinement_history: &[],
+            },
+            &global_dir,
+            &test_model(),
+            false,
+            None,
+            seam(update),
+        )
+        .await
+        .unwrap();
+        // The store moves on after the preview.
+        let concurrent = r#"{"summary":"v3","edits":[{"action":"update","kind":"memory","id":"m1","title":"T","content":"three"}]}"#;
+        execute_refinement(
+            &mut session,
+            RefinementTranscript {
+                messages: &[user_message("x")],
+                refinement_history: &[],
+            },
+            &global_dir,
+            &test_model(),
+            &RefineOptions::default(),
+            RefinementSource::User,
+            seam(concurrent),
+            None,
+        )
+        .await
+        .unwrap();
+        let result = execute_refinement(
+            &mut session,
+            RefinementTranscript {
+                messages: &[user_message("x")],
+                refinement_history: &[],
+            },
+            &global_dir,
+            &test_model(),
+            &RefineOptions {
+                pinned_plan: Some(preview),
+                ..RefineOptions::default()
+            },
+            RefinementSource::SelfRefine,
+            no_replan(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            !result.applied_edits[0].applied,
+            "{:?}",
+            result.applied_edits
+        );
+        let harness_dir =
+            crate::refinement::get_local_harness_state_dir(Some(session.get_session_dir()))
+                .unwrap();
+        let state = load_harness_state(&harness_dir, HarnessScope::Local);
+        assert_eq!(
+            state.entries[&crate::refinement::RefinementKind::Memory]["m1"].content,
+            "three"
+        );
     }
 
     /// The failed rows stay live-indexed so the in-process history sees

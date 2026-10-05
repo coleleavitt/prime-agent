@@ -101,8 +101,9 @@ Memories are created by two mechanisms:
     - The refinement event is always saved in the harness state's refinement history
     - A harness message is sent to the agent with the refinement result
 - Active memory management by the agent
-  - `refine.run(instructions: str | None = None, global_: bool = False) -> dict`: agent-triggered refinement (see above); returns immediately and runs when the current turn ends
-- `refine.status() -> dict`: whether a refinement is already pending for this turn or currently in flight
+  - `refine.run(instructions: str | None = None, global_: bool = False, plan_id: str | None = None) -> dict`: agent-triggered refinement (see above); returns immediately and runs when the current turn ends; `plan_id` applies exactly a plan from `refine.preview()` instead of re-planning
+  - `refine.preview(instructions: str | None = None, global_: bool = False) -> dict`: plans now and returns the proposed edits (`plan_id`, `summary`, `edits`, ...) without applying anything, so a refinement can be approved before it lands
+- `refine.status() -> dict`: whether a refinement is already pending for this turn or currently in flight, and the held `preview_ids`
   - `rlm.harness.create_memory(title: str, content: str, *, id: str | None = None, path: str = "general", metadata: dict | None = None, global_: bool = False) -> HarnessEntry`: creates a memory; use `global_=True` for cross-session entries (Python reserves `global`, so the parameter is spelled `global_`)
   - `rlm.harness.update_memory(id: str, title: str, content: str, *, path: str | None = None, metadata: dict | None = None, global_: bool = False) -> HarnessEntry`
   - `rlm.harness.delete_memory(id: str, *, global_: bool = False) -> bool`

@@ -32,7 +32,27 @@ pub struct PendingRefine {
     pub global: bool,
     /// Why a feature asked for it; `None` for the agent's own request.
     pub trigger: Option<RefineTrigger>,
+    /// A previewed plan to apply exactly (`refine.run(plan_id=...)`,
+    /// upstream #899); `None` plans afresh.
+    pub plan_id: Option<String>,
 }
+
+/// What `refine.preview` plans with, supplied by the host that owns the
+/// session's model and credentials: the live model, the global harness
+/// store, and the planning call (one per preview).
+pub struct RefinePlanningContext {
+    pub model: pa_types::ai::Model,
+    pub global_harness_dir: std::path::PathBuf,
+    pub refine_call: crate::refinement::executor::RefinerFn,
+}
+
+/// The host's source of a [`RefinePlanningContext`]; `None` when the
+/// session cannot plan right now (no resolvable model).
+pub type RefinePlanningSource = Arc<dyn Fn() -> Option<RefinePlanningContext> + Send + Sync>;
+
+/// Previewed plans a session keeps for `refine.run(plan_id=...)`; the
+/// oldest is dropped past this.
+pub const MAX_REFINE_PREVIEWS: usize = 5;
 
 /// A feature's own record of why it requested a refinement, carried with
 /// the request to the session's refinement gate untouched.
@@ -142,6 +162,12 @@ pub struct TurnBoundaryRequests {
     refine: Mutex<Option<PendingRefine>>,
     /// Who hears about a pending refinement dropped unserviced.
     refine_dropped: std::sync::Mutex<Vec<RefineDroppedFn>>,
+    /// The host's planning source for `refine.preview`; unset, the
+    /// request answers that previews are unavailable.
+    refine_planning: std::sync::RwLock<Option<RefinePlanningSource>>,
+    /// Previewed plans awaiting `refine.run(plan_id=...)`, oldest first.
+    refine_previews:
+        std::sync::Mutex<std::collections::VecDeque<super::refine::PreviewedRefinement>>,
 }
 
 impl TurnBoundaryRequests {
@@ -247,6 +273,68 @@ impl TurnBoundaryRequests {
     /// Whether a refinement is queued (TS `refine.status` `pending`).
     pub async fn refine_pending(&self) -> bool {
         self.refine.lock().await.is_some()
+    }
+
+    /// Install the host's `refine.preview` planning source.
+    pub fn set_refine_planning_source(&self, source: RefinePlanningSource) {
+        *self
+            .refine_planning
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(source);
+    }
+
+    fn refine_planning_context(&self) -> Option<RefinePlanningContext> {
+        let source = self
+            .refine_planning
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()?;
+        source()
+    }
+
+    /// Keep a previewed plan (the oldest past [`MAX_REFINE_PREVIEWS`] drops).
+    pub fn remember_refine_preview(&self, preview: super::refine::PreviewedRefinement) {
+        let mut previews = self
+            .refine_previews
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        previews.push_back(preview);
+        while previews.len() > MAX_REFINE_PREVIEWS {
+            previews.pop_front();
+        }
+    }
+
+    /// The previewed plan ids still held, oldest first.
+    #[must_use]
+    pub fn refine_preview_ids(&self) -> Vec<String> {
+        self.refine_previews
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .map(|preview| preview.plan_id.clone())
+            .collect()
+    }
+
+    /// Take one previewed plan (it applies once).
+    #[must_use]
+    pub fn take_refine_preview(&self, plan_id: &str) -> Option<super::refine::PreviewedRefinement> {
+        let mut previews = self
+            .refine_previews
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let index = previews
+            .iter()
+            .position(|preview| preview.plan_id == plan_id)?;
+        previews.remove(index)
+    }
+
+    /// Drop every held preview: a refinement or compaction ran, so the
+    /// previews were planned against a superseded state.
+    pub fn clear_refine_previews(&self) {
+        self.refine_previews
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
     }
 
     /// Register `model.info` (always present, like the TS `_hostHandlers`
@@ -392,7 +480,11 @@ impl TurnBoundaryRequests {
                     // The Rust consumption runs refinement synchronously
                     // between turns, so a cell never observes it in flight
                     // (the TS background-planning path is not ported).
-                    Ok(json!({ "pending": pending, "in_flight": false }))
+                    Ok(json!({
+                        "pending": pending,
+                        "in_flight": false,
+                        "preview_ids": requests.refine_preview_ids(),
+                    }))
                 })
             }),
         );
@@ -417,6 +509,18 @@ impl TurnBoundaryRequests {
                             "refine.run global must be a boolean when provided"
                         ),
                     };
+                    let plan_id = string_field(
+                        &payload.data,
+                        "plan_id",
+                        "refine.run plan_id must be a string when provided",
+                    )?;
+                    if let Some(plan_id) = &plan_id {
+                        if !requests.refine_preview_ids().contains(plan_id) {
+                            anyhow::bail!(
+                                "refine.run plan_id {plan_id} is unknown or expired; call refine.preview() again"
+                            );
+                        }
+                    }
                     let Some(runtime) = requests.bound() else {
                         return Ok(no_active_turn(
                             "no active turn; refine can only be requested while a turn is running",
@@ -430,6 +534,19 @@ impl TurnBoundaryRequests {
                     }
                     let mut slot = requests.refine.lock().await;
                     let merged = match slot.as_ref() {
+                        // A pinned plan already carries its instructions and
+                        // scope; a feature's trigger rides on, joined.
+                        _ if plan_id.is_some() => PendingRefine {
+                            instructions: None,
+                            global: false,
+                            trigger: slot.as_ref().and_then(|current| current.trigger.clone()).map(
+                                |trigger| RefineTrigger {
+                                    joined_by_agent: true,
+                                    ..trigger
+                                },
+                            ),
+                            plan_id,
+                        },
                         // A feature's request keeps its instructions and
                         // gets the agent's appended.
                         Some(current @ PendingRefine {
@@ -445,17 +562,20 @@ impl TurnBoundaryRequests {
                                 joined_by_agent: true,
                                 ..trigger.clone()
                             }),
+                            plan_id: None,
                         },
                         Some(current) => PendingRefine {
                             instructions: instructions
                                 .or_else(|| current.instructions.clone()),
                             global: global.unwrap_or(current.global),
                             trigger: None,
+                            plan_id: None,
                         },
                         None => PendingRefine {
                             instructions,
                             global: global.unwrap_or(false),
                             trigger: None,
+                            plan_id: None,
                         },
                     };
                     *slot = Some(merged);
@@ -463,6 +583,66 @@ impl TurnBoundaryRequests {
                         "scheduled": true,
                         "note": "Refinement runs when the current turn ends; applied edits are appended to your context as a refinement notice and you resume automatically. Continue working normally.",
                     }))
+                })
+            }),
+        );
+        let requests = Arc::downgrade(self);
+        handlers.register(
+            "refine.preview",
+            host_handler(move |payload| {
+                let requests = requests.clone();
+                Box::pin(async move {
+                    let Some(requests) = requests.upgrade() else {
+                        return Err(anyhow::anyhow!(
+                            "the session ended before the request could be served"
+                        ));
+                    };
+                    let instructions = string_field(
+                        &payload.data,
+                        "instructions",
+                        "refine.preview instructions must be a string when provided",
+                    )?;
+                    let global = match payload.data.get("global") {
+                        None | Some(Value::Null) => false,
+                        Some(Value::Bool(value)) => *value,
+                        Some(_) => {
+                            anyhow::bail!("refine.preview global must be a boolean when provided")
+                        }
+                    };
+                    let Some(runtime) = requests.bound() else {
+                        anyhow::bail!(
+                            "refine.preview is not available before the session is ready"
+                        );
+                    };
+                    let Some(context) = requests.refine_planning_context() else {
+                        anyhow::bail!("refine.preview is not available in this session");
+                    };
+                    let parts = runtime.session.lock().await.refine_transcript_parts();
+                    let crate::session::manager::RefineTranscriptParts {
+                        messages,
+                        refinement_history,
+                    } = parts.await?;
+                    // The planning call never holds the session lock.
+                    let dirs =
+                        super::refine::RefinementSessionDirs::of(&*runtime.session.lock().await);
+                    let preview = {
+                        super::refine::preview_refinement(
+                            dirs,
+                            super::refine::RefinementTranscript {
+                                messages: &messages,
+                                refinement_history: &refinement_history,
+                            },
+                            &context.global_harness_dir,
+                            &context.model,
+                            global,
+                            instructions,
+                            context.refine_call,
+                        )
+                        .await?
+                    };
+                    let reply = preview.to_payload();
+                    requests.remember_refine_preview(preview);
+                    Ok(reply)
                 })
             }),
         );
@@ -488,6 +668,8 @@ impl SessionEngine {
         abort: Option<&pa_agent::abort::AbortSignal>,
     ) -> Option<anyhow::Result<super::compact_session::CompactOutcome>> {
         let pending = self.turn_boundary.take_compaction().await?;
+        // Previews were planned against the pre-compaction transcript.
+        self.turn_boundary.clear_refine_previews();
         let compact = async {
             self.session
                 .compact(pending.instructions.as_deref(), model, api_key, abort)
@@ -513,11 +695,26 @@ impl SessionEngine {
         global_harness_dir: std::path::PathBuf,
     ) -> Option<anyhow::Result<crate::refinement::RefinementResult>> {
         let pending = self.turn_boundary.take_refine().await?;
+        // A pinned plan applies once; the run supersedes every other preview.
+        let pinned_plan = match &pending.plan_id {
+            Some(plan_id) => match self.turn_boundary.take_refine_preview(plan_id) {
+                Some(preview) => Some(preview),
+                None => {
+                    self.turn_boundary.clear_refine_previews();
+                    return Some(Err(anyhow::anyhow!(
+                        "refine plan {plan_id} expired before it could apply; call refine.preview() again"
+                    )));
+                }
+            },
+            None => None,
+        };
+        self.turn_boundary.clear_refine_previews();
         let options = super::refine::RefineOptions {
             global: pending.global,
             instructions: pending.instructions,
             rollback_id: None,
             trigger: pending.trigger,
+            pinned_plan,
         };
         Some(
             self.session

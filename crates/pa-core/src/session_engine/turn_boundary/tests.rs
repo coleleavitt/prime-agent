@@ -402,6 +402,7 @@ async fn refine_run_and_status_round_trip_inside_a_tool_call() {
             instructions: Some("create a memory about the failing gate".to_string()),
             global: true,
             trigger: None,
+            plan_id: None,
         })
     );
     assert!(requests.take_refine().await.is_none());
@@ -428,6 +429,7 @@ async fn a_feature_request_keeps_its_trigger_when_refine_run_joins_it() {
                 instructions: Some("stop the recurring failure".to_string()),
                 global: false,
                 trigger: Some(queued),
+                plan_id: None,
             })
         })
     })
@@ -474,6 +476,7 @@ async fn a_feature_request_keeps_its_trigger_when_refine_run_joins_it() {
                 joined_by_agent: true,
                 ..trigger
             }),
+            plan_id: None,
         })
     );
     // The session is gone: the requester reports it.
@@ -553,6 +556,7 @@ async fn refine_run_validates_and_merges_into_a_pending_request() {
             instructions: Some("first observation".to_string()),
             global: true,
             trigger: None,
+            plan_id: None,
         })
     );
 }
@@ -790,6 +794,7 @@ async fn a_dropped_pending_refine_is_reported_to_the_requesters_listeners() {
             data: json!({ "kind": "failure" }),
             joined_by_agent: false,
         }),
+        plan_id: None,
     };
     requests.schedule_refine(pending.clone()).await;
     assert_eq!(requests.take_refine().await, Some(pending.clone()));
@@ -801,4 +806,186 @@ async fn a_dropped_pending_refine_is_reported_to_the_requesters_listeners() {
     // The session is gone: nothing to listen to.
     drop(requests);
     assert!(!requester.on_dropped(Arc::new(|_: &PendingRefine| {})));
+}
+
+/// A planning model for `refine.preview` (the reply comes from the seam).
+fn planning_model() -> pa_types::ai::Model {
+    serde_json::from_value(json!({
+        "id": "faux-1", "name": "Faux", "api": "openai-completions", "provider": "faux",
+        "baseUrl": "", "reasoning": false, "input": ["text"],
+        "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+        "contextWindow": 100_000, "maxTokens": 1_000
+    }))
+    .unwrap()
+}
+
+/// A planning source whose every call answers `reply` (and counts the calls).
+fn planning_source(
+    global_dir: std::path::PathBuf,
+    reply: &'static str,
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+) -> RefinePlanningSource {
+    Arc::new(move || {
+        calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Some(RefinePlanningContext {
+            model: planning_model(),
+            global_harness_dir: global_dir.clone(),
+            refine_call: Box::new(move |_model, _system, _prompt| {
+                Box::pin(async move {
+                    match assistant_entry(reply) {
+                        SessionMessage::Assistant(message) => Ok(message),
+                        _ => unreachable!("assistant_entry builds an assistant"),
+                    }
+                })
+            }),
+        })
+    })
+}
+
+/// Upstream #899: `refine.preview` returns the planned edits without
+/// scheduling or writing anything, `refine.status` lists the held plan, and
+/// `refine.run(plan_id=...)` pins exactly that plan (an unknown id refuses).
+#[tokio::test]
+async fn refine_preview_holds_a_plan_that_refine_run_pins() {
+    let requests = Arc::new(TurnBoundaryRequests::new());
+    let handlers = registered(&requests);
+    let session = Arc::new(Mutex::new(session_with_history(false)));
+    let global_dir = tempfile::TempDir::new().unwrap();
+    // Unbound, no planning source: the preview is unavailable.
+    let error = handler(&handlers, "refine.preview")(payload(json!({})))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        format!("{error:#}"),
+        "refine.preview is not available before the session is ready"
+    );
+    let provider = Arc::new(ScriptedProvider::new(agent_model()));
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let reply = r#"{"summary":"note it","rationale":"repeated","expectedOutcome":"recall","edits":[{"action":"create","kind":"memory","id":"global:m1","title":"Tactic","content":"Use tactic A","reason":"seen twice"}]}"#;
+    requests.set_refine_planning_source(planning_source(
+        global_dir.path().to_path_buf(),
+        reply,
+        Arc::clone(&calls),
+    ));
+    let agent = Arc::new(Agent::new(AgentOptions {
+        initial_state: AgentInitialState {
+            system_prompt: Some("s".to_string()),
+            model: Some(agent_model()),
+            thinking_level: Some(ThinkingLevel::Off),
+            tools: None,
+            messages: None,
+        },
+        stream_fn: Some(provider.stream_fn()),
+        ..Default::default()
+    }));
+    requests.bind(TurnBoundaryRuntime {
+        agent,
+        session,
+        context_window: Some(100_000),
+        model_info: model_info(),
+    });
+    let error = handler(&handlers, "refine.preview")(payload(json!({ "global": "yes" })))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        format!("{error:#}"),
+        "refine.preview global must be a boolean when provided"
+    );
+    let mut preview = handler(&handlers, "refine.preview")(payload(
+        json!({ "global": true, "instructions": "note the tactic" }),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let plan_id = preview["plan_id"].as_str().unwrap().to_string();
+    preview["plan_id"] = json!("<id>");
+    assert_eq!(
+        preview,
+        json!({
+            "plan_id": "<id>",
+            "summary": "note it",
+            "rationale": "repeated",
+            "expected_outcome": "recall",
+            "scope": "global",
+            "edits": [{
+                "action": "create", "kind": "memory", "id": "m1",
+                "title": "Tactic", "content": "Use tactic A", "reason": "seen twice"
+            }]
+        })
+    );
+    // Nothing scheduled, nothing written; the plan is held.
+    let status = handler(&handlers, "refine.status")(payload(json!({})))
+        .await
+        .unwrap();
+    assert_eq!(
+        status,
+        json!({ "pending": false, "in_flight": false, "preview_ids": [plan_id.clone()] })
+    );
+    assert_eq!(
+        crate::refinement::load_harness_state(
+            global_dir.path(),
+            crate::refinement::HarnessScope::Global
+        ),
+        crate::refinement::empty_harness_state()
+    );
+    // An unknown plan id refuses up front.
+    let error = handler(&handlers, "refine.run")(payload(json!({ "plan_id": "refine_nope" })))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        format!("{error:#}"),
+        "refine.run plan_id refine_nope is unknown or expired; call refine.preview() again"
+    );
+    // Inside a turn, the held plan pins.
+    provider.push_tool_call_turn(None, vec![("call-1", "probe", json!({}))]);
+    provider.push_text_turn("done");
+    let probe = probe_tool(
+        &requests,
+        "probe",
+        "refine.run",
+        json!({ "plan_id": plan_id, "instructions": "ignored: the plan carries its own" }),
+    );
+    let agent = requests.bound().expect("bound").agent.clone();
+    agent.set_tools(vec![probe.tool.clone()]).await;
+    agent.prompt("run the probe tool").await.unwrap();
+    agent.wait_for_idle().await;
+    assert_eq!(probe.result().await["scheduled"], true);
+    assert_eq!(
+        requests.take_refine().await,
+        Some(PendingRefine {
+            instructions: None,
+            global: false,
+            trigger: None,
+            plan_id: Some(plan_id.clone()),
+        })
+    );
+    let held = requests
+        .take_refine_preview(&plan_id)
+        .expect("the plan is held");
+    assert!(held.global);
+    assert_eq!(held.instructions.as_deref(), Some("note the tactic"));
+    assert!(requests.refine_preview_ids().is_empty());
+}
+
+/// At most [`MAX_REFINE_PREVIEWS`] plans are held; the oldest drops.
+#[tokio::test]
+async fn refine_previews_keep_the_newest_plans() {
+    let requests = TurnBoundaryRequests::new();
+    for index in 0..=MAX_REFINE_PREVIEWS {
+        requests.remember_refine_preview(super::super::refine::PreviewedRefinement {
+            plan_id: format!("refine_{index}"),
+            global: false,
+            instructions: None,
+            proposal: crate::refinement::planner::RefinementProposal::default(),
+            baseline_state: crate::refinement::empty_harness_state(),
+        });
+    }
+    assert_eq!(
+        requests.refine_preview_ids(),
+        (1..=MAX_REFINE_PREVIEWS)
+            .map(|index| format!("refine_{index}"))
+            .collect::<Vec<_>>()
+    );
+    requests.clear_refine_previews();
+    assert!(requests.refine_preview_ids().is_empty());
 }
