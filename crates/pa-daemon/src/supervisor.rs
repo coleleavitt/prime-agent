@@ -486,6 +486,9 @@ impl Supervisor {
             let supervisor = Arc::clone(&self);
             tokio::spawn(async move {
                 crate::update_restore::restore_pass(&supervisor, adoption, roster).await;
+                // The ghost sweep runs once the resident roster settled: no live session's file
+                // can be judged a ghost.
+                crate::session_ghosts::boot_ghost_sweep(&supervisor).await;
             });
         }
 
