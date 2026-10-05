@@ -94,6 +94,62 @@ pub async fn run_turn_with_provider_failover<A, AF, E, EF, W, WF, S, SF, R, RF>(
     candidates: &[Model],
     context_window: u64,
     signal: Option<&AbortSignal>,
+    attempt: A,
+    emit: E,
+    wait: W,
+    switch: S,
+    restore: R,
+    park: Option<ParkDecisionCallback<'_>>,
+) -> anyhow::Result<AssistantMessage>
+where
+    A: FnMut() -> AF,
+    AF: Future<Output = anyhow::Result<AssistantMessage>>,
+    E: FnMut(AutoRetryEvent) -> EF,
+    EF: Future<Output = anyhow::Result<()>>,
+    W: FnMut(std::time::Duration) -> WF,
+    WF: Future<Output = bool>,
+    S: FnMut(&Model) -> SF,
+    SF: Future<Output = anyhow::Result<()>>,
+    R: FnMut() -> RF,
+    RF: Future<Output = anyhow::Result<Option<String>>>,
+{
+    run_turn_with_model_fallback(
+        quick_policy,
+        failover,
+        candidates,
+        &[],
+        context_window,
+        signal,
+        attempt,
+        emit,
+        wait,
+        switch,
+        restore,
+        park,
+    )
+    .await
+}
+
+/// [`run_turn_with_provider_failover`] with an ordered cross-model fallback chain (settings
+/// `fallbackModels`, upstream #1465) walked after the same-model providers. A model switch keeps
+/// the conversation; each fallback model gets its own per-provider budget and its own
+/// [`MAX_TOTAL_PROVIDER_RETRIES`] ceiling, a provider cooldown beyond the wait cap moves to the
+/// next fallback model instead of giving up, and auth / invalid-request failures never walk the
+/// fallback chain (they fail the same way on every model). A spent chain names every model it
+/// tried with its failure class. An empty `fallback_models` is exactly
+/// [`run_turn_with_provider_failover`].
+///
+/// # Errors
+///
+/// As [`run_turn_with_provider_failover`].
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+pub async fn run_turn_with_model_fallback<A, AF, E, EF, W, WF, S, SF, R, RF>(
+    quick_policy: &ProviderRetryPolicy,
+    failover: &ProviderFailoverPolicy,
+    candidates: &[Model],
+    fallback_models: &[Model],
+    context_window: u64,
+    signal: Option<&AbortSignal>,
     mut attempt: A,
     mut emit: E,
     mut wait: W,
@@ -113,7 +169,19 @@ where
     R: FnMut() -> RF,
     RF: Future<Output = anyhow::Result<Option<String>>>,
 {
-    if !failover.enabled || candidates.is_empty() {
+    // The walk order: the same-model providers, then the fallback models
+    // (one entry per `provider/id`).
+    let mut chain: Vec<&Model> = candidates.iter().collect();
+    for fallback in fallback_models {
+        if !chain
+            .iter()
+            .any(|entry| entry.provider == fallback.provider && entry.id == fallback.id)
+        {
+            chain.push(fallback);
+        }
+    }
+    let fallback_start = candidates.len();
+    if !failover.enabled || chain.is_empty() {
         // The pass-through moves the park seam: the loop below cannot
         // reach (and must not reborrow) it.
         return run_turn_with_auto_retry(
@@ -129,9 +197,16 @@ where
     }
     let mut total_retries = 0u32;
     let mut retries_on_provider = 0u32;
+    // The episode ceiling's count: one model's provider walk (it restarts
+    // when a fallback model takes over).
+    let mut retries_on_model = 0u32;
     let mut candidate_index = 0usize;
     let mut switched = false;
-    loop {
+    // Every model left behind, as `provider/model (failure class)`, once
+    // the walk entered the fallback chain.
+    let mut tried: Vec<String> = Vec::new();
+    let mut on_fallback = false;
+    'episode: loop {
         let message = attempt().await?;
         if message.stop_reason != StopReason::Error {
             if switched {
@@ -197,126 +272,181 @@ where
         }
         total_retries += 1;
         retries_on_provider += 1;
+        retries_on_model += 1;
+        // The next fallback model when this failure may hand the turn to
+        // one: auth fails the same way on every model.
+        let fallback_index = (provider_stream_failure_kind(&message).as_deref() != Some("auth"))
+            .then_some(candidate_index.max(fallback_start))
+            .filter(|index| *index < chain.len());
         // The whole-episode ceiling binds first: a long candidate chain
-        // gives up here instead of stacking per-provider budgets.
-        if total_retries > MAX_TOTAL_PROVIDER_RETRIES {
-            if switched {
-                let _ = restore().await?;
-            }
-            emit(AutoRetryEvent::End {
-                success: false,
-                attempt: total_retries - 1,
-                final_error: Some(final_error_of(&message)),
-                restored_model: None,
-            })
-            .await?;
-            return Ok(message);
-        }
-        if retries_on_provider > failover.max_retries {
-            let Some(next) = candidates.get(candidate_index) else {
-                if switched {
-                    let _ = restore().await?;
+        // gives up here instead of stacking per-provider budgets — unless a
+        // fallback model is left to take over.
+        let next_index = if retries_on_model > MAX_TOTAL_PROVIDER_RETRIES {
+            match fallback_index {
+                Some(index) => index,
+                None => {
+                    if switched {
+                        let _ = restore().await?;
+                    }
+                    emit(AutoRetryEvent::End {
+                        success: false,
+                        attempt: total_retries - 1,
+                        final_error: Some(chain_final_error(&tried, on_fallback, &message)),
+                        restored_model: None,
+                    })
+                    .await?;
+                    return Ok(message);
                 }
-                emit(AutoRetryEvent::End {
-                    success: false,
-                    attempt: total_retries,
-                    final_error: Some(final_error_of(&message)),
-                    restored_model: None,
-                })
-                .await?;
-                return Ok(message);
-            };
-            candidate_index += 1;
-            retries_on_provider = 0;
-            let backup_model = format!("{}/{}", next.provider, next.id);
-            switch(next).await?;
-            switched = true;
-            // The TS backup-model retry re-issues immediately (`delayMs: 0`).
-            emit(AutoRetryEvent::Start {
-                attempt: total_retries,
-                max_attempts: failover.max_retries,
-                delay_ms: 0,
-                error_message: final_error_of(&message),
-                reason: RetryStartReason::Backup { backup_model },
-            })
-            .await?;
-            continue;
-        }
-        let delay = failover_retry_delay(
-            retries_on_provider,
-            provider_stream_failure_retry_after_ms(&message),
-            failover,
-            quick_policy.max_retry_delay_ms,
-        );
-        let delay_ms = match delay {
-            // Jittered (SANCTIONED DIVERGENCE, operator ruling
-            // 2026-09-23): the jittered value is both waited and
-            // reported.
-            ProviderRetryDelay::Wait { delay_ms } => {
-                jittered_delay_ms(delay_ms, retry_jitter_rand01())
             }
-            ProviderRetryDelay::ExceedsCap { retry_after_ms } => {
-                if switched {
-                    let _ = restore().await?;
+        } else if retries_on_provider > failover.max_retries {
+            match chain.get(candidate_index) {
+                Some(_) if candidate_index < fallback_start => candidate_index,
+                Some(_) if fallback_index.is_some() => candidate_index,
+                _ => {
+                    if switched {
+                        let _ = restore().await?;
+                    }
+                    emit(AutoRetryEvent::End {
+                        success: false,
+                        attempt: total_retries,
+                        final_error: Some(chain_final_error(&tried, on_fallback, &message)),
+                        restored_model: None,
+                    })
+                    .await?;
+                    return Ok(message);
                 }
-                // The give-up sentence here is the park's abort message
-                // (TS `reset-too-far`).
-                let abort = format!(
-                    "Provider requested a {}s wait before retrying (above retry.provider.maxRetryDelayMs={}ms)",
-                    retry_after_ms.div_ceil(1000),
+            }
+        } else {
+            'pick: {
+                let delay = failover_retry_delay(
+                    retries_on_provider,
+                    provider_stream_failure_retry_after_ms(&message),
+                    failover,
                     quick_policy.max_retry_delay_ms,
                 );
-                // The park seam is a quota-failure seam: other
-                // server-requested waits keep the give-up.
-                let parked = if is_quota_block_failure(&message) {
-                    match park.as_deref_mut() {
-                        Some(park) => park(message.clone(), &abort).await,
-                        None => None,
+                let delay_ms = match delay {
+                    // Jittered (SANCTIONED DIVERGENCE, operator ruling
+                    // 2026-09-23): the jittered value is both waited and
+                    // reported.
+                    ProviderRetryDelay::Wait { delay_ms } => {
+                        jittered_delay_ms(delay_ms, retry_jitter_rand01())
                     }
-                } else {
-                    None
+                    ProviderRetryDelay::ExceedsCap { retry_after_ms } => {
+                        // A cooldown beyond the cap on a model with a fallback
+                        // left: the next fallback model serves instead.
+                        if let Some(index) = fallback_index {
+                            break 'pick index;
+                        }
+                        if switched {
+                            let _ = restore().await?;
+                        }
+                        // The give-up sentence here is the park's abort message
+                        // (TS `reset-too-far`).
+                        let abort = format!(
+                        "Provider requested a {}s wait before retrying (above retry.provider.maxRetryDelayMs={}ms)",
+                        retry_after_ms.div_ceil(1000),
+                        quick_policy.max_retry_delay_ms,
+                    );
+                        // The park seam is a quota-failure seam: other
+                        // server-requested waits keep the give-up.
+                        let parked = if is_quota_block_failure(&message) {
+                            match park.as_deref_mut() {
+                                Some(park) => park(message.clone(), &abort).await,
+                                None => None,
+                            }
+                        } else {
+                            None
+                        };
+                        let final_error = match parked {
+                            // The parked status replaces the give-up (TS
+                            // `_finishQuotaParkedTurn`'s `finalError`).
+                            Some(outcome) => outcome.status_message,
+                            None => format!(
+                                "{abort}: {}",
+                                message.error_message.as_deref().unwrap_or("unknown error"),
+                            ),
+                        };
+                        emit(AutoRetryEvent::End {
+                            success: false,
+                            attempt: total_retries - 1,
+                            final_error: Some(final_error),
+                            restored_model: None,
+                        })
+                        .await?;
+                        return Ok(message);
+                    }
                 };
-                let final_error = match parked {
-                    // The parked status replaces the give-up (TS
-                    // `_finishQuotaParkedTurn`'s `finalError`).
-                    Some(outcome) => outcome.status_message,
-                    None => format!(
-                        "{abort}: {}",
-                        message.error_message.as_deref().unwrap_or("unknown error"),
-                    ),
-                };
-                emit(AutoRetryEvent::End {
-                    success: false,
-                    attempt: total_retries - 1,
-                    final_error: Some(final_error),
-                    restored_model: None,
+                emit(AutoRetryEvent::Start {
+                    attempt: retries_on_provider,
+                    max_attempts: failover.max_retries,
+                    delay_ms,
+                    error_message: final_error_of(&message),
+                    reason: RetryStartReason::Quick,
                 })
                 .await?;
-                return Ok(message);
+                if !wait(std::time::Duration::from_millis(delay_ms)).await {
+                    if switched {
+                        let _ = restore().await?;
+                    }
+                    emit(AutoRetryEvent::End {
+                        success: false,
+                        attempt: total_retries,
+                        final_error: Some("Retry cancelled".to_string()),
+                        restored_model: None,
+                    })
+                    .await?;
+                    return Ok(with_stop_reason_aborted(message));
+                }
+                continue 'episode;
             }
         };
+        let next = chain[next_index];
+        if next_index >= fallback_start {
+            // A fallback model takes over: the left model is recorded for
+            // the exhaustion report and the ceiling restarts.
+            on_fallback = true;
+            retries_on_model = 0;
+        }
+        if on_fallback {
+            tried.push(tried_model(&message));
+        }
+        candidate_index = next_index + 1;
+        retries_on_provider = 0;
+        let backup_model = format!("{}/{}", next.provider, next.id);
+        switch(next).await?;
+        switched = true;
+        // The TS backup-model retry re-issues immediately (`delayMs: 0`).
         emit(AutoRetryEvent::Start {
-            attempt: retries_on_provider,
+            attempt: total_retries,
             max_attempts: failover.max_retries,
-            delay_ms,
+            delay_ms: 0,
             error_message: final_error_of(&message),
-            reason: RetryStartReason::Quick,
+            reason: RetryStartReason::Backup { backup_model },
         })
         .await?;
-        if !wait(std::time::Duration::from_millis(delay_ms)).await {
-            if switched {
-                let _ = restore().await?;
-            }
-            emit(AutoRetryEvent::End {
-                success: false,
-                attempt: total_retries,
-                final_error: Some("Retry cancelled".to_string()),
-                restored_model: None,
-            })
-            .await?;
-            return Ok(with_stop_reason_aborted(message));
-        }
     }
+}
+
+/// `provider/model (failure class)` for the fallback-exhaustion report.
+fn tried_model(message: &AssistantMessage) -> String {
+    let class = provider_stream_failure_kind(message).unwrap_or_else(|| "error".to_string());
+    format!("{}/{} ({class})", message.provider, message.model)
+}
+
+/// The give-up text: the last error, or — once the walk entered the
+/// fallback chain — every model tried with its failure class (upstream
+/// #1465's terminal report).
+fn chain_final_error(tried: &[String], on_fallback: bool, message: &AssistantMessage) -> String {
+    if !on_fallback {
+        return final_error_of(message);
+    }
+    let mut models = tried.to_vec();
+    models.push(tried_model(message));
+    format!(
+        "All fallback models failed: {}. Last error: {}",
+        models.join(", "),
+        final_error_of(message)
+    )
 }
 
 /// The user-visible error text of a failed turn.
@@ -433,16 +563,27 @@ mod tests {
         candidates: &[Model],
         script: Vec<AssistantMessage>,
     ) -> Harness {
+        drive_chain(failover, candidates, &[], script).await
+    }
+
+    /// [`drive`] with a cross-model fallback chain after the providers.
+    async fn drive_chain(
+        failover: &ProviderFailoverPolicy,
+        candidates: &[Model],
+        fallback_models: &[Model],
+        script: Vec<AssistantMessage>,
+    ) -> Harness {
         let script = Arc::new(Mutex::new(script));
         let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let switches: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let restores: Arc<Mutex<Vec<Option<String>>>> = Arc::new(Mutex::new(Vec::new()));
         let waits: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
         let events: Arc<Mutex<Vec<AutoRetryEvent>>> = Arc::new(Mutex::new(Vec::new()));
-        run_turn_with_provider_failover(
+        run_turn_with_model_fallback(
             &quick_policy(),
             failover,
             candidates,
+            fallback_models,
             0,
             None,
             {
@@ -840,5 +981,192 @@ mod tests {
         assert!(harness.events.is_empty());
         assert!(harness.switches.is_empty());
         assert!(harness.restores.is_empty());
+    }
+
+    /// A model served as `provider/id` (the fallback chain names other models).
+    fn chain_model(provider: &str, id: &str) -> Model {
+        let mut model = model(provider);
+        model.id = id.to_string();
+        model
+    }
+
+    /// A failed attempt as the serving `provider/model` reports it.
+    fn failure_on(
+        provider: &str,
+        model: &str,
+        kind: &str,
+        status: Option<u16>,
+        error: &str,
+    ) -> AssistantMessage {
+        let mut message = error_message(Some(kind), status, error);
+        message.provider = provider.to_string();
+        message.model = model.to_string();
+        message
+    }
+
+    /// Upstream #1465: once the same-model providers are spent, the turn
+    /// continues on the next configured fallback model (same conversation),
+    /// and the settle restores the primary.
+    #[tokio::test]
+    async fn the_fallback_model_serves_once_the_provider_chain_is_spent() {
+        let candidates = vec![model("backup-a")];
+        let fallbacks = vec![chain_model("other", "kimi-k2")];
+        let script = vec![
+            failure_on("primary", "glm-5.3", "server_error", Some(500), "primary 1"),
+            failure_on("primary", "glm-5.3", "server_error", Some(500), "primary 2"),
+            failure_on("primary", "glm-5.3", "server_error", Some(500), "primary 3"),
+            failure_on("backup-a", "glm-5.3", "rate_limit", Some(429), "backup 1"),
+            failure_on("backup-a", "glm-5.3", "rate_limit", Some(429), "backup 2"),
+            failure_on("backup-a", "glm-5.3", "rate_limit", Some(429), "backup 3"),
+            ok_message("served by the fallback model"),
+        ];
+        let harness = drive_chain(&fast_failover(), &candidates, &fallbacks, script).await;
+        assert_eq!(harness.attempts, 7);
+        assert_eq!(harness.switches, vec!["backup-a/glm-5.3", "other/kimi-k2"]);
+        assert_eq!(harness.restores, vec![Some("primary/glm-5.3".to_string())]);
+        let backups: Vec<(u32, String)> = harness
+            .events
+            .iter()
+            .filter_map(|event| match event {
+                AutoRetryEvent::Start {
+                    attempt,
+                    reason: RetryStartReason::Backup { backup_model },
+                    ..
+                } => Some((*attempt, backup_model.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            backups,
+            vec![
+                (3, "backup-a/glm-5.3".to_string()),
+                (6, "other/kimi-k2".to_string())
+            ]
+        );
+        assert_eq!(
+            harness.events.last(),
+            Some(&AutoRetryEvent::End {
+                success: true,
+                attempt: 6,
+                final_error: None,
+                restored_model: Some("primary/glm-5.3".to_string()),
+            })
+        );
+    }
+
+    /// The episode ceiling bounds one model's provider walk; a configured
+    /// fallback model still gets its turn instead of the give-up.
+    #[tokio::test]
+    async fn the_episode_ceiling_hands_over_to_the_fallback_model() {
+        let candidates: Vec<Model> = (1..=6)
+            .map(|index| model(&format!("backup-{index}")))
+            .collect();
+        let fallbacks = vec![chain_model("other", "kimi-k2")];
+        let mut script: Vec<AssistantMessage> = (0..=MAX_TOTAL_PROVIDER_RETRIES)
+            .map(|index| error_message(Some("server_error"), Some(500), &format!("down {index}")))
+            .collect();
+        script.push(ok_message("served by the fallback model"));
+        let harness = drive_chain(&fast_failover(), &candidates, &fallbacks, script).await;
+        assert_eq!(harness.attempts, 2 + MAX_TOTAL_PROVIDER_RETRIES as usize);
+        assert_eq!(
+            harness.switches,
+            vec!["backup-1/glm-5.3", "backup-2/glm-5.3", "other/kimi-k2"]
+        );
+        assert!(matches!(
+            harness.events.last(),
+            Some(AutoRetryEvent::End { success: true, .. })
+        ));
+    }
+
+    /// A spent chain names every model it tried with its failure class.
+    #[tokio::test]
+    async fn an_exhausted_fallback_chain_names_every_model_tried() {
+        let fallbacks = vec![chain_model("other", "kimi-k2")];
+        let script = vec![
+            failure_on("primary", "glm-5.3", "server_error", Some(500), "primary 1"),
+            failure_on("primary", "glm-5.3", "server_error", Some(500), "primary 2"),
+            failure_on("primary", "glm-5.3", "server_error", Some(500), "primary 3"),
+            failure_on("other", "kimi-k2", "rate_limit", Some(429), "kimi 1"),
+            failure_on("other", "kimi-k2", "rate_limit", Some(429), "kimi 2"),
+            failure_on("other", "kimi-k2", "rate_limit", Some(429), "kimi 3"),
+        ];
+        let harness = drive_chain(&fast_failover(), &[], &fallbacks, script).await;
+        assert_eq!(harness.attempts, 6);
+        assert_eq!(harness.switches, vec!["other/kimi-k2"]);
+        assert_eq!(harness.restores, vec![Some("primary/glm-5.3".to_string())]);
+        assert_eq!(
+            harness.events.last(),
+            Some(&AutoRetryEvent::End {
+                success: false,
+                attempt: 6,
+                final_error: Some(
+                    "All fallback models failed: primary/glm-5.3 (server_error), \
+                     other/kimi-k2 (rate_limit). Last error: kimi 3"
+                        .to_string()
+                ),
+                restored_model: None,
+            })
+        );
+    }
+
+    /// Auth and invalid-request failures fail the same way on every model:
+    /// they never burn the fallback chain (even with a zero retry budget).
+    #[tokio::test]
+    async fn auth_and_invalid_request_failures_never_walk_the_fallback_chain() {
+        let fallbacks = vec![chain_model("other", "kimi-k2")];
+        let mut no_retries = fast_failover();
+        no_retries.max_retries = 0;
+        for (kind, status) in [("auth", 401), ("invalid_request", 400)] {
+            let script = vec![failure_on(
+                "primary",
+                "glm-5.3",
+                kind,
+                Some(status),
+                "rejected",
+            )];
+            let harness = drive_chain(&no_retries, &[], &fallbacks, script).await;
+            assert_eq!(harness.attempts, 1, "{kind}");
+            assert!(
+                harness.switches.is_empty(),
+                "{kind}: {:?}",
+                harness.switches
+            );
+            assert!(
+                matches!(
+                    harness.events.last(),
+                    Some(AutoRetryEvent::End { success: false, final_error: Some(error), .. })
+                        if error == "rejected"
+                ),
+                "{kind}: {:?}",
+                harness.events
+            );
+        }
+    }
+
+    /// A provider cooldown longer than the wait cap is a retryable-class
+    /// failure for the chain: the next fallback model serves instead of the
+    /// give-up.
+    #[tokio::test]
+    async fn a_cooldown_beyond_the_wait_cap_falls_back_to_the_next_model() {
+        let fallbacks = vec![chain_model("other", "kimi-k2")];
+        let mut cooldown = failure_on("primary", "glm-5.3", "rate_limit", Some(429), "cooling");
+        cooldown.diagnostics.as_mut().unwrap()[0].details = Some(serde_json::json!({
+            "kind": "rate_limit", "status": 429, "retryAfterMs": 3_600_000u64
+        }));
+        let script = vec![cooldown, ok_message("served by the fallback model")];
+        let harness = drive_chain(&fast_failover(), &[], &fallbacks, script).await;
+        assert_eq!(harness.attempts, 2);
+        assert_eq!(harness.switches, vec!["other/kimi-k2"]);
+        assert!(harness.waits.is_empty(), "no wait: {:?}", harness.waits);
+
+        // Without a fallback chain the cooldown keeps the native give-up.
+        let mut cooldown = failure_on("primary", "glm-5.3", "rate_limit", Some(429), "cooling");
+        cooldown.diagnostics.as_mut().unwrap()[0].details = Some(serde_json::json!({
+            "kind": "rate_limit", "status": 429, "retryAfterMs": 3_600_000u64
+        }));
+        let harness =
+            drive_chain(&fast_failover(), &[model("backup-a")], &[], vec![cooldown]).await;
+        assert_eq!(harness.attempts, 1);
+        assert!(harness.switches.is_empty());
     }
 }

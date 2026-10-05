@@ -11,6 +11,8 @@ use super::{
 };
 
 mod boundary;
+#[cfg(test)]
+mod fallback_models_tests;
 mod model;
 mod quota;
 mod run_loop;

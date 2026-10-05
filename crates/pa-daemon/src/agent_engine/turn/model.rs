@@ -173,6 +173,13 @@ impl AgentSessionEngine {
             Some(route) => self.failover_candidates(&route.target.model),
             None => self.failover_candidates(&model),
         };
+        // The cross-model fallback chain (`fallbackModels`) follows the
+        // session model's providers; a routed image episode stays on its
+        // image model (a fallback could not see the images).
+        let fallback_models = match self.armed_image_route() {
+            Some(_) => Vec::new(),
+            None => self.fallback_models(&model),
+        };
         // The pa-core retry driver owns the attempt loop; this engine
         // owns one turn. The single `emit` reference is handed through
         // a RefCell slot to whichever closure is currently running.
@@ -238,10 +245,11 @@ impl AgentSessionEngine {
             None => model.context_window,
         };
         let result = self.runtime.block_on(
-            pa_core::session_engine::provider_failover::run_turn_with_provider_failover(
+            pa_core::session_engine::provider_failover::run_turn_with_model_fallback(
                 &policy,
                 &failover_policy,
                 &candidates,
+                &fallback_models,
                 overflow_window,
                 None,
                 || {

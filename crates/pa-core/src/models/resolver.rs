@@ -539,6 +539,40 @@ pub fn failover_candidates(current: &Model, available: &[Model]) -> Vec<Model> {
     candidates.into_iter().cloned().collect()
 }
 
+/// Resolve the `fallbackModels` chain (upstream #1465) against the auth-configured catalog: each
+/// entry must name an exact `provider/model-id` (the id may itself contain `/`). Returns the
+/// resolved models in chain order (the current model and repeats dropped) and the entries that
+/// matched nothing, which the caller reports instead of silently skipping.
+#[must_use]
+pub fn resolve_fallback_models(
+    entries: &[String],
+    current: &Model,
+    available: &[Model],
+) -> (Vec<Model>, Vec<String>) {
+    let mut resolved: Vec<Model> = Vec::new();
+    let mut unresolved: Vec<String> = Vec::new();
+    for entry in entries {
+        let found = entry.split_once('/').and_then(|(provider, id)| {
+            available
+                .iter()
+                .find(|model| model.provider == provider && model.id == id)
+        });
+        match found {
+            Some(model) => {
+                let is_current = model.provider == current.provider && model.id == current.id;
+                let repeated = resolved
+                    .iter()
+                    .any(|known| known.provider == model.provider && known.id == model.id);
+                if !is_current && !repeated {
+                    resolved.push(model.clone());
+                }
+            }
+            None => unresolved.push(entry.clone()),
+        }
+    }
+    (resolved, unresolved)
+}
+
 /// Inputs to the startup-model lookup (TS `findInitialModel`, composed with
 /// the `--models`-scope handling from `prepareSessionOptions`).
 #[derive(Clone, Copy)]
@@ -643,6 +677,33 @@ mod tests {
             model("prime-inference", "z-ai/glm-5.3", "GLM"),
             model("openrouter", "openai/gpt-4o", "GPT-4o"),
         ]
+    }
+
+    #[test]
+    fn fallback_models_resolve_exact_references_in_chain_order() {
+        let mut catalog = catalog();
+        catalog.push(model("openrouter", "z-ai/glm-5.3", "GLM via openrouter"));
+        let current = catalog[0].clone();
+        let entries: Vec<String> = [
+            "openrouter/z-ai/glm-5.3",
+            "nope/missing",
+            "bare-id-without-provider",
+            &format!("{}/{}", current.provider, current.id),
+            "openrouter/z-ai/glm-5.3",
+            "openrouter/openai/gpt-4o",
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+        let (resolved, unresolved) = resolve_fallback_models(&entries, &current, &catalog);
+        assert_eq!(
+            resolved
+                .iter()
+                .map(|model| format!("{}/{}", model.provider, model.id))
+                .collect::<Vec<_>>(),
+            vec!["openrouter/z-ai/glm-5.3", "openrouter/openai/gpt-4o"]
+        );
+        assert_eq!(unresolved, vec!["nope/missing", "bare-id-without-provider"]);
     }
 
     #[test]
