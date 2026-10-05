@@ -199,7 +199,7 @@ mod tests {
     use crate::theme::ColorMode;
     use serde_json::json;
 
-    fn result_row(content: &str, entries: Value) -> Value {
+    fn result_row(content: &str, entries: &Value) -> Value {
         json!({
             "role": "custom",
             "customType": "session_slash_command_result",
@@ -225,7 +225,7 @@ mod tests {
     fn a_harness_result_row_decodes_its_entries() {
         let decoded = harness_result(&result_row(
             "Continual harness entries: ...",
-            entries(false),
+            &entries(false),
         ))
         .expect("a harness result");
         assert!(decoded.success);
@@ -251,7 +251,7 @@ mod tests {
             ]
         );
         // Another command's result row is not ours.
-        let mut other = result_row("Plan mode is on.", json!([]));
+        let mut other = result_row("Plan mode is on.", &json!([]));
         other["details"]["command"]["name"] = json!("plan");
         assert_eq!(harness_result(&other), None);
     }
@@ -259,7 +259,7 @@ mod tests {
     #[test]
     fn enter_toggles_the_selected_entry_and_the_result_settles_it() {
         let kb = KeybindingsManager::new();
-        let decoded = harness_result(&result_row("", entries(true))).unwrap();
+        let decoded = harness_result(&result_row("", &entries(true))).unwrap();
         let mut selector = HarnessSelector::new(decoded.entries.unwrap());
         assert_eq!(
             selector.handle_key("down", &kb),
@@ -280,7 +280,7 @@ mod tests {
         // A refused toggle reverts; the refreshed list is authoritative.
         selector.revert("global:subagent:reviewer", false);
         assert_eq!(selector.checked("global:subagent:reviewer"), Some(true));
-        let refreshed = harness_result(&result_row("", entries(false))).unwrap();
+        let refreshed = harness_result(&result_row("", &entries(false))).unwrap();
         selector.refresh(refreshed.entries.unwrap());
         assert_eq!(selector.checked("global:subagent:reviewer"), Some(false));
         assert_eq!(

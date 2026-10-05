@@ -241,7 +241,7 @@ mod tests {
     use super::*;
     use crate::refinement::empty_harness_state;
 
-    fn entry(kind: RefinementKind, id: &str, extensions: serde_json::Value) -> HarnessEntry {
+    fn entry(kind: RefinementKind, id: &str, extensions: &serde_json::Value) -> HarnessEntry {
         HarnessEntry {
             id: id.to_string(),
             kind,
@@ -282,7 +282,7 @@ mod tests {
             vec![entry(
                 RefinementKind::Subagent,
                 "reviewer",
-                serde_json::json!({}),
+                &serde_json::json!({}),
             )],
         );
         store(
@@ -291,12 +291,12 @@ mod tests {
                 entry(
                     RefinementKind::Memory,
                     "stale",
-                    serde_json::json!({ "enabled": false }),
+                    &serde_json::json!({ "enabled": false }),
                 ),
                 entry(
                     RefinementKind::Subagent,
                     "reviewer",
-                    serde_json::json!({ "trust": 1 }),
+                    &serde_json::json!({ "trust": 1 }),
                 ),
             ],
         );
