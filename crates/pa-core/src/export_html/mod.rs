@@ -10,6 +10,7 @@ use anyhow::{bail, Result};
 use base64::Engine as _;
 use serde::Serialize;
 use serde_json::Value;
+use sha2::Digest as _;
 
 use crate::session::manager::SessionManager;
 use pa_types::session::FileEntry;
@@ -87,7 +88,25 @@ fn generate_html(data: &SessionExportData, theme: &theme::ExportTheme) -> String
         .replacen("{{BODY_BG}}", &theme.body_bg, 1)
         .replacen("{{CONTAINER_BG}}", &theme.container_bg, 1)
         .replacen("{{INFO_BG}}", &theme.info_bg, 1);
+    // Strict CSP for a file people share: only the three inline scripts run (by hash), nothing
+    // is fetched, and images are the session's embedded `data:` images.
+    let script_hashes: Vec<String> = [MARKED_JS, HIGHLIGHT_JS, TEMPLATE_JS]
+        .iter()
+        .map(|script| {
+            let digest = sha2::Sha256::digest(script.as_bytes());
+            format!(
+                "'sha256-{}'",
+                base64::engine::general_purpose::STANDARD.encode(digest)
+            )
+        })
+        .collect();
+    let csp = format!(
+        "default-src 'none'; script-src {}; style-src 'unsafe-inline'; img-src data:; \
+         base-uri 'none'; form-action 'none'",
+        script_hashes.join(" ")
+    );
     TEMPLATE_HTML
+        .replacen("{{CSP}}", &csp, 1)
         .replacen("{{CSS}}", &css, 1)
         .replacen("{{JS}}", TEMPLATE_JS, 1)
         .replacen("{{SESSION_DATA}}", &session_data, 1)
@@ -256,6 +275,65 @@ mod tests {
         assert!(
             data.get("systemPrompt").is_none(),
             "absent sections are omitted: {data}"
+        );
+    }
+
+    /// Upstream #937/#973: the export is a file people share, so it carries a strict CSP. Only
+    /// its own inline scripts run (by hash), nothing is fetched (`default-src 'none'`), and
+    /// images are limited to the session's embedded `data:` images: a remote markdown image
+    /// can never become a tracking pixel or leak the viewer's IP.
+    #[test]
+    fn the_export_carries_a_strict_content_security_policy() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let agent_dir = dir.path().join("agent");
+        std::fs::create_dir_all(&agent_dir).expect("agent dir");
+        let out = dir.path().join("out.html");
+        export_from_file(
+            &fixture_session(dir.path()),
+            Some(out.to_str().unwrap()),
+            &agent_dir,
+        )
+        .expect("export");
+        let html = std::fs::read_to_string(&out).expect("read export");
+        let csp_marker = "<meta http-equiv=\"Content-Security-Policy\" content=\"";
+        let csp = html
+            .find(csp_marker)
+            .map(|start| &html[start + csp_marker.len()..])
+            .and_then(|rest| rest.split('"').next());
+        // Every executable inline script (the JSON data block is not executed).
+        let script_hashes: Vec<String> = html
+            .split("<script>")
+            .skip(1)
+            .map(|rest| rest.split("</script>").next().expect("closed script"))
+            .map(|script| {
+                let digest = sha2::Sha256::digest(script.as_bytes());
+                format!(
+                    "'sha256-{}'",
+                    base64::engine::general_purpose::STANDARD.encode(digest)
+                )
+            })
+            .collect();
+        assert_eq!(script_hashes.len(), 3, "marked, highlight.js, the viewer");
+        assert_eq!(
+            csp,
+            Some(
+                format!(
+                    "default-src 'none'; script-src {}; style-src 'unsafe-inline'; \
+                     img-src data:; base-uri 'none'; form-action 'none'",
+                    script_hashes.join(" ")
+                )
+                .as_str()
+            )
+        );
+        // The CSP blocks inline event-handler attributes; the viewer wires its handlers in
+        // script instead, so none may remain in the template.
+        let handler = fancy_regex::Regex::new(r"<[^>]*\son[a-z]+\s*=").expect("pattern");
+        assert_eq!(
+            handler
+                .find(TEMPLATE_JS)
+                .expect("regex")
+                .map(|m| m.as_str()),
+            None
         );
     }
 

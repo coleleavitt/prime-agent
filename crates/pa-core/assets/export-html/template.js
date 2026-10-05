@@ -775,7 +775,7 @@
               previewHighlighted = escapeHtml(previewCode);
             }
 
-            return `<div class="tool-output expandable" onclick="if(window.getSelection().toString())return;this.classList.toggle('expanded')">
+            return `<div class="tool-output expandable" data-toggle-class="expanded">
               <div class="output-preview"><pre><code class="hljs">${previewHighlighted}</code></pre>
               <div class="expand-hint">... (${remaining} more lines)</div></div>
               <div class="output-full"><pre><code class="hljs">${highlighted}</code></pre></div></div>`;
@@ -785,7 +785,7 @@
         }
 
         if (remaining > 0) {
-          let out = '<div class="tool-output expandable" onclick="if(window.getSelection().toString())return;this.classList.toggle(\'expanded\')">';
+          let out = '<div class="tool-output expandable" data-toggle-class="expanded">';
           out += '<div class="output-preview">';
           for (const line of displayLines) {
             out += `<div>${escapeHtml(replaceTabs(line))}</div>`;
@@ -936,7 +936,7 @@
               }
 
               if (rendered.resultHtmlCollapsed && rendered.resultHtmlExpanded && rendered.resultHtmlCollapsed !== rendered.resultHtmlExpanded) {
-                html += `<div class="tool-output expandable ansi-rendered" onclick="if(window.getSelection().toString())return;this.classList.toggle('expanded')">
+                html += `<div class="tool-output expandable ansi-rendered" data-toggle-class="expanded">
                   <div class="output-preview">${rendered.resultHtmlCollapsed}</div>
                   <div class="output-full">${rendered.resultHtmlExpanded}</div>
                 </div>`;
@@ -965,6 +965,27 @@
        * Download the session data as a JSONL file.
        * Reconstructs the original format: header line + entry lines.
        */
+      // Delegated handlers: the export's CSP blocks inline on* attributes. A click toggles every
+      // `data-toggle-class` element from the target outward (inline handlers bubbled the same
+      // way); selecting text never toggles.
+      document.addEventListener('click', (event) => {
+        if (!(event.target instanceof Element)) {
+          return;
+        }
+        if (event.target.closest('[data-action="download-session-json"]')) {
+          window.downloadSessionJson();
+          return;
+        }
+        if (window.getSelection().toString()) {
+          return;
+        }
+        let toggle = event.target.closest('[data-toggle-class]');
+        while (toggle) {
+          toggle.classList.toggle(toggle.dataset.toggleClass);
+          toggle = toggle.parentElement ? toggle.parentElement.closest('[data-toggle-class]') : null;
+        }
+      });
+
       window.downloadSessionJson = function() {
         const lines = [];
         if (header) {
@@ -1081,7 +1102,7 @@
               const hasUserContent = skillBlock.userMessage || images.length > 0;
               let html = `<div class="skill-user-entry" id="${entryDomId}">${copyBtnHtml}${tsHtml}`;
 
-              html += `<div class="skill-invocation" onclick="if(window.getSelection().toString())return;this.classList.toggle('expanded')">
+              html += `<div class="skill-invocation" data-toggle-class="expanded">
                 <div class="skill-invocation-label">[skill] ${escapeHtml(skillBlock.name)}</div>
                 <div class="skill-invocation-collapsed">${escapeHtml(skillBlock.name)} (click to expand)</div>
                 <div class="skill-invocation-content markdown-content">${safeMarkedParse(skillBlock.content)}</div>
@@ -1178,7 +1199,7 @@
         }
 
         if (entry.type === 'compaction') {
-          return `<div class="compaction" id="${entryDomId}" onclick="if(window.getSelection().toString())return;this.classList.toggle('expanded')">
+          return `<div class="compaction" id="${entryDomId}" data-toggle-class="expanded">
             <div class="compaction-label">[compaction]</div>
             <div class="compaction-collapsed">Compacted from ${entry.tokensBefore.toLocaleString()} tokens</div>
             <div class="compaction-content"><strong>Compacted from ${entry.tokensBefore.toLocaleString()} tokens</strong>\n\n${escapeHtml(entry.summary)}</div>
@@ -1269,7 +1290,7 @@
               <div class="help-actions">
                 <button type="button" class="header-toggle-btn" data-action="toggle-thinking" title="Toggle thinking (T)">Toggle thinking</button>
                 <button type="button" class="header-toggle-btn" data-action="toggle-tools" title="Toggle tools (O)">Toggle tools</button>
-                <button type="button" class="download-json-btn" onclick="downloadSessionJson()" title="Download session as JSONL">↓ JSONL</button>
+                <button type="button" class="download-json-btn" data-action="download-session-json" title="Download session as JSONL">↓ JSONL</button>
               </div>
             </div>
             <div class="header-info">
@@ -1288,7 +1309,7 @@
           if (lines.length > previewLines) {
             const preview = lines.slice(0, previewLines).join('\n');
             const remaining = lines.length - previewLines;
-            html += `<div class="system-prompt expandable" onclick="if(window.getSelection().toString())return;this.classList.toggle('expanded')">
+            html += `<div class="system-prompt expandable" data-toggle-class="expanded">
               <div class="system-prompt-header">System Prompt</div>
               <div class="system-prompt-preview">${escapeHtml(preview)}</div>
               <div class="system-prompt-expand-hint">... (${remaining} more lines, click to expand)</div>
@@ -1325,7 +1346,7 @@
                   }
                   paramsHtml += `</div>`;
                 }
-                return `<div class="tool-item" onclick="if(window.getSelection().toString())return;this.classList.toggle('params-expanded')"><span class="tool-item-name">${escapeHtml(t.name)}</span> - <span class="tool-item-desc">${escapeHtml(t.description)}</span> <span class="tool-params-hint"></span><div class="tool-params-content">${paramsHtml}</div></div>`;
+                return `<div class="tool-item" data-toggle-class="params-expanded"><span class="tool-item-name">${escapeHtml(t.name)}</span> - <span class="tool-item-desc">${escapeHtml(t.description)}</span> <span class="tool-params-hint"></span><div class="tool-params-content">${paramsHtml}</div></div>`;
               }).join('')}
             </div>
           </div>`;
@@ -1443,11 +1464,11 @@
             if (/^\s*(javascript|vbscript|data):/i.test(href)) {
               return escapeHtml(token.text || '');
             }
-            let out = '<img src="' + escapeHtml(href) + '" alt="' + escapeHtml(token.text || '') + '"';
-            if (token.title) {
-              out += ' title="' + escapeHtml(token.title) + '"';
-            }
-            out += '>';
+            // A remote image is never fetched on open (a tracking pixel, the viewer's IP): it
+            // renders as a link the viewer chooses to open. The CSP (img-src data:) backs this.
+            let out = '<a class="remote-image" href="' + escapeHtml(href) + '" target="_blank" rel="noopener noreferrer"';
+            out += ' title="' + escapeHtml(token.title || 'Remote image (not loaded): ' + href) + '"';
+            out += '>[image: ' + escapeHtml(token.text || href) + ']</a>';
             return out;
           },
           code(token) {

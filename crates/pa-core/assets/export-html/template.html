@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="{{CSP}}">
   <title>Session Export</title>
   <style>
 {{CSS}}
@@ -42,8 +43,6 @@
   <script id="session-data" type="application/json">{{SESSION_DATA}}</script>
   <script>{{MARKED_JS}}</script>
   <script>{{HIGHLIGHT_JS}}</script>
-  <script>
-{{JS}}
-  </script>
+  <script>{{JS}}</script>
 </body>
 </html>
