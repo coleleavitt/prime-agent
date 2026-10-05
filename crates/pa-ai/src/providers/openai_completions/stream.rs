@@ -582,7 +582,7 @@ async fn run_stream(
     }
 
     let url = format!("{}/chat/completions", model.base_url.trim_end_matches('/'));
-    let headers = build_headers(
+    let mut headers = build_headers(
         model,
         &api_key,
         base_options.headers.as_ref(),
@@ -591,6 +591,7 @@ async fn run_stream(
         base_options.session_id.as_deref(),
     );
 
+    crate::utils_inner::headers::ensure_json_content_type(&mut headers);
     let mut response: HttpResponse = send(RequestOptions {
         method: reqwest::Method::POST,
         url,

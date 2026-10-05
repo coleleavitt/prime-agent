@@ -336,6 +336,7 @@ async fn run_stream(
         headers.push(("Authorization".into(), format!("Bearer {token}")));
     }
 
+    crate::utils_inner::headers::ensure_json_content_type(&mut headers);
     let mut response: HttpResponse = send(RequestOptions {
         method: reqwest::Method::POST,
         url,

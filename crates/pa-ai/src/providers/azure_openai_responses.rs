@@ -344,6 +344,7 @@ async fn run_stream(
     }
     headers.push(("api-key".into(), api_key));
 
+    crate::utils_inner::headers::ensure_json_content_type(&mut headers);
     let mut response: HttpResponse = send(RequestOptions {
         method: reqwest::Method::POST,
         url,

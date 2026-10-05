@@ -303,7 +303,8 @@ async fn run_stream(
     }
 
     let url = format!("{}/responses", model.base_url.trim_end_matches('/'));
-    let headers = build_headers(model, &api_key, &options, cache_session_id.as_deref());
+    let mut headers = build_headers(model, &api_key, &options, cache_session_id.as_deref());
+    crate::utils_inner::headers::ensure_json_content_type(&mut headers);
     let mut response: HttpResponse = send(RequestOptions {
         method: reqwest::Method::POST,
         url,
