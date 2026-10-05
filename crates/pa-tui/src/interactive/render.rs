@@ -487,6 +487,9 @@ impl Renderer {
                     let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Hide);
                 } else {
                     let _ = self.flush_to_main_screen(view);
+                    // The shell's own window title comes back off the title stack (a handoff
+                    // keeps the title for the adopting surface to replace).
+                    crate::terminal_title::restore(&mut std::io::stdout());
                     // The shared exit tail ends the parity teardown: the synchronized-output
                     // release, the SGR reset, the cursor show, and the cooked-tty verification
                     // end in the same terminal state every exit path guarantees.

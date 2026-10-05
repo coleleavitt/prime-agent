@@ -624,7 +624,7 @@ impl SessionUi {
         // Any browse selection belonged to the previous queue and drops.
         let _ = self.queue_selection.reset();
         view.queue_selected = None;
-        view.chrome.chat_name = self.session_display();
+        self.sync_chat_name(view);
         view.chrome.context = self.context;
         self.update_subagent_summary(view);
         // The rebuilt transcript invalidates the announcement row tracking;
