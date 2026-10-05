@@ -72,23 +72,29 @@ impl PackageManager {
             }
         };
 
+        // An untrusted workspace's skills (its Python skills install into
+        // the shared kernel venv and import at startup) and prompt
+        // templates stay out until the workspace is trusted.
+        let project_trusted = self.settings().project_scope_trusted();
         add_resources(
             accumulator,
             ResourceType::Skills,
-            [
-                collect_skill_entries(&project_dirs[0], SkillDiscoveryMode::Pi),
-                project_agents_skill_dirs
-                    .iter()
-                    .flat_map(|dir| collect_skill_entries(dir, SkillDiscoveryMode::Agents))
-                    .collect(),
-            ]
-            .concat(),
+            if project_trusted {
+                [
+                    collect_skill_entries(&project_dirs[0], SkillDiscoveryMode::Pi),
+                    project_agents_skill_dirs
+                        .iter()
+                        .flat_map(|dir| collect_skill_entries(dir, SkillDiscoveryMode::Agents))
+                        .collect(),
+                ]
+                .concat()
+            } else {
+                Vec::new()
+            },
             &project_metadata,
             &project_overrides[0],
             project_base_dir,
         );
-        // An untrusted workspace's prompt templates stay out until trusted.
-        let project_trusted = self.settings().project_scope_trusted();
         add_resources(
             accumulator,
             ResourceType::Prompts,

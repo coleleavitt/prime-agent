@@ -269,8 +269,8 @@ pub const COMMAND_SPECS: &[CommandSpec] = &[
     .description(
         "Project configuration that can run code or change the agent's instructions - \
 .prime/agent/settings.json keys such as shellPath, shellCommandPrefix, npmCommand, mcpServers \
-and packages, .prime/agent/SYSTEM.md and APPEND_SYSTEM.md, and prompt templates - loads only in a \
-trusted workspace. The decision is recorded in \
+and packages, .prime/agent/SYSTEM.md and APPEND_SYSTEM.md, prompt templates, and project skills - \
+loads only in a trusted workspace. The decision is recorded in \
 ~/.prime/agent/trusted-workspaces.json, pinned to the content it covered: a change asks again.",
     )
     .options(&["--list  List the recorded decisions"])

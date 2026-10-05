@@ -73,6 +73,85 @@ fn gated_settings(project_dir: &Path) -> serde_json::Map<String, Value> {
     document
 }
 
+/// A `skills` settings entry that names a path (not an override pattern
+/// or a glob), resolved like the package manager resolves it: tilde, then
+/// relative to the project config dir.
+fn settings_skill_path(entry: &str, project_dir: &Path) -> Option<PathBuf> {
+    let entry = entry.trim();
+    if entry.is_empty() || entry.starts_with(['!', '+', '-']) || entry.contains(['*', '?', '[']) {
+        return None;
+    }
+    let home = || pa_types::platform::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let path = if entry == "~" {
+        home()
+    } else if let Some(rest) = entry.strip_prefix("~/") {
+        home().join(rest)
+    } else if Path::new(entry).is_absolute() {
+        PathBuf::from(entry)
+    } else {
+        project_dir.join(entry)
+    };
+    path.exists().then_some(path)
+}
+
+/// Every project skill source the package resolution would load: the
+/// project `skills/` dir, each ancestor `.agents/skills/` up to the git
+/// root (the user's own `~/.agents/skills` excluded), and the project
+/// `skills` settings entries that name a path.
+fn project_skill_trees(
+    cwd: &Path,
+    project_dir: &Path,
+    settings: &serde_json::Map<String, Value>,
+) -> Vec<(GatedItem, GatedTree)> {
+    let config_dir = crate::settings::CONFIG_DIR_NAME;
+    let mut trees = Vec::new();
+    let skills_dir = project_dir.join("skills");
+    if dir_has_entries(&skills_dir) {
+        trees.push((
+            GatedItem::ProjectSkills(format!("{config_dir}/skills/")),
+            GatedTree {
+                label: "skills".to_string(),
+                root: skills_dir,
+            },
+        ));
+    }
+    let user_agents_skills = pa_types::platform::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".agents")
+        .join("skills");
+    for dir in crate::packages::resolve::discovery::collect_ancestor_agents_skill_dirs(cwd) {
+        if dir == user_agents_skills || !dir_has_entries(&dir) {
+            continue;
+        }
+        let shown = dir.strip_prefix(cwd).map_or_else(
+            |_| dir.display().to_string(),
+            |relative| relative.display().to_string(),
+        );
+        trees.push((
+            GatedItem::ProjectSkills(format!("{shown}/")),
+            GatedTree {
+                label: format!("agents-skills:{}", dir.display()),
+                root: dir,
+            },
+        ));
+    }
+    let entries = settings.get("skills").and_then(Value::as_array);
+    for entry in entries.into_iter().flatten().filter_map(Value::as_str) {
+        if let Some(root) = settings_skill_path(entry, project_dir) {
+            trees.push((
+                GatedItem::ProjectSkills(format!(
+                    "{config_dir}/settings.json skills entry {entry}"
+                )),
+                GatedTree {
+                    label: format!("settings-skills:{entry}"),
+                    root,
+                },
+            ));
+        }
+    }
+    trees
+}
+
 impl TrustInputs {
     pub(super) fn collect(cwd: &Path, agent_dir: &Path) -> TrustInputs {
         let project_dir = cwd.join(crate::settings::CONFIG_DIR_NAME);
@@ -96,8 +175,10 @@ impl TrustInputs {
                 },
             ));
         }
+        let settings = gated_settings(&project_dir);
+        trees.extend(project_skill_trees(cwd, &project_dir, &settings));
         TrustInputs {
-            settings: gated_settings(&project_dir),
+            settings,
             system_prompt: file("SYSTEM.md"),
             append_system_prompt: file("APPEND_SYSTEM.md"),
             trees,
@@ -285,7 +366,15 @@ fn tree_memo() -> &'static TreeMemo {
 
 fn tree_digest(root: &Path) -> Vec<u8> {
     let mut files = Vec::new();
-    walk(root, "", 0, &mut HashSet::new(), &mut files);
+    match std::fs::metadata(root) {
+        // A settings entry can name one skill file.
+        Ok(metadata) if metadata.is_file() => files.push(TreeFile {
+            relative: String::new(),
+            stamp: stat_stamp(&metadata),
+            path: root.to_path_buf(),
+        }),
+        Ok(_) | Err(_) => walk(root, "", 0, &mut HashSet::new(), &mut files),
+    }
     let mut stamp_hasher = Sha256::new();
     for file in &files {
         frame(&mut stamp_hasher, &file.relative, &[]);

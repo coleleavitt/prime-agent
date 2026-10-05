@@ -470,6 +470,13 @@ mod tests {
             "---\nname: alpha\ndescription: Project alpha\n---\nBody",
         )
         .unwrap();
+        // The fixture's project skills are its own: trusted.
+        crate::workspace_trust::record(
+            &cwd,
+            &agent_dir,
+            crate::workspace_trust::TrustDecision::Trusted,
+        )
+        .unwrap();
 
         let resources = load_resources(ResourceLoaderOptions::new(&cwd, &agent_dir)).unwrap();
         let alpha: Vec<_> = resources

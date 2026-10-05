@@ -93,8 +93,11 @@ keyed by the canonical cwd, each record pinned to a `sha256` over the gated
 content). An untrusted workspace keeps only the
 `UNTRUSTED_PROJECT_SETTINGS_KEYS` of its project settings (presentation and
 turn-behaviour keys; everything else, unknown keys included, waits for trust),
-and `load_resources` skips its `SYSTEM.md`/`APPEND_SYSTEM.md` and project
-prompt templates. A change to the gated content reads as `Changed` (asks again);
+and `load_resources` skips its `SYSTEM.md`/`APPEND_SYSTEM.md`, project
+prompt templates, and project skills (`.prime/agent/skills/`, ancestor
+`.agents/skills/`, settings `skills` paths), so an untrusted Python skill is
+never editable-installed into the kernel venv or imported. The hash covers
+every file of those skill trees except tool caches. A change to the gated content reads as `Changed` (asks again);
 a theme edit does not. Project-scope writes from an untrusted workspace are
 refused; the product's own project writes in a trusted one re-pin the record.
 `evaluate` never prompts or writes, so daemon workers just read the decision;

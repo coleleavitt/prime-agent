@@ -2,9 +2,10 @@
 //! code or change the agent's instructions.
 //!
 //! A cloned repository can carry `.prime/agent/settings.json` (shell,
-//! npm, MCP and package keys), `SYSTEM.md` / `APPEND_SYSTEM.md`, and
-//! prompt templates. None of it applies until the user trusts the
-//! workspace. The decision is recorded in `<agentDir>/trusted-workspaces.json`,
+//! npm, MCP and package keys), `SYSTEM.md` / `APPEND_SYSTEM.md`, prompt
+//! templates, and project skills (whose Python packages install into the
+//! shared kernel venv and import at kernel startup). None of it applies
+//! until the user trusts the workspace. The decision is recorded in `<agentDir>/trusted-workspaces.json`,
 //! keyed by the workspace's canonical path and pinned to a content hash
 //! of the gated files, so a change to them asks again.
 //!
@@ -74,6 +75,10 @@ pub enum GatedItem {
     AppendSystemPrompt,
     /// `.prime/agent/prompts/`: prompt templates.
     PromptTemplates,
+    /// A project skill directory (`.prime/agent/skills/`, an ancestor's
+    /// `.agents/skills/`, or a project `skills` settings entry): its
+    /// Python skills install into the kernel venv and import at startup.
+    ProjectSkills(String),
 }
 
 impl fmt::Display for GatedItem {
@@ -86,6 +91,7 @@ impl fmt::Display for GatedItem {
             GatedItem::SystemPrompt => write!(f, "{config_dir}/SYSTEM.md"),
             GatedItem::AppendSystemPrompt => write!(f, "{config_dir}/APPEND_SYSTEM.md"),
             GatedItem::PromptTemplates => write!(f, "{config_dir}/prompts/ (prompt templates)"),
+            GatedItem::ProjectSkills(location) => write!(f, "{location} (project skills)"),
         }
     }
 }

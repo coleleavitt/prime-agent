@@ -285,6 +285,7 @@ fn agents_skills_scan_stops_at_git_repo_root() {
     );
 
     let mut nested_manager = Fixture::with_cwd(fixture.root, nested_cwd, fixture.agent_dir);
+    nested_manager.reload();
     let result = nested_manager.manager.resolve().unwrap();
     assert!(result
         .skills
@@ -313,6 +314,7 @@ fn agents_skills_scan_goes_to_fs_root_without_a_repo() {
     );
 
     let mut nested_manager = Fixture::with_cwd(fixture.root, nested_cwd, fixture.agent_dir);
+    nested_manager.reload();
     let result = nested_manager.manager.resolve().unwrap();
     assert!(result
         .skills

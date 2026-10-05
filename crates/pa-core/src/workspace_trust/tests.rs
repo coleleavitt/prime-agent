@@ -17,6 +17,8 @@ impl Fixture {
         let cwd = tmp.path().join("repo");
         let agent_dir = tmp.path().join("agent");
         fs::create_dir_all(cwd.join(".prime").join("agent")).unwrap();
+        // The repository root bounds the `.agents/skills` ancestor scan.
+        fs::create_dir_all(cwd.join(".git")).unwrap();
         fs::create_dir_all(&agent_dir).unwrap();
         Fixture {
             _tmp: tmp,
@@ -341,4 +343,139 @@ fn the_notice_names_what_was_skipped_and_how_to_load_it() {
             canonical.display()
         ))
     );
+}
+
+/// A Python skill (SKILL.md + pyproject.toml + its package) under `dir`.
+fn write_python_skill(dir: &Path, name: &str, code: &str) {
+    let skill = dir.join(name);
+    let package = skill.join("src").join(name.replace('-', "_"));
+    fs::create_dir_all(&package).unwrap();
+    fs::write(
+        skill.join("SKILL.md"),
+        format!("---\nname: {name}\ndescription: a project python skill\n---\nbody"),
+    )
+    .unwrap();
+    fs::write(skill.join("pyproject.toml"), "[project]\nname = \"x\"\n").unwrap();
+    fs::write(package.join("__init__.py"), code).unwrap();
+}
+
+/// The kernel's pre-imported Python skills from this fixture (bundled
+/// skills, which load in every workspace, are left out).
+fn kernel_imports(fixture: &Fixture) -> Vec<String> {
+    let resources =
+        load_resources(ResourceLoaderOptions::new(&fixture.cwd, &fixture.agent_dir)).unwrap();
+    crate::session_engine::runtime_wiring::kernel_python_skills(&resources.skills)
+        .into_iter()
+        .map(|skill| skill.import_name)
+        .filter(|import_name| import_name.ends_with("_tool"))
+        .collect()
+}
+
+#[test]
+fn untrusted_project_python_skills_never_reach_the_kernel() {
+    let fixture = Fixture::new();
+    write_python_skill(
+        &fixture.project_file("skills"),
+        "repo-tool",
+        "import os  # runs at kernel startup\n",
+    );
+    write_python_skill(
+        &fixture.cwd.join(".agents").join("skills"),
+        "agents-tool",
+        "VALUE = 1\n",
+    );
+
+    let untrusted = fixture.evaluate();
+    assert_eq!(
+        untrusted,
+        status(
+            &fixture.cwd,
+            TrustState::Unknown,
+            vec![
+                GatedItem::ProjectSkills(".prime/agent/skills/".to_string()),
+                GatedItem::ProjectSkills(".agents/skills/".to_string()),
+            ]
+        )
+    );
+    let resources =
+        load_resources(ResourceLoaderOptions::new(&fixture.cwd, &fixture.agent_dir)).unwrap();
+    assert!(
+        resources
+            .skills
+            .iter()
+            .all(|skill| skill.name != "repo-tool" && skill.name != "agents-tool"),
+        "untrusted project skills (python or prompt) must not load"
+    );
+    assert_eq!(kernel_imports(&fixture), Vec::<String>::new());
+
+    fixture.trust();
+    let mut imports = kernel_imports(&fixture);
+    imports.sort();
+    assert_eq!(
+        imports,
+        vec!["agents_tool".to_string(), "repo_tool".to_string()]
+    );
+}
+
+#[test]
+fn a_skill_code_change_asks_again_but_tool_caches_do_not() {
+    let fixture = Fixture::new();
+    let skills = fixture.project_file("skills");
+    write_python_skill(&skills, "repo-tool", "VALUE = 1\n");
+    fixture.trust();
+
+    // What an editable install or a test run leaves behind.
+    let skill = skills.join("repo-tool");
+    fs::create_dir_all(skill.join("src").join("repo_tool.egg-info")).unwrap();
+    fs::write(
+        skill
+            .join("src")
+            .join("repo_tool.egg-info")
+            .join("PKG-INFO"),
+        "Name: x",
+    )
+    .unwrap();
+    fs::create_dir_all(skill.join("src").join("repo_tool").join("__pycache__")).unwrap();
+    fs::write(
+        skill
+            .join("src")
+            .join("repo_tool")
+            .join("__pycache__")
+            .join("x.pyc"),
+        "bytecode",
+    )
+    .unwrap();
+    assert_eq!(fixture.evaluate().state, TrustState::Trusted);
+
+    fs::write(
+        skill.join("src").join("repo_tool").join("__init__.py"),
+        "import subprocess; subprocess.run(['evil'])\n",
+    )
+    .unwrap();
+    assert_eq!(fixture.evaluate().state, TrustState::Changed);
+    assert_eq!(kernel_imports(&fixture), Vec::<String>::new());
+}
+
+#[test]
+fn project_skills_named_by_settings_are_gated_with_their_content() {
+    let fixture = Fixture::new();
+    write_python_skill(&fixture.cwd.join("tools"), "linked-tool", "VALUE = 1\n");
+    fixture.write_settings(&serde_json::json!({ "skills": ["../../tools"] }));
+
+    let gated = fixture.evaluate().gated;
+    assert_eq!(
+        gated,
+        vec![
+            GatedItem::SettingsKeys(vec!["skills".to_string()]),
+            GatedItem::ProjectSkills(
+                ".prime/agent/settings.json skills entry ../../tools".to_string()
+            ),
+        ]
+    );
+    assert_eq!(kernel_imports(&fixture), Vec::<String>::new());
+    fixture.trust();
+    assert_eq!(kernel_imports(&fixture), vec!["linked_tool".to_string()]);
+
+    write_python_skill(&fixture.cwd.join("tools"), "linked-tool", "VALUE = 2\n");
+    assert_eq!(fixture.evaluate().state, TrustState::Changed);
 }

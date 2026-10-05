@@ -14,6 +14,15 @@ only after you trust the workspace.
   does not know.
 - `.prime/agent/SYSTEM.md` and `.prime/agent/APPEND_SYSTEM.md`.
 - `.prime/agent/prompts/` (prompt templates).
+- Project skills, Python and prompt skills alike: `.prime/agent/skills/`,
+  every `.agents/skills/` from the workspace up to its git root (your own
+  `~/.agents/skills` excluded), and paths named by the project `skills`
+  setting. A Python skill is installed into the kernel venv (an editable
+  install that runs its build backend) and imported when the kernel starts,
+  so an untrusted workspace's skills are neither listed to the model nor
+  installed. The trust hash covers every file in these directories except
+  tool caches (`__pycache__`, `*.pyc`, `*.egg-info`, `.git`, test and lint
+  caches), so editing a skill's code asks again.
 
 These project settings keys still apply in an untrusted workspace, because
 they only change presentation or turn behaviour within the providers and
@@ -44,7 +53,10 @@ The decision is stored in `~/.prime/agent/trusted-workspaces.json`, keyed by
 the workspace's canonical path and pinned to a SHA-256 of the gated content.
 Changing any gated file (or a gated settings key) asks again; editing a safe
 key such as `theme` does not. A decision applies to sessions started after it;
-running sessions keep what they loaded.
+running sessions keep what they loaded. Revoking trust stops a project
+Python skill from being listed and imported in new sessions; a package an
+earlier trusted session installed stays in the kernel venv until it is
+rebuilt.
 
 ## Commands
 
