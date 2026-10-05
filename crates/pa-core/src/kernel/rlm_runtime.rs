@@ -299,12 +299,12 @@ fn normalize_model_search_text(value: &str) -> String {
         .collect()
 }
 
-/// Rank and cap model matches the same way `findRlmModelMatches` does: exact match,
-/// then prefix, then substring, then alphabetical order.
-///
-/// # Panics
-///
-/// Candidates are sorted by score with a `partial_cmp().unwrap()`; every score is finite.
+/// Rank and cap model matches like `findRlmModelMatches`: exact match, then
+/// prefix, then substring, then (upstream #855) a multi-word query whose words
+/// all appear in any order, then alphabetical order. An empty query has no
+/// ranking to apply, so (upstream #922) its candidates round-robin across
+/// providers: a bounded page samples every provider instead of reading as the
+/// alphabetically first provider's whole catalog.
 #[must_use]
 pub fn find_rlm_model_matches(
     query: &str,
@@ -312,7 +312,12 @@ pub fn find_rlm_model_matches(
     limit: usize,
 ) -> Vec<RlmModelMatch> {
     let normalized_query = normalize_model_search_text(query.trim());
-    let mut candidates: Vec<(RlmModelMatch, f64)> = Vec::new();
+    let query_words: Vec<String> = query
+        .split_whitespace()
+        .map(normalize_model_search_text)
+        .filter(|word| !word.is_empty())
+        .collect();
+    let mut candidates: Vec<(RlmModelMatch, usize)> = Vec::new();
     for model in models {
         let selector = model.selector();
         let name = if model.name.is_empty() {
@@ -320,35 +325,14 @@ pub fn find_rlm_model_matches(
         } else {
             model.name.clone()
         };
-        let fields = [selector.clone(), model.id.clone(), name.clone()];
-        let normalized_fields: Vec<String> = fields
-            .iter()
-            .map(|f| normalize_model_search_text(f))
-            .collect();
-        let mut score = if normalized_query.is_empty() {
-            0.0
+        let score = if normalized_query.is_empty() {
+            Some(0)
         } else {
-            f64::INFINITY
+            let normalized_fields =
+                [&selector, &model.id, &name].map(|field| normalize_model_search_text(field));
+            model_match_score(&normalized_fields, &normalized_query, &query_words)
         };
-        if !normalized_query.is_empty() {
-            if let Some(exact) = normalized_fields
-                .iter()
-                .position(|f| f == &normalized_query)
-            {
-                score = exact as f64;
-            } else if let Some(prefix) = normalized_fields
-                .iter()
-                .position(|f| f.starts_with(&normalized_query))
-            {
-                score = 3.0 + prefix as f64;
-            } else if let Some(partial) = normalized_fields
-                .iter()
-                .position(|f| f.contains(&normalized_query))
-            {
-                score = 6.0 + partial as f64;
-            }
-        }
-        if score.is_finite() {
+        if let Some(score) = score {
             candidates.push((
                 RlmModelMatch {
                     provider: model.provider.clone(),
@@ -360,12 +344,59 @@ pub fn find_rlm_model_matches(
             ));
         }
     }
-    candidates.sort_by(|a, b| {
-        a.1.partial_cmp(&b.1)
-            .unwrap()
-            .then_with(|| a.0.selector.cmp(&b.0.selector))
-    });
-    candidates.into_iter().take(limit).map(|(m, _)| m).collect()
+    candidates.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.selector.cmp(&b.0.selector)));
+    let ranked = candidates.into_iter().map(|(m, _)| m);
+    if normalized_query.is_empty() {
+        spread_across_providers(ranked.collect())
+            .into_iter()
+            .take(limit)
+            .collect()
+    } else {
+        ranked.take(limit).collect()
+    }
+}
+
+/// The rank of one model's normalized fields (selector, id, name) for a
+/// query: exact 0-2, prefix 3-5, substring 6-8, every word in any order 9;
+/// `None` when it does not match.
+fn model_match_score(fields: &[String; 3], query: &str, words: &[String]) -> Option<usize> {
+    if let Some(exact) = fields.iter().position(|f| f == query) {
+        return Some(exact);
+    }
+    if let Some(prefix) = fields.iter().position(|f| f.starts_with(query)) {
+        return Some(3 + prefix);
+    }
+    if let Some(partial) = fields.iter().position(|f| f.contains(query)) {
+        return Some(6 + partial);
+    }
+    let every_word = words.len() > 1
+        && words
+            .iter()
+            .all(|word| fields.iter().any(|field| field.contains(word.as_str())));
+    every_word.then_some(9)
+}
+
+/// Round-robin ranked matches across providers (providers in order of first
+/// appearance), keeping each provider's own order.
+fn spread_across_providers(ranked: Vec<RlmModelMatch>) -> Vec<RlmModelMatch> {
+    let mut buckets: Vec<std::collections::VecDeque<RlmModelMatch>> = Vec::new();
+    for candidate in ranked {
+        match buckets.iter_mut().find(|bucket| {
+            bucket
+                .front()
+                .is_some_and(|m| m.provider == candidate.provider)
+        }) {
+            Some(bucket) => bucket.push_back(candidate),
+            None => buckets.push(std::collections::VecDeque::from([candidate])),
+        }
+    }
+    let mut spread = Vec::new();
+    while buckets.iter().any(|bucket| !bucket.is_empty()) {
+        for bucket in &mut buckets {
+            spread.extend(bucket.pop_front());
+        }
+    }
+    spread
 }
 
 /// Models whose full selector ends with the reference, so a bare id like
@@ -543,6 +574,84 @@ mod tests {
         );
         let matches = find_rlm_model_matches("", &models, 1);
         assert_eq!(matches.len(), 1, "empty query lists up to the limit");
+    }
+
+    fn catalog(providers: &[&str], per_provider: usize) -> Vec<RlmModelInfo> {
+        providers
+            .iter()
+            .flat_map(|provider| {
+                (0..per_provider).map(move |index| RlmModelInfo {
+                    provider: (*provider).to_string(),
+                    id: format!("model-{index}"),
+                    name: format!("Model {index}"),
+                })
+            })
+            .collect()
+    }
+
+    fn selectors(matches: &[RlmModelMatch]) -> Vec<String> {
+        matches.iter().map(|m| m.selector.clone()).collect()
+    }
+
+    // Upstream #855/#922 (issue #799): a bare `find_models()` used to return
+    // the alphabetically first `limit` models, all from one provider.
+    #[test]
+    fn empty_query_spreads_across_providers() {
+        let models = catalog(&["zai", "anthropic", "openai"], 4);
+        assert_eq!(
+            selectors(&find_rlm_model_matches("", &models, 5)),
+            [
+                "anthropic/model-0",
+                "openai/model-0",
+                "zai/model-0",
+                "anthropic/model-1",
+                "openai/model-1",
+            ]
+        );
+        let everything = find_rlm_model_matches("  ", &models, 100);
+        assert_eq!(everything.len(), 12);
+        assert_eq!(everything[11].selector, "zai/model-3");
+        // A single-provider catalog keeps its own order.
+        assert_eq!(
+            selectors(&find_rlm_model_matches("", &catalog(&["solo"], 3), 8)),
+            ["solo/model-0", "solo/model-1", "solo/model-2"]
+        );
+        // A real query still ranks by relevance, not by provider.
+        assert_eq!(
+            selectors(&find_rlm_model_matches("model-1", &models, 3)),
+            ["anthropic/model-1", "openai/model-1", "zai/model-1"]
+        );
+    }
+
+    // Upstream #855: a multi-word query matches regardless of word order,
+    // ranked after every exact, prefix, and substring match.
+    #[test]
+    fn multi_word_query_ignores_word_order() {
+        let models = vec![
+            RlmModelInfo {
+                provider: "openai".into(),
+                id: "gpt-5.6-sol".into(),
+                name: "GPT 5.6 Sol".into(),
+            },
+            RlmModelInfo {
+                provider: "openai".into(),
+                id: "gpt-5.6".into(),
+                name: "GPT 5.6".into(),
+            },
+        ];
+        assert_eq!(
+            selectors(&find_rlm_model_matches("gpt 5.6 sol", &models, 8)),
+            ["openai/gpt-5.6-sol"]
+        );
+        assert_eq!(
+            selectors(&find_rlm_model_matches("5.6 gpt sol", &models, 8)),
+            ["openai/gpt-5.6-sol"]
+        );
+        assert_eq!(
+            selectors(&find_rlm_model_matches("sol gpt", &models, 8)),
+            ["openai/gpt-5.6-sol"]
+        );
+        assert!(find_rlm_model_matches("sol claude", &models, 8).is_empty());
     }
 
     #[test]

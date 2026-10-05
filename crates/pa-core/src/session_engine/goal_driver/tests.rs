@@ -336,8 +336,8 @@ fn the_mint_refuses_and_finishes_on_an_errored_turn() {
     driver.start(&mut session, "work", None).unwrap();
     let created_at = driver.state().created_at.unwrap();
     let corpse = test_error_turn(
-        "server_error",
-        None,
+        "payment_required",
+        Some(402),
         "402 Payment required: wallet drained",
         created_at as i64 + 1,
     );
@@ -355,6 +355,92 @@ fn the_mint_refuses_and_finishes_on_an_errored_turn() {
         GoalDriver::load_persisted(&session).state().status,
         GoalStatus::Error
     );
+}
+
+/// Upstream #1313: a turn that failed on a transient provider error after
+/// the retries ran out pauses the goal for retry instead of erroring it; the
+/// next successful model turn resumes it. A permanent failure still errors.
+#[test]
+fn a_transient_provider_failure_pauses_the_goal_for_retry() {
+    for kind in ["overloaded", "server_error", "stream_drop"] {
+        let mut session = persisted_session();
+        let mut driver = GoalDriver::new();
+        driver.start(&mut session, "work", None).unwrap();
+        let created_at = driver.state().created_at.unwrap() as i64;
+        let corpse = test_error_turn(
+            kind,
+            Some(503),
+            "Servers overloaded; retry later.",
+            created_at + 1,
+        );
+        assert!(driver
+            .next_continuation_message(&mut session, Some(&corpse))
+            .unwrap()
+            .is_none());
+        let paused = GoalState {
+            active: false,
+            status: GoalStatus::Paused,
+            last_reason: Some(format!(
+                "{TRANSIENT_FAILURE_PAUSE_PREFIX}Servers overloaded; retry later."
+            )),
+            last_error: Some("Servers overloaded; retry later.".to_string()),
+            updated_at: driver.state().updated_at,
+            time_used_seconds: driver.state().time_used_seconds,
+            no_progress_streak: driver.state().no_progress_streak,
+            no_progress_turn_ms: driver.state().no_progress_turn_ms,
+            ..driver.state().clone()
+        };
+        assert_eq!(driver.state(), &paused, "{kind}");
+        assert_eq!(GoalDriver::load_persisted(&session).state(), &paused);
+        assert!(!driver.owns_continuation_wakeup());
+
+        // A failed turn never resumes it; a successful one does.
+        assert!(!driver
+            .resume_after_transient_failure(&mut session, &corpse)
+            .unwrap());
+        assert!(driver
+            .resume_after_transient_failure(&mut session, &test_empty_turn(created_at + 2))
+            .unwrap());
+        assert_eq!(driver.state().status, GoalStatus::Active);
+        assert_eq!(driver.state().last_reason, None);
+        assert_eq!(driver.state().last_error, None);
+    }
+
+    // The direct terminal path classifies the same way.
+    let mut session = persisted_session();
+    let mut driver = GoalDriver::new();
+    driver.start(&mut session, "work", None).unwrap();
+    let created_at = driver.state().created_at.unwrap() as i64;
+    driver
+        .finish_for_failed_turn(
+            &mut session,
+            &test_error_turn("overloaded", None, "overloaded", created_at + 1),
+        )
+        .unwrap();
+    assert_eq!(driver.state().status, GoalStatus::Paused);
+    // A user pause is not lifted by a successful turn.
+    driver.clear(&mut session).unwrap();
+    driver.start(&mut session, "work", None).unwrap();
+    driver.pause(&mut session, "Paused by user").unwrap();
+    assert!(!driver
+        .resume_after_transient_failure(&mut session, &test_empty_turn(created_at + 5))
+        .unwrap());
+    assert_eq!(driver.state().status, GoalStatus::Paused);
+    // A permanent failure (expired auth) still errors the goal.
+    driver.clear(&mut session).unwrap();
+    driver.start(&mut session, "work", None).unwrap();
+    driver
+        .finish_for_failed_turn(
+            &mut session,
+            &test_error_turn(
+                "auth",
+                Some(401),
+                "Provided authentication token is expired.",
+                created_at + 9,
+            ),
+        )
+        .unwrap();
+    assert_eq!(driver.state().status, GoalStatus::Error);
 }
 
 /// A rate-limited corpse never triggers the hard finish; it counts toward the no-output backoff.

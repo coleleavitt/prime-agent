@@ -1038,3 +1038,32 @@ fn quote_block() {
     assert_eq!(lines[0][0].content, "▐ ");
     assert_eq!(lines[0][1].content, "wisdom");
 }
+
+// Upstream #814: markdown paragraphs wrap CJK runs between characters
+// (UAX #14 basics) instead of treating the run as one word.
+#[test]
+fn markdown_wraps_cjk_runs_between_characters() {
+    let rows = |spans: &[Span], width: usize| {
+        let mut out = Vec::new();
+        wrap_spans(spans, width, Style::default(), &mut out);
+        let mut counter = geometry::WrapOutput::count();
+        wrap_spans_into(spans, width, &mut counter);
+        assert_eq!(counter.rows, out.len());
+        out.iter()
+            .map(|row| {
+                row.iter()
+                    .map(|span| span.content.as_str())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(rows(&[Span::raw("ab 世界你好")], 7), ["ab 世界", "你好"]);
+    assert_eq!(
+        rows(&[Span::raw("hello日本語のtext")], 9),
+        ["hello日本", "語のtext"]
+    );
+    assert_eq!(
+        rows(&[Span::raw("世界。「你好」")], 8),
+        ["世界。", "「你好」"]
+    );
+}

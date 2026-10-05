@@ -1,0 +1,1 @@
+- A persistent goal that is blocked on you no longer keeps sending continuation turns: the model can call `goal.pause("waiting for ...")` to pause it (shown as "Paused by agent: ...") and `goal.resume()` once your input arrives. A goal you paused with `/goal pause` still only resumes with `/goal resume`.

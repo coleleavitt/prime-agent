@@ -154,6 +154,23 @@ pub fn is_permanent_provider_failure_kind(
     }
 }
 
+/// Whether a failed turn's provider failure is transient: overload, rate
+/// limit, server error, or a dropped stream, all of which the same request
+/// can survive later. Once the retry ladder is spent, such a failure pauses
+/// a goal for retry instead of failing it (upstream #1313); anything else
+/// (auth, permission, invalid request, payment, safety, unclassified) stays
+/// terminal.
+#[must_use]
+pub fn is_transient_provider_failure(message: &AssistantMessage) -> bool {
+    message.stop_reason == StopReason::Error
+        && !is_agent_lifecycle_failure(message)
+        && !is_faux_provider_queue_exhausted(message)
+        && matches!(
+            provider_stream_failure_kind(message).as_deref(),
+            Some("overloaded" | "rate_limit" | "server_error" | "stream_drop")
+        )
+}
+
 /// Jitter band on the computed backoff (SANCTIONED DIVERGENCE from TS
 /// `providerRetryDelay`, which has none): sessions hammering one rate-limited
 /// provider do not re-converge on the same exponential-ladder ticks (the

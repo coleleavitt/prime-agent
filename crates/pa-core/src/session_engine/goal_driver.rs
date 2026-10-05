@@ -64,6 +64,11 @@ pub struct GoalDriver {
     counted_no_progress_turn_ms: Option<i64>,
 }
 
+/// `last_reason` prefix of a goal paused by a transient provider failure
+/// ([`GoalDriver::finish_for_failed_turn`]): the next successful model turn
+/// resumes it, and `/goal resume` does too.
+pub const TRANSIENT_FAILURE_PAUSE_PREFIX: &str = "Paused after a transient provider failure: ";
+
 fn now_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -492,6 +497,78 @@ impl GoalDriver {
             )?;
         }
         Ok(())
+    }
+
+    /// A failed turn settles an active goal by its failure class: a
+    /// transient provider failure (overload, rate limit, server error,
+    /// dropped stream) pauses the goal for retry, since the provider's
+    /// retries ran out but the goal is fine; any other failure errors it
+    /// ([`GoalDriver::finish_for_terminal_message`]). Upstream #1313.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the paused or errored goal state cannot be persisted.
+    pub fn finish_for_failed_turn(
+        &mut self,
+        session: &mut SessionManager,
+        turn: &pa_agent::types::AssistantMessage,
+    ) -> anyhow::Result<()> {
+        let error = turn
+            .error_message
+            .as_deref()
+            .filter(|message| !message.is_empty())
+            .unwrap_or("Assistant response failed");
+        if self.state.status != GoalStatus::Active
+            || !crate::session_engine::provider_retry::is_transient_provider_failure(turn)
+        {
+            return self.finish_for_terminal_message(
+                session,
+                pa_types::ai::StopReason::Error,
+                Some(error),
+            );
+        }
+        self.set_state(
+            session,
+            GoalState {
+                active: false,
+                status: GoalStatus::Paused,
+                last_reason: Some(format!("{TRANSIENT_FAILURE_PAUSE_PREFIX}{error}")),
+                last_error: Some(error.to_string()),
+                ..self.state.clone()
+            },
+        )?;
+        self.owed_continuation_for_rlm_work = false;
+        Ok(())
+    }
+
+    /// Resume a goal paused by a transient provider failure once a model
+    /// turn settles successfully (the provider is back). Returns whether the
+    /// goal resumed; a user's pause and a failed turn leave it as it is.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the resumed goal state cannot be persisted.
+    pub fn resume_after_transient_failure(
+        &mut self,
+        session: &mut SessionManager,
+        turn: &pa_agent::types::AssistantMessage,
+    ) -> anyhow::Result<bool> {
+        let paused_by_failure = self.state.status == GoalStatus::Paused
+            && self
+                .state
+                .last_reason
+                .as_deref()
+                .is_some_and(|reason| reason.starts_with(TRANSIENT_FAILURE_PAUSE_PREFIX));
+        let succeeded = !matches!(
+            turn.stop_reason,
+            pa_agent::types::StopReason::Error | pa_agent::types::StopReason::Aborted
+        );
+        if !paused_by_failure || !succeeded {
+            return Ok(false);
+        }
+        // The resumed context is not queued: the turn end that follows mints the continuation.
+        self.resume(session)?;
+        Ok(self.state.status == GoalStatus::Active)
     }
 
     /// Build the next continuation context, consuming one continuation

@@ -651,14 +651,22 @@ fn wrap_spans_into(spans: &[Span], width: usize, out: &mut geometry::WrapOutput<
     // tokens: (text, style); alternating words and whitespace-run gaps. TS
     // `splitIntoTokensWithAnsi` keeps each whitespace RUN whole (a run at a span boundary
     // joins the previous gap token), never collapsing it to a single space.
+    // A word is further split into wrap units at CJK break opportunities
+    // (UAX #14 basics), so a CJK run is not one unbreakable word.
     let mut tokens: Vec<(String, Style)> = Vec::new();
+    let push_word = |tokens: &mut Vec<(String, Style)>, word: &str, style: Style| {
+        let mut rest = word;
+        while !rest.is_empty() {
+            let len = crate::width::wrap_unit_len(rest);
+            tokens.push((rest[..len].to_string(), style));
+            rest = &rest[len..];
+        }
+    };
     for span in spans {
         let mut word = String::new();
         for ch in span.content.chars() {
             if ch == ' ' {
-                if !word.is_empty() {
-                    tokens.push((std::mem::take(&mut word), span.style));
-                }
+                push_word(&mut tokens, &std::mem::take(&mut word), span.style);
                 match tokens.last_mut() {
                     Some((text, _)) if text.chars().all(|c| c == ' ') => text.push(' '),
                     _ => tokens.push((" ".to_string(), span.style)),
@@ -667,9 +675,7 @@ fn wrap_spans_into(spans: &[Span], width: usize, out: &mut geometry::WrapOutput<
                 word.push(ch);
             }
         }
-        if !word.is_empty() {
-            tokens.push((word, span.style));
-        }
+        push_word(&mut tokens, &word, span.style);
     }
 
     let mut col = 0usize;

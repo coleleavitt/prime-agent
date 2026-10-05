@@ -84,15 +84,10 @@ impl GoalDriver {
         // The TERMINAL kill is UNCONDITIONAL — outside the examined gate: a
         // timestamp dedup is not a total order across settle paths — a terminal
         // error sharing (or preceding) the examined turn must still refuse.
-        if turn_is_this_goals {
-            if let Some(error) = terminal_provider_failure(turn) {
-                self.finish_for_terminal_message(
-                    session,
-                    pa_types::ai::StopReason::Error,
-                    Some(&error),
-                )?;
-                return Ok(false);
-            }
+        if turn_is_this_goals && terminal_provider_failure(turn).is_some() {
+            // A transient failure pauses the goal for retry; others error it.
+            self.finish_for_failed_turn(session, turn)?;
+            return Ok(false);
         }
         if turn_is_this_goals && turn_is_new {
             // A parked corpse never consumes the no-progress budget. The refusal

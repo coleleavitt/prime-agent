@@ -298,11 +298,11 @@
         "ok": true,
         "text": "Successfully replaced 1 block(s) in file.txt.",
         "details": {
-          "diff": "-1 alpha\n+1 ALPHA\n 2 beta\n 3 keep",
+          "diff": "-1 alpha   \n+1 ALPHA\n 2 beta\n 3 keep  ",
           "firstChangedLine": 1
         }
       },
-      "finalContent": "ALPHA\nbeta\nkeep\n"
+      "finalContent": "ALPHA\nbeta\nkeep  \n"
     },
     {
       "name": "fuzzy-smart-quotes",
@@ -324,7 +324,7 @@
         "ok": true,
         "text": "Successfully replaced 1 block(s) in file.txt.",
         "details": {
-          "diff": "-1 it's a \"test\" line\n+1 plain quotes",
+          "diff": "-1 it’s a “test” line\n+1 plain quotes",
           "firstChangedLine": 1
         }
       },

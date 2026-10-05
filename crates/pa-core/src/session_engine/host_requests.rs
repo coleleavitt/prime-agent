@@ -102,9 +102,56 @@ pub fn handle_goal_host_request(
             let goal = complete_goal_from_host(driver, session)?;
             Ok(goal_host_response(&goal, true))
         }
+        "goal.pause" => {
+            let reason = record
+                .get("reason")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|reason| !reason.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("goal.pause reason must be a non-empty string"))?;
+            if reason.chars().count() > MAX_GOAL_PAUSE_REASON_CHARS {
+                anyhow::bail!(
+                    "goal.pause reason must be at most {MAX_GOAL_PAUSE_REASON_CHARS} characters"
+                );
+            }
+            if driver.state().status != GoalStatus::Active {
+                anyhow::bail!("cannot pause goal because this thread has no active goal");
+            }
+            driver.pause(session, &format!("{AGENT_PAUSE_REASON_PREFIX}{reason}"))?;
+            Ok(goal_host_response(
+                &driver.state_with_creation_elapsed(),
+                false,
+            ))
+        }
+        "goal.resume" => {
+            let paused_by_agent = driver.state().status == GoalStatus::Paused
+                && driver
+                    .state()
+                    .last_reason
+                    .as_deref()
+                    .is_some_and(|reason| reason.starts_with(AGENT_PAUSE_REASON_PREFIX));
+            if !paused_by_agent {
+                anyhow::bail!("cannot resume goal because it is not paused by the agent");
+            }
+            // The resuming turn is already running; its natural end mints the
+            // next continuation, so the resume's own context is not queued.
+            driver.resume(session)?;
+            Ok(goal_host_response(
+                &driver.state_with_creation_elapsed(),
+                false,
+            ))
+        }
         _ => anyhow::bail!("unknown goal request type \"{request_type}\""),
     }
 }
+
+/// `last_reason` prefix marking a pause the agent requested (`goal.pause`):
+/// only such a pause may be lifted by `goal.resume`; a user's `/goal pause`
+/// waits for `/goal resume`.
+pub const AGENT_PAUSE_REASON_PREFIX: &str = "Paused by agent: ";
+
+/// Upper bound on a `goal.pause` reason (TS `MAX_THREAD_GOAL_PAUSE_REASON_CHARS`).
+const MAX_GOAL_PAUSE_REASON_CHARS: usize = 1000;
 
 fn create_goal_from_host(
     driver: &mut GoalDriver,
@@ -511,6 +558,87 @@ mod tests {
         let error = handle_goal_host_request("goal.nope", &json!({}), &mut driver, &mut session)
             .unwrap_err();
         assert!(error.to_string().contains("unknown goal request type"));
+    }
+
+    // Upstream #888/#1113: a goal blocked on the user can be paused by the
+    // model, which stops continuations, and resumed once input arrives.
+    #[test]
+    fn goal_pause_and_resume_from_the_model() {
+        let mut session = persisted_session();
+        let mut driver = GoalDriver::new();
+        handle_goal_host_request(
+            "goal.create",
+            &json!({ "objective": "ship it" }),
+            &mut driver,
+            &mut session,
+        )
+        .unwrap();
+
+        let error = handle_goal_host_request(
+            "goal.pause",
+            &json!({ "reason": "   " }),
+            &mut driver,
+            &mut session,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "goal.pause reason must be a non-empty string"
+        );
+
+        let response = handle_goal_host_request(
+            "goal.pause",
+            &json!({ "reason": "  waiting for the API key  " }),
+            &mut driver,
+            &mut session,
+        )
+        .unwrap();
+        let goal = response.goal.unwrap();
+        assert_eq!(goal.status, GoalStatus::Paused);
+        assert_eq!(
+            driver.state().last_reason.as_deref(),
+            Some("Paused by agent: waiting for the API key")
+        );
+        // A paused goal mints no continuation.
+        assert!(driver
+            .next_continuation_message(&mut session, None)
+            .unwrap()
+            .is_none());
+        let error = handle_goal_host_request(
+            "goal.pause",
+            &json!({ "reason": "again" }),
+            &mut driver,
+            &mut session,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "cannot pause goal because this thread has no active goal"
+        );
+
+        let response =
+            handle_goal_host_request("goal.resume", &json!({}), &mut driver, &mut session).unwrap();
+        assert_eq!(response.goal.unwrap().status, GoalStatus::Active);
+        assert!(driver
+            .next_continuation_message(&mut session, None)
+            .unwrap()
+            .is_some());
+        let error = handle_goal_host_request("goal.resume", &json!({}), &mut driver, &mut session)
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "cannot resume goal because it is not paused by the agent"
+        );
+
+        // A goal the user paused stays paused until the user resumes it.
+        driver.pause(&mut session, "Paused by user").unwrap();
+        let error = handle_goal_host_request("goal.resume", &json!({}), &mut driver, &mut session)
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "cannot resume goal because it is not paused by the agent"
+        );
+        assert_eq!(driver.state().status, GoalStatus::Paused);
     }
 
     #[test]
