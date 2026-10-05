@@ -85,9 +85,11 @@ impl AgentSessionEngine {
                 }
                 TurnResult::Error { error, assistant } => {
                     // A context-overflow error triggers one compact-and-retry attempt.
-                    let arm = assistant.map_or(OverflowArmRun::NotApplicable, |assistant| {
-                        self.run_overflow_compaction(&assistant, emit)
-                    });
+                    let arm = assistant
+                        .as_ref()
+                        .map_or(OverflowArmRun::NotApplicable, |assistant| {
+                            self.run_overflow_compaction(assistant, emit)
+                        });
                     match arm {
                         OverflowArmRun::RetryTurn => {
                             overflow_retry = true;
@@ -129,8 +131,9 @@ impl AgentSessionEngine {
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
                     }
-                    // An error assistant message fails an active goal.
-                    self.finish_goal_for_terminal_error(&error);
+                    // An error assistant message fails an active goal; a
+                    // transient provider failure pauses it for retry.
+                    self.finish_goal_for_terminal_error(&error, assistant.as_deref());
                     emit(EngineEvent::Done(Err(error)));
                     return;
                 }

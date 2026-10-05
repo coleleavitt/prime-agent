@@ -74,18 +74,28 @@ impl AgentSessionEngine {
 
     /// An error assistant message fails an active goal (an abort keeps
     /// it); the state change surfaces through the run's tracking wrapper.
-    pub(crate) fn finish_goal_for_terminal_error(&self, error: &str) {
+    pub(crate) fn finish_goal_for_terminal_error(
+        &self,
+        error: &str,
+        failed_turn: Option<&pa_agent::types::AssistantMessage>,
+    ) {
         let Some(handles) = self.goal_runtime.lock_or_recover().clone() else {
             return;
         };
         self.runtime.block_on(async {
             let mut driver = handles.driver.lock().await;
             let mut session = handles.session.lock().await;
-            if let Err(persist_error) = driver.finish_for_terminal_message(
-                &mut session,
-                pa_types::ai::StopReason::Error,
-                Some(error),
-            ) {
+            // A transient provider failure pauses the goal for retry; other
+            // failures error it (upstream #1313).
+            let finished = match failed_turn {
+                Some(turn) => driver.finish_for_failed_turn(&mut session, turn),
+                None => driver.finish_for_terminal_message(
+                    &mut session,
+                    pa_types::ai::StopReason::Error,
+                    Some(error),
+                ),
+            };
+            if let Err(persist_error) = finished {
                 // The best-effort terminal hook must not reject the caller.
                 eprintln!("pa-daemon: goal terminal finish persist failed: {persist_error:#}");
             }
@@ -275,6 +285,14 @@ impl AgentSessionEngine {
         let last_turn = self.last_loop_assistant_message();
         self.runtime.block_on(async {
             let mut driver = handles.driver.lock().await;
+            // A goal a transient provider failure paused resumes once a
+            // model turn succeeds again (upstream #1313).
+            if let Some(turn) = last_turn.as_ref() {
+                let mut session = handles.session.lock().await;
+                if let Err(error) = driver.resume_after_transient_failure(&mut session, turn) {
+                    eprintln!("pa-daemon: goal resume after a transient failure failed: {error:#}");
+                }
+            }
             if !driver.owns_continuation_wakeup() {
                 let mut session = handles.session.lock().await;
                 if driver.owes_continuation() {

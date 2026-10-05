@@ -109,6 +109,16 @@ impl SessionEngine {
         }
         let persistence = self.session.shared_persistence();
         let mut driver = self.goal_driver.lock().await;
+        // A goal a transient provider failure paused resumes once a model
+        // turn succeeds again (upstream #1313).
+        if let Some(turn) = last_turn.as_ref() {
+            let mut session = persistence.lock().await;
+            if let Err(error) = driver.resume_after_transient_failure(&mut session, turn) {
+                tracing::warn!(
+                    "goal resume after a transient failure failed the persist: {error:#}"
+                );
+            }
+        }
         if !driver.owns_continuation_wakeup() {
             return None;
         }
@@ -133,7 +143,9 @@ impl SessionEngine {
     }
 
     /// A failed terminal assistant message fails an active goal: the error
-    /// text becomes the terminal reason; an abort keeps the goal.
+    /// text becomes the terminal reason; an abort keeps the goal. When the
+    /// failed turn is the session's last assistant message and its failure
+    /// is transient, the goal pauses for retry instead (upstream #1313).
     ///
     /// # Errors
     ///
@@ -143,14 +155,30 @@ impl SessionEngine {
         &self,
         error_message: Option<&str>,
     ) -> anyhow::Result<()> {
+        let failed_turn: Option<pa_agent::types::AssistantMessage> = self
+            .session
+            .last_assistant_message()
+            .await
+            .and_then(|wire| match wire {
+                pa_types::session::AgentMessage::Assistant(assistant) => {
+                    super::provider_adapter::json_round_trip(&assistant)
+                }
+                _ => None,
+            })
+            .filter(|turn: &pa_agent::types::AssistantMessage| {
+                turn.stop_reason == pa_agent::types::StopReason::Error
+            });
         let persistence = self.session.shared_persistence();
         let mut driver = self.goal_driver.lock().await;
         let mut session = persistence.lock().await;
-        driver.finish_for_terminal_message(
-            &mut session,
-            pa_types::ai::StopReason::Error,
-            error_message,
-        )
+        match failed_turn {
+            Some(turn) => driver.finish_for_failed_turn(&mut session, &turn),
+            None => driver.finish_for_terminal_message(
+                &mut session,
+                pa_types::ai::StopReason::Error,
+                error_message,
+            ),
+        }
     }
 
     /// The current goal state (the drivers' publish-dedupe read): the
