@@ -12,7 +12,8 @@
 
 //! Verifier integration tests for the callable Python skill wrapper the kernel bootstrap installs
 //! around every skill that exposes `run()`: a skill laid out as `<skill>/<skill>.py` is callable as
-//! `<skill>.<skill>(...)` (#2221). The kernel Python is ambient; skipped when absent.
+//! `<skill>.<skill>(...)` (#2221), and the wrapper pickles by reference so a variable holding it
+//! survives a namespace snapshot (#1278). The kernel Python is ambient; skipped when absent.
 
 use std::path::{Path, PathBuf};
 
@@ -112,6 +113,31 @@ async fn a_skill_is_callable_by_its_submodule_name() {
         )
         .await,
         (ExecuteStatus::Ok, "(2, 3, 4)".to_string())
+    );
+    provisioner.dispose(None).await;
+}
+
+#[tokio::test]
+async fn a_variable_holding_a_skill_survives_a_snapshot_round_trip() {
+    let Some(python) = kernel_python() else {
+        return;
+    };
+    let dir = tempfile::TempDir::new().unwrap();
+    let (provisioner, manager) = boot(python, dir.path()).await;
+    // #1278: the wrapper pickles by reference, so the variable is saved and restored.
+    let snapshot_round_trip = "import os, tempfile\n\
+from rlm import repl as _repl\n\
+_dir = tempfile.mkdtemp()\n\
+_saved = _repl._snapshot_state({'tools': {'d': demo_skill}}, os.path.join(_dir, 's.dill'), os.path.join(_dir, 's.json'), _repl.DEFAULT_SNAPSHOT_MAX_BYTES, _repl.DEFAULT_SNAPSHOT_MAX_VARIABLE_BYTES, False)\n\
+_ns = {}\n\
+_back = _repl._restore_state(_ns, os.path.join(_dir, 's.dill'))\n\
+(_saved['saved'], _saved['skipped'], _back['restored'], await _ns['tools']['d'].run(20))";
+    assert_eq!(
+        run_cell(&manager, snapshot_round_trip).await,
+        (
+            ExecuteStatus::Ok,
+            "(['tools'], [], ['tools'], 21)".to_string()
+        )
     );
     provisioner.dispose(None).await;
 }
