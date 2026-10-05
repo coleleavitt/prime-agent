@@ -132,9 +132,11 @@ impl SessionUi {
                 if !view.begin_frame_selection(row, col) {
                     view.begin_selection(row, col);
                 }
+                self.snap_multi_click(view, &event, row, col);
                 self.dirty = true;
             } else if left_press && event.motion {
                 self.left_mouse_dragged = true;
+                self.click_counter.reset();
                 view.extend_active_selection(row, col);
                 self.dirty = true;
             } else if !event.press && view.has_selection() {
@@ -153,9 +155,11 @@ impl SessionUi {
             if !view.begin_selection(row, col) {
                 view.begin_frame_selection(row, col);
             }
+            self.snap_multi_click(view, &event, row, col);
             self.dirty = true;
         } else if left_press && event.motion {
             self.left_mouse_dragged = true;
+            self.click_counter.reset();
             view.extend_active_selection(row, col);
             self.update_selection_auto_scroll(view, row, col);
             self.dirty = true;
@@ -193,6 +197,28 @@ impl SessionUi {
             self.pressed_hyperlink = None;
             self.pressed_click = None;
         }
+    }
+
+    /// Count a plain left press into the multi-click run and snap the selection it began: a
+    /// double click selects the word under the pointer, a triple click the row (upstream #1089).
+    /// The release then copies it like a finished drag. Modified presses break the run.
+    fn snap_multi_click(
+        &mut self,
+        view: &mut AgentView,
+        event: &crate::mouse::MouseEvent,
+        row: usize,
+        col: usize,
+    ) {
+        if event.shift || event.alt || event.ctrl {
+            self.click_counter.reset();
+            return;
+        }
+        let unit = match self.click_counter.register(Instant::now(), row, col) {
+            2 => crate::selection::SelectUnit::Word,
+            3 => crate::selection::SelectUnit::Line,
+            _ => return,
+        };
+        view.select_unit_at(row, col, unit);
     }
 
     /// Open one clicked link; a headless run has no terminal, so it records the

@@ -204,6 +204,7 @@ impl SessionUi {
             opened_urls: Vec::new(),
             pressed_click: None,
             click_adoption_emitted: false,
+            click_counter: crate::mouse::ClickCounter::default(),
         };
         session
             .attach_session(&active_session_id, DockFold::FirstFrame)

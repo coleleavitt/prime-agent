@@ -138,6 +138,54 @@ fn visible_content_span(text: &str, max_width: usize) -> Option<(usize, usize)> 
     from.map(|from| (from, to))
 }
 
+/// What a multi-click selects (upstream #1089).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SelectUnit {
+    /// A double click: the word under the pointer.
+    Word,
+    /// A triple click: the row's visible content.
+    Line,
+}
+
+/// Whether `c` belongs to a double-click word: anything but whitespace and the brackets, quotes,
+/// and separators that delimit words in prose and code (paths, URLs, and identifiers stay whole).
+fn is_word_char(c: char) -> bool {
+    !c.is_whitespace() && !"()[]{}<>'\"`,;|".contains(c)
+}
+
+/// The column span `[from, to)` of the word covering `col`: a run of word characters, or the
+/// lone delimiter clicked; `None` over whitespace or past the row's end.
+fn word_span(text: &str, col: usize) -> Option<(usize, usize)> {
+    let mut cells: Vec<(usize, usize, char)> = Vec::new();
+    let mut at = 0usize;
+    for c in text.chars() {
+        let width = char_width(c);
+        if width > 0 {
+            cells.push((at, at + width, c));
+        }
+        at += width;
+    }
+    let hit = cells
+        .iter()
+        .position(|(from, to, _)| (*from..*to).contains(&col))?;
+    let (from, to, c) = cells[hit];
+    if c.is_whitespace() {
+        return None;
+    }
+    if !is_word_char(c) {
+        return Some((from, to));
+    }
+    let first = cells[..hit]
+        .iter()
+        .rposition(|(_, _, c)| !is_word_char(*c))
+        .map_or(0, |index| index + 1);
+    let last = cells[hit..]
+        .iter()
+        .position(|(_, _, c)| !is_word_char(*c))
+        .map_or(cells.len(), |index| hit + index);
+    Some((cells[first].0, cells[last - 1].1))
+}
+
 /// Regions a frame selection may cover: every dock row's visible content
 /// span; the dock-mounted panes (`/model`, `/effort`, `/tree`, `/fork`) select here too.
 fn dock_regions(rows: &[String], first_dock_row: usize, width: usize) -> Vec<FrameRegion> {
@@ -425,6 +473,40 @@ impl AgentView {
         true
     }
 
+    /// Snap the selection a press just began at `(screen_row, screen_col)` to the word or row
+    /// under it (a double or triple click), read from the last composed frame's text: the
+    /// transcript's lines map 1:1 onto their screen columns, and a frame selection's row is the
+    /// screen row. `false` — selection unchanged — over whitespace or off any text.
+    pub(crate) fn select_unit_at(
+        &mut self,
+        screen_row: usize,
+        screen_col: usize,
+        unit: SelectUnit,
+    ) -> bool {
+        let (Some(anchor), Some(_)) = (self.selection.anchor, self.selection.mode) else {
+            return false;
+        };
+        if anchor.col != screen_col {
+            return false;
+        }
+        let Some(text) = self.selection.frame_text.get(screen_row) else {
+            return false;
+        };
+        let span = match unit {
+            SelectUnit::Word => word_span(text, screen_col),
+            SelectUnit::Line => visible_content_span(text, usize::MAX),
+        };
+        let Some((from, to)) = span.filter(|(from, to)| from < to) else {
+            return false;
+        };
+        self.selection.anchor = Some(SelectionPoint {
+            col: from,
+            ..anchor
+        });
+        self.selection.head = Some(SelectionPoint { col: to, ..anchor });
+        true
+    }
+
     /// Extend the active selection to a screen position, clamping into the window like the drag
     /// path.
     fn extend_selection(&mut self, screen_row: usize, screen_col: usize) {
@@ -640,6 +722,21 @@ mod tests {
 
     fn rendered_row(frame: &[Line], row: usize) -> String {
         row_text(frame.get(row).map_or(&[], Vec::as_slice))
+    }
+
+    /// Double-click word spans: paths and identifiers stay whole, brackets and quotes delimit,
+    /// whitespace selects nothing, and wide characters map by cell.
+    #[test]
+    fn word_span_picks_the_run_under_the_column() {
+        let text = "  see (src/main.rs) now";
+        assert_eq!(word_span(text, 3), Some((2, 5)));
+        assert_eq!(word_span(text, 10), Some((7, 18)));
+        assert_eq!(word_span(text, 6), Some((6, 7)));
+        assert_eq!(word_span(text, 1), None);
+        assert_eq!(word_span(text, 40), None);
+        // `日本` is two wide cells per char: column 3 is the second half of `本`.
+        assert_eq!(word_span("x 日本 y", 3), Some((2, 6)));
+        assert_eq!(word_span("x 日本 y", 5), Some((2, 6)));
     }
 
     /// A transcript window row: the top bar sits at row 0, so the first

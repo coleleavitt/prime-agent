@@ -93,6 +93,44 @@ pub(crate) fn wheel_scroll_delta(event: &MouseEvent) -> Option<isize> {
 /// configurable), which jumps on terminals and trackpads that send several reports per notch.
 const WHEEL_SCROLL_LINES: isize = 1;
 
+/// The multi-click window: a press within this long of the previous one, on the same row and
+/// within [`MULTI_CLICK_SLOP_COLS`], continues the click run (the common desktop double-click
+/// default).
+pub(crate) const MULTI_CLICK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+/// How far (in columns) a follow-up press may drift and still count as the same spot.
+const MULTI_CLICK_SLOP_COLS: usize = 1;
+
+/// Counts consecutive plain left presses on one spot (upstream #1089): 1 a single click, 2 a
+/// double click (word selection), 3 a triple click (line selection); a fourth press starts over.
+#[derive(Debug, Default)]
+pub(crate) struct ClickCounter {
+    last: Option<(std::time::Instant, usize, usize, u8)>,
+}
+
+impl ClickCounter {
+    /// Register a plain press at `(row, col)` and return its click count.
+    pub(crate) fn register(&mut self, at: std::time::Instant, row: usize, col: usize) -> u8 {
+        let count = match self.last {
+            Some((previous, last_row, last_col, count))
+                if count < 3
+                    && last_row == row
+                    && last_col.abs_diff(col) <= MULTI_CLICK_SLOP_COLS
+                    && at.saturating_duration_since(previous) <= MULTI_CLICK_INTERVAL =>
+            {
+                count + 1
+            }
+            _ => 1,
+        };
+        self.last = Some((at, row, col, count));
+        count
+    }
+
+    /// Forget the run: a drag or a press elsewhere (a modified press, a wheel turn) breaks it.
+    pub(crate) fn reset(&mut self) {
+        self.last = None;
+    }
+}
+
 /// A report read back from a crossterm mouse event: wheel turns, left-button presses, drags,
 /// releases, and the buttonless motion of `?1003` tracking (crossterm's `Moved` — operator
 /// directive 2026-09-26). `None` for other buttons: those reports are consumed at the source
@@ -135,6 +173,36 @@ pub(crate) fn from_crossterm(event: crossterm::event::MouseEvent) -> Option<Mous
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn click_counter_counts_runs_on_one_spot_within_the_window() {
+        let start = std::time::Instant::now();
+        let ms = |n| start + std::time::Duration::from_millis(n);
+        let mut counter = ClickCounter::default();
+        // Single, double, triple; a fourth press starts over.
+        let counts: Vec<u8> = [0, 100, 200, 300]
+            .into_iter()
+            .map(|at| counter.register(ms(at), 5, 10))
+            .collect();
+        assert_eq!(counts, vec![1, 2, 3, 1]);
+        // One column of drift still counts; two columns or another row does not.
+        let mut counter = ClickCounter::default();
+        assert_eq!(
+            [
+                counter.register(ms(0), 5, 10),
+                counter.register(ms(50), 5, 11),
+                counter.register(ms(100), 5, 13),
+                counter.register(ms(150), 6, 13),
+            ],
+            [1, 2, 1, 1]
+        );
+        // A press after the window starts a new run, and reset breaks one.
+        let mut counter = ClickCounter::default();
+        counter.register(ms(0), 1, 1);
+        assert_eq!(counter.register(ms(501), 1, 1), 1);
+        counter.reset();
+        assert_eq!(counter.register(ms(600), 1, 1), 1);
+    }
 
     /// The production path the headless driver bypasses: crossterm parses `?1003` buttonless motion
     /// as `Moved`, and the live path flows through `from_crossterm` — the hover affordance's report
