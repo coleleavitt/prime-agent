@@ -124,3 +124,7 @@ mcp_errors) match in full mode.
   `session/new` answers a persisted session's saved id (a `--no-session` session keeps a
   fresh UUID): the Rust surface serves ACP `session/list` / `session/load` (upstream
   #1116, #1600, #2804), which the TS v0.9.8 captures predate.
+- A Python REPL `tool_call` is titled by its cell (first non-blank line, a leading cell
+  magic paired with the next line, `· +N lines`) and carries the cell as a fenced content
+  block that its `tool_call_update` repeats (upstream #1309); the captures show the constant
+  title and `rawInput` only.

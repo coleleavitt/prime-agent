@@ -164,6 +164,10 @@ pub enum AcpSessionUpdate {
         title: String,
         kind: AcpToolKind,
         status: AcpToolStatus,
+        /// The Python REPL's cell as a fenced block, for clients that render
+        /// content rather than `rawInput` (upstream #1309).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        content: Option<Vec<ToolCallContent>>,
         #[serde(rename = "rawInput")]
         raw_input: Value,
     },
@@ -570,6 +574,7 @@ mod tests {
             title: "Python cell".into(),
             kind: AcpToolKind::Execute,
             status: AcpToolStatus::InProgress,
+            content: None,
             raw_input: json!({ "code": "1+1" }),
         };
         let value = call.to_bare_value();
