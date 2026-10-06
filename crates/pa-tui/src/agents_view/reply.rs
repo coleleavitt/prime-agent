@@ -3,7 +3,7 @@
 use serde_json::Value;
 
 use super::delete::PendingDelete;
-use super::rename::{Rename, RenameTarget};
+use super::rename::RenameTarget;
 use super::status::{Status, StatusTone};
 use super::{AgentsViewMode, Composer, DaemonClient, UiInput};
 use crate::agents_view_forest::RowKind;
@@ -529,8 +529,12 @@ impl AgentsViewMode {
             return;
         };
         reply.in_flight = Some(value.to_string());
-        self.set_status("Renaming agent...");
-        self.pending_rename = Some(Rename { target, name });
+        let session_id = current
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .map(str::to_string);
+        self.request_rename(target, session_id, name);
     }
 
     /// The `/kill` view command: an inactive target warns; a live one dispatches

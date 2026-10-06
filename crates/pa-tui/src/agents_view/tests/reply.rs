@@ -284,6 +284,7 @@ fn view_commands_route_and_reject() {
                 active_session_id: "p-live".to_string()
             },
             name: "new".to_string(),
+            session_id: Some("p".to_string()),
         }),
         "the /name dispatch reuses the rename flow"
     );

@@ -414,6 +414,10 @@ struct AgentsViewMode {
     /// Which projects' saved sessions the Inactive rows list; the flow's link carries it across
     /// re-entries.
     saved_scope: SavedScope,
+    /// Optimistic renames by session id (upstream #2099): the newest name the user asked for,
+    /// overlaid on every rebuild until the roster or catalog carries it, plus the one write in
+    /// flight for that session.
+    pending_renames: std::collections::HashMap<String, rename::PendingRename>,
 }
 
 /// The saved-catalog project filter (upstream #826): every project's saved sessions (the TS
@@ -571,6 +575,7 @@ impl AgentsViewMode {
             actions: Vec::new(),
             heartbeats: Vec::new(),
             saved_scope: SavedScope::default(),
+            pending_renames: std::collections::HashMap::new(),
         }
     }
 }
@@ -965,6 +970,15 @@ async fn run_agents_view_surface(
                 }
                 UiInput::RenameResult { rename, outcome } => {
                     mode.rename_result(rename, outcome);
+                    // A newer name the user asked for while this write ran gets its own
+                    // write now: one writer per session, so the newest name lands last.
+                    if let Some(rename) = mode.pending_rename.take() {
+                        action_dispatches.push(spawn_rename_dispatch(
+                            &client,
+                            ui_tx.clone(),
+                            rename,
+                        ));
+                    }
                 }
                 UiInput::HeadlineResult { key, result } => {
                     mode.headline_result(&key, result);
