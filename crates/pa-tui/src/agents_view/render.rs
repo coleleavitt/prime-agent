@@ -801,6 +801,13 @@ impl AgentsViewMode {
         if let Some(new) = first("app.agents.new") {
             segments.push(format!("{new} new"));
         }
+        // The saved-catalog scope slot (upstream #826): the toggle works on an empty search, and
+        // the slot names the scope the Inactive rows are listed under.
+        if self.query.is_empty() {
+            if let Some(toggle) = first("app.agents.toggleScope") {
+                segments.push(format!("{toggle} saved:{}", self.saved_scope.hint_word()));
+            }
+        }
         let hints = segments.join("   ");
         truncate_line(&vec![theme.fg(ThemeColor::Muted, hints)], width)
     }

@@ -17,7 +17,8 @@ impl Worker {
     /// `set_model { provider, modelId }`: resolve through the registry's
     /// available catalog, enforce the daemon model allowlist (outside it
     /// fails loudly, never a fallback), switch the engine, record the
-    /// durable `model_change` row, and persist the settings default. The
+    /// durable `model_change` row, and persist the settings default unless the command
+    /// carries `persistDefault: false` (a session-only switch). The
     /// switch parks the runtime, so it runs on the blocking pool.
     pub(crate) async fn handle_set_model(&self, payload: &Value) -> DaemonResponse {
         if let Err(response) = self.require_created("set_model") {
@@ -33,6 +34,9 @@ impl Worker {
         let Some(model_id) = payload.get("modelId").and_then(Value::as_str) else {
             return response_failure(None, "set_model", "set_model requires a modelId", None);
         };
+        // `persistDefault: false` (the TUI's `/switch`, upstream #840) switches this session only:
+        // the settings default the next session starts on stays put.
+        let persist_default = payload.get("persistDefault").and_then(Value::as_bool) != Some(false);
         let model = match resolve_available_model(&self.config.agent_dir, provider, model_id) {
             Ok(model) => model,
             // A model whose provider is not signed in is a typed refusal
@@ -110,8 +114,10 @@ impl Worker {
             };
             // TS `session.setModel` persists the default provider/model so
             // the next session starts on the switched model.
-            let mut settings = pa_core::settings::SettingsManager::create(&cwd, &agent_dir);
-            let _ = settings.set_default_model_and_provider(&provider, &model_id);
+            if persist_default {
+                let mut settings = pa_core::settings::SettingsManager::create(&cwd, &agent_dir);
+                let _ = settings.set_default_model_and_provider(&provider, &model_id);
+            }
             Some(())
         })
         .await

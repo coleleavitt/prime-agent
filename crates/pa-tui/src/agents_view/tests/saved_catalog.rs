@@ -94,3 +94,40 @@ fn the_carried_catalog_paints_and_the_load_flags_the_carry() {
         "the terminal load flags the carry for the flow's next run"
     );
 }
+
+/// Upstream #826: the saved catalog lists every project's sessions. The `app.agents.toggleScope`
+/// key (default ctrl+f, empty search only) narrows the saved rows to the view's cwd and back;
+/// the default stays all projects (the TS view's `"all"` scope), and the hint names the scope.
+#[test]
+fn the_scope_toggle_narrows_saved_sessions_to_the_current_project() {
+    let mut mode = mode_with_anchor(None, vec![]);
+    let mut elsewhere = saved_catalog_row("/x/other.jsonl", "other", "other project");
+    elsewhere["cwd"] = serde_json::json!("/somewhere/else");
+    mode.saved = vec![
+        saved_catalog_row("/x/here.jsonl", "here", "this project"),
+        elsewhere,
+    ];
+    mode.rebuild_rows();
+    let listed = |mode: &AgentsViewMode| {
+        mode.rows
+            .iter()
+            .filter_map(|row| row.summary.get("sessionId").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect::<std::collections::BTreeSet<String>>()
+    };
+    let both = std::collections::BTreeSet::from(["here".to_string(), "other".to_string()]);
+    let here = std::collections::BTreeSet::from(["here".to_string()]);
+    assert_eq!(listed(&mode), both);
+    assert!(flat(&mode.render_hints(200, None)).contains("Ctrl+F saved:all"));
+
+    mode.handle_key("ctrl+f");
+    assert_eq!(listed(&mode), here);
+    assert_eq!(mode.status_text(), Some("Saved sessions: current project"));
+    // The status line owns the hint row until it clears.
+    mode.status = None;
+    assert!(flat(&mode.render_hints(200, None)).contains("Ctrl+F saved:project"));
+
+    mode.handle_key("ctrl+f");
+    assert_eq!(listed(&mode), both);
+    assert_eq!(mode.status_text(), Some("Saved sessions: all projects"));
+}

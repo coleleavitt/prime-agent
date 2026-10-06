@@ -215,6 +215,7 @@ async fn apply_wire_config(
                     active_session_id: daemon_session_id.to_string(),
                     provider: model.provider.clone(),
                     model_id: model.id.clone(),
+                    persist_default: None,
                     rest: Map::default(),
                 })
                 .await

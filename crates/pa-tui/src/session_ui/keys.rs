@@ -2,8 +2,8 @@
 //! selection/auto-scroll, and the input-state seams.
 use super::{
     key_event_to_id, AgentView, ChatEntry, DaemonCommand, DockFocusSource, Duration,
-    EffortPickerAction, Instant, KeyEvent, Map, QueueBrowseDirection, QueueLane, Result, SessionUi,
-    StatusKind, SubmitBehavior,
+    EffortPickerAction, Instant, KeyEvent, Map, ModelSwitchScope, QueueBrowseDirection, QueueLane,
+    Result, SessionUi, StatusKind, SubmitBehavior,
 };
 
 /// How long the Ctrl+C exit hint arms the second-press exit.
@@ -637,7 +637,8 @@ impl SessionUi {
             // A completion request parked by this same press must not materialize
             // a dropdown over the picker on the next idle tick.
             view.editor.cancel_autocomplete();
-            self.open_model_picker(view, "").await?;
+            self.open_model_picker(view, "", ModelSwitchScope::SavedDefault)
+                .await?;
             // The picker opens over the user's own text (a draft or browsed
             // message), so its apply must keep it.
             self.picker_restored_draft = true;
@@ -845,7 +846,7 @@ impl SessionUi {
                 // The menu takes the frame from a queue browse: the next Enter must submit a
                 // prompt, not route into apply_queue_selection; ending the browse restores the
                 // stashed draft, so a failed menu open loses nothing.
-                if matches!(command.as_str(), "model" | "mcp") {
+                if matches!(command.as_str(), "model" | "switch" | "mcp") {
                     if self.queue_selection.has_draft() {
                         let draft = self.queue_selection.reset();
                         view.editor.set_text(&draft);
@@ -856,8 +857,13 @@ impl SessionUi {
                     self.sync_queue_selection(view);
                 }
                 match command.as_str() {
-                    "model" => {
-                        self.open_model_picker(view, partial.trim()).await?;
+                    "model" | "switch" => {
+                        let scope = if command == "switch" {
+                            ModelSwitchScope::SessionOnly
+                        } else {
+                            ModelSwitchScope::SavedDefault
+                        };
+                        self.open_model_picker(view, partial.trim(), scope).await?;
                         // Belt-and-braces (the picker always mounts here); keeps the
                         // failed-open contract symmetric with the mcp arm.
                         if view.model_picker.is_none() {

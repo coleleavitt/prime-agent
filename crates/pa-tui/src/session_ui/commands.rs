@@ -2,9 +2,9 @@
 //! command-catalog refresh/fold, and the shared connection-state read.
 use super::{
     create_session, effort_picker, info_commands, terminal_columns, AgentView, AuthSelectorKind,
-    ChatEntry, CommandCatalogUpdate, DaemonCommand, DockFold, Duration, InfoContent, Map,
-    PendingConfirm, RebuildKind, Result, SessionUi, SlashCommandExecution, SlashCommandRegistry,
-    StatusKind, SubmitBehavior, Value, UI_REQUEST_TIMEOUT_MS,
+    ChatEntry, CommandCatalogUpdate, DaemonCommand, DockFold, Duration, ForkLaunch, InfoContent,
+    Map, ModelSwitchScope, PendingConfirm, RebuildKind, Result, SessionUi, SlashCommandExecution,
+    SlashCommandRegistry, StatusKind, SubmitBehavior, Value, UI_REQUEST_TIMEOUT_MS,
 };
 
 impl SessionUi {
@@ -153,15 +153,27 @@ impl SessionUi {
                 }
             }
             // `/model` opens the model picker (menu-only: the TS inline-arg form is deliberately
-            // removed — a partial + Tab opens the picker filtered instead).
-            "model" => {
+            // removed — a partial + Tab opens the picker filtered instead); `/switch` opens the
+            // same picker for a session-only switch (upstream #840).
+            "model" | "switch" => {
+                let (usage, scope) = if resolved.name == "switch" {
+                    (
+                        "Usage: /switch (Tab filters the picker)",
+                        ModelSwitchScope::SessionOnly,
+                    )
+                } else {
+                    (
+                        "Usage: /model (Tab filters the picker)",
+                        ModelSwitchScope::SavedDefault,
+                    )
+                };
                 if !resolved.args.trim().is_empty() {
                     view.editor
                         .set_text(&format!("/{} {}", resolved.original_name, resolved.args));
-                    self.error_row("Usage: /model (Tab filters the picker)", view);
+                    self.error_row(usage, view);
                     return Ok(());
                 }
-                self.open_model_picker(view, "").await?;
+                self.open_model_picker(view, "", scope).await?;
                 self.track_menu_opened("model", "command");
                 self.track_feature_outcome("model", "initiated", None);
             }
@@ -222,22 +234,21 @@ impl SessionUi {
                     self.note("Usage: /tree", view);
                 }
             }
-            "fork" => {
-                if resolved.args.is_empty() {
+            "fork" => match ForkLaunch::from_args(&resolved.args) {
+                Some(launch) => {
                     self.track_feature_outcome("fork", "initiated", None);
+                    self.fork_launch = launch;
                     self.open_fork_selector(view).await?;
-                } else {
-                    self.note("Usage: /fork", view);
                 }
-            }
-            "clone" => {
-                if resolved.args.is_empty() {
+                None => self.note("Usage: /fork [--replace]", view),
+            },
+            "clone" => match ForkLaunch::from_args(&resolved.args) {
+                Some(launch) => {
                     self.track_feature_outcome("clone", "initiated", None);
-                    self.handle_clone_command(view).await?;
-                } else {
-                    self.note("Usage: /clone", view);
+                    self.handle_clone_command(launch, view).await?;
                 }
-            }
+                None => self.note("Usage: /clone [--replace]", view),
+            },
             "copy" => {
                 if resolved.args.is_empty() {
                     self.handle_copy_command(view).await?;

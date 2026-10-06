@@ -4,7 +4,7 @@
 use super::{
     key_event_to_id, streaming_tray_hint, AgentView, ChatEntry, CurrentModel, CycleDirection,
     DaemonCommand, Duration, KeyEvent, Map, ModelPicker, ModelPickerAction, ModelPickerOptions,
-    Result, SessionUi, SetModelOutcome, StatusKind, UI_REQUEST_TIMEOUT_MS,
+    ModelSwitchScope, Result, SessionUi, SetModelOutcome, StatusKind, UI_REQUEST_TIMEOUT_MS,
 };
 use serde_json::Value;
 
@@ -31,13 +31,16 @@ impl SessionUi {
         )
     }
 
-    /// Open the `/model` picker over the cached catalog, its search prefilled with `search`. A
-    /// refresh fires in the background when the snapshot is stale and lands into the open picker.
+    /// Open the `/model` (or `/switch`) picker over the cached catalog, its search prefilled with
+    /// `search`; `scope` is what its apply changes. A refresh fires in the background when the
+    /// snapshot is stale and lands into the open picker.
     pub(super) async fn open_model_picker(
         &mut self,
         view: &mut AgentView,
         search: &str,
+        scope: ModelSwitchScope,
     ) -> Result<()> {
+        self.model_picker_scope = scope;
         let current = self.current_model(view);
         // One connection-state read feeds both the thinking seed and the
         // scoped-model list.
@@ -143,8 +146,9 @@ impl SessionUi {
                 // The daemon is the source of truth: the local snapshot can lag an
                 // external credential change, so the switch is sent first and the typed
                 // refusal routes the sign-in flow.
+                let scope = self.model_picker_scope;
                 match self
-                    .try_set_model(&applied.provider, &applied.model_id, view)
+                    .try_set_model(&applied.provider, &applied.model_id, scope, view)
                     .await
                 {
                     SetModelOutcome::Switched => {
@@ -157,7 +161,7 @@ impl SessionUi {
                     // The typed refusal: the selection routes to the sign-in flow and applies
                     // after the login lands.
                     SetModelOutcome::NeedsSignIn => {
-                        self.begin_model_sign_in(&applied, view).await;
+                        self.begin_model_sign_in(&applied, scope, view).await;
                     }
                     SetModelOutcome::Failed => {}
                 }
@@ -273,13 +277,31 @@ impl SessionUi {
     /// Apply a picked model: the daemon `set_model` command switches the live session, then the
     /// client refreshes its model label and records the `Model: <id>` status row. The typed
     /// provider-unauthenticated refusal is the sign-in route; every other failure surfaces as the
-    /// error note.
+    /// error note. A session-only switch needs a daemon that honors it: an older one would save
+    /// the default anyway, so the switch refuses instead.
     pub(super) async fn try_set_model(
         &mut self,
         provider: &str,
         model_id: &str,
+        scope: ModelSwitchScope,
         view: &mut AgentView,
     ) -> SetModelOutcome {
+        let persist_default = match scope {
+            ModelSwitchScope::SavedDefault => None,
+            ModelSwitchScope::SessionOnly => {
+                if !self
+                    .client
+                    .supports_server_capability("session_model_selection")
+                {
+                    self.error_row(
+                        "This daemon cannot switch the model for one session only; restart the daemon to use /switch",
+                        view,
+                    );
+                    return SetModelOutcome::Failed;
+                }
+                Some(false)
+            }
+        };
         let switched = self
             .bounded_request(
                 Duration::from_millis(UI_REQUEST_TIMEOUT_MS),
@@ -288,18 +310,31 @@ impl SessionUi {
                     active_session_id: self.active_session_id.clone(),
                     provider: provider.to_string(),
                     model_id: model_id.to_string(),
+                    persist_default,
                     rest: Map::default(),
                 },
             )
             .await;
         match switched {
             Ok(_) => {
-                // The create path's runtime config carries the picked model, so `/new`
-                // sessions start on it too.
-                self.model_selection.provider = Some(provider.to_string());
-                self.model_selection.model = Some(model_id.to_string());
+                match scope {
+                    // The create path's runtime config carries the picked model, so `/new`
+                    // sessions start on it too.
+                    ModelSwitchScope::SavedDefault => {
+                        self.model_selection.provider = Some(provider.to_string());
+                        self.model_selection.model = Some(model_id.to_string());
+                    }
+                    // A session-only switch leaves the next session's model alone.
+                    ModelSwitchScope::SessionOnly => {}
+                }
                 self.refresh_model_label(provider, model_id, view).await;
-                self.note(&format!("Model: {model_id}"), view);
+                let note = match scope {
+                    ModelSwitchScope::SavedDefault => format!("Model: {model_id}"),
+                    ModelSwitchScope::SessionOnly => {
+                        format!("Model: {model_id} (this session only)")
+                    }
+                };
+                self.note(&note, view);
                 self.maybe_warn_anthropic_subscription_auth_if_subscribed(Some(provider), view)
                     .await;
                 SetModelOutcome::Switched
@@ -327,7 +362,10 @@ impl SessionUi {
         model_id: &str,
         view: &mut AgentView,
     ) {
-        match self.try_set_model(provider, model_id, view).await {
+        match self
+            .try_set_model(provider, model_id, ModelSwitchScope::SavedDefault, view)
+            .await
+        {
             // The switch recorded its own row; failures already rendered theirs.
             SetModelOutcome::Switched | SetModelOutcome::Failed => {}
             SetModelOutcome::NeedsSignIn => {

@@ -113,6 +113,7 @@ pub const KNOWN_COMMAND_TYPES: &[&str] = &[
     "new_session",
     "switch_session",
     "fork",
+    "fork_export",
     "navigate_tree",
     "import_jsonl",
     "export_html",
@@ -328,6 +329,10 @@ pub fn default_server_capabilities() -> Vec<DaemonServerCapability> {
                 "abort_and_send_queued",
                 "agent_roster",
                 "direct_peer_transport",
+                // `set_model { persistDefault: false }` switches one session only (#840).
+                "session_model_selection",
+                // `fork_export` writes a fork file and leaves the live session running (#1389).
+                "fork_export",
             ]
             .iter()
             .map(std::string::ToString::to_string),
@@ -810,6 +815,9 @@ pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
         | DaemonCommand::Fork {
             active_session_id, ..
         }
+        | DaemonCommand::ForkExport {
+            active_session_id, ..
+        }
         | DaemonCommand::NavigateTree {
             active_session_id, ..
         }
@@ -1008,6 +1016,7 @@ pub fn command_type_name(command: &DaemonCommand) -> &'static str {
         DaemonCommand::NewSession { .. } => "new_session",
         DaemonCommand::SwitchSession { .. } => "switch_session",
         DaemonCommand::Fork { .. } => "fork",
+        DaemonCommand::ForkExport { .. } => "fork_export",
         DaemonCommand::NavigateTree { .. } => "navigate_tree",
         DaemonCommand::ImportJsonl { .. } => "import_jsonl",
         DaemonCommand::ExportHtml { .. } => "export_html",

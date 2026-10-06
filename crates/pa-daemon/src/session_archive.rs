@@ -221,14 +221,31 @@ pub(crate) async fn archive_sweep_loop(supervisor: &std::sync::Arc<crate::superv
     }
 }
 
+/// The canonical session paths no housekeeping sweep may touch: every resident worker's
+/// session, and every active scheduled job's target (a wake target must never move).
+pub(crate) async fn protected_session_paths(
+    supervisor: &std::sync::Arc<crate::supervisor::Supervisor>,
+) -> HashSet<PathBuf> {
+    let mut protected = HashSet::new();
+    for resident in supervisor.registry.list().await {
+        let descriptor = resident.descriptor.lock().await;
+        if let Some(session_file) = &descriptor.session_file {
+            protected.insert(canonical_session_path(Path::new(session_file)));
+        }
+    }
+    for job in crate::update_roster::scan_scheduled_jobs(&supervisor.options.agent_dir) {
+        if job.status == pa_core::cron::JobStatus::Active && !job.session_file.is_empty() {
+            protected.insert(canonical_session_path(Path::new(&job.session_file)));
+        }
+    }
+    protected
+}
+
 /// One sweep: resolve the policy from the current settings, collect the
 /// protected paths, and move the retired sessions into the archive.
 pub(crate) async fn run_archive_sweep(
     supervisor: &std::sync::Arc<crate::supervisor::Supervisor>,
 ) -> Result<()> {
-    use std::collections::HashSet as Set;
-    use std::path::Path;
-
     let agent_dir = supervisor.options.agent_dir.clone();
     let settings = pa_core::settings::SettingsManager::create(
         std::env::current_dir().unwrap_or_default(),
@@ -236,20 +253,7 @@ pub(crate) async fn run_archive_sweep(
     );
     let policy = settings.get_session_archive_policy();
     let sessions_dir = crate::paths::sessions_dir(&agent_dir)?;
-    let mut protected = Set::new();
-    for resident in supervisor.registry.list().await {
-        let descriptor = resident.descriptor.lock().await;
-        if let Some(session_file) = &descriptor.session_file {
-            protected.insert(canonical_session_path(Path::new(session_file)));
-        }
-    }
-    // Active scheduled jobs own their saved session files: a wake target
-    // must never move.
-    for job in crate::update_roster::scan_scheduled_jobs(&agent_dir) {
-        if job.status == pa_core::cron::JobStatus::Active && !job.session_file.is_empty() {
-            protected.insert(canonical_session_path(Path::new(&job.session_file)));
-        }
-    }
+    let protected = protected_session_paths(supervisor).await;
     let archived = sweep_sessions(
         &sessions_dir,
         &archive_dir(&agent_dir),

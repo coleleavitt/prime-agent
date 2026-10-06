@@ -82,6 +82,7 @@ pub fn command_plane(command_type: &str) -> DaemonCommandPlane {
         | "new_session"
         | "switch_session"
         | "fork"
+        | "fork_export"
         | "navigate_tree"
         | "import_jsonl"
         | "export_html"

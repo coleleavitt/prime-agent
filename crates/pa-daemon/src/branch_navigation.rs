@@ -329,34 +329,50 @@ impl TreeNavigation {
 
     /// `fork`'s prepare phase: settle the running turn first (the branch copy reads the
     /// store), resolve the fork point, and copy the active path into the new session file.
-    /// A failed prepare never tears the live session down.
+    /// A failed prepare never tears the live session down. An export (`fork_export`) leaves
+    /// the running turn alone: the branch up to a stored entry is already on file.
     #[allow(clippy::result_large_err)]
     pub(crate) async fn prepare_fork(
         &self,
         payload: &Value,
+        mode: ForkMode,
     ) -> Result<(SessionFile, Option<String>), DaemonResponse> {
+        let command = mode.command();
         let entry_id = payload
             .get("entryId")
             .and_then(Value::as_str)
             .unwrap_or_default();
         let position = payload.get("position").and_then(Value::as_str);
-        // A fork interrupts the running turn first, like the TS replacement lease path.
-        self.wait_turn_end().await;
+        match mode {
+            // A fork interrupts the running turn first, like the TS replacement lease path.
+            ForkMode::ReplaceInPlace => self.wait_turn_end().await,
+            ForkMode::Export => {}
+        }
 
         let (target_leaf, selected_text, store, cwd) = {
             let core = self.core.lock_or_recover();
             let Some(store) = core.store.as_ref() else {
                 return Err(response_failure(
                     None,
-                    "fork",
+                    command,
                     "Session is still initializing",
                     None,
                 ));
             };
+            // An export hands a FILE to a new session: an in-memory session has none (the
+            // client falls back to the in-place fork).
+            if mode == ForkMode::Export && store.path.as_os_str().is_empty() {
+                return Err(response_failure(
+                    None,
+                    command,
+                    pa_types::daemon::FORK_EXPORT_NOT_PERSISTED,
+                    None,
+                ));
+            }
             let Some(target) = store.entry(entry_id) else {
                 return Err(response_failure(
                     None,
-                    "fork",
+                    command,
                     "Invalid entry ID for forking",
                     None,
                 ));
@@ -367,7 +383,7 @@ impl TreeNavigation {
                 let Some(text) = session_tree::user_entry_text(target) else {
                     return Err(response_failure(
                         None,
-                        "fork",
+                        command,
                         "Invalid entry ID for forking",
                         None,
                     ));
@@ -394,11 +410,11 @@ impl TreeNavigation {
                     if let Some(lease) = &store.lease {
                         forked.lease =
                             Some(lease.acquire_target(&forked.path).map_err(|error| {
-                                response_failure(None, "fork", &error.to_string(), None)
+                                response_failure(None, command, &error.to_string(), None)
                             })?);
                     }
                     if let Err(error) = forked.rewrite() {
-                        return Err(response_failure(None, "fork", &error.to_string(), None));
+                        return Err(response_failure(None, command, &error.to_string(), None));
                     }
                 }
                 forked
@@ -409,7 +425,7 @@ impl TreeNavigation {
                     // place (TS non-persisted `createBranchedSession`).
                     let mut forked = store;
                     if let Err(error) = forked.replace_with_branch(Some(leaf_id)) {
-                        return Err(response_failure(None, "fork", &error.to_string(), None));
+                        return Err(response_failure(None, command, &error.to_string(), None));
                     }
                     forked
                 } else {
@@ -417,7 +433,7 @@ impl TreeNavigation {
                     match store.create_branched_file(leaf_id, session_dir) {
                         Ok(forked) => forked,
                         Err(error) => {
-                            return Err(response_failure(None, "fork", &error.to_string(), None))
+                            return Err(response_failure(None, command, &error.to_string(), None))
                         }
                     }
                 }
@@ -541,12 +557,59 @@ fn custom_message_text(entry: &SessionEntry) -> Option<String> {
     }
 }
 
+/// How a fork treats the live session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ForkMode {
+    /// `fork` (TS v0.9.8): the live session is torn down and replaced by the fork in place.
+    ReplaceInPlace,
+    /// `fork_export` (upstream #1389): only the fork file is written; the live session, its
+    /// subagents and its heartbeats keep running, and the client opens the file as a new
+    /// session.
+    Export,
+}
+
+impl ForkMode {
+    fn command(self) -> &'static str {
+        match self {
+            ForkMode::ReplaceInPlace => "fork",
+            ForkMode::Export => "fork_export",
+        }
+    }
+}
+
 impl Worker {
+    /// `fork_export`: write the fork file and answer its path; nothing about the live
+    /// session changes. The fork file's lease (when leases are on) drops with the store
+    /// copy, so the new session's worker can take it.
+    pub(crate) async fn handle_fork_export(&self, payload: &Value) -> DaemonResponse {
+        let (forked, selected_text) = match self
+            .tree_navigation
+            .prepare_fork(payload, ForkMode::Export)
+            .await
+        {
+            Ok(prepared) => prepared,
+            Err(response) => return response,
+        };
+        let mut data = json!({
+            "cancelled": false,
+            "sessionPath": forked.path.to_string_lossy(),
+        });
+        if let Some(selected_text) = selected_text {
+            data["selectedText"] = json!(selected_text);
+        }
+        drop(forked);
+        response_success(None, "fork_export", Some(data))
+    }
+
     /// `fork` (TS `AgentSessionRuntime.fork`): a whole-runtime replacement — prepare the
     /// fork file, retire the live runtime, swap the store, prewarm the replacement.
     /// Tree moves (`navigate_tree`) never run this teardown.
     pub(crate) async fn handle_fork(&self, payload: &Value) -> DaemonResponse {
-        let (forked, selected_text) = match self.tree_navigation.prepare_fork(payload).await {
+        let (forked, selected_text) = match self
+            .tree_navigation
+            .prepare_fork(payload, ForkMode::ReplaceInPlace)
+            .await
+        {
             Ok(prepared) => prepared,
             Err(response) => return response,
         };

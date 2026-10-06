@@ -46,6 +46,7 @@ pub(crate) mod mcp_login;
 #[cfg(feature = "mermaid")]
 pub(crate) mod mermaid_diagrams;
 pub(crate) mod mode;
+pub(crate) mod named_sessions;
 pub(crate) mod package_command;
 pub(crate) mod prime_inference_login;
 pub(crate) mod prompt_command;
@@ -251,6 +252,64 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
     }
 
     let agent_dir = crate::config::get_agent_dir();
+    // The named-session flags (upstream #1294): the listing and the delete exit before any
+    // session starts; `--name` becomes the resume of the named (or newly created) session.
+    let flag_session_dir = parsed.session_dir.clone();
+    let named_session_dir = || {
+        flag_session_dir
+            .as_deref()
+            .map(crate::config::expand_tilde_path)
+            .or_else(crate::config::get_session_dir_env_override)
+            .or_else(|| {
+                pa_core::settings::SettingsManager::create(&cwd, &agent_dir).get_session_dir()
+            })
+            .unwrap_or_else(|| agent_dir.join("sessions"))
+    };
+    if parsed.list_sessions {
+        println!(
+            "{}",
+            named_sessions::format_sessions_here(
+                &named_session_dir(),
+                &cwd,
+                crate::daemon_session_list::now_ms()
+            )
+        );
+        return Ok(0);
+    }
+    if let Some(selector) = &parsed.delete_session {
+        let socket_path =
+            crate::config::resolve_daemon_socket_path(parsed.daemon_socket.as_deref());
+        return named_sessions::run_delete_session(
+            selector,
+            &named_session_dir(),
+            &cwd,
+            &socket_path,
+        );
+    }
+    let mut parsed = parsed;
+    if let Some(name) = parsed.name.clone() {
+        let mut conflicting_flags: Vec<&str> = Vec::new();
+        if parsed.continue_ {
+            conflicting_flags.push("--continue");
+        }
+        if parsed.has_resume() {
+            conflicting_flags.push("--resume");
+        }
+        if parsed.fork.is_some() {
+            conflicting_flags.push("--fork");
+        }
+        if parsed.no_session {
+            conflicting_flags.push("--no-session");
+        }
+        if !conflicting_flags.is_empty() {
+            return Err(format!(
+                "--name cannot be combined with {}",
+                conflicting_flags.join(", ")
+            ));
+        }
+        let path = named_sessions::open_or_create_named_session(&named_session_dir(), &cwd, &name)?;
+        parsed.resume = Some(path.to_string_lossy().to_string());
+    }
     // Workspace trust: project configuration that can run code or change
     // the prompt loads only in a trusted workspace. The interactive client
     // asks once; headless modes print what they skipped; daemon workers

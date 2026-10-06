@@ -99,6 +99,7 @@ pub(crate) mod session_catalog;
 pub(crate) mod session_commands;
 pub(crate) mod session_custom;
 pub mod session_export;
+pub(crate) mod session_ghosts;
 pub mod session_input_pause;
 pub mod session_navigation;
 pub(crate) mod session_scan;

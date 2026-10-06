@@ -824,6 +824,10 @@ pub enum DaemonCommand {
         active_session_id: String,
         provider: String,
         model_id: String,
+        /// `Some(false)` switches the session only and keeps the saved default (the daemon
+        /// advertises `session_model_selection`); absent saves it, as TS `/model` did.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        persist_default: Option<bool>,
         #[serde(flatten)]
         rest: JsonMap,
     },
@@ -987,6 +991,18 @@ pub enum DaemonCommand {
         rest: JsonMap,
     },
     Fork {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        active_session_id: String,
+        entry_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        position: Option<ForkPosition>,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
+    /// `fork`'s branch copy without the replacement: answers `{ sessionPath, selectedText? }`
+    /// and leaves the live session running (capability `fork_export`).
+    ForkExport {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         active_session_id: String,

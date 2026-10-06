@@ -78,6 +78,20 @@ pub const COMMAND_SPECS: &[CommandSpec] = &[
         "Rename an agent",
     ),
     CommandSpec::new(
+        &["create"],
+        "create [options] [name] -- <message>",
+        "Create and start an agent",
+    )
+    .description("Creates a top-level agent and starts it with the message; nothing attaches.")
+    .options(&[
+        "--cwd <dir>             Use a specific working directory",
+        "--provider <name>       Select a model provider",
+        "--model <id>            Select a model",
+        "--thinking <level>      Set the reasoning level",
+        "--daemon-socket <path>  Use a specific daemon socket",
+        "--json                  Print JSON",
+    ]),
+    CommandSpec::new(
         &["send"],
         "send [--from <agent>] <agent> <message>",
         "Send a steering message to an agent",
@@ -464,6 +478,18 @@ const TOP_LEVEL_OPTION_GROUPS: &[OptionGroup] = &[
             ),
             ("--session-dir <dir>", "Use a custom session directory"),
             ("--no-session", "Do not save the session"),
+            (
+                "--name <name>",
+                "Open this directory's session of that name, or start it",
+            ),
+            (
+                "--list-sessions",
+                "List this directory's saved sessions and exit",
+            ),
+            (
+                "--delete-session <id|name>",
+                "Delete a saved session and exit",
+            ),
             (
                 "--plan",
                 "Start in plan mode: investigate and plan, file edits blocked",

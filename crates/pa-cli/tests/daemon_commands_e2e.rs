@@ -1018,3 +1018,154 @@ fn ts_daemon_differential_cli_output() {
         failures.join("\n---\n")
     );
 }
+
+/// Upstream #1294: `--list-sessions` lists this directory's saved sessions with their names,
+/// and `--delete-session <name>` deletes one through the daemon (a live session refuses).
+#[test]
+fn named_session_flags_list_and_delete_this_directorys_sessions() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let agent_dir = dir.path().join("agent");
+    let sessions = agent_dir.join("sessions");
+    std::fs::create_dir_all(&sessions).expect("sessions dir");
+    let elsewhere = dir.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).expect("elsewhere dir");
+    let socket = dir.path().join("daemon.sock");
+    let cli = PathBuf::from(env!("CARGO_BIN_EXE_prime-agent"));
+    let daemon = spawn_daemon(&daemon_binary(), &socket, &agent_dir);
+    let socket_str = socket.to_string_lossy().to_string();
+    let (mut wire, _hello) = Wire::connect(&daemon.socket);
+    let live = create_session(&mut wire, "c1", "research", dir.path(), &sessions, None);
+    create_session(&mut wire, "c2", "other", &elsewhere, &sessions, None);
+
+    let listed = run_cli(&cli, dir.path(), &agent_dir, &["--list-sessions"]);
+    assert_eq!(listed.status.code(), Some(0), "{}", stderr(&listed));
+    assert_eq!(
+        normalize(&stdout(&listed)),
+        "ID MODIFIED NAME\n<timestamp> <time> research\n"
+    );
+
+    let refused = run_cli(
+        &cli,
+        dir.path(),
+        &agent_dir,
+        &list_args(&socket_str, &["--delete-session", "research"]),
+    );
+    assert_eq!(refused.status.code(), Some(1));
+    assert_eq!(
+        stderr(&refused),
+        "Error: Cannot delete the currently active session\n"
+    );
+
+    let stopped = wire.request("k1", &json!({ "type": "kill", "activeSessionId": live }));
+    assert_eq!(stopped["success"], true, "kill failed: {stopped}");
+    let deleted = run_cli(
+        &cli,
+        dir.path(),
+        &agent_dir,
+        &list_args(&socket_str, &["--delete-session", "research"]),
+    );
+    assert_eq!(deleted.status.code(), Some(0), "{}", stderr(&deleted));
+    assert!(
+        stdout(&deleted).starts_with("Deleted session "),
+        "{}",
+        stdout(&deleted)
+    );
+    let listed = run_cli(&cli, dir.path(), &agent_dir, &["--list-sessions"]);
+    assert_eq!(
+        stdout(&listed),
+        format!("No saved sessions for {}.\n", dir.path().display())
+    );
+}
+
+/// Upstream #1991: `prime-agent create [name] -- <message>` creates a top-level agent through
+/// the daemon and starts it with the message, without attaching; a missing or empty message
+/// refuses before anything is created.
+#[test]
+fn create_starts_a_background_agent_with_its_first_message() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let agent_dir = dir.path().join("agent");
+    std::fs::create_dir_all(agent_dir.join("sessions")).expect("sessions dir");
+    // An unreachable provider: the turn fails after admission, the message still lands.
+    std::fs::write(
+        agent_dir.join("models.json"),
+        json!({
+            "providers": {
+                "battery": {
+                    "api": "openai-completions",
+                    "baseUrl": "http://127.0.0.1:9/v1",
+                    "apiKey": "sk-battery",
+                    "models": [{
+                        "id": "mock-1",
+                        "name": "Mock 1",
+                        "api": "openai-completions",
+                        "contextWindow": 128_000,
+                        "maxTokens": 4096
+                    }]
+                }
+            }
+        })
+        .to_string(),
+    )
+    .expect("write models.json");
+    let socket = dir.path().join("daemon.sock");
+    let cli = PathBuf::from(env!("CARGO_BIN_EXE_prime-agent"));
+    let daemon = spawn_daemon(&daemon_binary(), &socket, &agent_dir);
+    let socket_str = socket.to_string_lossy().to_string();
+
+    for args in [
+        &["create", "reviewer"][..],
+        &["create", "reviewer", "--"][..],
+    ] {
+        let refused = run_cli(&cli, dir.path(), &agent_dir, &list_args(&socket_str, args));
+        assert_eq!(refused.status.code(), Some(1), "{args:?}");
+        assert_eq!(
+            stderr(&refused),
+            "Error: Usage: prime-agent create [options] [name] -- <message>\n",
+            "{args:?}"
+        );
+    }
+    let (mut wire, _hello) = Wire::connect(&daemon.socket);
+    let listed = wire.request("l0", &json!({ "type": "list" }));
+    assert_eq!(listed["data"]["sessions"], json!([]), "{listed}");
+
+    let created = run_cli(
+        &cli,
+        dir.path(),
+        &agent_dir,
+        &list_args(
+            &socket_str,
+            &[
+                "create",
+                "--provider",
+                "battery",
+                "--model",
+                "mock-1",
+                "reviewer",
+                "--",
+                "--review",
+                "the fix",
+            ],
+        ),
+    );
+    assert_eq!(created.status.code(), Some(0), "{}", stderr(&created));
+    let listed = wire.request("l1", &json!({ "type": "list" }));
+    let rows = listed["data"]["sessions"].as_array().expect("rows").clone();
+    assert_eq!(rows.len(), 1, "{listed}");
+    let active = rows[0]["activeSessionId"].as_str().expect("active id");
+    assert_eq!(stdout(&created), format!("Created {active} (reviewer)\n"));
+    assert_eq!(rows[0]["cwd"], json!(dir.path().to_string_lossy()));
+    assert_eq!(rows[0]["attachedClients"], json!(0));
+    let messages = wire.request(
+        "m1",
+        &json!({ "type": "get_messages", "activeSessionId": active }),
+    );
+    let first = &messages["data"]["messages"][0];
+    assert_eq!(first["role"], "user", "{messages}");
+    assert_eq!(
+        first["content"][0]["text"]
+            .as_str()
+            .or(first["content"].as_str()),
+        Some("--review the fix"),
+        "{messages}"
+    );
+}

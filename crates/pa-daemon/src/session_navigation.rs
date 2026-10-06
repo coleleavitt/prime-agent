@@ -204,49 +204,49 @@ impl SessionNavigation {
                 }),
             ));
         }
-        // The destination is the session dir's copy; an in-place import skips the copy.
+        // The destination is the session dir; an in-place import (the input already lives there)
+        // opens the file itself, every other import becomes a new session with a fresh id.
         let destination = {
             let core = self.core.lock_or_recover();
             core.store
                 .as_ref()
                 .and_then(|store| store.path.parent().map(std::path::Path::to_path_buf))
         };
-        let target = match destination {
-            Some(dir) => dir.join(resolved.file_name().map_or_else(
-                || session_file_name("imported"),
-                |name| name.to_string_lossy().to_string(),
-            )),
-            None => {
-                return Err(response_failure(
-                    None,
-                    "import_jsonl",
-                    "Session is still initializing",
-                    None,
-                ))
-            }
+        let Some(dir) = destination else {
+            return Err(response_failure(
+                None,
+                "import_jsonl",
+                "Session is still initializing",
+                None,
+            ));
         };
-        std::fs::create_dir_all(target.parent().unwrap_or(std::path::Path::new(".")))
-            .map_err(|error| error.to_string())
-            .ok();
-        let lease = self
-            .target_lease(&target)
-            .map_err(|error| response_failure(None, "import_jsonl", &error.to_string(), None))?;
-        if std::fs::canonicalize(&target).ok() != std::fs::canonicalize(resolved).ok() {
-            if let Err(error) = std::fs::copy(resolved, &target) {
-                return Err(response_failure(
-                    None,
-                    "import_jsonl",
-                    &error.to_string(),
-                    None,
-                ));
-            }
+        let in_place = resolved
+            .file_name()
+            .map(|name| dir.join(name))
+            .filter(|candidate| {
+                std::fs::canonicalize(candidate).ok() == std::fs::canonicalize(resolved).ok()
+            });
+        if let Some(target) = in_place {
+            return self.open_replacement(
+                &target.to_string_lossy(),
+                cwd_override,
+                "import_jsonl",
+                None,
+            );
         }
-        self.open_replacement(
+        let target = crate::session_store::copy_as_new_session(resolved, &dir)
+            .map_err(|error| response_failure(None, "import_jsonl", &format!("{error:#}"), None))?;
+        let prepared = self.open_replacement(
             &target.to_string_lossy(),
             cwd_override,
             "import_jsonl",
-            lease,
-        )
+            None,
+        );
+        if prepared.is_err() {
+            // A refused import leaves no half-imported session behind.
+            let _ = std::fs::remove_file(&target);
+        }
+        prepared
     }
 
     /// Open one replacement session file and check its stored cwd exists:
@@ -851,6 +851,89 @@ mod tests {
             }
             other => panic!("expected the typed missing-cwd error info, got {other:?}"),
         }
+    }
+
+    /// Upstream #1087: an import copied the input under its own file name and session id, so an
+    /// input named like a saved session overwrote it. The copy now takes a fresh id and the
+    /// `<id>.jsonl` name: the saved session keeps its bytes and the import is its own session.
+    #[tokio::test]
+    async fn import_jsonl_never_overwrites_a_saved_session_and_takes_a_fresh_id() {
+        let root = tempfile::tempdir().unwrap();
+        let sessions = root.path().join("sessions");
+        let outside = root.path().join("outside");
+        std::fs::create_dir_all(&sessions).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let cwd = root.path().to_string_lossy().to_string();
+        let live = sessions.join("live-session.jsonl");
+        let mut live_file = SessionFile::create(&cwd, None, 0);
+        live_file.set_path(live.clone());
+        live_file.rewrite().unwrap();
+        // A saved session with content, and an external transcript with the same file name and
+        // the same embedded session id.
+        let mut saved = SessionFile::create(&cwd, None, 0);
+        let shared_id = saved.session_id().to_string();
+        let saved_path = sessions.join(session_file_name(&shared_id));
+        saved.set_path(saved_path.clone());
+        saved.append_message(&json!({ "role": "user", "content": "keep me", "timestamp": 1u64 }));
+        saved.rewrite().unwrap();
+        let saved_bytes = std::fs::read_to_string(&saved_path).unwrap();
+        let mut external = SessionFile::create(&cwd, None, 0);
+        external.header.id.clone_from(&shared_id);
+        let external_path = outside.join(session_file_name(&shared_id));
+        external.set_path(external_path.clone());
+        external
+            .append_message(&json!({ "role": "user", "content": "imported", "timestamp": 2u64 }));
+        external.rewrite().unwrap();
+
+        let config = crate::worker::WorkerConfig {
+            socket_path: root.path().join("worker.sock"),
+            supervisor_socket_path: std::path::PathBuf::new(),
+            token: "token".to_string(),
+            worker_instance_id: String::new(),
+            active_session_id: "nav-session".to_string(),
+            agent_dir: root.path().join("agent"),
+            recovery_journal_path: root.path().join("recovery.jsonl"),
+            telemetry_disabled: None,
+            script: Some(json!({ "responses": ["ack"] })),
+        };
+        let worker = Arc::new(crate::worker::Worker::new(config, None));
+        let created = worker
+            .dispatch(
+                "create",
+                &json!({ "cwd": cwd, "name": "nav", "sessionPath": live.to_string_lossy() }),
+            )
+            .await;
+        assert!(created.success, "create failed: {created:?}");
+        let response = worker
+            .dispatch(
+                "import_jsonl",
+                &json!({
+                    "activeSessionId": "nav-session",
+                    "inputPath": external_path.to_string_lossy(),
+                }),
+            )
+            .await;
+        assert!(response.success, "{response:?}");
+
+        assert_eq!(std::fs::read_to_string(&saved_path).unwrap(), saved_bytes);
+        let (imported_path, imported_id) = {
+            let core = worker.core.lock().unwrap();
+            let store = core.store.as_ref().expect("imported store");
+            (store.path.clone(), store.session_id().to_string())
+        };
+        assert_ne!(imported_id, shared_id);
+        assert_eq!(
+            imported_path,
+            sessions.join(session_file_name(&imported_id))
+        );
+        let reopened = SessionFile::open(&imported_path).unwrap();
+        assert_eq!(reopened.header.id, imported_id);
+        let original = SessionFile::open(&external_path).unwrap();
+        assert_eq!(
+            reopened.branch_file_entries(),
+            original.branch_file_entries(),
+            "the imported copy keeps every entry"
+        );
     }
 
     /// The replacement reset wiring through `replace_session` itself (the

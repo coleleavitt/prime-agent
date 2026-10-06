@@ -97,6 +97,7 @@ const TS_DAEMON_COMMAND_TYPES: &[&str] = &[
     "new_session",
     "switch_session",
     "fork",
+    "fork_export",
     "navigate_tree",
     "import_jsonl",
     "export_html",
@@ -417,6 +418,10 @@ const WIRE_FIXTURES: &[(&str, &str)] = &[
     (
         "fork",
         r#"{"type": "fork", "activeSessionId": "sess", "entryId": "e"}"#,
+    ),
+    (
+        "fork_export",
+        r#"{"type": "fork_export", "activeSessionId": "sess", "entryId": "e"}"#,
     ),
     (
         "navigate_tree",

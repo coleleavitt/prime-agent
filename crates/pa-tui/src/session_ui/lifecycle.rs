@@ -205,6 +205,8 @@ impl SessionUi {
             pressed_click: None,
             click_adoption_emitted: false,
             click_counter: crate::mouse::ClickCounter::default(),
+            model_picker_scope: super::ModelSwitchScope::SavedDefault,
+            fork_launch: super::ForkLaunch::NewSession,
         };
         session
             .attach_session(&active_session_id, DockFold::FirstFrame)
