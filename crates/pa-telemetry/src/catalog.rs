@@ -12,7 +12,8 @@
 //! (`computer_use_session_started`, `computer_use_action`); schema version 4
 //! adds the separately built features' adoption events (`anthropic_shared_auth`, `dream_run`,
 //! `failure_resolution_hint`, `learning_report`, `observability command used`, `ravo_gate_decision`, `ravo_run`, `toolforge
-//! publish`, `workflow_run_agent`, `workflow_durable_request`, `workspace_trust_decision`): new-event
+//! publish`, `workflow_run_agent`, `workflow_durable_request`, `workspace_trust_decision`,
+//! `cli command used`, `acp session load`): new-event
 //! vocabulary bumps the version,
 //! additive property changes do not.
 //!
@@ -565,6 +566,27 @@ const AGENT_STARTED: EventRule = EventRule {
         ("session_id", required(uuid())),
         ("skill_count", optional(count())),
         ("python_skill_count", optional(count())),
+        // Settings adoption (schema v4, additive): how the session was
+        // configured, as categories and counts — never a model id, a
+        // budget figure, or a path.
+        ("length_continuations", optional(count())),
+        (
+            "repetition_guard",
+            optional(enum_rule(&["off", "reasoning", "all"], "reasoning")),
+        ),
+        (
+            "rlm_token_budget",
+            optional(enum_rule(&["off", "total", "per_depth"], "off")),
+        ),
+        ("fallback_model_count", optional(count())),
+        (
+            "context_cap_source",
+            optional(enum_rule(&["none", "global", "project"], "none")),
+        ),
+        (
+            "kernel_environment",
+            optional(enum_rule(&["inherit", "scrub_credentials"], "inherit")),
+        ),
     ],
 };
 
@@ -675,6 +697,11 @@ const AGENT_RUN_COMPLETED: EventRule = EventRule {
         ("custom_tool_error_count", optional(count())),
         ("custom_tool_duration_ms", optional(duration())),
         ("custom_tool_max_duration_ms", optional(duration())),
+        // Runtime behaviours (schema v4, additive): `fallbackModels` taking
+        // over (a provider backup serving the same model stays
+        // `failover_count` only) and repetition-guard trips.
+        ("fallback_model_switch_count", optional(count())),
+        ("repetition_guard_trip_count", optional(count())),
     ],
 };
 
@@ -773,6 +800,20 @@ const AGENT_SESSION_ENDED: EventRule = EventRule {
         ("feature_feedback_failed_count", optional(count())),
         ("feature_feedback_canceled_count", optional(count())),
         ("feature_feedback_unavailable_count", optional(count())),
+        // Runtime behaviours (schema v4, additive), counts only: fallback
+        // model switches and repetition-guard trips (summed over runs),
+        // length auto-continues, delegation-budget spawn refusals,
+        // `/harness` enable and disable flips, `refine.preview` calls and
+        // `refine.run(plan_id=)` runs, and `present_artifact` previews.
+        ("fallback_model_switch_count", optional(count())),
+        ("repetition_guard_trip_count", optional(count())),
+        ("length_continuation_count", optional(count())),
+        ("rlm_token_budget_refusal_count", optional(count())),
+        ("harness_enable_count", optional(count())),
+        ("harness_disable_count", optional(count())),
+        ("refine_preview_count", optional(count())),
+        ("refine_plan_run_count", optional(count())),
+        ("artifact_present_count", optional(count())),
     ],
 };
 
@@ -1515,6 +1556,50 @@ const DREAM_SESSION_RUN: EventRule = EventRule {
     ],
 };
 
+/// `cli command used` (v4): one run of a `prime-agent` CLI surface without
+/// an event of its own: the named-session flags (`--name` opening or
+/// creating, `--list-sessions`, `--delete-session`), `prime-agent create`,
+/// and `prime-agent trust --list`. The surface, its outcome, and (for
+/// `--name`) whether it created the session — never a session name, id,
+/// or path.
+const CLI_COMMAND_USED: EventRule = EventRule {
+    name: "cli command used",
+    since: 4,
+    properties: &[
+        (
+            "command",
+            required(enum_rule(
+                &[
+                    "name",
+                    "list_sessions",
+                    "delete_session",
+                    "create",
+                    "trust_list",
+                    "unknown",
+                ],
+                "unknown",
+            )),
+        ),
+        (
+            "outcome",
+            required(enum_rule(&["ok", "error", "unknown"], "unknown")),
+        ),
+        ("created", optional(boolean())),
+    ],
+};
+
+/// `acp session load` (v4): one ACP `session/load` request the ACP
+/// transport answered. The outcome only — never the session id, its cwd,
+/// or its MCP servers.
+const ACP_SESSION_LOAD: EventRule = EventRule {
+    name: "acp session load",
+    since: 4,
+    properties: &[(
+        "outcome",
+        required(enum_rule(&["loaded", "failed"], "failed")),
+    )],
+};
+
 /// `image delegation` (v2): one image-carrying turn delegated to a child
 /// running the resolved `settings.imageModel` (the supervisor-backed
 /// routing for text-only session models). Outcome only — never the
@@ -1624,6 +1709,15 @@ const TUI_EXIT: EventRule = EventRule {
         ("tui_mermaid_rendered", optional(count())),
         ("tui_mermaid_kept_source", optional(count())),
         ("tui_mermaid_rotated", optional(count())),
+        // Client adoption (schema v4, additive): `/switch <n|id>` session
+        // switches, `/fork --replace` and `/clone --replace` launches, and
+        // the plan-mode toggles the key and `--plan` submit (both ride
+        // `/plan`, whose `plan mode toggled` reports them as `command`).
+        ("tui_session_switch_count", optional(count())),
+        ("tui_fork_replace_count", optional(count())),
+        ("tui_clone_replace_count", optional(count())),
+        ("tui_plan_key_count", optional(count())),
+        ("tui_plan_flag_count", optional(count())),
         ("feature_model_initiated_count", optional(count())),
         ("feature_model_completed_count", optional(count())),
         ("feature_model_failed_count", optional(count())),
@@ -1857,6 +1951,8 @@ pub fn catalog() -> Vec<&'static EventRule> {
         &ANTHROPIC_SHARED_AUTH,
         &WORKSPACE_TRUST_DECISION,
         &CONTEXT_LIMIT_COMMAND,
+        &CLI_COMMAND_USED,
+        &ACP_SESSION_LOAD,
     ];
     all.extend(UPDATE_EVENTS.iter());
     all
@@ -2294,6 +2390,130 @@ mod tests {
         sanitize("tui exit", &mut odd);
         assert_eq!(odd.get("tui_mermaid_mode"), Some(&json!("streaming")));
         assert_eq!(odd.get("tui_mermaid_rendered"), Some(&json!(1_000_000u64)));
+    }
+
+    /// The recently added settings ride `agent started` as categories and
+    /// counts only (never a model id, a path, or a budget figure).
+    #[test]
+    fn agent_started_carries_the_settings_adoption_categories() {
+        let mut properties = Properties::new();
+        properties.set("session_id", json!("0197d0a0-8f5c-7f2a-b0e3-2d7e0d2b3b1a"));
+        properties.set("length_continuations", json!(3u64));
+        properties.set("repetition_guard", json!("all"));
+        properties.set("rlm_token_budget", json!("per_depth"));
+        properties.set("fallback_model_count", json!(2u64));
+        properties.set("context_cap_source", json!("project"));
+        properties.set("kernel_environment", json!("scrub_credentials"));
+        let expected = properties.clone();
+        properties.set("fallback_models", json!("openai/gpt-5,anthropic/claude")); // not catalogued
+        assert_eq!(sanitize("agent started", &mut properties), 1);
+        assert_eq!(properties, expected);
+        let mut odd = Properties::new();
+        odd.set("session_id", json!("0197d0a0-8f5c-7f2a-b0e3-2d7e0d2b3b1a"));
+        odd.set("repetition_guard", json!("sometimes"));
+        odd.set("rlm_token_budget", json!(400_000u64));
+        odd.set("context_cap_source", json!("chat"));
+        odd.set("kernel_environment", json!("minimal"));
+        sanitize("agent started", &mut odd);
+        let mut fallen = Properties::new();
+        fallen.set("session_id", json!("0197d0a0-8f5c-7f2a-b0e3-2d7e0d2b3b1a"));
+        fallen.set("repetition_guard", json!("reasoning"));
+        fallen.set("rlm_token_budget", json!("off"));
+        fallen.set("context_cap_source", json!("none"));
+        fallen.set("kernel_environment", json!("inherit"));
+        assert_eq!(odd, fallen);
+    }
+
+    /// The runtime behaviours ride the run and session events as counts.
+    #[test]
+    fn run_and_session_events_carry_the_runtime_behaviour_counts() {
+        let mut run = Properties::new();
+        run.set("session_id", json!("0197d0a0-8f5c-7f2a-b0e3-2d7e0d2b3b1a"));
+        run.set("outcome", json!("success"));
+        run.set("duration_ms", json!(5u64));
+        run.set("fallback_model_switch_count", json!(1u64));
+        run.set("repetition_guard_trip_count", json!(1u64));
+        let expected = run.clone();
+        assert_eq!(sanitize("agent run completed", &mut run), 0);
+        assert_eq!(run, expected);
+
+        let mut ended = Properties::new();
+        ended.set("session_id", json!("0197d0a0-8f5c-7f2a-b0e3-2d7e0d2b3b1a"));
+        ended.set("duration_ms", json!(5u64));
+        for key in [
+            "fallback_model_switch_count",
+            "repetition_guard_trip_count",
+            "length_continuation_count",
+            "rlm_token_budget_refusal_count",
+            "harness_enable_count",
+            "harness_disable_count",
+            "refine_preview_count",
+            "refine_plan_run_count",
+            "artifact_present_count",
+        ] {
+            ended.set(key, json!(2u64));
+        }
+        let expected = ended.clone();
+        ended.set("harness_entry", json!("global:subagent:reviewer")); // not catalogued
+        assert_eq!(sanitize("agent session ended", &mut ended), 1);
+        assert_eq!(ended, expected);
+    }
+
+    /// The interactive client's new adoption counters ride `tui exit`.
+    #[test]
+    fn tui_exit_carries_the_switch_fork_and_plan_counts() {
+        let mut properties = Properties::new();
+        properties.set("exit_reason", json!("ctrl_d"));
+        properties.set("turn_active", json!(false));
+        for key in [
+            "tui_session_switch_count",
+            "tui_fork_replace_count",
+            "tui_clone_replace_count",
+            "tui_plan_key_count",
+            "tui_plan_flag_count",
+        ] {
+            properties.set(key, json!(1u64));
+        }
+        let expected = properties.clone();
+        assert_eq!(sanitize("tui exit", &mut properties), 0);
+        assert_eq!(properties, expected);
+    }
+
+    #[test]
+    fn cli_command_used_carries_only_its_vocabulary() {
+        assert_eq!(lookup("cli command used").map(|rule| rule.since), Some(4));
+        let mut properties = Properties::new();
+        properties.set("command", json!("name"));
+        properties.set("outcome", json!("ok"));
+        properties.set("created", json!(true));
+        let expected = properties.clone();
+        properties.set("session_name", json!("my secret project")); // not catalogued
+        assert_eq!(sanitize("cli command used", &mut properties), 1);
+        assert_eq!(properties, expected);
+        let mut odd = Properties::new();
+        odd.set("command", json!("rm -rf"));
+        odd.set("outcome", json!("exploded"));
+        sanitize("cli command used", &mut odd);
+        let mut fallen = Properties::new();
+        fallen.set("command", json!("unknown"));
+        fallen.set("outcome", json!("unknown"));
+        assert_eq!(odd, fallen);
+    }
+
+    #[test]
+    fn acp_session_load_carries_only_its_outcome() {
+        assert_eq!(lookup("acp session load").map(|rule| rule.since), Some(4));
+        let mut properties = Properties::new();
+        properties.set("outcome", json!("loaded"));
+        let expected = properties.clone();
+        properties.set("session_id", json!("0197d0a0-8f5c-7f2a-b0e3-2d7e0d2b3b1a")); // not catalogued
+        properties.set("cwd", json!("/home/someone/project")); // not catalogued
+        assert_eq!(sanitize("acp session load", &mut properties), 2);
+        assert_eq!(properties, expected);
+        let mut odd = Properties::new();
+        odd.set("outcome", json!("partially"));
+        sanitize("acp session load", &mut odd);
+        assert_eq!(odd.get("outcome"), Some(&json!("failed")));
     }
 
     #[test]
