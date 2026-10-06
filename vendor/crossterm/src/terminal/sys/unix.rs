@@ -178,6 +178,26 @@ fn set_terminal_attr(fd: impl AsFd, termios: &Termios) -> io::Result<()> {
     Ok(())
 }
 
+/// Prime Agent patch: the kitty graphics protocol's documented detection
+/// query (a 1x1 RGB pixel, direct transmission, `a=q`: the terminal loads
+/// and answers without storing it).
+#[cfg(feature = "events")]
+const GRAPHICS_QUERY: &[u8] = b"\x1B_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1B\\";
+
+#[cfg(feature = "events")]
+static GRAPHICS_QUERY_REQUESTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Prime Agent patch: have the next keyboard enhancement support check also
+/// ask whether the terminal speaks the kitty graphics protocol; its verdict
+/// is read with [`crate::event::take_kitty_graphics_reply`]. Only for a
+/// terminal reached directly: a multiplexer answers DA1 itself (and screen
+/// can take an APC as a window title).
+#[cfg(feature = "events")]
+pub fn request_kitty_graphics_query() {
+    GRAPHICS_QUERY_REQUESTED.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
 /// Queries the terminal's support for progressive keyboard enhancement.
 ///
 /// On unix systems, this function will block and possibly time out while
@@ -219,19 +239,32 @@ pub(crate) fn read_supports_keyboard_enhancement_raw() -> io::Result<bool> {
 
     // ESC [ ? u        Query progressive keyboard enhancement flags (kitty protocol).
     // ESC [ c          Query primary device attributes.
-    const QUERY: &[u8] = b"\x1B[?u\x1B[c";
+    const KEYBOARD_QUERY: &[u8] = b"\x1B[?u\x1B[c";
 
     // Prime Agent patch: armed before the write, so the reply's verdict is
     // published by whichever poller parses it (see `read::ReplyWatch`).
     arm_capability_watch();
+    // Prime Agent patch: a requested kitty graphics query rides ahead of
+    // the keyboard query, concluded by the same DA1 (see
+    // `read::arm_graphics_watch`).
+    let graphics = GRAPHICS_QUERY_REQUESTED.swap(false, std::sync::atomic::Ordering::SeqCst);
+    if graphics {
+        crate::event::read::arm_graphics_watch();
+    }
+    let query: Vec<u8> = if graphics {
+        [GRAPHICS_QUERY, KEYBOARD_QUERY].concat()
+    } else {
+        KEYBOARD_QUERY.to_vec()
+    };
+    let query = query.as_slice();
 
     let result = File::open("/dev/tty").and_then(|mut file| {
-        file.write_all(QUERY)?;
+        file.write_all(query)?;
         file.flush()
     });
     if result.is_err() {
         let mut stdout = io::stdout();
-        stdout.write_all(QUERY)?;
+        stdout.write_all(query)?;
         stdout.flush()?;
     }
 

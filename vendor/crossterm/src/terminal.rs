@@ -101,6 +101,9 @@ pub(crate) mod sys;
 #[cfg(feature = "events")]
 pub use sys::supports_keyboard_enhancement;
 
+#[cfg(all(unix, feature = "events"))]
+pub use sys::request_kitty_graphics_query;
+
 /// Prime Agent patch: the raw-path keyboard-enhancement check for a
 /// caller that already holds the terminal in raw mode. The stock
 /// [`supports_keyboard_enhancement`] re-decides the raw state at its

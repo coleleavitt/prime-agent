@@ -141,27 +141,104 @@ pub fn image_protocol() -> Option<ImageProtocol> {
     image_terminal().map(|terminal| terminal.protocol)
 }
 
+/// Which probe can find an image terminal the environment does not name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProbeRoute {
+    /// The environment answered, or nothing can be asked.
+    None,
+    /// Ask the tmux server about its client ([`tmux`]).
+    Tmux,
+    /// Ask the terminal itself: the kitty graphics query, concluded by the
+    /// keyboard probe's DA1. An ssh session hides the emulator's variables
+    /// (openssh forwards no environment by default — `SendEnv` and
+    /// `AcceptEnv` start empty — and sends only `TERM`, in the pty
+    /// request), so `KITTY_WINDOW_ID`/`TERM_PROGRAM` never arrive.
+    GraphicsQuery,
+}
+
+/// The probe for this environment, after TS's detection said none. tmux is
+/// asked, never the terminal through it (tmux answers DA1 itself and drops
+/// the graphics reply); screen and zellij are never asked (screen can take
+/// an APC as a window title); a `dumb`/`linux` console or a non-tty stdout
+/// has no reply to give.
+pub(crate) fn probe_route(env: impl Fn(&str) -> Option<String>, stdout_is_tty: bool) -> ProbeRoute {
+    let var = |name: &str| env(name).filter(|value| !value.is_empty());
+    if detect_image_protocol(&env).is_some() || !stdout_is_tty {
+        return ProbeRoute::None;
+    }
+    if var("TMUX").is_some() {
+        return ProbeRoute::Tmux;
+    }
+    let term = var("TERM").unwrap_or_default().to_lowercase();
+    if term.starts_with("tmux")
+        || term.starts_with("screen")
+        || var("STY").is_some()
+        || var("ZELLIJ").is_some()
+        || matches!(term.as_str(), "" | "dumb" | "linux")
+    {
+        return ProbeRoute::None;
+    }
+    ProbeRoute::GraphicsQuery
+}
+
 /// Start the probe for a terminal the environment does not name, once per
 /// process, off the paint path; until it answers the previews keep their
-/// textual fallback. Runs at the first surface's mount.
+/// textual fallback. Runs at the first surface's mount, before the
+/// keyboard probe that carries the graphics query.
 pub fn start_image_detection() {
     static STARTED: std::sync::Once = std::sync::Once::new();
     STARTED.call_once(|| {
         use std::io::IsTerminal;
-        let tmux = std::env::var_os("TMUX").is_some_and(|value| !value.is_empty());
-        if env_image_terminal().is_some() || !tmux || !std::io::stdout().is_terminal() {
-            return;
+        let route = probe_route(
+            |name| std::env::var(name).ok(),
+            std::io::stdout().is_terminal(),
+        );
+        match route {
+            ProbeRoute::None => {}
+            ProbeRoute::Tmux => {
+                let _ = std::thread::Builder::new()
+                    .name("pa-image-tmux-probe".to_string())
+                    .spawn(|| {
+                        if let Some(terminal) = tmux::probe_tmux_client()
+                            .and_then(|client| tmux::tmux_image_terminal(&client))
+                        {
+                            set_probed(terminal);
+                        }
+                    });
+            }
+            ProbeRoute::GraphicsQuery => request_graphics_query(),
         }
-        let _ = std::thread::Builder::new()
-            .name("pa-image-tmux-probe".to_string())
-            .spawn(|| {
-                if let Some(terminal) =
-                    tmux::probe_tmux_client().and_then(|client| tmux::tmux_image_terminal(&client))
-                {
-                    set_probed(terminal);
-                }
-            });
     });
+}
+
+#[cfg(unix)]
+fn request_graphics_query() {
+    crossterm::terminal::request_kitty_graphics_query();
+}
+
+/// The keyboard probe (and with it the query) is unix-only.
+#[cfg(not(unix))]
+fn request_graphics_query() {}
+
+/// Take the graphics query's verdict once it landed (the keyboard probe's
+/// settle and the input reader's late-reply path call this): an `OK`
+/// makes the terminal a direct kitty one. Transmission is always direct
+/// (`t=d`, the default every command here leaves implicit): file and
+/// shared-memory media would name paths on the wrong side of an ssh hop.
+pub(crate) fn take_graphics_query_reply() {
+    if graphics_query_verdict() == Some(true) {
+        set_probed(ImageTerminal::direct(ImageProtocol::Kitty));
+    }
+}
+
+#[cfg(unix)]
+fn graphics_query_verdict() -> Option<bool> {
+    crossterm::event::take_kitty_graphics_reply()
+}
+
+#[cfg(not(unix))]
+fn graphics_query_verdict() -> Option<bool> {
+    None
 }
 
 /// A test-forced terminal (`None`: the fallback terminal).
@@ -806,6 +883,127 @@ mod tests {
             ),
             "[Image: shot.png [image/png] 8x6]"
         );
+    }
+
+    /// The env matrix after TS's detection: direct terminals need no
+    /// probe; ssh (only `TERM` crosses) asks the terminal; tmux — with or
+    /// without ssh underneath — asks the tmux server; screen, zellij, a
+    /// console, and a non-tty never ask.
+    #[test]
+    fn the_probe_route_follows_the_environment() {
+        let route = |vars: &[(&str, &str)], tty: bool| {
+            probe_route(
+                |name| {
+                    vars.iter()
+                        .find(|(key, _)| *key == name)
+                        .map(|(_, value)| (*value).to_string())
+                },
+                tty,
+            )
+        };
+        let ssh = [
+            ("SSH_CONNECTION", "192.0.2.1 50000 192.0.2.2 22"),
+            ("SSH_TTY", "/dev/pts/3"),
+        ];
+        let with = |extra: &[(&'static str, &'static str)]| -> Vec<(&'static str, &'static str)> {
+            ssh.iter().chain(extra).copied().collect()
+        };
+        // Direct kitty: TS's detection answers.
+        assert_eq!(
+            route(&[("KITTY_WINDOW_ID", "1"), ("TERM", "xterm-kitty")], true),
+            ProbeRoute::None
+        );
+        // kitty over ssh: only TERM crossed.
+        assert_eq!(
+            route(&with(&[("TERM", "xterm-kitty")]), true),
+            ProbeRoute::GraphicsQuery
+        );
+        // Any other terminal over ssh is asked too (the reply decides).
+        assert_eq!(
+            route(&with(&[("TERM", "xterm-256color")]), true),
+            ProbeRoute::GraphicsQuery
+        );
+        // Ghostty's TERM names it: TS's detection already answers.
+        assert_eq!(
+            route(&with(&[("TERM", "xterm-ghostty")]), true),
+            ProbeRoute::None
+        );
+        // tmux, local or behind ssh: ask the server, not the terminal.
+        assert_eq!(
+            route(
+                &[
+                    ("TMUX", "/tmp/tmux-1000/default,1,0"),
+                    ("TERM", "tmux-256color")
+                ],
+                true
+            ),
+            ProbeRoute::Tmux
+        );
+        assert_eq!(
+            route(
+                &with(&[
+                    ("TMUX", "/tmp/tmux-1000/default,1,0"),
+                    ("TERM", "tmux-256color")
+                ]),
+                true
+            ),
+            ProbeRoute::Tmux
+        );
+        // A stale KITTY_WINDOW_ID inside tmux does not skip the tmux probe.
+        assert_eq!(
+            route(&[("TMUX", "/tmp/t,1,0"), ("KITTY_WINDOW_ID", "1")], true),
+            ProbeRoute::Tmux
+        );
+        // ssh out of a tmux pane (TERM crossed, TMUX did not), screen,
+        // zellij, consoles, and pipes: never asked.
+        for vars in [
+            with(&[("TERM", "tmux-256color")]),
+            with(&[("TERM", "screen-256color")]),
+            with(&[("TERM", "xterm-256color"), ("STY", "1.pts-0.host")]),
+            with(&[("TERM", "xterm-256color"), ("ZELLIJ", "0")]),
+            with(&[("TERM", "linux")]),
+            with(&[("TERM", "dumb")]),
+            with(&[]),
+        ] {
+            assert_eq!(route(&vars, true), ProbeRoute::None, "{vars:?}");
+        }
+        assert_eq!(
+            route(&with(&[("TERM", "xterm-kitty")]), false),
+            ProbeRoute::None
+        );
+    }
+
+    /// Every kitty command the port writes transmits directly (`t=d`, the
+    /// protocol default, so no `t=` key at all): a file (`t=f`/`t=t`) or
+    /// shared-memory (`t=s`) medium names a path on the wrong side of an
+    /// ssh hop.
+    #[test]
+    fn kitty_transmission_is_always_direct() {
+        use kitty_graphics::{tmux_write_with_payload, Command};
+        let payload = "QUJD".repeat(3000);
+        let written = [
+            encode_kitty(&payload, &KittyOptions::default()),
+            kitty_transmit(&payload, 7),
+            kitty_place(7, 10, 5, None),
+            tmux_write_with_payload(
+                &Command::new()
+                    .key(b'a', 'T')
+                    .key(b'q', 2)
+                    .key(b'f', 100)
+                    .key(b'U', 1)
+                    .key(b'i', 7),
+                &payload,
+            ),
+        ];
+        for escapes in written {
+            let keys: Vec<&str> = escapes
+                .split("_G")
+                .skip(1)
+                .flat_map(|command| command.split(';').next().unwrap_or("").split(','))
+                .collect();
+            assert!(!keys.is_empty());
+            assert!(keys.iter().all(|key| !key.starts_with("t=")), "{keys:?}");
+        }
     }
 
     #[test]

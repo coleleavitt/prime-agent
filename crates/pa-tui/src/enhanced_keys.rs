@@ -303,6 +303,8 @@ fn take_late_reply_supported() -> bool {
 /// either way; the push happens only on a mounted surface the exit has
 /// not released, the same stand-downs as the in-window answer.
 pub(crate) fn apply_late_capability_reply() {
+    // A graphics query's late reply lands before the DA1 that woke the reader.
+    crate::terminal_image::take_graphics_query_reply();
     if query_in_flight() {
         return;
     }
@@ -624,6 +626,9 @@ fn spawn_kitty_probe() {
                     }
                     let _ = answer_tx
                         .send(crossterm::terminal::supports_keyboard_enhancement_checked_raw());
+                    // A graphics query rode the check (`terminal_image::start_image_detection`);
+                    // its reply precedes the DA1 that concluded the check.
+                    crate::terminal_image::take_graphics_query_reply();
                     // The guard releases at this scope's end; the answer
                     // path's `enable_kitty` takes the lock after it.
                     drop(modes);

@@ -75,6 +75,9 @@ pub(crate) fn parse_event(
                     }
                     b'[' => parse_csi(buffer),
                     b'\x1B' => Ok(Some(InternalEvent::Event(Event::Key(KeyCode::Esc.into())))),
+                    b'_' if crate::event::read::graphics_reply_expected() => {
+                        parse_kitty_graphics_reply(buffer, input_available)
+                    }
                     _ => parse_event(&buffer[1..], input_available).map(|event_option| {
                         event_option.map(|event| {
                             if let InternalEvent::Event(Event::Key(key_event)) = event {
@@ -123,6 +126,45 @@ pub(crate) fn parse_event(
                 .map(InternalEvent::Event)
         }),
     }
+}
+
+/// Prime Agent patch: the longest kitty graphics reply kept while waiting
+/// for its terminator (a reply is `i=<id>;<message>`; kitty's longest
+/// error messages are well under this).
+const MAX_GRAPHICS_REPLY: usize = 1024;
+
+/// Prime Agent patch: a kitty graphics reply, `ESC _ G <body> ESC \`.
+/// Only called while a graphics query is outstanding: upstream reads
+/// `ESC _` as Alt+`_` and the rest of the reply as typed keys. A lone
+/// `ESC _` at the end of the input is still Alt+`_`, as upstream; a split
+/// reply waits for its bytes.
+fn parse_kitty_graphics_reply(
+    buffer: &[u8],
+    input_available: bool,
+) -> io::Result<Option<InternalEvent>> {
+    assert!(buffer.starts_with(b"\x1B_"));
+    if buffer.len() == 2 {
+        return Ok(if input_available {
+            None
+        } else {
+            Some(InternalEvent::Event(Event::Key(KeyEvent::new(
+                KeyCode::Char('_'),
+                KeyModifiers::ALT,
+            ))))
+        });
+    }
+    if buffer[2] != b'G' || buffer.len() > MAX_GRAPHICS_REPLY {
+        return Err(could_not_parse_event_error());
+    }
+    let len = buffer.len();
+    if len >= 5 && buffer[len - 2] == b'\x1B' {
+        if buffer[len - 1] != b'\\' {
+            return Err(could_not_parse_event_error());
+        }
+        let body = String::from_utf8_lossy(&buffer[3..len - 2]).into_owned();
+        return Ok(Some(InternalEvent::KittyGraphicsReply(body)));
+    }
+    Ok(None)
 }
 
 // converts KeyCode to KeyEvent (adds shift modifier in case of uppercase characters)
@@ -1678,5 +1720,40 @@ mod tests {
                 KeyEventKind::Release,
             )))),
         );
+    }
+
+    /// Prime Agent patch: a kitty graphics reply parses as one internal
+    /// event while the graphics query is outstanding, and `ESC _` keeps its
+    /// upstream Alt+`_` meaning otherwise.
+    #[test]
+    fn test_parse_kitty_graphics_reply_only_while_expected() {
+        let _guard = crate::event::read::GRAPHICS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let alt_underscore = Some(InternalEvent::Event(Event::Key(KeyEvent::new(
+            KeyCode::Char('_'),
+            KeyModifiers::ALT,
+        ))));
+        crate::event::read::arm_graphics_watch();
+        // Byte by byte, the way `Parser::advance` feeds it.
+        let reply = b"\x1B_Gi=31;OK\x1B\\";
+        for end in 2..reply.len() {
+            assert_eq!(parse_event(&reply[..end], true).unwrap(), None, "{end}");
+        }
+        assert_eq!(
+            parse_event(reply, false).unwrap(),
+            Some(InternalEvent::KittyGraphicsReply("i=31;OK".to_string()))
+        );
+        // A split reply waits for its bytes at a read boundary too.
+        assert_eq!(parse_event(b"\x1B_Gi=31;O", false).unwrap(), None);
+        // A lone `ESC _` at the end of the input is still Alt+`_`.
+        assert_eq!(parse_event(b"\x1B_", false).unwrap(), alt_underscore);
+        // Anything else after `ESC _` is no reply.
+        assert!(parse_event(b"\x1B_x", true).is_err());
+        assert!(parse_event(b"\x1B_Gi=31;OK\x1Bx", true).is_err());
+        // Not expected: upstream's Alt+`_`.
+        let _ = crate::event::read::take_graphics_verdict();
+        crate::event::read::disarm_graphics_watch_for_tests();
+        assert_eq!(parse_event(b"\x1B_", true).unwrap(), alt_underscore);
     }
 }

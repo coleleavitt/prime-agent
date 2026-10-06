@@ -124,3 +124,32 @@ every parse failure clears it. The state is parser state, so a twin split across
 drops. Windows reads structured records and needs nothing. Pinned by
 `test_kitty_printable_twin_drops_only_after_a_csi_u_report` and
 `test_kitty_modified_or_control_reports_never_arm_the_twin` (scratch-copy run, see above).
+
+# The kitty graphics query (2026-10-06, inline images over ssh)
+
+`src/terminal/sys/unix.rs` (`request_kitty_graphics_query`, `GRAPHICS_QUERY`),
+`src/event/read.rs` (`arm_graphics_watch`, `observe_graphics_reply`,
+`take_graphics_verdict`), `src/event/sys/unix/parse.rs` (`parse_kitty_graphics_reply`),
+`src/event.rs` (`InternalEvent::KittyGraphicsReply`, `take_kitty_graphics_reply`), and the
+`terminal.rs` re-export. Additive: nothing changes unless a caller requests the query.
+
+An ssh session keeps only `TERM` (openssh forwards no environment by default), so the
+product cannot tell a kitty-protocol terminal from its variables. A caller that wants to know
+calls `terminal::request_kitty_graphics_query()` before the keyboard support check; the
+check then writes the graphics protocol's documented detection query
+(`ESC _ G i=31,s=1,v=1,a=q,t=d,f=24;AAAA ESC \`) ahead of its `CSI ? u` + `CSI c`,
+arming a second watch first. The terminal answers in order, so a graphics reply lands before
+the DA1 that every terminal sends: `i=31;OK` publishes `Some(true)`, an error reply or a DA1
+that arrives first publishes `Some(false)` (the DA1 still reaches the keyboard watch
+unchanged). The caller reads it once with `event::take_kitty_graphics_reply()`.
+
+While the query is outstanding (armed until its reply or the concluding DA1) the parser reads
+`ESC _ G … ESC \` as one `KittyGraphicsReply` (at most 1 KiB) instead of upstream's Alt+`_`
+followed by the reply's bytes as typed keys; the watch consumes every such reply (it never
+queues). A lone `ESC _` at the end of a read stays Alt+`_`; `ESC _` followed by anything but
+`G` in the same read is a parse error while armed (the window is one terminal round trip).
+Outside the window `ESC _` is upstream's Alt+`_`. Pinned by
+`test_parse_kitty_graphics_reply_only_while_expected` and
+`graphics_replies_conclude_the_watch_and_never_queue` (scratch-copy run, see above; the copy
+also needs the `[[example]]` tables removed), and end to end by pa-cli's
+`image_graphics_query_e2e`.

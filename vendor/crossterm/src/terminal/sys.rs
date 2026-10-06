@@ -2,7 +2,7 @@
 
 #[cfg(unix)]
 #[cfg(feature = "events")]
-pub use self::unix::supports_keyboard_enhancement;
+pub use self::unix::{request_kitty_graphics_query, supports_keyboard_enhancement};
 #[cfg(unix)]
 #[cfg(feature = "events")]
 pub(crate) use self::unix::read_supports_keyboard_enhancement_raw;

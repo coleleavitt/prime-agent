@@ -89,6 +89,95 @@ pub(crate) fn lapse_capability_watch() -> Option<bool> {
     capability_replies().verdict.take()
 }
 
+/// Prime Agent patch: the kitty graphics query watch.
+///
+/// The keyboard support check can carry the kitty graphics query
+/// (`ESC _ G i=31,s=1,v=1,a=q,t=d,f=24;AAAA ESC \`, the protocol's
+/// documented detection) ahead of its own `CSI ? u` + `CSI c`, for a caller
+/// whose terminal hides its name (an ssh session keeps only `TERM`). The
+/// terminal answers in order, so a graphics reply lands before the DA1
+/// reply that answers every terminal: a reply means the protocol works
+/// (`OK`) or not (an error), and a DA1 reply first means no graphics
+/// protocol. While the query is outstanding the parser reads `ESC _ G … ESC
+/// \` as one reply (upstream reads `ESC _` as Alt+`_` and leaks the rest as
+/// keys); the reply is always consumed, never queued.
+#[cfg(unix)]
+static GRAPHICS_REPLY_EXPECTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(unix)]
+static GRAPHICS_VERDICT: std::sync::Mutex<Option<bool>> = std::sync::Mutex::new(None);
+
+#[cfg(unix)]
+fn graphics_verdict() -> std::sync::MutexGuard<'static, Option<bool>> {
+    GRAPHICS_VERDICT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Arm the graphics watch for a query about to be written.
+#[cfg(unix)]
+pub(crate) fn arm_graphics_watch() {
+    *graphics_verdict() = None;
+    GRAPHICS_REPLY_EXPECTED.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Whether a graphics reply is outstanding (the parser's `ESC _ G` gate).
+#[cfg(unix)]
+pub(crate) fn graphics_reply_expected() -> bool {
+    GRAPHICS_REPLY_EXPECTED.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Serializes the tests that drive the process-global graphics watch.
+#[cfg(all(unix, test))]
+pub(crate) static GRAPHICS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(all(unix, test))]
+pub(crate) fn disarm_graphics_watch_for_tests() {
+    GRAPHICS_REPLY_EXPECTED.store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Take the graphics verdict (each is returned once).
+#[cfg(unix)]
+pub(crate) fn take_graphics_verdict() -> Option<bool> {
+    graphics_verdict().take()
+}
+
+/// The query's id (the protocol's documented example).
+#[cfg(unix)]
+pub(crate) const GRAPHICS_QUERY_ID: &str = "31";
+
+/// Whether a reply body (`i=31;OK`) says the query's image loaded.
+#[cfg(unix)]
+fn graphics_reply_ok(body: &str) -> bool {
+    let (keys, message) = body.split_once(';').unwrap_or((body, ""));
+    keys.split(',')
+        .any(|key| key.strip_prefix("i=") == Some(GRAPHICS_QUERY_ID))
+        && message == "OK"
+}
+
+/// Route a graphics reply, or the DA1 that concludes an unanswered query.
+/// `true` when the event was a graphics reply (consumed).
+#[cfg(unix)]
+fn observe_graphics_reply(event: &InternalEvent) -> bool {
+    use std::sync::atomic::Ordering;
+    match event {
+        InternalEvent::KittyGraphicsReply(body) => {
+            if GRAPHICS_REPLY_EXPECTED.swap(false, Ordering::SeqCst) {
+                *graphics_verdict() = Some(graphics_reply_ok(body));
+            }
+            true
+        }
+        InternalEvent::PrimaryDeviceAttributes => {
+            if GRAPHICS_REPLY_EXPECTED.swap(false, Ordering::SeqCst) {
+                *graphics_verdict() = Some(false);
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
 /// What [`observe_capability_reply`] did with one parsed event.
 #[cfg(unix)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +193,9 @@ enum WatchedReply {
 /// Route one parsed event through the reply watch.
 #[cfg(unix)]
 fn observe_capability_reply(event: &InternalEvent) -> WatchedReply {
+    if observe_graphics_reply(event) {
+        return WatchedReply::Swallowed;
+    }
     let flags = match event {
         InternalEvent::KeyboardEnhancementFlags(_) => true,
         InternalEvent::PrimaryDeviceAttributes => false,
@@ -281,6 +373,46 @@ mod tests {
         super::{filter::InternalEventFilter, Event},
         EventSource, InternalEvent, InternalEventReader,
     };
+
+    /// Prime Agent patch: the graphics watch's verdicts. A reply is
+    /// consumed whatever it says; `OK` for the query's id is the only yes;
+    /// a DA1 that arrives first is no, and still reaches the keyboard watch.
+    #[cfg(unix)]
+    #[test]
+    fn graphics_replies_conclude_the_watch_and_never_queue() {
+        use super::{
+            arm_capability_watch, arm_graphics_watch, graphics_reply_expected,
+            observe_capability_reply, take_capability_verdict, take_graphics_verdict,
+            WatchedReply, GRAPHICS_TEST_LOCK,
+        };
+        let _guard = GRAPHICS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let reply = |body: &str| InternalEvent::KittyGraphicsReply(body.to_string());
+        arm_graphics_watch();
+        assert_eq!(observe_capability_reply(&reply("i=31;OK")), WatchedReply::Swallowed);
+        assert!(!graphics_reply_expected());
+        assert_eq!(take_graphics_verdict(), Some(true));
+        assert_eq!(take_graphics_verdict(), None);
+        arm_graphics_watch();
+        assert_eq!(
+            observe_capability_reply(&reply("i=31;ENOTSUPPORTED:no")),
+            WatchedReply::Swallowed
+        );
+        assert_eq!(take_graphics_verdict(), Some(false));
+        // A stray reply with nothing outstanding is consumed, no verdict.
+        assert_eq!(observe_capability_reply(&reply("i=7;OK")), WatchedReply::Swallowed);
+        assert_eq!(take_graphics_verdict(), None);
+        // DA1 first: no graphics; the keyboard watch still takes the DA1.
+        arm_graphics_watch();
+        arm_capability_watch();
+        assert_eq!(
+            observe_capability_reply(&InternalEvent::PrimaryDeviceAttributes),
+            WatchedReply::Verdict
+        );
+        assert_eq!(take_graphics_verdict(), Some(false));
+        assert_eq!(take_capability_verdict(), Some(false));
+    }
 
     #[test]
     fn test_poll_fails_without_event_source() {

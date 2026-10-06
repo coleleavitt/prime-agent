@@ -241,6 +241,16 @@ pub fn take_late_keyboard_enhancement_reply() -> Option<bool> {
     read::take_capability_verdict()
 }
 
+/// Prime Agent patch: the verdict of the kitty graphics query the keyboard
+/// support check carried ([`crate::terminal::request_kitty_graphics_query`]):
+/// `Some(true)` once the terminal answered `OK`, `Some(false)` once it
+/// answered an error or its DA1 reply arrived first, `None` while nothing
+/// is pending. Each verdict is returned once.
+#[cfg(unix)]
+pub fn take_kitty_graphics_reply() -> Option<bool> {
+    read::take_graphics_verdict()
+}
+
 /// Reads a single [`Event`](enum.Event.html).
 ///
 /// This function blocks until an [`Event`](enum.Event.html) is available. Combine it with the
@@ -1221,6 +1231,12 @@ pub(crate) enum InternalEvent {
     /// Attributes and architectural class of the terminal.
     #[cfg(unix)]
     PrimaryDeviceAttributes,
+    /// Prime Agent patch: a kitty graphics protocol reply (`ESC _ G <body>
+    /// ESC \`), parsed only while a graphics query is outstanding (see
+    /// `read::arm_graphics_watch`); the body is the text between `G` and
+    /// the terminator (`i=31;OK`).
+    #[cfg(unix)]
+    KittyGraphicsReply(String),
 }
 
 #[cfg(test)]
