@@ -414,8 +414,26 @@ fn kitty_chunked(params: &str, base64_data: &str) -> String {
 
 /// Transmit and place a PNG through the kitty graphics protocol (TS
 /// `encodeKitty`, byte-identical): `a=T,f=100,q=2` plus the options.
+/// The production path is [`encode_kitty_with_format`] (the same bytes for
+/// a PNG); this form stays for the TS byte-parity goldens.
+#[cfg(test)]
 pub fn encode_kitty(base64_data: &str, options: &KittyOptions) -> String {
-    let mut params = vec!["a=T".to_string(), "f=100".to_string(), "q=2".to_string()];
+    encode_kitty_with_format(base64_data, "f=100", options)
+}
+
+/// [`encode_kitty`] for a payload whose format keys are not PNG's `f=100`
+/// (the raw RGBA of a decoded GIF or WebP: `f=32,s=…,v=…,o=z`), in the
+/// same position.
+pub(crate) fn encode_kitty_with_format(
+    base64_data: &str,
+    format_keys: &str,
+    options: &KittyOptions,
+) -> String {
+    let mut params = vec![
+        "a=T".to_string(),
+        format_keys.to_string(),
+        "q=2".to_string(),
+    ];
     if !options.move_cursor {
         params.push("C=1".to_string());
     }
@@ -435,8 +453,18 @@ pub fn encode_kitty(base64_data: &str, options: &KittyOptions) -> String {
 /// stays stored terminal-side, so every later move is a [`kitty_place`]
 /// instead of a re-send. Not in TS (its inline renderer re-sent `a=T`
 /// whenever the row repainted).
+#[cfg(test)]
 pub fn kitty_transmit(base64_data: &str, image_id: u32) -> String {
-    kitty_chunked(&format!("a=t,f=100,i={image_id},q=2"), base64_data)
+    kitty_transmit_with_format(base64_data, "f=100", image_id)
+}
+
+/// [`kitty_transmit`] with the payload's own format keys.
+pub(crate) fn kitty_transmit_with_format(
+    base64_data: &str,
+    format_keys: &str,
+    image_id: u32,
+) -> String {
+    kitty_chunked(&format!("a=t,{format_keys},i={image_id},q=2"), base64_data)
 }
 
 /// The source rectangle of a cropped kitty placement, in image pixels.

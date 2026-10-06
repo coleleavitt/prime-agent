@@ -1,6 +1,8 @@
 use super::painter::Painter;
 use super::payload::{
-    encode_png_rgb, jpeg_base64_to_png, shrink_rgb, KittyPayload, KittyPayloadState, PayloadSource,
+    decode_gif_first_frame, decode_webp_first_frame, encode_png_rgb, gif_base64_to_rgba,
+    jpeg_base64_to_png, shrink_rgb, webp_base64_to_png, webp_base64_to_rgba, KittyFormat,
+    KittyPayload, KittyPayloadState, PayloadSource, Rgba,
 };
 use super::plan::{plan, Visible};
 use super::*;
@@ -110,21 +112,22 @@ fn the_block_follows_ts_image_geometry_and_caps_tall_previews() {
 fn the_block_needs_a_protocol_that_takes_the_type() {
     let png = PanelImage::new("aGk=", "image/png", dims(1600, 900));
     let gif = PanelImage::new("aGk=", "image/gif", dims(1600, 900));
+    let webp = PanelImage::new("aGk=", "image/webp", dims(1600, 900));
+    let svg = PanelImage::new("aGk=", "image/svg+xml", dims(1600, 900));
     {
         let _terminal = Terminal::with(None);
         assert_eq!(image_block(&png, 80), None);
     }
-    {
-        let _terminal = Terminal::with(Some(ImageProtocol::Kitty));
-        assert!(image_block(&png, 80).is_some());
-        // kitty takes PNG (and JPEG through the transcode), never GIF.
-        assert_eq!(image_block(&gif, 80), None);
+    for protocol in [ImageProtocol::Kitty, ImageProtocol::Iterm2] {
+        let _terminal = Terminal::with(Some(protocol));
+        // Every preview type the kernel writes places on both: kitty takes
+        // GIF and WebP as their first frame's RGBA, iTerm2 WebP as a PNG.
+        for image in [&png, &gif, &webp] {
+            assert!(image_block(image, 80).is_some(), "{protocol:?} {image:?}");
+        }
+        assert_eq!(image_block(&svg, 80), None);
         // The exit flush's scrollback keeps the fallback.
         assert_eq!(with_text_fallback(|| image_block(&png, 80)), None);
-    }
-    {
-        let _terminal = Terminal::with(Some(ImageProtocol::Iterm2));
-        assert!(image_block(&gif, 80).is_some());
     }
 }
 
@@ -240,6 +243,7 @@ fn kitty_stub(image: &PanelImage) -> Stub {
             base64: Arc::from("UE5HREFUQQ=="),
             width_px: 200,
             height_px: 100,
+            format: KittyFormat::Png,
         })),
     );
     stub
@@ -839,4 +843,197 @@ fn the_tmux_session_frame_draws_placeholder_cells() {
     let scrollback = String::from_utf8_lossy(&scrollback);
     assert!(scrollback.contains("[Image: render.png [image/png] 1600x900]"));
     assert!(!scrollback.contains(PLACEHOLDER));
+}
+
+fn fixture(bytes: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+fn pixel(frame: &Rgba, x: u32, y: u32) -> [u8; 4] {
+    let at = (y * frame.width + x) as usize * 4;
+    [
+        frame.pixels[at],
+        frame.pixels[at + 1],
+        frame.pixels[at + 2],
+        frame.pixels[at + 3],
+    ]
+}
+
+fn inflate(base64: &str) -> Vec<u8> {
+    let compressed = base64::engine::general_purpose::STANDARD
+        .decode(base64)
+        .expect("base64");
+    let mut raw = Vec::new();
+    flate2::read::ZlibDecoder::new(compressed.as_slice())
+        .read_to_end(&mut raw)
+        .expect("zlib");
+    raw
+}
+
+/// An animated GIF shows its first frame only (red|blue; the second frame
+/// is all green), as exact RGBA.
+#[test]
+fn a_gif_preview_decodes_to_its_first_frame() {
+    let frame = decode_gif_first_frame(include_bytes!("fixtures/split-32x16-animated.gif"))
+        .expect("the GIF decodes");
+    assert_eq!((frame.width, frame.height), (32, 16));
+    assert_eq!(pixel(&frame, 2, 8), [255, 0, 0, 255]);
+    assert_eq!(pixel(&frame, 29, 8), [0, 0, 255, 255]);
+    assert!(frame
+        .pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .all(|p| *p != [0, 255, 0, 255]));
+    // kitty's payload: the same pixels, zlib-compressed, `f=32,o=z`.
+    let payload = gif_base64_to_rgba(&fixture(include_bytes!(
+        "fixtures/split-32x16-animated.gif"
+    )))
+    .expect("the GIF transcodes");
+    assert_eq!(
+        (payload.width_px, payload.height_px, payload.format),
+        (32, 16, KittyFormat::Rgba)
+    );
+    assert_eq!(payload.format_keys(), "f=32,s=32,v=16,o=z");
+    assert_eq!(inflate(&payload.base64), frame.pixels);
+    assert!(matches!(
+        gif_base64_to_rgba("bm90IGEgZ2lm"),
+        Err(super::payload::TranscodeError::Decode(_))
+    ));
+}
+
+/// WebP: lossless with alpha keeps both exactly; an animated WebP shows its
+/// first frame; a lossy one without alpha becomes opaque RGBA and shrinks
+/// under the 1024-pixel cap.
+#[test]
+fn a_webp_preview_decodes_to_its_first_frame() {
+    let alpha = decode_webp_first_frame(include_bytes!("fixtures/split-32x16-alpha.webp"))
+        .expect("the WebP decodes");
+    assert_eq!((alpha.width, alpha.height), (32, 16));
+    assert_eq!(pixel(&alpha, 2, 8), [255, 0, 0, 255]);
+    assert_eq!(pixel(&alpha, 29, 8)[3], 0);
+    let animated = decode_webp_first_frame(include_bytes!("fixtures/split-32x16-animated.webp"))
+        .expect("the animated WebP decodes");
+    assert_eq!(pixel(&animated, 2, 8), [255, 0, 0, 255]);
+    assert_eq!(pixel(&animated, 29, 8), [0, 0, 255, 255]);
+    let wide = webp_base64_to_rgba(&fixture(include_bytes!("fixtures/green-1100x500.webp")))
+        .expect("the WebP transcodes");
+    assert_eq!(
+        (wide.width_px, wide.height_px, wide.format),
+        (550, 250, KittyFormat::Rgba)
+    );
+    let raw = inflate(&wide.base64);
+    assert_eq!(raw.len(), 550 * 250 * 4);
+    let near = |a: &[u8], b: [u8; 4]| a.iter().zip(b).all(|(x, y)| x.abs_diff(y) <= 24);
+    assert!(near(&raw[..4], [0, 200, 0, 255]), "{:?}", &raw[..4]);
+    // iTerm2's WebP fallback: an RGBA PNG of the same frame.
+    let png = webp_base64_to_png(&fixture(include_bytes!("fixtures/split-32x16-alpha.webp")))
+        .expect("the WebP becomes a PNG");
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(png.base64.as_bytes())
+        .expect("base64");
+    assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+    assert_eq!(bytes[25], 6, "colour type RGBA");
+    assert_eq!(
+        (png.width_px, png.height_px, png.format),
+        (32, 16, KittyFormat::Png)
+    );
+    assert!(matches!(
+        webp_base64_to_rgba("bm90IGEgd2VicA=="),
+        Err(super::payload::TranscodeError::Decode(_))
+    ));
+}
+
+fn rgba_stub(image: &PanelImage) -> Stub {
+    let mut stub = Stub::default();
+    stub.kitty.insert(
+        image.key,
+        KittyPayloadState::Ready(Arc::new(KittyPayload {
+            base64: Arc::from("UkdCQQ=="),
+            width_px: 32,
+            height_px: 16,
+            format: KittyFormat::Rgba,
+        })),
+    );
+    stub
+}
+
+/// A raw RGBA payload declares its format in the transmit: the TS command's
+/// `f=` position directly, kitty's key order through tmux.
+#[test]
+fn an_rgba_payload_transmits_as_raw_pixels() {
+    use crate::terminal_image::kitty_graphics::tmux_passthrough;
+    let image = PanelImage::new("cmdiYQ==", "image/gif", dims(32, 16));
+    let stub = rgba_stub(&image);
+    let mut painter = Painter::default();
+    let mut out = String::new();
+    painter.paint(
+        KITTY,
+        &frame_with(&image, BLOCK, 3, 12),
+        (40, 12),
+        &stub,
+        &mut out,
+    );
+    let id = kitty_id(&out);
+    assert_eq!(
+        out,
+        format!("\x1b[4;5H\x1b_Ga=T,f=32,s=32,v=16,o=z,q=2,C=1,c=20,r=5,i={id};UkdCQQ==\x1b\\")
+    );
+    let _terminal = Terminal::with_terminal(Some(KITTY_TMUX));
+    let id = crate::terminal_image::kitty_graphics::placeholder_image_id(image.key);
+    let mut painter = Painter::default();
+    let mut out = String::new();
+    painter.paint(
+        KITTY_TMUX,
+        &frame_with(&image, BLOCK, 3, 12),
+        (40, 12),
+        &stub,
+        &mut out,
+    );
+    assert_eq!(
+        out,
+        tmux_passthrough(&format!(
+            "\x1b_Ga=T,q=2,f=32,o=z,U=1,s=32,v=16,c=20,r=5,i={id};UkdCQQ\x1b\\"
+        ))
+    );
+}
+
+/// The process source decodes GIF and WebP off the paint path for kitty,
+/// and hands iTerm2 the GIF itself but a PNG for the WebP.
+#[test]
+fn the_global_source_prepares_gif_and_webp_off_the_paint_path() {
+    let gif_data = fixture(include_bytes!("fixtures/split-32x16-animated.gif"));
+    let gif = PanelImage::new(&gif_data, "image/gif", dims(32, 16));
+    let webp = PanelImage::new(
+        &fixture(include_bytes!("fixtures/split-32x16-alpha.webp")),
+        "image/webp",
+        dims(32, 16),
+    );
+    assert_eq!(
+        GlobalSource.file(gif.key).as_deref(),
+        Some(gif_data.as_str())
+    );
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .expect("runtime");
+    runtime.block_on(async {
+        loop {
+            let kitty = (GlobalSource.kitty(gif.key), GlobalSource.kitty(webp.key));
+            let iterm2 = GlobalSource.file(webp.key);
+            if let (
+                (KittyPayloadState::Ready(gif_payload), KittyPayloadState::Ready(webp_payload)),
+                Some(png),
+            ) = (&kitty, &iterm2)
+            {
+                assert_eq!(gif_payload.format, KittyFormat::Rgba);
+                assert_eq!(webp_payload.format, KittyFormat::Rgba);
+                assert!(png.starts_with("iVBORw0KGgo"), "a PNG: {png}");
+                break;
+            }
+            tokio::time::timeout(std::time::Duration::from_secs(30), payload_ready())
+                .await
+                .expect("the transcodes settle");
+        }
+    });
 }

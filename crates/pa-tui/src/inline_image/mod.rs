@@ -102,14 +102,16 @@ pub(crate) struct ImageBlock {
     pub(crate) rows: u32,
 }
 
-/// Whether `protocol` can show `mime_type` without a codec the port lacks:
-/// iTerm2 takes the file bytes; kitty takes PNG (`f=100`), and JPEG through
-/// the off-paint PNG transcode.
-fn protocol_accepts(protocol: ImageProtocol, mime_type: &str) -> bool {
-    match protocol {
-        ImageProtocol::Kitty => matches!(mime_type, "image/png" | "image/jpeg"),
-        ImageProtocol::Iterm2 => matches!(mime_type, "image/png" | "image/jpeg" | "image/gif"),
-    }
+/// Whether `protocol` can show `mime_type`: every preview type the kernel
+/// writes (PNG, JPEG, GIF, WebP) on both — iTerm2 takes PNG/JPEG/GIF as
+/// they are and WebP as a PNG transcode; kitty takes PNG as it is, JPEG as
+/// a PNG transcode, and GIF/WebP as their first frame's raw RGBA (see
+/// `payload`). A failed transcode falls back per image.
+fn protocol_accepts(_protocol: ImageProtocol, mime_type: &str) -> bool {
+    matches!(
+        mime_type,
+        "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+    )
 }
 
 /// The preview's reserved block at `width`, or `None` when the row keeps

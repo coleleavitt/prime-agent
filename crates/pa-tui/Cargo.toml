@@ -25,6 +25,10 @@ base64 = "0.22"
 # decoded once off the paint path and re-sent as PNG (zlib via the existing flate2).
 zune-jpeg = "0.5.15"
 flate2 = "1"
+# GIF and WebP previews on kitty: their first frame decoded off the paint path and sent as
+# zlib-compressed RGBA (`f=32,o=z`); iTerm2 takes GIF as is and WebP as a PNG transcode.
+gif = { version = "0.14.2", default-features = false, features = ["std"] }
+image-webp = { version = "0.2.4", default-features = false }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "net", "process"] }
 uuid = { version = "1", features = ["v4"] }

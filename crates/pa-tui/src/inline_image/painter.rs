@@ -23,15 +23,15 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
-use super::payload::{KittyPayloadState, PayloadSource};
+use super::payload::{KittyFormat, KittyPayload, KittyPayloadState, PayloadSource};
 use super::plan::{markers, plan, Visible};
 use crate::terminal_image::kitty_graphics::{
     placeholder_image_id, tmux_passthrough, tmux_write_with_payload, Command,
 };
 use crate::terminal_image::{
-    allocate_image_id, delete_kitty_image, encode_iterm2, encode_kitty, kitty_delete_placements,
-    kitty_place, kitty_transmit, ImageProtocol, ImageTerminal, ImageTransport, Iterm2Options,
-    Iterm2Size, KittyCrop, KittyOptions,
+    allocate_image_id, delete_kitty_image, encode_iterm2, encode_kitty_with_format,
+    kitty_delete_placements, kitty_place, kitty_transmit_with_format, ImageProtocol, ImageTerminal,
+    ImageTransport, Iterm2Options, Iterm2Size, KittyCrop, KittyOptions,
 };
 use crate::Line;
 
@@ -142,7 +142,7 @@ impl Painter {
             let block = (tag.columns, tag.rows);
             if !image.sent {
                 out.push_str(&tmux_write_with_payload(
-                    &placeholder_transmit(image.id, block),
+                    &placeholder_transmit(&payload, image.id, block),
                     &payload.base64,
                 ));
                 image.sent = true;
@@ -198,8 +198,9 @@ impl Painter {
             if !image.sent && band.whole() {
                 // TS `Image`'s placement: transmit and place in one command,
                 // cursor left where it is.
-                out.push_str(&encode_kitty(
+                out.push_str(&encode_kitty_with_format(
                     &payload.base64,
+                    &payload.format_keys(),
                     &KittyOptions {
                         columns: Some(band.columns),
                         rows: Some(band.total),
@@ -209,7 +210,11 @@ impl Painter {
                 ));
             } else {
                 if !image.sent {
-                    out.push_str(&kitty_transmit(&payload.base64, image.id));
+                    out.push_str(&kitty_transmit_with_format(
+                        &payload.base64,
+                        &payload.format_keys(),
+                        image.id,
+                    ));
                 }
                 let crop = (!band.whole()).then(|| {
                     let total = u64::from(band.total.max(1));
@@ -352,11 +357,17 @@ impl Painter {
 
 /// icat's frame-0 transmit for a placeholder image: transmit and create the
 /// virtual placement in one command (`a=T,U=1`), quiet, the block's size.
-fn placeholder_transmit(id: u32, (columns, rows): (u32, u32)) -> Command {
-    Command::new()
-        .key(b'a', 'T')
-        .key(b'q', 2)
-        .key(b'f', 100)
+fn placeholder_transmit(payload: &KittyPayload, id: u32, (columns, rows): (u32, u32)) -> Command {
+    let command = Command::new().key(b'a', 'T').key(b'q', 2);
+    let command = match payload.format {
+        KittyFormat::Png => command.key(b'f', 100),
+        KittyFormat::Rgba => command
+            .key(b'f', 32)
+            .key(b's', payload.width_px)
+            .key(b'v', payload.height_px)
+            .key(b'o', 'z'),
+    };
+    command
         .key(b'U', 1)
         .key(b'c', columns)
         .key(b'r', rows)
