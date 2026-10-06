@@ -435,23 +435,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             policy: router_retry_policy,
         },
     );
-    // `artifact.present` (#1062): a host-provided registration (the
-    // extra handlers) wins; the native one captures into the session's
-    // artifact tree and records the row in the engine's session unless a
-    // host installs its sink.
-    let presented_artifacts = Arc::new(super::presented_artifact::PresentedArtifacts::new());
-    if handlers.get("artifact.present").is_none() {
-        super::presented_artifact::register_artifact_present_handler(
-            &mut handlers,
-            &presented_artifacts,
-            super::presented_artifact::PresentContext {
-                cwd: cwd.clone(),
-                artifact_dir: session_artifact_dir.clone(),
-                session_id: session_id.clone(),
-                session: wiring.session.clone(),
-            },
-        );
-    }
     // Per-session counters (MCP connector use, kernel boots, skills, RLM
     // child usage, feature outcomes) ride `agent session ended`; the seams
     // below count into them instead of emitting their own events.
@@ -468,6 +451,29 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     {
         session_counters.set_telemetry_enabled(telemetry_switch.enabled.clone());
     }
+    // `artifact.present` (#1062): a host-provided registration (the
+    // extra handlers) wins; the native one captures into the session's
+    // artifact tree and records the row in the engine's session unless a
+    // host installs its sink.
+    let presented_artifacts = Arc::new(super::presented_artifact::PresentedArtifacts::new());
+    if handlers.get("artifact.present").is_none() {
+        super::presented_artifact::register_artifact_present_handler(
+            &mut handlers,
+            &presented_artifacts,
+            super::presented_artifact::PresentContext {
+                cwd: cwd.clone(),
+                artifact_dir: session_artifact_dir.clone(),
+                session_id: session_id.clone(),
+                session: wiring.session.clone(),
+                counters: Some(std::sync::Arc::clone(&session_counters)),
+            },
+        );
+    }
+    // A delegation-budget refusal counts into the session counters.
+    let _ = wiring
+        .rlm
+        .adoption
+        .set(std::sync::Arc::clone(&session_counters));
     // The kernel telemetry bridge: `telemetry.emit` lets Python-backed
     // skills emit their bridge-vocabulary events through the session's
     // client; telemetry-opt-out sessions never register it.
@@ -491,6 +497,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // serve live views per request.
     crate::mcp::McpManager::register_host_handlers(&mcp_manager, &mut handlers);
     let turn_boundary = Arc::new(super::turn_boundary::TurnBoundaryRequests::new());
+    turn_boundary.set_adoption_counters(std::sync::Arc::clone(&session_counters));
     turn_boundary.register_model_info_handler(&mut handlers, model_info.clone());
     let keep_recent_tokens = compaction_settings
         .keep_recent_tokens
@@ -811,14 +818,17 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         length_continuation: (length_continuations > 0).then(|| {
             pa_agent::agent_loop::LengthContinuation {
                 max_continuations: length_continuations,
-                message: std::sync::Arc::new(|attempt, max| {
+                message: std::sync::Arc::new({
+                    let counters = std::sync::Arc::clone(&session_counters);
+                    move |attempt, max| {
+                    counters.note_adoption(super::telemetry::SessionAdoption::LengthContinuation);
                     crate::autonomous::autonomous_continuation_loop_row(
                         &format!(
                             "[auto-continue {attempt}/{max}: the previous reply was cut off at the output-token limit]\n\nContinue exactly where the previous reply stopped. Do not repeat what was already written."
                         ),
                         pa_agent::now_ms().max(0) as u64,
                     )
-                }),
+                }}),
             }
         }),
         // On (reasoning only) unless `repetitionGuard` says otherwise: a

@@ -901,3 +901,64 @@ async fn agent_started_reports_the_settings_adoption() {
         })
     );
 }
+
+/// A length auto-continue counts once on `agent session ended`.
+#[tokio::test]
+async fn a_length_auto_continue_counts_on_session_end() {
+    let model = pa_agent::types::Model {
+        id: "m".into(),
+        name: "m".into(),
+        api: "test".into(),
+        provider: "test".into(),
+        base_url: "http://localhost".into(),
+        reasoning: false,
+        cost: pa_agent::types::UsageCost::default(),
+        context_window: 1_000,
+        max_tokens: 100,
+    };
+    let provider = Arc::new(ScriptedProvider::new(model.clone()));
+    let mut steps = pa_agent::scripted::text_turn_steps(&model, "the first half");
+    if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut() {
+        if let pa_agent::stream::AssistantMessageEvent::Done { reason, message } = &mut **event {
+            *reason = pa_agent::types::StopReason::Length;
+            message.stop_reason = pa_agent::types::StopReason::Length;
+        }
+    }
+    provider.push_turn(pa_agent::scripted::ScriptedTurn::Events(steps));
+    provider.push_text_turn("the second half");
+    let tmp = tempfile::tempdir().unwrap();
+    let agent_dir = tmp.path().join("agent");
+    std::fs::create_dir_all(&agent_dir).unwrap();
+    std::fs::write(
+        agent_dir.join("settings.json"),
+        r#"{"lengthContinuations": 2}"#,
+    )
+    .unwrap();
+    let (wiring, mock) = mock_telemetry();
+    let engine = create_session(SessionEngineConfig {
+        cwd: tmp.path().to_path_buf(),
+        agent_dir,
+        model: Some(model),
+        stream_fn: Some(provider.stream_fn()),
+        rlm_depth: Some(0),
+        telemetry: Some(super::super::telemetry::TelemetryWiring {
+            client: wiring.client.clone(),
+            execution_mode: None,
+            now: None,
+            telemetry_enabled: None,
+        }),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    engine
+        .session
+        .prompt("go", crate::session_engine::PromptOptions::default())
+        .await
+        .unwrap();
+    engine.session.agent().wait_for_idle().await;
+    engine.telemetry.as_ref().unwrap().end().await.unwrap();
+    let ended = tracked(&wiring, &mock, "agent session ended").await;
+    assert_eq!(ended.len(), 1);
+    assert_eq!(ended[0]["length_continuation_count"], serde_json::json!(1));
+}

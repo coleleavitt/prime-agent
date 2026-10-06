@@ -651,6 +651,13 @@ async fn execute_harness(
             .await
             .map_err(|error| format!("{error}"))?
             .map_err(|error| format!("{error:#}"))?;
+            if let Some(telemetry) = &engine.telemetry {
+                telemetry.note_adoption(if enabled {
+                    super::telemetry::SessionAdoption::HarnessEnabled
+                } else {
+                    super::telemetry::SessionAdoption::HarnessDisabled
+                });
+            }
             let verb = if enabled { "Enabled" } else { "Disabled" };
             (format!("{verb} {}.", changed.key()), Some(changed))
         }

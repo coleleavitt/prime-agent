@@ -240,6 +240,8 @@ struct SessionTotals {
     compaction_count: u64,
     retry_count: u64,
     failover_count: u64,
+    fallback_model_switch_count: u64,
+    repetition_guard_trip_count: u64,
     model_error_count: u64,
     usage: UsageTotals,
 }
@@ -297,6 +299,10 @@ struct ActiveRun {
     compaction_count: u64,
     retry_count: u64,
     failover_count: u64,
+    /// Backups onto another model (`fallbackModels` taking over).
+    fallback_model_switch_count: u64,
+    /// Replies the repetition guard settled.
+    repetition_guard_trip_count: u64,
     usage: UsageTotals,
     last_assistant: Option<AssistantMessage>,
     /// An auto-retry (or provider failover) started after this run's
@@ -385,6 +391,42 @@ struct CounterValues {
     rlm_child_cost: f64,
     /// `feature_<name>_<outcome>_count` over the fixed feature vocabulary.
     feature_outcomes: std::collections::BTreeMap<String, u64>,
+    /// The session-level runtime behaviours ([`SessionAdoption`]).
+    adoption: std::collections::BTreeMap<&'static str, u64>,
+}
+
+/// One session-level runtime behaviour, counted on `agent session ended`
+/// (counts only: never what was continued, refused, toggled, or shown).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionAdoption {
+    /// A reply cut at the output limit auto-continued (`lengthContinuations`).
+    LengthContinuation,
+    /// A spawn the delegation budget (`rlmTokenBudget`) refused.
+    RlmTokenBudgetRefusal,
+    /// `/harness enable` turned an entry on.
+    HarnessEnabled,
+    /// `/harness disable` turned an entry off.
+    HarnessDisabled,
+    /// A `refine.preview` planned a refinement.
+    RefinePreview,
+    /// A `refine.run(plan_id=)` applied a previewed plan.
+    RefinePlanRun,
+    /// `present_artifact` showed an artifact.
+    ArtifactPresented,
+}
+
+impl SessionAdoption {
+    fn key(self) -> &'static str {
+        match self {
+            SessionAdoption::LengthContinuation => "length_continuation_count",
+            SessionAdoption::RlmTokenBudgetRefusal => "rlm_token_budget_refusal_count",
+            SessionAdoption::HarnessEnabled => "harness_enable_count",
+            SessionAdoption::HarnessDisabled => "harness_disable_count",
+            SessionAdoption::RefinePreview => "refine_preview_count",
+            SessionAdoption::RefinePlanRun => "refine_plan_run_count",
+            SessionAdoption::ArtifactPresented => "artifact_present_count",
+        }
+    }
 }
 
 impl SessionCounters {
@@ -412,6 +454,19 @@ impl SessionCounters {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
         );
+    }
+
+    /// One session-level runtime behaviour.
+    pub fn note_adoption(&self, adoption: SessionAdoption) {
+        self.with(|values| *values.adoption.entry(adoption.key()).or_default() += 1);
+    }
+
+    /// How often one session-level behaviour has counted (tests).
+    #[cfg(test)]
+    pub(crate) fn adoption_count(&self, adoption: SessionAdoption) -> u64 {
+        let mut count = 0;
+        self.with(|values| count = values.adoption.get(adoption.key()).copied().unwrap_or(0));
+        count
     }
 
     /// An MCP connector call (the server name never uploads).
@@ -462,6 +517,9 @@ impl SessionCounters {
                 properties.set("rlm_child_cost", Value::from(values.rlm_child_cost));
             }
             for (key, count) in &values.feature_outcomes {
+                properties.set(key, Value::from(*count));
+            }
+            for (key, count) in &values.adoption {
                 properties.set(key, Value::from(*count));
             }
         });
@@ -661,12 +719,29 @@ impl SessionTelemetry {
                 run.retry_count += 1;
                 run.retry_wait_ms += *delay_ms;
                 run.retry_pending = true;
-                if matches!(reason, super::auto_retry::RetryStartReason::Backup { .. }) {
+                if let super::auto_retry::RetryStartReason::Backup { backup_model } = reason {
                     run.failover_count += 1;
+                    // A provider backup serves the same model; a backup
+                    // onto another model is a `fallbackModels` switch.
+                    let backup_id = backup_model
+                        .split_once('/')
+                        .map_or(backup_model.as_str(), |(_, id)| id);
+                    if run
+                        .last_assistant
+                        .as_ref()
+                        .is_some_and(|failed| failed.model != backup_id)
+                    {
+                        run.fallback_model_switch_count += 1;
+                    }
                 }
             }
             AutoRetryEvent::End { .. } => run.retry_pending = false,
         }
+    }
+
+    /// One session-level runtime behaviour (`agent session ended`).
+    pub fn note_adoption(&self, adoption: SessionAdoption) {
+        self.counters.note_adoption(adoption);
     }
 
     /// A feature attempt's observed result at a session-engine seam,
@@ -741,6 +816,14 @@ impl SessionTelemetry {
             properties.set("terminal_outcome", Value::from("success"));
             properties.set("retry_count", Value::from(totals.retry_count));
             properties.set("failover_count", Value::from(totals.failover_count));
+            properties.set(
+                "fallback_model_switch_count",
+                Value::from(totals.fallback_model_switch_count),
+            );
+            properties.set(
+                "repetition_guard_trip_count",
+                Value::from(totals.repetition_guard_trip_count),
+            );
             properties.set("model_error_count", Value::from(totals.model_error_count));
         }
         self.counters.write_into(&mut properties);
@@ -877,6 +960,8 @@ fn handle_event(
                 compaction_count: 0,
                 retry_count: 0,
                 failover_count: 0,
+                fallback_model_switch_count: 0,
+                repetition_guard_trip_count: 0,
                 usage: UsageTotals::default(),
                 last_assistant: None,
                 retry_pending: false,
@@ -992,7 +1077,10 @@ fn handle_event(
                             .copied()
                     });
                 let cost_total = assistant.usage.cost.total;
+                let repetition_trip = assistant.stop_reason_raw.as_deref()
+                    == Some(pa_agent::repetition_guard::REPETITION_STOP_REASON);
                 if let Some(run) = state.active_run.as_mut() {
+                    run.repetition_guard_trip_count += u64::from(repetition_trip);
                     run.usage.add(&assistant.usage);
                     run.last_assistant = Some(assistant);
                     if let Some(turn_started) = run.current_turn_started_at.take() {
@@ -1086,6 +1174,8 @@ fn finalize_run_locked(client: &TelemetryClient, execution_mode: &str, state: &m
 
     state.totals.retry_count += run.retry_count;
     state.totals.failover_count += run.failover_count;
+    state.totals.fallback_model_switch_count += run.fallback_model_switch_count;
+    state.totals.repetition_guard_trip_count += run.repetition_guard_trip_count;
     state.totals.model_error_count += run.model_error_count;
 
     let mut properties = base_properties(execution_mode);
@@ -1114,6 +1204,14 @@ fn finalize_run_locked(client: &TelemetryClient, execution_mode: &str, state: &m
     properties.set("compaction_count", Value::from(run.compaction_count));
     properties.set("retry_count", Value::from(run.retry_count));
     properties.set("failover_count", Value::from(run.failover_count));
+    properties.set(
+        "fallback_model_switch_count",
+        Value::from(run.fallback_model_switch_count),
+    );
+    properties.set(
+        "repetition_guard_trip_count",
+        Value::from(run.repetition_guard_trip_count),
+    );
     properties.set(
         "provider_category",
         Value::from(provider_category(

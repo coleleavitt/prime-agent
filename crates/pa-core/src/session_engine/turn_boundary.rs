@@ -168,12 +168,20 @@ pub struct TurnBoundaryRequests {
     /// Previewed plans awaiting `refine.run(plan_id=...)`, oldest first.
     refine_previews:
         std::sync::Mutex<std::collections::VecDeque<super::refine::PreviewedRefinement>>,
+    /// The session counters `refine.preview` counts into (adoption).
+    adoption: std::sync::OnceLock<Arc<super::telemetry::SessionCounters>>,
 }
 
 impl TurnBoundaryRequests {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Install the session counters the turn-boundary requests count
+    /// their adoption into (first install wins).
+    pub fn set_adoption_counters(&self, counters: Arc<super::telemetry::SessionCounters>) {
+        let _ = self.adoption.set(counters);
     }
 
     /// Bind the assembled session runtime (first bind wins).
@@ -642,6 +650,9 @@ impl TurnBoundaryRequests {
                     };
                     let reply = preview.to_payload();
                     requests.remember_refine_preview(preview);
+                    if let Some(counters) = requests.adoption.get() {
+                        counters.note_adoption(super::telemetry::SessionAdoption::RefinePreview);
+                    }
                     Ok(reply)
                 })
             }),
@@ -704,6 +715,9 @@ impl SessionEngine {
                         "refine plan {plan_id} expired before it could apply; call refine.preview() again"
                     )));
                 };
+                if let Some(telemetry) = &self.telemetry {
+                    telemetry.note_adoption(super::telemetry::SessionAdoption::RefinePlanRun);
+                }
                 Some(preview)
             }
             None => None,

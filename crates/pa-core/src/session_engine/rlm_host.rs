@@ -420,6 +420,8 @@ pub struct RlmHostBridge {
     /// The session's delegation budget (`None` until the engine installs
     /// one; unset when no budget applies): every spawn draws its grant.
     pub(crate) token_budget: std::sync::OnceLock<Arc<super::rlm_token_budget::RlmTokenBudget>>,
+    /// The session counters a budget refusal counts into (adoption).
+    pub(crate) adoption: std::sync::OnceLock<Arc<super::telemetry::SessionCounters>>,
 }
 
 impl RlmHostBridge {
@@ -439,6 +441,7 @@ impl RlmHostBridge {
             semantic_spawn: std::sync::OnceLock::new(),
             plan_mode: std::sync::OnceLock::new(),
             token_budget: std::sync::OnceLock::new(),
+            adoption: std::sync::OnceLock::new(),
         }
     }
 }
@@ -458,10 +461,17 @@ impl RlmHostBridge {
     ///
     /// The budget's refusals (an exhausted pool, an unrecordable grant).
     pub fn reserve_child_grant(&self, requested: Option<u64>) -> anyhow::Result<Option<u64>> {
-        self.token_budget
+        let reserved = self
+            .token_budget
             .get()
             .map(|budget| budget.reserve_child_grant(requested))
-            .transpose()
+            .transpose();
+        if reserved.is_err() {
+            if let Some(counters) = self.adoption.get() {
+                counters.note_adoption(super::telemetry::SessionAdoption::RlmTokenBudgetRefusal);
+            }
+        }
+        reserved
     }
 
     /// Name the child a [`Self::reserve_child_grant`] grant funded.
@@ -616,8 +626,8 @@ fn register_run(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmHostBridge>)
                 // pool refuses the spawn and no child runs unfunded.
                 // An explicit `token_budget=` asks for that grant; with no
                 // budget installed it funds the child alone.
-                if let Some(budget) = bridge.token_budget.get() {
-                    request.token_budget = Some(budget.reserve_child_grant(request.token_budget)?);
+                if bridge.token_budget.get().is_some() {
+                    request.token_budget = bridge.reserve_child_grant(request.token_budget)?;
                 }
                 let grant = request.token_budget;
                 let handle = bridge.host.spawn(request).await?;
@@ -1346,6 +1356,8 @@ mod tests {
             RlmTokenAllowance::Root,
             0,
         )));
+        let counters = Arc::new(crate::session_engine::telemetry::SessionCounters::default());
+        let _ = wiring.rlm.adoption.set(Arc::clone(&counters));
         let spawn = || {
             call(
                 &wiring,
@@ -1367,6 +1379,13 @@ mod tests {
             .map(|request| request.token_budget)
             .collect();
         assert_eq!(grants, vec![Some(60), Some(40)]);
+        // Adoption: the refusal counts once.
+        assert_eq!(
+            counters.adoption_count(
+                crate::session_engine::telemetry::SessionAdoption::RlmTokenBudgetRefusal
+            ),
+            1
+        );
         // Each grant names the child it funded (the status surface).
         let attributed: Vec<(String, u64)> = wiring
             .rlm

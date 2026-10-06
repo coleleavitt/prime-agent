@@ -411,6 +411,8 @@ pub struct PresentContext {
     pub session_id: String,
     /// The engine's session, the default destination of the row.
     pub session: Arc<Mutex<SessionManager>>,
+    /// The session counters a shown artifact counts into (adoption).
+    pub counters: Option<Arc<super::telemetry::SessionCounters>>,
 }
 
 /// Register `artifact.present`: validate, capture, then hand the row to the
@@ -459,6 +461,9 @@ pub fn register_artifact_present_handler(
                         message.display,
                         message.details,
                     )?;
+                }
+                if let Some(counters) = &context.counters {
+                    counters.note_adoption(super::telemetry::SessionAdoption::ArtifactPresented);
                 }
                 Ok(captured.receipt)
             })
