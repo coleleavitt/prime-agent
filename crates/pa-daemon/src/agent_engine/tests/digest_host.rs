@@ -510,3 +510,79 @@ async fn messaging_stats_serves_the_snapshot_and_counts_send_outcomes() {
         })
     );
 }
+
+/// Upstream #2351 over the kernel handlers: a relative path resolves
+/// against the session cwd, a change reaches the worker sink, the TS
+/// argument errors hold, and a session close releases every watch.
+#[tokio::test]
+async fn path_watch_handlers_resolve_validate_notify_and_die_with_the_session() {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir(dir.path().join("relative")).unwrap();
+    let engine = std::sync::Arc::new(bare_engine(dir.path()));
+    engine.register_arc();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    engine.set_path_watch_sink(std::sync::Arc::new(move |event| {
+        let _ = tx.send(event);
+    }));
+    let mut handlers = HostRequestHandlers::default();
+    engine.register_path_watch_host_handlers(&mut handlers);
+    let call = |request: &str, data: Value| {
+        let handler = handlers.get(request).expect("handler").clone();
+        handler(HostRequestPayload {
+            data,
+            cell_source_code: None,
+        })
+    };
+    let registered = call("rlm.watch.path", json!({ "path": "relative" }))
+        .await
+        .unwrap();
+    let watched = dir.path().join("relative");
+    assert_eq!(
+        (
+            registered["watch"]["path"].clone(),
+            registered["watch"]["status"].clone()
+        ),
+        (json!(watched.display().to_string()), json!("active"))
+    );
+    std::fs::write(watched.join("signal.txt"), "x").unwrap();
+    let event = tokio::time::timeout(std::time::Duration::from_secs(20), rx.recv())
+        .await
+        .expect("a change arrives")
+        .expect("sink open");
+    assert!(matches!(
+        &event,
+        crate::path_watch::PathWatchEvent::Changed(change)
+            if change.watch_id == registered["watch"]["watch_id"].as_str().unwrap()
+    ));
+    let errors = [
+        call("rlm.watch.path", json!({ "path": "  " })).await,
+        call(
+            "rlm.watch.path",
+            json!({ "path": "relative", "recursive": "yes" }),
+        )
+        .await,
+        call("rlm.watch.path", json!({ "path": "missing" })).await,
+        call("rlm.watch.path_get", json!({ "watch_id": "watch_unknown" })).await,
+        call("rlm.watch.path_cancel", json!({})).await,
+    ]
+    .into_iter()
+    .map(|result| result.unwrap_err().to_string())
+    .collect::<Vec<_>>();
+    assert_eq!(
+        errors,
+        vec![
+            "rlm.watch.path path must be a non-empty string".to_string(),
+            "rlm.watch.path recursive must be a boolean".to_string(),
+            format!(
+                "Watched path does not exist: {}",
+                dir.path().join("missing").display()
+            ),
+            "Unknown path watch: watch_unknown".to_string(),
+            "rlm.watch.path_cancel watch_id must be a non-empty string".to_string(),
+        ]
+    );
+    let listed = call("rlm.watch.path_list", json!({})).await.unwrap();
+    assert_eq!(listed["watches"].as_array().map(Vec::len), Some(1));
+    engine.mark_session_closed();
+    assert_eq!(engine.path_watches.active_count(), (0, false));
+}

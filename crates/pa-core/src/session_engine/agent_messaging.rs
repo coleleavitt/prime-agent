@@ -243,7 +243,8 @@ pub fn assert_agent_message_queue_capacity(
 /// Names interpolated into a `[<kind> ...]` header line must not carry the
 /// characters that delimit the header itself (brackets, newlines, commas,
 /// or ":"): runs of those collapse into one space, then the value trims.
-pub(crate) fn sanitize_message_header_value(value: &str) -> String {
+#[must_use]
+pub fn sanitize_message_header_value(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     let mut pending_space = false;
     for char in value.chars() {

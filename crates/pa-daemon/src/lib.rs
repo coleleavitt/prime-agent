@@ -70,6 +70,8 @@ pub(crate) mod model_catalog;
 pub(crate) mod model_switch;
 mod overflow_compaction;
 pub mod ownership;
+pub mod path_watch;
+pub(crate) mod path_watch_host;
 pub mod paths;
 pub(crate) mod peer;
 pub(crate) mod peer_client;

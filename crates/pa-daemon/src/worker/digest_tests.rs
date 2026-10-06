@@ -784,3 +784,46 @@ async fn an_agent_message_arrival_counts_its_ingestion_step_and_a_plain_turn_doe
         )
     );
 }
+
+/// Upstream #2351 on the push lane: an undelivered path-watch notice
+/// MERGES the next batch's paths (never loses them), while a failure gets
+/// its own row.
+#[tokio::test]
+async fn a_pending_path_watch_notice_merges_the_next_batch() {
+    let worker = created_worker().await;
+    park_runner(&worker).await;
+    let change = |paths: &[&str]| crate::path_watch::PathWatchChange {
+        watch_id: "watch_a1".to_string(),
+        path: "/tmp/shared".to_string(),
+        recursive: false,
+        paths: paths.iter().map(|path| (*path).to_string()).collect(),
+        truncated: false,
+    };
+    let digest = &worker.agent_digest;
+    digest.emit_path_watch_event(&crate::path_watch::PathWatchEvent::Changed(change(&[
+        "/tmp/shared/a",
+    ])));
+    digest.emit_path_watch_event(&crate::path_watch::PathWatchEvent::Changed(change(&[
+        "/tmp/shared/b",
+        "/tmp/shared/a",
+    ])));
+    digest.emit_path_watch_event(&crate::path_watch::PathWatchEvent::Failed(
+        crate::path_watch::PathWatchFailure {
+            watch_id: "watch_a1".to_string(),
+            path: "/tmp/shared".to_string(),
+            recursive: false,
+            error: "Watched path was removed".to_string(),
+        },
+    ));
+    assert_eq!(
+        queue_texts(&worker.core, Lane::Steering),
+        vec![
+            crate::path_watch::format_path_watch_changed(&change(&[
+                "/tmp/shared/a",
+                "/tmp/shared/b"
+            ])),
+            "[watch-path-failed id:watch_a1 path:/tmp/shared]\n\nError: Watched path was removed"
+                .to_string(),
+        ]
+    );
+}

@@ -719,6 +719,20 @@ impl Worker {
                 // digest lane owns them (it records arrivals and steps and
                 // reads them for its controller); `rlm.messaging_stats` and
                 // the send counting call through these.
+                // The session-owned path watches (upstream #2351) route
+                // through the same digest-aware pipeline, behind the same
+                // closed-session gate.
+                let path_engine = std::sync::Arc::downgrade(concrete);
+                let path_digest = Arc::clone(&agent_digest);
+                concrete.set_path_watch_sink(std::sync::Arc::new(move |event| {
+                    if path_engine
+                        .upgrade()
+                        .is_some_and(|engine| engine.session_is_closed())
+                    {
+                        return;
+                    }
+                    path_digest.emit_path_watch_event(&event);
+                }));
                 let snapshot_digest = Arc::clone(&agent_digest);
                 let send_digest = Arc::clone(&agent_digest);
                 concrete.set_messaging_stats_seams(

@@ -194,6 +194,8 @@ impl AgentSessionEngine {
             presented_artifact_sink: std::sync::Mutex::new(None),
             messaging_stats_seams: std::sync::Mutex::new(None),
             session_telemetry: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            path_watches: crate::path_watch::PathWatchRegistry::default(),
+            path_watch_sink: std::sync::Mutex::new(None),
         })
     }
 
@@ -621,6 +623,8 @@ impl AgentSessionEngine {
         *self.autonomous_boundary.lock_or_recover() = None;
         *self.background_bash_probe.lock_or_recover() = None;
         *self.kernel_release_probe.lock_or_recover() = None;
+        // Watchers die with the session (upstream #2351).
+        self.path_watches.dispose();
     }
 
     /// The create path's live reset: a fresh (or replaced) session starts live.
@@ -750,6 +754,7 @@ impl AgentSessionEngine {
         self.register_digest_inbox_host_handlers(&mut handlers);
         self.register_watch_host_handlers(&mut handlers);
         self.register_messaging_stats_host_handlers(&mut handlers);
+        self.register_path_watch_host_handlers(&mut handlers);
         self.register_vision_read_host_handler(&mut handlers);
         Some(handlers)
     }

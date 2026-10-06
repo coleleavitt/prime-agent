@@ -419,6 +419,8 @@ pub enum SessionAdoption {
     /// `rlm.messaging_stats()` read the session's messaging counters
     /// (upstream #2352).
     MessagingStatsRead,
+    /// `rlm.watch.path` registered a filesystem watch (upstream #2351).
+    PathWatchRegistered,
 }
 
 impl SessionAdoption {
@@ -433,6 +435,7 @@ impl SessionAdoption {
             SessionAdoption::ArtifactPresented => "artifact_present_count",
             SessionAdoption::ToolIntentRecovery => "tool_intent_recovery_count",
             SessionAdoption::MessagingStatsRead => "messaging_stats_read_count",
+            SessionAdoption::PathWatchRegistered => "path_watch_register_count",
         }
     }
 }

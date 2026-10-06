@@ -1110,6 +1110,37 @@ impl AgentMessageDigest {
     /// quiet notice the async-bash completions ride (queue-if-busy,
     /// resume-if-idle), never content beyond the range.
     pub(crate) fn emit_watch_notice(&self, watch: &str, content: &str) {
+        self.emit_watch_row(watch, content, None);
+    }
+
+    /// Route one path-watch event (upstream #2351) through the same
+    /// pipeline. Each watch coalesces its own undelivered change notices:
+    /// a newer batch MERGES its paths into the pending row (path lists are
+    /// the whole signal, so superseding would lose earlier changes). A
+    /// failure is its own row: it ends the watch and is never coalesced.
+    pub(crate) fn emit_path_watch_event(&self, event: &crate::path_watch::PathWatchEvent) {
+        match event {
+            crate::path_watch::PathWatchEvent::Changed(change) => self.emit_watch_row(
+                &format!("path:{}", change.watch_id),
+                &crate::path_watch::format_path_watch_changed(change),
+                Some(change),
+            ),
+            crate::path_watch::PathWatchEvent::Failed(failure) => self.emit_watch_row(
+                &format!("path-failed:{}", failure.watch_id),
+                &crate::path_watch::format_path_watch_failed(failure),
+                None,
+            ),
+        }
+    }
+
+    /// The watch-notice routing shared by every watch kind; `change` marks
+    /// a path-watch batch, whose pending row merges instead of superseding.
+    fn emit_watch_row(
+        &self,
+        watch: &str,
+        content: &str,
+        change: Option<&crate::path_watch::PathWatchChange>,
+    ) {
         let digest = {
             let core = self
                 .core
@@ -1172,19 +1203,41 @@ impl AgentMessageDigest {
             .iter_mut()
             .find(|item| is_push_watch_notice_for(item, watch))
         {
-            pending.message = content.to_string();
+            let (content, merged) = match change {
+                Some(change) => {
+                    let merged = merge_path_watch_change(pending, change);
+                    (
+                        crate::path_watch::format_path_watch_changed(&merged),
+                        Some(merged),
+                    )
+                }
+                None => (content.to_string(), None),
+            };
+            pending.message.clone_from(&content);
             if let Some(row) = pending.custom_message.as_mut() {
                 row["content"] = json!(content);
                 row["timestamp"] = json!(crate::util::now_ms());
+                if let Some(merged) = merged {
+                    row["details"]["paths"] = json!(merged.paths);
+                    row["details"]["truncated"] = json!(merged.truncated);
+                }
             }
             return;
+        }
+        let mut details = json!({ "watch": watch });
+        if let Some(change) = change {
+            details["watchId"] = json!(change.watch_id);
+            details["path"] = json!(change.path);
+            details["recursive"] = json!(change.recursive);
+            details["paths"] = json!(change.paths);
+            details["truncated"] = json!(change.truncated);
         }
         let row = json!({
             "role": "custom",
             "customType": crate::agent_watch::AGENT_WATCH_NOTICE_CUSTOM_TYPE,
             "content": content,
             "display": false,
-            "details": { "watch": watch },
+            "details": details,
             "timestamp": crate::util::now_ms(),
         });
         let (policy, queue_visible) = if core.busy {
@@ -1216,6 +1269,45 @@ impl AgentMessageDigest {
             None,
         );
         self.work_notify.notify_one();
+    }
+}
+
+/// One path-watch batch merged into its undelivered pending row: the
+/// pending paths first (in their order), the new ones after, deduplicated
+/// and re-capped at the notice's byte budget.
+fn merge_path_watch_change(
+    pending: &QueuedItem,
+    change: &crate::path_watch::PathWatchChange,
+) -> crate::path_watch::PathWatchChange {
+    let details = pending
+        .custom_message
+        .as_ref()
+        .and_then(|row| row.get("details"));
+    let mut paths: Vec<String> = details
+        .and_then(|details| details.get("paths"))
+        .and_then(Value::as_array)
+        .map(|paths| {
+            paths
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let was_truncated = details
+        .and_then(|details| details.get("truncated"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    for path in &change.paths {
+        if !paths.contains(path) {
+            paths.push(path.clone());
+        }
+    }
+    let (paths, capped) = crate::path_watch::cap_path_list(&paths);
+    crate::path_watch::PathWatchChange {
+        paths,
+        truncated: capped || was_truncated || change.truncated,
+        ..change.clone()
     }
 }
 

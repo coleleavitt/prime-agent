@@ -343,4 +343,10 @@ pub struct AgentSessionEngine {
             Option<std::sync::Arc<pa_core::session_engine::telemetry::SessionTelemetry>>,
         >,
     >,
+    /// The session-owned filesystem watches (upstream #2351): released at
+    /// a session close or replacement.
+    pub(crate) path_watches: crate::path_watch::PathWatchRegistry,
+    /// The worker-installed path-watch notice routing. `None` outside a
+    /// daemon worker.
+    pub(crate) path_watch_sink: std::sync::Mutex<Option<crate::path_watch::PathWatchSink>>,
 }

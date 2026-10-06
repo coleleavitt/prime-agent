@@ -45,6 +45,13 @@ allow = [
   # one crate; drop it with the dependency.
   "BSL-1.0",
 ]
+# notify (CC0-1.0, a public-domain dedication): the platform filesystem
+# watcher behind `rlm.watch.path` (pa-daemon, upstream #2351). CC0 carries
+# no patent grant, so it is allowed for this one crate only, not workspace
+# wide. Added 2026-10-06; drop it with the dependency.
+exceptions = [
+  { allow = ["CC0-1.0"], crate = "notify" },
+]
 # Development-only tools are not shipped; we keep the graph tight instead of
 # adding private/exceptions stanzas.
 

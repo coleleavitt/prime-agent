@@ -818,6 +818,8 @@ const AGENT_SESSION_ENDED: EventRule = EventRule {
         ("tool_intent_recovery_count", optional(count())),
         // `rlm.messaging_stats()` reads (upstream #2352), counts only.
         ("messaging_stats_read_count", optional(count())),
+        // `rlm.watch.path` registrations (upstream #2351), counts only.
+        ("path_watch_register_count", optional(count())),
     ],
 };
 
@@ -2483,6 +2485,7 @@ mod tests {
             "artifact_present_count",
             "tool_intent_recovery_count",
             "messaging_stats_read_count",
+            "path_watch_register_count",
         ] {
             ended.set(key, json!(2u64));
         }
