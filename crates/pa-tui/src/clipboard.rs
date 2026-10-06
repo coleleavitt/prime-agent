@@ -57,6 +57,12 @@ const OVERSIZED_REMOTE_COPIED: &str =
     "Payload too large for terminal forwarding; copied to the remote machine's clipboard instead";
 
 fn tmux_output(args: &[&str]) -> Option<String> {
+    tmux_output_within(args, HELPER_TIMEOUT)
+}
+
+/// One bounded `tmux` query's stdout, or `None` when tmux is missing, fails, or misses
+/// `timeout`.
+pub(crate) fn tmux_output_within(args: &[&str], timeout: Duration) -> Option<String> {
     let mut child = Command::new("tmux")
         .args(args)
         .stdin(Stdio::null())
@@ -64,14 +70,14 @@ fn tmux_output(args: &[&str]) -> Option<String> {
         .stdout(Stdio::piped())
         .spawn()
         .ok()?;
-    probe_output(&mut child)
+    probe_output_within(&mut child, timeout)
 }
 
 /// One bounded probe's output, or `None` when the child fails or misses
 /// the deadline: the pipe drains from its own thread for the whole life
 /// of the child (the `pipe_to` writer-thread shape), so a probe writing
 /// past the pipe buffer still exits.
-fn probe_output(child: &mut std::process::Child) -> Option<String> {
+fn probe_output_within(child: &mut std::process::Child, timeout: Duration) -> Option<String> {
     let stdout = child.stdout.take();
     let reader = std::thread::spawn(move || {
         let mut output = String::new();
@@ -79,7 +85,7 @@ fn probe_output(child: &mut std::process::Child) -> Option<String> {
             .and_then(|mut pipe| pipe.read_to_string(&mut output).ok())
             .map(|_| output)
     });
-    let deadline = std::time::Instant::now() + HELPER_TIMEOUT;
+    let deadline = std::time::Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
@@ -163,9 +169,14 @@ fn pane_client(clients: &str, pane_window: &str) -> Option<String> {
 }
 
 /// TS `isRemoteSession`: any SSH or mosh transport means the local tools
-/// would target the wrong machine, so OSC 52 carries the copy home.
+/// would target the wrong machine, so OSC 52 carries the copy home. A Herdr
+/// pane (`HERDR_ENV=1`, upstream #682) is the same shape: the persistent
+/// Herdr server forwards a child's OSC 52 to its foreground client.
 fn is_remote_session(env: &Env) -> bool {
-    env.has("SSH_CONNECTION") || env.has("SSH_CLIENT") || env.has("MOSH_CONNECTION")
+    env.has("SSH_CONNECTION")
+        || env.has("SSH_CLIENT")
+        || env.has("MOSH_CONNECTION")
+        || env.value("HERDR_ENV").as_deref() == Some("1")
 }
 
 /// Whether this is a Wayland session.
@@ -185,6 +196,7 @@ impl Env {
             "SSH_CONNECTION",
             "SSH_CLIENT",
             "MOSH_CONNECTION",
+            "HERDR_ENV",
             "TERMUX_VERSION",
             "WAYLAND_DISPLAY",
             "XDG_SESSION_TYPE",
@@ -444,7 +456,8 @@ mod tests {
             .stdout(Stdio::piped())
             .spawn()
             .expect("sh spawns");
-        let output = probe_output(&mut child).expect("the probe drains the full pipe");
+        let output = probe_output_within(&mut child, HELPER_TIMEOUT)
+            .expect("the probe drains the full pipe");
         assert_eq!(output.len(), 262_144);
     }
 
@@ -524,5 +537,28 @@ mod tests {
             }
             OscSink::Stdout => panic!("the buffer sink captured nothing"),
         }
+    }
+
+    /// A Herdr pane (`HERDR_ENV=1`, upstream #682) copies like SSH/Mosh: Herdr routes a child's
+    /// OSC 52 to the foreground `herdr --remote` client, while the server machine's own
+    /// clipboard tools would write the wrong machine. The process env must carry the marker.
+    #[test]
+    fn a_herdr_pane_is_a_terminal_mediated_session() {
+        let herdr = |value: Option<&'static str>| {
+            Env::scripted([
+                ("SSH_CONNECTION", None),
+                ("SSH_CLIENT", None),
+                ("MOSH_CONNECTION", None),
+                ("HERDR_ENV", value),
+                ("TERMUX_VERSION", None),
+                ("WAYLAND_DISPLAY", None),
+                ("XDG_SESSION_TYPE", None),
+                ("DISPLAY", None),
+            ])
+        };
+        assert!(is_remote_session(&herdr(Some("1"))));
+        assert!(!is_remote_session(&herdr(Some("0"))));
+        assert!(!is_remote_session(&herdr(None)));
+        assert!(Env::process().values.contains_key("HERDR_ENV"));
     }
 }

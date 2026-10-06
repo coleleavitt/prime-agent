@@ -396,6 +396,9 @@ pub(crate) struct SessionUi {
     /// when it lands on the same row without a drag between.
     pub(crate) pressed_click: Option<PressedClick>,
     click_adoption_emitted: bool,
+    /// Consecutive plain left presses on one spot: a double click selects a word, a triple click
+    /// the row.
+    pub(crate) click_counter: crate::mouse::ClickCounter,
 }
 
 /// The reattach outcome for `reattach_after_recovery`: the budget expiry (a queued attach waiting

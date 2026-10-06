@@ -381,6 +381,44 @@ fn click_without_drag_copies_nothing() {
     assert!(copies.is_empty(), "a click never copies: {copies:?}");
 }
 
+/// A double click selects the word under the pointer and copies it on the release (upstream
+/// #1089); the second press lands one column over, inside the multi-click slop.
+#[test]
+fn double_click_copies_the_word_under_the_pointer() {
+    let (_, _, answer_row, answer_col, ..) = top_layout();
+    let steps = vec![
+        // The located press targets are valid only while the view sits at the transcript top.
+        HeadlessStep::ScrollTop,
+        HeadlessStep::Mouse(press(answer_col + 4, answer_row + 1)),
+        HeadlessStep::Mouse(release(answer_col + 4, answer_row + 1)),
+        HeadlessStep::Mouse(press(answer_col + 5, answer_row + 1)),
+        HeadlessStep::Mouse(release(answer_col + 5, answer_row + 1)),
+    ];
+    let (_, copies) = run_plan(steps, true);
+    assert_eq!(copies, vec!["answer".to_string()], "the word copied");
+}
+
+/// A triple click selects the row's visible content (upstream #1089); the fourth press starts
+/// over as a single click, so it copies nothing more.
+#[test]
+fn triple_click_copies_the_whole_row() {
+    let (_, _, answer_row, answer_col, ..) = top_layout();
+    let click = |steps: &mut Vec<HeadlessStep>| {
+        steps.push(HeadlessStep::Mouse(press(answer_col + 3, answer_row + 1)));
+        steps.push(HeadlessStep::Mouse(release(answer_col + 3, answer_row + 1)));
+    };
+    let mut steps = vec![HeadlessStep::ScrollTop];
+    for _ in 0..4 {
+        click(&mut steps);
+    }
+    let (_, copies) = run_plan(steps, true);
+    assert_eq!(
+        copies,
+        vec!["answer".to_string(), "answer 1".to_string()],
+        "the double click copied the word, the triple click the row"
+    );
+}
+
 /// A press on the dock starts a frame selection over the row's visible span (TS
 /// `beginFrameSelection`).
 #[test]

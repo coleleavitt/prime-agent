@@ -536,9 +536,11 @@ impl PathCompletionProvider {
                 argument_hint: None,
             });
         }
+        // Directories first. The kind is keyed on the label: a quoted value (`@"dir/"`, or any
+        // path with a space) ends in `"`, and a file name never contains `/`.
         suggestions.sort_by(|a, b| {
-            let a_dir = a.value.ends_with('/');
-            let b_dir = b.value.ends_with('/');
+            let a_dir = a.label.ends_with('/');
+            let b_dir = b.label.ends_with('/');
             match (a_dir, b_dir) {
                 (true, false) => std::cmp::Ordering::Less,
                 (false, true) => std::cmp::Ordering::Greater,

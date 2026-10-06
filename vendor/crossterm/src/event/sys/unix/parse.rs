@@ -873,11 +873,149 @@ pub(crate) fn parse_utf8_char(buffer: &[u8]) -> io::Result<Option<char>> {
     }
 }
 
+/// The kitty-printable twin dedup (prime-agent patch; TS `StdinBuffer`
+/// `pendingKittyPrintableCodepoint`). A duplicate-reporting terminal sends BOTH an unmodified
+/// `CSI <cp>u` report and the raw UTF-8 character for one printable keypress. Once parsed both
+/// are the same unmodified `Char` press, so the twin is only recognizable here, on the completed
+/// sequences' bytes: an unmodified CSI-u report for a codepoint >= 32 arms the pending, a raw
+/// sequence that is exactly that one character is the twin and is dropped, and every other
+/// sequence (or parse failure) clears it. Raw pairs with no CSI-u in front (dictation, IME
+/// commits, batched key repeat) always pass.
+///
+/// With the product's flags (`CSI > 7 u`: no "report all keys") a kitty terminal sends a plain
+/// printable press as text, so an unmodified CSI-u printable only comes from a twin-sending
+/// terminal.
+#[derive(Debug, Default)]
+pub(crate) struct KittyPrintableTwin {
+    pending: Option<char>,
+}
+
+impl KittyPrintableTwin {
+    /// Feed one completed sequence's bytes; `false` means it is the twin and must be dropped.
+    pub(crate) fn admit(&mut self, sequence: &[u8]) -> bool {
+        if let Some(pending) = self.pending.take() {
+            if raw_single_char(sequence) == Some(pending) {
+                return false;
+            }
+        }
+        self.pending = unmodified_kitty_printable(sequence);
+        true
+    }
+
+    /// A parse failure: the next sequence is not a twin.
+    pub(crate) fn clear(&mut self) {
+        self.pending = None;
+    }
+}
+
+/// The codepoint of `CSI <digits> [:<digits>?] [:<digits>] u` (the TS
+/// `parseUnmodifiedKittyPrintableCodepoint` shape: alternate-key sections allowed, no
+/// modifier/event-type field), when it is printable (>= 32).
+fn unmodified_kitty_printable(sequence: &[u8]) -> Option<char> {
+    let body = sequence.strip_prefix(b"\x1B[")?.strip_suffix(b"u")?;
+    let mut sections = body.split(|&byte| byte == b':');
+    let code = sections.next()?;
+    if code.is_empty() || !code.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    let shifted = sections.next();
+    let base = sections.next();
+    if sections.next().is_some()
+        || shifted.is_some_and(|section| !section.iter().all(u8::is_ascii_digit))
+        || base.is_some_and(|section| section.is_empty() || !section.iter().all(u8::is_ascii_digit))
+    {
+        return None;
+    }
+    let codepoint: u32 = std::str::from_utf8(code).ok()?.parse().ok()?;
+    if codepoint < 32 {
+        return None;
+    }
+    char::from_u32(codepoint)
+}
+
+/// The one character a raw (non-escape) sequence carries, when it is exactly one character.
+fn raw_single_char(sequence: &[u8]) -> Option<char> {
+    let text = std::str::from_utf8(sequence).ok()?;
+    let mut chars = text.chars();
+    let only = chars.next()?;
+    (chars.next().is_none() && only != '\x1B').then_some(only)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::event::{KeyEventState, KeyModifiers, MouseButton, MouseEvent};
 
     use super::*;
+
+    /// Feed `bytes` through the parser loop the event sources run, with the twin dedup.
+    fn parse_stream(bytes: &[u8]) -> Vec<InternalEvent> {
+        let mut twin = KittyPrintableTwin::default();
+        let mut buffer = Vec::new();
+        let mut events = Vec::new();
+        for (index, byte) in bytes.iter().enumerate() {
+            buffer.push(*byte);
+            match parse_event(&buffer, index + 1 < bytes.len()) {
+                Ok(Some(event)) => {
+                    if twin.admit(&buffer) {
+                        events.push(event);
+                    }
+                    buffer.clear();
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    twin.clear();
+                    buffer.clear();
+                }
+            }
+        }
+        events
+    }
+
+    fn char_press(c: char) -> InternalEvent {
+        InternalEvent::Event(Event::Key(KeyEvent::new(
+            KeyCode::Char(c),
+            KeyModifiers::NONE,
+        )))
+    }
+
+    #[test]
+    fn test_kitty_printable_twin_drops_only_after_a_csi_u_report() {
+        // The twin: `CSI 90u` + raw `Z` is ONE press.
+        assert_eq!(parse_stream(b"\x1B[90uZ"), vec![char_press('Z')]);
+        // Raw repeats (dictation, IME commit, batched repeat) all survive.
+        assert_eq!(
+            parse_stream(b"will"),
+            "will".chars().map(char_press).collect::<Vec<_>>()
+        );
+        assert_eq!(parse_stream(b"ZZ"), vec![char_press('Z'), char_press('Z')]);
+        // At most one twin per report: `CSI 97u a a` is two presses.
+        assert_eq!(
+            parse_stream(b"\x1B[97uaa"),
+            vec![char_press('a'), char_press('a')]
+        );
+        // A different raw char is kept and clears the pending.
+        assert_eq!(
+            parse_stream(b"\x1B[97uba"),
+            vec![char_press('a'), char_press('b'), char_press('a')]
+        );
+        // Non-ASCII twin.
+        assert_eq!(
+            parse_stream("\x1B[233u\u{e9}".as_bytes()),
+            vec![char_press('\u{e9}')]
+        );
+        // Alternate-key sections still arm (TS regex parity).
+        assert_eq!(parse_stream(b"\x1B[97:65uA").len(), 2);
+        assert_eq!(parse_stream(b"\x1B[97::97ua").len(), 1);
+    }
+
+    #[test]
+    fn test_kitty_modified_or_control_reports_never_arm_the_twin() {
+        // A modifier/event-type field: ctrl+a, a repeat event.
+        assert_eq!(parse_stream(b"\x1B[97;5ua").len(), 2);
+        assert_eq!(parse_stream(b"\x1B[97;1:2ua").len(), 2);
+        // Codepoints below 32 (Enter as CSI 13u) never arm.
+        assert_eq!(parse_stream(b"\x1B[13u\r").len(), 2);
+    }
 
     #[test]
     fn test_esc_key() {

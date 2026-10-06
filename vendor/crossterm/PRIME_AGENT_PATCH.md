@@ -108,3 +108,19 @@ the form, and its parse error clears the whole pending input buffer, so every ke
 it vanished. The product still resets mode 2 at each surface start; this covers a terminal
 that sends the form anyway. Pinned by `test_parse_csi_modify_other_keys` (the vendored crate is
 outside the workspace: run it from a scratch copy with an empty `[workspace]` table).
+
+# Kitty-printable twin dedup (2026-10-05, upstream #3341 / issue #3250)
+
+`src/event/sys/unix/parse.rs` (`KittyPrintableTwin`) and the `Parser::advance` loops in
+`src/event/source/unix/mio.rs` and `tty.rs`. A duplicate-reporting terminal sends both an
+unmodified `CSI <cp> u` and the raw character for one printable keypress (TS #3780). Parsed,
+both are the same unmodified `Char` press, so the product's event-layer equality guess also ate
+real raw pairs (dictation "will" typed "wil", IME commits, batched key repeat). The dedup now
+runs on each completed sequence's bytes, as TS `StdinBuffer` does
+(`pendingKittyPrintableCodepoint`): an unmodified CSI-u report for a codepoint >= 32 (the TS
+regex shape `CSI \d+ (:\d*)? (:\d+)? u` — alternate-key sections, no modifier field) arms the
+pending; a raw sequence that is exactly that character is dropped; every other sequence and
+every parse failure clears it. The state is parser state, so a twin split across reads still
+drops. Windows reads structured records and needs nothing. Pinned by
+`test_kitty_printable_twin_drops_only_after_a_csi_u_report` and
+`test_kitty_modified_or_control_reports_never_arm_the_twin` (scratch-copy run, see above).
