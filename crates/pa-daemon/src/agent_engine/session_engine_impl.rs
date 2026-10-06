@@ -1124,7 +1124,7 @@ impl SessionEngine for AgentSessionEngine {
         let model = self.resolve_model()?;
         self.ensure_core_session(&model)?;
         let api_key = self.resolve_request_api_key(&model);
-        let global_harness_dir = self.config.agent_dir.clone();
+        let global_harness_dir = self.config.global_harness_dir();
         // The lock covers the clone only; the model call below must not ride it.
         let core = self
             .session

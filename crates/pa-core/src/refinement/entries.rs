@@ -173,6 +173,31 @@ const LOCK_ATTEMPTS: u32 = 400;
 const LOCK_RETRY: Duration = Duration::from_millis(5);
 const LOCK_STALE: Duration = Duration::from_secs(10);
 
+/// Take the cross-process lock on the store at `dir` (`harness_state.json.lock`,
+/// the kernel's, TS `proper-lockfile`'s and `pa-ledger`'s protocol). Blocking.
+///
+/// # Errors
+///
+/// The lock stayed held past the retry budget, or the lock directory could not be created.
+pub(crate) fn lock_harness_state(dir: &Path) -> anyhow::Result<crate::platform::LockDir> {
+    let state_path = get_harness_state_path(dir);
+    for attempt in 0..LOCK_ATTEMPTS {
+        match crate::platform::LockDir::acquire(&state_path, LOCK_STALE) {
+            Ok(held) => return Ok(held),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if attempt + 1 < LOCK_ATTEMPTS {
+                    std::thread::sleep(LOCK_RETRY);
+                }
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    anyhow::bail!(
+        "harness state is locked by another writer: {}",
+        state_path.display()
+    )
+}
+
 /// Flip one entry's flag in the store at `dir` under the store's lock (the
 /// same lock the kernel's harness writes take). Blocking.
 ///
@@ -187,28 +212,7 @@ pub fn set_harness_entry_enabled(
     enabled: bool,
 ) -> anyhow::Result<HarnessEntrySummary> {
     std::fs::create_dir_all(dir)?;
-    let state_path = get_harness_state_path(dir);
-    let mut lock = None;
-    for attempt in 0..LOCK_ATTEMPTS {
-        match crate::platform::LockDir::acquire(&state_path, LOCK_STALE) {
-            Ok(held) => {
-                lock = Some(held);
-                break;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                if attempt + 1 < LOCK_ATTEMPTS {
-                    std::thread::sleep(LOCK_RETRY);
-                }
-            }
-            Err(error) => return Err(error.into()),
-        }
-    }
-    let Some(_lock) = lock else {
-        anyhow::bail!(
-            "harness state is locked by another writer: {}",
-            state_path.display()
-        );
-    };
+    let _lock = lock_harness_state(dir)?;
     let mut state = load_harness_state(dir, scope);
     let entry = state
         .entries

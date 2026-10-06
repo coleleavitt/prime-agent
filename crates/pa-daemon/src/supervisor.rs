@@ -492,6 +492,43 @@ impl Supervisor {
             });
         }
 
+        // Earlier daemon builds kept the global harness store at the agent dir's root
+        // instead of `<agentDir>/harness`; fold it into the canonical store once.
+        {
+            let supervisor = Arc::clone(&self);
+            tokio::spawn(async move {
+                let agent_dir = supervisor.options.agent_dir.clone();
+                let migrated = tokio::task::spawn_blocking(move || {
+                    pa_core::refinement::relocate::migrate_misplaced_global_harness_state(
+                        &agent_dir,
+                    )
+                })
+                .await;
+                match migrated {
+                    Ok(Ok(migration)) if !migration.backups.is_empty() => {
+                        supervisor.log_line(&format!(
+                            "moved a misplaced global harness store into the harness dir: {} entries ({} renamed), {} refinements, {} history records; originals kept at {}",
+                            migration.entries,
+                            migration.renamed.len(),
+                            migration.refinements,
+                            migration.history_records,
+                            migration
+                                .backups
+                                .iter()
+                                .map(|path| path.display().to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ));
+                    }
+                    Ok(Ok(_)) => {}
+                    Ok(Err(error)) => supervisor
+                        .log_line(&format!("global harness store migration failed: {error:#}")),
+                    Err(error) => supervisor
+                        .log_line(&format!("global harness store migration failed: {error}")),
+                }
+            });
+        }
+
         // Session-archive sweep (the sessions directory must not grow forever): boot sweep,
         // then the periodic re-sweep. Housekeeping only — it never gates serving.
         {

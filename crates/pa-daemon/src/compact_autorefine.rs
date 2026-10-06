@@ -72,7 +72,7 @@ impl AgentSessionEngine {
             return Ok(None);
         };
         let api_key = self.resolve_request_api_key(&model);
-        let global_harness_dir = self.config.agent_dir.clone();
+        let global_harness_dir = self.config.global_harness_dir();
         // The lock covers the clone only (see `run_compaction`): holding the
         // session mutex across the review serialized every client read seam
         // behind it. The cloned engine keeps the round alive across a rebuild.

@@ -41,6 +41,14 @@ pub struct AgentEngineConfig {
     pub queued_steering_probe: Option<std::sync::Arc<dyn Fn() -> bool + Send + Sync>>,
 }
 
+impl AgentEngineConfig {
+    /// The global harness store, `<agentDir>/harness`: the directory the kernel,
+    /// print mode, and the system-prompt digest use (TS `getGlobalHarnessStateDir()`).
+    pub(crate) fn global_harness_dir(&self) -> std::path::PathBuf {
+        pa_core::refinement::get_global_harness_state_dir(&self.agent_dir)
+    }
+}
+
 /// Supervisor-link coordinates for a daemon worker.
 #[derive(Clone, Debug)]
 pub struct SupervisorLinkConfig {

@@ -694,7 +694,7 @@ impl AgentSessionEngine {
         let mut params = SessionCommandParams {
             model: &model,
             api_key,
-            global_harness_dir: self.config.agent_dir.clone(),
+            global_harness_dir: self.config.global_harness_dir(),
             autonomous: &mut autonomous,
         };
         // The lock covers the clone only: the command below can run a summarizer call, so the
@@ -940,7 +940,7 @@ impl AgentSessionEngine {
                         Some(
                             pa_core::session_engine::turn_boundary::RefinePlanningContext {
                                 model,
-                                global_harness_dir: daemon.config.agent_dir.clone(),
+                                global_harness_dir: daemon.config.global_harness_dir(),
                                 refine_call: pa_core::session_engine::refine::default_refiner_call(
                                     api_key,
                                 ),

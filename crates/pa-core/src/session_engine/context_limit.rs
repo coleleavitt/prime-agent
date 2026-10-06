@@ -355,7 +355,9 @@ mod tests {
             &mut crate::session_engine::session_commands::SessionCommandParams {
                 model: &model,
                 api_key: None,
-                global_harness_dir: engine.feature_context.agent_dir.clone(),
+                global_harness_dir: crate::refinement::get_global_harness_state_dir(
+                    &engine.feature_context.agent_dir,
+                ),
                 autonomous: &mut autonomous,
             },
             &command,

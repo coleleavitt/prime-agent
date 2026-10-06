@@ -12,6 +12,7 @@ mod autonomous;
 mod compaction;
 mod digest_host;
 mod goal;
+mod harness_dir;
 mod model_resolution;
 mod plan_mode;
 mod quota_park;

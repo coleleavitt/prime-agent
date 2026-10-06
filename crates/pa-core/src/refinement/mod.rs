@@ -571,6 +571,7 @@ pub mod gate;
 pub mod planner;
 pub mod prompt_hook;
 pub mod ranking;
+pub mod relocate;
 
 // Export the compact-text helper for the digest formatter.
 pub(crate) use compact_text as compact_harness_text;
