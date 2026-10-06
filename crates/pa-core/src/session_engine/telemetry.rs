@@ -474,6 +474,74 @@ pub struct SkillCounts {
     pub python_skill_count: usize,
 }
 
+/// How the session's recently added settings were configured (adoption
+/// categories on `agent started`): counts and fixed vocabularies only —
+/// never a model id, a budget figure, or a path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SettingsAdoption {
+    /// `lengthContinuations`: the configured auto-continue count (0: off).
+    pub length_continuations: u32,
+    /// `repetitionGuard`: `off` | `reasoning` | `all`.
+    pub repetition_guard: &'static str,
+    /// `rlmTokenBudget`: `off` | `total` | `per_depth`.
+    pub rlm_token_budget: &'static str,
+    /// `fallbackModels`: how many distinct fallback models are configured.
+    pub fallback_model_count: usize,
+    /// Where `compaction.maxContextTokens` comes from: `none` | `global` | `project`.
+    pub context_cap_source: &'static str,
+    /// `kernel.environment`: `inherit` | `scrub_credentials`.
+    pub kernel_environment: &'static str,
+}
+
+impl SettingsAdoption {
+    /// Read the categories off a session's settings.
+    #[must_use]
+    pub fn from_settings(
+        settings: &crate::settings::SettingsManager,
+        context_cap_source: super::context_limit::ContextLimitSource,
+    ) -> Self {
+        SettingsAdoption {
+            length_continuations: settings.get_length_continuations(),
+            repetition_guard: match settings.get_repetition_guard() {
+                None => "off",
+                Some(guard) if guard.guard_text => "all",
+                Some(_) => "reasoning",
+            },
+            rlm_token_budget: match settings.get_rlm_token_budget() {
+                None => "off",
+                Some(budget) if budget.per_depth.is_empty() => "total",
+                Some(_) => "per_depth",
+            },
+            fallback_model_count: settings.get_fallback_models().len(),
+            context_cap_source: match context_cap_source {
+                super::context_limit::ContextLimitSource::Global => "global",
+                super::context_limit::ContextLimitSource::Project => "project",
+                super::context_limit::ContextLimitSource::Chat
+                | super::context_limit::ContextLimitSource::None => "none",
+            },
+            kernel_environment: match settings.get_kernel_environment() {
+                crate::kernel::shared::KernelEnvironment::Inherit => "inherit",
+                crate::kernel::shared::KernelEnvironment::ScrubCredentials => "scrub_credentials",
+            },
+        }
+    }
+
+    fn write_into(self, properties: &mut Properties) {
+        properties.set(
+            "length_continuations",
+            Value::from(u64::from(self.length_continuations)),
+        );
+        properties.set("repetition_guard", Value::from(self.repetition_guard));
+        properties.set("rlm_token_budget", Value::from(self.rlm_token_budget));
+        properties.set(
+            "fallback_model_count",
+            Value::from(self.fallback_model_count as u64),
+        );
+        properties.set("context_cap_source", Value::from(self.context_cap_source));
+        properties.set("kernel_environment", Value::from(self.kernel_environment));
+    }
+}
+
 /// Install the telemetry subscriber on an agent and emit `agent started`.
 ///
 /// # Errors
@@ -483,6 +551,7 @@ pub async fn install_session_telemetry(
     agent: &Arc<pa_agent::agent::Agent>,
     wiring: &TelemetryWiring,
     skill_counts: Option<SkillCounts>,
+    settings_adoption: Option<SettingsAdoption>,
     counters: Arc<SessionCounters>,
 ) -> anyhow::Result<SessionTelemetry> {
     let execution_mode = wiring
@@ -531,6 +600,9 @@ pub async fn install_session_telemetry(
                 "python_skill_count",
                 Value::from(counts.python_skill_count as u64),
             );
+        }
+        if let Some(adoption) = settings_adoption {
+            adoption.write_into(&mut properties);
         }
     }
     client.track("agent started", properties);

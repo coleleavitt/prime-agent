@@ -236,6 +236,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     } else {
         super::context_limit::ContextLimitSource::None
     };
+    let settings_adoption =
+        super::telemetry::SettingsAdoption::from_settings(&settings, context_cap_source);
     let auto_refine_gates =
         super::refine::AutoRefineGates::from_settings(settings.settings().auto_refine.as_ref());
     // Request timing: the settings half of the flag is read once here
@@ -978,6 +980,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 &telemetry_agent,
                 &wiring,
                 Some(skill_counts),
+                Some(settings_adoption),
                 std::sync::Arc::clone(&session_counters),
             )
             .await?;

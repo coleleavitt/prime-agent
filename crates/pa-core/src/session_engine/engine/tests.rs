@@ -773,3 +773,131 @@ async fn the_delegation_budget_survives_a_resume() {
         Some(300)
     );
 }
+
+/// A telemetry wiring over a mock sink (flushes per event).
+fn mock_telemetry() -> (
+    super::super::telemetry::TelemetryWiring,
+    std::sync::Arc<pa_telemetry::MockSink>,
+) {
+    let mock = std::sync::Arc::new(pa_telemetry::MockSink::new());
+    let mut config = pa_telemetry::TelemetryClientConfig::new("install-1");
+    config.batch_size = 1;
+    config.flush_interval = std::time::Duration::from_mins(10);
+    config.sinks = vec![mock.clone() as Arc<dyn pa_telemetry::TelemetrySink>];
+    (
+        super::super::telemetry::TelemetryWiring {
+            client: pa_telemetry::TelemetryClient::spawn(config).expect("spawn client"),
+            execution_mode: None,
+            now: None,
+            telemetry_enabled: None,
+        },
+        mock,
+    )
+}
+
+/// One event's properties as JSON, after a flush.
+async fn tracked(
+    wiring: &super::super::telemetry::TelemetryWiring,
+    mock: &pa_telemetry::MockSink,
+    name: &str,
+) -> Vec<serde_json::Value> {
+    wiring.client.flush().await.unwrap();
+    mock.events()
+        .iter()
+        .filter(|event| event.name == name)
+        .map(|event| serde_json::to_value(&event.properties).unwrap())
+        .collect()
+}
+
+/// The recently added settings ride `agent started` as categories and
+/// counts: a session reports how it was configured, never a model id, a
+/// budget figure, or a path.
+#[tokio::test]
+async fn agent_started_reports_the_settings_adoption() {
+    async fn started(settings: Option<&str>) -> serde_json::Value {
+        let model = pa_agent::types::Model {
+            id: "m".into(),
+            name: "m".into(),
+            api: "test".into(),
+            provider: "test".into(),
+            base_url: "http://localhost".into(),
+            reasoning: false,
+            cost: pa_agent::types::UsageCost::default(),
+            context_window: 1_000,
+            max_tokens: 100,
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let agent_dir = tmp.path().join("agent");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        if let Some(settings) = settings {
+            std::fs::write(agent_dir.join("settings.json"), settings).unwrap();
+        }
+        let (wiring, mock) = mock_telemetry();
+        let provider = Arc::new(ScriptedProvider::new(model.clone()));
+        let _engine = create_session(SessionEngineConfig {
+            cwd: tmp.path().to_path_buf(),
+            agent_dir,
+            model: Some(model),
+            stream_fn: Some(provider.stream_fn()),
+            rlm_depth: Some(0),
+            telemetry: Some(super::super::telemetry::TelemetryWiring {
+                client: wiring.client.clone(),
+                execution_mode: None,
+                now: None,
+                telemetry_enabled: None,
+            }),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let mut events = tracked(&wiring, &mock, "agent started").await;
+        assert_eq!(events.len(), 1);
+        let mut properties = events.remove(0);
+        // Only the settings adoption keys (the rest is pinned elsewhere).
+        let object = properties.as_object_mut().unwrap();
+        object.retain(|key, _| {
+            [
+                "length_continuations",
+                "repetition_guard",
+                "rlm_token_budget",
+                "fallback_model_count",
+                "context_cap_source",
+                "kernel_environment",
+            ]
+            .contains(&key.as_str())
+        });
+        properties
+    }
+    assert_eq!(
+        started(Some(
+            r#"{
+                "lengthContinuations": 3,
+                "repetitionGuard": "all",
+                "rlmTokenBudget": { "total": 1000, "perDepth": [100] },
+                "fallbackModels": ["openai/gpt-x", "anthropic/claude-y", "openai/gpt-x"],
+                "compaction": { "maxContextTokens": 50000 },
+                "kernel": { "environment": "scrub-credentials" }
+            }"#
+        ))
+        .await,
+        serde_json::json!({
+            "length_continuations": 3,
+            "repetition_guard": "all",
+            "rlm_token_budget": "per_depth",
+            "fallback_model_count": 2,
+            "context_cap_source": "global",
+            "kernel_environment": "scrub_credentials",
+        })
+    );
+    assert_eq!(
+        started(None).await,
+        serde_json::json!({
+            "length_continuations": 0,
+            "repetition_guard": "reasoning",
+            "rlm_token_budget": "off",
+            "fallback_model_count": 0,
+            "context_cap_source": "none",
+            "kernel_environment": "inherit",
+        })
+    );
+}
