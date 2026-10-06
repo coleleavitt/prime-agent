@@ -600,6 +600,10 @@ pub struct RowLayout {
     /// conditional host column).
     pub host_width: usize,
     pub details: HashMap<String, String>,
+    /// The Cwd column's width; `0` when the column is hidden (upstream #2526).
+    pub cwd_width: usize,
+    /// Each row's Cwd cell, by row identity.
+    pub cwd_cells: HashMap<String, String>,
 }
 
 fn table_cell(value: &str, width: usize) -> String {
@@ -638,37 +642,110 @@ fn pad_start(value: &str, width: usize) -> String {
     )
 }
 
-/// Compute the compact column layout for the rows at `width`.
+/// The optional columns (upstream #2526), in the order a narrow terminal drops them: the token
+/// pair first, then Context, then Cwd.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OptionalColumn {
+    Tokens,
+    Context,
+    Cwd,
+}
+
+const OPTIONAL_COLUMN_DROP_ORDER: [OptionalColumn; 3] = [
+    OptionalColumn::Tokens,
+    OptionalColumn::Context,
+    OptionalColumn::Cwd,
+];
+
+/// The Cwd cell's cap: the home-abbreviated path, middle-truncated.
+const CWD_MAX_CELLS: usize = 20;
+
+/// One row's optional and detail cells.
+struct RowCells {
+    cwd: String,
+    input: String,
+    output: String,
+    context: String,
+    cost: String,
+}
+
+/// Compute the compact column layout for the rows at `width`. Columns: Session, Model, the
+/// remote Host (only with a mesh row), Cwd, Input, Output, Context, Cost, Age. Input and Output
+/// roll every descendant's tokens up like Cost; Context is the context-window fill (`-` when
+/// unknown). Divergence from TS #2526: this view has no Activity column (removed by operator
+/// directive, #2813), so the optional columns drop — tokens, then Context, then Cwd — while
+/// Session and Model cannot keep their full widths, instead of when Activity falls below 20.
 #[must_use]
 pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: usize) -> RowLayout {
+    use crate::agents_view_forest::RowKind;
     // The program's code rows contribute no columns and read no detail cell (TS
     // `buildCompactAgentsViewLayout` excludes them).
     let rows: Vec<_> = rows
         .iter()
-        .filter(|row| row.kind != crate::agents_view_forest::RowKind::Code)
+        .filter(|row| row.kind != RowKind::Code)
         .collect();
-    let cost_width = rows
+    let home = pa_types::platform::home_dir().map(|home| home.to_string_lossy().to_string());
+    let cells: Vec<RowCells> = rows
         .iter()
-        .map(|row| str_width(&format!("${:.2}", row.cost)))
-        .max()
-        .unwrap_or(0)
-        .max(4);
+        .map(|row| {
+            // The subagents line reuses its parent's summary: it bills the descendant tokens
+            // and cost, but owns no cwd or context window.
+            let session_row = row.kind != RowKind::SubagentSummary;
+            let cwd = row
+                .summary
+                .get("cwd")
+                .and_then(Value::as_str)
+                .filter(|cwd| session_row && !cwd.is_empty())
+                .map(|cwd| {
+                    crate::chrome::truncate_path_middle(
+                        &crate::chrome::format_splash_cwd(cwd, home.as_deref()),
+                        CWD_MAX_CELLS,
+                    )
+                })
+                .unwrap_or_default();
+            let context = if session_row {
+                row.summary
+                    .get("contextPercent")
+                    .and_then(Value::as_f64)
+                    .filter(|percent| percent.is_finite())
+                    .map_or_else(|| "-".to_string(), |percent| format!("{percent:.0}%"))
+            } else {
+                String::new()
+            };
+            RowCells {
+                cwd,
+                input: crate::chrome::format_token_count(row.tokens.input),
+                output: crate::chrome::format_token_count(row.tokens.output),
+                context,
+                cost: format!("${:.2}", row.cost),
+            }
+        })
+        .collect();
+    let column_width = |heading: &str, cell: fn(&RowCells) -> &str| {
+        cells
+            .iter()
+            .map(|cells| str_width(cell(cells)))
+            .max()
+            .unwrap_or(0)
+            .max(str_width(heading))
+    };
+    let cwd_width = column_width("Cwd", |cells| &cells.cwd);
+    let input_width = column_width("Input", |cells| &cells.input);
+    let output_width = column_width("Output", |cells| &cells.output);
+    let context_width = column_width("Context", |cells| &cells.context);
+    let cost_width = column_width("Cost", |cells| &cells.cost);
     let age_width = rows
         .iter()
         .map(|row| str_width(&row.age))
         .max()
         .unwrap_or(0)
         .max(3);
-    let details_width = cost_width + 2 + age_width;
-    let available = width.saturating_sub(details_width + 4);
     let desired_model = rows
         .iter()
         .map(|row| str_width(&row.model))
         .max()
         .unwrap_or(0)
         .max(12);
-    let model_width = desired_model.min(32).min(available.saturating_sub(12));
-    let name_width = (available.saturating_sub(model_width)).min(SESSION_NAME_COLUMN_MAX_CELLS);
     // The host column appears only when a remote mesh row is present (TS
     // #2516's conditional host column: a purely local table keeps its
     // long-standing column layout byte-for-byte), and it is sized to its
@@ -681,12 +758,47 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
         .map(str_width)
         .max()
         .unwrap_or(0);
-    let detail_line = |cost: &str, age: &str| {
-        format!(
-            "{}  {}",
-            pad_start(cost, cost_width),
-            pad_start(age, age_width)
-        )
+    let mut shown: Vec<OptionalColumn> = OPTIONAL_COLUMN_DROP_ORDER.to_vec();
+    let available_with = |shown: &[OptionalColumn]| {
+        let optional: usize = shown
+            .iter()
+            .map(|column| match column {
+                OptionalColumn::Tokens => input_width + 2 + output_width + 2,
+                OptionalColumn::Context => context_width + 2,
+                OptionalColumn::Cwd => cwd_width + 2,
+            })
+            .sum();
+        width.saturating_sub(cost_width + 2 + age_width + optional + 4)
+    };
+    let full_width = desired_model.min(32) + SESSION_NAME_COLUMN_MAX_CELLS;
+    for column in OPTIONAL_COLUMN_DROP_ORDER {
+        if available_with(&shown) >= full_width {
+            break;
+        }
+        shown.retain(|kept| *kept != column);
+    }
+    let available = available_with(&shown);
+    let model_width = desired_model.min(32).min(available.saturating_sub(12));
+    let name_width = (available.saturating_sub(model_width)).min(SESSION_NAME_COLUMN_MAX_CELLS);
+    let show_tokens = shown.contains(&OptionalColumn::Tokens);
+    let show_context = shown.contains(&OptionalColumn::Context);
+    let cwd_width = if shown.contains(&OptionalColumn::Cwd) {
+        cwd_width
+    } else {
+        0
+    };
+    let detail_line = |input: &str, output: &str, context: &str, cost: &str, age: &str| {
+        let mut cells = Vec::new();
+        if show_tokens {
+            cells.push(pad_start(input, input_width));
+            cells.push(pad_start(output, output_width));
+        }
+        if show_context {
+            cells.push(pad_start(context, context_width));
+        }
+        cells.push(pad_start(cost, cost_width));
+        cells.push(pad_start(age, age_width));
+        cells.join("  ")
     };
     let mut headings = vec![
         table_cell("Session", name_width),
@@ -695,15 +807,30 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
     if host_width > 0 {
         headings.push(table_cell("Host", host_width));
     }
-    headings.push(detail_line("Cost", "Age"));
+    if cwd_width > 0 {
+        headings.push(table_cell("Cwd", cwd_width));
+    }
+    headings.push(detail_line("Input", "Output", "Context", "Cost", "Age"));
     let details = rows
         .iter()
-        .map(|row| {
+        .zip(&cells)
+        .map(|(row, cells)| {
             (
                 row.identity.clone(),
-                detail_line(&format!("${:.2}", row.cost), &row.age),
+                detail_line(
+                    &cells.input,
+                    &cells.output,
+                    &cells.context,
+                    &cells.cost,
+                    &row.age,
+                ),
             )
         })
+        .collect();
+    let cwd_cells = rows
+        .iter()
+        .zip(cells)
+        .map(|(row, cells)| (row.identity.clone(), cells.cwd))
         .collect();
     RowLayout {
         legend: table_cell(&headings.join("  "), width),
@@ -711,6 +838,8 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
         model_width,
         host_width,
         details,
+        cwd_width,
+        cwd_cells,
     }
 }
 
@@ -1082,7 +1211,11 @@ mod tests {
         assert!(layout.legend.contains("Session"));
         assert!(layout.legend.contains("Model"));
         assert!(layout.legend.contains("Cost"));
-        assert_eq!(layout.details["session:s1"].trim_end(), "$1.50");
+        // Input, Output, Context (unknown), Cost, and the empty age.
+        assert_eq!(
+            layout.details["session:s1"],
+            "    0       0        -  $1.50     "
+        );
     }
 
     #[test]
@@ -1454,6 +1587,111 @@ mod tests {
             rows.iter()
                 .any(|row| row.host_label.as_deref() == Some("on milk.tailnet.ts.net (offline)")),
             "the offline row carries its machine label"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Cwd, Input, Output and Context columns (TS #2526)
+    // ------------------------------------------------------------------
+
+    /// A parent with one live child: the parent bills the child's tokens like its cost.
+    fn usage_family() -> Vec<crate::agents_view_forest::AgentsViewRow> {
+        let roster = vec![
+            roster_entry(
+                "p",
+                "idle",
+                &json!({
+                    "sessionId": "p", "lifecycle": "live", "activeSessionId": "p-live",
+                    "sessionFile": "/x/p.jsonl", "runtimeKind": "top-level", "rlmDepth": 0,
+                    "sessionName": "parent", "messageCount": 2, "cwd": "/work/api",
+                    "contextPercent": 42.4,
+                    "usage": { "inputTokens": 1_200, "outputTokens": 300, "cost": 0.5 },
+                }),
+            ),
+            roster_entry(
+                "c",
+                "running",
+                &json!({
+                    "sessionId": "c", "lifecycle": "live", "activeSessionId": "c-live",
+                    "sessionFile": "/x/c.jsonl", "runtimeKind": "subagent",
+                    "rlmChildId": "child-c", "parentActiveSessionId": "p-live",
+                    "parentSessionId": "p", "parentSessionPath": "/x/p.jsonl",
+                    "sessionName": "child", "messageCount": 1, "rlmDepth": 1,
+                    "cwd": "/work/api",
+                    "usage": { "inputTokens": 800, "outputTokens": 50, "cost": 0.25 },
+                }),
+            ),
+        ];
+        let records = reconcile_unified_sessions(&roster, &[]);
+        let rollups = crate::agents_view_forest::compute_rollups(&records);
+        crate::agents_view_forest::build_rows::<std::collections::hash_map::RandomState>(
+            &records,
+            None,
+            &std::collections::HashSet::default(),
+            &std::collections::HashSet::default(),
+            &rollups,
+            None,
+        )
+    }
+
+    #[test]
+    fn layout_carries_cwd_tokens_and_context_columns() {
+        let rows = usage_family();
+        let layout = build_layout(&rows, 140);
+        let headings: Vec<&str> = layout.legend.split_whitespace().collect();
+        assert_eq!(
+            headings,
+            ["Session", "Model", "Cwd", "Input", "Output", "Context", "Cost", "Age"]
+        );
+        let parent = rows
+            .iter()
+            .find(|row| row.title == "parent")
+            .expect("parent row");
+        assert_eq!(layout.cwd_cells[&parent.identity], "/work/api");
+        // Input and Output roll the child up (1.2k + 800, 300 + 50) like Cost.
+        let cells: Vec<&str> = layout.details[&parent.identity]
+            .split_whitespace()
+            .collect();
+        assert_eq!(cells[..4], ["2.0k", "350", "42%", "$0.75"]);
+        // The subagents line bills the descendant tokens and owns no context window.
+        let summary_line = rows
+            .iter()
+            .find(|row| row.kind == crate::agents_view_forest::RowKind::SubagentSummary)
+            .expect("subagents line");
+        assert_eq!(layout.cwd_cells[&summary_line.identity], "");
+        let cells: Vec<&str> = layout.details[&summary_line.identity]
+            .split_whitespace()
+            .collect();
+        assert_eq!(cells, ["800", "50", "$0.25"]);
+    }
+
+    #[test]
+    fn narrow_terminals_drop_tokens_then_context_then_cwd() {
+        let rows = usage_family();
+        let legend = |width: usize| -> Vec<String> {
+            build_layout(&rows, width)
+                .legend
+                .split_whitespace()
+                .map(str::to_string)
+                .collect()
+        };
+        assert_eq!(
+            legend(85),
+            ["Session", "Model", "Cwd", "Context", "Cost", "Age"],
+            "the token pair drops first"
+        );
+        assert_eq!(
+            legend(70),
+            ["Session", "Model", "Cwd", "Cost", "Age"],
+            "then Context"
+        );
+        assert_eq!(legend(60), ["Session", "Model", "Cost", "Age"], "then Cwd");
+        let layout = build_layout(&rows, 60);
+        assert_eq!(layout.cwd_width, 0);
+        let parent = rows.iter().find(|row| row.title == "parent").unwrap();
+        assert_eq!(
+            layout.details[&parent.identity].split_whitespace().next(),
+            Some("$0.75")
         );
     }
 }

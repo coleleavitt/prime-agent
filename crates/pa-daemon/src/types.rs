@@ -154,6 +154,11 @@ pub struct SessionSummary {
     /// absent when none is in flight.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oldest_pending_tool_call_started_at: Option<u64>,
+    /// The context-window fill in percent (upstream #2526, the agents view's
+    /// Context column); absent without a known window or right after a
+    /// compaction with no post-compaction usage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_percent: Option<f64>,
 }
 
 /// The session action snapshot (TS `SessionActionSnapshot`).

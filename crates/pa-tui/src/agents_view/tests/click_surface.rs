@@ -8,9 +8,12 @@ use super::*;
 /// the cost/age details.
 fn expected_row(title_cell: &str, layout: &RowLayout) -> String {
     let bullet = "\u{2022}";
+    // The cwd-less row's blank Cwd cell, then Input, Output, Context, Cost, Age.
     format!(
-        "{bullet} {title_cell}  {}  $0.00   1s",
+        "{bullet} {title_cell}  {}  {}  {}",
         cell("mock-1", layout.model_width),
+        cell("", layout.cwd_width),
+        "    0       0        -  $0.00   1s",
     )
 }
 

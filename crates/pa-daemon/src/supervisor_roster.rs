@@ -586,6 +586,7 @@ fn passivated_summary(summary: Value) -> Value {
     let keep_cron = object.get("hasRegisteredCronJob").and_then(Value::as_bool) == Some(true);
     for key in [
         "activeSessionId",
+        "contextPercent",
         "directAttachedClients",
         "featureStatus",
         "hasActiveHeartbeat",

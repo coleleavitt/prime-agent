@@ -75,6 +75,8 @@ fn a_rows_heartbeat_count_renders_before_its_title() {
             mode.theme
                 .fg(ThemeColor::Muted, cell("mock-1", layout.model_width)),
             crate::Span::styled("  ".to_string(), ratatui::style::Style::default()),
+            mode.theme.fg(ThemeColor::Muted, cell("", layout.cwd_width)),
+            crate::Span::styled("  ".to_string(), ratatui::style::Style::default()),
             mode.theme.fg(
                 ThemeColor::Dim,
                 layout.details.get("worker").cloned().unwrap_or_default(),
