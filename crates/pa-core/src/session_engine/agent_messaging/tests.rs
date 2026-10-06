@@ -378,10 +378,7 @@ async fn message_host_handler_round_trip() {
     // Contract errors carry the TS strings verbatim.
     let positional =
         send_request(&send, json!({ "target": "worker", "message": "hi" })).unwrap_err();
-    assert_eq!(
-        positional.to_string(),
-        "positional agent_message.send targets are not supported; use receiver_role and receiver_name"
-    );
+    assert_eq!(positional.to_string(), BROADCAST_REMOVED_ERROR);
     let no_role = send_request(&send, json!({ "message": "hi" })).unwrap_err();
     assert_eq!(
         no_role.to_string(),
@@ -425,13 +422,10 @@ async fn message_host_handler_round_trip() {
     .unwrap();
     assert_eq!(by_session_alias["target"]["activeSessionId"], "kid-1");
 
+    // The removed broadcast form (upstream #2150) fails with the removal error.
     let broadcast =
-        send_request(&send, json!({ "target": "all", "message": "  everyone  " })).unwrap();
-    let receipts = broadcast["receipts"].as_array().expect("receipts");
-    assert_eq!(receipts.len(), 5, "{broadcast:?}");
-    assert!(receipts
-        .iter()
-        .all(|receipt| receipt["message"] == "everyone"));
+        send_request(&send, json!({ "target": "all", "message": "  everyone  " })).unwrap_err();
+    assert_eq!(broadcast.to_string(), BROADCAST_REMOVED_ERROR);
 
     // The removed roster request answers with the TS migration error.
     let list_agents = handlers.get("agent_message.list_agents").unwrap().clone();
@@ -441,8 +435,15 @@ async fn message_host_handler_round_trip() {
     ));
 }
 
+/// The `agent_message.send` error a stale kernel's broadcast call gets
+/// (upstream #2150): it names the removal and the recovery.
+const BROADCAST_REMOVED_ERROR: &str = "agent_message.send no longer takes a target or broadcast_message; broadcasting was removed. Restart the Python kernel to load the current agent-message skill, then call send(message, receiver_role=..., receiver_name=...).";
+
+/// A send that still carries a `target` (`"all"` or a name, from a kernel
+/// running the pre-removal skill) fails with the removal error before any
+/// family lookup or delivery (upstream #2150).
 #[tokio::test]
-async fn broadcast_without_family_is_empty_and_failures_settle() {
+async fn a_send_carrying_a_target_fails_with_the_removal_error() {
     struct NoFamilyController;
     impl AgentMessageController for NoFamilyController {
         fn family(
@@ -457,43 +458,38 @@ async fn broadcast_without_family_is_empty_and_failures_settle() {
             std::future::ready(Err(anyhow::anyhow!("no route")))
         }
     }
-    struct LoneFamilyController;
-    impl AgentMessageController for LoneFamilyController {
+    struct UnreachedController;
+    impl AgentMessageController for UnreachedController {
         fn family(
             &self,
         ) -> impl std::future::Future<Output = anyhow::Result<Vec<AgentFamilyMember>>> {
-            std::future::ready(Ok(vec![AgentFamilyMember {
-                relationship: AgentFamilyRelationship::Sibling,
-                id: "sib-1".to_string(),
-                name: None,
-                aliases: Vec::new(),
-            }]))
+            std::future::ready(Err(anyhow::anyhow!("the family must not be read")))
         }
         fn send_agent_message(
             &self,
             _input: AgentMessageSendInput,
         ) -> impl std::future::Future<Output = anyhow::Result<AgentMessageReceipt>> {
-            std::future::ready(Err(anyhow::anyhow!("peer unreachable")))
+            std::future::ready(Err(anyhow::anyhow!("nothing must be delivered")))
         }
     }
     let mut handlers = HostRequestHandlers::default();
+    register_agent_message_host_handlers(std::sync::Arc::new(UnreachedController), &mut handlers);
+    let send = handlers.get("agent_message.send").unwrap().clone();
+    for payload in [
+        json!({ "target": "all", "message": "hi" }),
+        json!({ "target": "all", "broadcast_message": "hi" }),
+        json!({ "target": "worker", "message": "hi", "receiver_role": "sibling" }),
+    ] {
+        let error = send_request(&send, payload).unwrap_err();
+        assert_eq!(error.to_string(), BROADCAST_REMOVED_ERROR);
+    }
+
+    // The role-addressed form still resolves against the family: an empty
+    // one has no parent.
+    let mut handlers = HostRequestHandlers::default();
     register_agent_message_host_handlers(std::sync::Arc::new(NoFamilyController), &mut handlers);
     let send = handlers.get("agent_message.send").unwrap().clone();
-    let broadcast = send_request(&send, json!({ "target": "all", "message": "hi" })).unwrap();
-    assert_eq!(broadcast["receipts"].as_array().map(Vec::len), Some(0));
-
     let no_parent =
         send_request(&send, json!({ "message": "hi", "receiver_role": "parent" })).unwrap_err();
     assert_eq!(no_parent.to_string(), "No parent matches the current agent");
-
-    // One-member family with a failing send: the receipt records the
-    // error instead of aborting the broadcast.
-    let mut handlers = HostRequestHandlers::default();
-    register_agent_message_host_handlers(std::sync::Arc::new(LoneFamilyController), &mut handlers);
-    let send = handlers.get("agent_message.send").unwrap().clone();
-    let broadcast = send_request(&send, json!({ "target": "all", "message": "hi" })).unwrap();
-    let receipts = broadcast["receipts"].as_array().expect("receipts");
-    assert_eq!(receipts.len(), 1);
-    assert_eq!(receipts[0]["target"], "sib-1");
-    assert_eq!(receipts[0]["error"], "peer unreachable");
 }

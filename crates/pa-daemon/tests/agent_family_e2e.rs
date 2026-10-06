@@ -320,6 +320,35 @@ kernel error record: {}; daemon log tail: {}",
     }
 }
 
+/// A kernel cell's recorded failure (`record_cell`'s `.error` traceback),
+/// once the cell wrote it.
+fn read_error_record(dir: &Path, name: &str) -> String {
+    let path = dir.join(format!("{name}.error"));
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if !content.is_empty() {
+                return content;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "error record {name} never appeared in {}: existing: {}; success receipt: {}; \
+daemon log tail: {}",
+            dir.display(),
+            receipt_listing(dir),
+            std::fs::read_to_string(dir.join(format!("{name}.json")))
+                .unwrap_or_else(|_| "<none>".to_string()),
+            daemon_log_tail(dir)
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// The removal error a send still carrying the broadcast `target` gets
+/// (upstream #2150).
+const BROADCAST_REMOVED: &str = "agent_message.send no longer takes a target or broadcast_message; broadcasting was removed. Restart the Python kernel";
+
 async fn send_agent_message(
     handlers: &HostRequestHandlers,
     receiver_name: &str,
@@ -620,7 +649,8 @@ async fn family_edges_never_cross_families_end_to_end() {
     let receipts_dir = dir.path().join("receipts");
     std::fs::create_dir_all(&receipts_dir).expect("receipts dir");
 
-    // Parent-a's one kernel turn records its roster and broadcast receipts.
+    // Parent-a's one kernel turn records its roster and the removed broadcast
+    // form's rejection (upstream #2150).
     let parent_a_cell = format!(
         "{}\n{}",
         record_cell(r#""agent_observe.list""#, "parent-observe", &receipts_dir),
@@ -667,13 +697,7 @@ async fn family_edges_never_cross_families_end_to_end() {
     ];
     // One scripted turn per cell: the tool-call entry, then the text entry that closes it (a nested
     // array is not a valid script).
-    let mut kid_responses = vec![
-        json!({ "text": "kid spawned" }),
-        // The parent's broadcast (target=all) drains into this session's steering queue
-        // during the spawn turn; the filler text absorbs that message's turn so the
-        // scripted cells align with the driven turns.
-        json!({ "text": "kid absorbed the broadcast" }),
-    ];
+    let mut kid_responses = vec![json!({ "text": "kid spawned" })];
     for cell in &kid_cells {
         let turn = cell_turn(cell);
         kid_responses.push(turn[0].clone());
@@ -828,8 +852,8 @@ async fn family_edges_never_cross_families_end_to_end() {
 
     // This harness owns the children registry in the TEST process, so the settle notice is
     // minted here while the parent worker's queue admission refuses it; waiting on it
-    // leaves the receipts dir empty. Once the broadcast receipt exists it is ahead of
-    // every later drive in the FIFO steering lane, so each scripted cell lands on its turn.
+    // leaves the receipts dir empty. Once the broadcast rejection is recorded the parent's
+    // cell turn ran, so each later drive lands on its own scripted turn.
     client.send_command(
         "to-parent-a-cells",
         &json!({
@@ -846,7 +870,7 @@ async fn family_edges_never_cross_families_end_to_end() {
         "send to-parent-a-cells failed: {response}"
     );
     client.wait_idle("w-parent-a-cells", parent_a_active);
-    let _parent_broadcast = read_recorded(&receipts_dir, "parent-broadcast.json");
+    let parent_broadcast = read_error_record(&receipts_dir, "parent-broadcast");
 
     let drive_kid_turn = |client: &mut Client, id: &str, message: &str| {
         client.send_command(
@@ -951,36 +975,16 @@ async fn family_edges_never_cross_families_end_to_end() {
         "the parent reply reaches the true parent: {parent_reply}"
     );
     assert_eq!(parent_reply["receiverRole"], "parent", "{parent_reply}");
-    if let Ok(error) = std::fs::read_to_string(receipts_dir.join("kid-broadcast.error")) {
-        panic!("kid kernel cell failed: {error}");
-    }
-    // The broadcast reaches the family roster; the grandkid's presence depends on
-    // broadcast-versus-spawn interleaving, so pin the isolation, not the exact set.
-    let kid_broadcast = read_recorded(&receipts_dir, "kid-broadcast.json");
-    let kid_targets: Vec<&str> = kid_broadcast["receipts"]
-        .as_array()
-        .expect("receipts")
-        .iter()
-        .map(|receipt| {
-            receipt["target"]["activeSessionId"]
-                .as_str()
-                .or_else(|| receipt["target"].as_str())
-                .expect("receipt target")
-        })
-        .collect();
-    let allowed = [parent_a_active.as_str(), grandkid_active.as_str()];
+    // The removed broadcast form fails with the removal error and delivers
+    // nothing (upstream #2150).
+    let kid_broadcast = read_error_record(&receipts_dir, "kid-broadcast");
     assert!(
-        kid_targets.iter().all(|target| allowed.contains(target)),
-        "the child's broadcast stays inside its own family: {kid_broadcast}"
+        kid_broadcast.contains(BROADCAST_REMOVED),
+        "a broadcast send fails with the removal error: {kid_broadcast}"
     );
     assert!(
-        kid_targets.contains(&parent_a_active.as_str()),
-        "the child's broadcast reaches its parent: {kid_broadcast}"
-    );
-    assert!(
-        !kid_targets.contains(&second_kid_active.as_str())
-            && !kid_targets.contains(&sibling_root_active.as_str()),
-        "the child's broadcast never crosses families: {kid_broadcast}"
+        !receipts_dir.join("kid-broadcast.json").exists(),
+        "the rejected broadcast records no receipt"
     );
     if let Ok(error) = std::fs::read_to_string(receipts_dir.join("kid-observe.error")) {
         panic!("kid kernel cell failed: {error}");
@@ -1067,27 +1071,9 @@ async fn family_edges_never_cross_families_end_to_end() {
             .any(|summary| summary["activeSessionId"] == grandkid_active.as_str()),
         "a grandchild never renders top-level in the root's roster: {roster:?}"
     );
-    if let Ok(error) = std::fs::read_to_string(receipts_dir.join("parent-broadcast.error")) {
-        panic!("parent kernel cell failed: {error}");
-    }
-    let parent_broadcast = read_recorded(&receipts_dir, "parent-broadcast.json");
-    let mut parent_targets: Vec<&str> = parent_broadcast["receipts"]
-        .as_array()
-        .expect("receipts")
-        .iter()
-        .map(|receipt| {
-            receipt["target"]["activeSessionId"]
-                .as_str()
-                .or_else(|| receipt["target"].as_str())
-                .expect("receipt target")
-        })
-        .collect();
-    parent_targets.sort_unstable();
-    let mut expected = vec![sibling_root_active.as_str(), kid_a_active.as_str()];
-    expected.sort_unstable();
-    assert_eq!(
-        parent_targets, expected,
-        "the parent's broadcast stays inside its nuclear family: {parent_broadcast}"
+    assert!(
+        parent_broadcast.contains(BROADCAST_REMOVED),
+        "the parent's broadcast send fails with the removal error: {parent_broadcast}"
     );
 
     client.wait_idle("w-child-transcript", kid_a_active);
