@@ -590,7 +590,12 @@ fn register_run(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmHostBridge>)
                 if let Some(budget) = bridge.token_budget.get() {
                     request.token_budget = Some(budget.reserve_child_grant(request.token_budget)?);
                 }
+                let grant = request.token_budget;
                 let handle = bridge.host.spawn(request).await?;
+                // The status surface names the child each grant funded.
+                if let (Some(budget), Some(grant)) = (bridge.token_budget.get(), grant) {
+                    budget.attribute_grant(grant, &handle.rlm_child_id, &handle.name);
+                }
                 // TS `_findLastAssistantMessage` at spawn: the spawning
                 // assistant row (persisted at `message_end` before tool
                 // execution) is the target every child-usage attribution
@@ -1333,6 +1338,29 @@ mod tests {
             .map(|request| request.token_budget)
             .collect();
         assert_eq!(grants, vec![Some(60), Some(40)]);
+        // Each grant names the child it funded (the status surface).
+        let attributed: Vec<(String, u64)> = wiring
+            .rlm
+            .token_budget
+            .get()
+            .unwrap()
+            .status()
+            .grants
+            .into_iter()
+            .map(|grant| {
+                (
+                    format!("{} ({})", grant.name, grant.rlm_child_id),
+                    grant.tokens,
+                )
+            })
+            .collect();
+        assert_eq!(
+            attributed,
+            vec![
+                ("worker (sub-1)".to_string(), 60),
+                ("worker (sub-1)".to_string(), 40)
+            ]
+        );
     }
 
     /// `rlm.spawn(token_budget=)`: an explicit grant is drawn from the pool

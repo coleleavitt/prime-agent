@@ -85,6 +85,84 @@ pub struct RlmTokenBudgetLedger {
     /// Tokens granted to this session's children (never returned).
     #[serde(default)]
     pub granted: u64,
+    /// The grants a spawned child took, in spawn order (a grant whose
+    /// spawn failed after drawing it counts in `granted` only).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grants: Vec<RlmTokenGrant>,
+}
+
+/// One grant a spawned child took.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RlmTokenGrant {
+    pub rlm_child_id: String,
+    pub name: String,
+    pub tokens: u64,
+}
+
+/// A point-in-time view of one session's budget (`/rlm-token-budget`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RlmTokenBudgetStatus {
+    /// `None` for the root; the grant that funded a subagent.
+    pub allowance: Option<u64>,
+    /// The pool grants (and a subagent's own spend) draw from.
+    pub pool: u64,
+    /// This session's depth.
+    pub depth: u32,
+    /// The cap on any single grant to this session's children.
+    pub child_grant_cap: Option<u64>,
+    pub spent: u64,
+    pub granted: u64,
+    pub remaining: u64,
+    pub grants: Vec<RlmTokenGrant>,
+}
+
+impl RlmTokenBudgetStatus {
+    /// The status text the slash command shows.
+    #[must_use]
+    pub fn render(&self) -> String {
+        let source = match self.allowance {
+            None => "root pool, from rlmTokenBudget",
+            Some(_) => "this subagent's grant from its parent",
+        };
+        let mut lines = vec![format!(
+            "RLM token budget ({source}): {} tokens{}",
+            self.pool,
+            match self.child_grant_cap {
+                Some(cap) => format!(
+                    "; any single grant to a depth-{} subagent is capped at {cap}",
+                    self.depth + 1
+                ),
+                None => String::new(),
+            }
+        )];
+        lines.push(format!(
+            "Spent by this session: {}{}",
+            self.spent,
+            match self.allowance {
+                None => " (the root's own spend is not capped)",
+                Some(_) => " (counts against the grant)",
+            }
+        ));
+        lines.push(format!(
+            "Granted: {}; left to grant: {}",
+            self.granted, self.remaining
+        ));
+        for grant in &self.grants {
+            lines.push(format!(
+                "- {} ({}): {}",
+                grant.name, grant.rlm_child_id, grant.tokens
+            ));
+        }
+        let attributed: u64 = self.grants.iter().map(|grant| grant.tokens).sum();
+        let unattributed = self.granted.saturating_sub(attributed);
+        if unattributed > 0 {
+            lines.push(format!(
+                "- not attributed (a spawn that failed after drawing its grant): {unattributed}"
+            ));
+        }
+        lines.join("\n")
+    }
 }
 
 impl RlmTokenBudgetLedger {
@@ -283,6 +361,43 @@ impl RlmTokenBudget {
         Ok(grant)
     }
 
+    /// Record which child a grant funded (after its spawn succeeded). A
+    /// ledger that cannot be written is logged: the grant itself is
+    /// already durable in the granted total.
+    pub fn attribute_grant(&self, tokens: u64, rlm_child_id: &str, name: &str) {
+        let mut ledger = self.ledger();
+        ledger.grants.push(RlmTokenGrant {
+            rlm_child_id: rlm_child_id.to_string(),
+            name: name.to_string(),
+            tokens,
+        });
+        if let Some(store) = &self.store {
+            if let Err(error) = ledger.save(store) {
+                tracing::warn!(
+                    target: "pa_core::rlm_token_budget",
+                    error = %format!("{error:#}"),
+                    "the RLM token budget ledger could not be written"
+                );
+            }
+        }
+    }
+
+    /// The budget's current numbers.
+    #[must_use]
+    pub fn status(&self) -> RlmTokenBudgetStatus {
+        let ledger = self.ledger();
+        RlmTokenBudgetStatus {
+            allowance: granted_allowance(self.allowance),
+            pool: self.pool(),
+            depth: self.depth,
+            child_grant_cap: self.config.per_depth.get(self.depth as usize).copied(),
+            spent: ledger.spent,
+            granted: ledger.granted,
+            remaining: self.remaining_in(&ledger),
+            grants: ledger.grants.clone(),
+        }
+    }
+
     /// A child has spent what it did not grant on: its run stops at this
     /// turn boundary. The root is never stopped.
     #[must_use]
@@ -410,6 +525,7 @@ mod tests {
                 allowance: Some(400),
                 spent: 150,
                 granted: 100,
+                grants: Vec::new(),
             }
         );
         let reopened = RlmTokenBudget::open(
