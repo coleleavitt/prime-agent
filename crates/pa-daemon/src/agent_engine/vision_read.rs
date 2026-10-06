@@ -256,6 +256,11 @@ impl AgentSessionEngine {
         };
         self.assert_image_model_allowed(&resolved)
             .map_err(VisionReadError::Refused)?;
+        // Funded from the delegation budget like the image-turn child; an
+        // exhausted pool refuses the read before any child exists.
+        let funding = self
+            .reserve_image_child_grant()
+            .map_err(|error| VisionReadError::Refused(format!("{error:#}")))?;
         let model = format!("{}/{}", resolved.model.provider, resolved.model.id);
         let deadline = Instant::now() + READ_TIMEOUT;
         let outcome = self.runtime.block_on(children.delegate_image_turn(
@@ -264,11 +269,19 @@ impl AgentSessionEngine {
                 model: model.clone(),
                 thinking: Some(resolved.thinking_level.wire_name().to_string()),
                 images: request.images,
+                token_budget: funding.as_ref().map(|(_, grant)| *grant),
             },
             &|| cancelled() || Instant::now() >= deadline,
         ));
         match outcome {
-            crate::rlm_children::ImageDelegationOutcome::Answered { answer, .. } => {
+            crate::rlm_children::ImageDelegationOutcome::Answered {
+                child_id,
+                session_name,
+                answer,
+            } => {
+                if let Some((bridge, grant)) = &funding {
+                    bridge.attribute_child_grant(*grant, &child_id, &session_name);
+                }
                 Ok(json!({ "text": cap_reading(&answer), "model": model }))
             }
             crate::rlm_children::ImageDelegationOutcome::Failed { error } => {

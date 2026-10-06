@@ -443,6 +443,35 @@ impl RlmHostBridge {
     }
 }
 
+impl RlmHostBridge {
+    /// The delegation budget's current numbers (`None`: no budget applies).
+    #[must_use]
+    pub fn token_budget_status(&self) -> Option<super::rlm_token_budget::RlmTokenBudgetStatus> {
+        self.token_budget.get().map(|budget| budget.status())
+    }
+
+    /// Draw a grant for a child the embedding spawns outside `rlm.spawn`
+    /// (the daemon's image-model delegation child): `Ok(None)` when no
+    /// budget applies.
+    ///
+    /// # Errors
+    ///
+    /// The budget's refusals (an exhausted pool, an unrecordable grant).
+    pub fn reserve_child_grant(&self, requested: Option<u64>) -> anyhow::Result<Option<u64>> {
+        self.token_budget
+            .get()
+            .map(|budget| budget.reserve_child_grant(requested))
+            .transpose()
+    }
+
+    /// Name the child a [`Self::reserve_child_grant`] grant funded.
+    pub fn attribute_child_grant(&self, tokens: u64, rlm_child_id: &str, name: &str) {
+        if let Some(budget) = self.token_budget.get() {
+            budget.attribute_grant(tokens, rlm_child_id, name);
+        }
+    }
+}
+
 /// Register every `rlm.*` host handler onto the handler map.
 pub fn register_rlm_host_handlers(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmHostBridge>) {
     register_find_models(handlers, bridge);

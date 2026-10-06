@@ -30,6 +30,9 @@ pub(crate) struct ImageDelegationRequest {
     /// The turn's delivered images (primary plus batch rows), riding the
     /// prompt wire to the child natively.
     pub images: Vec<pa_agent::types::ImageContent>,
+    /// The child's delegation grant (upstream #1192), drawn from the
+    /// parent session's budget pool; `None` when no budget applies.
+    pub token_budget: Option<u64>,
 }
 
 /// The delegation's terminal outcome for one image-carrying turn.
@@ -121,13 +124,17 @@ impl SupervisorChildSessionsInner {
             }
         };
         let cwd = identity.cwd.clone().unwrap_or_else(|| "/".to_string());
-        let runtime_metadata = json!({
+        let mut runtime_metadata = json!({
             "kind": "subagent",
             "rlmChildId": child_id,
             "parentActiveSessionId": self.parent_active_session_id,
             "rlmDepth": identity.rlm_depth + 1,
             "createdAt": now_ms(),
         });
+        // The grant the parent drew funds the child (upstream #1192).
+        if let Some(grant) = request.token_budget {
+            runtime_metadata["rlmTokenAllowance"] = json!(grant);
+        }
         let created = match self
             .create_child(
                 &child_id,

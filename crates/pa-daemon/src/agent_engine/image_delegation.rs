@@ -149,6 +149,19 @@ impl AgentSessionEngine {
         let Some(children) = self.children.as_ref() else {
             return ImageDelegationRun::NotDelegated;
         };
+        // The image-model child is a subagent like any `rlm.spawn` child:
+        // under a delegation budget it is funded from the pool, and an
+        // exhausted pool fails the turn loudly before any child exists.
+        let funding = match self.reserve_image_child_grant() {
+            Ok(funding) => funding,
+            Err(error) => {
+                self.note_image_delegation(false);
+                emit(EngineEvent::Done(Err(format!(
+                    "image delegation failed: {error:#}"
+                ))));
+                return ImageDelegationRun::Ended;
+            }
+        };
         let delegation_request = crate::rlm_children::ImageDelegationRequest {
             prompt: delegation_child_prompt(&turn_prompt_text(turn_prompt)),
             model: format!("{}/{}", resolved.model.provider, resolved.model.id),
@@ -157,6 +170,7 @@ impl AgentSessionEngine {
             // level, never the parent's unclamped one.
             thinking: Some(resolved.thinking_level.wire_name().to_string()),
             images: delivered_images(turn_prompt),
+            token_budget: funding.as_ref().map(|(_, grant)| *grant),
         };
         let outcome = self
             .runtime
@@ -171,6 +185,9 @@ impl AgentSessionEngine {
                 session_name,
                 answer,
             } => {
+                if let Some((bridge, grant)) = &funding {
+                    bridge.attribute_child_grant(*grant, &child_id, &session_name);
+                }
                 // The description row: ONE representation, durable and
                 // rendered (the daemon persists the emitted custom row) and
                 // model context (queued ahead of the turn's prompt, so the
@@ -249,6 +266,32 @@ impl AgentSessionEngine {
         let engine = session.as_ref().expect("session built");
         engine.session.queue_next_turn_row(row.clone());
         Ok(())
+    }
+
+    /// The delegation budget's grant for one image-model child (upstream
+    /// #1192): `Ok(None)` when no budget applies, else the session's RLM
+    /// bridge (to attribute the grant once the child exists) and the grant.
+    ///
+    /// Sync-context discipline as [`Self::queue_image_delegation_row`]:
+    /// the caller is a worker thread, never a runtime async context.
+    pub(crate) fn reserve_image_child_grant(
+        &self,
+    ) -> anyhow::Result<
+        Option<(
+            std::sync::Arc<pa_core::session_engine::rlm_host::RlmHostBridge>,
+            u64,
+        )>,
+    > {
+        let model = self.resolve_model()?;
+        self.ensure_core_session(&model)?;
+        let engine = self.session.blocking_lock().clone();
+        let Some(engine) = engine else {
+            return Ok(None);
+        };
+        let bridge = std::sync::Arc::clone(&engine.rlm);
+        Ok(bridge
+            .reserve_child_grant(None)?
+            .map(|grant| (bridge, grant)))
     }
 
     /// The delegation outcome's adoption telemetry (`image delegation`,
