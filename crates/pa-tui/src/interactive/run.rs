@@ -893,6 +893,8 @@ async fn run_interactive_surface(
                         if let Ok((_width, height)) = crossterm::terminal::size() {
                             view.set_terminal_rows(height);
                         }
+                        // A font-size change resizes the cells, not just the grid.
+                        crate::terminal_image::refresh_cell_dimensions();
                     }
                     UiInput::WaitIdle { .. } | UiInput::SubmitAndSettle { .. } => {
                         unreachable!("barrier handled above")
@@ -1658,6 +1660,11 @@ async fn run_interactive_surface(
             } => {
                 last_factory_refresh = Instant::now();
                 session.spawn_factory_refresh();
+            }
+            () = crate::inline_image::payload_ready() => {
+                // A preview's off-paint transcode settled: the next frame places it (or
+                // re-lays the row out as its fallback).
+                session.dirty = true;
             }
             _frame = async {
                 match render_deadline {

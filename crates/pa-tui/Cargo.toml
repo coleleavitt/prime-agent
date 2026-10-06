@@ -20,6 +20,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { workspace = true }
 anyhow = "1"
 base64 = "0.22"
+# The presented-artifact preview on kitty-protocol terminals: kitty only accepts PNG
+# (`f=100`), and the kernel re-encodes oversized previews as JPEG, so the preview is
+# decoded once off the paint path and re-sent as PNG (zlib via the existing flate2).
+zune-jpeg = "0.5.15"
+flate2 = "1"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "net", "process"] }
 uuid = { version = "1", features = ["v4"] }

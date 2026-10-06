@@ -271,6 +271,21 @@ pub(crate) fn render_custom_panel(
         &vec![custom_message_label(&row.custom_type, theme)],
         width,
     ));
+    // A preview the terminal can place: the label, then the reserved rows
+    // the image goes over after the frame flush.
+    let placed = row.image.as_deref().and_then(|preview| {
+        crate::inline_image::image_block(&preview.image, width).map(|block| (preview, block))
+    });
+    if let Some((preview, block)) = placed {
+        out.extend(crate::branch::branch_markdown(
+            &preview.label,
+            &md,
+            theme,
+            width,
+        ));
+        out.extend(crate::inline_image::image_block_rows(&preview.image, block));
+        return out;
+    }
     out.extend(crate::branch::branch_markdown(
         &row.content,
         &md,
@@ -469,6 +484,7 @@ mod tests {
         let panel = CustomPanelRow {
             custom_type: "note".to_string(),
             content: fence.to_string(),
+            image: None,
         };
         let panel_text: Vec<String> =
             render_custom_panel(&panel, &theme(), 60, MermaidMode::Streaming)
@@ -540,12 +556,110 @@ mod tests {
         );
     }
 
+    /// A presented artifact's preview row as the TUI decodes it.
+    fn presented_preview_row() -> CustomPanelRow {
+        let entries = crate::custom_message::custom_message_entries(&serde_json::json!({
+            "role": "custom",
+            "customType": crate::custom_message::PRESENTED_ARTIFACT_CUSTOM_TYPE,
+            "content": [
+                { "type": "text", "text": "Direction A" },
+                { "type": "image", "data": "aGk=", "mimeType": "image/png" }
+            ],
+            "display": true,
+            "details": { "name": "render.png", "kind": "image", "mimeType": "image/png",
+                         "width": 1600, "height": 900 },
+        }));
+        let [crate::chat::ChatEntry::CustomPanel(row)] = entries.as_slice() else {
+            panic!("one panel: {entries:?}");
+        };
+        (**row).clone()
+    }
+
+    /// Upstream #1062 follow-up: on a terminal that places images, the
+    /// presented artifact's preview is a reserved image block under its
+    /// label (it was the `[Image: …]` text panel everywhere); the geometry
+    /// counts the same rows.
+    #[test]
+    fn a_presented_preview_reserves_its_image_rows_where_images_place() {
+        use crate::terminal_image::{
+            clear_image_protocol_override, set_cell_dimensions_override,
+            set_image_protocol_override, CellDimensions, ImageProtocol,
+        };
+        let row = presented_preview_row();
+        let text = |rows: &[Line]| -> Vec<String> {
+            rows.iter()
+                .map(|line| {
+                    let mut line = line.clone();
+                    crate::inline_image::strip_markers(&mut line);
+                    flat(&line).trim_end().to_string()
+                })
+                .collect()
+        };
+        set_cell_dimensions_override(Some(CellDimensions {
+            width_px: 10,
+            height_px: 20,
+        }));
+        set_image_protocol_override(Some(ImageProtocol::Kitty));
+        let placed = render_custom_panel(&row, &theme(), 80, MermaidMode::default());
+        let placed_count = crate::custom_message::geometry::custom_panel_row_count(
+            &row,
+            &theme(),
+            80,
+            MermaidMode::default(),
+        );
+        set_image_protocol_override(None);
+        let fallback = render_custom_panel(&row, &theme(), 80, MermaidMode::default());
+        let fallback_count = crate::custom_message::geometry::custom_panel_row_count(
+            &row,
+            &theme(),
+            80,
+            MermaidMode::default(),
+        );
+        clear_image_protocol_override();
+        set_cell_dimensions_override(None);
+        // 60 columns of a 1600x900 preview at 10x20 px cells: 17 rows.
+        let mut expected = vec![
+            String::new(),
+            " [artifact]".to_string(),
+            " \u{2570}\u{2500} Direction A".to_string(),
+        ];
+        expected.extend(std::iter::repeat_n(String::new(), 17));
+        assert_eq!(text(&placed), expected);
+        assert_eq!(placed_count, placed.len());
+        let markers: Vec<_> = placed[3..]
+            .iter()
+            .map(|line| {
+                line.iter()
+                    .find_map(|span| crate::inline_image::parse_marker(&span.content))
+                    .map(|tag| (tag.index, tag.rows, tag.column, tag.columns))
+            })
+            .collect();
+        assert_eq!(
+            markers,
+            (0..17)
+                .map(|index| Some((index, 17, 4, 60)))
+                .collect::<Vec<_>>()
+        );
+        // No protocol: the textual fallback panel, unchanged.
+        assert_eq!(
+            text(&fallback),
+            vec![
+                "",
+                " [artifact]",
+                " \u{2570}\u{2500} Direction A",
+                "    [Image: render.png [image/png] 1600x900]",
+            ]
+        );
+        assert_eq!(fallback_count, fallback.len());
+    }
+
     /// The un-boxed panel's label and body carry their shared spans with no box background.
     #[test]
     fn custom_panel_guttered_shape() {
         let row = CustomPanelRow {
             custom_type: "autonomous_status".to_string(),
             content: "[autonomous-status: on]".to_string(),
+            image: None,
         };
         let rows = render_custom_panel(&row, &theme(), 40, MermaidMode::default());
         // No box background anywhere on the row.

@@ -792,6 +792,7 @@ fn wrap_quote(spans: &[Span], width: usize, style: &MarkdownStyle, out: &mut Vec
 pub fn to_ratatui_line(line: &Line) -> rt::Line<'static> {
     let mut stripped = line.clone();
     crate::osc133::strip(&mut stripped);
+    crate::inline_image::strip_markers(&mut stripped);
     crate::hyperlinks::strip_osc8(&mut stripped);
     // TS `applyLineResets` normalizes every painted line right before the differential
     // paint (Thai/Lao AM decomposition, tabs to three spaces).

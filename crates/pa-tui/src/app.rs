@@ -87,6 +87,7 @@ fn run_app_surface(
     // The replay surface owns the same enhanced-key modes as the session: bracketed pastes
     // arrive as one chunk.
     crate::enhanced_keys::enable(&mut std::io::stdout())?;
+    crate::terminal_image::refresh_cell_dimensions();
     let mut terminal = Terminal::new(crate::hyperlinks::stdout_backend())?;
 
     let theme = load_theme(&options.theme);
@@ -302,7 +303,24 @@ pub(crate) fn draw(
         }
     }
     let markers = if painted.is_ok() {
-        emit_zone_markers(&emissions, cursor)
+        // Inline images go over their reserved cells after the cell flush,
+        // inside the same synchronized update.
+        // An error here still reaches the update release below.
+        let images = crate::inline_image::paint_frame(&frame, area.width, area.height);
+        let written = (|| -> Result<()> {
+            use std::io::Write;
+            if images.is_empty() {
+                return Ok(());
+            }
+            let mut out = stdout();
+            out.write_all(images.as_bytes())?;
+            if let Some((row, col)) = cursor {
+                crossterm::queue!(out, crossterm::cursor::MoveTo(col as u16, row as u16))?;
+            }
+            out.flush()?;
+            Ok(())
+        })();
+        written.and_then(|()| emit_zone_markers(&emissions, cursor))
     } else {
         Ok(())
     };
@@ -350,6 +368,7 @@ pub fn render_frame_text(view: &mut AgentView, width: u16, height: u16) -> Vec<S
         .map(|line| {
             let mut stripped = line.clone();
             crate::osc133::strip(&mut stripped);
+            crate::inline_image::strip_markers(&mut stripped);
             crate::hyperlinks::strip_osc8(&mut stripped);
             stripped.iter().map(|s| s.content.as_str()).collect()
         })

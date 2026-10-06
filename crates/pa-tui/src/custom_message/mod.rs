@@ -154,7 +154,19 @@ pub struct EditField {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CustomPanelRow {
     pub custom_type: String,
+    /// The markdown body (for a presented image, its textual fallback).
     pub content: String,
+    /// A presented artifact's preview, placed inline on terminals that
+    /// show images (otherwise `content` renders).
+    pub image: Option<Box<PanelPreview>>,
+}
+
+/// A presented artifact's inline preview: the label line above it and the
+/// image the reserved rows below it place.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PanelPreview {
+    pub label: String,
+    pub image: crate::inline_image::PanelImage,
 }
 
 /// The transcript entries for one `custom`-role message, mirroring the TS
@@ -255,6 +267,7 @@ fn presented_artifact_entry(message: &Value, details: &Value) -> ChatEntry {
         .get("mimeType")
         .and_then(Value::as_str)
         .unwrap_or("application/octet-stream");
+    let mut preview = None;
     let body = if let Some(image) = blocks
         .iter()
         .find(|block| block.get("type").and_then(Value::as_str) == Some("image"))
@@ -279,6 +292,14 @@ fn presented_artifact_entry(message: &Value, details: &Value) -> ChatEntry {
                 )
             }),
         };
+        if let (Some(dimensions), Some(data)) =
+            (dimensions, image.get("data").and_then(Value::as_str))
+        {
+            preview = Some(Box::new(PanelPreview {
+                label: label.to_string(),
+                image: crate::inline_image::PanelImage::new(data, image_mime, dimensions),
+            }));
+        }
         crate::terminal_image::image_fallback(image_mime, dimensions, name)
     } else {
         let path = details.get("path").and_then(Value::as_str).unwrap_or("");
@@ -287,6 +308,7 @@ fn presented_artifact_entry(message: &Value, details: &Value) -> ChatEntry {
     ChatEntry::CustomPanel(Box::new(CustomPanelRow {
         custom_type: "artifact".to_string(),
         content: format!("{label}\n{body}"),
+        image: preview,
     }))
 }
 
@@ -296,6 +318,7 @@ fn generic_panel_entry(custom_type: &str, message: &Value) -> ChatEntry {
     ChatEntry::CustomPanel(Box::new(CustomPanelRow {
         custom_type: custom_type.to_string(),
         content: custom_content_text(message),
+        image: None,
     }))
 }
 
@@ -571,6 +594,17 @@ mod tests {
             vec![ChatEntry::CustomPanel(Box::new(CustomPanelRow {
                 custom_type: "artifact".to_string(),
                 content: "Direction A\n[Image: render.png [image/png] 1600x900]".to_string(),
+                image: Some(Box::new(PanelPreview {
+                    label: "Direction A".to_string(),
+                    image: crate::inline_image::PanelImage::new(
+                        "aGk=",
+                        "image/png",
+                        crate::terminal_image::ImageDimensions {
+                            width_px: 1600,
+                            height_px: 900
+                        }
+                    ),
+                })),
             }))]
         );
         let entries = decoded(&json!({
@@ -590,6 +624,7 @@ mod tests {
                 custom_type: "artifact".to_string(),
                 content: "Artifact: report.csv\nreport.csv \u{b7} text/plain\n/s/presented-artifacts/y-report.csv"
                     .to_string(),
+                    image: None,
             }))]
         );
     }
@@ -971,6 +1006,7 @@ mod tests {
         let panel = CustomPanelRow {
             custom_type: "notice".to_string(),
             content: body.clone(),
+            image: None,
         };
         let compacted = format!(" {body}");
         // (collapsed rows + their expected text, expanded rows, expanded

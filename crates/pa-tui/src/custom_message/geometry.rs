@@ -86,8 +86,17 @@ pub(crate) fn custom_panel_row_count(
         mermaid,
         false,
     );
-    1 + text_row_count(
+    let header = 1 + text_row_count(
         &vec![super::render::custom_message_label(&row.custom_type, theme)],
         width,
-    ) + branch_markdown_count(&row.content, &md, width)
+    );
+    let placed = row.image.as_deref().and_then(|preview| {
+        crate::inline_image::image_block(&preview.image, width).map(|block| (preview, block))
+    });
+    match placed {
+        Some((preview, block)) => {
+            header + branch_markdown_count(&preview.label, &md, width) + block.rows as usize
+        }
+        None => header + branch_markdown_count(&row.content, &md, width),
+    }
 }
