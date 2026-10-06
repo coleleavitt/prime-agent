@@ -38,7 +38,7 @@ impl SessionUi {
         match name.as_str() {
             "help" => {
                 self.note(
-                    "/help           this list\n/list           live sessions\n/switch <n|id>  switch to a session from /list\n/new            start a new session\n/exit           detach and exit",
+                    "/help           this list\n/list           live sessions\n/switch <n|id>  switch to a session from /list\n/switch         switch this session's model, keeping the saved default\n/new            start a new session\n/exit           detach and exit",
                     view,
                 );
                 return Ok(());
@@ -47,13 +47,11 @@ impl SessionUi {
                 self.refresh_list(view).await?;
                 return Ok(());
             }
-            "switch" => {
-                if args.is_empty() {
-                    self.note("usage: /switch <n|id> (run /list first)", view);
-                } else {
-                    self.track_client_adoption(crate::interactive::ClientAdoption::SessionSwitch);
-                    self.switch_to(&args, view).await?;
-                }
+            // `/switch <n|id>` moves to another live session; bare `/switch` falls through to the
+            // registry, which opens the session-only model picker (upstream #840).
+            "switch" if !args.is_empty() => {
+                self.track_client_adoption(crate::interactive::ClientAdoption::SessionSwitch);
+                self.switch_to(&args, view).await?;
                 return Ok(());
             }
             _ => {}
@@ -165,7 +163,7 @@ impl SessionUi {
             "model" | "switch" => {
                 let (usage, scope) = if resolved.name == "switch" {
                     (
-                        "Usage: /switch (Tab filters the picker)",
+                        "Usage: /switch (Tab filters the picker), or /switch <n|id> for a session",
                         ModelSwitchScope::SessionOnly,
                     )
                 } else {

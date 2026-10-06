@@ -1691,6 +1691,138 @@ async fn tui_model_picker_applies_and_effort_reports() {
     drop(supervisor);
 }
 
+/// Bare `/switch` opens the session-only model picker (upstream #840): the pick
+/// applies to this session and leaves the saved default untouched, while
+/// `/switch <n|id>` still routes to the session switch.
+#[tokio::test]
+async fn tui_bare_switch_opens_the_session_only_model_picker() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let agent_dir = dir.path().join("agent");
+    let session_dir = agent_dir.join("sessions");
+    std::fs::create_dir_all(&session_dir).expect("session dir");
+    std::fs::write(
+        agent_dir.join("models.json"),
+        serde_json::json!({
+            "providers": {
+                "test-provider": {
+                    "api": "openai-completions",
+                    "baseUrl": "http://127.0.0.1:9/v1",
+                    "apiKey": "sk-test",
+                    "models": [
+                        { "id": "mock-1", "name": "Mock 1", "api": "openai-completions",
+                          "baseUrl": "http://127.0.0.1:9/v1", "contextWindow": 128_000,
+                          "maxTokens": 4096 }
+                    ]
+                }
+            }
+        })
+        .to_string(),
+    )
+    .expect("write models.json");
+    let settings_before = serde_json::json!({ "retry": { "enabled": false } });
+    std::fs::write(agent_dir.join("settings.json"), settings_before.to_string())
+        .expect("write settings.json");
+    let script = serde_json::json!({ "engine": "faux", "responses": [] });
+    std::fs::write(dir.path().join("script.json"), script.to_string()).expect("write script");
+    let supervisor = spawn_supervisor(dir.path());
+    let auth = pa_core::auth::AuthStorage::in_memory_without_env(
+        &pa_core::auth::AuthStorageData::default(),
+        std::sync::Arc::new(pa_core::auth::NoOAuth),
+    );
+    let mut registry = pa_core::models::ModelRegistry::create(auth, agent_dir.join("models.json"));
+    registry.load_private_authorization_from_cache();
+    let catalog: Vec<pa_types::ai::Model> = registry.get_available().into_iter().cloned().collect();
+    assert_eq!(catalog.len(), 1, "the models.json model resolves available");
+
+    let options = pa_tui::interactive::InteractiveOptions {
+        resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
+        initial_plan_mode: false,
+        models: None,
+        socket_path: supervisor.socket.clone(),
+        cwd: dir.path().to_path_buf(),
+        session_dir: Some(session_dir.clone()),
+        script_path: Some(dir.path().join("script.json")),
+        model_selection: pa_tui::interactive::ModelSelection::default(),
+        model_catalog: catalog,
+        model_configured_providers: std::collections::HashSet::default(),
+        model_recent_models: Vec::new(),
+        default_thinking_level: None,
+        no_session: false,
+        session: pa_tui::interactive::SessionSelection::New,
+        show_images: true,
+        fullscreen_mouse: true,
+        initial_message: None,
+        theme: "prime".to_string(),
+        code_block_indent: "  ".to_string(),
+
+        tree_filter_mode: String::new(),
+        branch_summary_skip_prompt: false,
+        version: "0.0.0".to_string(),
+        onboarding: None,
+        telemetry_disabled: None,
+        client_auth: None,
+        traces: None,
+        provider_auth: None,
+        update_commands: None,
+        telemetry: None,
+        keybindings: pa_tui::keybindings::KeybindingsManager::new(),
+        session_rlm_depth: None,
+        prompt_stash: std::sync::Arc::default(),
+        session_has_children: false,
+        restore_dock_focus: false,
+        client_settings: None,
+    };
+    let plan = pa_tui::interactive::HeadlessPlan {
+        steps: vec![
+            pa_tui::interactive::HeadlessStep::Submit("/switch".to_string()),
+            pa_tui::interactive::HeadlessStep::WaitRender {
+                needle: "Search models".to_string(),
+                timeout_ms: 30_000,
+            },
+            pa_tui::interactive::HeadlessStep::Type("mock".to_string()),
+            pa_tui::interactive::HeadlessStep::Type("\n".to_string()),
+            pa_tui::interactive::HeadlessStep::WaitRender {
+                needle: "(this session only)".to_string(),
+                timeout_ms: 30_000,
+            },
+            // An argument keeps the session switch: an unknown id reports the attach failure.
+            pa_tui::interactive::HeadlessStep::Submit("/switch no-such-session".to_string()),
+            pa_tui::interactive::HeadlessStep::WaitRender {
+                needle: "switch to no-such-session failed".to_string(),
+                timeout_ms: 30_000,
+            },
+        ],
+        width: 120,
+        height: 36,
+    };
+    let outcome = run_headless_bounded(options, plan)
+        .await
+        .expect("interactive run");
+    let rendered = outcome.frames.join("\n");
+    assert!(
+        !rendered.contains("usage: /switch"),
+        "bare /switch must not print the session-switch usage line:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("Model: mock-1 (this session only)"),
+        "bare /switch opened the session-only picker and applied the pick:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("switch to no-such-session failed"),
+        "/switch <id> still routes to the session switch:\n{rendered}"
+    );
+    // The session-only pick left the saved default alone.
+    let settings_after: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(agent_dir.join("settings.json")).expect("read settings.json"),
+    )
+    .expect("settings.json parses");
+    assert_eq!(
+        settings_after, settings_before,
+        "a session-only switch must not save the default model"
+    );
+    drop(supervisor);
+}
+
 /// The `thinkingLevelMap` (not the `reasoning` flag) is the capability signal:
 /// `/effort` applies its declared level.
 #[tokio::test]
