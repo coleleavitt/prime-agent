@@ -35,6 +35,20 @@ fn cells_blank(line: &Line, tag: &Marker) -> bool {
         .all(|span| crate::ansi::strip_ansi(&span.content).trim().is_empty())
 }
 
+/// Every preview `frame` names, once each, top to bottom (the placeholder
+/// path: the cells draw the image, so no band needs planning).
+pub(crate) fn markers(frame: &[Line]) -> Vec<Marker> {
+    let mut seen: Vec<Marker> = Vec::new();
+    for line in frame {
+        if let Some(tag) = line.iter().find_map(|span| parse_marker(&span.content)) {
+            if !seen.iter().any(|known| known.key == tag.key) {
+                seen.push(tag);
+            }
+        }
+    }
+    seen
+}
+
 /// The previews `frame` shows: per image, the longest run of consecutive
 /// reserved rows that kept their marker and blank cells, top to bottom.
 pub(crate) fn plan(frame: &[Line]) -> Vec<Visible> {

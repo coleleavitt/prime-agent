@@ -4,15 +4,42 @@ use super::payload::{
 };
 use super::plan::{plan, Visible};
 use super::*;
+use crate::terminal_image::ImageTerminal;
 use crate::terminal_image::{
     clear_image_protocol_override, delete_kitty_image, encode_iterm2, encode_kitty,
     kitty_delete_placements, kitty_place, kitty_transmit, set_cell_dimensions_override,
-    set_image_protocol_override, Iterm2Options, Iterm2Size, KittyCrop, KittyOptions,
+    Iterm2Options, Iterm2Size, KittyCrop, KittyOptions,
 };
 use base64::Engine;
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::Read as _;
+
+const KITTY: ImageTerminal = ImageTerminal {
+    protocol: ImageProtocol::Kitty,
+    transport: crate::terminal_image::ImageTransport::Direct,
+};
+const ITERM2: ImageTerminal = ImageTerminal {
+    protocol: ImageProtocol::Iterm2,
+    transport: crate::terminal_image::ImageTransport::Direct,
+};
+
+/// kitty behind tmux with passthrough on: the pane at row 2, column 30 of
+/// the client's screen.
+const KITTY_TMUX: ImageTerminal = ImageTerminal {
+    protocol: ImageProtocol::Kitty,
+    transport: crate::terminal_image::ImageTransport::Tmux {
+        origin_row: 2,
+        origin_column: 30,
+    },
+};
+const ITERM2_TMUX: ImageTerminal = ImageTerminal {
+    protocol: ImageProtocol::Iterm2,
+    transport: crate::terminal_image::ImageTransport::Tmux {
+        origin_row: 2,
+        origin_column: 30,
+    },
+};
 
 const CELL: CellDimensions = CellDimensions {
     width_px: 10,
@@ -31,7 +58,11 @@ struct Terminal;
 
 impl Terminal {
     fn with(protocol: Option<ImageProtocol>) -> Self {
-        set_image_protocol_override(protocol);
+        Self::with_terminal(protocol.map(ImageTerminal::direct))
+    }
+
+    fn with_terminal(terminal: Option<ImageTerminal>) -> Self {
+        crate::terminal_image::set_image_terminal_override(terminal);
         set_cell_dimensions_override(Some(CELL));
         Self
     }
@@ -229,7 +260,7 @@ fn kitty_places_once_moves_by_id_and_deletes_when_scrolled_out() {
     let mut painter = Painter::default();
     let paint = |painter: &mut Painter, frame: &[Line]| {
         let mut out = String::new();
-        painter.paint(ImageProtocol::Kitty, frame, (40, 12), &stub, &mut out);
+        painter.paint(KITTY, frame, (40, 12), &stub, &mut out);
         out
     };
     // First sight, whole: TS's transmit-and-place at the reserved origin.
@@ -289,10 +320,10 @@ fn kitty_places_once_moves_by_id_and_deletes_when_scrolled_out() {
     assert_eq!(painter.take_shown(), 0);
     // The surface's exit frees the data.
     let mut released = String::new();
-    painter.release(&mut released);
+    painter.release(KITTY, &mut released);
     assert_eq!(released, delete_kitty_image(id));
     let mut again = String::new();
-    painter.release(&mut again);
+    painter.release(KITTY, &mut again);
     assert_eq!(again, "");
 }
 
@@ -303,7 +334,7 @@ fn kitty_first_seen_cropped_transmits_then_places() {
     let mut painter = Painter::default();
     let mut out = String::new();
     painter.paint(
-        ImageProtocol::Kitty,
+        KITTY,
         &frame_with(&image, BLOCK, -4, 12),
         (40, 12),
         &stub,
@@ -337,15 +368,15 @@ fn kitty_waits_for_a_pending_transcode_and_re_places_after_a_resize() {
     let mut painter = Painter::default();
     let frame = frame_with(&image, BLOCK, 3, 12);
     let mut out = String::new();
-    painter.paint(ImageProtocol::Kitty, &frame, (40, 12), &stub, &mut out);
+    painter.paint(KITTY, &frame, (40, 12), &stub, &mut out);
     assert_eq!(out, "", "nothing to place while the transcode runs");
     let stub = kitty_stub(&image);
-    painter.paint(ImageProtocol::Kitty, &frame, (40, 12), &stub, &mut out);
+    painter.paint(KITTY, &frame, (40, 12), &stub, &mut out);
     let id = kitty_id(&out);
     // The resize's clear: the old placement goes, and the image is sent
     // again (kitty freed the data the clear erased).
     let mut resized = String::new();
-    painter.paint(ImageProtocol::Kitty, &frame, (50, 12), &stub, &mut resized);
+    painter.paint(KITTY, &frame, (50, 12), &stub, &mut resized);
     assert_eq!(
         resized,
         format!(
@@ -386,7 +417,7 @@ fn iterm2_places_whole_previews_and_repaints_the_cells_a_moved_one_covered() {
     };
     let mut out = String::new();
     painter.paint(
-        ImageProtocol::Iterm2,
+        ITERM2,
         &frame_with(&image, BLOCK, 3, 12),
         (40, 12),
         &stub,
@@ -397,7 +428,7 @@ fn iterm2_places_whole_previews_and_repaints_the_cells_a_moved_one_covered() {
     // goes out at its new origin.
     let moved = frame_with(&image, BLOCK, 2, 12);
     let mut out = String::new();
-    painter.paint(ImageProtocol::Iterm2, &moved, (40, 12), &stub, &mut out);
+    painter.paint(ITERM2, &moved, (40, 12), &stub, &mut out);
     let mut expected = String::new();
     for row in 3..8u16 {
         let mut line = moved[usize::from(row)].clone();
@@ -417,7 +448,7 @@ fn iterm2_places_whole_previews_and_repaints_the_cells_a_moved_one_covered() {
         let mut out = String::new();
         let mut fresh = Painter::default();
         fresh.paint(
-            ImageProtocol::Iterm2,
+            ITERM2,
             &frame_with(&image, BLOCK, top, 12),
             (40, 12),
             &stub,
@@ -660,4 +691,152 @@ fn a_preview_scrolling_out_of_the_window_shrinks_to_its_visible_band() {
         }
     }
     panic!("the preview never scrolled out");
+}
+
+/// tmux: the image is transmitted once through the passthrough with a
+/// virtual placement (icat's `a=T,U=1`); scrolling, cropping and leaving
+/// the frame are the cells' business (no escape); a resized block
+/// re-creates the virtual placement; the release frees the data, wrapped.
+#[test]
+fn tmux_kitty_transmits_once_and_lets_the_cells_move_the_image() {
+    use crate::terminal_image::kitty_graphics::{tmux_passthrough, PLACEHOLDER};
+    let _terminal = Terminal::with_terminal(Some(KITTY_TMUX));
+    let image = PanelImage::new("dG11eA==", "image/png", dims(200, 100));
+    let stub = kitty_stub(&image);
+    let id = crate::terminal_image::kitty_graphics::placeholder_image_id(image.key);
+    let mut painter = Painter::default();
+    let mut paint = |frame: &[Line], size: (u16, u16)| {
+        let mut out = String::new();
+        painter.paint(KITTY_TMUX, frame, size, &stub, &mut out);
+        out
+    };
+    // kitty's own bytes (`placeholder_3x2.golden`'s serializer): the
+    // payload unpadded, every escape doubled inside the wrap.
+    let transmit = tmux_passthrough(&format!(
+        "\x1b_Ga=T,q=2,f=100,U=1,c=20,r=5,i={id};UE5HREFUQQ\x1b\\"
+    ));
+    let frame = frame_with(&image, BLOCK, 3, 12);
+    assert!(frame[3]
+        .iter()
+        .any(|span| span.content.starts_with(PLACEHOLDER)));
+    assert_eq!(paint(&frame, (40, 12)), transmit);
+    // Scrolled, cropped, gone, back, and a resize of the grid: tmux redraws
+    // the placeholder text; nothing to write.
+    for (top, size) in [(2, (40, 12)), (-2, (40, 12)), (20, (40, 12)), (3, (50, 14))] {
+        assert_eq!(
+            paint(&frame_with(&image, BLOCK, top, 12), size),
+            "",
+            "top {top}"
+        );
+    }
+    // A narrower pane shrinks the block: a new virtual placement over the
+    // stored data, no re-send.
+    let narrow = ImageBlock {
+        columns: 12,
+        rows: 3,
+    };
+    assert_eq!(
+        paint(&frame_with(&image, narrow, 3, 12), (40, 12)),
+        format!(
+            "{}{}",
+            tmux_passthrough(&format!("\x1b_Ga=d,q=2,d=i,i={id}\x1b\\")),
+            tmux_passthrough(&format!("\x1b_Ga=p,q=2,U=1,c=12,r=3,i={id}\x1b\\"))
+        )
+    );
+    assert_eq!(painter.take_shown(), 1);
+    let mut released = String::new();
+    painter.release(KITTY_TMUX, &mut released);
+    assert_eq!(
+        released,
+        tmux_passthrough(&format!("\x1b_Ga=d,q=2,d=I,i={id}\x1b\\"))
+    );
+}
+
+/// iTerm2 behind tmux: the same whole-preview placement, the cursor move
+/// inside the passthrough at the pane's origin on the client screen.
+#[test]
+fn tmux_iterm2_places_through_the_passthrough_at_the_pane_origin() {
+    use crate::terminal_image::kitty_graphics::tmux_passthrough;
+    let _terminal = Terminal::with_terminal(Some(ITERM2_TMUX));
+    let image = PanelImage::new("aXRtdXg=", "image/png", dims(200, 100));
+    let mut stub = Stub::default();
+    stub.files.insert(image.key, Arc::from("RklMRQ=="));
+    let mut painter = Painter::default();
+    let mut out = String::new();
+    painter.paint(
+        ITERM2_TMUX,
+        &frame_with(&image, BLOCK, 3, 12),
+        (40, 12),
+        &stub,
+        &mut out,
+    );
+    let image_escape = encode_iterm2(
+        "RklMRQ==",
+        &Iterm2Options {
+            width: Some(Iterm2Size::Cells(20)),
+            height: Some(Iterm2Size::Auto),
+            ..Iterm2Options::default()
+        },
+    );
+    assert_eq!(out, tmux_passthrough(&format!("\x1b[6;35H{image_escape}")));
+}
+
+/// The headless session frame under tmux: the reserved rows' cells hold
+/// the placeholder grid (one cell per column, the image id in the cell's
+/// foreground), the plain-text dump and the selection see blanks, and the
+/// exit flush still writes the textual fallback.
+#[test]
+fn the_tmux_session_frame_draws_placeholder_cells() {
+    use crate::terminal_image::kitty_graphics::{placeholder_cell, placeholder_rgb, PLACEHOLDER};
+    let _terminal = Terminal::with_terminal(Some(KITTY_TMUX));
+    let mut view = session_view();
+    let frame = view.render_frame(80, 40);
+    let tags = super::plan::markers(&frame);
+    let [tag] = tags.as_slice() else {
+        panic!("one preview: {tags:?}");
+    };
+    assert_eq!((tag.column, tag.columns, tag.rows), (4, 60, 17));
+    let id = crate::terminal_image::kitty_graphics::placeholder_image_id(tag.key);
+    let (r, g, b) = placeholder_rgb(id);
+    // Paint the frame into a ratatui buffer the way the surface does.
+    let backend = ratatui::backend::TestBackend::new(80, 40);
+    let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|f| {
+            let lines: Vec<ratatui::text::Line<'static>> =
+                frame.iter().map(crate::markdown::to_ratatui_line).collect();
+            f.render_widget(ratatui::text::Text::from(lines), f.area());
+        })
+        .expect("draw");
+    let buffer = terminal.backend().buffer();
+    let top = frame
+        .iter()
+        .position(|line| line.iter().any(|span| span.content.contains(PLACEHOLDER)))
+        .expect("a placeholder row");
+    for row in 0..17u32 {
+        for column in 0..60u32 {
+            let cell = &buffer[(4 + column as u16, top as u16 + row as u16)];
+            assert_eq!(
+                (cell.symbol(), cell.fg),
+                (
+                    placeholder_cell(id, row, column).as_str(),
+                    ratatui::style::Color::Rgb(r, g, b)
+                ),
+                "row {row} column {column}"
+            );
+        }
+        // The cell after the block is the row's own (blank) content.
+        assert_eq!(buffer[(64, top as u16 + row as u16)].symbol(), " ");
+    }
+    let text = crate::app::render_frame_text(&mut view, 80, 40);
+    assert!(
+        text[top..top + 17].iter().all(|row| row.trim().is_empty()),
+        "{text:#?}"
+    );
+    let mut scrollback: Vec<u8> = Vec::new();
+    view.stream_flush_to(&mut scrollback, 80, 40)
+        .expect("the flush streams");
+    let scrollback = String::from_utf8_lossy(&scrollback);
+    assert!(scrollback.contains("[Image: render.png [image/png] 1600x900]"));
+    assert!(!scrollback.contains(PLACEHOLDER));
 }

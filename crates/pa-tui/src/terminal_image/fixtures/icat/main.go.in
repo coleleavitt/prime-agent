@@ -1,0 +1,90 @@
+// Golden generator: kitty's own GraphicsCommand serializer (tools/tui/graphics,
+// copied verbatim minus its tty/loop helpers) driven the way kittens/icat drives
+// it under tmux, plus icat's write_unicode_placeholder cell loop.
+package main
+
+import (
+	"fmt"
+	"os"
+	"strings"
+
+	"icatgolden/graphics"
+	"icatgolden/images"
+)
+
+const ImagePlaceholderChar = 0x10EEEE
+
+func tmux_gc() *graphics.GraphicsCommand {
+	gc := graphics.GraphicsCommand{}
+	gc.WrapPrefix = "\033Ptmux;"
+	gc.WrapSuffix = "\033\\"
+	gc.EncodeSerializedDataFunc = func(x string) string { return strings.ReplaceAll(x, "\033", "\033\033") }
+	return &gc
+}
+
+func placeholder(id uint32, width_cells, height_cells int) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("\033[38:2:%d:%d:%dm", (id>>16)&255, (id>>8)&255, id&255))
+	id_char := string(images.NumberToDiacritic[(id>>24)&255])
+	for r := 0; r < height_cells; r++ {
+		for c := 0; c < width_cells; c++ {
+			b.WriteString(string(rune(ImagePlaceholderChar)) + string(images.NumberToDiacritic[r]) + string(images.NumberToDiacritic[c]) + id_char)
+		}
+		if r < height_cells-1 {
+			b.WriteString("\n\r")
+		}
+	}
+	b.WriteString("\033[39m")
+	return b.String()
+}
+
+func main() {
+	out := map[string]string{}
+	// icat's gc_for_image, frame 0, unicode placeholder, PNG passthrough (f=100), tmux wrap.
+	gc := tmux_gc()
+	gc.SetQuiet(graphics.GRT_quiet_silent)
+	gc.SetFormat(graphics.GRT_format_png)
+	gc.SetImageId(0x2A0B0C0D)
+	gc.SetAction(graphics.GRT_action_transmit_and_display)
+	gc.SetUnicodePlaceholder(graphics.GRT_create_unicode_placeholder)
+	gc.SetColumns(3)
+	gc.SetRows(2)
+	payload := []byte("\x89PNG-tiny-payload")
+	out["transmit_small"] = gc.AsAPC(payload)
+	// A payload over icat's compression threshold: chunked continuation keys.
+	big := make([]byte, 100*1024)
+	for i := range big {
+		big[i] = byte(i * 7)
+	}
+	out["transmit_big"] = gc.AsAPC(big)
+	// Delete by id (data freed), wrapped.
+	d := tmux_gc()
+	d.SetAction(graphics.GRT_action_delete)
+	d.SetDelete(graphics.GRT_free_by_id)
+	d.SetImageId(0x2A0B0C0D)
+	d.SetQuiet(graphics.GRT_quiet_silent)
+	out["delete"] = d.AsAPC(nil)
+	dp := tmux_gc()
+	dp.SetAction(graphics.GRT_action_delete)
+	dp.SetDelete(graphics.GRT_delete_by_id)
+	dp.SetImageId(0x2A0B0C0D)
+	dp.SetQuiet(graphics.GRT_quiet_silent)
+	out["delete_placements"] = dp.AsAPC(nil)
+	vp := tmux_gc()
+	vp.SetAction(graphics.GRT_action_display)
+	vp.SetQuiet(graphics.GRT_quiet_silent)
+	vp.SetUnicodePlaceholder(graphics.GRT_create_unicode_placeholder)
+	vp.SetColumns(3)
+	vp.SetRows(2)
+	vp.SetImageId(0x2A0B0C0D)
+	out["virtual_place"] = vp.AsAPC(nil)
+	out["placeholder_3x2"] = placeholder(0x2A0B0C0D, 3, 2)
+	var diac []string
+	for _, r := range images.NumberToDiacritic {
+		diac = append(diac, fmt.Sprintf("%x", r))
+	}
+	out["diacritics"] = strings.Join(diac, ",")
+	for _, k := range []string{"transmit_small", "transmit_big", "delete", "delete_placements", "virtual_place", "placeholder_3x2", "diacritics"} {
+		os.WriteFile(k+".golden", []byte(out[k]), 0o644)
+	}
+}

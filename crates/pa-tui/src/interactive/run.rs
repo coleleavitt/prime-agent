@@ -894,8 +894,9 @@ async fn run_interactive_surface(
                         if let Ok((_width, height)) = crossterm::terminal::size() {
                             view.set_terminal_rows(height);
                         }
-                        // A font-size change resizes the cells, not just the grid.
-                        crate::terminal_image::refresh_cell_dimensions();
+                        // A font-size change resizes the cells, not just the grid (and a
+                        // tmux layout change can move the pane).
+                        crate::terminal_image::terminal_resized();
                     }
                     UiInput::WaitIdle { .. } | UiInput::SubmitAndSettle { .. } => {
                         unreachable!("barrier handled above")

@@ -52,31 +52,132 @@ pub fn detect_image_protocol(env: impl Fn(&str) -> Option<String>) -> Option<Ima
     None
 }
 
+/// How image escapes reach the terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ImageTransport {
+    /// Straight to the terminal (TS's only path).
+    Direct,
+    /// Through tmux's passthrough (`DCS tmux; … ST`, see [`tmux`]): kitty
+    /// images become unicode placeholders tmux owns as text; iTerm2 images
+    /// address the client screen at the pane's origin.
+    Tmux { origin_row: u16, origin_column: u16 },
+}
+
+/// The process's image terminal: the protocol and how its escapes travel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ImageTerminal {
+    pub protocol: ImageProtocol,
+    pub transport: ImageTransport,
+}
+
+impl ImageTerminal {
+    #[must_use]
+    pub fn direct(protocol: ImageProtocol) -> Self {
+        Self {
+            protocol,
+            transport: ImageTransport::Direct,
+        }
+    }
+
+    /// Whether kitty images are unicode placeholders drawn by the cells.
+    #[must_use]
+    pub fn placeholders(self) -> bool {
+        self.protocol == ImageProtocol::Kitty && self.tmux()
+    }
+
+    /// Whether escapes ride tmux's passthrough.
+    #[must_use]
+    pub fn tmux(self) -> bool {
+        matches!(self.transport, ImageTransport::Tmux { .. })
+    }
+}
+
 thread_local! {
-    /// A test's image-protocol override.
-    static PROTOCOL_OVERRIDE: Cell<Option<ForcedProtocol>> = const { Cell::new(None) };
+    /// A test's image-terminal override.
+    static PROTOCOL_OVERRIDE: Cell<Option<ForcedTerminal>> = const { Cell::new(None) };
     /// A test's cell-size override.
     static CELL_OVERRIDE: Cell<Option<CellDimensions>> = const { Cell::new(None) };
 }
 
-/// The process's image protocol (TS `getCapabilities().images`), detected
-/// once from the environment.
-pub fn image_protocol() -> Option<ImageProtocol> {
-    static DETECTED: OnceLock<Option<ImageProtocol>> = OnceLock::new();
-    if let Some(ForcedProtocol(forced)) = PROTOCOL_OVERRIDE.with(Cell::get) {
-        return forced;
-    }
-    *DETECTED.get_or_init(|| detect_image_protocol(|name| std::env::var(name).ok()))
+/// The environment's answer (TS `getCapabilities().images`), read once.
+fn env_image_terminal() -> Option<ImageTerminal> {
+    static DETECTED: OnceLock<Option<ImageTerminal>> = OnceLock::new();
+    *DETECTED.get_or_init(|| {
+        detect_image_protocol(|name| std::env::var(name).ok()).map(ImageTerminal::direct)
+    })
 }
 
-/// A test-forced protocol (`None`: the fallback terminal).
+/// A probe's answer when the environment had none (see
+/// [`start_image_detection`]).
+static PROBED: std::sync::Mutex<Option<ImageTerminal>> = std::sync::Mutex::new(None);
+
+fn probed() -> Option<ImageTerminal> {
+    *PROBED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Record a probe's answer, size the cells for it, and wake the session
+/// loop so the next frame lays the previews out for it.
+fn set_probed(terminal: ImageTerminal) {
+    *PROBED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(terminal);
+    refresh_cell_dimensions();
+    crate::inline_image::notify_terminal_changed();
+}
+
+/// The process's image terminal: the environment's answer (TS parity),
+/// else what a probe found.
+pub fn image_terminal() -> Option<ImageTerminal> {
+    if let Some(ForcedTerminal(forced)) = PROTOCOL_OVERRIDE.with(Cell::get) {
+        return forced;
+    }
+    env_image_terminal().or_else(probed)
+}
+
+/// The process's image protocol (TS `getCapabilities().images`).
+pub fn image_protocol() -> Option<ImageProtocol> {
+    image_terminal().map(|terminal| terminal.protocol)
+}
+
+/// Start the probe for a terminal the environment does not name, once per
+/// process, off the paint path; until it answers the previews keep their
+/// textual fallback. Runs at the first surface's mount.
+pub fn start_image_detection() {
+    static STARTED: std::sync::Once = std::sync::Once::new();
+    STARTED.call_once(|| {
+        use std::io::IsTerminal;
+        let tmux = std::env::var_os("TMUX").is_some_and(|value| !value.is_empty());
+        if env_image_terminal().is_some() || !tmux || !std::io::stdout().is_terminal() {
+            return;
+        }
+        let _ = std::thread::Builder::new()
+            .name("pa-image-tmux-probe".to_string())
+            .spawn(|| {
+                if let Some(terminal) =
+                    tmux::probe_tmux_client().and_then(|client| tmux::tmux_image_terminal(&client))
+                {
+                    set_probed(terminal);
+                }
+            });
+    });
+}
+
+/// A test-forced terminal (`None`: the fallback terminal).
 #[derive(Debug, Clone, Copy)]
-struct ForcedProtocol(Option<ImageProtocol>);
+struct ForcedTerminal(Option<ImageTerminal>);
 
 /// Force this thread's image protocol (`None`: a terminal without one).
 #[cfg(test)]
 pub(crate) fn set_image_protocol_override(protocol: Option<ImageProtocol>) {
-    PROTOCOL_OVERRIDE.with(|cell| cell.set(Some(ForcedProtocol(protocol))));
+    set_image_terminal_override(protocol.map(ImageTerminal::direct));
+}
+
+/// Force this thread's image terminal (`None`: a terminal without one).
+#[cfg(test)]
+pub(crate) fn set_image_terminal_override(terminal: Option<ImageTerminal>) {
+    PROTOCOL_OVERRIDE.with(|cell| cell.set(Some(ForcedTerminal(terminal))));
 }
 
 /// Restore this thread's environment detection.
@@ -148,6 +249,40 @@ pub fn refresh_cell_dimensions() {
                 height_px: u32::from(size.height) / u32::from(size.rows),
             });
         }
+    }
+}
+
+/// A resize under tmux can move the pane (a split, a layout change): an
+/// iTerm2 placement addresses the client screen, so the pane's origin is
+/// asked again, off the paint path. Every other terminal only re-reads the
+/// cell size.
+pub fn terminal_resized() {
+    static IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    refresh_cell_dimensions();
+    let Some(current) = probed() else {
+        return;
+    };
+    if current.protocol != ImageProtocol::Iterm2
+        || !current.tmux()
+        || IN_FLIGHT.swap(true, Ordering::SeqCst)
+    {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("pa-image-tmux-probe".to_string())
+        .spawn(move || {
+            let answer =
+                tmux::probe_tmux_client().and_then(|client| tmux::tmux_image_terminal(&client));
+            if let Some(terminal) = answer.filter(|terminal| *terminal != current) {
+                *PROBED
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(terminal);
+                crate::inline_image::notify_terminal_changed();
+            }
+            IN_FLIGHT.store(false, Ordering::SeqCst);
+        });
+    if spawned.is_err() {
+        IN_FLIGHT.store(false, Ordering::SeqCst);
     }
 }
 
@@ -684,3 +819,6 @@ mod tests {
 
 #[cfg(test)]
 mod ts_parity_tests;
+
+pub(crate) mod kitty_graphics;
+pub(crate) mod tmux;

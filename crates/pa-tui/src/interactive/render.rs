@@ -189,7 +189,9 @@ impl Renderer {
                 }
                 // Bracketed paste and the kitty keyboard protocol come up with the raw-mode
                 // bracket: pastes arrive as one chunk, and the kitty probe (once per process —
-                // see `enhanced_keys`) runs before the reader thread starts polling.
+                // see `enhanced_keys`) runs before the reader thread starts polling. The image
+                // terminal's probe (once per process, off the paint path) starts first.
+                crate::terminal_image::start_image_detection();
                 crate::enhanced_keys::enable(&mut std::io::stdout())?;
                 spawn_session_reader(ui_tx.clone(), exit_guard.clone());
                 // Inline previews size their reserved rows from the cell size.

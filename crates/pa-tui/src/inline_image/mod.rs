@@ -9,9 +9,13 @@
 //! After the frame flush, [`paint_frame`] scans the composed frame for the
 //! markers and the [`Painter`] places the image over the reserved cells
 //! with cursor positioning, re-placing it on scroll and resize and deleting
-//! it when its rows leave the frame. Without a protocol (unknown terminals,
-//! tmux, screen), and in the exit flush's scrollback, the row keeps its
-//! textual fallback.
+//! it when its rows leave the frame. Inside tmux (passthrough on, a kitty
+//! client) the reserved cells instead hold kitty's unicode placeholders,
+//! drawn by ratatui like any text: tmux owns those cells, so the image
+//! scrolls, clips, and survives pane switches with them, and the painter
+//! only transmits each image once through the passthrough. Without a
+//! protocol (unknown terminals, screen, tmux with passthrough off), and in
+//! the exit flush's scrollback, the row keeps its textual fallback.
 
 mod painter;
 mod payload;
@@ -23,9 +27,13 @@ pub(crate) use payload::{payload_ready, GlobalSource};
 use std::cell::Cell;
 use std::sync::{Arc, LazyLock, Mutex};
 
+use crate::terminal_image::kitty_graphics::{
+    is_placeholder_cell, placeholder_cell, placeholder_image_id, placeholder_rgb,
+    MAX_PLACEHOLDER_CELLS, PLACEHOLDER,
+};
 use crate::terminal_image::{
-    calculate_image_rows, cell_dimensions, image_protocol, CellDimensions, ImageDimensions,
-    ImageProtocol,
+    calculate_image_rows, cell_dimensions, image_protocol, image_terminal, CellDimensions,
+    ImageDimensions, ImageProtocol, ImageTerminal,
 };
 use crate::{Line, Span};
 
@@ -36,6 +44,8 @@ const MAX_IMAGE_COLUMNS: u32 = 60;
 /// The tallest preview in rows: a portrait preview narrows to fit instead
 /// of filling several screens.
 const MAX_IMAGE_ROWS: u32 = 24;
+const _: () = assert!(MAX_IMAGE_ROWS < MAX_PLACEHOLDER_CELLS);
+const _: () = assert!(MAX_IMAGE_COLUMNS < MAX_PLACEHOLDER_CELLS);
 /// Narrower than this the preview stays the textual fallback.
 const MIN_IMAGE_COLUMNS: u32 = 8;
 
@@ -140,10 +150,19 @@ fn block_geometry(dims: ImageDimensions, width: usize, cell: CellDimensions) -> 
 
 /// The reserved rows of a placed preview: blank rows at the branch indent,
 /// each carrying its zero-width placement marker.
+///
+/// Under tmux the reserved cells hold kitty's unicode placeholders instead
+/// of blanks (icat's `write_unicode_placeholder`): each cell numbers its row
+/// and column with diacritics and carries the image id in its foreground
+/// colour, so the cells themselves are the image wherever tmux draws them.
 pub(crate) fn image_block_rows(image: &PanelImage, block: ImageBlock) -> Vec<Line> {
+    let placeholders = image_terminal().is_some_and(ImageTerminal::placeholders);
+    let id = placeholder_image_id(image.key);
+    let (r, g, b) = placeholder_rgb(id);
+    let style = ratatui::style::Style::default().fg(ratatui::style::Color::Rgb(r, g, b));
     (0..block.rows)
         .map(|index| {
-            vec![
+            let mut row = vec![
                 Span::raw(marker(&Marker {
                     key: image.key,
                     index,
@@ -152,9 +171,34 @@ pub(crate) fn image_block_rows(image: &PanelImage, block: ImageBlock) -> Vec<Lin
                     columns: block.columns,
                 })),
                 Span::raw(crate::branch::BRANCH_INDENT),
-            ]
+            ];
+            if placeholders {
+                row.push(Span {
+                    style,
+                    content: (0..block.columns)
+                        .map(|column| placeholder_cell(id, index, column))
+                        .collect(),
+                });
+            }
+            row
         })
         .collect()
+}
+
+/// Blank the placeholder cells of a row for the plain-text dumps (the
+/// selection copy, the headless frame text): one space per cell.
+pub(crate) fn blank_placeholders(line: &mut Line) {
+    use unicode_segmentation::UnicodeSegmentation;
+    for span in line.iter_mut() {
+        if !span.content.contains(PLACEHOLDER) {
+            continue;
+        }
+        span.content = span
+            .content
+            .graphemes(true)
+            .map(|cell| if is_placeholder_cell(cell) { " " } else { cell })
+            .collect();
+    }
 }
 
 const MARKER_PREFIX: &str = "\x1b_pa-image;";
@@ -228,6 +272,7 @@ fn text_fallback_active() -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct LayoutKey {
     protocol: Option<ImageProtocol>,
+    placeholders: bool,
     cell: CellDimensions,
     failures: u64,
     text_fallback: bool,
@@ -236,6 +281,7 @@ pub(crate) struct LayoutKey {
 pub(crate) fn layout_key() -> LayoutKey {
     LayoutKey {
         protocol: image_protocol(),
+        placeholders: image_terminal().is_some_and(ImageTerminal::placeholders),
         cell: cell_dimensions(),
         failures: payload::failure_epoch(),
         text_fallback: text_fallback_active(),
@@ -254,12 +300,18 @@ fn painter() -> std::sync::MutexGuard<'static, Painter> {
 /// The image escapes for one painted frame (empty without a protocol or
 /// when nothing changed). Runs after the cell flush; reads no disk.
 pub(crate) fn paint_frame(frame: &[Line], width: u16, height: u16) -> String {
-    let Some(protocol) = image_protocol() else {
+    let Some(terminal) = image_terminal() else {
         return String::new();
     };
     let mut out = String::new();
-    painter().paint(protocol, frame, (width, height), &GlobalSource, &mut out);
+    painter().paint(terminal, frame, (width, height), &GlobalSource, &mut out);
     out
+}
+
+/// The image terminal changed (a probe answered): wake the session loop so
+/// the next frame lays the previews out for it.
+pub(crate) fn notify_terminal_changed() {
+    payload::notify_ready();
 }
 
 /// Take every placed image off the screen and free kitty's copies: the
@@ -267,16 +319,16 @@ pub(crate) fn paint_frame(frame: &[Line], width: u16, height: u16) -> String {
 /// Never blocks: the exit restore also runs from panic and signal paths,
 /// where a paint may still hold the state.
 pub(crate) fn release_screen(out: &mut impl std::io::Write) {
-    if image_protocol().is_none() {
+    let Some(terminal) = image_terminal() else {
         return;
-    }
+    };
     let mut painter = match PAINTER.try_lock() {
         Ok(painter) => painter,
         Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
         Err(std::sync::TryLockError::WouldBlock) => return,
     };
     let mut escapes = String::new();
-    painter.release(&mut escapes);
+    painter.release(terminal, &mut escapes);
     if !escapes.is_empty() {
         let _ = out.write_all(escapes.as_bytes());
         let _ = out.flush();

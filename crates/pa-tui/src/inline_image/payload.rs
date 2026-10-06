@@ -95,9 +95,14 @@ pub(super) fn failure_epoch() -> u64 {
     FAILURES.load(Ordering::Relaxed)
 }
 
-/// Resolves once a background transcode settled (ready or failed).
+/// Resolves once a background transcode settled (ready or failed), or the
+/// image terminal changed.
 pub(crate) async fn payload_ready() {
     READY.notified().await;
+}
+
+pub(super) fn notify_ready() {
+    READY.notify_one();
 }
 
 /// The process payload source.

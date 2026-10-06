@@ -86,6 +86,7 @@ fn run_app_surface(
     crate::altscreen::enter()?;
     // The replay surface owns the same enhanced-key modes as the session: bracketed pastes
     // arrive as one chunk.
+    crate::terminal_image::start_image_detection();
     crate::enhanced_keys::enable(&mut std::io::stdout())?;
     crate::terminal_image::refresh_cell_dimensions();
     let mut terminal = Terminal::new(crate::hyperlinks::stdout_backend())?;
@@ -369,6 +370,7 @@ pub fn render_frame_text(view: &mut AgentView, width: u16, height: u16) -> Vec<S
             let mut stripped = line.clone();
             crate::osc133::strip(&mut stripped);
             crate::inline_image::strip_markers(&mut stripped);
+            crate::inline_image::blank_placeholders(&mut stripped);
             crate::hyperlinks::strip_osc8(&mut stripped);
             stripped.iter().map(|s| s.content.as_str()).collect()
         })
