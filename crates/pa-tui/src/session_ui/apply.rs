@@ -216,6 +216,16 @@ impl SessionUi {
         }
     }
 
+    /// Count one client adoption occurrence into the run's `tui exit`,
+    /// fire-and-forget.
+    pub(crate) fn track_client_adoption(&mut self, adoption: crate::interactive::ClientAdoption) {
+        if let Some(telemetry) = self.telemetry.clone() {
+            tokio::spawn(async move {
+                telemetry.client_adoption(adoption).await;
+            });
+        }
+    }
+
     /// Report a feature attempt's observed outcome (`agent feature
     /// outcome`), fire-and-forget.
     pub(super) fn track_feature_outcome(

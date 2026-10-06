@@ -110,6 +110,14 @@ fn set_mermaid_properties(
 }
 
 impl pa_tui::interactive::InteractionTelemetry for CliInteractionTelemetry {
+    fn client_adoption(
+        &self,
+        adoption: pa_tui::interactive::ClientAdoption,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        self.count(adoption.counter_key());
+        Box::pin(std::future::ready(()))
+    }
+
     fn feature_outcome(
         &self,
         feature: &'static str,
@@ -458,6 +466,67 @@ mod tests {
         assert!(exits[1]["properties"]
             .get("tui_hyperlinks_enabled")
             .is_none());
+    }
+
+    /// The client adoption occurrences count into the run's `tui exit`.
+    #[test]
+    fn client_adoption_counts_ride_tui_exit() {
+        crate::mode::tests::with_clean_telemetry_env(|| {
+            tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(count_client_adoption());
+        });
+    }
+
+    async fn count_client_adoption() {
+        use pa_tui::interactive::ClientAdoption;
+        let dir = tempfile::TempDir::new().unwrap();
+        let agent_dir = dir.path().join("agent");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        let telemetry = CliInteractionTelemetry::new(dir.path().to_path_buf(), agent_dir.clone());
+        for adoption in [
+            ClientAdoption::SessionSwitch,
+            ClientAdoption::SessionSwitch,
+            ClientAdoption::ForkReplace,
+            ClientAdoption::CloneReplace,
+            ClientAdoption::PlanKey,
+            ClientAdoption::PlanFlag,
+        ] {
+            telemetry.client_adoption(adoption).await;
+        }
+        telemetry.client_exit("ctrl_d", false).await;
+        let mirror = std::fs::read_to_string(agent_dir.join("telemetry.jsonl")).unwrap();
+        let exit: serde_json::Value = mirror
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .find(|event: &serde_json::Value| event["name"] == "tui exit")
+            .expect("tui exit");
+        let counts: serde_json::Map<String, serde_json::Value> = exit["properties"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .filter(|(key, _)| {
+                [
+                    "tui_session_switch_count",
+                    "tui_fork_replace_count",
+                    "tui_clone_replace_count",
+                    "tui_plan_key_count",
+                    "tui_plan_flag_count",
+                ]
+                .contains(&key.as_str())
+            })
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        assert_eq!(
+            serde_json::Value::Object(counts),
+            serde_json::json!({
+                "tui_session_switch_count": 2,
+                "tui_fork_replace_count": 1,
+                "tui_clone_replace_count": 1,
+                "tui_plan_key_count": 1,
+                "tui_plan_flag_count": 1,
+            })
+        );
     }
 
     /// `tui image fallback` is a standalone event (the dialog is a rare

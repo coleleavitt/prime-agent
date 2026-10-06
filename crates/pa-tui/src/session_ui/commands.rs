@@ -51,6 +51,7 @@ impl SessionUi {
                 if args.is_empty() {
                     self.note("usage: /switch <n|id> (run /list first)", view);
                 } else {
+                    self.track_client_adoption(crate::interactive::ClientAdoption::SessionSwitch);
                     self.switch_to(&args, view).await?;
                 }
                 return Ok(());
@@ -243,6 +244,9 @@ impl SessionUi {
             "fork" => match ForkLaunch::from_args(&resolved.args) {
                 Some(launch) => {
                     self.track_feature_outcome("fork", "initiated", None);
+                    if launch == ForkLaunch::ReplaceInPlace {
+                        self.track_client_adoption(crate::interactive::ClientAdoption::ForkReplace);
+                    }
                     self.fork_launch = launch;
                     self.open_fork_selector(view).await?;
                 }
@@ -251,6 +255,11 @@ impl SessionUi {
             "clone" => match ForkLaunch::from_args(&resolved.args) {
                 Some(launch) => {
                     self.track_feature_outcome("clone", "initiated", None);
+                    if launch == ForkLaunch::ReplaceInPlace {
+                        self.track_client_adoption(
+                            crate::interactive::ClientAdoption::CloneReplace,
+                        );
+                    }
                     self.handle_clone_command(launch, view).await?;
                 }
                 None => self.note("Usage: /clone [--replace]", view),

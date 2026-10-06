@@ -104,7 +104,46 @@ pub struct ModelSelection {
 /// The seam is object-safe (held as `Arc<dyn InteractionTelemetry>` in the
 /// options and session UI), so the async methods return boxed futures with an
 /// explicit `Send` bound instead of RPITIT.
+/// One client adoption occurrence the run counts into its `tui exit`
+/// (`tui_<name>_count`): which surface was used, never its arguments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientAdoption {
+    /// `/switch <n|id>` moved to another live session.
+    SessionSwitch,
+    /// `/fork --replace` forked in place.
+    ForkReplace,
+    /// `/clone --replace` cloned in place.
+    CloneReplace,
+    /// The plan-mode key (`app.plan.toggle`) toggled plan mode.
+    PlanKey,
+    /// `--plan` started the session in plan mode.
+    PlanFlag,
+}
+
+impl ClientAdoption {
+    /// The run counter this occurrence counts into.
+    #[must_use]
+    pub fn counter_key(self) -> &'static str {
+        match self {
+            ClientAdoption::SessionSwitch => "tui_session_switch_count",
+            ClientAdoption::ForkReplace => "tui_fork_replace_count",
+            ClientAdoption::CloneReplace => "tui_clone_replace_count",
+            ClientAdoption::PlanKey => "tui_plan_key_count",
+            ClientAdoption::PlanFlag => "tui_plan_flag_count",
+        }
+    }
+}
+
 pub trait InteractionTelemetry: Send + Sync {
+    /// One client adoption occurrence (counted into the run's `tui exit`).
+    /// The default counts nothing.
+    fn client_adoption(
+        &self,
+        _adoption: ClientAdoption,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(std::future::ready(()))
+    }
+
     /// The first transcript scroll action of a run: `action` is `page_up` / `page_down` / `top` /
     /// `follow`.
     fn scroll_used(

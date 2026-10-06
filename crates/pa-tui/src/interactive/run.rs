@@ -514,6 +514,7 @@ async fn run_interactive_surface(
     // `--plan` goes through the session command, so the change is durable
     // and the kernel guard arms before the first prompt's turn.
     if options.initial_plan_mode {
+        session.track_client_adoption(crate::interactive::ClientAdoption::PlanFlag);
         session
             .submit_prompt(
                 "/plan on",
