@@ -220,34 +220,54 @@ impl RlmTokenBudget {
         }
     }
 
-    /// Draw the grant for one new child: what is left, capped by the
-    /// per-depth ceiling for the child's depth. Never returned to the pool.
+    /// Draw the grant for one new child. Never returned to the pool.
+    /// `requested` (`rlm.spawn(token_budget=)`) asks for an explicit grant,
+    /// which must fit both what is left and the per-depth ceiling for the
+    /// child's depth; without one the child gets what is left, capped by
+    /// that ceiling.
     ///
     /// # Errors
     ///
-    /// Errors when nothing is left to grant (the spawn is refused), and
-    /// when the grant cannot be made durable (a restart would refill it).
-    pub fn reserve_child_grant(&self) -> anyhow::Result<u64> {
-        let ceiling = self
-            .config
-            .per_depth
-            .get(self.depth as usize)
-            .copied()
-            .unwrap_or(u64::MAX);
+    /// Errors when the pool cannot fund the child (nothing left, or less
+    /// than `requested`), when `requested` exceeds the per-depth ceiling,
+    /// and when the grant cannot be made durable (a restart would refill
+    /// it). Every refusal refuses the spawn.
+    pub fn reserve_child_grant(&self, requested: Option<u64>) -> anyhow::Result<u64> {
+        let ceiling = self.config.per_depth.get(self.depth as usize).copied();
         let mut ledger = self.ledger();
-        let grant = self.remaining_in(&ledger).min(ceiling);
+        let left = self.remaining_in(&ledger);
+        let spent_note = || match self.allowance {
+            RlmTokenAllowance::Root => String::new(),
+            RlmTokenAllowance::Granted(_) => {
+                format!(" or spent ({} spent by this session)", ledger.spent)
+            }
+        };
+        let grant = match requested {
+            Some(requested) => {
+                if let Some(ceiling) = ceiling.filter(|ceiling| requested > *ceiling) {
+                    anyhow::bail!(
+                        "rlm.spawn token_budget={requested} exceeds the {ceiling}-token cap on any single grant to a depth-{} subagent",
+                        self.depth + 1
+                    );
+                }
+                if requested > left {
+                    anyhow::bail!(
+                        "RLM token budget cannot fund token_budget={requested}: {left} tokens are left to grant ({} of {} already granted{})",
+                        ledger.granted,
+                        self.pool(),
+                        spent_note()
+                    );
+                }
+                requested
+            }
+            None => left.min(ceiling.unwrap_or(u64::MAX)),
+        };
         if grant == 0 {
             anyhow::bail!(
                 "RLM token budget exhausted: {} of {} tokens already granted{}; no budget is left for another subagent",
                 ledger.granted,
                 self.pool(),
-                match self.allowance {
-                    RlmTokenAllowance::Root => String::new(),
-                    RlmTokenAllowance::Granted(_) => format!(
-                        " or spent ({} spent by this session)",
-                        ledger.spent
-                    ),
-                }
+                spent_note()
             );
         }
         let next = RlmTokenBudgetLedger {
@@ -335,10 +355,10 @@ mod tests {
         root.record_spend(5_000);
         assert!(!root.exhausted(), "the root's own spend is never capped");
         let grants: Vec<u64> = (0..3)
-            .map(|_| root.reserve_child_grant().unwrap())
+            .map(|_| root.reserve_child_grant(None).unwrap())
             .collect();
         assert_eq!(grants, vec![400, 400, 200]);
-        let refused = root.reserve_child_grant().unwrap_err();
+        let refused = root.reserve_child_grant(None).unwrap_err();
         assert_eq!(
             refused.to_string(),
             "RLM token budget exhausted: 1000 of 1000 tokens already granted; no budget is left for another subagent"
@@ -358,7 +378,7 @@ mod tests {
         child.record_spend(250);
         assert!(!child.exhausted());
         assert_eq!(
-            child.reserve_child_grant().unwrap(),
+            child.reserve_child_grant(None).unwrap(),
             100,
             "the depth-2 ceiling"
         );
@@ -366,7 +386,7 @@ mod tests {
         child.record_spend(60);
         assert!(child.exhausted(), "310 spent of the 300 it kept");
         assert_eq!(child.remaining(), 0);
-        assert!(child.reserve_child_grant().is_err());
+        assert!(child.reserve_child_grant(None).is_err());
     }
 
     /// The ledger is the durable record: a reopened budget resumes the
@@ -382,7 +402,7 @@ mod tests {
             store.clone(),
         );
         child.record_spend(150);
-        assert_eq!(child.reserve_child_grant().unwrap(), 100);
+        assert_eq!(child.reserve_child_grant(None).unwrap(), 100);
         drop(child);
         assert_eq!(
             RlmTokenBudgetLedger::load(&store),
@@ -415,7 +435,7 @@ mod tests {
             0,
             blocker.join(RLM_TOKEN_BUDGET_FILE),
         );
-        assert!(root.reserve_child_grant().is_err());
+        assert!(root.reserve_child_grant(None).is_err());
         assert_eq!(root.remaining(), 1_000);
     }
 }

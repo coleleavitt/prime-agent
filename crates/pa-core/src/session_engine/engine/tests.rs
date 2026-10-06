@@ -764,7 +764,7 @@ async fn the_delegation_budget_survives_a_resume() {
     let (_, root) = open(None, None, 0, 0).await;
     run(&root).await;
     let budget = root.rlm.token_budget.get().unwrap();
-    assert_eq!(budget.reserve_child_grant().unwrap(), 200);
+    assert_eq!(budget.reserve_child_grant(None).unwrap(), 200);
     let root_file = session_file(&root).await;
     drop(root);
     let (_, root) = open(Some(root_file), None, 0, 0).await;

@@ -188,6 +188,7 @@ async def spawn(
     thinking: str | None = None,
     cwd: str | None = None,
     target: str | None = None,
+    token_budget: int | None = None,
 ) -> RLMSpawnHandle:
     """Spawn a recursive Prime Agent child and return once its task is admitted.
 
@@ -202,11 +203,20 @@ async def spawn(
     and the spawn fails with an explicit error instead of running the child
     locally. The kwarg is forwarded only when passed, so an omitted ``target``
     sends the byte-identical wire payload.
+    ``token_budget`` requests an explicit token grant for the child (it bounds
+    the child and every descendant it spawns). Under a delegation budget the
+    grant is drawn from this session's pool and must fit what is left and
+    the per-depth cap; without one it funds the child alone. Omitted, a
+    budgeted session grants whatever is left (up to the per-depth cap).
     """
     if not isinstance(prompt, str):
         raise TypeError(f"prompt must be str, got {type(prompt).__name__}")
     if target is not None and not isinstance(target, str):
         raise TypeError(f"target must be str, got {type(target).__name__}")
+    if token_budget is not None and (
+        not isinstance(token_budget, int) or isinstance(token_budget, bool) or token_budget <= 0
+    ):
+        raise TypeError(f"token_budget must be a positive int, got {token_budget!r}")
     kwargs: dict[str, Any] = {"name": name}
     if model is not None:
         kwargs["model"] = model
@@ -216,6 +226,8 @@ async def spawn(
         kwargs["cwd"] = cwd
     if target is not None:
         kwargs["target"] = target
+    if token_budget is not None:
+        kwargs["token_budget"] = token_budget
     # Wire type stays "rlm.run" so kernels and hosts of different versions stay compatible.
     payload = await host_request("rlm.run", {"prompt": prompt, "kwargs": kwargs})
     return _spawn_handle_from_payload(payload)
@@ -885,9 +897,16 @@ class _RLMNamespace:
         thinking: str | None = None,
         cwd: str | None = None,
         target: str | None = None,
+        token_budget: int | None = None,
     ) -> RLMSpawnHandle:
         return await spawn(
-            prompt, name=name, model=model, thinking=thinking, cwd=cwd, target=target
+            prompt,
+            name=name,
+            model=model,
+            thinking=thinking,
+            cwd=cwd,
+            target=target,
+            token_budget=token_budget,
         )
 
     async def create_session(
