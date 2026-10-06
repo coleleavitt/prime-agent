@@ -245,6 +245,9 @@ pub struct DaemonAcpOptions {
     pub product_version: String,
     /// The startup `create` built from the CLI session flags.
     pub create: DaemonCommand,
+    /// The transport's own adoption telemetry (`acp session load`); `None`
+    /// when telemetry is off. Session telemetry stays the worker's.
+    pub telemetry: Option<pa_telemetry::TelemetryClient>,
 }
 
 /// The daemon session this connection created at startup; every

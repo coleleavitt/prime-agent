@@ -111,14 +111,32 @@ async fn acp_mode_main(options: &RunOptions) -> Result<i32, String> {
         .await
         .map_err(|error| format!("{error:#}"))?;
     let (actual_cwd, create) = daemon_acp_create(options)?;
-    pa_daemon::acp::daemon::run_daemon_attached_acp_mode(pa_daemon::acp::daemon::DaemonAcpOptions {
-        socket_path,
-        actual_cwd,
-        product_version: crate::config::version().to_string(),
-        create,
-    })
+    // The transport's own client (`acp session load`), built like every
+    // other process's; the opt-out builds none.
+    let telemetry = {
+        let settings = pa_core::settings::SettingsManager::create(
+            &options.config.cwd,
+            &options.config.agent_dir,
+        );
+        (!crate::mode::telemetry_disabled(&settings)).then(|| {
+            pa_core::session_engine::telemetry::build_client(&settings, &options.config.agent_dir)
+        })
+    };
+    let result = pa_daemon::acp::daemon::run_daemon_attached_acp_mode(
+        pa_daemon::acp::daemon::DaemonAcpOptions {
+            socket_path,
+            actual_cwd,
+            product_version: crate::config::version().to_string(),
+            create,
+            telemetry: telemetry.clone(),
+        },
+    )
     .await
-    .map_err(|error| format!("{error:#}"))
+    .map_err(|error| format!("{error:#}"));
+    if let Some(client) = telemetry {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), client.shutdown()).await;
+    }
+    result
 }
 
 /// The ACP daemon session's create (TS main.ts `defaultSessionConfig` +

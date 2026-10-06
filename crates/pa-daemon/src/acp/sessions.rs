@@ -81,7 +81,7 @@ pub(super) async fn handle_session_new(
     }
     let params = types::NewSessionParams::parse(&params);
     let daemon_session_id = bound_daemon_session(state, binding).await;
-    admit_session(
+    let _admitted = admit_session(
         AdmissionRequest {
             id,
             params,
@@ -247,7 +247,7 @@ pub(super) async fn handle_session_load(
         return;
     }
     let params = types::LoadSessionParams::parse(&params);
-    match bind_saved_session(&params, link, state, binding).await {
+    let loaded = match bind_saved_session(&params, link, state, binding).await {
         Ok((daemon_session_id, messages, actual_cwd)) => {
             admit_session(
                 AdmissionRequest {
@@ -265,7 +265,7 @@ pub(super) async fn handle_session_load(
                 binding,
                 tx,
             )
-            .await;
+            .await
         }
         Err(error) => {
             state.lock().await.session_new_in_flight = false;
@@ -280,8 +280,23 @@ pub(super) async fn handle_session_load(
                 ),
                 LoadError::Daemon(error) => super::internal_error(&id, &format!("{error:#}")),
             });
+            false
         }
+    };
+    if let Some(telemetry) = &options.telemetry {
+        track_session_load(telemetry, loaded);
     }
+}
+
+/// `acp session load` (schema v4): the outcome only — never the session id,
+/// its cwd, or its MCP servers.
+pub(super) fn track_session_load(client: &pa_telemetry::TelemetryClient, loaded: bool) {
+    let mut properties = pa_telemetry::base_properties("acp");
+    properties.set(
+        "outcome",
+        serde_json::Value::from(if loaded { "loaded" } else { "failed" }),
+    );
+    client.track("acp session load", properties);
 }
 
 /// Why a `session/load` could not bind its session.
@@ -443,14 +458,15 @@ struct AdmissionRequest {
 /// Host one daemon session on the reserved slot: admit its MCP servers,
 /// publish the pickers and the live children, then answer. A `session/new`
 /// answers first and its held updates flow after; a `session/load` streams
-/// the replayed transcript first and answers after it.
+/// the replayed transcript first and answers after it. Answers whether
+/// the session was admitted (an error response went out otherwise).
 async fn admit_session(
     request: AdmissionRequest,
     link: &Arc<DaemonLink>,
     state: &Arc<Mutex<DaemonAcpState>>,
     binding: &DaemonBinding,
     tx: producer::FrameSink,
-) {
+) -> bool {
     let AdmissionRequest {
         id,
         params,
@@ -464,7 +480,7 @@ async fn admit_session(
         {
             state.lock().await.session_new_in_flight = false;
             let _ = tx.send(super::internal_error(&id, &error.to_string()));
-            return;
+            return false;
         }
     }
     // MCP admission runs after the pending-clear retry: a rejected list
@@ -479,13 +495,13 @@ async fn admit_session(
                 "Invalid params",
                 Some(&json!({ "reason": reason })),
             ));
-            return;
+            return false;
         }
     };
     if let Err(details) = super::mcp::acp_mcp_tool_names(&resolved) {
         state.lock().await.session_new_in_flight = false;
         let _ = tx.send(super::internal_error(&id, &details));
-        return;
+        return false;
     }
 
     // Neither picker fetch may fail the admission: discovery failures
@@ -558,7 +574,7 @@ async fn admit_session(
                     .await;
             state.lock().await.session_new_in_flight = false;
             let _ = tx.send(super::internal_error(&id, &error.to_string()));
-            return;
+            return false;
         }
         let names = resolved
             .iter()
@@ -613,7 +629,7 @@ async fn admit_session(
             guard.session_new_in_flight = false;
             drop(guard);
             let _ = tx.send(super::internal_error(&id, &error.to_string()));
-            return;
+            return false;
         }
     };
     {
@@ -651,7 +667,7 @@ async fn admit_session(
         }
         let _ = tx.send(jsonrpc::response(&id, &result));
         spawn_command_advertisement(link, daemon_session_id, producer);
-        return;
+        return false;
     }
     let _ = tx.send(jsonrpc::response(&id, &result));
     if let Some((pause_id, lease_key)) = inherited_pause {
@@ -659,6 +675,7 @@ async fn admit_session(
     }
     producer.commit_session_new_response().await;
     spawn_command_advertisement(link, daemon_session_id, producer);
+    true
 }
 
 /// Advertise the session's commands once it is admitted (upstream #1308),
@@ -823,6 +840,51 @@ mod tests {
             commands.iter().any(|command| command["name"] == "compact")
                 && !commands.iter().any(|command| command["name"] == "model"),
             "session builtins only: {commands:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod load_telemetry_tests {
+    /// `acp session load` carries its outcome and the base properties only.
+    #[tokio::test]
+    async fn a_session_load_reports_its_outcome_only() {
+        let mock = std::sync::Arc::new(pa_telemetry::MockSink::new());
+        let mut config = pa_telemetry::TelemetryClientConfig::new("install-1");
+        config.batch_size = 1;
+        config.sinks = vec![mock.clone() as std::sync::Arc<dyn pa_telemetry::TelemetrySink>];
+        let client = pa_telemetry::TelemetryClient::spawn(config).unwrap();
+        super::track_session_load(&client, true);
+        super::track_session_load(&client, false);
+        client.flush().await.unwrap();
+        let outcomes: Vec<(String, serde_json::Value)> = mock
+            .events()
+            .iter()
+            .map(|event| {
+                let mut properties = serde_json::to_value(&event.properties).unwrap();
+                let base: Vec<String> = pa_telemetry::base_properties("acp")
+                    .iter()
+                    .map(|(key, _)| key.clone())
+                    .collect();
+                properties
+                    .as_object_mut()
+                    .unwrap()
+                    .retain(|key, _| !base.contains(key) && key != "schema_version");
+                (event.name.clone(), properties)
+            })
+            .collect();
+        assert_eq!(
+            outcomes,
+            vec![
+                (
+                    "acp session load".to_string(),
+                    serde_json::json!({ "outcome": "loaded" })
+                ),
+                (
+                    "acp session load".to_string(),
+                    serde_json::json!({ "outcome": "failed" })
+                ),
+            ]
         );
     }
 }
