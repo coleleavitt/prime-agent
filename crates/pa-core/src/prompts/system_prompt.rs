@@ -290,7 +290,10 @@ fn environment_section(options: &BuildSystemPromptOptions) -> String {
                 .to_string(),
         ),
         Some(false) => lines.push(
-            "Image input: this model cannot see images; `attach_image` errors for it.".to_string(),
+            "Image input: this model cannot see images; `attach_image` has the configured \
+             vision-capable `imageModel` read them and returns its text description (it errors \
+             when no such image model is configured)."
+                .to_string(),
         ),
         None => {}
     }

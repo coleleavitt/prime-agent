@@ -143,6 +143,9 @@ pub struct SessionEngine {
     /// The session's plan mode, shared with the tool gate, the host-request
     /// gate, the per-turn context row, and the kernel's write guard.
     plan_mode: super::plan_mode::PlanModeSwitch,
+    /// The `artifact.present` seam (upstream #1062): a host whose durable
+    /// session lives outside the engine installs its row sink here.
+    pub presented_artifacts: Arc<super::presented_artifact::PresentedArtifacts>,
 }
 
 /// Skill overrides for built-in integrations the user is not logged into,
@@ -411,6 +414,23 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             policy: router_retry_policy,
         },
     );
+    // `artifact.present` (#1062): a host-provided registration (the
+    // extra handlers) wins; the native one captures into the session's
+    // artifact tree and records the row in the engine's session unless a
+    // host installs its sink.
+    let presented_artifacts = Arc::new(super::presented_artifact::PresentedArtifacts::new());
+    if handlers.get("artifact.present").is_none() {
+        super::presented_artifact::register_artifact_present_handler(
+            &mut handlers,
+            &presented_artifacts,
+            super::presented_artifact::PresentContext {
+                cwd: cwd.clone(),
+                artifact_dir: session_artifact_dir.clone(),
+                session_id: session_id.clone(),
+                session: wiring.session.clone(),
+            },
+        );
+    }
     // Per-session counters (MCP connector use, kernel boots, skills, RLM
     // child usage, feature outcomes) ride `agent session ended`; the seams
     // below count into them instead of emitting their own events.
@@ -990,6 +1010,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         feature_context,
         feature_status_sink: std::sync::Mutex::new(None),
         plan_mode,
+        presented_artifacts,
     };
     if config.plan_mode == Some(true) && restored_plan_mode != Some(true) {
         engine.track_plan_mode(true, "flag");

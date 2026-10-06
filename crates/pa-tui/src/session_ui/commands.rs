@@ -78,6 +78,12 @@ impl SessionUi {
             };
         };
 
+        // Bare `/harness` (or `/harness list`) opens the selector over the
+        // list the session command returns (#1118).
+        if resolved.name == "harness" && matches!(resolved.args.trim(), "" | "list") {
+            self.track_command_used(resolved.name);
+            return self.open_harness_selector(behavior, view);
+        }
         let command = registry
             .get(resolved.name)
             .expect("resolved name is builtin");

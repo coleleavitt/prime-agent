@@ -68,6 +68,37 @@ FACTORY_DAG = {
 
 
 class HarnessStateTest(unittest.TestCase):
+    def test_entries_disable_and_re_enable_without_deletion(self) -> None:
+        # #1118: a disabled entry stays stored with its content and version,
+        # survives a reload and a later content update, is marked in the
+        # overview, and re-enables in place; the flag lives under the entry's
+        # `enabled` key (absent = enabled) that the host's /harness reads.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "harness_state.json"
+            state = HarnessState(path)
+            state.create_subagent("Reviewer", "Review diffs.", id="reviewer")
+            self.assertTrue(state.get("subagent", "reviewer").enabled)
+            self.assertNotIn("enabled", json.loads(path.read_text())["entries"]["subagent"]["reviewer"])
+
+            disabled = state.disable_subagent("reviewer")
+            self.assertFalse(disabled.enabled)
+            stored = json.loads(path.read_text())["entries"]["subagent"]["reviewer"]
+            self.assertIs(stored["enabled"], False)
+            self.assertEqual((stored["content"], stored["version"]), ("Review diffs.", 1))
+
+            reloaded = HarnessState(path)
+            self.assertFalse(reloaded.get("subagent", "reviewer").enabled)
+            reloaded.update_subagent("reviewer", "Reviewer", "Review diffs carefully.")
+            self.assertFalse(HarnessState(path).get("subagent", "reviewer").enabled)
+            self.assertIn("[local:reviewer] [disabled] Reviewer", HarnessState(path).overview())
+
+            self.assertTrue(HarnessState(path).set_enabled("subagent", "reviewer", True).enabled)
+            self.assertTrue(HarnessState(path).get("subagent", "reviewer").enabled)
+            with self.assertRaises(TypeError):
+                state.set_enabled("subagent", "reviewer", "no")
+            with self.assertRaises(ValueError):
+                state.disable_memory("missing")
+
     def test_crud_for_all_entry_kinds(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             state = HarnessState(Path(temp_dir) / "harness_state.json")

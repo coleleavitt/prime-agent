@@ -656,6 +656,31 @@ impl Worker {
                     withdraw_bash_completion_notice(&withdraw_recovery, &withdraw_core, &notice);
                 });
                 concrete.set_bash_notice_sinks(completion, consumed);
+                // The presented-artifact rows (`artifact.present`, #1062):
+                // durable in the worker store, broadcast as the
+                // `message_start`/`message_end` pair clients render.
+                let artifact_core = Arc::clone(&core);
+                let artifact_events = events.clone();
+                let artifact_sink: pa_core::session_engine::presented_artifact::PresentedArtifactSink =
+                    Arc::new(move |message| {
+                        let message = crate::session_commands::custom_message_value(&message);
+                        {
+                            let mut core = artifact_core.lock_or_recover();
+                            persist_custom_row(&mut core, &message);
+                        }
+                        emit_worker_event_with(
+                            &artifact_core,
+                            &artifact_events,
+                            json!({ "type": "message_start", "message": message }),
+                        );
+                        emit_worker_event_with(
+                            &artifact_core,
+                            &artifact_events,
+                            json!({ "type": "message_end", "message": message }),
+                        );
+                        Ok(())
+                    });
+                concrete.set_presented_artifact_sink(artifact_sink);
                 // The swarm digest-lane seams (PRs C/D/E): the receiving
                 // worker owns the inbox (its store), the lane pin, and the
                 // digest-aware notice routing; the engine's kernel handlers

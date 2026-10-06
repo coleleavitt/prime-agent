@@ -25,6 +25,7 @@ pub mod image_model_routing;
 pub mod ipython_state;
 pub mod messages;
 pub mod plan_mode;
+pub mod presented_artifact;
 pub mod provider_adapter;
 pub mod provider_failover;
 pub mod provider_park;

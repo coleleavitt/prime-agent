@@ -22,7 +22,8 @@ The harness often sends messages to the agent. These are user messages starting 
     - `.duration: float`
 - `edit.run(path: str, old_str: str, new_str: str) -> str`: the primary method for editing files. async, exact-unique-match; the `edit` module is callable with the same arguments (`await edit(path=..., old_str=..., new_str=...)`)
 - `websearch.run(query: str, *, max_output: int = 8192, timeout: int | None, num_results: int | None) -> str`: search the web; the `websearch` module is callable with the same arguments
-- `attach_image(*paths: str) -> str`: loads images directly into context if the agent's model is vision-capable, errors otherwise
+- `attach_image(*paths: str) -> str`: loads images directly into context if the agent's model is vision-capable; on a text-only model, a configured vision-capable `imageModel` reads them and returns its text description (errors when none is configured)
+- `present_artifact(path: str, label: str | None = None) -> dict`: shows an on-disk artifact to the user inline (a bounded image preview, or the captured file for other types) without loading it into your context; returns a metadata receipt
 - `computer_use.get_state(emit: bool = True) -> dict`: the bundled computer-use skill's discovery snapshot of apps, permissions, allowlist, and platform
 - `computer_use.get_app(app: str | dict) -> App`: bind one desktop app by name, bundle id, or path (may launch it); the bound `App` exposes `get_ax_state`, `get_screenshot`, `click`, `drag`, `scroll`, `press_key`, `type_text`, `set_value`, `select_text`, `perform_secondary_action`, and `paste` (allowlist-gated and lock-aware; load the computer-use skill for its manual and safety policy)
 - `computer_use.list_apps() -> list[dict]`: running apps as id/name/running records
@@ -101,8 +102,9 @@ Memories are created by two mechanisms:
     - The refinement event is always saved in the harness state's refinement history
     - A harness message is sent to the agent with the refinement result
 - Active memory management by the agent
-  - `refine.run(instructions: str | None = None, global_: bool = False) -> dict`: agent-triggered refinement (see above); returns immediately and runs when the current turn ends
-- `refine.status() -> dict`: whether a refinement is already pending for this turn or currently in flight
+  - `refine.run(instructions: str | None = None, global_: bool = False, plan_id: str | None = None) -> dict`: agent-triggered refinement (see above); returns immediately and runs when the current turn ends; `plan_id` applies exactly a plan from `refine.preview()` instead of re-planning
+  - `refine.preview(instructions: str | None = None, global_: bool = False) -> dict`: plans now and returns the proposed edits (`plan_id`, `summary`, `edits`, ...) without applying anything, so a refinement can be approved before it lands
+- `refine.status() -> dict`: whether a refinement is already pending for this turn or currently in flight, and the held `preview_ids`
   - `rlm.harness.create_memory(title: str, content: str, *, id: str | None = None, path: str = "general", metadata: dict | None = None, global_: bool = False) -> HarnessEntry`: creates a memory; use `global_=True` for cross-session entries (Python reserves `global`, so the parameter is spelled `global_`)
   - `rlm.harness.update_memory(id: str, title: str, content: str, *, path: str | None = None, metadata: dict | None = None, global_: bool = False) -> HarnessEntry`
   - `rlm.harness.delete_memory(id: str, *, global_: bool = False) -> bool`
@@ -115,6 +117,7 @@ Memories are created by two mechanisms:
   - `rlm.harness.create_subagent(title: str, content: str, *, id: str | None = None, path: str = "general", metadata: dict | None = None, global_: bool = False) -> HarnessEntry`
   - `rlm.harness.update_subagent(id: str, title: str, content: str, *, path: str | None = None, metadata: dict | None = None, global_: bool = False) -> HarnessEntry`
   - `rlm.harness.delete_subagent(id: str, *, global_: bool = False) -> bool`
+  - `rlm.harness.set_enabled(kind: str, id: str, enabled: bool, *, global_: bool = False) -> HarnessEntry`: enables or disables an entry without deleting it; a disabled entry stays stored and rollback-able but is hidden from the system prompt (also `rlm.harness.enable_subagent(id)` / `rlm.harness.disable_subagent(id)`, and the same pair for `memory`, `prompt_note`, and `skill`)
   - `rlm.harness.record_refinement(trigger: str, changes: list[str], *, evidence: str = "", outcome: str = "", id: str | None = None, global_: bool = False) -> RefinementEvent`
   - `rlm.harness.plan_refinement(observation: str, *, failing_component: str = "", next_step: str = "") -> list[str]`: a suggested diagnose -> update -> validate plan
   - `rlm.harness.overview(*, max_entries_per_kind: int = 20, global_: bool = False) -> str`: memory overview
@@ -134,6 +137,7 @@ Memories are created by two mechanisms:
     - `created_at: str`: ISO timestamp of creation
     - `updated_at: str`: ISO timestamp of latest update
     - `version: int`: increments with every update, starting at 1
+    - `enabled: bool`: `False` once disabled (hidden from the system prompt)
   - `HarnessState`
     - `scope: Literal["global", "local"]`
     - `file_path: Path`

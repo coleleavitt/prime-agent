@@ -1241,6 +1241,26 @@ async fn run_prompts_and_emit(
     );
     let global_harness_dir =
         pa_core::refinement::get_global_harness_state_dir(&options.config.agent_dir);
+    // `refine.preview` plans with the same model, key, and store the
+    // boundary's refinement applies with (upstream #899).
+    engine
+        .turn_boundary
+        .set_refine_planning_source(std::sync::Arc::new({
+            let model = model.clone();
+            let api_key = api_key.clone();
+            let global_harness_dir = global_harness_dir.clone();
+            move || {
+                Some(
+                    pa_core::session_engine::turn_boundary::RefinePlanningContext {
+                        model: model.clone(),
+                        global_harness_dir: global_harness_dir.clone(),
+                        refine_call: pa_core::session_engine::refine::default_refiner_call(
+                            api_key.clone(),
+                        ),
+                    },
+                )
+            }
+        }));
     let mut boundary = crate::print_boundary::TurnBoundary::new(json_mode);
     // The autonomous runtime state the session-command executor mutates —
     // `/autonomous` rewrites what the hook, accounting, and exit contract read.

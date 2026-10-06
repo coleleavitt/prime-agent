@@ -89,6 +89,9 @@ pub struct AgentView {
     pub auth_panel: Option<crate::auth_panel::AuthPanel>,
     pub fork_selector: Option<crate::user_message_selector::UserMessageSelector>,
     pub effort_picker: Option<crate::effort_picker::EffortPicker>,
+    /// The `/harness` selector (#1118): open while its entries load and
+    /// after; toggles run as `/harness` session commands.
+    pub harness_selector: Option<HarnessSelectorState>,
     pub mcp_view: Option<crate::mcp_view::McpView>,
     /// The factory page: while set, it owns the editor dock like the
     /// inline pickers (one panel per live factory run) — the activity
@@ -240,6 +243,10 @@ impl AgentView {
             picker.paste(text);
             return true;
         }
+        if let Some(HarnessSelectorState::Open(selector)) = self.harness_selector.as_mut() {
+            selector.paste(text);
+            return true;
+        }
         if let Some(mcp) = self.mcp_view.as_mut() {
             mcp.paste(text);
             return true;
@@ -305,6 +312,7 @@ impl AgentView {
             auth_panel: None,
             fork_selector: None,
             effort_picker: None,
+            harness_selector: None,
             mcp_view: None,
             factory_view: None,
             heartbeats_picker: None,
@@ -731,6 +739,14 @@ fn item_to_entry(item: TranscriptItem) -> ChatEntry {
         },
         TranscriptItem::CustomRow { entry } => entry,
     }
+}
+
+/// The `/harness` selector's lifecycle: waiting for the list, then open.
+#[derive(Debug)]
+pub enum HarnessSelectorState {
+    /// `/harness list` is in flight.
+    Loading,
+    Open(crate::harness_selector::HarnessSelector),
 }
 
 #[cfg(test)]

@@ -282,6 +282,13 @@ class HarnessEntry:
     # _entry_payload, so `extra` itself is never a key on disk.
     extra: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
+    @property
+    def enabled(self) -> bool:
+        """Whether the entry is active. A disabled entry stays stored (and
+        rollback-able) but the host hides it from the system prompt. Absent
+        means enabled, so state written before the flag keeps working."""
+        return self.extra.get("enabled") is not False
+
 
 @dataclass
 class RefinementEvent:
@@ -895,6 +902,62 @@ class HarnessState:
         self.save()
         return True
 
+    @_locked_write
+    def set_enabled(
+        self, kind: HarnessKind, id: str, enabled: bool, *, global_: bool = False, **kwargs: Any
+    ) -> HarnessEntry:
+        """Enable or disable one entry without deleting it.
+
+        A disabled entry stays stored and rollback-able but is hidden from the
+        system prompt (a disabled subagent spec is never offered for delegation).
+        """
+        if not isinstance(enabled, bool):
+            raise TypeError(f"enabled must be bool, got {type(enabled).__name__}")
+        id, global_ = _strip_scope_prefix(id, global_)
+        if target := self._global_target(global_, kwargs):
+            return target.set_enabled(kind, id, enabled)
+        self._ensure_local_writable()
+        self._sync_from_disk()
+        if kind not in self.entries:
+            raise ValueError(f"unknown harness kind {kind!r}; expected one of {_KINDS}")
+        entry = self.entries[kind].get(id)
+        if entry is None:
+            raise ValueError(f"{kind} entry {id!r} does not exist")
+        entry.extra["enabled"] = enabled
+        entry.updated_at = _now()
+        self.save()
+        return entry
+
+    def enable(self, kind: HarnessKind, id: str, *, global_: bool = False, **kwargs: Any) -> HarnessEntry:
+        return self.set_enabled(kind, id, True, global_=global_, **kwargs)
+
+    def disable(self, kind: HarnessKind, id: str, *, global_: bool = False, **kwargs: Any) -> HarnessEntry:
+        return self.set_enabled(kind, id, False, global_=global_, **kwargs)
+
+    def enable_memory(self, id: str, *, global_: bool = False, **kwargs: Any) -> HarnessEntry:
+        return self.set_enabled("memory", id, True, global_=global_, **kwargs)
+
+    def disable_memory(self, id: str, *, global_: bool = False, **kwargs: Any) -> HarnessEntry:
+        return self.set_enabled("memory", id, False, global_=global_, **kwargs)
+
+    def enable_prompt_note(self, id: str, *, global_: bool = False, **kwargs: Any) -> HarnessEntry:
+        return self.set_enabled("prompt", id, True, global_=global_, **kwargs)
+
+    def disable_prompt_note(self, id: str, *, global_: bool = False, **kwargs: Any) -> HarnessEntry:
+        return self.set_enabled("prompt", id, False, global_=global_, **kwargs)
+
+    def enable_skill(self, id: str, *, global_: bool = False, **kwargs: Any) -> HarnessEntry:
+        return self.set_enabled("skill", id, True, global_=global_, **kwargs)
+
+    def disable_skill(self, id: str, *, global_: bool = False, **kwargs: Any) -> HarnessEntry:
+        return self.set_enabled("skill", id, False, global_=global_, **kwargs)
+
+    def enable_subagent(self, id: str, *, global_: bool = False, **kwargs: Any) -> HarnessEntry:
+        return self.set_enabled("subagent", id, True, global_=global_, **kwargs)
+
+    def disable_subagent(self, id: str, *, global_: bool = False, **kwargs: Any) -> HarnessEntry:
+        return self.set_enabled("subagent", id, False, global_=global_, **kwargs)
+
     def list(self, kind: HarnessKind | None = None, *, global_: bool = False, **kwargs: Any) -> list[HarnessEntry]:
         if target := self._global_target(global_, kwargs):
             return target.list(kind)
@@ -1324,8 +1387,9 @@ class HarnessState:
                     if len(reference_text) > 120:
                         reference_text = f"{reference_text[:117]}..."
                     reference_summary = f" ref={reference_text}"
+                disabled = "" if entry.enabled else " [disabled]"
                 lines.append(
-                    f"  - [{entry.scope}:{entry.id}] {entry.title} ({entry.path}, v{entry.version})"
+                    f"  - [{entry.scope}:{entry.id}]{disabled} {entry.title} ({entry.path}, v{entry.version})"
                     f"{reference_summary}{argument_summary}: {summary}"
                 )
             overflow = len(self.entries[kind]) - len(records)

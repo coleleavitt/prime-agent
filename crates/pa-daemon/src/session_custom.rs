@@ -260,6 +260,7 @@ impl Worker {
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
             trigger: None,
+            pinned_plan: None,
         };
         let engine = std::sync::Arc::clone(&self.engine);
         let result = tokio::task::spawn_blocking(move || engine.run_refinement(options))

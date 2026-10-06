@@ -65,6 +65,7 @@ mod external_editor;
 pub mod factory_view;
 pub mod fuzzy;
 pub mod goal_surface;
+pub mod harness_selector;
 pub mod heartbeats_picker;
 pub mod hotkeys;
 pub mod hyperlinks;

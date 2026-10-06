@@ -170,6 +170,8 @@ fn prompt_token_for_host_request(request: &str) -> Option<String> {
             "agent_observe.list" | "agent_message.list_agents" => "agent_observe.list_agents",
             "agent_observe.get" => "agent_observe.get_agent",
             "agent_observe.recent" => "agent_observe.recent_messages",
+            // The bundled present-artifact skill's request.
+            "artifact.present" => "present_artifact",
             other => other,
         }
         .to_string(),
@@ -200,6 +202,7 @@ const HARNESS_TOKENS: &[&str] = &[
     "rlm.harness.create_subagent",
     "rlm.harness.update_subagent",
     "rlm.harness.delete_subagent",
+    "rlm.harness.set_enabled",
     "rlm.harness.record_refinement",
     "rlm.harness.plan_refinement",
     "rlm.harness.overview",
@@ -545,6 +548,10 @@ const NET_NEW_BUNDLED_SKILLS: &[&str] = &[
     // PR #3226: computer use - the TS product has no computer-use feature,
     // so parity is not applicable; this is the declared net-new exception.
     "computer-use",
+    // Upstream #1062 (closed upstream, not in the TS v0.9.8 package):
+    // `present_artifact()`, the user-visible inline preview over the
+    // `artifact.present` host request.
+    "present-artifact",
 ];
 
 #[test]
@@ -620,4 +627,57 @@ fn generic_mcp_skill_renders_in_the_prompt_inventory() {
     assert!(second
         .assembled
         .contains("await mcp.list_tools(\"notion\")"));
+}
+
+// Image input
+
+/// A text-only session model reads images through the configured image model
+/// (`vision.read`): no model-facing text may still claim `attach_image` simply
+/// fails there, and each must name the condition (a vision-capable `imageModel`).
+#[test]
+fn attach_image_texts_describe_the_image_model_path() {
+    let core_line = CORE_LAYER
+        .lines()
+        .find(|line| line.starts_with("- `attach_image("))
+        .expect("the core layer documents attach_image");
+    assert_eq!(
+        core_line,
+        "- `attach_image(*paths: str) -> str`: loads images directly into context if the agent's \
+         model is vision-capable; on a text-only model, a configured vision-capable `imageModel` \
+         reads them and returns its text description (errors when none is configured)"
+    );
+
+    let skill = sorted_bundled_skills()
+        .into_iter()
+        .find(|skill| skill.name == "attach-image")
+        .expect("attach-image is bundled");
+    assert!(
+        !skill.description.contains("errors clearly otherwise"),
+        "attach-image description still claims text-only models fail: {}",
+        skill.description
+    );
+    assert!(
+        skill.description.contains("imageModel"),
+        "attach-image description names the image-model path: {}",
+        skill.description
+    );
+
+    let mut options = BuildSystemPromptOptions {
+        cwd: "/w".to_string(),
+        vision_capable: Some(false),
+        ..Default::default()
+    };
+    let text_only = system_prompt_breakdown(&options).assembled;
+    assert!(
+        text_only.contains(
+            "Image input: this model cannot see images; `attach_image` has the configured \
+             vision-capable `imageModel` read them and returns its text description (it errors \
+             when no such image model is configured)."
+        ),
+        "text-only environment line: {text_only}"
+    );
+    options.vision_capable = Some(true);
+    assert!(system_prompt_breakdown(&options).assembled.contains(
+        "Image input: this model can see images; `attach_image` loads them into context."
+    ));
 }

@@ -63,6 +63,7 @@ const KNOWN_FIELDS: &[&str] = &[
     "lengthContinuations",
     "repetitionGuard",
     "rlmTokenBudget",
+    "fallbackModels",
 ];
 
 /// Extract each known field independently; ignore fields whose JSON type does not match the Rust

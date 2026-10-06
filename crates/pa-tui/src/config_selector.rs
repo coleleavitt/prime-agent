@@ -53,6 +53,9 @@ pub enum SelectorKind {
     ResourceConfig,
     /// The `/effort` picker: single-select semantics, Enter applies.
     Effort,
+    /// The `/harness` selector (#1118): checkbox semantics over the
+    /// continual harness entries, Enter or Space toggles one in place.
+    Harness,
 }
 
 impl SelectorKind {
@@ -66,6 +69,10 @@ impl SelectorKind {
             SelectorKind::Effort => (
                 "Thinking Level",
                 &[("enter", "select"), ("escape", "close")],
+            ),
+            SelectorKind::Harness => (
+                "Continual Harness",
+                &[("enter", "toggle"), ("escape", "close")],
             ),
         }
     }
@@ -474,6 +481,7 @@ impl ConfigSelector {
         match self.kind {
             SelectorKind::ResourceConfig => "Type to filter resources",
             SelectorKind::Effort => "Type to filter levels",
+            SelectorKind::Harness => "Type to filter entries",
         }
     }
 
@@ -482,6 +490,7 @@ impl ConfigSelector {
         match self.kind {
             SelectorKind::ResourceConfig => "No resources found",
             SelectorKind::Effort => "No matching levels",
+            SelectorKind::Harness => "No harness entries",
         }
     }
 

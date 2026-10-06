@@ -679,6 +679,20 @@ impl SettingsManager {
             .filter(|m| !m.is_empty())
     }
 
+    /// The ordered cross-model fallback chain (settings `fallbackModels`): trimmed, non-empty,
+    /// first occurrence wins; unset (the default) is empty.
+    #[must_use]
+    pub fn get_fallback_models(&self) -> Vec<String> {
+        let mut chain: Vec<String> = Vec::new();
+        for entry in self.merged.fallback_models.iter().flatten() {
+            let entry = entry.trim();
+            if !entry.is_empty() && !chain.iter().any(|known| known == entry) {
+                chain.push(entry.to_string());
+            }
+        }
+        chain
+    }
+
     /// The daemon-level model allowlist (settings `allowedModels`), enforced at every
     /// daemon model resolution — a model outside fails loudly, never a fallback.
     /// Rust-only guardrail; `None` is unrestricted; global scope only, so a project
@@ -1440,6 +1454,32 @@ mod tests {
         assert_eq!(manager.get_session_archive_policy().max_sessions, None);
         manager.global.session_archive_max_sessions = Some(serde_json::json!(50));
         assert_eq!(manager.get_session_archive_policy().max_sessions, Some(50));
+    }
+
+    #[test]
+    fn fallback_models_default_empty_and_read_trimmed_in_order() {
+        assert_eq!(
+            SettingsManager::in_memory(&Settings::default()).get_fallback_models(),
+            Vec::<String>::new()
+        );
+        let manager = SettingsManager::in_memory(&Settings {
+            fallback_models: Some(vec![
+                " anthropic/claude-sonnet-4-5 ".to_string(),
+                String::new(),
+                "openai/gpt-5.2".to_string(),
+                "anthropic/claude-sonnet-4-5".to_string(),
+            ]),
+            ..Settings::default()
+        });
+        assert_eq!(
+            manager.get_fallback_models(),
+            vec!["anthropic/claude-sonnet-4-5", "openai/gpt-5.2"]
+        );
+        // A wrong-typed value loads as unset (lenient load).
+        let lenient = super::super::load::from_value_lenient(
+            &serde_json::json!({ "fallbackModels": "openai/gpt-5.2" }),
+        );
+        assert_eq!(lenient.fallback_models, None);
     }
 
     #[test]

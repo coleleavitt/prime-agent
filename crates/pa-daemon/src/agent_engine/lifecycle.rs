@@ -191,6 +191,7 @@ impl AgentSessionEngine {
             compaction_summary_sink: std::sync::Mutex::new(None),
             model_refusal_telemetry,
             semantic_identity: std::sync::Mutex::new(None),
+            presented_artifact_sink: std::sync::Mutex::new(None),
         })
     }
 
@@ -927,6 +928,29 @@ impl AgentSessionEngine {
         })
         .await
         .inspect(|engine| {
+            // `refine.preview` plans with the live session model, its key,
+            // and the store the boundary's refinement applies to (#899).
+            if let Some(weak) = self.self_weak.lock_or_recover().clone() {
+                engine
+                    .turn_boundary
+                    .set_refine_planning_source(std::sync::Arc::new(move || {
+                        let daemon = weak.upgrade()?;
+                        let model = daemon.session_model().ok()?;
+                        let api_key = daemon.resolve_request_api_key(&model);
+                        Some(
+                            pa_core::session_engine::turn_boundary::RefinePlanningContext {
+                                model,
+                                global_harness_dir: daemon.config.agent_dir.clone(),
+                                refine_call: pa_core::session_engine::refine::default_refiner_call(
+                                    api_key,
+                                ),
+                            },
+                        )
+                    }));
+            }
+            if let Some(sink) = self.presented_artifact_sink.lock_or_recover().clone() {
+                engine.presented_artifacts.set_sink(sink);
+            }
             if let Some(sink) = self
                 .feature_status_sink
                 .lock()

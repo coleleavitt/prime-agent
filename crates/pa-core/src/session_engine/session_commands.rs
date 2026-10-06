@@ -94,7 +94,10 @@ pub fn session_command_echo_row(command: &SessionSlashCommand) -> CustomMessage 
     CustomMessage {
         custom_type: SESSION_SLASH_COMMAND_CUSTOM_TYPE.to_string(),
         content: pa_types::ai::UserContent::Text(command.text.clone()),
-        display: true,
+        // `/harness` is configuration, not conversation (#1118): its rows
+        // stay on record but out of the transcript; clients surface the
+        // result as an ephemeral note.
+        display: command.name != HARNESS_COMMAND,
         details: Some(command_details(command)),
         timestamp: now_millis(),
         rest: serde_json::Map::default(),
@@ -241,6 +244,7 @@ pub async fn execute_session_command(
         "autonomous" => execute_autonomous(params, command, &mut execution),
         "context-limit" => execute_context_limit(engine, params, command, &mut execution).await,
         "plan" => execute_plan(engine, command, &mut execution).await,
+        HARNESS_COMMAND => execute_harness(engine, params, command, &mut execution).await,
         other => execute_feature_command(engine, command, &mut execution)
             .await
             .unwrap_or_else(|| Err(format!("Unknown session command: {other}"))),
@@ -252,7 +256,7 @@ pub async fn execute_session_command(
             false,
             "error",
             Some(&message),
-            true,
+            command.name != HARNESS_COMMAND,
         ));
         execution.error = Some(message);
     }
@@ -388,6 +392,7 @@ async fn execute_refine(
         instructions: options.instructions,
         rollback_id: options.rollback_id,
         trigger: None,
+        pinned_plan: None,
     };
     let result = match engine
         .session
@@ -542,6 +547,107 @@ fn execute_autonomous(
         timestamp: now_millis(),
         rest: serde_json::Map::default(),
     });
+    Ok(())
+}
+
+/// The `/harness` command name (#1118).
+pub const HARNESS_COMMAND: &str = "harness";
+
+/// `/harness [list]`, `/harness enable <entry>`, `/harness disable <entry>`
+/// (#1118): list the local and global continual harness entries, or flip
+/// one entry's flag. `<entry>` is an id, `<kind>:<id>`, `<scope>:<id>`, or
+/// `<scope>:<kind>:<id>`. The result row (display-only off, model-invisible)
+/// carries the refreshed list under `details.harness.entries`, so a client
+/// selector redraws from it.
+async fn execute_harness(
+    engine: &SessionEngine,
+    params: &SessionCommandParams<'_>,
+    command: &SessionSlashCommand,
+    execution: &mut SessionCommandExecution,
+) -> Result<(), String> {
+    use crate::refinement::entries::{
+        list_harness_entries, resolve_harness_entry, set_harness_entry_enabled,
+    };
+    const USAGE: &str = "Usage: /harness [list | enable <entry> | disable <entry>]";
+    let local_dir = {
+        let session = engine.session.session_handle().lock().await;
+        session
+            .has_session_dir()
+            .then(|| super::refine::local_harness_state_dir(&session))
+    };
+    let global_dir = params.global_harness_dir.clone();
+    let mut words = command.args.split_whitespace();
+    let action = words.next().unwrap_or("list");
+    let reference = words.collect::<Vec<_>>().join(" ");
+    let enable = match action {
+        "list" if reference.is_empty() => None,
+        "enable" | "disable" if !reference.is_empty() => Some(action == "enable"),
+        _ => return Err(USAGE.to_string()),
+    };
+    let listed = {
+        let local_dir = local_dir.clone();
+        let global_dir = global_dir.clone();
+        tokio::task::spawn_blocking(move || list_harness_entries(local_dir.as_deref(), &global_dir))
+            .await
+            .map_err(|error| format!("{error}"))?
+    };
+    let (text, changed) = match enable {
+        None => {
+            let lines: Vec<String> = listed
+                .iter()
+                .map(|entry| {
+                    format!(
+                        "{} {} - {}",
+                        if entry.enabled { "[on] " } else { "[off]" },
+                        entry.key(),
+                        entry.title
+                    )
+                })
+                .collect();
+            let text = if lines.is_empty() {
+                "No continual harness entries.".to_string()
+            } else {
+                format!("Continual harness entries:\n{}", lines.join("\n"))
+            };
+            (text, None)
+        }
+        Some(enabled) => {
+            let target = resolve_harness_entry(&reference, &listed)?.clone();
+            let dir = match target.scope {
+                crate::refinement::HarnessScope::Local => local_dir
+                    .clone()
+                    .ok_or_else(|| "This session has no local harness store.".to_string())?,
+                crate::refinement::HarnessScope::Global => global_dir.clone(),
+            };
+            let changed = tokio::task::spawn_blocking(move || {
+                set_harness_entry_enabled(&dir, target.scope, target.kind, &target.id, enabled)
+            })
+            .await
+            .map_err(|error| format!("{error}"))?
+            .map_err(|error| format!("{error:#}"))?;
+            let verb = if enabled { "Enabled" } else { "Disabled" };
+            (format!("{verb} {}.", changed.key()), Some(changed))
+        }
+    };
+    let entries = match &changed {
+        // The flip is already on disk: the list re-reads it.
+        Some(_) => tokio::task::spawn_blocking(move || {
+            list_harness_entries(local_dir.as_deref(), &global_dir)
+        })
+        .await
+        .map_err(|error| format!("{error}"))?,
+        None => listed,
+    };
+    let mut row = slash_command_result(command, text, true, "info", None, false);
+    if let Some(details) = row.details.as_mut() {
+        details["harness"] = serde_json::json!({
+            "entries": entries,
+            "changed": changed,
+        });
+    }
+    execution.push_message(row);
+    // The next prompt build reads the flipped flag (the digest filters
+    // disabled entries).
     Ok(())
 }
 
@@ -737,3 +843,7 @@ mod tests {
         assert_eq!(state.status.slug(), "complete");
     }
 }
+
+#[cfg(test)]
+#[path = "harness_command_tests.rs"]
+mod harness_command_tests;

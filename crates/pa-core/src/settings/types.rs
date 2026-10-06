@@ -403,6 +403,12 @@ pub struct Settings {
     /// (upstream #1192). Unset is OFF (TS v0.9.8 had no budget). Raw JSON
     /// validated at access time.
     pub rlm_token_budget: Option<serde_json::Value>,
+    /// Ordered cross-model fallback chain (`provider/model-id` entries,
+    /// upstream #1465): once a turn's same-model provider failover is
+    /// spent on a retryable failure (or a provider cooldown beyond the wait
+    /// cap), the turn continues on the next entry. Default: empty - no
+    /// cross-model fallback.
+    pub fallback_models: Option<Vec<String>>,
     /// Unknown keys survive load/save round-trips (forward compatibility).
     #[serde(flatten, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,

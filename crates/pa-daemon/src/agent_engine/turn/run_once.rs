@@ -57,6 +57,49 @@ impl AgentSessionEngine {
         }
     }
 
+    /// The cross-model fallback chain for `model` (settings `fallbackModels`,
+    /// upstream #1465): exact `provider/model-id` entries resolved against
+    /// the auth-configured catalog, in chain order, filtered by the daemon
+    /// model allowlist. An entry that resolves to nothing is logged (never
+    /// silently dropped from view). Faux-script sessions never fall back.
+    pub(super) fn fallback_models(&self, model: &pa_types::ai::Model) -> Vec<pa_types::ai::Model> {
+        if self.config.faux_script.is_some() {
+            return Vec::new();
+        }
+        let entries =
+            pa_core::settings::SettingsManager::create(self.cwd(), &self.config.agent_dir)
+                .get_fallback_models();
+        if entries.is_empty() {
+            return Vec::new();
+        }
+        let mut registry = self.session_model_registry();
+        registry.load_private_authorization_from_cache();
+        let available: Vec<pa_types::ai::Model> =
+            registry.get_available().into_iter().cloned().collect();
+        let (resolved, unresolved) =
+            pa_core::models::resolve_fallback_models(&entries, model, &available);
+        if !unresolved.is_empty() {
+            eprintln!(
+                "pa-daemon: fallbackModels entries match no configured provider/model-id and are skipped: {}",
+                unresolved.join(", ")
+            );
+        }
+        match crate::model_allowlist::load(&self.cwd(), &self.config.agent_dir) {
+            DaemonAllowlist::Unrestricted => resolved,
+            DaemonAllowlist::Allowed(patterns) => resolved
+                .into_iter()
+                .filter(|candidate| {
+                    pa_core::models::model_allowed(
+                        &format!("{}/{}", candidate.provider, candidate.id),
+                        &patterns,
+                    )
+                })
+                .collect(),
+            // Fail closed on an unreadable policy.
+            DaemonAllowlist::Unreadable(_) => Vec::new(),
+        }
+    }
+
     /// Run one turn, streaming assistant updates through `emit` as they
     /// arrive. The first attempt prompts the session; retries continue the
     /// parked turn. Returns the final assistant message, `None` when none

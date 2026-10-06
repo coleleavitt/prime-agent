@@ -1,6 +1,6 @@
 ---
 name: attach-image
-description: Load an on-disk image (PNG, JPEG, GIF, WebP) into the model's context as a viewable attachment so the model can directly SEE it — for screenshots, diagrams, charts, photos, or scanned pages. Use this when you need to perceive an image's visual contents. Requires a vision-capable model; errors clearly otherwise.
+description: Load an on-disk image (PNG, JPEG, GIF, WebP) into the model's context as a viewable attachment so the model can directly SEE it — for screenshots, diagrams, charts, photos, or scanned pages. Use this when you need to perceive an image's visual contents. On a text-only model, the configured vision-capable `imageModel` (settings.json) reads the images and returns a text description instead; errors clearly when no such image model is configured.
 ---
 
 # Attach Image

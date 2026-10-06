@@ -1269,6 +1269,7 @@ async fn pre_turn_abort_arm_drops_pending_requests_and_continues() {
             instructions: None,
             global: false,
             trigger: None,
+            plan_id: None,
         })
         .await;
     events.lock().unwrap().clear();
@@ -1306,6 +1307,7 @@ async fn requested_refinement_failure_emits_the_refine_failed_event() {
             instructions: None,
             global: true,
             trigger: None,
+            plan_id: None,
         })
         .await;
     admit_with_harness_dir(
@@ -1351,6 +1353,7 @@ async fn requested_refinement_streams_rows_and_refine_complete() {
             instructions: None,
             global: true,
             trigger: None,
+            plan_id: None,
         })
         .await;
     admit_with_harness_dir(

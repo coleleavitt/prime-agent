@@ -8,6 +8,7 @@ mod auth;
 mod bash;
 mod commands;
 mod factory;
+mod harness;
 mod heartbeats;
 mod keys;
 mod lifecycle;

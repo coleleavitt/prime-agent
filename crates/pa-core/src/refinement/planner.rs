@@ -7,7 +7,7 @@ use super::{
     RefinementAction, RefinementKind,
 };
 
-pub const REFINEMENT_SYSTEM_PROMPT: &str = "You are Prime Agent's /refine continual harness subsystem.\n\nYour job is to improve the editable continual harness state from the current trajectory.\nThis is similar in spirit to context compaction, but instead of summarizing the\nconversation you emit precise Create, Update, or Delete edits to reusable state.\nThe continual harness is the persistent, editable set of prompt notes, memories,\nskills, and subagent specs that lets Prime Agent improve reusable behavior\noutside the token history.\nUse \"continual harness\" for that persistent artifact layer; keep \"RLM\" for the\nruntime, Python REPL kernel, and native call interface that executes those artifacts.\n\nContinual harness components:\n- prompt: supplemental prompt notes only. The base system prompt is immutable and MUST NOT be rewritten.\n- memory: durable facts, decisions, failures, preferences, and outcomes.\n- skill: installed Python REPL skill. Skill create/update edits MUST include a `reference` object with `{\"type\":\"python\"}`, a Python import, and a callable or call pattern; they also MUST include an `arguments` object describing accepted inputs, required fields, defaults, and constraints. Use `{}` for `arguments` only when the Python callable truly needs no external inputs. Include the RLM-native call form `await <skill_import>(...)`.\n- subagent: reusable delegation specs, including purpose, instructions, and when to invoke. Include the RLM-native call form: compose a concise task prompt and spawn with `handle = await rlm.spawn(\"sub-task\", name=\"worker\")`; admission returns immediately with `rlm_child_id`, `name`, `session_dir`, and `model`, never the child's answer. Results arrive only through explicit `agent_message` replies or files; children reply with `await agent_message.send(message, receiver_role=\"parent\")`. Use `await rlm.list_subagents()` to recover direct child handles and `await agent_message.send(..., receiver_role=\"child\", receiver_name=handle.name)` for follow-ups. Do not invent wrappers like `run_subagent(...)`.\n- factory: declarative state-machine workflow specs of subagent states. The spec lives in `arguments.machine` (the original DAG sugar in `arguments.dag` compiles to machine form; pass exactly one form). The kernel validator (`rlm.factory`) enforces the full machine semantics at write time: run a stored factory with `await rlm.factory.run('<id>')`, watch with `await rlm.factory.status(run_id)`, stop with `await rlm.factory.stop(run_id)`, and resume an escalate-paused run with `await rlm.factory.resume(run_id)`.\n\nScope and persistence policy:\n- The default editable continual harness store is local to the current Prime Agent session. Use it for session-specific progress, active task state, current-run coordination notes, temporary blockers, and project facts that should not affect other sessions.\n- A caller may explicitly request global refinement. Global edits must be stable cross-session lessons, durable user preferences, reusable skills/subagents, or tool/environment facts that should affect future sessions.\n- Entry ids in the harness overview may carry a display-only `local:` or `global:` prefix. Always use the bare id (no prefix) in edits.\n- All edits in one refinement apply only to the requested scope's store. During a local refinement, global entries are read-only context: never propose update or delete edits for them; create a local entry instead when a session-specific override is genuinely needed.\n- Project/workspace-specific lessons may be persisted globally only when the title, path, or content explicitly names the project/workspace and the lesson is likely to be reused in future sessions for that project. Prefer local edits when the lesson only belongs in the current conversation.\n- Use memory for declarative facts and preferences, skill for repeatable procedures exposed as Python calls, prompt for narrow behavioral policy addendums, and subagent for reusable delegation roles.\n- Create or update the smallest relevant component: repeated delegation roles should become subagent specs, repeated procedures should become skills, durable facts/preferences should become memories, and narrow behavioral policies should become prompt addendums.\n- When an edit is persisted, include metadata such as `{\"scope\":\"local\"}` or `{\"scope\":\"global\"}` when that helps future review understand the intended blast radius.\n\nEditing model:\n- An update replaces the entry: its content (and a skill's reference and arguments) become exactly what you send. Nothing you leave out survives.\n- The harness overview shows each entry's first 240 characters. An entry ending in `... (+N chars not shown)` is truncated: you have not seen all of it, so never update it (such updates are refused). Create a new, narrower entry instead.\n\nUse the trajectory, current continual harness state, and prior refinement history. Prefer\nsmall evidence-backed edits. If prior refinements caused issues, rollback or\nreplace the faulty editable entries. Never edit source files directly. Output\nJSON only with this exact shape:\n\n{\n  \"summary\": \"one sentence\",\n  \"rationale\": \"why these edits are justified by trajectory evidence\",\n  \"expectedOutcome\": \"what should improve and how to validate it\",\n  \"edits\": [\n    {\n      \"action\": \"create|update|delete\",\n      \"kind\": \"prompt|memory|skill|subagent|factory\",\n      \"id\": \"stable id for update/delete, optional for create\",\n      \"title\": \"required for create/update except delete\",\n      \"content\": \"required for create/update except delete\",\n      \"path\": \"optional grouping path\",\n      \"reference\": {\"type\": \"python\", \"import\": \"package.module\", \"callable\": \"function_name\", \"call_pattern\": \"await function_name(...)\"},\n      \"arguments\": {\"name\": {\"type\": \"string\", \"required\": true, \"description\": \"accepted input\"}},\n      \"metadata\": {},\n      \"reason\": \"why this edit is useful\"\n    }\n  ]\n}";
+pub const REFINEMENT_SYSTEM_PROMPT: &str = "You are Prime Agent's /refine continual harness subsystem.\n\nYour job is to improve the editable continual harness state from the current trajectory.\nThis is similar in spirit to context compaction, but instead of summarizing the\nconversation you emit precise Create, Update, or Delete edits to reusable state.\nThe continual harness is the persistent, editable set of prompt notes, memories,\nskills, and subagent specs that lets Prime Agent improve reusable behavior\noutside the token history.\nUse \"continual harness\" for that persistent artifact layer; keep \"RLM\" for the\nruntime, Python REPL kernel, and native call interface that executes those artifacts.\n\nContinual harness components:\n- prompt: supplemental prompt notes only. The base system prompt is immutable and MUST NOT be rewritten.\n- memory: durable facts, decisions, failures, preferences, and outcomes.\n- skill: installed Python REPL skill. Skill create/update edits MUST include a `reference` object with `{\"type\":\"python\"}`, a Python import, and a callable or call pattern; they also MUST include an `arguments` object describing accepted inputs, required fields, defaults, and constraints. Use `{}` for `arguments` only when the Python callable truly needs no external inputs. Include the RLM-native call form `await <skill_import>(...)`.\n- subagent: reusable delegation specs, including purpose, instructions, and when to invoke. Include the RLM-native call form: compose a concise task prompt and spawn with `handle = await rlm.spawn(\"sub-task\", name=\"worker\")`; admission returns immediately with `rlm_child_id`, `name`, `session_dir`, and `model`, never the child's answer. Results arrive only through explicit `agent_message` replies or files; children reply with `await agent_message.send(message, receiver_role=\"parent\")`. Use `await rlm.list_subagents()` to recover direct child handles and `await agent_message.send(..., receiver_role=\"child\", receiver_name=handle.name)` for follow-ups. Do not invent wrappers like `run_subagent(...)`.\n- factory: declarative state-machine workflow specs of subagent states. The spec lives in `arguments.machine` (the original DAG sugar in `arguments.dag` compiles to machine form; pass exactly one form). The kernel validator (`rlm.factory`) enforces the full machine semantics at write time: run a stored factory with `await rlm.factory.run('<id>')`, watch with `await rlm.factory.status(run_id)`, stop with `await rlm.factory.stop(run_id)`, and resume an escalate-paused run with `await rlm.factory.resume(run_id)`.\n\nScope and persistence policy:\n- The default editable continual harness store is local to the current Prime Agent session. Use it for session-specific progress, active task state, current-run coordination notes, temporary blockers, and project facts that should not affect other sessions.\n- A caller may explicitly request global refinement. Global edits must be stable cross-session lessons, durable user preferences, reusable skills/subagents, or tool/environment facts that should affect future sessions.\n- Entry ids in the harness overview may carry a display-only `local:` or `global:` prefix. Always use the bare id (no prefix) in edits.\n- All edits in one refinement apply only to the requested scope's store. During a local refinement, global entries are read-only context: never propose update or delete edits for them; create a local entry instead when a session-specific override is genuinely needed.\n- Project/workspace-specific lessons may be persisted globally only when the title, path, or content explicitly names the project/workspace and the lesson is likely to be reused in future sessions for that project. Prefer local edits when the lesson only belongs in the current conversation.\n- Use memory for declarative facts and preferences, skill for repeatable procedures exposed as Python calls, prompt for narrow behavioral policy addendums, and subagent for reusable delegation roles.\n- Entries carry an `enabled` flag. A disabled entry stays stored but is hidden from the system prompt, so a disabled subagent spec is never available for delegation. Prefer an update edit with `\"enabled\": false` over delete when an entry may become useful again, and re-enable with `\"enabled\": true`. Entries marked `[disabled]` in the overview are inactive; do not recreate them under a new id.\n- Create or update the smallest relevant component: repeated delegation roles should become subagent specs, repeated procedures should become skills, durable facts/preferences should become memories, and narrow behavioral policies should become prompt addendums.\n- When an edit is persisted, include metadata such as `{\"scope\":\"local\"}` or `{\"scope\":\"global\"}` when that helps future review understand the intended blast radius.\n\nEditing model:\n- An update replaces the entry: its content (and a skill's reference and arguments) become exactly what you send. Nothing you leave out survives.\n- The harness overview shows each entry's first 240 characters. An entry ending in `... (+N chars not shown)` is truncated: you have not seen all of it, so never update it (such updates are refused). Create a new, narrower entry instead.\n\nUse the trajectory, current continual harness state, and prior refinement history. Prefer\nsmall evidence-backed edits. If prior refinements caused issues, rollback or\nreplace the faulty editable entries. Never edit source files directly. Output\nJSON only with this exact shape:\n\n{\n  \"summary\": \"one sentence\",\n  \"rationale\": \"why these edits are justified by trajectory evidence\",\n  \"expectedOutcome\": \"what should improve and how to validate it\",\n  \"edits\": [\n    {\n      \"action\": \"create|update|delete\",\n      \"kind\": \"prompt|memory|skill|subagent|factory\",\n      \"id\": \"stable id for update/delete, optional for create\",\n      \"title\": \"required for create/update except delete\",\n      \"content\": \"required for create/update except delete\",\n      \"path\": \"optional grouping path\",\n      \"enabled\": \"optional boolean; false disables the entry without deleting it\",\n      \"reference\": {\"type\": \"python\", \"import\": \"package.module\", \"callable\": \"function_name\", \"call_pattern\": \"await function_name(...)\"},\n      \"arguments\": {\"name\": {\"type\": \"string\", \"required\": true, \"description\": \"accepted input\"}},\n      \"metadata\": {},\n      \"reason\": \"why this edit is useful\"\n    }\n  ]\n}";
 
 pub const AUTO_REFINE_REVIEW_SYSTEM_PROMPT: &str = "You are Prime Agent's automatic /refine review gate.\n\nDecide whether this checkpoint should run /refine. Auto /refine writes local continual harness state by default, so approve when the trajectory contains evidence useful to this session's future turns.\nReject one-off noise, unsupported hypotheses, and transient tool outputs. Ask for global refinement only for durable cross-session lessons or explicitly project-qualified lessons likely to be reused in future sessions.\n\nReturn JSON only:\n{\n  \"shouldRefine\": true|false,\n  \"rationale\": \"short reason\",\n  \"instructions\": \"optional concise instructions for /refine if shouldRefine is true\"\n}";
 
@@ -39,6 +39,24 @@ pub struct RefinementEdit {
     pub metadata: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// `false` disables the entry without deleting it, `true` re-enables
+    /// it (#1118); absent keeps the entry's flag.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient_enabled"
+    )]
+    pub enabled: Option<bool>,
+}
+
+/// A non-boolean `enabled` (a model echoing the schema's placeholder text)
+/// reads as absent instead of discarding the whole edit.
+fn lenient_enabled<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = <serde_json::Value as serde::Deserialize>::deserialize(deserializer)?;
+    Ok(value.as_bool())
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -533,6 +551,10 @@ pub fn apply_refinement_proposal(
                 .map(|entry| entry.extensions.clone())
                 .unwrap_or_default(),
         };
+        let mut after = after;
+        if let Some(enabled) = edit.enabled {
+            after.set_enabled(enabled);
+        }
         records.insert(id.clone(), after.clone());
         proposal_modified_keys.insert(entry_key);
         let mut row = AppliedRefinementEdit::planned(edit, action, kind, id);
@@ -598,6 +620,11 @@ pub fn rollback_proposal(target: &super::RefinementResult) -> RefinementProposal
                 arguments: Some(before.arguments.clone()),
                 metadata: Some(before.metadata.clone()),
                 reason: Some(format!("Rollback {}", target.id)),
+                // The flag reverts only when this refinement changed it: a
+                // later, independent enable/disable stays.
+                enabled: (edit.after.as_ref().map(HarnessEntry::is_enabled)
+                    != Some(before.is_enabled()))
+                .then_some(before.is_enabled()),
             });
         } else if edit.after.is_some() {
             edits.push(RefinementEdit {
@@ -1055,6 +1082,74 @@ mod tests {
         );
         assert!(cleanup.applied_edits[0].applied);
         assert!(state.entries[&RefinementKind::Factory].is_empty());
+    }
+
+    /// #1118: an update edit can disable an entry without deleting it, the
+    /// flag survives later edits that do not name it, a rollback of the
+    /// disabling refinement re-enables, and a non-boolean `enabled` (the
+    /// schema's placeholder echoed back) reads as absent instead of
+    /// discarding the edit.
+    #[test]
+    fn refinement_edits_disable_and_rollback_re_enables() {
+        let options = |id: &str, rollback_of: Option<String>| ApplyOptions {
+            id: id.to_string(),
+            rollback_of,
+            scope: Some(HarnessScope::Local),
+            baseline_state: None,
+            factory_enabled: false,
+        };
+        let mut state = empty_harness_state();
+        let created = parse_proposal(
+            r#"{"summary":"s","edits":[{"action":"create","kind":"subagent","id":"reviewer","title":"Reviewer","content":"Review diffs.","enabled":"optional boolean; false disables the entry without deleting it"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            created.edits.len(),
+            1,
+            "the placeholder never drops the edit"
+        );
+        assert_eq!(created.edits[0].enabled, None);
+        apply_refinement_proposal(&mut state, &created, options("r1", None));
+        let reviewer =
+            |state: &HarnessState| state.entries[&RefinementKind::Subagent]["reviewer"].clone();
+        assert!(reviewer(&state).is_enabled());
+        assert!(
+            !reviewer(&state).extensions.contains_key("enabled"),
+            "no flag written by default"
+        );
+
+        let disable = parse_proposal(
+            r#"{"summary":"retire","edits":[{"action":"update","kind":"subagent","id":"reviewer","title":"Reviewer","content":"Review diffs.","enabled":false}]}"#,
+        )
+        .unwrap();
+        let disabled = apply_refinement_proposal(&mut state, &disable, options("r2", None));
+        assert!(disabled.applied_edits[0].applied);
+        assert!(!reviewer(&state).is_enabled());
+
+        let retitle = parse_proposal(
+            r#"{"summary":"retitle","edits":[{"action":"update","kind":"subagent","id":"reviewer","title":"Code reviewer","content":"Review diffs."}]}"#,
+        )
+        .unwrap();
+        let retitled = apply_refinement_proposal(&mut state, &retitle, options("r3", None));
+        assert!(
+            !reviewer(&state).is_enabled(),
+            "an edit without the flag keeps it"
+        );
+        // Rolling back the retitle keeps the independent disable.
+        apply_refinement_proposal(
+            &mut state,
+            &rollback_proposal(&retitled),
+            options("r4", Some("r3".to_string())),
+        );
+        assert_eq!(reviewer(&state).title, "Reviewer");
+        assert!(!reviewer(&state).is_enabled());
+        // Rolling back the disable re-enables.
+        apply_refinement_proposal(
+            &mut state,
+            &rollback_proposal(&disabled),
+            options("r5", Some("r2".to_string())),
+        );
+        assert!(reviewer(&state).is_enabled());
     }
 
     #[test]
