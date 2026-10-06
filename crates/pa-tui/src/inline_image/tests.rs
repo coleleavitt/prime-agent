@@ -284,6 +284,9 @@ fn kitty_places_once_moves_by_id_and_deletes_when_scrolled_out() {
         paint(&mut painter, &frame_with(&image, BLOCK, 20, 12)),
         kitty_delete_placements(id)
     );
+    // Adoption counts the preview once, however often it moved.
+    assert_eq!(painter.take_shown(), 1);
+    assert_eq!(painter.take_shown(), 0);
     // The surface's exit frees the data.
     let mut released = String::new();
     painter.release(&mut released);

@@ -12,7 +12,7 @@
 //! only whole (iTerm2 cannot crop; a band touching the last row would
 //! scroll the screen).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
 use super::payload::{KittyPayloadState, PayloadSource};
@@ -45,6 +45,8 @@ pub(crate) struct Painter {
     size: (u16, u16),
     kitty: HashMap<u64, KittyImage>,
     placed: Vec<Placed>,
+    /// The distinct previews placed since the last [`Painter::take_shown`].
+    shown: HashSet<u64>,
 }
 
 /// CUP: rows and columns are 1-based.
@@ -144,6 +146,7 @@ impl Painter {
                 out.push_str(&kitty_place(image.id, band.columns, band.rows, crop));
             }
             image.sent = true;
+            self.shown.insert(band.key);
             self.placed.push(Placed {
                 band: *band,
                 rows: Vec::new(),
@@ -218,8 +221,16 @@ impl Painter {
                     ..Iterm2Options::default()
                 },
             ));
+            self.shown.insert(placement.band.key);
             self.placed.push(placement);
         }
+    }
+
+    /// The count of distinct previews placed since the last take.
+    pub(crate) fn take_shown(&mut self) -> u64 {
+        let count = self.shown.len() as u64;
+        self.shown.clear();
+        count
     }
 
     /// Take every image off the screen and free kitty's copies (the surface

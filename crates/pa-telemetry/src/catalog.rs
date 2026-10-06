@@ -1624,6 +1624,14 @@ const TUI_EXIT: EventRule = EventRule {
         ("tui_mermaid_rendered", optional(count())),
         ("tui_mermaid_kept_source", optional(count())),
         ("tui_mermaid_rotated", optional(count())),
+        // Inline-image adoption (added in schema v4, additive): the terminal's image
+        // protocol and the presented-artifact previews the run placed as real images,
+        // each counted once (never per repaint). Counts only, never image content.
+        (
+            "tui_inline_images",
+            optional(enum_rule(&["kitty", "iterm2", "off"], "off")),
+        ),
+        ("tui_inline_image_count", optional(count())),
         ("feature_model_initiated_count", optional(count())),
         ("feature_model_completed_count", optional(count())),
         ("feature_model_failed_count", optional(count())),
@@ -2270,6 +2278,25 @@ mod tests {
         properties.set("action", json!("send_everything"));
         assert_eq!(sanitize("tui image fallback", &mut properties), 1);
         assert_eq!(properties.get("action"), Some(&json!("cancel")));
+    }
+
+    #[test]
+    fn tui_exit_carries_the_inline_image_protocol_and_count() {
+        let mut properties = Properties::new();
+        properties.set("exit_reason", json!("ctrl_d"));
+        properties.set("turn_active", json!(false));
+        properties.set("tui_inline_images", json!("kitty"));
+        properties.set("tui_inline_image_count", json!(2u64));
+        let expected = properties.clone();
+        properties.set("tui_inline_image_name", json!("render.png")); // not catalogued
+        assert_eq!(sanitize("tui exit", &mut properties), 1);
+        assert_eq!(properties, expected);
+        let mut odd = Properties::new();
+        odd.set("exit_reason", json!("ctrl_d"));
+        odd.set("turn_active", json!(false));
+        odd.set("tui_inline_images", json!("sixel"));
+        sanitize("tui exit", &mut odd);
+        assert_eq!(odd.get("tui_inline_images"), Some(&json!("off")));
     }
 
     #[test]

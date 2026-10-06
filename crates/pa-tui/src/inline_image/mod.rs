@@ -283,5 +283,28 @@ pub(crate) fn release_screen(out: &mut impl std::io::Write) {
     }
 }
 
+/// The run's inline-image adoption for `tui exit`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShownImages {
+    /// The terminal's protocol: `kitty`, `iterm2`, or `off`.
+    pub protocol: &'static str,
+    /// The distinct previews placed since the last take.
+    pub count: u64,
+}
+
+/// Take the inline-image adoption counters (each preview counts once per
+/// run, never per repaint).
+#[must_use]
+pub fn take_shown() -> ShownImages {
+    ShownImages {
+        protocol: match image_protocol() {
+            Some(ImageProtocol::Kitty) => "kitty",
+            Some(ImageProtocol::Iterm2) => "iterm2",
+            None => "off",
+        },
+        count: painter().take_shown(),
+    }
+}
+
 #[cfg(test)]
 mod tests;
