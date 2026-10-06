@@ -642,3 +642,134 @@ async fn a_funded_subagent_stops_once_its_grant_is_spent() {
         (3, Some(500))
     );
 }
+
+/// The delegation budget's spend and grant totals are durable: a resumed
+/// child keeps counting against the grant it was spawned with (even when
+/// the resume carries no allowance, as after a daemon restart), and a
+/// restarted root does not refill its pool.
+#[tokio::test]
+async fn the_delegation_budget_survives_a_resume() {
+    async fn run(engine: &SessionEngine) {
+        engine
+            .session
+            .prompt("go", crate::session_engine::PromptOptions::default())
+            .await
+            .unwrap();
+        engine.session.agent().wait_for_idle().await;
+    }
+    async fn session_file(engine: &SessionEngine) -> std::path::PathBuf {
+        engine
+            .session
+            .session_handle()
+            .lock()
+            .await
+            .get_session_file()
+            .unwrap()
+            .to_path_buf()
+    }
+
+    let model = pa_agent::types::Model {
+        id: "m".into(),
+        name: "m".into(),
+        api: "test".into(),
+        provider: "test".into(),
+        base_url: "http://localhost".into(),
+        reasoning: false,
+        cost: pa_agent::types::UsageCost::default(),
+        context_window: 1_000,
+        max_tokens: 100,
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let agent_dir = tmp.path().join("agent");
+    let session_dir = tmp.path().join("sessions").join("w");
+    std::fs::create_dir_all(&agent_dir).unwrap();
+    std::fs::write(
+        agent_dir.join("settings.json"),
+        r#"{"rlmTokenBudget": {"total": 500, "perDepth": [200]}}"#,
+    )
+    .unwrap();
+    // One session lifetime: `turns` 80-token tool-call turns then a stop;
+    // answers the provider calls made and the budget engine.
+    let open =
+        |file: Option<std::path::PathBuf>, allowance: Option<u64>, depth: u32, turns: usize| {
+            let model = model.clone();
+            let cwd = tmp.path().to_path_buf();
+            let agent_dir = agent_dir.clone();
+            let session_dir = session_dir.clone();
+            async move {
+                let provider = Arc::new(ScriptedProvider::new(model.clone()));
+                for index in 0..turns {
+                    let call = format!("call-{index}");
+                    let mut steps = pa_agent::scripted::tool_call_turn_steps(
+                        &model,
+                        None,
+                        vec![(call.as_str(), "echo", serde_json::json!({ "text": "hi" }))],
+                    );
+                    if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut() {
+                        if let pa_agent::stream::AssistantMessageEvent::Done { message, .. } =
+                            &mut **event
+                        {
+                            message.usage.input = 60;
+                            message.usage.output = 20;
+                        }
+                    }
+                    provider.push_turn(pa_agent::scripted::ScriptedTurn::Events(steps));
+                }
+                provider.push_text_turn("all done");
+                let session_manager = match &file {
+                    Some(file) => SessionManager::open(&cwd, &session_dir, file),
+                    None => SessionManager::persisted(&cwd, &session_dir),
+                };
+                let engine = create_session(SessionEngineConfig {
+                    cwd,
+                    agent_dir,
+                    model: Some(model),
+                    stream_fn: Some(provider.stream_fn()),
+                    tools: vec![bridge_tool(echo_definition())],
+                    rlm_depth: Some(depth),
+                    rlm_token_allowance: allowance,
+                    session_manager: Some(session_manager),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+                (provider, engine)
+            }
+        };
+    // A child funded with 200 spends 80 and stops after the next turn.
+    let (_, child) = open(None, Some(200), 1, 1).await;
+    run(&child).await;
+    let child_file = session_file(&child).await;
+    drop(child);
+    // Resumed without the allowance (a daemon restart): it still holds
+    // its 200 grant with 80 already spent.
+    let (provider, child) = open(Some(child_file), None, 1, 2).await;
+    assert_eq!(
+        child
+            .rlm
+            .token_budget
+            .get()
+            .map(|budget| budget.remaining()),
+        Some(120)
+    );
+    run(&child).await;
+    assert_eq!(
+        provider.calls().len(),
+        2,
+        "the second resumed turn crosses the remaining 120"
+    );
+    drop(child);
+
+    // A root's grants are never returned, across a restart too.
+    let (_, root) = open(None, None, 0, 0).await;
+    run(&root).await;
+    let budget = root.rlm.token_budget.get().unwrap();
+    assert_eq!(budget.reserve_child_grant().unwrap(), 200);
+    let root_file = session_file(&root).await;
+    drop(root);
+    let (_, root) = open(Some(root_file), None, 0, 0).await;
+    assert_eq!(
+        root.rlm.token_budget.get().map(|budget| budget.remaining()),
+        Some(300)
+    );
+}

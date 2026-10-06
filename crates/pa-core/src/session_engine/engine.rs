@@ -243,29 +243,10 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     let request_timing_settings = settings.get_request_timing();
     let length_continuations = settings.get_length_continuations();
     let repetition_guard = settings.get_repetition_guard();
-    // The delegation budget (upstream #1192): a root takes its pool from
-    // the global `rlmTokenBudget` setting; a funded child enforces the grant
-    // its parent drew even if the setting changed since.
-    let rlm_token_budget = {
-        use super::rlm_token_budget::{RlmTokenAllowance, RlmTokenBudget, RlmTokenBudgetConfig};
-        let depth = config.rlm_depth.unwrap_or(0);
-        match (settings.get_rlm_token_budget(), config.rlm_token_allowance) {
-            (budget, Some(grant)) => Some(std::sync::Arc::new(RlmTokenBudget::new(
-                budget.unwrap_or(RlmTokenBudgetConfig {
-                    total: grant,
-                    per_depth: Vec::new(),
-                }),
-                RlmTokenAllowance::Granted(grant),
-                depth,
-            ))),
-            (Some(budget), None) if depth == 0 => Some(std::sync::Arc::new(RlmTokenBudget::new(
-                budget,
-                RlmTokenAllowance::Root,
-                depth,
-            ))),
-            (Some(_) | None, None) => None,
-        }
-    };
+    // The delegation budget's setting (upstream #1192), read before
+    // `settings` moves into the loader; the budget itself is built once
+    // the session's artifact dir (its durable ledger's home) is known.
+    let rlm_token_budget_setting = settings.get_rlm_token_budget();
     let kernel_environment = settings.get_kernel_environment();
     // Captured before `settings` moves into the resource loader: the
     // factory host bridge's preflight facts (the daemon `allowedModels`
@@ -339,9 +320,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             .unwrap_or_else(|| restored_plan_mode.unwrap_or(false)),
     );
     let _ = wiring.rlm.plan_mode.set(plan_mode.clone());
-    if let Some(budget) = &rlm_token_budget {
-        let _ = wiring.rlm.token_budget.set(std::sync::Arc::clone(budget));
-    }
     let mut handlers = wiring.handlers.clone();
     if let Some(extra) = config.extra_host_handlers.clone() {
         handlers.merge(extra);
@@ -359,6 +337,47 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 .as_deref()
                 .and_then(super::harness_digest::session_artifact_dir_for_log)
         });
+    // The delegation budget (upstream #1192): a root takes its pool from
+    // the global `rlmTokenBudget` setting; a funded child enforces the grant
+    // its parent drew even if the setting changed since, and a resumed
+    // child whose resume carries no grant (a daemon restart) keeps the one
+    // its ledger recorded.
+    let rlm_token_budget = {
+        use super::rlm_token_budget::{
+            RlmTokenAllowance, RlmTokenBudget, RlmTokenBudgetConfig, RlmTokenBudgetLedger,
+            RLM_TOKEN_BUDGET_FILE,
+        };
+        let depth = config.rlm_depth.unwrap_or(0);
+        let store = session_artifact_dir
+            .as_deref()
+            .map(|dir| dir.join(RLM_TOKEN_BUDGET_FILE));
+        let allowance = config.rlm_token_allowance.or_else(|| {
+            (depth > 0)
+                .then(|| store.as_deref().map(RlmTokenBudgetLedger::load))
+                .flatten()
+                .and_then(|ledger| ledger.allowance)
+        });
+        let budget = match (rlm_token_budget_setting, allowance) {
+            (budget, Some(grant)) => Some((
+                budget.unwrap_or(RlmTokenBudgetConfig {
+                    total: grant,
+                    per_depth: Vec::new(),
+                }),
+                RlmTokenAllowance::Granted(grant),
+            )),
+            (Some(budget), None) if depth == 0 => Some((budget, RlmTokenAllowance::Root)),
+            (Some(_) | None, None) => None,
+        };
+        budget.map(|(budget, allowance)| {
+            std::sync::Arc::new(match store {
+                Some(store) => RlmTokenBudget::open(budget, allowance, depth, store),
+                None => RlmTokenBudget::new(budget, allowance, depth),
+            })
+        })
+    };
+    if let Some(budget) = &rlm_token_budget {
+        let _ = wiring.rlm.token_budget.set(std::sync::Arc::clone(budget));
+    }
     // Separately built features installed by the composition root (none in
     // the native product).
     let mut feature_context = crate::features::SessionFeatureContext {
