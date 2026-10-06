@@ -38,6 +38,13 @@ pub trait AuthStorageBackend: Send + Sync {
         &self,
         update: &mut dyn FnMut(Option<String>) -> Result<((), Option<String>)>,
     ) -> Result<()>;
+
+    /// Whether another process rewrote (or removed) the backing document
+    /// since this backend last read or wrote it (upstream #3000). The
+    /// default, for stores no other process shares, is never.
+    fn changed_externally(&self) -> bool {
+        false
+    }
 }
 
 use crate::platform::lock_dir::LockDir as LockGuard;
@@ -47,13 +54,31 @@ const STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(10);
 
 pub struct FileAuthStorageBackend {
     auth_path: PathBuf,
+    /// The document's stat identity as this backend last read or wrote it:
+    /// detects rewrites by other processes without re-reading on every
+    /// lookup.
+    last_known: Mutex<Option<FileIdentity>>,
 }
 
 impl FileAuthStorageBackend {
     pub fn new(auth_path: impl Into<PathBuf>) -> Self {
         FileAuthStorageBackend {
             auth_path: auth_path.into(),
+            last_known: Mutex::new(None),
         }
+    }
+
+    fn current_identity(&self) -> Option<FileIdentity> {
+        fs::metadata(&self.auth_path)
+            .ok()
+            .and_then(|metadata| stat_identity(&metadata))
+    }
+
+    fn remember(&self, identity: Option<FileIdentity>) {
+        *self
+            .last_known
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = identity;
     }
 
     fn ensure_parent_dir(&self) -> Result<()> {
@@ -188,15 +213,14 @@ impl AuthStorageBackend for FileAuthStorageBackend {
     /// locked protocol cycle, which also populates the cache.
     fn read(&self) -> Result<Option<String>> {
         let _process_guard = process_lock(&self.auth_path);
-        let now_identity = fs::metadata(&self.auth_path)
-            .ok()
-            .and_then(|metadata| stat_identity(&metadata));
+        let now_identity = self.current_identity();
         if let Some(identity) = now_identity {
             let cache = read_cache()
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(entry) = cache.get(&self.auth_path) {
                 if entry.identity == identity {
+                    self.remember(Some(identity));
                     return Ok(Some(entry.content.clone()));
                 }
             }
@@ -205,12 +229,11 @@ impl AuthStorageBackend for FileAuthStorageBackend {
         self.ensure_file_exists()?;
         // A read can arrive before the initializer created the document,
         // so re-stat for the identity that pairs with this read.
-        let now_identity = fs::metadata(&self.auth_path)
-            .ok()
-            .and_then(|metadata| stat_identity(&metadata));
+        let now_identity = self.current_identity();
         let guard = self.acquire_lock()?;
         let content = fs::read_to_string(&self.auth_path).ok();
         drop(guard);
+        self.remember(now_identity);
         if let (Some(identity), Some(content)) = (now_identity, content.as_deref()) {
             read_cache()
                 .lock()
@@ -234,13 +257,29 @@ impl AuthStorageBackend for FileAuthStorageBackend {
         self.ensure_parent_dir()?;
         self.ensure_file_exists()?;
         let guard = self.acquire_lock()?;
+        let identity_before_read = self.current_identity();
         let current = fs::read_to_string(&self.auth_path).ok();
         let ((), next) = update(current)?;
         if let Some(next) = next {
             super::super::settings::storage::atomic_write(&self.auth_path, &next)?;
+            self.remember(self.current_identity());
+        } else {
+            self.remember(identity_before_read);
         }
         drop(guard);
         Ok(())
+    }
+
+    fn changed_externally(&self) -> bool {
+        let Some(last) = *self
+            .last_known
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        else {
+            return false;
+        };
+        // A removed document changed too.
+        self.current_identity() != Some(last)
     }
 }
 

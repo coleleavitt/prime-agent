@@ -401,6 +401,29 @@ impl AuthStorage {
         }
     }
 
+    /// Pick up a credential write from another process (upstream #3000):
+    /// `auth.json` is shared machine-wide, so a `/login` in one session must
+    /// reach a long-lived worker serving another, or a rejected key wedges
+    /// it until a restart. An external write is an explicit credential
+    /// change, so the stored-source stale markings drop exactly as an
+    /// in-process `set`/`remove` drops them (a re-login with the same key
+    /// recovers too); an unreadable rewrite keeps the old state until a
+    /// readable one replaces it. Returns whether the store reloaded.
+    pub fn refresh_from_external_changes(&mut self) -> bool {
+        if !self.storage.changed_externally() {
+            return false;
+        }
+        self.reload();
+        if self.load_error.is_some() {
+            return false;
+        }
+        self.stale_auth_sources.retain(|_, tokens| {
+            tokens.retain(|token| token.source != AuthSource::Stored);
+            !tokens.is_empty()
+        });
+        true
+    }
+
     /// Runtime API-key override (CLI `--api-key`); not persisted.
     pub fn set_runtime_api_key(&mut self, provider: &str, api_key: String) {
         self.clear_stale_auth_source(provider, AuthSource::Runtime);

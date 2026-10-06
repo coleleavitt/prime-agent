@@ -18,6 +18,7 @@ impl AuthStorage {
         provider_id: &str,
         include_fallback: bool,
     ) -> AuthApiKeyResult {
+        self.refresh_from_external_changes();
         // 1. Runtime override.
         if let Some(candidate) = self.runtime_candidate(provider_id) {
             if !self.is_stale(provider_id, &candidate) {
