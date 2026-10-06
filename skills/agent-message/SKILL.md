@@ -50,6 +50,21 @@ if child is not None:
   `digestAt`; the target pulls it with `rlm.inbox.read()` instead of being
   prompted per message.
 
+## Receiving
+
+A message delivered to this session arrives as a prompt headed
+`[agent-message from <relationship>:<name>]`, then a `Sent: <ISO 8601 time>`
+line (when the target daemon accepted it, the same time the sender's receipt
+reports), then the body. A message queued behind a long turn can be read well
+after it was sent: compare `Sent:` with the current time and with later
+messages from the same sender before acting on it.
+
+A `"queued"` receipt is not a delivery guarantee. If the target drops your
+queued messages before they run (it clears its agent-message queue, pauses
+agent messaging, or is killed), you receive a message from the target whose
+body starts with `[agent-message-failed]` and lists the dropped message ids
+and the reason. Resend if the content still matters.
+
 ## Safety
 
 - Do not delete a child immediately after `send`: delivered follow-ups may still

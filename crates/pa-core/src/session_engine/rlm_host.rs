@@ -212,6 +212,9 @@ pub struct RlmSpawnRequest {
     pub cell_source_code: Option<String>,
     /// The parent's plan mode at spawn; the child starts in it.
     pub plan_mode: bool,
+    /// The child's delegation grant (upstream #1192), drawn from this
+    /// session's budget pool at spawn; `None` when no budget applies.
+    pub token_budget: Option<u64>,
 }
 
 /// Validated `rlm.create_session` request handed to the host.
@@ -414,6 +417,9 @@ pub struct RlmHostBridge {
     pub(crate) semantic_spawn: std::sync::OnceLock<SemanticSpawnAnchor>,
     /// The session's plan mode, read at every spawn (a child inherits it).
     pub(crate) plan_mode: std::sync::OnceLock<super::plan_mode::PlanModeSwitch>,
+    /// The session's delegation budget (`None` until the engine installs
+    /// one; unset when no budget applies): every spawn draws its grant.
+    pub(crate) token_budget: std::sync::OnceLock<Arc<super::rlm_token_budget::RlmTokenBudget>>,
 }
 
 impl RlmHostBridge {
@@ -432,6 +438,7 @@ impl RlmHostBridge {
             usage,
             semantic_spawn: std::sync::OnceLock::new(),
             plan_mode: std::sync::OnceLock::new(),
+            token_budget: std::sync::OnceLock::new(),
         }
     }
 }
@@ -575,6 +582,12 @@ fn register_run(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmHostBridge>)
                     }
                     None => None,
                 };
+                // The delegation budget (upstream #1192): the child's grant
+                // is drawn before the host is consulted, so an exhausted
+                // pool refuses the spawn and no child runs unfunded.
+                if let Some(budget) = bridge.token_budget.get() {
+                    request.token_budget = Some(budget.reserve_child_grant()?);
+                }
                 let handle = bridge.host.spawn(request).await?;
                 // TS `_findLastAssistantMessage` at spawn: the spawning
                 // assistant row (persisted at `message_end` before tool
@@ -617,6 +630,7 @@ fn spawn_request_from_payload(prompt: &str, data: &Value) -> anyhow::Result<RlmS
         target: target.unwrap_or_default(),
         cell_source_code: None,
         plan_mode: false,
+        token_budget: None,
     })
 }
 
@@ -1263,6 +1277,49 @@ mod tests {
             .map(|request| request.plan_mode)
             .collect();
         assert_eq!(inherited, vec![true, false]);
+    }
+
+    /// Upstream #1192: every spawn draws its grant from the session's
+    /// delegation pool before the host is consulted, under the per-depth
+    /// ceiling; an empty pool refuses the spawn and no child is created.
+    #[tokio::test]
+    async fn spawns_draw_grants_from_the_delegation_budget() {
+        use super::super::rlm_token_budget::{
+            RlmTokenAllowance, RlmTokenBudget, RlmTokenBudgetConfig,
+        };
+        let dir = tempfile::TempDir::new().unwrap();
+        let host = RecordingHost::new();
+        let spawn_requests = Arc::clone(&host.spawn_requests);
+        let wiring = wired(dir.path(), Some(host));
+        let _ = wiring.rlm.token_budget.set(Arc::new(RlmTokenBudget::new(
+            RlmTokenBudgetConfig {
+                total: 100,
+                per_depth: vec![60],
+            },
+            RlmTokenAllowance::Root,
+            0,
+        )));
+        let spawn = || {
+            call(
+                &wiring,
+                "rlm.run",
+                json!({ "type": "rlm.run", "prompt": "look around", "kwargs": {} }),
+            )
+        };
+        spawn().await.unwrap();
+        spawn().await.unwrap();
+        let refused = spawn().await.unwrap_err();
+        assert_eq!(
+            refused.to_string(),
+            "RLM token budget exhausted: 100 of 100 tokens already granted; no budget is left for another subagent"
+        );
+        let grants: Vec<Option<u64>> = spawn_requests
+            .lock()
+            .await
+            .iter()
+            .map(|request| request.token_budget)
+            .collect();
+        assert_eq!(grants, vec![Some(60), Some(40)]);
     }
 
     #[tokio::test]

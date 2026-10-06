@@ -153,6 +153,11 @@ pub struct AgentMessagePromptPayload {
     pub message: String,
     pub sender_name: String,
     pub from_relationship: Option<AgentFamilyRelationship>,
+    /// When the target accepted the message (ISO 8601, the receipt's
+    /// `deliveredAt`/`queuedAt`), rendered as a `Sent:` line so a receiver
+    /// can tell a message that waited behind a long turn from a fresh one
+    /// (upstream #1189). `None` renders the unstamped TS prompt.
+    pub sent_at: Option<String>,
 }
 
 #[must_use]
@@ -269,7 +274,13 @@ pub fn create_agent_session_message_prompt(payload: &AgentMessagePromptPayload) 
         Some(relationship) => format!("{}:{sender}", relationship.as_str()),
         None => sender,
     };
-    format!("[agent-message from {sender}]\n\n{}", payload.message)
+    match &payload.sent_at {
+        Some(sent_at) => format!(
+            "[agent-message from {sender}]\nSent: {sent_at}\n\n{}",
+            payload.message
+        ),
+        None => format!("[agent-message from {sender}]\n\n{}", payload.message),
+    }
 }
 
 /// The receiving side's custom-row inputs.
@@ -538,7 +549,8 @@ mod observe;
 pub use observe::{
     create_agent_observe_message_preview, normalize_observe_limit, normalize_observe_max_chars,
     register_agent_observe_host_handlers, AgentFamilyStatus, AgentObserveActivity,
-    AgentObserveController, AgentObserveMessagePreview, AgentObserveSummary,
+    AgentObserveController, AgentObserveMessagePreview, AgentObservePendingToolCalls,
+    AgentObserveSummary,
 };
 
 #[cfg(test)]

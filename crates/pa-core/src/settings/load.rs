@@ -60,6 +60,9 @@ const KNOWN_FIELDS: &[&str] = &[
     "warnings",
     "sessionDir",
     "requestTiming",
+    "lengthContinuations",
+    "repetitionGuard",
+    "rlmTokenBudget",
 ];
 
 /// Extract each known field independently; ignore fields whose JSON type does not match the Rust

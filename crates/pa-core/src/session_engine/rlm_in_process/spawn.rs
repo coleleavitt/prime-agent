@@ -192,6 +192,8 @@ async fn admission(
             telemetry: None,
             prewarm_ipython_kernel: None,
             plan_mode: Some(request.plan_mode),
+            // The grant the parent's spawn drew funds the child.
+            rlm_token_allowance: request.token_budget,
             ..Default::default()
         })
         .await?,

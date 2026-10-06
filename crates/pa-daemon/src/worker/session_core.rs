@@ -29,9 +29,11 @@ pub(crate) struct SessionCore {
     pub(crate) shutdown_requested: bool,
     /// True while a compaction run is in flight (TS `isCompacting`).
     pub(crate) compacting: bool,
-    /// The turn's tool calls in flight, keyed by tool-call id: the
-    /// roster summary derives `isRunningTools` from its size.
-    pub(crate) running_tool_calls: std::collections::HashSet<String>,
+    /// The turn's tool calls in flight, keyed by tool-call id, with each
+    /// call's start time (epoch ms): the roster summary derives
+    /// `isRunningTools` from its size and the in-flight count and oldest
+    /// start from its entries.
+    pub(crate) running_tool_calls: std::collections::HashMap<String, u64>,
     /// Admission ids belonging to the current in-flight turn. The queue
     /// handoff and owned cancellation both inspect this under the core lock.
     pub(crate) running_admission_ids: std::collections::HashSet<String>,
@@ -141,7 +143,7 @@ impl SessionCore {
             shutdown_requested: false,
             last_activity_ms: 0,
             compacting: false,
-            running_tool_calls: std::collections::HashSet::new(),
+            running_tool_calls: std::collections::HashMap::new(),
             running_admission_ids: std::collections::HashSet::new(),
             auto_compaction_enabled: true,
             last_action_snapshot: Some(SessionActionSnapshot::default()),

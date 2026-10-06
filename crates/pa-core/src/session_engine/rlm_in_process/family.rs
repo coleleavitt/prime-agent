@@ -20,8 +20,8 @@ use crate::session_engine::agent_messaging::{
     register_agent_observe_host_handlers, AgentFamilyMember, AgentFamilyRelationship,
     AgentMessageController, AgentMessageDeliveryStatus, AgentMessagePromptPayload,
     AgentMessageReceipt, AgentMessageSendInput, AgentObserveActivity, AgentObserveController,
-    AgentObserveMessagePreview, AgentObserveSummary, AgentSessionMessageRowPayload,
-    DEFAULT_AGENT_MESSAGE_MAX_PENDING_PER_SESSION,
+    AgentObserveMessagePreview, AgentObservePendingToolCalls, AgentObserveSummary,
+    AgentSessionMessageRowPayload, DEFAULT_AGENT_MESSAGE_MAX_PENDING_PER_SESSION,
 };
 use crate::session_engine::engine::SessionEngine;
 use pa_types::session::{AgentMessage as SessionAgentMessage, CustomMessage, FileEntry};
@@ -292,6 +292,14 @@ impl InProcessFamilyController {
             AgentObserveActivity::Idle
         };
         let session_id = engine.session.session_id().await;
+        let cwd = engine
+            .session
+            .shared_persistence()
+            .lock()
+            .await
+            .get_cwd()
+            .display()
+            .to_string();
         AgentObserveSummary {
             active_session_id: Some(session_id.clone()),
             session_id,
@@ -310,6 +318,16 @@ impl InProcessFamilyController {
             attached_clients: 0,
             queued_count,
             is_session_active: true,
+            cwd: Some(cwd),
+            pending_tool_calls: AgentObservePendingToolCalls::measure(
+                state.pending_tool_calls.len(),
+                state
+                    .pending_tool_call_started_at
+                    .values()
+                    .min()
+                    .and_then(|started| u64::try_from(*started).ok()),
+                now_ms(),
+            ),
         }
     }
 
@@ -372,10 +390,14 @@ impl AgentMessageController for InProcessFamilyController {
             AgentFamilyRelationship::Child => Some(AgentFamilyRelationship::Parent),
             AgentFamilyRelationship::Sibling => Some(AgentFamilyRelationship::Sibling),
         };
+        // One acceptance time: the prompt's `Sent:` stamp and the
+        // receipt's delivered/queued time.
+        let sent_at = crate::session::manager::format_iso_now();
         let prompt = create_agent_session_message_prompt(&AgentMessagePromptPayload {
             message: message.clone(),
             sender_name: sender_name.clone(),
             from_relationship,
+            sent_at: Some(sent_at.clone()),
         });
         let target_session_id = node.session_id.clone();
         let id = create_agent_session_message_id();
@@ -449,8 +471,8 @@ impl AgentMessageController for InProcessFamilyController {
             delivery_status: delivery,
             delivery_mode: Some("steer"),
             receiver_role: input.receiver_role,
-            delivered_at: delivered.then(crate::session::manager::format_iso_now),
-            queued_at: (!delivered).then(crate::session::manager::format_iso_now),
+            delivered_at: delivered.then(|| sent_at.clone()),
+            queued_at: (!delivered).then_some(sent_at),
             // The in-process host steers directly; it has no digest lane.
             digest_at: None,
         })

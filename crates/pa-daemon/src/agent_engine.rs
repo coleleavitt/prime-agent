@@ -298,6 +298,9 @@ pub struct AgentSessionEngine {
     /// A `set_rlm_max_depth` that landed before the first turn: the durable
     /// entry parks here and flushes at build.
     pending_max_depth: std::sync::Mutex<Option<u64>>,
+    /// The delegation grant that funds this subagent (upstream #1192), from
+    /// its create's runtime metadata; `None` for a root session.
+    rlm_token_allowance: std::sync::Mutex<Option<u64>>,
     /// The resolved faux model, registered once per engine so scripts span
     /// turns. Verification harness only; never set by the product.
     faux_model: std::sync::OnceLock<Model>,

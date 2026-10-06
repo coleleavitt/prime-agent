@@ -388,6 +388,21 @@ pub struct Settings {
     /// Log per-request provider timing phases to the diagnostic log (TS
     /// `requestTiming`; unset means OFF, exactly the TS default).
     pub request_timing: Option<bool>,
+    /// `lengthContinuations`: how many times in a row a reply cut off at the
+    /// output-token limit auto-continues (upstream #969). Unset or 0 is
+    /// OFF, the TS v0.9.8 behavior (a truncated reply ends the turn).
+    pub length_continuations: Option<u64>,
+    /// `repetitionGuard`: stop a degenerate looping generation mid-stream
+    /// instead of streaming it to the output cap (upstream #1798):
+    /// `"thinking"` (the default when unset) guards reasoning only, `"all"`
+    /// (or `true`) guards reply text too, `"off"` (or `false`) disables it.
+    /// Raw JSON validated at access time.
+    pub repetition_guard: Option<serde_json::Value>,
+    /// `rlmTokenBudget` (global scope only): the host-enforced delegation
+    /// budget, a token count or `{ "total": n, "perDepth": [n, ...] }`
+    /// (upstream #1192). Unset is OFF (TS v0.9.8 had no budget). Raw JSON
+    /// validated at access time.
+    pub rlm_token_budget: Option<serde_json::Value>,
     /// Unknown keys survive load/save round-trips (forward compatibility).
     #[serde(flatten, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,

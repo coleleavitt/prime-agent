@@ -10,7 +10,8 @@ use serde_json::{json, Value};
 use pa_core::session_engine::agent_messaging::{
     AgentFamilyMember, AgentFamilyRelationship, AgentFamilyStatus, AgentMessageController,
     AgentMessageDeliveryStatus, AgentMessageReceipt, AgentMessageSendInput, AgentObserveActivity,
-    AgentObserveController, AgentObserveMessagePreview, AgentObserveSummary,
+    AgentObserveController, AgentObserveMessagePreview, AgentObservePendingToolCalls,
+    AgentObserveSummary,
 };
 
 use crate::supervisor_link::SupervisorLink;

@@ -29,6 +29,9 @@ pub(crate) async fn run_loop(
     let mut first_turn = true;
     let mut turn_index: u64 = 0;
     let mut last_turn: Option<ShouldStopAfterTurnContext> = None;
+    // Consecutive output-limit auto-continuations (reset by any turn that
+    // ends some other way).
+    let mut length_continuations: u32 = 0;
     let mut pending_messages =
         poll_messages_unless_aborted(config.get_steering_messages.as_ref(), signal).await?;
 
@@ -149,6 +152,32 @@ pub(crate) async fn run_loop(
                         })
                         .await?;
                         return Ok(());
+                    }
+                    // A reply cut off at the output-token limit continues
+                    // in the next turn (bounded); queued steering wins.
+                    match &config.length_continuation {
+                        Some(policy)
+                            if pending_messages.is_empty()
+                                && !has_more_tool_calls
+                                && policy.continues(&message, length_continuations) =>
+                        {
+                            length_continuations += 1;
+                            tracing::info!(
+                                target: "pa_agent::length_continuation",
+                                attempt = length_continuations,
+                                max = policy.max_continuations,
+                                "auto-continuing a reply cut off at the output-token limit"
+                            );
+                            pending_messages = vec![(policy.message)(
+                                length_continuations,
+                                policy.max_continuations,
+                            )];
+                        }
+                        Some(_) | None => {
+                            if message.stop_reason != StopReason::Length {
+                                length_continuations = 0;
+                            }
+                        }
                     }
                 }
             }

@@ -19,6 +19,9 @@ pub const RECENT_MODELS_LIMIT: usize = 20;
 pub const DEFAULT_IDLE_EVICTION_MINUTES: u64 = 90;
 pub const DEFAULT_SESSION_ARCHIVE_MAX_AGE_DAYS: u64 = 30;
 pub const DEFAULT_SESSION_ARCHIVE_MAX_SESSIONS: usize = 200;
+/// The ceiling on `lengthContinuations`: a model that keeps hitting the
+/// output-token limit stops after this many continuations whatever the setting.
+pub const MAX_LENGTH_CONTINUATIONS: u32 = 10;
 
 #[derive(Debug, Clone)]
 pub struct SettingsError {
@@ -871,6 +874,19 @@ impl SettingsManager {
         self.global.rlm_max_depth
     }
 
+    /// `rlmTokenBudget`, from the global scope only (like `rlmMaxDepth`): a
+    /// project's settings cannot fund or unfund a delegation tree. `None`
+    /// (unset, zero, or malformed) is off.
+    #[must_use]
+    pub fn get_rlm_token_budget(
+        &self,
+    ) -> Option<crate::session_engine::rlm_token_budget::RlmTokenBudgetConfig> {
+        self.global
+            .rlm_token_budget
+            .as_ref()
+            .and_then(crate::session_engine::rlm_token_budget::RlmTokenBudgetConfig::from_setting)
+    }
+
     /// The daemon mesh listener's TCP port (global scope only, TS #2517):
     /// an integer between 1 and 65535, else unset.
     #[must_use]
@@ -987,6 +1003,44 @@ impl SettingsManager {
     #[must_use]
     pub fn get_request_timing(&self) -> bool {
         self.merged.request_timing.unwrap_or(false)
+    }
+
+    /// `repetitionGuard` (upstream #1798): the guard's channels, `None`
+    /// when off. Unset or unrecognized values keep the default, which
+    /// guards reasoning only (a user can legitimately ask for repetitive
+    /// reply text).
+    #[must_use]
+    pub fn get_repetition_guard(
+        &self,
+    ) -> Option<pa_agent::repetition_guard::RepetitionGuardConfig> {
+        let default = pa_agent::repetition_guard::RepetitionGuardConfig::default();
+        match self.merged.repetition_guard.as_ref() {
+            Some(serde_json::Value::Bool(false)) => None,
+            Some(serde_json::Value::String(mode)) if mode == "off" => None,
+            Some(serde_json::Value::Bool(true)) => {
+                Some(pa_agent::repetition_guard::RepetitionGuardConfig {
+                    guard_text: true,
+                    ..default
+                })
+            }
+            Some(serde_json::Value::String(mode)) if mode == "all" => {
+                Some(pa_agent::repetition_guard::RepetitionGuardConfig {
+                    guard_text: true,
+                    ..default
+                })
+            }
+            _ => Some(default),
+        }
+    }
+
+    /// `lengthContinuations`: the bound on consecutive auto-continuations
+    /// of a reply cut off at the output-token limit, clamped to
+    /// [`MAX_LENGTH_CONTINUATIONS`]. 0 (the default) is off.
+    #[must_use]
+    pub fn get_length_continuations(&self) -> u32 {
+        self.merged.length_continuations.map_or(0, |count| {
+            count.min(u64::from(MAX_LENGTH_CONTINUATIONS)) as u32
+        })
     }
 
     /// `kernel.environment`, from the global scope only: a project's settings file must not

@@ -643,13 +643,33 @@ impl Worker {
         // session mutex the running turn holds across its provider wait: the later
         // awaits settle on an already-cancelled turn. The cancel sweep must land
         // before the close clears the lanes.
-        {
+        let dropped: Vec<crate::agent_message_ingest::DroppedAgentMessage> = {
             let mut core = self.core.lock_or_recover();
             core.abort_requested = true;
+            let dropped = core
+                .steering
+                .iter()
+                .chain(core.follow_up.iter())
+                .filter_map(crate::agent_message_ingest::DroppedAgentMessage::of)
+                .collect();
             core.steering.clear();
             core.follow_up.clear();
-        }
+            dropped
+        };
         self.work_notify.notify_one();
+        // A killed or replaced session never delivers its queued agent
+        // messages (a shutdown close keeps them for the later wake): tell
+        // their senders before the worker's route goes away (upstream #2329).
+        if reason != KillCloseReason::Shutdown {
+            if let Some(route) = self.drop_notice_route() {
+                route
+                    .notify(
+                        dropped,
+                        crate::agent_message_ingest::AgentMessageDropReason::Closed,
+                    )
+                    .await;
+            }
+        }
         self.compaction.abort();
         self.tree_navigation.abort();
         self.engine.abort_in_flight_turn();

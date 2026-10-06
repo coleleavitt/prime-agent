@@ -33,11 +33,24 @@ if child is not None:
   agent carries `sessionId`, optional `sessionName`, `relationship`
   (`parent`/`sibling`/`child`), `status`, `isSessionActive`, and the counts and
   message previews known for it: `latestMessage` for a live session,
-  `firstMessage` for an inactive child. A member with no live session has
-  no `activeSessionId` and no live detail; address it with `agent_message.send`
+  `firstMessage` for an inactive child. A live member also carries `cwd`, its
+  worker's working directory (advisory: it can lag a just-changed directory,
+  and it is a full local path). A member with no live session has
+  no `activeSessionId`, no `cwd`, and no live detail; address it with `agent_message.send`
   using its `relationship` plus its `sessionName`, or its `sessionId` when the
   member has no name. For direct children,
   `await rlm.list_subagents()` also exposes parent-owned lifecycle handles.
+- Every agent also carries `pendingToolCallCount`, the tool calls it is
+  executing right now (0 for a member with no live session). While one is in
+  flight, `oldestPendingToolCallStartedAt` (epoch ms) and
+  `pendingToolCallElapsedMs` say how long the longest-running call has run, so
+  a child wedged in one call can be told apart from one a few seconds in:
+
+  ```python
+  agent = (await agent_observe.get_agent(handle.name))["agent"]
+  if agent["pendingToolCallCount"] and agent.get("pendingToolCallElapsedMs", 0) > 10 * 60 * 1000:
+      ...  # ask the child what it is waiting on
+  ```
 - `await agent_observe.get_agent(target)` returns `agent`, where `agent`
   contains one live agent summary. `target` is resolved like other live-session
   selectors: active id, session id/name, or unambiguous suffix.

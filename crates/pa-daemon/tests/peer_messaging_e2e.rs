@@ -385,9 +385,12 @@ fn worker_to_worker_kernel_send_delivers_over_the_peer_transport() {
     );
 
     let beta_messages = messages(&mut client, "gm2", &beta.active_session_id);
-    let prompt = "[agent-message from alpha]\\n\\nhello from alpha";
+    // The prompt carries the acceptance stamp the receipt reports (#1189);
+    // the payload is JSON text, so its newlines are escaped.
+    let sent_at = receipt["deliveredAt"].as_str().expect("deliveredAt");
+    let prompt = format!("[agent-message from alpha]\\nSent: {sent_at}\\n\\nhello from alpha");
     assert_eq!(
-        beta_messages.matches(prompt).count(),
+        beta_messages.matches(prompt.as_str()).count(),
         1,
         "B must render the delivered prompt once: {beta_messages}"
     );
@@ -414,7 +417,7 @@ fn worker_to_worker_kernel_send_delivers_over_the_peer_transport() {
     assert_eq!(delivered["role"], "custom");
     assert_eq!(
         delivered["content"],
-        "[agent-message from alpha]\n\nhello from alpha"
+        format!("[agent-message from alpha]\nSent: {sent_at}\n\nhello from alpha")
     );
     assert_eq!(delivered["display"], true);
     assert_eq!(delivered["details"]["message"], "hello from alpha");

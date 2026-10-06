@@ -7,6 +7,7 @@ pub mod admission;
 pub mod agent;
 pub mod agent_loop;
 pub mod proxy;
+pub mod repetition_guard;
 pub mod scripted;
 pub mod stream;
 pub mod types;

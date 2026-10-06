@@ -20,6 +20,8 @@ fn observe_rows_carry_the_typed_status_and_activity() {
         attached_clients: 1,
         queued_count: 0,
         is_session_active: true,
+        cwd: None,
+        pending_tool_calls: AgentObservePendingToolCalls::default(),
     };
     let value = row.to_value();
     assert_eq!(value["status"], "running");
@@ -39,6 +41,49 @@ fn observe_rows_carry_the_typed_status_and_activity() {
         value.get("activity").is_none(),
         "a member with no live session omits the activity field"
     );
+}
+
+/// Upstream #891: the observe row always carries the in-flight tool-call
+/// count, and the oldest call's start and elapsed time while one runs; the
+/// elapsed time clamps at zero when the clock moved backwards.
+#[test]
+fn observe_rows_carry_in_flight_tool_call_progress() {
+    let mut row = AgentObserveSummary {
+        active_session_id: Some("live-1".to_string()),
+        session_id: "sess-1".to_string(),
+        session_name: None,
+        relationship: Some(AgentFamilyRelationship::Child),
+        runtime_kind: Some("subagent".to_string()),
+        status: AgentFamilyStatus::Running,
+        activity: Some(AgentObserveActivity::Tool),
+        is_current: false,
+        is_streaming: true,
+        is_compacting: false,
+        attached_clients: 0,
+        queued_count: 0,
+        is_session_active: true,
+        cwd: None,
+        pending_tool_calls: AgentObservePendingToolCalls::measure(1, Some(5_000), 65_000),
+    };
+    let progress = |value: &Value| {
+        [
+            "pendingToolCallCount",
+            "oldestPendingToolCallStartedAt",
+            "pendingToolCallElapsedMs",
+        ]
+        .map(|key| value.get(key).cloned())
+    };
+    assert_eq!(
+        progress(&row.to_value()),
+        [Some(json!(1)), Some(json!(5_000)), Some(json!(60_000))]
+    );
+    row.pending_tool_calls = AgentObservePendingToolCalls::measure(1, Some(9_000), 8_000);
+    assert_eq!(
+        progress(&row.to_value()),
+        [Some(json!(1)), Some(json!(9_000)), Some(json!(0))]
+    );
+    row.pending_tool_calls = AgentObservePendingToolCalls::measure(0, Some(9_000), 8_000);
+    assert_eq!(progress(&row.to_value()), [Some(json!(0)), None, None]);
 }
 
 #[test]
@@ -88,13 +133,25 @@ fn message_prompts_and_id_parsing() {
         message: "keep going".to_string(),
         sender_name: "worker-1".to_string(),
         from_relationship: Some(AgentFamilyRelationship::Child),
+        sent_at: None,
     };
     let prompt = create_agent_session_message_prompt(&payload);
     assert_eq!(prompt, "[agent-message from child:worker-1]\n\nkeep going");
+    // Upstream #1189: the acceptance stamp rides its own line under the
+    // header, so a receiver can spot mail that waited behind a long turn.
+    let stamped = AgentMessagePromptPayload {
+        sent_at: Some("2026-10-05T12:00:00.000Z".to_string()),
+        ..payload
+    };
+    assert_eq!(
+        create_agent_session_message_prompt(&stamped),
+        "[agent-message from child:worker-1]\nSent: 2026-10-05T12:00:00.000Z\n\nkeep going"
+    );
     let evil = AgentMessagePromptPayload {
         message: "m".to_string(),
         sender_name: "bad name!".to_string(),
         from_relationship: None,
+        sent_at: None,
     };
     assert_eq!(
         create_agent_session_message_prompt(&evil),

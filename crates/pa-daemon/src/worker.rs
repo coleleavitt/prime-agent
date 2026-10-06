@@ -326,7 +326,7 @@ impl Worker {
             agent_message_digest_pin: digest::DigestLanePin::default(),
             active_action: None,
             feature_status: serde_json::Map::new(),
-            running_tool_calls: std::collections::HashSet::new(),
+            running_tool_calls: std::collections::HashMap::new(),
             running_admission_ids: std::collections::HashSet::new(),
         };
         let active_session_id = config.active_session_id.clone();
@@ -382,6 +382,7 @@ impl Worker {
             std::sync::Arc::clone(&user_bash),
             Arc::clone(&events),
             Arc::clone(&recovery),
+            Arc::clone(&idle_notify),
         ));
         // The digest inbox lane (swarm PRs C/D/E): the receiving worker owns
         // the lane — the durable inbox, the controller with its counters, and
@@ -999,6 +1000,20 @@ fn is_injected_prompt_item(item: &QueuedItem) -> bool {
 #[cfg(test)]
 #[path = "worker_resume_settings_tests.rs"]
 mod worker_resume_settings_tests;
+
+/// A rendered agent-message prompt with its `Sent:` acceptance stamp
+/// (upstream #1189) removed: tests that pin the prompt's sender and body
+/// without the wall-clock time compare against the unstamped TS form.
+#[cfg(test)]
+pub(crate) fn without_sent_stamp(prompt: &str) -> String {
+    match prompt.split_once("\nSent: ") {
+        Some((header, rest)) => match rest.split_once('\n') {
+            Some((_, body)) => format!("{header}\n{body}"),
+            None => prompt.to_string(),
+        },
+        None => prompt.to_string(),
+    }
+}
 
 #[cfg(test)]
 mod agent_message_tests;

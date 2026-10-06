@@ -183,6 +183,7 @@ impl AgentSessionEngine {
             rlm_depth: std::sync::atomic::AtomicU32::new(0),
             rlm_max_depth_source: std::sync::Mutex::new("default"),
             pending_max_depth: std::sync::Mutex::new(None),
+            rlm_token_allowance: std::sync::Mutex::new(None),
             reloaded_goal_update: std::sync::Mutex::new(None),
             faux_model: std::sync::OnceLock::new(),
             overflow_recovery: std::sync::Mutex::new(OverflowRecovery::default()),
@@ -872,6 +873,7 @@ impl AgentSessionEngine {
         // same ledger, so a rebuild replays instead of re-registering.
         let semantic_edges = self.semantic_identity.lock_or_recover().clone();
         let on_late_sent_agent_message = self.late_agent_message_sink.lock_or_recover().clone();
+        let rlm_token_allowance = *self.rlm_token_allowance.lock_or_recover();
         pa_core::session_engine::engine::create_session(SessionEngineConfig {
             plan_mode: None,
             on_late_sent_agent_message,
@@ -921,6 +923,7 @@ impl AgentSessionEngine {
                 wiring.binding = self.kernel_cron_binding().or(wiring.binding);
                 wiring
             }),
+            rlm_token_allowance,
         })
         .await
         .inspect(|engine| {

@@ -195,6 +195,7 @@ async fn the_runtime_round_trips_run_agent_through_the_rust_host() {
         prewarm_ipython_kernel: None,
         on_background_work_settled: None,
         queued_goal_context_purge: None,
+        rlm_token_allowance: None,
     })
     .await
     .unwrap();

@@ -88,6 +88,37 @@ pub type AfterToolCallFn = Arc<
         + Sync,
 >;
 
+/// Mints the continuation row for auto-continuation `attempt` of `max`.
+pub type LengthContinuationMessageFn = Arc<dyn Fn(u32, u32) -> AgentMessage + Send + Sync>;
+
+/// Bounded auto-continuation of a response cut off at the output-token
+/// limit (`stopReason: length`; upstream #969). When a turn ends on the
+/// limit with text and no tool calls, and no steering is waiting, the loop
+/// delivers [`LengthContinuation::message`] as the next turn instead of
+/// ending the run, at most `max_continuations` times in a row; a turn that
+/// ends any other way resets the count. Off unless a host installs it (TS
+/// v0.9.8 had no auto-continuation).
+#[derive(Clone)]
+pub struct LengthContinuation {
+    pub max_continuations: u32,
+    pub message: LengthContinuationMessageFn,
+}
+
+impl LengthContinuation {
+    /// Whether `message` is a truncated reply this policy continues: cut
+    /// at the limit with visible text, no tool calls (those are actionable
+    /// as they stand), and the bound not yet reached.
+    #[must_use]
+    pub fn continues(&self, message: &crate::types::AssistantMessage, used: u32) -> bool {
+        message.stop_reason == crate::types::StopReason::Length
+            && used < self.max_continuations
+            && message.tool_calls().is_empty()
+            && message.content.iter().any(|block| {
+                matches!(block, crate::types::AssistantContent::Text(text) if !text.text.trim().is_empty())
+            })
+    }
+}
+
 #[derive(Clone)]
 pub struct AgentLoopConfig {
     pub model: Model,
@@ -111,6 +142,12 @@ pub struct AgentLoopConfig {
     pub tool_execution: ToolExecutionMode,
     pub before_tool_call: Option<BeforeToolCallFn>,
     pub after_tool_call: Option<AfterToolCallFn>,
+    /// Auto-continuation of output-limit truncations; `None` ends the run
+    /// on a truncated reply (the TS behavior).
+    pub length_continuation: Option<LengthContinuation>,
+    /// Stop a degenerate looping generation mid-stream (upstream #1798);
+    /// `None` streams every response to its natural end.
+    pub repetition_guard: Option<crate::repetition_guard::RepetitionGuardConfig>,
 }
 
 impl AgentLoopConfig {
@@ -137,6 +174,8 @@ impl AgentLoopConfig {
             tool_execution: ToolExecutionMode::Parallel,
             before_tool_call: None,
             after_tool_call: None,
+            length_continuation: None,
+            repetition_guard: None,
         }
     }
 

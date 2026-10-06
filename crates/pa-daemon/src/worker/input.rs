@@ -613,11 +613,15 @@ impl Worker {
             }
             Ok(None) => {}
         }
+        // One acceptance time: the prompt's `Sent:` stamp (upstream #1189)
+        // and the receipt's delivered/queued time.
+        let timestamp = crate::util::now_iso();
         let prompt = pa_core::session_engine::agent_messaging::create_agent_session_message_prompt(
             &AgentMessagePromptPayload {
                 message: message.to_string(),
                 sender_name,
                 from_relationship,
+                sent_at: Some(timestamp.clone()),
             },
         );
         let lane = if payload.get("deliveryMode").and_then(Value::as_str) == Some("follow_up") {
@@ -713,7 +717,6 @@ impl Worker {
         // order). The checkpoint, projection push, and runner wake are
         // the callers' (the keyed path commits them durably first).
         self.agent_digest.record_arrival(crate::util::now_ms());
-        let timestamp = crate::util::now_iso();
         let mut receipt = json!({
             "id": id,
             "source": AGENT_MESSAGE_SOURCE,

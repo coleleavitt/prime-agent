@@ -216,6 +216,7 @@ fn spawn_request(name: Option<&str>, model: Option<&str>) -> RlmSpawnRequest {
         target: super::super::rlm_host::RlmSpawnTarget::Local,
         spawned_by_request_id: None,
         cell_source_code: None,
+        token_budget: None,
     }
 }
 
@@ -1497,6 +1498,9 @@ async fn a_composed_remote_family_routes_sends_beyond_the_local_graph() {
                 attached_clients: 0,
                 queued_count: 0,
                 is_session_active: true,
+                cwd: None,
+                pending_tool_calls:
+                    crate::session_engine::agent_messaging::AgentObservePendingToolCalls::default(),
             }
         }
     }

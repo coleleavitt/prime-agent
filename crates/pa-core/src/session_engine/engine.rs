@@ -86,6 +86,10 @@ pub struct SessionEngineConfig {
     /// session's restored mode is recorded as a durable change row. `None`
     /// restores the newest change on the session's branch (off when none).
     pub plan_mode: Option<bool>,
+    /// The delegation grant that funds this subagent (upstream #1192; the
+    /// parent's `rlm.spawn` drew it). `None` for a root session, which
+    /// takes its pool from the `rlmTokenBudget` setting.
+    pub rlm_token_allowance: Option<u64>,
 }
 
 pub struct SessionEngine {
@@ -234,6 +238,31 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // Request timing: the settings half of the flag is read once here
     // (`settings` moves into the loader); the `PI_REQUEST_TIMING` half stays live.
     let request_timing_settings = settings.get_request_timing();
+    let length_continuations = settings.get_length_continuations();
+    let repetition_guard = settings.get_repetition_guard();
+    // The delegation budget (upstream #1192): a root takes its pool from
+    // the global `rlmTokenBudget` setting; a funded child enforces the grant
+    // its parent drew even if the setting changed since.
+    let rlm_token_budget = {
+        use super::rlm_token_budget::{RlmTokenAllowance, RlmTokenBudget, RlmTokenBudgetConfig};
+        let depth = config.rlm_depth.unwrap_or(0);
+        match (settings.get_rlm_token_budget(), config.rlm_token_allowance) {
+            (budget, Some(grant)) => Some(std::sync::Arc::new(RlmTokenBudget::new(
+                budget.unwrap_or(RlmTokenBudgetConfig {
+                    total: grant,
+                    per_depth: Vec::new(),
+                }),
+                RlmTokenAllowance::Granted(grant),
+                depth,
+            ))),
+            (Some(budget), None) if depth == 0 => Some(std::sync::Arc::new(RlmTokenBudget::new(
+                budget,
+                RlmTokenAllowance::Root,
+                depth,
+            ))),
+            (Some(_) | None, None) => None,
+        }
+    };
     let kernel_environment = settings.get_kernel_environment();
     // Captured before `settings` moves into the resource loader: the
     // factory host bridge's preflight facts (the daemon `allowedModels`
@@ -307,6 +336,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             .unwrap_or_else(|| restored_plan_mode.unwrap_or(false)),
     );
     let _ = wiring.rlm.plan_mode.set(plan_mode.clone());
+    if let Some(budget) = &rlm_token_budget {
+        let _ = wiring.rlm.token_budget.set(std::sync::Arc::clone(budget));
+    }
     let mut handlers = wiring.handlers.clone();
     if let Some(extra) = config.extra_host_handlers.clone() {
         handlers.merge(extra);
@@ -700,19 +732,58 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             std::sync::Arc::clone(&request_timing_wiring),
             super::request_timing::pass_through_transform(),
         )),
-        should_stop_after_turn: config.queued_steering_probe.take().map(|probe| {
-            let probe: pa_agent::agent_loop::ShouldStopAfterTurnFn =
-                std::sync::Arc::new(move |_context| {
-                    let probe = std::sync::Arc::clone(&probe);
-                    Box::pin(async move { Ok(probe()) })
-                });
-            probe
-        }),
+        should_stop_after_turn: {
+            let probe = config.queued_steering_probe.take();
+            // A funded subagent that spent its grant stops at this
+            // boundary (the turn that crossed it is kept).
+            let budget = rlm_token_budget.clone();
+            (probe.is_some() || budget.is_some()).then(|| {
+                let stop: pa_agent::agent_loop::ShouldStopAfterTurnFn =
+                    std::sync::Arc::new(move |_context| {
+                        let probe = probe.clone();
+                        let budget = budget.clone();
+                        Box::pin(async move {
+                            let exhausted = budget.as_ref().is_some_and(|budget| {
+                                let exhausted = budget.exhausted();
+                                if exhausted {
+                                    tracing::info!(
+                                        target: "pa_core::rlm_token_budget",
+                                        "subagent stopped: its RLM token grant is spent"
+                                    );
+                                }
+                                exhausted
+                            });
+                            Ok(exhausted || probe.is_some_and(|probe| probe()))
+                        })
+                    });
+                stop
+            })
+        },
         should_stop_before_turn: config.queued_steering_probe.clone(),
         steering_mode: config.steering_mode,
         follow_up_mode: config.follow_up_mode,
         before_tool_call,
         after_tool_call,
+        // Opt-in (`lengthContinuations`, TS v0.9.8 had none): a reply cut
+        // off at the output-token limit continues in a visible follow-up
+        // turn, bounded by the setting.
+        length_continuation: (length_continuations > 0).then(|| {
+            pa_agent::agent_loop::LengthContinuation {
+                max_continuations: length_continuations,
+                message: std::sync::Arc::new(|attempt, max| {
+                    crate::autonomous::autonomous_continuation_loop_row(
+                        &format!(
+                            "[auto-continue {attempt}/{max}: the previous reply was cut off at the output-token limit]\n\nContinue exactly where the previous reply stopped. Do not repeat what was already written."
+                        ),
+                        pa_agent::now_ms().max(0) as u64,
+                    )
+                }),
+            }
+        }),
+        // On (reasoning only) unless `repetitionGuard` says otherwise: a
+        // degenerate looping generation settles as a guarded error instead
+        // of streaming to the output cap.
+        repetition_guard,
         ..Default::default()
     });
     crate::features::observe_agent_events(crate::features::installed(), &feature_context, &agent)
@@ -825,6 +896,23 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                     }
                     Ok(())
                 })
+            })
+            .await;
+    }
+    // The budget counts this session's own replies as they settle.
+    if let Some(budget) = rlm_token_budget {
+        agent
+            .subscribe(move |event, _signal| {
+                if let pa_agent::types::AgentEvent::MessageEnd {
+                    message:
+                        pa_agent::types::AgentMessage::Standard(pa_agent::types::Message::Assistant(
+                            reply,
+                        )),
+                } = &event
+                {
+                    budget.record_spend(super::rlm_token_budget::reply_tokens(&reply.usage));
+                }
+                Box::pin(async { Ok(()) })
             })
             .await;
     }

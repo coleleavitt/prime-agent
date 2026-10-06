@@ -364,6 +364,49 @@ mod tests {
         }
     }
 
+    /// Upstream #890: a beat declined by a busy session re-arms on the
+    /// schedule's original phase. `every 5m` due at 12:05 and declined at
+    /// 12:06:30 re-arms at 12:10 (not 12:11:30); declined at 12:27 it
+    /// re-arms at 12:30.
+    #[test]
+    fn a_skipped_beat_keeps_the_interval_phase() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = AgentCronJobStore::new(dir.path().join("jobs.json"));
+        let t0 = 1_700_000_000_000;
+        let minute = 60_000;
+        let job = store.create(&input("beat", "every 5m", t0)).unwrap();
+        assert_eq!(
+            job.next_run_at
+                .as_deref()
+                .and_then(crate::cron::parse_iso_millis),
+            Some(t0 + 5 * minute)
+        );
+        let skip_at = |due: u64, declined_at: u64| {
+            let dispatches = store.claim_due(due, due);
+            assert_eq!(dispatches.len(), 1, "the beat due at {due} claims");
+            store
+                .record_dispatch_result(
+                    &dispatches[0].id,
+                    &DispatchResultOptions {
+                        now: Some(declined_at),
+                        outcome: "skipped",
+                        error: None,
+                    },
+                )
+                .unwrap()
+                .and_then(|job| job.next_run_at)
+                .and_then(|next| crate::cron::parse_iso_millis(&next))
+        };
+        assert_eq!(
+            skip_at(t0 + 5 * minute, t0 + 6 * minute + 30_000),
+            Some(t0 + 10 * minute)
+        );
+        assert_eq!(
+            skip_at(t0 + 10 * minute, t0 + 27 * minute),
+            Some(t0 + 30 * minute)
+        );
+    }
+
     /// Dogfood P0 regression: a heartbeat created after the bind-time arm
     /// never fires unless the mutation's wake re-arms.
     #[tokio::test]

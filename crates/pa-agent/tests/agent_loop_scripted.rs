@@ -534,6 +534,51 @@ async fn abort_during_tool_execution_produces_aborted_tool_result() {
     assert!(!state.is_streaming);
 }
 
+/// Upstream #891: the state snapshot records when each in-flight tool call
+/// started, so observers can report how long a call has been running; the
+/// start times clear with the in-flight set.
+#[tokio::test]
+async fn in_flight_tool_calls_record_their_start_time() {
+    let slow = EchoTool::with_options("slow_tool", 60_000, false);
+    let (agent, provider, _events) = scripted_agent(vec![slow.clone()]).await;
+    provider.push_tool_call_turn(
+        None,
+        vec![("call-1", "slow_tool", serde_json::json!({ "text": "x" }))],
+    );
+    let before = pa_agent::now_ms();
+    let prompt_task = tokio::spawn({
+        let agent = agent.clone();
+        async move { agent.prompt("go").await }
+    });
+    // Observable readiness: the tool call is in flight.
+    let state = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let state = agent.state().await;
+            if !state.pending_tool_calls.is_empty() {
+                return state;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the tool call starts");
+    let after = pa_agent::now_ms();
+    let started: Vec<&String> = state.pending_tool_call_started_at.keys().collect();
+    assert_eq!(started, vec!["call-1"]);
+    let at = state.pending_tool_call_started_at["call-1"];
+    assert!(
+        (before..=after).contains(&at),
+        "{before} <= {at} <= {after}"
+    );
+
+    agent.abort();
+    prompt_task.await.unwrap().unwrap();
+    agent.wait_for_idle().await;
+    let state = agent.state().await;
+    assert!(state.pending_tool_calls.is_empty());
+    assert!(state.pending_tool_call_started_at.is_empty());
+}
+
 #[tokio::test]
 async fn max_iterations_stops_after_configured_turn_count() {
     let echo = EchoTool::new("echo");
@@ -713,4 +758,219 @@ fn scripted_event_shapes_round_trip_through_the_event_enum() {
         pa_agent::scripted::ScriptStep::Event(event)
             if matches!(**event, AssistantMessageEvent::Error { .. })
     )));
+}
+
+/// A text turn that ends at the output-token limit (`stopReason: length`).
+fn length_turn(provider: &ScriptedProvider, text: &str) {
+    let mut steps = pa_agent::scripted::text_turn_steps(&test_model(), text);
+    if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut() {
+        if let AssistantMessageEvent::Done { reason, message } = &mut **event {
+            *reason = StopReason::Length;
+            message.stop_reason = StopReason::Length;
+        }
+    }
+    provider.push_turn(pa_agent::scripted::ScriptedTurn::Events(steps));
+}
+
+/// The run's transcript as `(role, text)` rows.
+fn transcript(messages: &[AgentMessage]) -> Vec<(&'static str, String)> {
+    messages
+        .iter()
+        .map(|message| match message {
+            AgentMessage::Standard(Message::User(user)) => (
+                "user",
+                match &user.content {
+                    UserContent::Text(text) => text.clone(),
+                    UserContent::Parts(parts) => parts
+                        .iter()
+                        .filter_map(|part| match part {
+                            pa_agent::types::UserPart::Text(text) => Some(text.text.clone()),
+                            pa_agent::types::UserPart::Image(_) => None,
+                        })
+                        .collect(),
+                },
+            ),
+            AgentMessage::Standard(Message::Assistant(assistant)) => (
+                "assistant",
+                assistant
+                    .content
+                    .iter()
+                    .filter_map(|block| match block {
+                        AssistantContent::Text(text) => Some(text.text.clone()),
+                        _ => None,
+                    })
+                    .collect(),
+            ),
+            _ => ("other", String::new()),
+        })
+        .collect()
+}
+
+fn length_continuation_agent(provider: &Arc<ScriptedProvider>, max: u32) -> Agent {
+    Agent::new(AgentOptions {
+        stream_fn: Some(provider.stream_fn()),
+        length_continuation: Some(pa_agent::agent_loop::LengthContinuation {
+            max_continuations: max,
+            message: Arc::new(|attempt, max| {
+                AgentMessage::Standard(Message::User(pa_agent::types::UserMessage {
+                    content: UserContent::Text(format!("continue {attempt}/{max}")),
+                    timestamp: 0,
+                }))
+            }),
+        }),
+        ..Default::default()
+    })
+}
+
+/// Upstream #969: a reply cut off at the output-token limit continues in a
+/// follow-up turn of the same run, bounded by the policy; the bound ends
+/// the run on the last truncated reply.
+#[tokio::test]
+async fn a_length_truncated_reply_auto_continues_up_to_the_bound() {
+    let provider = Arc::new(ScriptedProvider::new(test_model()));
+    let agent = length_continuation_agent(&provider, 2);
+    agent.set_model(test_model()).await;
+    length_turn(&provider, "part one");
+    length_turn(&provider, "part two");
+    length_turn(&provider, "part three");
+    provider.push_text_turn("never requested");
+    agent.prompt("write it all").await.unwrap();
+    agent.wait_for_idle().await;
+    assert_eq!(
+        transcript(&agent.state().await.messages),
+        vec![
+            ("user", "write it all".to_string()),
+            ("assistant", "part one".to_string()),
+            ("user", "continue 1/2".to_string()),
+            ("assistant", "part two".to_string()),
+            ("user", "continue 2/2".to_string()),
+            ("assistant", "part three".to_string()),
+        ]
+    );
+    assert_eq!(provider.calls().len(), 3);
+}
+
+/// The continuation stops on a natural completion, and a fresh prompt
+/// starts a fresh bound.
+#[tokio::test]
+async fn a_length_continuation_ends_at_the_natural_stop_and_resets_per_run() {
+    let provider = Arc::new(ScriptedProvider::new(test_model()));
+    let agent = length_continuation_agent(&provider, 1);
+    agent.set_model(test_model()).await;
+    length_turn(&provider, "cut");
+    provider.push_text_turn("done");
+    agent.prompt("first").await.unwrap();
+    agent.wait_for_idle().await;
+    length_turn(&provider, "cut again");
+    provider.push_text_turn("done again");
+    agent.prompt("second").await.unwrap();
+    agent.wait_for_idle().await;
+    assert_eq!(
+        transcript(&agent.state().await.messages),
+        vec![
+            ("user", "first".to_string()),
+            ("assistant", "cut".to_string()),
+            ("user", "continue 1/1".to_string()),
+            ("assistant", "done".to_string()),
+            ("user", "second".to_string()),
+            ("assistant", "cut again".to_string()),
+            ("user", "continue 1/1".to_string()),
+            ("assistant", "done again".to_string()),
+        ]
+    );
+}
+
+/// Without the policy (the default, TS v0.9.8 behavior) a truncated reply
+/// ends the run.
+#[tokio::test]
+async fn a_length_truncated_reply_ends_the_run_without_the_policy() {
+    let (agent, provider, _events) = scripted_agent(vec![]).await;
+    length_turn(&provider, "cut");
+    provider.push_text_turn("never requested");
+    agent.prompt("go").await.unwrap();
+    agent.wait_for_idle().await;
+    assert_eq!(
+        transcript(&agent.state().await.messages),
+        vec![("user", "go".to_string()), ("assistant", "cut".to_string())]
+    );
+}
+
+fn guarded_agent(provider: &Arc<ScriptedProvider>) -> Agent {
+    Agent::new(AgentOptions {
+        stream_fn: Some(provider.stream_fn()),
+        repetition_guard: Some(pa_agent::repetition_guard::RepetitionGuardConfig {
+            guard_text: true,
+            ..Default::default()
+        }),
+        ..Default::default()
+    })
+}
+
+/// Upstream #1798: a degenerate looping stream is stopped by the guard
+/// instead of streaming to the cap: the reply settles as an error naming
+/// the guard (`stopReasonRaw: repetition_loop`), trimmed to its first
+/// repeats, and the run ends.
+#[tokio::test]
+async fn the_repetition_guard_stops_a_looping_stream() {
+    let provider = Arc::new(ScriptedProvider::new(test_model()));
+    let agent = guarded_agent(&provider);
+    agent.set_model(test_model()).await;
+    provider.push_text_turn(&format!("Thinking it over: {}", "the ".repeat(5_000)));
+    provider.push_text_turn("never requested");
+    agent.prompt("go").await.unwrap();
+    agent.wait_for_idle().await;
+    let state = agent.state().await;
+    let reply = assistant_text(state.messages.last().unwrap());
+    // The guard fires at the first 256-byte check past the 2000-char span
+    // floor: 507 repeats in, far short of the 5000 the stream would send.
+    assert_eq!(
+        (
+            reply.stop_reason,
+            reply.stop_reason_raw.as_deref(),
+            reply.error_message.as_deref(),
+        ),
+        (
+            StopReason::Error,
+            Some("repetition_loop"),
+            Some("Generation stopped by the repetition guard: the output repeated one 4-character unit 507 times in a row"),
+        )
+    );
+    assert_eq!(
+        transcript(&state.messages),
+        vec![
+            ("user", "go".to_string()),
+            ("assistant", "Thinking it over: the the".to_string()),
+        ]
+    );
+    assert_eq!(provider.calls().len(), 1);
+}
+
+/// The guard never stops real output with repeated structure, and without
+/// the guard (the default) a loop streams to its end.
+#[tokio::test]
+async fn the_repetition_guard_passes_real_output_and_is_off_by_default() {
+    let provider = Arc::new(ScriptedProvider::new(test_model()));
+    let agent = guarded_agent(&provider);
+    agent.set_model(test_model()).await;
+    let code = (0..120).fold(String::new(), |mut code, row| {
+        use std::fmt::Write as _;
+        let _ = write!(
+            code,
+            "    assert_eq!(table[{row}], expected[{row}]);\n    }}\n"
+        );
+        code
+    });
+    provider.push_text_turn(&code);
+    agent.prompt("write the test").await.unwrap();
+    agent.wait_for_idle().await;
+    let reply = assistant_text(agent.state().await.messages.last().unwrap()).clone();
+    assert_eq!(reply.stop_reason, StopReason::Stop);
+
+    let (agent, provider, _events) = scripted_agent(vec![]).await;
+    let looping = "the ".repeat(5_000);
+    provider.push_text_turn(&looping);
+    agent.prompt("go").await.unwrap();
+    agent.wait_for_idle().await;
+    let reply = assistant_text(agent.state().await.messages.last().unwrap()).clone();
+    assert_eq!(reply.stop_reason, StopReason::Stop);
 }

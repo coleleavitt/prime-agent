@@ -83,7 +83,7 @@ fn summary_lifecycle_is_message_based() {
     // prompt; a busy turn is live at that wire moment.
     let mut busy = SessionCore::test_core(None, "/tmp".to_string());
     busy.busy = true;
-    busy.running_tool_calls.insert("call-1".to_string());
+    busy.running_tool_calls.insert("call-1".to_string(), 1_000);
     // `isRunningTools` is the streaming gate over the in-flight tool
     // set.
     assert!(
@@ -101,7 +101,7 @@ fn summary_lifecycle_is_message_based() {
         )
         .is_running_tools
     );
-    busy.running_tool_calls.insert("call-1".to_string());
+    busy.running_tool_calls.insert("call-1".to_string(), 1_000);
     busy.busy = false;
     assert!(
         !session_summary(
@@ -307,4 +307,39 @@ fn display_ids_are_twelve_hex() {
     let id = crate::util::new_display_id();
     assert_eq!(id.len(), 12);
     assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
+}
+
+/// Upstream #891: the roster row reports how many tool calls are in flight
+/// and when the oldest one started; both keys are absent when none is.
+#[test]
+fn summary_reports_the_in_flight_tool_call_count_and_oldest_start() {
+    let mut core = SessionCore::test_core(None, "/tmp".to_string());
+    core.busy = true;
+    core.running_tool_calls.insert("call-1".to_string(), 2_000);
+    core.running_tool_calls.insert("call-2".to_string(), 1_500);
+    let row = serde_json::to_value(session_summary(
+        &core, "default", None, None, /*bash_running=*/ false, /*quota_parked=*/ false,
+        /*subagents_running=*/ false,
+    ))
+    .unwrap();
+    assert_eq!(
+        (
+            row["pendingToolCallCount"].clone(),
+            row["oldestPendingToolCallStartedAt"].clone()
+        ),
+        (json!(2), json!(1_500))
+    );
+    core.running_tool_calls.clear();
+    let row = serde_json::to_value(session_summary(
+        &core, "default", None, None, /*bash_running=*/ false, /*quota_parked=*/ false,
+        /*subagents_running=*/ false,
+    ))
+    .unwrap();
+    assert_eq!(
+        (
+            row.get("pendingToolCallCount"),
+            row.get("oldestPendingToolCallStartedAt")
+        ),
+        (None, None)
+    );
 }

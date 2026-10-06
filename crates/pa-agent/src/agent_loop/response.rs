@@ -186,6 +186,9 @@ async fn stream_assistant_response_inner(
         signal,
     )
     .await?;
+    let mut repetition_guard = config
+        .repetition_guard
+        .map(crate::repetition_guard::RepetitionGuard::new);
 
     loop {
         let next = match signal {
@@ -220,9 +223,61 @@ async fn stream_assistant_response_inner(
                     *partial_event = Some(Arc::clone(&event));
                     emit(AgentEvent::MessageUpdate {
                         message: Arc::new(AgentMessage::from(partial.clone())),
-                        assistant_message_event: event,
+                        assistant_message_event: Arc::clone(&event),
                     })
                     .await?;
+                }
+                // A degenerate loop ends the stream here instead of at the
+                // output cap: the response settles as an error naming the
+                // guard, with the loop trimmed to its first repeats.
+                let looping = match (repetition_guard.as_mut(), &*event) {
+                    (
+                        Some(guard),
+                        crate::stream::AssistantMessageEvent::TextDelta {
+                            content_index,
+                            partial,
+                            ..
+                        }
+                        | crate::stream::AssistantMessageEvent::ThinkingDelta {
+                            content_index,
+                            partial,
+                            ..
+                        },
+                    ) => guard
+                        .observe(partial, *content_index)
+                        .map(|found| (found, partial.clone())),
+                    _ => None,
+                };
+                if let Some((found, mut final_message)) = looping {
+                    response.close();
+                    tracing::warn!(
+                        target: "pa_agent::repetition_guard",
+                        period_chars = found.period_chars,
+                        repeats = found.repeats,
+                        "stopped a degenerate looping generation"
+                    );
+                    crate::repetition_guard::trim_loop(&mut final_message, &found);
+                    final_message.stop_reason = crate::types::StopReason::Error;
+                    final_message.stop_reason_raw =
+                        Some(crate::repetition_guard::REPETITION_STOP_REASON.to_string());
+                    final_message.error_message = Some(found.describe());
+                    if *added_partial {
+                        *context.messages.last_mut().unwrap() =
+                            AgentMessage::from(final_message.clone());
+                    } else {
+                        context
+                            .messages
+                            .push(AgentMessage::from(final_message.clone()));
+                        emit(AgentEvent::MessageStart {
+                            message: AgentMessage::from(final_message.clone()),
+                        })
+                        .await?;
+                    }
+                    emit(AgentEvent::MessageEnd {
+                        message: AgentMessage::from(final_message.clone()),
+                    })
+                    .await?;
+                    return Ok(final_message);
                 }
             }
             ref event if event.terminal_message().is_some() => {

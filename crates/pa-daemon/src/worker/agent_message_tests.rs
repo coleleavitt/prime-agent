@@ -97,9 +97,14 @@ async fn deliver_message_answers_the_ts_receipt_shape() {
         .unwrap_or_default()
         .is_empty());
     assert_eq!(data["from"]["sessionName"], "source-agent");
+    // Upstream #1189: the prompt carries the acceptance time the receipt
+    // reports, so the receiver can spot mail that waited.
     assert_eq!(
         queue_texts(&worker.core, Lane::Steering),
-        vec!["[agent-message from source-agent]\n\nping from the first session"],
+        vec![format!(
+            "[agent-message from source-agent]\nSent: {}\n\nping from the first session",
+            data["deliveredAt"].as_str().unwrap()
+        )],
         "steering lane"
     );
     assert!(queue_texts(&worker.core, Lane::FollowUp).is_empty());
@@ -130,7 +135,13 @@ async fn deliver_message_carries_the_agent_message_custom_row() {
         .await;
     assert!(response.success, "deliver failed: {response:?}");
     let data = response.data.expect("receipt data");
-    let prompt = "[agent-message from child:research-lane]\n\nthe research is done";
+    let prompt = format!(
+        "[agent-message from child:research-lane]\nSent: {}\n\nthe research is done",
+        data["deliveredAt"]
+            .as_str()
+            .or(data["queuedAt"].as_str())
+            .unwrap()
+    );
     let (custom, message, agent_message, preview) = {
         let core = worker.core.lock().unwrap();
         let item = core.steering.front().expect("the delivery queued");
@@ -195,7 +206,10 @@ async fn deliver_message_follow_up_lane_and_subagent_sender() {
     let data = response.data.expect("receipt data");
     assert_eq!(data["deliveryMode"], "follow_up");
     assert_eq!(
-        queue_texts(&worker.core, Lane::FollowUp),
+        queue_texts(&worker.core, Lane::FollowUp)
+            .iter()
+            .map(|text| crate::worker::without_sent_stamp(text))
+            .collect::<Vec<_>>(),
         vec!["[agent-message from child:source-agent]\n\nqueue me"],
         "follow-up lane"
     );

@@ -72,6 +72,41 @@ pub struct AgentObserveSummary {
     pub attached_clients: usize,
     pub queued_count: usize,
     pub is_session_active: bool,
+    /// The resident session's working directory (upstream #1066); `None`
+    /// for members with no live session, whose saved cwd may be stale or
+    /// client-owned.
+    pub cwd: Option<String>,
+    /// The in-flight tool calls (upstream #891): `count` is always
+    /// reported (0 for a member with no live session); the oldest call's
+    /// start and elapsed time ride along while one is in flight.
+    pub pending_tool_calls: AgentObservePendingToolCalls,
+}
+
+/// The in-flight tool-call progress an observe row reports, so a child
+/// stuck in one call for forty minutes is distinguishable from one three
+/// seconds in.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AgentObservePendingToolCalls {
+    pub count: usize,
+    /// Epoch ms the longest-running in-flight call started.
+    pub oldest_started_at: Option<u64>,
+    /// How long that call has run, measured when the row was built
+    /// (clamped at 0 when the clock moved backwards).
+    pub elapsed_ms: Option<u64>,
+}
+
+impl AgentObservePendingToolCalls {
+    /// The progress of `count` in-flight calls whose oldest started at
+    /// `oldest_started_at`, measured at `now_ms`.
+    #[must_use]
+    pub fn measure(count: usize, oldest_started_at: Option<u64>, now_ms: u64) -> Self {
+        let oldest_started_at = oldest_started_at.filter(|_| count > 0);
+        AgentObservePendingToolCalls {
+            count,
+            oldest_started_at,
+            elapsed_ms: oldest_started_at.map(|started| now_ms.saturating_sub(started)),
+        }
+    }
 }
 
 impl AgentObserveSummary {
@@ -92,6 +127,16 @@ impl AgentObserveSummary {
         });
         if let Some(activity) = self.activity {
             row["activity"] = json!(activity.as_str());
+        }
+        if let Some(cwd) = &self.cwd {
+            row["cwd"] = json!(cwd);
+        }
+        row["pendingToolCallCount"] = json!(self.pending_tool_calls.count);
+        if let Some(started) = self.pending_tool_calls.oldest_started_at {
+            row["oldestPendingToolCallStartedAt"] = json!(started);
+        }
+        if let Some(elapsed) = self.pending_tool_calls.elapsed_ms {
+            row["pendingToolCallElapsedMs"] = json!(elapsed);
         }
         row
     }

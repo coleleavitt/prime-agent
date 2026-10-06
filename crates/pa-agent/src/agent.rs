@@ -72,6 +72,9 @@ pub struct AgentStateSnapshot {
     pub streaming_message: Option<AgentMessage>,
     pub pending_tool_calls: HashSet<String>,
     pub error_message: Option<String>,
+    /// When each in-flight tool call started (epoch ms, keyed like
+    /// `pending_tool_calls`): observers report how long a call has run.
+    pub pending_tool_call_started_at: std::collections::HashMap<String, i64>,
 }
 
 #[derive(Default)]
@@ -102,6 +105,12 @@ pub struct AgentOptions {
     pub follow_up_mode: Option<QueueMode>,
     pub session_id: Option<String>,
     pub tool_execution: Option<ToolExecutionMode>,
+    /// Auto-continue replies cut off at the output-token limit; `None`
+    /// (the default) ends the run on a truncated reply.
+    pub length_continuation: Option<crate::agent_loop::LengthContinuation>,
+    /// Stop a degenerate looping generation mid-stream; `None` (the
+    /// default) streams every response to its natural end.
+    pub repetition_guard: Option<crate::repetition_guard::RepetitionGuardConfig>,
 }
 
 struct MutableAgentState {
@@ -112,7 +121,8 @@ struct MutableAgentState {
     messages: Vec<AgentMessage>,
     is_streaming: bool,
     streaming_message: Option<Arc<AgentMessage>>,
-    pending_tool_calls: HashSet<String>,
+    /// The in-flight tool calls and their start times (epoch ms).
+    pending_tool_calls: std::collections::HashMap<String, i64>,
     error_message: Option<String>,
 }
 
@@ -126,7 +136,7 @@ impl Default for MutableAgentState {
             messages: Vec::new(),
             is_streaming: false,
             streaming_message: None,
-            pending_tool_calls: HashSet::new(),
+            pending_tool_calls: std::collections::HashMap::new(),
             error_message: None,
         }
     }
@@ -423,6 +433,8 @@ pub(crate) struct AgentInner {
     after_tool_call: Option<AfterToolCallFn>,
     should_stop_after_turn: Option<ShouldStopAfterTurnFn>,
     should_stop_before_turn: Option<ShouldStopBeforeTurnFn>,
+    length_continuation: Option<crate::agent_loop::LengthContinuation>,
+    repetition_guard: Option<crate::repetition_guard::RepetitionGuardConfig>,
     /// The natural-turn-end continuation hook: settable after construction so the session engine
     /// can install it. A plain mutex: cloned at run-config build, never held across an await.
     get_continuation_messages: Mutex<Option<GetContinuationMessagesFn>>,
@@ -471,7 +483,10 @@ impl AgentInner {
                 shared.state.messages.push(message.clone());
             }
             AgentEvent::ToolExecutionStart { tool_call_id, .. } => {
-                shared.state.pending_tool_calls.insert(tool_call_id.clone());
+                shared
+                    .state
+                    .pending_tool_calls
+                    .insert(tool_call_id.clone(), crate::now_ms());
             }
             AgentEvent::ToolExecutionEnd { tool_call_id, .. } => {
                 shared.state.pending_tool_calls.remove(tool_call_id);
@@ -676,6 +691,10 @@ impl AgentInner {
         config.tool_execution = self.tool_execution;
         config.before_tool_call.clone_from(&self.before_tool_call);
         config.after_tool_call.clone_from(&self.after_tool_call);
+        config
+            .length_continuation
+            .clone_from(&self.length_continuation);
+        config.repetition_guard = self.repetition_guard;
         config
     }
 
@@ -1160,6 +1179,8 @@ impl Agent {
             after_tool_call: options.after_tool_call,
             should_stop_after_turn: options.should_stop_after_turn,
             should_stop_before_turn: options.should_stop_before_turn,
+            length_continuation: options.length_continuation,
+            repetition_guard: options.repetition_guard,
             get_continuation_messages: Mutex::new(options.get_continuation_messages),
             model_override: Mutex::new(None),
             session_id: options.session_id,
@@ -1215,8 +1236,9 @@ impl Agent {
             messages: shared.state.messages.clone(),
             is_streaming: shared.state.is_streaming,
             streaming_message: shared.state.streaming_message.as_deref().cloned(),
-            pending_tool_calls: shared.state.pending_tool_calls.clone(),
+            pending_tool_calls: shared.state.pending_tool_calls.keys().cloned().collect(),
             error_message: shared.state.error_message.clone(),
+            pending_tool_call_started_at: shared.state.pending_tool_calls.clone(),
         }
     }
 

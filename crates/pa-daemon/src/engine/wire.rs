@@ -286,6 +286,9 @@ pub struct RlmSessionIdentity {
     /// file is a top-level runtime and spawns no edge, and a replacement
     /// runtime has none.
     pub semantic_spawn: Option<SemanticSpawnOrigin>,
+    /// The delegation grant funding a subagent create (upstream #1192; the
+    /// runtime metadata's `rlmTokenAllowance`). `None` for a root.
+    pub rlm_token_allowance: Option<u64>,
 }
 
 /// A created session's semantic-edge provenance (TS

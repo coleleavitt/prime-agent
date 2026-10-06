@@ -47,6 +47,11 @@ async fn spawn_fake_supervisor(
                     let command = value["command"].clone();
                     let command_type = command["type"].as_str().unwrap_or_default().to_string();
                     let response = match command_type.as_str() {
+                        "list" => response_success(
+                            Some(&id),
+                            "list",
+                            Some(json!({ "sessions": roster["sessions"] })),
+                        ),
                         "list_agent_peers" => response_success(
                             Some(&id),
                             "list_agent_peers",
@@ -152,7 +157,7 @@ fn labeled(
     sessions: Vec<Value>,
     identity: &FamilyIdentity,
 ) -> Vec<(Option<String>, Option<AgentFamilyRelationship>)> {
-    summaries_from_roster(sessions, identity, &[])
+    summaries_from_roster(sessions, identity, &[], 0)
         .into_iter()
         .map(|summary| (summary.active_session_id, summary.relationship))
         .collect()
@@ -544,7 +549,7 @@ fn summaries_label_the_nuclear_family_by_durable_edges() {
             "sessionName": "another-root", "runtimeKind": "top-level",
         }),
     ];
-    let summaries = summaries_from_roster(sessions, &identity, &[]);
+    let summaries = summaries_from_roster(sessions, &identity, &[], 0);
     assert_eq!(summaries.len(), 4, "{summaries:?}");
     let current = summaries.iter().find(|s| s.is_current).unwrap();
     assert_eq!(current.active_session_id.as_deref(), Some("kid111"));
@@ -782,7 +787,7 @@ fn summaries_carry_the_typed_status_and_activity() {
             "parentActiveSessionId": "me000", "parentSessionId": "sess-me",
         }),
     ];
-    let summaries = summaries_from_roster(sessions, &identity, &[]);
+    let summaries = summaries_from_roster(sessions, &identity, &[], 0);
     assert_eq!(summaries.len(), 5, "{summaries:?}");
     let row = |id: &str| {
         summaries
@@ -831,7 +836,7 @@ fn summaries_label_root_siblings_and_never_foreign_children() {
             "runtimeKind": "subagent", "parentActiveSessionId": "root222",
         }),
     ];
-    let summaries = summaries_from_roster(sessions, &identity, &[]);
+    let summaries = summaries_from_roster(sessions, &identity, &[], 0);
     assert_eq!(summaries.len(), 2, "{summaries:?}");
     assert!(summaries.iter().any(|s| s.is_current));
     let sibling = summaries
@@ -934,4 +939,116 @@ async fn family_resolves_a_moved_parent_by_the_session_file_alias() {
     assert_eq!(family.len(), 1, "{family:?}");
     assert_eq!(family[0].relationship, AgentFamilyRelationship::Parent);
     assert_eq!(family[0].id, "rrr777");
+}
+
+/// Upstream #1066: `agent_observe.list_agents()` rows carry the resident
+/// session's `cwd`; a member with no live session omits it (its saved cwd
+/// may be stale or client-owned).
+#[tokio::test]
+async fn observe_list_rows_carry_the_live_cwd_only() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("sup.sock");
+    spawn_fake_supervisor(
+        socket.clone(),
+        json!({ "sessions": [
+            { "activeSessionId": "aaa111", "sessionId": "sess-a", "cwd": "/work/alpha" },
+            { "activeSessionId": "kid111", "sessionId": "sess-kid", "runtimeKind": "subagent",
+              "parentActiveSessionId": "aaa111", "parentSessionId": "sess-a", "cwd": "/work/kid" },
+            { "id": "kid222", "sessionId": "sess-kid2", "runtimeKind": "subagent",
+              "parentActiveSessionId": "aaa111", "parentSessionId": "sess-a", "cwd": "/stale" },
+        ]}),
+        None,
+    )
+    .await;
+    let observer = LinkAgentObserveController::new(
+        Arc::new(SupervisorLink::new(socket)),
+        "aaa111".to_string(),
+        Arc::new(std::sync::Mutex::new(own_summary())),
+        None,
+    );
+    let mut handlers = pa_core::kernel::shared::HostRequestHandlers::default();
+    pa_core::session_engine::agent_messaging::register_agent_observe_host_handlers(
+        Arc::new(observer),
+        &mut handlers,
+    );
+    let list = handlers.get("agent_observe.list").unwrap().clone();
+    let listed = list(pa_core::kernel::shared::HostRequestPayload {
+        data: json!({}),
+        cell_source_code: None,
+    })
+    .await
+    .unwrap();
+    let cwds: Vec<(Value, Value)> = listed["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            (
+                row["sessionId"].clone(),
+                row.get("cwd").cloned().unwrap_or(Value::Null),
+            )
+        })
+        .collect();
+    assert_eq!(
+        cwds,
+        vec![
+            (json!("sess-a"), json!("/work/alpha")),
+            (json!("sess-kid"), json!("/work/kid")),
+            (json!("sess-kid2"), Value::Null),
+        ]
+    );
+}
+
+/// Upstream #891: an observe row derives the in-flight tool-call count, the
+/// oldest call's start, and its elapsed time from the worker's roster row;
+/// a passivated member reports zero calls in flight.
+#[test]
+fn observe_rows_report_in_flight_tool_call_progress() {
+    let identity = FamilyIdentity {
+        active_session_id: "me000".to_string(),
+        session_id: Some("sess-me".to_string()),
+        ..Default::default()
+    };
+    let sessions = vec![
+        json!({
+            "activeSessionId": "me000", "sessionId": "sess-me", "isStreaming": true,
+            "isRunningTools": true, "pendingToolCallCount": 2,
+            "oldestPendingToolCallStartedAt": 10_000,
+        }),
+        json!({
+            "activeSessionId": "ch111", "sessionId": "sess-ch1", "runtimeKind": "subagent",
+            "parentActiveSessionId": "me000", "parentSessionId": "sess-me",
+        }),
+        json!({
+            "id": "ch222", "sessionId": "sess-ch2", "runtimeKind": "subagent",
+            "parentActiveSessionId": "me000", "parentSessionId": "sess-me",
+            "pendingToolCallCount": 1, "oldestPendingToolCallStartedAt": 1,
+        }),
+    ];
+    let progress: Vec<(String, AgentObservePendingToolCalls)> =
+        summaries_from_roster(sessions, &identity, &[], 2_410_000)
+            .into_iter()
+            .map(|summary| (summary.session_id, summary.pending_tool_calls))
+            .collect();
+    assert_eq!(
+        progress,
+        vec![
+            (
+                "sess-me".to_string(),
+                AgentObservePendingToolCalls {
+                    count: 2,
+                    oldest_started_at: Some(10_000),
+                    elapsed_ms: Some(2_400_000),
+                }
+            ),
+            (
+                "sess-ch1".to_string(),
+                AgentObservePendingToolCalls::default()
+            ),
+            (
+                "sess-ch2".to_string(),
+                AgentObservePendingToolCalls::default()
+            ),
+        ]
+    );
 }

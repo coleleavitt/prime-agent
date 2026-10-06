@@ -825,6 +825,8 @@ fn passivation_keeps_registration_marks_and_strips_live_fields() {
         "hasRunningRlmChildren": true,
         "isBashRunning": true,
         "isRunningTools": true,
+        "pendingToolCallCount": 1,
+        "oldestPendingToolCallStartedAt": 1_000,
         "workerState": "ready",
         "workerPid": 4242,
         "cwd": "/the/live/cwd",
@@ -846,6 +848,8 @@ fn passivation_keeps_registration_marks_and_strips_live_fields() {
         "hasRunningRlmChildren",
         "isBashRunning",
         "isRunningTools",
+        "oldestPendingToolCallStartedAt",
+        "pendingToolCallCount",
         "workerState",
         "workerPid",
     ] {

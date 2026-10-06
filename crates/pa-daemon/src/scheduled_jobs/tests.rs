@@ -106,6 +106,7 @@ async fn a_fire_at_a_killed_session_cancels_and_skips() {
         user_bash: Arc::new(crate::user_bash::UserBash::new()),
         store: Arc::new(AgentCronJobStore::for_session_artifacts()),
         recovery: Arc::new(std::sync::Mutex::new(None)),
+        idle_notify: Arc::new(Notify::new()),
     };
     // The dead-target cancel registers the artifact partition itself (a fresh store knows
     // nothing of the session yet).
@@ -147,6 +148,7 @@ async fn heartbeat_fire_parks_the_labeled_preview_on_its_lane() {
         user_bash: Arc::new(crate::user_bash::UserBash::new()),
         store: Arc::new(AgentCronJobStore::for_session_artifacts()),
         recovery: Arc::new(std::sync::Mutex::new(None)),
+        idle_notify: Arc::new(Notify::new()),
     });
     let steer_heartbeat = heartbeat_job("hb-1", "steer the mission", DeliveryMode::Steer, &session);
     let follow_up_heartbeat = heartbeat_job(
@@ -254,6 +256,7 @@ async fn settles_classify_ran_failed_or_skipped() {
             user_bash: Arc::new(crate::user_bash::UserBash::new()),
             store: Arc::new(AgentCronJobStore::for_session_artifacts()),
             recovery: Arc::new(std::sync::Mutex::new(None)),
+            idle_notify: Arc::new(Notify::new()),
         });
         let job = heartbeat_job("hb-1", "steer the mission", DeliveryMode::Steer, session);
         let hooks_for_run = Arc::clone(&hooks);
@@ -440,4 +443,64 @@ async fn rlm_heartbeat_mutation_hook_fires_into_the_session_queue() {
     assert_eq!(details["schedule"], "every 10s");
     assert_eq!(details["status"], "active");
     assert_eq!(details["runCount"], 0);
+}
+
+/// Upstream #890: a heartbeat that fires into a busy session is not lost -
+/// the fire waits for the session to go idle, then parks on its lane.
+#[tokio::test(flavor = "current_thread")]
+async fn a_heartbeat_deferred_by_a_busy_session_delivers_once_idle() {
+    let dir = std::env::temp_dir().join(format!("pa-sched-defer-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let session = write_active_session(&dir);
+    let mut busy = crate::worker::SessionCore::test_core(None, "/w".to_string());
+    busy.created = true;
+    busy.busy = true;
+    let core = Arc::new(std::sync::Mutex::new(busy));
+    let idle_notify = Arc::new(Notify::new());
+    let hooks = Arc::new(QueueHooks {
+        core: Arc::clone(&core),
+        work_notify: Arc::new(Notify::new()),
+        user_bash: Arc::new(crate::user_bash::UserBash::new()),
+        store: Arc::new(AgentCronJobStore::for_session_artifacts()),
+        recovery: Arc::new(std::sync::Mutex::new(None)),
+        idle_notify: Arc::clone(&idle_notify),
+    });
+    // A follow-up heartbeat defers on a streaming turn; its next beat is a
+    // minute out, so the wait has room.
+    let job = AgentCronJob {
+        next_run_at: Some(crate::util::iso_from_unix_ms(
+            crate::util::now_ms() + 60_000,
+        )),
+        ..heartbeat_job("hb-defer", "check in", DeliveryMode::FollowUp, &session)
+    };
+    let run = tokio::spawn({
+        let hooks = Arc::clone(&hooks);
+        let job = job.clone();
+        async move { AgentCronSchedulerHooks::run_job(&*hooks, &job).await }
+    });
+    // The single-threaded runtime polls the fire to its first await: it saw
+    // the busy session and is waiting, not answering a skip.
+    tokio::task::yield_now().await;
+    assert!(
+        !run.is_finished(),
+        "the busy fire was skipped, not deferred"
+    );
+    assert!(core.lock().unwrap().follow_up.is_empty());
+
+    // The turn settles: the runner parks and signals idle.
+    core.lock().unwrap().busy = false;
+    idle_notify.notify_waiters();
+    let item = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if let Some(item) = core.lock().unwrap().follow_up.pop_front() {
+                return item;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the deferred beat parks once the session is idle");
+    assert_eq!(item.queue_key.as_deref(), Some("heartbeat:hb-defer"));
+    drop(item);
+    assert_eq!(run.await.unwrap().expect("run_job"), None);
 }

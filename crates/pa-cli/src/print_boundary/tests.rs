@@ -137,6 +137,7 @@ async fn faux_engine_with_telemetry(
         on_background_work_settled: None,
         queued_goal_context_purge: None,
         queued_steering_probe: None,
+        rlm_token_allowance: None,
     })
     .await
     .expect("the faux session assembles");
