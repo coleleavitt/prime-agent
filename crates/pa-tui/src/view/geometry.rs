@@ -376,6 +376,7 @@ mod tests {
                 ChatEntry::CustomPanel(Box::new(CustomPanelRow {
                     custom_type: "notice".to_string(),
                     content,
+                    image: None,
                 }))
             }),
         ]

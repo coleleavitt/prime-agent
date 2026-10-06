@@ -192,6 +192,8 @@ impl Renderer {
                 // see `enhanced_keys`) runs before the reader thread starts polling.
                 crate::enhanced_keys::enable(&mut std::io::stdout())?;
                 spawn_session_reader(ui_tx.clone(), exit_guard.clone());
+                // Inline previews size their reserved rows from the cell size.
+                crate::terminal_image::refresh_cell_dimensions();
                 let terminal = Terminal::new(crate::hyperlinks::stdout_backend())?;
                 // The adopted buffer still holds the previous view's frame, so the clear escape
                 // must never reach the pane on its own: the armed mount's clear and cursor hide
@@ -310,6 +312,8 @@ impl Renderer {
     fn suspend(&mut self, view: &mut AgentView) -> Result<()> {
         match self {
             Renderer::Terminal { .. } => {
+                // Placed images belong to the alternate screen being left.
+                crate::inline_image::release_screen(&mut std::io::stdout());
                 let _ = crate::mouse_tracking::disable(&mut std::io::stdout());
                 // The raw-mode bracket takes the enhanced-key modes with it; `resume` re-enables
                 // both.
@@ -468,6 +472,11 @@ impl Renderer {
             crate::enhanced_keys::drain_for_handoff(&mut std::io::stdout());
         } else {
             crate::enhanced_keys::drain(&mut std::io::stdout());
+        }
+        // Placed images go with the surface, before the alternate screen is left or handed
+        // on (the adopting view never learns of them).
+        if matches!(self, Renderer::Terminal { .. }) {
+            crate::inline_image::release_screen(&mut std::io::stdout());
         }
         // Tracking releases with the surface (disable written before leaving the alt screen).
         let _ = crate::mouse_tracking::disable(&mut std::io::stdout());

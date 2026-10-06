@@ -12,8 +12,15 @@ use std::sync::{Mutex, OnceLock};
 /// plus the view's `layout_options` tuple.
 pub(super) type LayoutShape = (usize, LayoutOptions);
 /// The rendering options that affect cached entry rows: theme, code-block indent, Mermaid
-/// mode, image rows, and the fullscreen image fallback.
-pub(super) type LayoutOptions = (Theme, String, crate::markdown::MermaidMode, bool, bool);
+/// mode, image rows, the fullscreen image fallback, and the inline-image geometry inputs.
+pub(super) type LayoutOptions = (
+    Theme,
+    String,
+    crate::markdown::MermaidMode,
+    bool,
+    bool,
+    crate::inline_image::LayoutKey,
+);
 
 /// One visible-window entry's held layouts, per detail slot (a pack is
 /// valid for the slot it was built under).

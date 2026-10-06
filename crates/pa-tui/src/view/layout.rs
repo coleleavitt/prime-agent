@@ -319,6 +319,7 @@ impl AgentView {
             self.mermaid_mode,
             self.show_images,
             crate::image_component::fullscreen_image_fallback_active(),
+            crate::inline_image::layout_key(),
         );
         if self.layout_width != width || self.layout_options.as_ref() != Some(&options) {
             self.entry_heights.clear();

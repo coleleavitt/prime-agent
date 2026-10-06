@@ -26,30 +26,34 @@ impl AgentView {
         width: usize,
         screen_height: usize,
     ) -> std::io::Result<()> {
-        let layout = self.layout_pass(width);
-        let mut sink = FlushSink {
-            flushed: std::mem::take(&mut self.flushed_frame),
-            texts: Vec::new(),
-            ring: std::collections::VecDeque::new(),
-            chunk: String::new(),
-            screen_height,
-            appending: false,
-            repaint: false,
-        };
-        sink.feed(out, &layout.splash)?;
-        let mut preceded_by_tool_activity = false;
-        for (index, entry) in self.chat.iter().enumerate() {
-            let rows =
-                self.render_entry(index, entry, width, index == 0, preceded_by_tool_activity);
-            sink.feed(out, &rows)?;
-            preceded_by_tool_activity = Self::is_compact_neighbor(entry);
-        }
-        sink.feed(out, &layout.tail)?;
-        let dock = self.render_dock(width);
-        sink.feed(out, &dock)?;
-        sink.finish(out)?;
-        self.flushed_frame = std::mem::take(&mut sink.texts);
-        Ok(())
+        // Scrollback keeps no placed image (TS's in-product image rows were all
+        // `fallbackOnly`): every preview flushes as its textual fallback.
+        crate::inline_image::with_text_fallback(|| {
+            let layout = self.layout_pass(width);
+            let mut sink = FlushSink {
+                flushed: std::mem::take(&mut self.flushed_frame),
+                texts: Vec::new(),
+                ring: std::collections::VecDeque::new(),
+                chunk: String::new(),
+                screen_height,
+                appending: false,
+                repaint: false,
+            };
+            sink.feed(out, &layout.splash)?;
+            let mut preceded_by_tool_activity = false;
+            for (index, entry) in self.chat.iter().enumerate() {
+                let rows =
+                    self.render_entry(index, entry, width, index == 0, preceded_by_tool_activity);
+                sink.feed(out, &rows)?;
+                preceded_by_tool_activity = Self::is_compact_neighbor(entry);
+            }
+            sink.feed(out, &layout.tail)?;
+            let dock = self.render_dock(width);
+            sink.feed(out, &dock)?;
+            sink.finish(out)?;
+            self.flushed_frame = std::mem::take(&mut sink.texts);
+            Ok(())
+        })
     }
 }
 

@@ -355,6 +355,7 @@ impl pa_tui::interactive::InteractionTelemetry for CliInteractionTelemetry {
                     .unwrap_or_else(std::sync::PoisonError::into_inner),
             );
             let diagrams = pa_tui::diagram::take_render_counts();
+            let images = pa_tui::inline_image::take_shown();
             let Some(client) = self.client() else {
                 return;
             };
@@ -365,6 +366,14 @@ impl pa_tui::interactive::InteractionTelemetry for CliInteractionTelemetry {
                 &mut properties,
                 self.settings().get_mermaid_rendering_mode(),
                 diagrams,
+            );
+            properties.set(
+                "tui_inline_images",
+                serde_json::Value::from(images.protocol),
+            );
+            properties.set(
+                "tui_inline_image_count",
+                serde_json::Value::from(images.count),
             );
             for (key, count) in &counters.counts {
                 properties.set(key, serde_json::Value::from(*count));
@@ -462,6 +471,13 @@ mod tests {
         assert_eq!(exits.len(), 2);
         assert_eq!(exits[0]["properties"]["tui_scroll_count"], 1);
         assert_eq!(exits[0]["properties"]["tui_hyperlinks_enabled"], true);
+        // The inline-image adoption rides every exit: the detected protocol
+        // and the previews this run placed (none here).
+        assert!(matches!(
+            exits[0]["properties"]["tui_inline_images"].as_str(),
+            Some("kitty" | "iterm2" | "off")
+        ));
+        assert_eq!(exits[0]["properties"]["tui_inline_image_count"], 0);
         assert!(exits[1]["properties"].get("tui_scroll_count").is_none());
         assert!(exits[1]["properties"]
             .get("tui_hyperlinks_enabled")

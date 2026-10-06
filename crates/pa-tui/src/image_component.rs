@@ -1,9 +1,13 @@
 //! The fullscreen image-fallback guard (TS `withFullscreenImageFallback`):
 //! the frame-composition seam that forces image components to their
 //! textual fallback while a fullscreen frame repaints. The transcript's
-//! image rows are always fallback-only metadata rows in this port, so
-//! the guard is the composition boundary the cache keys and frame sites
-//! share — kept for the TS parity contract.
+//! tool-result image rows are always fallback-only metadata rows in this
+//! port, so the guard is the composition boundary the cache keys and frame
+//! sites share — kept for the TS parity contract. The presented-artifact
+//! preview (`crate::inline_image`) does not follow it: it never rides the
+//! cells (the image goes over reserved blank rows after the flush), and
+//! its geometry must not change between the frame and the selection
+//! passes that run under the guard.
 
 use std::cell::Cell;
 

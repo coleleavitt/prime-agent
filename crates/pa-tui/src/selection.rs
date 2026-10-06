@@ -91,6 +91,7 @@ pub(crate) fn highlight_line(line: &Line, from: usize, to: usize) -> Line {
 fn row_text(line: &[Span]) -> String {
     let mut stripped = line.to_vec();
     crate::osc133::strip(&mut stripped);
+    crate::inline_image::strip_markers(&mut stripped);
     crate::hyperlinks::strip_osc8(&mut stripped);
     stripped.iter().map(|s| s.content.as_str()).collect()
 }

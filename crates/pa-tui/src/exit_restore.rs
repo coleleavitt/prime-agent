@@ -90,6 +90,8 @@ pub fn restore_terminal() {
         crate::enhanced_keys::drain_for_exit(&mut out);
         let _ = crate::mouse_tracking::disable(&mut out);
         let _ = crate::enhanced_keys::disable(&mut out);
+        // Placed inline images go before the alternate screen they live on.
+        crate::inline_image::release_screen(&mut out);
         // The unconditional leave: the restore must not trust the ownership flag
         // — a desynced flag would keep the alt buffer up past the process death.
         crate::altscreen::force_leave(&mut out);
