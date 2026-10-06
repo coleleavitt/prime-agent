@@ -265,3 +265,35 @@ fn the_turn_loop_is_driven_by_the_driver_trait() {
         2
     );
 }
+
+/// Upstream #2530's session gate: the dropped-tool-call retry is for
+/// interactive runs only — autonomous mode and a non-idle goal continue on
+/// their own, so either one declines the retry; turning them off restores it.
+#[test]
+fn the_tool_intent_recovery_gate_declines_autonomous_and_goal_runs() {
+    let _faux = FAUX_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (engine, _dir) = faux_engine_with_settings(
+        &serde_json::json!({ "responses": ["reply"], "repeatLastResponse": true }),
+        1,
+    );
+    let engine = std::sync::Arc::new(engine);
+    engine.register_arc();
+    let _goal_work = goal_admission_collector(&engine);
+    let allowed = |engine: &std::sync::Arc<AgentSessionEngine>| {
+        futures::executor::block_on(engine.tool_intent_recovery_allowed())
+    };
+    admit(&engine, "plain turn".to_string(), &mut Vec::new());
+    let mut verdicts = vec![allowed(&engine)];
+    for prompt in [
+        "/autonomous on",
+        "/autonomous off",
+        "/goal ship the gate",
+        "/goal clear",
+    ] {
+        admit(&engine, prompt.to_string(), &mut Vec::new());
+        verdicts.push(allowed(&engine));
+    }
+    assert_eq!(verdicts, vec![true, false, true, false, true]);
+}

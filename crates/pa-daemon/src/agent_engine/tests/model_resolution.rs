@@ -234,7 +234,7 @@ fn write_prime_auth(agent_dir: &std::path::Path) {
 
 /// The Prime Inference `/models` payload: every compiled offline
 /// entry (the coverage gate keeps thin fetches out) plus the private
-/// `internal/glm-5.3-fast` the compiled fallback lacks.
+/// `internal/glm-5.4-fast` the compiled fallback lacks.
 fn pi_payload() -> String {
     let mut data: Vec<Value> = pa_models::transports::prime_inference_offline_entries()
         .iter()
@@ -255,8 +255,8 @@ fn pi_payload() -> String {
         })
         .collect();
     data.push(serde_json::json!({
-        "id": "internal/glm-5.3-fast",
-        "display_name": "GLM 5.3 Fast (internal)",
+        "id": "internal/glm-5.4-fast",
+        "display_name": "GLM 5.4 Fast (internal)",
         "pricing": { "input_usd_per_mtok": 0.42, "output_usd_per_mtok": 2.1 },
         "specs": {
             "context_window": 400_000, "max_output_tokens": 131_072,
@@ -283,7 +283,7 @@ fn install_loopback_catalog(agent_dir: &std::path::Path, server: &MockCatalogSer
 /// A session file whose last `model_change` row pins the private team
 /// model — what a revived worker reads at create.
 fn session_file_pinning_private_model(dir: &std::path::Path) -> std::path::PathBuf {
-    session_file_pinning_model(dir, "prime-inference", "internal/glm-5.3-fast")
+    session_file_pinning_model(dir, "prime-inference", "internal/glm-5.4-fast")
 }
 
 /// A session file whose last `model_change` row pins the given model —
@@ -627,7 +627,7 @@ async fn revived_session_restores_its_pinned_model_not_the_startup_default() {
         .resolve_registry_model()
         .expect("restored resolution");
     assert_eq!(restored.provider, "prime-inference");
-    assert_eq!(restored.id, "internal/glm-5.3-fast");
+    assert_eq!(restored.id, "internal/glm-5.4-fast");
     assert!(
         engine.model_fallback_message().is_none(),
         "a successful restore leaves no fallback message"
@@ -650,7 +650,7 @@ async fn revived_session_fallback_is_on_the_record() {
     engine.restore_session_model(&path, None).await;
     assert_eq!(
         engine.model_fallback_message().as_deref(),
-        Some("Could not restore model prime-inference/internal/glm-5.3-fast. Using prime-inference/z-ai/glm-5.3"),
+        Some("Could not restore model prime-inference/internal/glm-5.4-fast. Using prime-inference/z-ai/glm-5.3"),
         "the fallback is published, never silent"
     );
     let resolved = engine.resolve_registry_model().expect("startup chain");
@@ -718,7 +718,7 @@ async fn a_restore_decision_is_scoped_to_its_session_file() {
     let restored = engine
         .resolve_registry_model()
         .expect("restored resolution");
-    assert_eq!(restored.id, "internal/glm-5.3-fast");
+    assert_eq!(restored.id, "internal/glm-5.4-fast");
 
     let mut other =
         crate::session_store::SessionFile::create(dir.path().to_str().unwrap_or("/tmp"), None, 0);
@@ -757,7 +757,7 @@ async fn a_model_switch_never_leaks_into_the_replacement_session() {
     engine.set_session_file(file_a.clone());
     engine.restore_session_model(&file_a, None).await;
     let restored = engine.resolve_registry_model().expect("restored");
-    assert_eq!(restored.id, "internal/glm-5.3-fast");
+    assert_eq!(restored.id, "internal/glm-5.4-fast");
 
     // A mid-session /model switch on session A (the worker runs the
     // engine's synchronous switch on the blocking pool, like the turn
@@ -782,7 +782,7 @@ async fn a_model_switch_never_leaks_into_the_replacement_session() {
     engine.restore_session_model(&file_b, None).await;
     let moved = engine.resolve_registry_model().expect("moved resolution");
     assert_eq!(
-        moved.id, "internal/glm-5.3-fast",
+        moved.id, "internal/glm-5.4-fast",
         "the moved-to session's own file pin wins over the previous session's switch"
     );
     assert!(engine.model_fallback_message().is_none());

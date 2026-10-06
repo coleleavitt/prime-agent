@@ -984,6 +984,7 @@ mod tests {
             on_payload: None,
             on_response: None,
             headers: None,
+            tool_choice: None,
         }
     }
 

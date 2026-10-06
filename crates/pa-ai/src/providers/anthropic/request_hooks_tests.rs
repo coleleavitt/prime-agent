@@ -364,6 +364,7 @@ async fn a_hook_reads_the_callers_request_and_sends_its_own_body() {
             low: Some(100),
             ..Default::default()
         }),
+        tool_choice: None,
     };
     let context = Context {
         system_prompt: Some("You help.".to_string()),

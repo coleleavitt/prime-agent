@@ -96,6 +96,7 @@ fn send(case: &Case, index: usize, settings: &serde_json::Value) -> (CapturedReq
         },
         reasoning: case.options.reasoning,
         thinking_budgets: case.options.thinking_budgets.clone(),
+        tool_choice: None,
     };
     let message = complete_with(
         &model_with_id(&provider, &base, &case.model),

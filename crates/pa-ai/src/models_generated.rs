@@ -26,6 +26,7 @@ struct RawCompat {
     zai_tool_stream: Option<bool>,
     send_session_affinity_headers: Option<bool>,
     supports_strict_mode: Option<bool>,
+    retry_on_truncated_tool_call: Option<bool>,
 }
 
 /// One entry of the compiled fallback table, in the TS `MODELS` layout.
@@ -237,6 +238,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: Some(true),
             supports_strict_mode: None,
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -270,6 +272,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: None,
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -342,6 +345,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: None,
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -439,6 +443,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: None,
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -539,6 +544,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -565,6 +571,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -702,6 +709,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: None,
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -797,6 +805,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -831,6 +840,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -864,6 +874,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -897,6 +908,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -930,6 +942,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -963,6 +976,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -996,6 +1010,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1029,6 +1044,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1062,6 +1078,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1095,6 +1112,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1128,6 +1146,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1161,6 +1180,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1194,6 +1214,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1220,6 +1241,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1246,6 +1268,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1279,6 +1302,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1312,6 +1336,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1345,6 +1370,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1378,6 +1404,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1411,6 +1438,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1444,6 +1472,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1477,6 +1506,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1510,6 +1540,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1543,6 +1574,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1577,6 +1609,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1610,6 +1643,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1644,6 +1678,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1678,6 +1713,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1712,6 +1748,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1746,6 +1783,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1780,6 +1818,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1806,6 +1845,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1832,6 +1872,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1858,6 +1899,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1884,6 +1926,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1910,6 +1953,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1944,6 +1988,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -1978,6 +2023,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2011,6 +2057,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2037,6 +2084,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2063,6 +2111,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2096,6 +2145,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2122,6 +2172,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2148,6 +2199,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2181,6 +2233,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2214,6 +2267,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2248,6 +2302,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2281,6 +2336,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2314,6 +2370,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2347,6 +2404,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2373,6 +2431,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2399,6 +2458,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2425,6 +2485,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2451,6 +2512,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2477,6 +2539,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2511,6 +2574,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2545,6 +2609,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2579,6 +2644,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2612,6 +2678,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2645,6 +2712,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2679,6 +2747,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2712,6 +2781,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2745,6 +2815,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2778,6 +2849,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2811,6 +2883,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2845,6 +2918,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2878,6 +2952,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2908,6 +2983,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2941,6 +3017,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -2974,6 +3051,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3007,6 +3085,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3040,6 +3119,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3073,6 +3153,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3106,6 +3187,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3140,6 +3222,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3174,6 +3257,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3208,6 +3292,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3241,6 +3326,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3274,6 +3360,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3300,6 +3387,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3326,6 +3414,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3359,6 +3448,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3385,6 +3475,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3411,6 +3502,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3437,6 +3529,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3463,6 +3556,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3497,6 +3591,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3523,6 +3618,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3549,6 +3645,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3582,6 +3679,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3615,6 +3713,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3648,6 +3747,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3681,6 +3781,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3714,6 +3815,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3748,6 +3850,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3781,6 +3884,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3815,6 +3919,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3849,6 +3954,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3882,6 +3988,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3915,6 +4022,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3948,6 +4056,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -3981,6 +4090,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -4014,6 +4124,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -4047,6 +4158,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -4080,6 +4192,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -4113,6 +4226,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -4146,6 +4260,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -4179,6 +4294,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -4213,6 +4329,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: Some(true),
         }),
     },
     RawModel {
@@ -4247,6 +4364,7 @@ compat: Some(RawCompat {
             zai_tool_stream: None,
             send_session_affinity_headers: None,
             supports_strict_mode: Some(false),
+            retry_on_truncated_tool_call: None,
         }),
     },
     RawModel {
@@ -4369,6 +4487,7 @@ compat: Some(RawCompat {
             zai_tool_stream: Some(true),
             send_session_affinity_headers: None,
             supports_strict_mode: None,
+            retry_on_truncated_tool_call: None,
         }),
     },];
 
@@ -4387,6 +4506,7 @@ fn compat_from_raw(raw: &RawCompat) -> ModelCompat {
             zai_tool_stream: raw.zai_tool_stream,
             send_session_affinity_headers: raw.send_session_affinity_headers,
             supports_strict_mode: raw.supports_strict_mode,
+            retry_on_truncated_tool_call: raw.retry_on_truncated_tool_call,
             ..OpenAiCompletionsCompat::default()
         },
     )))

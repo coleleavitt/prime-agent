@@ -51,6 +51,7 @@ pub mod state_restore_notice;
 pub(crate) mod system_router_host;
 pub mod telemetry;
 pub mod tool_bridge;
+pub mod tool_intent_recovery;
 pub mod turn_boundary;
 
 mod admission;

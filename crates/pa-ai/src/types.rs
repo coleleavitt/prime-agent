@@ -115,6 +115,10 @@ pub struct SimpleStreamOptions {
     /// Explicit model reasoning selection. Omit to preserve the provider default.
     pub reasoning: Option<ModelThinkingLevel>,
     pub thinking_budgets: Option<ThinkingBudgets>,
+    /// The request's tool choice (TS `SimpleStreamOptions.toolChoice`):
+    /// the `OpenAI` Chat Completions adapter sends it as `tool_choice`; the
+    /// other adapters ignore it. `None` keeps the provider default.
+    pub tool_choice: Option<pa_types::ai::RequestToolChoice>,
 }
 
 impl SimpleStreamOptions {
@@ -124,6 +128,7 @@ impl SimpleStreamOptions {
             base,
             reasoning: None,
             thinking_budgets: None,
+            tool_choice: None,
         }
     }
 }

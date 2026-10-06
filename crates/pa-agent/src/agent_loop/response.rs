@@ -179,6 +179,7 @@ async fn stream_assistant_response_inner(
         on_payload: None,
         on_response: None,
         headers: None,
+        tool_choice: config.tool_choice,
     };
 
     let mut response = race_with_abort(

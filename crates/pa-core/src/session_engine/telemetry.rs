@@ -413,6 +413,9 @@ pub enum SessionAdoption {
     RefinePlanRun,
     /// `present_artifact` showed an artifact.
     ArtifactPresented,
+    /// A reply that reported a tool call and delivered none retried once
+    /// (upstream #2530).
+    ToolIntentRecovery,
 }
 
 impl SessionAdoption {
@@ -425,6 +428,7 @@ impl SessionAdoption {
             SessionAdoption::RefinePreview => "refine_preview_count",
             SessionAdoption::RefinePlanRun => "refine_plan_run_count",
             SessionAdoption::ArtifactPresented => "artifact_present_count",
+            SessionAdoption::ToolIntentRecovery => "tool_intent_recovery_count",
         }
     }
 }

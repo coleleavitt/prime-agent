@@ -439,6 +439,17 @@ pub enum StopReason {
     Aborted,
 }
 
+/// A per-request tool choice (TS `SimpleStreamOptions.toolChoice`): sent as
+/// `tool_choice` by the `OpenAI` Chat Completions adapter, ignored by the
+/// others. `None` on a request keeps the provider default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RequestToolChoice {
+    Auto,
+    None,
+    Required,
+}
+
 /// Terminal reason of a successful stream (`done` events).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

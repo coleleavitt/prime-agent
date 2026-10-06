@@ -367,7 +367,13 @@ pub fn stream_simple_openai_completions(
 
     let stream_options = OpenAICompletionsOptions {
         base,
-        tool_choice: None,
+        tool_choice: options
+            .and_then(|options| options.tool_choice)
+            .map(|choice| match choice {
+                pa_types::ai::RequestToolChoice::Auto => ToolChoice::Auto,
+                pa_types::ai::RequestToolChoice::None => ToolChoice::None,
+                pa_types::ai::RequestToolChoice::Required => ToolChoice::Required,
+            }),
         reasoning_effort,
         reasoning_enabled: if reasoning_specified {
             Some(clamped_reasoning != Some(ModelThinkingLevel::Off))

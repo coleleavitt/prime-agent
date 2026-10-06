@@ -814,6 +814,8 @@ const AGENT_SESSION_ENDED: EventRule = EventRule {
         ("refine_preview_count", optional(count())),
         ("refine_plan_run_count", optional(count())),
         ("artifact_present_count", optional(count())),
+        // Dropped-tool-call retries (upstream #2530), counts only.
+        ("tool_intent_recovery_count", optional(count())),
     ],
 };
 
@@ -2477,6 +2479,7 @@ mod tests {
             "refine_preview_count",
             "refine_plan_run_count",
             "artifact_present_count",
+            "tool_intent_recovery_count",
         ] {
             ended.set(key, json!(2u64));
         }

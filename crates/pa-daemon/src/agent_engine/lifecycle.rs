@@ -332,6 +332,8 @@ impl AgentSessionEngine {
         }));
         // The in-run autonomous continuation hook (the goal seam keeps its own boundary mint).
         self.install_autonomous_continuation_hook_on(built.session.agent());
+        // The one-shot dropped-tool-call retry (upstream #2530).
+        self.install_tool_intent_recovery_hook_on(built.session.agent(), built.telemetry.clone());
         // Live children outlive the rebuild and registered their spawns on the old producer:
         // adopt those registrations before the new sink observes, or the first post-swap
         // report drops against a producer that never saw the spawn.
