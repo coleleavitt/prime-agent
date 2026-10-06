@@ -75,6 +75,7 @@ fn quota_failure_message(
         stop_reason_raw: None,
         error_message: Some("You have hit your usage limit".to_string()),
         timestamp: 0,
+        discarded_usage: None,
     }
 }
 
@@ -116,6 +117,7 @@ async fn a_failed_park_entry_write_propagates_to_the_caller() {
                 error_message: None,
                 timestamp: 2,
                 rest: Map::default(),
+                discarded_usage: None,
             },
         ))
         .expect("the assistant seed persists");

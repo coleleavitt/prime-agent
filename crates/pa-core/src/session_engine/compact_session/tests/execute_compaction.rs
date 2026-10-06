@@ -258,6 +258,7 @@ async fn split_turn_compaction_streams_in_final_order_and_converges() {
             error_message: None,
             timestamp: 0,
             rest: Map::default(),
+            discarded_usage: None,
         })
     };
     session.append_message(user("turn one")).unwrap();

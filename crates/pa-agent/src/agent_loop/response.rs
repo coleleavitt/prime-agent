@@ -1,15 +1,124 @@
 //! Streaming one assistant response: context transform, LLM-bound message
-//! conversion, the model stream event loop, and the aborted-message
-//! finalize path.
+//! conversion, the model stream event loop, the aborted-message finalize
+//! path, and the empty-turn retry that wraps one or more attempts.
 
 use std::sync::Arc;
 
 use crate::abort::{is_abort_error, AbortSignal};
 use crate::stream::{LlmContext, StreamFn, StreamRequestOptions, ToolDefinition};
-use crate::types::{AgentContext, AgentEvent, AgentMessage, AssistantMessage};
+use crate::types::{
+    AgentContext, AgentEvent, AgentMessage, AssistantContent, AssistantMessage, StopReason, Usage,
+};
 
 use super::abort::{create_aborted_assistant_message, race_with_abort};
 use super::{AgentEventSink, AgentLoopConfig};
+
+/// Attempts per turn before an empty final turn becomes an error (upstream
+/// #1896).
+const MAX_EMPTY_TURN_ATTEMPTS: usize = 3;
+
+/// A failure that interrupted empty-turn retries: the discarded attempts'
+/// paid spend rides with the original error so the run-failure message can
+/// still account for it. Displays as the original error.
+#[derive(Debug)]
+pub(crate) struct EmptyTurnRetryFailure {
+    pub(crate) cause: anyhow::Error,
+    pub(crate) discarded_usage: Vec<Usage>,
+}
+
+impl std::fmt::Display for EmptyTurnRetryFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{:#}", self.cause)
+    }
+}
+
+impl std::error::Error for EmptyTurnRetryFailure {}
+
+/// No tool call and no visible text on a normal stop: completing here would
+/// silently abandon the task. Error, aborted and length stops are signals of
+/// their own, and thinking does not count as output.
+fn is_empty_assistant_turn(message: &AssistantMessage) -> bool {
+    match message.stop_reason {
+        StopReason::Error | StopReason::Aborted | StopReason::Length => false,
+        StopReason::Stop | StopReason::ToolUse => !message.content.iter().any(|part| match part {
+            AssistantContent::ToolCall(_) => true,
+            AssistantContent::Text(text) => !text.text.trim().is_empty(),
+            AssistantContent::Thinking(_) => false,
+        }),
+    }
+}
+
+/// The silent-overflow shape (a normal stop whose input already exceeds the
+/// window): empty by definition, and it must reach `message_end` untouched so
+/// compaction recovery sees it. Mirrors the silent arm of
+/// `pa_ai::is_context_overflow`, the only arm an empty normal stop can hit.
+fn is_silent_context_overflow(message: &AssistantMessage, context_window: u64) -> bool {
+    context_window > 0
+        && message.stop_reason == StopReason::Stop
+        && message.usage.input + message.usage.cache_read > context_window
+}
+
+/// Stream the assistant's response, silently re-requesting an empty final
+/// turn up to [`MAX_EMPTY_TURN_ATTEMPTS`] times. A discarded attempt is
+/// popped from the context before `message_end` (the durability edge), so it
+/// is never resent nor persisted; its paid usage rides the surviving
+/// message's `discarded_usage`. The last empty attempt settles as an error.
+pub(crate) async fn stream_assistant_response(
+    context: &mut AgentContext,
+    config: &AgentLoopConfig,
+    signal: Option<&AbortSignal>,
+    emit: &AgentEventSink,
+    stream_fn: Option<&StreamFn>,
+) -> anyhow::Result<AssistantMessage> {
+    let mut discarded_usage: Vec<Usage> = Vec::new();
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        let mut message =
+            match stream_assistant_attempt(context, config, signal, emit, stream_fn).await {
+                Ok(message) => message,
+                Err(cause) if discarded_usage.is_empty() => return Err(cause),
+                Err(cause) => {
+                    return Err(anyhow::Error::new(EmptyTurnRetryFailure {
+                        cause,
+                        discarded_usage,
+                    }))
+                }
+            };
+        if is_empty_assistant_turn(&message)
+            && !is_silent_context_overflow(&message, config.model.context_window)
+        {
+            if attempt < MAX_EMPTY_TURN_ATTEMPTS {
+                tracing::warn!(
+                    target: "pa_agent::empty_turn",
+                    attempt,
+                    "the model returned an empty response; retrying the request"
+                );
+                context.messages.pop();
+                discarded_usage.push(message.usage);
+                continue;
+            }
+            message.stop_reason = StopReason::Error;
+            message.error_message = Some(format!(
+                "Model returned an empty response (no output content or tool calls) {MAX_EMPTY_TURN_ATTEMPTS} times in a row"
+            ));
+            if let Some(last) = context.messages.last_mut() {
+                *last = AgentMessage::from(message.clone());
+            }
+        }
+        if !discarded_usage.is_empty() {
+            message.discarded_usage = Some(std::mem::take(&mut discarded_usage));
+            if let Some(last) = context.messages.last_mut() {
+                *last = AgentMessage::from(message.clone());
+            }
+        }
+        emit(AgentEvent::MessageEnd {
+            message: AgentMessage::from(message.clone()),
+        })
+        .await?;
+        return Ok(message);
+    }
+}
 
 /// One provider call as an `llm.request` span (`llm.provider`, `llm.api`,
 /// `llm.model`, `llm.base_url`); it ends when the response settles, with the
@@ -29,7 +138,10 @@ use super::{AgentEventSink, AgentLoopConfig};
         error = tracing::field::Empty,
     )
 )]
-pub(crate) async fn stream_assistant_response(
+/// One attempt places its final message in the context and emits
+/// `message_start`, never `message_end` (the caller decides whether the
+/// attempt survives).
+async fn stream_assistant_attempt(
     context: &mut AgentContext,
     config: &AgentLoopConfig,
     signal: Option<&AbortSignal>,
@@ -58,10 +170,6 @@ pub(crate) async fn stream_assistant_response(
                 })
                 .await?;
             }
-            emit(AgentEvent::MessageEnd {
-                message: AgentMessage::from(final_message.clone()),
-            })
-            .await?;
             final_message
         }};
     }
@@ -273,10 +381,6 @@ async fn stream_assistant_response_inner(
                         })
                         .await?;
                     }
-                    emit(AgentEvent::MessageEnd {
-                        message: AgentMessage::from(final_message.clone()),
-                    })
-                    .await?;
                     return Ok(final_message);
                 }
             }
@@ -305,10 +409,6 @@ async fn stream_assistant_response_inner(
                     })
                     .await?;
                 }
-                emit(AgentEvent::MessageEnd {
-                    message: AgentMessage::from(final_message.clone()),
-                })
-                .await?;
                 return Ok(final_message);
             }
             _ => {}
@@ -329,10 +429,6 @@ async fn stream_assistant_response_inner(
         })
         .await?;
     }
-    emit(AgentEvent::MessageEnd {
-        message: AgentMessage::from(final_message.clone()),
-    })
-    .await?;
     Ok(final_message)
 }
 

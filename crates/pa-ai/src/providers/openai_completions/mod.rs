@@ -348,6 +348,7 @@ pub fn stream_simple_openai_completions(
             error_message: Some(format!("No API key for provider: {}", model.provider)),
             timestamp: crate::utils_inner::diagnostics::now_ms(),
             rest: Map::default(),
+            discarded_usage: None,
         };
         message.usage.cost = UsageCost::default();
         writer.push(AssistantMessageEvent::Error {

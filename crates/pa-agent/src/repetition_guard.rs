@@ -296,6 +296,7 @@ mod tests {
             stop_reason_raw: None,
             error_message: None,
             timestamp: 0,
+            discarded_usage: None,
         };
         assert_eq!(guard.observe(&message, 0), None);
         let found = guard.observe(&message, 1).expect("the second block loops");

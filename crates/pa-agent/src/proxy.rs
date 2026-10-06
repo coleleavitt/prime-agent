@@ -146,6 +146,7 @@ pub fn stream_proxy(
                 stop_reason_raw: None,
                 error_message: None,
                 timestamp: crate::now_ms(),
+                discarded_usage: None,
             },
             partial_json: HashMap::new(),
         };

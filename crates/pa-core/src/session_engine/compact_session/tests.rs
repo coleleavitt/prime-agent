@@ -40,6 +40,7 @@ fn session_with_turns(cwd: &std::path::Path, turns: usize) -> SessionManager {
                 error_message: None,
                 timestamp: 0,
                 rest: serde_json::Map::default(),
+                discarded_usage: None,
             }))
             .unwrap();
     }

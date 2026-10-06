@@ -300,6 +300,7 @@ mod tests {
             error_message: None,
             stop_reason_raw: None,
             timestamp: 0,
+            discarded_usage: None,
         };
         let (handle, consumer) = crate::stream::event_stream();
         handle.push(AssistantMessageEvent::Done {

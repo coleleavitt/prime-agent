@@ -416,6 +416,7 @@ async fn placement_rig(
         error_message: None,
         timestamp: 0,
         rest: serde_json::Map::default(),
+        discarded_usage: None,
     };
     let user0 = session_user("turn zero words");
     let reply0 = pa_types::session::AgentMessage::Assistant(assistant_row.clone());

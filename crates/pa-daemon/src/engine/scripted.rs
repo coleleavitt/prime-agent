@@ -741,6 +741,7 @@ fn scripted_side_question_turn(
         stop_reason_raw: None,
         error_message: None,
         timestamp: 0,
+        discarded_usage: None,
     };
     let mut message = base();
     let set_text = |message: &mut AssistantMessage, text: &str| {

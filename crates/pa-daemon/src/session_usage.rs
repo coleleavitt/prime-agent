@@ -261,6 +261,11 @@ pub struct UsageScan {
     attributed_child_usage: Usage,
     #[serde(with = "usage_bits")]
     summarization_usage: Usage,
+    /// Paid spend of discarded empty-turn attempts (upstream #1896): it
+    /// rides an assistant row's `discardedUsage`, outside the per-id map a
+    /// child attribution replaces.
+    #[serde(with = "usage_bits")]
+    discarded_attempt_usage: Usage,
 }
 
 impl UsageScan {
@@ -277,6 +282,16 @@ impl UsageScan {
         }
         if let Some(usage) = usage {
             self.assistant_usage_by_id.set(id, usage);
+        }
+    }
+
+    /// An assistant row's discarded empty-turn attempts (`discardedUsage`).
+    pub(crate) fn fold_discarded_attempts(&mut self, role: Option<&str>, usages: &[Usage]) {
+        if role != Some("assistant") {
+            return;
+        }
+        for usage in usages {
+            add_assistant_usage(&mut self.discarded_attempt_usage, usage);
         }
     }
 
@@ -315,6 +330,7 @@ impl UsageScan {
             add_assistant_usage(&mut total, usage);
         }
         add_assistant_usage(&mut total, &self.summarization_usage);
+        add_assistant_usage(&mut total, &self.discarded_attempt_usage);
         let mut own = total;
         subtract_assistant_usage(&mut own, &self.attributed_child_usage);
         SessionUsageTotals { own, total }
@@ -355,6 +371,8 @@ struct ScanMessage {
     role: Option<String>,
     #[serde(default)]
     usage: Option<ScanUsage>,
+    #[serde(default)]
+    discarded_usage: Option<Vec<ScanUsage>>,
 }
 
 impl ScanEntry {
@@ -366,6 +384,12 @@ impl ScanEntry {
                     (message.role.as_deref(), message.usage.map(Usage::from))
                 });
                 scan.fold_message(&self.id, role, usage);
+                if let Some(message) = &self.message {
+                    scan.fold_discarded_attempts(
+                        role,
+                        &discarded_usages(message.discarded_usage.as_deref()),
+                    );
+                }
             }
             "child_usage_attributed" => scan.fold_child_attribution(
                 self.target_id.as_deref(),
@@ -378,6 +402,15 @@ impl ScanEntry {
             _ => {}
         }
     }
+}
+
+/// The scan-side `discardedUsage` blocks, each defaulting its absent fields.
+pub(crate) fn discarded_usages(blocks: Option<&[ScanUsage]>) -> Vec<Usage> {
+    blocks
+        .unwrap_or_default()
+        .iter()
+        .map(|usage| Usage::from(*usage))
+        .collect()
 }
 
 /// Whole-file scan over every parsable line; invalid lines contribute nothing.
@@ -576,6 +609,34 @@ mod tests {
                 input_tokens: 355,
                 output_tokens: 35,
                 cost: 1.0 + (0.3 + 0.1)
+            })
+        );
+    }
+
+    /// Discarded empty-turn attempts (upstream #1896) were paid requests:
+    /// their `discardedUsage` spend counts, and a later child attribution
+    /// replacing the row's own block keeps it.
+    #[test]
+    fn discarded_attempts_add_to_the_own_spend() {
+        let mut row = message(
+            "a",
+            "assistant",
+            &json!({
+                "input": 100, "output": 10, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 110,
+                "cost": { "input": 0.0, "output": 1.0, "cacheRead": 0.0, "cacheWrite": 0.0, "total": 1.0 }
+            }),
+        );
+        row["message"]["discardedUsage"] = json!([usage(20, 4, 0.25), usage(30, 6, 0.5)]);
+        let summary = scan_summary(&[
+            row,
+            attribution("a", usage(5, 1, 0.125), usage(105, 11, 1.125)),
+        ]);
+        assert_eq!(
+            summary,
+            Some(SessionUsageSummary {
+                input_tokens: 150,
+                output_tokens: 20,
+                cost: 1.125 + 0.75 - 0.125
             })
         );
     }

@@ -124,6 +124,7 @@ pub fn stream_openai_responses(
             error_message: None,
             timestamp: now_ms(),
             rest: Map::default(),
+            discarded_usage: None,
         };
 
         let result = run_stream(&model, &context, options.as_ref(), &mut output, &writer).await;
@@ -442,6 +443,7 @@ pub fn stream_simple_openai_responses(
             error_message: Some(format!("No API key for provider: {}", model.provider)),
             timestamp: now_ms(),
             rest: Map::default(),
+            discarded_usage: None,
         };
         writer.push(AssistantMessageEvent::Error {
             reason: crate::types::ErrorStopReason::Error,

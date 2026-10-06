@@ -148,6 +148,7 @@ mod tests {
             error_message: error_message.map(std::string::ToString::to_string),
             timestamp: 0,
             rest: Map::default(),
+            discarded_usage: None,
         }
     }
 

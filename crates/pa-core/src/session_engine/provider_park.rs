@@ -331,6 +331,7 @@ mod tests {
             stop_reason_raw: None,
             error_message: Some("You have hit your usage limit".to_string()),
             timestamp: 0,
+            discarded_usage: None,
         }
     }
 

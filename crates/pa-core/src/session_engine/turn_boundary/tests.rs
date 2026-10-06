@@ -76,6 +76,7 @@ fn assistant_entry(text: &str) -> SessionMessage {
         error_message: None,
         timestamp: 1,
         rest: serde_json::Map::default(),
+        discarded_usage: None,
     })
 }
 

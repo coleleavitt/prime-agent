@@ -205,7 +205,7 @@ impl AgentLoopConfig {
 
 mod abort;
 mod entry;
-mod response;
+pub(crate) mod response;
 mod run;
 mod tool_call;
 mod tools;

@@ -39,6 +39,7 @@ fn assistant_node(id: &str, parent: Option<&str>, timestamp: &str) -> TreeNodeDa
                 error_message: None,
                 timestamp: 0,
                 rest: Map::default(),
+                discarded_usage: None,
             }),
             base: pa_types::session::EntryBase {
                 id: Some(id.to_string()),

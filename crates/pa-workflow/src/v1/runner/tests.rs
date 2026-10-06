@@ -42,6 +42,7 @@ fn message(
         stop_reason_raw: None,
         error_message: None,
         timestamp: 0,
+        discarded_usage: None,
     }
 }
 

@@ -492,6 +492,7 @@ pub fn stream_openai_completions(
             error_message: None,
             timestamp: crate::utils_inner::diagnostics::now_ms(),
             rest: Map::default(),
+            discarded_usage: None,
         };
 
         let result = run_stream(&model, &context, options.as_ref(), &mut output, &writer).await;

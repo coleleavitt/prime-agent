@@ -261,6 +261,7 @@ pub fn stream_bedrock(
             error_message: None,
             timestamp: now_ms(),
             rest: Map::default(),
+            discarded_usage: None,
         };
 
         let result = run_stream(&model, &context, options.as_ref(), &mut output, &writer).await;
@@ -765,6 +766,7 @@ pub fn stream_simple_bedrock(
                     error_message: Some(message),
                     timestamp: now_ms(),
                     rest: Map::default(),
+                    discarded_usage: None,
                 };
                 writer.push(AssistantMessageEvent::Error {
                     reason: error_reason(StopReason::Error),

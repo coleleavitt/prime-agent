@@ -523,6 +523,13 @@ impl AgentInner {
     }
 
     async fn handle_run_failure(self: &Arc<Self>, error: &anyhow::Error, aborted: bool) {
+        // Unwrap the loop's empty-turn carrier: the spend rides the wrapper,
+        // the failure text is the original error's.
+        let (error, discarded_usage) =
+            match error.downcast_ref::<crate::agent_loop::response::EmptyTurnRetryFailure>() {
+                Some(failure) => (&failure.cause, Some(failure.discarded_usage.clone())),
+                None => (error, None),
+            };
         let failure_message = {
             let shared = self.shared.lock().await;
             // The model that served the run when it started tags its
@@ -572,6 +579,7 @@ impl AgentInner {
                 error_message: Some(format!("{error:#}")),
                 stop_reason_raw: None,
                 timestamp: crate::now_ms(),
+                discarded_usage,
             }
         };
         {
@@ -1766,6 +1774,7 @@ mod tests {
                         error_message: None,
                         stop_reason_raw: None,
                         timestamp: 0,
+                        discarded_usage: None,
                     };
                     Box::pin(async move {
                         let (handle, consumer) = crate::stream::event_stream();

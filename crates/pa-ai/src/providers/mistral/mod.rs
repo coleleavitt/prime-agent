@@ -174,6 +174,7 @@ pub fn stream_simple_mistral(
             error_message: Some(format!("No API key for provider: {}", model.provider)),
             timestamp: now_ms(),
             rest: Map::default(),
+            discarded_usage: None,
         };
         let message = error.error_message.clone().unwrap_or_default();
         writer.push(AssistantMessageEvent::Error {

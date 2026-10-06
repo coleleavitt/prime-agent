@@ -151,15 +151,16 @@ impl AgentSessionEngine {
                             {
                                 let mut state = autonomous_state.lock().await;
                                 autonomous_driver.account_message(&mut state, &message);
-                                // Goal accounting: only turns neither errors
-                                // nor aborted spend the budget, only while
-                                // active.
+                                // Goal accounting, only while active:
+                                // completed turns spend the budget, and
+                                // every turn spends its discarded empty
+                                // attempts.
                                 if let Some(handles) = goal_runtime.as_ref() {
-                                    if !matches!(
-                                        message.stop_reason,
-                                        pa_types::ai::StopReason::Error
-                                            | pa_types::ai::StopReason::Aborted
-                                    ) {
+                                    if let Some(usage) =
+                                        pa_core::session_engine::rlm_usage::chargeable_turn_usage(
+                                            &message,
+                                        )
+                                    {
                                         let mut driver = handles.driver.lock().await;
                                         let mut session = handles.session.lock().await;
                                 // The timestamp is the double-counting guard identity (no
@@ -171,7 +172,7 @@ impl AgentSessionEngine {
                                         // the wrap-up steer); a failed persist
                                         // only warns.
                                         match driver
-                                            .record_assistant_usage(&mut session, &message_id, &message.usage)
+                                            .record_assistant_usage(&mut session, &message_id, &usage)
                                         {
                                             Ok(
                                                 pa_core::session_engine::goal_driver::UsageOutcome::BudgetReached,

@@ -318,6 +318,7 @@ mod tests {
             error_message: None,
             timestamp: 0,
             rest: Map::default(),
+            discarded_usage: None,
         })
     }
 

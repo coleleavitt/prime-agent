@@ -827,6 +827,7 @@ mod tests {
             error_message: None,
             timestamp: 0,
             rest: Map::default(),
+            discarded_usage: None,
         };
         append_transport_failure_diagnostic(&mut output, &close, "auto", false, 23_377);
         append_transport_failure_diagnostic(&mut output, &runtime, "auto", true, 23_361);
@@ -894,6 +895,7 @@ mod tests {
             error_message: Some(error.to_string()),
             timestamp: 0,
             rest: Map::default(),
+            discarded_usage: None,
         };
         crate::utils_inner::stream_failure::record_stream_failure(
             ("openai-codex", "gpt-5-codex", API_OPENAI_CODEX_RESPONSES),

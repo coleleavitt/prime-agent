@@ -49,6 +49,7 @@ async fn split_turn_compaction_runs_two_summarizer_calls_and_merges_the_turn_con
             error_message: None,
             timestamp: 0,
             rest: serde_json::Map::default(),
+            discarded_usage: None,
         })
     };
     session.append_message(user("turn one")).unwrap();
@@ -225,6 +226,7 @@ async fn injected_custom_turn_cuts_whole_turns_the_double_row_splits() {
             error_message: None,
             timestamp: 0,
             rest: serde_json::Map::default(),
+            discarded_usage: None,
         })
     };
     let goal_row = |session: &mut SessionManager| {
@@ -412,6 +414,7 @@ async fn split_turn_without_history_makes_only_the_prefix_call() {
             error_message: None,
             timestamp: 0,
             rest: serde_json::Map::default(),
+            discarded_usage: None,
         })
     };
     // One big turn only: the cut splits it, and nothing precedes the
@@ -557,6 +560,7 @@ async fn a_split_turn_compaction_commits_both_summary_slices_before_its_entry() 
             error_message: None,
             timestamp: 0,
             rest: serde_json::Map::default(),
+            discarded_usage: None,
         })
     };
     session.append_message(user("turn one")).unwrap();

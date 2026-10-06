@@ -365,6 +365,9 @@ pub(super) struct SessionInfoMessage<'a> {
     /// Borrowed `content` span (zero copy): read only when the fold's guard passes.
     #[serde(default, borrow)]
     pub(super) content: Option<&'a serde_json::value::RawValue>,
+    /// Discarded empty-turn attempts' spend (upstream #1896).
+    #[serde(default)]
+    discarded_usage: Option<Vec<crate::session_usage::ScanUsage>>,
 }
 
 #[derive(Deserialize)]
@@ -687,6 +690,10 @@ pub(super) fn fold_scan_entry(acc: &mut SessionScanAccumulator, raw: &str) -> Op
                 let role = role.as_deref();
                 acc.usage_scan
                     .fold_message(&entry.id, role, message.usage.map(Usage::from));
+                acc.usage_scan.fold_discarded_attempts(
+                    role,
+                    &crate::session_usage::discarded_usages(message.discarded_usage.as_deref()),
+                );
                 if role == Some("assistant") {
                     if let (Some(provider), Some(model_id)) =
                         (raw_string(message.provider), raw_string(message.model))

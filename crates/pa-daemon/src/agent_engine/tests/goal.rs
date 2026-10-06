@@ -129,6 +129,7 @@ fn wire_assistant_message(text: String) -> Value {
             error_message: None,
             timestamp: 2,
             rest: Map::default(),
+            discarded_usage: None,
         },
     ))
     .expect("assistant message serializes")

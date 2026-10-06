@@ -147,6 +147,7 @@ fn reply(text: &str) -> AssistantMessage {
         error_message: None,
         timestamp: 0,
         rest: serde_json::Map::default(),
+        discarded_usage: None,
     }
 }
 
