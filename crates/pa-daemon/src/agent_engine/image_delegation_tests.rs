@@ -127,6 +127,19 @@ pub(crate) fn delegating_engine_with_socket(
     dir: &std::path::Path,
     socket: &std::path::Path,
 ) -> crate::agent_engine::AgentSessionEngine {
+    delegating_engine_with_settings(
+        dir,
+        socket,
+        &serde_json::json!({ "imageModel": "battery/mock-vision" }),
+    )
+}
+
+/// [`delegating_engine_with_socket`] over explicit global settings.
+pub(crate) fn delegating_engine_with_settings(
+    dir: &std::path::Path,
+    socket: &std::path::Path,
+    settings: &serde_json::Value,
+) -> crate::agent_engine::AgentSessionEngine {
     let agent_dir = dir.join("agent");
     std::fs::create_dir_all(&agent_dir).unwrap();
     std::fs::write(
@@ -160,11 +173,7 @@ pub(crate) fn delegating_engine_with_socket(
         .to_string(),
     )
     .unwrap();
-    std::fs::write(
-        agent_dir.join("settings.json"),
-        serde_json::json!({ "imageModel": "battery/mock-vision" }).to_string(),
-    )
-    .unwrap();
+    std::fs::write(agent_dir.join("settings.json"), settings.to_string()).unwrap();
     let engine = crate::agent_engine::AgentSessionEngine::new(AgentEngineConfig {
         cwd: dir.to_path_buf(),
         agent_dir,
@@ -511,6 +520,87 @@ fn image_turn_delegation_lands_the_child_answer_on_a_text_only_parent() {
         ]),
         "the child prompt rode the actual image bytes"
     );
+    registration.unregister();
+}
+
+/// Upstream #1192: under a delegation budget the image-model child is
+/// funded from the session's pool like an `rlm.spawn` child — its grant
+/// rides the create as `runtimeMetadata.rlmTokenAllowance` and is
+/// attributed to it — and an exhausted pool fails the delegation loudly
+/// before any child is created.
+#[test]
+fn the_image_model_child_is_funded_from_the_delegation_budget() {
+    let _faux = FAUX_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let registration = register_text_only_battery_model();
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("scripted-supervisor.sock");
+    let supervisor = ScriptedSupervisor::spawn(socket.clone(), "a red square");
+    let engine = delegating_engine_with_settings(
+        dir.path(),
+        &socket,
+        &serde_json::json!({
+            "imageModel": "battery/mock-vision",
+            "rlmTokenBudget": { "total": 250, "perDepth": [200] },
+        }),
+    );
+    let first = run_prompt_collecting(&engine, vec![image_content("QUJD")]);
+    assert!(first
+        .iter()
+        .any(|event| matches!(event, crate::engine::EngineEvent::Done(Ok(())))));
+    let allowances: Vec<serde_json::Value> = supervisor
+        .captured
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|command| command["type"] == "create")
+        .map(|command| command["runtimeMetadata"]["rlmTokenAllowance"].clone())
+        .collect();
+    assert_eq!(allowances, vec![serde_json::json!(200)]);
+    let status = engine
+        .session
+        .blocking_lock()
+        .as_ref()
+        .expect("session built")
+        .rlm
+        .token_budget_status()
+        .expect("a budget applies");
+    assert_eq!(
+        (
+            status.granted,
+            status.remaining,
+            status
+                .grants
+                .iter()
+                .map(|grant| (grant.name.clone(), grant.tokens))
+                .collect::<Vec<_>>()
+        ),
+        (200, 50, vec![("img-child".to_string(), 200)])
+    );
+
+    // Drain the pool; the next delegation finds it empty and fails
+    // loudly with no child created.
+    let core = engine
+        .session
+        .blocking_lock()
+        .clone()
+        .expect("session built");
+    assert_eq!(core.rlm.reserve_child_grant(None).unwrap(), Some(50));
+    let refused = run_prompt_collecting(&engine, vec![image_content("QUJD")]);
+    let error = done_error(&refused);
+    assert!(
+        error.contains("image delegation failed") && error.contains("RLM token budget exhausted"),
+        "{error}"
+    );
+    let creates = supervisor
+        .captured
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|command| command["type"] == "create")
+        .count();
+    assert_eq!(creates, 1, "the refused delegation created no child");
     registration.unregister();
 }
 

@@ -132,6 +132,36 @@ class RlmSubagentRegistryTest(unittest.TestCase):
             {"prompt": "run the lane", "kwargs": {"name": "cloud-worker"}},
         )
 
+    def test_forwards_an_explicit_token_budget_and_omission_stays_identical(self) -> None:
+        handle = {
+            "rlm_child_id": "sub-a1b2c3d4",
+            "name": "auditor",
+            "session_dir": "/tmp/parent/sub-a1b2c3d4",
+            "model": "deepseek/deepseek-v4-flash",
+        }
+        forwarded = AsyncMock(return_value=handle)
+        with patch.object(rlm_module, "host_request", forwarded):
+            asyncio.run(rlm_module.rlm.spawn("audit the retry logic", name="auditor", token_budget=200_000))
+        forwarded.assert_awaited_once_with(
+            "rlm.run",
+            {"prompt": "audit the retry logic", "kwargs": {"name": "auditor", "token_budget": 200_000}},
+        )
+        omitted = AsyncMock(return_value=handle)
+        with patch.object(rlm_module, "host_request", omitted):
+            asyncio.run(rlm_module.rlm.spawn("audit the retry logic", name="auditor"))
+        omitted.assert_awaited_once_with(
+            "rlm.run",
+            {"prompt": "audit the retry logic", "kwargs": {"name": "auditor"}},
+        )
+
+    def test_rejects_a_non_positive_or_non_int_token_budget_before_the_host(self) -> None:
+        host_request = AsyncMock()
+        with patch.object(rlm_module, "host_request", host_request):
+            for bad in (0, -5, 1.5, True, "200k"):
+                with self.assertRaisesRegex(TypeError, r"token_budget must be a positive int"):
+                    asyncio.run(rlm_module.rlm.spawn("run the lane", name="w", token_budget=bad))
+        host_request.assert_not_awaited()
+
     def test_rejects_non_string_target_before_the_host(self) -> None:
         host_request = AsyncMock()
         with patch.object(rlm_module, "host_request", host_request):

@@ -1576,3 +1576,112 @@ async fn kernel_telemetry_bridge_round_trips_through_the_registry() {
     wiring.client.flush().await.unwrap();
     assert_eq!(mock.events().len(), 1, "nothing else emitted");
 }
+
+/// The runtime behaviours count per run and per session: a backup on
+/// another model is a `fallbackModels` switch (a provider backup serving
+/// the same model is failover only), a repetition-guard settle is a trip,
+/// and the session-level behaviours ride `agent session ended`.
+#[tokio::test]
+async fn fallback_switches_repetition_trips_and_session_behaviours_count() {
+    let fixture = fixture();
+    let telemetry = SessionTelemetry::detached(
+        fixture.client.clone(),
+        fixture.state.clone(),
+        "interactive".to_string(),
+    );
+    let backup = |model: &str| {
+        telemetry.note_auto_retry_event(&AutoRetryEvent::Start {
+            attempt: 1,
+            max_attempts: 3,
+            delay_ms: 0,
+            error_message: String::new(),
+            reason: crate::session_engine::auto_retry::RetryStartReason::Backup {
+                backup_model: model.to_string(),
+            },
+        });
+    };
+    emit(
+        &fixture,
+        AgentEvent::MessageStart {
+            message: user_message(),
+        },
+    );
+    attempt(&fixture, assistant_with_error("API Error: 500"));
+    // Another provider serving the same model: failover, not a fallback.
+    backup("backup-provider/gpt-test");
+    attempt(&fixture, assistant_with_error("API Error: 500"));
+    // A fallback model takes over.
+    backup("other/kimi-k2");
+    let mut guarded = assistant_with_error("repetition loop");
+    guarded.model = "kimi-k2".to_string();
+    guarded.stop_reason_raw = Some(pa_agent::repetition_guard::REPETITION_STOP_REASON.to_string());
+    attempt(&fixture, guarded);
+    telemetry.note_auto_retry_event(&AutoRetryEvent::End {
+        success: false,
+        attempt: 2,
+        final_error: Some("repetition loop".to_string()),
+        restored_model: None,
+    });
+    for adoption in [
+        SessionAdoption::LengthContinuation,
+        SessionAdoption::LengthContinuation,
+        SessionAdoption::RlmTokenBudgetRefusal,
+        SessionAdoption::HarnessEnabled,
+        SessionAdoption::HarnessDisabled,
+        SessionAdoption::RefinePreview,
+        SessionAdoption::RefinePlanRun,
+        SessionAdoption::ArtifactPresented,
+    ] {
+        telemetry.note_adoption(adoption);
+    }
+    telemetry.end().await.unwrap();
+
+    let runs = event_properties(&fixture.mock, "agent run completed").await;
+    assert_eq!(runs.len(), 1);
+    assert_eq!(
+        (
+            runs[0]["failover_count"].clone(),
+            runs[0]["fallback_model_switch_count"].clone(),
+            runs[0]["repetition_guard_trip_count"].clone(),
+        ),
+        (
+            serde_json::json!(2),
+            serde_json::json!(1),
+            serde_json::json!(1)
+        )
+    );
+    let ended = &event_properties(&fixture.mock, "agent session ended").await[0];
+    let counts: serde_json::Map<String, serde_json::Value> = [
+        "fallback_model_switch_count",
+        "repetition_guard_trip_count",
+        "length_continuation_count",
+        "rlm_token_budget_refusal_count",
+        "harness_enable_count",
+        "harness_disable_count",
+        "refine_preview_count",
+        "refine_plan_run_count",
+        "artifact_present_count",
+    ]
+    .iter()
+    .map(|key| {
+        (
+            (*key).to_string(),
+            ended.get(*key).cloned().unwrap_or_default(),
+        )
+    })
+    .collect();
+    assert_eq!(
+        serde_json::Value::Object(counts),
+        serde_json::json!({
+            "fallback_model_switch_count": 1,
+            "repetition_guard_trip_count": 1,
+            "length_continuation_count": 2,
+            "rlm_token_budget_refusal_count": 1,
+            "harness_enable_count": 1,
+            "harness_disable_count": 1,
+            "refine_preview_count": 1,
+            "refine_plan_run_count": 1,
+            "artifact_present_count": 1,
+        })
+    );
+}

@@ -180,7 +180,14 @@ pub fn handle_public_command(args: &[String]) -> PublicCommandResult {
                     None,
                 );
             }
-            run_internal_agent_command("create", &rest)
+            let created = run_internal_agent_command("create", &rest);
+            crate::cli_command_telemetry::report(
+                &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+                crate::cli_command_telemetry::CliCommand::Create,
+                created.exit_code.is_none_or(|code| code == 0),
+                true,
+            );
+            created
         }
         "schedule" => run_nested_agent_command("schedule", "cron", &rest),
         "status" => run_status(&rest),

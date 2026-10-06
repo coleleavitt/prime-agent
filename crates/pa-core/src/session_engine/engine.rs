@@ -236,6 +236,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     } else {
         super::context_limit::ContextLimitSource::None
     };
+    let settings_adoption =
+        super::telemetry::SettingsAdoption::from_settings(&settings, context_cap_source);
     let auto_refine_gates =
         super::refine::AutoRefineGates::from_settings(settings.settings().auto_refine.as_ref());
     // Request timing: the settings half of the flag is read once here
@@ -243,29 +245,10 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     let request_timing_settings = settings.get_request_timing();
     let length_continuations = settings.get_length_continuations();
     let repetition_guard = settings.get_repetition_guard();
-    // The delegation budget (upstream #1192): a root takes its pool from
-    // the global `rlmTokenBudget` setting; a funded child enforces the grant
-    // its parent drew even if the setting changed since.
-    let rlm_token_budget = {
-        use super::rlm_token_budget::{RlmTokenAllowance, RlmTokenBudget, RlmTokenBudgetConfig};
-        let depth = config.rlm_depth.unwrap_or(0);
-        match (settings.get_rlm_token_budget(), config.rlm_token_allowance) {
-            (budget, Some(grant)) => Some(std::sync::Arc::new(RlmTokenBudget::new(
-                budget.unwrap_or(RlmTokenBudgetConfig {
-                    total: grant,
-                    per_depth: Vec::new(),
-                }),
-                RlmTokenAllowance::Granted(grant),
-                depth,
-            ))),
-            (Some(budget), None) if depth == 0 => Some(std::sync::Arc::new(RlmTokenBudget::new(
-                budget,
-                RlmTokenAllowance::Root,
-                depth,
-            ))),
-            (Some(_) | None, None) => None,
-        }
-    };
+    // The delegation budget's setting (upstream #1192), read before
+    // `settings` moves into the loader; the budget itself is built once
+    // the session's artifact dir (its durable ledger's home) is known.
+    let rlm_token_budget_setting = settings.get_rlm_token_budget();
     let kernel_environment = settings.get_kernel_environment();
     // Captured before `settings` moves into the resource loader: the
     // factory host bridge's preflight facts (the daemon `allowedModels`
@@ -339,9 +322,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             .unwrap_or_else(|| restored_plan_mode.unwrap_or(false)),
     );
     let _ = wiring.rlm.plan_mode.set(plan_mode.clone());
-    if let Some(budget) = &rlm_token_budget {
-        let _ = wiring.rlm.token_budget.set(std::sync::Arc::clone(budget));
-    }
     let mut handlers = wiring.handlers.clone();
     if let Some(extra) = config.extra_host_handlers.clone() {
         handlers.merge(extra);
@@ -359,6 +339,47 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 .as_deref()
                 .and_then(super::harness_digest::session_artifact_dir_for_log)
         });
+    // The delegation budget (upstream #1192): a root takes its pool from
+    // the global `rlmTokenBudget` setting; a funded child enforces the grant
+    // its parent drew even if the setting changed since, and a resumed
+    // child whose resume carries no grant (a daemon restart) keeps the one
+    // its ledger recorded.
+    let rlm_token_budget = {
+        use super::rlm_token_budget::{
+            RlmTokenAllowance, RlmTokenBudget, RlmTokenBudgetConfig, RlmTokenBudgetLedger,
+            RLM_TOKEN_BUDGET_FILE,
+        };
+        let depth = config.rlm_depth.unwrap_or(0);
+        let store = session_artifact_dir
+            .as_deref()
+            .map(|dir| dir.join(RLM_TOKEN_BUDGET_FILE));
+        let allowance = config.rlm_token_allowance.or_else(|| {
+            (depth > 0)
+                .then(|| store.as_deref().map(RlmTokenBudgetLedger::load))
+                .flatten()
+                .and_then(|ledger| ledger.allowance)
+        });
+        let budget = match (rlm_token_budget_setting, allowance) {
+            (budget, Some(grant)) => Some((
+                budget.unwrap_or(RlmTokenBudgetConfig {
+                    total: grant,
+                    per_depth: Vec::new(),
+                }),
+                RlmTokenAllowance::Granted(grant),
+            )),
+            (Some(budget), None) if depth == 0 => Some((budget, RlmTokenAllowance::Root)),
+            (Some(_) | None, None) => None,
+        };
+        budget.map(|(budget, allowance)| {
+            std::sync::Arc::new(match store {
+                Some(store) => RlmTokenBudget::open(budget, allowance, depth, store),
+                None => RlmTokenBudget::new(budget, allowance, depth),
+            })
+        })
+    };
+    if let Some(budget) = &rlm_token_budget {
+        let _ = wiring.rlm.token_budget.set(std::sync::Arc::clone(budget));
+    }
     // Separately built features installed by the composition root (none in
     // the native product).
     let mut feature_context = crate::features::SessionFeatureContext {
@@ -414,23 +435,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             policy: router_retry_policy,
         },
     );
-    // `artifact.present` (#1062): a host-provided registration (the
-    // extra handlers) wins; the native one captures into the session's
-    // artifact tree and records the row in the engine's session unless a
-    // host installs its sink.
-    let presented_artifacts = Arc::new(super::presented_artifact::PresentedArtifacts::new());
-    if handlers.get("artifact.present").is_none() {
-        super::presented_artifact::register_artifact_present_handler(
-            &mut handlers,
-            &presented_artifacts,
-            super::presented_artifact::PresentContext {
-                cwd: cwd.clone(),
-                artifact_dir: session_artifact_dir.clone(),
-                session_id: session_id.clone(),
-                session: wiring.session.clone(),
-            },
-        );
-    }
     // Per-session counters (MCP connector use, kernel boots, skills, RLM
     // child usage, feature outcomes) ride `agent session ended`; the seams
     // below count into them instead of emitting their own events.
@@ -447,6 +451,29 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     {
         session_counters.set_telemetry_enabled(telemetry_switch.enabled.clone());
     }
+    // `artifact.present` (#1062): a host-provided registration (the
+    // extra handlers) wins; the native one captures into the session's
+    // artifact tree and records the row in the engine's session unless a
+    // host installs its sink.
+    let presented_artifacts = Arc::new(super::presented_artifact::PresentedArtifacts::new());
+    if handlers.get("artifact.present").is_none() {
+        super::presented_artifact::register_artifact_present_handler(
+            &mut handlers,
+            &presented_artifacts,
+            super::presented_artifact::PresentContext {
+                cwd: cwd.clone(),
+                artifact_dir: session_artifact_dir.clone(),
+                session_id: session_id.clone(),
+                session: wiring.session.clone(),
+                counters: Some(std::sync::Arc::clone(&session_counters)),
+            },
+        );
+    }
+    // A delegation-budget refusal counts into the session counters.
+    let _ = wiring
+        .rlm
+        .adoption
+        .set(std::sync::Arc::clone(&session_counters));
     // The kernel telemetry bridge: `telemetry.emit` lets Python-backed
     // skills emit their bridge-vocabulary events through the session's
     // client; telemetry-opt-out sessions never register it.
@@ -470,6 +497,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // serve live views per request.
     crate::mcp::McpManager::register_host_handlers(&mcp_manager, &mut handlers);
     let turn_boundary = Arc::new(super::turn_boundary::TurnBoundaryRequests::new());
+    turn_boundary.set_adoption_counters(std::sync::Arc::clone(&session_counters));
     turn_boundary.register_model_info_handler(&mut handlers, model_info.clone());
     let keep_recent_tokens = compaction_settings
         .keep_recent_tokens
@@ -790,14 +818,17 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         length_continuation: (length_continuations > 0).then(|| {
             pa_agent::agent_loop::LengthContinuation {
                 max_continuations: length_continuations,
-                message: std::sync::Arc::new(|attempt, max| {
+                message: std::sync::Arc::new({
+                    let counters = std::sync::Arc::clone(&session_counters);
+                    move |attempt, max| {
+                    counters.note_adoption(super::telemetry::SessionAdoption::LengthContinuation);
                     crate::autonomous::autonomous_continuation_loop_row(
                         &format!(
                             "[auto-continue {attempt}/{max}: the previous reply was cut off at the output-token limit]\n\nContinue exactly where the previous reply stopped. Do not repeat what was already written."
                         ),
                         pa_agent::now_ms().max(0) as u64,
                     )
-                }),
+                }}),
             }
         }),
         // On (reasoning only) unless `repetitionGuard` says otherwise: a
@@ -959,6 +990,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 &telemetry_agent,
                 &wiring,
                 Some(skill_counts),
+                Some(settings_adoption),
                 std::sync::Arc::clone(&session_counters),
             )
             .await?;

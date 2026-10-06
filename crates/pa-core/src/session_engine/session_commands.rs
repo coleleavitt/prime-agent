@@ -1,5 +1,5 @@
 //! Session slash-command execution: the daemon-side behavior behind
-//! `/compact`, `/refine`, `/goal`, `/autonomous`, `/context-limit`, and `/plan`. The host runtime owns
+//! `/compact`, `/refine`, `/goal`, `/autonomous`, `/context-limit`, `/plan`, and `/rlm-token-budget`. The host runtime owns
 //! persistence of what this returns; errors carry the exact TS message and
 //! the host renders the `Command failed: ...` result row.
 
@@ -244,6 +244,7 @@ pub async fn execute_session_command(
         "autonomous" => execute_autonomous(params, command, &mut execution),
         "context-limit" => execute_context_limit(engine, params, command, &mut execution).await,
         "plan" => execute_plan(engine, command, &mut execution).await,
+        "rlm-token-budget" => execute_rlm_token_budget(engine, command, &mut execution),
         HARNESS_COMMAND => execute_harness(engine, params, command, &mut execution).await,
         other => execute_feature_command(engine, command, &mut execution)
             .await
@@ -344,6 +345,31 @@ async fn execute_context_limit(
         "info",
         None,
         true,
+    ));
+    Ok(())
+}
+
+/// `/rlm-token-budget` (upstream #1192's status form): the delegation
+/// budget's pool, this session's spend, what is left to grant, and the
+/// grant each spawned subagent drew. The budget is configured by the
+/// global `rlmTokenBudget` setting; the command only reports.
+fn execute_rlm_token_budget(
+    engine: &SessionEngine,
+    command: &SessionSlashCommand,
+    execution: &mut SessionCommandExecution,
+) -> Result<(), String> {
+    if !command.args.trim().is_empty() {
+        return Err(
+            "Usage: /rlm-token-budget (the budget is configured by the global rlmTokenBudget setting)"
+                .to_string(),
+        );
+    }
+    let text = match engine.rlm.token_budget.get() {
+        Some(budget) => budget.status().render(),
+        None => "No RLM token budget applies to this session. Set rlmTokenBudget in the global settings to fund subagent delegation.".to_string(),
+    };
+    execution.push_message(slash_command_result(
+        command, text, true, "info", None, true,
     ));
     Ok(())
 }
@@ -625,6 +651,13 @@ async fn execute_harness(
             .await
             .map_err(|error| format!("{error}"))?
             .map_err(|error| format!("{error:#}"))?;
+            if let Some(telemetry) = &engine.telemetry {
+                telemetry.note_adoption(if enabled {
+                    super::telemetry::SessionAdoption::HarnessEnabled
+                } else {
+                    super::telemetry::SessionAdoption::HarnessDisabled
+                });
+            }
             let verb = if enabled { "Enabled" } else { "Disabled" };
             (format!("{verb} {}.", changed.key()), Some(changed))
         }
@@ -847,3 +880,7 @@ mod tests {
 #[cfg(test)]
 #[path = "harness_command_tests.rs"]
 mod harness_command_tests;
+
+#[cfg(test)]
+#[path = "rlm_token_budget_command_tests.rs"]
+mod rlm_token_budget_command_tests;

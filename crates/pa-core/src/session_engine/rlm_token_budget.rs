@@ -15,11 +15,11 @@
 //!
 //! Off unless the global `rlmTokenBudget` setting is set (TS v0.9.8 had no
 //! budget). Spend is counted from the session's own assistant replies as
-//! they settle (input, output, and cache tokens), in memory: a resumed
-//! child restarts its own count, and the root's granted total resets with
-//! its worker.
-
-use std::sync::atomic::{AtomicU64, Ordering};
+//! they settle (input, output, and cache tokens). The spend and grant
+//! totals, and a child's own grant, persist in the session's artifact dir
+//! ([`RLM_TOKEN_BUDGET_FILE`]): a resumed child keeps counting against the
+//! grant it was spawned with, and a restarted root does not refill its
+//! pool.
 
 /// The configured budget (`rlmTokenBudget`): the root's delegation pool
 /// and the optional per-depth grant ceilings.
@@ -67,6 +67,139 @@ pub enum RlmTokenAllowance {
     Granted(u64),
 }
 
+/// The file under a session's artifact dir that keeps its budget ledger,
+/// so the totals survive worker restarts, resumes and daemon restarts.
+pub const RLM_TOKEN_BUDGET_FILE: &str = "rlm-token-budget.json";
+
+/// A session's durable budget totals (`rlm-token-budget.json`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RlmTokenBudgetLedger {
+    /// The grant that funded this session (a subagent only): a resume
+    /// that carries no allowance (a daemon restart) keeps it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowance: Option<u64>,
+    /// Tokens this session's own replies spent.
+    #[serde(default)]
+    pub spent: u64,
+    /// Tokens granted to this session's children (never returned).
+    #[serde(default)]
+    pub granted: u64,
+    /// The grants a spawned child took, in spawn order (a grant whose
+    /// spawn failed after drawing it counts in `granted` only).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grants: Vec<RlmTokenGrant>,
+}
+
+/// One grant a spawned child took.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RlmTokenGrant {
+    pub rlm_child_id: String,
+    pub name: String,
+    pub tokens: u64,
+}
+
+/// A point-in-time view of one session's budget (`/rlm-token-budget`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RlmTokenBudgetStatus {
+    /// `None` for the root; the grant that funded a subagent.
+    pub allowance: Option<u64>,
+    /// The pool grants (and a subagent's own spend) draw from.
+    pub pool: u64,
+    /// This session's depth.
+    pub depth: u32,
+    /// The cap on any single grant to this session's children.
+    pub child_grant_cap: Option<u64>,
+    pub spent: u64,
+    pub granted: u64,
+    pub remaining: u64,
+    pub grants: Vec<RlmTokenGrant>,
+}
+
+impl RlmTokenBudgetStatus {
+    /// The status text the slash command shows.
+    #[must_use]
+    pub fn render(&self) -> String {
+        let source = match self.allowance {
+            None => "root pool, from rlmTokenBudget",
+            Some(_) => "this subagent's grant from its parent",
+        };
+        let mut lines = vec![format!(
+            "RLM token budget ({source}): {} tokens{}",
+            self.pool,
+            match self.child_grant_cap {
+                Some(cap) => format!(
+                    "; any single grant to a depth-{} subagent is capped at {cap}",
+                    self.depth + 1
+                ),
+                None => String::new(),
+            }
+        )];
+        lines.push(format!(
+            "Spent by this session: {}{}",
+            self.spent,
+            match self.allowance {
+                None => " (the root's own spend is not capped)",
+                Some(_) => " (counts against the grant)",
+            }
+        ));
+        lines.push(format!(
+            "Granted: {}; left to grant: {}",
+            self.granted, self.remaining
+        ));
+        for grant in &self.grants {
+            lines.push(format!(
+                "- {} ({}): {}",
+                grant.name, grant.rlm_child_id, grant.tokens
+            ));
+        }
+        let attributed: u64 = self.grants.iter().map(|grant| grant.tokens).sum();
+        let unattributed = self.granted.saturating_sub(attributed);
+        if unattributed > 0 {
+            lines.push(format!(
+                "- not attributed (a spawn that failed after drawing its grant): {unattributed}"
+            ));
+        }
+        lines.join("\n")
+    }
+}
+
+impl RlmTokenBudgetLedger {
+    /// Read a ledger. A missing file is an empty ledger; an unreadable or
+    /// malformed one is reported (logged) and read as empty.
+    #[must_use]
+    pub fn load(path: &std::path::Path) -> Self {
+        match std::fs::read_to_string(path) {
+            Ok(text) => serde_json::from_str(&text).unwrap_or_else(|error| {
+                tracing::warn!(
+                    target: "pa_core::rlm_token_budget",
+                    %error,
+                    "the RLM token budget ledger is malformed; starting from zero"
+                );
+                Self::default()
+            }),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self::default(),
+            Err(error) => {
+                tracing::warn!(
+                    target: "pa_core::rlm_token_budget",
+                    %error,
+                    "the RLM token budget ledger is unreadable; starting from zero"
+                );
+                Self::default()
+            }
+        }
+    }
+
+    fn save(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let text = serde_json::to_string_pretty(self)?;
+        crate::settings::storage::atomic_write(path, &format!("{text}\n"))
+    }
+}
+
 /// One session's budget state.
 #[derive(Debug)]
 pub struct RlmTokenBudget {
@@ -74,22 +207,53 @@ pub struct RlmTokenBudget {
     allowance: RlmTokenAllowance,
     /// This session's depth (its children run at depth + 1).
     depth: u32,
-    /// Tokens this session's own replies spent.
-    spent: AtomicU64,
-    /// Tokens granted to this session's children.
-    granted: AtomicU64,
+    /// The spend and grant totals.
+    ledger: std::sync::Mutex<RlmTokenBudgetLedger>,
+    /// Where the ledger persists (`None`: in memory only).
+    store: Option<std::path::PathBuf>,
 }
 
 impl RlmTokenBudget {
+    /// An in-memory budget (no session artifact dir to persist into).
     #[must_use]
     pub fn new(config: RlmTokenBudgetConfig, allowance: RlmTokenAllowance, depth: u32) -> Self {
         RlmTokenBudget {
             config,
             allowance,
             depth,
-            spent: AtomicU64::new(0),
-            granted: AtomicU64::new(0),
+            ledger: std::sync::Mutex::new(RlmTokenBudgetLedger {
+                allowance: granted_allowance(allowance),
+                ..RlmTokenBudgetLedger::default()
+            }),
+            store: None,
         }
+    }
+
+    /// A budget whose totals persist in `store`, resuming what an earlier
+    /// lifetime of the session spent and granted.
+    #[must_use]
+    pub fn open(
+        config: RlmTokenBudgetConfig,
+        allowance: RlmTokenAllowance,
+        depth: u32,
+        store: std::path::PathBuf,
+    ) -> Self {
+        let ledger = RlmTokenBudgetLedger {
+            allowance: granted_allowance(allowance),
+            ..RlmTokenBudgetLedger::load(&store)
+        };
+        RlmTokenBudget {
+            config,
+            allowance,
+            depth,
+            ledger: std::sync::Mutex::new(ledger),
+            store: Some(store),
+        }
+    }
+
+    fn ledger(&self) -> std::sync::MutexGuard<'_, RlmTokenBudgetLedger> {
+        use pa_types::sync::MutexExt;
+        self.ledger.lock_or_recover()
     }
 
     /// The pool this session draws grants and (for a child) its own spend
@@ -101,62 +265,136 @@ impl RlmTokenBudget {
         }
     }
 
+    fn remaining_in(&self, ledger: &RlmTokenBudgetLedger) -> u64 {
+        let own = match self.allowance {
+            RlmTokenAllowance::Root => 0,
+            RlmTokenAllowance::Granted(_) => ledger.spent,
+        };
+        self.pool()
+            .saturating_sub(ledger.granted)
+            .saturating_sub(own)
+    }
+
     /// What is left to grant: the pool minus earlier grants and, for a
     /// child, its own spend.
     #[must_use]
     pub fn remaining(&self) -> u64 {
-        let own = match self.allowance {
-            RlmTokenAllowance::Root => 0,
-            RlmTokenAllowance::Granted(_) => self.spent.load(Ordering::SeqCst),
-        };
-        self.pool()
-            .saturating_sub(self.granted.load(Ordering::SeqCst))
-            .saturating_sub(own)
+        self.remaining_in(&self.ledger())
     }
 
-    /// Record one settled reply's tokens.
+    /// Record one settled reply's tokens. A ledger that cannot be written
+    /// is logged: the reply already happened, and memory keeps counting.
     pub fn record_spend(&self, tokens: u64) {
-        self.spent.fetch_add(tokens, Ordering::SeqCst);
+        let mut ledger = self.ledger();
+        ledger.spent = ledger.spent.saturating_add(tokens);
+        if let Some(store) = &self.store {
+            if let Err(error) = ledger.save(store) {
+                tracing::warn!(
+                    target: "pa_core::rlm_token_budget",
+                    error = %format!("{error:#}"),
+                    "the RLM token budget ledger could not be written"
+                );
+            }
+        }
     }
 
-    /// Draw the grant for one new child: what is left, capped by the
-    /// per-depth ceiling for the child's depth. Never returned to the pool.
+    /// Draw the grant for one new child. Never returned to the pool.
+    /// `requested` (`rlm.spawn(token_budget=)`) asks for an explicit grant,
+    /// which must fit both what is left and the per-depth ceiling for the
+    /// child's depth; without one the child gets what is left, capped by
+    /// that ceiling.
     ///
     /// # Errors
     ///
-    /// Errors when nothing is left to grant (the spawn is refused).
-    pub fn reserve_child_grant(&self) -> anyhow::Result<u64> {
-        let ceiling = self
-            .config
-            .per_depth
-            .get(self.depth as usize)
-            .copied()
-            .unwrap_or(u64::MAX);
-        loop {
-            let granted = self.granted.load(Ordering::SeqCst);
-            let left = self.remaining();
-            let grant = left.min(ceiling);
-            if grant == 0 {
-                anyhow::bail!(
-                    "RLM token budget exhausted: {} of {} tokens already granted{}; no budget is left for another subagent",
-                    granted,
-                    self.pool(),
-                    match self.allowance {
-                        RlmTokenAllowance::Root => String::new(),
-                        RlmTokenAllowance::Granted(_) => format!(
-                            " or spent ({} spent by this session)",
-                            self.spent.load(Ordering::SeqCst)
-                        ),
-                    }
+    /// Errors when the pool cannot fund the child (nothing left, or less
+    /// than `requested`), when `requested` exceeds the per-depth ceiling,
+    /// and when the grant cannot be made durable (a restart would refill
+    /// it). Every refusal refuses the spawn.
+    pub fn reserve_child_grant(&self, requested: Option<u64>) -> anyhow::Result<u64> {
+        let ceiling = self.config.per_depth.get(self.depth as usize).copied();
+        let mut ledger = self.ledger();
+        let left = self.remaining_in(&ledger);
+        let spent_note = || match self.allowance {
+            RlmTokenAllowance::Root => String::new(),
+            RlmTokenAllowance::Granted(_) => {
+                format!(" or spent ({} spent by this session)", ledger.spent)
+            }
+        };
+        let grant = match requested {
+            Some(requested) => {
+                if let Some(ceiling) = ceiling.filter(|ceiling| requested > *ceiling) {
+                    anyhow::bail!(
+                        "rlm.spawn token_budget={requested} exceeds the {ceiling}-token cap on any single grant to a depth-{} subagent",
+                        self.depth + 1
+                    );
+                }
+                if requested > left {
+                    anyhow::bail!(
+                        "RLM token budget cannot fund token_budget={requested}: {left} tokens are left to grant ({} of {} already granted{})",
+                        ledger.granted,
+                        self.pool(),
+                        spent_note()
+                    );
+                }
+                requested
+            }
+            None => left.min(ceiling.unwrap_or(u64::MAX)),
+        };
+        if grant == 0 {
+            anyhow::bail!(
+                "RLM token budget exhausted: {} of {} tokens already granted{}; no budget is left for another subagent",
+                ledger.granted,
+                self.pool(),
+                spent_note()
+            );
+        }
+        let next = RlmTokenBudgetLedger {
+            granted: ledger.granted.saturating_add(grant),
+            ..ledger.clone()
+        };
+        if let Some(store) = &self.store {
+            next.save(store).map_err(|error| {
+                error.context("record the RLM token grant (the spawn is refused)")
+            })?;
+        }
+        *ledger = next;
+        Ok(grant)
+    }
+
+    /// Record which child a grant funded (after its spawn succeeded). A
+    /// ledger that cannot be written is logged: the grant itself is
+    /// already durable in the granted total.
+    pub fn attribute_grant(&self, tokens: u64, rlm_child_id: &str, name: &str) {
+        let mut ledger = self.ledger();
+        ledger.grants.push(RlmTokenGrant {
+            rlm_child_id: rlm_child_id.to_string(),
+            name: name.to_string(),
+            tokens,
+        });
+        if let Some(store) = &self.store {
+            if let Err(error) = ledger.save(store) {
+                tracing::warn!(
+                    target: "pa_core::rlm_token_budget",
+                    error = %format!("{error:#}"),
+                    "the RLM token budget ledger could not be written"
                 );
             }
-            if self
-                .granted
-                .compare_exchange(granted, granted + grant, Ordering::SeqCst, Ordering::SeqCst)
-                .is_ok()
-            {
-                return Ok(grant);
-            }
+        }
+    }
+
+    /// The budget's current numbers.
+    #[must_use]
+    pub fn status(&self) -> RlmTokenBudgetStatus {
+        let ledger = self.ledger();
+        RlmTokenBudgetStatus {
+            allowance: granted_allowance(self.allowance),
+            pool: self.pool(),
+            depth: self.depth,
+            child_grant_cap: self.config.per_depth.get(self.depth as usize).copied(),
+            spent: ledger.spent,
+            granted: ledger.granted,
+            remaining: self.remaining_in(&ledger),
+            grants: ledger.grants.clone(),
         }
     }
 
@@ -167,10 +405,17 @@ impl RlmTokenBudget {
         match self.allowance {
             RlmTokenAllowance::Root => false,
             RlmTokenAllowance::Granted(grant) => {
-                self.spent.load(Ordering::SeqCst)
-                    >= grant.saturating_sub(self.granted.load(Ordering::SeqCst))
+                let ledger = self.ledger();
+                ledger.spent >= grant.saturating_sub(ledger.granted)
             }
         }
+    }
+}
+
+fn granted_allowance(allowance: RlmTokenAllowance) -> Option<u64> {
+    match allowance {
+        RlmTokenAllowance::Root => None,
+        RlmTokenAllowance::Granted(grant) => Some(grant),
     }
 }
 
@@ -225,10 +470,10 @@ mod tests {
         root.record_spend(5_000);
         assert!(!root.exhausted(), "the root's own spend is never capped");
         let grants: Vec<u64> = (0..3)
-            .map(|_| root.reserve_child_grant().unwrap())
+            .map(|_| root.reserve_child_grant(None).unwrap())
             .collect();
         assert_eq!(grants, vec![400, 400, 200]);
-        let refused = root.reserve_child_grant().unwrap_err();
+        let refused = root.reserve_child_grant(None).unwrap_err();
         assert_eq!(
             refused.to_string(),
             "RLM token budget exhausted: 1000 of 1000 tokens already granted; no budget is left for another subagent"
@@ -248,7 +493,7 @@ mod tests {
         child.record_spend(250);
         assert!(!child.exhausted());
         assert_eq!(
-            child.reserve_child_grant().unwrap(),
+            child.reserve_child_grant(None).unwrap(),
             100,
             "the depth-2 ceiling"
         );
@@ -256,6 +501,57 @@ mod tests {
         child.record_spend(60);
         assert!(child.exhausted(), "310 spent of the 300 it kept");
         assert_eq!(child.remaining(), 0);
-        assert!(child.reserve_child_grant().is_err());
+        assert!(child.reserve_child_grant(None).is_err());
+    }
+
+    /// The ledger is the durable record: a reopened budget resumes the
+    /// spend and the grants, and the file holds exactly the totals.
+    #[test]
+    fn the_ledger_persists_spend_grants_and_the_allowance() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("artifacts").join(RLM_TOKEN_BUDGET_FILE);
+        let child = RlmTokenBudget::open(
+            config(1_000, &[400, 100]),
+            RlmTokenAllowance::Granted(400),
+            1,
+            store.clone(),
+        );
+        child.record_spend(150);
+        assert_eq!(child.reserve_child_grant(None).unwrap(), 100);
+        drop(child);
+        assert_eq!(
+            RlmTokenBudgetLedger::load(&store),
+            RlmTokenBudgetLedger {
+                allowance: Some(400),
+                spent: 150,
+                granted: 100,
+                grants: Vec::new(),
+            }
+        );
+        let reopened = RlmTokenBudget::open(
+            config(1_000, &[400, 100]),
+            RlmTokenAllowance::Granted(400),
+            1,
+            store,
+        );
+        assert_eq!(reopened.remaining(), 150);
+    }
+
+    /// A grant that cannot be made durable refuses the spawn and leaves
+    /// the pool as it was.
+    #[test]
+    fn an_unrecordable_grant_refuses_the_spawn() {
+        let dir = tempfile::tempdir().unwrap();
+        // The ledger's parent is a file: nothing can be written under it.
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, "").unwrap();
+        let root = RlmTokenBudget::open(
+            config(1_000, &[]),
+            RlmTokenAllowance::Root,
+            0,
+            blocker.join(RLM_TOKEN_BUDGET_FILE),
+        );
+        assert!(root.reserve_child_grant(None).is_err());
+        assert_eq!(root.remaining(), 1_000);
     }
 }

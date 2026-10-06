@@ -16,6 +16,7 @@
 // Internal ported modules are crate-private: the only public API is the
 // runtime boundary below (see crates/pa-cli/README.md).
 pub(crate) mod args;
+pub(crate) mod cli_command_telemetry;
 pub(crate) mod client_settings;
 pub(crate) mod client_traces;
 pub(crate) mod client_update;
@@ -274,17 +275,26 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
                 crate::daemon_session_list::now_ms()
             )
         );
+        cli_command_telemetry::report(
+            &cwd,
+            cli_command_telemetry::CliCommand::ListSessions,
+            true,
+            true,
+        );
         return Ok(0);
     }
     if let Some(selector) = &parsed.delete_session {
         let socket_path =
             crate::config::resolve_daemon_socket_path(parsed.daemon_socket.as_deref());
-        return named_sessions::run_delete_session(
-            selector,
-            &named_session_dir(),
+        let deleted =
+            named_sessions::run_delete_session(selector, &named_session_dir(), &cwd, &socket_path);
+        cli_command_telemetry::report(
             &cwd,
-            &socket_path,
+            cli_command_telemetry::CliCommand::DeleteSession,
+            matches!(deleted, Ok(0)),
+            true,
         );
+        return deleted;
     }
     let mut parsed = parsed;
     if let Some(name) = parsed.name.clone() {
@@ -307,8 +317,29 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
                 conflicting_flags.join(", ")
             ));
         }
-        let path = named_sessions::open_or_create_named_session(&named_session_dir(), &cwd, &name)?;
-        parsed.resume = Some(path.to_string_lossy().to_string());
+        let opened =
+            match named_sessions::open_or_create_named_session(&named_session_dir(), &cwd, &name) {
+                Ok(opened) => opened,
+                Err(error) => {
+                    cli_command_telemetry::report(
+                        &cwd,
+                        cli_command_telemetry::CliCommand::Name { created: false },
+                        false,
+                        true,
+                    );
+                    return Err(error);
+                }
+            };
+        // The launch continues into the session: the report never holds it.
+        cli_command_telemetry::report(
+            &cwd,
+            cli_command_telemetry::CliCommand::Name {
+                created: opened.created,
+            },
+            true,
+            false,
+        );
+        parsed.resume = Some(opened.path.to_string_lossy().to_string());
     }
     // Workspace trust: project configuration that can run code or change
     // the prompt loads only in a trusted workspace. The interactive client

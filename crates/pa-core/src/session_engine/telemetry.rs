@@ -240,6 +240,8 @@ struct SessionTotals {
     compaction_count: u64,
     retry_count: u64,
     failover_count: u64,
+    fallback_model_switch_count: u64,
+    repetition_guard_trip_count: u64,
     model_error_count: u64,
     usage: UsageTotals,
 }
@@ -297,6 +299,10 @@ struct ActiveRun {
     compaction_count: u64,
     retry_count: u64,
     failover_count: u64,
+    /// Backups onto another model (`fallbackModels` taking over).
+    fallback_model_switch_count: u64,
+    /// Replies the repetition guard settled.
+    repetition_guard_trip_count: u64,
     usage: UsageTotals,
     last_assistant: Option<AssistantMessage>,
     /// An auto-retry (or provider failover) started after this run's
@@ -385,6 +391,42 @@ struct CounterValues {
     rlm_child_cost: f64,
     /// `feature_<name>_<outcome>_count` over the fixed feature vocabulary.
     feature_outcomes: std::collections::BTreeMap<String, u64>,
+    /// The session-level runtime behaviours ([`SessionAdoption`]).
+    adoption: std::collections::BTreeMap<&'static str, u64>,
+}
+
+/// One session-level runtime behaviour, counted on `agent session ended`
+/// (counts only: never what was continued, refused, toggled, or shown).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionAdoption {
+    /// A reply cut at the output limit auto-continued (`lengthContinuations`).
+    LengthContinuation,
+    /// A spawn the delegation budget (`rlmTokenBudget`) refused.
+    RlmTokenBudgetRefusal,
+    /// `/harness enable` turned an entry on.
+    HarnessEnabled,
+    /// `/harness disable` turned an entry off.
+    HarnessDisabled,
+    /// A `refine.preview` planned a refinement.
+    RefinePreview,
+    /// A `refine.run(plan_id=)` applied a previewed plan.
+    RefinePlanRun,
+    /// `present_artifact` showed an artifact.
+    ArtifactPresented,
+}
+
+impl SessionAdoption {
+    fn key(self) -> &'static str {
+        match self {
+            SessionAdoption::LengthContinuation => "length_continuation_count",
+            SessionAdoption::RlmTokenBudgetRefusal => "rlm_token_budget_refusal_count",
+            SessionAdoption::HarnessEnabled => "harness_enable_count",
+            SessionAdoption::HarnessDisabled => "harness_disable_count",
+            SessionAdoption::RefinePreview => "refine_preview_count",
+            SessionAdoption::RefinePlanRun => "refine_plan_run_count",
+            SessionAdoption::ArtifactPresented => "artifact_present_count",
+        }
+    }
 }
 
 impl SessionCounters {
@@ -412,6 +454,19 @@ impl SessionCounters {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
         );
+    }
+
+    /// One session-level runtime behaviour.
+    pub fn note_adoption(&self, adoption: SessionAdoption) {
+        self.with(|values| *values.adoption.entry(adoption.key()).or_default() += 1);
+    }
+
+    /// How often one session-level behaviour has counted (tests).
+    #[cfg(test)]
+    pub(crate) fn adoption_count(&self, adoption: SessionAdoption) -> u64 {
+        let mut count = 0;
+        self.with(|values| count = values.adoption.get(adoption.key()).copied().unwrap_or(0));
+        count
     }
 
     /// An MCP connector call (the server name never uploads).
@@ -464,6 +519,9 @@ impl SessionCounters {
             for (key, count) in &values.feature_outcomes {
                 properties.set(key, Value::from(*count));
             }
+            for (key, count) in &values.adoption {
+                properties.set(key, Value::from(*count));
+            }
         });
     }
 }
@@ -472,6 +530,74 @@ impl SessionCounters {
 pub struct SkillCounts {
     pub skill_count: usize,
     pub python_skill_count: usize,
+}
+
+/// How the session's recently added settings were configured (adoption
+/// categories on `agent started`): counts and fixed vocabularies only —
+/// never a model id, a budget figure, or a path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SettingsAdoption {
+    /// `lengthContinuations`: the configured auto-continue count (0: off).
+    pub length_continuations: u32,
+    /// `repetitionGuard`: `off` | `reasoning` | `all`.
+    pub repetition_guard: &'static str,
+    /// `rlmTokenBudget`: `off` | `total` | `per_depth`.
+    pub rlm_token_budget: &'static str,
+    /// `fallbackModels`: how many distinct fallback models are configured.
+    pub fallback_model_count: usize,
+    /// Where `compaction.maxContextTokens` comes from: `none` | `global` | `project`.
+    pub context_cap_source: &'static str,
+    /// `kernel.environment`: `inherit` | `scrub_credentials`.
+    pub kernel_environment: &'static str,
+}
+
+impl SettingsAdoption {
+    /// Read the categories off a session's settings.
+    #[must_use]
+    pub fn from_settings(
+        settings: &crate::settings::SettingsManager,
+        context_cap_source: super::context_limit::ContextLimitSource,
+    ) -> Self {
+        SettingsAdoption {
+            length_continuations: settings.get_length_continuations(),
+            repetition_guard: match settings.get_repetition_guard() {
+                None => "off",
+                Some(guard) if guard.guard_text => "all",
+                Some(_) => "reasoning",
+            },
+            rlm_token_budget: match settings.get_rlm_token_budget() {
+                None => "off",
+                Some(budget) if budget.per_depth.is_empty() => "total",
+                Some(_) => "per_depth",
+            },
+            fallback_model_count: settings.get_fallback_models().len(),
+            context_cap_source: match context_cap_source {
+                super::context_limit::ContextLimitSource::Global => "global",
+                super::context_limit::ContextLimitSource::Project => "project",
+                super::context_limit::ContextLimitSource::Chat
+                | super::context_limit::ContextLimitSource::None => "none",
+            },
+            kernel_environment: match settings.get_kernel_environment() {
+                crate::kernel::shared::KernelEnvironment::Inherit => "inherit",
+                crate::kernel::shared::KernelEnvironment::ScrubCredentials => "scrub_credentials",
+            },
+        }
+    }
+
+    fn write_into(self, properties: &mut Properties) {
+        properties.set(
+            "length_continuations",
+            Value::from(u64::from(self.length_continuations)),
+        );
+        properties.set("repetition_guard", Value::from(self.repetition_guard));
+        properties.set("rlm_token_budget", Value::from(self.rlm_token_budget));
+        properties.set(
+            "fallback_model_count",
+            Value::from(self.fallback_model_count as u64),
+        );
+        properties.set("context_cap_source", Value::from(self.context_cap_source));
+        properties.set("kernel_environment", Value::from(self.kernel_environment));
+    }
 }
 
 /// Install the telemetry subscriber on an agent and emit `agent started`.
@@ -483,6 +609,7 @@ pub async fn install_session_telemetry(
     agent: &Arc<pa_agent::agent::Agent>,
     wiring: &TelemetryWiring,
     skill_counts: Option<SkillCounts>,
+    settings_adoption: Option<SettingsAdoption>,
     counters: Arc<SessionCounters>,
 ) -> anyhow::Result<SessionTelemetry> {
     let execution_mode = wiring
@@ -531,6 +658,9 @@ pub async fn install_session_telemetry(
                 "python_skill_count",
                 Value::from(counts.python_skill_count as u64),
             );
+        }
+        if let Some(adoption) = settings_adoption {
+            adoption.write_into(&mut properties);
         }
     }
     client.track("agent started", properties);
@@ -589,12 +719,29 @@ impl SessionTelemetry {
                 run.retry_count += 1;
                 run.retry_wait_ms += *delay_ms;
                 run.retry_pending = true;
-                if matches!(reason, super::auto_retry::RetryStartReason::Backup { .. }) {
+                if let super::auto_retry::RetryStartReason::Backup { backup_model } = reason {
                     run.failover_count += 1;
+                    // A provider backup serves the same model; a backup
+                    // onto another model is a `fallbackModels` switch.
+                    let backup_id = backup_model
+                        .split_once('/')
+                        .map_or(backup_model.as_str(), |(_, id)| id);
+                    if run
+                        .last_assistant
+                        .as_ref()
+                        .is_some_and(|failed| failed.model != backup_id)
+                    {
+                        run.fallback_model_switch_count += 1;
+                    }
                 }
             }
             AutoRetryEvent::End { .. } => run.retry_pending = false,
         }
+    }
+
+    /// One session-level runtime behaviour (`agent session ended`).
+    pub fn note_adoption(&self, adoption: SessionAdoption) {
+        self.counters.note_adoption(adoption);
     }
 
     /// A feature attempt's observed result at a session-engine seam,
@@ -669,6 +816,14 @@ impl SessionTelemetry {
             properties.set("terminal_outcome", Value::from("success"));
             properties.set("retry_count", Value::from(totals.retry_count));
             properties.set("failover_count", Value::from(totals.failover_count));
+            properties.set(
+                "fallback_model_switch_count",
+                Value::from(totals.fallback_model_switch_count),
+            );
+            properties.set(
+                "repetition_guard_trip_count",
+                Value::from(totals.repetition_guard_trip_count),
+            );
             properties.set("model_error_count", Value::from(totals.model_error_count));
         }
         self.counters.write_into(&mut properties);
@@ -805,6 +960,8 @@ fn handle_event(
                 compaction_count: 0,
                 retry_count: 0,
                 failover_count: 0,
+                fallback_model_switch_count: 0,
+                repetition_guard_trip_count: 0,
                 usage: UsageTotals::default(),
                 last_assistant: None,
                 retry_pending: false,
@@ -920,7 +1077,10 @@ fn handle_event(
                             .copied()
                     });
                 let cost_total = assistant.usage.cost.total;
+                let repetition_trip = assistant.stop_reason_raw.as_deref()
+                    == Some(pa_agent::repetition_guard::REPETITION_STOP_REASON);
                 if let Some(run) = state.active_run.as_mut() {
+                    run.repetition_guard_trip_count += u64::from(repetition_trip);
                     run.usage.add(&assistant.usage);
                     run.last_assistant = Some(assistant);
                     if let Some(turn_started) = run.current_turn_started_at.take() {
@@ -1014,6 +1174,8 @@ fn finalize_run_locked(client: &TelemetryClient, execution_mode: &str, state: &m
 
     state.totals.retry_count += run.retry_count;
     state.totals.failover_count += run.failover_count;
+    state.totals.fallback_model_switch_count += run.fallback_model_switch_count;
+    state.totals.repetition_guard_trip_count += run.repetition_guard_trip_count;
     state.totals.model_error_count += run.model_error_count;
 
     let mut properties = base_properties(execution_mode);
@@ -1042,6 +1204,14 @@ fn finalize_run_locked(client: &TelemetryClient, execution_mode: &str, state: &m
     properties.set("compaction_count", Value::from(run.compaction_count));
     properties.set("retry_count", Value::from(run.retry_count));
     properties.set("failover_count", Value::from(run.failover_count));
+    properties.set(
+        "fallback_model_switch_count",
+        Value::from(run.fallback_model_switch_count),
+    );
+    properties.set(
+        "repetition_guard_trip_count",
+        Value::from(run.repetition_guard_trip_count),
+    );
     properties.set(
         "provider_category",
         Value::from(provider_category(

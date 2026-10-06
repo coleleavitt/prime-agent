@@ -181,6 +181,7 @@ async fn the_host_request_records_the_row_and_answers_the_receipt() {
     std::fs::write(dir.path().join("pic.png"), png_bytes(1)).unwrap();
     let session = Arc::new(Mutex::new(SessionManager::in_memory(dir.path())));
     let presented = Arc::new(PresentedArtifacts::new());
+    let counters = Arc::new(crate::session_engine::telemetry::SessionCounters::default());
     let mut handlers = HostRequestHandlers::default();
     register_artifact_present_handler(
         &mut handlers,
@@ -190,6 +191,7 @@ async fn the_host_request_records_the_row_and_answers_the_receipt() {
             artifact_dir: Some(dir.path().join("artifacts")),
             session_id: "sess".to_string(),
             session: Arc::clone(&session),
+            counters: Some(Arc::clone(&counters)),
         },
     );
     let handler = handlers
@@ -209,6 +211,12 @@ async fn the_host_request_records_the_row_and_answers_the_receipt() {
     );
     let rows = presented_rows(&session).await;
     assert_eq!(rows, vec![PRESENTED_ARTIFACT_CUSTOM_TYPE.to_string()]);
+    // Adoption: each shown artifact counts once (never what it showed).
+    assert_eq!(
+        counters
+            .adoption_count(crate::session_engine::telemetry::SessionAdoption::ArtifactPresented),
+        1
+    );
 
     // An installed sink owns the row instead.
     let seen: Arc<std::sync::Mutex<Vec<CustomMessage>>> = Arc::default();

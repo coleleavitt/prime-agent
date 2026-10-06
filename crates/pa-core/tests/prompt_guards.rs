@@ -508,6 +508,76 @@ fn core_layer_documents_the_real_tool_surface() {
     }
 }
 
+/// The keyword-only parameter names of one `(..., *, a: T = x, b: U) -> R`
+/// signature (names only; annotations and defaults dropped).
+fn keyword_only_parameters(signature: &str) -> BTreeSet<String> {
+    let Some((_, after_star)) = signature.split_once('*') else {
+        return BTreeSet::new();
+    };
+    let parameters = after_star.split(')').next().unwrap_or_default();
+    parameters
+        .split(',')
+        .filter_map(|parameter| {
+            let name = parameter.split(':').next()?.split('=').next()?.trim();
+            (!name.is_empty()).then(|| name.to_string())
+        })
+        .collect()
+}
+
+/// `rlm.spawn`'s documented keyword arguments are real on both sides of the
+/// bridge: the kernel runtime's `spawn` takes each one and the host's
+/// `rlm.run` kwarg allowlist admits each one (a kwarg the prompt teaches
+/// but the host rejects fails every spawn that uses it).
+#[test]
+fn documented_spawn_kwargs_reach_the_runtime_and_the_host() {
+    let documented_line = CORE_LAYER
+        .lines()
+        .find(|line| line.trim_start().starts_with("- `rlm.spawn("))
+        .expect("the core layer documents rlm.spawn");
+    let documented = keyword_only_parameters(documented_line);
+    assert!(
+        documented.contains("name") && documented.contains("token_budget"),
+        "rlm.spawn's documented kwargs: {documented:?}"
+    );
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("workspace root");
+    let runtime = std::fs::read_to_string(root.join("prime-agent-runtime/src/rlm/__init__.py"))
+        .expect("read the kernel runtime");
+    let runtime_signature = runtime
+        .split("\nasync def spawn(")
+        .nth(1)
+        .and_then(|rest| rest.split(") -> RLMSpawnHandle").next())
+        .expect("the runtime defines a module-level spawn");
+    let runtime_parameters = keyword_only_parameters(&format!("{runtime_signature})"));
+
+    let host = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/session_engine/rlm_host.rs"),
+    )
+    .expect("read the rlm host");
+    let allowlist = host
+        .split("fn spawn_request_from_payload(")
+        .nth(1)
+        .and_then(|rest| rest.split("reject_unsupported_kwargs(").nth(1))
+        .and_then(|rest| rest.split_once("&[").map(|(_, tail)| tail))
+        .and_then(|rest| rest.split(']').next())
+        .expect("the rlm.run handler names its kwarg allowlist");
+    let host_kwargs: BTreeSet<String> = all_string_literals(allowlist).into_iter().collect();
+
+    for kwarg in &documented {
+        assert!(
+            runtime_parameters.contains(kwarg),
+            "the prompt documents rlm.spawn({kwarg}=) but the kernel runtime's spawn does not take it: {runtime_parameters:?}"
+        );
+        assert!(
+            host_kwargs.contains(kwarg),
+            "the prompt documents rlm.spawn({kwarg}=) but the host rejects it: {host_kwargs:?}"
+        );
+    }
+}
+
 // Packaged-set parity (TS packages/coding-agent/skills)
 
 /// The packaged skill set at TS tip `f62dae4d0`

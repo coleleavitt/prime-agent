@@ -420,6 +420,8 @@ pub struct RlmHostBridge {
     /// The session's delegation budget (`None` until the engine installs
     /// one; unset when no budget applies): every spawn draws its grant.
     pub(crate) token_budget: std::sync::OnceLock<Arc<super::rlm_token_budget::RlmTokenBudget>>,
+    /// The session counters a budget refusal counts into (adoption).
+    pub(crate) adoption: std::sync::OnceLock<Arc<super::telemetry::SessionCounters>>,
 }
 
 impl RlmHostBridge {
@@ -439,6 +441,43 @@ impl RlmHostBridge {
             semantic_spawn: std::sync::OnceLock::new(),
             plan_mode: std::sync::OnceLock::new(),
             token_budget: std::sync::OnceLock::new(),
+            adoption: std::sync::OnceLock::new(),
+        }
+    }
+}
+
+impl RlmHostBridge {
+    /// The delegation budget's current numbers (`None`: no budget applies).
+    #[must_use]
+    pub fn token_budget_status(&self) -> Option<super::rlm_token_budget::RlmTokenBudgetStatus> {
+        self.token_budget.get().map(|budget| budget.status())
+    }
+
+    /// Draw a grant for a child the embedding spawns outside `rlm.spawn`
+    /// (the daemon's image-model delegation child): `Ok(None)` when no
+    /// budget applies.
+    ///
+    /// # Errors
+    ///
+    /// The budget's refusals (an exhausted pool, an unrecordable grant).
+    pub fn reserve_child_grant(&self, requested: Option<u64>) -> anyhow::Result<Option<u64>> {
+        let reserved = self
+            .token_budget
+            .get()
+            .map(|budget| budget.reserve_child_grant(requested))
+            .transpose();
+        if reserved.is_err() {
+            if let Some(counters) = self.adoption.get() {
+                counters.note_adoption(super::telemetry::SessionAdoption::RlmTokenBudgetRefusal);
+            }
+        }
+        reserved
+    }
+
+    /// Name the child a [`Self::reserve_child_grant`] grant funded.
+    pub fn attribute_child_grant(&self, tokens: u64, rlm_child_id: &str, name: &str) {
+        if let Some(budget) = self.token_budget.get() {
+            budget.attribute_grant(tokens, rlm_child_id, name);
         }
     }
 }
@@ -585,10 +624,17 @@ fn register_run(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmHostBridge>)
                 // The delegation budget (upstream #1192): the child's grant
                 // is drawn before the host is consulted, so an exhausted
                 // pool refuses the spawn and no child runs unfunded.
-                if let Some(budget) = bridge.token_budget.get() {
-                    request.token_budget = Some(budget.reserve_child_grant()?);
+                // An explicit `token_budget=` asks for that grant; with no
+                // budget installed it funds the child alone.
+                if bridge.token_budget.get().is_some() {
+                    request.token_budget = bridge.reserve_child_grant(request.token_budget)?;
                 }
+                let grant = request.token_budget;
                 let handle = bridge.host.spawn(request).await?;
+                // The status surface names the child each grant funded.
+                if let (Some(budget), Some(grant)) = (bridge.token_budget.get(), grant) {
+                    budget.attribute_grant(grant, &handle.rlm_child_id, &handle.name);
+                }
                 // TS `_findLastAssistantMessage` at spawn: the spawning
                 // assistant row (persisted at `message_end` before tool
                 // execution) is the target every child-usage attribution
@@ -605,7 +651,11 @@ fn register_run(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmHostBridge>)
 fn spawn_request_from_payload(prompt: &str, data: &Value) -> anyhow::Result<RlmSpawnRequest> {
     const OPERATION: &str = "rlm.spawn";
     let kwargs = kwargs_from_payload(data);
-    reject_unsupported_kwargs(&kwargs, OPERATION, &["name", "model", "thinking", "target"])?;
+    reject_unsupported_kwargs(
+        &kwargs,
+        OPERATION,
+        &["name", "model", "thinking", "target", "token_budget"],
+    )?;
     let name = optional_string_kwarg(&kwargs, "name", OPERATION)?;
     let name = normalize_requested_rlm_subagent_session_name(name, OPERATION)?;
     if let Some(name) = &name {
@@ -621,6 +671,13 @@ fn spawn_request_from_payload(prompt: &str, data: &Value) -> anyhow::Result<RlmS
     // refuses until the backend exists.
     let target = optional_string_kwarg(&kwargs, "target", OPERATION)?;
     let target = normalize_requested_rlm_spawn_target(target, OPERATION)?;
+    // The explicit delegation grant (upstream #1192's `token_budget=`).
+    let token_budget = match kwargs.get("token_budget") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(value.as_u64().filter(|tokens| *tokens > 0).ok_or_else(|| {
+            anyhow::anyhow!("{OPERATION} token_budget must be a positive integer")
+        })?),
+    };
     Ok(RlmSpawnRequest {
         prompt: prompt.to_string(),
         name,
@@ -630,7 +687,7 @@ fn spawn_request_from_payload(prompt: &str, data: &Value) -> anyhow::Result<RlmS
         target: target.unwrap_or_default(),
         cell_source_code: None,
         plan_mode: false,
-        token_budget: None,
+        token_budget,
     })
 }
 
@@ -1299,6 +1356,8 @@ mod tests {
             RlmTokenAllowance::Root,
             0,
         )));
+        let counters = Arc::new(crate::session_engine::telemetry::SessionCounters::default());
+        let _ = wiring.rlm.adoption.set(Arc::clone(&counters));
         let spawn = || {
             call(
                 &wiring,
@@ -1320,6 +1379,123 @@ mod tests {
             .map(|request| request.token_budget)
             .collect();
         assert_eq!(grants, vec![Some(60), Some(40)]);
+        // Adoption: the refusal counts once.
+        assert_eq!(
+            counters.adoption_count(
+                crate::session_engine::telemetry::SessionAdoption::RlmTokenBudgetRefusal
+            ),
+            1
+        );
+        // Each grant names the child it funded (the status surface).
+        let attributed: Vec<(String, u64)> = wiring
+            .rlm
+            .token_budget
+            .get()
+            .unwrap()
+            .status()
+            .grants
+            .into_iter()
+            .map(|grant| {
+                (
+                    format!("{} ({})", grant.name, grant.rlm_child_id),
+                    grant.tokens,
+                )
+            })
+            .collect();
+        assert_eq!(
+            attributed,
+            vec![
+                ("worker (sub-1)".to_string(), 60),
+                ("worker (sub-1)".to_string(), 40)
+            ]
+        );
+    }
+
+    /// `rlm.spawn(token_budget=)`: an explicit grant is drawn from the pool
+    /// when it fits both what is left and the per-depth cap, and refused
+    /// otherwise; without a budget it funds the child alone; a malformed
+    /// value is refused before any grant or host call.
+    #[tokio::test]
+    async fn an_explicit_token_budget_draws_its_grant_within_the_pool_and_cap() {
+        use super::super::rlm_token_budget::{
+            RlmTokenAllowance, RlmTokenBudget, RlmTokenBudgetConfig,
+        };
+        async fn spawn(
+            wiring: &crate::session_engine::runtime_wiring::SessionKernelWiring,
+            token_budget: Value,
+        ) -> Result<(), String> {
+            let kwargs = if token_budget.is_null() {
+                json!({})
+            } else {
+                json!({ "token_budget": token_budget })
+            };
+            call(
+                wiring,
+                "rlm.run",
+                json!({ "type": "rlm.run", "prompt": "look around", "kwargs": kwargs }),
+            )
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+        }
+        let dir = tempfile::TempDir::new().unwrap();
+        let host = RecordingHost::new();
+        let spawn_requests = Arc::clone(&host.spawn_requests);
+        let wiring = wired(dir.path(), Some(host));
+        let _ = wiring.rlm.token_budget.set(Arc::new(RlmTokenBudget::new(
+            RlmTokenBudgetConfig {
+                total: 1_000,
+                per_depth: vec![400],
+            },
+            RlmTokenAllowance::Root,
+            0,
+        )));
+        let outcomes = vec![
+            spawn(&wiring, json!(300)).await,
+            spawn(&wiring, json!(500)).await,
+            spawn(&wiring, json!(400)).await,
+            spawn(&wiring, json!(350)).await,
+            spawn(&wiring, Value::Null).await,
+            spawn(&wiring, json!(0)).await,
+            spawn(&wiring, json!("200k")).await,
+            spawn(&wiring, json!(true)).await,
+        ];
+        let malformed = "rlm.spawn token_budget must be a positive integer".to_string();
+        assert_eq!(
+            outcomes,
+            vec![
+                Ok(()),
+                Err("rlm.spawn token_budget=500 exceeds the 400-token cap on any single grant to a depth-1 subagent".to_string()),
+                Ok(()),
+                Err("RLM token budget cannot fund token_budget=350: 300 tokens are left to grant (700 of 1000 already granted)".to_string()),
+                Ok(()),
+                Err(malformed.clone()),
+                Err(malformed.clone()),
+                Err(malformed),
+            ]
+        );
+        let grants: Vec<Option<u64>> = spawn_requests
+            .lock()
+            .await
+            .iter()
+            .map(|request| request.token_budget)
+            .collect();
+        assert_eq!(grants, vec![Some(300), Some(400), Some(300)]);
+
+        // No budget: the explicit grant funds the child alone.
+        let dir = tempfile::TempDir::new().unwrap();
+        let host = RecordingHost::new();
+        let spawn_requests = Arc::clone(&host.spawn_requests);
+        let wiring = wired(dir.path(), Some(host));
+        assert_eq!(spawn(&wiring, json!(50)).await, Ok(()));
+        assert_eq!(spawn(&wiring, Value::Null).await, Ok(()));
+        let grants: Vec<Option<u64>> = spawn_requests
+            .lock()
+            .await
+            .iter()
+            .map(|request| request.token_budget)
+            .collect();
+        assert_eq!(grants, vec![Some(50), None]);
     }
 
     #[tokio::test]

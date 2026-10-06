@@ -53,12 +53,15 @@ pub(crate) fn open_or_create_named_session(
     session_dir: &Path,
     cwd: &Path,
     name: &str,
-) -> Result<PathBuf, String> {
+) -> Result<NamedSessionOpen, String> {
     if name.trim().is_empty() {
         return Err("--name requires a non-empty session name".to_string());
     }
     if let Some(path) = find_named_session(session_dir, cwd, name)? {
-        return Ok(path);
+        return Ok(NamedSessionOpen {
+            path,
+            created: false,
+        });
     }
     let mut file = SessionFile::create(&cwd.to_string_lossy(), None, 0);
     file.append_session_info(name);
@@ -68,7 +71,17 @@ pub(crate) fn open_or_create_named_session(
     file.set_path(path.clone());
     file.rewrite()
         .map_err(|error| format!("Cannot create session \"{}\": {error:#}", name.trim()))?;
-    Ok(path)
+    Ok(NamedSessionOpen {
+        path,
+        created: true,
+    })
+}
+
+/// The session file a `--name` launch opens, and whether it was created.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NamedSessionOpen {
+    pub(crate) path: PathBuf,
+    pub(crate) created: bool,
 }
 
 /// `--list-sessions`: the directory's saved sessions as an `ID / MODIFIED / NAME` table (the
@@ -200,9 +213,14 @@ mod tests {
 
         assert_eq!(
             open_or_create_named_session(&sessions, &here, "work"),
-            Ok(named.clone())
+            Ok(NamedSessionOpen {
+                path: named.clone(),
+                created: false
+            })
         );
-        let created = open_or_create_named_session(&sessions, &here, "notes").unwrap();
+        let opened = open_or_create_named_session(&sessions, &here, "notes").unwrap();
+        assert!(opened.created);
+        let created = opened.path;
         assert_ne!(created, named);
         assert_eq!(
             SessionFile::open(&created).unwrap().header.cwd,
@@ -211,7 +229,10 @@ mod tests {
         // The second open finds the session the first one created.
         assert_eq!(
             open_or_create_named_session(&sessions, &here, " notes "),
-            Ok(created.clone())
+            Ok(NamedSessionOpen {
+                path: created.clone(),
+                created: false
+            })
         );
         saved(&sessions, &here, Some("work"));
         assert_eq!(
