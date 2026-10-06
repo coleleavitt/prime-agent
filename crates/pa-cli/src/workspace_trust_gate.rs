@@ -201,7 +201,7 @@ pub(crate) fn run_trust_command(args: &[String]) -> i32 {
             eprintln!("Error: --list takes no path");
             return 1;
         }
-        return match workspace_trust::list(&agent_dir) {
+        let code = match workspace_trust::list(&agent_dir) {
             Ok(records) if records.is_empty() => {
                 println!("No workspace trust decisions recorded.");
                 0
@@ -221,6 +221,13 @@ pub(crate) fn run_trust_command(args: &[String]) -> i32 {
                 1
             }
         };
+        crate::cli_command_telemetry::report(
+            &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            crate::cli_command_telemetry::CliCommand::TrustList,
+            code == 0,
+            true,
+        );
+        return code;
     }
     decide_from_command(args, &agent_dir, TrustDecision::Trusted)
 }
