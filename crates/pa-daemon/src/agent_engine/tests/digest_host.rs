@@ -437,3 +437,76 @@ fn a_registration_from_the_retired_session_never_lands_in_the_replacement() {
         .unwrap();
     assert_eq!(engine.watch_host_state().registry.list().len(), 1);
 }
+
+/// Upstream #2352: `rlm.messaging_stats` answers the worker's snapshot in
+/// the TS wire shape, and `agent_message.send` counts each attempt that
+/// reaches the delivery at resolution (a rejection as a failure; a payload
+/// without a string message is not an attempt).
+#[tokio::test]
+async fn messaging_stats_serves_the_snapshot_and_counts_send_outcomes() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let engine = std::sync::Arc::new(bare_engine(dir.path()));
+    let stats =
+        std::sync::Arc::new(pa_core::session_engine::messaging_stats::MessagingStats::default());
+    let snapshot_stats = std::sync::Arc::clone(&stats);
+    let send_stats = std::sync::Arc::clone(&stats);
+    engine.set_messaging_stats_seams(crate::messaging_stats_host::MessagingStatsSeams {
+        snapshot: std::sync::Arc::new(move || {
+            snapshot_stats.snapshot(
+                pa_core::session_engine::messaging_stats::MessagingContext {
+                    context_tokens: Some(800),
+                    estimated_agent_message_tokens: 100,
+                },
+                crate::util::now_ms(),
+            )
+        }),
+        record_send: std::sync::Arc::new(move |failed| send_stats.record_send_attempt(failed)),
+    });
+    let mut handlers = HostRequestHandlers::default();
+    handlers.register(
+        "agent_message.send",
+        pa_core::kernel::shared::host_handler(|payload| async move {
+            if payload.data["target"] == json!("ghost") {
+                anyhow::bail!("No agent session matches \"ghost\"");
+            }
+            Ok(json!({ "deliveryStatus": "delivered" }))
+        }),
+    );
+    engine.register_messaging_stats_host_handlers(&mut handlers);
+    let call = |request: &str, data: Value| {
+        let handler = handlers.get(request).expect("handler").clone();
+        handler(HostRequestPayload {
+            data,
+            cell_source_code: None,
+        })
+    };
+    call(
+        "agent_message.send",
+        json!({ "message": "hi", "target": "kid" }),
+    )
+    .await
+    .expect("delivered");
+    call(
+        "agent_message.send",
+        json!({ "message": "hi", "target": "ghost" }),
+    )
+    .await
+    .expect_err("unknown target");
+    call(
+        "agent_message.send",
+        json!({ "message": 3, "target": "kid" }),
+    )
+    .await
+    .expect("the fake accepts it, but it is no counted attempt");
+    let snapshot = call("rlm.messaging_stats", json!({})).await.unwrap();
+    assert_eq!(
+        snapshot,
+        json!({
+            "arrivals": { "total": 0, "last5m": 0 },
+            "model_steps": { "total": 0, "last5m": 0, "tokens": 0 },
+            "ingestion_steps": { "total": 0, "last5m": 0, "tokens": 0 },
+            "context": { "estimated_agent_message_tokens": 100, "context_tokens": 800, "share": 0.125 },
+            "sends": { "attempts": 2, "failures": 1 },
+        })
+    );
+}

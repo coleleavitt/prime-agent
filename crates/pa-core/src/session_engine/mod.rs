@@ -24,6 +24,7 @@ pub mod host_requests;
 pub mod image_model_routing;
 pub mod ipython_state;
 pub mod messages;
+pub mod messaging_stats;
 pub mod plan_mode;
 pub mod presented_artifact;
 pub mod provider_adapter;

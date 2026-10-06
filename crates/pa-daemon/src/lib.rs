@@ -64,6 +64,7 @@ pub mod lease;
 pub mod mcp_connections;
 pub mod mcp_login;
 pub(crate) mod messaging;
+pub mod messaging_stats_host;
 pub mod model_allowlist;
 pub(crate) mod model_catalog;
 pub(crate) mod model_switch;

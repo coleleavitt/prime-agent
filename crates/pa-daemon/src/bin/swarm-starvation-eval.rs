@@ -657,21 +657,22 @@ fn drive_trial(
     .and_then(Value::as_array)
     .cloned()
     .unwrap_or_default();
-    let context_tokens = command_data(
+    let session_stats = command_data(
         client,
-        &json!({ "type": "get_session_stats", "activeSessionId": session_id }),
+        &json!({
+            "type": "get_session_stats",
+            "activeSessionId": session_id,
+            "includeMessagingStats": true,
+        }),
         Duration::from_secs(30),
-    )?
-    .get("contextUsage")
-    .and_then(|usage| usage.get("tokens"))
-    .and_then(Value::as_u64);
+    )?;
 
     let expected: Vec<u64> = secrets.iter().map(|secret| u64::from(*secret)).collect();
     let answer = parse_answer_line(answer_text.as_deref());
     let task_success = answer.as_deref() == Some(expected.as_slice());
     let instant_fail = rate_limit_failure(&messages);
 
-    let snapshot = snapshot_from_transcript(&messages, context_tokens);
+    let snapshot = trial_snapshot(&session_stats, &messages);
     Ok(trial_result_from_snapshot(
         config,
         size,
@@ -681,6 +682,24 @@ fn drive_trial(
         instant_fail,
         started.elapsed().as_secs_f64(),
     ))
+}
+
+/// The trial's messaging snapshot: the session's live counters (upstream
+/// #2352, `get_session_stats` with `includeMessagingStats`) when the daemon
+/// serves them, else the transcript-derived fallback over the
+/// context-usage estimate.
+fn trial_snapshot(session_stats: &Value, messages: &[Value]) -> MessagingStatsSnapshot {
+    if let Some(live) = session_stats
+        .get("messagingStats")
+        .and_then(|stats| serde_json::from_value(stats.clone()).ok())
+    {
+        return live;
+    }
+    let context_tokens = session_stats
+        .get("contextUsage")
+        .and_then(|usage| usage.get("tokens"))
+        .and_then(Value::as_u64);
+    snapshot_from_transcript(messages, context_tokens)
 }
 
 fn command_data(client: &mut Client, command: &Value, timeout: Duration) -> Result<Value, String> {
@@ -740,7 +759,10 @@ mod tests {
     use pa_types::platform::transport::BlockingTransportStream;
     use serde_json::{json, Value};
 
-    use super::{run, run_tag, run_trial, runs_root_path, session_name, socket_from_args, Client};
+    use super::{
+        run, run_tag, run_trial, runs_root_path, session_name, snapshot_from_transcript,
+        socket_from_args, trial_snapshot, Client, MessagingStatsSnapshot,
+    };
 
     /// A scripted daemon socket: greets the client, then answers each
     /// command by its `type` from `script`, recording every command in
@@ -1877,6 +1899,35 @@ mod tests {
         assert!(
             error.contains("overflows the derived trial seed"),
             "{error}"
+        );
+    }
+
+    /// Upstream #2352: a daemon serving the session's live counters
+    /// (`messagingStats`) is scored on them; without the field the trial
+    /// falls back to the transcript-derived snapshot.
+    #[test]
+    fn the_trial_scores_the_live_counters_when_the_daemon_serves_them() {
+        let live = MessagingStatsSnapshot {
+            sends: pa_core::swarm_eval::SendCounts {
+                attempts: 3,
+                failures: 1,
+            },
+            ..MessagingStatsSnapshot::default()
+        };
+        let messages = vec![json!({
+            "role": "custom", "customType": "agent_message", "content": "reply body"
+        })];
+        let served = json!({
+            "contextUsage": { "tokens": 1_000 },
+            "messagingStats": serde_json::to_value(live).unwrap(),
+        });
+        let legacy = json!({ "contextUsage": { "tokens": 1_000 } });
+        assert_eq!(
+            (
+                trial_snapshot(&served, &messages),
+                trial_snapshot(&legacy, &messages)
+            ),
+            (live, snapshot_from_transcript(&messages, Some(1_000)))
         );
     }
 }

@@ -331,4 +331,16 @@ pub struct AgentSessionEngine {
     pub(crate) presented_artifact_sink: std::sync::Mutex<
         Option<pa_core::session_engine::presented_artifact::PresentedArtifactSink>,
     >,
+    /// The worker-installed messaging-counter seams (upstream #2352).
+    /// `None` outside a daemon worker.
+    pub(crate) messaging_stats_seams:
+        std::sync::Mutex<Option<crate::messaging_stats_host::MessagingStatsSeams>>,
+    /// The built session's telemetry, mirrored at build and cleared at
+    /// retirement, so kernel host handlers count adoption without the
+    /// session mutex (a turn holds it across its whole model call).
+    pub(crate) session_telemetry: std::sync::Arc<
+        std::sync::Mutex<
+            Option<std::sync::Arc<pa_core::session_engine::telemetry::SessionTelemetry>>,
+        >,
+    >,
 }

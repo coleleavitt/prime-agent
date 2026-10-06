@@ -500,17 +500,23 @@ impl TurnRunner {
                         abort_gate_armed_seen.store(true, std::sync::atomic::Ordering::SeqCst);
                     }
                 }
-                // The digest lane's step counters (swarm PR D): one model
-                // turn per assistant row the persist path accepts (an
-                // `error` stop is not a completed step, TS
-                // `stopReason !== "error"`); the ingestion flag rides the
-                // turn. Counted only AFTER the abort/suppression gate
-                // accepts the event — a suppressed row is not a step — and
-                // the atomics keep the counter increments independent of
-                // the core lock the counter readers hold.
+                // The session's messaging step counters (upstream #2352,
+                // read by the digest lane's controller): one model step per
+                // assistant row the persist path accepts (an `error` stop
+                // is not a completed step, TS `stopReason !== "error"`)
+                // with its usage tokens; the ingestion flag rides the turn.
+                // Counted only AFTER the abort/suppression gate accepts
+                // the event — a suppressed row is not a step — and the
+                // stats' leaf mutex keeps the count safe under the core
+                // lock the counter readers hold.
                 if let EngineEvent::AssistantMessage(message) = &event {
                     if message.get("stopReason").and_then(Value::as_str) != Some("error") {
-                        agent_digest.note_model_turn(ingestion_turn);
+                        let tokens = message
+                            .get("usage")
+                            .and_then(|usage| usage.get("totalTokens"))
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0);
+                        agent_digest.note_model_step(tokens, ingestion_turn);
                     }
                 }
                 // The pane reporter's engine boundaries (the TS

@@ -576,6 +576,16 @@ async def rename(new_name: str, *, session_id: str | RLMSpawnHandle | RLMSubagen
 # ---------------------------------------------------------------------------
 
 
+async def messaging_stats() -> dict[str, Any]:
+    """Read this session's swarm messaging counters.
+
+    Instrumentation only: arrivals, agent-triggered model steps vs. all
+    model steps, estimated agent-message context share, and send attempts.
+    Never changes delivery behavior.
+    """
+    return await host_request("rlm.messaging_stats")
+
+
 async def inbox_list() -> dict[str, Any]:
     """List this session's digest inbox entries (ids, senders, read state, previews).
 
@@ -945,6 +955,9 @@ class _RLMNamespace:
     async def collect(self, targets: Any = None, *, timeout_ms: int = 0) -> list[RLMChildResult]:
         return await collect(targets, timeout_ms=timeout_ms)
 
+    async def messaging_stats(self) -> dict[str, Any]:
+        return await messaging_stats()
+
     @property
     def inbox(self) -> _RLMInbox:
         return _RLMInbox()
@@ -1009,6 +1022,7 @@ __all__ = [
     "inbox_read",
     "interrupt_subagent",
     "list_subagents",
+    "messaging_stats",
     "progress_note",
     "rename",
     "rlm",

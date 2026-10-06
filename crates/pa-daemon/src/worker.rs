@@ -715,6 +715,18 @@ impl Worker {
                         watch_digest.emit_watch_notice(watch, content);
                     });
                 concrete.set_watch_notice_sink(watch_sink);
+                // The session's messaging counters (upstream #2352): the
+                // digest lane owns them (it records arrivals and steps and
+                // reads them for its controller); `rlm.messaging_stats` and
+                // the send counting call through these.
+                let snapshot_digest = Arc::clone(&agent_digest);
+                let send_digest = Arc::clone(&agent_digest);
+                concrete.set_messaging_stats_seams(
+                    crate::messaging_stats_host::MessagingStatsSeams {
+                        snapshot: Arc::new(move || snapshot_digest.messaging_snapshot()),
+                        record_send: Arc::new(move |failed| send_digest.note_send_attempt(failed)),
+                    },
+                );
             }
             // The live roster activity feed (TS `observeRosterEvent`): busy
             // flips and trigger events coalesce into `worker_roster_delta`

@@ -398,7 +398,7 @@ pub(crate) fn restore_queue_snapshot(
         // queued heartbeat still runs and persists as the
         // `heartbeat_prompt` component, and a restored queued agent
         // message still counts as an ingestion turn (`first.agent_message`
-        // at `note_model_turn`) and stays removable by
+        // at `note_model_step`) and stays removable by
         // `agent_messages_clear`/`agent_messages_pause`.
         lanes
             .into_iter()

@@ -416,6 +416,9 @@ pub enum SessionAdoption {
     /// A reply that reported a tool call and delivered none retried once
     /// (upstream #2530).
     ToolIntentRecovery,
+    /// `rlm.messaging_stats()` read the session's messaging counters
+    /// (upstream #2352).
+    MessagingStatsRead,
 }
 
 impl SessionAdoption {
@@ -429,6 +432,7 @@ impl SessionAdoption {
             SessionAdoption::RefinePlanRun => "refine_plan_run_count",
             SessionAdoption::ArtifactPresented => "artifact_present_count",
             SessionAdoption::ToolIntentRecovery => "tool_intent_recovery_count",
+            SessionAdoption::MessagingStatsRead => "messaging_stats_read_count",
         }
     }
 }
