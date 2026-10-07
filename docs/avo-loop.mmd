@@ -1,13 +1,14 @@
 %% AVO agentic variation loop (Puget et al., arXiv:2603.24517) as RAVO instantiates it.
 %% Notation from ~/RocqProjects/ravo/Ravo.v: Agent(P, K, f) with lineage P, knowledge K, evaluator f.
+%% Rust: crates/pa-ravo (run_ravo_controller in src/run/controller.rs, ravo_step in src/reducer.rs).
 flowchart LR
   subgraph IN["Inputs to AVO"]
     P["Solution lineage P<br/>candidates + scores<br/>(Rocq: Lineage = list (A * nat))"]
-    K["Knowledge base K<br/>docs + code + failure ledger<br/>(Rocq S11: Ledger)"]
-    f["Evaluator f<br/>fast screen + deep outcome + opponents<br/>(Rocq: fast, deep, clearsEW)"]
+    K["Knowledge base K<br/>harness overview + failure ledger<br/>(Rocq S11: Ledger)"]
+    f["Evaluator f<br/>fast screen + deep judge + opponents + referee<br/>(Rocq: fast, deep, clearsEW)"]
   end
 
-  subgraph LOOP["AVO agentic variation loop — Agent(P, K, f) is a general-purpose coding agent with Tools · Memory · Reasoning"]
+  subgraph LOOP["AVO agentic variation loop — run_ravo_controller; each step is one JSON-only child prompt"]
     direction TB
     S1["1 Inspect context<br/>lineage, feedback, references"]
     S2["2 Plan<br/>choose the next change"]
@@ -19,9 +20,9 @@ flowchart LR
     S5 --> S1
   end
 
-  SUP["Supervisor<br/>watches stagnation, budget, deadline<br/>(RavoControllerOptions.supervisor)"]
+  SUP["Supervisor child<br/>plans after two rejections<br/>limits: rounds, repairs, deadline, tokens"]
   CAND["Candidate<br/>solution and score (x, deep x)"]
-  GATE{"commit gate<br/>tau <= fast x<br/>bestScore P <= deep x<br/>missedWeight <= eps"}
+  GATE{"commit gate (ravo_step)<br/>tau <= fast x<br/>bestScore P <= deep x<br/>missedWeight <= eps"}
   UPD["Updated lineage<br/>accepted candidate appended<br/>(Rocq: commitGate, commitE)"]
   REJ(("reject"))
 
@@ -33,7 +34,7 @@ flowchart LR
   GATE -->|"commit"| UPD
   GATE -->|"fail"| REJ
   REJ -.->|"repair and retry"| S5
-  UPD -.->|"weakness pressure: double weight of missed opponents<br/>(Rocq S4/S6: pressureW)"| f
+  UPD -.->|"weakness pressure: double weight of missed opponents<br/>(ravo_pressure; Rocq S4/S6: pressureW)"| f
 
   classDef input fill:#f4f6f8,stroke:#6b7c8a,color:#1c2b36;
   classDef loop fill:#e8f2f6,stroke:#2f6f8f,color:#1c2b36;

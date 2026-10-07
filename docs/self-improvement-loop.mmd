@@ -1,42 +1,45 @@
+%% The self-improvement loop end to end, as the Rust crates run it (merge-rust-port 6714b023f).
+%% Observe: pa-ledger. Trigger: pa-core auto-refine + pa-ravo failure refines. Plan/apply: pa-core::refinement.
+%% Gate and commit: pa-ravo (RefinementGate seam).
 flowchart TB
   classDef live fill:#dcfce7,stroke:#15803d,color:#14532d
   classDef gate fill:#fef3c7,stroke:#b45309,color:#78350f
   classDef state fill:#e0e7ff,stroke:#4338ca,color:#1e1b4b
   classDef fixed fill:#f1f5f9,stroke:#475569,color:#0f172a,stroke-dasharray:4 3
 
-  subgraph RUN["① RUN A TURN  (RLM execution plane · immutable substrate)"]
+  subgraph RUN["1 RUN A TURN  (RLM execution plane · immutable substrate)"]
     direction LR
-    SP["system prompt<br/>= base prompt (fixed)<br/>+ Continual Harness State (mutable)"]:::fixed
+    SP["context<br/>= layered system prompt (fixed)<br/>+ harness digest (mutable)"]:::fixed
     LLM["model<br/>thinking · text · tool calls"]:::live
-    K["IPython kernel<br/>bash() · mcp · rlm() children"]:::fixed
+    K["IPython kernel<br/>bash() · mcp · rlm.spawn children<br/>served by the host"]:::fixed
     TR["session JSONL<br/>(thinking blocks kept)"]:::state
     SP --> LLM --> K --> TR
   end
 
-  subgraph OBS["② OBSERVE  (every turn boundary · zero LLM tokens)"]
+  subgraph OBS["2 OBSERVE  (every assistant turn boundary · zero model tokens)"]
     direction LR
-    EX["extractFailures<br/>python_exception · tool_error · provider_error"]:::live
+    EX["extract_failures<br/>Python traceback · isError tool result · stopReason error"]:::live
     FP["fingerprint = sha256(kind, source, class, normalized msg)[:16]<br/>numbers→#  strings→?  paths→&lt;path&gt;"]:::live
-    LED[("FAILURE LEDGER<br/>HarnessState.failures<br/>count · firstSeenTurn · lastSeenTurn")]:::state
+    LED[("FAILURE LEDGER<br/>HarnessState failures<br/>local + global by default")]:::state
     EX --> FP --> LED
   end
   TR --> EX
 
-  subgraph TRIG["③ TRIGGER"]
+  subgraph TRIG["3 TRIGGER"]
     direction LR
     T1{"recurrence<br/>count ≥ 2"}:::gate
-    T2{"regression<br/>claimed fp recurs<br/>inside 20-turn window"}:::gate
-    T3{"turn_interval 25 / compact<br/>→ reviewer LLM + 20 min cooldown"}:::gate
+    T2{"regression<br/>claimed fp recurs<br/>inside a 20-turn window"}:::gate
+    T3{"turn_interval 25 / compact<br/>→ review call + 20 min cooldown"}:::gate
     T4["manual /refine · refine.run()"]:::live
   end
   LED --> T1
   LED --> T2
   TR --> T3
 
-  subgraph PLAN["④ PLAN  (agentic variation operator · 1 LLM call)"]
+  subgraph PLAN["4 PLAN  (agentic variation operator · 1 model call)"]
     direction TB
-    IN["input = serializeConversation(last 80k chars)<br/>[Assistant thinking] + [Assistant] + [tool calls] + [Tool result]<br/>+ harness overview + refinement history + ledger"]:::live
-    PR["RefinementProposal<br/>edits[]: create|update|delete × prompt|memory|skill|subagent<br/>+ addressedFingerprints"]:::state
+    IN["input = serialize_conversation (last 80k chars)<br/>+ harness overview + refinement history<br/>+ ledger block in a failure refine's instructions"]:::live
+    PR["RefinementProposal<br/>edits: create|update|delete × prompt|memory|skill|subagent|factory"]:::state
     IN --> PR
   end
   T1 --> IN
@@ -44,14 +47,15 @@ flowchart TB
   T3 --> IN
   T4 --> IN
 
-  subgraph GATE["⑤ GATE  (ravoEvaluateProposal → ravoDecide · pure reducer)"]
+  subgraph GATE["5 GATE  (ravo_evaluate_proposal → ravo_step · pure reducer)"]
     direction TB
-    FS{"fast screen ≥ 50<br/>structural + skill dry-run<br/>(kernel imports skill, resolves callable)<br/>no LLM"}:::gate
-    DJ["deep judge (1 LLM call)<br/>deepScore 0–100 · missedCriteria · addressedFingerprints"]:::live
-    OPP[("OPPONENT POOL<br/>evidence · scope · minimality · contracts · novelty<br/>+ failure:&lt;fp&gt; for every recurring error<br/>each with weight w")]:::state
-    D1{"deepScore + 10 ≥ best(lineage)?"}:::gate
+    FS{"fast screen ≥ 50<br/>structural only<br/>no model call"}:::gate
+    DJ["deep judge (1 model call)<br/>score 0–100 · missed criteria · claimed fingerprints"]:::live
+    RF["referee<br/>verified replay cases of the claims<br/>in the kernel's Python"]:::live
+    OPP[("OPPONENT POOL<br/>evidence · scope · minimality · contracts · novelty<br/>+ failure:&lt;fp&gt; · referee:&lt;fp&gt;<br/>each with weight w")]:::state
+    D1{"score + 10 ≥ best(lineage)?"}:::gate
     D2{"Σ w(missed) ≤ ε = 1?"}:::gate
-    FS -- yes --> DJ --> D1 -- yes --> D2
+    FS -- yes --> DJ --> RF --> D1 -- yes --> D2
     OPP -.-> D2
     FS -- no --> RS["reject_screen"]:::gate
     D1 -- no --> RD["reject_deep"]:::gate
@@ -59,17 +63,17 @@ flowchart TB
   end
   PR --> FS
 
-  subgraph COMMIT["⑥ COMMIT  (sync · LLM-free · digest re-verified)"]
+  subgraph COMMIT["6 COMMIT  (model-free · digest re-verified)"]
     direction TB
-    V["re-hash proposal + baseline harness<br/>mismatch ⇒ reject (stale context)"]:::live
-    AP["apply edits to disk<br/>memory · skill · prompt note · subagent"]:::live
+    V["re-read the store, re-hash proposal + baseline<br/>mismatch ⇒ refused (retry /refine)"]:::live
+    AP["apply edits to disk<br/>memory · skill · prompt note · subagent · factory"]:::live
     LIN[("LINEAGE (append-only)<br/>best score is monotone")]:::state
-    PRS["PRESSURE<br/>w(missed[0]) ×= 2<br/>same weakness cannot pass twice"]:::live
-    WIN["champion claims fingerprints<br/>provisional window = 20 turns"]:::live
+    PRS["PRESSURE (ravo_pressure)<br/>missed weights double<br/>same weakness cannot pass twice"]:::live
+    WIN["champion claims fingerprints<br/>provisional + trust window = 20 turns"]:::live
     V --> AP --> LIN --> PRS --> WIN
   end
   D2 -- yes --> V
   PRS --> OPP
   WIN --> T2
 
-  AP ==>|"formatHarnessStateForPrompt<br/>rendered into next turn's prompt"| SP
+  AP ==>|"format_harness_state_for_prompt<br/>rendered into the next harness digest"| SP
