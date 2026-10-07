@@ -1,20 +1,29 @@
 # RAVO and Prime Agent architecture (Mermaid)
 
-Machine-readable maps for agents working on or inside the RAVO loop. Both diagrams are plain Mermaid so a model can read the edges directly; the Rocq references point at `Ravo.v` sections that prove the corresponding property.
+Machine-readable maps for agents working on or inside the RAVO loop. The diagrams are plain Mermaid so a model can
+read the edges directly; the Rocq references point at sections of the mechanised development in
+~/RocqProjects/ravo/Ravo.v (outside this repo) that prove the corresponding property.
+
+RAVO is a fork feature crate (`docs/fork-feature-crates.md`). The code is `crates/pa-ravo` (gate, referee, trust,
+`ravo.run`, `/ravo`) on top of `crates/pa-ledger` (failure ledger, replay cases, resolution index), with
+`crates/pa-learning` measuring the outcome. It plugs into the native refinement engine in `pa-core` only through
+generic seams, and `pa-cli` wires it in `crates/pa-cli/src/features.rs` behind the Cargo features `ledger`, `ravo`
+(implies `ledger`) and `learning` (implies `ravo`). Each crate's `README.md` is the precise reference; this document
+is the map.
 
 ## AVO agentic variation loop
 
 ```mermaid
 %% AVO agentic variation loop (Puget et al., arXiv:2603.24517) as RAVO instantiates it.
-%% Notation from ~/RocqProjects/ravo/Ravo.v: Agent(P, K, f) with lineage P, knowledge K, evaluator f.
+%% Notation from Ravo.v: Agent(P, K, f) with lineage P, knowledge K, evaluator f.
 flowchart LR
   subgraph IN["Inputs to AVO"]
     P["Solution lineage P<br/>candidates + scores<br/>(Rocq: Lineage = list (A * nat))"]
-    K["Knowledge base K<br/>docs + code + failure ledger<br/>(Rocq S11: Ledger)"]
-    f["Evaluator f<br/>fast screen + deep outcome + opponents<br/>(Rocq: fast, deep, clearsEW)"]
+    K["Knowledge base K<br/>harness entries + failure ledger<br/>(Rocq S11: Ledger)"]
+    f["Evaluator f<br/>fast screen + deep judge + opponents<br/>(Rocq: fast, deep, clearsEW)"]
   end
 
-  subgraph LOOP["AVO agentic variation loop — Agent(P, K, f) is a general-purpose coding agent with Tools · Memory · Reasoning"]
+  subgraph LOOP["AVO agentic variation loop: Agent(P, K, f)"]
     direction TB
     S1["1 Inspect context<br/>lineage, feedback, references"]
     S2["2 Plan<br/>choose the next change"]
@@ -26,9 +35,9 @@ flowchart LR
     S5 --> S1
   end
 
-  SUP["Supervisor<br/>watches stagnation, budget, deadline<br/>(RavoControllerOptions.supervisor)"]
+  SUP["Supervisor child<br/>consulted after two rejections<br/>(ravo.run only)"]
   CAND["Candidate<br/>solution and score (x, deep x)"]
-  GATE{"commit gate<br/>tau <= fast x<br/>bestScore P <= deep x<br/>missedWeight <= eps"}
+  GATE{"commit gate<br/>tau <= fast x<br/>bestScore P <= deep x + tolerance<br/>missedWeight <= eps"}
   UPD["Updated lineage<br/>accepted candidate appended<br/>(Rocq: commitGate, commitE)"]
   REJ(("reject"))
 
@@ -40,7 +49,7 @@ flowchart LR
   GATE -->|"commit"| UPD
   GATE -->|"fail"| REJ
   REJ -.->|"repair and retry"| S5
-  UPD -.->|"weakness pressure: double weight of missed opponents<br/>(Rocq S4/S6: pressureW)"| f
+  UPD -.->|"weakness pressure: missed opponents double in weight<br/>(Rocq S4/S7: pressureW)"| f
 
   classDef input fill:#f4f6f8,stroke:#6b7c8a,color:#1c2b36;
   classDef loop fill:#e8f2f6,stroke:#2f6f8f,color:#1c2b36;
@@ -52,81 +61,101 @@ flowchart LR
   class REJ bad;
 ```
 
+Two instantiations run this loop. Every gated `/refine` (and every other planned refine) is one pass of steps 4 and 5
+with a single candidate: the gate decides, and a rejection is final for that proposal. `ravo.run` (or `/ravo <task>`)
+runs the whole loop: inspect, plan, implement or repair, evaluate, step the reducer, until a commit or a limit.
+
 ## Prime Agent: three planes
 
 ```mermaid
-%% Prime Agent architecture as of fix/forkserver-probe-hardening (2026-09-09).
+%% Prime Agent with the fork's RAVO crates, as of merge-rust-port.
 %% Three planes: RLM execution (what runs), Continual Harness (what is learned), RAVO (how learning is gated).
 flowchart TB
-  subgraph RLM["RLM execution plane — packages/coding-agent/src/core"]
+  subgraph RLM["RLM execution plane: pa-core, pa-daemon"]
     direction LR
-    USER["User / CLI / TUI<br/>modes/interactive, daemon client"] --> AS["AgentSession<br/>core/agent-session.ts<br/>turn loop, events, host bridge"]
-    AS --> MODEL["Model call<br/>@earendil-works/pi-ai providers"]
-    AS --> KERNEL["IPython kernel (RLM)<br/>persistent Python REPL<br/>bash(), edit, skills, mcp"]
-    KERNEL --> SKILLS["Python skills<br/>skills/<name>/src<br/>refine · ravo · agent_message · ..."]
-    SKILLS -->|"host_request(name, payload)"| AS
-    KERNEL -->|"await rlm(task)"| CHILD["Child AgentSessions<br/>run-agent.ts / retained workers"]
-    CHILD --> AS
-    AS --> DAEMON["Daemon supervisor + workers<br/>modes/daemon<br/>protocol 7, schema 29, capabilities"]
-    DAEMON --> VIEW["Agents View<br/>modes/agents-view<br/>rows · usage · ravo status line"]
-    AS --> SESS["Session JSONL + two-tier catalog index<br/>session-manager.ts · session-catalog-index.ts"]
+    USER["Client<br/>pa-cli + pa-tui<br/>daemon wire only"] --> DAEMON["Supervisor + session worker<br/>pa-daemon"]
+    DAEMON --> ENG["Session engine<br/>pa-core session_engine<br/>turn loop, host requests"]
+    ENG --> MODEL["Model call<br/>pa-ai providers"]
+    ENG --> KERNEL["Python kernel (rlm)<br/>persistent REPL<br/>bash(), edit, skills, mcp"]
+    KERNEL --> SKILLS["Python skills<br/>refine, ravo, agent_message, ..."]
+    SKILLS -->|"host request"| ENG
+    KERNEL -->|"rlm.spawn"| CHILD["Child sessions"]
+    DAEMON --> VIEW["Agents view<br/>featureStatus.ravo line"]
   end
 
-  subgraph HARNESS["Continual Harness plane — core/refinement"]
+  subgraph HARNESS["Continual Harness plane: pa-core refinement, pa-ledger"]
     direction LR
-    HS["HarnessState (harness_state.json)<br/>memories · skills · subagent specs · prompt notes<br/>ravo: ReducerState · failures: FailureLedger"]
-    LEDGER["Failure ledger<br/>core/ravo/failure-ledger.ts<br/>fingerprint(kind, source, class, msg) → count<br/>per session, and global unless PRIME_AGENT_GLOBAL_LEDGER=0"]
-    TRIG["Refine triggers<br/>turn_interval · compact · recurrence(actionable, count>=2) · regression"]
-    PROP["refine.run / _planRefine<br/>LLM proposes RefinementProposal edits"]
+    HS["harness_state.json<br/>entries: memory, skill, subagent, prompt, factory<br/>keys: ravo, failures, trustWindows"]
+    LEDGER["Failure ledger (pa-ledger)<br/>fingerprint(kind, source, class, msg)<br/>per session, and global unless<br/>PRIME_AGENT_GLOBAL_LEDGER=0"]
+    TRIG["Refine triggers<br/>turn_interval 25, compact (reviewed, 20 min cooldown)<br/>recurrence, regression (queued by pa-ravo)<br/>manual /refine, refine.run"]
+    PROP["plan_refinement<br/>one model call proposes edits"]
     HS --> PROP
     LEDGER --> TRIG --> PROP
   end
 
-  subgraph RAVO["RAVO plane — core/ravo"]
+  subgraph RAVO["RAVO plane: pa-ravo"]
     direction LR
-    FAST["fast screen<br/>structural validity − skill dry-run failures<br/>(refinement/skill-dry-run.ts)"]
-    DEEP["deep score<br/>LLM judge 0-100, or ARC-AGI-3 levels completed<br/>(arc-agi-evaluator.ts)"]
-    OPP["opponents<br/>evidence · scope · minimality · contracts · novelty<br/>failure:&lt;fp&gt; per recurring error · referee:&lt;fp&gt; per adjudicated claim<br/>arc:no-crash · arc:all-levels (dormant passes outside an ARC run)"]
-    STEP["ravoStep (reducer.ts)<br/>tau ≤ fast ∧ best ≤ deep ∧ missedWeight ≤ eps<br/>commit → pressure doubles missed weights"]
-    AUTH["authorizeAssistedRavo (authority.ts)<br/>digest-binds proposal + baseline<br/>provisional champion, 20-observation window on its clock"]
-    CTRL["runRavoController (controller.ts)<br/>inspect → plan → implement → evaluate → gate → diagnose/repair<br/>stops: accepted · round_limit · repair_limit · deadline · budget · cancelled"]
-    SVC["RavoRunService (run-service.ts)<br/>/ravo &lt;task&gt; · ravo.run()<br/>--arc-repo DIR --arc-game ID"]
-    ARCH["RavoArchive<br/>hash-chained NDJSON + CAS"]
+    FAST["fast screen<br/>share of well-formed edits"]
+    DEEP["deep judge<br/>one model call: verdict, score 0-100,<br/>missed criteria, addressed fingerprints"]
+    OPP["opponents<br/>evidence, scope, minimality, contracts, novelty<br/>failure:&lt;fp&gt; per charged recurrence<br/>referee:&lt;fp&gt; per adjudicated claim"]
+    STEP["ravo_step (reducer)<br/>tau <= fast, best <= deep + 10, missed <= eps<br/>commit: missed weights double"]
+    AUTH["authorize_assisted_ravo<br/>digest-binds proposal + baseline<br/>provisional champion, 20-observation window"]
+    SVC["RavoRunService<br/>ravo.run, /ravo<br/>run_ravo_controller"]
+    ARCH["RavoArchive<br/>hash-chained events.jsonl + champion CAS"]
+    TRUST["Trust windows<br/>+5 clean, -15 upheld, dormant below 30"]
     FAST --> STEP
     DEEP --> STEP
     OPP --> STEP
     STEP --> AUTH
-    SVC --> CTRL --> STEP
-    STEP --> ARCH
+    SVC --> STEP
+    SVC --> ARCH
   end
 
-  AS -->|"tool errors · tracebacks · provider errors<br/>at every assistant turn boundary"| LEDGER
-  PROP -->|"proposal"| FAST
-  AUTH -->|"commit: apply edits, save state"| HS
-  HS -->|"memories · skills · notes into context<br/>digest at cold boundaries · notice after apply"| AS
+  LEARN["pa-learning<br/>learning index, prime-agent learning<br/>trajectory levers"]
+
+  ENG -->|"every finalized message<br/>(on_message_end)"| LEDGER
+  PROP -->|"RefinementGate::evaluate"| FAST
+  AUTH -->|"admit: apply edits, save state"| HS
+  AUTH --> TRUST
+  TRUST --> HS
+  HS -->|"refinement notice now<br/>harness digest at cold boundaries"| ENG
   LEDGER -->|"recurring fingerprints become opponents"| OPP
-  AS -->|"recurrence inside the provisional window = measured fault<br/>→ regression refine in the champion's scope (gated repair)"| TRIG
-  SKILLS -->|"ravo.run → host bridge ravo.run"| SVC
-  CTRL -->|"children via runAgent / retained worker"| CHILD
-  CTRL -->|"RavoProgressEvent → ravo_run_update"| DAEMON
-  DEEP -.->|"ARC mode: uv run main.py --agent --game"| ARC["ARC-AGI-3 harness<br/>/tmp/arc-agi-3"]
+  LEDGER -->|"claimed fp recurs inside the window<br/>regression repair in the champion's scope"| TRIG
+  SKILLS -->|"ravo.run host request"| SVC
+  SVC -->|"publish_feature_status"| DAEMON
+  ENG -->|"agent.jsonl spans + refinement.committed"| LEARN
+  LEARN -->|"HarnessPromptHook, RecurrenceFilter"| HS
 
   classDef live fill:#e6f4ea,stroke:#3a8f5a,color:#173a24;
   classDef store fill:#fff7e0,stroke:#b8860b,color:#3a2e00;
-  class USER,AS,MODEL,KERNEL,SKILLS,CHILD,DAEMON,VIEW,LEDGER,TRIG,PROP,FAST,DEEP,OPP,STEP,AUTH,CTRL,SVC live;
-  class HS,SESS,ARCH,ARC store;
+  class USER,DAEMON,ENG,MODEL,KERNEL,SKILLS,CHILD,VIEW,LEDGER,TRIG,PROP,FAST,DEEP,OPP,STEP,AUTH,SVC,LEARN live;
+  class HS,ARCH,TRUST store;
 ```
 
 ## Reading the loop
 
-- `P`, `K`, `f` are the three inputs of `Agent(P, K, f)`. In Prime, `P` is `HarnessState.ravo.lineage`, `K` is the harness plus the failure ledger, `f` is the fast/deep/opponent adapter set built by `RavoRunService`.
-- The commit gate is the only place the lineage changes (`mutation_requires_authority`). A rejection never mutates state; it routes to Diagnose and repair.
-- Weakness pressure runs on commit: every opponent the accepted candidate missed doubles in weight, so the same gap cannot be exploited twice (`pressureW_ge`).
-- The token budget and deadline are stop conditions, not gates: they bound cost, they do not affect which candidates can be committed.
+- `P`, `K`, `f` are the three inputs of Agent(P, K, f). In Prime Agent, `P` is the lineage in the `ravo` key of the
+  target store's `harness_state.json` (`RavoState`), `K` is the harness entries plus the `failures` ledger, and `f` is
+  the screen, judge and opponent set that `ravo_evaluate_proposal` (for a refine) or `RavoRunService` (for a run)
+  builds.
+- The commit gate is the only place the lineage changes. A rejection never applies an edit; in `/refine` the proposal
+  id is spent, in `ravo.run` it routes to diagnose and repair.
+- Weakness pressure runs on commit: every opponent the accepted candidate missed doubles in weight (`ravo_pressure`),
+  so the same gap costs twice as much next time. Rocq's pressureW doubles one weak opponent; its lemma pressureW_ge
+  (weights never decrease) holds for the reducer's per-criterion doubling as well.
+- The token budget and deadline of a `ravo.run` are stop conditions, not gates: they bound cost and do not affect which
+  candidates can commit.
 
 ## The self-improvement loop, end to end
 
-Stages: run a turn → observe failures at the turn boundary (`_observeFailuresAtTurnBoundary`) → trigger (actionable recurrence ≥ 2, regression inside the champion's 20-observation window, turn interval, compact, manual) → plan from the serialized chain of thought (`planRefinement`) → weighted gate with the referee, judging the live conversation and recording how far it moved while the proposal was planned (`ravoEvaluateProposal` → `authorizeAssistedRavo`) → apply, which decides the final outcome (`_applyRefine`) → the applied change reaches the running model as an in-context refinement notice, and later contexts through the harness digest delivered at cold boundaries (session start, resume, compaction); the system prompt itself stays static.
+Stages: run a turn; the ledger observes every finalized message on its own worker thread and treats each assistant
+message as a turn boundary (`pa-ledger`, through the `on_message_end` hook of `SessionFeature`); a trigger fires (a
+fingerprint entering the recurring set, a claimed fingerprint recurring inside a champion's window, the reviewed
+turn-interval or compaction checkpoint, or a manual `/refine` / `refine.run`); the native planner proposes edits from
+the serialized conversation (`plan_refinement`); the gate evaluates the plan with one model call (the `RefinementGate`
+trait in `pa_core::refinement::gate`, implemented by `pa-ravo`); its verdict (`RefinementGateVerdict`) admits or
+refuses against the target store re-read at apply time; an applied change reaches the running model as an in-context
+refinement notice, and later contexts through the harness digest at cold boundaries. The system prompt stays static.
 
 ```mermaid
 flowchart TB
@@ -135,39 +164,39 @@ flowchart TB
   classDef state fill:#e0e7ff,stroke:#4338ca,color:#1e1b4b
   classDef fixed fill:#f1f5f9,stroke:#475569,color:#0f172a,stroke-dasharray:4 3
 
-  subgraph RUN["① RUN A TURN  (RLM execution plane · immutable substrate)"]
+  subgraph RUN["1 RUN A TURN (RLM execution plane)"]
     direction LR
-    SP["context<br/>= static system prompt<br/>+ harness digest at cold boundaries + refinement notices"]:::fixed
-    LLM["model<br/>thinking · text · tool calls"]:::live
-    K["IPython kernel<br/>bash() · mcp · rlm() children"]:::fixed
-    TR["session JSONL<br/>(thinking blocks kept)"]:::state
+    SP["context<br/>static system prompt<br/>+ harness digest at cold boundaries + refinement notices"]:::fixed
+    LLM["model<br/>thinking, text, tool calls"]:::live
+    K["Python kernel<br/>bash(), mcp, rlm children"]:::fixed
+    TR["session JSONL"]:::state
     SP --> LLM --> K --> TR
   end
 
-  subgraph OBS["② OBSERVE  (every turn boundary · zero LLM tokens)"]
+  subgraph OBS["2 OBSERVE (each assistant message, ledger worker thread, no model call)"]
     direction LR
-    EX["extractFailures<br/>python_exception · tool_error · provider_error"]:::live
-    FP["fingerprint = sha256(kind, source, class, normalized msg)[:16]<br/>numbers→#  strings→?  paths→&lt;path&gt;"]:::live
-    LED[("FAILURE LEDGER<br/>HarnessState.failures, local and (by default) global<br/>count · nonActionableCount · firstSeenTurn · lastSeenTurn<br/>replayCases, verified off the turn path")]:::state
+    EX["extract_failures<br/>python_exception, tool_error, provider_error"]:::live
+    FP["fingerprint = sha256(canonical kind, source, class, message)[:16]<br/>numbers to #, strings to ?, paths to &lt;path&gt;"]:::live
+    LED[("FAILURE LEDGER<br/>failures key, local and (by default) global<br/>count, nonActionableCount, firstSeenTurn, lastSeenTurn<br/>replayCases, verified off the turn path")]:::state
     EX --> FP --> LED
   end
   TR --> EX
 
-  subgraph TRIG["③ TRIGGER"]
+  subgraph TRIG["3 TRIGGER"]
     direction LR
-    T1{"recurrence<br/>enters count ≥ 2 ∧ actionable"}:::gate
+    T1{"recurrence<br/>enters count >= 2 and actionable"}:::gate
     T2{"regression<br/>claimed fp recurs inside<br/>20-observation window on its clock"}:::gate
-    T3{"turn_interval 25 / compact<br/>→ reviewer LLM + 20 min cooldown"}:::gate
-    T4["manual /refine · refine.run()"]:::live
+    T3{"turn_interval 25 / compact<br/>reviewer model call + 20 min cooldown"}:::gate
+    T4["manual /refine, refine.run()"]:::live
   end
   LED --> T1
   LED --> T2
   TR --> T3
 
-  subgraph PLAN["④ PLAN  (agentic variation operator · 1 LLM call)"]
+  subgraph PLAN["4 PLAN (pa-core planner, one model call)"]
     direction TB
-    IN["input = serializeConversation(last 80k chars)<br/>[Assistant thinking] + [Assistant] + [tool calls] + [Tool result]<br/>+ harness overview + ledger<br/>+ refinement history (rejections: decision, judge rationale, missed criteria)"]:::live
-    PR["RefinementProposal<br/>edits[]: create|update|delete × prompt|memory|skill|subagent<br/>no addressedFingerprints: normalization strips any, the judge decides"]:::state
+    IN["input = serialized conversation (last 80 000 chars)<br/>+ harness overview + refinement history<br/>+ the ledger's recurrence or regression instructions"]:::live
+    PR["RefinementProposal<br/>edits: create, update, delete of<br/>prompt, memory, skill, subagent, factory"]:::state
     IN --> PR
   end
   T1 --> IN
@@ -175,14 +204,14 @@ flowchart TB
   T3 --> IN
   T4 --> IN
 
-  subgraph GATE["⑤ GATE  (ravoEvaluateProposal → authorizeAssistedRavo → ravoStep · pure reducer)"]
+  subgraph GATE["5 GATE (ravo_evaluate_proposal, authorize_assisted_ravo, ravo_step)"]
     direction TB
-    FS{"fast screen ≥ 50<br/>structural + skill dry-run<br/>(kernel imports skill, resolves callable)<br/>no LLM"}:::gate
-    DJ["deep judge (1 LLM call)<br/>verdict · deepScore 0–100 · missedCriteria<br/>addressedFingerprints: the only claim there is"]:::live
-    RF["referee (ravo.referee)<br/>re-runs verified replay cases of claimed fps<br/>whose probe a skill the proposal writes imports"]:::gate
-    OPP[("OPPONENT POOL<br/>evidence · scope · minimality · contracts · novelty<br/>+ failure:&lt;fp&gt; for every recurring error the refine is charged<br/>+ referee:&lt;fp&gt; for every adjudicated claim<br/>each with weight w")]:::state
-    D1{"deepScore + 10 ≥ best(lineage)?"}:::gate
-    D2{"Σ w(missed) ≤ ε = 1?"}:::gate
+    FS{"fast screen >= 50<br/>share of well-formed edits<br/>no model call"}:::gate
+    DJ["deep judge (one model call)<br/>verdict, score 0-100, failedCriteria<br/>addressedFingerprints: the only claim there is"]:::live
+    RF["referee<br/>re-runs verified replay cases of claimed fps<br/>whose probe a skill the proposal writes imports"]:::gate
+    OPP[("OPPONENT POOL<br/>evidence, scope, minimality, contracts, novelty<br/>+ failure:&lt;fp&gt; for each charged recurrence<br/>+ referee:&lt;fp&gt; for each adjudicated claim<br/>each with weight w")]:::state
+    D1{"deep score + 10 >= best(lineage)?"}:::gate
+    D2{"sum of w(missed) <= eps = 1?"}:::gate
     FS -- yes --> DJ --> RF --> D1 -- yes --> D2
     OPP -.-> D2
     FS -- no --> RS["reject_screen"]:::gate
@@ -192,14 +221,14 @@ flowchart TB
   end
   PR --> FS
 
-  subgraph COMMIT["⑥ COMMIT  (sync · LLM-free · digest re-verified)"]
+  subgraph COMMIT["6 COMMIT (at apply time, no model call)"]
     direction TB
-    V["re-hash proposal + baseline harness<br/>mismatch ⇒ reject (stale context)"]:::live
-    AP["apply edits to disk<br/>memory · skill · prompt note · subagent"]:::live
+    V["re-read target store, re-check digests<br/>mismatch: reject (baseline_changed)"]:::live
+    AP["apply edits, save harness_state.json"]:::live
     LIN[("LINEAGE (append-only)<br/>best score is monotone")]:::state
-    PRS["PRESSURE<br/>w(missed[0]) ×= 2<br/>same weakness cannot pass twice"]:::live
-    WIN["champion claims fingerprints<br/>provisional window = 20 observations on its clock"]:::live
-    UM["commit_unmeasured<br/>claimed nothing, not a failure refine<br/>edits apply · RAVO state unchanged · no window"]:::live
+    PRS["PRESSURE<br/>each missed criterion's weight doubles"]:::live
+    WIN["champion claims fingerprints<br/>provisional window = 20 observations on its clock<br/>trust window over the entries it wrote"]:::live
+    UM["commit_unmeasured<br/>claimed nothing, not a failure refine<br/>edits apply, RAVO state unchanged, no window"]:::live
     V --> AP --> LIN --> PRS --> WIN
     AP -->|"nothing claimed"| UM
   end
@@ -215,58 +244,117 @@ One concrete cycle:
 ```mermaid
 sequenceDiagram
   autonumber
-  participant U as user
   participant M as model + kernel
   participant L as failure ledger
-  participant P as /refine planner
+  participant P as refine planner
   participant G as RAVO gate
   participant H as harness on disk
-  Note over M: turn 3 — bash() raises TypeError in skill X
-  M->>L: extractFailures → fp a1b2c3 (count 1)
-  Note over M: turn 9 — same TypeError, different numbers/paths
-  M->>L: normalize → same fp a1b2c3 (count 2)
-  L-->>P: recurrence → refine (no reviewer, no cooldown)
-  P->>P: read thinking + tool results (last 80k) + ledger
-  P->>G: proposal: update skill X (it claims nothing itself)
-  G->>G: fast screen: kernel python dry-run imports skill X → 100
-  G->>G: deep judge → pass, 72, missed=[], addressedFingerprints=[a1b2c3]
-  G->>G: referee: a TypeError has no replay case → not_applicable, the claim stands on the window
-  G->>G: opponents now include failure:a1b2c3 (w=1)
-  G->>G: 72+10 ≥ best(60) ✓ · Σw(missed)=0 ≤ 1 ✓ → commit
-  G->>H: apply: re-verify digests → write skill X → refine.decision commit
-  G->>H: lineage += {score 72} · claim fp a1b2c3 · window at global ordinal 40–60
+  Note over M: turn 3: an ipython cell raises ModuleNotFoundError in skill X
+  M->>L: extract_failures, fp a1b2c3 (count 1), replay case import y derived
+  Note over L: off the turn path the self-check reproduces it: case verified
+  Note over M: turn 9: same error, different numbers and paths
+  M->>L: normalize, same fp a1b2c3 (count 2)
+  L-->>P: enters the recurring set, recurrence refine queued (no review, no cooldown)
+  P->>P: serialized conversation + harness overview + recurrence instructions
+  P->>G: proposal: update skill X (the planner claims nothing)
+  G->>G: fast screen: every edit well formed, 100
+  G->>G: deep judge: pass, 72, failedCriteria=[], addressedFingerprints=[a1b2c3]
+  G->>G: referee: skill X imports y, the verified case runs clean, cleared
+  G->>G: opponents include failure:a1b2c3 and referee:a1b2c3, both pass
+  G->>G: 72+10 >= best(60), sum w(missed)=0 <= 1, commit
+  G->>H: re-read store, digests match, write skill X
+  G->>H: lineage += score 72, claim a1b2c3, window at ordinal 40 to 60
   H-->>M: an in-context refinement notice carries the new skill X
-  alt fp a1b2c3 recurs at global ordinal 47
-    M->>L: regression (measured fault, inside window, same clock)
-    L-->>P: regression refine in the champion's scope → must claim a1b2c3 or be reject_unclaimed
-  else ordinal passes 60 without it
-    Note over H: champion stands · correction confirmed by outcome, not opinion
+  alt fp a1b2c3 recurs at ordinal 47
+    M->>L: regression recorded on the champion at the next flush
+    L-->>P: regression repair in the champion's scope: must claim a1b2c3 or be reject_unclaimed
+  else the ordinal passes 60 without it
+    Note over H: champion stands, trust window closes clean (+5 to skill X)
   end
 ```
 
 ## Claims, clocks, and the referee
 
-- **The judge makes the claim.** A `/refine` proposal is normalized to its summary, rationale, expected outcome and edits, so an `addressedFingerprints` list the planner writes is dropped. The deep judge names the fingerprints the edits address, filtered to the recurring failures the gate charges, and only that list opens a provisional window and a trust claim. `ravo.run` differs: its implement child still writes `addressedFingerprints` into the artifact, and its opponents and commit gate read that. Its log line holds that claim to the judge: a `ravo.run` commit logs `refinement.committed` only for claims the judge also named (as `<fp>` or `failure:<fp>`) and the certificate did not charge. A self-claim alone is `refinement.applied_unmeasured`, though the champion still records it. A `ravo.run` is charged every actionable fingerprint recurring in the ledger of the store it runs against, with no recency window.
-- **Where a `ravo.run` commits.** A local run reads, gates against and commits into the session store. A global run (`global_=True`, `/ravo --global`) uses the global store: its lineage, opponents, entries and failure ledger — the global ledger, which only has data while `PRIME_AGENT_GLOBAL_LEDGER` is on. Its commit reads, applies and saves under the same harness state lock every session's ledger flush takes, with the referee verdicts computed before the lock; checkpoints and the archive stay under the global dir. It does not see this session's observations that have not been flushed yet, which `/refine --global` folds in.
-- **What a refine is charged.** A fingerprint recurs when its record is at or over the threshold (count ≥ 2) and actionable. A refine is always charged the recurring fingerprints whose recurrence or regression queued it, including those of a failure request merged into the agent's `refine.run`. Such a trigger is charged on its record in the recurrence ledger (the global one when it is on) when it recurs there, and otherwise on its record in the session's own ledger, so the repair of a failure counted while the global ledger was off can still claim it. A failure refine (`recurrence`, `regression`) is held to its triggers alone. Any other refine is also charged the fingerprints that recur in both the session's own ledger and the recurrence ledger and were last seen no more than 20 assistant turns before the branch's current turn and not after it (`0 ≤ currentTurn − lastSeenTurn ≤ 20`). The ledger does not track branches, so a failure last seen at a later turn than the branch has reached, as after a rewind, was seen on another branch and is not recent. A record is actionable unless a strict majority of its occurrences classified non-actionable (`nonActionableCount`: an outage, a denial, the network, a timeout); when the fingerprint's normalized message or exception class alone classifies that way, every occurrence counts, whatever tally was stored. A non-actionable occurrence never regresses a champion. A recurrence refine is queued when a fingerprint enters the recurring set (at or over the threshold and actionable by the majority of its occurrences), whether it crosses the threshold or turns actionable after crossing it. A `refine.run` merged into a queued failure refine is gated as `directed`.
-- **Claimless results.** A failure refine the judge credits with no fingerprint is `reject_unclaimed`. Any other refine that commits without a claim is `commit_unmeasured`: the edits apply, but the RAVO state is left as it was (no lineage entry, no pressure, no window), and the log line is `refinement.applied_unmeasured`, never `refinement.committed`. A `ravo.run` commit with no credited claim logs the same line, but it does advance the RAVO state: it earned its certificate on that run's own evaluators.
-- **Window clocks.** A provisional window is `[ordinal, ordinal + 20]`, counted in failure observations rather than turns, on the clock stamped with it. `"ordinal"` is the global ledger's observation total, used for local and global champions alike whenever `PRIME_AGENT_GLOBAL_LEDGER` is on. `"local-ordinal"` is the session ledger's total, used for a local window opened while the flag is off; a global window opened then gets no clock. At a turn boundary a window is compared only with an ordinal read off its own clock: `"local-ordinal"` windows always, `"ordinal"` windows only while the flag is on. A window with no clock (a legacy per-session turn count) or with a clock this build does not know (stripped on load) never regresses, so flipping the flag cannot reopen a closed window or match across clocks. `refineHarness`, which has no session, stamps `"ordinal"` for a global refine and `"local-ordinal"` for a local one. A session settles harness trust windows on the global ordinal whatever the flag says, at every failure ledger flush as well as at a `/refine` apply: local windows on the ordinal the flush merged, global windows under the harness state lock. With the flag off this session never advances that ordinal, so on its own it settles no window and moves no trust, and a recurrence inside a window is neither recorded nor adjudicated.
-- **Trust after commit.** An upheld post-commit replay is the only thing that debits trust, and attribution is the whole difficulty: a fingerprint folds every missing module into one, a memory or prompt fix cannot be probed, and the skill may have been rewritten since. So a commit records, per skill it wrote, the modules and distributions that skill imports, and a replay is planned only for a `skill:<id>` whose imports are still exactly those; only on the newest overlapping window that recorded them (an older one, such as the window a regression repair replaced, is superseded); and only when the recurrence's own derived case probes one of those imports — an unrelated missing module recurring in the window runs nothing and uses no attempt. A case that has not reproduced yet waits for its self-check (`ravo.replay_verify`) and is planned once that lands. The replays run off the turn path under `harness.trust.adjudicate`, at most 8 per batch and one batch at a time.
+- **The judge makes the claim.** A `/refine` proposal carries no claim of its own: the planner's output is a summary,
+  rationale, expected outcome and edits. The deep judge names the fingerprints the edits address, filtered to the
+  recurring failures the gate charges, and only that list opens a provisional window and a trust claim. `ravo.run`
+  differs: its implement child writes `addressedFingerprints` into the artifact, and its opponents, referee and commit
+  gate read that. Its outcome line holds that claim to the judge: a run's commit logs `refinement.committed` only for
+  claims the judge also named and the certificate credited; a self-claim alone logs `refinement.applied_unmeasured`,
+  though the champion still records it.
+- **Where a `ravo.run` commits.** A local run reads, gates against and commits into the session store. A global run
+  (`global_=True` in the `ravo` skill, `/ravo --global`) uses the global store: its lineage, opponents, entries and
+  failure ledger. Its commit reads, applies and saves under the harness state lock every ledger flush takes
+  (`acquire_harness_state_lock`). Checkpoints (`<store>/ravo/runs/<runId>.json`) and the archive
+  (`<store>/ravo/archive/`) live under the store the run targets. One run per session at a time, in the background,
+  only in a top-level session with a local harness store (`ravo_run_allowed`); limits default to 4 rounds, 3 repairs,
+  20 minutes and 1.5M tokens (`RAVO_RUN_MAX_ROUNDS`, `RAVO_RUN_MAX_REPAIRS`, `RAVO_RUN_DEADLINE`,
+  `RAVO_RUN_TOKEN_BUDGET`). It stops with one of `RavoStopReason`: accepted, round or repair limit, deadline, budget,
+  cancelled, or `stale_cas` when the store moved under it.
+- **What a refine is charged.** A fingerprint recurs when its record is at or over the threshold (count >= 2,
+  `DEFAULT_RECURRENCE_THRESHOLD`) and actionable. A refine is always charged the fingerprints whose recurrence or
+  regression queued it (`triggerFingerprintIds`), on their record in the recurrence ledger (the global one while it is
+  on), else on the session's own record. A failure refine (`recurrence`, `regression`) is held to its triggers alone.
+  Any other refine is also charged the fingerprints recurring in the session's own ledger that were last seen no more
+  than 20 assistant turns before the branch's current turn and not after it; a failure last seen at a later turn than
+  the branch has reached (as after a rewind) was seen on another branch and is not recent. A record is actionable
+  unless a strict majority of its occurrences classified non-actionable (`nonActionableCount`: an abort, a denial, a
+  dead kernel, the network, a timeout, provider capacity). A `refine.run` merged into a queued failure refine is gated
+  as directed.
+- **Claimless results.** A failure refine the judge credits with no fingerprint is `reject_unclaimed`. Any other refine
+  that commits without a claim is `commit_unmeasured`: the edits apply, the RAVO state is left as it was (no lineage
+  entry, no pressure, no window), and the outcome line is `refinement.applied_unmeasured`, never
+  `refinement.committed`. A `ravo.run` commit with no credited claim logs the same line but does advance the RAVO
+  state: it earned its certificate on that run's own evaluators.
+- **Window clocks.** A provisional window is `[ordinal, ordinal + 20]`, counted in failure observations rather than
+  turns, on the clock stamped with it (`RavoWindowClock`). `ordinal` is the global ledger's observation total, used for
+  local and global champions alike while the global ledger is on. `local-ordinal` is the session ledger's total, used
+  for a local window opened while it is off; a global window opened then gets no clock. A window is compared only with
+  an ordinal read off its own clock, and a window with no clock or one this build does not know (stripped on load)
+  never regresses, so flipping `PRIME_AGENT_GLOBAL_LEDGER` cannot reopen a closed window or match across clocks.
+- **Trust after commit.** An upheld post-commit replay is the only thing that debits trust, and attribution is the
+  whole difficulty: a fingerprint folds every missing module into one, a memory or prompt fix cannot be probed, and the
+  skill may have been rewritten since. So a gated commit that claims fingerprints opens a trust window
+  (`trustWindows[<proposalId>]`) recording the entries it wrote and the imports each written skill names. A replay is
+  planned only for a skill that still imports exactly what the commit recorded, only on the newest window that wrote
+  it, and only when the recurrence's own case probes one of those imports. A case not yet verified waits for its
+  self-check. The replays run off the turn path under the root span `harness.trust.adjudicate`, at most 8 per batch
+  (`MAX_TRUST_ADJUDICATION_JOBS`) and one batch at a time per session. Windows settle at each ledger flush and before a
+  refine's edits apply (`prepare_application`).
 
   | situation | trust effect | re-run |
   |---|---|---|
-  | `upheld` | −15 once per window on the skill entry the replay ran for; window `faulted` (terminal, also from `clean` or `contested`) | never |
+  | `upheld` | -15 once per window on the skill entry the replay ran for; window `faulted` | never |
   | `cleared` / `unverifiable` | none | on a later qualifying recurrence, up to 3 runs per (window, entry, fingerprint) |
-  | recurrence of another module, or no applicable verified case | nothing runs | — |
-  | window closes after a recurrence with no upheld verdict | `contested`: no credit, no debit | — |
-  | window closes with no recurrence | `clean`: +5 to every entry it touched | — |
+  | recurrence of another module, or no applicable verified case | nothing runs | none |
+  | window closes after a recurrence with no upheld verdict | `contested`: no credit, no debit | none |
+  | window closes with no recurrence | `clean`: +5 to every entry it touched | none |
 
-  A memory or prompt entry the same commit wrote is never debited; it can only miss the credit. A `+5` a clean close already granted stays even if a later upheld verdict faults that window. Below the dormancy threshold (30) an entry is dropped from the rendered prompt but stays fully readable and editable.
-- **Regression repair.** A regressed champion is repaired in its own scope. Local and global regressions queue separate failure refines, a request never merges into a pending one of the other scope, and a parked request runs after the one ahead of it.
-- **After a rejection.** When the certificate still binds, the proposal id is spent and cannot be evaluated again. The rejected result goes to the session JSONL and to the refinement history of the scope it targeted — `<agentDir>/harness/refinements.jsonl` for a global refine, `<agentDir>/harness/local-refinements/<sessionId>.jsonl` for a local one — and `refinement.rejected` is logged with the `cause` that classified it (`gate`, `screen`, `judge_unavailable`, `baseline_changed`, `stale_evidence`). The next planner reads a rejection's gate decision, the judge's rationale and the criteria it missed, never its scores; the judge's text is stripped of markup and invisible characters, truncated and quoted as untrusted output first. A serialized checkpoint or an approved auto-refine restarts the 20-minute cooldown whatever the gate decided, and a failure trigger fires once per fingerprint per session, so a rejected recurrence or regression refine is not retried in that session. A queued or requested refine (`refine.run`, `/refine`, a recurrence or regression repair) cancelled before it applies (by an abort, a branch change, or a compaction that aborts its plan), whether still queued or already planning, reports `refine_failed` and frees the fingerprints no other live request carries to trigger again. A periodic `turn_interval` or `compact` auto-refine that is cancelled is dropped without a report. The working model is not told: only an applied refinement adds a model-facing notice.
-- **A rejection on evidence that moved.** The proposer and the judge read the conversation at different moments, and the session keeps working in between. The gate records the difference by message identity (`refine.evidence_drift`: `appended` when the judge read something new, `rewritten` when a compaction, a rewind or a dropped partial reply took away something the proposer read) and judges the live conversation either way — drift never cancels a refine. When the judge itself refused the proposal (`reject_deep`, `reject_criteria`, `reject_unclaimed`), the conversation had moved, and no referee verdict speaks against the claim, the rejection is a timing artefact: it is tagged `stale_evidence` and its round is left open. No cooldown is stamped, the turn interval is not reset, and the failures that queued it stay held; the refine plans once more on the current conversation as soon as the session is idle, at the same checkpoint in a serialized session. That re-plan carries `refine.replan_of`/`replanOf`, closes the round whatever it decides, and is never re-planned itself. A user `/refine`, a rollback and an already-re-planned refine are tagged but not re-planned. An armed re-plan an abort or a branch change drops releases its triggers, and reports `refine_failed` when the refine was the agent's own request; dispose drains it if it can and otherwise drops it silently.
+  A memory or prompt entry the same commit wrote is never debited; it can only miss the credit. Trust is clamped to
+  [0, 100] and defaults to 50 (`DEFAULT_ENTRY_TRUST`). Below 30 (`DORMANT_TRUST_THRESHOLD`) an entry is dormant: the
+  `HarnessPromptHook` withholds it from the rendered harness digest and from the judge's overview (a
+  `- +N dormant <kind> entries (below trust threshold; still readable and editable)` line), and it stays fully readable
+  and editable.
+- **Regression repair.** A regressed champion is repaired in its own scope. Local and global regressions queue separate
+  failure refines, a request merges only into a pending one of its own scope and parks behind one of the other scope,
+  and each fingerprint queues at most once per kind per session. A pending request an aborted turn drops unserviced
+  (`RefineRequester::on_dropped`) releases its fingerprints so they may queue a repair again.
+- **After a rejection.** When the certificate still binds, the consumed evaluation is saved into the `ravo` key, so the
+  proposal id cannot be evaluated again. The rejected result is recorded on the session JSONL (an audit row and an
+  outcome row) and, for a global refine, in `<agentDir>/harness/refinement_history.jsonl`; the outcome line
+  `refinement.rejected` carries the `cause` that classified it (`gate`, `screen`, `judge_unavailable`,
+  `baseline_changed`). A failure trigger fires once per fingerprint per session, so a rejected recurrence or
+  regression refine is not retried in that session. The working model is not told: only an applied refinement adds a
+  model-facing notice.
 
-The referee derives replay cases only from the kernel's own traceback for an `ipython` cell that raised, and only as two side-effect-free probes: `import X` (no module named X) and `importlib.metadata.version("d")` (no package metadata). A private module segment or a denylisted top-level module is never derived or run, a record keeps at most 8 distinct cases, all of them valid probes: a stored case of a retired kind (a module attribute, a `from X import n` name, an executable), or any source that no longer re-renders as a probe, is dropped when the ledger is next loaded or written, so it never holds a slot a live case would be evicted to free, and every place that runs or lists a case still refuses one: when X imports, a skill cannot make a guessed name exist. A case is evidence only after the self-check (`ravo.replay_verify`, in the sanitized environment: `PATH`, `HOME`, `LANG`, on Windows also what CPython needs to start, and explicit roots, no inherited `PYTHONPATH`) saw it reproduce its recorded exception. At the gate, each claimed fingerprint gets one verdict:
+The referee derives replay cases only from the kernel's own traceback for an `ipython` cell that raised, and only as
+two side-effect-free probes (`ReplayProbe`): `import X` (no module named X) and `importlib.metadata.version("d")` (no
+package metadata). A private module segment or a top-level module in `REPLAY_MODULE_DENYLIST` is never derived or run
+(`is_replayable_module_path`), and a record keeps at most 8 distinct cases (`MAX_REPLAY_CASES`); stored cases that no
+longer re-render as a valid probe are dropped when the ledger is next loaded or written. A case is evidence only after
+the self-check saw it reproduce its recorded exception: each boundary's newly derived cases run off the turn path in
+the sanitized environment, and a reproduction is written at the ledger's next flush (`record_replay_verifications`).
+At the gate, each claimed fingerprint gets one verdict (`RefereeVerdictStatus`):
 
 | status | when | effect |
 |---|---|---|
@@ -276,4 +364,64 @@ The referee derives replay cases only from the kernel's own traceback for an `ip
 | `unverifiable` | a verified applicable case could not run, or raised something else | `failure:<fp>` and `referee:<fp>` fail |
 | `cleared` | every verified applicable case ran clean | `failure:<fp>` and `referee:<fp>` pass |
 
-Adjudication replays in `skillImportEnvironment`: the sanitized base plus the toolforge source roots and the host's `PYTHONPATH` entries, the same environment the skill dry-run screen imports in, and the same one a post-commit trust replay uses. Both run the interpreter in a fresh temporary working directory, so neither the environment nor the working directory can make the two disagree. Every replay interpreter leads its own process group, which is killed when the run ends, on host exit and on SIGINT, SIGTERM, SIGHUP or SIGQUIT, and is recorded in the orphan process journal while it runs, so supervisor recovery reaps it after a worker is killed outright. Only `upheld`, `unverifiable` and `cleared` add `referee:<fp>` to the pool. Persisted `arc:*` criteria are dormant passes in `/refine` and in a judge `ravo.run`, and keep their weights.
+`PythonReplayRunner` runs every case in the kernel's Python in isolated mode (`-I -B`, the program on stdin), in a
+fresh temporary working directory, with an environment of `PATH`, `HOME` and `LANG` (on Windows also what CPython needs
+to start) plus explicit `sys.path` roots, under a 10 s timeout (`DEFAULT_REPLAY_TIMEOUT`). The self-check uses that
+sanitized environment (`ReplayEnvironment::Sanitized`); adjudication and the post-commit trust replay add the host's
+`PYTHONPATH` entries (`ReplayEnvironment::SkillImport`), so the two adjudications cannot disagree. The interpreter
+leads its own process group, killed when the run ends, and is recorded in the orphan process journal while it runs, so
+supervisor recovery reaps it after a worker is killed outright. Only `upheld`, `unverifiable` and `cleared` add
+`referee:<fp>` to the pool. Persisted criteria a `/refine` or a judge `ravo.run` never observes are dormant passes and
+keep their weights.
+
+## Seams and files
+
+The crates touch native code only through these generic seams (details in each crate's README):
+
+| seam | used by | for |
+|---|---|---|
+| `SessionFeature::refinement_gate` (`RefinementGate`, `RefinementGateVerdict`) | `pa-ravo` | gate every planned refine, hold ledger flushes while it runs, lock the global store, admit or refuse at apply time |
+| `RefineRequester` (`pa_core::session_engine::turn_boundary`) | `pa-ravo` | queue recurrence and regression refines for the next serviced turn boundary |
+| `SessionFeature::auto_refine_policy` (`AutoRefinePolicy`) | `pa-ravo` | `GlobalDefaultAutoRefine`: the reviewer may pick `scope`, global by default |
+| `SessionFeature::harness_prompt_hook` (`HarnessPromptHook`) | `pa-ravo`, `pa-learning` | withhold dormant entries; rank entries by trajectory and add the trajectory section |
+| `LedgerObserver` / `LedgerHandle` (`pa-ledger`) | `pa-ravo` | see each boundary, write the `ravo` and `trustWindows` keys inside the ledger's flush |
+| `RecurrenceFilter` | `pa-learning` | mute recurrence refines for fingerprints the trajectory index labels DROPPED |
+| `SessionFeature::register_host_handlers`, `slash_commands`, `bundled_skills` | `pa-ravo` | `ravo.run`, `ravo.status`, `ravo.cancel`; `/ravo`; the `ravo` skill (`skills/.features/ravo`) |
+| `publish_feature_status` | `pa-ravo` | each run update as feature `ravo` (`featureStatus.ravo`, `ravo_status_line`) |
+
+Files: the `ravo` and `trustWindows` keys of `<sessionArtifactDir>/harness/harness_state.json` and
+`<agentDir>/harness/harness_state.json` (`pa-ravo`), their `failures` key and
+`<agentDir>/resolution/<basename>.<hash>.json` (`pa-ledger`), and `<agentDir>/learning/` (`pa-learning`). All are
+byte-compatible with the TS fork, proven by node-generated goldens in each crate's `tests/`. `PRIME_AGENT_RAVO=0`
+turns the gate off at run time; building `pa-cli` without the `ravo` feature removes it entirely.
+
+## Differences from the TS fork
+
+The Rust crates reproduce the TS gate, referee, trust and run service byte for byte where they write files. These TS
+behaviours are not ported (each crate README lists its own non-goals):
+
+- **Skill dry-run in the fast screen.** TS imported each proposed skill in the kernel and resolved its callable
+  (`refinement/skill-dry-run.ts`); the Rust screen is structural only.
+- **Evidence drift and the stale-evidence re-plan.** TS recorded how far the conversation moved between planner and
+  judge (`refine.evidence_drift`) and re-planned a judge rejection made on moved evidence once (`stale_evidence`,
+  `refine.replan_of`). `RejectionCause` keeps the `stale_evidence` spelling for stored results, but nothing produces
+  it.
+- **Rejection history for the planner.** TS fed each rejection's gate decision, cleaned judge rationale and missed
+  criteria into the next planner prompt, and kept a per-session `local-refinements/<sessionId>.jsonl`. The native
+  planner's history lists prior results' edits and expected outcomes only, and a local rejection is recorded only on
+  the session JSONL.
+- **Spans.** `ravo.referee`, `ravo.replay_case` and `ravo.replay_verify` are not emitted; `ravo.run`, `ravo.round`,
+  `ravo.proposal`, `ravo.evaluation` and `harness.trust.adjudicate` are. `harness.trust.adjudicate` has no
+  `trigger.trace_id` (the ledger's boundary runs on its worker thread, outside the turn's trace), and there is no
+  native refine span to carry `trust.*` attributes or `refine.trust_window_opened`.
+- **Trust on ungated refines.** TS gave every entry any refine wrote a trust record and settled windows at every apply;
+  here only a gated commit does (an absent record reads as the default score).
+- **The skill-import environment** has no toolforge source roots: `pa-cli` passes no extra `sys.path` roots
+  (`replay_sys_path` is empty), so adjudication sees the sanitized base plus the host's `PYTHONPATH`.
+- **Around `ravo.run`:** the status reaches clients as the generic `feature_status` event, not the TS
+  `ravo_run_update`; children are single provider calls (no retained worker runtime); a run cannot resume from its
+  checkpoint; evaluators run one at a time; the `ravo` skill is listed to every session of a build with the feature,
+  where its calls fail as unregistered outside a session offered runs.
+- **The ARC-AGI-3 evaluator** (`docs/ravo-arc-agi-evaluator.md`) is benchmark code outside the product:
+  `/ravo --arc-repo/--arc-game` and `ravo.run(arc_agi=...)` are refused, and persisted `arc:*` criteria stay dormant
+  passes.
