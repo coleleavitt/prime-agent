@@ -12,12 +12,21 @@ from contextlib import redirect_stderr
 from pathlib import Path
 from unittest import mock
 
+import bash_guard_check
 from rlm import bash
 from rlm.bash import BASH_SECRET_ECHO_BYPASS_ENV, SecretEchoRefusalError
 
 # The package re-exports the bash() function under the same name, so reach the
 # module through sys.modules for internals.
 bash_module = sys.modules["rlm.bash"]
+
+
+def _secret_echo_violation(command: str) -> str | None:
+    # The secret-echo guard runs in the host (pa-bash guards::secret_echo);
+    # the violation phrase is read back from its refusal.
+    return bash_guard_check.phrase(
+        "secret_echo", command, "Refusing to run this command: it would print ", " into\nthe transcript"
+    )
 
 # Each guard's suite verifies one rule in isolation. The sibling guards fail
 # closed on shapes this suite exercises (`bash <(...)`, `sh -c ...`, `env`,
@@ -228,12 +237,12 @@ class SecretEchoDetectionTest(unittest.TestCase):
     def test_matches_dumps_and_secret_file_reads(self):
         for command in SECRET_ECHO_MATCHING_COMMANDS:
             with self.subTest(command=command):
-                self.assertIsNotNone(bash_module._secret_echo_violation(command))
+                self.assertIsNotNone(_secret_echo_violation(command))
 
     def test_does_not_match_targeted_or_literal_commands(self):
         for command in SECRET_ECHO_NON_MATCHING_COMMANDS:
             with self.subTest(command=command):
-                self.assertIsNone(bash_module._secret_echo_violation(command))
+                self.assertIsNone(_secret_echo_violation(command))
 
     def test_cost_locks_keep_deep_scans_bounded(self):
         # Cost lock: interiors come from an iterative worklist, so nesting depth
@@ -242,15 +251,15 @@ class SecretEchoDetectionTest(unittest.TestCase):
         nested = '"$(' * 1200 + "echo hi" + ')' * 1200
         chain = '"$( ' * 2000
         start = time.perf_counter()
-        self.assertIsNone(bash_module._secret_echo_violation(nested))
-        self.assertIsNone(bash_module._secret_echo_violation(chain))
+        self.assertIsNone(_secret_echo_violation(nested))
+        self.assertIsNone(_secret_echo_violation(chain))
         self.assertLess(time.perf_counter() - start, DEEP_SCAN_TIME_BOUND)
         self.assertEqual(
-            bash_module._secret_echo_violation('"$(' * 1200 + "env" + ')' * 1200),
+            _secret_echo_violation('"$(' * 1200 + "env" + ')' * 1200),
             "the full environment",
         )
         self.assertEqual(
-            bash_module._secret_echo_violation(chain + "env"), "the full environment"
+            _secret_echo_violation(chain + "env"), "the full environment"
         )
 
     def test_cost_lock_keeps_an_unterminated_heredoc_linear(self):
@@ -260,7 +269,7 @@ class SecretEchoDetectionTest(unittest.TestCase):
         command = "cat <<'EOF'\nenv\n" * 4000
         start = time.perf_counter()
         self.assertEqual(
-            bash_module._secret_echo_violation(command), "the full environment"
+            _secret_echo_violation(command), "the full environment"
         )
         self.assertLess(time.perf_counter() - start, UNTERMINATED_HEREDOC_TIME_BOUND)
 
@@ -270,7 +279,7 @@ class SecretEchoDetectionTest(unittest.TestCase):
         # opener instead of a lex of the rest of the line per opener.
         command = "cat " + "<<A " * 8000 + "body"
         start = time.perf_counter()
-        self.assertIsNone(bash_module._secret_echo_violation(command))
+        self.assertIsNone(_secret_echo_violation(command))
         self.assertLess(time.perf_counter() - start, MANY_OPENERS_TIME_BOUND)
 
     def test_nested_substitution_inner_command_still_scanned(self):
@@ -281,8 +290,8 @@ class SecretEchoDetectionTest(unittest.TestCase):
 
         for inner in ['"$(env)"', '"$(cat ~/.ssh/id_rsa)"']:
             with self.subTest(inner=inner):
-                self.assertIsNotNone(bash_module._secret_echo_violation(nested(200, inner)))
-        self.assertIsNone(bash_module._secret_echo_violation(nested(200, "env")))
+                self.assertIsNotNone(_secret_echo_violation(nested(200, inner)))
+        self.assertIsNone(_secret_echo_violation(nested(200, "env")))
 
 
 
@@ -488,7 +497,7 @@ class SecretEchoGuardTest(unittest.IsolatedAsyncioTestCase):
         # A spaced value is still the one word this test reads as the pattern,
         # so the documented filtered read keeps its verdict.
         for allowed in ("env | grep -e SAFE_VAR", "env | grep --regexp SAFE_VAR"):
-            self.assertIsNone(bash_module._secret_echo_violation(allowed))
+            self.assertIsNone(_secret_echo_violation(allowed))
 
     async def test_numeric_grep_context_flag_refused(self):
         # The stand-in dump below shows the widening the refusal rests on.
@@ -667,7 +676,7 @@ class SecretEchoGuardTest(unittest.IsolatedAsyncioTestCase):
     def test_multibyte_control_escape_answers_a_verdict(self):
         # `\c` masks its operand's low five bits, and `'ß'.upper()` is two
         # characters, so masking the code point answers instead of raising.
-        self.assertIsNone(bash_module._secret_echo_violation("echo $'\\cß'"))
+        self.assertIsNone(_secret_echo_violation("echo $'\\cß'"))
 
     def test_overlong_descriptor_returns_a_verdict(self):
         # A descriptor run past Python's digit limit must not escape as a
@@ -675,7 +684,7 @@ class SecretEchoGuardTest(unittest.IsolatedAsyncioTestCase):
         # fails closed and still answers a verdict.
         command = "env " + "9" * 4500 + ">&1 | grep SAFE_VAR"
         self.assertEqual(
-            bash_module._secret_echo_violation(command), "the full environment"
+            _secret_echo_violation(command), "the full environment"
         )
 
     async def test_env_flag_operands_and_nested_dump_words_refused(self):

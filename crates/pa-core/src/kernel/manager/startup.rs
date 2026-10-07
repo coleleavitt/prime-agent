@@ -254,6 +254,9 @@ impl Inner {
             "PRIME_AGENT_KERNEL_OWNER_PID".to_string(),
             std::process::id().to_string(),
         );
+        // This host serves the kernel's `bash.*` requests (it runs the
+        // commands); the runtime reads the flag once at import.
+        env.insert("PRIME_AGENT_HOST_BASH".to_string(), "1".to_string());
         if let Some(traceparent) = pa_types::trace_context::current_traceparent() {
             env.insert(
                 pa_types::trace_context::TRACEPARENT_ENV.to_string(),

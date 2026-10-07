@@ -315,7 +315,6 @@ struct Guarded {
     late_handlers: VecDeque<(String, LateSentAgentMessageCallback)>,
     /// Resolvers for done events outside the active execution (the shutdown reply).
     pending_done_waiters: HashMap<String, oneshot::Sender<()>>,
-    bash_activity_waiters: HashMap<String, oneshot::Sender<Value>>,
     /// Resolvers for out-of-band `plan_guard` done events.
     plan_guard_waiters: HashMap<String, oneshot::Sender<Value>>,
     host_inflight: Vec<tokio::task::JoinHandle<()>>,
@@ -476,7 +475,6 @@ impl ReplKernelManager {
                 host_request_cancellations: HashMap::new(),
                 late_handlers: VecDeque::new(),
                 pending_done_waiters: HashMap::new(),
-                bash_activity_waiters: HashMap::new(),
                 plan_guard_waiters: HashMap::new(),
                 host_inflight: Vec::new(),
                 active_execution: None,
@@ -738,35 +736,28 @@ impl ReplKernelManager {
         if action == "tail" && !(1..=200).contains(&lines) {
             return Err(anyhow!("lines must be an integer between 1 and 200"));
         }
-        let request_id = uuid::Uuid::new_v4().to_string();
-        let (tx, rx) = oneshot::channel();
-        lock(&self.inner.guarded)
-            .bash_activity_waiters
-            .insert(request_id.clone(), tx);
-        let frame = json!({"type": "bash_activity", "id": request_id, "action": action,
-                           "activityId": activity_id, "lines": lines});
-        if let Err(error) = self.inner.write_line(&frame).await {
-            lock(&self.inner.guarded)
-                .bash_activity_waiters
-                .remove(&request_id);
-            return Err(error);
+        // The host runs the kernel's commands, so it answers from its own job
+        // table: no kernel round trip, and a busy cell never delays the view.
+        let table = Arc::clone(&self.inner.bash_jobs);
+        let action = action.to_string();
+        let activity_id = activity_id.map(str::to_string);
+        let answer = tokio::task::spawn_blocking(move || {
+            table.activity(&action, activity_id.as_deref(), &json!(lines))
+        })
+        .await
+        .map_err(|error| anyhow!("Kernel bash activity request did not settle: {error}"))?;
+        match answer {
+            Ok(mut fields) => {
+                if let Some(object) = fields.as_object_mut() {
+                    object.insert("status".to_string(), json!("ok"));
+                }
+                Ok(fields)
+            }
+            // The reason the kernel's handler sent: `str(exception)`, which
+            // quotes a KeyError's message.
+            Err(error @ pa_bash::ActivityError::UnknownActivity) => Err(anyhow!("'{error}'")),
+            Err(error) => Err(anyhow!("{error}")),
         }
-        let Ok(Ok(fields)) = tokio::time::timeout(Duration::from_secs(3), rx).await else {
-            lock(&self.inner.guarded)
-                .bash_activity_waiters
-                .remove(&request_id);
-            return Err(anyhow!("Kernel bash activity request did not settle"));
-        };
-        if fields.get("status").and_then(Value::as_str) != Some("ok") {
-            return Err(anyhow!(
-                "{}",
-                fields
-                    .get("reason")
-                    .and_then(Value::as_str)
-                    .unwrap_or("Kernel bash activity failed")
-            ));
-        }
-        Ok(fields)
     }
 
     // -------------------------------------------------------- state ops API

@@ -148,36 +148,6 @@ class DestructiveGitDetectionTest(unittest.TestCase):
             self.assertLess(time.monotonic() - start, 5.0)
 
 
-class EvalPayloadDetectionTest(unittest.TestCase):
-    def test_eval_payloads_hiding_discards(self):
-        for command in [
-            "eval 'git reset --hard'", 'eval "git clean -f"', "eval 'cd sub && git reset --hard'", "eval 'git checkout -- .'",
-            'eval "git restore ."', 'eval \'eval "git reset --hard"\'', "GIT_DIR=sub/.git eval 'git reset --hard'", "eval 'git reset \\\n--hard'",
-            "'eval' 'git reset --hard'", "E=eval; $E 'git reset --hard'", "{ eval 'git reset --hard'; }",
-            "H='git reset --hard'; eval '$H'; H='echo hi'; $H", "H='git reset --hard' eval '$H'",
-            "shopt -s expand_aliases\nalias g='git reset --hard'\neval 'g'", "shopt -s expand_aliases\nalias g='git reset --hard'\neval g",
-            'shopt -s expand_aliases\nalias g=\'git reset --hard\'\neval "$(printf %s g)"',
-            "shopt -s expand_aliases\nalias g='git reset --hard'\nunalias -n g\neval 'g'",
-            "shopt -s expand_aliases\nalias g='git reset --hard'\nunalias -a -n\neval 'g'", 'eval "$(printf \'%s\' \'git reset --hard\')"',
-            'X=\'git reset --hard\'; X2="$X"; eval "$X2"',
-            "shopt -s expand_aliases\nalias g='git reset --hard'\neval 'g'\nalias g='echo hi'\ng",
-        ]:
-            with self.subTest(command=command):
-                self.assertTrue(bash_module._eval_payloads_hide_destructive_git(command))
-
-    def test_safe_eval_payloads_stay_unflagged(self):
-        for command in [
-            'eval', "eval 'echo hi'", "eval 'git status'", 'eval \'echo "git reset --hard"\'', 'eval "echo \'git reset --hard\'"',
-            "echo 'eval git reset --hard'", "echo eval 'git reset --hard'", 'npm run eval:suite',
-            "shopt -s expand_aliases\nalias g='echo hi'\neval 'g'", "shopt -s expand_aliases\nalias g='git status'\neval 'g'",
-            "shopt -s expand_aliases\nalias g='git reset --hard'\neval 'echo g'",
-            "shopt -s expand_aliases\nalias g='git reset --hard'\nunalias g\neval 'g'",
-            "shopt -s expand_aliases\nalias g='git reset --hard'\nunalias -- g\neval 'g'",
-        ]:
-            with self.subTest(command=command):
-                self.assertFalse(bash_module._eval_payloads_hide_destructive_git(command))
-
-
 class DestructiveGitGuardTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self._prev_cwd = os.getcwd()
@@ -378,29 +348,6 @@ class DestructiveGitGuardTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self._tracked("tracked.txt").read_text(), "modified\n")
         self.assertTrue(self._tracked("untracked.txt").exists())
 
-    async def test_probe_runs_only_for_discard_commands(self):
-        self._init_dirty_repo()
-        probe = mock.Mock(return_value=[" M tracked.txt"])
-        with mock.patch.object(bash_module, "_probe_uncommitted_changes", probe):
-            result = await bash("echo hi")
-            self.assertEqual(result.exit_code, 0)
-            result = await bash("git status")
-            self.assertEqual(result.exit_code, 0)
-            probe.assert_not_called()
-            with self.assertRaises(DestructiveGitRefusalError):
-                bash("git checkout -- .")
-        probe.assert_called_once_with(
-            "git status --porcelain --untracked-files=all",
-            os.path.realpath(self.test_dir),
-        )
-
-    async def test_fails_open_when_the_probe_fails(self):
-        self._init_dirty_repo()
-        with mock.patch.object(bash_module, "_probe_uncommitted_changes", return_value=None):
-            result = await bash("git checkout -- .")
-        self.assertEqual(result.exit_code, 0)
-        self.assertEqual(self._tracked("tracked.txt").read_text(), "committed\n")
-
     async def test_refuses_relocation_into_dirty_nested_repository(self):
         self._init_dirty_repo()
         for directory, command in [
@@ -516,25 +463,6 @@ class DestructiveGitGuardTest(unittest.IsolatedAsyncioTestCase):
         ]:
             with self.subTest(unalias=form):
                 await check(f"shopt -s expand_aliases\nalias g='git reset --hard'\n{form}\neval 'g'", refused)
-
-    def test_probe_reads_are_bounded_and_time_out(self):
-        # The timeout kills the probe's process group: it covers a probe whose
-        # child exited while a descendant holds stdout, a hang, and an endless
-        # listing (the caller returns in time and the bytes read stay capped).
-        self._init_dirty_repo()
-
-        def timed(command: str):
-            started = time.monotonic()
-            result = bash_module._probe_uncommitted_changes(command, self.test_dir)
-            self.assertLess(time.monotonic() - started, 5.0, command)
-            return result
-
-        with mock.patch.object(bash_module, "_PROBE_TIMEOUT_SECONDS", 1.0):
-            self.assertIsNone(timed("sleep 60"))
-            self.assertEqual(timed("(sleep 60) & exit 0"), [])
-        listed = timed("yes dirty")
-        self.assertTrue(listed)
-        self.assertLessEqual(len("\n".join(listed).encode()), bash_module._PROBE_OUTPUT_CAP_BYTES)
 
     async def test_refuses_eval_wrapped_discards(self):
         self._init_dirty_repo()
@@ -844,33 +772,3 @@ class DestructiveGitGuardTest(unittest.IsolatedAsyncioTestCase):
             bash("git clean -fd")
         self.assertIn("fresh-untracked.txt", str(caught.exception))
         self.assertTrue(self._tracked("fresh-untracked.txt").exists())
-
-    async def test_command_prefix_is_replayed_in_the_probe(self):
-        self._init_dirty_repo()
-        probe = mock.Mock(return_value=[" M tracked.txt"])
-        with (
-            mock.patch.dict(
-                os.environ, {"PRIME_AGENT_BASH_COMMAND_PREFIX": "export GUARD_TEST_VAR=1"}
-            ),
-            mock.patch.object(bash_module, "_probe_uncommitted_changes", probe),
-        ):
-            with self.assertRaises(DestructiveGitRefusalError):
-                bash("git checkout -- .")
-        probe.assert_called_once_with(
-            "export GUARD_TEST_VAR=1\ngit status --porcelain --untracked-files=all",
-            os.path.realpath(self.test_dir),
-        )
-
-    async def test_discard_inside_command_prefix_is_refused(self):
-        os.chdir(self.test_dir)
-        probe = mock.Mock()
-        with (
-            mock.patch.dict(
-                os.environ, {"PRIME_AGENT_BASH_COMMAND_PREFIX": "git checkout -- ."}
-            ),
-            mock.patch.object(bash_module, "_probe_uncommitted_changes", probe),
-        ):
-            with self.assertRaises(DestructiveGitRefusalError) as caught:
-                bash("git status")
-        self.assertIn("changes directory (or repository) first", str(caught.exception))
-        probe.assert_not_called()

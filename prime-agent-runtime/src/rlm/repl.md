@@ -292,6 +292,43 @@ kernel the client sends the same request to `prime-agent
 --prime-agent-harness-request` (stdin: the request, stdout: the reply);
 the host exports the binary to the kernel as `PRIME_AGENT_EXECUTABLE`.
 
+### bash() requests
+
+`rlm.bash` is a client of the host's command checker and job runner (the
+`pa-bash` crate). A host that serves these requests exports
+`PRIME_AGENT_HOST_BASH=1` to the kernel (read once at import); otherwise, and
+outside a kernel, the client sends the same requests to a
+`prime-agent --prime-agent-bash-host` sidecar it starts on first use (one JSON
+line per request, `{"id": str, "data": <request>}`, and per reply; the sidecar
+kills its jobs when its stdin closes). Each request is a blocking host request
+whose `result` carries `status`: `ok`, `refused` (`error`: the refusal class,
+`message`, `warning`: the one-time late-bypass stderr text) or `error`
+(`error`: `ValueError`/`RuntimeError`/`OSError`/`KeyError`/`TypeError`,
+`message`, `errno` for `OSError`), which the client raises.
+
+- `bash.check` / `bash.spawn`: `{command, script, prefix?, allow: [guard],
+  cwd, env, launchBypass: [guard], kernelPid, traceparent?}`; the guard keys
+  are `destructive_git`, `destructive_chmod`, `force_push`, `secret_echo`,
+  `pipe_to_shell`, `sudo`. `bash.spawn` adds `guards: false` (the client
+  already ran `bash.check`) and `sandboxPrefix?: [str]` (the plan-mode
+  sandbox argv) and answers `{job: {id, pid, pgid, startedAt}}`. `cwd` and
+  `env` are the kernel's own at call time: the command runs there, with the
+  non-interactive settings and the guard bypass scrub applied host-side.
+- `bash.follow {id, cursor}`: waits (up to 30 s) for the job's next events
+  and answers `{events, cursor, done}`; events are `progress` (`msg`,
+  `fields`), `finished` (`exitCode`, `output`, `duration`, `fields`), then
+  `reaped` (`bytes`), always in that order.
+- `bash.output {id, bytesOnly?}`, `bash.kill {id, signal, graceMs}`,
+  `bash.confirmExit {id, termGraceMs, killWaitMs}` (the cancelled one-shot's
+  bounded teardown), `bash.groupAlive {id}`, `bash.killAll {}`,
+  `bash.inventory {limit}`, `bash.activity {action, activityId?, lines?}`,
+  `bash.shell` / `bash.childEnv` (the shell and environment a command would
+  get), and `bash.isDestructiveGitDiscard {command}`.
+
+The host answers the `list_kernel_bash`/`tail_kernel_bash`/`kill_kernel_bash`
+commands from the same job table; the `bash_activity` frame remains for a
+runtime run by another host (the runtime forwards it to its sidecar).
+
 ## MCP sessions
 
 The MCP connections behind `rlm.mcp` and `rlm.McpIntegration` are host-owned
@@ -329,7 +366,8 @@ process spawns; `subprocess.Popen` runs under a
 read-only OS sandbox (`bwrap` on Linux, `sandbox-exec` on macOS) or, without
 one, only classifiable read-only commands. A refused operation raises
 `rlm.plan_guard.PlanModeError` in the cell. `bash()` checks its command
-before spawning.
+before spawning and runs it under the same sandbox (`sandboxPrefix`); the
+bash sidecar starts before the guard arms (`rlm.plan_guard.on_before_arm`).
 
 The runtime claims the one host controller before it announces `ready`, and
 only the reader thread holds it: cells cannot claim another. The first frame
@@ -367,5 +405,6 @@ top-level names under the same filter the snapshot applies.
 
 ## Shutdown
 
-`shutdown` (or stdin EOF) kills live `rlm.bash` child process groups, replies
+`shutdown` (or stdin EOF) kills live `rlm.bash` process groups (`bash.killAll`;
+a host also kills a kernel's jobs at teardown), replies
 `done` (when the request carried an id), stops the loop, and exits 0.

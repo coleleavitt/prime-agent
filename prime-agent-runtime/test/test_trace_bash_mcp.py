@@ -87,15 +87,6 @@ class BashCommandSpanTest(_SpanCapture):
         self.assertGreaterEqual(span["attrs"]["bash.elapsed_ms"], 0)
         self.assertGreaterEqual(span["attrs"]["bash.silence_ms"], 0)
 
-    async def test_cargo_lock_detection_survives_output_chunk_boundary(self):
-        handle = bash("true")
-        await handle
-        handle._wait_reason = None
-        handle._cargo_probe_tail = b""
-        handle._record_output(b"Blocking waiting for file lock on build direc")
-        handle._record_output(b"tory")
-        self.assertEqual(handle._wait_reason, "cargo_build_lock")
-
     async def test_no_output_warning_is_structured_and_contains_no_output(self):
         with mock.patch.dict(bash_module.os.environ, {"PRIME_AGENT_BASH_NO_OUTPUT_WARN_MS": "20"}):
             handle = bash("sleep 0.15")
@@ -212,12 +203,15 @@ class BashCommandSpanTest(_SpanCapture):
         self.assertTrue(handle._span.ended)
 
     async def test_spawn_failure_ends_span_with_error(self):
-        with mock.patch.object(bash_module.subprocess, "Popen", side_effect=OSError("no fork")):
+        # The host spawns the command; a shell that does not exist fails the spawn.
+        with mock.patch.dict(bash_module.os.environ, {"PRIME_AGENT_BASH_SHELL": "/nonexistent/prime-agent-shell"}):
             with self.assertRaises(OSError):
                 bash("echo never")
         (span,) = self.spans("bash.command")
         self.assertEqual(span["status"], "error")
-        self.assertEqual(span["attrs"]["error"], "spawn failed: OSError: no fork")
+        self.assertEqual(
+            span["attrs"]["error"], "spawn failed: FileNotFoundError: [Errno 2] No such file or directory"
+        )
         self.assertNotIn("bash.pid", span["attrs"])
 
     async def test_concurrent_worker_threads_end_span_exactly_once(self):
@@ -240,7 +234,7 @@ class BashCommandSpanTest(_SpanCapture):
     async def test_end_span_never_raises(self):
         handle = bash("true")
         await handle
-        handle._buffer = None  # a broken handle must not turn tracing into an exception
+        handle._fields = None  # a broken handle must not turn tracing into an exception
         handle._span.ended = False
         handle._end_span(exit_code=0)
         self.assertEqual(len(self.spans("bash.command")), 1)

@@ -62,16 +62,17 @@ cannot express without `unsafe`), `rustix` on POSIX (group signals, `poll`,
 ## Parity
 
 The Python implementation (`prime-agent-runtime/src/rlm/bash.py` before the
-port) is the oracle:
+port) was the oracle:
 
 - `tests/corpus/guards.jsonl` + `messages.json`: every input the Python guard
   suites fed the guards, judged by all six Python guards in a neutral context
-  (`tests/corpus/capture.py`). `guards::corpus_tests` replays it.
-- `tests/corpus/differential.py` with `examples/guard_oracle.rs`: runs the
-  Python suites with every guard call also judged by the Rust guards in the
-  call's live context (files, repositories, environment). (It needs the
-  Python guards, so it ran before the switch-over; after it the Python guard
-  suites themselves run against these guards through `bash.check`.)
+  (1618 inputs x 6 guards), captured from the Python guards before their
+  deletion. `guards::corpus_tests` replays it on every test run.
+- Before the switch-over, a differential run (the Python suites with every
+  guard call also judged by these guards in the call's live context: files,
+  repositories, environment) matched on all 2261 calls; since the switch-over
+  the Python guard suites themselves run against these guards through
+  `bash.check`.
 
 ## Parser choice
 
