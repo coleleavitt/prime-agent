@@ -9,6 +9,7 @@ description = "Kernel bash(): the shell command checker (refusal guards) and the
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+pa-os-sandbox = { path = "../pa-os-sandbox" }
 fancy-regex = "0.14"
 getrandom = "0.3"
 

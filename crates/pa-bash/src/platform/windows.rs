@@ -5,9 +5,7 @@
 //! foreground-status channel: the command runs as written and its result is
 //! final at shell exit (the drain after it is best-effort).
 
-use std::collections::BTreeMap;
 use std::io::PipeReader;
-use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -133,30 +131,16 @@ impl Control {
     }
 }
 
-/// Spawn `argv` inside a fresh kill-on-close job.
+/// Spawn `command` (program, arguments, cwd and environment set) inside a
+/// fresh kill-on-close job.
 ///
 /// # Errors
 ///
 /// The OS error of the pipe, the spawn, or the job assignment (nothing runs
 /// outside a job: a failed assignment terminates the suspended child).
-pub(crate) fn spawn(
-    argv: &[String],
-    cwd: &Path,
-    env: &BTreeMap<String, String>,
-) -> std::io::Result<Spawned> {
+pub(crate) fn spawn(mut command: Command) -> std::io::Result<Spawned> {
     let (output, output_write) = std::io::pipe()?;
-    let Some((program, arguments)) = argv.split_first() else {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "empty argv",
-        ));
-    };
-    let mut command = Command::new(program);
     command
-        .args(arguments)
-        .current_dir(cwd)
-        .env_clear()
-        .envs(env)
         .env("NoDefaultCurrentDirectoryInExePath", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::from(output_write.try_clone()?))

@@ -53,7 +53,9 @@ pub(crate) fn run_probe(
     let Ok(shell) = resolve_shell(context) else {
         return ProbeOutcome::Unavailable;
     };
-    let mut command = Command::new(shell);
+    let Ok(mut command) = context.sandbox().command(shell) else {
+        return ProbeOutcome::Unavailable;
+    };
     command
         .arg("-c")
         .arg(script)

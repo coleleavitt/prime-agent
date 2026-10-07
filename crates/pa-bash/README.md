@@ -32,6 +32,10 @@ through the `prime-agent --prime-agent-bash-host` sidecar (`serve_stdio`).
   the child is suspended; no status channel (the result is final at exit).
 - `service`: the JSON request surface (`handle`, `REQUEST_TYPES`) shared by
   both transports; `sidecar`: the stdio transport.
+- `sandbox`: `JobSandbox`, the OS sandbox (`pa-os-sandbox`) every process
+  the crate starts runs under: the kernel's own prepared restriction (pa-core
+  sets it at each kernel start), none, or unavailable (nothing starts). The
+  sidecar takes it from the `sandbox` setting (`docs/os-sandbox.md`).
 - `shell`: the kernel's shell choice and child environment (non-interactive
   settings, guard bypass scrub, `BASH_ENV`/`ENV`/`BASH_FUNC_*` dropped).
 
@@ -47,9 +51,10 @@ through the `prime-agent --prime-agent-bash-host` sidecar (`serve_stdio`).
 
 - `check(&Script, &Allowances, &GuardContext) -> Result<(), Refusal>`;
   `Script`, `Allowances`, `GuardContext`, `GuardKind`, `Refusal`
-- `JobTable` (`new`, `kill_all`, `activity`, `inventory`), `SpawnRequest`,
+- `JobTable` (`new`, `set_sandbox`, `sandbox`, `kill_all`, `activity`,
+  `inventory`), `JobSandbox`, `SpawnRequest`,
   `SpawnError`, `ActivityError`
-- `handle(&JobTable, &Value) -> Value`, `REQUEST_TYPES`, `serve_stdio()`
+- `handle(&JobTable, &Value) -> Value`, `REQUEST_TYPES`, `serve_stdio(JobSandbox)`
 - `child_env`, `resolve_shell`, `ShellError`, `is_truthy_env_value`
 
 ## Dependencies
@@ -57,7 +62,8 @@ through the `prime-agent --prime-agent-bash-host` sidecar (`serve_stdio`).
 `serde`, `serde_json`, `thiserror`, `getrandom` (the fence token and job ids),
 `process-wrap` (safe `setsid` in the child and Windows job objects, which std
 cannot express without `unsafe`), `rustix` on POSIX (group signals, `poll`,
-`FIONREAD`). No workspace crate.
+`FIONREAD`), and `pa-os-sandbox` (the confinement the kernel's commands run
+under; a leaf crate, so pa-bash stays below pa-core).
 
 ## Parity
 

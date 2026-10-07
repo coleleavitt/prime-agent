@@ -21,6 +21,7 @@ use serde_json::{json, Map, Value};
 use crate::context::GuardContext;
 use crate::pipeline::{check, Allowances};
 use crate::platform::{self, Signal};
+use crate::sandbox::JobSandbox;
 use crate::script::Script;
 use crate::shell::{child_env, resolve_shell, ShellError};
 use crate::verdict::Refusal;
@@ -64,6 +65,10 @@ pub enum SpawnError {
     /// The OS refused the pipe, socket or spawn.
     #[error(transparent)]
     Os(std::io::Error),
+    /// The session's OS sandbox is on but cannot be enforced here: nothing
+    /// may start unconfined.
+    #[error("bash(): {0}")]
+    Sandbox(String),
     /// The journal is configured with a bad owner pid; the spawned process
     /// was killed before it ran anything.
     #[error(
@@ -108,6 +113,8 @@ struct Jobs {
 #[derive(Debug, Default)]
 pub struct JobTable {
     jobs: Mutex<Jobs>,
+    /// What every process the table starts runs under.
+    sandbox: Mutex<JobSandbox>,
 }
 
 impl JobTable {
@@ -124,6 +131,24 @@ impl JobTable {
             });
         });
         Self::default()
+    }
+
+    /// Confine every later command, check probe and helper to `sandbox`
+    /// (the host sets the kernel's own sandbox at each kernel start).
+    pub fn set_sandbox(&self, sandbox: JobSandbox) {
+        *self
+            .sandbox
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = sandbox;
+    }
+
+    /// The sandbox commands start under now.
+    #[must_use]
+    pub fn sandbox(&self) -> JobSandbox {
+        self.sandbox
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     fn lock(&self) -> MutexGuard<'_, Jobs> {
@@ -166,9 +191,23 @@ impl JobTable {
         argv.push(shell.to_string_lossy().into_owned());
         argv.push("-c".to_string());
         argv.push(script);
-        let env = child_env(context);
+        let (program, arguments) = argv.split_first().ok_or_else(|| {
+            SpawnError::Os(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "empty argv",
+            ))
+        })?;
+        let mut command = context
+            .sandbox()
+            .command(program)
+            .map_err(SpawnError::Sandbox)?;
+        command
+            .args(arguments)
+            .current_dir(context.cwd())
+            .env_clear()
+            .envs(child_env(context));
         let journal = journal::Journal::from_env(context.env(), request.kernel_pid);
-        let spawned = platform::spawn(&argv, context.cwd(), &env).map_err(SpawnError::Os)?;
+        let spawned = platform::spawn(command).map_err(SpawnError::Os)?;
         let Ok(journal) = journal else {
             // Fail closed: a configured journal that cannot enroll the pid must
             // not let the command run (the host reaper would never see it).

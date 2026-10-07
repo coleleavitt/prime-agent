@@ -12,12 +12,15 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use crate::runner::JobTable;
+use crate::sandbox::JobSandbox;
 use crate::service::handle;
 
-/// Serve requests from stdin until it closes. Returns the process exit code.
+/// Serve requests from stdin until it closes, starting every process under
+/// `sandbox`. Returns the process exit code.
 #[must_use]
-pub fn serve_stdio() -> i32 {
+pub fn serve_stdio(sandbox: JobSandbox) -> i32 {
     let table = Arc::new(JobTable::new());
+    table.set_sandbox(sandbox);
     let out = Arc::new(Mutex::new(std::io::stdout()));
     let stdin = std::io::stdin();
     for line in stdin.lock().lines() {

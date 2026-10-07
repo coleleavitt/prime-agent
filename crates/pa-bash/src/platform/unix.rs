@@ -3,11 +3,9 @@
 //! socket pair as stdin (the status channel the fence script remaps), and
 //! writes stdout and stderr into one pipe.
 
-use std::collections::BTreeMap;
 use std::io::{PipeReader, Read, Write};
 use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::net::UnixStream;
-use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -148,31 +146,17 @@ fn parse_status(line: &[u8]) -> Option<i32> {
     std::str::from_utf8(line).ok()?.trim().parse().ok()
 }
 
-/// Spawn `argv` contained in its own session, gated on the status channel.
+/// Spawn `command` (program, arguments, cwd and environment set) contained
+/// in its own session, gated on the status channel.
 ///
 /// # Errors
 ///
 /// The OS error of the pipe, socket or spawn.
-pub(crate) fn spawn(
-    argv: &[String],
-    cwd: &Path,
-    env: &BTreeMap<String, String>,
-) -> std::io::Result<Spawned> {
+pub(crate) fn spawn(mut command: Command) -> std::io::Result<Spawned> {
     let (parent, child_end) = UnixStream::pair()?;
     let (wake_read, wake_write) = std::io::pipe()?;
     let (output, output_write) = std::io::pipe()?;
-    let Some((program, arguments)) = argv.split_first() else {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "empty argv",
-        ));
-    };
-    let mut command = Command::new(program);
     command
-        .args(arguments)
-        .current_dir(cwd)
-        .env_clear()
-        .envs(env)
         .stdin(Stdio::from(OwnedFd::from(child_end)))
         .stdout(Stdio::from(output_write.try_clone()?))
         .stderr(Stdio::from(output_write));

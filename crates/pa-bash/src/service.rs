@@ -52,7 +52,7 @@ pub fn handle(table: &JobTable, request: &Value) -> Value {
         .and_then(Value::as_str)
         .unwrap_or_default();
     match kind {
-        "bash.check" => checked(request).map_or_else(|reply| reply, |_| ok(json!({}))),
+        "bash.check" => checked(table, request).map_or_else(|reply| reply, |_| ok(json!({}))),
         "bash.isDestructiveGitDiscard" => {
             let command = request
                 .get("command")
@@ -60,14 +60,14 @@ pub fn handle(table: &JobTable, request: &Value) -> Value {
                 .unwrap_or_default();
             ok(json!({"discard": crate::guards::is_destructive_git_discard(command)}))
         }
-        "bash.shell" => match parse(request) {
+        "bash.shell" => match parse(table, request) {
             Ok(parsed) => match resolve_shell(&parsed.context) {
                 Ok(shell) => ok(json!({"shell": shell.to_string_lossy()})),
                 Err(error) => shell_error(&error),
             },
             Err(reply) => reply,
         },
-        "bash.childEnv" => match parse(request) {
+        "bash.childEnv" => match parse(table, request) {
             Ok(parsed) => ok(json!({"env": child_env(&parsed.context)})),
             Err(reply) => reply,
         },
@@ -213,7 +213,7 @@ fn guard_list(request: &Value, key: &str) -> Vec<GuardKind> {
         .collect()
 }
 
-fn parse(request: &Value) -> Result<Parsed, Value> {
+fn parse(table: &JobTable, request: &Value) -> Result<Parsed, Value> {
     let text = |key: &str| request.get(key).and_then(Value::as_str).map(str::to_string);
     let script = text("script").unwrap_or_default();
     let command = text("command").unwrap_or_else(|| script.clone());
@@ -230,7 +230,9 @@ fn parse(request: &Value) -> Result<Parsed, Value> {
                 .map(|value| (name.clone(), value.to_string()))
         })
         .collect();
-    let mut context = GuardContext::new(cwd, env).with_traceparent(text("traceparent"));
+    let mut context = GuardContext::new(cwd, env)
+        .with_traceparent(text("traceparent"))
+        .with_sandbox(table.sandbox());
     for guard in guard_list(request, "launchBypass") {
         context = context.with_launch_bypass(guard);
     }
@@ -246,8 +248,8 @@ fn parse(request: &Value) -> Result<Parsed, Value> {
     })
 }
 
-fn checked(request: &Value) -> Result<Parsed, Value> {
-    let parsed = parse(request)?;
+fn checked(table: &JobTable, request: &Value) -> Result<Parsed, Value> {
+    let parsed = parse(table, request)?;
     let script = Script {
         command: &parsed.command,
         script: &parsed.script,
@@ -258,7 +260,7 @@ fn checked(request: &Value) -> Result<Parsed, Value> {
 }
 
 fn spawn(table: &JobTable, request: &Value) -> Value {
-    let parsed = match parse(request) {
+    let parsed = match parse(table, request) {
         Ok(parsed) => parsed,
         Err(reply) => return reply,
     };
@@ -310,6 +312,8 @@ fn spawn(table: &JobTable, request: &Value) -> Value {
             "message": error.to_string(),
             "errno": error.raw_os_error(),
         }),
-        Err(error @ SpawnError::Enrollment) => error_reply("RuntimeError", &error.to_string()),
+        Err(error @ (SpawnError::Enrollment | SpawnError::Sandbox(_))) => {
+            error_reply("RuntimeError", &error.to_string())
+        }
     }
 }

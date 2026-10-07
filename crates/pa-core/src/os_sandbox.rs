@@ -172,6 +172,21 @@ impl SessionSandbox {
         workspace: &Path,
         scratch: Vec<PathBuf>,
     ) -> Result<std::process::Command, SandboxError> {
+        Ok(self.prepare(workspace, scratch)?.command(program))
+    }
+
+    /// This sandbox prepared for `workspace` and `scratch`, for any number of
+    /// spawns: the kernel and the `bash()` commands the host runs for it share
+    /// one restriction.
+    ///
+    /// # Errors
+    ///
+    /// The sandbox is unavailable on this machine, or its rules cannot be built.
+    pub fn prepare(
+        &self,
+        workspace: &Path,
+        scratch: Vec<PathBuf>,
+    ) -> Result<pa_os_sandbox::PreparedSandbox, SandboxError> {
         if let Err(error) = &self.support {
             return Err(error.clone());
         }
@@ -179,8 +194,7 @@ impl SessionSandbox {
             workspace: workspace.to_path_buf(),
             scratch,
         };
-        let prepared = pa_os_sandbox::prepare(&self.policy, &paths)?;
-        Ok(prepared.command(program))
+        pa_os_sandbox::prepare(&self.policy, &paths)
     }
 }
 

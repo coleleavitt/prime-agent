@@ -9,6 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use crate::sandbox::JobSandbox;
 use crate::verdict::GuardKind;
 
 /// Where and with what environment a command is checked (and run).
@@ -18,6 +19,7 @@ pub struct GuardContext {
     env: BTreeMap<String, String>,
     launch_bypass: BTreeSet<GuardKind>,
     traceparent: Option<String>,
+    sandbox: JobSandbox,
 }
 
 impl GuardContext {
@@ -30,6 +32,7 @@ impl GuardContext {
             env,
             launch_bypass: BTreeSet::new(),
             traceparent: None,
+            sandbox: JobSandbox::Unconfined,
         }
     }
 
@@ -47,6 +50,19 @@ impl GuardContext {
     pub fn with_traceparent(mut self, traceparent: Option<String>) -> Self {
         self.traceparent = traceparent;
         self
+    }
+
+    /// Every process started for this check or command (the command, the
+    /// guards' probes) runs under `sandbox`: the kernel's own.
+    #[must_use]
+    pub fn with_sandbox(mut self, sandbox: JobSandbox) -> Self {
+        self.sandbox = sandbox;
+        self
+    }
+
+    #[must_use]
+    pub fn sandbox(&self) -> &JobSandbox {
+        &self.sandbox
     }
 
     /// The kernel's working directory.

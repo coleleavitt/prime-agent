@@ -268,41 +268,55 @@ impl Inner {
         // every `bash()`, `subprocess` and cell child inherits the policy.
         // Its own scratch stays writable in every mode: the temp directory,
         // the session state dirs, and the orphan journal `bash()` enrolls in.
-        let command = match &self.options.sandbox {
-            Some(kernel_sandbox) => {
-                let workspace = cwd
-                    .clone()
-                    .or_else(|| std::env::current_dir().ok())
-                    .unwrap_or_default();
-                let mut scratch = vec![crate::os_sandbox::temp_dir_for(
-                    env.get("TMPDIR").map(String::as_str),
-                )];
-                // A state dir the kernel would create on first use must exist now: the
-                // sandbox only grants directories that exist when it is built.
-                for dir in &kernel_sandbox.state_dirs {
-                    let _ = std::fs::create_dir_all(dir);
-                }
-                scratch.extend(kernel_sandbox.state_dirs.iter().cloned());
-                if let Some(journal) = env.get(orphan_journal::ORPHAN_PROCESS_JOURNAL_ENV) {
-                    scratch.extend(
-                        std::path::Path::new(journal)
-                            .parent()
-                            .map(std::path::Path::to_path_buf),
-                    );
-                }
-                tracing::info!(
-                    target: "pa_core::kernel",
-                    sandbox_mode = kernel_sandbox.sandbox.mode().wire_name(),
-                    sandbox_status = %kernel_sandbox.sandbox.status_label(),
-                    "kernel spawns under the OS sandbox"
-                );
-                kernel_sandbox
-                    .sandbox
-                    .command(&python, &workspace, scratch)
-                    .map(tokio::process::Command::from)
-                    .map_err(|error| error.to_string())
+        let command = if let Some(kernel_sandbox) = &self.options.sandbox {
+            let workspace = cwd
+                .clone()
+                .or_else(|| std::env::current_dir().ok())
+                .unwrap_or_default();
+            let mut scratch = vec![crate::os_sandbox::temp_dir_for(
+                env.get("TMPDIR").map(String::as_str),
+            )];
+            // A state dir the kernel would create on first use must exist now: the
+            // sandbox only grants directories that exist when it is built.
+            for dir in &kernel_sandbox.state_dirs {
+                let _ = std::fs::create_dir_all(dir);
             }
-            None => Ok(tokio::process::Command::new(&python)),
+            scratch.extend(kernel_sandbox.state_dirs.iter().cloned());
+            if let Some(journal) = env.get(orphan_journal::ORPHAN_PROCESS_JOURNAL_ENV) {
+                scratch.extend(
+                    std::path::Path::new(journal)
+                        .parent()
+                        .map(std::path::Path::to_path_buf),
+                );
+            }
+            tracing::info!(
+                target: "pa_core::kernel",
+                sandbox_mode = kernel_sandbox.sandbox.mode().wire_name(),
+                sandbox_status = %kernel_sandbox.sandbox.status_label(),
+                "kernel spawns under the OS sandbox"
+            );
+            // One restriction for the kernel and for the `bash()` commands
+            // the host spawns on its behalf: they no longer inherit it from
+            // the kernel process, so the job table applies it to each.
+            kernel_sandbox
+                .sandbox
+                .prepare(&workspace, scratch)
+                .map(|prepared| {
+                    let prepared = Arc::new(prepared);
+                    self.bash_jobs
+                        .set_sandbox(pa_bash::JobSandbox::Confined(Arc::clone(&prepared)));
+                    tokio::process::Command::from(prepared.command(&python))
+                })
+                .map_err(|error| {
+                    // Fail closed for jobs too: no kernel starts, and no
+                    // command could run unconfined if one asked.
+                    self.bash_jobs
+                        .set_sandbox(pa_bash::JobSandbox::Unavailable(error.to_string()));
+                    error.to_string()
+                })
+        } else {
+            self.bash_jobs.set_sandbox(pa_bash::JobSandbox::Unconfined);
+            Ok(tokio::process::Command::new(&python))
         };
         let spawned = match command {
             Ok(mut command) => {

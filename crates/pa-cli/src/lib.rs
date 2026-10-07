@@ -97,6 +97,28 @@ pub fn main_with_runtime(args: &[String], runtime: &dyn mode::Runtime) -> i32 {
     }
 }
 
+/// The sidecar's sandbox: the `sandbox` setting resolved for its working
+/// directory exactly as a session there resolves it (global choice, project
+/// tightening), prepared with that directory as the workspace and the temp
+/// directory as scratch. On but unenforceable here refuses every command. A
+/// sidecar started inside a confined process also inherits that confinement.
+fn bash_host_sandbox() -> pa_bash::JobSandbox {
+    let Ok(cwd) = std::env::current_dir() else {
+        return pa_bash::JobSandbox::Unconfined;
+    };
+    let settings = pa_core::settings::SettingsManager::create(&cwd, crate::config::get_agent_dir());
+    let Some(sandbox) = pa_core::os_sandbox::SessionSandbox::resolve(&settings, None, &cwd) else {
+        return pa_bash::JobSandbox::Unconfined;
+    };
+    let scratch = vec![pa_core::os_sandbox::temp_dir_for(
+        std::env::var("TMPDIR").ok().as_deref(),
+    )];
+    match sandbox.prepare(&cwd, scratch) {
+        Ok(prepared) => pa_bash::JobSandbox::Confined(std::sync::Arc::new(prepared)),
+        Err(error) => pa_bash::JobSandbox::Unavailable(error.to_string()),
+    }
+}
+
 fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String> {
     use std::io::IsTerminal;
 
@@ -130,9 +152,10 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
     }
 
     // A kernel runtime outside a Prime Agent host (tests, scripts) runs its
-    // bash() commands through this sidecar over stdin/stdout.
+    // bash() commands through this sidecar over stdin/stdout, under the OS
+    // sandbox a session in the same directory would get.
     if args.len() == 1 && args[0] == "--prime-agent-bash-host" {
-        return Ok(pa_bash::serve_stdio());
+        return Ok(pa_bash::serve_stdio(bash_host_sandbox()));
     }
 
     // Public command routing: help requests, removed commands, management

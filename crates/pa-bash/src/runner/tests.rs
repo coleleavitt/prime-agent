@@ -129,12 +129,13 @@ fn a_closed_gate_never_runs_the_command() {
     let marker = dir.path().join("ran");
     let script = super::fence::status_script(&format!("touch {}", marker.display()), "a", "b");
     let env = BTreeMap::from([("PATH".to_string(), "/usr/bin:/bin".to_string())]);
-    let spawned = platform::spawn(
-        &["/bin/sh".to_string(), "-c".to_string(), script],
-        dir.path(),
-        &env,
-    )
-    .expect("spawn");
+    let mut command = std::process::Command::new("/bin/sh");
+    command
+        .args(["-c", &script])
+        .current_dir(dir.path())
+        .env_clear()
+        .envs(&env);
+    let spawned = platform::spawn(command).expect("spawn");
     let platform::Spawned {
         mut process,
         channel,
@@ -178,4 +179,118 @@ fn the_journal_brackets_the_job() {
     assert!(records
         .iter()
         .all(|record| record["pid"] == job.pid && record["ownerPid"] == 4242));
+}
+
+/// The kernel's sandbox prepared for `workspace` (writable) with nothing
+/// else writable, or `None` (after saying why) where this machine cannot
+/// confine.
+#[cfg(target_os = "linux")]
+fn workspace_sandbox(workspace: &std::path::Path) -> Option<crate::sandbox::JobSandbox> {
+    use pa_os_sandbox::{Confinement, NetworkAccess, SandboxError, SandboxPaths, SandboxPolicy};
+    let policy = SandboxPolicy {
+        confinement: Confinement::WorkspaceWrite,
+        network: NetworkAccess::Denied,
+        writable_roots: Vec::new(),
+    };
+    let paths = SandboxPaths {
+        workspace: workspace.to_path_buf(),
+        scratch: Vec::new(),
+    };
+    match pa_os_sandbox::prepare(&policy, &paths) {
+        Ok(prepared) => Some(crate::sandbox::JobSandbox::Confined(Arc::new(prepared))),
+        Err(SandboxError::Unsupported { reason }) => {
+            eprintln!("skipping the confined-spawn test: {reason}");
+            None
+        }
+        Err(error) => panic!("sandbox setup failed: {error}"),
+    }
+}
+
+/// The host spawns `bash()` commands (and the guards' probes) itself, so it
+/// applies the kernel's sandbox to each: a confined command writes its
+/// workspace and nothing outside it, and so does a probe.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_confined_spawn_writes_only_inside_its_roots() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().canonicalize().expect("root");
+    let workspace = root.join("workspace");
+    let outside = root.join("outside");
+    std::fs::create_dir(&workspace).expect("workspace");
+    std::fs::create_dir(&outside).expect("outside");
+    let Some(sandbox) = workspace_sandbox(&workspace) else {
+        return;
+    };
+    let table = JobTable::new();
+    table.set_sandbox(sandbox.clone());
+    let env = BTreeMap::from([("PATH".to_string(), "/usr/bin:/bin".to_string())]);
+    let context = GuardContext::new(&workspace, env).with_sandbox(sandbox);
+    let command = format!(
+        "printf in > '{}'; printf out > '{}'",
+        workspace.join("job.txt").display(),
+        outside.join("job.txt").display()
+    );
+    let job = table
+        .start_unchecked(&SpawnRequest {
+            script: Script::bare(&command),
+            allow: Allowances::none(),
+            context: context.clone(),
+            kernel_pid: std::process::id(),
+            sandbox_prefix: Vec::new(),
+        })
+        .expect("spawn");
+    let (exit_code, output) = finished(&events(&job));
+    let probe = crate::probe::run_probe(
+        &context,
+        &format!("printf out > '{}'", outside.join("probe.txt").display()),
+        &workspace,
+        crate::probe::ProbeLimits {
+            timeout: Duration::from_secs(10),
+            kill_grace: Duration::from_secs(1),
+            output_cap: None,
+        },
+    );
+    assert_eq!(
+        (
+            exit_code,
+            output.contains("Permission denied"),
+            workspace.join("job.txt").exists(),
+            outside.join("job.txt").exists(),
+            matches!(probe, crate::probe::ProbeOutcome::Finished { status: Some(code), .. } if code != 0),
+            outside.join("probe.txt").exists(),
+        ),
+        (1, true, true, false, true, false)
+    );
+}
+
+/// A sandbox the setting asks for but this machine cannot enforce starts
+/// nothing, probes included.
+#[test]
+fn an_unavailable_sandbox_starts_nothing() {
+    let table = JobTable::new();
+    let sandbox =
+        crate::sandbox::JobSandbox::Unavailable("OS sandbox unavailable: test".to_string());
+    table.set_sandbox(sandbox.clone());
+    let started = table.start_unchecked(&SpawnRequest {
+        script: Script::bare("true"),
+        allow: Allowances::none(),
+        context: context(&[]).with_sandbox(sandbox.clone()),
+        kernel_pid: std::process::id(),
+        sandbox_prefix: Vec::new(),
+    });
+    assert_eq!(
+        started.err().map(|error| error.to_string()),
+        Some("bash(): OS sandbox unavailable: test".to_string())
+    );
+    let probe = crate::probe::run_probe(
+        &context(&[]).with_sandbox(sandbox),
+        "true",
+        std::path::Path::new("/"),
+        crate::probe::ProbeLimits {
+            timeout: Duration::from_secs(10),
+            kill_grace: Duration::from_secs(1),
+            output_cap: None,
+        },
+    );
+    assert_eq!(probe, crate::probe::ProbeOutcome::Unavailable);
 }

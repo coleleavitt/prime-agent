@@ -77,6 +77,23 @@ When the sandbox is on but cannot be enforced on this machine, the tray shows
 `(unavailable)`, the prompt line says so, and the Python kernel refuses to start: nothing runs
 unconfined while the setting asks for confinement. Use `--sandbox off` or set `mode` to `off`.
 
+## `bash()` commands
+
+The host runs the kernel's `bash()` commands on its behalf (they are not children of the kernel
+process), so it starts each one under the kernel's own prepared sandbox: the same mode, network
+rule and writable roots, with the kernel's working directory as the workspace. The guards'
+read-only probes (`git status`, the upstream of the current branch) run under it too. A command
+the sandbox refuses fails exactly as it did when it inherited the kernel's confinement.
+
+Outside a Prime Agent session, `rlm.bash` runs its commands through the
+`prime-agent --prime-agent-bash-host` sidecar. The sidecar resolves the `sandbox` setting for its
+working directory the way a session there would (the global choice, a project file only
+tightening it) and confines every command and probe to it, with that directory as the workspace
+and the temp directory as scratch; `--sandbox` is a session flag and does not apply. A sidecar
+whose setting asks for a sandbox this machine cannot enforce refuses every command. Started from
+inside a confined process (a script a sandboxed kernel runs), the sidecar also inherits that
+process's confinement.
+
 ## MCP servers
 
 The Prime Agent host starts a stdio MCP server on the kernel's behalf (`rlm.mcp`). It runs
