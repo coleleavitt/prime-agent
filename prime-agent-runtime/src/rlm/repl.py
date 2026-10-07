@@ -1705,13 +1705,7 @@ async def _serve(queue: asyncio.Queue[dict[str, Any]], ns: dict[str, Any]) -> No
                 # Host stdin closed without a shutdown request: the host
                 # process is gone, so this is the last chance to persist.
                 _flush_final_snapshot(ns)
-            # MCP children must close before the loop dies; close() is internally bounded under the host's 5s deadline.
-            mcp_mod = sys.modules.get("rlm.mcp")
-            if mcp_mod is not None:
-                try:
-                    await mcp_mod.close()
-                except BaseException as exc:
-                    print(f"MCP shutdown failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+            # MCP connections are host-owned and outlive this kernel: nothing to close here.
             # Kill live bash children now; atexit would wait on parked executor threads.
             _kill_live_handles()
             if isinstance(rid, str):
