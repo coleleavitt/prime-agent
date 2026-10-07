@@ -149,6 +149,15 @@ class ModuleCallTests(ClientTestCase):
             await computer_use.list_apps()
         self.assertEqual(caught.exception.code, "TRANSPORT_ERROR")
 
+    async def test_a_host_that_does_not_serve_computer_use_names_the_skew(self) -> None:
+        self.host.raises = RuntimeError('host request type "computer_use.get_state" is not available in this session')
+        with self.assertRaises(ComputerUseError) as caught:
+            await computer_use.get_state()
+        self.assertEqual(caught.exception.code, "TRANSPORT_ERROR")
+        self.assertIn("does not serve computer_use requests", caught.exception.message)
+        self.assertIn("host/runtime version skew", caught.exception.message)
+        self.assertIn("Reinstall prime-agent", caught.exception.message)
+
     async def test_run_summarizes_the_state(self) -> None:
         self.host.replies.append(
             {"ok": {"apps": [{"id": "a", "running": True}], "permissions": {"accessibility": "ok"}, "allowlist": {"allowed": ["a"], "blocked": []}, "platform": "linux"}}

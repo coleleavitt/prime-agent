@@ -302,11 +302,16 @@ the host exports the binary to the kernel as `PRIME_AGENT_EXECUTABLE`.
 
 `rlm.bash` is a client of the host's command checker and job runner (the
 `pa-bash` crate). A host that serves these requests exports
-`PRIME_AGENT_HOST_BASH=1` to the kernel (read once at import); otherwise, and
-outside a kernel, the client sends the same requests to a
-`prime-agent --prime-agent-bash-host` sidecar it starts on first use (one JSON
-line per request, `{"id": str, "data": <request>}`, and per reply; the sidecar
-kills its jobs when its stdin closes). Each request is a blocking host request
+`PRIME_AGENT_HOST_BASH=1` to the kernel (read once at import); a host reply
+that a `bash.*` type "is not available in this session" fails the call with a
+`BashHostUnavailable` naming the host/runtime version skew (reinstall
+prime-agent). A Prime Agent host too old to serve `bash()` speaks protocol 4
+and is refused at the handshake. Otherwise (another REPL host, or outside a
+kernel) the client sends the same requests to a
+`prime-agent --prime-agent-bash-host` sidecar it starts on first use (one JSON line per request,
+`{"id": str, "data": <request>}`, and per reply; the sidecar kills its jobs
+when its stdin closes); a sidecar that exits at once (a binary without the
+flag) fails the call with the same skew hint. Each request is a blocking host request
 whose `result` carries `status`: `ok`, `refused` (`error`: the refusal class,
 `message`, `warning`: the one-time late-bypass stderr text) or `error`
 (`error`: `ValueError`/`RuntimeError`/`OSError`/`KeyError`/`TypeError`,

@@ -279,6 +279,21 @@ class HostRequestUnavailable(RuntimeError):
     """The host rejected a request before provider dispatch (missing capability)."""
 
 
+# The host's error for a request type it registers no handler for.
+UNSERVED_HOST_REQUEST = "is not available in this session"
+
+
+def host_skew_message(surface: str) -> str:
+    """The error for a kernel whose host does not serve `surface` that every
+    current host serves: the host binary is older than this runtime."""
+    return (
+        f"this kernel's Prime Agent host does not serve {surface}: the prime-agent binary is older "
+        "than this prime-agent-runtime (host/runtime version skew). Reinstall prime-agent so the "
+        "binary and its runtime match (`cargo install --path crates/pa-cli` from the checkout, or "
+        "rerun the installer)"
+    )
+
+
 class HostConnectionLost(RuntimeError):
     """The authenticated host channel closed after a request may have dispatched."""
 

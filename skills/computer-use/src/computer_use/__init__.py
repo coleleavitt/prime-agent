@@ -39,7 +39,20 @@ _INDEX_LIMIT = 2**63 - 1
 _bound_apps: dict[int, App] = {}
 
 
+# The host's error for a request type it registers no handler for: every
+# current host serves computer_use.*, so the host predates this client.
+_UNSERVED_HOST_REQUEST = "is not available in this session"
+
+
 def _no_host(error: BaseException | None = None) -> ComputerUseError:
+    if error is not None and _UNSERVED_HOST_REQUEST in str(error):
+        return ComputerUseError(
+            "TRANSPORT_ERROR",
+            "computer use backend unavailable: this kernel's Prime Agent host does not serve "
+            "computer_use requests: the prime-agent binary is older than this computer-use skill "
+            "(host/runtime version skew). Reinstall prime-agent so the binary and its bundled "
+            "skills match (`cargo install --path crates/pa-cli` from the checkout, or rerun the installer)",
+        )
     reason = f": {str(error)[:200]}" if error is not None else ""
     return ComputerUseError(
         "TRANSPORT_ERROR",

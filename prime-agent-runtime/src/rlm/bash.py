@@ -188,6 +188,16 @@ class BashHostUnavailable(RuntimeError):
     """The bash host (the kernel's Prime Agent host, or the sidecar) cannot answer."""
 
 
+# Why a sidecar can vanish at once: a binary that predates the flag treats
+# it as an ordinary run and exits.
+_SIDECAR_SKEW_HINT = (
+    f"a prime-agent binary without {_SIDECAR_FLAG} is older than this prime-agent-runtime "
+    "(host/runtime version skew). Reinstall prime-agent so the binary and its runtime match "
+    "(`cargo install --path crates/pa-cli` from the checkout, or rerun the installer), or set "
+    "PRIME_AGENT_EXECUTABLE to a current prime-agent binary"
+)
+
+
 def _raise_for(reply: dict[str, Any]) -> dict[str, Any]:
     """`reply` when it succeeded, else the exception it names."""
     status = reply.get("status")
@@ -285,13 +295,18 @@ class _Sidecar:
         self._write_lock = threading.Lock()
         self._proc: subprocess.Popen[bytes] | None = None
         self._pending: dict[str, _Slot] = {}
+        self._executable = ""
+
+    def _gone(self, what: str) -> BashHostUnavailable:
+        return BashHostUnavailable(f"the bash host ({self._executable}) {what}; {_SIDECAR_SKEW_HINT}")
 
     def ensure_started(self) -> None:
         with self._lock:
             if self._proc is not None and self._proc.poll() is None:
                 return
+            self._executable = _host_executable()
             proc = subprocess.Popen(
-                [_host_executable(), _SIDECAR_FLAG],
+                [self._executable, _SIDECAR_FLAG],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
@@ -317,7 +332,7 @@ class _Sidecar:
             stranded = [slot for slot in self._pending.values() if slot.proc is proc]
             self._pending = {key: slot for key, slot in self._pending.items() if slot.proc is not proc}
         for slot in stranded:
-            slot.settle(None, BashHostUnavailable("the bash host exited before answering"))
+            slot.settle(None, self._gone("exited before answering"))
 
     def _send(self, data: dict[str, Any], slot: _Slot) -> None:
         self.ensure_started()
@@ -336,7 +351,9 @@ class _Sidecar:
         except OSError as err:
             with self._lock:
                 self._pending.pop(rid, None)
-            raise BashHostUnavailable(f"the bash host is not reachable: {err}") from err
+            # A host that exited at once is the same failure as one that
+            # exited before answering, whichever the write noticed first.
+            raise self._gone("exited before answering") from err
 
     def request(self, data: dict[str, Any]) -> dict[str, Any]:
         slot = _Slot()
@@ -366,7 +383,12 @@ def _host_mode() -> bool:
 
 def _unwrap_host(reply: dict[str, Any]) -> dict[str, Any]:
     if reply.get("status") != "ok":
-        raise BashHostUnavailable(str(reply.get("error") or "bash host request failed"))
+        from . import repl
+
+        error = str(reply.get("error") or "bash host request failed")
+        if repl.UNSERVED_HOST_REQUEST in error:
+            raise BashHostUnavailable(f"{error}: {repl.host_skew_message('this bash() request')}")
+        raise BashHostUnavailable(error)
     result = reply.get("result")
     return result if isinstance(result, dict) else {}
 

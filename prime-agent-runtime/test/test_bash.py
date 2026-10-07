@@ -568,5 +568,53 @@ async def _poll_journal(path: str, count: int, timeout: float = 2.0) -> list[dic
     return records
 
 
+class BashHostSkewTest(unittest.TestCase):
+    """A host or sidecar that cannot serve bash() fails with the
+    host/runtime version skew named and the fix."""
+
+    def test_a_repl_host_that_does_not_announce_bash_keeps_the_sidecar(self):
+        # A REPL host that is not a Prime Agent session (this suite's
+        # harness) does not serve bash.*: the sidecar serves it. A Prime
+        # Agent host too old to serve bash() speaks protocol 4 and is
+        # refused at the handshake before any cell runs.
+        from rlm import repl
+
+        sidecar_reply = {"status": "ok", "activities": []}
+        with (
+            mock.patch.object(bash_module, "_HOST_SERVES_BASH", False),
+            mock.patch.object(repl, "is_active", return_value=True),
+            mock.patch.object(bash_module._sidecar, "request", return_value=sidecar_reply) as request,
+        ):
+            self.assertEqual(bash_module._request({"type": "bash.list"}), sidecar_reply)
+        request.assert_called_once_with({"type": "bash.list"})
+
+    def test_a_host_missing_a_bash_request_type_names_the_skew(self):
+        from rlm import repl
+
+        unserved = {"status": "error", "error": 'host request type "bash.list" is not available in this session'}
+        with (
+            mock.patch.object(bash_module, "_HOST_SERVES_BASH", True),
+            mock.patch.object(repl, "is_active", return_value=True),
+            mock.patch.object(repl, "host_request_blocking", return_value=unserved),
+        ):
+            with self.assertRaises(bash_module.BashHostUnavailable) as caught:
+                bash_module._request({"type": "bash.list"})
+        message = str(caught.exception)
+        self.assertIn('host request type "bash.list" is not available in this session', message)
+        self.assertIn("host/runtime version skew", message)
+
+    def test_outside_a_kernel_a_sidecar_that_exits_names_the_likely_skew(self):
+        # Genuine non-kernel use keeps the sidecar; a binary that does not
+        # know the sidecar flag exits at once, and the error says why.
+        sidecar = bash_module._Sidecar()
+        with mock.patch.dict(os.environ, {"PRIME_AGENT_EXECUTABLE": "/bin/true"}):
+            with self.assertRaises(bash_module.BashHostUnavailable) as caught:
+                sidecar.request({"type": "bash.list"})
+        message = str(caught.exception)
+        self.assertIn("the bash host (/bin/true) exited before answering", message)
+        self.assertIn("--prime-agent-bash-host", message)
+        self.assertIn("Reinstall prime-agent", message)
+
+
 if __name__ == "__main__":
     unittest.main()
