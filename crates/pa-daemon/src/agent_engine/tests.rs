@@ -316,14 +316,19 @@ pub(crate) fn assert_cancelled_end_event(
 fn run_prompts(
     script: &serde_json::Value,
     prompts: &[&str],
-) -> (std::sync::Arc<AgentSessionEngine>, Vec<EngineEvent>) {
+) -> (
+    crate::test_support::InTestDir<std::sync::Arc<AgentSessionEngine>>,
+    Vec<EngineEvent>,
+) {
     let _faux = FAUX_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let dir = tempfile::TempDir::new().unwrap();
+    // The engine outlives this helper and keeps writing under the dir (a later build creates
+    // `agent/auth.json`), so the dir goes back with it.
+    let dir = crate::test_support::TestDir::new("pa-engine-prompts-");
     let engine = AgentSessionEngine::new(AgentEngineConfig {
-        cwd: dir.path().to_path_buf(),
-        agent_dir: dir.path().join("agent"),
+        cwd: dir.to_path_buf(),
+        agent_dir: dir.join("agent"),
         provider: None,
         model: None,
         api_key: None,
@@ -359,7 +364,7 @@ fn run_prompts(
             },
         );
     }
-    (engine, events)
+    (crate::test_support::InTestDir::new(engine, dir), events)
 }
 
 /// The user rows emitted by one run (message texts in order).

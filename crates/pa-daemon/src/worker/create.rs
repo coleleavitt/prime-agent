@@ -14,6 +14,29 @@ use crate::agent_engine::CreateSessionResources;
 use crate::protocol::DaemonResponse;
 
 impl Worker {
+    /// Start one of a create's fire-and-forget tasks, keeping its abort handle. Finished handles
+    /// are pruned here, so the list stays bounded by the running work.
+    fn spawn_create_background(
+        &self,
+        work: impl std::future::Future<Output = ()> + Send + 'static,
+    ) {
+        let handle = tokio::spawn(work).abort_handle();
+        let mut running = self.create_background.lock_or_recover();
+        running.retain(|handle| !handle.is_finished());
+        running.push(handle);
+    }
+
+    /// Abort the create's fire-and-forget tasks and the context-tree refresh: a test that retires this worker (a simulated
+    /// restart) and removes its dir must not have them recreate it on their next poll. The
+    /// worker itself stays referenced by its own runner tasks, so dropping it does not stop them.
+    #[cfg(test)]
+    pub(crate) fn abort_create_background(&self) {
+        for handle in self.create_background.lock_or_recover().drain(..) {
+            handle.abort();
+        }
+        self.context_tree.abort_refreshes();
+    }
+
     pub(super) async fn handle_create(&self, payload: &Value) -> DaemonResponse {
         // One create in flight at a time: a concurrent create joins this open and
         // answers with the created summary instead of racing a second init.
@@ -620,7 +643,7 @@ impl Worker {
         // model-independent; a build failure surfaces on the first demand seam.
         if let Some(agent_engine) = &self.agent_engine {
             let engine = std::sync::Arc::clone(agent_engine);
-            tokio::spawn(async move {
+            self.spawn_create_background(async move {
                 let Ok(model) = engine.resolve_model() else {
                     return;
                 };
@@ -641,7 +664,7 @@ impl Worker {
         // effect is the on-disk cache file; failures fall back to the cached or
         // bundled catalog without touching the session.
         let agent_dir = self.config.agent_dir.clone();
-        tokio::spawn(async move {
+        self.spawn_create_background(async move {
             let auth = pa_core::auth::AuthStorage::create(&agent_dir);
             let mut registry =
                 pa_core::models::ModelRegistry::create(auth, agent_dir.join("models.json"));

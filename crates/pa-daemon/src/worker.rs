@@ -165,6 +165,10 @@ pub struct Worker {
     /// The `get_context_tree` children cache: the artifact-tree walk is a
     /// multi-second disk read, so requests serve the cached snapshot.
     pub(crate) context_tree: std::sync::Arc<crate::context_tree_cache::ContextTreeCache>,
+    /// The fire-and-forget tasks a create starts (the eager engine build, the model-catalog
+    /// refresh). They write under the agent dir (`auth.json`, `models.json`); a test that retires
+    /// a worker and removes its dir mid-test aborts them first ([`Worker::abort_create_background`]).
+    create_background: std::sync::Mutex<Vec<tokio::task::AbortHandle>>,
     exports: crate::session_export::ExportCommands,
     /// Session-scoped ACP MCP servers for engines without their own
     /// store; the real engine's manager serves the product path.
@@ -858,6 +862,7 @@ impl Worker {
             compaction,
             tree_navigation,
             context_tree: std::sync::Arc::new(crate::context_tree_cache::ContextTreeCache::new()),
+            create_background: std::sync::Mutex::new(Vec::new()),
             exports,
             acp_mcp: std::sync::Arc::new(std::sync::Mutex::new(acp_mcp)),
             user_bash,

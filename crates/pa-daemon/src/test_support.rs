@@ -40,6 +40,69 @@ impl TestDir {
     }
 }
 
+/// Removal waits for the crate's in-flight blocking work first ([`BlockingWork`]): a worker's
+/// background walk that started during the test would otherwise finish after the dir is gone
+/// and recreate it (`<dir>/agent/auth.json` outliving the test).
+#[cfg(test)]
+impl Drop for TestDir {
+    fn drop(&mut self) {
+        BlockingWork::wait_for_idle(std::time::Duration::from_secs(30));
+    }
+}
+
+/// Fire-and-forget blocking work the product spawns (`spawn_blocking`) that writes under a
+/// worker's agent dir. Tests cannot await it, and the runtime finishes a started blocking task
+/// after the test body (and its temp dirs) are gone, so the product marks each such task with
+/// [`BlockingWork::start`] (test builds only) and [`TestDir`] removal waits for none to be in
+/// flight. The count is process-wide: a sibling test's walk delays removal by its few
+/// milliseconds, never correctness.
+#[cfg(test)]
+#[must_use = "the work counts as in flight until this drops"]
+pub(crate) struct BlockingWork(());
+
+#[cfg(test)]
+static BLOCKING_WORK: (std::sync::Mutex<usize>, std::sync::Condvar) =
+    (std::sync::Mutex::new(0), std::sync::Condvar::new());
+
+#[cfg(test)]
+impl BlockingWork {
+    /// Count one piece of work in flight. Take it BEFORE `spawn_blocking` and move it into the
+    /// closure: a queued task the runtime drops unstarted releases it too.
+    pub(crate) fn start() -> Self {
+        *BLOCKING_WORK
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) += 1;
+        Self(())
+    }
+
+    /// Block until no work is in flight, or `limit` passes (a wedged walk must not hang the
+    /// suite; the leak then shows in the temp dir instead).
+    pub(crate) fn wait_for_idle(limit: std::time::Duration) {
+        let (count, idle) = &BLOCKING_WORK;
+        let guard = count
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _ = idle
+            .wait_timeout_while(guard, limit, |in_flight| *in_flight > 0)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+    }
+}
+
+#[cfg(test)]
+impl Drop for BlockingWork {
+    fn drop(&mut self) {
+        let (count, idle) = &BLOCKING_WORK;
+        let mut in_flight = count
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *in_flight -= 1;
+        if *in_flight == 0 {
+            idle.notify_all();
+        }
+    }
+}
+
 #[cfg(test)]
 impl std::ops::Deref for TestDir {
     type Target = std::path::Path;
@@ -107,5 +170,38 @@ impl<T> std::ops::Deref for InTestDir<T> {
 impl<T: AsRef<std::path::Path>> AsRef<std::path::Path> for InTestDir<T> {
     fn as_ref(&self) -> &std::path::Path {
         self.value.as_ref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BlockingWork, TestDir};
+
+    /// The leak class: a worker's background walk finished after its test, and its
+    /// `AuthStorage::create` recreated `<dir>/agent/auth.json` in the removed dir. A
+    /// [`TestDir`] removal now waits for in-flight [`BlockingWork`], so a write that lands
+    /// while the work is in flight is removed with the dir.
+    #[test]
+    fn removal_waits_for_in_flight_blocking_work() {
+        let dir = TestDir::new("pa-blocking-work-");
+        let auth = dir.join("agent").join("auth.json");
+        let work = BlockingWork::start();
+        let (dropped_tx, dropped_rx) = std::sync::mpsc::channel();
+        let dropper = std::thread::spawn(move || {
+            drop(dir);
+            dropped_tx.send(()).expect("report the removal");
+        });
+        // Removal must not finish while the work is in flight. (Without the wait it finishes
+        // at once and the write below recreates the dir, as the walk did.)
+        assert_eq!(
+            dropped_rx.recv_timeout(std::time::Duration::from_millis(200)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        );
+        std::fs::create_dir_all(auth.parent().expect("agent dir")).expect("agent dir");
+        std::fs::write(&auth, "{}").expect("late write");
+        drop(work);
+        dropped_rx.recv().expect("the removal finishes");
+        dropper.join().expect("dropper");
+        assert!(!auth.parent().expect("agent dir").exists());
     }
 }

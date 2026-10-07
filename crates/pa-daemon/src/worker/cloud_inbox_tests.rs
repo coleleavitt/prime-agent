@@ -183,6 +183,7 @@ async fn restart_restores_the_lane_and_the_inbox_key() {
     assert!(parked.success, "parked deliver failed: {parked:?}");
     let parked_receipt = parked.data.expect("receipt");
     assert_eq!(parked_receipt["deliveryStatus"], "queued");
+    first_worker.abort_create_background();
     drop(first_worker);
     // The respawn: a fresh worker over the same recovery journal (the
     // serve loop opens the journal; the test installs it the same way).
@@ -356,6 +357,7 @@ async fn detach_and_wire_release_cannot_unpause_a_failing_cloud_commit() {
     worker.work_notify.notify_one();
     tokio::task::yield_now().await;
     assert!(queue_texts(&worker.core, Lane::Steering).is_empty());
+    worker.abort_create_background();
     drop(worker);
 
     let respawned = Arc::new(Worker::new(config.clone(), None));
@@ -495,6 +497,7 @@ async fn failed_fsync_quarantines_until_restart_and_reconciles_both_disk_outcome
             1,
             "the held pause blocks the runner"
         );
+        worker.abort_create_background();
         drop(worker);
 
         if lost {
@@ -562,6 +565,8 @@ async fn failed_fsync_quarantines_until_restart_and_reconciles_both_disk_outcome
             .await;
         assert_eq!(duplicate.data.unwrap(), receipt);
         assert_eq!(queue_texts(&respawned.core, Lane::Steering).len(), 2);
-        let _ = std::fs::remove_dir_all(journal_path.parent().unwrap());
+        // The iteration's `_dir` guard removes the dir, after the worker's in-flight
+        // background walk (a direct removal here raced it, and the walk recreated the dir).
+        respawned.abort_create_background();
     }
 }

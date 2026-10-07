@@ -49,11 +49,28 @@ pub(crate) struct ContextTreeCache {
     /// snapshot is NOT a proxy for it: after a fork the in-flight walk
     /// serves the new session while the published one is still the old).
     in_flight: Mutex<Option<String>>,
+    /// The refresh tasks still running, so a test retiring its worker can abort them.
+    #[cfg(test)]
+    refresh_tasks: Mutex<Vec<tokio::task::AbortHandle>>,
 }
 
 impl ContextTreeCache {
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    /// Abort the refresh tasks still running (a test retiring its worker before it removes the
+    /// dir: a later poll would start a walk that recreates it).
+    #[cfg(test)]
+    pub(crate) fn abort_refreshes(&self) {
+        for task in self
+            .refresh_tasks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .drain(..)
+        {
+            task.abort();
+        }
     }
 
     /// Assemble the `get_context_tree` children from the cache and the fresh
@@ -190,7 +207,8 @@ impl ContextTreeCache {
             }
         }
         let cache = Arc::clone(self);
-        tokio::spawn(async move {
+        #[cfg_attr(not(test), expect(unused_variables, reason = "tracked in test builds"))]
+        let task = tokio::spawn(async move {
             // No session yet (the create path warms before the store lands): nothing to walk.
             let Some(first) = current_session_id else {
                 return;
@@ -256,7 +274,13 @@ impl ContextTreeCache {
                 let registry_dir = agent_dir.clone();
                 let walk_session_id = session_id.clone();
                 let walk_session_file = session_file.clone();
+                // The walk writes under the agent dir (the registry's `auth.json`); test temp
+                // dirs wait for it before they go.
+                #[cfg(test)]
+                let in_flight = crate::test_support::BlockingWork::start();
                 let walk = tokio::task::spawn_blocking(move || {
+                    #[cfg(test)]
+                    let _in_flight = in_flight;
                     walk_children(
                         &registry_dir,
                         &walk_session_id,
@@ -319,6 +343,15 @@ impl ContextTreeCache {
                 };
             }
         });
+        #[cfg(test)]
+        {
+            let mut tasks = self
+                .refresh_tasks
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            tasks.retain(|task| !task.is_finished());
+            tasks.push(task.abort_handle());
+        }
     }
 }
 
