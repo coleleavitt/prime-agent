@@ -593,6 +593,8 @@ async fn build_headless_engine_with(
     );
     let engine = pa_core::session_engine::engine::create_session(
         pa_core::session_engine::engine::SessionEngineConfig {
+            // `--sandbox`; without it the `sandbox` setting decides.
+            sandbox_mode: config.sandbox_mode,
             // `--plan`; without it the session restores its own mode.
             plan_mode: config.plan_mode.then_some(true),
             on_late_sent_agent_message: None,
@@ -1542,6 +1544,8 @@ async fn build_faux_engine_with(
     // path so binary-level tests can verify persistence without the network.
     let engine = pa_core::session_engine::engine::create_session(
         pa_core::session_engine::engine::SessionEngineConfig {
+            // `--sandbox`; without it the `sandbox` setting decides.
+            sandbox_mode: config.sandbox_mode,
             // `--plan`; without it the session restores its own mode.
             plan_mode: config.plan_mode.then_some(true),
             on_late_sent_agent_message: None,

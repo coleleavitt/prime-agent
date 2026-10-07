@@ -151,6 +151,7 @@ async fn started_manager(
 fn test_options() -> Option<pa_core::kernel::shared::KernelManagerOptions> {
     let python = kernel_python()?;
     Some(pa_core::kernel::shared::KernelManagerOptions {
+        sandbox: None,
         environment: pa_core::kernel::shared::KernelEnvironment::Inherit,
         plan_guard: None,
         python: Some(python),

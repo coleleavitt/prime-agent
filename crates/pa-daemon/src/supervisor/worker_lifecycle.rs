@@ -269,6 +269,8 @@ impl Supervisor {
             "noContextFiles",
             "autonomous",
             "executionMode",
+            // `--sandbox`: a respawned worker keeps the session's sandbox.
+            "sandbox",
         ] {
             if let Some(value) = config_object.and_then(|config| config.get(key)) {
                 durable_rest.insert(key.to_string(), value.clone());

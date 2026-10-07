@@ -551,6 +551,18 @@ pub struct KernelManagerOptions {
     /// The session's plan mode: armed in every started kernel before it serves
     /// a request, when on. `None` sends no plan-guard frame at all.
     pub plan_guard: Option<crate::kernel::plan_guard::KernelPlanGuard>,
+    /// The OS sandbox the kernel process (and so everything it spawns) runs
+    /// under (`sandbox` setting). `None` spawns it unconfined, as before.
+    pub sandbox: Option<KernelSandbox>,
+}
+
+/// A kernel's OS sandbox: the session's policy plus the kernel's own state
+/// directories (the session artifacts, the harness stores), which stay
+/// writable in every mode next to the temp directory.
+#[derive(Debug, Clone)]
+pub struct KernelSandbox {
+    pub sandbox: crate::os_sandbox::SessionSandbox,
+    pub state_dirs: Vec<std::path::PathBuf>,
 }
 
 /// Shutdown options: whether to flush a final namespace snapshot and drain

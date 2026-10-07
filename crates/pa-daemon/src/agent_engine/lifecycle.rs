@@ -163,6 +163,7 @@ impl AgentSessionEngine {
             image_route: std::sync::Mutex::new(None),
             own_summary: std::sync::Arc::new(std::sync::Mutex::new(None)),
             create_resources: std::sync::RwLock::default(),
+            sandbox: std::sync::RwLock::default(),
             autonomous: std::sync::Arc::new(tokio::sync::Mutex::new(
                 pa_core::autonomous::create_autonomous_runtime_state(None, None),
             )),
@@ -211,6 +212,21 @@ impl AgentSessionEngine {
 
     pub(crate) fn cwd(&self) -> std::path::PathBuf {
         self.cwd.read_or_recover().clone()
+    }
+
+    /// The session's OS sandbox: the last build's, or (before the first
+    /// build) resolved once from the settings and the create's override,
+    /// exactly as the build will.
+    pub(crate) fn session_sandbox(&self) -> Option<pa_core::os_sandbox::SessionSandbox> {
+        if let super::config::SandboxSlot::Resolved(sandbox) = &*self.sandbox.read_or_recover() {
+            return sandbox.clone();
+        }
+        let cwd = self.cwd();
+        let settings = pa_core::settings::SettingsManager::create(&cwd, &self.config.agent_dir);
+        let override_mode = self.create_resources.read_or_recover().sandbox_mode();
+        let sandbox = pa_core::os_sandbox::SessionSandbox::resolve(&settings, override_mode, &cwd);
+        *self.sandbox.write_or_recover() = super::config::SandboxSlot::Resolved(sandbox.clone());
+        sandbox
     }
 
     /// Expand a `/skill:<name>` submission against the core session
@@ -297,6 +313,9 @@ impl AgentSessionEngine {
 
     async fn adopt_built_session(&self, built: &CoreSessionEngine) -> anyhow::Result<()> {
         self.mirror_goal_runtime(built).await;
+        // The build's own resolution is the one its kernel runs under.
+        *self.sandbox.write_or_recover() =
+            super::config::SandboxSlot::Resolved(built.sandbox.clone());
         if let Some(sink) = self.compaction_summary_sink.lock_or_recover().clone() {
             built.session.set_compaction_summary_sink(sink);
         }
@@ -890,6 +909,8 @@ impl AgentSessionEngine {
         let on_late_sent_agent_message = self.late_agent_message_sink.lock_or_recover().clone();
         let rlm_token_allowance = *self.rlm_token_allowance.lock_or_recover();
         pa_core::session_engine::engine::create_session(SessionEngineConfig {
+            // `--sandbox` from the create; `None` keeps the setting.
+            sandbox_mode: create_resources.sandbox_mode(),
             plan_mode: None,
             on_late_sent_agent_message,
             semantic_edges,

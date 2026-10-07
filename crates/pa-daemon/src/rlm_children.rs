@@ -99,6 +99,9 @@ pub struct ParentIdentity {
     pub thinking: Option<String>,
     /// Verification seam: create children with a scripted engine file.
     pub child_script: Option<String>,
+    /// The parent's `--sandbox` override (wire name): every child is created
+    /// under it, so `rlm.spawn` cannot step outside the run's sandbox.
+    pub sandbox: Option<String>,
 }
 
 impl ParentIdentity {

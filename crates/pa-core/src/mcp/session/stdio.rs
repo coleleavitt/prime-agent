@@ -30,6 +30,7 @@ impl StdioChild {
     /// that cannot start.
     pub(crate) fn spawn(
         launch: &StdioLaunch,
+        sandbox: Option<&crate::os_sandbox::SessionSandbox>,
     ) -> Result<
         (
             Self,
@@ -55,7 +56,26 @@ impl StdioChild {
         // A resolved `.cmd`/`.bat` runs through `cmd.exe /c`: std's Windows
         // spawn does that itself, quoting each argument for cmd (and refusing
         // one it cannot quote safely).
-        let mut command = std::process::Command::new(&program);
+        // Under the session's OS sandbox the server is confined like the
+        // kernel: the cwd writable under `workspace-write`, its temp dir in
+        // every mode. A sandbox this machine cannot enforce refuses the spawn.
+        let mut command = match sandbox {
+            Some(sandbox) => {
+                let tmpdir = launch
+                    .env
+                    .iter()
+                    .find(|(key, _)| key == "TMPDIR")
+                    .map(|(_, value)| value.as_str());
+                sandbox
+                    .command(
+                        &program,
+                        &launch.cwd,
+                        vec![crate::os_sandbox::temp_dir_for(tmpdir)],
+                    )
+                    .map_err(|error| McpSessionError::runtime(error.to_string()))?
+            }
+            None => std::process::Command::new(&program),
+        };
         command
             .args(&launch.args)
             .current_dir(&launch.cwd)

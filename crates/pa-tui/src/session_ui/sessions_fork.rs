@@ -391,6 +391,7 @@ impl SessionUi {
     /// the original run.
     pub(super) fn create_options(&self) -> InteractiveOptions {
         InteractiveOptions {
+            sandbox_mode: None,
             resource_exclusions: self.resource_exclusions,
             initial_plan_mode: false,
             socket_path: self.client.socket_path().to_path_buf(),

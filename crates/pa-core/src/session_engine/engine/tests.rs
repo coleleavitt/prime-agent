@@ -54,6 +54,7 @@ async fn engine_runs_tool_loop_and_persists() {
     let cwd = tmp.path().join("project");
     std::fs::create_dir_all(&cwd).unwrap();
     let engine = create_session(SessionEngineConfig {
+        sandbox_mode: None,
         plan_mode: None,
         on_late_sent_agent_message: None,
         semantic_edges: None,
@@ -155,6 +156,7 @@ async fn spawned_child_prompt_stamps_its_depth() {
     let cwd = tmp.path().join("project");
     std::fs::create_dir_all(&cwd).unwrap();
     let engine = create_session(SessionEngineConfig {
+        sandbox_mode: None,
         plan_mode: None,
         on_late_sent_agent_message: None,
         semantic_edges: None,
@@ -224,6 +226,7 @@ async fn oauth_creds_unlock_generic_mcp_gating_in_new_sessions() {
         stream_fn: pa_agent::stream::StreamFn,
     ) -> SessionEngineConfig {
         SessionEngineConfig {
+            sandbox_mode: None,
             plan_mode: None,
             on_late_sent_agent_message: None,
             semantic_edges: None,
@@ -863,6 +866,7 @@ async fn agent_started_reports_the_settings_adoption() {
                 "fallback_model_count",
                 "context_cap_source",
                 "kernel_environment",
+                "sandbox_mode",
             ]
             .contains(&key.as_str())
         });
@@ -876,7 +880,8 @@ async fn agent_started_reports_the_settings_adoption() {
                 "rlmTokenBudget": { "total": 1000, "perDepth": [100] },
                 "fallbackModels": ["openai/gpt-x", "anthropic/claude-y", "openai/gpt-x"],
                 "compaction": { "maxContextTokens": 50000 },
-                "kernel": { "environment": "scrub-credentials" }
+                "kernel": { "environment": "scrub-credentials" },
+                "sandbox": { "mode": "workspace-write" }
             }"#
         ))
         .await,
@@ -887,6 +892,7 @@ async fn agent_started_reports_the_settings_adoption() {
             "fallback_model_count": 2,
             "context_cap_source": "global",
             "kernel_environment": "scrub_credentials",
+            "sandbox_mode": "workspace_write",
         })
     );
     assert_eq!(
@@ -898,6 +904,7 @@ async fn agent_started_reports_the_settings_adoption() {
             "fallback_model_count": 0,
             "context_cap_source": "none",
             "kernel_environment": "inherit",
+            "sandbox_mode": "off",
         })
     );
 }

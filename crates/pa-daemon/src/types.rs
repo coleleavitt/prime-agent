@@ -250,6 +250,11 @@ pub struct AgentConnectionState {
     pub active_tool_names: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_usage: Option<Value>,
+    /// The OS sandbox status label (`workspace-write`, `read-only+net
+    /// (degraded)`, ...); absent while the sandbox is off, so the off-mode
+    /// state is byte-identical to before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<String>,
 }
 
 #[cfg(test)]

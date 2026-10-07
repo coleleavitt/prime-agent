@@ -143,7 +143,7 @@ async fn a_successful_startup_discards_the_stderr_it_captured() {
     let generation = Generation::open(
         "svc",
         json!({ "type": "stdio" }),
-        Target::Stdio(launch),
+        Target::Stdio(launch, None),
         Discovery::Full,
     )
     .await
@@ -156,4 +156,70 @@ async fn a_successful_startup_discards_the_stderr_it_captured() {
         .clone();
     assert_eq!(stderr.tail(&[], &[]), "");
     generation.close().await;
+}
+
+/// A host-spawned stdio server runs under the session's OS sandbox, like
+/// the kernel whose `rlm.mcp` calls it serves: under `workspace-write` it
+/// starts and writes inside its cwd, and a write outside it fails, so the
+/// server never starts. Skips without Landlock or a writable directory
+/// outside `/tmp` (which the sandbox keeps writable).
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_stdio_server_spawns_under_the_session_sandbox() {
+    let Some(python) = super::super::tests::python() else {
+        return;
+    };
+    let Ok(base) = tempfile::tempdir_in("/var/tmp") else {
+        eprintln!("/var/tmp is not usable; skipping the sandboxed stdio test");
+        return;
+    };
+    let root = base.path().canonicalize().unwrap();
+    let (work, outside) = (root.join("work"), root.join("outside"));
+    std::fs::create_dir_all(&work).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    let settings = crate::settings::SettingsManager::in_memory(&crate::settings::Settings {
+        sandbox: Some(crate::settings::SandboxSettings {
+            mode: Some("workspace-write".to_string()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+    let sandbox = crate::os_sandbox::SessionSandbox::resolve(&settings, None, &work)
+        .expect("an enabled sandbox");
+    if sandbox.status_label().ends_with("(unavailable)") {
+        eprintln!(
+            "skipping the sandboxed stdio test: {}",
+            sandbox.prompt_line()
+        );
+        return;
+    }
+    let launch = |pid_file: &std::path::Path| StdioLaunch {
+        command: python.clone(),
+        args: vec![super::super::tests::fixture("stdio_server.py")
+            .to_string_lossy()
+            .to_string()],
+        cwd: work.clone(),
+        env: vec![(
+            "FIXTURE_PID_FILE".to_string(),
+            pid_file.to_string_lossy().to_string(),
+        )],
+        secrets: Vec::new(),
+        disclosable: true,
+        private_values: Vec::new(),
+    };
+    let mut started = Vec::new();
+    for pid_file in [work.join("server.pid"), outside.join("server.pid")] {
+        let opened = Generation::open(
+            "svc",
+            json!({ "type": "stdio" }),
+            Target::Stdio(launch(&pid_file), Some(sandbox.clone())),
+            Discovery::Full,
+        )
+        .await;
+        started.push((opened.is_ok(), pid_file.exists()));
+        if let Ok(generation) = opened {
+            generation.close().await;
+        }
+    }
+    assert_eq!(started, vec![(true, true), (false, false)]);
 }

@@ -205,6 +205,13 @@ pub trait SessionEngine: Send + Sync {
         Box::pin(async {})
     }
 
+    /// The session's OS sandbox (`sandbox` setting or the create's
+    /// `--sandbox`): the `!` lane spawns under it and the connection state
+    /// reports it. Engines without a kernel have none.
+    fn sandbox(&self) -> Option<pa_core::os_sandbox::SessionSandbox> {
+        None
+    }
+
     /// Context window (tokens) of the engine's resolved model, when known.
     /// Drives the `contextUsage` estimate in `get_session_stats`.
     fn model_context_window(&self) -> Option<u64> {

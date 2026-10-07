@@ -587,6 +587,12 @@ const AGENT_STARTED: EventRule = EventRule {
             "kernel_environment",
             optional(enum_rule(&["inherit", "scrub_credentials"], "inherit")),
         ),
+        // The effective OS sandbox mode (the `sandbox` setting or
+        // `--sandbox`): the category only, never a path or a root count.
+        (
+            "sandbox_mode",
+            optional(enum_rule(&["off", "read_only", "workspace_write"], "off")),
+        ),
     ],
 };
 
@@ -2444,6 +2450,7 @@ mod tests {
         properties.set("fallback_model_count", json!(2u64));
         properties.set("context_cap_source", json!("project"));
         properties.set("kernel_environment", json!("scrub_credentials"));
+        properties.set("sandbox_mode", json!("workspace_write"));
         let expected = properties.clone();
         properties.set("fallback_models", json!("openai/gpt-5,anthropic/claude")); // not catalogued
         assert_eq!(sanitize("agent started", &mut properties), 1);
@@ -2454,6 +2461,7 @@ mod tests {
         odd.set("rlm_token_budget", json!(400_000u64));
         odd.set("context_cap_source", json!("chat"));
         odd.set("kernel_environment", json!("minimal"));
+        odd.set("sandbox_mode", json!("/home/me/project"));
         sanitize("agent started", &mut odd);
         let mut fallen = Properties::new();
         fallen.set("session_id", json!("0197d0a0-8f5c-7f2a-b0e3-2d7e0d2b3b1a"));
@@ -2461,6 +2469,7 @@ mod tests {
         fallen.set("rlm_token_budget", json!("off"));
         fallen.set("context_cap_source", json!("none"));
         fallen.set("kernel_environment", json!("inherit"));
+        fallen.set("sandbox_mode", json!("off"));
         assert_eq!(odd, fallen);
     }
 

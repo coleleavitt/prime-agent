@@ -264,27 +264,75 @@ impl Inner {
             );
         }
         let cwd = self.start_cwd();
-        let mut command = tokio::process::Command::new(&python);
-        // `-P`: the project cwd is not prepended to `sys.path`, so a repo-local `rlm/`,
-        // `dill.py`, or stdlib-named module cannot shadow the runtime's imports. The runtime
-        // appends the cwd last so project modules stay importable from cells. Process-local
-        // (unlike `PYTHONSAFEPATH`): `bash()` children resolve their own imports as before.
-        command
-            .args(["-P", "-m", "rlm.repl"])
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-        // Hidden window on Windows (TS `spawnHidden`); the kernel stays in
-        // this process's group - its lifecycle is supervised directly.
-        crate::platform::process::set_no_window(command.as_std_mut());
-        if let Some(cwd) = &cwd {
-            command.current_dir(cwd);
-        }
-        command.env_clear().envs(env);
-        // A just-(re)written interpreter (a concurrent bootstrap, or a fork
-        // still holding its write handle) refuses exec with ETXTBSY for a
-        // moment: ride it out like the runtime probe does.
-        let child = match crate::platform::process::spawn_retrying_text_busy(&mut command).await {
+        // Under the OS sandbox the kernel process itself is confined, so
+        // every `bash()`, `subprocess` and cell child inherits the policy.
+        // Its own scratch stays writable in every mode: the temp directory,
+        // the session state dirs, and the orphan journal `bash()` enrolls in.
+        let command = match &self.options.sandbox {
+            Some(kernel_sandbox) => {
+                let workspace = cwd
+                    .clone()
+                    .or_else(|| std::env::current_dir().ok())
+                    .unwrap_or_default();
+                let mut scratch = vec![crate::os_sandbox::temp_dir_for(
+                    env.get("TMPDIR").map(String::as_str),
+                )];
+                // A state dir the kernel would create on first use must exist now: the
+                // sandbox only grants directories that exist when it is built.
+                for dir in &kernel_sandbox.state_dirs {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                scratch.extend(kernel_sandbox.state_dirs.iter().cloned());
+                if let Some(journal) = env.get(orphan_journal::ORPHAN_PROCESS_JOURNAL_ENV) {
+                    scratch.extend(
+                        std::path::Path::new(journal)
+                            .parent()
+                            .map(std::path::Path::to_path_buf),
+                    );
+                }
+                tracing::info!(
+                    target: "pa_core::kernel",
+                    sandbox_mode = kernel_sandbox.sandbox.mode().wire_name(),
+                    sandbox_status = %kernel_sandbox.sandbox.status_label(),
+                    "kernel spawns under the OS sandbox"
+                );
+                kernel_sandbox
+                    .sandbox
+                    .command(&python, &workspace, scratch)
+                    .map(tokio::process::Command::from)
+                    .map_err(|error| error.to_string())
+            }
+            None => Ok(tokio::process::Command::new(&python)),
+        };
+        let spawned = match command {
+            Ok(mut command) => {
+                // `-P`: the project cwd is not prepended to `sys.path`, so a repo-local `rlm/`,
+                // `dill.py`, or stdlib-named module cannot shadow the runtime's imports. The
+                // runtime appends the cwd last so project modules stay importable from cells.
+                // Process-local (unlike `PYTHONSAFEPATH`): `bash()` children resolve their own
+                // imports as before.
+                command
+                    .args(["-P", "-m", "rlm.repl"])
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped());
+                // Hidden window on Windows (TS `spawnHidden`); the kernel stays in
+                // this process's group - its lifecycle is supervised directly.
+                crate::platform::process::set_no_window(command.as_std_mut());
+                if let Some(cwd) = &cwd {
+                    command.current_dir(cwd);
+                }
+                command.env_clear().envs(env);
+                // A just-(re)written interpreter (a concurrent bootstrap, or a fork
+                // still holding its write handle) refuses exec with ETXTBSY for a
+                // moment: ride it out like the runtime probe does.
+                crate::platform::process::spawn_retrying_text_busy(&mut command)
+                    .await
+                    .map_err(|error| error.to_string())
+            }
+            Err(error) => Err(error),
+        };
+        let child = match spawned {
             Ok(child) => child,
             Err(error) => {
                 // Fail a pending start promptly instead of riding out the ready timeout. The

@@ -118,6 +118,7 @@ fn fake_kernel(dir: &Path) -> Arc<ReplKernelManager> {
     std::fs::write(&python, FAKE_RUNTIME).expect("write fake runtime");
     std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755)).expect("chmod");
     Arc::new(ReplKernelManager::new(KernelManagerOptions {
+        sandbox: None,
         environment: pa_core::kernel::shared::KernelEnvironment::Inherit,
         plan_guard: None,
         python: Some(python),

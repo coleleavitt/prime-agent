@@ -68,6 +68,7 @@ fn manager_options(
     snapshot_dir: Option<&std::path::Path>,
 ) -> KernelManagerOptions {
     KernelManagerOptions {
+        sandbox: None,
         environment: pa_core::kernel::shared::KernelEnvironment::Inherit,
         plan_guard: None,
         python: Some(python),

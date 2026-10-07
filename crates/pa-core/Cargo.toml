@@ -19,6 +19,7 @@ pa-models = { path = "../pa-models" }
 pa-agent.workspace = true
 pa-telemetry.workspace = true
 pa-bash = { path = "../pa-bash" }
+pa-os-sandbox = { path = "../pa-os-sandbox" }
 base64 = "0.22"
 fancy-regex = "0.14"
 # The traces browser login's auth challenge (RSA-2048 keypair, OAEP-SHA256

@@ -211,6 +211,7 @@ fn children(socket: &Path, agent_dir: &Path, script: &Path) -> SupervisorChildSe
         )),
     );
     sessions.set_identity(ParentIdentity {
+        sandbox: None,
         rlm_depth: 0,
         rlm_max_depth: 2,
         // Off-catalog on purpose: scripted children do not resolve models.

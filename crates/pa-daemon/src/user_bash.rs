@@ -200,6 +200,8 @@ impl Worker {
         let work_notify = Arc::clone(&self.work_notify);
         let command = command.to_string();
         let agent_dir = self.config.agent_dir.clone();
+        // The `!` lane runs under the session's OS sandbox, like the kernel.
+        let sandbox = self.engine.sandbox();
         tokio::spawn(async move {
             let cwd = {
                 let core = core.lock_or_recover();
@@ -216,6 +218,7 @@ impl Worker {
                 cwd: &cwd,
                 prefix: prefix.as_deref(),
                 shell_path: shell_path.as_deref(),
+                sandbox: sandbox.as_ref(),
                 user_bash: &user_bash,
                 on_chunk: Some((Arc::clone(&core), Arc::clone(&events))),
             })
@@ -290,6 +293,7 @@ impl Worker {
         };
         let user_bash = Arc::clone(&self.user_bash);
         let command = command.to_string();
+        let sandbox = self.engine.sandbox();
         // The awaited run counts toward `isBashRunning` without
         // blocking a streamed user bash.
         let awaited = user_bash.begin_awaited();
@@ -298,6 +302,7 @@ impl Worker {
             cwd: &cwd,
             prefix: prefix.as_deref(),
             shell_path: shell_path.as_deref(),
+            sandbox: sandbox.as_ref(),
             user_bash: &user_bash,
             // The awaited path emits nothing (TS passes no `onChunk`).
             on_chunk: None,
@@ -400,6 +405,9 @@ struct RunBash<'a> {
     cwd: &'a str,
     prefix: Option<&'a str>,
     shell_path: Option<&'a str>,
+    /// The session's OS sandbox: the shell (and what it runs) spawns
+    /// confined; `None` spawns it as before.
+    sandbox: Option<&'a pa_core::os_sandbox::SessionSandbox>,
     user_bash: &'a UserBash,
     /// The streaming emit target for each sanitized chunk; `None` on
     /// the awaited path, which emits nothing.
@@ -492,7 +500,20 @@ async fn run_bash(run: RunBash<'_>) -> BashEnd {
         Ok(shell) => shell,
         Err(error) => return spawn_failure(error.to_string()),
     };
-    let mut command = tokio::process::Command::new(&shell.shell);
+    let mut command = match run.sandbox {
+        // Writable: the cwd under `workspace-write`, and the temp directory.
+        Some(sandbox) => match sandbox.command(
+            &shell.shell,
+            std::path::Path::new(run.cwd),
+            vec![pa_core::os_sandbox::temp_dir_for(
+                std::env::var("TMPDIR").ok().as_deref(),
+            )],
+        ) {
+            Ok(command) => tokio::process::Command::from(command),
+            Err(error) => return spawn_failure(error.to_string()),
+        },
+        None => tokio::process::Command::new(&shell.shell),
+    };
     command
         .args(&shell.args)
         .arg(&resolved)
@@ -824,9 +845,22 @@ mod tests {
     use std::sync::Arc;
 
     async fn created_worker(cwd: &std::path::Path) -> Arc<Worker> {
+        created_sandboxed_worker(cwd, json!({ "responses": ["ack"] }), "{}", json!({})).await
+    }
+
+    /// A created worker over `script` whose agent dir holds
+    /// `global_settings`, created with `create_extra` merged into the create
+    /// payload.
+    async fn created_sandboxed_worker(
+        cwd: &std::path::Path,
+        script: Value,
+        global_settings: &str,
+        create_extra: Value,
+    ) -> Arc<Worker> {
         std::fs::create_dir_all(cwd).unwrap();
         let dir = std::env::temp_dir().join(format!("pa-worker-bash-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(dir.join("agent")).unwrap();
+        std::fs::write(dir.join("agent/settings.json"), global_settings).unwrap();
         let config = crate::worker::WorkerConfig {
             socket_path: dir.join("worker.sock"),
             supervisor_socket_path: std::path::PathBuf::new(),
@@ -836,15 +870,15 @@ mod tests {
             agent_dir: dir.join("agent"),
             recovery_journal_path: dir.join("recovery.jsonl"),
             telemetry_disabled: None,
-            script: Some(json!({ "responses": ["ack"] })),
+            script: Some(script),
         };
         let worker = Arc::new(Worker::new(config, None));
-        let created = worker
-            .dispatch(
-                "create",
-                &json!({ "noSession": true, "cwd": cwd.to_string_lossy(), "name": "bash" }),
-            )
-            .await;
+        let mut payload =
+            json!({ "noSession": true, "cwd": cwd.to_string_lossy(), "name": "bash" });
+        if let (Some(payload), Value::Object(extra)) = (payload.as_object_mut(), create_extra) {
+            payload.extend(extra);
+        }
+        let created = worker.dispatch("create", &payload).await;
         assert!(created.success, "create failed: {created:?}");
         worker
     }
@@ -1099,6 +1133,109 @@ mod tests {
             Some(
                 "Working directory does not exist: /nonexistent-bash-cwd\nCannot execute bash commands."
             )
+        );
+    }
+
+    /// The `!` lane spawns under the session's OS sandbox: the setting's
+    /// `workspace-write` lets it write the cwd and refuses (EACCES) a
+    /// directory outside it; the create's `--sandbox read-only` override
+    /// refuses the cwd too; the connection state names the mode. Skips
+    /// without Landlock or a writable directory outside `/tmp` (which the
+    /// sandbox keeps writable).
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn the_bang_lane_runs_under_the_session_sandbox() {
+        let Ok(base) = tempfile::tempdir_in("/var/tmp") else {
+            eprintln!("/var/tmp is not usable; skipping the sandboxed bash test");
+            return;
+        };
+        let cwd = base.path().canonicalize().unwrap().join("work");
+        let outside = base.path().canonicalize().unwrap().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        let run = |worker: Arc<Worker>, command: String| async move {
+            let response = worker
+                .dispatch(
+                    "execute_bash_and_wait",
+                    &json!({ "activeSessionId": "bash-session", "command": command }),
+                )
+                .await;
+            let data = response.data.expect("data");
+            (
+                data["exitCode"].as_i64(),
+                data["output"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("Permission denied"),
+            )
+        };
+        let state = |worker: Arc<Worker>| async move {
+            let response = worker
+                .dispatch(
+                    "get_connection_state",
+                    &json!({ "activeSessionId": "bash-session" }),
+                )
+                .await;
+            response.data.expect("state")["sandbox"].clone()
+        };
+        // The real agent engine (over the faux provider) owns the sandbox.
+        let faux = json!({ "engine": "faux", "responses": ["ack"] });
+        let workspace_write = created_sandboxed_worker(
+            &cwd,
+            faux.clone(),
+            r#"{ "sandbox": { "mode": "workspace-write" } }"#,
+            json!({}),
+        )
+        .await;
+        let label = state(Arc::clone(&workspace_write)).await;
+        if label
+            .as_str()
+            .is_some_and(|label| label.ends_with("(unavailable)"))
+        {
+            eprintln!("skipping the sandboxed bash test: {label}");
+            return;
+        }
+        let read_only =
+            created_sandboxed_worker(&cwd, faux.clone(), "{}", json!({ "sandbox": "read-only" }))
+                .await;
+        let off = created_sandboxed_worker(&cwd, faux, "{}", json!({})).await;
+        let outside_target = outside.join("bang.txt");
+        let results = [
+            run(
+                Arc::clone(&workspace_write),
+                "printf x > inside.txt".to_string(),
+            )
+            .await,
+            run(
+                Arc::clone(&workspace_write),
+                format!("printf x > '{}'", outside_target.display()),
+            )
+            .await,
+            run(
+                Arc::clone(&read_only),
+                "printf x > read-only.txt".to_string(),
+            )
+            .await,
+        ];
+        assert_eq!(
+            (
+                results,
+                label,
+                state(read_only).await,
+                state(Arc::clone(&off)).await,
+                outside_target.exists(),
+            ),
+            (
+                [(Some(0), false), (Some(1), true), (Some(1), true)],
+                json!("workspace-write"),
+                json!("read-only"),
+                Value::Null,
+                false,
+            )
+        );
+        // Off is unchanged: the same outside write lands.
+        assert_eq!(
+            run(off, format!("printf x > '{}'", outside_target.display())).await,
+            (Some(0), false)
         );
     }
 
