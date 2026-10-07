@@ -26,15 +26,19 @@ impl Worker {
         running.push(handle);
     }
 
-    /// Abort the create's fire-and-forget tasks and the context-tree refresh: a test that retires this worker (a simulated
-    /// restart) and removes its dir must not have them recreate it on their next poll. The
-    /// worker itself stays referenced by its own runner tasks, so dropping it does not stop them.
+    /// Retire this worker in-process (a test's simulated restart): abort the create's
+    /// fire-and-forget tasks, the context-tree refreshes and the turn runner, and close the
+    /// recovery journal. A real retire ends the worker's process and every writer with it; the
+    /// worker here stays referenced by its own tasks, so dropping it stops none of them, and
+    /// a turn it ran after the test removed its dir would recreate `recovery.jsonl` there.
     #[cfg(all(test, unix))] // its callers, the cloud-inbox restart tests, are unix-only
-    pub(crate) fn abort_create_background(&self) {
+    pub(crate) fn retire(&self) {
         for handle in self.create_background.lock_or_recover().drain(..) {
             handle.abort();
         }
         self.context_tree.abort_refreshes();
+        self.turn_runner.abort();
+        drop(self.recovery.lock_or_recover().take());
     }
 
     pub(super) async fn handle_create(&self, payload: &Value) -> DaemonResponse {

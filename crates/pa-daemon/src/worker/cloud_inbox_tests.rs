@@ -183,7 +183,7 @@ async fn restart_restores_the_lane_and_the_inbox_key() {
     assert!(parked.success, "parked deliver failed: {parked:?}");
     let parked_receipt = parked.data.expect("receipt");
     assert_eq!(parked_receipt["deliveryStatus"], "queued");
-    first_worker.abort_create_background();
+    first_worker.retire();
     drop(first_worker);
     // The respawn: a fresh worker over the same recovery journal (the
     // serve loop opens the journal; the test installs it the same way).
@@ -357,7 +357,7 @@ async fn detach_and_wire_release_cannot_unpause_a_failing_cloud_commit() {
     worker.work_notify.notify_one();
     tokio::task::yield_now().await;
     assert!(queue_texts(&worker.core, Lane::Steering).is_empty());
-    worker.abort_create_background();
+    worker.retire();
     drop(worker);
 
     let respawned = Arc::new(Worker::new(config.clone(), None));
@@ -497,7 +497,7 @@ async fn failed_fsync_quarantines_until_restart_and_reconciles_both_disk_outcome
             1,
             "the held pause blocks the runner"
         );
-        worker.abort_create_background();
+        worker.retire();
         drop(worker);
 
         if lost {
@@ -567,6 +567,38 @@ async fn failed_fsync_quarantines_until_restart_and_reconciles_both_disk_outcome
         assert_eq!(queue_texts(&respawned.core, Lane::Steering).len(), 2);
         // The iteration's `_dir` guard removes the dir, after the worker's in-flight
         // background walk (a direct removal here raced it, and the walk recreated the dir).
-        respawned.abort_create_background();
+        respawned.retire();
     }
+}
+
+/// A retired worker (the restart tests' simulated crash) writes nothing after its retire: its
+/// turn runner would otherwise run the parked delivery once the runner wakes and checkpoint
+/// the queue, recreating `recovery.jsonl` in the dir the test already removed.
+#[tokio::test]
+async fn a_retired_worker_never_journals_into_its_removed_dir() {
+    let (worker, dir) = created_worker().await.into_parts();
+    worker.core.lock().unwrap().busy = true;
+    let parked = worker
+        .dispatch(
+            "worker_deliver_message",
+            &keyed_payload("parked before the retire", "msgreq_retired"),
+        )
+        .await;
+    assert!(parked.success, "parked deliver failed: {parked:?}");
+    let root = dir.to_path_buf();
+    worker.retire();
+    drop(dir);
+    assert!(!root.exists(), "the fixture removed the dir");
+    worker.core.lock().unwrap().busy = false;
+    worker.work_notify.notify_one();
+    // Long enough for the unretired runner to run the scripted turn and checkpoint it.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !root.exists() && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(
+        !root.exists(),
+        "the retired worker recreated {}",
+        root.display()
+    );
 }

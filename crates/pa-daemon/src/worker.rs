@@ -167,8 +167,12 @@ pub struct Worker {
     pub(crate) context_tree: std::sync::Arc<crate::context_tree_cache::ContextTreeCache>,
     /// The fire-and-forget tasks a create starts (the eager engine build, the model-catalog
     /// refresh). They write under the agent dir (`auth.json`, `models.json`); a test that retires
-    /// a worker and removes its dir mid-test aborts them first ([`Worker::abort_create_background`]).
+    /// a worker and removes its dir mid-test aborts them first ([`Worker::retire`]).
     create_background: std::sync::Mutex<Vec<tokio::task::AbortHandle>>,
+    /// The turn runner (it lives as long as the process): a test that retires this worker
+    /// in-process stops it, so the retired worker cannot run a turn and journal it.
+    #[cfg(all(test, unix))]
+    turn_runner: tokio::task::AbortHandle,
     exports: crate::session_export::ExportCommands,
     /// Session-scoped ACP MCP servers for engines without their own
     /// store; the real engine's manager serves the product path.
@@ -401,10 +405,11 @@ impl Worker {
         // The turn runner runs for the whole process lifetime. The command
         // dispatcher keeps the engine handle too (model metadata for the
         // stats commands).
-        let (engine, agent_engine, roster_pushes): (
+        let (engine, agent_engine, roster_pushes, turn_runner): (
             std::sync::Arc<dyn SessionEngine>,
             Option<std::sync::Arc<crate::agent_engine::AgentSessionEngine>>,
             crate::roster_activity::RosterPushQueue,
+            tokio::task::AbortHandle,
         ) = {
             // Scripted sessions serve the integration harness; sessions
             // without a script run the real agent engine.
@@ -792,10 +797,11 @@ impl Worker {
                 },
                 herdr: std::sync::Arc::clone(&herdr_slot),
             };
-            tokio::spawn(async move {
+            let turn_runner = tokio::spawn(async move {
                 runner.run().await;
-            });
-            (engine, agent_engine, roster_pushes)
+            })
+            .abort_handle();
+            (engine, agent_engine, roster_pushes, turn_runner)
         };
         let side_questions = crate::side_question::SideQuestionManager::new(
             std::sync::Arc::clone(&engine),
@@ -836,6 +842,9 @@ impl Worker {
             Arc::clone(&core),
             Arc::clone(&agent_digest),
         );
+        // Only an in-process retire (tests) stops the runner; dropping the handle detaches it.
+        #[cfg(not(all(test, unix)))]
+        drop(turn_runner);
         Worker {
             config,
             bound_socket_identity: std::sync::Mutex::new(None),
@@ -863,6 +872,8 @@ impl Worker {
             tree_navigation,
             context_tree: std::sync::Arc::new(crate::context_tree_cache::ContextTreeCache::new()),
             create_background: std::sync::Mutex::new(Vec::new()),
+            #[cfg(all(test, unix))]
+            turn_runner,
             exports,
             acp_mcp: std::sync::Arc::new(std::sync::Mutex::new(acp_mcp)),
             user_bash,
