@@ -90,6 +90,8 @@ pub struct BuildSystemPromptOptions<'a> {
     pub rlm_parent_agent: Option<&'a str>,
     /// Enabled user-configured generic MCP servers.
     pub generic_mcp_servers: Vec<String>,
+    /// The OS sandbox's one environment line (`None`: sandbox off, no line).
+    pub sandbox: Option<String>,
 }
 
 /// Build the system prompt (assembled text only).
@@ -296,6 +298,9 @@ fn environment_section(options: &BuildSystemPromptOptions) -> String {
                 .to_string(),
         ),
         None => {}
+    }
+    if let Some(sandbox) = &options.sandbox {
+        lines.push(sandbox.clone());
     }
     lines.join("\n")
 }

@@ -205,6 +205,7 @@ fn children_host(
         )),
     );
     sessions.set_identity(ParentIdentity {
+        sandbox: None,
         rlm_depth: depth,
         rlm_max_depth: 3,
         // Off-catalog on purpose: scripted children do not resolve models.

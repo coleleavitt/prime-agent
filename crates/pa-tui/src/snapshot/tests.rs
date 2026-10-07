@@ -2147,3 +2147,16 @@ fn elided_image_tool_results_render_their_marker_metadata() {
 }
 
 mod thinking_pins;
+
+/// The attach state's `sandbox` label reaches the rebuilt view (the tray
+/// badge); a state without one (sandbox off) leaves it unset.
+#[test]
+fn reconstructs_the_sandbox_label() {
+    let mut attach = slim_attach();
+    attach["snapshot"]["state"]["sandbox"] = json!("workspace-write");
+    let labels = [
+        reconstruct(&attach_data_from_response(attach).unwrap()).sandbox,
+        reconstruct(&attach_data_from_response(slim_attach()).unwrap()).sandbox,
+    ];
+    assert_eq!(labels, [Some("workspace-write".to_string()), None]);
+}

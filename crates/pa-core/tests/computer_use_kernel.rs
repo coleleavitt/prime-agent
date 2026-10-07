@@ -221,6 +221,7 @@ async fn the_kernel_client_is_served_by_the_host() {
         on_background_work_settled: None,
         queued_goal_context_purge: None,
         rlm_token_allowance: None,
+        sandbox_mode: None,
     })
     .await
     .expect("create_session");

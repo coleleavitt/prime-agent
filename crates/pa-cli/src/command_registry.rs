@@ -495,6 +495,10 @@ const TOP_LEVEL_OPTION_GROUPS: &[OptionGroup] = &[
                 "Start in plan mode: investigate and plan, file edits blocked",
             ),
             (
+                "--sandbox <mode>",
+                "OS sandbox for the kernel and its commands this run: off, read-only, workspace-write",
+            ),
+            (
                 "--goal <objective>",
                 "Seed a persistent goal for a new root session",
             ),

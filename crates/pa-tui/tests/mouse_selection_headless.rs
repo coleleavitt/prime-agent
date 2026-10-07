@@ -228,6 +228,7 @@ fn attach_data(id: &str) -> Value {
 
 fn options(socket: PathBuf, fullscreen_mouse: bool) -> InteractiveOptions {
     InteractiveOptions {
+        sandbox_mode: None,
         resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         initial_plan_mode: false,
         models: None,

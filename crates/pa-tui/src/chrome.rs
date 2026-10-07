@@ -71,6 +71,10 @@ pub struct ChromeState {
     /// The session's service tier as its wire name: `fast` for priority, the
     /// tier name for any other non-default tier; `None` or `default` renders no badge.
     pub service_tier: Option<String>,
+    /// The session's OS sandbox label (`workspace-write`, `read-only+net`,
+    /// `... (degraded)`): the tray's `sandbox <label>` badge. `None` (off)
+    /// renders nothing.
+    pub sandbox: Option<String>,
     /// Startup warning (tmux keyboard setup), rendered as a status row.
     pub tmux_notice: Option<String>,
     /// Tray override label: while the Ctrl+C exit hint is armed, it
@@ -520,6 +524,9 @@ pub fn render_tray_with_hint(
         }
     }
     let mut right: Line = Vec::new();
+    if let Some(sandbox) = &state.sandbox {
+        right.push(Span::styled(format!("sandbox {sandbox}"), dim));
+    }
     if let Some(model) = &state.model_id {
         let mut label = model.clone();
         if let Some(suffix) = &state.thinking_suffix {

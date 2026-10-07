@@ -82,6 +82,7 @@ impl SessionUi {
             show_images: options.show_images,
             fullscreen_mouse: options.fullscreen_mouse,
             service_tier: None,
+            sandbox: None,
             speed_display_enabled: false,
             speed_stats: None,
             client_settings: options.client_settings.clone(),
@@ -428,6 +429,7 @@ impl SessionUi {
         self.daemon_closing_notice = None;
         self.session_name.clone_from(&reconstructed.session_name);
         self.service_tier.clone_from(&reconstructed.service_tier);
+        self.sandbox.clone_from(&reconstructed.sandbox);
         self.session_file = attach
             .snapshot
             .get("state")
@@ -622,6 +624,7 @@ impl SessionUi {
         // The tray badge mirrors the session-scoped tier on every rebuild: an
         // attach that reports no tier clears the previous session's badge.
         view.chrome.service_tier.clone_from(&self.service_tier);
+        view.chrome.sandbox.clone_from(&self.sandbox);
         // The tray's effort suffix moves with the same snapshot; the bare name
         // wins when the state reports neither.
         view.chrome.thinking_suffix = self.pending_thinking_suffix.take();

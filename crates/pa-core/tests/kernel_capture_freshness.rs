@@ -43,6 +43,7 @@ fn kernel_python() -> Option<PathBuf> {
 fn test_options(snapshot_dir: Option<&Path>) -> Option<KernelManagerOptions> {
     let python = kernel_python()?;
     Some(KernelManagerOptions {
+        sandbox: None,
         environment: pa_core::kernel::shared::KernelEnvironment::Inherit,
         plan_guard: None,
         python: Some(python),

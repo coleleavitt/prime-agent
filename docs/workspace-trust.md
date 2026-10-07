@@ -31,7 +31,8 @@ models you already configured: `theme`, `defaultProvider`, `defaultModel`,
 `followUpMode`, `transport`, `compaction`, `branchSummary`, `retry`,
 `terminal`, `images`, `treeFilterMode`, `chatDetail`, `editorPaddingX`,
 `autocompleteMaxVisible`, `showHardwareCursor`, `markdown`, `warnings`,
-`quietStartup`, `requestTiming`, `enableSkillCommands`.
+`quietStartup`, `requestTiming`, `enableSkillCommands`, and `sandbox` (it can only tighten
+the [OS sandbox](os-sandbox.md), never loosen it).
 
 Not gated: `AGENTS.md` / `CLAUDE.md` project context (the repository's own
 instructions to any coding agent), project themes, and everything under your

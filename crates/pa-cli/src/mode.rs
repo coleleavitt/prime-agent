@@ -91,6 +91,8 @@ pub struct RuntimeConfig {
     pub initial_goal: Option<InitialGoal>,
     /// `--plan`: the session starts in plan mode.
     pub plan_mode: bool,
+    /// `--sandbox <mode>`: the OS sandbox mode for this run, over the `sandbox` setting.
+    pub sandbox_mode: Option<pa_core::os_sandbox::SandboxMode>,
 }
 
 impl RuntimeConfig {
@@ -297,6 +299,7 @@ pub fn runtime_config_from_args(
             token_budget: parsed.goal_token_budget,
         }),
         plan_mode: parsed.plan,
+        sandbox_mode: parsed.sandbox,
     }
 }
 

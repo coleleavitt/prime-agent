@@ -18,6 +18,7 @@ pa-ai.workspace = true
 pa-models = { path = "../pa-models" }
 pa-agent.workspace = true
 pa-telemetry.workspace = true
+pa-os-sandbox = { path = "../pa-os-sandbox" }
 # The bundled computer-use skill's host side (`computer_use.*` host requests).
 pa-computer-use = { path = "../pa-computer-use" }
 base64 = "0.22"

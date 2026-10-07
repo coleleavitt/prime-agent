@@ -721,6 +721,36 @@ fn tray_service_tier_badge_follows_the_ts_shape() {
     }
 }
 
+/// An enabled OS sandbox leads the tray's right group as `sandbox <label>`;
+/// off renders the tray exactly as before.
+#[test]
+fn tray_sandbox_badge_leads_the_right_group_only_when_enabled() {
+    let tray = |sandbox: Option<&str>| {
+        let state = ChromeState {
+            model_id: Some("faux-1".to_string()),
+            sandbox: sandbox.map(str::to_string),
+            ..Default::default()
+        };
+        let line = render_tray(&state, &theme(), 60);
+        line.iter().map(|s| s.content.as_str()).collect::<String>()
+    };
+    assert_eq!(
+        [
+            tray(None),
+            tray(Some("workspace-write")),
+            tray(Some("read-only+net (degraded)")),
+        ],
+        [
+            format!("{}faux-1", " ".repeat(54)),
+            format!("{}sandbox workspace-write \u{00b7} faux-1", " ".repeat(28)),
+            format!(
+                "{}sandbox read-only+net (degraded) \u{00b7} faux-1",
+                " ".repeat(19)
+            ),
+        ]
+    );
+}
+
 /// A level on a reasoning model renders; everything else keeps the bare id.
 #[test]
 fn effort_suffix_gates_on_model_reasoning() {

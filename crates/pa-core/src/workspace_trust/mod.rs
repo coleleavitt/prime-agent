@@ -56,6 +56,9 @@ pub const UNTRUSTED_PROJECT_SETTINGS_KEYS: &[&str] = &[
     "quietStartup",
     "requestTiming",
     "enableSkillCommands",
+    // Tighten-only: the resolver (`crate::os_sandbox`) lets a project scope enable or narrow
+    // the OS sandbox, never loosen it or add writable roots.
+    "sandbox",
 ];
 
 /// Whether a project settings key applies in an untrusted workspace.

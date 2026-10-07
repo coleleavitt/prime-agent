@@ -632,14 +632,19 @@ async fn run_interactive_surface(
         // a stdin chunk): a burst applies as one batch instead of one render pass per event. A
         // WaitIdle step is a barrier: it holds at the queue head until the turn finishes.
         let mut inputs_pending = !pending.is_empty();
+        // Whether this iteration applied a headless plan step (its frame paints pre-select).
+        let mut step_applied = false;
         while inputs_pending {
             if let Some(UiInput::WaitIdle { timeout_ms }) = pending.front() {
                 let timeout_ms = *timeout_ms;
                 // A parked follow-up/steering message keeps the barrier waiting until the session
-                // delivers it; a submit whose round trip is still armed holds the barrier too
-                // (the async submit resolves off the render path).
+                // delivers it, and so does a picked-up prompt whose turn is still preparing (the
+                // "Starting" row: between the previous turn's end and this turn's start, the turn
+                // is inactive and the lanes are empty); a submit whose round trip is still armed
+                // holds the barrier too (the async submit resolves off the render path).
                 if session.turn_active
                     || !view.queued.is_empty()
+                    || view.queued.starting.is_some()
                     || session.prompt_submits_in_flight() > 0
                 {
                     if wait_idle_deadline.is_none() {
@@ -758,6 +763,7 @@ async fn run_interactive_surface(
                 }
             } else if let Some(input) = pending.pop_front() {
                 session.dirty = true;
+                step_applied = true;
                 match input {
                     UiInput::Key(key) => {
                         session.stop_selection_auto_scroll();
@@ -980,6 +986,14 @@ async fn run_interactive_surface(
                 // batch.
                 inputs_pending = false;
             }
+        }
+        // A headless step paints its frame before the select can fold anything else in: a
+        // transient state the step mounted (the `/share` loader while `gh` runs) would otherwise
+        // be replaced unpainted when its outcome arm wins the select's race against the frame.
+        if step_applied && session.dirty && !renderer.is_terminal() {
+            renderer.render_headless(&mut session, &mut view);
+            last_pulse_phase = view.pulse_frame;
+            render_deadline = None;
         }
         // The headless exit gate: the plan completed, and the run ends once every settle member
         // drains (an in-flight `/share` upload or inline auth flow holds the run open like an

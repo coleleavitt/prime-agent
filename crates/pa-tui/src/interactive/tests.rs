@@ -91,6 +91,7 @@ fn flush_rows_write_crlf_and_keep_zone_markers() {
 
 fn options(selection: ModelSelection) -> InteractiveOptions {
     InteractiveOptions {
+        sandbox_mode: None,
         resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         initial_plan_mode: false,
         models: None,

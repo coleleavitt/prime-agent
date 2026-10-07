@@ -341,6 +341,10 @@ pub struct InteractiveOptions {
     /// `--plan`: switch the session into plan mode (`/plan on`) right after
     /// attach, before the initial prompt.
     pub initial_plan_mode: bool,
+    /// `--sandbox <mode>` (the wire name): rides the create config so the
+    /// session's kernel and `!` lane run under that mode instead of the
+    /// `sandbox` setting's. `None` keeps the setting.
+    pub sandbox_mode: Option<String>,
     /// The `terminal.showImages` setting, default true: whether image blocks render their
     /// metadata rows or the `[Image: ...]` placeholders.
     pub show_images: bool,
@@ -416,6 +420,7 @@ impl std::fmt::Debug for InteractiveOptions {
             .field("session", &self.session)
             .field("initial_message", &self.initial_message)
             .field("initial_plan_mode", &self.initial_plan_mode)
+            .field("sandbox_mode", &self.sandbox_mode)
             .field("theme", &self.theme)
             .field("code_block_indent", &self.code_block_indent)
             .field("version", &self.version)
@@ -468,6 +473,9 @@ impl InteractiveOptions {
             serde_json::to_value(self.resource_exclusions),
         ) {
             object.extend(exclusions);
+        }
+        if let Some(sandbox) = &self.sandbox_mode {
+            config["sandbox"] = json!(sandbox);
         }
         // `telemetryDisabled` rides the runtime config: a resume's create reads it back.
         if self.telemetry_disabled == Some(true) {
