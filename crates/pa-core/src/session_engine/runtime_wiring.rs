@@ -272,6 +272,11 @@ fn kernel_harness_env(
             local.to_string_lossy().to_string(),
         ));
     }
+    // A store the host process itself was pointed at (an eval harness
+    // seeding `RLM_HARNESS_STATE_DIR`) reaches the kernel unchanged.
+    env.retain(|(name, _)| {
+        std::env::var_os(name).is_none_or(|value| value.to_string_lossy().trim().is_empty())
+    });
     // Only the product binary serves the one-shot; a test harness or an
     // embedding binary does not.
     if let Ok(executable) = std::env::current_exe() {

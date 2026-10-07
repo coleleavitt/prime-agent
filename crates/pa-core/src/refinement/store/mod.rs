@@ -277,20 +277,20 @@ impl Session {
             .filter_map(|kind| self.state.entries.get(kind))
             .flat_map(|bucket| bucket.values().cloned())
             .collect();
+        // Python sorts on the kind's name, so the order is alphabetical.
+        let kind_name = |entry: &HarnessEntry| {
+            KINDS
+                .iter()
+                .find(|(_, kind)| *kind == entry.kind)
+                .map_or("", |(name, _)| *name)
+        };
         entries.sort_by(|left, right| {
-            let key = |entry: &HarnessEntry| {
-                (
-                    KINDS
-                        .iter()
-                        .find(|(_, kind)| *kind == entry.kind)
-                        .map_or("", |(name, _)| *name)
-                        .to_string(),
-                    entry.path.clone(),
-                    entry.title.clone(),
-                    entry.id.clone(),
-                )
-            };
-            key(left).cmp(&key(right))
+            (kind_name(left), &left.path, &left.title, &left.id).cmp(&(
+                kind_name(right),
+                &right.path,
+                &right.title,
+                &right.id,
+            ))
         });
         entries
     }
