@@ -20,10 +20,11 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias, TypedDict, TypeGuard, Unpack, cast, overload
 
 from .factory import validate_factory_spec
 
@@ -43,6 +44,34 @@ _HARNESS_REQUEST_FLAG = "--prime-agent-harness-request"
 # The marker the host reads in place of a value JSON cannot carry (a set, a
 # datetime): validation names its type, and a save refuses it like json.dump.
 _UNSERIALIZABLE_KEY = "__rlm_harness_unserializable__"
+# JSON as the host request carries it.
+JsonValue: TypeAlias = "None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]"
+JsonObject: TypeAlias = "dict[str, JsonValue]"
+
+
+# The keyword arguments every scoped call accepts beyond its own: ``global``
+# (the reserved-word spelling of ``global_``).
+_ScopeKwargs = TypedDict("_ScopeKwargs", {"global": bool}, total=False)
+
+
+class _HostError(TypedDict):
+    """The Python exception a store call raises: its class name and message."""
+
+    type: str
+    message: str
+
+
+class _HostReply(TypedDict, total=False):
+    """One ``harness.<op>`` reply: ``ok`` with the call's ``result`` and the
+    store's ``state`` after it, or ``ok: false`` with the ``error``."""
+
+    ok: bool
+    result: JsonValue
+    state: JsonObject
+    loadError: str | None
+    error: _HostError
+
+
 _ERRORS: dict[str, type[Exception]] = {
     "ValueError": ValueError,
     "TypeError": TypeError,
@@ -65,7 +94,7 @@ def _agent_dir() -> Path:
     return Path(raw).expanduser().resolve()
 
 
-def _resolve_global_flag(global_: bool = False, extra: dict[str, Any] | None = None) -> bool:
+def _resolve_global_flag(global_: bool = False, extra: Mapping[str, object] | None = None) -> bool:
     extra = dict(extra or {})
     if "global" in extra:
         value = extra.pop("global")
@@ -78,6 +107,10 @@ def _resolve_global_flag(global_: bool = False, extra: dict[str, Any] | None = N
     return bool(global_)
 
 
+@overload
+def _strip_scope_prefix(id: str, global_: bool) -> tuple[str, bool]: ...
+@overload
+def _strip_scope_prefix(id: str | None, global_: bool) -> tuple[str | None, bool]: ...
 def _strip_scope_prefix(id: str | None, global_: bool) -> tuple[str | None, bool]:
     # overview() displays entries as [local:id]/[global:id]; accept those ids
     # verbatim. A global: prefix routes to the global store unless the caller
@@ -105,7 +138,7 @@ def _state_file(state_dir: str | Path | None = None, *, global_: bool = False) -
     if root is None and not global_:
         raise RuntimeError(
             "Local harness state requires RLM_HARNESS_STATE_DIR or RLM_SESSION_DIR. "
-            "Use get_harness_state(global_=True) for global state."
+            + "Use get_harness_state(global_=True) for global state."
         )
     if root:
         return Path(root).expanduser().resolve() / _DEFAULT_FILE_NAME
@@ -171,46 +204,106 @@ _REFINEMENT_FIELDS = {field.name for field in fields(RefinementEvent)}
 _MODELLED_TOP_LEVEL = {"schema", "entries", "refinements"}
 
 
-def _entry_payload(entry: HarnessEntry) -> dict[str, Any]:
+def _entry_payload(entry: HarnessEntry) -> dict[str, object]:
     """Serialize an entry with its unmodelled host-owned keys flattened back in.
 
     Modelled fields win: `extra` only ever carries keys this dataclass does not
     know about, so a stale duplicate there can never shadow a real field.
     """
-    data = asdict(entry)
-    extra = data.pop("extra", None)
-    return {**extra, **data} if isinstance(extra, dict) and extra else data
+    data: dict[str, object] = asdict(entry)
+    del data["extra"]
+    return {**entry.extra, **data}
 
 
-def _refinement_payload(event: RefinementEvent) -> dict[str, Any]:
+def _refinement_payload(event: RefinementEvent) -> dict[str, object]:
     """Serialize a refinement event, leaving `reason` off the events that have none."""
-    data = asdict(event)
+    data: dict[str, object] = asdict(event)
     if data.get("reason") is None:
-        data.pop("reason", None)
+        del data["reason"]
     return data
 
 
-def _entry_from_payload(payload: dict[str, Any]) -> HarnessEntry:
+def _is_kind(value: object) -> TypeGuard[HarnessKind]:
+    return value in _KINDS
+
+
+def _is_object(value: object) -> TypeGuard[JsonObject]:
+    return isinstance(value, dict)
+
+
+def _invalid(what: str) -> RuntimeError:
+    return RuntimeError(f"the harness host returned an invalid {what}")
+
+
+def _field_text(payload: JsonObject, key: str, what: str) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str):
+        raise _invalid(what)
+    return value
+
+
+def _field_record(payload: JsonObject, key: str, what: str) -> JsonObject:
+    value = payload.get(key)
+    if not _is_object(value):
+        raise _invalid(what)
+    return value
+
+
+def _entry_from_payload(payload: JsonObject) -> HarnessEntry:
+    """A stored entry as the host reports it (modelled keys plus its own)."""
+    kind, scope, version = payload.get("kind"), payload.get("scope"), payload.get("version")
+    if not _is_kind(kind) or scope not in ("local", "global") or not isinstance(version, int):
+        raise _invalid("harness entry")
     return HarnessEntry(
-        **{key: value for key, value in payload.items() if key in _ENTRY_FIELDS},
+        id=_field_text(payload, "id", "harness entry"),
+        kind=kind,
+        title=_field_text(payload, "title", "harness entry"),
+        content=_field_text(payload, "content", "harness entry"),
+        path=_field_text(payload, "path", "harness entry"),
+        scope="global" if scope == "global" else "local",
+        reference=_field_record(payload, "reference", "harness entry"),
+        arguments=_field_record(payload, "arguments", "harness entry"),
+        metadata=_field_record(payload, "metadata", "harness entry"),
+        source=_field_text(payload, "source", "harness entry"),
+        created_at=_field_text(payload, "created_at", "harness entry"),
+        updated_at=_field_text(payload, "updated_at", "harness entry"),
+        version=version,
         extra={key: value for key, value in payload.items() if key not in _ENTRY_FIELDS},
     )
 
 
-def _event_from_payload(payload: dict[str, Any]) -> RefinementEvent:
-    return RefinementEvent(**{key: value for key, value in payload.items() if key in _REFINEMENT_FIELDS})
+def _event_from_payload(payload: JsonObject) -> RefinementEvent:
+    """A recorded refinement event as the host reports it."""
+    changes, reason = payload.get("changes"), payload.get("reason")
+    if not isinstance(changes, list) or not all(isinstance(change, str) for change in changes):
+        raise _invalid("refinement event")
+    if reason is not None and not isinstance(reason, str):
+        raise _invalid("refinement event")
+    return RefinementEvent(
+        id=_field_text(payload, "id", "refinement event"),
+        trigger=_field_text(payload, "trigger", "refinement event"),
+        changes=[change for change in changes if isinstance(change, str)],
+        evidence=_field_text(payload, "evidence", "refinement event"),
+        outcome=_field_text(payload, "outcome", "refinement event"),
+        created_at=_field_text(payload, "created_at", "refinement event"),
+        reason=reason,
+    )
 
 
-def _wire(value: Any) -> Any:
+def _unserializable_marker(value: object) -> JsonObject:
+    return {_UNSERIALIZABLE_KEY: type(value).__name__}
+
+
+def _wire(value: object) -> JsonValue:
     """``value`` as plain JSON data, a value JSON cannot carry replaced by a
     marker naming its type. Out-of-range floats raise ValueError."""
     text = json.dumps(
         value,
         ensure_ascii=False,
         allow_nan=False,
-        default=lambda unserializable: {_UNSERIALIZABLE_KEY: type(unserializable).__name__},
+        default=_unserializable_marker,
     )
-    return json.loads(text)
+    return cast("JsonValue", json.loads(text))
 
 
 def _checkout_host() -> Path | None:
@@ -241,11 +334,11 @@ def _host_executable() -> str:
         return str(checkout)
     raise RuntimeError(
         "rlm.harness needs the Prime Agent host: call it inside a Prime Agent kernel, "
-        "or set PRIME_AGENT_EXECUTABLE to the prime-agent binary"
+        + "or set PRIME_AGENT_EXECUTABLE to the prime-agent binary"
     )
 
 
-def _one_shot(payload: dict[str, Any]) -> Any:
+def _one_shot(payload: JsonObject) -> JsonValue:
     executable = _host_executable()
     try:
         completed = subprocess.run(
@@ -262,42 +355,53 @@ def _one_shot(payload: dict[str, Any]) -> Any:
         detail = completed.stderr.strip() or f"exit code {completed.returncode}"
         raise RuntimeError(f"rlm.harness host request failed: {detail}")
     try:
-        return json.loads(completed.stdout)
+        reply = cast("JsonValue", json.loads(completed.stdout))
     except ValueError as err:
         raise RuntimeError(f"rlm.harness host returned an invalid reply: {err}") from err
+    return reply
 
 
-def _host_call(request_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _host_call(request_type: str, payload: JsonObject) -> _HostReply:
     """Send one ``harness.<op>`` request; raise the store's error as the
     Python exception it names."""
     from . import repl
 
-    message = {**payload, "type": request_type}
+    message: JsonObject = {**payload, "type": request_type}
+    body: JsonValue
     if repl.is_active():
-        reply = repl.host_request_blocking(message)
+        reply: Mapping[str, object] = repl.host_request_blocking(message)
         status = reply.get("status")
         if status == "error":
             raise RuntimeError(str(reply.get("error") or f"host request {request_type} failed"))
         if status != "ok":
             raise RuntimeError(f"host request {request_type} returned unexpected status: {status!r}")
-        body = reply.get("result")
+        body = cast("JsonValue", reply.get("result"))
     else:
         body = _one_shot(message)
-    if not isinstance(body, dict):
+    if not _is_object(body):
         raise RuntimeError(f"host request {request_type} returned an invalid reply")
     if body.get("ok") is True:
-        return body
-    error = body.get("error") if isinstance(body.get("error"), dict) else {}
-    raise _ERRORS.get(error.get("type"), RuntimeError)(error.get("message") or f"host request {request_type} failed")
+        state, load_error = body.get("state"), body.get("loadError")
+        result: _HostReply = {"ok": True, "result": body.get("result")}
+        if _is_object(state):
+            result["state"] = state
+        result["loadError"] = load_error if isinstance(load_error, str) else None
+        return result
+    error = body.get("error")
+    kind = error.get("type") if _is_object(error) else None
+    text = error.get("message") if _is_object(error) else None
+    exception = _ERRORS.get(kind, RuntimeError) if isinstance(kind, str) else RuntimeError
+    raise exception(text if isinstance(text, str) and text else f"host request {request_type} failed")
 
 
-def _factory_spec_errors(arguments: Any) -> list[str] | None:
+def _factory_spec_errors(arguments: object) -> list[str] | None:
     """What the kernel's factory validator says about the spec a generic
     factory write stores, for the host to apply in its validation order."""
     if not isinstance(arguments, dict):
         return None
-    machine = arguments.get("machine")
-    spec = machine if machine is not None else arguments.get("dag")
+    record = cast("Mapping[str, object]", arguments)
+    machine = record.get("machine")
+    spec = machine if machine is not None else record.get("dag")
     return validate_factory_spec(spec) if isinstance(spec, dict) else None
 
 
@@ -325,63 +429,68 @@ class HarnessState:
         self.scope: HarnessScope = scope
         # When set, local mutations raise instead of vanishing into a volatile
         # store; reads and global_=True delegation keep working.
-        self._local_write_error = local_write_error
+        self._local_write_error: str | None = local_write_error
         self.entries: dict[HarnessKind, dict[str, HarnessEntry]] = {kind: {} for kind in _KINDS}
         self.refinements: list[RefinementEvent] = []
         # Top-level keys this class does not model (`ravo`, `failures`,
         # `trustWindows`, ...), as of the last call: save() writes them back.
-        self._extra: dict[str, Any] = {}
-        self._schema: Any = 1
+        self._extra: JsonObject = {}
+        self._schema: JsonValue = 1
         # Each viewed entry's payload as last adopted from the store.
-        self._adopted: dict[tuple[str, str], dict[str, Any]] = {}
+        self._adopted: dict[tuple[HarnessKind, str], JsonObject] = {}
         self._global_target_state_dir: Path | None = None
         # Why the store's file failed to parse at the last call, if it did. The
         # host backs such a file up before a write replaces it.
         self.load_error: str | None = None
         if self.file_path is not None:
-            self.load()
+            _ = self.load()
 
-    def _document(self) -> dict[str, Any]:
+    def _document(self) -> JsonObject:
         """The state this view holds, as the store's document."""
         return {
             **self._extra,
             "schema": self._schema,
-            "entries": {
-                kind: {entry_id: _entry_payload(entry) for entry_id, entry in records.items()}
-                for kind, records in self.entries.items()
-            },
-            "refinements": [_refinement_payload(event) for event in self.refinements],
+            "entries": _wire(
+                {
+                    kind: {entry_id: _entry_payload(entry) for entry_id, entry in records.items()}
+                    for kind, records in self.entries.items()
+                }
+            ),
+            "refinements": _wire([_refinement_payload(event) for event in self.refinements]),
         }
 
-    def _adopt(self, document: Any, load_error: Any) -> None:
+    def _adopt(self, document: JsonObject | None, load_error: str | None) -> None:
         """Mirror the store's state after a call."""
-        if not isinstance(document, dict):
+        if document is None:
             return
         self._extra = {key: value for key, value in document.items() if key not in _MODELLED_TOP_LEVEL}
         self._schema = document.get("schema", 1)
-        raw_entries = document.get("entries") if isinstance(document.get("entries"), dict) else {}
+        raw_entries = document.get("entries")
         entries: dict[HarnessKind, dict[str, HarnessEntry]] = {}
-        adopted: dict[tuple[str, str], dict[str, Any]] = {}
+        adopted: dict[tuple[HarnessKind, str], JsonObject] = {}
         for kind in _KINDS:
-            records = raw_entries.get(kind) if isinstance(raw_entries.get(kind), dict) else {}
             entries[kind] = {}
+            records = raw_entries.get(kind) if _is_object(raw_entries) else None
+            if not _is_object(records):
+                continue
             for entry_id, payload in records.items():
-                if not isinstance(payload, dict):
+                if not _is_object(payload):
                     continue
                 entries[kind][entry_id] = self._entry_object(kind, entry_id, payload)
                 adopted[(kind, entry_id)] = payload
         self.entries = entries
         self._adopted = adopted
-        self.refinements = [
-            _event_from_payload(event) for event in document.get("refinements") or [] if isinstance(event, dict)
-        ]
-        self.load_error = load_error if isinstance(load_error, str) else None
+        events = document.get("refinements")
+        self.refinements = (
+            [_event_from_payload(event) for event in events if _is_object(event)] if isinstance(events, list) else []
+        )
+        self.load_error = load_error
 
-    def _entry_object(self, kind: str, entry_id: str, payload: dict[str, Any]) -> HarnessEntry:
+    def _entry_object(self, kind: HarnessKind, entry_id: str, payload: JsonObject) -> HarnessEntry:
         """The view's object for one stored entry. An entry keeps its object
         across calls (like the store's in-memory records always did): an
         unchanged entry keeps it untouched, a changed one is updated in place."""
-        current = self.entries.get(kind, {}).get(entry_id)  # type: ignore[call-overload]
+        current = self.entries.get(kind, {}).get(entry_id)
         if current is None:
             return _entry_from_payload(payload)
         if self._adopted.get((kind, entry_id)) != payload:
@@ -390,22 +499,27 @@ class HarnessState:
                 setattr(current, name, getattr(fresh, name))
         return current
 
-    def _entry_result(self, payload: Any) -> HarnessEntry | None:
+    def _entry_result(self, payload: JsonValue) -> HarnessEntry:
         """A call's entry result, as the view's object for it."""
-        if not isinstance(payload, dict):
-            return None
+        if not _is_object(payload):
+            raise _invalid("harness entry")
         kind, entry_id = payload.get("kind"), payload.get("id")
-        current = self.entries.get(kind, {}).get(entry_id) if isinstance(kind, str) else None
+        current = self.entries[kind].get(entry_id) if _is_kind(kind) and isinstance(entry_id, str) else None
         return current if current is not None else _entry_from_payload(payload)
 
-    def _call(self, request_type: str, extra: dict[str, Any] | None = None, **args: Any) -> Any:
+    def _entry_results(self, payloads: JsonValue) -> list[HarnessEntry]:
+        if not isinstance(payloads, list):
+            raise _invalid("harness entry list")
+        return [self._entry_result(payload) for payload in payloads]
+
+    def _call(self, request_type: str, extra: JsonObject | None = None, **args: object) -> JsonValue:
         """Run one store operation on this store and mirror its state."""
-        payload: dict[str, Any] = {
+        payload: JsonObject = {
             "store": {
                 "file": str(self.file_path) if self.file_path is not None else None,
                 "scope": self.scope,
                 # The in-memory store's state travels with each call.
-                "document": _wire(self._document()) if self.file_path is None else None,
+                "document": self._document() if self.file_path is None else None,
                 "writeError": self._local_write_error,
             },
             "agentDir": str(_agent_dir()),
@@ -418,10 +532,10 @@ class HarnessState:
         return reply.get("result")
 
     def load(self) -> "HarnessState":
-        self._call("harness.load")
+        _ = self._call("harness.load")
         return self
 
-    def _global_target(self, global_: bool, extra: dict[str, Any] | None = None) -> "HarnessState | None":
+    def _global_target(self, global_: bool, extra: Mapping[str, object] | None = None) -> "HarnessState | None":
         if not _resolve_global_flag(global_, extra):
             return None
         target = get_harness_state(state_dir=self._global_target_state_dir, global_=True)
@@ -433,7 +547,7 @@ class HarnessState:
         if self.file_path is None:
             # in_memory: the view is the store.
             return self
-        self._call("harness.save", document=self._document())
+        _ = self._call("harness.save", document=self._document())
         return self
 
     def upsert(
@@ -449,7 +563,7 @@ class HarnessState:
         metadata: dict[str, Any] | None = None,
         source: str = KERNEL_ENTRY_SOURCE,
         global_: bool = False,
-        **kwargs: Any,
+        **kwargs: Unpack[_ScopeKwargs],
     ) -> HarnessEntry:
         id, global_ = _strip_scope_prefix(id, global_)
         if target := self._global_target(global_, kwargs):
@@ -469,20 +583,20 @@ class HarnessState:
     def _write(
         self,
         request_type: str,
-        kind: Any,
-        id: Any,
-        title: Any,
-        content: Any,
-        path: Any,
-        reference: Any,
-        arguments: Any,
-        metadata: Any,
-        source: Any,
-        extra: dict[str, Any] | None = None,
+        kind: object,
+        id: object,
+        title: object,
+        content: object,
+        path: object,
+        reference: object,
+        arguments: object,
+        metadata: object,
+        source: object,
     ) -> HarnessEntry:
-        extra = dict(extra or {})
-        if kind == "factory" and "factorySpecErrors" not in extra:
-            extra["factorySpecErrors"] = _factory_spec_errors(arguments)
+        extra: JsonObject = {}
+        if kind == "factory":
+            errors = _factory_spec_errors(arguments)
+            extra["factorySpecErrors"] = list(errors) if errors is not None else None
         payload = self._call(
             request_type,
             extra,
@@ -496,22 +610,23 @@ class HarnessState:
             metadata=metadata,
             source=source,
         )
-        return self._entry_result(payload)  # type: ignore[return-value]
+        return self._entry_result(payload)
 
-    def get(self, kind: HarnessKind, id: str, *, global_: bool = False, **kwargs: Any) -> HarnessEntry | None:
+    def get(self, kind: HarnessKind, id: str, *, global_: bool = False, **kwargs: Unpack[_ScopeKwargs]) -> HarnessEntry | None:
         id, global_ = _strip_scope_prefix(id, global_)
         if target := self._global_target(global_, kwargs):
             return target.get(kind, id)
-        return self._entry_result(self._call("harness.get", kind=kind, id=id))
+        payload = self._call("harness.get", kind=kind, id=id)
+        return None if payload is None else self._entry_result(payload)
 
-    def delete(self, kind: HarnessKind, id: str, *, global_: bool = False, **kwargs: Any) -> bool:
+    def delete(self, kind: HarnessKind, id: str, *, global_: bool = False, **kwargs: Unpack[_ScopeKwargs]) -> bool:
         id, global_ = _strip_scope_prefix(id, global_)
         if target := self._global_target(global_, kwargs):
             return target.delete(kind, id)
         return bool(self._call("harness.delete", kind=kind, id=id))
 
     def set_enabled(
-        self, kind: HarnessKind, id: str, enabled: bool, *, global_: bool = False, **kwargs: Any
+        self, kind: HarnessKind, id: str, enabled: bool, *, global_: bool = False, **kwargs: Unpack[_ScopeKwargs]
     ) -> HarnessEntry:
         """Enable or disable one entry without deleting it.
 
@@ -521,44 +636,42 @@ class HarnessState:
         id, global_ = _strip_scope_prefix(id, global_)
         if target := self._global_target(global_, kwargs):
             return target.set_enabled(kind, id, enabled)
-        return self._entry_result(  # type: ignore[return-value]
-            self._call("harness.set_enabled", kind=kind, id=id, enabled=enabled)
-        )
+        return self._entry_result(self._call("harness.set_enabled", kind=kind, id=id, enabled=enabled))
 
-    def enable(self, kind: HarnessKind, id: str, *, global_: bool = False, **kwargs: Any) -> HarnessEntry:
+    def enable(self, kind: HarnessKind, id: str, *, global_: bool = False, **kwargs: Unpack[_ScopeKwargs]) -> HarnessEntry:
         return self.set_enabled(kind, id, True, global_=global_, **kwargs)
 
-    def disable(self, kind: HarnessKind, id: str, *, global_: bool = False, **kwargs: Any) -> HarnessEntry:
+    def disable(self, kind: HarnessKind, id: str, *, global_: bool = False, **kwargs: Unpack[_ScopeKwargs]) -> HarnessEntry:
         return self.set_enabled(kind, id, False, global_=global_, **kwargs)
 
-    def enable_memory(self, id: str, *, global_: bool = False, **kwargs: Any) -> HarnessEntry:
+    def enable_memory(self, id: str, *, global_: bool = False, **kwargs: Unpack[_ScopeKwargs]) -> HarnessEntry:
         return self.set_enabled("memory", id, True, global_=global_, **kwargs)
 
-    def disable_memory(self, id: str, *, global_: bool = False, **kwargs: Any) -> HarnessEntry:
+    def disable_memory(self, id: str, *, global_: bool = False, **kwargs: Unpack[_ScopeKwargs]) -> HarnessEntry:
         return self.set_enabled("memory", id, False, global_=global_, **kwargs)
 
-    def enable_prompt_note(self, id: str, *, global_: bool = False, **kwargs: Any) -> HarnessEntry:
+    def enable_prompt_note(self, id: str, *, global_: bool = False, **kwargs: Unpack[_ScopeKwargs]) -> HarnessEntry:
         return self.set_enabled("prompt", id, True, global_=global_, **kwargs)
 
-    def disable_prompt_note(self, id: str, *, global_: bool = False, **kwargs: Any) -> HarnessEntry:
+    def disable_prompt_note(self, id: str, *, global_: bool = False, **kwargs: Unpack[_ScopeKwargs]) -> HarnessEntry:
         return self.set_enabled("prompt", id, False, global_=global_, **kwargs)
 
-    def enable_skill(self, id: str, *, global_: bool = False, **kwargs: Any) -> HarnessEntry:
+    def enable_skill(self, id: str, *, global_: bool = False, **kwargs: Unpack[_ScopeKwargs]) -> HarnessEntry:
         return self.set_enabled("skill", id, True, global_=global_, **kwargs)
 
-    def disable_skill(self, id: str, *, global_: bool = False, **kwargs: Any) -> HarnessEntry:
+    def disable_skill(self, id: str, *, global_: bool = False, **kwargs: Unpack[_ScopeKwargs]) -> HarnessEntry:
         return self.set_enabled("skill", id, False, global_=global_, **kwargs)
 
-    def enable_subagent(self, id: str, *, global_: bool = False, **kwargs: Any) -> HarnessEntry:
+    def enable_subagent(self, id: str, *, global_: bool = False, **kwargs: Unpack[_ScopeKwargs]) -> HarnessEntry:
         return self.set_enabled("subagent", id, True, global_=global_, **kwargs)
 
-    def disable_subagent(self, id: str, *, global_: bool = False, **kwargs: Any) -> HarnessEntry:
+    def disable_subagent(self, id: str, *, global_: bool = False, **kwargs: Unpack[_ScopeKwargs]) -> HarnessEntry:
         return self.set_enabled("subagent", id, False, global_=global_, **kwargs)
 
-    def list(self, kind: HarnessKind | None = None, *, global_: bool = False, **kwargs: Any) -> list[HarnessEntry]:
+    def list(self, kind: HarnessKind | None = None, *, global_: bool = False, **kwargs: Unpack[_ScopeKwargs]) -> list[HarnessEntry]:
         if target := self._global_target(global_, kwargs):
             return target.list(kind)
-        return [self._entry_result(payload) for payload in self._call("harness.list", kind=kind)]  # type: ignore[misc]
+        return self._entry_results(self._call("harness.list", kind=kind))
 
     def create(
         self,
@@ -573,7 +686,7 @@ class HarnessState:
         metadata: dict[str, Any] | None = None,
         source: str = KERNEL_ENTRY_SOURCE,
         global_: bool = False,
-        **kwargs: Any,
+        **kwargs: Unpack[_ScopeKwargs],
     ) -> HarnessEntry:
         id, global_ = _strip_scope_prefix(id, global_)
         if target := self._global_target(global_, kwargs):
@@ -603,7 +716,7 @@ class HarnessState:
         metadata: dict[str, Any] | None = None,
         source: str = KERNEL_ENTRY_SOURCE,
         global_: bool = False,
-        **kwargs: Any,
+        **kwargs: Unpack[_ScopeKwargs],
     ) -> HarnessEntry:
         id, global_ = _strip_scope_prefix(id, global_)
         if target := self._global_target(global_, kwargs):
@@ -629,7 +742,7 @@ class HarnessState:
         path: str = "general",
         metadata: dict[str, Any] | None = None,
         global_: bool = False,
-        **kwargs: Any,
+        **kwargs: Unpack[_ScopeKwargs],
     ) -> HarnessEntry:
         return self.create("memory", title, content, id=id, path=path, metadata=metadata, global_=global_, **kwargs)
 
@@ -642,11 +755,11 @@ class HarnessState:
         path: str | None = None,
         metadata: dict[str, Any] | None = None,
         global_: bool = False,
-        **kwargs: Any,
+        **kwargs: Unpack[_ScopeKwargs],
     ) -> HarnessEntry:
         return self.update("memory", id, title, content, path=path, metadata=metadata, global_=global_, **kwargs)
 
-    def delete_memory(self, id: str, *, global_: bool = False, **kwargs: Any) -> bool:
+    def delete_memory(self, id: str, *, global_: bool = False, **kwargs: Unpack[_ScopeKwargs]) -> bool:
         return self.delete("memory", id, global_=global_, **kwargs)
 
     def create_prompt_note(
@@ -658,7 +771,7 @@ class HarnessState:
         path: str = "policy",
         metadata: dict[str, Any] | None = None,
         global_: bool = False,
-        **kwargs: Any,
+        **kwargs: Unpack[_ScopeKwargs],
     ) -> HarnessEntry:
         return self.create("prompt", title, content, id=id, path=path, metadata=metadata, global_=global_, **kwargs)
 
@@ -671,28 +784,28 @@ class HarnessState:
         path: str | None = None,
         metadata: dict[str, Any] | None = None,
         global_: bool = False,
-        **kwargs: Any,
+        **kwargs: Unpack[_ScopeKwargs],
     ) -> HarnessEntry:
         return self.update("prompt", id, title, content, path=path, metadata=metadata, global_=global_, **kwargs)
 
-    def delete_prompt_note(self, id: str, *, global_: bool = False, **kwargs: Any) -> bool:
+    def delete_prompt_note(self, id: str, *, global_: bool = False, **kwargs: Unpack[_ScopeKwargs]) -> bool:
         return self.delete("prompt", id, global_=global_, **kwargs)
 
     def _skill_write(
         self,
         request_type: str,
-        raw_id: Any,
-        title: Any,
-        content: Any,
-        path: Any,
-        reference: Any,
-        arguments: Any,
-        metadata: Any,
+        raw_id: object,
+        title: object,
+        content: object,
+        path: object,
+        reference: object,
+        arguments: object,
+        metadata: object,
         global_: bool,
-        kwargs: dict[str, Any],
+        kwargs: Mapping[str, object],
     ) -> HarnessEntry:
         # The reference check names the entry by the id as the caller wrote it.
-        id, global_ = _strip_scope_prefix(raw_id, global_)
+        id, global_ = _strip_scope_prefix(raw_id, global_) if isinstance(raw_id, str) else (raw_id, global_)
         if target := self._global_target(global_, kwargs):
             return target._skill_write(
                 request_type, raw_id, title, content, path, reference, arguments, metadata, False, {}
@@ -710,7 +823,7 @@ class HarnessState:
             metadata=metadata,
             source=KERNEL_ENTRY_SOURCE,
         )
-        return self._entry_result(payload)  # type: ignore[return-value]
+        return self._entry_result(payload)
 
     def create_skill(
         self,
@@ -723,7 +836,7 @@ class HarnessState:
         arguments: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
         global_: bool = False,
-        **kwargs: Any,
+        **kwargs: Unpack[_ScopeKwargs],
     ) -> HarnessEntry:
         return self._skill_write(
             "harness.create_skill", id, title, content, path, reference, arguments, metadata, global_, kwargs
@@ -740,7 +853,7 @@ class HarnessState:
         arguments: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
         global_: bool = False,
-        **kwargs: Any,
+        **kwargs: Unpack[_ScopeKwargs],
     ) -> HarnessEntry:
         # Omitting the reference keeps the stored one rather than forcing every
         # title/content-only update to re-send the full Python reference.
@@ -748,7 +861,7 @@ class HarnessState:
             "harness.update_skill", id, title, content, path, reference, arguments, metadata, global_, kwargs
         )
 
-    def delete_skill(self, id: str, *, global_: bool = False, **kwargs: Any) -> bool:
+    def delete_skill(self, id: str, *, global_: bool = False, **kwargs: Unpack[_ScopeKwargs]) -> bool:
         return self.delete("skill", id, global_=global_, **kwargs)
 
     def create_subagent(
@@ -760,7 +873,7 @@ class HarnessState:
         path: str = "general",
         metadata: dict[str, Any] | None = None,
         global_: bool = False,
-        **kwargs: Any,
+        **kwargs: Unpack[_ScopeKwargs],
     ) -> HarnessEntry:
         return self.create("subagent", title, content, id=id, path=path, metadata=metadata, global_=global_, **kwargs)
 
@@ -773,36 +886,37 @@ class HarnessState:
         path: str | None = None,
         metadata: dict[str, Any] | None = None,
         global_: bool = False,
-        **kwargs: Any,
+        **kwargs: Unpack[_ScopeKwargs],
     ) -> HarnessEntry:
         return self.update("subagent", id, title, content, path=path, metadata=metadata, global_=global_, **kwargs)
 
-    def delete_subagent(self, id: str, *, global_: bool = False, **kwargs: Any) -> bool:
+    def delete_subagent(self, id: str, *, global_: bool = False, **kwargs: Unpack[_ScopeKwargs]) -> bool:
         return self.delete("subagent", id, global_=global_, **kwargs)
 
     def _factory_write(
         self,
         create: bool,
-        id: Any,
-        title: Any,
-        content: Any,
-        path: Any,
-        dag: Any,
-        machine: Any,
-        metadata: Any,
+        id: object,
+        title: object,
+        content: object,
+        path: object,
+        dag: object,
+        machine: object,
+        metadata: object,
         global_: bool,
-        kwargs: dict[str, Any],
+        kwargs: Mapping[str, object],
     ) -> HarnessEntry:
         # The host gates the opt-in, refuses both forms at once, and applies
         # the factory validator's verdict on the spec, before the shared write.
-        spec = machine if machine is not None else dag
+        spec: object = machine if machine is not None else dag
         spec_errors = validate_factory_spec(spec) if create or spec is not None else None
-        id, global_ = _strip_scope_prefix(id, global_)
+        if isinstance(id, str):
+            id, global_ = _strip_scope_prefix(id, global_)
         if target := self._global_target(global_, kwargs):
             return target._factory_write(create, id, title, content, path, dag, machine, metadata, False, {})
         payload = self._call(
             "harness.factory",
-            {"factorySpecErrors": spec_errors},
+            {"factorySpecErrors": list(spec_errors) if spec_errors is not None else None},
             create=create,
             id=id,
             title=title,
@@ -813,7 +927,7 @@ class HarnessState:
             metadata=metadata,
             source=KERNEL_ENTRY_SOURCE,
         )
-        return self._entry_result(payload)  # type: ignore[return-value]
+        return self._entry_result(payload)
 
     def create_factory(
         self,
@@ -826,7 +940,7 @@ class HarnessState:
         machine: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
         global_: bool = False,
-        **kwargs: Any,
+        **kwargs: Unpack[_ScopeKwargs],
     ) -> HarnessEntry:
         return self._factory_write(True, id, title, content, path, dag, machine, metadata, global_, kwargs)
 
@@ -841,13 +955,13 @@ class HarnessState:
         machine: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
         global_: bool = False,
-        **kwargs: Any,
+        **kwargs: Unpack[_ScopeKwargs],
     ) -> HarnessEntry:
         # Omitting both forms keeps the stored spec, exactly like update_skill
         # treats reference.
         return self._factory_write(False, id, title, content, path, dag, machine, metadata, global_, kwargs)
 
-    def delete_factory(self, id: str, *, global_: bool = False, **kwargs: Any) -> bool:
+    def delete_factory(self, id: str, *, global_: bool = False, **kwargs: Unpack[_ScopeKwargs]) -> bool:
         return self.delete("factory", id, global_=global_, **kwargs)
 
     def record_refinement(
@@ -859,13 +973,15 @@ class HarnessState:
         outcome: str = "",
         id: str | None = None,
         global_: bool = False,
-        **kwargs: Any,
+        **kwargs: Unpack[_ScopeKwargs],
     ) -> RefinementEvent:
         if target := self._global_target(global_, kwargs):
             return target.record_refinement(trigger, changes, evidence=evidence, outcome=outcome, id=id)
         payload = self._call(
             "harness.record_refinement", trigger=trigger, changes=changes, evidence=evidence, outcome=outcome, id=id
         )
+        if not _is_object(payload):
+            raise _invalid("refinement event")
         return _event_from_payload(payload)
 
     def plan_refinement(
@@ -885,10 +1001,13 @@ class HarnessState:
             plan.append(f"Immediate validation step: {next_step}")
         return plan
 
-    def overview(self, *, max_entries_per_kind: int = 20, global_: bool = False, **kwargs: Any) -> str:
+    def overview(self, *, max_entries_per_kind: int = 20, global_: bool = False, **kwargs: Unpack[_ScopeKwargs]) -> str:
         if target := self._global_target(global_, kwargs):
             return target.overview(max_entries_per_kind=max_entries_per_kind)
-        return self._call("harness.overview", max_entries_per_kind=max_entries_per_kind)
+        overview = self._call("harness.overview", max_entries_per_kind=max_entries_per_kind)
+        if not isinstance(overview, str):
+            raise _invalid("overview")
+        return overview
 
     def search(
         self,
@@ -897,7 +1016,7 @@ class HarnessState:
         limit: int = 10,
         *,
         global_: bool = False,
-        **kwargs: Any,
+        **kwargs: Unpack[_ScopeKwargs],
     ) -> list[HarnessEntry]:
         """Return harness entries ranked by weighted term overlap with *query*.
 
@@ -910,16 +1029,19 @@ class HarnessState:
         if target := self._global_target(global_, kwargs):
             return target.search(query, kind=kind, limit=limit)
         payloads = self._call("harness.search", query=query, kind=kind, limit=limit)
-        return [self._entry_result(payload) for payload in payloads]  # type: ignore[misc]
+        return self._entry_results(payloads)
 
-    def snapshot(self, *, global_: bool = False, **kwargs: Any) -> dict[str, Any]:
+    def snapshot(self, *, global_: bool = False, **kwargs: Unpack[_ScopeKwargs]) -> dict[str, Any]:
         if target := self._global_target(global_, kwargs):
             return target.snapshot()
-        return self._call("harness.snapshot")
+        snapshot = self._call("harness.snapshot")
+        if not _is_object(snapshot):
+            raise _invalid("snapshot")
+        return snapshot
 
 
 def get_harness_state(
-    state_dir: str | Path | None = None, *, global_: bool = False, **kwargs: Any
+    state_dir: str | Path | None = None, *, global_: bool = False, **kwargs: Unpack[_ScopeKwargs]
 ) -> HarnessState:
     """Return the cached local harness state, or global when requested."""
     global_ = _resolve_global_flag(global_, kwargs)

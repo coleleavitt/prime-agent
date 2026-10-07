@@ -250,7 +250,7 @@ never through the request queue, since the awaiting cell is itself the
 in-flight execute. Replies for unknown ids are dropped. Cancellation-aware calls emit one exact-ID `host_cancel`, shield the same reply future, and keep it alive through their bounded drain. `rlm.repl.is_active()` reports whether the
 process is serving the protocol (importing the module does not count).
 
-`rlm.repl.host_request_blocking(data)` is the synchronous form for runtime
+`rlm.repl.host_request_blocking(request)` is the synchronous form for runtime
 APIs that are not coroutines (`rlm.harness`): the same `host_request` frame,
 but the calling thread blocks until the reader thread hands it the reply (no
 event-loop turn is needed, so a cell may call it directly). An interrupt ends

@@ -33,7 +33,7 @@ import time
 import traceback
 import types
 import uuid
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from typing import Any
 
 from . import factory as factory_module
@@ -359,12 +359,12 @@ class _BlockingHostReply:
     """One synchronous host request's settlement slot."""
 
     def __init__(self) -> None:
-        self.done = threading.Event()
-        self.data: dict[str, Any] | None = None
+        self.done: threading.Event = threading.Event()
+        self.data: dict[str, object] | None = None
         self.error: BaseException | None = None
 
 
-def host_request_blocking(data: dict[str, Any]) -> dict[str, Any]:
+def host_request_blocking(request: Mapping[str, object]) -> dict[str, object]:
     """Send one typed request and block the calling thread until its reply.
 
     For synchronous runtime APIs (``rlm.harness``) called from a cell: the
@@ -376,28 +376,30 @@ def host_request_blocking(data: dict[str, Any]) -> dict[str, Any]:
         raise HostRequestUnavailable("repl runtime is not serving")
     if _host_closed:
         raise HostRequestUnavailable("host connection closed before request admission")
+    data = dict(request)
     _check_payload("host_request", data)
     rid = uuid.uuid4().hex
     slot = _BlockingHostReply()
     with _blocking_host_lock:
         _pending_blocking_host[rid] = slot
-    attrs: dict[str, Any] = {"host_request.rid": rid}
+    attrs: dict[str, str] = {"host_request.rid": rid}
     request_type = data.get("type") or data.get("kind")
     if isinstance(request_type, str):
         attrs["host_request.type"] = request_type
     try:
         with trace.start_span("kernel.host_request", **attrs) as span:
-            frame: dict[str, Any] = {"event": "host_request", "id": rid, "data": data}
+            frame: dict[str, object] = {"event": "host_request", "id": rid, "data": data}
             frame["traceparent"] = trace.format_traceparent(span.ctx)
             _send(frame)
-            slot.done.wait()
+            _ = slot.done.wait()
             if slot.error is not None:
                 raise slot.error
-            assert slot.data is not None
+            if slot.data is None:
+                raise HostConnectionLost("host connection closed; host_request cannot be answered")
             return slot.data
     finally:
         with _blocking_host_lock:
-            _pending_blocking_host.pop(rid, None)
+            _ = _pending_blocking_host.pop(rid, None)
 
 
 def _fail_blocking_host_requests() -> None:
