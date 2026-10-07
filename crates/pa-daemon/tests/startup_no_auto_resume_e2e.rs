@@ -411,6 +411,28 @@ fn a_due_scheduled_job_never_boots_its_session_at_daemon_start() {
     let (mut client, hello) = Client::connect(&socket);
     assert_eq!(hello["type"], "daemon_hello");
 
+    // The boot evaluation's own report marks the adoption settle: wait for
+    // it (a loaded box can take longer than any fixed pause to write it).
+    let log_path = pa_daemon::paths::daemon_log_path(&socket, &agent_dir);
+    let needles = [
+        "job-stale-heartbeat",
+        "job-stale-cron",
+        "stays dormant: no session auto-boots on daemon start",
+        "2 due scheduled job(s) stayed dormant on not-running sessions",
+    ];
+    let report_deadline = Instant::now() + Duration::from_mins(1);
+    loop {
+        let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+        if needles.iter().all(|needle| log.contains(needle)) {
+            break;
+        }
+        assert!(
+            Instant::now() < report_deadline,
+            "the daemon log lacks the dormant report lines {needles:?}: {log}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
     // The old re-arm woke the session within a beat of the adoption
     // settle; hold the window open so a regression boots and fails.
     std::thread::sleep(Duration::from_secs(2));
@@ -425,20 +447,6 @@ fn a_due_scheduled_job_never_boots_its_session_at_daemon_start() {
         file_before, file_after,
         "the not-running session's file changed at boot"
     );
-
-    let log_path = pa_daemon::paths::daemon_log_path(&socket, &agent_dir);
-    let log = std::fs::read_to_string(&log_path).unwrap_or_default();
-    for needle in [
-        "job-stale-heartbeat",
-        "job-stale-cron",
-        "stays dormant: no session auto-boots on daemon start",
-        "2 due scheduled job(s) stayed dormant on not-running sessions",
-    ] {
-        assert!(
-            log.contains(needle),
-            "the daemon log lacks the dormant report line [{needle}]: {log}"
-        );
-    }
 
     client.send_command("hb1", &json!({ "type": "heartbeats_list" }));
     let heartbeats = client.read_response("hb1");
