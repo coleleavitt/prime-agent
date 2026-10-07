@@ -177,6 +177,8 @@ pub fn wire_session_runtime(
         rlm_usage.clone(),
     ));
     register_rlm_host_handlers(&mut handlers, &rlm_bridge);
+    // The kernel's `rlm.harness` store calls.
+    crate::refinement::store::register_host_handlers(&mut handlers);
     SessionKernelWiring {
         session,
         handlers,
@@ -220,11 +222,12 @@ pub fn kernel_provisioner(
     environment: crate::kernel::shared::KernelEnvironment,
     plan_mode: crate::kernel::plan_guard::PlanModeSwitch,
 ) -> Arc<KernelProvisioner> {
-    let mut env = HashMap::with_capacity(1);
+    let mut env = HashMap::with_capacity(4);
     env.insert(
         "PRIME_AGENT_CODING_AGENT_DIR".to_string(),
         agent_dir.to_string_lossy().to_string(),
     );
+    env.extend(kernel_harness_env(agent_dir, snapshot_dir.as_deref()));
     Arc::new(KernelProvisioner::new(
         cwd,
         IpythonKernelProvisionerOptions {
@@ -247,6 +250,42 @@ pub fn kernel_provisioner(
             plan_mode: Some(plan_mode),
         },
     ))
+}
+
+/// The harness stores the kernel's `rlm.harness` resolves (TS
+/// `agent-session.ts` exports the same variables): the global store, the
+/// session's local store when the session persists, and the binary a plain
+/// Python process the kernel starts reaches the store through.
+fn kernel_harness_env(
+    agent_dir: &std::path::Path,
+    session_artifact_dir: Option<&std::path::Path>,
+) -> Vec<(String, String)> {
+    let mut env = vec![(
+        "RLM_GLOBAL_HARNESS_STATE_DIR".to_string(),
+        crate::refinement::get_global_harness_state_dir(agent_dir)
+            .to_string_lossy()
+            .to_string(),
+    )];
+    if let Some(local) = crate::refinement::get_local_harness_state_dir(session_artifact_dir) {
+        env.push((
+            "RLM_HARNESS_STATE_DIR".to_string(),
+            local.to_string_lossy().to_string(),
+        ));
+    }
+    // Only the product binary serves the one-shot; a test harness or an
+    // embedding binary does not.
+    if let Ok(executable) = std::env::current_exe() {
+        if executable
+            .file_stem()
+            .is_some_and(|stem| stem == "prime-agent")
+        {
+            env.push((
+                "PRIME_AGENT_EXECUTABLE".to_string(),
+                executable.to_string_lossy().to_string(),
+            ));
+        }
+    }
+    env
 }
 
 impl IpythonKernelProvisioner for KernelProvisioner {
