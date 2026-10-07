@@ -9,6 +9,7 @@
 mod context;
 mod guards;
 mod pipeline;
+mod probe;
 mod script;
 mod shell;
 mod verdict;

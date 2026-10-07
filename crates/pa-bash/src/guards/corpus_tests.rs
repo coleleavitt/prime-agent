@@ -148,12 +148,20 @@ fn every_ported_guard_matches_the_python_verdicts() {
                 script: &record.script,
                 prefix: record.prefix.as_deref(),
             };
-            let expected = record.refused.get(key).map(|(error, id)| {
-                (
-                    error.clone(),
-                    messages[*id].replace("<ROOT>", &neutral.root),
-                )
-            });
+            // A Python verdict that is not a refusal class is the Python guard
+            // crashing (`OverflowError` from `chr()` on `$'\UFFFFFFFF'` in the
+            // chmod and secret-echo decoders). The port fixes the crash: the
+            // escape stays literal and the command is judged like any other.
+            let expected = record
+                .refused
+                .get(key)
+                .filter(|(error, _)| error.ends_with("RefusalError"))
+                .map(|(error, id)| {
+                    (
+                        error.clone(),
+                        messages[*id].replace("<ROOT>", &neutral.root),
+                    )
+                });
             let actual = super::check(guard, &script, &neutral.context)
                 .err()
                 .map(|refusal| (refusal.guard.error_name().to_string(), refusal.message));
