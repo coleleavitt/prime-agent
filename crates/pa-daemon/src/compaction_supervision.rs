@@ -662,8 +662,7 @@ mod tests {
 
     #[test]
     fn journal_survives_restart_until_consumed_or_cleared() {
-        let dir = std::env::temp_dir().join(format!("pa-comp-sup-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-comp-sup-");
         let path = dir.join("compaction-supervision.jsonl");
         {
             let mut journal = TerminalCompactionJournal::open(&path).unwrap();
@@ -715,8 +714,7 @@ mod tests {
 
     #[test]
     fn a_manual_declaration_never_displaces_a_pending_record() {
-        let dir = std::env::temp_dir().join(format!("pa-comp-sup-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-comp-sup-");
         let path = dir.join("compaction-supervision.jsonl");
         let record = |reason: &str| TerminalCompactionRecord {
             version: 1,
@@ -771,8 +769,7 @@ mod tests {
 
     #[test]
     fn a_failed_durable_write_stays_retryable_until_the_replay() {
-        let dir = std::env::temp_dir().join(format!("pa-comp-sup-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-comp-sup-");
         let path = dir.join("compaction-supervision.jsonl");
         let record = || TerminalCompactionRecord {
             version: 1,

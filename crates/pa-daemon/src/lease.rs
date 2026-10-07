@@ -603,8 +603,7 @@ mod tests {
 
     #[test]
     fn lease_conflicts_and_releases() {
-        let dir = std::env::temp_dir().join(format!("pa-lease-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-lease-");
         std::env::set_var(SESSION_LEASES_ENABLED_ENV, "1");
         let session = dir.join("s.jsonl");
         std::fs::write(&session, "{}").unwrap();
@@ -803,8 +802,7 @@ mod tests {
     fn rename_target_contention_denied_only_when_win32_target_exists() {
         // TS: EPERM/EACCES count as contention on win32 when - and only
         // when - the lease directory actually exists.
-        let dir = std::env::temp_dir().join(format!("pa-lease-c-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-lease-c-");
         let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
         assert!(is_rename_target_contention(&dir, &denied, true));
         assert!(!is_rename_target_contention(&dir, &denied, false));

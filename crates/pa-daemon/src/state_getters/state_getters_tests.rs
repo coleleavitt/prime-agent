@@ -36,9 +36,8 @@ async fn created_worker_at(root: &std::path::Path, session_file: &std::path::Pat
     worker
 }
 
-async fn created_worker() -> Arc<Worker> {
-    let dir = std::env::temp_dir().join(format!("pa-worker-sg-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+async fn created_worker() -> crate::test_support::InTestDir<Arc<Worker>> {
+    let dir = crate::test_support::TestDir::new("pa-worker-sg-");
     let config = crate::worker::WorkerConfig {
         socket_path: dir.join("worker.sock"),
         supervisor_socket_path: std::path::PathBuf::new(),
@@ -58,7 +57,7 @@ async fn created_worker() -> Arc<Worker> {
         )
         .await;
     assert!(created.success, "create failed: {created:?}");
-    worker
+    crate::test_support::InTestDir::new(worker, dir)
 }
 
 /// `heartbeat` is present and null (no cron store on this worker).
@@ -187,8 +186,7 @@ async fn get_context_tree_matches_the_ts_root_node() {
 /// carries the attributed child spend (input 52898, cost $0.0089957).
 #[tokio::test]
 async fn get_context_tree_folds_the_captured_attributions() {
-    let root = std::env::temp_dir().join(format!("pa-worker-af-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = crate::test_support::TestDir::new("pa-worker-af-");
     let fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/attribution-fold-captured.jsonl");
     let session_file = root.join("captured.jsonl");
@@ -241,8 +239,7 @@ async fn get_context_tree_folds_the_captured_attributions() {
 /// switch's cache-write burst (the cost blocks are `calculate_cost` records).
 #[tokio::test]
 async fn get_context_tree_breaks_own_usage_down_by_model() {
-    let root = std::env::temp_dir().join(format!("pa-worker-bm-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = crate::test_support::TestDir::new("pa-worker-bm-");
     let session_file = root.join("switched.jsonl");
     let usage = |input: u64,
                  output: u64,
@@ -331,8 +328,7 @@ async fn get_context_tree_breaks_own_usage_down_by_model() {
 /// and the display degrades to the plain totals instead of overstating the node.
 #[tokio::test]
 async fn get_context_tree_omits_the_breakdown_when_an_attribution_exceeds_its_bucket() {
-    let root = std::env::temp_dir().join(format!("pa-worker-bmx-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = crate::test_support::TestDir::new("pa-worker-bmx-");
     let session_file = root.join("clamped.jsonl");
     let usage = |input: u64, output: u64, total: u64| {
         json!({
@@ -389,8 +385,7 @@ async fn get_context_tree_omits_the_breakdown_when_an_attribution_exceeds_its_bu
 /// stays served.
 #[tokio::test]
 async fn get_context_tree_keeps_the_breakdown_when_an_attribution_fits_its_bucket() {
-    let root = std::env::temp_dir().join(format!("pa-worker-bmf-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = crate::test_support::TestDir::new("pa-worker-bmf-");
     let session_file = root.join("fits.jsonl");
     let usage = |input: u64, output: u64, total: u64| {
         json!({
@@ -443,7 +438,7 @@ async fn get_context_tree_keeps_the_breakdown_when_an_attribution_fits_its_bucke
 /// restart-orphaned subagents all appear, with real usage and grandchildren.
 #[tokio::test]
 async fn get_context_tree_lists_persisted_children() {
-    let root = std::env::temp_dir().join(format!("pa-worker-ct-{}", uuid::Uuid::new_v4()));
+    let root = crate::test_support::TestDir::new("pa-worker-ct-");
     let agent_dir = root.join("agent");
     let sessions = agent_dir.join("sessions");
     std::fs::create_dir_all(&sessions).unwrap();

@@ -1,9 +1,8 @@
 //! Worker tests.
 use super::*;
 
-fn worker_with_journal() -> Arc<Worker> {
-    let dir = std::env::temp_dir().join(format!("pa-worker-verdict-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+fn worker_with_journal() -> crate::test_support::InTestDir<Arc<Worker>> {
+    let dir = crate::test_support::TestDir::new("pa-worker-verdict-");
     let config = WorkerConfig {
         socket_path: dir.join("worker.sock"),
         supervisor_socket_path: PathBuf::new(),
@@ -20,10 +19,10 @@ fn worker_with_journal() -> Arc<Worker> {
     // checkpoints have the same durable sink as production.
     *worker.recovery.lock().unwrap() =
         Some(WorkerRecoveryJournal::open(&worker.config.recovery_journal_path).unwrap());
-    worker
+    crate::test_support::InTestDir::new(worker, dir)
 }
 
-async fn created_worker_with_journal() -> Arc<Worker> {
+async fn created_worker_with_journal() -> crate::test_support::InTestDir<Arc<Worker>> {
     let worker = worker_with_journal();
     let created = worker
         .dispatch(

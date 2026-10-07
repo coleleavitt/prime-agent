@@ -2,9 +2,10 @@
 use super::*;
 
 /// A scripted goal session's dispatch worker.
-async fn goal_dispatch_worker(goal: serde_json::Value) -> std::sync::Arc<Worker> {
-    let dir = std::env::temp_dir().join(format!("pa-worker-goal-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+async fn goal_dispatch_worker(
+    goal: serde_json::Value,
+) -> crate::test_support::InTestDir<std::sync::Arc<Worker>> {
+    let dir = crate::test_support::TestDir::new("pa-worker-goal-");
     let config = WorkerConfig {
         socket_path: dir.join("worker.sock"),
         supervisor_socket_path: PathBuf::new(),
@@ -27,7 +28,7 @@ async fn goal_dispatch_worker(goal: serde_json::Value) -> std::sync::Arc<Worker>
         )
         .await;
     assert!(created.success, "create failed: {created:?}");
-    worker
+    crate::test_support::InTestDir::new(worker, dir)
 }
 
 /// TS `compact()`'s active-goal branch: a successful compact mints the owed continuation.
@@ -192,8 +193,7 @@ async fn goal_turn_end_loop_runs_to_completion() {
     let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let dir = std::env::temp_dir().join(format!("pa-worker-goal-loop-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-worker-goal-loop-");
     let config = WorkerConfig {
         socket_path: dir.join("worker.sock"),
         supervisor_socket_path: PathBuf::new(),
@@ -322,8 +322,7 @@ async fn goal_pause_withdraws_the_queued_continuation() {
     let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let dir = std::env::temp_dir().join(format!("pa-worker-goal-pause-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-worker-goal-pause-");
     let config = WorkerConfig {
         socket_path: dir.join("worker.sock"),
         supervisor_socket_path: PathBuf::new(),
@@ -382,8 +381,11 @@ async fn goal_pause_withdraws_the_queued_continuation() {
 /// file, so the `thread_goal_state` mirror is observable.
 async fn goal_dispatch_worker_with_store(
     goal: serde_json::Value,
-) -> (std::sync::Arc<Worker>, PathBuf) {
-    let dir = std::env::temp_dir().join(format!("pa-worker-goal-{}", uuid::Uuid::new_v4()));
+) -> (
+    crate::test_support::InTestDir<std::sync::Arc<Worker>>,
+    PathBuf,
+) {
+    let dir = crate::test_support::TestDir::new("pa-worker-goal-");
     let session_dir = dir.join("sessions");
     std::fs::create_dir_all(&session_dir).unwrap();
     let config = WorkerConfig {
@@ -418,7 +420,7 @@ async fn goal_dispatch_worker_with_store(
         .map(|entry| entry.path())
         .find(|path| path.extension().is_some_and(|ext| ext == "jsonl"))
         .expect("session file created");
-    (worker, file)
+    (crate::test_support::InTestDir::new(worker, dir), file)
 }
 
 /// The session file's `thread_goal_state` custom rows, in order.

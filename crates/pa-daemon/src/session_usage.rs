@@ -746,8 +746,7 @@ mod tests {
 
     #[test]
     fn read_own_usage_summary_scans_a_file() {
-        let dir = std::env::temp_dir().join(format!("session-usage-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("session-usage-");
         let path = dir.join("session.jsonl");
         std::fs::write(
             &path,

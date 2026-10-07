@@ -92,8 +92,7 @@ async fn abort_and_send_queued_delivers_the_parked_queue_at_the_boundary() {
     let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let dir = std::env::temp_dir().join(format!("pa-worker-abort-send-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-worker-abort-send-");
     let config = WorkerConfig {
         socket_path: dir.join("worker.sock"),
         supervisor_socket_path: PathBuf::new(),
@@ -278,8 +277,7 @@ async fn abort_and_send_queued_with_only_follow_ups_starts_the_oldest() {
     let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let dir = std::env::temp_dir().join(format!("pa-worker-abort-fu-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-worker-abort-fu-");
     let config = WorkerConfig {
         socket_path: dir.join("worker.sock"),
         supervisor_socket_path: PathBuf::new(),
@@ -498,8 +496,7 @@ async fn abort_and_clear_queue_suspends_plain_prompts() {
 /// and the settle clears the admission.
 #[tokio::test]
 async fn cancel_owned_admission_aborts_the_running_prompt() {
-    let dir = std::env::temp_dir().join(format!("pa-worker-cancel-owned-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-worker-cancel-owned-");
     let config = WorkerConfig {
         socket_path: dir.join("worker.sock"),
         supervisor_socket_path: PathBuf::new(),

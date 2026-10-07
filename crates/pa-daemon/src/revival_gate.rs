@@ -144,9 +144,8 @@ mod tests {
         }
     }
 
-    fn session_file(state: Option<&str>) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("pa-revival-gate-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+    fn session_file(state: Option<&str>) -> crate::test_support::InTestDir<std::path::PathBuf> {
+        let dir = crate::test_support::TestDir::new("pa-revival-gate-");
         let mut session = crate::session_store::SessionFile::create("/work", None, 0);
         session.append_message(&serde_json::json!({
             "role": "user", "content": "hi", "timestamp": 1u64
@@ -157,13 +156,11 @@ mod tests {
         let path = dir.join(format!("{}.jsonl", session.session_id()));
         session.set_path(path.clone());
         session.rewrite().unwrap();
-        path
+        crate::test_support::InTestDir::new(path, dir)
     }
 
-    fn agent_dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("pa-revival-agent-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    fn agent_dir() -> crate::test_support::TestDir {
+        crate::test_support::TestDir::new("pa-revival-agent-")
     }
 
     #[test]

@@ -11,9 +11,8 @@ use super::*;
 /// tempdir whose descriptor dir is the probe's drain root, with the
 /// launch-probe budget pinned to 1 ms. No live worker ever answers —
 /// the launch fails at the probe, after the spawn record served.
-fn spawn_record_witness(tag: &str) -> (Arc<Supervisor>, std::path::PathBuf) {
-    let dir = std::env::temp_dir().join(format!("pa-spawnrec-{tag}-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+fn spawn_record_witness(tag: &str) -> (Arc<Supervisor>, crate::test_support::TestDir) {
+    let dir = crate::test_support::TestDir::new(&format!("pa-spawnrec-{tag}-"));
     let agent_dir = dir.join("agent");
     std::fs::create_dir_all(&agent_dir).unwrap();
     let supervisor = Arc::new(
@@ -36,8 +35,7 @@ fn spawn_record_witness(tag: &str) -> (Arc<Supervisor>, std::path::PathBuf) {
 /// write.
 #[tokio::test]
 async fn a_known_resident_registration_writes_nothing_to_disk() {
-    let dir = std::env::temp_dir().join(format!("pa-regskip-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-regskip-");
     let agent_dir = dir.join("agent");
     std::fs::create_dir_all(&agent_dir).unwrap();
     let supervisor = Arc::new(

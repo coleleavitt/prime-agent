@@ -2,9 +2,8 @@
 use super::*;
 
 /// A created worker over the scripted engine.
-async fn created_dispatch_worker() -> std::sync::Arc<Worker> {
-    let dir = std::env::temp_dir().join(format!("pa-worker-susp-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+async fn created_dispatch_worker() -> crate::test_support::InTestDir<std::sync::Arc<Worker>> {
+    let dir = crate::test_support::TestDir::new("pa-worker-susp-");
     let config = WorkerConfig {
         socket_path: dir.join("worker.sock"),
         supervisor_socket_path: std::path::PathBuf::new(),
@@ -24,7 +23,7 @@ async fn created_dispatch_worker() -> std::sync::Arc<Worker> {
         )
         .await;
     assert!(created.success, "create failed: {created:?}");
-    worker
+    crate::test_support::InTestDir::new(worker, dir)
 }
 
 /// The session events seen by an attached client since `mark`, in

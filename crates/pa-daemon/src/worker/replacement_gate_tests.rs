@@ -105,12 +105,7 @@ fn recording_worker(dir: &Path, events: std::sync::Arc<std::sync::Mutex<Vec<Stri
 /// branch context, and the model from different sessions.
 #[tokio::test]
 async fn concurrent_replacements_never_interleave_their_critical_sections() {
-    let dir = std::env::temp_dir().join(format!(
-        "pa-replacement-gate-{}-{}",
-        std::process::id(),
-        line!()
-    ));
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    let dir = crate::test_support::TestDir::new("pa-replacement-gate-");
     let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let worker = recording_worker(&dir, std::sync::Arc::clone(&events));
     let created = worker
@@ -157,9 +152,7 @@ async fn concurrent_replacements_never_interleave_their_critical_sections() {
 /// the failed path's model.
 #[tokio::test]
 async fn a_failed_existing_session_create_never_binds_the_engine() {
-    let dir =
-        std::env::temp_dir().join(format!("pa-create-bind-{}-{}", std::process::id(), line!()));
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    let dir = crate::test_support::TestDir::new("pa-create-bind-");
     let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let worker = recording_worker(&dir, std::sync::Arc::clone(&events));
 

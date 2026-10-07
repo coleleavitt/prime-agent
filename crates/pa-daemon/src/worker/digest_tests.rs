@@ -4,9 +4,8 @@
 //! watch notice routing.
 use super::*;
 
-fn test_worker() -> Arc<Worker> {
-    let dir = std::env::temp_dir().join(format!("pa-worker-digest-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+fn test_worker() -> crate::test_support::InTestDir<Arc<Worker>> {
+    let dir = crate::test_support::TestDir::new("pa-worker-digest-");
     let config = WorkerConfig {
         socket_path: dir.join("worker.sock"),
         supervisor_socket_path: PathBuf::new(),
@@ -18,10 +17,10 @@ fn test_worker() -> Arc<Worker> {
         telemetry_disabled: None,
         script: Some(json!({ "responses": ["ack"] })),
     };
-    Arc::new(Worker::new(config, None))
+    crate::test_support::InTestDir::new(Arc::new(Worker::new(config, None)), dir)
 }
 
-async fn created_worker() -> Arc<Worker> {
+async fn created_worker() -> crate::test_support::InTestDir<Arc<Worker>> {
     let worker = test_worker();
     let created = worker
         .dispatch(
@@ -609,9 +608,7 @@ async fn session_replacement_resets_the_lane_and_counters() {
 /// session.
 #[tokio::test]
 async fn a_reloaded_worker_re_arms_the_notice_for_unread_inbox_entries() {
-    let dir =
-        std::env::temp_dir().join(format!("pa-worker-digest-reload-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-worker-digest-reload-");
     let session_path = dir.join("reloaded-session.jsonl");
     // The crashed predecessor's durable backlog: one unread inbox entry.
     let mut store = crate::session_store::SessionFile::create("/tmp", None, 0);
@@ -720,8 +717,7 @@ async fn a_busy_session_holds_one_pending_watch_notice_per_watch() {
 /// `rlm.messaging_stats()` / `messagingStats` source) reports both.
 #[tokio::test]
 async fn an_agent_message_arrival_counts_its_ingestion_step_and_a_plain_turn_does_not() {
-    let dir = std::env::temp_dir().join(format!("pa-worker-stats-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-worker-stats-");
     let worker = Arc::new(Worker::new(
         WorkerConfig {
             socket_path: dir.join("worker.sock"),

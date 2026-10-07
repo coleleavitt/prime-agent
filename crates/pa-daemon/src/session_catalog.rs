@@ -70,10 +70,8 @@ mod tests {
     use crate::session_store::{session_file_name, SessionFile};
     use std::path::PathBuf;
 
-    fn temp_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("pa-catalog-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    fn temp_dir() -> crate::test_support::TestDir {
+        crate::test_support::TestDir::new("pa-catalog-")
     }
 
     fn write_session(dir: &Path, cwd: &str, name: Option<&str>) -> (String, PathBuf) {

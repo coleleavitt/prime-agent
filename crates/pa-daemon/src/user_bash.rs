@@ -844,7 +844,7 @@ mod tests {
     use serde_json::json;
     use std::sync::Arc;
 
-    async fn created_worker(cwd: &std::path::Path) -> Arc<Worker> {
+    async fn created_worker(cwd: &std::path::Path) -> crate::test_support::InTestDir<Arc<Worker>> {
         created_sandboxed_worker(cwd, json!({ "responses": ["ack"] }), "{}", json!({})).await
     }
 
@@ -856,9 +856,9 @@ mod tests {
         script: Value,
         global_settings: &str,
         create_extra: Value,
-    ) -> Arc<Worker> {
+    ) -> crate::test_support::InTestDir<Arc<Worker>> {
         std::fs::create_dir_all(cwd).unwrap();
-        let dir = std::env::temp_dir().join(format!("pa-worker-bash-{}", uuid::Uuid::new_v4()));
+        let dir = crate::test_support::TestDir::new("pa-worker-bash-");
         std::fs::create_dir_all(dir.join("agent")).unwrap();
         std::fs::write(dir.join("agent/settings.json"), global_settings).unwrap();
         let config = crate::worker::WorkerConfig {
@@ -880,7 +880,7 @@ mod tests {
         }
         let created = worker.dispatch("create", &payload).await;
         assert!(created.success, "create failed: {created:?}");
-        worker
+        crate::test_support::InTestDir::new(worker, dir)
     }
 
     fn bash_rows(worker: &Worker) -> Vec<Value> {
@@ -1227,7 +1227,7 @@ mod tests {
             (
                 results,
                 label,
-                state(read_only).await,
+                state(Arc::clone(&read_only)).await,
                 state(Arc::clone(&off)).await,
                 outside_target.exists(),
             ),
@@ -1241,7 +1241,11 @@ mod tests {
         );
         // Off is unchanged: the same outside write lands.
         assert_eq!(
-            run(off, format!("printf x > '{}'", outside_target.display())).await,
+            run(
+                Arc::clone(&off),
+                format!("printf x > '{}'", outside_target.display())
+            )
+            .await,
             (Some(0), false)
         );
     }

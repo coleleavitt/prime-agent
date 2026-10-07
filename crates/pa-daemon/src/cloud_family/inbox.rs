@@ -478,10 +478,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn open_tightens_a_normal_parent_and_creates_missing_ones_privately() {
-        let dir = std::fs::canonicalize(std::env::temp_dir())
-            .unwrap()
-            .join(format!("pa-cloud-inbox-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new_canonical("pa-cloud-inbox-");
         // The umask-independent normal shape: what create_dir_all makes
         // on the usual 022 umask.
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
@@ -510,10 +507,7 @@ mod tests {
     #[test]
     fn inbox_file_is_private_from_its_first_write_and_swaps_when_legacy_loose() {
         use std::os::unix::fs::MetadataExt;
-        let dir = std::fs::canonicalize(std::env::temp_dir())
-            .unwrap()
-            .join(format!("pa-cloud-inbox-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new_canonical("pa-cloud-inbox-");
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
         let path = dir.join("cloud-inbox.jsonl");
         let mut log = CloudInboxLog::open(&path).unwrap();

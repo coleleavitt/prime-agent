@@ -1186,10 +1186,9 @@ mod tests {
         (reporter, current)
     }
 
-    fn temp_socket(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("pa-herdr-{tag}-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir.join("herdr.sock")
+    fn temp_socket(tag: &str) -> crate::test_support::InTestDir<std::path::PathBuf> {
+        let dir = crate::test_support::TestDir::new(&format!("pa-herdr-{tag}-"));
+        crate::test_support::InTestDir::new(dir.join("herdr.sock"), dir)
     }
 
     fn pane_env(socket_path: &std::path::Path, pane_id: &str) -> BTreeMap<String, String> {

@@ -1772,17 +1772,15 @@ mod tests {
     /// no-symlink placement contract requires the ORIGINAL path to be
     /// symlink-free, so the fixtures canonicalize their legitimate temp
     /// roots at the call site (the product keeps no exception).
-    fn temp_path_root() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("pa-daemon-journal-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&dir).unwrap();
-        fs::canonicalize(&dir).unwrap()
+    fn temp_path_root() -> crate::test_support::TestDir {
+        crate::test_support::TestDir::new_canonical("pa-daemon-journal-")
     }
 
-    fn temp_path(name: &str) -> std::path::PathBuf {
+    fn temp_path(name: &str) -> crate::test_support::InTestDir<std::path::PathBuf> {
         let dir = temp_path_root();
         #[cfg(unix)]
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
-        dir.join(name)
+        crate::test_support::InTestDir::new(dir.join(name), dir)
     }
 
     #[test]

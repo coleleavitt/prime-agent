@@ -57,7 +57,9 @@ async fn spawn_fake_supervisor(
     // prompt-retry arbitration to `landed`, and turn an expected failure
     // row into a no-reply notice.
     let child_session_file = std::sync::Arc::new(
-        std::env::temp_dir()
+        socket
+            .parent()
+            .expect("the fake supervisor socket sits in its test dir")
             .join(format!(
                 "pa-rlm-watch-child-{}.jsonl",
                 uuid::Uuid::new_v4().simple()
@@ -288,10 +290,15 @@ async fn sessions_with_fake_child_subagents(
     child: FakeChild,
     child_subagents: Arc<FakeChildSubagents>,
 ) -> (SupervisorChildSessions, mpsc::UnboundedReceiver<Value>) {
-    let socket = std::env::temp_dir().join(format!(
-        "pa-rlm-watch-{}.sock",
-        uuid::Uuid::new_v4().simple()
-    ));
+    let dir = crate::test_support::TestDir::new("pa-rlm-watch-");
+    let socket = dir.join("supervisor.sock");
+    let root = dir.to_path_buf();
+    // The dir lives as long as the test's runtime (the fake supervisor's
+    // lifetime): the parked task drops it when the runtime shuts down.
+    tokio::spawn(async move {
+        let _dir = dir;
+        std::future::pending::<()>().await;
+    });
     let (kill_tx, kill_rx) = mpsc::unbounded_channel();
     spawn_fake_supervisor(
         socket.clone(),
@@ -306,10 +313,10 @@ async fn sessions_with_fake_child_subagents(
     let link = Arc::new(crate::supervisor_link::SupervisorLink::new(socket));
     let sessions = SupervisorChildSessions::new(
         link,
-        std::env::temp_dir(),
+        root.clone(),
         "parent-live".to_string(),
         std::sync::Arc::new(crate::model_allowlist::ModelRefusalTelemetry::new(
-            std::env::temp_dir(),
+            root.clone(),
             /*telemetry_disabled*/ true,
         )),
     );
@@ -317,7 +324,7 @@ async fn sessions_with_fake_child_subagents(
     // spawn path resolves the child's model from it.
     sessions.set_identity(ParentIdentity {
         model: Some("mock/mock-1".to_string()),
-        cwd: Some(std::env::temp_dir().to_string_lossy().to_string()),
+        cwd: Some(root.to_string_lossy().to_string()),
         ..ParentIdentity::with_default_depth()
     });
     (sessions, kill_rx)
@@ -343,12 +350,8 @@ async fn spawn_child(sessions: &SupervisorChildSessions) -> RlmSpawnHandle {
 /// Seed one child's durable display file (`running`) in a fresh temp dir
 /// and return the dir: the settle tail's display completion is the marker
 /// the restart reseed trusts, so the settle-tail pins assert it directly.
-fn seed_child_display(child_id: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "pa-rlm-watch-display-{}",
-        uuid::Uuid::new_v4().simple()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
+fn seed_child_display(child_id: &str) -> crate::test_support::TestDir {
+    let dir = crate::test_support::TestDir::new("pa-rlm-watch-display-");
     std::fs::write(
         dir.join("rlm-subagent.json"),
         json!({

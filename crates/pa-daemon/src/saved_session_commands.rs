@@ -948,11 +948,8 @@ mod tombstone_usage_tests {
         tombstone_saved_session_delete_captured(agent_dir, sessions_dir, &capture)
     }
 
-    fn temp_dir(name: &str) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("pa-saved-del-{name}-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    fn temp_dir(name: &str) -> crate::test_support::TestDir {
+        crate::test_support::TestDir::new(&format!("pa-saved-del-{name}-"))
     }
 
     fn write_child_with_usage(dir: &Path) -> PathBuf {

@@ -248,10 +248,8 @@ mod tests {
     use serde_json::json;
     use std::path::PathBuf;
 
-    fn temp_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("pa-daemon-scan-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&dir).unwrap();
-        dir
+    fn temp_dir() -> crate::test_support::TestDir {
+        crate::test_support::TestDir::new("pa-daemon-scan-")
     }
 
     /// Write one valid session file with `message_count` user/assistant turns
@@ -534,7 +532,7 @@ mod tests {
         }
         let mut listed = vec![session, foreign];
         listed.sort();
-        assert_eq!(finished, vec![(dir, listed)]);
+        assert_eq!(finished, vec![(dir.to_path_buf(), listed)]);
     }
 
     #[test]

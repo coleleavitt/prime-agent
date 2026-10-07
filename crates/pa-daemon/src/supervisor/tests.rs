@@ -340,8 +340,7 @@ fn adopted_watch_resident(dir: &std::path::Path, pid: u32) -> Arc<ResidentWorker
 /// optional wire shape.
 #[test]
 fn saved_session_rows_publish_deleted_descendant_usage() {
-    let dir = std::env::temp_dir().join(format!("pa-saved-dd-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-saved-dd-");
     let mut session = crate::session_store::SessionFile::create("/tmp", None, 0);
     let path = dir.join(format!("{}.jsonl", session.session_id()));
     session.set_path(path.clone());
@@ -369,8 +368,7 @@ fn saved_session_rows_publish_deleted_descendant_usage() {
 
 #[test]
 fn saved_session_rows_carry_the_persisted_thinking_level() {
-    let dir = std::env::temp_dir().join(format!("pa-saved-tl-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-saved-tl-");
     let mut session = crate::session_store::SessionFile::create("/tmp", None, 0);
     let path = dir.join(format!("{}.jsonl", session.session_id()));
     session.set_path(path.clone());
@@ -406,8 +404,7 @@ fn saved_session_rows_carry_the_persisted_thinking_level() {
 /// No billable work stays bare, like TS's undefined serialization.
 #[test]
 fn saved_session_rows_publish_the_own_usage_summary() {
-    let dir = std::env::temp_dir().join(format!("pa-saved-usage-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-saved-usage-");
     let mut session = crate::session_store::SessionFile::create("/tmp", None, 0);
     let path = dir.join(format!("{}.jsonl", session.session_id()));
     session.set_path(path.clone());
@@ -447,8 +444,7 @@ fn saved_session_rows_publish_the_own_usage_summary() {
 /// non-resident bound session keeps its family edge.
 #[test]
 fn saved_session_summaries_carry_the_parent_binding() {
-    let dir = std::env::temp_dir().join(format!("pa-saved-binding-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-saved-binding-");
     let mut bound = crate::session_store::SessionFile::create("/tmp", Some("/s/p.jsonl"), 1);
     let bound_path = dir.join(format!("{}.jsonl", bound.session_id()));
     bound.set_path(bound_path.clone());
@@ -477,8 +473,7 @@ fn saved_session_summaries_carry_the_parent_binding() {
 
 #[tokio::test]
 async fn worker_probe_fails_at_the_deadline_and_names_the_worker() {
-    let dir = std::env::temp_dir().join(format!("pa-probe-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-probe-");
     let socket = dir.join("never.sock");
     let expired = tokio::time::Instant::now() - Duration::from_millis(1);
     let error = probe_worker_socket("worker-abc", &socket, expired)
@@ -493,8 +488,7 @@ async fn worker_probe_fails_at_the_deadline_and_names_the_worker() {
 
 #[tokio::test]
 async fn worker_probe_accepts_a_live_socket() {
-    let dir = std::env::temp_dir().join(format!("pa-probe-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-probe-");
     let socket = dir.join("live.sock");
     let listener = pa_types::platform::transport::bind_transport(&socket)
         .await
@@ -510,7 +504,7 @@ async fn worker_probe_accepts_a_live_socket() {
 
 #[tokio::test]
 async fn adoption_settles_then_seeds_the_roster_once() {
-    let dir = std::env::temp_dir().join(format!("pa-adopt-seed-{}", uuid::Uuid::new_v4()));
+    let dir = crate::test_support::TestDir::new("pa-adopt-seed-");
     let agent_dir = dir.join("agent");
     let sessions_dir = agent_dir.join("sessions");
     std::fs::create_dir_all(&sessions_dir).unwrap();
@@ -2033,7 +2027,7 @@ async fn off_window_daemon_events_never_count_into_the_summary() {
 /// uniqueness.
 #[tokio::test]
 async fn a_live_rename_conflicting_with_a_sibling_fails_with_the_unavailability_error() {
-    let dir = std::env::temp_dir().join(format!("pa-rename-ladder-{}", uuid::Uuid::new_v4()));
+    let dir = crate::test_support::TestDir::new("pa-rename-ladder-");
     let agent_dir = dir.join("agent");
     let sessions_dir = agent_dir.join("sessions");
     std::fs::create_dir_all(&sessions_dir).unwrap();

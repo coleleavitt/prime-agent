@@ -1046,8 +1046,7 @@ mod off_unix_tests {
 
     #[test]
     fn family_logs_fail_closed_off_unix() {
-        let dir = std::env::temp_dir().join(format!("pa-family-off-unix-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-family-off-unix-");
         assert!(
             FamilyRequestLog::open(&dir, "sess_off", 10).is_err(),
             "the request outbox fails closed off unix"

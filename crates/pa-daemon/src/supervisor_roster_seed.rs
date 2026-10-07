@@ -563,8 +563,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn seeded_rows_shape_matches_the_ts_entry() {
-        let dir = std::env::temp_dir().join(format!("pa-seed-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-seed-");
         let child = dir.join("sub-9.jsonl");
         // The child file carries the durable display rows the hydration reads.
         std::fs::write(
@@ -623,8 +622,13 @@ pub(crate) mod tests {
 
     /// A temp supervisor home: agent dir, sessions dir, a root
     /// transcript, and a child transcript carrying the durable display rows.
-    pub(crate) async fn roster_fixture() -> (PathBuf, Arc<Supervisor>, PathBuf, PathBuf) {
-        let dir = std::env::temp_dir().join(format!("pa-roster-{}", uuid::Uuid::new_v4()));
+    pub(crate) async fn roster_fixture() -> (
+        crate::test_support::TestDir,
+        Arc<Supervisor>,
+        PathBuf,
+        PathBuf,
+    ) {
+        let dir = crate::test_support::TestDir::new("pa-roster-");
         let agent_dir = dir.join("agent");
         let sessions_dir = agent_dir.join("sessions");
         std::fs::create_dir_all(&sessions_dir).unwrap();

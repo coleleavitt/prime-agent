@@ -124,8 +124,7 @@ async fn worker_roster_delta_drops_stale_sequences() {
             .await
     }
 
-    let dir = std::env::temp_dir().join(format!("pa-roster-seq-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-roster-seq-");
     let supervisor = Arc::new(
         Supervisor::new(crate::supervisor::SupervisorOptions {
             socket_path: dir.join("supervisor.sock"),

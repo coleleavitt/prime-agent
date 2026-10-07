@@ -56,9 +56,8 @@ fn record_with_file(child_id: &str, session_file: &Path) -> Arc<Mutex<ChildRecor
 }
 
 fn registry(agent_dir: &Path) -> SupervisorChildSessions {
-    let tmp = tempfile::tempdir().unwrap();
-    let socket = tmp.path().join("supervisor.sock");
-    std::mem::forget(tmp);
+    // Never bound: the link only needs a path, kept inside the test's own dir.
+    let socket = agent_dir.join("supervisor.sock");
     SupervisorChildSessions::new(
         Arc::new(SupervisorLink::new(socket)),
         agent_dir.to_path_buf(),

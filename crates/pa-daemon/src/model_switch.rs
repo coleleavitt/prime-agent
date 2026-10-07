@@ -313,8 +313,7 @@ mod tests {
                 .await
         }
 
-        let dir = std::env::temp_dir().join(format!("pa-worker-al-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-worker-al-");
         models_fixture(&dir);
         std::fs::write(
             dir.join("agent").join("settings.json"),
@@ -362,8 +361,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_model_refuses_an_unsigned_in_provider_with_the_typed_sign_in_error() {
-        let dir = std::env::temp_dir().join(format!("pa-worker-si-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-worker-si-");
         models_fixture(&dir);
         let worker = std::sync::Arc::new(crate::worker::Worker::new(worker_config(&dir), None));
         let created = worker

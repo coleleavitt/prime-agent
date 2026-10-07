@@ -109,11 +109,7 @@ async fn abort_and_send_idle_race_rate_harness() {
                 let _ = writeln!(file, "=== RATE_HARNESS rep {rep} ===");
             }
         }
-        let dir = std::env::temp_dir().join(format!(
-            "pa-worker-abort-race-{rep}-{}",
-            uuid::Uuid::new_v4()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new(&format!("pa-worker-abort-race-{rep}-"));
         let config = WorkerConfig {
             socket_path: dir.join("worker.sock"),
             supervisor_socket_path: PathBuf::new(),

@@ -179,10 +179,8 @@ fn legacy_read_session_info(path: &Path) -> Option<SessionInfo> {
     })
 }
 
-fn test_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("session-info-fold-{}", uuid::Uuid::new_v4()));
-    fs::create_dir_all(&dir).unwrap();
-    dir
+fn test_dir() -> crate::test_support::TestDir {
+    crate::test_support::TestDir::new("session-info-fold-")
 }
 
 fn append_rows(path: &Path, rows: &[Value]) {

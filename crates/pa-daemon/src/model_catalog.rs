@@ -391,7 +391,7 @@ mod tests {
     /// worker. Returns once the create-path refresh has fully settled,
     /// so later fetch counts are deterministic.
     struct Fixture {
-        dir: PathBuf,
+        dir: crate::test_support::TestDir,
         agent_dir: PathBuf,
         server: CatalogServer,
         worker: Arc<Worker>,
@@ -399,15 +399,7 @@ mod tests {
     }
 
     async fn fixture(create_answers: Vec<Answer>) -> Fixture {
-        let dir = std::env::temp_dir().join(format!(
-            "pa-model-catalog-refresh-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).expect("temp dir");
+        let dir = crate::test_support::TestDir::new("pa-model-catalog-refresh-");
         let agent_dir = dir.join("agent");
         write_models_json(&agent_dir);
         write_auth_json(&agent_dir, "sk-account-a", "team-a");

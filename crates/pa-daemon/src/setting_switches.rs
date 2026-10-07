@@ -595,15 +595,14 @@ mod tests {
         }
     }
 
-    async fn created_worker() -> Arc<Worker> {
-        let dir = std::env::temp_dir().join(format!("pa-worker-sw-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+    async fn created_worker() -> crate::test_support::InTestDir<Arc<Worker>> {
+        let dir = crate::test_support::TestDir::new("pa-worker-sw-");
         let worker = Arc::new(Worker::new(worker_config(&dir), None));
         let created = worker
             .dispatch("create", &json!({ "noSession": true, "cwd": dir }))
             .await;
         assert!(created.success, "create failed: {created:?}");
-        worker
+        crate::test_support::InTestDir::new(worker, dir)
     }
 
     /// The connection state carries the settings-seeded defaults: service tier "default"
@@ -664,8 +663,7 @@ mod tests {
 
     #[tokio::test]
     async fn cycle_model_on_a_non_switching_engine_fails_like_set_model() {
-        let dir = std::env::temp_dir().join(format!("pa-worker-cm2-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-worker-cm2-");
         models_fixture(&dir, 2);
         let worker = Arc::new(Worker::new(worker_config(&dir), None));
         let created = worker
@@ -688,8 +686,7 @@ mod tests {
 
     #[tokio::test]
     async fn cycle_model_refuses_models_outside_the_allowlist() {
-        let dir = std::env::temp_dir().join(format!("pa-worker-cm3-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-worker-cm3-");
         models_fixture(&dir, 2);
         std::fs::create_dir_all(dir.join("agent")).unwrap();
         std::fs::write(
@@ -736,8 +733,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_resolves_the_models_scope_for_the_session() {
-        let dir = std::env::temp_dir().join(format!("pa-worker-scope-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-worker-scope-");
         models_fixture(&dir, 2);
         // The real engine (no script) resolves the model against the registry.
         let mut config = worker_config(&dir);
@@ -821,9 +817,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_fresh_scoped_create_persists_the_scoped_startup_pick_in_its_file() {
-        let dir =
-            std::env::temp_dir().join(format!("pa-worker-scope-file-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-worker-scope-file-");
         models_fixture(&dir, 2);
         let mut config = worker_config(&dir);
         config.script = None;
@@ -1033,7 +1027,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_transport_persists_the_setting() {
-        let dir = std::env::temp_dir().join(format!("pa-worker-tr-{}", uuid::Uuid::new_v4()));
+        let dir = crate::test_support::TestDir::new("pa-worker-tr-");
         std::fs::create_dir_all(dir.join("agent")).unwrap();
         let worker = Arc::new(Worker::new(worker_config(&dir), None));
         let created = worker
@@ -1101,7 +1095,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_auto_retry_persists_the_toggle() {
-        let dir = std::env::temp_dir().join(format!("pa-worker-ar-{}", uuid::Uuid::new_v4()));
+        let dir = crate::test_support::TestDir::new("pa-worker-ar-");
         std::fs::create_dir_all(dir.join("agent")).unwrap();
         let worker = Arc::new(Worker::new(worker_config(&dir), None));
         let created = worker
@@ -1122,7 +1116,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_auto_compaction_persists_the_toggle() {
-        let dir = std::env::temp_dir().join(format!("pa-worker-ac-{}", uuid::Uuid::new_v4()));
+        let dir = crate::test_support::TestDir::new("pa-worker-ac-");
         std::fs::create_dir_all(dir.join("agent")).unwrap();
         let worker = Arc::new(Worker::new(worker_config(&dir), None));
         let created = worker
@@ -1179,8 +1173,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_auto_compaction_fails_without_flipping_on_a_failed_save() {
-        let dir = std::env::temp_dir().join(format!("pa-worker-acf-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-worker-acf-");
         // A file where the agent dir would be: the settings save cannot create agent/settings.json.
         std::fs::write(dir.join("agent"), b"not a directory").unwrap();
         let worker = Arc::new(Worker::new(worker_config(&dir), None));

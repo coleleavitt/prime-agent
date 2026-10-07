@@ -71,8 +71,7 @@ fn write_active_session(dir: &std::path::Path) -> (String, std::path::PathBuf) {
 
 #[tokio::test]
 async fn a_fire_at_a_killed_session_cancels_and_skips() {
-    let dir = std::env::temp_dir().join(format!("pa-sched-dead-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-sched-dead-");
     let (session_id, session_file) = write_active_session(&dir);
     let store = AgentCronJobStore::for_session_artifacts();
     let artifact_dir = session_artifact_dir(&session_file, &session_id).unwrap();
@@ -136,8 +135,7 @@ async fn a_fire_at_a_killed_session_cancels_and_skips() {
 /// queue strip reads `Heartbeat prompt: <content>`, the turn text keeps the raw content).
 #[tokio::test]
 async fn heartbeat_fire_parks_the_labeled_preview_on_its_lane() {
-    let dir = std::env::temp_dir().join(format!("pa-sched-fire-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-sched-fire-");
     let session = write_active_session(&dir);
     let core = Arc::new(std::sync::Mutex::new(
         crate::worker::SessionCore::test_core(None, "/w".to_string()),
@@ -287,8 +285,7 @@ async fn settles_classify_ran_failed_or_skipped() {
         run.await.expect("run task")
     }
 
-    let dir = std::env::temp_dir().join(format!("pa-sched-fail-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-sched-fail-");
     let session = write_active_session(&dir);
 
     // A provider failure surfaces: the scheduler records it and backs off (the incident's
@@ -339,7 +336,7 @@ async fn settles_classify_ran_failed_or_skipped() {
 
 #[tokio::test]
 async fn rlm_heartbeat_mutation_hook_fires_into_the_session_queue() {
-    let dir = std::env::temp_dir().join(format!("pa-hb-fire-{}", uuid::Uuid::new_v4()));
+    let dir = crate::test_support::TestDir::new("pa-hb-fire-");
     let sessions_dir = dir.join("sessions");
     std::fs::create_dir_all(&sessions_dir).unwrap();
     let worker = Arc::new(Worker::new(persisted_worker_config(&dir), None));
@@ -449,8 +446,7 @@ async fn rlm_heartbeat_mutation_hook_fires_into_the_session_queue() {
 /// the fire waits for the session to go idle, then parks on its lane.
 #[tokio::test(flavor = "current_thread")]
 async fn a_heartbeat_deferred_by_a_busy_session_delivers_once_idle() {
-    let dir = std::env::temp_dir().join(format!("pa-sched-defer-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-sched-defer-");
     let session = write_active_session(&dir);
     let mut busy = crate::worker::SessionCore::test_core(None, "/w".to_string());
     busy.created = true;

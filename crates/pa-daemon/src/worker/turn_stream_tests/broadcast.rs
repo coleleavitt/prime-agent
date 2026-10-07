@@ -145,8 +145,7 @@ async fn an_injected_custom_turn_replaces_the_user_row() {
 
 #[tokio::test]
 async fn a_delivered_agent_message_turn_emits_the_custom_row() {
-    let dir = std::env::temp_dir().join(format!("pa-worker-amw-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-worker-amw-");
     let config = WorkerConfig {
         socket_path: dir.join("worker.sock"),
         supervisor_socket_path: PathBuf::new(),
@@ -324,10 +323,7 @@ async fn a_retried_turn_broadcasts_one_agent_end_per_run() {
     let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let dir = std::env::temp_dir().join(format!(
-        "pa-worker-agent-end-retry-{}",
-        uuid::Uuid::new_v4()
-    ));
+    let dir = crate::test_support::TestDir::new("pa-worker-agent-end-retry-");
     std::fs::create_dir_all(dir.join("agent")).unwrap();
     std::fs::write(
         dir.join("agent").join("settings.json"),

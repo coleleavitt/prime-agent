@@ -1,15 +1,12 @@
 //! Agent-message command tests.
 use super::*;
 
-pub(super) fn test_worker() -> Arc<Worker> {
+pub(super) fn test_worker() -> crate::test_support::InTestDir<Arc<Worker>> {
     // The macOS temp root resolves through /var (a symlink); the strict
     // no-symlink placement contract requires the ORIGINAL path to be
     // symlink-free, so the fixture canonicalizes its legitimate temp
     // root at the call site.
-    let dir = std::fs::canonicalize(std::env::temp_dir())
-        .unwrap()
-        .join(format!("pa-worker-am-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new_canonical("pa-worker-am-");
     let config = WorkerConfig {
         socket_path: dir.join("worker.sock"),
         supervisor_socket_path: PathBuf::new(),
@@ -21,10 +18,10 @@ pub(super) fn test_worker() -> Arc<Worker> {
         telemetry_disabled: None,
         script: Some(json!({ "responses": ["ack"] })),
     };
-    Arc::new(Worker::new(config, None))
+    crate::test_support::InTestDir::new(Arc::new(Worker::new(config, None)), dir)
 }
 
-pub(super) async fn created_worker() -> Arc<Worker> {
+pub(super) async fn created_worker() -> crate::test_support::InTestDir<Arc<Worker>> {
     let worker = test_worker();
     let created = worker
         .dispatch(

@@ -404,9 +404,8 @@ mod tests {
     use serde_json::json;
     use std::sync::Arc;
 
-    async fn created_worker() -> Arc<Worker> {
-        let dir = std::env::temp_dir().join(format!("pa-worker-nav-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+    async fn created_worker() -> crate::test_support::InTestDir<Arc<Worker>> {
+        let dir = crate::test_support::TestDir::new("pa-worker-nav-");
         let config = crate::worker::WorkerConfig {
             socket_path: dir.join("worker.sock"),
             supervisor_socket_path: std::path::PathBuf::new(),
@@ -426,7 +425,7 @@ mod tests {
             )
             .await;
         assert!(created.success, "create failed: {created:?}");
-        worker
+        crate::test_support::InTestDir::new(worker, dir)
     }
 
     #[tokio::test]
@@ -793,8 +792,7 @@ mod tests {
     /// The typed issue carries the fallback cwd the client's confirm answers with.
     #[tokio::test]
     async fn import_jsonl_answers_the_ts_missing_cwd_error_info() {
-        let dir = std::env::temp_dir().join(format!("pa-import-cwd-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-import-cwd-");
         // The import copies its input into the live session's directory, so the worker starts on a
         // real file.
         let live = dir.join("live-session.jsonl");
@@ -945,8 +943,7 @@ mod tests {
     /// would reintroduce.
     #[tokio::test]
     async fn a_replacement_resets_the_digest_lane_and_clears_the_watches() {
-        let dir = std::env::temp_dir().join(format!("pa-nav-replace-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-nav-replace-");
         let live = dir.join("live-session.jsonl");
         let mut live_file = SessionFile::create("/tmp", None, 0);
         live_file.set_path(live.clone());
@@ -1015,9 +1012,7 @@ mod tests {
     /// lane re-validation also refuses a decision the replacement straddled).
     #[tokio::test]
     async fn a_concurrent_delivery_never_digests_into_a_replacement_store() {
-        let dir =
-            std::env::temp_dir().join(format!("pa-nav-replace-race-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-nav-replace-race-");
         let mut live_file = SessionFile::create("/tmp", None, 0);
         live_file.set_path(dir.join("live-session.jsonl"));
         live_file.rewrite().unwrap();

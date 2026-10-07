@@ -274,8 +274,7 @@ async fn waiting_rpc_prompt_overtakes_background_steer_and_settles() {
 
 #[test]
 fn legacy_queue_record_priority_defaults_by_row_and_keeps_order() {
-    let dir = std::env::temp_dir().join(format!("pa-worker-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-worker-");
     let path = dir.join("priority-recovery.jsonl");
     let mut journal = WorkerRecoveryJournal::open(&path).unwrap();
     let machine: crate::journal::WorkerQueueItemRecord = serde_json::from_value(json!({
@@ -309,8 +308,7 @@ fn legacy_queue_record_priority_defaults_by_row_and_keeps_order() {
 
 #[test]
 fn queue_snapshot_round_trips_through_the_recovery_journal() {
-    let dir = std::env::temp_dir().join(format!("pa-worker-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-worker-");
     let journal_path = dir.join("recovery.jsonl");
     let mut journal = WorkerRecoveryJournal::open(&journal_path).unwrap();
     // A parked heartbeat rides the journal with its full delivery row, so a
@@ -382,8 +380,7 @@ fn queue_snapshot_round_trips_through_the_recovery_journal() {
 /// A version-1 queue snapshot (pre-item text lanes a prior binary wrote).
 #[test]
 fn a_version_one_queue_snapshot_restores_as_plain_rows() {
-    let dir = std::env::temp_dir().join(format!("pa-worker-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-worker-");
     let journal_path = dir.join("recovery.jsonl");
     std::fs::write(
         &journal_path,
@@ -522,8 +519,7 @@ fn queue_snapshots_round_trip_the_agent_message_marker() {
     );
 
     // The journal round-trip: the restore rebuilds the marker.
-    let dir = std::env::temp_dir().join(format!("pa-worker-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-worker-");
     let journal_path = dir.join("recovery.jsonl");
     let mut journal = WorkerRecoveryJournal::open(&journal_path).unwrap();
     journal

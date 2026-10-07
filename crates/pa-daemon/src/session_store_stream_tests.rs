@@ -32,16 +32,12 @@ fn whole_file_reference(path: &std::path::Path) -> anyhow::Result<Vec<SessionEnt
     Ok(entries)
 }
 
-fn write_session(name: &str, bytes: &[u8]) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "pa-stream-{name}-{}",
-        uuid::Uuid::new_v4().simple()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
+fn write_session(name: &str, bytes: &[u8]) -> crate::test_support::InTestDir<std::path::PathBuf> {
+    let dir = crate::test_support::TestDir::new(&format!("pa-stream-{name}-"));
     let path = dir.join("session.jsonl");
     let mut file = std::fs::File::create(&path).unwrap();
     file.write_all(bytes).unwrap();
-    path
+    crate::test_support::InTestDir::new(path, dir)
 }
 
 fn assert_streamed_equals_reference(name: &str, bytes: &[u8]) {

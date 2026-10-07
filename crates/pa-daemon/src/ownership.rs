@@ -340,8 +340,7 @@ mod tests {
     /// identity only.
     #[tokio::test]
     async fn the_owned_session_scan_refuses_a_quarantined_identity() {
-        let dir = std::env::temp_dir().join(format!("pa-own-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-own-");
         let supervisor = supervisor_with_stale_identity(&dir).await;
         let resident = supervisor.registry.get("w-a").await.expect("resident");
 

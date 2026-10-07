@@ -10,9 +10,10 @@ use super::*;
 
 /// A created worker carrying one compaction script (the `delayMs`
 /// sleep IS the mid-compaction window).
-async fn compaction_admission_worker(compaction: Value) -> Arc<Worker> {
-    let dir = std::env::temp_dir().join(format!("pa-compacting-gate-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+async fn compaction_admission_worker(
+    compaction: Value,
+) -> crate::test_support::InTestDir<Arc<Worker>> {
+    let dir = crate::test_support::TestDir::new("pa-compacting-gate-");
     let config = WorkerConfig {
         socket_path: dir.join("worker.sock"),
         supervisor_socket_path: std::path::PathBuf::new(),
@@ -35,7 +36,7 @@ async fn compaction_admission_worker(compaction: Value) -> Arc<Worker> {
         )
         .await;
     assert!(created.success, "create failed: {created:?}");
-    worker
+    crate::test_support::InTestDir::new(worker, dir)
 }
 
 /// The session events seen by an attached client, in wire order (one

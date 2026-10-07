@@ -151,10 +151,7 @@ async fn restart_restores_the_lane_and_the_inbox_key() {
     // /var (a symlink); the strict no-symlink placement contract requires
     // the ORIGINAL path to be symlink-free, so the fixture canonicalizes
     // its legitimate temp root at the call site.
-    let dir = std::fs::canonicalize(std::env::temp_dir())
-        .unwrap()
-        .join(format!("pa-worker-cloud-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new_canonical("pa-worker-cloud-");
     let config = WorkerConfig {
         socket_path: dir.join("worker.sock"),
         supervisor_socket_path: PathBuf::new(),
@@ -290,7 +287,7 @@ async fn unkeyed_delivery_stays_untracked() {
 /// transient row back without giving the runner a dequeue window.
 #[tokio::test]
 async fn detach_and_wire_release_cannot_unpause_a_failing_cloud_commit() {
-    let worker = created_worker().await;
+    let (worker, _dir) = created_worker().await.into_parts();
     worker.core.lock().unwrap().busy = true;
     let config = worker.config.clone();
     {
@@ -398,7 +395,7 @@ async fn detach_and_wire_release_cannot_unpause_a_failing_cloud_commit() {
 #[tokio::test]
 async fn failed_fsync_quarantines_until_restart_and_reconciles_both_disk_outcomes() {
     for lost in [false, true] {
-        let worker = created_worker().await;
+        let (worker, _dir) = created_worker().await.into_parts();
         worker.core.lock().unwrap().busy = true;
         let config = worker.config.clone();
         let neighbor = worker

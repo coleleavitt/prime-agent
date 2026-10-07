@@ -1,9 +1,8 @@
 //! Worker tests.
 use super::*;
 
-async fn snapshot_after_create() -> (Arc<Worker>, DaemonResponse) {
-    let dir = std::env::temp_dir().join(format!("pa-worker-us-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+async fn snapshot_after_create() -> (crate::test_support::InTestDir<Arc<Worker>>, DaemonResponse) {
+    let dir = crate::test_support::TestDir::new("pa-worker-us-");
     let config = WorkerConfig {
         socket_path: dir.join("worker.sock"),
         supervisor_socket_path: PathBuf::new(),
@@ -28,7 +27,7 @@ async fn snapshot_after_create() -> (Arc<Worker>, DaemonResponse) {
         .await;
     assert!(created.success, "create must succeed: {created:?}");
     let response = worker.dispatch("update_snapshot", &json!({})).await;
-    (worker, response)
+    (crate::test_support::InTestDir::new(worker, dir), response)
 }
 
 #[tokio::test]

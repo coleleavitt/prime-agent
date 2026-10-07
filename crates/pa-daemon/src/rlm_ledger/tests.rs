@@ -3,10 +3,8 @@
 use super::*;
 use crate::session_usage::SessionUsageSummary;
 
-fn temp_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("pa-ledger-{name}-{}", uuid::Uuid::new_v4()));
-    fs::create_dir_all(&dir).unwrap();
-    dir
+fn temp_dir(name: &str) -> crate::test_support::TestDir {
+    crate::test_support::TestDir::new(&format!("pa-ledger-{name}-"))
 }
 
 fn ledger_for(dir: &Path) -> RlmSpawnLedger {

@@ -78,9 +78,13 @@ async fn answer_supervisor_frame(socket: &mut FakeWorkerSocket, request_id: &str
 /// test binds itself (the fake worker on the far side of `connect_worker`).
 async fn supervisor_with_resident(
     worker_id: &str,
-) -> (Arc<Supervisor>, Arc<ResidentWorker>, PathBuf) {
-    let dir = std::env::temp_dir().join(format!("pa-{worker_id}-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+) -> (
+    Arc<Supervisor>,
+    Arc<ResidentWorker>,
+    PathBuf,
+    crate::test_support::TestDir,
+) {
+    let dir = crate::test_support::TestDir::new(&format!("pa-{worker_id}-"));
     let socket_path = dir.join("worker.sock");
     let agent_dir = dir.join("agent");
     std::fs::create_dir_all(&agent_dir).unwrap();
@@ -116,7 +120,7 @@ async fn supervisor_with_resident(
         dir.join(format!("{worker_id}.json")),
     );
     supervisor.registry.insert(Arc::clone(&resident)).await;
-    (supervisor, resident, socket_path)
+    (supervisor, resident, socket_path, dir)
 }
 
 /// The handshake owns its channel privately until the auth answer proves
@@ -127,7 +131,7 @@ async fn supervisor_with_resident(
 /// unauthenticated connection.
 #[tokio::test]
 async fn handshake_channel_stays_private_until_auth_answers() {
-    let (supervisor, resident, socket_path) = supervisor_with_resident("w-handshake").await;
+    let (supervisor, resident, socket_path, _dir) = supervisor_with_resident("w-handshake").await;
     let listener = bind_fake_worker(&socket_path).await;
     let connect = {
         let supervisor = Arc::clone(&supervisor);
@@ -260,7 +264,7 @@ async fn run_silent_peer_auth(cancel_connect: bool) {
 /// channel), the registration itself succeeds, and the launch completes.
 #[tokio::test]
 async fn a_mid_handshake_registration_cannot_kill_the_handshake() {
-    let (supervisor, resident, socket_path) = supervisor_with_resident("w-wedge").await;
+    let (supervisor, resident, socket_path, _dir) = supervisor_with_resident("w-wedge").await;
     let listener = bind_fake_worker(&socket_path).await;
     let connect = {
         let supervisor = Arc::clone(&supervisor);
@@ -330,7 +334,7 @@ async fn a_mid_handshake_registration_cannot_kill_the_handshake() {
 /// connect to clear it.
 #[tokio::test]
 async fn a_closed_connection_fails_its_in_flight_request() {
-    let (supervisor, resident, socket_path) = supervisor_with_resident("w-drop").await;
+    let (supervisor, resident, socket_path, _dir) = supervisor_with_resident("w-drop").await;
     let listener = bind_fake_worker(&socket_path).await;
     let connect = {
         let supervisor = Arc::clone(&supervisor);
@@ -386,8 +390,7 @@ async fn a_closed_connection_fails_its_in_flight_request() {
 /// routable.
 #[tokio::test]
 async fn a_stale_epoch_never_overwrites_the_installed_channel() {
-    let dir = std::env::temp_dir().join(format!("pa-install-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-install-");
     let descriptor: DaemonWorkerDescriptor = serde_json::from_value(serde_json::json!({
         "version": 2,
         "workerId": "w-install",
@@ -461,8 +464,7 @@ async fn a_stale_epoch_never_overwrites_the_installed_channel() {
 /// cannot outlive the connection it was sent on.
 #[tokio::test]
 async fn a_lost_worker_connection_fails_its_in_flight_route() {
-    let dir = std::env::temp_dir().join(format!("pa-lost-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-lost-");
     let socket_path = dir.join("worker.sock");
     let agent_dir = dir.join("agent");
     std::fs::create_dir_all(&agent_dir).unwrap();

@@ -364,8 +364,7 @@ mod tests {
 
     #[tokio::test]
     async fn successive_swaps_land_the_identity_on_the_final_row() {
-        let dir = std::env::temp_dir().join(format!("pa-root-id-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-root-id-");
         let supervisor = supervisor_with_movable_worker(&dir).await;
 
         // A → B: each accepted row moves the whole triple.
@@ -422,8 +421,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_identity_persist_is_repaired_by_the_next_roster_write() {
-        let dir = std::env::temp_dir().join(format!("pa-root-id-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-root-id-");
         let supervisor = supervisor_with_movable_worker(&dir).await;
         let resident = supervisor.registry.get("w-a").await.expect("resident");
 
@@ -484,8 +482,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_durable_pending_moves_the_boot_identity_before_any_routing() {
-        let dir = std::env::temp_dir().join(format!("pa-root-id-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-root-id-");
         let supervisor = supervisor_with_movable_worker(&dir).await;
         let resident = supervisor.registry.get("w-a").await.expect("resident");
 
@@ -632,8 +629,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_child_roster_delta_never_lifts_the_root_quarantine() {
-        let dir = std::env::temp_dir().join(format!("pa-root-id-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-root-id-");
         let supervisor = supervisor_with_movable_worker(&dir).await;
         let resident = supervisor.registry.get("w-a").await.expect("resident");
         resident.mark_identity_quarantined();
@@ -690,8 +686,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_path_backed_replacement_clears_the_no_session_replay_flag() {
-        let dir = std::env::temp_dir().join(format!("pa-root-id-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-root-id-");
         let supervisor = Arc::new(
             Supervisor::new(crate::supervisor::SupervisorOptions {
                 tcp_port: None,
@@ -749,8 +744,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_quarantined_resident_never_serves_until_the_live_word_lands() {
-        let dir = std::env::temp_dir().join(format!("pa-root-id-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TestDir::new("pa-root-id-");
         let supervisor = supervisor_with_movable_worker(&dir).await;
         let resident = supervisor.registry.get("w-a").await.expect("resident");
         let stale_file = dir.join("s0.jsonl").to_string_lossy().to_string();

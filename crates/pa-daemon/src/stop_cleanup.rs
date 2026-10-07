@@ -489,10 +489,8 @@ mod tests {
     use pa_core::cron::AgentCronJob;
     use std::io::Write;
 
-    fn temp_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("pa-stop-cleanup-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    fn temp_dir() -> crate::test_support::TestDir {
+        crate::test_support::TestDir::new("pa-stop-cleanup-")
     }
 
     fn write_session(dir: &Path, name: Option<&str>) -> (String, PathBuf) {

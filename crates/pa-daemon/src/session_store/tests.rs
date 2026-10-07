@@ -4,10 +4,8 @@
 use super::*;
 use serde_json::json;
 
-fn temp_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("pa-daemon-test-{}", uuid::Uuid::new_v4()));
-    fs::create_dir_all(&dir).unwrap();
-    dir
+fn temp_dir() -> crate::test_support::TestDir {
+    crate::test_support::TestDir::new("pa-daemon-test-")
 }
 
 /// The captured-attribution fixture: real devbox session rows (content sanitized,

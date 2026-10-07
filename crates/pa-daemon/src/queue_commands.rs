@@ -236,9 +236,8 @@ mod tests {
     use serde_json::json;
     use std::sync::Arc;
 
-    async fn created_worker() -> Arc<Worker> {
-        let dir = std::env::temp_dir().join(format!("pa-worker-qc-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+    async fn created_worker() -> crate::test_support::InTestDir<Arc<Worker>> {
+        let dir = crate::test_support::TestDir::new("pa-worker-qc-");
         let config = crate::worker::WorkerConfig {
             socket_path: dir.join("worker.sock"),
             supervisor_socket_path: std::path::PathBuf::new(),
@@ -258,7 +257,7 @@ mod tests {
             )
             .await;
         assert!(created.success, "create failed: {created:?}");
-        worker
+        crate::test_support::InTestDir::new(worker, dir)
     }
 
     fn lane_texts(worker: &Worker, lane: Lane) -> Vec<String> {

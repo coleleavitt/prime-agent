@@ -128,8 +128,7 @@ fn summary_lifecycle_is_message_based() {
         .lifecycle,
         "live"
     );
-    let dir = std::env::temp_dir().join(format!("pa-worker-lc-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-worker-lc-");
     let mut session = crate::session_store::SessionFile::create("/tmp", None, 0);
     let path = dir.join(crate::session_store::session_file_name(
         session.session_id(),
@@ -198,8 +197,7 @@ fn running_subagents_keep_an_idle_session_working() {
 /// compaction's own call.
 #[test]
 fn live_summary_usage_is_the_catalog_fold() {
-    let dir = std::env::temp_dir().join(format!("pa-worker-usage-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_support::TestDir::new("pa-worker-usage-");
     let path = dir.join("live-usage.jsonl");
     let usage = |input: u64, output: u64, cost: f64| {
         json!({

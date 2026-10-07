@@ -235,10 +235,8 @@ mod tests {
     use serde_json::json;
     use std::fs;
 
-    fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("pa-roster-{name}-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&dir).unwrap();
-        dir
+    fn temp_dir(name: &str) -> crate::test_support::TestDir {
+        crate::test_support::TestDir::new(&format!("pa-roster-{name}-"))
     }
 
     fn write_session_with_thinking(path: &std::path::Path, id: &str, level: &str) {

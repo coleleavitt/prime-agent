@@ -117,24 +117,29 @@ async fn sessions_with_gated_supervisor(
     verdict_rx: mpsc::UnboundedReceiver<bool>,
     rename_seen_tx: mpsc::UnboundedSender<Value>,
 ) -> SupervisorChildSessions {
-    let socket = std::env::temp_dir().join(format!(
-        "pa-rlm-gate-{}.sock",
-        uuid::Uuid::new_v4().simple()
-    ));
+    let dir = crate::test_support::TestDir::new("pa-rlm-gate-");
+    let socket = dir.join("supervisor.sock");
+    let root = dir.to_path_buf();
+    // The dir lives as long as the test's runtime (the fake supervisor's
+    // lifetime): the parked task drops it when the runtime shuts down.
+    tokio::spawn(async move {
+        let _dir = dir;
+        std::future::pending::<()>().await;
+    });
     spawn_gated_supervisor(socket.clone(), create_seen_tx, verdict_rx, rename_seen_tx).await;
     let link = Arc::new(crate::supervisor_link::SupervisorLink::new(socket));
     let sessions = SupervisorChildSessions::new(
         link,
-        std::env::temp_dir(),
+        root.clone(),
         "parent-live".to_string(),
         std::sync::Arc::new(crate::model_allowlist::ModelRefusalTelemetry::new(
-            std::env::temp_dir(),
+            root.clone(),
             /*telemetry_disabled*/ true,
         )),
     );
     sessions.set_identity(ParentIdentity {
         model: Some("mock/mock-1".to_string()),
-        cwd: Some(std::env::temp_dir().to_string_lossy().to_string()),
+        cwd: Some(root.to_string_lossy().to_string()),
         ..ParentIdentity::with_default_depth()
     });
     sessions
