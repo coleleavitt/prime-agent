@@ -580,70 +580,96 @@ fn register_run(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmHostBridge>)
         host_handler(move |payload| {
             let bridge = Arc::clone(&bridge);
             Box::pin(async move {
-                let data = &payload.data;
-                let Some(prompt) = data.get("prompt").and_then(Value::as_str) else {
-                    anyhow::bail!("rlm.spawn prompt must be a string");
-                };
-                let mut request = spawn_request_from_payload(prompt, data)?;
-                request.cell_source_code = payload.cell_source_code.clone();
-                // A child spawned during plan mode must not be an edit
-                // escape hatch.
-                request.plan_mode = bridge
-                    .plan_mode
-                    .get()
-                    .is_some_and(super::plan_mode::PlanModeSwitch::is_enabled);
-                // Placement gate (see [`RlmSpawnTarget`]): cloud placement
-                // is refused here, before any `RlmSubagentHost` is
-                // consulted, so no host implementation can fall back to
-                // running a cloud child locally. The gate is removed by
-                // the cloud-backend change that implements placement.
-                if request.target == RlmSpawnTarget::Cloud {
-                    anyhow::bail!(
-                        "rlm.spawn target \"cloud\" is unsupported: no cloud child backend \
-                         exists yet, and the child is never run locally instead. \
-                         Omit target (or use \"local\") to spawn a local child."
-                    );
-                }
-                // TS `_startRlmChildRun`: the spawning request is the turn
-                // whose tool call is executing now (the anchor is computed
-                // before the spawn admission's first await); a spawn
-                // outside an active run has no such turn, and an absent
-                // edge beats a wrong one.
-                request.spawned_by_request_id = match bridge.semantic_spawn.get() {
-                    Some(anchor) => {
-                        let agent = anchor.agent.upgrade();
-                        match agent {
-                            Some(agent) if agent.state().await.is_streaming => {
-                                anchor.recorder.last_turn_request_id()
-                            }
-                            _ => None,
-                        }
-                    }
-                    None => None,
-                };
-                // The delegation budget (upstream #1192): the child's grant
-                // is drawn before the host is consulted, so an exhausted
-                // pool refuses the spawn and no child runs unfunded.
-                // An explicit `token_budget=` asks for that grant; with no
-                // budget installed it funds the child alone.
-                if bridge.token_budget.get().is_some() {
-                    request.token_budget = bridge.reserve_child_grant(request.token_budget)?;
-                }
-                let grant = request.token_budget;
-                let handle = bridge.host.spawn(request).await?;
-                // The status surface names the child each grant funded.
-                if let (Some(budget), Some(grant)) = (bridge.token_budget.get(), grant) {
-                    budget.attribute_grant(grant, &handle.rlm_child_id, &handle.name);
-                }
-                // TS `_findLastAssistantMessage` at spawn: the spawning
-                // assistant row (persisted at `message_end` before tool
-                // execution) is the target every child-usage attribution
-                // folds into.
-                bridge.usage.register_spawn(&handle.rlm_child_id).await;
-                serde_json::to_value(&handle).map_err(anyhow::Error::new)
+                bridge
+                    .spawn_from_payload(&payload.data, payload.cell_source_code.clone())
+                    .await
             })
         }),
     );
+}
+
+impl RlmHostBridge {
+    /// The child-session host behind this bridge (roster, collect, delete).
+    #[must_use]
+    pub fn child_host(&self) -> Arc<dyn RlmSubagentHost> {
+        Arc::clone(&self.host)
+    }
+
+    /// One `rlm.spawn` admission from its wire payload (`{"prompt": str,
+    /// "kwargs": {...}}`): the kwargs validation, the plan-mode and
+    /// placement gates, the spawn anchor, the delegation grant, and the
+    /// usage registration. The kernel's `rlm.run` handler and host-side
+    /// orchestrators (the factory executor) share this one path, so every
+    /// child is admitted the same way. Answers the spawn handle as JSON.
+    ///
+    /// # Errors
+    ///
+    /// The payload's validation errors, the gates' refusals, a budget
+    /// refusal, or the host's spawn failure.
+    pub async fn spawn_from_payload(
+        &self,
+        data: &Value,
+        cell_source_code: Option<String>,
+    ) -> anyhow::Result<Value> {
+        let Some(prompt) = data.get("prompt").and_then(Value::as_str) else {
+            anyhow::bail!("rlm.spawn prompt must be a string");
+        };
+        let mut request = spawn_request_from_payload(prompt, data)?;
+        request.cell_source_code = cell_source_code;
+        // A child spawned during plan mode must not be an edit
+        // escape hatch.
+        request.plan_mode = self
+            .plan_mode
+            .get()
+            .is_some_and(super::plan_mode::PlanModeSwitch::is_enabled);
+        // Placement gate (see [`RlmSpawnTarget`]): cloud placement is
+        // refused here, before any `RlmSubagentHost` is consulted, so no
+        // host implementation can fall back to running a cloud child
+        // locally. The gate is removed by the cloud-backend change that
+        // implements placement.
+        if request.target == RlmSpawnTarget::Cloud {
+            anyhow::bail!(
+                "rlm.spawn target \"cloud\" is unsupported: no cloud child backend \
+                 exists yet, and the child is never run locally instead. \
+                 Omit target (or use \"local\") to spawn a local child."
+            );
+        }
+        // TS `_startRlmChildRun`: the spawning request is the turn whose
+        // tool call is executing now (the anchor is computed before the
+        // spawn admission's first await); a spawn outside an active run has
+        // no such turn, and an absent edge beats a wrong one.
+        request.spawned_by_request_id = match self.semantic_spawn.get() {
+            Some(anchor) => {
+                let agent = anchor.agent.upgrade();
+                match agent {
+                    Some(agent) if agent.state().await.is_streaming => {
+                        anchor.recorder.last_turn_request_id()
+                    }
+                    _ => None,
+                }
+            }
+            None => None,
+        };
+        // The delegation budget (upstream #1192): the child's grant is
+        // drawn before the host is consulted, so an exhausted pool refuses
+        // the spawn and no child runs unfunded. An explicit
+        // `token_budget=` asks for that grant; with no budget installed it
+        // funds the child alone.
+        if self.token_budget.get().is_some() {
+            request.token_budget = self.reserve_child_grant(request.token_budget)?;
+        }
+        let grant = request.token_budget;
+        let handle = self.host.spawn(request).await?;
+        // The status surface names the child each grant funded.
+        if let (Some(budget), Some(grant)) = (self.token_budget.get(), grant) {
+            budget.attribute_grant(grant, &handle.rlm_child_id, &handle.name);
+        }
+        // TS `_findLastAssistantMessage` at spawn: the spawning assistant
+        // row (persisted at `message_end` before tool execution) is the
+        // target every child-usage attribution folds into.
+        self.usage.register_spawn(&handle.rlm_child_id).await;
+        serde_json::to_value(&handle).map_err(anyhow::Error::new)
+    }
 }
 
 /// Shared kwargs validation for `rlm.run`: unsupported keys are rejected
