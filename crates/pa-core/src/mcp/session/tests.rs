@@ -82,6 +82,7 @@ impl Harness {
                 auth,
                 Arc::new(crate::mcp::McpOAuth::new()),
             ))),
+            None,
             options,
         );
         let mut handlers = HostRequestHandlers::new();

@@ -69,11 +69,16 @@ impl KernelEnv {
 #[derive(Clone)]
 pub(crate) struct McpCredentials {
     store: Arc<tokio::sync::Mutex<AuthStorage>>,
+    /// Counts a successful refresh as connector use (as `mcp.refresh` does).
+    usage: Option<crate::mcp::McpUsageReporter>,
 }
 
 impl McpCredentials {
-    pub(crate) fn new(store: Arc<tokio::sync::Mutex<AuthStorage>>) -> Self {
-        Self { store }
+    pub(crate) fn new(
+        store: Arc<tokio::sync::Mutex<AuthStorage>>,
+        usage: Option<crate::mcp::McpUsageReporter>,
+    ) -> Self {
+        Self { store, usage }
     }
 
     /// The raw `mcp:<server>` entry, or `None`.
@@ -96,13 +101,19 @@ impl McpCredentials {
     async fn refresh(&self, server: &str) -> bool {
         let store = Arc::clone(&self.store);
         let provider = super::super::provider_id(server);
-        tokio::task::spawn_blocking(move || {
+        let refreshed = tokio::task::spawn_blocking(move || {
             let mut store = store.blocking_lock();
             store.reload();
             store.get_api_key(&provider).is_some()
         })
         .await
-        .unwrap_or(false)
+        .unwrap_or(false);
+        if refreshed {
+            if let Some(report) = &self.usage {
+                report("refresh", server);
+            }
+        }
+        refreshed
     }
 
     /// The stored credential, only when bound to exactly this endpoint: a

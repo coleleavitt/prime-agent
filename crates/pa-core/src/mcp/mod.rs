@@ -878,11 +878,13 @@ impl McpManager {
                 manager.usage_report.clone(),
             )
         };
+        let config_usage = usage.clone();
         let sessions = McpSessions::new(
             Box::new(move |server| {
-                resolve_server_config(&integrations, &acp_servers, usage.as_ref(), server)
+                resolve_server_config(&integrations, &acp_servers, config_usage.as_ref(), server)
             }),
             auth,
+            usage,
             options,
         );
         sessions.register_handlers(handlers);

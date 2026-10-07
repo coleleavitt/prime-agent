@@ -27,12 +27,13 @@ fn credentials(entries: Value) -> McpCredentials {
     let Value::Object(map) = entries else {
         panic!("auth entries must be an object");
     };
-    McpCredentials::new(Arc::new(tokio::sync::Mutex::new(
-        AuthStorage::in_memory_without_env(
+    McpCredentials::new(
+        Arc::new(tokio::sync::Mutex::new(AuthStorage::in_memory_without_env(
             &AuthStorageData(map),
             Arc::new(crate::mcp::McpOAuth::new()),
-        ),
-    )))
+        ))),
+        None,
+    )
 }
 
 fn far_future_ms() -> i64 {

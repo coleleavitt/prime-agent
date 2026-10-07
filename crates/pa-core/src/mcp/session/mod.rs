@@ -91,12 +91,13 @@ impl McpSessions {
     pub(crate) fn new(
         configs: ConfigResolver,
         auth: Arc<tokio::sync::Mutex<crate::auth::AuthStorage>>,
+        usage: Option<super::McpUsageReporter>,
         options: McpSessionOptions,
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
                 configs,
-                credentials: McpCredentials::new(auth),
+                credentials: McpCredentials::new(auth, usage),
                 env: KernelEnv::new(options.environment, options.kernel_env),
                 cwd: Mutex::new(options.cwd),
                 slots: Mutex::new(HashMap::new()),
