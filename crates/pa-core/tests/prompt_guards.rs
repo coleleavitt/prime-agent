@@ -151,6 +151,11 @@ fn cached_prefix_is_stable_across_sessions() {
 /// worker's `bash.completed` (the background-command completion notice)
 /// and `bash.progress` (`rlm.watch.job`'s own poller) are runtime plumbing,
 /// and `vision.read` is the bundled `attach_image` skill's own request.
+/// The `harness.*` requests are the transport of `rlm.harness` (documented
+/// through `HARNESS_TOKENS`). The `mcp.session.*` / `mcp.integration.*` requests carry the documented
+/// kernel-local `mcp.list_tools` / `call_tool` / ... calls (and
+/// `rlm.McpIntegration`) to the host-owned connections. The
+/// `factory.*` requests are the bundled `factory` skill's client.
 const INTERNAL_HOST_REQUESTS: &[&str] = &[
     "model.info",
     "mcp.config",
@@ -161,6 +166,41 @@ const INTERNAL_HOST_REQUESTS: &[&str] = &[
     "bash.completed",
     "bash.progress",
     "vision.read",
+    "harness.load",
+    "harness.save",
+    "harness.get",
+    "harness.list",
+    "harness.search",
+    "harness.overview",
+    "harness.snapshot",
+    "harness.upsert",
+    "harness.create",
+    "harness.update",
+    "harness.delete",
+    "harness.set_enabled",
+    "harness.record_refinement",
+    "harness.create_skill",
+    "harness.update_skill",
+    "harness.factory",
+    "mcp.session.list_tools",
+    "mcp.session.call_tool",
+    "mcp.session.describe_tool",
+    "mcp.session.search_tools",
+    "mcp.session.reload",
+    "mcp.session.close",
+    "mcp.integration.list_tools",
+    "mcp.integration.call_tool",
+    // The kernel's factory client: `rlm.factory` is the bundled `factory`
+    // skill's surface (documented by its SKILL.md and `rlm.factory.help()`),
+    // and `factory.spec` is the validator behind `rlm.harness` factory writes.
+    "factory.spec",
+    "factory.run",
+    "factory.status",
+    "factory.stop",
+    "factory.resume",
+    "factory.graph",
+    "factory.watch",
+    "factory.machine",
 ];
 
 /// Map one registered host-request type to the prompt token that documents

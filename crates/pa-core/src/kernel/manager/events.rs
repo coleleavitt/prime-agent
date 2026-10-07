@@ -116,12 +116,6 @@ impl Inner {
                     let _ = waiter.send(fields);
                     return;
                 }
-                // The factory bridge's lane shares the done routing: its
-                // ids are fresh UUIDs, never a cell request id.
-                if let Some(waiter) = lock(&self.guarded).factory_activity_waiters.remove(&id) {
-                    let _ = waiter.send(fields);
-                    return;
-                }
                 if let Some(waiter) = lock(&self.guarded).plan_guard_waiters.remove(&id) {
                     let _ = waiter.send(fields);
                     return;

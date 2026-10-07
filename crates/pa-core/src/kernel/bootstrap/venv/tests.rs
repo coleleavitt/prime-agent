@@ -1197,7 +1197,7 @@ fn the_shipped_constraints_pin_every_base_requirement() {
         .filter_map(|line| line.split_once("=="))
         .map(|(name, _)| name.trim().to_ascii_lowercase())
         .collect();
-    let unpinned: Vec<&str> = ["mcp", "tyro", STATE_SNAPSHOT_REQUIREMENT]
+    let unpinned: Vec<&str> = ["tyro", STATE_SNAPSHOT_REQUIREMENT]
         .into_iter()
         .chain(default_rlm_extra_uv_args())
         .filter(|name| !pinned.contains(*name))

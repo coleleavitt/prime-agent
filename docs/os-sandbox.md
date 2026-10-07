@@ -79,11 +79,13 @@ unconfined while the setting asks for confinement. Use `--sandbox off` or set `m
 
 ## MCP servers
 
-`rlm.mcp` starts a stdio MCP server as a kernel child, so the server runs under the same
-sandbox: with `network` off it cannot reach the network, and it writes only where the kernel
-may. HTTP MCP servers are reached by the kernel itself, so they also need `network: true`.
-When stdio servers move to the Prime Agent host, the host must start them under the same
-policy (`SessionSandbox::command`), so the move does not loosen the sandbox.
+The Prime Agent host starts a stdio MCP server on the kernel's behalf (`rlm.mcp`). It runs
+under the session's sandbox, like the kernel: it writes only its working directory (under
+`workspace-write`) and its temp directory, and with `network` off it cannot open network
+sockets, so a server that needs the network needs `network: true`. The reasoning: the model
+drives these servers, so leaving them unconfined would be a way around the sandbox. (The Codex
+CLI runs MCP servers unconfined; Prime Agent chooses not to.) HTTP MCP servers are reached
+by the host and are not affected.
 
 ## Not confined
 

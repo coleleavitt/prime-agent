@@ -13,17 +13,17 @@ at write time (machine form, or `dag` sugar that compiles to one; pass
 exactly one), and an invalid spec is never stored.
 `await rlm.factory.run('<spec_id>')` then spawns each state's subagent as an
 ordinary child, feeds captured outputs into the successors' prompts, and
-drives the run to quiescence in a background kernel task — the call
-returns immediately and the run continues after the model turn ends. Use
+drives the run to quiescence in the Prime Agent host — the call returns
+immediately, the run continues after the model turn ends, and a kernel
+restart or crash never touches it (a host restart pauses an in-flight run
+as interrupted; `rlm.factory.resume(run_id)` continues it). Use
 it when a workflow needs shape: fan-out, bounded loops (review/fix until a
 verdict approves), joins, or one child per list item.
 
 **For the full authoring reference and API guide — states, ports, guards,
 joins, foreach, residents, budgets and policies, and the `rlm.factory`
 run/status/stop/resume/graph/watch calls with worked examples — call
-`rlm.factory.help()` in the kernel.** The guide lands with the factory-core
-PR; on builds without it, the module docstring in
-`prime-agent-runtime/src/rlm/factory.py` is the source of truth.
+`rlm.factory.help()` in the kernel.**
 
 ## The opt-in gate
 

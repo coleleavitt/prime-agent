@@ -969,3 +969,89 @@ async fn a_length_auto_continue_counts_on_session_end() {
     assert_eq!(ended.len(), 1);
     assert_eq!(ended[0]["length_continuation_count"], serde_json::json!(1));
 }
+
+/// The workspace-trust gate covers the host-owned MCP sessions: an untrusted
+/// project's `mcpServers` never reach them (the command never runs), and
+/// trusting the workspace admits the entry.
+#[cfg(unix)]
+#[tokio::test]
+async fn an_untrusted_project_mcp_server_never_starts() {
+    let model = pa_agent::types::Model {
+        id: "m".into(),
+        name: "m".into(),
+        api: "test".into(),
+        provider: "test".into(),
+        base_url: "http://localhost".into(),
+        reasoning: false,
+        cost: pa_agent::types::UsageCost::default(),
+        context_window: 1_000,
+        max_tokens: 100,
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().join("repo");
+    let agent_dir = tmp.path().join("agent");
+    std::fs::create_dir_all(cwd.join(".prime").join("agent")).unwrap();
+    std::fs::create_dir_all(cwd.join(".git")).unwrap();
+    std::fs::create_dir_all(&agent_dir).unwrap();
+    let marker = tmp.path().join("evil-ran");
+    std::fs::write(
+        cwd.join(".prime").join("agent").join("settings.json"),
+        serde_json::json!({
+            "mcpServers": { "evil": {
+                "type": "stdio",
+                "command": "sh",
+                "args": ["-c", format!("touch {}", marker.display())],
+            } }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let call_evil = |engine: SessionEngine| async move {
+        let mut handlers = crate::kernel::shared::HostRequestHandlers::new();
+        engine.mcp_sessions.register_handlers(&mut handlers);
+        let handler = handlers.get("mcp.session.call_tool").unwrap().clone();
+        let reply = handler(crate::kernel::shared::HostRequestPayload {
+            data: serde_json::json!({ "server": "evil", "tool": "t", "arguments": {} }),
+            cell_source_code: None,
+        })
+        .await
+        .unwrap();
+        engine.mcp_sessions.close_all().await;
+        reply
+    };
+    let engine = |model: pa_agent::types::Model| {
+        let provider = Arc::new(ScriptedProvider::new(model.clone()));
+        create_session(SessionEngineConfig {
+            cwd: cwd.clone(),
+            agent_dir: agent_dir.clone(),
+            model: Some(model),
+            stream_fn: Some(provider.stream_fn()),
+            rlm_depth: Some(0),
+            ..Default::default()
+        })
+    };
+    let untrusted = call_evil(engine(model.clone()).await.unwrap()).await;
+    assert_eq!(
+        untrusted,
+        serde_json::json!({
+            "ok": false,
+            "error": { "type": "KeyError", "message": "MCP server 'evil' is not declared in user settings" },
+            "connected": false,
+        })
+    );
+    assert!(!marker.exists());
+    crate::workspace_trust::record(
+        &cwd,
+        &agent_dir,
+        crate::workspace_trust::TrustDecision::Trusted,
+    )
+    .unwrap();
+    let trusted = call_evil(engine(model).await.unwrap()).await;
+    // Admitted: the command ran (it is no MCP server, so its startup fails).
+    assert_eq!(
+        trusted["error"]["type"],
+        serde_json::json!("McpStartupError"),
+        "{trusted}"
+    );
+    assert!(marker.exists());
+}

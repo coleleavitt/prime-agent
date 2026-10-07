@@ -5,11 +5,10 @@ import json
 import tempfile
 import time
 import unittest
-from contextlib import AsyncExitStack
 from pathlib import Path
 from unittest import mock
 
-from rlm import mcp_base
+from rlm import mcp_base, repl
 from rlm.mcp_base import McpIntegration, McpToolError, NotEnabled
 
 
@@ -17,31 +16,26 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-class _FakeSession:
-    """Stand-in for an mcp ClientSession with canned tools/results."""
+class _FakeHost:
+    """The host's ``mcp.integration.*`` handlers behind ``repl.host_request``:
+    a canned tool list and call result (raw reply ``result`` objects)."""
 
-    def __init__(self, tools, result):
-        self._tools = tools
-        self._result = result
-        self.calls = []
+    def __init__(self, tools=(), call=None):
+        self.tools = [
+            {"name": name, "description": description, "inputSchema": schema}
+            for name, description, schema in tools
+        ]
+        self.call = call if call is not None else {"ok": True, "value": None, "connected": False}
+        self.requests = []
 
-    async def list_tools(self):
-        Tool = type("Tool", (), {})
+    async def host_request(self, data, **_options):
+        self.requests.append(dict(data))
+        if data["type"] == "mcp.integration.list_tools":
+            return {"status": "ok", "result": {"ok": True, "value": self.tools, "connected": False}}
+        return {"status": "ok", "result": self.call}
 
-        def make(name, desc, schema):
-            t = Tool()
-            t.name = name
-            t.description = desc
-            t.inputSchema = schema
-            return t
-
-        resp = type("Resp", (), {})()
-        resp.tools = [make(*t) for t in self._tools]
-        return resp
-
-    async def call_tool(self, name, arguments):
-        self.calls.append((name, arguments))
-        return self._result
+    def patch(self):
+        return mock.patch.object(repl, "host_request", self.host_request)
 
 
 class _Integration(McpIntegration):
@@ -61,13 +55,6 @@ class McpIntegrationTest(unittest.TestCase):
 
     def _write_auth(self, cred):
         self.auth_path.write_text(json.dumps({"mcp:demo": cred}))
-
-    def _patch_session(self, session):
-        # Replace _open_session so no real network/SDK is needed.
-        async def fake_open(self_, stack: AsyncExitStack):
-            return session
-
-        return mock.patch.object(_Integration, "_open_session", fake_open)
 
     def test_not_enabled_without_credentials(self):
         integration = _Integration()
@@ -143,70 +130,58 @@ class McpIntegrationTest(unittest.TestCase):
         with mock.patch.dict("os.environ", {"DEMO_MCP_TOKEN": "env-secret"}):
             self.assertEqual(_run(EnvIntegration()._resolve_token()), "env-secret")
 
-    def test_empty_structured_result_preserved(self):
-        for payload in ({}, []):
-            result = type("R", (), {"structuredContent": payload, "content": [], "isError": False})()
-            self.assertEqual(mcp_base._parse_result(result), payload)
-
-    def test_error_result_raises(self):
-        block = type("B", (), {"text": "boom"})()
-        result = type("R", (), {"isError": True, "content": [block], "structuredContent": None})()
-        with self.assertRaises(McpToolError) as ctx:
-            mcp_base._parse_result(result)
-        self.assertIn("boom", str(ctx.exception))
-
     def test_auto_bound_tool_calls_session(self):
-        session = _FakeSession(
+        host = _FakeHost(
             tools=[("list_issues", "List issues", {"type": "object"})],
-            result=type("R", (), {"structuredContent": {"issues": [1, 2]}})(),
+            call={"ok": True, "value": {"issues": [1, 2]}, "connected": False},
         )
         self._write_auth(
             {"type": "oauth", "access": "t", "refresh": "r", "expires": (time.time() + 3600) * 1000}
         )
-        with self._patch_session(session):
+        with host.patch():
             integration = _Integration()
             out = _run(integration.list_issues(team="Eng"))
         self.assertEqual(out, {"issues": [1, 2]})
-        self.assertEqual(session.calls, [("list_issues", {"team": "Eng"})])
-
-    def test_snake_case_input_schema_surfaces(self):
-        # mcp>=2 Tool objects expose input_schema (pydantic field name), not inputSchema.
-        Tool = type("Tool", (), {})
-        tool = Tool()
-        tool.name = "list_issues"
-        tool.description = "List issues"
-        tool.input_schema = {"type": "object", "properties": {"team": {"type": "string"}}}
-        session = _FakeSession(tools=[], result=None)
-
-        async def list_tools():
-            resp = type("Resp", (), {})()
-            resp.tools = [tool]
-            return resp
-
-        session.list_tools = list_tools
-        self._write_auth(
-            {"type": "oauth", "access": "t", "refresh": "r", "expires": (time.time() + 3600) * 1000}
+        connection = {"server": "demo", "url": "https://example.test/mcp", "headers": {"Authorization": "Bearer t"}}
+        self.assertEqual(
+            host.requests,
+            [
+                {"type": "mcp.integration.list_tools", **connection},
+                {"type": "mcp.integration.call_tool", **connection, "tool": "list_issues", "arguments": {"team": "Eng"}},
+            ],
         )
-        with self._patch_session(session):
-            integration = _Integration()
-            tools = _run(integration.list_tools())
-        self.assertEqual(tools[0]["inputSchema"], tool.input_schema)
+
+    def test_error_result_raises(self):
+        host = _FakeHost(call={"ok": False, "error": {"type": "McpToolError", "message": "boom"}, "connected": False})
+        self._write_auth({"type": "api_key", "key": "key-abc"})
+        with host.patch():
+            with self.assertRaises(McpToolError) as ctx:
+                _run(_Integration().call_tool("noop", {}))
+        self.assertIn("boom", str(ctx.exception))
+
+    def test_configured_headers_precede_the_bearer_header(self):
+        class HeaderIntegration(_Integration):
+            async def _resolve_config(self):
+                return self.url, {"X-Team": "eng", "Authorization": "Bearer configured"}
+
+        host = _FakeHost()
+        self._write_auth(
+            {"type": "oauth", "access": "tok-xyz", "refresh": "r", "expires": (time.time() + 3600) * 1000}
+        )
+        with host.patch():
+            _run(HeaderIntegration().call_tool("noop", {}))
+        self.assertEqual(host.requests[0]["headers"], {"X-Team": "eng", "Authorization": "Bearer tok-xyz"})
 
     def test_unknown_tool_raises_with_available_list(self):
-        session = _FakeSession(tools=[("list_issues", "", {})], result=None)
+        host = _FakeHost(tools=[("list_issues", "", {})])
         self._write_auth(
             {"type": "oauth", "access": "t", "refresh": "r", "expires": (time.time() + 3600) * 1000}
         )
-        with self._patch_session(session):
+        with host.patch():
             integration = _Integration()
             with self.assertRaises(AttributeError) as ctx:
                 _run(integration.nonexistent_tool())
         self.assertIn("list_issues", str(ctx.exception))
-
-    def test_text_result_parsing(self):
-        block = type("B", (), {"text": "hello"})()
-        result = type("R", (), {"content": [block], "structuredContent": None})()
-        self.assertEqual(mcp_base._parse_result(result), "hello")
 
     def test_requires_server_attribute(self):
         class Bad(McpIntegration):
@@ -214,67 +189,6 @@ class McpIntegrationTest(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             Bad()
-
-    def _run_open_session_with_transport(self, transport):
-        """Drive the real _open_session against a fake transport callable.
-
-        `transport` must declare its real parameters (headers= or http_client=)
-        so the signature inspection in _open_session is exercised faithfully.
-        """
-        self._write_auth(
-            {"type": "oauth", "access": "tok-xyz", "refresh": "r", "expires": (time.time() + 3600) * 1000}
-        )
-
-        async def fake_host_request(req_type, payload):
-            return {}  # no host URL override; _resolve_url falls back to self.url
-
-        with mock.patch.object(mcp_base, "host_request", fake_host_request), \
-             mock.patch.object(mcp_base, "_resolve_streamable_http", lambda: transport), \
-             mock.patch("mcp.ClientSession") as session_cls:
-            session = mock.MagicMock()
-            session.initialize = mock.AsyncMock()
-            session.call_tool = mock.AsyncMock(
-                return_value=type("R", (), {"content": [], "structuredContent": None})()
-            )
-            session_cls.return_value.__aenter__ = mock.AsyncMock(return_value=session)
-            session_cls.return_value.__aexit__ = mock.AsyncMock(return_value=False)
-            _run(_Integration().call_tool("noop", {}))
-
-    def test_open_session_uses_headers_signature(self):
-        # streamablehttp_client(url, headers=...)
-        captured = {}
-
-        class _CM:
-            async def __aenter__(self_inner):
-                return ("read", "write", None)
-
-            async def __aexit__(self_inner, *a):
-                return False
-
-        def transport(url, headers=None):
-            captured["headers"] = headers
-            return _CM()
-
-        self._run_open_session_with_transport(transport)
-        self.assertEqual(captured["headers"], {"Authorization": "Bearer tok-xyz"})
-
-    def test_open_session_uses_http_client_signature(self):
-        # streamable_http_client(url, *, http_client=...) — must NOT pass headers=
-        captured = {}
-
-        class _CM:
-            async def __aenter__(self_inner):
-                return ("read", "write", None)
-
-            async def __aexit__(self_inner, *a):
-                return False
-
-        def transport(url, *, http_client=None):
-            captured["http_client"] = http_client
-            return _CM()
-
-        self._run_open_session_with_transport(transport)
-        self.assertIsNotNone(captured["http_client"])
 
     def test_resolve_config_ignores_host_overrides(self):
         # A same-named mcpServers entry must not repoint an authored integration:

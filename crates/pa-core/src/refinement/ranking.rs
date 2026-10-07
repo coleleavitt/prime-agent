@@ -957,6 +957,7 @@ mod tests {
                 evidence: String::new(),
                 outcome: "routing improved".to_string(),
                 created_at: String::new(),
+                reason: None,
             });
         state
             .refinements
@@ -967,6 +968,7 @@ mod tests {
                 evidence: String::new(),
                 outcome: String::new(),
                 created_at: String::new(),
+                reason: None,
             });
         let flags = HarnessDigestRenderFlags {
             include_ipython_examples: true,
@@ -1055,6 +1057,7 @@ mod tests {
                 evidence: String::new(),
                 outcome: "routing improved".to_string(),
                 created_at: String::new(),
+                reason: None,
             });
         let text = format_harness_state_for_prompt(&state, &HarnessStatePromptOptions::default());
         assert!(text.starts_with("# Continual Harness State"));

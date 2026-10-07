@@ -97,6 +97,10 @@ pub struct HarnessRefinementEvent {
     /// The TS event schema keeps the snake-cased `created_at`.
     #[serde(rename = "created_at")]
     pub created_at: String,
+    /// Why the host ran the refine (`manual`, `recurrence`, `turn_interval`,
+    /// ...), when it recorded one; a save keeps it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -191,63 +195,12 @@ pub fn factory_enabled(agent_dir: &Path) -> bool {
 }
 
 /// Load harness state; a corrupt or unreadable file degrades to empty rather
-/// than throwing (prompt builds run on every turn).
-///
-/// # Panics
-///
-/// The `get_mut(kind).unwrap()` cannot panic: the empty state pre-populates every kind map.
+/// than throwing (prompt builds run on every turn). Entries are read
+/// leniently ([`store::document`]).
+#[must_use]
 pub fn load_harness_state(harness_state_dir: &Path, scope: HarnessScope) -> HarnessState {
-    let state_path = get_harness_state_path(harness_state_dir);
-    let Ok(raw) = std::fs::read_to_string(&state_path) else {
-        return empty_harness_state();
-    };
-    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        return empty_harness_state();
-    };
-    let Some(parsed_obj) = parsed.as_object() else {
-        return empty_harness_state();
-    };
-    let mut state = empty_harness_state();
-    state.schema = parsed_obj
-        .get("schema")
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(1);
-    for kind in REFINEMENT_KINDS {
-        let kind_key = kind_from_name(kind);
-        if let Some(records) = parsed_obj
-            .get("entries")
-            .and_then(|entries| entries.get(kind))
-            .and_then(|records| records.as_object())
-        {
-            for (id, raw_entry) in records {
-                let Ok(mut entry) = serde_json::from_value::<HarnessEntry>(raw_entry.clone())
-                else {
-                    continue;
-                };
-                entry.scope = Some(entry.scope.unwrap_or(scope));
-                state
-                    .entries
-                    .get_mut(&kind_key)
-                    .unwrap()
-                    .insert(id.clone(), entry);
-            }
-        }
-    }
-    if let Some(refinements) = parsed_obj
-        .get("refinements")
-        .and_then(|value| value.as_array())
-    {
-        state.refinements = refinements
-            .iter()
-            .filter_map(|event| serde_json::from_value(event.clone()).ok())
-            .collect();
-    }
-    state.extensions = parsed_obj
-        .iter()
-        .filter(|(key, _)| !matches!(key.as_str(), "schema" | "entries" | "refinements"))
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect();
-    state
+    store::document::read_harness_state_file(&get_harness_state_path(harness_state_dir), scope)
+        .state
 }
 
 /// Merge global + local states: local ids conflict-prefixed with their scope.
@@ -300,7 +253,9 @@ pub fn merge_harness_states(
     merged
 }
 
-/// Atomically save harness state (0o600 for new files).
+/// Atomically save harness state ([`store::document`]: the destination's
+/// mode is kept, a new file is owner-only, a symlinked file is written
+/// through, and a file that does not parse is copied aside first).
 ///
 /// # Errors
 ///
@@ -310,10 +265,11 @@ pub fn save_harness_state(
     state: &HarnessState,
 ) -> anyhow::Result<PathBuf> {
     std::fs::create_dir_all(harness_state_dir)?;
-    let state_path = get_harness_state_path(harness_state_dir);
-    let content = format!("{}\n", serde_json::to_string_pretty(state)?);
-    crate::settings::storage::atomic_write(&state_path, &content)?;
-    Ok(state_path)
+    store::document::write_harness_state_file(
+        &get_harness_state_path(harness_state_dir),
+        state,
+        store::document::WriteDurability::NoSync,
+    )
 }
 
 #[must_use]
@@ -573,6 +529,7 @@ pub mod planner;
 pub mod prompt_hook;
 pub mod ranking;
 pub mod relocate;
+pub mod store;
 
 // Export the compact-text helper for the digest formatter.
 pub(crate) use compact_text as compact_harness_text;

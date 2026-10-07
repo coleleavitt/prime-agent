@@ -1311,6 +1311,10 @@ pub const KNOWN_FACTORY_EVENT_KINDS: &[&str] = &[
     "run_stopped",
     "resumed",
     "executor_error",
+    // A host restart found the run in flight (the durable executor's
+    // recovery: one per run, one per lost in-flight instance).
+    "run_interrupted",
+    "interrupted",
 ];
 
 const KNOWN_STAGES: &[&str] = &["recorded", "arrived", "shown", "delivered"];

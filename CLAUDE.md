@@ -61,6 +61,9 @@ callable surface; a unit test pins its protocol number to `REPL_PROTOCOL_VERSION
   tee, the pidfd owner watchdog with a raw-syscall fallback.
 - `pa-agent`: queued batches record their origin; an aborted run parks the **user's** steer/follow-up rows (next
   prompt or `continue` folds them) while host rows (terminal notices, injected rows) keep driving the session.
+- The factory (`skills/factory`, `rlm.factory`) runs host-side: `pa-core::factory` owns the spec validator, the
+  executor (one per session, a durable `factory-runs/<run id>.json` record per run, recovery that pauses in-flight
+  runs as interrupted after a host restart) and the `/factory` lane; the kernel's `rlm.factory` is a thin client.
 - Spawn hardening: ETXTBSY-tolerant spawns (`platform::process::{status,spawn}_retrying_text_busy`) for the runtime
   probe, `uv`, and staged-update version probes; runtime-probe memo invalidation scoped to the failed interpreter.
 - `skills/computer-use`: macOS + X11 (#3246) + a **Wayland/niri** backend (`_wayland.py`, AT-SPI observation,
@@ -84,7 +87,9 @@ formats are byte-compatible with the TS fork, proven by node-generated goldens i
 rules for this repo's hazard classes: `codegraph-rules/` (`codegraph analyze rules`).
 
 Open:
-- Workflow V2's durable controller (the TS fork never built it; needs a store dependency decision).
+- Workflow V2's durable controller (the TS fork never built it; needs a store dependency decision). The factory
+  executor's host-side control loop, child port and restart reconciliation are reusable for it; its JSON record
+  store is not the transactional event-sourced store `WORKFLOW-V2.md` specifies.
 - `docs/dream-rsi.md`, `docs/ravo-*.md`, `docs/observability.md` and `FLOWCHART.md` still describe the **TS**
   implementation; the crate READMEs describe the Rust one.
 - Wayland computer-use: PyGObject is a Linux dependency of the skill (built by the kernel bootstrap's skill sync;
