@@ -1155,10 +1155,28 @@ fn create_starts_a_background_agent_with_its_first_message() {
     assert_eq!(stdout(&created), format!("Created {active} (reviewer)\n"));
     assert_eq!(rows[0]["cwd"], json!(dir.path().to_string_lossy()));
     assert_eq!(rows[0]["attachedClients"], json!(0));
-    let messages = wire.request(
-        "m1",
-        &json!({ "type": "get_messages", "activeSessionId": active }),
-    );
+    // `create` returns once the daemon admitted the first prompt (queued and checkpointed);
+    // the turn runner persists the user row when the turn starts, so wait for it to land.
+    let deadline = Instant::now() + Duration::from_mins(1);
+    let mut poll = 0;
+    let messages = loop {
+        poll += 1;
+        let messages = wire.request(
+            &format!("m{poll}"),
+            &json!({ "type": "get_messages", "activeSessionId": active }),
+        );
+        if messages["data"]["messages"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty())
+        {
+            break messages;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the admitted first prompt never reached the transcript: {messages}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
     let first = &messages["data"]["messages"][0];
     assert_eq!(first["role"], "user", "{messages}");
     assert_eq!(
