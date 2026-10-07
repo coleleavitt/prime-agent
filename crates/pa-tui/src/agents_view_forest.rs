@@ -59,6 +59,8 @@ pub struct AgentsViewRow {
     /// The row's children carry a spawn program: true only on the summary row whose children
     /// carry code, computed where the children are known.
     pub has_spawn_code: bool,
+    /// Own tokens plus every descendant's, the same scope as `cost` (upstream #2526).
+    pub tokens: TokenUsage,
 }
 
 /// The four list row shapes (TS `AgentsViewRowKind`).
@@ -116,6 +118,42 @@ pub struct Rollup {
     /// deleted-descendant bucket. Status-independent — all descendants bill.
     pub descendants: f64,
     pub descendant_count: usize,
+    /// Own tokens plus every descendant's, the same scope as `cost` (upstream #2526).
+    pub tokens: TokenUsage,
+    /// Every descendant's tokens, the same scope as `descendants`.
+    pub descendant_tokens: TokenUsage,
+}
+
+/// One input/output token pair (the usage summary's `inputTokens`/`outputTokens`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TokenUsage {
+    pub input: u64,
+    pub output: u64,
+}
+
+impl TokenUsage {
+    /// The pair a usage block (`{inputTokens, outputTokens, ...}`) carries; absent fields are 0.
+    #[must_use]
+    pub fn of(usage: Option<&Value>) -> Self {
+        let field = |key: &str| {
+            usage
+                .and_then(|usage| usage.get(key))
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        };
+        TokenUsage {
+            input: field("inputTokens"),
+            output: field("outputTokens"),
+        }
+    }
+
+    #[must_use]
+    pub fn plus(self, other: TokenUsage) -> Self {
+        TokenUsage {
+            input: self.input.saturating_add(other.input),
+            output: self.output.saturating_add(other.output),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -561,6 +561,7 @@ mod tests {
                 error_message: None,
                 timestamp: 0,
                 rest: serde_json::Map::default(),
+                discarded_usage: None,
             }),
         )
     }
@@ -601,6 +602,7 @@ mod tests {
             error_message: None,
             timestamp,
             rest: serde_json::Map::default(),
+            discarded_usage: None,
         })
     }
 
@@ -894,6 +896,7 @@ mod tests {
                     error_message: None,
                     timestamp: 0,
                     rest: serde_json::Map::default(),
+                    discarded_usage: None,
                 }),
             ),
         ];

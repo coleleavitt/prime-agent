@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
-use super::{AgentsViewScope, Rollup, SelectionKey};
+use super::{AgentsViewScope, Rollup, SelectionKey, TokenUsage};
 use crate::agents_view_state::{summary_for_record, UnifiedRecord};
 use crate::subagents::{depth_consistent_binding, is_subagent_summary, summary_parent_keys};
 
@@ -206,10 +206,26 @@ pub fn compute_rollups(records: &[UnifiedRecord]) -> HashMap<String, Rollup> {
             + deleted_descendants;
         // `descendants` starts at the deleted-descendant bucket: the bucket is descendant spend,
         // so the aggregate bills it even though no live child row carries it.
+        // The token pair follows the cost's precedence and deleted-descendant bucket.
+        let usage_of = |key: &str| {
+            records[*position]
+                .daemon
+                .as_ref()
+                .and_then(|daemon| daemon.get(key))
+                .or_else(|| {
+                    records[*position]
+                        .saved
+                        .as_ref()
+                        .and_then(|saved| saved.get(key))
+                })
+        };
+        let deleted_tokens = TokenUsage::of(usage_of("deletedDescendantUsage"));
         let mut rollup = Rollup {
             cost: own_cost,
             descendants: deleted_descendants,
             descendant_count: 0,
+            tokens: TokenUsage::of(usage_of("usage")).plus(deleted_tokens),
+            descendant_tokens: deleted_tokens,
         };
         for child in index.children_by_parent.get(position).into_iter().flatten() {
             if !is_subagent_descendant(&records[*child], &records[*position]) {
@@ -218,6 +234,8 @@ pub fn compute_rollups(records: &[UnifiedRecord]) -> HashMap<String, Rollup> {
             rollup.cost += rollups[*child].cost;
             rollup.descendants += rollups[*child].cost;
             rollup.descendant_count += 1 + rollups[*child].descendant_count;
+            rollup.tokens = rollup.tokens.plus(rollups[*child].tokens);
+            rollup.descendant_tokens = rollup.descendant_tokens.plus(rollups[*child].tokens);
         }
         rollups[*position] = rollup;
     }

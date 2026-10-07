@@ -1,5 +1,6 @@
-//! The rename flow: the ctrl+r composer over the prompt, the wire dispatch the confirm
-//! executes, and the landed outcome's status.
+//! The rename flow: the ctrl+r composer over the prompt, the optimistic name overlay the
+//! confirm applies at once (upstream #2099), the wire dispatch that runs behind it, and the
+//! landed outcome's status.
 use serde_json::Value;
 
 use super::{AgentsViewMode, Composer, DaemonClient, UiInput};
@@ -12,6 +13,18 @@ use tokio::sync::mpsc;
 pub(super) struct Rename {
     pub(super) target: RenameTarget,
     pub(super) name: String,
+    /// The renamed session's id: the optimistic overlay's key (`None` for a summary without
+    /// one, which renames without an overlay).
+    pub(super) session_id: Option<String>,
+}
+
+/// One session's optimistic rename: the newest name the user asked for, and the name the one
+/// in-flight write carries. Two concurrent writes could land in either order, so a newer name
+/// waits for the write ahead of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PendingRename {
+    pub(super) name: String,
+    pub(super) writing: Option<String>,
 }
 
 /// The rename composer's state: the editor owns the draft (the full cursor/word/
@@ -20,6 +33,7 @@ pub(super) struct Rename {
 pub(super) struct RenameComposer {
     pub(super) target: RenameTarget,
     pub(super) editor: Editor,
+    pub(super) session_id: Option<String>,
 }
 
 /// Which session a rename targets: the live session through `rename`, the saved file through
@@ -93,7 +107,117 @@ impl AgentsViewMode {
         editor.set_keybindings(self.keybindings.clone());
         editor.set_text(&name);
         editor.clear_autocomplete_provider();
-        self.composer = Composer::Rename(Box::new(RenameComposer { target, editor }));
+        let session_id = self
+            .rows
+            .get(self.selected)
+            .and_then(|row| row.summary.get("sessionId"))
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .map(str::to_string);
+        self.composer = Composer::Rename(Box::new(RenameComposer {
+            target,
+            editor,
+            session_id,
+        }));
+    }
+
+    /// Submit one rename (the ctrl+r composer and the `/name` command): the row shows the new
+    /// name at once and input stays live; the write runs behind it, and a write already in
+    /// flight for the session hands this name to the follow-up write its outcome dispatches.
+    pub(super) fn request_rename(
+        &mut self,
+        target: RenameTarget,
+        session_id: Option<String>,
+        name: String,
+    ) {
+        self.set_status(&format!("Renaming to {name}..."));
+        let Some(session_id) = session_id else {
+            self.pending_rename = Some(Rename {
+                target,
+                name,
+                session_id: None,
+            });
+            return;
+        };
+        let pending = self
+            .pending_renames
+            .entry(session_id.clone())
+            .or_insert_with(|| PendingRename {
+                name: name.clone(),
+                writing: None,
+            });
+        pending.name.clone_from(&name);
+        if pending.writing.is_none() {
+            pending.writing = Some(name.clone());
+            self.pending_rename = Some(Rename {
+                target,
+                name,
+                session_id: Some(session_id),
+            });
+        }
+        self.rebuild_rows();
+    }
+
+    /// Drop the overlays the daemon's truth now carries. A roster-resident session confirms on
+    /// its roster row (rows display daemon-first); a saved-only one on its catalog row. A match
+    /// while a write is still in flight never confirms: renaming back to a still-stale name
+    /// matches too, and the earlier in-flight name would win the row.
+    pub(super) fn settle_confirmed_renames(&mut self) {
+        if self.pending_renames.is_empty() {
+            return;
+        }
+        let roster = &self.roster;
+        let saved = &self.saved;
+        self.pending_renames.retain(|session_id, pending| {
+            if pending.writing.is_some() {
+                return true;
+            }
+            let roster_name = roster.iter().find_map(|entry| {
+                let summary = entry.get("summary")?;
+                (summary.get("sessionId").and_then(Value::as_str) == Some(session_id.as_str()))
+                    .then(|| summary.get("sessionName").and_then(Value::as_str))
+            });
+            let truth = match roster_name {
+                Some(name) => name,
+                None => saved.iter().find_map(|row| {
+                    (row.get("id").and_then(Value::as_str) == Some(session_id.as_str()))
+                        .then(|| row.get("name").and_then(Value::as_str))
+                        .flatten()
+                }),
+            };
+            truth != Some(pending.name.as_str())
+        });
+    }
+
+    /// The roster and catalog rows with every pending name overlaid (`None`: nothing pending).
+    pub(super) fn with_pending_renames(&self) -> Option<(Vec<Value>, Vec<Value>)> {
+        if self.pending_renames.is_empty() {
+            return None;
+        }
+        let mut roster = self.roster.clone();
+        for entry in &mut roster {
+            let Some(summary) = entry.get_mut("summary") else {
+                continue;
+            };
+            let pending = summary
+                .get("sessionId")
+                .and_then(Value::as_str)
+                .and_then(|id| self.pending_renames.get(id));
+            if let Some(pending) = pending {
+                summary["sessionName"] = Value::from(pending.name.as_str());
+            }
+        }
+        let mut saved = self.saved.clone();
+        for row in &mut saved {
+            let pending = row
+                .get("id")
+                .and_then(Value::as_str)
+                .and_then(|id| self.pending_renames.get(id));
+            if let Some(pending) = pending {
+                row["name"] = Value::from(pending.name.as_str());
+            }
+        }
+        Some((roster, saved))
     }
 
     /// Rename-mode key routing: cancel exits to search, Enter dispatches the trimmed
@@ -121,11 +245,7 @@ impl AgentsViewMode {
             });
         match submitted {
             Some(name) if !name.is_empty() => {
-                self.set_status("Renaming agent...");
-                self.pending_rename = Some(Rename {
-                    target: rename.target,
-                    name,
-                });
+                self.request_rename(rename.target, rename.session_id, name);
             }
             Some(_) => {}
             None => self.composer = Composer::Rename(rename),
@@ -133,7 +253,9 @@ impl AgentsViewMode {
     }
 
     /// One landed rename outcome: the status names it; a saved target's catalog row patches
-    /// its name in place (saved rows get no push).
+    /// its name in place (saved rows get no push). A failure drops the overlay, so the row
+    /// returns to the daemon's name; a newer name asked for meanwhile gets its own write either
+    /// way (left in `pending_rename` for the loop to dispatch).
     pub(super) fn rename_result(&mut self, rename: Rename, outcome: Result<(), String>) {
         // The in-flight draft marks the composer that dispatched the rename (a
         // re-armed composer carries no in-flight draft). Success disarms it; failure
@@ -154,23 +276,39 @@ impl AgentsViewMode {
                 }
             }
         }
+        let succeeded = outcome.is_ok();
         match outcome {
             Ok(()) => {
                 self.set_status(&format!("Renamed to {}", rename.name));
                 self.actions.push("renamed");
-                if let RenameTarget::Saved { session_path } = rename.target {
+                if let RenameTarget::Saved { session_path } = &rename.target {
                     if let Some(saved) = self.saved.iter_mut().find(|saved| {
                         saved.get("path").and_then(Value::as_str) == Some(session_path.as_str())
                     }) {
                         saved["name"] = serde_json::json!(rename.name);
                     }
-                    self.rebuild_rows();
                 }
             }
             Err(error) => {
                 self.set_status(&format!("Failed to rename agent: {error}"));
             }
         }
+        if let Some(session_id) = rename.session_id.as_deref() {
+            if let Some(pending) = self.pending_renames.get_mut(session_id) {
+                pending.writing = None;
+                if pending.name != rename.name {
+                    pending.writing = Some(pending.name.clone());
+                    self.pending_rename = Some(Rename {
+                        target: rename.target,
+                        name: pending.name.clone(),
+                        session_id: Some(session_id.to_string()),
+                    });
+                } else if !succeeded {
+                    self.pending_renames.remove(session_id);
+                }
+            }
+        }
+        self.rebuild_rows();
     }
 }
 

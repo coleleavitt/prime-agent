@@ -483,7 +483,16 @@ impl AgentsViewMode {
             // 2026-09-26: an all-done tree renders no running line, so the inactive line carries
             // the same aggregate; deliberate divergence from TS, which renders no cost there).
             if crate::agents_view_forest::is_summary_row_identity(&row.identity) {
-                let zone = layout.name_width + 2 + layout.model_width;
+                // The detail cells align under the session rows' own: the zone spans every
+                // column ahead of them (the host and cwd columns when shown).
+                let zone = layout.name_width
+                    + 2
+                    + layout.model_width
+                    + [layout.host_width, layout.cwd_width]
+                        .into_iter()
+                        .filter(|width| *width > 0)
+                        .map(|width| width + 2)
+                        .sum::<usize>();
                 let title = crate::agents_view_state::truncate_text(&text, zone);
                 let pad = zone.saturating_sub(str_width(&title));
                 let line: Line = vec![
@@ -614,6 +623,17 @@ impl AgentsViewMode {
                 ThemeColor::Muted
             };
             line.push(theme.fg(color, cell(host_cell, layout.host_width)));
+            line.push(crate::Span::styled(
+                "  ".to_string(),
+                ratatui::style::Style::default(),
+            ));
+        }
+        if layout.cwd_width > 0 {
+            let cwd = layout
+                .cwd_cells
+                .get(&row.identity)
+                .map_or("", String::as_str);
+            line.push(theme.fg(ThemeColor::Muted, cell(cwd, layout.cwd_width)));
             line.push(crate::Span::styled(
                 "  ".to_string(),
                 ratatui::style::Style::default(),

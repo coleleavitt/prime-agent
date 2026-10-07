@@ -699,9 +699,11 @@ const AGENT_RUN_COMPLETED: EventRule = EventRule {
         ("custom_tool_max_duration_ms", optional(duration())),
         // Runtime behaviours (schema v4, additive): `fallbackModels` taking
         // over (a provider backup serving the same model stays
-        // `failover_count` only) and repetition-guard trips.
+        // `failover_count` only), repetition-guard trips, and empty final
+        // turns the loop discarded and re-requested.
         ("fallback_model_switch_count", optional(count())),
         ("repetition_guard_trip_count", optional(count())),
+        ("empty_turn_retry_count", optional(count())),
     ],
 };
 
@@ -814,6 +816,7 @@ const AGENT_SESSION_ENDED: EventRule = EventRule {
         ("refine_preview_count", optional(count())),
         ("refine_plan_run_count", optional(count())),
         ("artifact_present_count", optional(count())),
+        ("empty_turn_retry_count", optional(count())),
     ],
 };
 
@@ -2460,6 +2463,7 @@ mod tests {
         run.set("duration_ms", json!(5u64));
         run.set("fallback_model_switch_count", json!(1u64));
         run.set("repetition_guard_trip_count", json!(1u64));
+        run.set("empty_turn_retry_count", json!(2u64));
         let expected = run.clone();
         assert_eq!(sanitize("agent run completed", &mut run), 0);
         assert_eq!(run, expected);
@@ -2477,6 +2481,7 @@ mod tests {
             "refine_preview_count",
             "refine_plan_run_count",
             "artifact_present_count",
+            "empty_turn_retry_count",
         ] {
             ended.set(key, json!(2u64));
         }

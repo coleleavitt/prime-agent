@@ -934,3 +934,139 @@ fn a_second_refresh_joins_the_first_flight_instead_of_fetching_again() {
         "one flight per provider: the second caller served the first's fresh credential"
     );
 }
+
+/// External credential writes (upstream #3000): `auth.json` rewritten by
+/// another process (a `/login` in a different session) reaches this
+/// long-lived store at its next lookup. The provider is synthetic, so no
+/// environment variable can supply an unrelated candidate.
+mod external_changes {
+    use super::*;
+
+    const PROVIDER: &str = "external-reload-test-provider";
+
+    fn write_auth_json(path: &std::path::Path, data: &serde_json::Value) {
+        std::fs::write(path, serde_json::to_string_pretty(data).unwrap()).unwrap();
+    }
+
+    fn api_key(key: &str) -> serde_json::Value {
+        serde_json::json!({ "type": "api_key", "key": key })
+    }
+
+    fn file_storage(path: &std::path::Path) -> AuthStorage {
+        AuthStorage::from_storage(
+            Arc::new(crate::auth::storage::FileAuthStorageBackend::new(path)),
+            Arc::new(NoOAuth),
+        )
+    }
+
+    #[test]
+    fn a_stale_stored_key_recovers_when_another_process_rewrites_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.json");
+        write_auth_json(
+            &path,
+            &serde_json::json!({ PROVIDER: api_key("rejected-old-key") }),
+        );
+        let mut auth = file_storage(&path);
+        assert_eq!(
+            auth.get_api_key(PROVIDER).as_deref(),
+            Some("rejected-old-key")
+        );
+        assert!(auth.mark_auth_stale(PROVIDER));
+        assert_eq!(auth.get_api_key(PROVIDER), None);
+
+        write_auth_json(
+            &path,
+            &serde_json::json!({ PROVIDER: api_key("fresh-new-key") }),
+        );
+        assert_eq!(auth.get_api_key(PROVIDER).as_deref(), Some("fresh-new-key"));
+    }
+
+    #[test]
+    fn a_credential_written_elsewhere_is_visible_without_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.json");
+        write_auth_json(
+            &path,
+            &serde_json::json!({ "other-provider": api_key("unrelated") }),
+        );
+        let mut auth = file_storage(&path);
+        assert!(!auth.has_auth(PROVIDER));
+
+        write_auth_json(
+            &path,
+            &serde_json::json!({ PROVIDER: api_key("replacement-key") }),
+        );
+        assert_eq!(
+            auth.get_api_key(PROVIDER).as_deref(),
+            Some("replacement-key")
+        );
+        assert_eq!(
+            auth.get_auth_status(PROVIDER),
+            AuthStatus {
+                configured: true,
+                source: Some(AuthSource::Stored),
+                label: None,
+            }
+        );
+        assert!(auth.has_auth(PROVIDER));
+    }
+
+    #[test]
+    fn own_writes_are_not_external_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.json");
+        write_auth_json(&path, &serde_json::json!({ PROVIDER: api_key("old-key") }));
+        let mut auth = file_storage(&path);
+        auth.set(
+            PROVIDER,
+            serde_json::from_value(api_key("new-own-key")).unwrap(),
+        );
+        assert!(!auth.refresh_from_external_changes());
+        assert_eq!(auth.get_api_key(PROVIDER).as_deref(), Some("new-own-key"));
+        // A repeated lookup after a reload does not reload again.
+        write_auth_json(
+            &path,
+            &serde_json::json!({ PROVIDER: api_key("from-elsewhere") }),
+        );
+        assert!(auth.refresh_from_external_changes());
+        assert!(!auth.refresh_from_external_changes());
+    }
+
+    #[test]
+    fn a_relogin_with_the_same_key_clears_the_stale_marking() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.json");
+        write_auth_json(
+            &path,
+            &serde_json::json!({ PROVIDER: api_key("stable-key") }),
+        );
+        let mut auth = file_storage(&path);
+        assert_eq!(auth.get_api_key(PROVIDER).as_deref(), Some("stable-key"));
+        assert!(auth.mark_auth_stale(PROVIDER));
+        assert_eq!(auth.get_api_key(PROVIDER), None);
+
+        // The same credential, rewritten by another process; the unrelated
+        // provider keeps the rewrite's size different.
+        write_auth_json(
+            &path,
+            &serde_json::json!({
+                PROVIDER: api_key("stable-key"),
+                "another-provider": api_key("unrelated"),
+            }),
+        );
+        assert_eq!(auth.get_api_key(PROVIDER).as_deref(), Some("stable-key"));
+    }
+
+    #[test]
+    fn an_unreadable_rewrite_keeps_the_previous_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.json");
+        write_auth_json(&path, &serde_json::json!({ PROVIDER: api_key("kept-key") }));
+        let mut auth = file_storage(&path);
+        assert!(auth.mark_auth_stale(PROVIDER));
+        std::fs::write(&path, "{ not json").unwrap();
+        assert!(!auth.refresh_from_external_changes());
+        assert_eq!(auth.get_api_key(PROVIDER), None, "the marking stands");
+    }
+}

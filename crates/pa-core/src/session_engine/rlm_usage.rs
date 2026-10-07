@@ -25,6 +25,32 @@ pub fn add_assistant_usage(total: &mut Usage, usage: &Usage) {
     total.cost.total = add_cost(total.cost.total, usage.cost.total);
 }
 
+/// The paid spend one settled assistant turn charges to goal budgets and
+/// child attribution (upstream #1896): a completed turn charges its own
+/// usage plus every discarded empty-turn attempt; an error or aborted turn
+/// charges only the discarded attempts, which were paid normal-stop
+/// requests. `None` when the turn charges nothing.
+#[must_use]
+pub fn chargeable_turn_usage(message: &pa_types::ai::AssistantMessage) -> Option<Usage> {
+    let failed_turn = matches!(
+        message.stop_reason,
+        pa_types::ai::StopReason::Error | pa_types::ai::StopReason::Aborted
+    );
+    let discarded = message.discarded_usage.as_deref().unwrap_or_default();
+    if failed_turn && discarded.is_empty() {
+        return None;
+    }
+    let mut total = if failed_turn {
+        Usage::default()
+    } else {
+        message.usage
+    };
+    for usage in discarded {
+        add_assistant_usage(&mut total, usage);
+    }
+    Some(total)
+}
+
 /// TS cost math runs on plain numbers; `JsNumber` keeps the wire parity.
 fn add_cost(total: pa_types::JsNumber, usage: pa_types::JsNumber) -> pa_types::JsNumber {
     pa_types::JsNumber(total.as_f64() + usage.as_f64())
@@ -360,7 +386,39 @@ mod tests {
             error_message: None,
             timestamp: 0,
             rest: serde_json::Map::default(),
+            discarded_usage: None,
         })
+    }
+
+    /// The goal/attribution spend of one turn (upstream #1896): a completed
+    /// turn charges its own usage plus its discarded attempts; a failed turn
+    /// charges the discarded attempts alone, or nothing.
+    #[test]
+    fn chargeable_turn_usage_adds_discarded_attempts() {
+        let pa_types::session::AgentMessage::Assistant(mut message) =
+            assistant_row(usage_block(100, 10, 0, 0, 110, 1.0))
+        else {
+            unreachable!("assistant_row builds an assistant")
+        };
+        assert_eq!(
+            chargeable_turn_usage(&message),
+            Some(usage_block(100, 10, 0, 0, 110, 1.0))
+        );
+        message.discarded_usage = Some(vec![
+            usage_block(20, 2, 0, 0, 22, 0.25),
+            usage_block(30, 3, 0, 0, 33, 0.5),
+        ]);
+        assert_eq!(
+            chargeable_turn_usage(&message),
+            Some(usage_block(150, 15, 0, 0, 165, 1.75))
+        );
+        message.stop_reason = StopReason::Error;
+        assert_eq!(
+            chargeable_turn_usage(&message),
+            Some(usage_block(50, 5, 0, 0, 55, 0.75))
+        );
+        message.discarded_usage = None;
+        assert_eq!(chargeable_turn_usage(&message), None);
     }
 
     fn manager_with_assistant(

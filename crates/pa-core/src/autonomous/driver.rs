@@ -7,9 +7,10 @@ use std::pin::Pin;
 
 use super::gates::{should_autonomously_continue, GateCommandRunner, ShellGateRunner};
 use super::{
-    add_autonomous_continuation, add_autonomous_usage, autonomous_limit_reason, autonomous_status,
-    build_autonomous_gate_failure_continuation, now_millis, AgentAutonomousStatus,
-    AutonomousDecisionReason, AutonomousLimitReason, AutonomousRuntimeState,
+    add_autonomous_continuation, add_autonomous_discarded_usage, add_autonomous_usage,
+    autonomous_limit_reason, autonomous_status, build_autonomous_gate_failure_continuation,
+    now_millis, AgentAutonomousStatus, AutonomousDecisionReason, AutonomousLimitReason,
+    AutonomousRuntimeState,
 };
 
 pub type AutonomousFollowUpFuture<'a> =
@@ -94,6 +95,7 @@ impl<R: GateCommandRunner> AutonomousDriver for ShellAutonomousDriver<R> {
         if message.stop_reason != pa_types::ai::StopReason::Error {
             add_autonomous_usage(state, Some(&message.usage));
         }
+        add_autonomous_discarded_usage(state, message.discarded_usage.as_deref());
     }
 
     fn after_turn<'a>(
@@ -189,6 +191,7 @@ mod tests {
             error_message: None,
             timestamp: 0,
             rest: serde_json::Map::default(),
+            discarded_usage: None,
         }
     }
 

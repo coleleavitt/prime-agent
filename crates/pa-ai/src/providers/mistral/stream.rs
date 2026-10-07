@@ -60,6 +60,7 @@ pub fn stream_mistral(
             error_message: None,
             timestamp: now_ms(),
             rest: Map::default(),
+            discarded_usage: None,
         };
 
         let result = run_stream(&model, &context, options.as_ref(), &mut output, &writer).await;

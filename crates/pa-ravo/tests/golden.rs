@@ -297,6 +297,7 @@ fn scripted_judge(reply: &Value, requests: &Requests) -> RefinerFn {
                 error_message,
                 timestamp: 0,
                 rest: serde_json::Map::default(),
+                discarded_usage: None,
             })
         })
     })

@@ -401,19 +401,19 @@ impl PrintGoalSurface {
                         if let Some(wire) =
                             json_round_trip::<_, pa_types::ai::AssistantMessage>(assistant)
                         {
-                            // Only turns that were neither errors nor aborted spend the budget; the
-                            // crossing flips the goal to `budget_limited` and arms the steer.
-                            if !matches!(
-                                wire.stop_reason,
-                                pa_types::ai::StopReason::Error | pa_types::ai::StopReason::Aborted
-                            ) {
+                            // Completed turns spend the budget, and every turn spends its
+                            // discarded empty attempts; the crossing flips the goal to
+                            // `budget_limited` and arms the steer.
+                            if let Some(usage) =
+                                pa_core::session_engine::rlm_usage::chargeable_turn_usage(&wire)
+                            {
                                 // The message identity for the double-counting guard: the loop does
                                 // not assign message ids in-process.
                                 let message_id = format!("a-{}", wire.timestamp);
                                 // Goal accounting must not interrupt the loop; a failed persist
                                 // only warns.
                                 let outcome =
-                                    engine.record_goal_usage(&message_id, &wire.usage).await;
+                                    engine.record_goal_usage(&message_id, &usage).await;
                                 surface.publish_goal_update(&engine).await;
                                 match outcome {
                                     Ok(UsageOutcome::BudgetReached) => {

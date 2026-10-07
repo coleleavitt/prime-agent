@@ -207,10 +207,11 @@ fn rename_key_composes_edits_and_dispatches() {
                 active_session_id: "p-live".to_string()
             },
             name: "new".to_string(),
+            session_id: Some("p".to_string()),
         }),
         "the confirmed rename dispatches"
     );
-    assert_eq!(mode.status_text(), Some("Renaming agent..."));
+    assert_eq!(mode.status_text(), Some("Renaming to new..."));
     mode.rename_result(rename.expect("the dispatched rename"), Ok(()));
     assert_eq!(mode.status_text(), Some("Renamed to new"));
     // Esc exits back to search; the query stays untouched. Ctrl+C cancels too (the default

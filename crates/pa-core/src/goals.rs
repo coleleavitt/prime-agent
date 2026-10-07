@@ -606,6 +606,7 @@ mod tests {
                 error_message: Some(error.to_string()),
                 timestamp: 0,
                 rest: serde_json::Map::default(),
+                discarded_usage: None,
             }),
             base: pa_types::session::EntryBase {
                 id: None,
@@ -660,6 +661,7 @@ mod tests {
                 error_message: None,
                 timestamp: 0,
                 rest: serde_json::Map::default(),
+                discarded_usage: None,
             }),
             base: pa_types::session::EntryBase {
                 id: None,

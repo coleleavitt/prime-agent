@@ -48,6 +48,7 @@ fn seeded_assistant() -> SessionAgentMessage {
         error_message: None,
         timestamp: 0,
         rest: serde_json::Map::default(),
+        discarded_usage: None,
     })
 }
 
@@ -282,6 +283,7 @@ fn refine_assistant_row(error: bool) -> SessionAgentMessage {
         },
         timestamp: 0,
         rest: serde_json::Map::default(),
+        discarded_usage: None,
     })
 }
 
@@ -308,6 +310,7 @@ fn refine_plan_call(plan: &'static str) -> crate::refinement::executor::RefinerF
                 error_message: None,
                 timestamp: 0,
                 rest: serde_json::Map::default(),
+                discarded_usage: None,
             })
         })
     })

@@ -16,6 +16,11 @@ MAX_REMOTE_CATALOG_BYTES — the same fetch scripts/release/bundle_catalog.py
 uses); `--catalog-dir <prime-agent-catalog>` reads a local checkout
 instead, so the refresh also works offline.
 
+After a refresh, run `cargo test -p pa-models --test parity`: the catalog
+invariants (pa-ai `catalog_invariants`) must report exactly the known defect
+set in tests/fixtures/catalog.v1.known-violations.txt, so a refresh that
+introduces a violation fails by name; drop the lines the catalog fixed.
+
 Usage:
   python3 scripts/generate-catalog-fixture.py
   python3 scripts/generate-catalog-fixture.py --catalog-dir <prime-agent-catalog>

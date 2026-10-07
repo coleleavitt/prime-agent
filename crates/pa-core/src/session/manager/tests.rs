@@ -85,6 +85,7 @@ fn persist_appends_after_first_assistant() {
             error_message: None,
             timestamp: 0,
             rest: serde_json::Map::default(),
+            discarded_usage: None,
         }))
         .unwrap();
     let file = manager.get_session_file().unwrap().to_path_buf();
@@ -120,6 +121,7 @@ fn open_repairs_and_resumes() {
         error_message: None,
         timestamp: 0,
         rest: serde_json::Map::default(),
+        discarded_usage: None,
     });
     manager.append_message(assistant).unwrap();
     let file = manager.get_session_file().unwrap().to_path_buf();
@@ -176,6 +178,7 @@ fn fork_from_copies_the_branch_under_a_fresh_header() {
         error_message: None,
         timestamp: 0,
         rest: serde_json::Map::default(),
+        discarded_usage: None,
     });
     source.append_message(assistant).unwrap();
     let assistant_id = source.get_leaf_id().unwrap().to_string();

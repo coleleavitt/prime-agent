@@ -151,6 +151,7 @@ pub async fn run_side_question(
                 stop_reason_raw: None,
                 error_message: None,
                 timestamp: pa_agent::now_ms(),
+                discarded_usage: None,
             },
         )));
     }
@@ -517,6 +518,7 @@ mod tests {
                         stop_reason_raw: None,
                         error_message: None,
                         timestamp: 0,
+                        discarded_usage: None,
                     })),
                 ]),
             },

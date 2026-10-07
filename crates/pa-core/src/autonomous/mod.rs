@@ -331,6 +331,20 @@ pub fn add_autonomous_usage(
     state.tokens_used += autonomous_token_delta(usage);
 }
 
+/// Spend of discarded empty-turn attempts (upstream #1896): the tokens
+/// count, but no turn is consumed.
+pub fn add_autonomous_discarded_usage(
+    state: &mut AutonomousRuntimeState,
+    usage: Option<&[pa_types::ai::Usage]>,
+) {
+    if !state.enabled {
+        return;
+    }
+    for attempt in usage.unwrap_or_default() {
+        state.tokens_used += autonomous_token_delta(Some(attempt));
+    }
+}
+
 pub fn add_autonomous_continuation(state: &mut AutonomousRuntimeState) {
     if !state.enabled {
         return;
@@ -596,6 +610,18 @@ mod tests {
         assert_eq!(state.turns_used, 1);
         // input 100 + output 40 + cacheWrite 100.
         assert_eq!(state.tokens_used, 240);
+    }
+
+    /// Discarded empty-turn attempts (upstream #1896) spend tokens without
+    /// consuming a turn.
+    #[test]
+    fn discarded_attempts_spend_tokens_without_a_turn() {
+        let mut state = create_autonomous_runtime_state(Some(&config(true)), None);
+        add_autonomous_discarded_usage(&mut state, Some(&[usage(10, 5), usage(20, 0)]));
+        assert_eq!((state.turns_used, state.tokens_used), (0, 65));
+        let mut off = create_autonomous_runtime_state(None, None);
+        add_autonomous_discarded_usage(&mut off, Some(&[usage(10, 5)]));
+        assert_eq!((off.turns_used, off.tokens_used), (0, 0));
     }
 
     #[test]

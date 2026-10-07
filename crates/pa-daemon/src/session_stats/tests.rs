@@ -220,6 +220,21 @@ fn compaction_with_post_usage_estimates() {
     );
 }
 
+/// The roster summary's `contextPercent` (upstream #2526): the same estimate
+/// as the stats' `contextUsage.percent`, absent without a window or after a
+/// compaction with no post-compaction usage.
+#[test]
+fn context_percent_reads_the_context_usage_estimate() {
+    let store = store_with(&[entry_with_usage(128)]);
+    assert_eq!(store_context_percent(&store, Some(1000)), Some(12.8));
+    assert_eq!(store_context_percent(&store, None), None);
+    let compacted = store_with(&[
+        entry_with_usage(50),
+        ("compaction", json!({ "firstKeptEntryId": "e1" })),
+    ]);
+    assert_eq!(store_context_percent(&compacted, Some(1000)), None);
+}
+
 #[test]
 fn no_context_window_omits_usage() {
     let store = store_with(&[entry_with_usage(128)]);

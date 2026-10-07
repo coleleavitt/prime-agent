@@ -148,6 +148,7 @@ fn assistant_message() -> AssistantMessage {
         stop_reason_raw: None,
         error_message: None,
         timestamp: 0,
+        discarded_usage: None,
     }
 }
 
@@ -1684,4 +1685,69 @@ async fn fallback_switches_repetition_trips_and_session_behaviours_count() {
             "artifact_present_count": 1,
         })
     );
+}
+
+/// Discarded empty-turn attempts (upstream #1896) were paid model requests:
+/// each counts as a model call with its tokens, and the retries ride the run
+/// and session events as `empty_turn_retry_count`.
+#[tokio::test]
+async fn discarded_empty_turns_count_as_model_calls_and_retries() {
+    let fixture = fixture();
+    let discarded = Usage {
+        input: 10,
+        output: 4,
+        cache_read: 0,
+        cache_write: 0,
+        total_tokens: 14,
+        cost: pa_agent::types::UsageCost::default(),
+    };
+    let survivor = AssistantMessage {
+        discarded_usage: Some(vec![discarded.clone(), discarded]),
+        ..assistant_message()
+    };
+    emit(&fixture, AgentEvent::AgentStart);
+    emit(
+        &fixture,
+        AgentEvent::MessageStart {
+            message: user_message(),
+        },
+    );
+    emit(&fixture, AgentEvent::TurnStart);
+    emit(&fixture, message_end_event(survivor));
+    emit(
+        &fixture,
+        AgentEvent::AgentEnd {
+            messages: Vec::new(),
+        },
+    );
+    SessionTelemetry::detached(
+        fixture.client.clone(),
+        fixture.state.clone(),
+        "interactive".to_string(),
+    )
+    .end()
+    .await
+    .unwrap();
+
+    let runs = event_properties(&fixture.mock, "agent run completed").await;
+    let picked: serde_json::Map<String, serde_json::Value> = [
+        "model_call_count",
+        "input_tokens",
+        "output_tokens",
+        "empty_turn_retry_count",
+    ]
+    .iter()
+    .map(|key| ((*key).to_string(), runs[0][*key].clone()))
+    .collect();
+    assert_eq!(
+        serde_json::Value::Object(picked),
+        serde_json::json!({
+            "model_call_count": 3,
+            "input_tokens": 120,
+            "output_tokens": 28,
+            "empty_turn_retry_count": 2,
+        })
+    );
+    let ended = &event_properties(&fixture.mock, "agent session ended").await[0];
+    assert_eq!(ended["empty_turn_retry_count"], serde_json::json!(2));
 }

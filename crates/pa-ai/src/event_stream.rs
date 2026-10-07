@@ -306,6 +306,7 @@ pub fn initial_assistant_message(api: &str, provider: &str, model_id: &str) -> A
         error_message: None,
         timestamp: timestamp_ms,
         rest: Map::default(),
+        discarded_usage: None,
     }
 }
 
@@ -338,6 +339,7 @@ mod tests {
             error_message: None,
             timestamp: 0,
             rest: Map::default(),
+            discarded_usage: None,
         }
     }
 

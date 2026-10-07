@@ -201,6 +201,7 @@ async fn second_compaction_request_carries_the_anchor_and_strips_file_blocks() {
             error_message: None,
             timestamp: 0,
             rest: serde_json::Map::default(),
+            discarded_usage: None,
         }))
         .unwrap();
     session.append_message(user("turn one")).unwrap();
@@ -263,6 +264,7 @@ async fn second_compaction_request_carries_the_anchor_and_strips_file_blocks() {
             error_message: None,
             timestamp: 0,
             rest: serde_json::Map::default(),
+            discarded_usage: None,
         }))
         .unwrap();
     session.append_message(user("turn four")).unwrap();
@@ -370,6 +372,7 @@ async fn second_compaction_split_turn_history_updates_prefix_does_not() {
             error_message: None,
             timestamp: 0,
             rest: serde_json::Map::default(),
+            discarded_usage: None,
         })
     };
     session.append_message(user("turn zero")).unwrap();

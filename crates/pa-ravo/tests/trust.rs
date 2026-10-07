@@ -148,6 +148,7 @@ fn scripted(text: &str) -> RefinerFn {
             error_message: None,
             timestamp: 0,
             rest: serde_json::Map::default(),
+            discarded_usage: None,
         };
         Box::pin(async move { Ok(reply) })
     })

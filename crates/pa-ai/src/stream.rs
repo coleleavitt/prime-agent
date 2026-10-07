@@ -398,6 +398,7 @@ mod tests {
                     error_message: None,
                     timestamp: 0,
                     rest: Map::default(),
+                    discarded_usage: None,
                 }),
                 crate::types::Message::ToolResult(ToolResultMessage {
                     tool_call_id: "c".to_string(),

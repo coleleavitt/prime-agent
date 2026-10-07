@@ -563,6 +563,7 @@ fn seed_session(
             error_message: None,
             timestamp: 0,
             rest: Map::default(),
+            discarded_usage: None,
         }))
         .expect("write assistant message");
     let id = session.get_session_id().to_string();

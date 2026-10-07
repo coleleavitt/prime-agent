@@ -93,6 +93,11 @@ fn legacy_read_session_info(path: &Path) -> Option<SessionInfo> {
                             serde_json::from_value::<pa_types::ai::Usage>(usage.clone()).ok()
                         }),
                     );
+                    let discarded: Vec<pa_types::ai::Usage> = message
+                        .get("discardedUsage")
+                        .and_then(|usages| serde_json::from_value(usages.clone()).ok())
+                        .unwrap_or_default();
+                    usage_scan.fold_discarded_attempts(role, &discarded);
                     if role == Some("assistant") {
                         if let (Some(provider), Some(model_id)) = (
                             message.get("provider").and_then(Value::as_str),

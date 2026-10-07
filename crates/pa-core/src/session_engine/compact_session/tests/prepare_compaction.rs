@@ -42,6 +42,7 @@ fn prepare_compaction_split_arm_counts_the_turn_prefix_as_content() {
             error_message: None,
             timestamp: 0,
             rest: serde_json::Map::default(),
+            discarded_usage: None,
         }))
         .unwrap();
     session.append_message(user("small")).unwrap();
@@ -115,6 +116,7 @@ fn raw_assistant_text_entry(id: &str, text: &str) -> FileEntry {
             error_message: None,
             timestamp: 0,
             rest: serde_json::Map::default(),
+            discarded_usage: None,
         }),
         base: EntryBase {
             id: Some(id.to_string()),
@@ -171,6 +173,7 @@ fn prepare_compaction_anchors_on_the_newest_kept_tail_assistant_text() {
             error_message: None,
             timestamp: 0,
             rest: serde_json::Map::default(),
+            discarded_usage: None,
         }),
         base: EntryBase {
             id: Some("a2".to_string()),

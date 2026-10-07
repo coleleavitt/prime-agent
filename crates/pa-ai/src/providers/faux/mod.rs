@@ -110,6 +110,7 @@ pub fn faux_assistant_message(
         error_message: options.error_message,
         timestamp: options.timestamp.unwrap_or_else(now_ms),
         rest: Map::default(),
+        discarded_usage: None,
     }
 }
 
@@ -457,6 +458,7 @@ fn create_error_message(
         error_message: Some(message.to_string()),
         timestamp: now_ms(),
         rest: Map::default(),
+        discarded_usage: None,
     }
 }
 

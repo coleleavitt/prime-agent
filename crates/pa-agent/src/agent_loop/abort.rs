@@ -94,5 +94,6 @@ pub(crate) fn create_aborted_assistant_message(
         stop_reason_raw: None,
         error_message: Some(ABORT_ERROR_MESSAGE.to_string()),
         timestamp: crate::now_ms(),
+        discarded_usage: None,
     }
 }

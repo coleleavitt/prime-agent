@@ -266,6 +266,15 @@ pub struct AssistantMessage {
     pub error_message: Option<String>,
     #[serde(default)]
     pub timestamp: i64,
+    /// Per-request spend of same-turn attempts discarded before
+    /// `message_end` (the empty-turn retries). Spend accounting adds these;
+    /// context estimation reads `usage` alone.
+    #[serde(
+        rename = "discardedUsage",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub discarded_usage: Option<Vec<Usage>>,
 }
 
 impl AssistantMessage {

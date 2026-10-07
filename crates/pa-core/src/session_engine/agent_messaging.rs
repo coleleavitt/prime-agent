@@ -396,9 +396,9 @@ fn receipt_value(receipt: &AgentMessageReceipt) -> Value {
 }
 
 /// Register `agent_message.*` handlers onto a handler map. The `send`
-/// contract matches the kernel skill: role/addressed sends carry
-/// `receiver_role`/`receiver_name`, and `target: "all"` is the broadcast
-/// form; other positional targets are rejected.
+/// contract matches the kernel skill: sends carry `receiver_role` and
+/// `receiver_name`; a positional `target` (the removed broadcast form) is
+/// rejected with the removal error.
 pub fn register_agent_message_host_handlers<C: AgentMessageController + 'static>(
     controller: std::sync::Arc<C>,
     handlers: &mut HostRequestHandlers,
@@ -419,47 +419,22 @@ pub fn register_agent_message_host_handlers<C: AgentMessageController + 'static>
             let controller = controller.clone();
             Box::pin(async move {
                 let data = payload.data;
+                // A kernel still running the pre-removal skill sends a
+                // positional `target` (upstream #2150): name the removal and
+                // the recovery instead of failing on `receiver_role`.
+                if data.get("target").is_some() {
+                    return Err(anyhow::anyhow!(
+                        "agent_message.send no longer takes a target or broadcast_message; broadcasting was removed. Restart the Python kernel to load the current agent-message skill, then call send(message, receiver_role=..., receiver_name=...)."
+                    ));
+                }
                 let Some(message) = data.get("message").and_then(Value::as_str) else {
                     return Err(anyhow::anyhow!(
                         "agent_message.send message must be a string"
                     ));
                 };
-                // TS normalizes inside every send (broadcast included), so
-                // normalizing up front is behaviorally identical.
+                // TS normalizes inside the send, so normalizing up front is
+                // behaviorally identical.
                 let message = normalize_agent_session_message(message)?;
-                // Broadcast form (`target: "all"`): one send per family
-                // member, all-settled into a receipts array.
-                if let Some(target) = data.get("target").and_then(Value::as_str) {
-                    if target != "all" {
-                        return Err(anyhow::anyhow!(
-                            "positional agent_message.send targets are not supported; use receiver_role and receiver_name"
-                        ));
-                    }
-                    if data.get("receiver_role").is_some() || data.get("receiver_name").is_some() {
-                        return Err(anyhow::anyhow!(
-                            "agent_message.send broadcast cannot be combined with receiver_role/receiver_name"
-                        ));
-                    }
-                    let family = controller.family().await?;
-                    let mut receipts = Vec::with_capacity(family.len());
-                    for member in family {
-                        let result = controller
-                            .send_agent_message(AgentMessageSendInput {
-                                target: member.id.clone(),
-                                message: message.clone(),
-                                receiver_role: Some(member.relationship),
-                            })
-                            .await;
-                        receipts.push(match result {
-                            Ok(receipt) => receipt_value(&receipt),
-                            Err(error) => json!({
-                                "target": member.id,
-                                "error": error.to_string(),
-                            }),
-                        });
-                    }
-                    return Ok(json!({ "receipts": receipts }));
-                }
                 // Role-addressed form: resolve the receiver through the
                 // family roster, then send once.
                 let role = match data.get("receiver_role").and_then(Value::as_str) {

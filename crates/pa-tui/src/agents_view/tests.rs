@@ -16,6 +16,7 @@ mod hints_render;
 mod hover_band;
 mod key_bindings;
 mod notices;
+mod optimistic_rename;
 mod render_pulse;
 mod reply;
 mod running_lines;
@@ -61,6 +62,7 @@ fn mode_with_row(title: &str, model: &str) -> (AgentsViewMode, usize) {
         parent_identity: None,
         kind: RowKind::Agent,
         has_spawn_code: false,
+        tokens: crate::agents_view_forest::TokenUsage::default(),
     };
     mode.rows = vec![row("holder"), row(title)];
     (mode, 1)

@@ -72,3 +72,19 @@ fn skip_invalid_keeps_the_real_payload_whole() {
     let parsed = parse_model_catalog(&fixture(), InvalidEntries::SkipInvalid).expect("skip mode");
     assert_eq!(parsed.models.len(), 1197, "no real entry is skipped");
 }
+
+/// The catalog invariants (upstream #2042) over the real payload. The live
+/// catalog is generated in prime-agent-catalog, so its rows are fixed there;
+/// this pins the payload's exact known defect set
+/// (`fixtures/catalog.v1.known-violations.txt`, one per line), so a fixture
+/// refresh that introduces any new violation fails by name, and one that
+/// fixes a defect updates the list.
+#[test]
+fn the_real_payload_violates_exactly_the_known_invariants() {
+    let parsed = parse_model_catalog(&fixture(), InvalidEntries::Reject).unwrap();
+    let violations = pa_ai::catalog_invariants::validate_model_catalog(&parsed.models);
+    let known: Vec<&str> = include_str!("fixtures/catalog.v1.known-violations.txt")
+        .lines()
+        .collect();
+    assert_eq!(violations, known);
+}

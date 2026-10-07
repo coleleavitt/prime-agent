@@ -11,11 +11,16 @@ use super::{
 
 impl AgentsViewMode {
     pub(super) fn records(&self) -> Vec<crate::agents_view_state::UnifiedRecord> {
+        // Pending renames overlay both catalogs (upstream #2099).
+        let overlaid = self.with_pending_renames();
+        let (roster, saved) = match &overlaid {
+            Some((roster, saved)) => (roster, saved),
+            None => (&self.roster, &self.saved),
+        };
         match self.saved_scope {
-            SavedScope::AllProjects => reconcile_unified_sessions(&self.roster, &self.saved),
+            SavedScope::AllProjects => reconcile_unified_sessions(roster, saved),
             SavedScope::CurrentProject => {
-                let here: Vec<Value> = self
-                    .saved
+                let here: Vec<Value> = saved
                     .iter()
                     .filter(|row| {
                         row.get("cwd")
@@ -24,7 +29,7 @@ impl AgentsViewMode {
                     })
                     .cloned()
                     .collect();
-                reconcile_unified_sessions(&self.roster, &here)
+                reconcile_unified_sessions(roster, &here)
             }
         }
     }
@@ -32,6 +37,7 @@ impl AgentsViewMode {
     /// Rebuild rows from the current roster, catalog, and query. A scoped run lists the scope
     /// root's subtree with the root's own row excluded; a gone scope root falls back.
     pub(super) fn rebuild_rows(&mut self) {
+        self.settle_confirmed_renames();
         let identity = self.rows.get(self.selected).map(|row| row.identity.clone());
         let records = self.records();
         // A scope frame whose root is gone drops, with the nearest fallback surfaced as a

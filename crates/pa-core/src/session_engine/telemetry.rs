@@ -244,6 +244,7 @@ struct SessionTotals {
     repetition_guard_trip_count: u64,
     model_error_count: u64,
     usage: UsageTotals,
+    empty_turn_retry_count: u64,
 }
 
 #[derive(Default)]
@@ -348,6 +349,9 @@ struct ActiveRun {
     /// tools by name, every MCP and custom tool folded into `mcp` /
     /// `custom`: no raw tool names leave the machine).
     tool_summary: HashMap<ToolCategory, ToolCategoryStats>,
+    /// Empty final turns the loop discarded and re-requested (upstream
+    /// #1896).
+    empty_turn_retry_count: u64,
 }
 
 /// One tool category's per-run aggregates.
@@ -824,6 +828,10 @@ impl SessionTelemetry {
                 "repetition_guard_trip_count",
                 Value::from(totals.repetition_guard_trip_count),
             );
+            properties.set(
+                "empty_turn_retry_count",
+                Value::from(totals.empty_turn_retry_count),
+            );
             properties.set("model_error_count", Value::from(totals.model_error_count));
         }
         self.counters.write_into(&mut properties);
@@ -983,6 +991,7 @@ fn handle_event(
                 error_category_counts: std::collections::BTreeMap::new(),
                 compaction_duration_ms: 0,
                 tool_summary: HashMap::new(),
+                empty_turn_retry_count: 0,
             });
         }
         AgentEvent::MessageStart { message } => {
@@ -1076,12 +1085,20 @@ fn handle_event(
                             .find(|known| **known == category)
                             .copied()
                     });
-                let cost_total = assistant.usage.cost.total;
+                let discarded = assistant.discarded_usage.as_deref().unwrap_or_default();
+                // Discarded empty-turn attempts were paid model requests: one
+                // `add` each keeps `model_call_count` equal to requests.
+                let cost_total = assistant.usage.cost.total
+                    + discarded.iter().map(|usage| usage.cost.total).sum::<f64>();
                 let repetition_trip = assistant.stop_reason_raw.as_deref()
                     == Some(pa_agent::repetition_guard::REPETITION_STOP_REASON);
                 if let Some(run) = state.active_run.as_mut() {
                     run.repetition_guard_trip_count += u64::from(repetition_trip);
+                    run.empty_turn_retry_count += discarded.len() as u64;
                     run.usage.add(&assistant.usage);
+                    for usage in discarded {
+                        run.usage.add(usage);
+                    }
                     run.last_assistant = Some(assistant);
                     if let Some(turn_started) = run.current_turn_started_at.take() {
                         let latency = now.saturating_sub(turn_started);
@@ -1176,6 +1193,7 @@ fn finalize_run_locked(client: &TelemetryClient, execution_mode: &str, state: &m
     state.totals.failover_count += run.failover_count;
     state.totals.fallback_model_switch_count += run.fallback_model_switch_count;
     state.totals.repetition_guard_trip_count += run.repetition_guard_trip_count;
+    state.totals.empty_turn_retry_count += run.empty_turn_retry_count;
     state.totals.model_error_count += run.model_error_count;
 
     let mut properties = base_properties(execution_mode);
@@ -1211,6 +1229,10 @@ fn finalize_run_locked(client: &TelemetryClient, execution_mode: &str, state: &m
     properties.set(
         "repetition_guard_trip_count",
         Value::from(run.repetition_guard_trip_count),
+    );
+    properties.set(
+        "empty_turn_retry_count",
+        Value::from(run.empty_turn_retry_count),
     );
     properties.set(
         "provider_category",

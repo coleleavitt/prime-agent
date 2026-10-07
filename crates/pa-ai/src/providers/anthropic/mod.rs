@@ -457,6 +457,7 @@ pub fn stream_simple_anthropic(
             error_message: Some(format!("No API key for provider: {}", model.provider)),
             timestamp: now_ms(),
             rest: Map::default(),
+            discarded_usage: None,
         };
         writer.push(AssistantMessageEvent::Error {
             reason: crate::types::ErrorStopReason::Error,
@@ -514,6 +515,7 @@ pub fn stream_simple_anthropic(
                 error_message: Some(message),
                 timestamp: now_ms(),
                 rest: Map::default(),
+                discarded_usage: None,
             };
             writer.push(AssistantMessageEvent::Error {
                 reason: crate::types::ErrorStopReason::Error,

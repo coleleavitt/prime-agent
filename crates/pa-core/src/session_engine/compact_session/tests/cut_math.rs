@@ -92,6 +92,7 @@ fn tokens_before_anchors_on_last_valid_usage_plus_trailing() {
             error_message: None,
             timestamp: 0,
             rest: serde_json::Map::default(),
+            discarded_usage: None,
         })
     };
     let tmp = tempfile::tempdir().unwrap();

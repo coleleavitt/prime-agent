@@ -157,6 +157,18 @@ pub(crate) fn store_context_usage(
     context_usage(&branch, &messages, context_window)
 }
 
+/// The context-window fill in percent for one whole store (the roster
+/// summary's `contextPercent`): `None` without a known window or while the
+/// estimate is unknown right after a compaction.
+pub(crate) fn store_context_percent(
+    store: &SessionFile,
+    context_window: Option<u64>,
+) -> Option<f64> {
+    store_context_usage(store, context_window)?
+        .get("percent")
+        .and_then(Value::as_f64)
+}
+
 /// `toolCall` content blocks on one assistant message.
 fn tool_call_count(message: &Value) -> u64 {
     message

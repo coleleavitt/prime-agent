@@ -60,6 +60,7 @@ fn test_error_turn(
         stop_reason_raw: None,
         error_message: Some(error.to_string()),
         timestamp,
+        discarded_usage: None,
     }
 }
 
@@ -78,6 +79,7 @@ fn test_empty_turn(timestamp: i64) -> pa_agent::types::AssistantMessage {
         stop_reason_raw: None,
         error_message: None,
         timestamp,
+        discarded_usage: None,
     }
 }
 
@@ -100,6 +102,7 @@ fn test_progress_turn(timestamp: i64) -> pa_agent::types::AssistantMessage {
         stop_reason_raw: None,
         error_message: None,
         timestamp,
+        discarded_usage: None,
     }
 }
 
@@ -138,6 +141,7 @@ fn wire_error_turn(
         error_message: Some(error.to_string()),
         timestamp,
         rest: serde_json::Map::default(),
+        discarded_usage: None,
     }
 }
 

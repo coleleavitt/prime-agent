@@ -27,6 +27,9 @@ impl Worker {
             self.engine.is_quota_parked(),
             self.engine.has_running_subagents(),
         );
+        summary.context_percent = core.store.as_ref().and_then(|store| {
+            crate::session_stats::store_context_percent(store, self.engine.model_context_window())
+        });
         // The roster-delta counter at snapshot time: the pull gate orders the
         // summary against its watermark, so a delta still in flight when the pull
         // answered is dropped instead of overwriting the pull's fresher state.
@@ -306,7 +309,7 @@ pub(crate) fn push_roster_delta(context: &RosterPushContext) {
     let _order = context.roster_push_order.lock_or_recover();
     let mut summary = {
         let core = context.core.lock_or_recover();
-        session_summary(
+        let mut summary = session_summary(
             &core,
             &context
                 .engine
@@ -317,7 +320,14 @@ pub(crate) fn push_roster_delta(context: &RosterPushContext) {
             context.user_bash.is_running(),
             context.engine.is_quota_parked(),
             context.engine.has_running_subagents(),
-        )
+        );
+        summary.context_percent = core.store.as_ref().and_then(|store| {
+            crate::session_stats::store_context_percent(
+                store,
+                context.engine.model_context_window(),
+            )
+        });
+        summary
     };
     // The embedded counter is the pre-stamp value read under the order
     // lock: every sequence stamped before the snapshot is at or below it.
@@ -453,6 +463,8 @@ pub(crate) fn session_summary(
         pending_tool_call_count: (!core.running_tool_calls.is_empty())
             .then_some(core.running_tool_calls.len() as u32),
         oldest_pending_tool_call_started_at: core.running_tool_calls.values().min().copied(),
+        // The engine owns the context window: the summary composers fill it.
+        context_percent: None,
     }
 }
 

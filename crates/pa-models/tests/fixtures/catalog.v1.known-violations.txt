@@ -1,0 +1,109 @@
+huggingface/thinkingmachines/Inkling-Small: maxTokens 1048576 exceeds contextWindow 524288
+github-copilot/grok-4.5: api openai-completions does not match classification openai-responses
+github-copilot/grok-4.6: api openai-completions does not match classification openai-responses
+github-copilot/mai-code-1-flash-picker: api openai-completions does not match classification openai-responses
+github-copilot/mai-code-1.1-flash: api openai-completions does not match classification openai-responses
+openai-codex/gpt-5.6-luna: contextWindow 272000 diverges more than 2x from openai/gpt-5.6-luna (1050000)
+openai-codex/gpt-5.6-sol: contextWindow 272000 diverges more than 2x from openai/gpt-5.6-sol (1050000)
+openai-codex/gpt-5.6-terra: contextWindow 272000 diverges more than 2x from openai/gpt-5.6-terra (1050000)
+openai-codex/gpt-6-sol: contextWindow 272000 diverges more than 2x from openai/gpt-6-sol (1050000)
+openai-codex/gpt-6-luna: contextWindow 272000 diverges more than 2x from openai/gpt-6-luna (1050000)
+fireworks/accounts/fireworks/models/deepseek-v4-flash-0731: thinkingLevelMap offers [max] but the budget path serializes them as high
+fireworks/accounts/fireworks/models/deepseek-v4-flash-vision-exp: thinkingLevelMap offers [max] but the budget path serializes them as high
+fireworks/accounts/fireworks/models/deepseek-v4-pro-0813: thinkingLevelMap offers [max] but the budget path serializes them as high
+fireworks/accounts/fireworks/models/glm-5p2: thinkingLevelMap offers [max] but the budget path serializes them as high
+fireworks/accounts/fireworks/models/glm-5p3: thinkingLevelMap offers [max] but the budget path serializes them as high
+fireworks/accounts/fireworks/models/glm-5p3-flash: thinkingLevelMap offers [max] but the budget path serializes them as high
+fireworks/accounts/fireworks/models/kimi-k3: thinkingLevelMap offers [max] but the budget path serializes them as high
+fireworks/accounts/fireworks/models/muse-glimmer-30b: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+fireworks/accounts/fireworks/models/qwen3p8-2p4t-a95b: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+fireworks/accounts/fireworks/routers/glm-5p2-fast: thinkingLevelMap offers [max] but the budget path serializes them as high
+fireworks/accounts/fireworks/routers/kimi-k3-fast: thinkingLevelMap offers [max] but the budget path serializes them as high
+github-copilot/gemini-3.5-flash: thinkingLevelMap offers [minimal,low,medium,high] but the transport cannot send reasoning effort
+github-copilot/gemini-3.6-flash: thinkingLevelMap offers [minimal,low,medium,high] but the transport cannot send reasoning effort
+github-copilot/gemini-3.7-flash: thinkingLevelMap offers [low,medium,high] but the transport cannot send reasoning effort
+github-copilot/gemini-3.8-flash: thinkingLevelMap offers [low,medium,high] but the transport cannot send reasoning effort
+github-copilot/grok-4.5: thinkingLevelMap offers [low,medium,high] but the transport cannot send reasoning effort
+github-copilot/grok-4.6: thinkingLevelMap offers [low,medium,high,xhigh] but the transport cannot send reasoning effort
+github-copilot/kimi-k3: thinkingLevelMap offers [low,high,max] but the transport cannot send reasoning effort
+github-copilot/mai-code-1-flash-picker: thinkingLevelMap offers [low,medium,high] but the transport cannot send reasoning effort
+github-copilot/mai-code-1.1-flash: thinkingLevelMap offers [low,medium,high] but the transport cannot send reasoning effort
+kimi-coding/k3: thinkingLevelMap offers [max] but the budget path serializes them as high
+kimi-coding/k3-256k: thinkingLevelMap offers [max] but the budget path serializes them as high
+kimi-coding/kimi-for-coding: thinkingLevelMap offers [max] but the budget path serializes them as high
+moonshotai/kimi-k3: thinkingLevelMap offers [low,high,max] but the transport cannot send reasoning effort
+moonshotai-cn/kimi-k3: thinkingLevelMap offers [low,high,max] but the transport cannot send reasoning effort
+vercel-ai-gateway/alibaba/qwen3.8-2.4t-a95b: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/alibaba/qwen3.8-27b: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/alibaba/qwen3.8-max: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/alibaba/qwen3.8-max-0902: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/deepseek/deepseek-v4-flash: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/deepseek/deepseek-v4-flash-vision-exp: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/deepseek/deepseek-v4-pro: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/deepseek/deepseek-v4-pro-0813: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/meta/muse-glimmer-30b: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/meta/muse-spark-1.1: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/meta/muse-spark-1.2-contributor: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/meta/muse-spark-1.3: thinkingLevelMap offers [xhigh,max] but the budget path serializes them as high
+vercel-ai-gateway/meta/muse-spark-1.3-contributor: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/moonshotai/kimi-k3: thinkingLevelMap offers [max] but the budget path serializes them as high
+vercel-ai-gateway/moonshotai/kimi-k3-fast: thinkingLevelMap offers [max] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-5.1-codex-max: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-5.2: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-5.2-codex: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-5.2-fast: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-5.2-pro: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-5.3-codex: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-5.3-codex-fast: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-5.4: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-5.4-fast: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-5.4-mini: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-5.4-mini-fast: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-5.4-nano: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-5.4-pro: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-5.5: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-5.5-fast: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-5.5-pro: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-5.6-luna: thinkingLevelMap offers [xhigh,max] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-5.6-luna-fast: thinkingLevelMap offers [xhigh,max] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-5.6-sol: thinkingLevelMap offers [xhigh,max] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-5.6-sol-fast: thinkingLevelMap offers [xhigh,max] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-5.6-terra: thinkingLevelMap offers [xhigh,max] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-5.6-terra-fast: thinkingLevelMap offers [xhigh,max] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-6-astra: thinkingLevelMap offers [xhigh,max] but the budget path serializes them as high
+vercel-ai-gateway/openai/gpt-6-astra-fast: thinkingLevelMap offers [xhigh,max] but the budget path serializes them as high
+vercel-ai-gateway/thinkingmachines/inkling: thinkingLevelMap offers [xhigh,max] but the budget path serializes them as high
+vercel-ai-gateway/thinkingmachines/inkling-small: thinkingLevelMap offers [xhigh,max] but the budget path serializes them as high
+vercel-ai-gateway/zai/glm-5.2: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/zai/glm-5.2-fast: thinkingLevelMap offers [xhigh] but the budget path serializes them as high
+vercel-ai-gateway/zai/glm-5.3: thinkingLevelMap offers [max] but the budget path serializes them as high
+vercel-ai-gateway/zai/glm-5.3-fast: thinkingLevelMap offers [max] but the budget path serializes them as high
+vercel-ai-gateway/zai/glm-5.3-flash: thinkingLevelMap offers [max] but the budget path serializes them as high
+xai/grok-4.3: thinkingLevelMap offers [low,medium,high] but the transport cannot send reasoning effort
+xai/grok-4.5: thinkingLevelMap offers [low,medium,high] but the transport cannot send reasoning effort
+xai/grok-4.6: thinkingLevelMap offers [low,medium,high,xhigh] but the transport cannot send reasoning effort
+xai/grok-4.7: thinkingLevelMap offers [low,medium,high,xhigh] but the transport cannot send reasoning effort
+deepseek-v4-flash-0731 [openai-completions]: selectable thinking levels disagree across providers: cloudflare-workers-ai/@cf/deepseek-ai/deepseek-v4-flash-0731=[high,xhigh], huggingface/deepseek-ai/DeepSeek-V4-Flash-0731=[high,max], openrouter/deepseek/deepseek-v4-flash-0731=[high,xhigh]
+deepseek-v4-flash-vision-exp [anthropic-messages]: selectable thinking levels disagree across providers: fireworks/accounts/fireworks/models/deepseek-v4-flash-vision-exp=[low,high,max], vercel-ai-gateway/deepseek/deepseek-v4-flash-vision-exp=[high,xhigh]
+deepseek-v4-flash-vision-exp [openai-completions]: selectable thinking levels disagree across providers: huggingface/deepseek-ai/DeepSeek-V4-Flash-Vision-Exp=[low,high,max], opencode-go/deepseek-v4-flash-vision-exp=[high,xhigh], opencode/deepseek-v4-flash-vision-exp=[high,xhigh], openrouter/deepseek/deepseek-v4-flash-vision-exp=[high,xhigh]
+deepseek-v4-pro [openai-completions]: selectable thinking levels disagree across providers: deepseek/deepseek-v4-pro=[high,xhigh], huggingface/deepseek-ai/DeepSeek-V4-Pro=[high], opencode-go/deepseek-v4-pro=[high,xhigh], opencode/deepseek-v4-pro=[high,xhigh], openrouter/deepseek/deepseek-v4-pro=[high,xhigh]
+deepseek-v4-pro-0813 [anthropic-messages]: selectable thinking levels disagree across providers: fireworks/accounts/fireworks/models/deepseek-v4-pro-0813=[high,max], vercel-ai-gateway/deepseek/deepseek-v4-pro-0813=[high,xhigh]
+deepseek-v4-pro-0813 [openai-completions]: selectable thinking levels disagree across providers: cloudflare-workers-ai/@cf/deepseek-ai/deepseek-v4-pro-0813=[high,xhigh], huggingface/deepseek-ai/DeepSeek-V4-Pro-0813=[low,high,max], openrouter/deepseek/deepseek-v4-pro-0813=[high,xhigh]
+glm-5.2 [openai-completions]: selectable thinking levels disagree across providers: cloudflare-workers-ai/@cf/zai-org/glm-5.2=[high,max], opencode-go/glm-5.2=[high,max], opencode/glm-5.2=[high,max], openrouter/z-ai/glm-5.2=[high,xhigh], zai/glm-5.2=[high,max]
+gpt-5-mini [openai-responses]: selectable thinking levels disagree across providers: cloudflare-ai-gateway/gpt-5-mini=[minimal,low,medium,high], github-copilot/gpt-5-mini=[low,medium,high], openai/gpt-5-mini=[minimal,low,medium,high]
+gpt-5.1-codex [openai-responses]: selectable thinking levels disagree across providers: openai/gpt-5.1-codex=[minimal,low,medium,high], opencode/gpt-5.1-codex=[low,medium,high]
+gpt-5.1-codex-max [openai-responses]: selectable thinking levels disagree across providers: openai/gpt-5.1-codex-max=[minimal,low,medium,high], opencode/gpt-5.1-codex-max=[low,medium,high,xhigh]
+gpt-5.4-nano [openai-responses]: selectable thinking levels disagree across providers: cloudflare-ai-gateway/gpt-5.4-nano=[low,medium,high,xhigh], github-copilot/gpt-5.4-nano=[minimal,low,medium,high,xhigh], openai/gpt-5.4-nano=[low,medium,high,xhigh], opencode/gpt-5.4-nano=[low,medium,high,xhigh]
+gpt-oss-safeguard-20b [openai-completions]: selectable thinking levels disagree across providers: groq/openai/gpt-oss-safeguard-20b=[low,medium,high], openrouter/openai/gpt-oss-safeguard-20b=[high]
+hy4-preview [openai-completions]: selectable thinking levels disagree across providers: opencode-go/hy4-preview=[high], openrouter/tencent/hy4-preview=[low,high]
+inkling [openai-completions]: selectable thinking levels disagree across providers: huggingface/thinkingmachines/Inkling=[low,medium,high], openrouter/thinkingmachines/inkling=[minimal,low,medium,high,max]
+kimi-k3 [anthropic-messages]: selectable thinking levels disagree across providers: fireworks/accounts/fireworks/models/kimi-k3=[low,medium,high,max], vercel-ai-gateway/moonshotai/kimi-k3=[max]
+kimi-k3 [openai-completions]: selectable thinking levels disagree across providers: huggingface/moonshotai/Kimi-K3=[low,high,max], opencode-go/kimi-k3=[max], opencode/kimi-k3=[max], openrouter/moonshotai/kimi-k3=[low,high,max]
+kimi-k3-fast [anthropic-messages]: selectable thinking levels disagree across providers: fireworks/accounts/fireworks/routers/kimi-k3-fast=[low,medium,high,max], vercel-ai-gateway/moonshotai/kimi-k3-fast=[low,high,max]
+mimo-v2.5 [openai-completions]: selectable thinking levels disagree across providers: huggingface/XiaomiMiMo/MiMo-V2.5=[low,medium,high,xhigh], openrouter/xiaomi/mimo-v2.5=[high]
+mimo-v2.5-pro [openai-completions]: selectable thinking levels disagree across providers: huggingface/XiaomiMiMo/MiMo-V2.5-Pro=[low,medium,high,xhigh], openrouter/xiaomi/mimo-v2.5-pro=[high]
+qwen3-vl-235b-a22b-thinking [openai-completions]: selectable thinking levels disagree across providers: huggingface/Qwen/Qwen3-VL-235B-A22B-Thinking=[low,medium,high], openrouter/qwen/qwen3-vl-235b-a22b-thinking=[high]
+qwen3.5-397b-a17b [openai-completions]: selectable thinking levels disagree across providers: huggingface/Qwen/Qwen3.5-397B-A17B=[low,medium,high], openrouter/qwen/qwen3.5-397b-a17b=[high]
+qwen3.6-27b [openai-completions]: selectable thinking levels disagree across providers: groq/qwen/qwen3.6-27b=[], openrouter/qwen/qwen3.6-27b=[high]
+qwen3.8-27b [openai-completions]: selectable thinking levels disagree across providers: cloudflare-workers-ai/@cf/qwen/qwen3.8-27b=[low,medium,xhigh], groq/qwen/qwen3.8-27b=[low,medium,high], huggingface/Qwen/Qwen3.8-27B=[low,medium,xhigh], openrouter/qwen/qwen3.8-27b=[low,medium,xhigh]
+qwen3.8-flash [openai-completions]: selectable thinking levels disagree across providers: opencode-go/qwen3.8-flash=[low,medium,xhigh], openrouter/qwen/qwen3.8-flash=[high]

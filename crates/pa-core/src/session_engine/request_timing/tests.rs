@@ -69,6 +69,7 @@ fn empty_partial(model: &pa_agent::types::Model) -> pa_agent::types::AssistantMe
         stop_reason_raw: None,
         error_message: None,
         timestamp: 0,
+        discarded_usage: None,
     }
 }
 

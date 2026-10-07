@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use super::lineage::{depth_consistent_parent, is_subagent_descendant};
 use super::{
-    session_model, session_title, AgentsViewRow, AgentsViewScope, Rollup, RowKind,
+    session_model, session_title, AgentsViewRow, AgentsViewScope, Rollup, RowKind, TokenUsage,
     SUMMARY_ROW_PREFIX,
 };
 use crate::agents_view_state::{
@@ -29,6 +29,8 @@ struct BaseRow {
     running_subagent_count: usize,
     record: usize,
     search_score: Option<f64>,
+    recursive_tokens: TokenUsage,
+    descendant_tokens: TokenUsage,
 }
 
 /// Build the session-list rows (plus the operator's one-line subagent summary): top-level
@@ -117,6 +119,8 @@ pub(crate) fn build_rows<S: std::hash::BuildHasher + Default>(
             running_subagent_count: 0,
             summary,
             record: position,
+            recursive_tokens: rollup.tokens,
+            descendant_tokens: rollup.descendant_tokens,
         });
     }
     // Parent linkage: a subagent row nests under the first row its parent keys resolve to.
@@ -327,6 +331,7 @@ fn agents_row(row: &BaseRow, depth: usize, parent_identity: Option<&str>) -> Age
         running_subagent_count: row.running_subagent_count,
         expanded: false,
         has_spawn_code: false,
+        tokens: row.recursive_tokens,
     }
 }
 
@@ -385,6 +390,7 @@ fn merged_summary_row(parent: &BaseRow, depth: usize, expanded: bool) -> AgentsV
         running_subagent_count: running,
         expanded,
         has_spawn_code: false,
+        tokens: parent.descendant_tokens,
     }
 }
 
@@ -422,6 +428,7 @@ fn spawn_code_rows(
         running_subagent_count: 0,
         expanded: false,
         has_spawn_code: false,
+        tokens: TokenUsage::default(),
     };
     // Strip the trailing whitespace editors leave, then split into lines — the cap reads the
     // first lines and counts the rest from the one iterator, with no intermediate collection.

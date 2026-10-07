@@ -42,6 +42,7 @@ fn wire_assistant(text: &str) -> pa_types::session::AgentMessage {
         error_message: None,
         timestamp: 0,
         rest: serde_json::Map::default(),
+        discarded_usage: None,
     })
 }
 

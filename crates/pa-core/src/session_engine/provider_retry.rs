@@ -327,6 +327,7 @@ mod tests {
             stop_reason_raw: None,
             error_message: Some("provider failed".to_string()),
             timestamp: 0,
+            discarded_usage: None,
         }
     }
 
@@ -347,6 +348,7 @@ mod tests {
             stop_reason_raw: None,
             error_message: None,
             timestamp: 0,
+            discarded_usage: None,
         }
     }
 

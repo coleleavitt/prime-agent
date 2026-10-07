@@ -37,6 +37,7 @@ fn error_message(
         stop_reason_raw: None,
         error_message: Some("provider down".to_string()),
         timestamp: 0,
+        discarded_usage: None,
     }
 }
 
@@ -57,6 +58,7 @@ fn ok_message() -> AssistantMessage {
         stop_reason_raw: None,
         error_message: None,
         timestamp: 0,
+        discarded_usage: None,
     }
 }
 
@@ -368,6 +370,7 @@ fn stream_drop_message() -> AssistantMessage {
                 .to_string(),
         ),
         timestamp: 0,
+        discarded_usage: None,
     }
 }
 

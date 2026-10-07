@@ -567,6 +567,7 @@ mod tests {
             error_message: None,
             timestamp: 42,
             rest: serde_json::Map::default(),
+            discarded_usage: None,
         })
     }
 

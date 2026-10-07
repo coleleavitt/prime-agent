@@ -537,6 +537,19 @@ pub struct AssistantMessage {
     pub timestamp: u64,
     #[serde(flatten)]
     pub rest: JsonMap,
+    /// Per-request spend of same-turn attempts discarded before
+    /// `message_end` (the empty-turn retries). Spend accounting adds these;
+    /// context estimation reads `usage` alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discarded_usage: Option<Vec<Usage>>,
+}
+
+impl AssistantMessage {
+    /// The message's own usage followed by every discarded attempt's: the
+    /// full paid spend of this turn.
+    pub fn spend(&self) -> impl Iterator<Item = &Usage> {
+        std::iter::once(&self.usage).chain(self.discarded_usage.iter().flatten())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -317,6 +317,7 @@ fn terminal_event(reason: StopReason) -> AssistantMessageEvent {
         stop_reason_raw: None,
         error_message: None,
         timestamp: 0,
+        discarded_usage: None,
     };
     match reason {
         StopReason::Error | StopReason::Aborted => AssistantMessageEvent::Error {
