@@ -7,8 +7,10 @@
 //! labels ([`labels`]), and the spec-operation surface the kernel's thin
 //! `rlm.factory` client calls ([`spec_ops`]).
 
+pub mod executor;
 pub mod host;
 pub mod labels;
+pub mod lane;
 pub mod pyvalue;
 pub mod spec;
 pub mod spec_ops;

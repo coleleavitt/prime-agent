@@ -87,6 +87,9 @@ pub struct SessionKernelWiring {
     /// The child-usage attribution producer the daemon's children
     /// registry drives after the engine is built.
     pub rlm_usage: Arc<super::rlm_usage::RlmChildUsageAttributions>,
+    /// The session's factory executor (kernel `factory.*` requests and the
+    /// `/factory` lane).
+    pub factory: Arc<crate::factory::executor::FactoryExecutor>,
 }
 
 /// Build the session runtime and register the `goal.*`, `rlm_heartbeat.*`, and `rlm.*`
@@ -140,6 +143,21 @@ pub fn wire_session_runtime(
         || Arc::new(AgentCronJobStore::new(agent_dir.join("cron-jobs.json"))),
         |wiring| wiring.store,
     );
+    // Factory run records live beside the session's other artifacts, so a
+    // restarted host recovers its runs: the persisted session's artifact
+    // dir, else the one the embedding's durable session file implies (the
+    // daemon worker's engine session is in memory; the worker owns the
+    // file). A session with neither keeps its runs in memory.
+    let factory_store = session
+        .get_session_artifact_dir()
+        .or_else(|| {
+            Some(binding.session_file.as_str())
+                .filter(|file| !file.is_empty())
+                .and_then(|file| {
+                    super::harness_digest::session_artifact_dir_for_log(std::path::Path::new(file))
+                })
+        })
+        .map(|dir| dir.join(crate::factory::executor::store::FACTORY_RUNS_DIR));
     let mut runtime = SessionRuntime::new(&session, cron_store, active_session_id, binding);
     if let Some(purge) = goal_complete_purge {
         runtime.set_goal_complete_purge(purge);
@@ -177,13 +195,28 @@ pub fn wire_session_runtime(
         rlm_usage.clone(),
     ));
     register_rlm_host_handlers(&mut handlers, &rlm_bridge);
-    crate::factory::host::register_factory_host_handlers(&mut handlers);
+    // The factory executor runs host-side over the same child host the
+    // kernel's `rlm.spawn` uses: a kernel restart never touches a run.
+    let factory_children = Arc::new(crate::factory::executor::ports::SessionChildren::new(
+        Arc::clone(&rlm_bridge),
+    ));
+    let factory = Arc::new(crate::factory::executor::FactoryExecutor::new(
+        crate::factory::executor::FactoryExecutorConfig {
+            children: factory_children,
+            notices: Arc::new(crate::factory::executor::ports::NoNoticeLane),
+            clock: Arc::new(crate::factory::executor::ports::SystemClock),
+            store_dir: factory_store,
+        },
+    ));
+    crate::factory::host::register_factory_spec_handler(&mut handlers);
+    crate::factory::host::register_factory_executor_handlers(&mut handlers, &factory, agent_dir);
     SessionKernelWiring {
         session,
         handlers,
         runtime,
         rlm: rlm_bridge,
         rlm_usage,
+        factory,
     }
 }
 

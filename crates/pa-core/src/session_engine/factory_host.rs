@@ -1,31 +1,28 @@
-//! The factory host bridge: the session seam that exposes the kernel's
-//! factory surface (`factory.graph/status/watch/run/stop/resume`) to the
-//! daemon and TUI, the `/factory` view's lane.
+//! The factory host bridge: the session seam that exposes the factory
+//! surface (`factory.graph/status/watch/run/stop/resume`) to the daemon and
+//! TUI, the `/factory` view's lane.
 //!
-//! The factory itself lives in the kernel (`rlm/factory.py`, the Rust port's
-//! Python kernel architecture — the executor owns the run registry in kernel
-//! memory), so this bridge is host->kernel: the session engine validates the
-//! request, prefights a `run` before any child spawns, and rides the
-//! out-of-band `factory_activity` kernel frame (the `bash_activity`
-//! precedent — a running cell never delays the live view).
+//! The executor runs host-side (`crate::factory::executor`, one per
+//! session, with durable run records), so this bridge answers without the
+//! kernel: the session engine validates the request, prefights a `run`
+//! before any child spawns, and hands the request to the lane
+//! (`crate::factory::lane`), which reads the stored specs through this
+//! bridge's harness view ([`FactoryHost`] implements its context).
 //!
 //! The module follows the `system_router_host` pattern from #3184: a config
 //! struct of session facts captured in `create_session` (the daemon model
 //! allowlist pin, the session model), a registry-backed model preflight
 //! (exact catalog match, TS short form, the stale-provider gate) that fails
 //! loudly before a run starts, and a unit battery in the child module. The
-//! direction differs by design: #3184 registers a kernel->host handler, while
-//! the factory bridge serves daemon/TUI->kernel requests through
-//! [`SessionEngine::factory_activity`]; the executor's own children ride the
-//! existing `rlm.spawn` host path, where the daemon allowlist pin is
-//! enforced per spawn.
+//! executor's own children ride the existing `rlm.spawn` admission path,
+//! where the daemon allowlist pin is enforced per spawn.
 
 use std::path::PathBuf;
 
 use anyhow::anyhow;
 use serde_json::Value;
 
-use crate::kernel::shared::{FACTIVITY_WATCH_TIMEOUT_MS_CAP, FACTORY_ACTIVITY_ACTIONS};
+use crate::factory::lane::{ACTIVITY_ACTIONS, ACTIVITY_TIMEOUT_MS_CAP};
 use crate::models::registry::ModelRegistry;
 use crate::models::resolver::find_exact_model_reference_match;
 use pa_types::ai::Model as AiModel;
@@ -308,6 +305,82 @@ impl FactoryHost {
     }
 }
 
+/// The lane's reads outside the executor, with the kernel harness's own
+/// semantics: an unprefixed id reads the session's local store (a spec
+/// stored only globally is unknown to the kernel, so it is here too), a
+/// `global:`/`local:` prefix routes to that store, and a subagent
+/// reference resolves by id first, then by the first title in the local
+/// store's `(kind, path, title, id)` order.
+impl crate::factory::lane::FactoryLaneContext for FactoryHost {
+    fn factory_enabled(&self) -> bool {
+        crate::factory::lane::factory_enabled_in(&self.config.agent_dir)
+    }
+
+    fn stored_spec(&self, spec_id: &str) -> Option<crate::factory::lane::StoredSpec> {
+        use crate::factory::executor::ResolvedSubagent;
+        use crate::factory::pyvalue::PyValue;
+        use crate::refinement::RefinementKind;
+
+        let local = self.local_harness_state();
+        let global = self.global_harness_state();
+        let store_for = |scope: Scope| match scope {
+            Scope::Global => Some(&global),
+            Scope::Any | Scope::Local => local.as_ref(),
+        };
+        let (spec_scope, spec_key) = split_harness_scope(spec_id);
+        let entry = store_for(spec_scope)?
+            .entries
+            .get(&RefinementKind::Factory)
+            .and_then(|entries| entries.get(spec_key))?;
+        let spec = entry
+            .arguments
+            .get("machine")
+            .filter(|value| !value.is_null())
+            .or_else(|| entry.arguments.get("dag").filter(|value| !value.is_null()))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let states = spec
+            .get("states")
+            .or_else(|| spec.get("nodes"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut local_titles: Vec<&crate::refinement::HarnessEntry> = local
+            .as_ref()
+            .and_then(|state| state.entries.get(&RefinementKind::Subagent))
+            .map(|entries| entries.values().collect())
+            .unwrap_or_default();
+        local_titles.sort_by(|a, b| (&a.path, &a.title, &a.id).cmp(&(&b.path, &b.title, &b.id)));
+        let mut subagents = std::collections::HashMap::new();
+        for state in &states {
+            let Some(reference) = state.get("subagent").and_then(Value::as_str) else {
+                continue;
+            };
+            let (scope, key) = split_harness_scope(reference);
+            let by_id = store_for(scope)
+                .and_then(|store| store.entries.get(&RefinementKind::Subagent))
+                .and_then(|entries| entries.get(key));
+            let found = by_id.or_else(|| {
+                local_titles
+                    .iter()
+                    .copied()
+                    .find(|row| row.title == reference)
+            });
+            let resolved = found.map(|row| ResolvedSubagent {
+                content: PyValue::Str(row.content.clone()),
+                model: PyValue::from_json(row.metadata.get("model").unwrap_or(&Value::Null)),
+                thinking: PyValue::from_json(row.metadata.get("thinking").unwrap_or(&Value::Null)),
+            });
+            subagents.insert(reference.to_string(), resolved);
+        }
+        Some(crate::factory::lane::StoredSpec {
+            id: entry.id.clone(),
+            spec: PyValue::from_json(&spec),
+            subagents,
+        })
+    }
+}
+
 /// The ai-side view of the session's agent-side model descriptor, for the
 /// preflight's allowlist and auth checks only. The two `Model`s do not
 /// share a wire shape (the agent side serializes `base_url`, never carries
@@ -403,9 +476,8 @@ fn split_harness_scope(id: &str) -> (Scope, &str) {
     (Scope::Any, id)
 }
 
-/// The out-of-band request the bridge sends into the kernel, validated
-/// host-side before the frame: one action with its target and the watch
-/// bound.
+/// One lane request, validated before it reaches the executor: one action
+/// with its target and the watch bound.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FactoryActivityRequest {
     pub action: &'static str,
@@ -415,9 +487,9 @@ pub struct FactoryActivityRequest {
 }
 
 impl FactoryActivityRequest {
-    /// Parse and validate one daemon command payload. Mirrors the kernel
-    /// frame's own validation (the kernel re-validates): a known action,
-    /// string targets when present, and a bounded watch timeout.
+    /// Parse and validate one daemon command payload: a known action,
+    /// string targets when present, and a bounded watch timeout (the lane
+    /// re-validates with the full request rules).
     ///
     /// # Errors
     ///
@@ -429,7 +501,7 @@ impl FactoryActivityRequest {
         spec_id: Option<&str>,
         timeout_ms: Option<u64>,
     ) -> anyhow::Result<Self> {
-        let Some(action) = FACTORY_ACTIVITY_ACTIONS
+        let Some(action) = ACTIVITY_ACTIONS
             .iter()
             .find(|known| **known == action)
             .copied()
@@ -443,9 +515,9 @@ impl FactoryActivityRequest {
             return Err(anyhow!("factory activity {action} requires runId"));
         }
         if let Some(timeout_ms) = timeout_ms {
-            if timeout_ms > FACTIVITY_WATCH_TIMEOUT_MS_CAP {
+            if timeout_ms > ACTIVITY_TIMEOUT_MS_CAP {
                 return Err(anyhow!(
-                    "factory activity timeoutMs must be at most {FACTIVITY_WATCH_TIMEOUT_MS_CAP}"
+                    "factory activity timeoutMs must be at most {ACTIVITY_TIMEOUT_MS_CAP}"
                 ));
             }
         }

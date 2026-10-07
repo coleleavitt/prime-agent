@@ -4,7 +4,10 @@
 one persistent `__main__` namespace on a single asyncio event loop. The wire
 format is newline-delimited JSON: one object per line, UTF-8, no other framing.
 The current protocol version is `4`; the runtime announces it in the `ready`
-event.
+event. The out-of-band `factory_activity` request is gone (the factory
+executor runs in the host, so the `/factory` lane no longer needs the
+kernel); no frame changed shape, so the version stays `4`, and a runtime
+that receives the retired request answers the unknown-type protocol error.
 
 ## Channels
 
@@ -57,7 +60,7 @@ event.
 | `plan_guard` | `{"type":"plan_guard","id":str,"token":str,"enabled":bool,"writable_roots"?:[str,...]}` — host-only plan-mode switch, out-of-band even during a running cell; see Plan guard below |
 | `shutdown` | `{"type":"shutdown","id"?:str}` |
 
-Requests other than `interrupt`, `host_reply`, `bash_activity`, `factory_activity`, and
+Requests other than `interrupt`, `host_reply`, `bash_activity`, and
 `plan_guard` run strictly in order, one at a time. A malformed line
 produces `{"event":"error","id":null,"ename":"ProtocolError",...}` and the
 runtime keeps serving. Closing stdin is equivalent to `shutdown`.

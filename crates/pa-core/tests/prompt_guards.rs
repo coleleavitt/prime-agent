@@ -166,6 +166,13 @@ const INTERNAL_HOST_REQUESTS: &[&str] = &[
     // skill's surface (documented by its SKILL.md and `rlm.factory.help()`),
     // and `factory.spec` is the validator behind `rlm.harness` factory writes.
     "factory.spec",
+    "factory.run",
+    "factory.status",
+    "factory.stop",
+    "factory.resume",
+    "factory.graph",
+    "factory.watch",
+    "factory.machine",
 ];
 
 /// Map one registered host-request type to the prompt token that documents
