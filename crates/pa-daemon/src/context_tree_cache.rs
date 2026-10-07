@@ -61,7 +61,7 @@ impl ContextTreeCache {
 
     /// Abort the refresh tasks still running (a test retiring its worker before it removes the
     /// dir: a later poll would start a walk that recreates it).
-    #[cfg(test)]
+    #[cfg(all(test, unix))] // its callers, the cloud-inbox restart tests, are unix-only
     pub(crate) fn abort_refreshes(&self) {
         for task in self
             .refresh_tasks

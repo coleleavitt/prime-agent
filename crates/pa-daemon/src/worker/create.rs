@@ -29,7 +29,7 @@ impl Worker {
     /// Abort the create's fire-and-forget tasks and the context-tree refresh: a test that retires this worker (a simulated
     /// restart) and removes its dir must not have them recreate it on their next poll. The
     /// worker itself stays referenced by its own runner tasks, so dropping it does not stop them.
-    #[cfg(test)]
+    #[cfg(all(test, unix))] // its callers, the cloud-inbox restart tests, are unix-only
     pub(crate) fn abort_create_background(&self) {
         for handle in self.create_background.lock_or_recover().drain(..) {
             handle.abort();
