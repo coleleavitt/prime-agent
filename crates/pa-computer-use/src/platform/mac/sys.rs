@@ -17,8 +17,7 @@ use std::time::Duration;
 use objc2::rc::Retained;
 use objc2::AnyThread;
 use objc2_app_kit::{
-    NSApplicationActivationOptions, NSApplicationActivationPolicy, NSPasteboard,
-    NSPasteboardTypeHTML, NSPasteboardTypeString, NSWorkspace,
+    NSApplicationActivationOptions, NSApplicationActivationPolicy, NSPasteboard, NSWorkspace,
 };
 use objc2_application_services::{
     kAXTrustedCheckOptionPrompt, AXError, AXIsProcessTrustedWithOptions, AXUIElement,
@@ -38,6 +37,7 @@ use objc2_vision::{VNImageRequestHandler, VNRecognizeTextRequest, VNRequest};
 
 use super::ax::{Ax, AxError as RawAxError, AxValue};
 use super::events::{MacEvent, MouseKind};
+use super::pasteboard::{Pasteboard, PasteboardClipboard};
 use super::{Desktop, PostError, WorkspaceApp};
 use crate::element::Rect;
 use crate::keymap::Modifier;
@@ -266,11 +266,6 @@ fn general_pasteboard() -> Retained<NSPasteboard> {
     NSPasteboard::generalPasteboard()
 }
 
-fn string_type() -> &'static NSString {
-    // SAFETY: an AppKit constant, initialized when AppKit loads.
-    unsafe { NSPasteboardTypeString }
-}
-
 /// `AppKit`, `CoreGraphics`, the pasteboard and Vision.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct SysDesktop;
@@ -486,51 +481,64 @@ fn build(event: &MacEvent) -> Option<CFRetained<CGEvent>> {
     }
 }
 
-impl Clipboard for SysDesktop {
-    fn save(&self) -> Option<ClipboardSnapshot> {
-        let pasteboard = general_pasteboard();
-        let types = pasteboard
-            .types()
-            .map(|types| types.to_vec())
-            .unwrap_or_default();
+/// The general pasteboard's raw calls; the snapshot, write and restore
+/// rules are [`PasteboardClipboard`]'s.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct SysPasteboard;
+
+impl Pasteboard for SysPasteboard {
+    fn types(&self) -> Option<Vec<String>> {
         Some(
-            types
-                .into_iter()
-                .filter_map(|kind| {
-                    Some((kind.to_string(), pasteboard.dataForType(&kind)?.to_vec()))
-                })
-                .collect(),
+            general_pasteboard()
+                .types()
+                .map(|types| types.to_vec().iter().map(ToString::to_string).collect())
+                .unwrap_or_default(),
         )
     }
 
-    fn write(&self, text: &str, format: PasteFormat) -> Result<(), String> {
-        let pasteboard = general_pasteboard();
-        pasteboard.clearContents();
-        if format == PasteFormat::Html {
-            // SAFETY: an AppKit constant, initialized when AppKit loads.
-            let html = unsafe { NSPasteboardTypeHTML };
-            pasteboard.setData_forType(Some(&NSData::with_bytes(text.as_bytes())), html);
-        }
-        pasteboard.setString_forType(&NSString::from_str(text), string_type());
-        Ok(())
+    fn data(&self, kind: &str) -> Option<Vec<u8>> {
+        general_pasteboard()
+            .dataForType(&NSString::from_str(kind))
+            .map(|data| data.to_vec())
     }
 
-    fn holds(&self, text: &str) -> bool {
+    fn clear(&self) {
+        general_pasteboard().clearContents();
+    }
+
+    fn set_data(&self, kind: &str, data: &[u8]) -> bool {
         general_pasteboard()
-            .dataForType(string_type())
-            .is_some_and(|data| data.to_vec() == text.as_bytes())
+            .setData_forType(Some(&NSData::with_bytes(data)), &NSString::from_str(kind))
+    }
+
+    fn set_string(&self, kind: &str, text: &str) -> bool {
+        general_pasteboard().setString_forType(&NSString::from_str(text), &NSString::from_str(kind))
     }
 
     fn change_count(&self) -> Option<i64> {
         i64::try_from(general_pasteboard().changeCount()).ok()
     }
+}
+
+impl Clipboard for SysDesktop {
+    fn save(&self) -> Option<ClipboardSnapshot> {
+        PasteboardClipboard(SysPasteboard).save()
+    }
+
+    fn write(&self, text: &str, format: PasteFormat) -> Result<(), String> {
+        PasteboardClipboard(SysPasteboard).write(text, format)
+    }
+
+    fn holds(&self, text: &str) -> bool {
+        PasteboardClipboard(SysPasteboard).holds(text)
+    }
+
+    fn change_count(&self) -> Option<i64> {
+        PasteboardClipboard(SysPasteboard).change_count()
+    }
 
     fn restore(&self, snapshot: &ClipboardSnapshot) {
-        let pasteboard = general_pasteboard();
-        pasteboard.clearContents();
-        for (kind, data) in snapshot {
-            pasteboard.setData_forType(Some(&NSData::with_bytes(data)), &NSString::from_str(kind));
-        }
+        PasteboardClipboard(SysPasteboard).restore(snapshot);
     }
 }
 

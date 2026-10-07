@@ -12,6 +12,7 @@
 
 pub(crate) mod ax;
 pub(crate) mod events;
+pub(crate) mod pasteboard;
 
 #[cfg(target_os = "macos")]
 mod sys;

@@ -235,4 +235,16 @@ fn the_summary_reads_the_file_at_call_time() {
     assert_eq!(policy.summary()["allowed"], json!([ALLOWED, OTHER]));
     assert!(allowed(&policy.gate(OTHER)));
     assert!(!allowed(&policy.gate(BLOCKED)));
+    // A risk label read from the file rides the verdict.
+    write_settings(
+        &agent_dir.join("settings"),
+        &[ALLOWED],
+        &[],
+        &[],
+        &[(ALLOWED, "low")],
+    );
+    assert_eq!(
+        policy.gate(ALLOWED),
+        GateVerdict::Allowed { risk: Risk::Low }
+    );
 }

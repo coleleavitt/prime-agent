@@ -95,12 +95,40 @@ fn the_socket_transport_speaks_json_lines() {
     );
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn a_missing_or_empty_niri_socket_is_a_transport_error() {
+    use super::niri::SocketTransport;
+    for env in [(|_: &str| None) as fn(&str) -> Option<String>, |_: &str| {
+        Some(String::new())
+    }] {
+        let error = SocketTransport { env }
+            .exchange(b"\"Windows\"\n")
+            .unwrap_err();
+        assert_eq!(
+            error,
+            crate::error::transport(
+                "computer use backend unavailable: NIRI_SOCKET is not set; the Wayland backend \
+                 needs niri"
+            )
+        );
+    }
+}
+
 struct Canned(&'static [u8]);
 
 impl NiriTransport for Canned {
     fn exchange(&self, _line: &[u8]) -> Result<Vec<u8>> {
         Ok(self.0.to_vec())
     }
+}
+
+#[test]
+fn a_null_focused_window_reads_as_no_focus() {
+    let niri = Niri {
+        transport: Canned(b"{\"Ok\":{\"FocusedWindow\":null}}\n"),
+    };
+    assert_eq!(niri.focused_window_id().unwrap(), None);
 }
 
 #[test]
@@ -139,6 +167,14 @@ fn list_apps_dedups_app_ids() {
         .map(|app| app.id)
         .collect();
     assert_eq!(ids, ["org.gnome.TextEditor", "foot", "org.example.Floaty"]);
+    assert_eq!(
+        crate::session::apps_json(&world.platform.list_apps().unwrap()),
+        json!([
+            {"id": "org.gnome.TextEditor", "name": "org.gnome.TextEditor", "running": true},
+            {"id": "foot", "name": "foot", "running": true},
+            {"id": "org.example.Floaty", "name": "org.example.Floaty", "running": true},
+        ])
+    );
 }
 
 #[test]
@@ -157,7 +193,10 @@ fn resolve_orders_focused_then_recent_and_casefolds() {
     assert_eq!(ids(&AppSpec::text("ORG.GNOME.TEXTEDITOR")), [10, 11]);
     assert_eq!(ids(&AppSpec::dict("bundle_id", "foot")), [20]);
     assert!(ids(&AppSpec::text("nope")).is_empty());
-    for bad in [AppSpec::text(""), AppSpec::dict("path", "/x")] {
+    let not_a_spec =
+        AppSpec::from_wire(&json!({"kind": "other", "type": "int", "str": "5", "repr": "5"}))
+            .unwrap();
+    for bad in [AppSpec::text(""), AppSpec::dict("path", "/x"), not_a_spec] {
         assert_eq!(
             world.platform.resolve(&bad).unwrap_err().code,
             ErrorCode::InvalidArgument
@@ -480,6 +519,10 @@ fn actions_run_and_refusals_are_unsupported() {
     assert_eq!(save.get().performed, ["click", "click"]);
     assert_eq!(missing.message, "the element no longer exposes press");
     assert_eq!(refused.message, "the element refused click");
+    assert_eq!(
+        (missing.code, refused.code),
+        (ErrorCode::ActionUnsupported, ErrorCode::ActionUnsupported)
+    );
 }
 
 #[test]
@@ -752,10 +795,25 @@ fn grim_captures_the_logical_rect_into_the_hardened_dir() {
     let mode =
         |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode(std::path::Path::new(&captured.path)), 0o600);
-    assert_eq!(
-        mode(std::path::Path::new(&captured.path).parent().unwrap()),
-        0o700
-    );
+    let parent = std::path::Path::new(&captured.path).parent().unwrap();
+    assert_eq!(parent, world.shots.path().join("shots"));
+    assert_eq!(mode(parent), 0o700);
+}
+
+#[test]
+fn a_symlinked_capture_dir_is_refused_before_grim_runs() {
+    let world = world();
+    world.script.on_png(&["-g"], (10, 10));
+    let elsewhere = world.shots.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, world.shots.path().join("shots")).unwrap();
+    let error = world
+        .platform
+        .capture(CaptureRequest::Window(10))
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::TransportError);
+    assert!(error.message.contains("symlink"), "{}", error.message);
+    assert!(world.script.calls().is_empty());
 }
 
 #[test]
@@ -792,6 +850,7 @@ fn tiled_or_overlapped_windows_refuse_and_a_focused_floating_window_is_on_top() 
         .capture(CaptureRequest::Window(10))
         .unwrap_err();
     assert!(overlapped.message.contains("overlaps"));
+    assert_eq!(overlapped.code, ErrorCode::ActionUnsupported);
     assert_eq!(world.script.calls().len(), 1);
 }
 
@@ -803,6 +862,7 @@ fn grim_missing_failing_or_writing_nothing_is_a_transport_error() {
         .capture(CaptureRequest::Window(10))
         .unwrap_err();
     assert!(missing.message.contains("grim"));
+    assert_eq!(missing.code, ErrorCode::TransportError);
     let world = self::world();
     world.script.on(
         &["-g"],
@@ -1139,6 +1199,7 @@ fn keyboard_flows_focus_the_window_and_refuse_a_secure_focus() {
         )
         .unwrap_err();
     assert_eq!(secure.details, Some(json!({"live": true})));
+    assert_eq!(secure.code, ErrorCode::ActionUnsupported);
     ok.get().role_fails = true;
     let unknown = env
         .session
@@ -1150,6 +1211,7 @@ fn keyboard_flows_focus_the_window_and_refuse_a_secure_focus() {
         )
         .unwrap_err();
     assert_eq!(unknown.details, Some(json!({"live": false})));
+    assert_eq!(unknown.code, ErrorCode::ActionUnsupported);
     assert_eq!(world.input.calls().len(), 2);
 }
 

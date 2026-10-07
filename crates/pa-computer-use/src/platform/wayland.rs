@@ -777,7 +777,7 @@ pub(crate) mod native {
     pub(crate) fn platform(agent_dir: &Path) -> NativeWayland {
         WaylandPlatform::new(
             SystemTools,
-            SocketTransport,
+            SocketTransport::default(),
             BusAtSpi::default(),
             session_input(),
             CaptureDir::under_agent_dir(agent_dir),

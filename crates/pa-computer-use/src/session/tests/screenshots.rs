@@ -111,6 +111,14 @@ fn a_reobserve_during_the_capture_cannot_retag_the_shot() {
             ..
         })
     ));
+    // The stored shot keeps the 4321 tag: once the re-observe sees window
+    // 9999, the screenshot's points are refused instead of retargeted.
+    call(&env, &app, AppCall::GetAxState { diff: true }).unwrap();
+    assert_eq!(
+        error(call(&env, &app, click_point(10.0, 10.0))).message,
+        "the focused window changed since the screenshot; take a fresh screenshot before \
+         clicking image coordinates"
+    );
 }
 
 #[test]

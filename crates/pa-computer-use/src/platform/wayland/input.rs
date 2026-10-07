@@ -245,4 +245,76 @@ mod tests {
         assert!(!text.contains("<K2>"));
         assert!(keymap_text(&[]).contains("maximum = 9;"));
     }
+
+    /// Compiles one keymap with the system's libxkbcommon through Python's
+    /// ctypes (the skill's test did the same; no FFI in this crate's tests)
+    /// and prints the Shift, Control, Mod1 and Mod4 indices, or `SKIP`.
+    const XKB_PROBE: &str = r#"
+import ctypes, ctypes.util, json, sys
+name = ctypes.util.find_library("xkbcommon")
+if not name:
+    print("SKIP"); sys.exit(0)
+lib = ctypes.CDLL(name)
+lib.xkb_context_new.restype = ctypes.c_void_p
+lib.xkb_keymap_new_from_string.restype = ctypes.c_void_p
+lib.xkb_keymap_new_from_string.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int, ctypes.c_int]
+lib.xkb_keymap_mod_get_index.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+lib.xkb_keymap_mod_get_index.restype = ctypes.c_uint
+lib.xkb_keymap_unref.argtypes = [ctypes.c_void_p]
+lib.xkb_context_unref.argtypes = [ctypes.c_void_p]
+context = lib.xkb_context_new(0)
+keymap = lib.xkb_keymap_new_from_string(context, open(sys.argv[1], "rb").read(), 1, 0)
+if not keymap:
+    print("FAILED"); sys.exit(0)
+print(json.dumps([lib.xkb_keymap_mod_get_index(keymap, m.encode()) for m in ("Shift", "Control", "Mod1", "Mod4")]))
+lib.xkb_keymap_unref(keymap)
+lib.xkb_context_unref(context)
+"#;
+
+    #[test]
+    fn the_generated_keymap_compiles_with_libxkbcommon() {
+        let mut keysyms: Vec<String> = "aZ1 !\n\t\u{e9}\u{20ac}"
+            .chars()
+            .map(|character| keysym_for_char(character).unwrap())
+            .collect();
+        keysyms.extend(["BackSpace", "Prior", "F12", "Escape"].map(String::from));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("keymap.xkb");
+        std::fs::write(&path, keymap_text(&keysyms)).unwrap();
+        let Ok(output) = std::process::Command::new("python3")
+            .args(["-I", "-c", XKB_PROBE])
+            .arg(&path)
+            .output()
+        else {
+            eprintln!("python3 not found; skipping the libxkbcommon compile check");
+            return;
+        };
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stdout = stdout.trim();
+        if stdout == "SKIP" {
+            eprintln!("libxkbcommon not installed; skipping the compile check");
+            return;
+        }
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_ne!(
+            stdout, "FAILED",
+            "libxkbcommon refused the generated keymap"
+        );
+        let indices: Vec<u32> = serde_json::from_str(stdout).unwrap();
+        let masks: Vec<u32> = indices.into_iter().map(|index| 1 << index).collect();
+        assert_eq!(
+            masks,
+            [
+                Modifier::Shift,
+                Modifier::Ctrl,
+                Modifier::Alt,
+                Modifier::Cmd
+            ]
+            .map(modifier_mask)
+        );
+    }
 }

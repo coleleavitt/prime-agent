@@ -7,7 +7,7 @@
 //! capture (files older than 24 hours go, at most the 20 most recent stay),
 //! and every written PNG is read back through the verified descriptor.
 
-use std::os::fd::{AsFd, OwnedFd};
+use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -36,11 +36,28 @@ fn symlinked(component: &dyn std::fmt::Display) -> ComputerUseError {
     ))
 }
 
+/// The capture directory of an agent dir: `<agent_dir>/tmp/computer-use`.
+/// The host writes screenshots there and the kernel reads them back (to
+/// attach them), so it must stay readable by a sandboxed kernel: the OS
+/// sandbox confines writes, never reads, of the same user's files.
+#[must_use]
+pub fn capture_dir(agent_dir: &Path) -> PathBuf {
+    agent_dir.join("tmp").join("computer-use")
+}
+
+/// The mode change (`fchmod`); a seam so tests can make it fail.
+type Chmod = fn(BorrowedFd<'_>, Mode) -> rustix::io::Result<()>;
+
+fn fchmod(fd: BorrowedFd<'_>, mode: Mode) -> rustix::io::Result<()> {
+    rustix::fs::fchmod(fd, mode)
+}
+
 /// Where captures go, and the home the no-follow chain starts from.
 #[derive(Debug, Clone)]
 pub(crate) struct CaptureDir {
     dir: PathBuf,
     home: PathBuf,
+    chmod: Chmod,
     #[cfg(test)]
     fixed_name: Option<String>,
 }
@@ -49,7 +66,7 @@ impl CaptureDir {
     /// `<agent_dir>/tmp/computer-use`, chained from `$HOME`.
     pub(crate) fn under_agent_dir(agent_dir: &Path) -> Self {
         Self::new(
-            agent_dir.join("tmp").join("computer-use"),
+            capture_dir(agent_dir),
             std::env::home_dir().unwrap_or_default(),
         )
     }
@@ -58,9 +75,17 @@ impl CaptureDir {
         Self {
             dir,
             home,
+            chmod: fchmod,
             #[cfg(test)]
             fixed_name: None,
         }
+    }
+
+    /// Replace the mode change (a failing one: privacy is best-effort).
+    #[cfg(test)]
+    pub(crate) fn with_chmod(mut self, chmod: Chmod) -> Self {
+        self.chmod = chmod;
+        self
     }
 
     /// Name the next capture `name` instead of a random one (tests plant
@@ -120,14 +145,14 @@ impl CaptureDir {
                 ))
             })?;
             let fd = rustix::fs::open(&self.dir, directory, Mode::empty()).map_err(unavailable)?;
-            let _ = rustix::fs::fchmod(&fd, Mode::from_raw_mode(0o700));
+            let _ = (self.chmod)(fd.as_fd(), Mode::from_raw_mode(0o700));
             return Ok(fd);
         };
         let mut fd = rustix::fs::open(&self.home, directory, Mode::empty()).map_err(unavailable)?;
         for component in below_home.components() {
             fd = open_component(&fd, component.as_os_str())?;
         }
-        let _ = rustix::fs::fchmod(&fd, Mode::from_raw_mode(0o700));
+        let _ = (self.chmod)(fd.as_fd(), Mode::from_raw_mode(0o700));
         Ok(fd)
     }
 }
@@ -200,7 +225,7 @@ impl OpenCaptureDir<'_> {
             let regular = rustix::fs::fstat(&file)
                 .is_ok_and(|stat| FileType::from_raw_mode(stat.st_mode) == FileType::RegularFile);
             if regular {
-                let _ = rustix::fs::fchmod(&file, Mode::from_raw_mode(0o600));
+                let _ = (self.dir.chmod)(file.as_fd(), Mode::from_raw_mode(0o600));
             }
         }
     }

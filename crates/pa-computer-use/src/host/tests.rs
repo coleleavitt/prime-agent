@@ -7,7 +7,7 @@ use serde_json::json;
 
 use super::*;
 use crate::permissions::MAC_HELP_LINES;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use crate::process::script::Script;
 use crate::session::fake::{quick_timing, Env, RecordingTelemetry, BUNDLE};
 use crate::telemetry::{Outcome, TelemetryEvent};
@@ -97,6 +97,7 @@ fn malformed_calls_are_refused_not_guessed() {
     for payload in [
         json!({"method": "click", "target": {"kind": "index", "index": 0}, "button": "side", "count": 1}),
         json!({"method": "click", "target": {"kind": "index", "index": 0}, "button": "left", "count": 11}),
+        json!({"method": "click", "target": {"kind": "index", "index": 0}, "button": "left", "count": 0}),
         json!({"method": "scroll", "target": {"kind": "index", "index": 0}, "direction": "up", "pages": 0}),
         json!({"method": "select_text", "element_index": {"index": 0}, "text": ""}),
         json!({"method": "paste", "text": "p", "format": "rtf"}),
@@ -190,6 +191,17 @@ fn replies_carry_ok_or_the_error_wire_form() {
         reply,
         json!({"error": {"code": "INVALID_ARGUMENT", "message": "unknown computer-use request type \"computer_use.nope\"", "details": null}})
     );
+}
+
+/// Compile-checked here; runs on macOS only.
+#[cfg(target_os = "macos")]
+#[test]
+fn darwin_wins_ahead_of_every_linux_backend() {
+    let script = Script::with_tools(&["xdotool"]);
+    script.set_env("WAYLAND_DISPLAY", "wayland-1");
+    script.set_env("NIRI_SOCKET", "/run/niri.sock");
+    script.add_socket("/run/niri.sock");
+    assert_eq!(detect_kind(&script), Some(PlatformKind::Mac));
 }
 
 #[cfg(target_os = "linux")]

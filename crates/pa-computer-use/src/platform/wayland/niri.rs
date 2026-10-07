@@ -197,12 +197,24 @@ impl<N: NiriTransport> Niri<N> {
 
 /// The real IPC transport over the niri socket.
 #[cfg(target_os = "linux")]
-pub(crate) struct SocketTransport;
+pub(crate) struct SocketTransport {
+    /// The environment lookup (`std::env::var` in production).
+    pub(crate) env: fn(&str) -> Option<String>,
+}
+
+#[cfg(target_os = "linux")]
+impl Default for SocketTransport {
+    fn default() -> Self {
+        Self {
+            env: |key| std::env::var(key).ok(),
+        }
+    }
+}
 
 #[cfg(target_os = "linux")]
 impl NiriTransport for SocketTransport {
     fn exchange(&self, line: &[u8]) -> Result<Vec<u8>> {
-        let path = std::env::var("NIRI_SOCKET").unwrap_or_default();
+        let path = (self.env)("NIRI_SOCKET").unwrap_or_default();
         if path.is_empty() {
             return Err(transport(
                 "computer use backend unavailable: NIRI_SOCKET is not set; the Wayland backend \

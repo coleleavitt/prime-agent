@@ -118,5 +118,6 @@ fn a_failed_write_restores_the_snapshot() {
         error.message,
         "could not write the paste payload: pasteboard refused the write"
     );
+    assert_eq!(error.code, ErrorCode::TransportError);
     assert!(env.fake().clipboard_calls.contains(&saved()));
 }

@@ -27,6 +27,8 @@ mod session;
 mod spec;
 pub mod telemetry;
 
+#[cfg(unix)]
+pub use capture::capture_dir;
 pub use host::{ComputerUse, HostConfig, REQUEST_TYPES};
 
 #[cfg(test)]

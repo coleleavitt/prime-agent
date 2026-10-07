@@ -214,6 +214,7 @@ fn a_symlinked_parent_component_below_home_is_refused() {
     let shots = linked_parent.join("tmp").join("shots");
     let error = CaptureDir::new(shots.clone(), home).open().err().unwrap();
     assert!(error.message.contains("symlink"), "{}", error.message);
+    assert_eq!(error.code, ErrorCode::TransportError);
     assert!(!shots.exists());
 }
 
@@ -271,14 +272,31 @@ fn non_regular_and_symlinked_targets_are_refused() {
         "{}",
         error.message
     );
+    assert_eq!(error.code, ErrorCode::TransportError);
     std::fs::remove_dir(dir.path().join("fixed.png")).unwrap();
-    symlink(tmp.path(), dir.path().join("fixed.png")).unwrap();
-    let error = dir.open().unwrap().new_target().err().unwrap();
-    assert!(
-        error.message.contains("not a regular file"),
-        "{}",
-        error.message
-    );
+    // A link to a directory, then a link to a regular file: both refused.
+    let regular = tmp.path().join("regular.png");
+    std::fs::write(&regular, png_bytes(5, 5)).unwrap();
+    for target in [tmp.path().to_path_buf(), regular] {
+        symlink(&target, dir.path().join("fixed.png")).unwrap();
+        let error = dir.open().unwrap().new_target().err().unwrap();
+        assert!(
+            error.message.contains("not a regular file"),
+            "{}",
+            error.message
+        );
+        assert_eq!(error.code, ErrorCode::TransportError);
+        std::fs::remove_file(dir.path().join("fixed.png")).unwrap();
+    }
+}
+
+#[test]
+fn chmod_failures_never_break_the_capture() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = outside_home(tmp.path()).with_chmod(|_, _| Err(Errno::PERM));
+    let (path, size) = capture(&dir, &png_bytes(5, 5)).unwrap();
+    assert!(path.extension().is_some_and(|extension| extension == "png"));
+    assert_eq!(size, (5, 5));
 }
 
 #[test]
@@ -297,6 +315,7 @@ fn a_planted_fifo_never_blocks_the_read_back() {
     let error = open.png_dimensions(&name).unwrap_err();
     assert!(started.elapsed() < Duration::from_secs(2));
     assert!(error.message.contains("regular PNG"), "{}", error.message);
+    assert_eq!(error.code, ErrorCode::TransportError);
 }
 
 #[test]
@@ -305,8 +324,10 @@ fn invalid_missing_and_empty_pngs_are_rejected() {
     let dir = outside_home(tmp.path());
     let error = capture(&dir, b"not a png at all").unwrap_err();
     assert!(error.message.contains("valid PNG"), "{}", error.message);
+    assert_eq!(error.code, ErrorCode::TransportError);
     let error = capture(&dir, &png_bytes(0, 0)).unwrap_err();
     assert!(error.message.contains("empty PNG"), "{}", error.message);
+    assert_eq!(error.code, ErrorCode::TransportError);
     let open = dir.open().unwrap();
     let error = open.png_dimensions("never-written.png").unwrap_err();
     assert!(error.message.contains("readable PNG"), "{}", error.message);

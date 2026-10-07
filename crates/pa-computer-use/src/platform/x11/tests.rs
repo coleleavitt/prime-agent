@@ -320,6 +320,11 @@ fn list_apps_dedups_classes_in_first_seen_order() {
         .map(|app| app.id)
         .collect();
     assert_eq!(ids, ["Notes", "Slack", "XTerm", "Weird", "Sh"]);
+    let entry = |id: &str| json!({"id": id, "name": id, "running": true});
+    assert_eq!(
+        crate::session::apps_json(&platform.list_apps().unwrap()),
+        json!(["Notes", "Slack", "XTerm", "Weird", "Sh"].map(entry))
+    );
 }
 
 #[test]
@@ -675,6 +680,10 @@ fn without_maim_scrot_runs_directly() {
         .capture(CaptureRequest::Window(220))
         .unwrap();
     assert_eq!(script.calls().len(), 1);
+    assert_eq!(
+        script.calls()[0][..3],
+        argv(&["/usr/bin/scrot", "-u", "-o"])
+    );
     assert_eq!(captured.width, 100);
 }
 
@@ -690,6 +699,7 @@ fn capture_failures_name_every_attempt() {
         "{}",
         error.message
     );
+    assert_eq!(error.code, ErrorCode::TransportError);
     let script = x11(&TOOLS);
     script.on(&["-i"], 1, b"", b"maim: window gone");
     script.on(&["-u"], 1, b"", b"giblib error: cannot open X display");
@@ -720,6 +730,7 @@ fn capture_failures_name_every_attempt() {
         "{}",
         error.message
     );
+    assert_eq!(error.code, ErrorCode::TransportError);
 }
 
 // --- the App layer on X11 -----------------------------------------------------
@@ -797,6 +808,7 @@ fn get_app_gates_the_wm_class_and_reports_missing_apps() {
         .get_app(&AppSpec::text("notes"), None)
         .unwrap_err();
     assert!(blocked.message.contains("blocked list"));
+    assert_eq!(blocked.code, ErrorCode::AppNotAllowed);
     let (env, _script) = linux_env();
     let missing = env
         .session
@@ -1087,6 +1099,7 @@ fn unsupported_actions_name_the_x11_gap_and_emit_their_events() {
     assert!(frontmost
         .message
         .contains("focus control is not available on the linux X11 backend yet"));
+    assert_eq!(frontmost.code, ErrorCode::ActionUnsupported);
     let ocr = env
         .session
         .call(app.handle, AppCall::GetTextRegions)
@@ -1096,6 +1109,7 @@ fn unsupported_actions_name_the_x11_gap_and_emit_their_events() {
             .contains("not available on the Linux X11 backend yet")
             && ocr.message.contains("get_ax_state")
     );
+    assert_eq!(ocr.code, ErrorCode::ActionUnsupported);
 }
 
 #[test]
@@ -1133,6 +1147,7 @@ fn telemetry_diffing_and_the_state_report_linux() {
     );
     let state = env.session.get_state(false).unwrap();
     assert_eq!(state["platform"], json!("linux"));
+    assert_eq!(state["permissions"]["accessibility"], json!("unknown"));
     assert_eq!(state["allowlist"]["allowed"], json!(["Notes", "Slack"]));
     assert_eq!(
         state["apps"][0],

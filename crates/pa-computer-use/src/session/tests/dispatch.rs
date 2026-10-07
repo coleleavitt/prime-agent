@@ -65,6 +65,34 @@ fn a_double_click_bypasses_the_press_action() {
 }
 
 #[test]
+fn malformed_drag_and_scroll_points_are_invalid_and_send_nothing() {
+    let env = Env::new();
+    let app = bound(&env);
+    let bad = |repr: &str| PointArg::Invalid {
+        repr: repr.to_string(),
+    };
+    for drag in [
+        AppCall::Drag {
+            from: point(10.0, 20.0),
+            to: bad("(30,)"),
+        },
+        AppCall::Drag {
+            from: bad("'10,20'"),
+            to: point(30.0, 40.0),
+        },
+    ] {
+        assert_eq!(code(call(&env, &app, drag)), ErrorCode::InvalidArgument);
+    }
+    let scroll = AppCall::Scroll {
+        target: TargetArg::Point(bad("'10,20'")),
+        direction: ScrollDirection::Up,
+        pages: 1,
+    };
+    assert_eq!(code(call(&env, &app, scroll)), ErrorCode::InvalidArgument);
+    assert!(env.fake().calls.is_empty());
+}
+
+#[test]
 fn window_points_translate_by_the_window_origin() {
     let env = Env::new();
     let app = bound(&env);
