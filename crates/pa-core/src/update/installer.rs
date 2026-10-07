@@ -269,7 +269,10 @@ pub async fn run_installer_from(
         spawn_handoff(&script, prefix, channel, &[])?;
         return Ok(RunOutcome::Handoff);
     }
-    execute_script(&script, &[], prefix, channel, output).await?;
+    // The downloaded script is this run's own temp file: remove it whatever the installer did.
+    let result = execute_script(&script, &[], prefix, channel, output).await;
+    let _ = std::fs::remove_file(&script);
+    result?;
     let version = launcher_version(prefix).await;
     Ok(RunOutcome::Installed(Installed { version }))
 }

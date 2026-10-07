@@ -85,8 +85,11 @@ fn serve_at(path: &'static str, body: &'static str) -> String {
 }
 
 /// One sandbox: a HOME with the session store the update must preserve,
-/// and the install prefix the launcher lands under.
+/// and the install prefix the launcher lands under. The guard removes the
+/// whole tree (copied release binaries included) when the test ends, on
+/// panic as well as on success.
 struct Sandbox {
+    _guard: tempfile::TempDir,
     root: PathBuf,
     session_file: PathBuf,
     session_bytes: Vec<u8>,
@@ -95,12 +98,11 @@ struct Sandbox {
 
 impl Sandbox {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "pa-update-e2e-{}-{}",
-            std::process::id(),
-            uuid_probe()
-        ));
-        std::fs::create_dir_all(&root).expect("sandbox root");
+        let guard = tempfile::Builder::new()
+            .prefix("pa-update-e2e-")
+            .tempdir()
+            .expect("sandbox root");
+        let root = guard.path().to_path_buf();
         let home = root.join("home");
         let session_file = home.join(".prime/agent/sessions/session.jsonl");
         std::fs::create_dir_all(session_file.parent().expect("session dir")).expect("session dir");
@@ -111,11 +113,27 @@ impl Sandbox {
         let prefix = root.join("prefix/.local");
         std::fs::create_dir_all(&prefix).expect("prefix");
         Self {
+            _guard: guard,
             root,
             session_file,
             session_bytes,
             prefix,
         }
+    }
+
+    /// The update's own temp files (the downloaded installer script) are gone: the run's
+    /// TMPDIR is this sandbox's `tmp`.
+    fn assert_temp_dir_empty(&self) {
+        let leftovers: Vec<String> = std::fs::read_dir(self.root.join("tmp"))
+            .expect("tmp dir")
+            .filter_map(std::result::Result::ok)
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .collect();
+        assert_eq!(
+            leftovers,
+            Vec::<String>::new(),
+            "the update left temp files"
+        );
     }
 
     /// The preserve invariant: the session store is byte-identical.
@@ -128,14 +146,6 @@ impl Sandbox {
     }
 }
 
-/// A per-test disambiguator for the sandbox root (no uuid dependency in
-/// dev-deps: the pid plus the server port keeps concurrent runs apart).
-fn uuid_probe() -> String {
-    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let next = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    format!("{next}")
-}
-
 fn run_prime_agent(args: &[&str], sandbox: &Sandbox, url: &str) -> std::process::Output {
     let mut command = prime_agent(args, sandbox);
     command.env(ENV_INSTALLER_URL, url);
@@ -143,10 +153,13 @@ fn run_prime_agent(args: &[&str], sandbox: &Sandbox, url: &str) -> std::process:
 }
 
 fn prime_agent(args: &[&str], sandbox: &Sandbox) -> Command {
+    let tmp = sandbox.root.join("tmp");
+    std::fs::create_dir_all(&tmp).expect("tmp dir");
     let mut command = Command::new(env!("CARGO_BIN_EXE_prime-agent"));
     command
         .args(args)
         .env("HOME", sandbox.root.join("home"))
+        .env("TMPDIR", tmp)
         .env_remove(ENV_INSTALLER_URL)
         .env(ENV_PREFIX, &sandbox.prefix)
         .env(
@@ -187,6 +200,7 @@ fn update_runs_the_downloaded_installer_and_preserves_the_session_store() {
         "9.9.9-continuous.0123456789abcdef"
     );
     sandbox.assert_session_preserved();
+    sandbox.assert_temp_dir_empty();
 }
 
 /// A nightly install's `prime-agent update` fetches `install-beta.sh` from
@@ -259,6 +273,7 @@ fn a_failing_installer_keeps_the_previous_install() {
         "the previous install was kept"
     );
     sandbox.assert_session_preserved();
+    sandbox.assert_temp_dir_empty();
 }
 
 /// A hermetic world for the real `install-rust.sh`: `HOME` and `TMPDIR`
