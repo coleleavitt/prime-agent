@@ -459,12 +459,32 @@ pub(crate) fn saved_session_context_from_parts(
     }
 }
 
+/// The faux provider registry is process-global: a registration replaces
+/// the provider every live faux engine streams through, so one made outside
+/// `FAUX_TEST_LOCK` hands a concurrent test's turns (a provider retry, a
+/// background summary) this test's scripted responses. Fail the registering
+/// test instead of a random other one.
+#[cfg(test)]
+fn assert_faux_test_lock_held() {
+    let held = matches!(
+        crate::agent_engine::FAUX_TEST_LOCK.try_lock(),
+        Err(std::sync::TryLockError::WouldBlock)
+    );
+    assert!(
+        held,
+        "a faux provider registered without FAUX_TEST_LOCK held (thread {:?})",
+        std::thread::current().name()
+    );
+}
+
 /// Register the faux provider from a script and return its model. Scripts
 /// carry plain-text responses or content-block arrays (thinking, text, tool
 /// calls) so harnesses can script full turns. Verification harness only.
 fn faux_model_from_script(script: &str) -> anyhow::Result<Model> {
     let script: serde_json::Value = serde_json::from_str(script)?;
     let parsed = pa_ai::faux::script::parse_faux_script(&script).map_err(anyhow::Error::msg)?;
+    #[cfg(test)]
+    assert_faux_test_lock_held();
     let registration = pa_ai::faux::script::register_faux_provider_from_script(&parsed);
     Ok(registration.get_model())
 }
