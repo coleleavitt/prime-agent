@@ -18,6 +18,8 @@ pa-ai.workspace = true
 pa-models = { path = "../pa-models" }
 pa-agent.workspace = true
 pa-telemetry.workspace = true
+# The bundled computer-use skill's host side (`computer_use.*` host requests).
+pa-computer-use = { path = "../pa-computer-use" }
 base64 = "0.22"
 fancy-regex = "0.14"
 # The traces browser login's auth challenge (RSA-2048 keypair, OAEP-SHA256

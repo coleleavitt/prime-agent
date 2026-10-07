@@ -1917,6 +1917,7 @@ dependencies = [
  "nix",
  "pa-agent",
  "pa-ai",
+ "pa-computer-use",
  "pa-models",
  "pa-telemetry",
  "pa-types",

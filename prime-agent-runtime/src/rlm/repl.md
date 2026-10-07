@@ -292,6 +292,25 @@ kernel the client sends the same request to `prime-agent
 --prime-agent-harness-request` (stdin: the request, stdout: the reply);
 the host exports the binary to the kernel as `PRIME_AGENT_EXECUTABLE`.
 
+### Computer-use requests
+
+The bundled `computer-use` skill's `computer_use` package is a client of the
+host's `pa-computer-use` backends (macOS, X11, Wayland/niri); every call is
+one host request (`App.is_frontmost()`, a synchronous method, uses
+`host_request_blocking` with a 30 s bound, the rest `host_request`):
+
+| `type` | payload |
+|---|---|
+| `computer_use.get_state` | `{emit}` |
+| `computer_use.list_apps` | `{}` |
+| `computer_use.permissions_status` | `{}` |
+| `computer_use.get_app` | `{spec, instructions_dir}`: `spec` is the argument's shape (`{"kind": "str", "value"}`, `{"kind": "dict", "entries", "keys"}`, or `{"kind": "other", "type"}`) plus its Python `str` and `repr`; `instructions_dir` is where the per-app guides ship |
+| `computer_use.app` | `{handle, method, ...}`: one `App` method of the binding `handle` names, with its arguments encoded (`target`: `{"kind": "index", "index"}`, `{"kind": "point", "point": {x, y, repr}}`, or `{"kind": "invalid", "type"}`) |
+
+Each answers `{"ok": result}` or `{"error": {"code", "message", "details"}}`,
+which the client raises as `ComputerUseError(code, message, details)`. The
+client validates the Python-typed arguments first, with the skill's messages.
+
 ## MCP sessions
 
 The MCP connections behind `rlm.mcp` and `rlm.McpIntegration` are host-owned
