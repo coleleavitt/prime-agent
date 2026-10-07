@@ -412,10 +412,7 @@ impl Inner {
             // A stale runtime passed a memoized probe's key but speaks the
             // wrong protocol: the memo is stale, so a retry re-probes.
             crate::kernel::bootstrap::invalidate_runtime_probe_cache_for(&python);
-            return Err(anyhow!(
-                "Kernel runtime speaks protocol {protocol}, expected {REPL_PROTOCOL_VERSION}. \
-                 Update prime-agent-runtime in the kernel Python (PRIME_AGENT_KERNEL_PYTHON) to match this prime-agent."
-            ));
+            return Err(anyhow!(protocol_skew_message(protocol)));
         }
         // Plan mode arms before the kernel serves anything (restore, the
         // runtime bootstrap, cells). With plan mode off no frame is sent: the
@@ -718,6 +715,25 @@ impl Inner {
 #[cfg(unix)]
 fn unix_signal_of(status: std::process::ExitStatus) -> Option<i32> {
     crate::platform::process::termination_signal(&status)
+}
+
+/// The handshake failure for a runtime that speaks another protocol: which
+/// side is behind, and how to bring the two back in step.
+fn protocol_skew_message(protocol: i64) -> String {
+    let expected = REPL_PROTOCOL_VERSION;
+    if protocol > expected as i64 {
+        format!(
+            "Kernel runtime speaks protocol {protocol}, expected {expected}: the kernel's prime-agent-runtime is newer than this prime-agent (host/runtime version skew). \
+             Reinstall prime-agent so the binary matches its runtime (`cargo install --path crates/pa-cli` from the checkout, or rerun the installer), \
+             or point PRIME_AGENT_KERNEL_PYTHON at a Python whose prime-agent-runtime matches this prime-agent."
+        )
+    } else {
+        format!(
+            "Kernel runtime speaks protocol {protocol}, expected {expected}: the kernel's prime-agent-runtime is older than this prime-agent (host/runtime version skew). \
+             Update prime-agent-runtime in the kernel Python (PRIME_AGENT_KERNEL_PYTHON) to match this prime-agent, \
+             or unset PRIME_AGENT_KERNEL_PYTHON so prime-agent bootstraps the runtime it ships."
+        )
+    }
 }
 
 #[cfg(test)]

@@ -171,8 +171,8 @@ class ReplTest(unittest.TestCase):
     def test_the_retired_factory_activity_frame_is_an_unknown_request(self):
         # The factory executor runs in the host, so the `/factory` lane no
         # longer rides the kernel: the retired out-of-band request answers
-        # the unknown-type protocol error (no frame changed shape, so the
-        # protocol version stays 4) and the runtime keeps serving.
+        # the unknown-type protocol error (retiring it changed no frame
+        # shape) and the runtime keeps serving.
         self.repl.send({"type": "factory_activity", "id": "g", "action": "graph"})
         event = self.repl.read_event()
         self.assertEqual(event["event"], "error")
@@ -183,7 +183,7 @@ class ReplTest(unittest.TestCase):
 
     def test_ready_handshake_and_startup_time(self):
         self.assertEqual(self.ready_event["event"], "ready")
-        self.assertEqual(self.ready_event["protocol"], 4)
+        self.assertEqual(self.ready_event["protocol"], 5)
         major, minor = sys.version_info[:2]
         self.assertTrue(self.ready_event["python"].startswith(f"{major}.{minor}."))
         # Loose bound for loaded CI machines; still catches an order-of-magnitude regression.

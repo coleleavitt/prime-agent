@@ -3,11 +3,17 @@
 `python -m rlm.repl` starts a CPython REPL runtime that executes code cells in
 one persistent `__main__` namespace on a single asyncio event loop. The wire
 format is newline-delimited JSON: one object per line, UTF-8, no other framing.
-The current protocol version is `4`; the runtime announces it in the `ready`
-event. The out-of-band `factory_activity` request is gone (the factory
-executor runs in the host, so the `/factory` lane no longer needs the
-kernel); no frame changed shape, so the version stays `4`, and a runtime
-that receives the retired request answers the unknown-type protocol error.
+The current protocol version is `5`; the runtime announces it in the `ready`
+event, and the host refuses a runtime that announces any other version.
+Version 5 changed no frame shape: it marks the runtime whose `bash()` and
+computer use are thin clients of the host, so the host must serve the
+`bash.*` and `computer_use.*` host requests (with `harness.*`,
+`mcp.session.*` and `factory.*`). A version-4 host cannot run a version-5
+runtime and vice versa, and the handshake says so instead of letting every
+`bash()` call fail. The out-of-band `factory_activity` request is gone (the
+factory executor runs in the host, so the `/factory` lane no longer needs the
+kernel); a runtime that receives the retired request answers the
+unknown-type protocol error.
 
 ## Channels
 
@@ -67,7 +73,7 @@ runtime keeps serving. Closing stdin is equivalent to `shutdown`.
 
 ## Events
 
-- `{"event":"ready","protocol":4,"python":"3.13.11"}` — sent once at startup;
+- `{"event":"ready","protocol":5,"python":"3.13.11"}` — sent once at startup;
   the handshake. No banner precedes it.
 - `{"event":"stdout"|"stderr","id":str|null,"text":str}` — captured output.
   `id` is the cell whose Python execution context performed the write; asyncio

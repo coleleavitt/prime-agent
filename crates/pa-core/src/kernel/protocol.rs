@@ -1,4 +1,4 @@
-//! Wire types of the REPL runtime protocol (version 3).
+//! Wire types of the REPL runtime protocol (version 5).
 //!
 //! Requests are newline-delimited JSON objects written to the kernel's stdin; events
 //! arrive as newline-delimited JSON objects on the runtime's private protocol dup of
@@ -11,8 +11,12 @@ use crate::kernel::shared::KernelSentAgentMessage;
 
 /// Protocol version the manager speaks; the runtime announces its own in the
 /// `ready` event and the handshake must match exactly. Version 4 adds the
-/// advisory `host_cancel` event (see `Event::HostCancel`).
-pub const REPL_PROTOCOL_VERSION: u64 = 4;
+/// advisory `host_cancel` event (see `Event::HostCancel`). Version 5 marks the
+/// runtime that needs its host to serve `bash.*` and `computer_use.*` (with
+/// `harness.*`, `mcp.session.*`, `factory.*`): `bash()` and computer use are
+/// thin clients of the host, so a host and runtime on either side of it
+/// cannot work together and the handshake refuses the pair.
+pub const REPL_PROTOCOL_VERSION: u64 = 5;
 
 /// One request frame.
 #[derive(Debug, Clone)]

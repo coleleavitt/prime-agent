@@ -39,7 +39,7 @@ from typing import Any
 from . import plan_guard, trace
 from .bash import _kill_live_handles
 
-PROTOCOL_VERSION = 4
+PROTOCOL_VERSION = 5
 
 DEFAULT_SNAPSHOT_MAX_BYTES = 256 * 1024 * 1024
 DEFAULT_SNAPSHOT_MAX_VARIABLE_BYTES = 16 * 1024 * 1024

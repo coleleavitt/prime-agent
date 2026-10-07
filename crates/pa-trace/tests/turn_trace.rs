@@ -27,7 +27,7 @@ use regex::Regex;
 use serde_json::Value;
 use tracing_subscriber::layer::SubscriberExt;
 
-/// Speaks protocol 4 like `rlm.repl`: each execute runs under the request's
+/// Speaks protocol 5 like `rlm.repl`: each execute runs under the request's
 /// `traceparent` and reports a `kernel.cell` `span_end` trace event before
 /// `done`.
 const FAKE_RUNTIME: &str = r#"#!/usr/bin/env python3
@@ -35,7 +35,7 @@ import json
 import secrets
 import sys
 
-print(json.dumps({"event": "ready", "protocol": 4, "python": "3.13.0"}), flush=True)
+print(json.dumps({"event": "ready", "protocol": 5, "python": "3.13.0"}), flush=True)
 for line in sys.stdin:
     try:
         req = json.loads(line)

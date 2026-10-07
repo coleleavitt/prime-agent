@@ -927,13 +927,14 @@ fn resolve_startup_budget_ms() -> u64 {
 /// A failed boot the provisioner may retry on its own: transient spawn or
 /// ready-handshake problems. Structural failures never auto-retry.
 fn startup_failure_is_retryable(error: &anyhow::Error) -> bool {
-    const FATAL_MARKERS: [&str; 8] = [
+    const FATAL_MARKERS: [&str; 9] = [
         "provisioner disposed",
         "aborted",
         "Failed to set up the Python kernel runtime",
         "PRIME_AGENT_KERNEL_PYTHON points to a Python",
         "Failed to initialize rlm runtime",
         "Update prime-agent-runtime in the kernel Python",
+        "host/runtime version skew",
         "Kernel start superseded",
         "Kernel was disposed during startup",
     ];
@@ -1567,8 +1568,7 @@ mod tests {
             "PRIME_AGENT_KERNEL_PYTHON points to a Python missing a current prime-agent-runtime: /bad"
         )));
         assert!(!startup_failure_is_retryable(&anyhow!(
-            "Kernel runtime speaks protocol 2, expected 3. \
-             Update prime-agent-runtime in the kernel Python (PRIME_AGENT_KERNEL_PYTHON) to match this prime-agent."
+            "Kernel runtime speaks protocol 6, expected 5: the kernel's prime-agent-runtime is newer than this prime-agent (host/runtime version skew). Reinstall prime-agent."
         )));
     }
 
@@ -1683,7 +1683,7 @@ mod tests {
     async fn silent_bootstrap_fails_bounded_and_leaves_no_kernel() {
         use std::os::unix::fs::PermissionsExt;
 
-        // Speaks protocol v3: answers the ready handshake, stays silent on
+        // Speaks the current protocol: answers the ready handshake, stays silent on
         // every execute (the runtime bootstrap included), and answers the
         // shutdown frame so a teardown does not wait out its kill deadline.
         const SILENT_BOOTSTRAP_RUNTIME: &str = r#"#!/usr/bin/env python3
@@ -1694,7 +1694,7 @@ import sys
 base = os.path.dirname(os.path.abspath(__file__))
 with open(os.path.join(base, "starts"), "a") as f:
     f.write("x")
-print(json.dumps({"event": "ready", "protocol": 4, "python": "3.13.0"}), flush=True)
+print(json.dumps({"event": "ready", "protocol": 5, "python": "3.13.0"}), flush=True)
 for line in sys.stdin:
     try:
         req = json.loads(line)
@@ -1745,5 +1745,81 @@ for line in sys.stdin:
             1,
             "the fatal classification must not auto-retry the boot"
         );
+    }
+
+    /// A runtime on the other side of a protocol bump fails the handshake
+    /// loudly, naming the host/runtime version skew and the fix, and does
+    /// not retry: a runtime the host cannot serve (the 4 -> 5 bump: `bash()`
+    /// and computer use became host-served) must never get to run cells.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_protocol_skew_fails_the_handshake_with_the_fix() {
+        use std::os::unix::fs::PermissionsExt;
+
+        use crate::kernel::protocol::REPL_PROTOCOL_VERSION;
+
+        for (announced, fix) in [
+            (
+                REPL_PROTOCOL_VERSION - 1,
+                "the kernel's prime-agent-runtime is older than this prime-agent",
+            ),
+            (
+                REPL_PROTOCOL_VERSION + 1,
+                "the kernel's prime-agent-runtime is newer than this prime-agent",
+            ),
+        ] {
+            let runtime = format!(
+                r#"#!/usr/bin/env python3
+import json
+import os
+import sys
+
+base = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(base, "starts"), "a") as f:
+    f.write("x")
+print(json.dumps({{"event": "ready", "protocol": {announced}, "python": "3.13.0"}}), flush=True)
+for line in sys.stdin:
+    try:
+        req = json.loads(line)
+    except Exception:
+        continue
+    if req.get("type") == "shutdown":
+        print(json.dumps({{"event": "done", "id": req.get("id"), "status": "ok"}}), flush=True)
+        break
+"#
+            );
+            let dir = tempfile::TempDir::new().expect("temp dir");
+            let python = dir.path().join("fake-kernel");
+            std::fs::write(&python, runtime).expect("write fake runtime");
+            std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod fake runtime");
+            let provisioner = IpythonKernelProvisioner::new(
+                dir.path(),
+                IpythonKernelProvisionerOptions {
+                    python: Some(python),
+                    ..Default::default()
+                },
+            );
+            let error = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                provisioner.ensure(None, None),
+            )
+            .await
+            .expect("the handshake must settle")
+            .expect_err("a skewed runtime must not start");
+            let chain = format!("{error:#}");
+            assert!(
+                chain.contains(&format!(
+                    "Kernel runtime speaks protocol {announced}, expected {REPL_PROTOCOL_VERSION}: {fix} (host/runtime version skew)."
+                )),
+                "{chain}"
+            );
+            assert!(!provisioner.has_running_kernel(), "{chain}");
+            assert_eq!(
+                std::fs::metadata(dir.path().join("starts")).map_or(0, |m| m.len()),
+                1,
+                "a skew is fatal, not retried: {chain}"
+            );
+        }
     }
 }
