@@ -74,13 +74,13 @@ against goldens produced by the TS code on Node.
   row and a durable terminal row when the run ends), the bundled `dream`
   kernel skill (`skills/.features/dream`), status pushes with the TS
   agents-view line, and the adoption event. Offered only to a top-level
-  session with a session artifact directory (TS `_autoRefineAllowedForSession`).
+  session with a session artifact directory (`dream_allowed`; TS
+  `_autoRefineAllowedForSession`). The `dream` skill follows the same rule:
+  `session_skill_visible` hides it from any other session (TS
+  `_modelVisibleSkills`), so no session lists a skill whose calls would fail.
 
 ## Non-goals and known differences
 
-- The `dream` skill is listed to every session of a build with the feature
-  (TS withheld it from sessions that cannot dream); there its calls fail as
-  unregistered host requests.
 - The service runs on its own thread; status key order is the struct's,
   not the TS spread order (the reply is not persisted).
 - A rejection excerpt or guidance artifact cut through a surrogate pair
@@ -92,7 +92,7 @@ against goldens produced by the TS code on Node.
   modules above.
 - Seams used: `pa-cli`'s command registry; `SessionFeature::
   register_host_handlers`, `slash_commands` / `execute_slash_command`,
-  `bundled_skills`, `flush`; `pa_core::features::publish_feature_status`
+  `bundled_skills`, `session_skill_visible`, `flush`; `pa_core::features::publish_feature_status`
   (the daemon's `feature_status` event and roster `featureStatus`, the
   agents-view line). Spans are `tracing` spans named as the TS spans,
   plus `dream.llm_propose`, `dream.llm_dream`, `dream.llm_guidance`.
