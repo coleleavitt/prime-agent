@@ -151,6 +151,8 @@ fn cached_prefix_is_stable_across_sessions() {
 /// worker's `bash.completed` (the background-command completion notice)
 /// and `bash.progress` (`rlm.watch.job`'s own poller) are runtime plumbing,
 /// and `vision.read` is the bundled `attach_image` skill's own request.
+/// The `harness.*` requests are the transport of `rlm.harness` (documented
+/// through `HARNESS_TOKENS`).
 const INTERNAL_HOST_REQUESTS: &[&str] = &[
     "model.info",
     "mcp.config",
@@ -161,6 +163,22 @@ const INTERNAL_HOST_REQUESTS: &[&str] = &[
     "bash.completed",
     "bash.progress",
     "vision.read",
+    "harness.load",
+    "harness.save",
+    "harness.get",
+    "harness.list",
+    "harness.search",
+    "harness.overview",
+    "harness.snapshot",
+    "harness.upsert",
+    "harness.create",
+    "harness.update",
+    "harness.delete",
+    "harness.set_enabled",
+    "harness.record_refinement",
+    "harness.create_skill",
+    "harness.update_skill",
+    "harness.factory",
 ];
 
 /// Map one registered host-request type to the prompt token that documents

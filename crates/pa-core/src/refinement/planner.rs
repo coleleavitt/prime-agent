@@ -606,6 +606,7 @@ pub fn apply_refinement_proposal(
         evidence: proposal.rationale.clone(),
         outcome: proposal.expected_outcome.clone(),
         created_at: now_iso(),
+        reason: None,
     });
     super::RefinementResult {
         id: options.id,

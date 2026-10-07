@@ -437,6 +437,39 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
     }
 }
 
+/// The hidden flag a Python process outside a kernel uses to reach the
+/// harness store (`rlm.harness` without a host): one `harness.<op>` request
+/// on stdin, its reply on stdout.
+pub const HARNESS_REQUEST_FLAG: &str = "--prime-agent-harness-request";
+
+/// Serve one [`HARNESS_REQUEST_FLAG`] request. Returns the exit code: 0
+/// with the reply printed, 2 when stdin is not one JSON request.
+#[must_use]
+pub fn run_harness_request() -> i32 {
+    use std::io::{Read as _, Write as _};
+    let mut input = String::new();
+    if let Err(error) = std::io::stdin().read_to_string(&mut input) {
+        eprintln!("Error: {error}");
+        return 2;
+    }
+    let request: serde_json::Value = match serde_json::from_str(&input) {
+        Ok(request) => request,
+        Err(error) => {
+            eprintln!("Error: harness request is not JSON: {error}");
+            return 2;
+        }
+    };
+    let reply = pa_core::refinement::store::handle_request(&request);
+    let mut stdout = std::io::stdout().lock();
+    match writeln!(stdout, "{reply}").and_then(|()| stdout.flush()) {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("Error: {error}");
+            1
+        }
+    }
+}
+
 /// Prepare the kernel runtime at install time: resolve or bootstrap the kernel
 /// Python and print its path. Failures print the error and exit 1.
 fn run_runtime_bootstrap() -> Result<i32, String> {
