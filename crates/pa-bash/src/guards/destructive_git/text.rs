@@ -8,7 +8,8 @@
 
 use std::sync::LazyLock;
 
-use super::pattern::{is_space, Pattern};
+use crate::syntax::chars::is_space;
+use crate::syntax::pyre::{Haystack, PyRegex};
 
 /// True when the `#` at `index` opens a comment: the shell starts a comment
 /// only at the beginning of a word, so `foo#bar` is literal text.
@@ -232,10 +233,10 @@ fn mask_heredoc_body(
     }
 }
 
-static REDIRECT_OPERATOR: LazyLock<Pattern> =
-    LazyLock::new(|| Pattern::new(r"(?:&>{1,2}|>&|[0-9]*[<>]{1,3}(&[0-9]+)?)"));
-static STATIC_REDIRECT_TARGET: LazyLock<Pattern> =
-    LazyLock::new(|| Pattern::new(r#"[^\s;&|<>()$`"']*"#));
+static REDIRECT_OPERATOR: LazyLock<PyRegex> =
+    LazyLock::new(|| PyRegex::new(r"(?:&>{1,2}|>&|[0-9]*[<>]{1,3}(&[0-9]+)?)"));
+static STATIC_REDIRECT_TARGET: LazyLock<PyRegex> =
+    LazyLock::new(|| PyRegex::new(r#"[^\s;&|<>()$`"']*"#));
 
 /// Blank shell redirection words, keeping positions: `git reset 2>/dev/null
 /// --hard` scans as `git reset --hard`. Only the operator and a fully static
@@ -246,6 +247,7 @@ static STATIC_REDIRECT_TARGET: LazyLock<Pattern> =
     reason = "one quote-aware pass; the redirect and heredoc arms share its state"
 )]
 pub(super) fn mask_shell_redirections(command: &[char]) -> Vec<char> {
+    let haystack = Haystack::from_chars(command);
     let mut chars = command.to_vec();
     let mut quote: Option<char> = None;
     let mut comment = false;
@@ -276,7 +278,7 @@ pub(super) fn mask_shell_redirections(command: &[char]) -> Vec<char> {
                     i += 2;
                     continue;
                 }
-                if let Some(operator) = REDIRECT_OPERATOR.match_at(command, i) {
+                if let Some(operator) = REDIRECT_OPERATOR.match_at(&haystack, i) {
                     chars[operator.start()..operator.end()].fill(' ');
                     i = operator.end();
                     if command[operator.start()..operator.end()] == ['<', '<'] {
@@ -306,7 +308,7 @@ pub(super) fn mask_shell_redirections(command: &[char]) -> Vec<char> {
                         }
                     }
                     let attached_end = STATIC_REDIRECT_TARGET
-                        .match_at(command, i)
+                        .match_at(&haystack, i)
                         .map_or(i, |found| found.end());
                     let (target_start, target_end) = if attached_end > i {
                         (i, attached_end)
@@ -318,7 +320,7 @@ pub(super) fn mask_shell_redirections(command: &[char]) -> Vec<char> {
                             j += 1;
                         }
                         let detached_end = STATIC_REDIRECT_TARGET
-                            .match_at(command, j)
+                            .match_at(&haystack, j)
                             .map_or(j, |found| found.end());
                         if detached_end > j && j > i {
                             (j, detached_end)

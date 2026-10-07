@@ -13,7 +13,6 @@
 
 mod eval;
 mod messages;
-mod pattern;
 mod sites;
 mod target;
 mod text;

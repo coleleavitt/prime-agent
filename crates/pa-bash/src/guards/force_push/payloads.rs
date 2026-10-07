@@ -12,8 +12,9 @@ use super::command_words::{
 use super::config::{mirror_or_push_refspec_configured, unreadable_inline_config};
 use super::lexing::{prepare, unquote_one_level};
 use super::push::{find_git_push_runs, run_is_guarded};
-use super::text::{chars, command_name, has_expansion, has_word, slice, SHELL_NAMES};
+use super::text::{chars, command_name, has_expansion, slice, SHELL_NAMES};
 use super::words::{literal_words, scan_words, ShellWord};
+use crate::syntax::mention::Mention;
 
 /// Payload nesting deeper than this is refused rather than missed.
 const MAX_PAYLOAD_DEPTH: usize = 10;
@@ -73,15 +74,15 @@ pub(super) fn nested_payloads_hide_force_push(
     depth: usize,
     budget: &Budget,
 ) -> Scan<Option<HiddenIn>> {
-    if has_word(gate, &["eval"], false) && eval_payloads_hide_force_push(command, depth, budget)? {
+    if Mention::Eval.in_text(gate) && eval_payloads_hide_force_push(command, depth, budget)? {
         return Ok(Some(HiddenIn::Eval));
     }
-    if has_word(gate, &SHELL_NAMES, true)
+    if Mention::AnyShellAnyCase.in_text(gate)
         && shell_c_payloads_hide_force_push(command, depth, budget)?
     {
         return Ok(Some(HiddenIn::ShellC));
     }
-    if has_word(gate, &["env"], true) && env_payloads_hide_force_push(command, depth, budget)? {
+    if Mention::EnvAnyCase.in_text(gate) && env_payloads_hide_force_push(command, depth, budget)? {
         return Ok(Some(HiddenIn::EnvSplitString));
     }
     Ok(None)

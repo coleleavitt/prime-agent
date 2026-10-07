@@ -5,11 +5,11 @@
 
 use std::sync::LazyLock;
 
-use super::pattern::Pattern;
 use super::text::{
     contains, equals, mask_quoted_spans, normalized, split_whitespace_runs, starts_with,
 };
 use super::words::{reveal_shell_command_words, AliasReading, Names};
+use crate::syntax::pyre::PyRegex;
 
 /// One git option token and the separate value word that may follow it,
 /// written as disjoint shapes so every token has exactly one reading and the
@@ -23,29 +23,33 @@ fn global_options() -> String {
     format!(r"(?:{GIT_OPTION_TOKEN}(?:\s+{GIT_OPTION_VALUE})?\s+)*")
 }
 
-static CHECKOUT: LazyLock<Pattern> = LazyLock::new(|| {
+static CHECKOUT: LazyLock<PyRegex> = LazyLock::new(|| {
     let options = global_options();
-    Pattern::new(&format!(
+    PyRegex::new(&format!(
         r"\bgit\s+{options}checkout\s+(?:(?:(?:-[fm]|--ours|--theirs|--conflict=\S+)\s+)*(?:(?:--\s+)?(?:\./?|:/)|{PATHSPEC_FROM_FILE})|[^\s;&|()]+\s+(?:(?:--\s+)?(?:\./?|:/)|{PATHSPEC_FROM_FILE})|(?:-f|--force)\s+[^\s;&|()]+)(?=\s|$|[;&|)])"
     ))
+    .requiring(&["git"])
 });
-static RESTORE: LazyLock<Pattern> = LazyLock::new(|| {
+static RESTORE: LazyLock<PyRegex> = LazyLock::new(|| {
     let options = global_options();
-    Pattern::new(&format!(
+    PyRegex::new(&format!(
         r"\bgit\s+{options}restore\s+((?:{GIT_OPTION_TOKEN}(?:\s+{GIT_OPTION_VALUE})?\s+)*)(?:{PATHSPEC_FROM_FILE}|\./?|:/)(?=\s|$|[;&|)])"
     ))
+    .requiring(&["git"])
 });
-static RESET: LazyLock<Pattern> = LazyLock::new(|| {
+static RESET: LazyLock<PyRegex> = LazyLock::new(|| {
     let options = global_options();
-    Pattern::new(&format!(
+    PyRegex::new(&format!(
         r"\bgit\s+{options}reset\s+(?:(?:-[^\s;&|]+)\s+)*--hard\b"
     ))
+    .requiring(&["git"])
 });
-static CLEAN: LazyLock<Pattern> = LazyLock::new(|| {
+static CLEAN: LazyLock<PyRegex> = LazyLock::new(|| {
     let options = global_options();
-    Pattern::new(&format!(
+    PyRegex::new(&format!(
         r"\bgit\s+{options}clean(?=\s|$|[;&|)])([^;&|\n]*)"
     ))
+    .requiring(&["git"])
 });
 
 /// `git restore` targets the working tree unless `--staged`/`-S` alone is

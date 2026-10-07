@@ -7,8 +7,9 @@ use crate::context::GuardContext;
 use super::budget::{Budget, Scan};
 use super::config::Assignments;
 use super::lexing::unquoted_paren_counts;
-use super::text::{chars, has_git_assignment, has_word, is_space, join_path, slice};
+use super::text::{chars, has_git_assignment, is_space, join_path, slice};
 use super::words::{literal_words, scan_words};
+use crate::syntax::mention::Mention;
 
 /// The directory a push would run in.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -223,7 +224,7 @@ pub(super) fn resolve_push_cwd(
     context: &GuardContext,
     budget: &Budget,
 ) -> Scan<PushCwd> {
-    if !(has_word(prefix, &["cd", "pushd", "popd", "source"], false)
+    if !(Mention::RelocatorOrSource.in_text(prefix)
         || part_sources_scripts(prefix, budget)?
         || prefix.contains('('))
     {
@@ -287,7 +288,7 @@ pub(super) fn resolve_push_cwd(
         };
         let top = frames.len() - 1;
         let Some(cd) = cd_command(&body) else {
-            if has_word(&body, &["cd", "pushd", "popd"], false) {
+            if Mention::Relocator.in_text(&body) {
                 return Ok(PushCwd::Unresolvable);
             }
             frames[top].pending = false;

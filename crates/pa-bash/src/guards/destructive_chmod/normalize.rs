@@ -8,6 +8,7 @@ use super::patterns::{
     opens_comment_after, redirect_operator_at, static_target_end, RedirectOperator,
 };
 use super::pyos::is_space;
+use crate::syntax::pyre::Haystack;
 
 /// Collapse unquoted backslash-newline continuations between words into two
 /// spaces (keeping indices aligned); an in-word pair is left for
@@ -153,6 +154,7 @@ pub(super) fn mask_shell_redirections(command: &[char], depth: usize) -> Result<
     if depth > messages::MAX_SUBSTITUTION_NESTING {
         return Err(messages::nesting());
     }
+    let haystack = Haystack::from_chars(command);
     let mut chars = command.to_vec();
     let n = chars.len();
     let mut quote: Option<char> = None;
@@ -183,7 +185,7 @@ pub(super) fn mask_shell_redirections(command: &[char], depth: usize) -> Result<
                     i += 2;
                     continue;
                 }
-                if let Some(operator) = redirect_operator_at(command, i) {
+                if let Some(operator) = redirect_operator_at(&haystack, i) {
                     if operator.is_here_string(command) {
                         i = operator.end;
                         continue;

@@ -26,6 +26,7 @@ mod tests;
 use crate::context::GuardContext;
 use crate::script::Script;
 
+use crate::syntax::mention::Mention;
 use invocations::{
     env_option_values, find_invocations, hash_registered_command_names, operand_words,
     region_words, wrapper_chain_groups,
@@ -38,7 +39,7 @@ use messages::PayloadReason;
 use normalize::{
     locate_heredoc, mask_shell_redirections, normalize_line_continuations, strip_shell_escapes,
 };
-use patterns::{has_word, redirect_operators};
+use patterns::redirect_operators;
 use payloads::{bash_env_words_arm_shell_code, function_definition_could_recurse, PayloadKind};
 use pyos::{basename, strip};
 use vocabulary::{is_chmod_chown_word, named, SCRIPT_INPUT_WRAPPERS, SHELL_C_INTERPRETERS};
@@ -165,20 +166,20 @@ impl Chmod<'_> {
         }
         let any_word =
             |predicate: &dyn Fn(&str) -> bool| words.iter().any(|word| predicate(&word.value));
-        let eval_reason = if any_word(&|value| value == "eval") || has_word(&text, &["eval"]) {
+        let eval_reason = if any_word(&|value| value == "eval") || Mention::Eval.in_text(&text) {
             self.wrapper_payloads_hide_shell_code(normalized, PayloadKind::Eval)?
         } else {
             None
         };
         let shell_c_reason = if any_word(&|value| named(value, &SHELL_C_INTERPRETERS))
-            || has_word(&text, &SHELL_C_INTERPRETERS)
+            || Mention::PosixShell.in_text(&text)
         {
             self.wrapper_payloads_hide_shell_code(normalized, PayloadKind::ShellC)?
         } else {
             None
         };
         let alias_reason =
-            if any_word(&|value| basename(value) == "alias") || has_word(&text, &["alias"]) {
+            if any_word(&|value| basename(value) == "alias") || Mention::Alias.in_text(&text) {
                 self.wrapper_payloads_hide_shell_code(normalized, PayloadKind::Alias)?
             } else {
                 None
@@ -190,7 +191,7 @@ impl Chmod<'_> {
             return Err(messages::pipe_fed_wrapper());
         }
         let env_s_reason =
-            if any_word(&|value| basename(value) == "env") || has_word(&text, &["env"]) {
+            if any_word(&|value| basename(value) == "env") || Mention::Env.in_text(&text) {
                 self.env_split_payloads_hide_shell_code(normalized)?
             } else {
                 None

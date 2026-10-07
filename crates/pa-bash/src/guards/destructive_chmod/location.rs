@@ -4,10 +4,11 @@
 
 use super::invocations::region_words;
 use super::normalize::expand_ansi_c_payloads;
-use super::patterns::{assigns_anywhere, has_glob_or_substitution, has_word};
+use super::patterns::{assigns_anywhere, has_glob_or_substitution, Assigned};
 use super::pyos::{cwd_text, expanduser, is_abs, is_file, join, realpath, strip};
 use super::words::ShellWord;
 use crate::context::GuardContext;
+use crate::syntax::mention::Mention;
 
 /// The fixed locations one check measures against.
 #[derive(Debug, Clone)]
@@ -92,8 +93,6 @@ fn cd_argument(text: &str) -> Option<&str> {
     Some(strip(rest.trim_start_matches(super::pyos::is_space)))
 }
 
-const RELOCATORS: [&str; 3] = ["cd", "pushd", "popd"];
-
 /// Replay the statically-known `cd` relocations in `prefix` (the command
 /// text before the invocation): parens groups run in subshells, brace
 /// groups in the current shell; anything unreplayable is
@@ -105,7 +104,7 @@ pub(super) fn effective_cwd(
     user_command_start: usize,
 ) -> EffectiveCwd {
     let text: String = prefix.iter().collect();
-    if !(has_word(&text, &RELOCATORS) || text.contains('(')) {
+    if !(Mention::Relocator.in_text(&text) || text.contains('(')) {
         return EffectiveCwd::Workspace;
     }
     let mut current: Option<String> = None;
@@ -132,7 +131,7 @@ pub(super) fn effective_cwd(
             continue;
         }
         let trimmed = strip(&part);
-        if assigns_anywhere(trimmed, "CDPATH") {
+        if assigns_anywhere(trimmed, Assigned::Cdpath) {
             cdpath_armed = true;
         }
         let opens = part.matches('(').count();
@@ -151,7 +150,7 @@ pub(super) fn effective_cwd(
                 }
                 saw_cd = true;
                 cd_pending_separator = true;
-            } else if has_word(trimmed, &RELOCATORS) {
+            } else if Mention::Relocator.in_text(trimmed) {
                 return EffectiveCwd::Unresolvable;
             }
             if paren_depth == 0 {
@@ -165,7 +164,7 @@ pub(super) fn effective_cwd(
             rest.trim_start_matches(super::pyos::is_space)
         });
         let Some(argument) = cd_argument(group_free) else {
-            if has_word(group_free, &RELOCATORS) {
+            if Mention::Relocator.in_text(group_free) {
                 return EffectiveCwd::Unresolvable;
             }
             cd_pending_separator = false;
@@ -389,5 +388,5 @@ pub(super) fn path_hit(locations: &Locations<'_>, candidate: &str) -> Option<Str
 
 /// Whether a `PATH` assignment appears anywhere in the text.
 pub(super) fn assigns_path(normalized: &[char]) -> bool {
-    assigns_anywhere(&normalized.iter().collect::<String>(), "PATH")
+    assigns_anywhere(&normalized.iter().collect::<String>(), Assigned::Path)
 }

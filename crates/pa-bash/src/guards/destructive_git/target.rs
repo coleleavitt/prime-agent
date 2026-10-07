@@ -5,7 +5,6 @@
 
 use std::sync::LazyLock;
 
-use super::pattern::{is_space, Pattern};
 use super::text::{
     chars, equals, mask_quoted_spans, split_whitespace_runs, starts_with, string, stripped, tokens,
     trim, unquote_one_level,
@@ -15,6 +14,8 @@ use super::words::{
     revealed_word_text, revealed_words, shell_word_positions, AliasReading, Names, ASSIGNMENT_WORD,
     REPLAYABLE_ASSIGNMENT, SHELL_KEYWORDS, TRANSPARENT_BUILTINS,
 };
+use crate::syntax::chars::is_space;
+use crate::syntax::pyre::PyRegex;
 
 /// The probe the guard runs when no relocation applies.
 pub(super) const GIT_STATUS_PORCELAIN_COMMAND: &str =
@@ -35,17 +36,18 @@ pub(super) enum ProbeTarget {
     Unresolvable,
 }
 
-static FUNCTION_DEFINITION: LazyLock<Pattern> = LazyLock::new(|| {
-    Pattern::new(
+static FUNCTION_DEFINITION: LazyLock<PyRegex> = LazyLock::new(|| {
+    PyRegex::new(
         r"(?:\bfunction\s+([A-Za-z_][A-Za-z0-9_-]*)|\b([A-Za-z_][A-Za-z0-9_-]*)\s*\(\s*\))\s*\{",
     )
 });
-static DIRECTORY_WORD: LazyLock<Pattern> = LazyLock::new(|| Pattern::new(r"\b(?:cd|pushd)\b"));
-static SEPARATORS: LazyLock<Pattern> = LazyLock::new(|| Pattern::new(r"(&&|\|\||;|\||\n)"));
-static CORE_RELOCATION: LazyLock<Pattern> =
-    LazyLock::new(|| Pattern::new(r"core\.(worktree|bare)(=|$)"));
-static TRAP_REPORT_OPTION: LazyLock<Pattern> =
-    LazyLock::new(|| Pattern::new(r"-[A-Za-z]*[pl][A-Za-z]*"));
+static DIRECTORY_WORD: LazyLock<PyRegex> =
+    LazyLock::new(|| PyRegex::new(r"\b(?:cd|pushd)\b").requiring(&["cd", "pushd"]));
+static SEPARATORS: LazyLock<PyRegex> = LazyLock::new(|| PyRegex::new(r"(&&|\|\||;|\||\n)"));
+static CORE_RELOCATION: LazyLock<PyRegex> =
+    LazyLock::new(|| PyRegex::new(r"core\.(worktree|bare)(=|$)"));
+static TRAP_REPORT_OPTION: LazyLock<PyRegex> =
+    LazyLock::new(|| PyRegex::new(r"-[A-Za-z]*[pl][A-Za-z]*"));
 
 /// Index just past the `}` closing the `{` at `open_index`.
 fn brace_group_end(text: &[char], open_index: usize) -> usize {
@@ -304,7 +306,7 @@ pub(super) fn resolve_probe_target(
         } else if equals(token, "-c") || (starts_with(token, "-c") && token.len() > 2) {
             let config = option_value(&tokens_all, index, "-c");
             if config.is_some_and(|config| {
-                !config.is_empty() && CORE_RELOCATION.match_at(config, 0).is_some()
+                !config.is_empty() && CORE_RELOCATION.match_start(config).is_some()
             }) {
                 return ProbeTarget::Unresolvable;
             }
@@ -316,7 +318,7 @@ pub(super) fn resolve_probe_target(
                 tokens_all.get(index + 1).copied()
             };
             if config.is_some_and(|config| {
-                !config.is_empty() && CORE_RELOCATION.match_at(config, 0).is_some()
+                !config.is_empty() && CORE_RELOCATION.match_start(config).is_some()
             }) {
                 return ProbeTarget::Unresolvable;
             }

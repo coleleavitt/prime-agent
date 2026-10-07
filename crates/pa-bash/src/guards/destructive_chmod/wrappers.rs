@@ -161,7 +161,7 @@ impl Chmod<'_> {
         let Some(prefix) = self.prefix.filter(|prefix| !prefix.is_empty()) else {
             return Ok(false);
         };
-        if super::patterns::has_word(prefix, &["cd", "pushd", "popd"]) {
+        if crate::syntax::mention::Mention::Relocator.in_text(prefix) {
             return Ok(true);
         }
         let prefix: Vec<char> = prefix.chars().collect();

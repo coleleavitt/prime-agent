@@ -12,6 +12,7 @@ mod pipeline;
 mod probe;
 mod script;
 mod shell;
+mod syntax;
 mod verdict;
 
 pub use context::{is_truthy_env_value, GuardContext};

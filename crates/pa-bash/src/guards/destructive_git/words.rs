@@ -5,8 +5,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
-use super::pattern::{is_space, Pattern};
 use super::text::{equals, starts_comment, string, strip_shell_escapes};
+use crate::syntax::chars::is_space;
+use crate::syntax::pyre::{Haystack, PyRegex};
 
 /// Names to values (assignments or aliases) the walk knows about.
 pub(super) type Names = BTreeMap<String, String>;
@@ -21,23 +22,23 @@ pub(super) const SHELL_KEYWORDS: [&str; 19] = [
     "case", "esac", "select", "time", "function",
 ];
 
-pub(super) static PLAIN_WORD_RUN: LazyLock<Pattern> =
-    LazyLock::new(|| Pattern::new(r"[A-Za-z0-9_./-]+"));
-static VARIABLE_REFERENCE: LazyLock<Pattern> = LazyLock::new(|| {
-    Pattern::new(r"\$(?:([A-Za-z_][A-Za-z0-9_]*)\b|\{([A-Za-z_][A-Za-z0-9_]*)\})")
+pub(super) static PLAIN_WORD_RUN: LazyLock<PyRegex> =
+    LazyLock::new(|| PyRegex::new(r"[A-Za-z0-9_./-]+"));
+static VARIABLE_REFERENCE: LazyLock<PyRegex> = LazyLock::new(|| {
+    PyRegex::new(r"\$(?:([A-Za-z_][A-Za-z0-9_]*)\b|\{([A-Za-z_][A-Za-z0-9_]*)\})")
 });
-pub(super) static LITERAL_ASSIGNMENT: LazyLock<Pattern> = LazyLock::new(|| {
-    Pattern::new(r#"([A-Za-z_][A-Za-z0-9_]*)=(?:"([^"$`]*)"|'([^']*)'|([A-Za-z0-9_./-]+))"#)
+pub(super) static LITERAL_ASSIGNMENT: LazyLock<PyRegex> = LazyLock::new(|| {
+    PyRegex::new(r#"([A-Za-z_][A-Za-z0-9_]*)=(?:"([^"$`]*)"|'([^']*)'|([A-Za-z0-9_./-]+))"#)
 });
-static COPIED_ASSIGNMENT: LazyLock<Pattern> = LazyLock::new(|| {
-    Pattern::new(
+static COPIED_ASSIGNMENT: LazyLock<PyRegex> = LazyLock::new(|| {
+    PyRegex::new(
         r#"([A-Za-z_][A-Za-z0-9_]*)=(?:"?\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})"?)"#,
     )
 });
-pub(super) static REPLAYABLE_ASSIGNMENT: LazyLock<Pattern> =
-    LazyLock::new(|| Pattern::new(r#"[A-Za-z_][A-Za-z0-9_]*=[^\s$`;&|()<>"]+"#));
-pub(super) static ASSIGNMENT_WORD: LazyLock<Pattern> =
-    LazyLock::new(|| Pattern::new(r#"[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|[^\s;&|()<>"']*)"#));
+pub(super) static REPLAYABLE_ASSIGNMENT: LazyLock<PyRegex> =
+    LazyLock::new(|| PyRegex::new(r#"[A-Za-z_][A-Za-z0-9_]*=[^\s$`;&|()<>"]+"#));
+pub(super) static ASSIGNMENT_WORD: LazyLock<PyRegex> =
+    LazyLock::new(|| PyRegex::new(r#"[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|[^\s;&|()<>"']*)"#));
 
 fn is_one_of(word: &[char], set: &[&str]) -> bool {
     set.iter().any(|item| equals(word, item))
@@ -160,6 +161,7 @@ pub(super) fn shell_word_positions(command: &[char]) -> Vec<ShellWord> {
 
 /// The word's text when quoting is its only shell syntax, else `None`.
 pub(super) fn plain_word_text(word: &[char]) -> Option<String> {
+    let haystack = Haystack::from_chars(word);
     let mut content = String::new();
     let n = word.len();
     let mut i = 0;
@@ -174,7 +176,7 @@ pub(super) fn plain_word_text(word: &[char]) -> Option<String> {
             i = close + 1;
             continue;
         }
-        let found = PLAIN_WORD_RUN.match_at(word, i)?;
+        let found = PLAIN_WORD_RUN.match_at(&haystack, i)?;
         content.push_str(&string(&word[i..found.end()]));
         i = found.end();
     }
@@ -317,7 +319,12 @@ pub(super) enum AliasReading {
 }
 
 /// The first non-`None` capture among groups `from..` of a match.
-fn first_value(found: &super::pattern::Captures, text: &[char], from: usize, to: usize) -> String {
+fn first_value(
+    found: &crate::syntax::pyre::Captures,
+    text: &[char],
+    from: usize,
+    to: usize,
+) -> String {
     (from..=to)
         .find_map(|group| found.text(text, group))
         .unwrap_or_default()

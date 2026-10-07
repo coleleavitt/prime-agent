@@ -6,31 +6,16 @@
 //! (including the information separators U+001C..U+001F) and `\w` is a Unicode
 //! letter or digit, or `_`.
 
-/// Python's `str.isspace()` / regex `\s`.
-pub(super) fn is_space(ch: char) -> bool {
-    ch.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&ch)
-}
+use std::sync::LazyLock;
 
-/// Python's regex `\w` for `str` patterns.
-fn is_word(ch: char) -> bool {
-    ch.is_alphanumeric() || ch == '_'
-}
-
-/// `[A-Za-z0-9_]`.
-pub(super) fn is_ascii_word(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || ch == '_'
-}
+pub(super) use crate::syntax::chars::{is_ascii_word, is_space};
+use crate::syntax::pyre::PyRegex;
 
 pub(super) fn chars(text: &str) -> Vec<char> {
     text.chars().collect()
 }
 
-/// `text[start:end]` with Python's clamping.
-pub(super) fn slice(text: &[char], start: usize, end: usize) -> String {
-    let end = end.min(text.len());
-    let start = start.min(end);
-    text[start..end].iter().collect()
-}
+pub(super) use crate::syntax::chars::py_slice as slice;
 
 /// `str.casefold()` for the names the guard compares against (all ASCII):
 /// a character folds into ASCII only through these spellings.
@@ -52,135 +37,39 @@ pub(super) fn command_name(value: &str) -> String {
     casefold(value.rsplit('/').next().unwrap_or(value))
 }
 
-/// Whether `text` holds `name` as a whole word (`\bname\b`), optionally
-/// ignoring ASCII case.
-pub(super) fn has_word(text: &str, names: &[&str], ignore_case: bool) -> bool {
-    let text = chars(text);
-    let n = text.len();
-    for start in 0..n {
-        if start > 0 && is_word(text[start - 1]) {
-            continue;
-        }
-        for name in names {
-            let name = chars(name);
-            let end = start + name.len();
-            if end > n {
-                continue;
-            }
-            let matched = text[start..end].iter().zip(&name).all(|(a, b)| {
-                if ignore_case {
-                    a.eq_ignore_ascii_case(b)
-                } else {
-                    a == b
-                }
-            });
-            if matched && (end == n || !is_word(text[end])) {
-                return true;
-            }
-        }
-    }
-    false
-}
+static PUSH_IN_TEXT: LazyLock<PyRegex> =
+    LazyLock::new(|| PyRegex::new(r"(?<![A-Za-z0-9_])push(?![A-Za-z0-9_])").requiring(&["push"]));
+static FORCE_IN_TEXT: LazyLock<PyRegex> = LazyLock::new(|| {
+    PyRegex::new(concat!(
+        r"(?<![A-Za-z0-9_])",
+        r"(?:--forc(?:e)?(?![A-Za-z0-9_-])|--m(?:ir(?:r(?:or)?)?)?(?![A-Za-z0-9_-])",
+        r"|-[A-Za-z]*f(?![A-Za-z0-9_-])|\+[^\s;&|()])",
+    ))
+});
+static SHELL_INTERPRETER_IN_TEXT: LazyLock<PyRegex> = LazyLock::new(|| {
+    PyRegex::new(r"(?i)(?<![A-Za-z0-9_.-])(?:sh|bash|zsh|dash|ksh|fish|tcsh|csh)(?:\.exe)?(?![A-Za-z0-9_.-])")
+        .requiring_any_case(&["sh"])
+});
+static BRACE_EXPANSION: LazyLock<PyRegex> =
+    LazyLock::new(|| PyRegex::new(r"\{[^{}\s]*(?:,|\.\.)[^{}\s]*\}"));
+static GIT_ASSIGNMENT_WORD: LazyLock<PyRegex> =
+    LazyLock::new(|| PyRegex::new(r"(^|\s)GIT_[A-Z_]+="));
+static GIT_ASSIGNMENT: LazyLock<PyRegex> = LazyLock::new(|| PyRegex::new(r"GIT_[A-Z_]+="));
 
-/// `(?<![A-Za-z0-9_])push(?![A-Za-z0-9_])`.
-fn has_push_word(text: &[char]) -> bool {
-    let name = ['p', 'u', 's', 'h'];
-    (0..text.len()).any(|start| {
-        (start == 0 || !is_ascii_word(text[start - 1]))
-            && text[start..].starts_with(&name)
-            && text.get(start + 4).is_none_or(|ch| !is_ascii_word(*ch))
-    })
-}
-
-/// `[A-Za-z0-9_-]`: what may not follow a force flag.
-fn is_flag_char(ch: char) -> bool {
-    is_ascii_word(ch) || ch == '-'
-}
-
-/// The force signal of `_FP_FORCE_IN_TEXT`: `--force` (or `--forc`),
-/// `--mirror` and its abbreviations, a short cluster ending in `f`, or a
-/// `+`-prefixed word.
-fn has_force_signal(text: &[char]) -> bool {
-    let n = text.len();
-    let ends_flag = |at: usize| at >= n || !is_flag_char(text[at]);
-    for start in 0..n {
-        if start > 0 && is_ascii_word(text[start - 1]) {
-            continue;
-        }
-        let rest = &text[start..];
-        for long in ["--force", "--forc", "--mirror", "--mirr", "--mir", "--m"] {
-            let long: Vec<char> = long.chars().collect();
-            if rest.starts_with(&long) && ends_flag(start + long.len()) {
-                return true;
-            }
-        }
-        if rest.first() == Some(&'-') {
-            let run = rest[1..]
-                .iter()
-                .take_while(|ch| ch.is_ascii_alphabetic())
-                .count();
-            if run > 0 && rest[run] == 'f' && ends_flag(start + 1 + run) {
-                return true;
-            }
-        }
-        if rest.first() == Some(&'+')
-            && rest
-                .get(1)
-                .is_some_and(|ch| !is_space(*ch) && !";&|()".contains(*ch))
-        {
-            return true;
-        }
-    }
-    false
-}
-
-/// True when the text carries `push` together with a force signal.
+/// `_fp_force_push_pattern_in_text`: `push` together with a force signal.
 pub(super) fn force_push_pattern_in_text(text: &str) -> bool {
-    let text = chars(text);
-    has_push_word(&text) && has_force_signal(&text)
+    PUSH_IN_TEXT.is_found(text) && FORCE_IN_TEXT.is_found(text)
 }
 
 /// The shells that run a script: the name list of `_FP_SHELL_C_INTERPRETERS`.
 pub(super) const SHELL_NAMES: [&str; 8] =
     ["sh", "bash", "zsh", "dash", "ksh", "fish", "tcsh", "csh"];
 
-/// `_FP_SHELL_INTERPRETER_IN_TEXT`: a shell name (case-insensitive, optional
+/// `_FP_SHELL_INTERPRETER_IN_TEXT`: a shell name (any case, optional
 /// `.exe`) not glued to a `[A-Za-z0-9_.-]` character on either side, so
 /// `/bin/sh` and `./sh` count while `payload.sh` does not.
 pub(super) fn has_shell_interpreter(text: &str) -> bool {
-    let text = chars(text);
-    let n = text.len();
-    let glue = |ch: char| is_ascii_word(ch) || ch == '.' || ch == '-';
-    for start in 0..n {
-        if start > 0 && glue(text[start - 1]) {
-            continue;
-        }
-        for name in SHELL_NAMES {
-            let name: Vec<char> = name.chars().collect();
-            let end = start + name.len();
-            if end > n
-                || !text[start..end]
-                    .iter()
-                    .zip(&name)
-                    .all(|(a, b)| a.eq_ignore_ascii_case(b))
-            {
-                continue;
-            }
-            let exe = ['.', 'e', 'x', 'e'];
-            let with_exe = end + 4 <= n
-                && text[end..end + 4]
-                    .iter()
-                    .zip(&exe)
-                    .all(|(a, b)| a.eq_ignore_ascii_case(b));
-            if with_exe && text.get(end + 4).is_none_or(|ch| !glue(*ch)) {
-                return true;
-            }
-            if text.get(end).is_none_or(|ch| !glue(*ch)) {
-                return true;
-            }
-        }
-    }
-    false
+    SHELL_INTERPRETER_IN_TEXT.is_found(text)
 }
 
 /// `_FP_GLOB_OR_SUBSTITUTION`: substitution, globs, and brace expansion.
@@ -196,25 +85,7 @@ pub(super) fn has_expansion(text: &str) -> bool {
 /// `_FP_BRACE_EXPANSION`: `{...}` with a `,` or `..` and no brace or
 /// whitespace inside.
 pub(super) fn has_brace_expansion(text: &str) -> bool {
-    let text = chars(text);
-    for (open, ch) in text.iter().enumerate() {
-        if *ch != '{' {
-            continue;
-        }
-        let run = text[open + 1..]
-            .iter()
-            .take_while(|ch| **ch != '{' && **ch != '}' && !is_space(**ch))
-            .count();
-        let close = open + 1 + run;
-        if text.get(close) != Some(&'}') {
-            continue;
-        }
-        let body = &text[open + 1..close];
-        if body.contains(&',') || body.windows(2).any(|pair| pair == ['.', '.']) {
-            return true;
-        }
-    }
-    false
+    BRACE_EXPANSION.is_found(text)
 }
 
 /// `[A-Za-z_][A-Za-z0-9_]*` in full.
@@ -246,17 +117,12 @@ pub(super) fn starts_with_git_assignment(value: &str) -> bool {
 
 /// `(^|\s)GIT_[A-Z_]+=` anywhere in `text`.
 pub(super) fn has_git_assignment(text: &str) -> bool {
-    let text = chars(text);
-    (0..text.len()).any(|start| {
-        (start == 0 || is_space(text[start - 1]))
-            && starts_with_git_assignment(&slice(&text, start, text.len()))
-    })
+    GIT_ASSIGNMENT_WORD.is_found(text)
 }
 
 /// `GIT_[A-Z_]+=` anywhere in `text`.
 pub(super) fn contains_git_assignment(text: &str) -> bool {
-    let text = chars(text);
-    (0..text.len()).any(|start| starts_with_git_assignment(&slice(&text, start, text.len())))
+    GIT_ASSIGNMENT.is_found(text)
 }
 
 /// `str.strip(chars)`.

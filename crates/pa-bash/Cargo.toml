@@ -9,6 +9,7 @@ description = "Kernel bash(): the shell command checker (refusal guards) and the
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+fancy-regex = "0.14"
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["process"] }

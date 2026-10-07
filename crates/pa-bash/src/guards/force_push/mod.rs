@@ -40,6 +40,7 @@ use std::time::Duration;
 use crate::context::GuardContext;
 use crate::script::Script;
 
+use crate::syntax::mention::Mention;
 use alias::unresolvable_git_subcommand;
 use budget::{Budget, Scan, ScanStop};
 use command_words::{
@@ -49,7 +50,7 @@ use config::{mirror_or_push_refspec_configured, unreadable_inline_config};
 use lexing::prepare;
 use payloads::{nested_payloads_hide_force_push, HiddenIn};
 use push::{find_git_push_runs, is_guarded_push, parse_push_args};
-use text::{contains_git_assignment, force_push_pattern_in_text, has_word};
+use text::{contains_git_assignment, force_push_pattern_in_text};
 use upstream::{ProbeCache, PROBE_TIMEOUT};
 use violation::{push_violation, PushSite};
 use words::{flattened_text, scan_word_chars};
@@ -101,7 +102,7 @@ fn scan(
         None => {}
     }
     let trailing_backslashes = command_text.len() - command_text.trim_end_matches('\\').len();
-    if trailing_backslashes % 2 == 1 && has_word(&normalized, &["git"], true) {
+    if trailing_backslashes % 2 == 1 && Mention::GitAnyCase.in_text(&normalized) {
         // An odd trailing backslash escapes the newline the kernel appends.
         return Ok(Some(messages::refusal(
             "it ends with a line continuation, so the shell joins it with the text that follows in the script \
@@ -162,7 +163,7 @@ fn scan(
     // A GIT_DIR/GIT_WORK_TREE/... assignment in the prefix relocates the
     // repository every later command runs in, like a cd.
     let relocating_prefix = !prefix.is_empty()
-        && (has_word(prefix, &["cd", "pushd", "popd"], false) || contains_git_assignment(prefix));
+        && (Mention::Relocator.in_text(prefix) || contains_git_assignment(prefix));
     let kernel_cwd = context.cwd().display().to_string();
     let site = PushSite {
         words: &words,

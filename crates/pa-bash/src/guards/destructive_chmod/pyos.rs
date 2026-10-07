@@ -12,11 +12,6 @@ pub(super) fn is_space(c: char) -> bool {
     c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
 }
 
-/// A regex `\w` character.
-pub(super) fn is_word_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
-}
-
 /// `str.strip()`.
 pub(super) fn strip(text: &str) -> &str {
     text.trim_matches(is_space)
