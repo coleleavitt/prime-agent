@@ -12,7 +12,13 @@ use std::time::Duration;
 
 use process_wrap::std::{ChildWrapper, CommandWrap, JobObject};
 
-use super::Signal;
+use super::{Containment, Signal};
+
+/// Windows has no controlling terminal to escape: the job object contains
+/// the command.
+pub(crate) fn has_controlling_terminal() -> bool {
+    false
+}
 
 /// Whether the platform delivers the foreground status on its own channel.
 pub(crate) const STATUS_CHANNEL: bool = false;
@@ -138,7 +144,7 @@ impl Control {
 ///
 /// The OS error of the pipe, the spawn, or the job assignment (nothing runs
 /// outside a job: a failed assignment terminates the suspended child).
-pub(crate) fn spawn(mut command: Command) -> std::io::Result<Spawned> {
+pub(crate) fn spawn(mut command: Command, _containment: Containment) -> std::io::Result<Spawned> {
     let (output, output_write) = std::io::pipe()?;
     command
         .env("NoDefaultCurrentDirectoryInExePath", "1")

@@ -101,20 +101,45 @@ pub(crate) fn assess(abi: i32, network: NetworkAccess) -> Result<Assessment, San
 /// the parent for every spawn of the command) and the socket filter.
 pub(crate) struct LinuxSandbox {
     restriction: Arc<syscalls::Restriction>,
+    roots: Vec<PathBuf>,
+    network: NetworkAccess,
 }
 
 impl LinuxSandbox {
     /// Build the ruleset for `roots` (and, when network is off, the TCP
     /// rules and the seccomp program).
     pub(crate) fn prepare(roots: &[PathBuf], network: NetworkAccess) -> Result<Self, SandboxError> {
-        let ruleset = ruleset(roots, network)?;
+        let ruleset: Option<OwnedFd> = ruleset(roots, network)?.into();
+        let ruleset = ruleset.ok_or_else(|| SandboxError::Unsupported {
+            reason: "the kernel refused to create a Landlock ruleset".to_string(),
+        })?;
         let socket_filter = match (network, SECCOMP_ARCH) {
-            (NetworkAccess::Denied, Some(arch)) => Some(socket_filter(arch)?),
+            (NetworkAccess::Denied, Some(arch)) => Some(
+                socket_filter(arch)?
+                    .into_iter()
+                    .map(|instruction| libc::sock_filter {
+                        code: instruction.code,
+                        jt: instruction.jt,
+                        jf: instruction.jf,
+                        k: instruction.k,
+                    })
+                    .collect(),
+            ),
             (NetworkAccess::Denied, None) | (NetworkAccess::Allowed, _) => None,
         };
         Ok(Self {
             restriction: Arc::new(syscalls::Restriction::new(ruleset, socket_filter)),
+            roots: roots.to_vec(),
+            network,
         })
+    }
+
+    pub(crate) fn roots(&self) -> &[PathBuf] {
+        &self.roots
+    }
+
+    pub(crate) fn network(&self) -> NetworkAccess {
+        self.network
     }
 
     /// Confine `command`'s child between fork and exec.
@@ -130,9 +155,33 @@ fn setup_error(context: &'static str, error: impl std::fmt::Display) -> SandboxE
     }
 }
 
+/// Confine this process (the launcher, before it execs the program) with
+/// the same rules [`LinuxSandbox::prepare`] builds, through landlock's and
+/// seccompiler's safe self-restriction calls. A root that no longer exists
+/// is skipped: it cannot be written either way.
+pub(crate) fn restrict_self(roots: &[PathBuf], network: NetworkAccess) -> Result<(), SandboxError> {
+    let existing: Vec<PathBuf> = roots.iter().filter(|root| root.exists()).cloned().collect();
+    let status = ruleset(&existing, network)?
+        .restrict_self()
+        .map_err(|error| setup_error("Landlock restrict_self", error))?;
+    if status.ruleset == landlock::RulesetStatus::NotEnforced {
+        return Err(SandboxError::Unsupported {
+            reason: "the kernel did not enforce the Landlock ruleset".to_string(),
+        });
+    }
+    if let (NetworkAccess::Denied, Some(arch)) = (network, SECCOMP_ARCH) {
+        seccompiler::apply_filter(&socket_filter(arch)?)
+            .map_err(|error| setup_error("seccomp filter", error))?;
+    }
+    Ok(())
+}
+
 /// Everything readable and executable; writes only beneath `roots` and the
 /// device allowlist; no TCP when network is off.
-fn ruleset(roots: &[PathBuf], network: NetworkAccess) -> Result<OwnedFd, SandboxError> {
+fn ruleset(
+    roots: &[PathBuf],
+    network: NetworkAccess,
+) -> Result<landlock::RulesetCreated, SandboxError> {
     let mut ruleset = Ruleset::default()
         .set_compatibility(CompatLevel::BestEffort)
         .handle_access(AccessFs::from_all(TARGET_ABI))
@@ -162,10 +211,7 @@ fn ruleset(roots: &[PathBuf], network: NetworkAccess) -> Result<OwnedFd, Sandbox
             created = add_rule(created, path, AccessFs::from_all(TARGET_ABI))?;
         }
     }
-    let descriptor: Option<OwnedFd> = created.into();
-    descriptor.ok_or_else(|| SandboxError::Unsupported {
-        reason: "the kernel refused to create a Landlock ruleset".to_string(),
-    })
+    Ok(created)
 }
 
 fn add_rule(
@@ -187,10 +233,9 @@ fn add_rule(
 
 /// `socket(2)` outside `AF_UNIX`, and the `io_uring` syscalls (which can open
 /// sockets without `socket(2)`), fail with `EPERM`; everything else passes.
-fn socket_filter(arch: seccompiler::TargetArch) -> Result<Vec<libc::sock_filter>, SandboxError> {
+fn socket_filter(arch: seccompiler::TargetArch) -> Result<seccompiler::BpfProgram, SandboxError> {
     use seccompiler::{
-        BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompFilter,
-        SeccompRule,
+        SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompFilter, SeccompRule,
     };
     let filter_error = |error: seccompiler::BackendError| setup_error("seccomp filter", error);
     let not_unix = SeccompCondition::new(
@@ -220,16 +265,7 @@ fn socket_filter(arch: seccompiler::TargetArch) -> Result<Vec<libc::sock_filter>
         arch,
     )
     .map_err(filter_error)?;
-    let program: BpfProgram = filter.try_into().map_err(filter_error)?;
-    Ok(program
-        .into_iter()
-        .map(|instruction| libc::sock_filter {
-            code: instruction.code,
-            jt: instruction.jt,
-            jf: instruction.jf,
-            k: instruction.k,
-        })
-        .collect())
+    filter.try_into().map_err(filter_error)
 }
 
 #[cfg(test)]

@@ -11,7 +11,9 @@
 //! ```
 //!
 //! `PA_CORE_KERNEL_PYTHON` picks the interpreter (an older runtime's venv, to
-//! compare); `PA_BASH_BENCH_RUNS` the run count per case (default 300).
+//! compare); `PA_BASH_BENCH_RUNS` the run count per case (default 300);
+//! `PA_BASH_BENCH_INFLATE_MB` touches that much extra host memory first (spawn
+//! cost against host RSS).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -71,6 +73,13 @@ async fn kernel_bash_latency() {
         return;
     };
     let runs = std::env::var("PA_BASH_BENCH_RUNS").unwrap_or_else(|_| "300".to_string());
+    // Resident ballast: every page touched, so the host's page tables grow
+    // the way a busy host's do.
+    let inflate_mb: usize = std::env::var("PA_BASH_BENCH_INFLATE_MB")
+        .ok()
+        .and_then(|mb| mb.parse().ok())
+        .unwrap_or(0);
+    let ballast = std::hint::black_box(vec![1u8; inflate_mb * 1024 * 1024]);
     let workspace = tempfile::tempdir().unwrap();
     let manager = ReplKernelManager::new(KernelManagerOptions {
         sandbox: None,
@@ -98,7 +107,12 @@ async fn kernel_bash_latency() {
         .await
         .unwrap();
     assert_eq!(result.status, ExecuteStatus::Ok, "{result:?}");
-    println!("{}", result.stdout);
+    let rss_mib = std::fs::read_to_string("/proc/self/statm")
+        .ok()
+        .and_then(|statm| statm.split_whitespace().nth(1)?.parse::<u64>().ok())
+        .map_or(0, |pages| pages * 4096 / (1024 * 1024));
+    println!("host RSS {rss_mib} MiB\n{}", result.stdout);
+    drop(ballast);
     let _ = tokio::time::timeout(
         Duration::from_secs(10),
         manager.shutdown(KernelShutdownOptions::default()),

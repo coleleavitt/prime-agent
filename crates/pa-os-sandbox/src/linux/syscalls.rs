@@ -1,15 +1,17 @@
 //! The only `unsafe` in this crate: the Landlock ABI probe and the
-//! fork/exec hook that confines a child.
+//! fork/exec hook that confines a child when no launcher is registered.
 //!
-//! Why not a safe API: `landlock::RulesetCreated::restrict_self` confines
-//! the *calling* process, and it consumes the ruleset, so it can neither
-//! run in the parent (the worker would confine itself) nor be retried by a
-//! second spawn of the same command; `std::os::unix::process::CommandExt`
-//! offers no confinement hook other than `pre_exec`, which is `unsafe`
-//! because the closure runs in a forked copy of a multithreaded process.
-//! The alternative, re-executing our own binary as a confining launcher,
-//! needs the `prime-agent` binary on hand in every caller (the library
-//! tests have none).
+//! A host that registers a launcher (`prime-agent` registers itself; see
+//! [`crate::launch`]) never reaches the hook: the exec'd launcher confines
+//! itself through the safe `restrict_self` and `apply_filter` calls, and
+//! the spawn is a `posix_spawn` instead of a fork of the host. The hook
+//! remains for library hosts with no launcher binary (test binaries of
+//! other crates): `landlock::RulesetCreated::restrict_self` confines the
+//! *calling* process, so without a fresh process image to call it in, the
+//! only place is between fork and exec, and
+//! `std::os::unix::process::CommandExt` offers no confinement hook other
+//! than `pre_exec`, which is `unsafe` because the closure runs in a forked
+//! copy of a multithreaded process.
 //!
 //! So the hook stays minimal: everything that allocates is built before the
 //! fork (`Restriction::new` holds the ruleset descriptor and the BPF

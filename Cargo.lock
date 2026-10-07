@@ -1891,6 +1891,7 @@ dependencies = [
  "pa-learning",
  "pa-ledger",
  "pa-mermaid",
+ "pa-os-sandbox",
  "pa-ravo",
  "pa-recall",
  "pa-session-index",
@@ -2110,6 +2111,7 @@ version = "0.9.8"
 dependencies = [
  "landlock",
  "libc",
+ "rustix 1.1.4",
  "seccompiler",
  "tempfile",
  "thiserror",

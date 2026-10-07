@@ -4,7 +4,8 @@
 //!
 //! - Linux: Landlock filesystem rules (plus TCP rules where the ABI has
 //!   them) and, with network off, a seccomp filter refusing every socket
-//!   outside the unix domain. Applied in the child between fork and exec.
+//!   outside the unix domain. Applied by the exec'd launcher ([`launch`])
+//!   when the host registered one, else in the child between fork and exec.
 //! - macOS: the child runs under `/usr/bin/sandbox-exec` with a generated
 //!   Seatbelt profile.
 //! - Windows and everything else: [`SandboxError::Unsupported`]; nothing
@@ -13,8 +14,11 @@
 //! Public API: the policy vocabulary ([`SandboxMode`], [`SandboxPolicy`],
 //! [`SandboxPaths`]), [`assess`] (what a policy gets on this machine, no
 //! side effects), and [`prepare`] → [`PreparedSandbox::command`] (a
-//! `Command` whose children are confined).
+//! `Command` whose children are confined); [`session_command`] for a child
+//! that must lead its own session; the launcher ([`set_launcher`],
+//! [`launch_main`]) that makes both fork-free.
 
+pub mod launch;
 mod policy;
 // Pure profile generation, compiled (and unit-tested) on every platform.
 #[cfg(target_os = "linux")]
@@ -25,6 +29,7 @@ mod seatbelt;
 use std::ffi::OsStr;
 use std::process::Command;
 
+pub use launch::{launch_main, launcher, set_launcher, Launcher, LAUNCHER_FLAG};
 pub use policy::{Confinement, NetworkAccess, SandboxMode, SandboxPaths, SandboxPolicy};
 
 /// Why a sandbox cannot be applied.
@@ -93,10 +98,41 @@ impl PreparedSandbox {
 
     /// A command running `program` confined: the caller adds the arguments,
     /// environment, working directory and stdio as for `Command::new`.
+    /// Through the registered launcher when there is one (no fork), else
+    /// confined in the forked child.
     #[must_use]
     pub fn command(&self, program: impl AsRef<OsStr>) -> Command {
+        let request = self.inner.launch_request(program.as_ref());
+        if request.confine.is_some() {
+            if let Some(command) = launch::launcher_command(&request) {
+                return command;
+            }
+        }
         self.inner.command(program.as_ref())
     }
+}
+
+/// A command running `program` (confined by `sandbox` when given) as the
+/// leader of a new session, with no controlling terminal, through the
+/// registered launcher: `None` without one. Its stdin must be a socket: the
+/// launcher writes [`launch::LAUNCH_ACK`] there once the session exists and
+/// the restriction is applied (or [`launch::LAUNCH_NAK`] and the error), and
+/// the caller reads it before signalling the child's group.
+#[must_use]
+pub fn session_command(
+    program: impl AsRef<OsStr>,
+    sandbox: Option<&PreparedSandbox>,
+) -> Option<Command> {
+    let mut request = match sandbox {
+        Some(prepared) => prepared.inner.launch_request(program.as_ref()),
+        None => launch::LaunchRequest {
+            program: program.as_ref().to_os_string(),
+            ..launch::LaunchRequest::default()
+        },
+    };
+    request.setsid = true;
+    request.ack_stdin = true;
+    launch::launcher_command(&request)
 }
 
 /// Prepare `policy` for launches against `paths`: everything that can fail
@@ -140,6 +176,15 @@ mod platform {
             self.0.apply(&mut command);
             command
         }
+
+        /// The launcher applies the same roots and network rule itself.
+        pub(crate) fn launch_request(&self, program: &OsStr) -> crate::launch::LaunchRequest {
+            crate::launch::LaunchRequest {
+                confine: Some((self.0.roots().to_vec(), self.0.network())),
+                program: program.to_os_string(),
+                ..crate::launch::LaunchRequest::default()
+            }
+        }
     }
 }
 
@@ -179,6 +224,18 @@ mod platform {
             command.args(&self.launcher_args).arg(program);
             command
         }
+
+        /// `sandbox-exec` is already an exec'd launcher: the request only
+        /// runs it (for a new session).
+        pub(crate) fn launch_request(&self, program: &OsStr) -> crate::launch::LaunchRequest {
+            let mut args = self.launcher_args.clone();
+            args.push(program.to_os_string());
+            crate::launch::LaunchRequest {
+                program: crate::seatbelt::SANDBOX_EXEC.into(),
+                args,
+                ..crate::launch::LaunchRequest::default()
+            }
+        }
     }
 }
 
@@ -215,6 +272,10 @@ mod platform {
         }
 
         pub(crate) fn command(&self, _program: &OsStr) -> Command {
+            match *self {}
+        }
+
+        pub(crate) fn launch_request(&self, _program: &OsStr) -> crate::launch::LaunchRequest {
             match *self {}
         }
     }

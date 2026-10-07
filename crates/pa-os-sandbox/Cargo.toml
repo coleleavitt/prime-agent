@@ -8,6 +8,11 @@ description = "OS-level confinement of the Python kernel and the commands it run
 [dependencies]
 thiserror.workspace = true
 
+# The launcher's `setsid` (safe wrapper; already in the graph through
+# pa-bash and pa-types, so no new crate).
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["process"] }
+
 # Landlock (filesystem + TCP rules) and seccomp (non-unix socket denial) are
 # Linux kernel interfaces; nothing else links them.
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -21,7 +26,8 @@ tempfile = "3"
 [lints.rust]
 # `deny`, not the workspace's `forbid`: exactly one module
 # (`linux::syscalls`) opts back in with `#[allow(unsafe_code)]` for the
-# fork/exec hook and the ABI probe, each block under a `// SAFETY:` note.
+# fork/exec hook (the fallback when no launcher is registered) and the ABI
+# probe, each block under a `// SAFETY:` note.
 # `forbid` could not be lifted there, and `deny` keeps every other module
 # of this crate as unsafe-free as the rest of the workspace.
 unsafe_code = "deny"
@@ -90,3 +96,9 @@ unnecessary_join = "warn"
 unnecessary_literal_bound = "warn"
 unnecessary_semicolon = "warn"
 used_underscore_binding = "warn"
+
+# The launcher end to end: this test binary is its own launcher (its `main`
+# dispatches the hidden flag), so it needs its own entry point.
+[[test]]
+name = "launcher"
+harness = false

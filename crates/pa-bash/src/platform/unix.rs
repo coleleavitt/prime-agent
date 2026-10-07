@@ -1,7 +1,8 @@
-//! POSIX containment: the command leads a fresh session (so its process group
-//! is its pid and it has no controlling terminal), receives one end of a
-//! socket pair as stdin (the status channel the fence script remaps), and
-//! writes stdout and stderr into one pipe.
+//! POSIX containment: the command leads its own process group (its group id
+//! is its pid) and never keeps the host's controlling terminal (see
+//! [`Containment`]), receives one end of a socket pair as stdin (the status
+//! channel the fence script remaps), and writes stdout and stderr into one
+//! pipe.
 
 use std::io::{PipeReader, Read, Write};
 use std::os::fd::{AsFd, OwnedFd};
@@ -9,11 +10,13 @@ use std::os::unix::net::UnixStream;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+use std::os::unix::process::CommandExt as _;
+
 use process_wrap::std::{ChildWrapper, CommandWrap, ProcessSession};
 use rustix::event::{poll, PollFd, PollFlags};
 use rustix::process::{kill_process_group, test_kill_process_group, Pid};
 
-use super::Signal;
+use super::{Containment, Signal};
 
 /// A spawned command: its process (owned by the watcher), the parent end of
 /// its status channel, and the read end of its output pipe.
@@ -146,13 +149,23 @@ fn parse_status(line: &[u8]) -> Option<i32> {
     std::str::from_utf8(line).ok()?.trim().parse().ok()
 }
 
+/// How long a spawn waits for the launcher's acknowledgement (it only
+/// starts, calls `setsid` and applies the restriction).
+const LAUNCH_ACK_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Whether this process has a controlling terminal (`/dev/tty` opens only
+/// then): a command must then lead its own session.
+pub(crate) fn has_controlling_terminal() -> bool {
+    std::fs::File::open("/dev/tty").is_ok()
+}
+
 /// Spawn `command` (program, arguments, cwd and environment set) contained
-/// in its own session, gated on the status channel.
+/// as `containment` says, gated on the status channel.
 ///
 /// # Errors
 ///
-/// The OS error of the pipe, socket or spawn.
-pub(crate) fn spawn(mut command: Command) -> std::io::Result<Spawned> {
+/// The OS error of the pipe, socket or spawn, or the launcher's refusal.
+pub(crate) fn spawn(mut command: Command, containment: Containment) -> std::io::Result<Spawned> {
     let (parent, child_end) = UnixStream::pair()?;
     let (wake_read, wake_write) = std::io::pipe()?;
     let (output, output_write) = std::io::pipe()?;
@@ -160,14 +173,29 @@ pub(crate) fn spawn(mut command: Command) -> std::io::Result<Spawned> {
         .stdin(Stdio::from(OwnedFd::from(child_end)))
         .stdout(Stdio::from(output_write.try_clone()?))
         .stderr(Stdio::from(output_write));
-    let mut wrapped = CommandWrap::from(command);
-    wrapped.wrap(ProcessSession);
-    let child = wrapped.spawn()?;
+    let child = match containment {
+        Containment::ProcessGroup | Containment::LauncherSession => {
+            if containment == Containment::ProcessGroup {
+                command.process_group(0);
+            }
+            let spawned = command.spawn();
+            drop(command);
+            Box::new(spawned?)
+        }
+        Containment::ForkSession => {
+            let mut wrapped = CommandWrap::from(command);
+            wrapped.wrap(ProcessSession);
+            wrapped.spawn()?
+        }
+    };
     // The command (and with it the parent's copies of the child-side fds)
-    // closes here, so the output pipe reports EOF once the tree closes it.
-    drop(wrapped);
+    // closed above, so the output pipe reports EOF once the tree closes it.
+    let mut process = Process { child };
+    if containment == Containment::LauncherSession {
+        await_launch(&parent, &mut process)?;
+    }
     Ok(Spawned {
-        process: Process { child },
+        process,
         channel: ControlChannel {
             status: parent,
             wake_read,
@@ -175,6 +203,56 @@ pub(crate) fn spawn(mut command: Command) -> std::io::Result<Spawned> {
         },
         output,
     })
+}
+
+/// Read the launcher's acknowledgement: the child leads its session (and is
+/// confined) from then on, so its group can be signalled. Before that the
+/// launcher is alone (it has run nothing), so a failure reaps just it, by
+/// its unreaped handle, never by group id. A refusal carries the launcher's
+/// error text.
+fn await_launch(status: &UnixStream, process: &mut Process) -> std::io::Result<()> {
+    let mut first = [0u8; 1];
+    let timeout = rustix::event::Timespec::try_from(LAUNCH_ACK_TIMEOUT)
+        .map_err(|_| std::io::Error::other("launcher timeout out of range"))?;
+    let mut fds = [PollFd::new(status, PollFlags::IN)];
+    let ready = match poll(&mut fds, Some(&timeout)) {
+        Ok(ready) => ready,
+        Err(error) => {
+            let _ = process.child.kill();
+            return Err(error.into());
+        }
+    };
+    if ready == 0 {
+        let _ = process.child.kill();
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "the sandbox launcher did not start the command",
+        ));
+    }
+    let read = match (&*status).read(&mut first) {
+        Ok(read) => read,
+        Err(error) => {
+            let _ = process.child.kill();
+            return Err(error);
+        }
+    };
+    match (read, first[0]) {
+        (1, pa_os_sandbox::launch::LAUNCH_ACK) => Ok(()),
+        (0, _) => {
+            let code = process.wait();
+            Err(std::io::Error::other(format!(
+                "the sandbox launcher exited ({code}) before starting the command"
+            )))
+        }
+        _ => {
+            let mut message = Vec::new();
+            let _ = (&*status).read_to_end(&mut message);
+            process.wait();
+            Err(std::io::Error::other(
+                String::from_utf8_lossy(&message).into_owned(),
+            ))
+        }
+    }
 }
 
 /// Signals and liveness for a command's process group, by its leader's pid

@@ -211,9 +211,9 @@ impl JobTable {
                 "empty argv",
             ))
         })?;
-        let mut command = context
+        let (mut command, containment) = context
             .sandbox()
-            .command(program)
+            .job_command(program)
             .map_err(SpawnError::Sandbox)?;
         command
             .args(arguments)
@@ -221,7 +221,7 @@ impl JobTable {
             .env_clear()
             .envs(child_env(context));
         let journal = journal::Journal::from_env(context.env(), request.kernel_pid);
-        let spawned = platform::spawn(command).map_err(SpawnError::Os)?;
+        let spawned = platform::spawn(command, containment).map_err(SpawnError::Os)?;
         let Ok(journal) = journal else {
             // Fail closed: a configured journal that cannot enroll the pid must
             // not let the command run (the host reaper would never see it).

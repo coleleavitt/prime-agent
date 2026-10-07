@@ -57,6 +57,9 @@ workflow = ["dep:pa-workflow"]
 pa-types = { path = "../pa-types" }
 pa-core = { path = "../pa-core" }
 pa-bash = { path = "../pa-bash" }
+# The exec'd sandbox launcher this binary serves and registers (no new crate:
+# pa-core and pa-bash already depend on it).
+pa-os-sandbox = { path = "../pa-os-sandbox" }
 pa-toolforge = { path = "../pa-toolforge", optional = true }
 pa-ai = { path = "../pa-ai" }
 pa-agent = { path = "../pa-agent" }

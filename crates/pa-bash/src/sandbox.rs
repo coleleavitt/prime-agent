@@ -12,6 +12,8 @@ use std::sync::Arc;
 
 use pa_os_sandbox::PreparedSandbox;
 
+use crate::platform::Containment;
+
 /// How a kernel's commands are confined.
 #[derive(Debug, Clone, Default)]
 pub enum JobSandbox {
@@ -27,6 +29,30 @@ pub enum JobSandbox {
 }
 
 impl JobSandbox {
+    /// A `Command` running a job's `program` under this sandbox, and the
+    /// containment its spawn uses (see [`Containment`]).
+    ///
+    /// # Errors
+    ///
+    /// The refusal, when the sandbox is [`JobSandbox::Unavailable`].
+    pub(crate) fn job_command(
+        &self,
+        program: impl AsRef<OsStr>,
+    ) -> Result<(Command, Containment), String> {
+        let prepared = match self {
+            JobSandbox::Unconfined => None,
+            JobSandbox::Confined(prepared) => Some(prepared.as_ref()),
+            JobSandbox::Unavailable(reason) => return Err(reason.clone()),
+        };
+        if !crate::platform::has_controlling_terminal() {
+            return Ok((self.command(program)?, Containment::ProcessGroup));
+        }
+        match pa_os_sandbox::session_command(program.as_ref(), prepared) {
+            Some(command) => Ok((command, Containment::LauncherSession)),
+            None => Ok((self.command(program)?, Containment::ForkSession)),
+        }
+    }
+
     /// A `Command` running `program` under this sandbox.
     ///
     /// # Errors

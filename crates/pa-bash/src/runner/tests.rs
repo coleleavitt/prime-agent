@@ -138,7 +138,7 @@ fn a_closed_gate_never_runs_the_command() {
         .current_dir(dir.path())
         .env_clear()
         .envs(&env);
-    let spawned = platform::spawn(command).expect("spawn");
+    let spawned = platform::spawn(command, platform::Containment::ProcessGroup).expect("spawn");
     let platform::Spawned {
         mut process,
         channel,
@@ -387,4 +387,160 @@ fn older_reaped_jobs_are_compacted() {
     expected.extend(vec![true; super::FULL_HISTORY]);
     assert_eq!(sizes, expected);
     assert!(jobs.iter().all(|job| job.output_bytes() == 200_000));
+}
+
+/// The median of `samples`.
+fn median(mut samples: Vec<Duration>) -> Duration {
+    samples.sort();
+    samples[samples.len() / 2]
+}
+
+/// A job spawn must not fork the host: fork copies the host's page tables,
+/// so its cost grew with the host's resident memory (3 to 5 ms per command
+/// at 120 MB). Measured against a spawn std is known to fork (a bare
+/// program name with `PATH` set), interleaved at the same inflated RSS: the
+/// job spawn stays several times cheaper. Without a controlling terminal
+/// the job leads a new process group through `posix_spawn`; with one (a
+/// developer's terminal) a library host has no launcher and forks, so the
+/// check does not apply there.
+#[cfg(unix)]
+#[test]
+fn a_job_spawn_does_not_copy_the_host() {
+    if platform::has_controlling_terminal() {
+        eprintln!("skipping: this host has a controlling terminal (and no launcher)");
+        return;
+    }
+    let ballast = std::hint::black_box(vec![1u8; 192 * 1024 * 1024]);
+    let env = BTreeMap::from([("PATH".to_string(), "/usr/bin:/bin".to_string())]);
+    let mut job_spawns = Vec::new();
+    let mut fork_spawns = Vec::new();
+    for _ in 0..25 {
+        let (mut command, containment) = crate::sandbox::JobSandbox::Unconfined
+            .job_command("/bin/sh")
+            .expect("command");
+        command
+            .args(["-c", "true"])
+            .current_dir("/")
+            .env_clear()
+            .envs(&env);
+        let started = std::time::Instant::now();
+        let spawned = platform::spawn(command, containment).expect("spawn");
+        job_spawns.push(started.elapsed());
+        spawned.abort();
+
+        let mut forked = std::process::Command::new("true");
+        forked.env("PATH", "/usr/bin:/bin").current_dir("/");
+        let started = std::time::Instant::now();
+        let mut child = forked.spawn().expect("fork");
+        fork_spawns.push(started.elapsed());
+        child.wait().expect("reap");
+    }
+    let rss = host_rss_mib();
+    drop(ballast);
+    let (job, fork) = (median(job_spawns), median(fork_spawns));
+    assert!(
+        job * 3 < fork,
+        "a job spawn ({job:?}) costs about what a fork of this {rss} MiB host does ({fork:?})"
+    );
+}
+
+/// Median and p95 of `samples` in milliseconds.
+fn spawn_bench_summary(mut samples: Vec<Duration>) -> String {
+    samples.sort();
+    let at = |q: f64| {
+        // Truncation is intended: an index into the sorted samples.
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss
+        )]
+        let index = ((samples.len() as f64 * q) as usize).min(samples.len() - 1);
+        samples[index].as_secs_f64() * 1000.0
+    };
+    format!("median {:7.3} ms  p95 {:7.3} ms", at(0.5), at(0.95))
+}
+
+/// One bench pass at the current host RSS: the runner's own spawn (the
+/// `platform::spawn` call alone, then a whole `true` job until reaped),
+/// unconfined and, where this machine can confine, under the sandbox.
+fn spawn_bench_pass(label: &str, runs: usize) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let workspace = dir.path().canonicalize().expect("workspace");
+    let mut sandboxes = vec![("unconfined", crate::sandbox::JobSandbox::Unconfined)];
+    #[cfg(target_os = "linux")]
+    if let Some(confined) = workspace_sandbox(&workspace) {
+        sandboxes.push(("confined", confined));
+    }
+    for (name, sandbox) in sandboxes {
+        let env = BTreeMap::from([("PATH".to_string(), "/usr/bin:/bin".to_string())]);
+        let context = GuardContext::new(&workspace, env.clone()).with_sandbox(sandbox.clone());
+        let mut spawn_only = Vec::with_capacity(runs);
+        for _ in 0..runs {
+            let (mut command, containment) = sandbox.job_command("/bin/sh").expect("command");
+            command
+                .args(["-c", "true"])
+                .current_dir(&workspace)
+                .env_clear()
+                .envs(&env);
+            let started = std::time::Instant::now();
+            let spawned = platform::spawn(command, containment).expect("spawn");
+            spawn_only.push(started.elapsed());
+            spawned.abort();
+        }
+        let table = JobTable::new();
+        table.set_sandbox(sandbox.clone());
+        let mut whole_job = Vec::with_capacity(runs);
+        for _ in 0..runs {
+            let started = std::time::Instant::now();
+            let job = spawn(&table, "true", context.clone());
+            let _ = events(&job);
+            whole_job.push(started.elapsed());
+        }
+        println!(
+            "{label:>10} {name:>10}  spawn() {}  |  true job {}",
+            spawn_bench_summary(spawn_only),
+            spawn_bench_summary(whole_job)
+        );
+    }
+}
+
+/// The host's resident set in MiB (Linux `/proc`; 0 elsewhere).
+fn host_rss_mib() -> u64 {
+    std::fs::read_to_string("/proc/self/statm")
+        .ok()
+        .and_then(|statm| statm.split_whitespace().nth(1)?.parse::<u64>().ok())
+        .map_or(0, |pages| pages * 4096 / (1024 * 1024))
+}
+
+/// Spawn latency against the host's resident memory: a pass at the test
+/// process's own size, then one after touching `PA_SPAWN_BENCH_INFLATE_MB`
+/// (default 200) more. Fork copies the parent's page tables, so its cost
+/// grows with RSS; a `posix_spawn`/`vfork` path does not. Run it from a
+/// terminal (or under `script`) to measure the controlling-terminal path.
+#[test]
+#[ignore = "benchmark: cargo test -p pa-bash --release -- --ignored --nocapture spawn_latency"]
+fn spawn_latency_against_host_rss() {
+    let runs = std::env::var("PA_SPAWN_BENCH_RUNS")
+        .ok()
+        .and_then(|runs| runs.parse().ok())
+        .unwrap_or(300);
+    // `PA_SPAWN_BENCH_LAUNCHER`: a `prime-agent` binary to confine through
+    // (its exec'd launcher) instead of the in-process fork hook.
+    if let Some(program) = std::env::var_os("PA_SPAWN_BENCH_LAUNCHER") {
+        let _ = pa_os_sandbox::set_launcher(pa_os_sandbox::Launcher::new(
+            program.into(),
+            vec![pa_os_sandbox::LAUNCHER_FLAG.into()],
+        ));
+    }
+    let inflate_mb: usize = std::env::var("PA_SPAWN_BENCH_INFLATE_MB")
+        .ok()
+        .and_then(|mb| mb.parse().ok())
+        .unwrap_or(200);
+    spawn_bench_pass(&format!("{}MiB", host_rss_mib()), runs);
+    // Touch every page so it is resident (and in the page tables).
+    let ballast: Vec<u8> = vec![1u8; inflate_mb * 1024 * 1024];
+    let touched: u64 = ballast.iter().step_by(4096).map(|&b| u64::from(b)).sum();
+    assert!(touched > 0);
+    spawn_bench_pass(&format!("{}MiB", host_rss_mib()), runs);
+    drop(std::hint::black_box(ballast));
 }
