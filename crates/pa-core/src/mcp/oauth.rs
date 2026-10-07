@@ -13,7 +13,7 @@ use tokio::time::Duration;
 
 use crate::auth::types::AuthCredential;
 
-use super::oauth_callback::{CallbackCode, CallbackServer};
+use super::oauth_callback::{CallbackCode, CallbackPorts, CallbackServer};
 use super::oauth_discovery::{
     canonical_resource, discover, exchange_token, generate_pkce, parse_redirect_input,
     random_state, register_client, validated_https_url, TokenResponse, TOKEN_EXPIRY_BUFFER_MS,
@@ -35,6 +35,8 @@ pub struct McpOAuthConfig {
     pub client_id: Option<String>,
     /// Requested scopes; defaults to the server's advertised scopes.
     pub scopes: Option<String>,
+    /// The ports the local callback server tries (the registered range in product logins).
+    pub callback_ports: CallbackPorts,
 }
 
 /// The interactive surface a login drives (the TS `OAuthLoginCallbacks`).
@@ -151,7 +153,7 @@ pub async fn mcp_login(
     // `state` is independent of the PKCE verifier: the verifier is the
     // token-exchange secret, `state` is echoed on the redirect URL.
     let state = random_state();
-    let callback = Arc::new(CallbackServer::start(&config.label).await?);
+    let callback = Arc::new(CallbackServer::start(&config.label, &config.callback_ports).await?);
     let redirect_uri = callback.redirect_uri();
 
     let scope = config
@@ -585,6 +587,8 @@ mod tests {
             url: url.to_string(),
             client_id: None,
             scopes: None,
+            // Tests never contend for the registered range.
+            callback_ports: CallbackPorts::ephemeral(),
         }
     }
 

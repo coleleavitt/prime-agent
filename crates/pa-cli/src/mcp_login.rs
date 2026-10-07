@@ -72,6 +72,8 @@ pub(crate) fn cli_mcp_manager(cwd: &std::path::Path, agent_dir: &std::path::Path
 pub struct TerminalMcpAuth {
     cwd: PathBuf,
     agent_dir: PathBuf,
+    /// The ports the login's callback server tries (the registered range outside tests).
+    callback_ports: pa_core::mcp::CallbackPorts,
 }
 
 impl TerminalMcpAuth {
@@ -79,13 +81,16 @@ impl TerminalMcpAuth {
         TerminalMcpAuth {
             cwd: cwd.into(),
             agent_dir: agent_dir.into(),
+            callback_ports: pa_core::mcp::CallbackPorts::registered(),
         }
     }
 
     /// The manager that resolves integrations the same way the session engine's
     /// gating does (settings `mcpServers` + the builtin catalog).
     fn manager(&self) -> McpManager {
-        cli_mcp_manager(&self.cwd, &self.agent_dir)
+        let mut manager = cli_mcp_manager(&self.cwd, &self.agent_dir);
+        manager.set_oauth_callback_ports(self.callback_ports.clone());
+        manager
     }
 
     /// Run one login against an injectable UI/transport (tests script the
@@ -409,7 +414,9 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let agent_dir = dir.path().join("agent");
         settings_with_fixture_server(&agent_dir);
-        let auth = TerminalMcpAuth::new(dir.path().to_path_buf(), agent_dir.clone());
+        let mut auth = TerminalMcpAuth::new(dir.path().to_path_buf(), agent_dir.clone());
+        // Parallel runs never contend for the registered callback range.
+        auth.callback_ports = pa_core::mcp::CallbackPorts::ephemeral();
         let http = ScriptedHttp::fixture();
         let ui = PasteUi {
             auth_url: Arc::new(std::sync::Mutex::new(String::new())),

@@ -233,7 +233,7 @@ mod tests {
                 call_timeout_ms: None,
             },
         );
-        let manager = McpManager::new(McpManagerOptions {
+        let mut manager = McpManager::new(McpManagerOptions {
             auth_storage: AuthStorage::create_with_oauth(
                 agent.path(),
                 Arc::new(pa_core::mcp::McpOAuth::with_http(
@@ -247,6 +247,7 @@ mod tests {
             remote_source: None,
             probe_override: None,
         });
+        manager.set_oauth_callback_ports(pa_core::mcp::CallbackPorts::ephemeral());
         let manager = Arc::new(std::sync::Mutex::new(manager));
         // Gating snapshots take the auth-store's blocking lock (the
         // session engine runs them off the async runtime; same here).

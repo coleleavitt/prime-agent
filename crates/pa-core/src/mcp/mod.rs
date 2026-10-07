@@ -33,6 +33,7 @@ pub use manager_catalog::{
     StaticTokenInstall,
 };
 pub use oauth::{mcp_login, mcp_refresh_token, McpLoginUi, McpOAuthConfig};
+pub use oauth_callback::CallbackPorts;
 pub use oauth_http::{OAuthHttp, OAuthHttpRequest, OAuthHttpResponse, ReqwestOAuthHttp};
 use pa_types::sync::MutexExt;
 pub use session::{McpSessionOptions, McpSessions, DEFAULT_IDLE_TIMEOUT};
@@ -281,6 +282,8 @@ pub struct McpManager {
     remote_source: Option<manager_catalog::RemoteCatalogSourceFn>,
     probe_override: Option<probe::McpEndpointProbe>,
     usage_report: Option<McpUsageReporter>,
+    /// The ports interactive logins' callback server tries.
+    oauth_callback_ports: oauth_callback::CallbackPorts,
     integrations: HashMap<String, ResolvedIntegration>,
     /// The resolved service catalog (the SAME resolution feeds integrations
     /// and the `/mcp` view).
@@ -299,6 +302,12 @@ impl McpManager {
     /// [`McpManager::register_host_handlers`] so the handlers capture it.
     pub fn set_usage_report(&mut self, reporter: Option<McpUsageReporter>) {
         self.usage_report = reporter;
+    }
+
+    /// Set the ports interactive logins' callback server tries (the registered range by default;
+    /// tests pass [`CallbackPorts::ephemeral`] so parallel runs never contend for it).
+    pub fn set_oauth_callback_ports(&mut self, ports: CallbackPorts) {
+        self.oauth_callback_ports = ports;
     }
 }
 
@@ -388,6 +397,7 @@ impl McpManager {
             remote_source,
             probe_override: options.probe_override,
             usage_report: None,
+            oauth_callback_ports: oauth_callback::CallbackPorts::registered(),
             integrations: HashMap::new(),
             service_catalog: crate::mcp::service_catalog::McpCatalogResolution::default(),
             catalog_available: false,

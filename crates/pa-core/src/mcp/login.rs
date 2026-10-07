@@ -11,6 +11,7 @@ use crate::auth::types::AuthCredential;
 use crate::auth::{AuthStorage, OAuthIntegration};
 
 use super::oauth::{mcp_login, McpLoginUi, McpOAuthConfig};
+use super::oauth_callback::CallbackPorts;
 use super::oauth_http::OAuthHttp;
 use super::McpManager;
 
@@ -59,6 +60,7 @@ impl McpManager {
             url,
             client_id: None,
             scopes: None,
+            callback_ports: self.oauth_callback_ports.clone(),
         })
     }
 
@@ -162,6 +164,8 @@ impl McpOAuth {
             url: endpoint.clone(),
             client_id: None,
             scopes: None,
+            // A refresh never runs the callback server.
+            callback_ports: CallbackPorts::registered(),
         };
         let http = Arc::clone(&self.http);
         let credential = credentials.clone();
