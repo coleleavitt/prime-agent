@@ -129,6 +129,12 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
         return run_runtime_bootstrap();
     }
 
+    // A kernel runtime outside a Prime Agent host (tests, scripts) runs its
+    // bash() commands through this sidecar over stdin/stdout.
+    if args.len() == 1 && args[0] == "--prime-agent-bash-host" {
+        return Ok(pa_bash::serve_stdio());
+    }
+
     // Public command routing: help requests, removed commands, management
     // commands, and the model/session rewrites.
     let public_command = public_command::handle_public_command(args);

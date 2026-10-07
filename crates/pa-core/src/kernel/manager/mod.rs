@@ -377,6 +377,9 @@ pub(crate) struct Inner {
     /// #2528): a restart or respawn starts there instead of
     /// `options.cwd`.
     cwd_override: Mutex<Option<std::path::PathBuf>>,
+    /// The kernel's `bash()` jobs: the host runs them on the kernel's behalf
+    /// (`bash.*` host requests) and kills them with the kernel.
+    bash_jobs: Arc<pa_bash::JobTable>,
 }
 
 struct StderrLog {
@@ -492,6 +495,7 @@ impl ReplKernelManager {
             stderr_closed: Notify::new(),
             stderr_closed_flag: AtomicBool::new(false),
             stderr_log: Mutex::new(None),
+            bash_jobs: Arc::new(pa_bash::JobTable::new()),
             plan_guard_token: Mutex::new(None),
             plan_guard_lock: tokio::sync::Mutex::new(()),
             cwd_override: Mutex::new(None),

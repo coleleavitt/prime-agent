@@ -163,3 +163,10 @@ fn probe_uncommitted_changes(
 
 #[cfg(test)]
 mod tests;
+
+/// Whether `command` holds a git command that discards uncommitted
+/// working-tree changes (the kernel's public
+/// `is_destructive_git_discard_command`).
+pub(crate) fn is_discard_command(command: &str) -> bool {
+    sites::has_discard(&command.chars().collect::<Vec<_>>())
+}

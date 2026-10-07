@@ -56,6 +56,7 @@ workflow = ["dep:pa-workflow"]
 [dependencies]
 pa-types = { path = "../pa-types" }
 pa-core = { path = "../pa-core" }
+pa-bash = { path = "../pa-bash" }
 pa-toolforge = { path = "../pa-toolforge", optional = true }
 pa-ai = { path = "../pa-ai" }
 pa-agent = { path = "../pa-agent" }

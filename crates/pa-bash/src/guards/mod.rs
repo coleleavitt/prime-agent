@@ -56,3 +56,5 @@ pub(crate) fn check(
             .map(str::to_string),
     })
 }
+
+pub(crate) use destructive_git::is_discard_command as is_destructive_git_discard;

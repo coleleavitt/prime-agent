@@ -33,6 +33,26 @@ impl GuardKind {
         GuardKind::Sudo,
     ];
 
+    /// The guard's wire name (`destructive_git`, ..., `sudo`): the kernel's
+    /// `allow`/`launchBypass` lists and the parity corpus use it.
+    #[must_use]
+    pub fn key(self) -> &'static str {
+        match self {
+            GuardKind::DestructiveGit => "destructive_git",
+            GuardKind::DestructiveChmod => "destructive_chmod",
+            GuardKind::ForcePush => "force_push",
+            GuardKind::SecretEcho => "secret_echo",
+            GuardKind::PipeToShell => "pipe_to_shell",
+            GuardKind::Sudo => "sudo",
+        }
+    }
+
+    /// The guard with this wire name.
+    #[must_use]
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|guard| guard.key() == key)
+    }
+
     /// The exception class the kernel raises for this guard's refusals
     /// (`rlm.bash.<ErrorName>`, a `RuntimeError` subclass).
     #[must_use]

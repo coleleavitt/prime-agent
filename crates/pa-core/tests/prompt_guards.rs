@@ -201,6 +201,21 @@ const INTERNAL_HOST_REQUESTS: &[&str] = &[
     "factory.graph",
     "factory.watch",
     "factory.machine",
+    // The kernel's `bash()` client: the host checks and runs the commands
+    // (`pa_bash::REQUEST_TYPES`); the model-facing surface is `bash()`.
+    "bash.check",
+    "bash.isDestructiveGitDiscard",
+    "bash.shell",
+    "bash.childEnv",
+    "bash.spawn",
+    "bash.follow",
+    "bash.output",
+    "bash.kill",
+    "bash.confirmExit",
+    "bash.groupAlive",
+    "bash.killAll",
+    "bash.inventory",
+    "bash.activity",
 ];
 
 /// Map one registered host-request type to the prompt token that documents
@@ -805,4 +820,16 @@ fn attach_image_texts_describe_the_image_model_path() {
     assert!(system_prompt_breakdown(&options).assembled.contains(
         "Image input: this model can see images; `attach_image` loads them into context."
     ));
+}
+
+/// The host serves every kernel `bash()` request natively; each one is
+/// host-internal (the model-facing surface is `bash()` itself).
+#[test]
+fn every_bash_host_request_is_listed_as_internal() {
+    let missing: Vec<&str> = pa_bash::REQUEST_TYPES
+        .iter()
+        .copied()
+        .filter(|request| !INTERNAL_HOST_REQUESTS.contains(request))
+        .collect();
+    assert_eq!(missing, Vec::<&str>::new());
 }

@@ -10,9 +10,15 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 fancy-regex = "0.14"
+getrandom = "0.3"
+
+# Safe wrappers for what std cannot express without `unsafe`: a new session
+# for the child (POSIX `setsid` between fork and exec) and Windows job objects
+# entered while the child is still suspended.
+process-wrap = { version = "10.0.1", default-features = false, features = ["std", "process-session", "job-object", "creation-flags"] }
 
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1", features = ["process"] }
+rustix = { version = "1", features = ["process", "event"] }
 
 [dev-dependencies]
 tempfile = "3"
