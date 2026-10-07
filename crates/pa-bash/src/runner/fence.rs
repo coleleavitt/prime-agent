@@ -9,6 +9,10 @@
 //! output ends; halves of the token travel separately so a passive echo of
 //! the wrapper (`set -x`, `/proc/$$/cmdline`) never forms it.
 
+use std::path::Path;
+
+use memchr::memmem;
+
 /// Child-side fd of the status channel. POSIX shells (notably dash) accept
 /// only single-digit fds in redirections.
 pub(crate) const STATUS_FD: u8 = 9;
@@ -25,9 +29,20 @@ const SYSTEM_UTILITY_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
 #[cfg(not(target_os = "macos"))]
 const SYSTEM_UTILITY_PATH: &str = "/bin:/usr/bin";
 
-/// The `printf` the fence uses: slash-qualified (bypassing function and alias
-/// lookup) when it can be found and quoted, else `\command -p printf`.
-fn fence_printf() -> String {
+/// The `printf` the fence uses, so a user function or alias named `printf`
+/// cannot swallow the fence frames: in bash and zsh the builtin, reached
+/// through `builtin` (which skips functions; the backslash skips aliases) at
+/// no process cost; in other shells the utility, slash-qualified when it can
+/// be found and quoted, else `\command -p printf`. (The fence trusts the
+/// shell's own `exec`, `set` and `wait` the same way it trusts `builtin`.)
+fn fence_printf(shell: &Path) -> String {
+    let name = shell
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    if matches!(name, "bash" | "zsh") {
+        return "\\builtin printf".to_string();
+    }
     match crate::shell::which("printf", Some(SYSTEM_UTILITY_PATH)) {
         Some(path) if !path.to_string_lossy().contains('\'') => {
             format!("'{}'", path.to_string_lossy())
@@ -39,8 +54,8 @@ fn fence_printf() -> String {
 /// The script the shell runs for `command`: remap the status channel, wait for
 /// the gate byte (sent once the pid is journaled), run the command with the
 /// control fds closed, then write the marker and the status.
-pub(crate) fn status_script(command: &str, token_a: &str, token_b: &str) -> String {
-    let emit = fence_printf();
+pub(crate) fn status_script(command: &str, token_a: &str, token_b: &str, shell: &Path) -> String {
+    let emit = fence_printf(shell);
     format!(
         "exec {STATUS_FD}>&0 {OUTPUT_FD}>&1 0</dev/null\n\
          read -r _prime_agent_gate <&{STATUS_FD} || exit 127\n\
@@ -58,6 +73,7 @@ pub(crate) fn status_script(command: &str, token_a: &str, token_b: &str) -> Stri
 }
 
 /// What one chunk of output means for the fence.
+#[cfg(test)]
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Scanned {
     /// Bytes that belong to the output stream now.
@@ -71,7 +87,7 @@ pub(crate) struct Scanned {
 /// the start of a marker split across reads.
 #[derive(Debug)]
 pub(crate) struct MarkerScanner {
-    marker: Vec<u8>,
+    finder: memmem::Finder<'static>,
     pending: Vec<u8>,
 }
 
@@ -81,33 +97,47 @@ impl MarkerScanner {
         marker.extend_from_slice(token.as_bytes());
         marker.extend_from_slice(COMPLETION_SUFFIX);
         Self {
-            marker,
+            finder: memmem::Finder::new(&marker).into_owned(),
             pending: Vec::new(),
         }
     }
 
-    /// Feed one chunk read before the marker was seen.
+    /// Feed one chunk read before the marker was seen: the bytes that are
+    /// output now go to `output` (borrowed from `chunk` unless a held-back
+    /// tail had to be joined), and the bytes after the marker come back once
+    /// it is found.
+    pub(crate) fn feed_into(
+        &mut self,
+        chunk: &[u8],
+        output: impl FnOnce(&[u8]),
+    ) -> Option<Vec<u8>> {
+        let joined;
+        let data: &[u8] = if self.pending.is_empty() {
+            chunk
+        } else {
+            let mut held = std::mem::take(&mut self.pending);
+            held.extend_from_slice(chunk);
+            joined = held;
+            &joined
+        };
+        let marker = self.finder.needle();
+        if let Some(at) = self.finder.find(data) {
+            output(&data[..at]);
+            return Some(data[at + marker.len()..].to_vec());
+        }
+        let retained = held_back(data, marker);
+        let (now, held) = data.split_at(data.len() - retained);
+        self.pending = held.to_vec();
+        output(now);
+        None
+    }
+
+    /// [`Self::feed_into`], collected.
+    #[cfg(test)]
     pub(crate) fn feed(&mut self, chunk: &[u8]) -> Scanned {
-        let mut data = std::mem::take(&mut self.pending);
-        data.extend_from_slice(chunk);
-        if let Some(at) = find(&data, &self.marker) {
-            let after = data[at + self.marker.len()..].to_vec();
-            data.truncate(at);
-            return Scanned {
-                before: data,
-                fence: Some(after),
-            };
-        }
-        let longest = data.len().min(self.marker.len() - 1);
-        let retained = (1..=longest)
-            .rev()
-            .find(|size| data.ends_with(&self.marker[..*size]))
-            .unwrap_or(0);
-        self.pending = data.split_off(data.len() - retained);
-        Scanned {
-            before: data,
-            fence: None,
-        }
+        let mut before = Vec::new();
+        let fence = self.feed_into(chunk, |bytes| before.extend_from_slice(bytes));
+        Scanned { before, fence }
     }
 
     /// The held-back bytes, released when the stream ends without a marker.
@@ -116,19 +146,20 @@ impl MarkerScanner {
     }
 }
 
-/// The first occurrence of `needle`, scanning for its first byte (the
-/// marker starts with a control byte that output rarely carries).
-pub(crate) fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    let (&first, _) = needle.split_first()?;
-    let mut from = 0;
-    while let Some(offset) = haystack.get(from..)?.iter().position(|byte| *byte == first) {
-        let at = from + offset;
-        if haystack.get(at..at + needle.len()) == Some(needle) {
-            return Some(at);
-        }
-        from = at + 1;
-    }
-    None
+/// How many trailing bytes of `data` could start a marker that the next read
+/// completes: the longest suffix that is a proper prefix of `marker`.
+fn held_back(data: &[u8], marker: &[u8]) -> usize {
+    let window = data.len().min(marker.len() - 1);
+    let tail = &data[data.len() - window..];
+    // The marker starts with a control byte that output rarely carries, so
+    // almost every read is settled by one byte search.
+    let Some(first) = memchr::memchr(marker[0], tail) else {
+        return 0;
+    };
+    (1..=window - first)
+        .rev()
+        .find(|size| data.ends_with(&marker[..*size]))
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -181,7 +212,7 @@ mod tests {
 
     #[test]
     fn the_script_never_names_the_raw_token() {
-        let script = status_script("echo hi", "aaaa", "bbbb");
+        let script = status_script("echo hi", "aaaa", "bbbb", Path::new("/bin/sh"));
         assert!(script.contains("'aaaa' 'bbbb' >&8"));
         assert!(!script.contains("aaaabbbb"));
         assert!(script.starts_with("exec 9>&0 8>&1 0</dev/null\nread -r _prime_agent_gate <&9 || exit 127\n{\necho hi\n} 8>&- 9>&-\n"));

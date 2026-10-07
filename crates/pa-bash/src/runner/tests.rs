@@ -8,7 +8,6 @@ use std::time::Duration;
 
 use super::{Job, JobEvent, JobTable, SpawnRequest};
 use crate::context::GuardContext;
-use crate::pipeline::Allowances;
 use crate::platform;
 use crate::script::Script;
 
@@ -22,9 +21,8 @@ fn context(extra: &[(&str, String)]) -> GuardContext {
 
 fn spawn(table: &JobTable, command: &str, context: GuardContext) -> Arc<Job> {
     table
-        .start_unchecked(&SpawnRequest {
+        .start(&SpawnRequest {
             script: Script::bare(command),
-            allow: Allowances::none(),
             context,
             kernel_pid: std::process::id(),
             sandbox_prefix: Vec::new(),
@@ -52,7 +50,7 @@ fn finished(events: &[JobEvent]) -> (i32, String) {
         .find_map(|event| match event {
             JobEvent::Finished {
                 exit_code, output, ..
-            } => Some((*exit_code, output.clone())),
+            } => Some((*exit_code, output.to_string())),
             JobEvent::Progress { .. } | JobEvent::Reaped { .. } => None,
         })
         .expect("a finished event")
@@ -127,7 +125,12 @@ fn a_delivered_status_wins_over_a_later_shell_death() {
 fn a_closed_gate_never_runs_the_command() {
     let dir = tempfile::tempdir().expect("tempdir");
     let marker = dir.path().join("ran");
-    let script = super::fence::status_script(&format!("touch {}", marker.display()), "a", "b");
+    let script = super::fence::status_script(
+        &format!("touch {}", marker.display()),
+        "a",
+        "b",
+        std::path::Path::new("/bin/sh"),
+    );
     let env = BTreeMap::from([("PATH".to_string(), "/usr/bin:/bin".to_string())]);
     let mut command = std::process::Command::new("/bin/sh");
     command
@@ -231,9 +234,8 @@ fn a_confined_spawn_writes_only_inside_its_roots() {
         outside.join("job.txt").display()
     );
     let job = table
-        .start_unchecked(&SpawnRequest {
+        .start(&SpawnRequest {
             script: Script::bare(&command),
-            allow: Allowances::none(),
             context: context.clone(),
             kernel_pid: std::process::id(),
             sandbox_prefix: Vec::new(),
@@ -271,9 +273,8 @@ fn an_unavailable_sandbox_starts_nothing() {
     let sandbox =
         crate::sandbox::JobSandbox::Unavailable("OS sandbox unavailable: test".to_string());
     table.set_sandbox(sandbox.clone());
-    let started = table.start_unchecked(&SpawnRequest {
+    let started = table.start(&SpawnRequest {
         script: Script::bare("true"),
-        allow: Allowances::none(),
         context: context(&[]).with_sandbox(sandbox.clone()),
         kernel_pid: std::process::id(),
         sandbox_prefix: Vec::new(),
@@ -293,4 +294,97 @@ fn an_unavailable_sandbox_starts_nothing() {
         },
     );
     assert_eq!(probe, crate::probe::ProbeOutcome::Unavailable);
+}
+
+/// The fence's `printf` is the shell builtin in bash (no process per
+/// command), reached so a user function or alias named `printf` cannot
+/// swallow the marker or the status: the result still arrives at foreground
+/// completion, not when the background child lets the shell exit.
+#[test]
+fn a_printf_function_or_alias_cannot_swallow_the_fence() {
+    let Some(bash) = crate::shell::which("bash", Some("/usr/bin:/bin")) else {
+        eprintln!("no bash; skipping");
+        return;
+    };
+    let table = JobTable::new();
+    let command = "printf() { echo hijacked; }\n\
+                   shopt -s expand_aliases\n\
+                   alias printf='echo aliased'\n\
+                   echo out\n\
+                   sleep 30 >/dev/null 2>&1 &";
+    let job = spawn(
+        &table,
+        command,
+        context(&[("SHELL", bash.to_string_lossy().into_owned())]),
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let mut cursor = 0;
+    let mut result = None;
+    while result.is_none() && std::time::Instant::now() < deadline {
+        let (events, next, _) = job.follow(cursor, Duration::from_secs(1));
+        cursor = next;
+        result = events.iter().find_map(|event| match event {
+            JobEvent::Finished {
+                exit_code, output, ..
+            } => Some((*exit_code, output.to_string())),
+            JobEvent::Progress { .. } | JobEvent::Reaped { .. } => None,
+        });
+    }
+    job.kill_now();
+    assert_eq!(result, Some((0, "out\n".to_string())));
+}
+
+/// The result is the output as of the fence; output written after it (an
+/// EXIT trap) stays out of the result but in the job's output, whether it
+/// lands before or after the result is read.
+#[test]
+fn output_past_the_fence_stays_out_of_the_result() {
+    let table = JobTable::new();
+    let job = spawn(&table, "trap 'echo late' EXIT\necho early", context(&[]));
+    let events = events(&job);
+    assert_eq!(finished(&events), (0, "early\n".to_string()));
+    assert_eq!(job.output(), ("early\nlate\n".to_string(), 11));
+}
+
+/// An old reaped job keeps only its buffer's tail: the activity tail it
+/// serves and its byte count are the ones the whole buffer gave.
+#[test]
+fn a_compacted_job_serves_the_same_activity_tail() {
+    let table = JobTable::new();
+    let job = spawn(
+        &table,
+        "i=0; while [ $i -lt 30000 ]; do echo \"line $i of the output\"; i=$((i+1)); done",
+        context(&[]),
+    );
+    let _ = events(&job);
+    let tail = |table: &JobTable| table.activity("tail", Some(&job.id), &serde_json::json!(200));
+    let before = tail(&table);
+    let bytes = job.output_bytes();
+    job.compact(super::COMPACT_KEEP);
+    assert!(job.output().0.len() < 2 * super::COMPACT_KEEP);
+    assert_eq!(tail(&table), before);
+    assert_eq!(job.output_bytes(), bytes);
+}
+
+/// Only the newest reaped jobs keep their whole buffer.
+#[test]
+fn older_reaped_jobs_are_compacted() {
+    let table = JobTable::new();
+    let command = "head -c 200000 /dev/zero | tr '\\0' x";
+    let jobs: Vec<_> = (0..super::FULL_HISTORY + 2)
+        .map(|_| {
+            let job = spawn(&table, command, context(&[]));
+            let _ = events(&job);
+            job
+        })
+        .collect();
+    let _ = table.inventory(1); // prunes
+    let sizes: Vec<bool> = jobs
+        .iter()
+        .map(|job| job.output().0.len() > super::COMPACT_KEEP + 100)
+        .collect();
+    let mut expected = vec![false; 2];
+    expected.extend(vec![true; super::FULL_HISTORY]);
+    assert_eq!(sizes, expected);
+    assert!(jobs.iter().all(|job| job.output_bytes() == 200_000));
 }

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import contextlib
 import contextvars
 import functools
 import json
@@ -24,6 +25,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -167,6 +169,7 @@ _GUARDS: dict[str, tuple[str, str, str | None, type[RuntimeError]]] = {
     "sudo": ("allow_sudo", "_SUDO_BYPASS_AT_KERNEL_START", "_sudo_late_bypass_warned", PrivilegeEscalationRefusalError),
 }
 _REFUSALS = {error.__name__: (key, error) for key, (_, _, _, error) in _GUARDS.items()}
+_REFUSAL_ERRORS = tuple(error for _, _, _, error in _GUARDS.values())
 
 
 def _launch_bypass() -> list[str]:
@@ -334,7 +337,7 @@ class _Sidecar:
         for slot in stranded:
             slot.settle(None, self._gone("exited before answering"))
 
-    def _send(self, data: dict[str, Any], slot: _Slot) -> None:
+    def _send(self, data: dict[str, Any], slot: _Slot) -> str:
         self.ensure_started()
         rid = uuid.uuid4().hex
         with self._lock:
@@ -354,23 +357,62 @@ class _Sidecar:
             # A host that exited at once is the same failure as one that
             # exited before answering, whichever the write noticed first.
             raise self._gone("exited before answering") from err
+        return rid
 
-    def request(self, data: dict[str, Any]) -> dict[str, Any]:
+    def _cancel(self, rid: str, slot: _Slot) -> None:
+        line = (json.dumps({"id": rid, "cancel": True}, separators=(",", ":")) + "\n").encode()
+        proc = slot.proc
+        if proc is None or proc.stdin is None:
+            return
+        try:
+            with self._write_lock:
+                _ = proc.stdin.write(line)
+                proc.stdin.flush()
+        except OSError:
+            pass  # the sidecar is gone, and its jobs with it
+
+    def request(self, data: dict[str, Any], *, cancel_on_interrupt: bool = False) -> dict[str, Any]:
         slot = _Slot()
-        self._send(data, slot)
-        slot.done.wait()
+        rid = self._send(data, slot)
+        try:
+            _ = slot.done.wait()
+        except KeyboardInterrupt as interrupt:
+            if not cancel_on_interrupt:
+                raise
+            self._cancel(rid, slot)
+            _drain(slot.done, _CANCEL_DRAIN)
+            interrupt.bash_reply = slot.data if slot.error is None else None  # pyright: ignore[reportAttributeAccessIssue]
+            raise
         if slot.error is not None:
             raise slot.error
         return slot.data or {}
 
     async def arequest(self, data: dict[str, Any]) -> dict[str, Any]:
         slot = _Slot(asyncio.get_running_loop())
-        self._send(data, slot)
+        _ = self._send(data, slot)
         assert slot.future is not None
         return await slot.future
 
 
 _sidecar = _Sidecar()
+
+# How long an interrupted `bash.run` waits for its host to kill the job and
+# answer (the teardown itself is bounded at about 2.5 s host-side).
+_CANCEL_DRAIN = 10.0
+
+
+def _drain(done: threading.Event, timeout: float) -> None:
+    """Wait (bounded) for a cancelled request's reply; repeat interrupts are
+    consumed, as the async cancel drain does."""
+    deadline = time.monotonic() + timeout
+    while not done.is_set():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        try:
+            _ = done.wait(remaining)
+        except KeyboardInterrupt:
+            continue
 
 
 def _host_mode() -> bool:
@@ -393,12 +435,42 @@ def _unwrap_host(reply: dict[str, Any]) -> dict[str, Any]:
     return result if isinstance(result, dict) else {}
 
 
-def _request(data: dict[str, Any]) -> dict[str, Any]:
-    """Send one `bash.*` request and block for its reply (any thread)."""
+def _request(data: dict[str, Any], *, cancel_on_interrupt: bool = False) -> dict[str, Any]:
+    """Send one `bash.*` request and block for its reply (any thread).
+
+    With ``cancel_on_interrupt``, a KeyboardInterrupt during the wait cancels
+    the request host-side (a `bash.run` kills its job), waits for the reply,
+    and re-raises with that reply (or None) as its ``bash_reply``.
+    """
+    reply = _request_once(data, cancel_on_interrupt=cancel_on_interrupt)
+    if reply.get("status") == "error" and reply.get("error") == "EnvUnknown":
+        # The host (a restarted sidecar, or a newer environment from another
+        # thread) does not hold the environment this key names.
+        resend = _env_resend(data)
+        if resend is not None:
+            return _request_once(resend, cancel_on_interrupt=cancel_on_interrupt)
+    return reply
+
+
+def _request_once(data: dict[str, Any], *, cancel_on_interrupt: bool) -> dict[str, Any]:
     if _host_mode():
         from . import repl
 
-        return _unwrap_host(repl.host_request_blocking(data))
+        try:
+            reply = (
+                repl.host_request_blocking(data, cancel_on_interrupt=True, drain_timeout_s=_CANCEL_DRAIN)
+                if cancel_on_interrupt
+                else repl.host_request_blocking(data)
+            )
+        except KeyboardInterrupt as interrupt:
+            host_reply = getattr(interrupt, "host_reply", None)
+            interrupt.bash_reply = (  # pyright: ignore[reportAttributeAccessIssue]
+                _unwrap_host(host_reply) if isinstance(host_reply, dict) and host_reply.get("status") == "ok" else None
+            )
+            raise
+        return _unwrap_host(reply)
+    if cancel_on_interrupt:
+        return _sidecar.request(data, cancel_on_interrupt=True)
     return _sidecar.request(data)
 
 
@@ -423,6 +495,56 @@ def _prepare_for_plan_mode() -> None:
 plan_guard.on_before_arm(_prepare_for_plan_mode)
 
 
+def _event_output(event: dict[str, Any], job_id: str) -> str:
+    """A finished event's result text: inline, or (a long one) in the spill
+    file the host wrote to this kernel's temp directory, read and removed.
+    A spill file that cannot be read falls back to the host's buffer."""
+    path = event.get("outputFile")
+    if not isinstance(path, str):
+        return str(event.get("output", ""))
+    try:
+        with open(path, encoding="utf-8", newline="") as spilled:
+            return spilled.read()
+    except OSError:
+        return str(_raise_for(_request({"type": "bash.output", "id": job_id})).get("output", ""))
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(path)
+
+
+# The kernel environment last sent whole, and the key the host remembers it
+# under: an unchanged environment travels as its key alone.
+_env_lock = threading.Lock()
+_env_sent: tuple[str, dict[str, str]] | None = None
+
+
+def _env_fields() -> dict[str, Any]:
+    """`os.environ` right now, as the request fields that carry it."""
+    global _env_sent
+    env = dict(os.environ)
+    with _env_lock:
+        if _env_sent is not None and _env_sent[1] == env:
+            return {"envKey": _env_sent[0]}
+        _env_sent = (uuid.uuid4().hex, env)
+        return {"envKey": _env_sent[0], "env": env}
+
+
+def _env_resend(data: dict[str, Any]) -> dict[str, Any] | None:
+    """`data` with its environment whole, for a host that lost the key: the
+    environment the key named, which the host remembers again under it (or,
+    when another thread has replaced it since, the current one, unkeyed)."""
+    key = data.get("envKey")
+    if not isinstance(key, str) or "env" in data:
+        return None
+    with _env_lock:
+        sent = _env_sent
+    if sent is not None and sent[0] == key:
+        return {**data, "env": sent[1]}
+    resend = {name: value for name, value in data.items() if name != "envKey"}
+    resend["env"] = dict(os.environ)
+    return resend
+
+
 def _kernel_request(kind: str, command: str, script: str, command_prefix: str | None, **extra: Any) -> dict[str, Any]:
     """The kernel state every check and spawn carries: its cwd and environment
     right now, the launch-time bypasses, and the current trace context."""
@@ -431,7 +553,7 @@ def _kernel_request(kind: str, command: str, script: str, command_prefix: str | 
         "command": command,
         "script": script,
         "cwd": os.getcwd(),
-        "env": dict(os.environ),
+        **_env_fields(),
         "launchBypass": _launch_bypass(),
         "kernelPid": os.getpid(),
     }
@@ -570,6 +692,92 @@ def _live_cell_owner() -> asyncio.Task[Any] | None:
     return None
 
 
+# `bash.run` follows a command it just started for this long, so a quick
+# command's whole life (result and reap) is one host request. While other
+# handles are live the window is skipped: `bash()` blocks its caller for the
+# window, and a fan-out of long commands must not start one window apart.
+_RUN_WINDOW_MS = 25
+
+
+@dataclass
+class _Launch:
+    """One `bash.run`: the span the command carries, and what the host
+    answered (the job and its events so far), or why it did not start."""
+
+    command: str
+    script: str
+    span: trace.Span
+    started: float
+    reply: dict[str, Any] | None = None
+    error: BaseException | None = None
+    interrupt: KeyboardInterrupt | None = None
+
+
+# bash() hands its launch to the BashHandle it builds next on this thread.
+_handoff = threading.local()
+
+
+def _launch(command: str, script: str, command_prefix: str | None, allow: list[str] | None) -> _Launch:
+    """Check, spawn and briefly follow `script` in one host request.
+
+    ``allow`` lists the bypassed guards; None skips the guards (a caller that
+    already validated the script). A guard refusal raises here; plan mode's
+    refusal and a spawn failure come back as the launch's ``error``, raised by
+    the handle (which ends the command's span with it). An interrupt during
+    the wait kills the job host-side and comes back as ``interrupt``.
+    """
+    span = trace.Span(
+        name="bash.command", ctx=trace.child_context(trace.current()), attrs={"bash.command": _safe_command(command)}
+    )
+    launch = _Launch(command=command, script=script, span=span, started=time.monotonic())
+    # Plan mode refuses before any process exists (with an OS sandbox the
+    # command runs inside it, read-only; without one only a classifiable
+    # read-only script runs). A kernel guard refusal still wins: it is what
+    # the command met first before the two checks shared one request.
+    try:
+        plan_guard.check_bash(script)
+    except BaseException as error:  # noqa: BLE001 - re-raised by the handle
+        if allow is not None:
+            _run_kernel_bash_guards(command, script, command_prefix, **{_GUARDS[key][0]: True for key in allow})
+        launch.error = error
+        return launch
+    sandbox = plan_guard.sandbox_prefix()
+    with _live_lock:
+        window = 0 if _live_handles else _RUN_WINDOW_MS
+    data = _kernel_request(
+        "bash.run",
+        command,
+        script,
+        command_prefix,
+        traceparent=trace.format_traceparent(span.ctx),
+        waitMs=window,
+        spillDir=tempfile.gettempdir(),
+        **({"sandboxPrefix": sandbox} if sandbox else {}),
+    )
+    if allow is None:
+        data["guards"] = False
+    else:
+        data["allow"] = allow
+        if (ctx := trace.current()) is not None:
+            data["checkTraceparent"] = trace.format_traceparent(ctx)
+    try:
+        reply = _request(data, cancel_on_interrupt=True)
+    except KeyboardInterrupt as interrupt:
+        launch.interrupt = interrupt
+        reply = getattr(interrupt, "bash_reply", None)
+        if not isinstance(reply, dict) or not isinstance(reply.get("job"), dict):
+            raise
+        launch.reply = reply
+        return launch
+    try:
+        launch.reply = _raise_for(reply)
+    except _REFUSAL_ERRORS:
+        raise
+    except Exception as error:  # noqa: BLE001 - re-raised by the handle
+        launch.error = error
+    return launch
+
+
 @dataclass(frozen=True)
 class BashResult:
     exit_code: int
@@ -591,27 +799,33 @@ class BashHandle:
         # `command` is the text the caller wrote and stays the display value
         # (the completion notice and repr use it). `script` is the text the
         # shell runs, computed once by `bash()` from a single read of
-        # PRIME_AGENT_BASH_COMMAND_PREFIX and already validated there; a handle
-        # built directly is guarded here on the same one read that supplies its
-        # script, so constructing the class is not a way around the guards.
+        # PRIME_AGENT_BASH_COMMAND_PREFIX and launched (checked and spawned in
+        # one host request) there; a handle built directly is guarded here on
+        # the same one read that supplies its script, so constructing the
+        # class is not a way around the guards.
+        handed_over = False
         if script is None:
             command_prefix = os.environ.get("PRIME_AGENT_BASH_COMMAND_PREFIX")
             script = _prefix_command(command, command_prefix)
-            _run_kernel_bash_guards(command, script, command_prefix)
+            launch = _launch(command, script, command_prefix, [])
         elif not _validated:
             # A caller-supplied script has no trusted prefix region: scan the
             # whole text as user text so a prefix boundary cannot hide words.
-            _run_kernel_bash_guards(command, script, None)
+            launch = _launch(command, script, None, [])
+        else:
+            pending: _Launch | None = getattr(_handoff, "launch", None)
+            _handoff.launch = None
+            if pending is not None and pending.command == command and pending.script == script:
+                launch = pending
+                handed_over = True
+            else:
+                launch = _launch(command, script, None, None)
         self.command = command
         # One "bash.command" span per call, a child of the calling cell's
         # context (or a fresh trace); the child process inherits it through
         # TRACEPARENT. _end_span finishes it exactly once from whichever path
         # observes completion first.
-        self._span = trace.Span(
-            name="bash.command",
-            ctx=trace.child_context(trace.current()),
-            attrs={"bash.command": _safe_command(command)},
-        )
+        self._span = launch.span
         self._span_lock = threading.Lock()
         self._span_context = contextvars.copy_context()
         self._killed = False
@@ -621,7 +835,7 @@ class BashHandle:
         self._creating_cell_task = completion_context[1] if completion_context else None
         self._awaited_by_creating_cell = False
         self._cell_bash_recorder = _current_cell_bash_recorder()
-        self._started = time.monotonic()
+        self._started = launch.started
         self._fields: dict[str, Any] = {}
         self._done = threading.Event()
         self._reaped = False
@@ -633,37 +847,27 @@ class BashHandle:
         self._consumed_notice: Callable[[], None] | None = None
         self._callback_lock = threading.Lock()
         self._released = False
-        # The host's job, filled in by the spawn before the handle is returned.
+        # The host's job, filled in from the launch before the handle is returned.
         self._activity_id = ""
         self._pid = 0
         self._pgid = 0
         self._started_at_text = ""
         self._started_at = datetime.now(timezone.utc)
         try:
-            self._spawn()
+            self._adopt(launch)
         except BaseException as exc:
             self._end_span(error=_truncate(f"spawn failed: {type(exc).__name__}: {exc}"))
             raise
+        if launch.interrupt is not None and not handed_over:
+            raise launch.interrupt
 
-    def _spawn(self) -> None:
-        # Plan mode: refuse before any process exists. With an OS sandbox the
-        # command runs inside it (read-only); without one only a classifiable
-        # read-only script runs.
-        plan_guard.check_bash(self._script)
-        sandbox = plan_guard.sandbox_prefix()
-        reply = _raise_for(
-            _request(
-                _kernel_request(
-                    "bash.spawn",
-                    self.command,
-                    self._script,
-                    None,
-                    guards=False,
-                    traceparent=trace.format_traceparent(self._span.ctx),
-                    **({"sandboxPrefix": sandbox} if sandbox else {}),
-                )
-            )
-        )
+    def _adopt(self, launch: _Launch) -> None:
+        """Take over the launched job: its events so far settle the handle
+        (a quick command arrives finished and reaped), and a follower thread
+        mirrors the rest."""
+        if launch.error is not None:
+            raise launch.error
+        reply = launch.reply or {}
         job = reply["job"]
         self._activity_id = str(job["id"])
         self._pid = int(job["pid"])
@@ -674,9 +878,17 @@ class BashHandle:
             {"bash.pid": self._pid, "bash.pgid": self._pgid, "bash.started_at": self._started_at_text}
         )
         self._span.emit_start()
+        if launch.interrupt is not None:
+            # The interrupted run killed the command it owned, like a
+            # cancelled one-shot await: no completion notice follows.
+            self._killed = True
+            self._awaited_by_creating_cell = True
         with _live_lock:
             _live_handles.add(self)
-        threading.Thread(target=self._follow, daemon=True).start()
+        for event in reply.get("events", ()):
+            self._apply(event)
+        if not reply.get("done"):
+            threading.Thread(target=self._follow, args=(int(reply.get("cursor", 0)),), daemon=True).start()
         self._schedule_background_completion_notice()
 
     @property
@@ -745,13 +957,21 @@ class BashHandle:
             return
         _request({"type": "bash.kill", "id": self._activity_id, "signal": int(sig), "graceMs": int(grace * 1000)})
 
-    def _follow(self) -> None:
+    def _follow(self, cursor: int = 0) -> None:
         """Mirror the host's job events: progress events become trace events,
         the result finalizes the handle, and the reap releases it."""
-        cursor = 0
         try:
             while True:
-                reply = _raise_for(_request({"type": "bash.follow", "id": self._activity_id, "cursor": cursor}))
+                reply = _raise_for(
+                    _request(
+                        {
+                            "type": "bash.follow",
+                            "id": self._activity_id,
+                            "cursor": cursor,
+                            "spillDir": tempfile.gettempdir(),
+                        }
+                    )
+                )
                 for event in reply.get("events", ()):
                     self._apply(event)
                 cursor = int(reply.get("cursor", cursor))
@@ -775,7 +995,9 @@ class BashHandle:
         elif kind == "finished":
             fields = event.get("fields") or {}
             self._fields.update(fields)
-            self._finalize(int(event["exitCode"]), str(event.get("output", "")), float(event.get("duration", 0.0)))
+            self._finalize(
+                int(event["exitCode"]), _event_output(event, self._activity_id), float(event.get("duration", 0.0))
+            )
         elif kind == "reaped":
             self._release(event)
 
@@ -1292,18 +1514,22 @@ def bash(
     # the guards scanned. `_with_prefix` is called once for the script itself.
     command_prefix = os.environ.get("PRIME_AGENT_BASH_COMMAND_PREFIX")
     script = _with_prefix(command, command_prefix)
-    _run_kernel_bash_guards(
-        command,
-        script,
-        command_prefix,
-        allow_destructive_git=allow_destructive_git,
-        allow_destructive_chmod=allow_destructive_chmod,
-        allow_force_push=allow_force_push,
-        allow_secret_echo=allow_secret_echo,
-        allow_pipe_to_shell=allow_pipe_to_shell,
-        allow_sudo=allow_sudo,
-    )
-    handle = BashHandle(command, script=script, _validated=True)
+    allowed = {
+        "destructive_git": allow_destructive_git,
+        "destructive_chmod": allow_destructive_chmod,
+        "force_push": allow_force_push,
+        "secret_echo": allow_secret_echo,
+        "pipe_to_shell": allow_pipe_to_shell,
+        "sudo": allow_sudo,
+    }
+    # The guards and the spawn are one host request on that one script; a
+    # refusal raises here, before any handle (or process) exists.
+    launch = _launch(command, script, command_prefix, [key for key, allow in allowed.items() if allow])
+    _handoff.launch = launch
+    try:
+        handle = BashHandle(command, script=script, _validated=True)
+    finally:
+        _handoff.launch = None
     from . import repl
 
     repl.emit(
@@ -1314,6 +1540,10 @@ def bash(
             }
         }
     )
+    if launch.interrupt is not None:
+        # Interrupted while the run waited: the command is already killed and
+        # settled (as a cancelled one-shot await), and the interrupt goes on.
+        raise launch.interrupt
     return handle
 
 

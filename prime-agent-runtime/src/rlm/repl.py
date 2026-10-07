@@ -379,7 +379,11 @@ class _BlockingHostReply:
 
 
 def host_request_blocking(
-    request: Mapping[str, object], *, timeout_s: float | None = None
+    request: Mapping[str, object],
+    *,
+    timeout_s: float | None = None,
+    cancel_on_interrupt: bool = False,
+    drain_timeout_s: float = 10.0,
 ) -> dict[str, object]:
     """Send one typed request and block the calling thread until its reply.
 
@@ -389,6 +393,11 @@ def host_request_blocking(
     (``KeyboardInterrupt``) ends the wait; the host's late reply is then
     dropped like any reply for an unknown id. ``timeout_s`` bounds the wait
     for callers whose host work is always quick (``HostDrainTimeout``).
+
+    With ``cancel_on_interrupt`` the interrupt instead sends one exact-ID
+    ``host_cancel``, waits (up to ``drain_timeout_s``, consuming repeat
+    interrupts) for the handler's terminal reply, and re-raises with that
+    reply (or None) as the exception's ``host_reply``.
     """
     if _loop is None:
         raise HostRequestUnavailable("repl runtime is not serving")
@@ -415,7 +424,21 @@ def host_request_blocking(
             frame: dict[str, object] = {"event": "host_request", "id": rid, "data": data}
             frame["traceparent"] = trace.format_traceparent(span.ctx)
             _send(frame)
-            if not slot.done.wait(timeout_s):
+            try:
+                answered = slot.done.wait(timeout_s)
+            except KeyboardInterrupt as interrupt:
+                if not cancel_on_interrupt:
+                    raise
+                _send({"event": "host_cancel", "id": rid})
+                deadline = time.monotonic() + drain_timeout_s
+                while not slot.done.is_set() and (remaining := deadline - time.monotonic()) > 0:
+                    try:
+                        _ = slot.done.wait(remaining)
+                    except KeyboardInterrupt:
+                        continue
+                interrupt.host_reply = slot.data  # pyright: ignore[reportAttributeAccessIssue]
+                raise
+            if not answered:
                 raise HostDrainTimeout(f"blocking host request did not answer within {timeout_s:g}s")
             if slot.error is not None:
                 raise slot.error

@@ -317,18 +317,37 @@ whose `result` carries `status`: `ok`, `refused` (`error`: the refusal class,
 (`error`: `ValueError`/`RuntimeError`/`OSError`/`KeyError`/`TypeError`,
 `message`, `errno` for `OSError`), which the client raises.
 
-- `bash.check` / `bash.spawn`: `{command, script, prefix?, allow: [guard],
-  cwd, env, launchBypass: [guard], kernelPid, traceparent?}`; the guard keys
-  are `destructive_git`, `destructive_chmod`, `force_push`, `secret_echo`,
-  `pipe_to_shell`, `sudo`. `bash.spawn` adds `guards: false` (the client
-  already ran `bash.check`) and `sandboxPrefix?: [str]` (the plan-mode
-  sandbox argv) and answers `{job: {id, pid, pgid, startedAt}}`. `cwd` and
-  `env` are the kernel's own at call time: the command runs there, with the
-  non-interactive settings and the guard bypass scrub applied host-side.
-- `bash.follow {id, cursor}`: waits (up to 30 s) for the job's next events
-  and answers `{events, cursor, done}`; events are `progress` (`msg`,
-  `fields`), `finished` (`exitCode`, `output`, `duration`, `fields`), then
-  `reaped` (`bytes`), always in that order.
+- `bash.run`: `{command, script, prefix?, allow: [guard], cwd, env |
+  envKey, launchBypass: [guard], kernelPid, traceparent?, checkTraceparent?,
+  sandboxPrefix?: [str], waitMs, spillDir?, guards?}` is a `bash()` call in
+  one request: the guards on `script` (the guard keys are
+  `destructive_git`, `destructive_chmod`, `force_push`, `secret_echo`,
+  `pipe_to_shell`, `sudo`; `guards: false` skips them for a script the
+  kernel's caller declared validated), then the spawn of that same script
+  (under the plan-mode `sandboxPrefix` argv), then a follow of the job for
+  up to `waitMs` (at most 30 s). It answers a refusal like `bash.check`, or
+  `{job: {id, pid, pgid, startedAt}, events, cursor, done}`: a quick command
+  arrives finished and reaped (`done`); otherwise the client continues with
+  `bash.follow` from `cursor`. The kernel waits 25 ms, or 0 while another
+  of its handles is live. A `host_cancel` for the run (the kernel was
+  interrupted while it waited; `host_request_blocking(...,
+  cancel_on_interrupt=True)`) SIGTERMs the job, SIGKILLs it after 0.5 s,
+  confirms the group's exit, and answers with `cancelled: true` and the
+  events up to the reap. `cwd` and `env` are the kernel's own at call time:
+  the command runs there, with the non-interactive settings and the guard
+  bypass scrub applied host-side. `env` travels whole with a new `envKey`
+  when it changed and as `envKey` alone otherwise; a host that does not
+  hold the key answers `error: EnvUnknown` and the client resends it whole.
+- `bash.check`: the guards alone (same fields, no spawn); `{}` or the
+  refusal.
+- `bash.follow {id, cursor, spillDir?}`: waits (up to 30 s) for the job's
+  next events and answers `{events, cursor, done}`; events are `progress`
+  (`msg`, `fields`), `finished` (`exitCode`, `output`, `duration`, `fields`),
+  then `reaped` (`bytes`), always in that order. With `spillDir` (the
+  kernel's temp directory), a result of 64 KiB or more is written to a new
+  owner-only file there and the `finished` event carries `outputFile`
+  instead of `output`; the client reads and removes it (and falls back to
+  `bash.output` if it cannot). `bash.run` events follow the same rule.
 - `bash.output {id, bytesOnly?}`, `bash.kill {id, signal, graceMs}`,
   `bash.confirmExit {id, termGraceMs, killWaitMs}` (the cancelled one-shot's
   bounded teardown), `bash.groupAlive {id}`, `bash.killAll {}`,

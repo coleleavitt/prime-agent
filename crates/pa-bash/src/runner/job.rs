@@ -16,7 +16,9 @@ use serde_json::{json, Map, Value};
 
 use super::buffer::OutputBuffer;
 use super::clock::iso_utc;
-use super::fence::{self, MarkerScanner};
+use memchr::memmem;
+
+use super::fence::MarkerScanner;
 use super::journal::Journal;
 use crate::platform::{self, ControlChannel, Process, Signal};
 
@@ -60,7 +62,7 @@ pub(crate) enum JobEvent {
     /// The command's result.
     Finished {
         exit_code: i32,
-        output: String,
+        output: Arc<str>,
         duration: Duration,
         fields: Map<String, Value>,
     },
@@ -68,21 +70,60 @@ pub(crate) enum JobEvent {
     Reaped { bytes: u64 },
 }
 
+/// A [`JobEvent`] as the job keeps it: the result's text is rendered from
+/// the buffer when a follower reads it, so a finished job holds its output
+/// once (in the buffer), not once per copy.
+#[derive(Debug, Clone)]
+enum Recorded {
+    Progress {
+        msg: &'static str,
+        fields: Map<String, Value>,
+    },
+    Finished {
+        exit_code: i32,
+        duration: Duration,
+        fields: Map<String, Value>,
+    },
+    Reaped {
+        bytes: u64,
+    },
+}
+
+/// Which bytes of the buffer are the command's result.
+#[derive(Debug, Clone)]
+enum ResultText {
+    /// Not decided yet.
+    Unset,
+    /// The buffer as it is now: no byte arrived since the result was pinned.
+    Live,
+    /// The buffer as it was when the result was pinned, rendered just before
+    /// a later byte (output past the fence) landed.
+    Frozen(Arc<str>),
+}
+
 impl JobEvent {
     pub(crate) fn to_json(&self) -> Value {
+        let mut json = self.to_json_without_output();
+        if let JobEvent::Finished { output, .. } = self {
+            json["output"] = (**output).into();
+        }
+        json
+    }
+
+    /// [`Self::to_json`], a finished event's `output` left out.
+    pub(crate) fn to_json_without_output(&self) -> Value {
         match self {
             JobEvent::Progress { msg, fields } => {
                 json!({"type": "progress", "msg": msg, "fields": fields})
             }
             JobEvent::Finished {
                 exit_code,
-                output,
                 duration,
                 fields,
+                ..
             } => json!({
                 "type": "finished",
                 "exitCode": exit_code,
-                "output": output,
                 "duration": duration.as_secs_f64(),
                 "fields": fields,
             }),
@@ -106,10 +147,10 @@ enum StatusReport {
 #[derive(Debug)]
 enum Fence {
     /// Still looking for the marker.
-    Open(MarkerScanner),
-    /// The marker arrived (with the output as of that moment) or the stream
-    /// ended without one (`None`): later bytes are plain output.
-    Closed(Option<String>),
+    Open(Box<MarkerScanner>),
+    /// The marker arrived (`marked`: the result is the output as of that
+    /// moment) or the stream ended without one: later bytes are plain output.
+    Closed { marked: bool },
 }
 
 #[derive(Debug)]
@@ -121,13 +162,14 @@ struct State {
     wait_reason: Option<WaitReason>,
     cargo_tail: Vec<u8>,
     fence: Fence,
+    result: ResultText,
     /// The pump is between reading a chunk and committing it.
     transfer: bool,
     eof: bool,
     status: StatusReport,
     finished: Option<(i32, Duration)>,
     reaped: bool,
-    events: Vec<JobEvent>,
+    events: Vec<Recorded>,
 }
 
 /// One spawned command.
@@ -185,7 +227,8 @@ impl Job {
                 last_progress: None,
                 wait_reason: None,
                 cargo_tail: Vec::new(),
-                fence: Fence::Open(MarkerScanner::new(&launch.token)),
+                fence: Fence::Open(Box::new(MarkerScanner::new(&launch.token))),
+                result: ResultText::Unset,
                 transfer: false,
                 eof: false,
                 status: StatusReport::Pending,
@@ -252,25 +295,32 @@ impl Job {
     }
 
     fn consume(&self, state: &mut State, chunk: &[u8]) {
-        let scanned = match &mut state.fence {
-            Fence::Closed(_) => {
+        // The scanner leaves the state while it hands bytes to `record`
+        // (the lock is held throughout, so nothing sees the gap).
+        let mut scanner = match std::mem::replace(&mut state.fence, Fence::Closed { marked: false })
+        {
+            Fence::Open(scanner) => scanner,
+            closed @ Fence::Closed { .. } => {
+                state.fence = closed;
                 self.record(state, chunk);
                 return;
             }
-            Fence::Open(scanner) => scanner.feed(chunk),
         };
-        self.record(state, &scanned.before);
-        if let Some(after) = scanned.fence {
-            state.fence = Fence::Closed(Some(state.buffer.text()));
-            self.changed.notify_all();
-            self.record(state, &after);
+        match scanner.feed_into(chunk, |bytes| self.record(state, bytes)) {
+            None => state.fence = Fence::Open(scanner),
+            Some(after) => {
+                state.fence = Fence::Closed { marked: true };
+                state.result = ResultText::Live;
+                self.changed.notify_all();
+                self.record(state, &after);
+            }
         }
     }
 
     fn abandon_fence(&self, state: &mut State) {
         if let Fence::Open(scanner) = &mut state.fence {
             let pending = scanner.take_pending();
-            state.fence = Fence::Closed(None);
+            state.fence = Fence::Closed { marked: false };
             self.record(state, &pending);
             self.changed.notify_all();
         }
@@ -279,6 +329,11 @@ impl Job {
     fn record(&self, state: &mut State, chunk: &[u8]) {
         if chunk.is_empty() {
             return;
+        }
+        if matches!(state.result, ResultText::Live) {
+            // The result is pinned to the buffer as it is now: render it
+            // before this byte changes the buffer.
+            state.result = ResultText::Frozen(state.buffer.text().into());
         }
         state.buffer.write(chunk);
         let now = Instant::now();
@@ -290,8 +345,8 @@ impl Job {
         if state.wait_reason.is_none() {
             let mut seam = std::mem::take(&mut state.cargo_tail);
             seam.extend_from_slice(&chunk[..chunk.len().min(keep)]);
-            if fence::find(&seam, CARGO_BUILD_LOCK_TEXT).is_some()
-                || fence::find(chunk, CARGO_BUILD_LOCK_TEXT).is_some()
+            if memmem::find(&seam, CARGO_BUILD_LOCK_TEXT).is_some()
+                || memmem::find(chunk, CARGO_BUILD_LOCK_TEXT).is_some()
             {
                 state.wait_reason = Some(WaitReason::CargoBuildLock);
                 self.emit_progress(state, "cargo_lock_wait", now);
@@ -317,7 +372,7 @@ impl Job {
 
     fn emit_progress(&self, state: &mut State, msg: &'static str, now: Instant) {
         let fields = self.progress_fields(state, now);
-        state.events.push(JobEvent::Progress { msg, fields });
+        state.events.push(Recorded::Progress { msg, fields });
         self.changed.notify_all();
     }
 
@@ -357,14 +412,11 @@ impl Job {
             .changed
             .wait_while(state, |state| matches!(state.fence, Fence::Open(_)))
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let output = match &state.fence {
-            Fence::Closed(output) => output.clone(),
-            Fence::Open(_) => None,
-        };
-        if output.is_none() {
+        let marked = matches!(state.fence, Fence::Closed { marked: true });
+        if !marked {
             state = self.drain_grace(state);
         }
-        self.finalize(&mut state, status, output);
+        self.finalize(&mut state, status, marked);
     }
 
     /// Observe the shell's death independently of the status channel, then
@@ -384,7 +436,7 @@ impl Job {
         if state.status == StatusReport::Missing && state.finished.is_none() {
             self.abandon_fence(&mut state);
             state = self.drain_grace(state);
-            self.finalize(&mut state, exit_code, None);
+            self.finalize(&mut state, exit_code, false);
         }
         // A delivered status finalizes on the reporter (once the fence or EOF
         // completes the output): the result always precedes the reap.
@@ -408,7 +460,7 @@ impl Job {
         }
         let mut state = self.lock();
         let bytes = state.buffer.total();
-        state.events.push(JobEvent::Reaped { bytes });
+        state.events.push(Recorded::Reaped { bytes });
         drop(state);
         self.changed.notify_all();
     }
@@ -448,21 +500,24 @@ impl Job {
         state
     }
 
-    fn finalize(&self, state: &mut State, exit_code: i32, output: Option<String>) {
+    /// Record the result. `marked`: the fence pinned the result text when its
+    /// marker arrived; otherwise the result is the buffer as it is now.
+    fn finalize(&self, state: &mut State, exit_code: i32, marked: bool) {
         if state.finished.is_some() {
             return;
         }
         let now = Instant::now();
         let duration = now.duration_since(self.started);
         state.finished = Some((exit_code, duration));
-        let output = output.unwrap_or_else(|| state.buffer.text());
+        if !marked {
+            state.result = ResultText::Live;
+        }
         let mut fields = self.progress_fields(state, now);
         if let Some(at) = state.last_output_at {
             fields.insert("bash.last_output_at".into(), iso_utc(at).into());
         }
-        state.events.push(JobEvent::Finished {
+        state.events.push(Recorded::Finished {
             exit_code,
-            output,
             duration,
             fields,
         });
@@ -503,10 +558,31 @@ impl Job {
             .changed
             .wait_timeout_while(state, timeout, |state| state.events.len() <= cursor)
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let events: Vec<JobEvent> = state.events.iter().skip(cursor).cloned().collect();
+        let events: Vec<JobEvent> = state
+            .events
+            .iter()
+            .skip(cursor)
+            .map(|event| match event {
+                Recorded::Progress { msg, fields } => JobEvent::Progress {
+                    msg,
+                    fields: fields.clone(),
+                },
+                Recorded::Finished {
+                    exit_code,
+                    duration,
+                    fields,
+                } => JobEvent::Finished {
+                    exit_code: *exit_code,
+                    output: result_text(&state),
+                    duration: *duration,
+                    fields: fields.clone(),
+                },
+                Recorded::Reaped { bytes } => JobEvent::Reaped { bytes: *bytes },
+            })
+            .collect();
         let next = cursor + events.len();
         // The reaped event is always the last one.
-        let done = matches!(state.events.last(), Some(JobEvent::Reaped { .. }))
+        let done = matches!(state.events.last(), Some(Recorded::Reaped { .. }))
             && next == state.events.len();
         (events, next, done)
     }
@@ -515,6 +591,15 @@ impl Job {
     pub(crate) fn output(&self) -> (String, u64) {
         let state = self.lock();
         (state.buffer.text(), state.buffer.total())
+    }
+
+    /// Keep only the last `keep` output bytes (an old reaped job's buffer,
+    /// once its stream has ended; the result was delivered long before).
+    pub(crate) fn compact(&self, keep: usize) {
+        let mut state = self.lock();
+        if state.eof && state.reaped {
+            state.buffer.compact(keep);
+        }
     }
 
     /// The stream byte count only.
@@ -619,6 +704,15 @@ impl Job {
 
     fn signal_group(&self, signal: Signal) -> bool {
         self.control.signal(signal)
+    }
+}
+
+/// The command's result text (rendered from the buffer unless a later byte
+/// froze it first).
+fn result_text(state: &State) -> Arc<str> {
+    match &state.result {
+        ResultText::Frozen(text) => Arc::clone(text),
+        ResultText::Live | ResultText::Unset => state.buffer.text().into(),
     }
 }
 

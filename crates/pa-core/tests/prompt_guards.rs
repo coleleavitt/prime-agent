@@ -208,7 +208,7 @@ const INTERNAL_HOST_REQUESTS: &[&str] = &[
     "bash.isDestructiveGitDiscard",
     "bash.shell",
     "bash.childEnv",
-    "bash.spawn",
+    "bash.run",
     "bash.follow",
     "bash.output",
     "bash.kill",

@@ -112,14 +112,33 @@ impl Inner {
         if pa_bash::REQUEST_TYPES.contains(&request_type) {
             // The kernel's bash() commands run here, on the kernel's behalf
             // (its cwd and environment ride on every request). The answer may
-            // block (a follow waits for the job's next event), so it runs on
-            // a blocking thread; cancellation is advisory for these.
+            // block (a run or a follow waits for the job's events), so it runs
+            // on a blocking thread. A `host_cancel` (the kernel was
+            // interrupted while it waited) ends a `bash.run`: its job is
+            // killed and the run still answers, once the group is gone; the
+            // other requests treat cancellation as advisory.
             let table = Arc::clone(&self.bash_jobs);
             let data = data.clone();
             return Box::pin(async move {
-                tokio::task::spawn_blocking(move || pa_bash::handle(&table, &data))
-                    .await
-                    .map_err(|error| anyhow!("bash host request failed: {error}"))
+                let cancel = pa_bash::RunCancel::default();
+                let canceller = cancel.clone();
+                let mut answer = tokio::task::spawn_blocking(move || {
+                    pa_bash::handle_cancellable(&table, &data, &canceller)
+                });
+                let token = crate::kernel::shared::host_request_cancellation();
+                let reply = match token {
+                    Some(token) => {
+                        tokio::select! {
+                            reply = &mut answer => reply,
+                            () = token.cancelled() => {
+                                cancel.cancel();
+                                answer.await
+                            }
+                        }
+                    }
+                    None => answer.await,
+                };
+                reply.map_err(|error| anyhow!("bash host request failed: {error}"))
             });
         }
         let Some(handler) = self.options.host_handlers.get(request_type).cloned() else {

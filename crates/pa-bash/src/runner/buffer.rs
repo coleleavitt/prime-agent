@@ -11,8 +11,9 @@ pub(crate) const TAIL_CAP: usize = 3 * 512 * 1024;
 #[derive(Debug, Default)]
 pub(crate) struct OutputBuffer {
     head: Vec<u8>,
-    tail: VecDeque<Vec<u8>>,
-    tail_size: usize,
+    /// A ring of the latest bytes past the head: trimming its front moves
+    /// nothing, so a long stream costs one copy per byte.
+    tail: VecDeque<u8>,
     dropped: u64,
 }
 
@@ -26,31 +27,34 @@ impl OutputBuffer {
         if chunk.is_empty() {
             return;
         }
-        self.tail.push_back(chunk.to_vec());
-        self.tail_size += chunk.len();
-        // Trim the oldest chunk instead of dropping it whole, so exactly
-        // TAIL_CAP bytes stay.
-        while self.tail_size > TAIL_CAP {
-            let excess = self.tail_size - TAIL_CAP;
-            let Some(oldest) = self.tail.front_mut() else {
-                break;
-            };
-            if oldest.len() <= excess {
-                let removed = oldest.len();
-                self.tail.pop_front();
-                self.tail_size -= removed;
-                self.dropped += removed as u64;
-            } else {
-                oldest.drain(..excess);
-                self.tail_size -= excess;
-                self.dropped += excess as u64;
-            }
+        // Bytes that would fall out of the tail at once never enter it.
+        let skip = chunk.len().saturating_sub(TAIL_CAP);
+        self.dropped += skip as u64;
+        chunk = &chunk[skip..];
+        let excess = (self.tail.len() + chunk.len()).saturating_sub(TAIL_CAP);
+        self.tail.drain(..excess);
+        self.dropped += excess as u64;
+        self.tail.extend(chunk);
+    }
+
+    /// Keep only the last `keep` resident bytes (the buffer of a stream that
+    /// has ended): `total` is unchanged, and `text` renders them after the
+    /// drop marker.
+    pub(crate) fn compact(&mut self, keep: usize) {
+        if self.size() <= keep {
+            return;
         }
+        let total = self.total();
+        let (front, back) = self.tail.as_slices();
+        let all = [self.head.as_slice(), front, back].concat();
+        self.tail = VecDeque::from(all[all.len() - keep..].to_vec());
+        self.head = Vec::new();
+        self.dropped = total - keep as u64;
     }
 
     /// The resident bytes.
     pub(crate) fn size(&self) -> usize {
-        self.head.len() + self.tail_size
+        self.head.len() + self.tail.len()
     }
 
     /// Every byte ever written, the dropped middle included: watchers report
@@ -62,19 +66,24 @@ impl OutputBuffer {
     /// The output as text (invalid UTF-8 replaced), with a marker where the
     /// middle was dropped.
     pub(crate) fn text(&self) -> String {
-        let tail: Vec<u8> = self.tail.iter().flatten().copied().collect();
+        let (front, back) = self.tail.as_slices();
         if self.dropped == 0 {
-            let mut all = self.head.clone();
-            all.extend_from_slice(&tail);
-            return String::from_utf8_lossy(&all).into_owned();
+            return lossy([self.head.as_slice(), front, back].concat());
         }
         format!(
             "{}\n... [{} bytes dropped] ...\n{}",
             String::from_utf8_lossy(&self.head),
             self.dropped,
-            String::from_utf8_lossy(&tail)
+            lossy([front, back].concat())
         )
     }
+}
+
+/// `bytes` as text, invalid UTF-8 replaced (validated in one pass first: the
+/// common, valid case keeps the allocation).
+fn lossy(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes)
+        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
 }
 
 #[cfg(test)]
@@ -88,7 +97,7 @@ mod tests {
         buffer.write(&vec![b'x'; HEAD_CAP]);
         buffer.write(&vec![b'a'; TAIL_CAP]);
         buffer.write(&[b'b'; 1000]);
-        assert_eq!(buffer.tail_size, TAIL_CAP);
+        assert_eq!(buffer.tail.len(), TAIL_CAP);
         let text = buffer.text();
         assert!(text.ends_with(&"b".repeat(1000)));
         assert!(text.contains(&format!("{}{}", "a".repeat(1000), "b".repeat(1000))));

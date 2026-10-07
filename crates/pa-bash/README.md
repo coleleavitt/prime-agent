@@ -30,8 +30,11 @@ through the `prime-agent --prime-agent-bash-host` sidecar (`serve_stdio`).
   pid, no controlling terminal), the status socket as stdin, group signals,
   `FIONREAD` for the drain. Windows: a kill-on-close job object entered while
   the child is suspended; no status channel (the result is final at exit).
-- `service`: the JSON request surface (`handle`, `REQUEST_TYPES`) shared by
-  both transports; `sidecar`: the stdio transport.
+- `service`: the JSON request surface (`handle`, `handle_cancellable`,
+  `REQUEST_TYPES`) shared by both transports; `bash.run` checks, spawns and
+  follows a command in one request (`run`: the follow window and its
+  cancellation, `RunCancel`), and long results can travel in a spill file;
+  `sidecar`: the stdio transport (with `{"id", "cancel": true}` frames).
 - `sandbox`: `JobSandbox`, the OS sandbox (`pa-os-sandbox`) every process
   the crate starts runs under: the kernel's own prepared restriction (pa-core
   sets it at each kernel start), none, or unavailable (nothing starts). The
@@ -54,12 +57,14 @@ through the `prime-agent --prime-agent-bash-host` sidecar (`serve_stdio`).
 - `JobTable` (`new`, `set_sandbox`, `sandbox`, `kill_all`, `activity`,
   `inventory`), `JobSandbox`, `SpawnRequest`,
   `SpawnError`, `ActivityError`
-- `handle(&JobTable, &Value) -> Value`, `REQUEST_TYPES`, `serve_stdio(JobSandbox)`
+- `handle(&JobTable, &Value) -> Value`, `handle_cancellable(.., &RunCancel)`,
+  `RunCancel`, `REQUEST_TYPES`, `serve_stdio(JobSandbox)`
 - `child_env`, `resolve_shell`, `ShellError`, `is_truthy_env_value`
 
 ## Dependencies
 
 `serde`, `serde_json`, `thiserror`, `getrandom` (the fence token and job ids),
+`memchr` (the marker and cargo-lock searches over every output read),
 `process-wrap` (safe `setsid` in the child and Windows job objects, which std
 cannot express without `unsafe`), `rustix` on POSIX (group signals, `poll`,
 `FIONREAD`), and `pa-os-sandbox` (the confinement the kernel's commands run

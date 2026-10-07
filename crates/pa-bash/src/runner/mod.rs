@@ -4,6 +4,10 @@
 //! A [`JobTable`] belongs to one kernel (the host keeps one per kernel
 //! manager; the sidecar one per kernel process). Live jobs stay until their
 //! group is reaped; the last [`HISTORY_CAP`] finished ones stay listable.
+//! Only the newest [`FULL_HISTORY`] of those keep their whole output buffer:
+//! older ones keep the tail the activity view reads, so the host does not
+//! grow by megabytes per finished command (and every later spawn's fork
+//! does not pay to copy that memory's page tables).
 
 mod buffer;
 mod clock;
@@ -12,7 +16,7 @@ mod job;
 mod journal;
 mod pyjson;
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -24,7 +28,6 @@ use crate::platform::{self, Signal};
 use crate::sandbox::JobSandbox;
 use crate::script::Script;
 use crate::shell::{child_env, resolve_shell, ShellError};
-use crate::verdict::Refusal;
 
 pub(crate) use clock::iso_utc;
 pub(crate) use job::{Job, JobEvent};
@@ -32,6 +35,12 @@ pub(crate) use pyjson::{dumps as python_json, splitlines};
 
 /// Finished jobs kept listable after their group is reaped.
 const HISTORY_CAP: usize = 64;
+/// Reaped jobs, newest first, that keep their whole buffer (a kernel reads a
+/// job's output right after its reap; nothing reads it later than that).
+const FULL_HISTORY: usize = 4;
+/// Output bytes an older reaped job keeps: four times the activity tail's
+/// wire cap, so the tail it serves is the one the whole buffer gave.
+const COMPACT_KEEP: usize = 4 * ACTIVITY_FRAME_CAP;
 /// The activity view's wire cap on one serialized response.
 const ACTIVITY_FRAME_CAP: usize = 16_384;
 /// The activity list's per-row command cap.
@@ -39,11 +48,10 @@ const ACTIVITY_COMMAND_CAP: usize = 512;
 /// The inventory's row cap.
 pub(crate) const INVENTORY_LIMIT: usize = 100;
 
-/// One command to start.
+/// One command to start (already checked).
 #[derive(Debug, Clone)]
 pub struct SpawnRequest<'a> {
     pub script: Script<'a>,
-    pub allow: Allowances,
     pub context: GuardContext,
     /// The kernel process the command belongs to (journaled as `kernelPid`).
     pub kernel_pid: u32,
@@ -56,9 +64,6 @@ pub struct SpawnRequest<'a> {
 /// exception it names.
 #[derive(Debug, thiserror::Error)]
 pub enum SpawnError {
-    /// A guard refused it (no process started).
-    #[error("{}", .0.message)]
-    Refused(Refusal),
     /// No shell could be chosen.
     #[error(transparent)]
     Shell(#[from] ShellError),
@@ -115,6 +120,9 @@ pub struct JobTable {
     jobs: Mutex<Jobs>,
     /// What every process the table starts runs under.
     sandbox: Mutex<JobSandbox>,
+    /// The kernel environment last sent with a key: later requests name the
+    /// key instead of resending an unchanged environment.
+    env: Mutex<Option<(String, BTreeMap<String, String>)>>,
 }
 
 impl JobTable {
@@ -151,31 +159,37 @@ impl JobTable {
             .clone()
     }
 
+    /// Remember `env` under `key` (the one key a later request may name).
+    pub(crate) fn remember_env(&self, key: &str, env: &BTreeMap<String, String>) {
+        *self
+            .env
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some((key.to_string(), env.clone()));
+    }
+
+    /// The environment remembered under `key`, if it is still the latest.
+    pub(crate) fn remembered_env(&self, key: &str) -> Option<BTreeMap<String, String>> {
+        self.env
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .filter(|(remembered, _)| remembered == key)
+            .map(|(_, env)| env.clone())
+    }
+
     fn lock(&self) -> MutexGuard<'_, Jobs> {
         self.jobs
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Check `request` and start it.
+    /// Start `request` (its client ran the guards).
     ///
     /// # Errors
     ///
-    /// [`SpawnError`]: a refusal, no shell, an OS failure, or a bad journal.
-    pub(crate) fn spawn(&self, request: &SpawnRequest<'_>) -> Result<Arc<Job>, SpawnError> {
-        check(&request.script, &request.allow, &request.context).map_err(SpawnError::Refused)?;
-        self.start(request)
-    }
-
-    /// Start `request` without running the guards (its client already did).
-    pub(crate) fn start_unchecked(
-        &self,
-        request: &SpawnRequest<'_>,
-    ) -> Result<Arc<Job>, SpawnError> {
-        self.start(request)
-    }
-
-    fn start(&self, request: &SpawnRequest<'_>) -> Result<Arc<Job>, SpawnError> {
+    /// [`SpawnError`]: no shell, an OS failure, the sandbox, or a bad journal.
+    pub(crate) fn start(&self, request: &SpawnRequest<'_>) -> Result<Arc<Job>, SpawnError> {
         let context = &request.context;
         let shell = resolve_shell(context)?;
         let token = random_hex(32);
@@ -183,7 +197,7 @@ impl JobTable {
         // Without a status channel (Windows) the command runs as written and
         // its result is final at shell exit.
         let script = if platform::STATUS_CHANNEL {
-            fence::status_script(request.script.script, token_a, token_b)
+            fence::status_script(request.script.script, token_a, token_b, &shell)
         } else {
             request.script.script.to_string()
         };
@@ -389,6 +403,12 @@ fn prune(jobs: &mut Jobs) {
             jobs.all.retain(|job| job.id != oldest);
         }
     }
+    let older = jobs.reaped.len().saturating_sub(FULL_HISTORY);
+    for id in jobs.reaped.iter().take(older) {
+        if let Some(job) = jobs.all.iter().find(|job| &job.id == id) {
+            job.compact(COMPACT_KEEP);
+        }
+    }
 }
 
 /// `PRIME_AGENT_BASH_NO_OUTPUT_WARN_MS` from the kernel environment: unset or
@@ -405,7 +425,7 @@ fn no_output_warn(context: &GuardContext) -> Option<Duration> {
 }
 
 /// `bytes` random bytes from the OS, hex-encoded (`secrets.token_hex`).
-fn random_hex(bytes: usize) -> String {
+pub(crate) fn random_hex(bytes: usize) -> String {
     let mut buffer = vec![0u8; bytes];
     // The OS random source does not fail on supported platforms; a zeroed
     // token would only weaken forgery resistance of one fence.

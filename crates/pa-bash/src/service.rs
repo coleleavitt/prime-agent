@@ -2,6 +2,10 @@
 //! client sends (through the host, or to the sidecar), as JSON in and out.
 //! One implementation serves both transports.
 //!
+//! `bash.run` is the one-request path of a `bash()` call: it checks, spawns
+//! and follows the job for a short window, so a quick command's whole life is
+//! one request; a longer one continues with `bash.follow`.
+//!
 //! Every reply carries `status`: `ok`, `refused` (a guard refused; `error`
 //! names the kernel's exception class, `message` its text, `warning` the
 //! one-time late-bypass warning) or `error` (`error` names the Python
@@ -9,6 +13,8 @@
 //! `OSError`).
 
 use std::collections::BTreeMap;
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,7 +23,8 @@ use serde_json::{json, Value};
 use crate::context::GuardContext;
 use crate::pipeline::{check, Allowances};
 use crate::platform::Signal;
-use crate::runner::{iso_utc, Job, JobTable, SpawnError, SpawnRequest};
+use crate::run::RunCancel;
+use crate::runner::{iso_utc, Job, JobEvent, JobTable, SpawnError, SpawnRequest};
 use crate::script::Script;
 use crate::shell::{child_env, resolve_shell, ShellError};
 use crate::verdict::{GuardKind, Refusal};
@@ -28,7 +35,7 @@ pub const REQUEST_TYPES: [&str; 13] = [
     "bash.isDestructiveGitDiscard",
     "bash.shell",
     "bash.childEnv",
-    "bash.spawn",
+    "bash.run",
     "bash.follow",
     "bash.output",
     "bash.kill",
@@ -39,14 +46,27 @@ pub const REQUEST_TYPES: [&str; 13] = [
     "bash.activity",
 ];
 
-/// The longest a `bash.follow` waits for an event before answering empty.
+/// The error a request naming an environment key the host does not hold gets
+/// (the client resends the environment whole).
+const ENV_UNKNOWN: &str = "EnvUnknown";
+
+/// The longest a `bash.follow` (or a `bash.run`'s follow window) waits
+/// before answering.
 const MAX_FOLLOW_WAIT: Duration = Duration::from_secs(30);
 
-/// Answer one request against `table`. Blocking: `bash.follow` waits for the
-/// job's next event and `bash.confirmExit` for its group's death, so callers
-/// on an async runtime run it on a blocking thread.
+/// Answer one request against `table`. Blocking: `bash.run` and
+/// `bash.follow` wait for the job's events and `bash.confirmExit` for its
+/// group's death, so callers on an async runtime run it on a blocking thread.
 #[must_use]
 pub fn handle(table: &JobTable, request: &Value) -> Value {
+    handle_cancellable(table, request, &RunCancel::default())
+}
+
+/// [`handle`], with `cancel` able to end a `bash.run` early from another
+/// thread: its job is killed (TERM, then KILL) and the run answers once the
+/// process group is gone, with `cancelled: true`.
+#[must_use]
+pub fn handle_cancellable(table: &JobTable, request: &Value, cancel: &RunCancel) -> Value {
     let kind = request
         .get("type")
         .and_then(Value::as_str)
@@ -71,20 +91,15 @@ pub fn handle(table: &JobTable, request: &Value) -> Value {
             Ok(parsed) => ok(json!({"env": child_env(&parsed.context)})),
             Err(reply) => reply,
         },
-        "bash.spawn" => spawn(table, request),
+        "bash.run" => run(table, request, cancel),
         "bash.follow" => with_job(table, request, |job| {
             let cursor = request.get("cursor").and_then(Value::as_u64).unwrap_or(0);
-            let wait = request
-                .get("waitMs")
-                .and_then(Value::as_u64)
-                .map_or(MAX_FOLLOW_WAIT, Duration::from_millis)
+            let wait = millis(request, "waitMs")
+                .unwrap_or(MAX_FOLLOW_WAIT)
                 .min(MAX_FOLLOW_WAIT);
             let (events, cursor, done) =
                 job.follow(usize::try_from(cursor).unwrap_or(usize::MAX), wait);
-            let events: Vec<Value> = events
-                .iter()
-                .map(crate::runner::JobEvent::to_json)
-                .collect();
+            let events = events_json(&events, spill_dir(request));
             ok(json!({"events": events, "cursor": cursor, "done": done}))
         }),
         "bash.output" => with_job(table, request, |job| {
@@ -219,17 +234,32 @@ fn parse(table: &JobTable, request: &Value) -> Result<Parsed, Value> {
     let command = text("command").unwrap_or_else(|| script.clone());
     let cwd = text("cwd")
         .ok_or_else(|| error_reply("RuntimeError", "bash request needs the kernel cwd"))?;
-    let env: BTreeMap<String, String> = request
-        .get("env")
-        .and_then(Value::as_object)
-        .into_iter()
-        .flatten()
-        .filter_map(|(name, value)| {
-            value
-                .as_str()
-                .map(|value| (name.clone(), value.to_string()))
-        })
-        .collect();
+    // The environment rides along whole, or (unchanged since the request
+    // that sent it) as the key it was sent under; an unknown key asks the
+    // client to send it whole again.
+    let env_key = request.get("envKey").and_then(Value::as_str);
+    let env: BTreeMap<String, String> = match (request.get("env"), env_key) {
+        (Some(env), key) => {
+            let env = env
+                .as_object()
+                .into_iter()
+                .flatten()
+                .filter_map(|(name, value)| {
+                    value
+                        .as_str()
+                        .map(|value| (name.clone(), value.to_string()))
+                })
+                .collect();
+            if let Some(key) = key {
+                table.remember_env(key, &env);
+            }
+            env
+        }
+        (None, Some(key)) => table.remembered_env(key).ok_or_else(|| {
+            error_reply(ENV_UNKNOWN, "the bash host no longer has this environment")
+        })?,
+        (None, None) => BTreeMap::new(),
+    };
     let mut context = GuardContext::new(cwd, env)
         .with_traceparent(text("traceparent"))
         .with_sandbox(table.sandbox());
@@ -259,11 +289,92 @@ fn checked(table: &JobTable, request: &Value) -> Result<Parsed, Value> {
     Ok(parsed)
 }
 
-fn spawn(table: &JobTable, request: &Value) -> Value {
+/// A result at least this long travels in a spill file when the client
+/// offers a directory for one: a file write and read beat escaping it into
+/// (and parsing it out of) the reply frame.
+const SPILL_MIN_BYTES: usize = 64 * 1024;
+
+/// The events as reply JSON. With `spill` (the request's `spillDir`: a
+/// directory the client reads, its own temp directory), a long result's text
+/// is written to a new file there and the event names it (`outputFile`)
+/// instead of carrying it; the client reads and removes the file.
+fn events_json(events: &[JobEvent], spill: Option<&Path>) -> Vec<Value> {
+    events
+        .iter()
+        .map(|event| match (event, spill) {
+            (JobEvent::Finished { output, .. }, Some(dir)) if output.len() >= SPILL_MIN_BYTES => {
+                let mut json = event.to_json_without_output();
+                match spill_file(dir, output) {
+                    Ok(path) => json["outputFile"] = path.to_string_lossy().into_owned().into(),
+                    Err(_) => json["output"] = (**output).into(),
+                }
+                json
+            }
+            _ => event.to_json(),
+        })
+        .collect()
+}
+
+/// Write `text` to a new file (create-new, owner-only) in `dir`.
+fn spill_file(dir: &Path, text: &str) -> std::io::Result<PathBuf> {
+    let path = dir.join(format!(
+        "pa-bash-output-{}.txt",
+        crate::runner::random_hex(12)
+    ));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&path)?;
+    if let Err(error) = file.write_all(text.as_bytes()) {
+        drop(file);
+        let _ = std::fs::remove_file(&path);
+        return Err(error);
+    }
+    Ok(path)
+}
+
+fn spill_dir(request: &Value) -> Option<&Path> {
+    request
+        .get("spillDir")
+        .and_then(Value::as_str)
+        .filter(|dir| !dir.is_empty())
+        .map(Path::new)
+}
+
+/// `bash.run`: check, spawn, then follow the job until it is reaped or the
+/// request's `waitMs` window closes; a cancel kills the job and answers once
+/// its group is gone.
+fn run(table: &JobTable, request: &Value, cancel: &RunCancel) -> Value {
     let parsed = match parse(table, request) {
         Ok(parsed) => parsed,
         Err(reply) => return reply,
     };
+    if cancel.is_cancelled() {
+        return ok(json!({"cancelled": true}));
+    }
+    let script = Script {
+        command: &parsed.command,
+        script: &parsed.script,
+        prefix: parsed.prefix.as_deref(),
+    };
+    // `guards: false`: a handle the kernel built from a script its caller
+    // declared validated (the kernel's private `_validated` path).
+    if request.get("guards").and_then(Value::as_bool) != Some(false) {
+        // The guards' probes carry the calling cell's trace context; the
+        // command itself carries its own `bash.command` span's.
+        let check_traceparent = request
+            .get("checkTraceparent")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let check_context = parsed.context.clone().with_traceparent(check_traceparent);
+        if let Err(refusal) = check(&script, &parsed.allow, &check_context) {
+            return refused(&refusal);
+        }
+    }
     let kernel_pid = request
         .get("kernelPid")
         .and_then(Value::as_u64)
@@ -278,41 +389,46 @@ fn spawn(table: &JobTable, request: &Value) -> Value {
         .map(str::to_string)
         .collect();
     let spawn = SpawnRequest {
-        script: Script {
-            command: &parsed.command,
-            script: &parsed.script,
-            prefix: parsed.prefix.as_deref(),
-        },
-        allow: parsed.allow.clone(),
+        script,
         context: parsed.context.clone(),
         kernel_pid,
         sandbox_prefix,
     };
-    // A client that ran `bash.check` itself (the kernel checks before it
-    // builds the handle, so plan mode can classify in between) skips the
-    // second pass; the kernel controls its allowances either way.
-    let checked = request.get("guards").and_then(Value::as_bool) == Some(false);
-    let started = if checked {
-        table.start_unchecked(&spawn)
-    } else {
-        table.spawn(&spawn)
+    let job = match table.start(&spawn) {
+        Ok(job) => job,
+        Err(error) => return spawn_error(error),
     };
-    match started {
-        Ok(job) => ok(json!({"job": {
+    let window = millis(request, "waitMs")
+        .unwrap_or(Duration::ZERO)
+        .min(MAX_FOLLOW_WAIT);
+    let followed = crate::run::follow_window(&job, window, cancel);
+    let mut reply = json!({
+        "job": {
             "id": job.id,
             "pid": job.pid,
             "pgid": job.pid,
             "startedAt": iso_utc(job.started_at),
-        }})),
-        Err(SpawnError::Refused(refusal)) => refused(&refusal),
-        Err(SpawnError::Shell(error)) => shell_error(&error),
-        Err(SpawnError::Os(error)) => json!({
+        },
+        "events": events_json(&followed.events, spill_dir(request)),
+        "cursor": followed.cursor,
+        "done": followed.done,
+    });
+    if followed.cancelled {
+        reply["cancelled"] = true.into();
+    }
+    ok(reply)
+}
+
+fn spawn_error(error: SpawnError) -> Value {
+    match error {
+        SpawnError::Shell(error) => shell_error(&error),
+        SpawnError::Os(error) => json!({
             "status": "error",
             "error": "OSError",
             "message": error.to_string(),
             "errno": error.raw_os_error(),
         }),
-        Err(error @ (SpawnError::Enrollment | SpawnError::Sandbox(_))) => {
+        error @ (SpawnError::Enrollment | SpawnError::Sandbox(_)) => {
             error_reply("RuntimeError", &error.to_string())
         }
     }
