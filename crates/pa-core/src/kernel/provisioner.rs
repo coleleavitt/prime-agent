@@ -134,6 +134,9 @@ pub struct IpythonKernelProvisionerOptions {
     /// The session's plan mode: every booted kernel arms the runtime write
     /// guard while it is on (see [`crate::kernel::plan_guard`]).
     pub plan_mode: Option<crate::kernel::plan_guard::PlanModeSwitch>,
+    /// The session's OS sandbox (`sandbox` setting); `None` spawns the
+    /// kernel unconfined.
+    pub sandbox: Option<crate::os_sandbox::SessionSandbox>,
 }
 
 /// Why and how long one startup failed, published through the shared startup
@@ -1114,6 +1117,21 @@ async fn start_kernel_impl(
                 mode: mode.clone(),
                 writable_roots: snapshot_dir.iter().cloned().collect(),
                 protected_roots: vec![cwd.clone()],
+            }
+        }),
+        // The kernel's own state stays writable under every mode: the
+        // snapshot and local harness (the artifact dir) and the global
+        // harness store `rlm.harness` writes directly.
+        sandbox: options.sandbox.clone().map(|sandbox| {
+            let global_harness = options
+                .env
+                .get("PRIME_AGENT_CODING_AGENT_DIR")
+                .map(|agent_dir| {
+                    crate::refinement::get_global_harness_state_dir(std::path::Path::new(agent_dir))
+                });
+            crate::kernel::shared::KernelSandbox {
+                sandbox,
+                state_dirs: snapshot_dir.iter().cloned().chain(global_harness).collect(),
             }
         }),
     });

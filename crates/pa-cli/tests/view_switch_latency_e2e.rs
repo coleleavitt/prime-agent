@@ -216,6 +216,7 @@ fn chat_options(
     session: pa_tui::interactive::SessionSelection,
 ) -> pa_tui::interactive::InteractiveOptions {
     pa_tui::interactive::InteractiveOptions {
+        sandbox_mode: None,
         resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         initial_plan_mode: false,
         models: None,

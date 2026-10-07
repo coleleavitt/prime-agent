@@ -101,6 +101,29 @@ pub(crate) struct CreateSessionResources {
     /// The creating client's mode (`interactive`, `acp`, ...) for the
     /// session's telemetry; absent reports `unknown` (TS parity).
     pub(crate) execution_mode: Option<String>,
+    /// `--sandbox <mode>` (wire name): the OS sandbox mode for this session
+    /// over the `sandbox` setting. Validated at create.
+    pub(crate) sandbox: Option<String>,
+}
+
+impl CreateSessionResources {
+    /// The create's sandbox override; an unrecognized name (refused at
+    /// create) would fail closed to `read-only`.
+    pub(crate) fn sandbox_mode(&self) -> Option<pa_core::os_sandbox::SandboxMode> {
+        self.sandbox.as_deref().map(|mode| {
+            pa_core::os_sandbox::SandboxMode::from_wire(mode)
+                .unwrap_or(pa_core::os_sandbox::SandboxMode::ReadOnly)
+        })
+    }
+}
+
+/// The session's resolved OS sandbox, cached for the status and `!` lane
+/// reads: resolved on first use, replaced by each build's own resolution.
+#[derive(Clone, Default)]
+pub(crate) enum SandboxSlot {
+    #[default]
+    Unresolved,
+    Resolved(Option<pa_core::os_sandbox::SessionSandbox>),
 }
 
 /// The create command's `--models` scope inputs: the startup chain picks
@@ -150,6 +173,29 @@ mod tests {
     /// The create payload's `executionMode` reaches the session telemetry;
     /// a create without one (an agent-spawned session) stays `None`
     /// (reported as `unknown`, TS parity).
+    /// The create's `sandbox` override parses to its mode; absent keeps the setting.
+    #[test]
+    fn create_resources_read_the_sandbox_override() {
+        use pa_core::os_sandbox::SandboxMode;
+        let read = |payload: serde_json::Value| {
+            CreateSessionResources::deserialize(&payload)
+                .unwrap()
+                .sandbox_mode()
+        };
+        assert_eq!(
+            [
+                read(serde_json::json!({ "cwd": "/tmp", "sandbox": "workspace-write" })),
+                read(serde_json::json!({ "cwd": "/tmp", "sandbox": "off" })),
+                read(serde_json::json!({ "cwd": "/tmp" })),
+            ],
+            [
+                Some(SandboxMode::WorkspaceWrite),
+                Some(SandboxMode::Off),
+                None
+            ]
+        );
+    }
+
     #[test]
     fn create_resources_read_the_execution_mode() {
         let payload = serde_json::json!({ "cwd": "/tmp", "executionMode": "interactive" });

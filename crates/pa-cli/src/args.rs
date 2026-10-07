@@ -185,6 +185,9 @@ pub struct Args {
     pub offline: bool,
     /// `--plan`: start the session in plan mode (edits blocked).
     pub plan: bool,
+    /// `--sandbox <mode>`: the OS sandbox for this run (`off` | `read-only` |
+    /// `workspace-write`), over the `sandbox` setting.
+    pub sandbox: Option<pa_core::os_sandbox::SandboxMode>,
     pub verbose: bool,
     pub messages: Vec<String>,
     #[allow(clippy::struct_field_names)]
@@ -490,6 +493,19 @@ pub fn parse_args(args: &[String]) -> Args {
             "--verbose" => result.verbose = true,
             "--offline" => result.offline = true,
             "--plan" => result.plan = true,
+            "--sandbox" => {
+                let value = require_value!(arg);
+                if let Some(mode) = pa_core::os_sandbox::SandboxMode::from_wire(&value) {
+                    result.sandbox = Some(mode);
+                } else {
+                    result.diagnostics.push(Diagnostic::error(format!(
+                        "Invalid sandbox mode \"{value}\". Valid values: {}",
+                        pa_core::os_sandbox::SandboxMode::ALL
+                            .map(pa_core::os_sandbox::SandboxMode::wire_name)
+                            .join(", ")
+                    )));
+                }
+            }
             _ if arg.starts_with("--resume=") => {
                 let value = &arg["--resume=".len()..];
                 if value.is_empty() {
@@ -627,6 +643,41 @@ mod tests {
         );
         assert!(config.plan_mode);
         assert!(!parse(&["hello"]).plan);
+    }
+
+    /// `--sandbox <mode>` takes one of the three modes, reaches the session config, and
+    /// rejects anything else.
+    #[test]
+    fn sandbox_flag_selects_the_mode_for_the_run() {
+        use pa_core::os_sandbox::SandboxMode;
+        let parsed = parse(&["--sandbox", "workspace-write", "fix the bug"]);
+        let config = crate::mode::runtime_config_from_args(
+            &parsed,
+            std::path::PathBuf::from("/work"),
+            std::path::PathBuf::from("/agent"),
+            None,
+            crate::mode::AppMode::Print,
+            /*telemetry_disabled*/ true,
+        );
+        assert_eq!(
+            (
+                config.sandbox_mode,
+                parsed.messages,
+                parse(&["--sandbox", "off"]).sandbox,
+                parse(&["hello"]).sandbox,
+                last_error(&parse(&["--sandbox", "full"])).to_string(),
+                last_error(&parse(&["--sandbox"])).to_string(),
+            ),
+            (
+                Some(SandboxMode::WorkspaceWrite),
+                vec!["fix the bug".to_string()],
+                Some(SandboxMode::Off),
+                None,
+                "Invalid sandbox mode \"full\". Valid values: off, read-only, workspace-write"
+                    .to_string(),
+                "--sandbox requires a value".to_string(),
+            )
+        );
     }
 
     #[test]

@@ -122,6 +122,7 @@ async fn a_published_skill_is_callable_in_the_cell_that_published_it() {
     provider.push_text_turn("published");
 
     let engine = create_session(SessionEngineConfig {
+        sandbox_mode: None,
         plan_mode: None,
         on_late_sent_agent_message: None,
         semantic_edges: None,

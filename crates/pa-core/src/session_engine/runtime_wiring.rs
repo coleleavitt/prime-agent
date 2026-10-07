@@ -264,6 +264,7 @@ pub fn kernel_provisioner(
     on_bootstrap_result: Option<crate::kernel::provisioner::KernelBootstrapResultHandler>,
     environment: crate::kernel::shared::KernelEnvironment,
     plan_mode: crate::kernel::plan_guard::PlanModeSwitch,
+    sandbox: Option<crate::os_sandbox::SessionSandbox>,
 ) -> Arc<KernelProvisioner> {
     let mut env = kernel_env_overrides(agent_dir);
     env.extend(kernel_harness_env(agent_dir, snapshot_dir.as_deref()));
@@ -287,6 +288,7 @@ pub fn kernel_provisioner(
             on_bootstrap_result,
             environment,
             plan_mode: Some(plan_mode),
+            sandbox,
         },
     ))
 }

@@ -323,6 +323,7 @@ mod tests {
         let engine = Arc::new(
             pa_core::session_engine::engine::create_session(
                 pa_core::session_engine::engine::SessionEngineConfig {
+                    sandbox_mode: None,
                     plan_mode: None,
                     on_late_sent_agent_message: None,
                     semantic_edges: None,

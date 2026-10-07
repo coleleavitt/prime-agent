@@ -67,6 +67,7 @@ pub mod goals;
 pub mod kernel;
 pub mod mcp;
 pub mod models;
+pub mod os_sandbox;
 pub mod packages;
 pub mod platform;
 pub mod prompts;

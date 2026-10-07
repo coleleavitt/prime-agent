@@ -425,3 +425,29 @@ async fn a_spawn_grant_rides_the_child_create_metadata() {
         (Some(json!(40_000)), None)
     );
 }
+
+/// A parent run under `--sandbox` creates every child under the same mode, so
+/// `rlm.spawn` cannot step outside the run's sandbox; without one the child's
+/// create carries none (its own settings decide, as before).
+#[tokio::test]
+async fn a_child_create_inherits_the_parents_sandbox_override() {
+    let (create_seen_tx, mut create_seen_rx) = mpsc::unbounded_channel();
+    let (verdict_tx, verdict_rx) = mpsc::unbounded_channel();
+    let (rename_seen_tx, _rename_seen_rx) = mpsc::unbounded_channel();
+    let sessions = sessions_with_gated_supervisor(create_seen_tx, verdict_rx, rename_seen_tx).await;
+    let mut seen = Vec::new();
+    for (name, sandbox) in [("plain", None), ("confined", Some("read-only"))] {
+        sessions.set_identity(ParentIdentity {
+            model: Some("mock/mock-1".to_string()),
+            cwd: Some(std::env::temp_dir().to_string_lossy().to_string()),
+            sandbox: sandbox.map(str::to_string),
+            ..ParentIdentity::with_default_depth()
+        });
+        let spawned = tokio::spawn(sessions.spawn(spawn_request(name, "work")));
+        let create = create_seen_rx.recv().await.expect("the child create");
+        seen.push(create["config"]["sandbox"].clone());
+        verdict_tx.send(false).expect("refuse the create");
+        let _ = spawned.await.expect("spawn task");
+    }
+    assert_eq!(seen, vec![Value::Null, json!("read-only")]);
+}

@@ -344,6 +344,7 @@ fn model(id: &str, name: &str) -> Model {
 
 fn options(socket: PathBuf, catalog: Vec<Model>) -> InteractiveOptions {
     InteractiveOptions {
+        sandbox_mode: None,
         resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         initial_plan_mode: false,
         models: None,

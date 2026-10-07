@@ -571,6 +571,9 @@ pub struct SettingsAdoption {
     pub context_cap_source: &'static str,
     /// `kernel.environment`: `inherit` | `scrub_credentials`.
     pub kernel_environment: &'static str,
+    /// The effective `sandbox` mode (setting or `--sandbox`): `off` | `read_only` |
+    /// `workspace_write`.
+    pub sandbox_mode: &'static str,
 }
 
 impl SettingsAdoption {
@@ -579,6 +582,7 @@ impl SettingsAdoption {
     pub fn from_settings(
         settings: &crate::settings::SettingsManager,
         context_cap_source: super::context_limit::ContextLimitSource,
+        sandbox: Option<&crate::os_sandbox::SessionSandbox>,
     ) -> Self {
         SettingsAdoption {
             length_continuations: settings.get_length_continuations(),
@@ -603,6 +607,7 @@ impl SettingsAdoption {
                 crate::kernel::shared::KernelEnvironment::Inherit => "inherit",
                 crate::kernel::shared::KernelEnvironment::ScrubCredentials => "scrub_credentials",
             },
+            sandbox_mode: crate::os_sandbox::SessionSandbox::telemetry_mode(sandbox),
         }
     }
 
@@ -619,6 +624,7 @@ impl SettingsAdoption {
         );
         properties.set("context_cap_source", Value::from(self.context_cap_source));
         properties.set("kernel_environment", Value::from(self.kernel_environment));
+        properties.set("sandbox_mode", Value::from(self.sandbox_mode));
     }
 }
 

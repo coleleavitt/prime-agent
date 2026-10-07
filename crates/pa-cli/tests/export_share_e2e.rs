@@ -253,6 +253,7 @@ async fn tui_export_and_share_surface() {
         .to_string();
 
     let options = pa_tui::interactive::InteractiveOptions {
+        sandbox_mode: None,
         resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         initial_plan_mode: false,
         models: None,

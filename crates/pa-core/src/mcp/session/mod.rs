@@ -69,6 +69,9 @@ pub struct McpSessionOptions {
     pub kernel_env: HashMap<String, String>,
     /// Idle timeout ([`DEFAULT_IDLE_TIMEOUT`] when `None`).
     pub idle_timeout: Option<Duration>,
+    /// The session's OS sandbox: stdio servers spawn under it, like the
+    /// kernel whose `rlm.mcp` calls they serve. `None` spawns them as before.
+    pub sandbox: Option<crate::os_sandbox::SessionSandbox>,
 }
 
 /// The session's MCP connections. Clones share them.
@@ -85,6 +88,7 @@ struct Inner {
     slots: Mutex<HashMap<String, SharedGeneration>>,
     idle_timeout: Duration,
     reaper_started: AtomicBool,
+    sandbox: Option<crate::os_sandbox::SessionSandbox>,
 }
 
 impl McpSessions {
@@ -103,6 +107,7 @@ impl McpSessions {
                 slots: Mutex::new(HashMap::new()),
                 idle_timeout: options.idle_timeout.unwrap_or(DEFAULT_IDLE_TIMEOUT),
                 reaper_started: AtomicBool::new(false),
+                sandbox: options.sandbox,
             }),
         }
     }
@@ -268,9 +273,10 @@ impl Inner {
             }),
             Some("stdio") => {
                 let cwd = self.cwd.lock_or_recover().clone();
-                Ok(Target::Stdio(connect::stdio_launch(
-                    server, config, &self.env, &cwd,
-                )?))
+                Ok(Target::Stdio(
+                    connect::stdio_launch(server, config, &self.env, &cwd)?,
+                    self.sandbox.clone(),
+                ))
             }
             _ => Err(McpSessionError::value(format!(
                 "MCP server '{server}' has unsupported transport {}",
