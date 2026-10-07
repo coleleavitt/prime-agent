@@ -1,6 +1,8 @@
 //! The uv discovery concern: the PATH/PATHEXT executable search and the `ensure_uv` resolution.
 
 use super::{anyhow, home_dir, Path, PathBuf};
+#[cfg(windows)]
+use crate::platform::process::windows_executable_candidates;
 
 const UV_INSTALL_COMMAND: &str = "curl -LsSf https://astral.sh/uv/install.sh | sh";
 
@@ -24,53 +26,6 @@ fn find_executable(name: &str) -> Option<PathBuf> {
         }
     }
     None
-}
-
-/// The extension order `windowsExecutableCandidates` uses when `PATHEXT`
-/// yields nothing usable.
-#[cfg(any(windows, test))]
-const WINDOWS_PATHEXT_DEFAULT: [&str; 4] = [".COM", ".EXE", ".BAT", ".CMD"];
-
-/// The bare name followed by the supported PATHEXT extensions, in `PATHEXT` order, else the TS
-/// default order. A name that already ends in a default extension is never suffixed again.
-#[cfg(any(windows, test))]
-pub(super) fn windows_executable_candidates(name: &str, pathext: Option<&str>) -> Vec<String> {
-    let extensions = pathext
-        .unwrap_or("")
-        .split(';')
-        .map(str::trim)
-        .map(str::to_lowercase)
-        .filter(|ext| {
-            WINDOWS_PATHEXT_DEFAULT
-                .iter()
-                .any(|default| default.eq_ignore_ascii_case(ext))
-        })
-        .collect::<Vec<_>>();
-    let lower_name = name.to_lowercase();
-    if WINDOWS_PATHEXT_DEFAULT
-        .iter()
-        .any(|ext| lower_name.ends_with(&ext.to_lowercase()))
-    {
-        return vec![name.to_string()];
-    }
-    let defaults: Vec<String> = WINDOWS_PATHEXT_DEFAULT
-        .iter()
-        .map(std::string::ToString::to_string)
-        .collect();
-    let source: &[String] = if extensions.is_empty() {
-        &defaults
-    } else {
-        &extensions
-    };
-    let mut seen = std::collections::HashSet::from([lower_name]);
-    let mut candidates = vec![name.to_string()];
-    for ext in source {
-        let candidate = format!("{name}{ext}");
-        if seen.insert(candidate.to_lowercase()) {
-            candidates.push(candidate);
-        }
-    }
-    candidates
 }
 
 fn is_executable(path: &Path) -> bool {

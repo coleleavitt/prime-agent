@@ -37,6 +37,8 @@ use probe::{installed_rlm_dir, lock_probe_memo, runtime_probe_key};
 pub use probe::{invalidate_runtime_probe_cache, invalidate_runtime_probe_cache_for};
 // The memo-clear helper and the live-probe package-dir walk exist only behind
 // the unix tests (see their gates in probe.rs and tests.rs).
+#[cfg(test)]
+use crate::platform::process::windows_executable_candidates;
 #[cfg(all(test, unix))]
 use probe::{clear_in_process_probe_memo_for_tests, installed_package_dir};
 pub(crate) use probe::{
@@ -57,8 +59,6 @@ use skills::{
 };
 pub(crate) use skills::{normalize_python_skills, BootstrapPythonSkill};
 pub(crate) use uv::ensure_uv;
-#[cfg(test)]
-use uv::windows_executable_candidates;
 use version::{
     bootstrap_base_version_current, bootstrap_skill_key, bootstrap_version_current,
     read_bootstrap_version, read_bootstrap_version_raw, write_bootstrap_version,

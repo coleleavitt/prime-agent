@@ -35,6 +35,25 @@ fn next_spinner_deadline(started: Instant, now: Instant) -> Instant {
     now + Duration::from_millis((SPINNER_INTERVAL_MS - into_phase) as u64)
 }
 
+/// The surface loop's UI-input arm: the next input, parking for good once the
+/// channel closed (`closed` remembers it). A closed `recv()` resolves `None`
+/// on every poll, so an unparked arm hot-spins the select; the headless
+/// driver drops its sender as soon as it queued the plan, while a `WaitIdle`
+/// barrier still holds `HeadlessDone` in the pending queue. Once every
+/// iteration also paints (a spinner phase per frame, when a frame outlasts
+/// the 80ms phase on a big transcript or a loaded box), the spinning loop
+/// stops yielding to the session reader on the same runtime: the stream
+/// stops applying and the barrier expires.
+async fn next_ui_input(ui_rx: &mut mpsc::UnboundedReceiver<UiInput>, closed: &mut bool) -> UiInput {
+    if !*closed {
+        if let Some(input) = ui_rx.recv().await {
+            return input;
+        }
+        *closed = true;
+    }
+    std::future::pending().await
+}
+
 /// Run the interactive UI until the user exits (terminal) or the plan
 /// completes (headless).
 ///
@@ -470,6 +489,8 @@ async fn run_interactive_surface(
     session.restore_prompt_stash_on_open(&mut view);
     // Declared above the onboarding phase: the pane's drive marks it.
     let mut headless_done = false;
+    // The UI input channel closed (see [`next_ui_input`]).
+    let mut ui_closed = false;
     // The settle bound's deadline (see [`HEADLESS_SETTLE_TIMEOUT_MS`]).
     let mut headless_settle_deadline: Option<Instant> = None;
     let mut headless_settle_pending = false;
@@ -558,6 +579,9 @@ async fn run_interactive_surface(
     // it; `WaitGone` checks only the newest frame).
     let mut wait_render_deadline: Option<Instant> = None;
     let mut wait_render_baseline: usize = 0;
+    // The frame count a holding render barrier last checked: a frame painted after it wakes the
+    // loop for the re-check (see the frame-wake inventory).
+    let mut wait_render_checked: usize = 0;
     // Spec §10.2: the reconnect loop after a `daemon_closing` update frame. Retry with backoff up
     // to RECONNECT_WINDOW; each attempt reads the successor's hello (§10.3) and reattaches by
     // durable session id (§10.4). UI input keeps flowing while reconnecting.
@@ -694,6 +718,7 @@ async fn run_interactive_surface(
                     } else {
                         wait_render_baseline =
                             renderer.headless_frames().map_or(0, <[String]>::len);
+                        wait_render_checked = wait_render_baseline;
                         wait_render_deadline =
                             Some(Instant::now() + Duration::from_millis(timeout_ms));
                         inputs_pending = false;
@@ -727,6 +752,7 @@ async fn run_interactive_surface(
                             &mut view,
                         );
                     } else {
+                        wait_render_checked = renderer.headless_frames().map_or(0, <[String]>::len);
                         inputs_pending = false;
                     }
                 }
@@ -998,6 +1024,24 @@ async fn run_interactive_surface(
         if session.dirty && render_deadline.is_none() {
             render_deadline = Some(Instant::now());
         }
+        // Headless plan steps apply one per iteration, and once the driver's channel closed its
+        // arm parks (see [`next_ui_input`]), so the queue wakes its own next iteration: a runnable
+        // head step wakes the loop now, and a holding render barrier as soon as a frame painted
+        // after its last check. The state barriers (`WaitIdle`, `SubmitAndSettle`) wake on the
+        // session events that release them, plus their own deadlines below. An open channel
+        // keeps its own pacing: the driver's next send is the wake.
+        if ui_closed && !renderer.is_terminal() {
+            let wake_now = match pending.front() {
+                None | Some(UiInput::WaitIdle { .. } | UiInput::SubmitAndSettle { .. }) => false,
+                Some(UiInput::WaitRender { .. } | UiInput::WaitGone { .. }) => {
+                    renderer.headless_frames().map_or(0, <[String]>::len) != wait_render_checked
+                }
+                Some(_) => true,
+            };
+            if wake_now {
+                render_deadline = Some(Instant::now());
+            }
+        }
         for deadline in [
             wait_idle_deadline,
             wait_render_deadline,
@@ -1268,19 +1312,17 @@ async fn run_interactive_surface(
                     }
                 }
             }
-            maybe_input = async {
-                // The headless driver drops its sender after HeadlessDone; a closed recv is
-                // always ready and would starve turn events while the final submitted prompt is
-                // still settling.
+            input = async {
+                // The headless driver drops its sender after queueing the plan: a closed recv is
+                // always ready and would starve turn events while a barrier or the final
+                // submitted prompt is still settling, so the arm parks once it saw the close.
                 if headless_done {
-                    std::future::pending::<Option<UiInput>>().await
+                    std::future::pending::<UiInput>().await
                 } else {
-                    ui_rx.recv().await
+                    next_ui_input(&mut ui_rx, &mut ui_closed).await
                 }
             } => {
-                if let Some(input) = maybe_input {
-                    pending.push_back(input);
-                }
+                pending.push_back(input);
             }
             maybe_note = notes_rx.recv() => {
                 if let Some(note) = maybe_note {
@@ -1896,5 +1938,31 @@ mod tests {
         assert_eq!(next_spinner_deadline(started, at(81)), at(160));
         assert_eq!(next_spinner_deadline(started, at(161)), at(240));
         assert_eq!(next_spinner_deadline(started, at(239)), at(240));
+    }
+
+    /// A closed UI channel parks its select arm: the headless driver drops
+    /// its sender right after queueing the plan, while a `WaitIdle` barrier
+    /// still holds `HeadlessDone` in the pending queue. A `recv()` that
+    /// resolves on every poll hot-spins the loop, and once every iteration
+    /// paints a frame the loop stops yielding to the session reader task
+    /// (the stream stops applying and the barrier expires).
+    #[tokio::test(start_paused = true)]
+    async fn a_closed_ui_channel_parks_its_select_arm() {
+        let (ui_tx, mut ui_rx) = mpsc::unbounded_channel::<UiInput>();
+        ui_tx.send(UiInput::HeadlessDone).expect("send");
+        drop(ui_tx);
+        let mut closed = false;
+        let first = next_ui_input(&mut ui_rx, &mut closed).await;
+        assert!(
+            matches!(first, UiInput::HeadlessDone),
+            "the queued input arrives first"
+        );
+        let parked = tokio::time::timeout(
+            Duration::from_secs(60),
+            next_ui_input(&mut ui_rx, &mut closed),
+        )
+        .await;
+        assert!(parked.is_err(), "a closed channel must park, not resolve");
+        assert!(closed, "the arm remembers the closed channel");
     }
 }

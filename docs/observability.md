@@ -53,7 +53,7 @@ the span so `grep withSpan`/`start_span` lands on it.
 | `extensions.load`     | `extensions.count`, `extensions.loader_ms`, `extensions.errors`, `extensions.slowest`, `extensions.slowest_ms`, `extensions.<label>_ms` (>100 ms) | done | coding-agent `core/extensions/loader.ts` |
 | `session.load`        | `session.path`, `session.bytes`, `session.entries` | done | coding-agent `core/session-manager.ts` (`open`/`openAsync`) |
 | `bash.command`        | `bash.command`, `bash.pid`, `bash.exit_code`, `bash.signal`, `bash.killed`, `bash.output_bytes` | done | Python `rlm/bash.py` (the child's `TRACEPARENT` names this span; kernel shutdown ends it as error "kernel shutdown") |
-| `mcp.call`            | `mcp.server`, `mcp.tool`, `mcp.connected`, `mcp.tool_count` | done | Python `rlm/mcp.py` |
+| `mcp.call`            | `mcp.server`, `mcp.tool`, `mcp.connected`, `mcp.tool_count` | done | Python `rlm/mcp.py` (`mcp.connected` from the host session's reply) |
 | `ravo.run`            | `ravo.run_id`, `ravo.resumed`, `ravo.reason`, `ravo.rounds`, `ravo.repairs`, `ravo.spent_tokens`, `ravo.certificate_digest` | done | coding-agent `core/ravo/controller.ts` (deadline/budget/cancel are ok + reason; each evaluated proposal also logs one `refinement.*` record, see [Refinement outcome records](#refinement-outcome-records)) |
 | `ravo.round`          | `ravo.round`, `ravo.phase`, `ravo.outcome`, `ravo.reason` | done | coding-agent `core/ravo/controller.ts` |
 | `ravo.proposal`       | `ravo.round`, `ravo.kind`, `ravo.proposal_id`, `ravo.candidate_tokens` | done | coding-agent `core/ravo/controller.ts` (implement/repair child call) |

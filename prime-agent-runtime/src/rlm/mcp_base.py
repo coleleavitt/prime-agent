@@ -11,7 +11,10 @@ methods, so the agent writes ordinary Python:
 Credentials live in the host's ``auth.json`` (single store, survives kernel
 rebuilds). This module reads that file directly for the common case; on token
 expiry it asks the host to refresh via ``rlm.host_request("mcp.refresh", ...)``
-and re-reads. Interactive login runs host-side, never here.
+and re-reads. Interactive login runs host-side, never here. The MCP protocol
+itself runs host-side too: each listing or call is one per-call host
+connection to the integration's ``url`` with the resolved headers
+(``mcp.integration.*`` host requests).
 """
 
 from __future__ import annotations
@@ -20,7 +23,6 @@ import asyncio
 import json
 import os
 import time
-from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
 
@@ -90,25 +92,6 @@ def _resolve_config_value(value: str) -> str:
     return (os.environ.get(value) or value).strip()
 
 
-def _resolve_streamable_http():
-    """Return an SDK streamable-HTTP transport callable.
-
-    SDK versions vary: some expose ``streamablehttp_client(url, headers=...)``,
-    others ``streamable_http_client(url, *, http_client=...)``, and some expose
-    both with *different* signatures. Imported lazily so importing an integration
-    package never hard-fails when ``mcp`` is absent.
-    """
-    from mcp.client import streamable_http as mod  # noqa: PLC0415
-
-    for name in ("streamablehttp_client", "streamable_http_client"):
-        fn = getattr(mod, name, None)
-        if fn is not None:
-            return fn
-    raise ImportError(
-        "the installed `mcp` SDK exposes no streamable-HTTP client; upgrade `mcp`"
-    )
-
-
 class McpIntegration:
     """Subclass and set :attr:`server` (and :attr:`url` for remote servers).
 
@@ -121,7 +104,7 @@ class McpIntegration:
     #: ``mcp:<server>`` and the mcpServers settings key).
     server: str = ""
 
-    #: Remote MCP endpoint. Required unless a subclass overrides ``_open_streams``.
+    #: Remote MCP endpoint (streamable HTTP).
     url: str | None = None
 
     #: Optional env var holding a static bearer token (used instead of auth.json OAuth).
@@ -196,53 +179,23 @@ class McpIntegration:
         """
         return self.url, {}
 
-    async def _open_session(self, stack: AsyncExitStack):
-        """Open an initialized MCP ClientSession bound to ``stack``.
-
-        Override for non-HTTP transports (e.g. stdio). The default connects over
-        streamable HTTP to the class ``url`` with a Bearer token from auth.json.
-        """
-        import inspect  # noqa: PLC0415
-
-        from mcp import ClientSession  # noqa: PLC0415
-
+    async def _connection(self) -> dict[str, Any]:
+        """The host-request payload naming this integration's endpoint and
+        headers (configured headers first, Authorization last so it wins)."""
         url, extra_headers = await self._resolve_config()
         if not url:
-            raise ValueError(
-                f"{type(self).__name__} must set `url` or override `_open_session`"
-            )
+            raise ValueError(f"{type(self).__name__} must set `url`")
         token = await self._resolve_token()
-        transport = _resolve_streamable_http()
-        # Extra configured headers first, Authorization last so it always wins.
-        auth_header = {**extra_headers, "Authorization": f"Bearer {token}"}
+        headers = {**extra_headers, "Authorization": f"Bearer {token}"}
+        return {"server": self.server, "url": url, "headers": headers}
 
-        # SDK signatures vary: some take headers=, others only http_client=.
-        params = inspect.signature(transport).parameters
-        if "headers" in params:
-            cm = transport(url, headers=auth_header)
-        elif "http_client" in params:
-            # This SDK shape requires its companion httpx2 client (the transport calls client.sse()).
-            import httpx2  # noqa: PLC0415
+    async def _host(self, request_type: str, payload: dict[str, Any]) -> Any:
+        from .mcp import _session_request
 
-            # SDK-factory timeouts; a default client's 5s read cap drops idle SSE streams.
-            # No redirects: a redirecting endpoint must not receive the bearer header.
-            client = await stack.enter_async_context(
-                httpx2.AsyncClient(
-                    headers=auth_header,
-                    timeout=httpx2.Timeout(30.0, read=300.0),
-                    follow_redirects=False,
-                )
-            )
-            cm = transport(url, http_client=client)
-        else:
-            raise RuntimeError(
-                f"unsupported mcp streamable-HTTP client signature: {tuple(params)}"
-            )
-
-        read, write, *_ = await stack.enter_async_context(cm)
-        session = await stack.enter_async_context(ClientSession(read, write))
-        await session.initialize()
-        return session
+        value, _, error = await _session_request(request_type, payload)
+        if error is not None:
+            raise error
+        return value
 
     # -- tools --------------------------------------------------------------
 
@@ -257,33 +210,18 @@ class McpIntegration:
         async with self._lock:
             if self._tools is not None:
                 return
-            async with AsyncExitStack() as stack:
-                session = await self._open_session(stack)
-                resp = await session.list_tools()
-                tools: dict[str, Any] = {}
-                for t in resp.tools:
-                    # mcp>=2 exposes the pydantic field input_schema; inputSchema is the wire alias.
-                    schema = getattr(t, "input_schema", None)
-                    if schema is None:
-                        schema = getattr(t, "inputSchema", None)
-                    tools[t.name] = {
-                        "name": t.name,
-                        "description": getattr(t, "description", "") or "",
-                        "inputSchema": schema if isinstance(schema, dict) else {},
-                    }
-                self._tools = tools
+            listed = await self._host("mcp.integration.list_tools", await self._connection())
+            self._tools = {tool["name"]: tool for tool in listed}
 
     async def call_tool(self, tool: str, arguments: dict[str, Any] | None = None) -> Any:
         """Call ``tool`` on the server and return its parsed result.
 
-        Opens a fresh session per call: MCP sessions are not safe to hold across
-        the kernel's snapshot/restore, and per-call connect keeps this robust to
-        idle sessions and token rotation at modest latency cost.
+        Opens a fresh host connection per call, which keeps this robust to idle
+        sessions and token rotation at modest latency cost. Raises
+        :class:`McpToolError` when the server flags the result as an error.
         """
-        async with AsyncExitStack() as stack:
-            session = await self._open_session(stack)
-            result = await session.call_tool(tool, arguments or {})
-        return _parse_result(result)
+        payload = {**await self._connection(), "tool": tool, "arguments": arguments or {}}
+        return await self._host("mcp.integration.call_tool", payload)
 
     def __getattr__(self, name: str):
         # Only reached for names not found normally; bind as an async tool call.
@@ -306,32 +244,3 @@ class McpIntegration:
             desc = self._tools[name].get("description") or ""
             _call.__doc__ = f"{desc}\n\nArguments (JSON Schema):\n{json.dumps(schema, indent=2)}"
         return _call
-
-
-def _parse_result(result: Any) -> Any:
-    """Normalize a CallToolResult into plain Python (structured output preferred).
-
-    Raises McpToolError when the server flags the result as an error, so a failed
-    tool call doesn't look like a successful one to the caller.
-    """
-    texts: list[str] = []
-    for block in getattr(result, "content", None) or []:
-        text = getattr(block, "text", None)
-        if text is not None:
-            texts.append(text)
-    is_error = getattr(result, "is_error", getattr(result, "isError", False))
-    if is_error:
-        raise McpToolError("\n".join(texts) or "MCP tool returned an error")
-
-    structured = getattr(result, "structured_content", getattr(result, "structuredContent", None))
-    if structured is not None:  # falsy-but-valid payloads ({} / []) are real results
-        return structured
-    if texts:
-        return "\n".join(texts)
-
-    # Non-text content (images, embedded resources): return them as plain dicts
-    # rather than the opaque SDK object so callers get usable data.
-    blocks = getattr(result, "content", None) or []
-    if blocks:
-        return [b.model_dump(mode="json") if hasattr(b, "model_dump") else b for b in blocks]
-    return result

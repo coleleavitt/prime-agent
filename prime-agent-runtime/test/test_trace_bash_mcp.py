@@ -7,11 +7,9 @@ import signal
 import sys
 import threading
 import unittest
-from types import SimpleNamespace
 from unittest import mock
 
-from mcp.types import CallToolResult, TextContent
-from rlm import bash, mcp, trace
+from rlm import bash, mcp, repl, trace
 
 bash_module = sys.modules["rlm.bash"]
 
@@ -248,38 +246,37 @@ class BashCommandSpanTest(_SpanCapture):
         self.assertEqual(len(self.spans("bash.command")), 1)
 
 
-class FakeSession:
-    def __init__(self, tools, result=None, error: BaseException | None = None):
-        self.tools = tools
-        self.result = result
-        self.error = error
-        self.calls: list[tuple[str, dict]] = []
+class FakeMcpHost:
+    """The host's ``mcp.session.*`` replies behind ``repl.host_request``."""
 
-    async def list_tools(self):
-        return SimpleNamespace(tools=self.tools)
+    def __init__(self, reply):
+        self.reply = reply
+        self.requests: list[dict[str, object]] = []
 
-    async def call_tool(self, name, arguments):
-        self.calls.append((name, arguments))
-        if self.error is not None:
-            raise self.error
-        return self.result
+    async def host_request(self, data, **_options):
+        self.requests.append(dict(data))
+        return {"status": "ok", "result": self.reply}
+
+    def patch(self):
+        return mock.patch.object(repl, "host_request", self.host_request)
+
+
+def _ok(value, connected=False):
+    return {"ok": True, "value": value, "connected": connected}
+
+
+def _failed(kind, message, connected=False):
+    return {"ok": False, "error": {"type": kind, "message": message}, "connected": connected}
 
 
 class McpCallSpanTest(_SpanCapture):
     def setUp(self) -> None:
         super().setUp()
-        mcp._registry = mcp._Registry()
-
-    async def generation(self, result=None, error=None) -> mcp._Generation:
-        generation = mcp._Generation("svc", {"type": "http"})
-        tools = [SimpleNamespace(name="echo", description="", inputSchema={"type": "object"})]
-        generation.session = FakeSession(tools, result=result, error=error)
-        await generation.discover()
-        return generation
+        mcp._client = mcp._Client()
 
     async def test_call_tool_ok(self):
-        generation = await self.generation(result=CallToolResult(content=[TextContent(type="text", text="pong")]))
-        with mock.patch.object(mcp._registry, "_get_locked", mock.AsyncMock(return_value=generation)):
+        host = FakeMcpHost(_ok("pong"))
+        with host.patch():
             with trace.start_span("cell") as cell:
                 value = await mcp.call_tool("svc", "echo", {"value": 1})
         self.assertEqual(value, "pong")
@@ -290,19 +287,19 @@ class McpCallSpanTest(_SpanCapture):
         self.assertEqual(
             span["attrs"], {"mcp.server": "svc", "mcp.tool": "echo", "mcp.connected": False}
         )
-        self.assertEqual(generation.session.calls, [("echo", {"value": 1})])
+        self.assertEqual(
+            host.requests,
+            [{"type": "mcp.session.call_tool", "server": "svc", "tool": "echo", "arguments": {"value": 1}}],
+        )
 
     async def test_connected_attribute_reflects_open_generation(self):
-        generation = await self.generation(result=CallToolResult(content=[TextContent(type="text", text="pong")]))
-        mcp._registry._generations["svc"] = generation
-        with mock.patch.object(mcp._registry, "_get_locked", mock.AsyncMock(return_value=generation)):
+        with FakeMcpHost(_ok("pong", connected=True)).patch():
             await mcp.call_tool("svc", "echo")
         (span,) = self.spans("mcp.call")
         self.assertTrue(span["attrs"]["mcp.connected"])
 
     async def test_call_tool_error_propagates_unchanged(self):
-        generation = await self.generation(error=RuntimeError("tool exploded"))
-        with mock.patch.object(mcp._registry, "_get_locked", mock.AsyncMock(return_value=generation)):
+        with FakeMcpHost(_failed("RuntimeError", "tool exploded")).patch():
             with self.assertRaisesRegex(RuntimeError, "tool exploded"):
                 await mcp.call_tool("svc", "echo", {})
         (span,) = self.spans("mcp.call")
@@ -322,10 +319,10 @@ class McpCallSpanTest(_SpanCapture):
         self.assertEqual(spans[1]["attrs"]["mcp.tool"], "42")
 
     async def test_list_tools_span(self):
-        generation = await self.generation()
-        with mock.patch.object(mcp._registry, "_get_locked", mock.AsyncMock(return_value=generation)):
-            tools = await mcp.list_tools("svc")
-        self.assertEqual([tool["name"] for tool in tools], ["echo"])
+        tools = [{"name": "echo", "description": "", "inputSchema": {"type": "object"}}]
+        with FakeMcpHost(_ok(tools)).patch():
+            listed = await mcp.list_tools("svc")
+        self.assertEqual([tool["name"] for tool in listed], ["echo"])
         (span,) = self.spans("mcp.call")
         self.assertEqual(span["status"], "ok")
         self.assertEqual(span["attrs"]["mcp.tool"], "list_tools")
@@ -333,15 +330,12 @@ class McpCallSpanTest(_SpanCapture):
         self.assertEqual(span["attrs"]["mcp.tool_count"], 1)
 
     async def test_list_tools_error(self):
-        async def unavailable(_server):
-            raise RuntimeError("host request timed out")
-
-        with mock.patch.object(mcp, "_config", unavailable):
+        with FakeMcpHost(_failed("RuntimeError", "Could not load MCP configuration for 'svc'")).patch():
             with self.assertRaises(RuntimeError):
                 await mcp.list_tools("svc")
         (span,) = self.spans("mcp.call")
         self.assertEqual(span["status"], "error")
-        self.assertIn("host request timed out", span["attrs"]["error"])
+        self.assertIn("Could not load MCP configuration", span["attrs"]["error"])
 
 
 if __name__ == "__main__":

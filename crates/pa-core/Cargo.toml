@@ -38,8 +38,20 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 tar = "0.4"
 flate2 = "1"
 unicode-normalization = "0.1"
+# Python `str.isalnum()`/`isprintable()` character classes for the kernel
+# harness store's id slugs, search terms and `repr` text (general category;
+# already in the workspace through pa-tui).
+unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
 serde_yaml = "0.9"
 ignore = "0.4"
+# MCP client sessions (stdio servers and streamable HTTP) run in the host
+# with the official Rust SDK, client side only. Its reqwest client feature
+# stays off (rmcp 3 pins reqwest 0.13): the HTTP leg rides this crate's
+# reqwest 0.12 + rustls client through `StreamableHttpClient`, which names
+# `sse_stream::Sse` (rmcp's own SSE parser dependency). Pinned: 3.5.0 is the
+# newest release past the 7-day release-age rule.
+rmcp = { version = "=3.5.0", default-features = false, features = ["client", "transport-async-rw", "transport-streamable-http-client"] }
+sse-stream = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

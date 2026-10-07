@@ -4,7 +4,10 @@
 one persistent `__main__` namespace on a single asyncio event loop. The wire
 format is newline-delimited JSON: one object per line, UTF-8, no other framing.
 The current protocol version is `4`; the runtime announces it in the `ready`
-event.
+event. The out-of-band `factory_activity` request is gone (the factory
+executor runs in the host, so the `/factory` lane no longer needs the
+kernel); no frame changed shape, so the version stays `4`, and a runtime
+that receives the retired request answers the unknown-type protocol error.
 
 ## Channels
 
@@ -57,7 +60,7 @@ event.
 | `plan_guard` | `{"type":"plan_guard","id":str,"token":str,"enabled":bool,"writable_roots"?:[str,...]}` — host-only plan-mode switch, out-of-band even during a running cell; see Plan guard below |
 | `shutdown` | `{"type":"shutdown","id"?:str}` |
 
-Requests other than `interrupt`, `host_reply`, `bash_activity`, `factory_activity`, and
+Requests other than `interrupt`, `host_reply`, `bash_activity`, and
 `plan_guard` run strictly in order, one at a time. A malformed line
 produces `{"event":"error","id":null,"ename":"ProtocolError",...}` and the
 runtime keeps serving. Closing stdin is equivalent to `shutdown`.
@@ -183,10 +186,11 @@ context, or a fresh trace when there is none):
   `bash.wait_reason="cargo_build_lock"`; no captured output content is emitted.
 - `mcp.call` — one per `mcp.list_tools(server)` / `mcp.call_tool(server,
   tool, arguments)` call (`attrs`: `mcp.server`, `mcp.tool` — `"list_tools"`
-  for listings —, `mcp.connected` whether an open generation existed when the
-  call began; `false` means a lazy connect/handshake ran inside the span;
-  `mcp.tool_count` on listings). An exception marks the span `error` with
-  `attrs.error` and propagates unchanged.
+  for listings —, `mcp.connected` whether the host had a live connection when
+  the call began, set from the host's reply; `false` means a lazy
+  connect/handshake ran inside the span; `mcp.tool_count` on listings). An
+  exception marks the span `error` with `attrs.error` and propagates
+  unchanged.
 
 ## Execution
 
@@ -249,6 +253,71 @@ dict verbatim. Replies are routed on the reader thread like `interrupt` —
 never through the request queue, since the awaiting cell is itself the
 in-flight execute. Replies for unknown ids are dropped. Cancellation-aware calls emit one exact-ID `host_cancel`, shield the same reply future, and keep it alive through their bounded drain. `rlm.repl.is_active()` reports whether the
 process is serving the protocol (importing the module does not count).
+
+`rlm.repl.host_request_blocking(request, *, timeout_s=None)` is the synchronous
+form for runtime APIs that are not coroutines (`rlm.harness`, and the factory
+client: `factory.spec` behind factory writes and the `factory.*` executor
+calls): the same `host_request` frame, but the calling thread blocks until the
+reader thread hands it the reply (no event-loop turn is needed, so a cell may
+call it directly). An interrupt ends the wait with `KeyboardInterrupt`; stdin
+EOF or `shutdown` fails it with `HostConnectionLost`; a set `timeout_s` (the
+factory client passes 30) bounds it with `HostDrainTimeout`.
+
+### Harness store requests
+
+`rlm.harness` is a client of the host's harness store; each call is one
+blocking host request of type `harness.load`, `harness.save`, `harness.get`,
+`harness.list`, `harness.search`, `harness.overview`, `harness.snapshot`,
+`harness.upsert`, `harness.create`, `harness.update`, `harness.delete`,
+`harness.set_enabled`, `harness.record_refinement`, `harness.create_skill`,
+`harness.update_skill`, or `harness.factory` (`create_factory` /
+`update_factory`). `data` carries:
+
+- `store`: `{"file": str|null, "scope": "local"|"global", "document": object|null, "writeError": str|null}`
+  — the state file the client resolved (from `RLM_HARNESS_STATE_DIR`,
+  `RLM_SESSION_DIR`, `RLM_GLOBAL_HARNESS_STATE_DIR`, or an explicit path), or
+  `file: null` with the in-memory store's `document`; a set `writeError` makes
+  every write raise it as `RuntimeError` (a kernel without a session store).
+- `args`: the call's arguments as JSON (a value JSON cannot carry is
+  `{"__rlm_harness_unserializable__": "<type name>"}`), and `types`: each
+  argument's Python type name.
+- `agentDir`: where the `factory.enabled` opt-in is read; `factorySpecErrors`:
+  the kernel factory validator's errors for the spec a factory write stores.
+
+The handler's `result` is `{"ok": true, "result": ..., "state": <the store's
+document after the call>, "loadError": str|null}` or `{"ok": false, "error":
+{"type": "ValueError"|"TypeError"|"RuntimeError"|"TimeoutError"|"OSError",
+"message": str}}`, which the client raises as that exception. Outside a
+kernel the client sends the same request to `prime-agent
+--prime-agent-harness-request` (stdin: the request, stdout: the reply);
+the host exports the binary to the kernel as `PRIME_AGENT_EXECUTABLE`.
+
+## MCP sessions
+
+The MCP connections behind `rlm.mcp` and `rlm.McpIntegration` are host-owned
+(one set per agent session, kept across kernel restarts, closed on
+`rlm.mcp.reload`/`close`, idle, configuration change, and session end).
+The runtime reaches them through cancellation-aware host requests:
+
+| `type` | payload |
+|---|---|
+| `mcp.session.list_tools` | `{server}` |
+| `mcp.session.call_tool` | `{server, tool, arguments}` |
+| `mcp.session.describe_tool` | `{server, tool}` |
+| `mcp.session.search_tools` | `{server, query, limit}` |
+| `mcp.session.reload` | `{server?}` (all servers when absent) |
+| `mcp.session.close` | `{}` |
+| `mcp.integration.list_tools` | `{server, url, headers}` |
+| `mcp.integration.call_tool` | `{server, url, headers, tool, arguments}` |
+
+Each answers `{"ok":true,"value":…,"connected":bool}` or
+`{"ok":false,"error":{"type":str,"message":str},"connected":bool}`, where
+`type` names the exception the runtime raises (`RuntimeError`, `KeyError`,
+`PermissionError`, `ValueError`, `TimeoutError`, `FileNotFoundError`,
+`OSError`, `McpStartupError`, `McpDiscoveryError`, `McpCredentialsUnavailable`,
+`McpToolError`, or `CancelledError`). A cancelled caller sends `host_cancel`;
+the host abandons the request (an in-flight `tools/call` is cancelled at the
+server) and replies `CancelledError`.
 
 ## Plan guard
 

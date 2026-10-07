@@ -935,10 +935,12 @@ class _RLMFactoryNamespace:
 
     ``run('<spec_id>')`` validates a stored factory entry (machine form, or
     dag sugar that compiles to one), enters the entry states up to the
-    spec's max_parallel, and returns immediately; a kernel asyncio task
-    continues the run (nonblocking control loop). Runs live in kernel
-    memory only; children stay supervisor-owned. Every call is async, so
-    always await it: ``await rlm.factory.run('<id>')``.
+    spec's max_parallel, and returns immediately; the Prime Agent host's
+    executor continues the run (nonblocking control loop). Runs live in
+    the host with a durable record each: a kernel restart never touches a
+    running workflow, and a host restart pauses an in-flight run as
+    interrupted for ``resume``. Every call is async, so always await it:
+    ``await rlm.factory.run('<id>')``.
 
     When no stored entry carries the id, ``run`` falls back to the machine
     library: the bundled seeds ship inside the runtime (the personal

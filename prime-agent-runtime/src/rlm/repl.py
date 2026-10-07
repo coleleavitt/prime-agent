@@ -33,10 +33,9 @@ import time
 import traceback
 import types
 import uuid
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from typing import Any
 
-from . import factory as factory_module
 from . import plan_guard, trace
 from .bash import _kill_live_handles
 
@@ -188,6 +187,10 @@ _current_cell_execution: contextvars.ContextVar[_CellExecution | None] = context
 _active: dict[str, Any] = {"task": None, "rid": None, "interrupted": False}
 _cell_counter = 0
 _pending_host: dict[str, "asyncio.Future[dict[str, Any]]"] = {}
+# host_request_blocking waiters: resolved on the reader thread itself, since
+# the waiting thread may be the loop thread (a synchronous call in a cell).
+_blocking_host_lock = threading.Lock()
+_pending_blocking_host: dict[str, "_BlockingHostReply"] = {}
 # Set on the loop thread once stdin hits EOF or a shutdown request arrives; no
 # host reply can arrive after that, so waiting (and future) host_request calls fail.
 _host_closed = False
@@ -351,11 +354,81 @@ async def host_request(
         _pending_host.pop(rid, None)
 
 
+class _BlockingHostReply:
+    """One synchronous host request's settlement slot."""
+
+    def __init__(self) -> None:
+        self.done: threading.Event = threading.Event()
+        self.data: dict[str, object] | None = None
+        self.error: BaseException | None = None
+
+
+def host_request_blocking(
+    request: Mapping[str, object], *, timeout_s: float | None = None
+) -> dict[str, object]:
+    """Send one typed request and block the calling thread until its reply.
+
+    For synchronous runtime APIs called from a cell (``rlm.harness``, the
+    factory spec validator and executor client): the reply is delivered on
+    the reader thread, so the wait needs no event loop turn. An interrupt
+    (``KeyboardInterrupt``) ends the wait; the host's late reply is then
+    dropped like any reply for an unknown id. ``timeout_s`` bounds the wait
+    for callers whose host work is always quick (``HostDrainTimeout``).
+    """
+    if _loop is None:
+        raise HostRequestUnavailable("repl runtime is not serving")
+    if _host_closed:
+        raise HostRequestUnavailable("host connection closed before request admission")
+    data = dict(request)
+    _check_payload("host_request", data)
+    rid = uuid.uuid4().hex
+    slot = _BlockingHostReply()
+    with _blocking_host_lock:
+        _pending_blocking_host[rid] = slot
+    if _host_closed:
+        # Teardown raced the registration above: its fail pass may have
+        # missed this waiter, and no reply can arrive.
+        with _blocking_host_lock:
+            _ = _pending_blocking_host.pop(rid, None)
+        raise HostRequestUnavailable("host connection closed before request admission")
+    attrs: dict[str, str] = {"host_request.rid": rid}
+    request_type = data.get("type") or data.get("kind")
+    if isinstance(request_type, str):
+        attrs["host_request.type"] = request_type
+    try:
+        with trace.start_span("kernel.host_request", **attrs) as span:
+            frame: dict[str, object] = {"event": "host_request", "id": rid, "data": data}
+            frame["traceparent"] = trace.format_traceparent(span.ctx)
+            _send(frame)
+            if not slot.done.wait(timeout_s):
+                raise HostDrainTimeout(f"blocking host request did not answer within {timeout_s:g}s")
+            if slot.error is not None:
+                raise slot.error
+            if slot.data is None:
+                raise HostConnectionLost("host connection closed; host_request cannot be answered")
+            return slot.data
+    finally:
+        with _blocking_host_lock:
+            _ = _pending_blocking_host.pop(rid, None)
+
+
+def _fail_blocking_host_requests() -> None:
+    """Reader-thread half of teardown for synchronous waiters: the waiting
+    thread may be the loop thread, which cannot run the loop-side teardown."""
+    with _blocking_host_lock:
+        waiters = list(_pending_blocking_host.values())
+    for slot in waiters:
+        if not slot.done.is_set():
+            slot.error = HostConnectionLost("host connection closed; host_request cannot be answered")
+            slot.done.set()
+
+
 def _fail_pending_host_requests() -> None:
     """Loop-thread half of teardown: no host reply can arrive anymore, so every
     awaiting cell must unblock or the queued shutdown would never be served."""
     global _host_closed
     _host_closed = True
+    _fail_blocking_host_requests()
     for future in _pending_host.values():
         if not future.done():
             future.set_exception(HostConnectionLost("host connection closed; host_request cannot be answered"))
@@ -364,6 +437,12 @@ def _fail_pending_host_requests() -> None:
 def _resolve_host_reply(rid: str, data: dict[str, Any]) -> None:
     """Reader-thread half of the host bridge; late/unknown replies are dropped."""
     assert _loop is not None
+    with _blocking_host_lock:
+        slot = _pending_blocking_host.get(rid)
+    if slot is not None:
+        slot.data = data
+        slot.done.set()
+        return
 
     def deliver() -> None:
         future = _pending_host.get(rid)
@@ -1705,13 +1784,7 @@ async def _serve(queue: asyncio.Queue[dict[str, Any]], ns: dict[str, Any]) -> No
                 # Host stdin closed without a shutdown request: the host
                 # process is gone, so this is the last chance to persist.
                 _flush_final_snapshot(ns)
-            # MCP children must close before the loop dies; close() is internally bounded under the host's 5s deadline.
-            mcp_mod = sys.modules.get("rlm.mcp")
-            if mcp_mod is not None:
-                try:
-                    await mcp_mod.close()
-                except BaseException as exc:
-                    print(f"MCP shutdown failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+            # MCP connections are host-owned and outlive this kernel: nothing to close here.
             # Kill live bash children now; atexit would wait on parked executor threads.
             _kill_live_handles()
             if isinstance(rid, str):
@@ -1782,7 +1855,6 @@ _REQUIRED_FIELDS = {
     # string-required field; the handler validates the list itself.
     "mcp_status": ("id",),
     "bash_activity": ("id", "action"),
-    "factory_activity": ("id", "action"),
     "plan_guard": ("id", "token"),
     "shutdown": (),
 }
@@ -1876,34 +1948,6 @@ def _handle_request_line(
         # startup; the frame never enters the cell queue or any namespace.
         _handle_plan_guard(req, plan_guard_controller)
         return
-    if rtype == "factory_activity":
-        from .factory import ACTIVITY_ACTIONS, ACTIVITY_TIMEOUT_MS_CAP
-
-        if req["action"] not in ACTIVITY_ACTIONS:
-            _protocol_error(f"unknown factory activity action: {req['action']!r}")
-            return
-        for field in ("runId", "specId"):
-            value = req.get(field)
-            if value is not None and not isinstance(value, str):
-                _protocol_error(f"factory activity {field} must be a string when provided")
-                return
-        timeout_ms = req.get("timeoutMs")
-        if timeout_ms is not None and (
-            not isinstance(timeout_ms, int) or isinstance(timeout_ms, bool)
-            or not 0 <= timeout_ms <= ACTIVITY_TIMEOUT_MS_CAP
-        ):
-            _protocol_error(
-                f"factory activity timeoutMs must be an integer between 0 and {ACTIVITY_TIMEOUT_MS_CAP}"
-            )
-            return
-        if len(req["id"]) > 256:
-            _protocol_error("factory activity ids must stay under 256 characters")
-            return
-        # Like bash_activity, this bypasses the cell FIFO: the factory view
-        # must answer while a cell runs. The handler schedules the async
-        # activity on this loop and replies when it settles.
-        _loop.call_soon_threadsafe(factory_module.schedule_activity, req)
-        return
     if rtype in ("execute", "snapshot", "restore"):
         with _interrupt_lock:
             # A reused in-flight id would corrupt interrupt/finish bookkeeping.
@@ -1917,6 +1961,7 @@ def _handle_request_line(
     if rtype == "shutdown":
         # No host reply follows a shutdown; a cell awaiting host_request
         # must fail now or it would block _serve from ever consuming this.
+        _fail_blocking_host_requests()
         _loop.call_soon_threadsafe(_fail_pending_host_requests)
     _loop.call_soon_threadsafe(queue.put_nowait, req)
 
@@ -1942,6 +1987,7 @@ def _read_requests(
     # Host closed stdin: shut the runtime down. The marker distinguishes
     # this from the host's explicit shutdown request (which runs after the
     # host flushed its own final snapshot, so no runtime-side flush runs).
+    _fail_blocking_host_requests()
     _loop.call_soon_threadsafe(_fail_pending_host_requests)
     _loop.call_soon_threadsafe(queue.put_nowait, {"type": "shutdown", "eof": True})
 

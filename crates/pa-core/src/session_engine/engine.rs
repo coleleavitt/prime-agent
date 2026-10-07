@@ -121,6 +121,9 @@ pub struct SessionEngine {
     /// session facts captured in `create_session` (the #3184 capture
     /// pattern) and reached through [`SessionEngine::factory_activity`].
     pub factory_host: super::factory_host::FactoryHost,
+    /// The session's factory executor: the runs the kernel's
+    /// `rlm.factory` client and the `/factory` lane drive, host-side.
+    pub factory: std::sync::Arc<crate::factory::executor::FactoryExecutor>,
     /// The session's RLM host bridge: the progress-note store an
     /// in-process children host reads for its roster rows (the child's
     /// latest `rlm.progress.note`), shared with the kernel's own
@@ -146,6 +149,9 @@ pub struct SessionEngine {
     /// The `artifact.present` seam (upstream #1062): a host whose durable
     /// session lives outside the engine installs its row sink here.
     pub presented_artifacts: Arc<super::presented_artifact::PresentedArtifacts>,
+    /// The session's MCP client connections (behind the kernel's `rlm.mcp`
+    /// calls): they outlive kernel restarts and close with the session.
+    pub mcp_sessions: crate::mcp::McpSessions,
 }
 
 /// Skill overrides for built-in integrations the user is not logged into,
@@ -496,6 +502,19 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // The registration takes the shared manager: the inventory handlers
     // serve live views per request.
     crate::mcp::McpManager::register_host_handlers(&mcp_manager, &mut handlers);
+    // The MCP client connections themselves: stdio servers see what the
+    // kernel process sees (the `kernel.environment` policy plus the agent
+    // dir the provisioner sets).
+    let mcp_sessions = crate::mcp::McpManager::register_session_handlers(
+        &mcp_manager,
+        &mut handlers,
+        crate::mcp::McpSessionOptions {
+            cwd: cwd.clone(),
+            environment: kernel_environment,
+            kernel_env: super::runtime_wiring::kernel_env_overrides(&config.agent_dir),
+            idle_timeout: None,
+        },
+    );
     let turn_boundary = Arc::new(super::turn_boundary::TurnBoundaryRequests::new());
     turn_boundary.set_adoption_counters(std::sync::Arc::clone(&session_counters));
     // Adoption of read-only package harness overlays (counts only).
@@ -1049,12 +1068,14 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         telemetry,
         rlm_usage: wiring.rlm_usage,
         factory_host,
+        factory: wiring.factory,
         rlm: wiring.rlm,
         provisioner,
         feature_context,
         feature_status_sink: std::sync::Mutex::new(None),
         plan_mode,
         presented_artifacts,
+        mcp_sessions,
     };
     if config.plan_mode == Some(true) && restored_plan_mode != Some(true) {
         engine.track_plan_mode(true, "flag");
@@ -1196,6 +1217,7 @@ impl SessionEngine {
     /// ends the session but keeps the engine alive; dropping the engine tears the kernel down too.
     pub async fn dispose_kernel(&self) {
         self.provisioner.dispose(None).await;
+        self.mcp_sessions.close_all().await;
     }
 
     /// Retarget the session kernel's working directory (`/cwd`, upstream
@@ -1206,7 +1228,9 @@ impl SessionEngine {
     ///
     /// Returns an error when the running kernel refuses the change.
     pub async fn set_kernel_cwd(&self, cwd: &std::path::Path) -> anyhow::Result<()> {
-        self.provisioner.set_cwd(cwd).await
+        self.provisioner.set_cwd(cwd).await?;
+        self.mcp_sessions.set_cwd(cwd);
+        Ok(())
     }
 
     /// Release the kernel with a final namespace snapshot, revivable: the next
@@ -1220,18 +1244,16 @@ impl SessionEngine {
             .await;
     }
 
-    /// One factory activity over this session's live kernel: the `/factory`
-    /// view's bridge lane (graph/status/watch/run/stop/resume). A `run`
-    /// prefights the spec's declared models first (allowlist pin, request
-    /// auth) so a doomed run fails before any child spawns; then the
-    /// out-of-band frame carries the request into the kernel's executor,
-    /// which owns the run registry.
+    /// One factory activity over this session's executor: the `/factory`
+    /// view's lane (graph/status/watch/run/stop/resume). A `run` prefights
+    /// the spec's declared models first (allowlist pin, request auth) so a
+    /// doomed run fails before any child spawns; the executor answers
+    /// host-side, so the lane keeps working while the kernel restarts.
     ///
     /// # Errors
     ///
     /// Returns an error when the arguments are invalid, the preflight
-    /// fails, the session has no running kernel, or the kernel request
-    /// fails or does not settle.
+    /// fails, the factory is disabled, or the executor refuses.
     pub async fn factory_activity(
         &self,
         action: &str,
@@ -1259,18 +1281,24 @@ impl SessionEngine {
                 .map_err(|join| anyhow::anyhow!("factory run preflight join failed: {join}"))?;
             preflight?;
         }
-        let manager = self
-            .provisioner
-            .manager()
-            .ok_or_else(|| anyhow::anyhow!("Kernel is not running"))?;
-        manager
-            .factory_activity(
-                request.action,
-                request.run_id.as_deref(),
-                request.spec_id.as_deref(),
-                request.timeout_ms,
-            )
-            .await
+        let mut frame = serde_json::Map::new();
+        frame.insert("action".into(), serde_json::Value::from(request.action));
+        if let Some(run_id) = request.run_id {
+            frame.insert("runId".into(), serde_json::Value::from(run_id));
+        }
+        if let Some(spec_id) = request.spec_id {
+            frame.insert("specId".into(), serde_json::Value::from(spec_id));
+        }
+        if let Some(timeout_ms) = request.timeout_ms {
+            frame.insert("timeoutMs".into(), serde_json::Value::from(timeout_ms));
+        }
+        let reply = crate::factory::lane::activity(
+            &self.factory,
+            &self.factory_host,
+            &serde_json::Value::Object(frame),
+        )
+        .await;
+        crate::factory::lane::capped_reply(reply).map_err(anyhow::Error::msg)
     }
 
     /// Out-of-band kernel bash activity, scoped to this session's live kernel.

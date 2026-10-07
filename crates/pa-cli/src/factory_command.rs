@@ -273,6 +273,11 @@ fn dispatch_via_kernel(python: &std::path::Path, payload: &Value) -> Result<Valu
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // The runner has no serving host, so the runtime's spec validator runs
+    // its operations through this binary's filter mode.
+    if let Ok(binary) = std::env::current_exe() {
+        child.env(pa_core::factory::spec_ops::HOST_BINARY_ENV, binary);
+    }
     // Hidden window on Windows, matching the kernel probes.
     pa_core::platform::process::set_no_window(&mut child);
     let mut child = child
