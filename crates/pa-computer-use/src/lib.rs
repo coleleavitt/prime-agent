@@ -8,10 +8,7 @@
 // A target without a backend (Windows) still compiles and tests the
 // platform-independent session machinery, but never constructs it: every
 // request answers the no-backend replies.
-#![cfg_attr(
-    not(any(target_os = "macos", target_os = "linux")),
-    allow(dead_code)
-)]
+#![cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(dead_code))]
 
 #[cfg(unix)]
 mod capture;

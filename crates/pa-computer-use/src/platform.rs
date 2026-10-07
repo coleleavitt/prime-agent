@@ -20,6 +20,8 @@ use crate::spec::AppSpec;
 #[cfg(any(target_os = "linux", all(test, unix)))]
 mod logind;
 #[cfg(any(target_os = "linux", all(test, unix)))]
+pub(crate) mod wayland;
+#[cfg(any(target_os = "linux", all(test, unix)))]
 pub(crate) mod x11;
 
 /// The backend families, as `get_state()["platform"]` names them.

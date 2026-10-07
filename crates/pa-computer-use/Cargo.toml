@@ -23,9 +23,26 @@ toml = { version = "1", default-features = false, features = ["parse", "serde", 
 # Python module's `dir_fd` calls), plus the keymap memfd on Wayland.
 rustix = { version = "1", features = ["fs"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# The Wayland backend's AT-SPI client: pure Rust over D-Bus, replacing the
+# Python skill's PyGObject + libatspi (which needed the gobject-introspection
+# and cairo headers to build). The blocking proxies run on the host's
+# blocking pool.
+atspi-proxies = "0.14"
+zbus = "5"
+# The virtual pointer (wlr) and keyboard (misc) protocols the Python skill
+# spoke by hand over the Wayland socket.
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+wayland-protocols-misc = { version = "0.3", features = ["client"] }
+
 [dev-dependencies]
 tempfile = "3"
 tokio = { workspace = true, features = ["test-util"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+# The fake compositor receives the keymap fd as SCM_RIGHTS ancillary data.
+rustix = { version = "1", features = ["fs", "net"] }
 
 [lints.rust]
 # Denied, not forbidden: the macOS platform module binds AppKit,
