@@ -219,6 +219,8 @@ fn cursor_stays_hidden_and_positioned_across_mount_picker_and_suspend() {
 /// One pty-backed product child plus the mock supervisor it attaches to.
 struct CursorHarness {
     child: Child,
+    /// The temp dir holding the child's socket; removed after the drop stops the child.
+    _dir: tempfile::TempDir,
     /// The mock-supervisor server thread's join handle (exits with the child's connection).
     _server: std::thread::JoinHandle<()>,
     master: PtyReader,
@@ -245,11 +247,9 @@ impl CursorHarness {
         .expect("open pty");
 
         let child = spawn_child(&socket, &pty.slave);
-        // Leak the temp dir's socket path on purpose: the child needs it, and the
-        // whole tree dies with the child at teardown.
-        std::mem::forget(dir);
         let mut harness = CursorHarness {
             child,
+            _dir: dir,
             _server: server,
             master: PtyReader::new(pty.master),
             startup_end: 0,

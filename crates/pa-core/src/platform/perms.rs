@@ -289,8 +289,11 @@ mod unix_tests {
     /// end-to-end by `pa-cli`'s `resolve_tailscale_binary` tests.)
     #[test]
     fn the_process_execute_probe_follows_access_semantics() {
-        let dir = std::env::temp_dir().join(format!("pa-perms-x-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("temp dir");
+        let guard = tempfile::Builder::new()
+            .prefix("pa-perms-x-")
+            .tempdir()
+            .expect("temp dir");
+        let dir = guard.path().to_path_buf();
         let file = dir.join("probe.sh");
         std::fs::write(&file, "#!/bin/sh\n").expect("write");
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).expect("chmod");
@@ -310,9 +313,11 @@ mod unix_tests {
     /// creation, the tighten, and the private file-creation mode.
     #[test]
     fn ownership_mode_and_private_creation_probes() {
-        let dir = std::env::temp_dir().join(format!("pa-perms-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("temp dir");
+        let guard = tempfile::Builder::new()
+            .prefix("pa-perms-")
+            .tempdir()
+            .expect("temp dir");
+        let dir = guard.path().to_path_buf();
 
         assert!(effective_uid().is_some(), "unix has the uid probe");
         assert!(owned_by_effective_user(&dir), "an own directory is owned");
@@ -357,8 +362,11 @@ mod windows_tests {
 
     #[test]
     fn restriction_is_a_no_op_and_probes_match_open_semantics() {
-        let dir = std::env::temp_dir().join(format!("pa-perms-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("temp dir");
+        let guard = tempfile::Builder::new()
+            .prefix("pa-perms-")
+            .tempdir()
+            .expect("temp dir");
+        let dir = guard.path().to_path_buf();
         let file = dir.join("probe.txt");
         std::fs::write(&file, "x").expect("write");
         assert!(restrict_file(&file).is_ok());
@@ -373,8 +381,11 @@ mod windows_tests {
     /// inherited ACLs, and there is no uid-style probe on this platform.
     #[test]
     fn ownership_probes_fail_closed() {
-        let dir = std::env::temp_dir().join(format!("pa-perms-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("temp dir");
+        let guard = tempfile::Builder::new()
+            .prefix("pa-perms-")
+            .tempdir()
+            .expect("temp dir");
+        let dir = guard.path().to_path_buf();
         assert_eq!(effective_uid(), None);
         assert!(
             !owned_by_effective_user(&dir),

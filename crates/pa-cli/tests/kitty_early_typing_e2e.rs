@@ -173,6 +173,8 @@ fn a_kitty_terminal_upgrades_and_a_da1_terminal_settles_without_flags() {
 /// chunk-accurate timing ledger over the raw byte stream.
 struct EarlyTypingHarness {
     child: Child,
+    /// The temp dir holding the child's socket; removed after the drop stops the child.
+    _dir: tempfile::TempDir,
     /// The mock-supervisor server thread's join handle (exits with the child's connection).
     _server: std::thread::JoinHandle<()>,
     master: LedgerReader,
@@ -197,11 +199,9 @@ impl EarlyTypingHarness {
         .expect("open pty");
 
         let child = spawn_child(&socket, &pty.slave);
-        // Leak the temp dir's socket path on purpose: the child needs it, and
-        // the whole tree dies with the child at teardown.
-        std::mem::forget(dir);
         EarlyTypingHarness {
             child,
+            _dir: dir,
             _server: server,
             master: LedgerReader::new(pty.master),
         }

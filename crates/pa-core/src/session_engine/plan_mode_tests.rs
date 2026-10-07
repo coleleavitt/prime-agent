@@ -68,10 +68,12 @@ async fn run_command(engine: &SessionEngine, text: &str) -> SessionCommandExecut
     let command = parse_session_command(&SlashCommandRegistry::builtin(), text).unwrap();
     let mut autonomous = crate::autonomous::create_autonomous_runtime_state(None, None);
     let model = wire_model();
+    // A command may write the global harness: never into the shared temp root.
+    let global_harness = tempfile::tempdir().expect("temp dir");
     let mut params = SessionCommandParams {
         model: &model,
         api_key: None,
-        global_harness_dir: std::env::temp_dir(),
+        global_harness_dir: global_harness.path().to_path_buf(),
         autonomous: &mut autonomous,
     };
     execute_session_command(engine, &mut params, &command).await

@@ -190,7 +190,7 @@ fn diff_replay_child_mode() {
 
 /// The fixture session the replay child runs: a small transcript with a
 /// URL row (the OSC 8 hyperlink pairs).
-fn write_replay_fixture() -> String {
+fn write_replay_fixture() -> (tempfile::TempDir, String) {
     let dir = tempfile::TempDir::new().expect("temp dir");
     let path = dir.path().join("fixture.jsonl");
     let fixture = concat!(
@@ -200,9 +200,10 @@ fn write_replay_fixture() -> String {
         "\n",
     );
     std::fs::write(&path, fixture).expect("write fixture");
-    // The child reads the file across the process boundary.
-    std::mem::forget(dir);
-    path.display().to_string()
+    // The child reads the file across the process boundary: the caller holds
+    // the dir until the child is done.
+    let path = path.display().to_string();
+    (dir, path)
 }
 
 /// Route: the parity exit through the `/exit` slash command.
@@ -434,7 +435,7 @@ fn the_config_selector_toggle_error_restores_every_mode() {
 #[test]
 fn the_replay_surface_clean_exit_restores_every_mode() {
     let _lock = harness_lock();
-    let fixture = write_replay_fixture();
+    let (_fixture_dir, fixture) = write_replay_fixture();
     let mut harness =
         DifferentialHarness::start(&ChildSpec::new("replay").env(CHILD_FIXTURE_ENV, fixture));
     harness.answer_kitty_query();
@@ -459,7 +460,7 @@ fn the_replay_surface_clean_exit_restores_every_mode() {
 #[test]
 fn the_panic_unwind_restores_every_mode() {
     let _lock = harness_lock();
-    let fixture = write_replay_fixture();
+    let (_fixture_dir, fixture) = write_replay_fixture();
     let mut harness = DifferentialHarness::start(
         &ChildSpec::new("replay")
             .env(CHILD_FIXTURE_ENV, fixture)

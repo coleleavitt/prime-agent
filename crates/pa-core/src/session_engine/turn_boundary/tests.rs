@@ -83,7 +83,7 @@ fn assistant_entry(text: &str) -> SessionMessage {
 /// A persisted session manager with a small conversation to summarize
 /// (`end_with_compaction` flips it into the `already compacted` shape).
 fn session_with_history(end_with_compaction: bool) -> SessionManager {
-    let dir = tempfile::TempDir::new().unwrap();
+    let dir = crate::test_support::ThreadTempDir::new();
     let session_dir = dir.path().join("session");
     std::fs::create_dir_all(&session_dir).unwrap();
     let mut session = SessionManager::in_memory(dir.path());
@@ -114,7 +114,7 @@ fn session_with_history(end_with_compaction: bool) -> SessionManager {
 impl SessionManager {
     /// Strip the conversation entries (the fresh-session prepare case).
     fn without_history(mut self) -> Self {
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = crate::test_support::ThreadTempDir::new();
         let session_dir = dir.path().join("session");
         std::fs::create_dir_all(&session_dir).unwrap();
         self = SessionManager::in_memory(dir.path());

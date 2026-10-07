@@ -83,14 +83,13 @@ pub fn load_image_from_path(path: &Path) -> std::io::Result<Option<LoadedImage>>
 mod tests {
     use super::*;
 
-    fn temp_image(name: &str, bytes: &[u8]) -> std::path::PathBuf {
+    /// The image file plus its dir's guard: the caller holds the guard for
+    /// the assertions' lifetime and the dir goes with the test.
+    fn temp_image(name: &str, bytes: &[u8]) -> (tempfile::TempDir, std::path::PathBuf) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(name);
         std::fs::write(&path, bytes).unwrap();
-        // Leak the dir: the tempdir guard would drop the file on scope
-        // exit; keep the path alive for the assertion lifetime instead.
-        std::mem::forget(dir);
-        path
+        (dir, path)
     }
 
     #[test]
@@ -122,13 +121,13 @@ mod tests {
 
     #[test]
     fn sniff_ignores_extensions_and_reads_only_the_prefix() {
-        let png = temp_image("notes.png", b"this is not an image at all");
+        let (_png_dir, png) = temp_image("notes.png", b"this is not an image at all");
         assert_eq!(
             detect_supported_image_mime_from_path(&png).unwrap(),
             None,
             "content, not the name, decides"
         );
-        let jpeg = temp_image("photo.txt", &[0xff, 0xd8, 0xff, 0xe0, 0, 0]);
+        let (_jpeg_dir, jpeg) = temp_image("photo.txt", &[0xff, 0xd8, 0xff, 0xe0, 0, 0]);
         assert_eq!(
             detect_supported_image_mime_from_path(&jpeg).unwrap(),
             Some("image/jpeg")
@@ -137,16 +136,16 @@ mod tests {
 
     #[test]
     fn loads_supported_images_as_base64_attachments() {
-        let gif = temp_image("a.gif", b"GIF89a\x02\x00\x01\x00");
+        let (_gif_dir, gif) = temp_image("a.gif", b"GIF89a\x02\x00\x01\x00");
         let loaded = load_image_from_path(&gif).unwrap().expect("image");
         assert_eq!(loaded.mime_type, "image/gif");
         assert_eq!(
             loaded.data,
             base64::engine::general_purpose::STANDARD.encode(b"GIF89a\x02\x00\x01\x00")
         );
-        let text = temp_image("a.txt", b"just text");
+        let (_text_dir, text) = temp_image("a.txt", b"just text");
         assert_eq!(load_image_from_path(&text).unwrap(), None);
-        let empty = temp_image("a.png", b"");
+        let (_empty_dir, empty) = temp_image("a.png", b"");
         assert_eq!(load_image_from_path(&empty).unwrap(), None);
     }
 

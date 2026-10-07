@@ -8,8 +8,8 @@ use std::collections::HashSet;
 async fn headless_error_returns_never_touch_the_terminal() {
     // A socket that never listens: the headless harness never owned the terminal — the restore is
     // gated on the terminal ui mode, so a headless error return must not attempt one.
-    let socket =
-        std::env::temp_dir().join(format!("tui-exit-restore-dead-{}.sock", std::process::id()));
+    let socket_dir = tempfile::tempdir().unwrap();
+    let socket = socket_dir.path().join("tui-exit-restore-dead.sock");
     let mut opts = options(ModelSelection::default());
     opts.socket_path = socket;
     // The attempts counter is process-global and the unwind-guard test also moves it: this reader
@@ -196,8 +196,8 @@ fn create_config_carries_the_resource_exclusions() {
 
 #[test]
 fn resume_hint_names_a_flushed_session() {
-    let dir = std::env::temp_dir().join("pa-tui-resume-hint-test");
-    std::fs::create_dir_all(&dir).unwrap();
+    let guard = tempfile::tempdir().unwrap();
+    let dir = guard.path().to_path_buf();
     let file = dir.join("session.jsonl");
     std::fs::write(&file, "{}").unwrap();
     let stats = json!({

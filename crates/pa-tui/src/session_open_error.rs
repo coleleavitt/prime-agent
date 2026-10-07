@@ -251,7 +251,8 @@ mod tests {
 
     #[test]
     fn the_roster_names_the_holder() {
-        let file = std::env::temp_dir().join("holder-probe.jsonl");
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("holder-probe.jsonl");
         std::fs::write(&file, "{}").unwrap();
         let rows = vec![
             row("/s/other.jsonl", "other", None, None),
@@ -313,7 +314,8 @@ mod tests {
 
     #[test]
     fn the_holder_reads_the_object_model_field() {
-        let file = std::env::temp_dir().join("holder-model.jsonl");
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("holder-model.jsonl");
         std::fs::write(&file, "{}").unwrap();
         let mut row = row(&file.display().to_string(), "h1", None, None);
         row["model"] = json!({"id": "z-ai/glm-5.3", "provider": "prime-inference"});
@@ -326,7 +328,8 @@ mod tests {
 
     #[test]
     fn roster_controlled_fields_cannot_inject_lines() {
-        let file = std::env::temp_dir().join("holder-inject.jsonl");
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("holder-inject.jsonl");
         std::fs::write(&file, "{}").unwrap();
         let mut row = row(&file.display().to_string(), "h1", None, None);
         row["sessionName"] = json!("injected\nname");

@@ -24,7 +24,7 @@ async fn scripted_session() -> AgentSession {
         ..Default::default()
     };
     let agent = Agent::new(options);
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::ThreadTempDir::new();
     let session = SessionManager::in_memory(tmp.path());
     AgentSession::new(Arc::new(agent), session, vec![])
         .await
@@ -164,7 +164,7 @@ async fn digest_session_with_harness(
         stream_fn: Some(provider.stream_fn()),
         ..Default::default()
     });
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::ThreadTempDir::new();
     AgentSession::from_session_arc(
         Arc::new(agent),
         Arc::new(tokio::sync::Mutex::new(SessionManager::in_memory(

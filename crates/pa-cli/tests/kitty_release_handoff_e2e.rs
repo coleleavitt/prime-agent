@@ -200,6 +200,8 @@ fn releases_around_the_handoff_never_become_visible() {
 /// One pty-backed product child plus the mock supervisor it attaches to.
 struct HandoffHarness {
     child: Child,
+    /// The temp dir holding the child's socket; removed after the drop stops the child.
+    _dir: tempfile::TempDir,
     /// The mock-supervisor server thread's join handle (exits with the child's connection).
     _server: std::thread::JoinHandle<()>,
     master: PtyReader,
@@ -224,11 +226,9 @@ impl HandoffHarness {
         .expect("open pty");
 
         let child = spawn_child(&socket, &pty.slave);
-        // Leak the temp dir's socket path on purpose: the child needs it, and the
-        // whole tree dies with the child at teardown.
-        std::mem::forget(dir);
         HandoffHarness {
             child,
+            _dir: dir,
             _server: server,
             master: PtyReader::new(pty.master),
         }

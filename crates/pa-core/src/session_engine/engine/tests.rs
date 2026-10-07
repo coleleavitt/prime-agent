@@ -264,7 +264,7 @@ async fn oauth_creds_unlock_generic_mcp_gating_in_new_sessions() {
         }
     }
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::ThreadTempDir::new();
     let cwd = tmp.path().join("project");
     let agent_dir = tmp.path().join("agent");
     std::fs::create_dir_all(&cwd).unwrap();
@@ -408,7 +408,7 @@ async fn the_length_continuations_setting_auto_continues_a_truncated_reply() {
         }
         provider.push_turn(pa_agent::scripted::ScriptedTurn::Events(steps));
         provider.push_text_turn("the second half");
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_support::ThreadTempDir::new();
         let agent_dir = tmp.path().join("agent");
         std::fs::create_dir_all(&agent_dir).unwrap();
         if let Some(settings) = settings {
@@ -682,7 +682,7 @@ async fn the_delegation_budget_survives_a_resume() {
         context_window: 1_000,
         max_tokens: 100,
     };
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::ThreadTempDir::new();
     let agent_dir = tmp.path().join("agent");
     let session_dir = tmp.path().join("sessions").join("w");
     std::fs::create_dir_all(&agent_dir).unwrap();

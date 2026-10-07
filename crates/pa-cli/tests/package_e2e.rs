@@ -114,6 +114,8 @@ fn steps() -> Vec<Step> {
 }
 
 struct Fixtures {
+    /// The fixture root's guard: the tree goes with the fixture.
+    _root_dir: tempfile::TempDir,
     root: PathBuf,
     #[allow(dead_code)]
     gitbase: PathBuf,
@@ -222,8 +224,8 @@ fn make_fixtures() -> Fixtures {
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     };
 
-    std::mem::forget(root); // keep the fixture root for the whole test
     Fixtures {
+        _root_dir: root,
         root: root_path,
         gitbase,
         work,

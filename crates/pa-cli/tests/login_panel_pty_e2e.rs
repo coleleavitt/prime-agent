@@ -503,6 +503,8 @@ fn model_picker_routes_the_sign_in_flow_and_applies_after_login() {
 /// One pty-backed product child plus the mock supervisor it attaches to.
 struct LoginPanelHarness {
     child: Child,
+    /// The temp dir holding the child's socket; removed after the drop stops the child.
+    _dir: tempfile::TempDir,
     /// The mock-supervisor server thread's join handle (it exits with the child's connection).
     _server: std::thread::JoinHandle<()>,
     master: PtyReader,
@@ -542,10 +544,9 @@ impl LoginPanelHarness {
         .expect("open pty");
 
         let child = spawn_child(&socket, &pty.slave, child_test);
-        // Leak the socket dir on purpose: the child needs it for the test's lifetime.
-        std::mem::forget(dir);
         LoginPanelHarness {
             child,
+            _dir: dir,
             _server: server,
             master: PtyReader::new(pty.master),
         }

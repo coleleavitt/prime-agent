@@ -423,7 +423,7 @@ mod tests {
 
     /// A session with three user turns and a kernel probe bound.
     async fn session_with_probe(probe: ScriptedProbe) -> (AgentSession, std::sync::Arc<Agent>) {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_support::ThreadTempDir::new();
         let mut session = SessionManager::in_memory(tmp.path());
         for text in ["turn zero", "turn one", "turn two"] {
             session.append_message(user_turn(text)).unwrap();

@@ -168,8 +168,8 @@ fn slash_completion_applies_separator_by_argument() {
 
 #[test]
 fn path_completion_lists_directories_first() {
-    let dir = std::env::temp_dir().join("pa-tui-path-completion");
-    let _ = std::fs::remove_dir_all(&dir);
+    let guard = tempfile::tempdir().expect("temp dir");
+    let dir = guard.path().join("pa-tui-path-completion");
     std::fs::create_dir_all(dir.join("src")).expect("mkdir");
     std::fs::create_dir_all(dir.join("docs")).expect("mkdir");
     std::fs::write(dir.join("main.rs"), "fn main() {}").expect("write");

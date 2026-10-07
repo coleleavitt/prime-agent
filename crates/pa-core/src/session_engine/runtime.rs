@@ -230,7 +230,7 @@ mod tests {
     use crate::kernel::shared::HostRequestPayload;
 
     fn persisted_session() -> SessionManager {
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = crate::test_support::ThreadTempDir::new();
         let session_dir = dir.path().join("session");
         std::fs::create_dir_all(&session_dir).unwrap();
         let mut session = SessionManager::in_memory(dir.path());

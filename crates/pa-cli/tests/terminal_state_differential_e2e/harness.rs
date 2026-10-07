@@ -39,6 +39,8 @@ use crate::{
 /// pre-spawn termios snapshot.
 pub(crate) struct DifferentialHarness {
     pub(crate) child: Child,
+    /// The temp dir holding the child's socket; removed after the drop stops the child.
+    _dir: tempfile::TempDir,
     pub(crate) master: PtyReader,
     /// A route may shut it down to refuse later connections.
     listener: Option<std::os::unix::net::UnixListener>,
@@ -74,10 +76,9 @@ impl DifferentialHarness {
         .expect("open pty");
         let before = Termios::capture(pty.master.as_raw_fd());
         let child = spawn_child(spec, &socket, &pty.slave);
-        // The child needs the socket and the temp dir for its lifetime.
-        std::mem::forget(dir);
         DifferentialHarness {
             child,
+            _dir: dir,
             master: PtyReader::new(pty.master),
             listener: Some(listener),
             _server: Some(server),
@@ -163,9 +164,10 @@ impl DifferentialHarness {
     pub(crate) fn assert_terminal_state_restored(&mut self, context: &str) {
         self.drain_until_quiet(10);
         let stream = self.output();
-        // Failure triage: keep the recorded tape next to the run.
+        // Failure triage: keep the recorded tape next to the run (cargo's
+        // per-target scratch dir, never the shared temp root).
         std::fs::write(
-            std::env::temp_dir().join("terminal-state-differential-stream.bin"),
+            Path::new(env!("CARGO_TARGET_TMPDIR")).join("terminal-state-differential-stream.bin"),
             &stream,
         )
         .ok();

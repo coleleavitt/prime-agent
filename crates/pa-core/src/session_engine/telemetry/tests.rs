@@ -1156,11 +1156,6 @@ async fn legacy_events_reach_the_analytics_endpoint_in_the_ts_shape() {
         .find(|event| event["name"] == "agent session ended")
         .unwrap();
     assert_eq!(ended["properties"]["tool_call_count"], 1);
-    std::fs::write(
-        std::env::temp_dir().join("pa-telemetry-e2e-bodies.json"),
-        serde_json::to_string_pretty(&bodies).unwrap(),
-    )
-    .unwrap();
 }
 
 /// A fixture whose recording seams consult a live switch the test flips:

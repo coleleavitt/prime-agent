@@ -130,7 +130,7 @@ pub(super) fn child_run(route: &str, socket: PathBuf) {
                 .expect("the selector ran");
         }
         "replay_auto" => {
-            let stream = replay_stream();
+            let (_replay_dir, stream) = replay_stream();
             let options = pa_tui::app::AppOptions {
                 auto_exit_ms: Some(1_200),
                 ..Default::default()
@@ -139,7 +139,7 @@ pub(super) fn child_run(route: &str, socket: PathBuf) {
                 .expect("the replay surface ran");
         }
         "replay_panic" => {
-            let stream = replay_stream();
+            let (_replay_dir, stream) = replay_stream();
             let options = pa_tui::app::AppOptions {
                 panic_after_frame: true,
                 ..Default::default()
@@ -155,8 +155,9 @@ pub(super) fn child_run(route: &str, socket: PathBuf) {
 }
 
 /// A tiny replay transcript (the replay surface needs a live session
-/// stream): two turns, then End.
-fn replay_stream() -> pa_tui::session::JsonlSessionStream {
+/// stream): two turns, then End. The caller holds the returned dir while the
+/// stream is read; it goes with the caller's scope, unwinding included.
+fn replay_stream() -> (tempfile::TempDir, pa_tui::session::JsonlSessionStream) {
     let dir = tempfile::TempDir::new().expect("temp dir");
     let path = dir.path().join("replay.jsonl");
     let mut entries = String::new();
@@ -175,8 +176,8 @@ fn replay_stream() -> pa_tui::session::JsonlSessionStream {
         entries.push('\n');
     }
     std::fs::write(&path, entries).expect("write replay jsonl");
-    std::mem::forget(dir);
-    pa_tui::session::JsonlSessionStream::from_path(&path).expect("replay stream")
+    let stream = pa_tui::session::JsonlSessionStream::from_path(&path).expect("replay stream");
+    (dir, stream)
 }
 
 use pa_tui::agents_view::{run_agents_view, AgentsViewOptions, AgentsViewUiMode};

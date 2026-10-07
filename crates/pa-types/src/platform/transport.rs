@@ -389,17 +389,22 @@ mod tests {
     use super::*;
     use std::os::unix::fs::FileTypeExt;
 
-    /// A directory whose full path length is exactly `target` bytes; falls
-    /// back to `/tmp` when the ambient `TMPDIR` is already too deep.
-    fn dir_of_exact_len(tag: &str, target: usize) -> std::path::PathBuf {
-        let tag = format!("pa-transport-sun-path-{tag}");
-        let base = std::env::temp_dir().join(&tag);
-        let base = if base.as_os_str().len() + 21 <= target {
-            base
+    /// A directory whose full path length is exactly `target` bytes, inside
+    /// a fresh temp dir (removed with the returned guard); falls back to
+    /// `/tmp` when the ambient `TMPDIR` is already too deep.
+    fn dir_of_exact_len(tag: &str, target: usize) -> (tempfile::TempDir, std::path::PathBuf) {
+        let prefix = format!("pa-transport-sun-path-{tag}-");
+        // A fresh guard name is the prefix plus six random characters.
+        let root = if std::env::temp_dir().as_os_str().len() + prefix.len() + 7 + 21 <= target {
+            std::env::temp_dir()
         } else {
-            std::path::Path::new("/tmp").join(&tag)
+            std::path::PathBuf::from("/tmp")
         };
-        let mut dir = base;
+        let guard = tempfile::Builder::new()
+            .prefix(&prefix)
+            .tempdir_in(root)
+            .expect("create the deep dir's root");
+        let mut dir = guard.path().to_path_buf();
         // Keep at least one byte of room for a file name after the separator.
         while dir.as_os_str().len() + 22 <= target {
             dir = dir.join("d".repeat(20));
@@ -411,13 +416,13 @@ mod tests {
         dir = dir.join("d".repeat(pad));
         assert_eq!(dir.as_os_str().len(), target);
         std::fs::create_dir_all(&dir).expect("create deep dir");
-        dir
+        (guard, dir)
     }
 
     #[tokio::test]
     async fn over_limit_paths_bind_connect_and_land_in_place() {
         use tokio::io::AsyncReadExt;
-        let dir = dir_of_exact_len("roundtrip", 120);
+        let (_guard, dir) = dir_of_exact_len("roundtrip", 120);
         let socket = dir.join("worker-test.sock");
         let _ = std::fs::remove_file(&socket);
         assert!(socket.as_os_str().len() > MAX_SUN_PATH);
@@ -457,7 +462,7 @@ mod tests {
 
     #[tokio::test]
     async fn paths_at_the_limit_bind_directly() {
-        let dir = dir_of_exact_len("boundary", 96);
+        let (_guard, dir) = dir_of_exact_len("boundary", 96);
         let name = "x".repeat(MAX_SUN_PATH - dir.as_os_str().len() - 1);
         let socket = dir.join(name);
         assert_eq!(socket.as_os_str().len(), MAX_SUN_PATH);
@@ -469,7 +474,7 @@ mod tests {
 
     #[tokio::test]
     async fn over_limit_paths_without_a_short_name_error_clearly() {
-        let dir = dir_of_exact_len("toolong", 120);
+        let (_guard, dir) = dir_of_exact_len("toolong", 120);
         let socket = dir.join("n".repeat(120));
         assert!(socket.as_os_str().len() > MAX_SUN_PATH);
         let error = bind_transport(&socket)
@@ -543,12 +548,13 @@ mod pipe_name_tests {
         let _lock = CWD_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // The dirs outlive the guard: the cwd is restored before they are removed.
+        let first = tempfile::tempdir().expect("create the cwd pin dir");
+        let second = tempfile::tempdir().expect("create the cwd pin dir");
         let _guard = CwdGuard::capture();
-        let first = tempfile_dir();
-        std::env::set_current_dir(&first).expect("chdir first");
+        std::env::set_current_dir(first.path()).expect("chdir first");
         let here = pipe_name(Path::new("daemon.sock")).expect("derives");
-        let second = tempfile_dir();
-        std::env::set_current_dir(&second).expect("chdir second");
+        std::env::set_current_dir(second.path()).expect("chdir second");
         let elsewhere = pipe_name(Path::new("daemon.sock")).expect("derives");
         assert_ne!(
             here, elsewhere,
@@ -573,20 +579,5 @@ mod pipe_name_tests {
         fn drop(&mut self) {
             let _ = std::env::set_current_dir(&self.0);
         }
-    }
-
-    /// A fresh directory to chdir into for the relative-path pin.
-    fn tempfile_dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("pa-pipe-name-cwd-{}", uuid_like()));
-        std::fs::create_dir_all(&dir).expect("create the cwd pin dir");
-        dir
-    }
-
-    /// Per-call unique suffix without a uuid dependency: the process id plus a monotonic counter.
-    fn uuid_like() -> u64 {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let next = COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
-        (u64::from(std::process::id()) << 32) | next
     }
 }

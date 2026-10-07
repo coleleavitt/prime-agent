@@ -28,13 +28,15 @@ use pa_core::platform::LockDir;
 
 use support::ts_binary;
 
-fn sandbox(prefix: &str) -> PathBuf {
-    let base = std::env::temp_dir().join(format!(
-        "pa-cli-lock-compat-{prefix}-{}",
-        std::process::id()
-    ));
+/// A fresh sandbox (removed with the returned guard) holding the four
+/// directories a run uses.
+fn sandbox(prefix: &str) -> tempfile::TempDir {
+    let base = tempfile::Builder::new()
+        .prefix(&format!("pa-cli-lock-compat-{prefix}-"))
+        .tempdir()
+        .expect("create sandbox");
     for dir in ["home", "cwd", "agent", "tmp"] {
-        std::fs::create_dir_all(base.join(dir)).expect("create sandbox directory");
+        std::fs::create_dir_all(base.path().join(dir)).expect("create sandbox directory");
     }
     base
 }
@@ -124,7 +126,8 @@ fn ts_binary_fails_on_stale_lock_file_artifact() {
         eprintln!("SKIPPED: TS prime-agent binary not found (set PA_TS_BINARY)");
         return;
     };
-    let sandbox = sandbox("ts-stale-file");
+    let sandbox_dir = sandbox("ts-stale-file");
+    let sandbox = sandbox_dir.path().to_path_buf();
     seed_stale_lock_file(&sandbox);
     let (exit, stdout, stderr) = run(
         &ts,
@@ -160,7 +163,8 @@ fn ts_binary_reclaims_stale_lock_directory_artifact() {
         eprintln!("SKIPPED: TS prime-agent binary not found (set PA_TS_BINARY)");
         return;
     };
-    let sandbox = sandbox("ts-stale-dir");
+    let sandbox_dir = sandbox("ts-stale-dir");
+    let sandbox = sandbox_dir.path().to_path_buf();
     seed_stale_lock_dir(&sandbox);
     let (exit, stdout, stderr) = run(
         &ts,
@@ -191,7 +195,8 @@ fn ts_binary_sees_a_rust_held_lock_as_contention() {
         eprintln!("SKIPPED: TS prime-agent binary not found (set PA_TS_BINARY)");
         return;
     };
-    let sandbox = sandbox("interop");
+    let sandbox_dir = sandbox("interop");
+    let sandbox = sandbox_dir.path().to_path_buf();
     // Hold the lock the way the Rust production code does.
     let guard = LockDir::acquire(&settings_path(&sandbox), std::time::Duration::from_secs(10))
         .expect("Rust acquires the lock");
@@ -239,7 +244,8 @@ fn ts_binary_sees_a_rust_held_lock_as_contention() {
 #[test]
 fn rust_binary_reclaims_stale_lock_directory_artifact() {
     let rust = PathBuf::from(env!("CARGO_BIN_EXE_prime-agent"));
-    let sandbox = sandbox("rs-stale-dir");
+    let sandbox_dir = sandbox("rs-stale-dir");
+    let sandbox = sandbox_dir.path().to_path_buf();
     seed_stale_lock_dir(&sandbox);
     let (exit, stdout, stderr) = run(
         &rust,
@@ -266,7 +272,8 @@ fn rust_binary_heals_stale_lock_file_artifact() {
     // Pre-compat Rust builds left flock FILEs at the lock path. The Rust
     // binary removes the foreign artifact and proceeds; the TS binary cannot.
     let rust = PathBuf::from(env!("CARGO_BIN_EXE_prime-agent"));
-    let sandbox = sandbox("rs-stale-file");
+    let sandbox_dir = sandbox("rs-stale-file");
+    let sandbox = sandbox_dir.path().to_path_buf();
     seed_stale_lock_file(&sandbox);
     let (exit, stdout, stderr) = run(
         &rust,

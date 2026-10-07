@@ -271,7 +271,7 @@ mod tests {
             ..Default::default()
         };
         let agent = pa_agent::agent::Agent::new(options);
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_support::ThreadTempDir::new();
         let mut manager = crate::session::manager::SessionManager::in_memory(tmp.path());
         if persisted {
             manager.materialize_session_file(Some(tmp.path().join("session")));

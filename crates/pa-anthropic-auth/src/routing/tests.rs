@@ -21,6 +21,8 @@ const FAR: &str = "2099-01-01T00:00:00Z";
 /// sticky state beside it, and a usage endpoint answering from `bodies`.
 struct Fixture {
     _home: tempfile::TempDir,
+    /// The sidecar and sticky-state dir, removed with the fixture.
+    _sidecar_dir: tempfile::TempDir,
     source: Arc<SharedStoreSource>,
     bodies: UsageBodies,
     polls: Arc<std::sync::atomic::AtomicUsize>,
@@ -39,13 +41,13 @@ fn fixture(provider: &str, ids: &[&str], sidecar_document: &serde_json::Value) -
         config.config_path = Some(config_path);
         config.routing_state_path = Some(state.clone());
     });
-    std::mem::forget(dir);
     AccountStore::mutate(source.store_path(), |store| store.set_current(ids[0]))
         .expect("pin the first login");
     pa_core::auth::install_credential_source(provider, source.clone());
     pa_ai::request_hooks::install_request_hooks(provider, source.clone());
     Fixture {
         _home: home,
+        _sidecar_dir: dir,
         source,
         bodies,
         polls,

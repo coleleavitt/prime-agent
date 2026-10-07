@@ -134,14 +134,13 @@ mod tests {
 
         // A failing command is retried on every lookup (TS #2497: a transient failure must
         // not disable the credential for the process lifetime).
-        let counter = std::env::temp_dir().join(format!("pa-resolve-retry-{}", std::process::id()));
-        let _ = std::fs::remove_file(&counter);
+        let counter_dir = tempfile::tempdir().expect("temp dir");
+        let counter = counter_dir.path().join("pa-resolve-retry");
         let command = format!("echo x >> {} ; exit 1", counter.display());
         for _ in 0..3 {
             assert_eq!(resolve_config_value(&format!("!{command}")), None);
         }
         let runs = std::fs::read_to_string(&counter).map_or(0, |text| text.lines().count());
-        let _ = std::fs::remove_file(&counter);
         assert_eq!(runs, 3, "failed commands are re-run on each lookup");
     }
 }

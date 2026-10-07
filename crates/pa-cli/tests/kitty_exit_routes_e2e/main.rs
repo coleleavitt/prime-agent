@@ -498,6 +498,8 @@ static HARNESS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 struct RouteHarness {
     child: Child,
+    /// The temp dir holding the child's socket; removed after the drop stops the child.
+    _dir: tempfile::TempDir,
     _server: std::thread::JoinHandle<()>,
     master: PtyReader,
 }
@@ -529,10 +531,9 @@ impl RouteHarness {
         .expect("open pty");
 
         let child = spawn_child(route, &socket, &pty.slave, known_terminal);
-        // The socket outlives this fn: the child needs it (the tree dies with the child).
-        std::mem::forget(dir);
         RouteHarness {
             child,
+            _dir: dir,
             _server: server,
             master: PtyReader::new(pty.master),
         }

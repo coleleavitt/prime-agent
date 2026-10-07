@@ -132,6 +132,8 @@ fn session_runner() -> bool {
 /// One pty-backed product child plus the mock supervisor it attaches to.
 struct ChatOpenHarness {
     child: Child,
+    /// The temp dir holding the child's socket; removed after the drop stops the child.
+    _dir: tempfile::TempDir,
     /// The mock-supervisor server thread's join handle (it exits with the child's connection).
     _server: std::thread::JoinHandle<()>,
     master: PtyReader,
@@ -156,11 +158,9 @@ impl ChatOpenHarness {
         .expect("open pty");
 
         let child = spawn_child(&socket, &pty.slave);
-        // Leak the temp dir's socket path on purpose: the child needs it for
-        // the test's lifetime, and the whole tree dies with the child.
-        std::mem::forget(dir);
         ChatOpenHarness {
             child,
+            _dir: dir,
             _server: server,
             master: PtyReader::new(pty.master),
         }

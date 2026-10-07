@@ -739,16 +739,17 @@ fn session_env(
     tree: &str,
     allowed: &[&str],
     blocked: &[&str],
-) -> (Env<X11Platform<Script>>, Script) {
+) -> (Env<X11Platform<Script>>, Script, tempfile::TempDir) {
     let script = x11(&["xdotool", "xwininfo", "maim", "scrot", "loginctl"]);
     script.on(&["show-session"], 0, b"LockedHint=no\nActive=yes\n", b"");
     script.serve_first(&["-root", "-tree", "-int"], tree);
-    let shots = tempfile::tempdir().unwrap().keep().join("shots");
+    let shots_dir = tempfile::tempdir().unwrap();
+    let shots = shots_dir.path().join("shots");
     let env = Env::with_policy(platform(&script, &shots), allowed, blocked);
-    (env, script)
+    (env, script, shots_dir)
 }
 
-fn linux_env() -> (Env<X11Platform<Script>>, Script) {
+fn linux_env() -> (Env<X11Platform<Script>>, Script, tempfile::TempDir) {
     session_env(ROOT_TREE, &["Notes", "Slack"], &[])
 }
 
@@ -775,7 +776,7 @@ fn point(x: f64, y: f64) -> TargetArg {
 
 #[test]
 fn get_app_binds_the_topmost_window_and_observes() {
-    let (env, _script) = linux_env();
+    let (env, _script, _shots) = linux_env();
     let app = bind_notes(&env);
     assert_eq!(
         (app.bundle_id.as_str(), app.name.as_str(), app.pid),
@@ -794,7 +795,7 @@ fn get_app_binds_the_topmost_window_and_observes() {
 
 #[test]
 fn get_app_gates_the_wm_class_and_reports_missing_apps() {
-    let (env, _script) = session_env(ROOT_TREE, &[], &[]);
+    let (env, _script, _shots) = session_env(ROOT_TREE, &[], &[]);
     assert_eq!(
         env.session
             .get_app(&AppSpec::text("notes"), None)
@@ -802,14 +803,14 @@ fn get_app_gates_the_wm_class_and_reports_missing_apps() {
             .code,
         ErrorCode::AppNotAllowed
     );
-    let (env, _script) = session_env(ROOT_TREE, &["Notes"], &["Notes"]);
+    let (env, _script, _shots) = session_env(ROOT_TREE, &["Notes"], &["Notes"]);
     let blocked = env
         .session
         .get_app(&AppSpec::text("notes"), None)
         .unwrap_err();
     assert!(blocked.message.contains("blocked list"));
     assert_eq!(blocked.code, ErrorCode::AppNotAllowed);
-    let (env, _script) = linux_env();
+    let (env, _script, _shots) = linux_env();
     let missing = env
         .session
         .get_app(&AppSpec::text("firefox"), None)
@@ -830,7 +831,7 @@ fn get_app_gates_the_wm_class_and_reports_missing_apps() {
 
 #[test]
 fn clicks_on_elements_translate_to_window_relative_centers() {
-    let (env, script) = linux_env();
+    let (env, script, _shots) = linux_env();
     let app = bind_notes(&env);
     let click = AppCall::Click {
         target: TargetArg::Index(0),
@@ -864,7 +865,7 @@ fn clicks_on_elements_translate_to_window_relative_centers() {
 
 #[test]
 fn point_clicks_stay_window_relative_and_are_bounds_checked() {
-    let (env, script) = linux_env();
+    let (env, script, _shots) = linux_env();
     let app = bind_notes(&env);
     let click = AppCall::Click {
         target: point(10.0, 20.0),
@@ -901,7 +902,7 @@ fn point_clicks_stay_window_relative_and_are_bounds_checked() {
 
 #[test]
 fn drag_scroll_keys_and_type_dispatch_to_x11() {
-    let (env, script) = linux_env();
+    let (env, script, _shots) = linux_env();
     let app = bind_notes(&env);
     let calls = [
         AppCall::Drag {
@@ -972,7 +973,7 @@ fn drag_scroll_keys_and_type_dispatch_to_x11() {
 
 #[test]
 fn a_renamed_element_is_stale_and_a_gone_window_fails_the_guard() {
-    let (env, script) = linux_env();
+    let (env, script, _shots) = linux_env();
     let app = bind_notes(&env);
     script.on(&["getwindowname"], 0, b"renamed\n", b"");
     let click = AppCall::Click {
@@ -1006,7 +1007,7 @@ fn a_renamed_element_is_stale_and_a_gone_window_fails_the_guard() {
 
 #[test]
 fn the_screenshot_dispatches_to_maim_without_scaling_state() {
-    let (env, script) = linux_env();
+    let (env, script, _shots) = linux_env();
     script.on_png(&["-i"], (800, 600));
     let app = bind_notes(&env);
     let shot = env
@@ -1030,7 +1031,7 @@ fn the_screenshot_dispatches_to_maim_without_scaling_state() {
 
 #[test]
 fn unsupported_actions_name_the_x11_gap_and_emit_their_events() {
-    let (env, _script) = linux_env();
+    let (env, _script, _shots) = linux_env();
     let app = bind_notes(&env);
     let calls = [
         (
@@ -1115,7 +1116,7 @@ fn unsupported_actions_name_the_x11_gap_and_emit_their_events() {
 #[test]
 fn typing_is_never_refused_for_a_secure_focus_on_x11() {
     // X11 has no secure-input role: a documented gap, not fail-closed.
-    let (env, script) = linux_env();
+    let (env, script, _shots) = linux_env();
     let app = bind_notes(&env);
     env.session
         .call(
@@ -1130,7 +1131,7 @@ fn typing_is_never_refused_for_a_secure_focus_on_x11() {
 
 #[test]
 fn telemetry_diffing_and_the_state_report_linux() {
-    let (env, _script) = linux_env();
+    let (env, _script, _shots) = linux_env();
     let app = bind_notes(&env);
     let click = AppCall::Click {
         target: TargetArg::Index(0),

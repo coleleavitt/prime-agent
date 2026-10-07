@@ -248,6 +248,8 @@ fn a_stalled_drain_still_fires_the_force_quit() {
 
 struct SlowDrainHarness {
     child: Child,
+    /// The temp dir holding the child's socket; removed after the drop stops the child.
+    _dir: tempfile::TempDir,
     _server: std::thread::JoinHandle<()>,
     master: PtyReader,
 }
@@ -271,10 +273,9 @@ impl SlowDrainHarness {
         .expect("open pty");
 
         let child = spawn_child(&socket, &pty.slave);
-        // The child needs the socket for its lifetime.
-        std::mem::forget(dir);
         SlowDrainHarness {
             child,
+            _dir: dir,
             _server: server,
             master: PtyReader::new(pty.master),
         }

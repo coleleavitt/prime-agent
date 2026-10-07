@@ -746,16 +746,19 @@ mod tests {
         ReplKernelManager::new(KernelManagerOptions::default())
     }
 
-    fn temp_root(tag: &str) -> std::path::PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("pa-stderr-perms-{}-{tag}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        dir
+    /// A fresh scratch dir (removed with the guard) and the not-yet-created root inside it.
+    fn temp_root(tag: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let guard = tempfile::Builder::new()
+            .prefix("pa-stderr-perms-")
+            .tempdir()
+            .expect("temp dir");
+        let root = guard.path().join(tag);
+        (guard, root)
     }
 
     #[test]
     fn kernel_stderr_log_is_owner_only() {
-        let root = temp_root("create");
+        let (_guard, root) = temp_root("create");
         let path = root.join("artifacts").join("kernel-stderr.log");
         let log = manager()
             .inner
@@ -782,7 +785,7 @@ mod tests {
     fn kernel_stderr_log_rotation_tightens_a_world_readable_log() {
         use std::io::Write;
 
-        let root = temp_root("rotate");
+        let (_guard, root) = temp_root("rotate");
         let path = root.join("kernel-stderr.log");
         std::fs::create_dir_all(&root).expect("dir");
         let mut loose = std::fs::OpenOptions::new()

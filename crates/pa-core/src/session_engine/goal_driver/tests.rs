@@ -23,7 +23,7 @@ fn session_rows_with_reverted_terminal(session: &mut SessionManager) -> GoalStat
 }
 
 fn persisted_session() -> SessionManager {
-    let dir = tempfile::TempDir::new().unwrap();
+    let dir = crate::test_support::ThreadTempDir::new();
     let session_dir = dir.path().join("session");
     std::fs::create_dir_all(&session_dir).unwrap();
     let mut session = SessionManager::in_memory(dir.path());
