@@ -3,104 +3,43 @@
 
 use super::dump::{env_split_words, executed_command_words};
 use super::words::{shell_words, Reach};
+use crate::syntax::pyre::PyRegex;
+use std::sync::LazyLock;
 
 /// Commands whose operands are read for a secret path (the only readers
 /// modeled).
 pub(super) const SECRET_READ_COMMANDS: [&str; 2] = ["cat", "echo"];
 
-/// The secret directory names; each must end the name (`.sshfoo`, `.awsrc`
-/// are other names).
-const SECRET_NAMES: [&str; 3] = [".ssh", ".gnupg", ".aws"];
+/// A secret directory name; the lookahead keeps a longer name (`.sshfoo`,
+/// `.awsrc`) from matching.
+const SECRET_HOME_NAME: &str = r"(?:\.ssh|\.gnupg|\.aws)(?![\w.-])";
 
-fn starts_with_at(text: &[char], at: usize, prefix: &str) -> Option<usize> {
-    let mut position = at;
-    for expected in prefix.chars() {
-        if text.get(position) != Some(&expected) {
-            return None;
-        }
-        position += 1;
-    }
-    Some(position)
-}
+/// `~/<secret>` (it expands only unquoted, so this reads masked text).
+static TILDE_SECRET_PATH: LazyLock<PyRegex> =
+    LazyLock::new(|| PyRegex::new(&format!("~/(?:{SECRET_HOME_NAME})")).requiring(&["~"]));
+/// `$HOME/<secret>`; a double-quoted `$HOME` may close its quote before the
+/// path (`cat "$HOME"/.ssh/id_rsa`).
+static HOME_VAR_SECRET_PATH: LazyLock<PyRegex> = LazyLock::new(|| {
+    PyRegex::new(&format!(r#"\$\{{?HOME\}}?"?(?:/(?:{SECRET_HOME_NAME}))"#)).requiring(&["HOME"])
+});
+/// The same two rules on the word the shell builds, where quotes are gone and
+/// a run of slashes is one slash to the kernel.
+static TILDE_WORD_SECRET_PATH: LazyLock<PyRegex> =
+    LazyLock::new(|| PyRegex::new(&format!("~/+(?:{SECRET_HOME_NAME})")));
+static HOME_VAR_WORD_SECRET_PATH: LazyLock<PyRegex> = LazyLock::new(|| {
+    PyRegex::new(&format!(r"\$\{{?HOME\}}?/+(?:{SECRET_HOME_NAME})")).requiring(&["HOME"])
+});
+/// A `$HOME` the mask leaves live.
+static LIVE_HOME_VAR: LazyLock<PyRegex> = LazyLock::new(|| PyRegex::new(r"\$\{?HOME\}?"));
 
-/// `(?:\.ssh|\.gnupg|\.aws)(?![\w.-])` at `at`.
-fn secret_name_at(text: &[char], at: usize) -> bool {
-    SECRET_NAMES.iter().any(|name| {
-        starts_with_at(text, at, name).is_some_and(|after| {
-            !text
-                .get(after)
-                .is_some_and(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '.' | '-'))
-        })
-    })
-}
-
-/// The index after `$HOME` / `${HOME}` (optional closing brace) at `at`.
-fn home_var_at(text: &[char], at: usize) -> Option<usize> {
-    if text.get(at) != Some(&'$') {
-        return None;
-    }
-    let mut position = at + 1;
-    if text.get(position) == Some(&'{') {
-        position += 1;
-    }
-    position = starts_with_at(text, position, "HOME")?;
-    if text.get(position) == Some(&'}') {
-        position += 1;
-    }
-    Some(position)
-}
-
-/// The index after one or more `/` at `at` (`/+`), or after exactly one.
-fn slashes_at(text: &[char], at: usize, many: bool) -> Option<usize> {
-    if text.get(at) != Some(&'/') {
-        return None;
-    }
-    let mut position = at + 1;
-    while many && text.get(position) == Some(&'/') {
-        position += 1;
-    }
-    Some(position)
-}
-
-/// `~/<secret>` anywhere in masked text (it expands only unquoted).
+/// `~/<secret>` anywhere in masked text.
 pub(super) fn tilde_secret_path(text: &[char]) -> bool {
-    (0..text.len()).any(|at| {
-        text[at] == '~'
-            && slashes_at(text, at + 1, false).is_some_and(|after| secret_name_at(text, after))
-    })
+    TILDE_SECRET_PATH.is_found(text)
 }
 
-/// `$HOME/<secret>` anywhere in masked text, one optional `"` allowed
-/// between the variable and the path (`cat "$HOME"/.ssh/id_rsa`).
+/// `$HOME/<secret>` anywhere in masked text.
 pub(super) fn home_var_secret_path(text: &[char]) -> bool {
-    (0..text.len()).any(|at| {
-        home_var_at(text, at).is_some_and(|mut position| {
-            if text.get(position) == Some(&'"') {
-                position += 1;
-            }
-            slashes_at(text, position, false).is_some_and(|after| secret_name_at(text, after))
-        })
-    })
-}
-
-/// `~/+<secret>` at the start of a built word.
-fn tilde_word_secret_path(word: &[char]) -> bool {
-    word.first() == Some(&'~')
-        && slashes_at(word, 1, true).is_some_and(|after| secret_name_at(word, after))
-}
-
-/// `$HOME/+<secret>` anywhere in a built word.
-fn home_var_word_secret_path(word: &[char]) -> bool {
-    (0..word.len()).any(|at| {
-        home_var_at(word, at)
-            .and_then(|position| slashes_at(word, position, true))
-            .is_some_and(|after| secret_name_at(word, after))
-    })
-}
-
-/// A `$HOME` / `${HOME}` the mask leaves live.
-fn live_home_var(text: &[char]) -> bool {
-    (0..text.len()).any(|at| home_var_at(text, at).is_some())
+    HOME_VAR_SECRET_PATH.is_found(text)
 }
 
 /// Whether a word the shell builds in `command[start..end]` names a secret
@@ -122,12 +61,12 @@ pub(super) fn live_secret_path_word(
             let built: Vec<char> = word.text.chars().collect();
             if literal.get(word.start) == Some(&'~')
                 && command.get(word.start + 1) == Some(&'/')
-                && tilde_word_secret_path(&built)
+                && TILDE_WORD_SECRET_PATH.match_start(&built).is_some()
             {
                 return true;
             }
             let span = &expanded[word.start.min(expanded.len())..word.end.min(expanded.len())];
-            live_home_var(span) && home_var_word_secret_path(&built)
+            LIVE_HOME_VAR.is_found(span) && HOME_VAR_WORD_SECRET_PATH.is_found(&built)
         })
 }
 
@@ -146,9 +85,8 @@ pub(super) fn split_operand_secret_path(words: &[String]) -> bool {
         return false;
     }
     env_split_words(&words[1..]).is_some_and(|split| {
-        split.iter().any(|word| {
-            let chars: Vec<char> = word.chars().collect();
-            home_var_word_secret_path(&chars)
-        })
+        split
+            .iter()
+            .any(|word| HOME_VAR_WORD_SECRET_PATH.is_found(word.as_str()))
     })
 }

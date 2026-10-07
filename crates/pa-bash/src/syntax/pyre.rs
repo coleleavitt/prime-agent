@@ -56,6 +56,18 @@ impl AsText for Vec<char> {
 /// match, the direction every caller treats as "not this shape").
 const BACKTRACK_LIMIT: usize = 50_000_000;
 
+/// Python's `\w` for `str` patterns: `str.isalnum()` (letters and numbers
+/// of every kind) or `_`. The regex crate's `\w` also takes combining marks
+/// and connector punctuation, which would move word boundaries.
+const WORD_MEMBERS: &str = r"\p{L}\p{N}_";
+const WORD: &str = r"[\p{L}\p{N}_]";
+const NOT_WORD: &str = r"[^\p{L}\p{N}_]";
+/// `\b` / `\B` over that `\w`.
+const WORD_BOUNDARY: &str =
+    r"(?:(?<=[\p{L}\p{N}_])(?![\p{L}\p{N}_])|(?<![\p{L}\p{N}_])(?=[\p{L}\p{N}_]))";
+const NOT_WORD_BOUNDARY: &str =
+    r"(?:(?<=[\p{L}\p{N}_])(?=[\p{L}\p{N}_])|(?<![\p{L}\p{N}_])(?![\p{L}\p{N}_]))";
+
 /// Rewrite a Python pattern into the `fancy-regex` dialect.
 fn translate(source: &str) -> String {
     let chars: Vec<char> = source.chars().collect();
@@ -72,6 +84,11 @@ fn translate(source: &str) -> String {
                 (false, 'S') => out.push_str(r"[^\s\x1c-\x1f]"),
                 (true, 's') => out.push_str(r"\s\x1c-\x1f"),
                 (false, 'Z') => out.push_str(r"\z"),
+                (false, 'w') => out.push_str(WORD),
+                (false, 'W') => out.push_str(NOT_WORD),
+                (true, 'w') => out.push_str(WORD_MEMBERS),
+                (false, 'b') => out.push_str(WORD_BOUNDARY),
+                (false, 'B') => out.push_str(NOT_WORD_BOUNDARY),
                 _ => {
                     out.push('\\');
                     out.push(next);
@@ -418,6 +435,15 @@ mod tests {
         assert!(config.match_at(&Haystack::new("core.bareX"), 0).is_none());
         assert!(PyRegex::new(r"a\sb").is_full_match("a\u{1f}b"));
         assert!(PyRegex::new(r"[^\s]").is_full_match("é"));
+    }
+
+    #[test]
+    fn word_classes_follow_python() {
+        // A combining mark is not `str.isalnum()`: Python sees a boundary.
+        assert!(PyRegex::new(r"\bgit\b").is_found("\u{301}git"));
+        assert!(PyRegex::new(r"x(?![\w.-])").is_found("x\u{301}"));
+        assert!(!PyRegex::new(r"\bgit\b").is_found("égit"));
+        assert!(PyRegex::new(r"\w+").is_full_match("a½_٣"));
     }
 
     #[test]

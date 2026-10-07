@@ -8,6 +8,7 @@
 //! nothing, and a bracket body's raw characters keep their regex meaning.
 
 use super::tables::SUDO_COMMAND_WORDS;
+use crate::syntax::pyre::PyRegex;
 
 /// POSIX character classes as the regex ranges bash matches; a class the
 /// table does not name still matches one character in bash, so it becomes
@@ -130,10 +131,12 @@ pub(super) fn matches_sudo_pattern(value: &str) -> bool {
     if !value.contains(['*', '?', '[']) {
         return false;
     }
-    let Some(regex) = Regex::compile(&glob_regex(value)) else {
+    let Some(regex) = python_regex(&glob_regex(value)) else {
         return false;
     };
-    SUDO_COMMAND_WORDS.iter().any(|name| regex.full_match(name))
+    SUDO_COMMAND_WORDS
+        .iter()
+        .any(|name| regex.is_full_match(*name))
 }
 
 /// A `\d`-style category inside a class.
@@ -148,55 +151,16 @@ enum Category {
 }
 
 impl Category {
-    fn matches(self, ch: char) -> bool {
+    fn regex(self) -> &'static str {
         match self {
-            Category::Digit => ch.is_numeric(),
-            Category::NotDigit => !ch.is_numeric(),
-            Category::Space => ch.is_whitespace(),
-            Category::NotSpace => !ch.is_whitespace(),
-            Category::Word => ch.is_alphanumeric() || ch == '_',
-            Category::NotWord => !(ch.is_alphanumeric() || ch == '_'),
+            Category::Digit => r"\d",
+            Category::NotDigit => r"\D",
+            Category::Space => r"\s",
+            Category::NotSpace => r"\S",
+            Category::Word => r"\w",
+            Category::NotWord => r"\W",
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ClassItem {
-    Range(u32, u32),
-    Category(Category),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Atom {
-    Literal(char),
-    AnyButNewline,
-    Class {
-        negated: bool,
-        items: Vec<ClassItem>,
-    },
-}
-
-impl Atom {
-    fn matches(&self, ch: char) -> bool {
-        match self {
-            Atom::Literal(literal) => *literal == ch,
-            Atom::AnyButNewline => ch != '\n',
-            Atom::Class { negated, items } => {
-                let code = u32::from(ch);
-                let hit = items.iter().any(|item| match item {
-                    ClassItem::Range(low, high) => (*low..=*high).contains(&code),
-                    ClassItem::Category(category) => category.matches(ch),
-                });
-                hit != *negated
-            }
-        }
-    }
-}
-
-/// The subset of Python `re` the translated globs use: literals and escapes,
-/// `.`, `*`, and character classes.
-struct Regex {
-    items: Vec<(Atom, bool)>,
 }
 
 /// A class escape's meaning: one code point or a category.
@@ -206,72 +170,63 @@ enum Escaped {
     Category(Category),
 }
 
-impl Regex {
-    fn compile(pattern: &str) -> Option<Self> {
-        let chars: Vec<char> = pattern.chars().collect();
-        let mut items: Vec<(Atom, bool)> = Vec::new();
-        let mut index = 0;
-        while index < chars.len() {
-            match chars[index] {
-                '*' => {
-                    let last = items.last_mut()?;
-                    if last.1 {
-                        return None; // multiple repeat
-                    }
-                    last.1 = true;
-                    index += 1;
+/// The translated glob, read by Python's `re.compile` rules (a malformed
+/// class, a bad range, or a stray repeat is an error: `None`), re-spelled in
+/// the `fancy-regex` dialect with every literal as a `\x{..}` code point so
+/// no character keeps a meaning the two dialects disagree on.
+fn python_regex(pattern: &str) -> Option<PyRegex> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut out = String::new();
+    let mut repeatable = false;
+    let mut index = 0;
+    while index < chars.len() {
+        match chars[index] {
+            '*' => {
+                if !repeatable {
+                    return None; // nothing to repeat, or a multiple repeat
                 }
-                '.' => {
-                    items.push((Atom::AnyButNewline, false));
-                    index += 1;
+                out.push('*');
+                repeatable = false;
+                index += 1;
+                continue;
+            }
+            '.' => {
+                out.push('.');
+                index += 1;
+            }
+            '[' => {
+                index = class(&chars, index + 1, &mut out)?;
+            }
+            '\\' => {
+                let escaped = *chars.get(index + 1)?;
+                if escaped.is_ascii_alphanumeric() {
+                    return None; // not an escape the translation produces
                 }
-                '[' => {
-                    let (atom, next) = parse_class(&chars, index + 1)?;
-                    items.push((atom, false));
-                    index = next;
-                }
-                '\\' => {
-                    let escaped = *chars.get(index + 1)?;
-                    if escaped.is_ascii_alphanumeric() {
-                        return None; // not an escape the translation produces
-                    }
-                    items.push((Atom::Literal(escaped), false));
-                    index += 2;
-                }
-                '(' | ')' | '+' | '?' | '{' | '|' | '^' | '$' => return None,
-                literal => {
-                    items.push((Atom::Literal(literal), false));
-                    index += 1;
-                }
+                push_code(&mut out, u32::from(escaped));
+                index += 2;
+            }
+            '(' | ')' | '+' | '?' | '{' | '|' | '^' | '$' => return None,
+            literal => {
+                push_code(&mut out, u32::from(literal));
+                index += 1;
             }
         }
-        Some(Self { items })
+        repeatable = true;
     }
-
-    fn full_match(&self, text: &str) -> bool {
-        let chars: Vec<char> = text.chars().collect();
-        match_from(&self.items, &chars)
-    }
+    PyRegex::compile(&out).ok()
 }
 
-fn match_from(items: &[(Atom, bool)], text: &[char]) -> bool {
-    let Some(((atom, star), rest)) = items.split_first() else {
-        return text.is_empty();
+/// One code point as `\x{..}`. Python accepts a lone surrogate in a pattern
+/// where the regex crate does not; only `sudo`/`doas` are ever matched, so a
+/// surrogate stands in as U+10FFFF, which no ASCII name contains either.
+fn push_code(out: &mut String, code: u32) {
+    use std::fmt::Write as _;
+    let code = if (0xD800..=0xDFFF).contains(&code) {
+        0x0010_FFFF
+    } else {
+        code
     };
-    if *star {
-        let mut taken = 0;
-        loop {
-            if match_from(rest, &text[taken..]) {
-                return true;
-            }
-            if taken < text.len() && atom.matches(text[taken]) {
-                taken += 1;
-            } else {
-                return false;
-            }
-        }
-    }
-    text.first().is_some_and(|&ch| atom.matches(ch)) && match_from(rest, &text[1..])
+    let _ = write!(out, "\\x{{{code:x}}}");
 }
 
 /// One class escape (`\x41`, `\t`, `\d`, `\[`), Python `_class_escape`.
@@ -332,55 +287,78 @@ fn class_escape(chars: &[char], index: usize) -> Option<(Escaped, usize)> {
     }
 }
 
-/// Parse a class from just after its `[`: the atom and the index after `]`.
-fn parse_class(chars: &[char], mut index: usize) -> Option<(Atom, usize)> {
-    let negated = chars.get(index) == Some(&'^');
-    if negated {
+/// Parse a Python class from just after its `[`, write it to `out`, and
+/// return the index after its `]`.
+fn class(chars: &[char], mut index: usize, out: &mut String) -> Option<usize> {
+    out.push('[');
+    if chars.get(index) == Some(&'^') {
+        out.push('^');
         index += 1;
     }
-    let mut items: Vec<ClassItem> = Vec::new();
+    let mut empty = true;
     loop {
         let this = *chars.get(index)?;
-        if this == ']' && !items.is_empty() {
-            return Some((Atom::Class { negated, items }, index + 1));
+        if this == ']' && !empty {
+            out.push(']');
+            return Some(index + 1);
         }
+        empty = false;
         let (first, next) = if this == '\\' {
             class_escape(chars, index)?
         } else {
             (Escaped::Code(u32::from(this)), index + 1)
         };
         index = next;
-        if chars.get(index) == Some(&'-') {
-            index += 1;
-            let that = *chars.get(index)?;
-            if that == ']' {
-                items.push(single(first));
-                items.push(ClassItem::Range(u32::from('-'), u32::from('-')));
-                return Some((Atom::Class { negated, items }, index + 1));
-            }
-            let (second, next) = if that == '\\' {
-                class_escape(chars, index)?
-            } else {
-                (Escaped::Code(u32::from(that)), index + 1)
-            };
-            index = next;
-            let (Escaped::Code(low), Escaped::Code(high)) = (first, second) else {
-                return None; // bad character range
-            };
-            if high < low {
-                return None;
-            }
-            items.push(ClassItem::Range(low, high));
-        } else {
-            items.push(single(first));
+        if chars.get(index) != Some(&'-') {
+            push_item(out, first);
+            continue;
         }
+        index += 1;
+        let that = *chars.get(index)?;
+        if that == ']' {
+            push_item(out, first);
+            push_code(out, u32::from('-'));
+            out.push(']');
+            return Some(index + 1);
+        }
+        let (second, next) = if that == '\\' {
+            class_escape(chars, index)?
+        } else {
+            (Escaped::Code(u32::from(that)), index + 1)
+        };
+        index = next;
+        let (Escaped::Code(low), Escaped::Code(high)) = (first, second) else {
+            return None; // bad character range
+        };
+        if high < low {
+            return None;
+        }
+        // A range is a set of scalar values: surrogate endpoints move inward
+        // (a range of surrogates only holds nothing an ASCII name has).
+        let low = if (0xD800..=0xDFFF).contains(&low) {
+            0xE000
+        } else {
+            low
+        };
+        let high = if (0xD800..=0xDFFF).contains(&high) {
+            0xD7FF
+        } else {
+            high
+        };
+        if low > high {
+            push_code(out, 0x0010_FFFF);
+            continue;
+        }
+        push_code(out, low);
+        out.push('-');
+        push_code(out, high);
     }
 }
 
-fn single(escaped: Escaped) -> ClassItem {
-    match escaped {
-        Escaped::Code(code) => ClassItem::Range(code, code),
-        Escaped::Category(category) => ClassItem::Category(category),
+fn push_item(out: &mut String, item: Escaped) {
+    match item {
+        Escaped::Code(code) => push_code(out, code),
+        Escaped::Category(category) => out.push_str(category.regex()),
     }
 }
 
