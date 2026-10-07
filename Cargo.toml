@@ -6,6 +6,7 @@ members = [
     "crates/pa-ai",
     "crates/pa-models",
     "crates/pa-sandbox",
+    "crates/pa-bash",
     "crates/pa-agent",
     "crates/pa-core",
     "crates/pa-recall",
