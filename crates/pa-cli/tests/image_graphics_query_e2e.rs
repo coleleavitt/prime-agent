@@ -62,7 +62,10 @@ fn a_kitty_reply_over_ssh_places_the_preview_without_leaking_keys() {
     harness.write(b"Q");
     harness.wait_for(typed, b"Q", "the typed key's paint");
     let after = String::from_utf8_lossy(&harness.output[mark..]).into_owned();
-    for leaked in ["i=31", ";OK", "62;c"] {
+    // `Gi=31` (not a bare `i=31`): the preview's own placement carries a
+    // random image id (`_Ga=T,...,i=3188384900;...`) that a bare `i=31`
+    // matches whenever the id starts with 31.
+    for leaked in ["Gi=31", ";OK", "62;c"] {
         assert!(!after.contains(leaked), "{leaked:?} leaked:\n{after}");
     }
     harness.finish();
