@@ -53,7 +53,10 @@ class BashRunTest(unittest.IsolatedAsyncioTestCase):
     async def test_a_short_command_is_one_host_request(self):
         counter = _Counter()
         counter.patch(self)
-        handle = bash("echo hi")
+        # The window is a latency bet (25 ms); what this guards is that a
+        # command done inside it needs no follow, so give it room under load.
+        with mock.patch.object(bash_module, "_RUN_WINDOW_MS", 10_000):
+            handle = bash("echo hi")
         self.assertEqual(counter.types, ["bash.run"])
         self.assertFalse(handle.running)  # finished and reaped inside the run
         result = await asyncio.wait_for(handle, AWAIT_TIMEOUT)
@@ -83,6 +86,23 @@ class BashRunTest(unittest.IsolatedAsyncioTestCase):
         finally:
             long.kill(signal.SIGKILL)
         await asyncio.wait_for(long, AWAIT_TIMEOUT)
+
+    async def test_a_finished_command_does_not_skip_the_next_window(self):
+        # The first command's result is in, but its background child keeps the
+        # group (and so the handle) unreaped: it is not a command in flight,
+        # so the next bash() still gets its window.
+        first = bash("sleep 30 >/dev/null 2>&1 & echo first")
+        try:
+            result = await asyncio.wait_for(first, AWAIT_TIMEOUT)
+            self.assertEqual((result.exit_code, result.output), (0, "first\n"))
+            counter = _Counter()
+            counter.patch(self)
+            with mock.patch.object(bash_module, "_RUN_WINDOW_MS", 10_000):
+                handle = bash("echo hi")
+            self.assertEqual(counter.types, ["bash.run"])
+            self.assertFalse(handle.running)
+        finally:
+            first.kill(signal.SIGKILL)
 
     async def test_a_long_result_arrives_through_a_removed_spill_file(self):
         with tempfile.TemporaryDirectory() as spill:

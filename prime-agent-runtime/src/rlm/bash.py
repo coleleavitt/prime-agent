@@ -693,9 +693,12 @@ def _live_cell_owner() -> asyncio.Task[Any] | None:
 
 
 # `bash.run` follows a command it just started for this long, so a quick
-# command's whole life (result and reap) is one host request. While other
-# handles are live the window is skipped: `bash()` blocks its caller for the
-# window, and a fan-out of long commands must not start one window apart.
+# command's whole life (result and reap) is one host request. While another
+# command is in flight the window is skipped: `bash()` blocks its caller for
+# the window, and a fan-out of long commands must not start one window apart.
+# A handle whose result is in no longer counts, though it stays live until its
+# reap arrives (at once, or when a lingering background group exits): an
+# awaited command followed by the next must not race that reap.
 _RUN_WINDOW_MS = 25
 
 
@@ -743,7 +746,8 @@ def _launch(command: str, script: str, command_prefix: str | None, allow: list[s
         return launch
     sandbox = plan_guard.sandbox_prefix()
     with _live_lock:
-        window = 0 if _live_handles else _RUN_WINDOW_MS
+        in_flight = any(not handle._done.is_set() for handle in _live_handles)
+    window = 0 if in_flight else _RUN_WINDOW_MS
     data = _kernel_request(
         "bash.run",
         command,
