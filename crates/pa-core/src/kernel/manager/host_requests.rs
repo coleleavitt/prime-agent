@@ -109,6 +109,19 @@ impl Inner {
                 Err(anyhow!("host request payload must have a string type"))
             });
         };
+        if pa_bash::REQUEST_TYPES.contains(&request_type) {
+            // The kernel's bash() commands run here, on the kernel's behalf
+            // (its cwd and environment ride on every request). The answer may
+            // block (a follow waits for the job's next event), so it runs on
+            // a blocking thread; cancellation is advisory for these.
+            let table = Arc::clone(&self.bash_jobs);
+            let data = data.clone();
+            return Box::pin(async move {
+                tokio::task::spawn_blocking(move || pa_bash::handle(&table, &data))
+                    .await
+                    .map_err(|error| anyhow!("bash host request failed: {error}"))
+            });
+        }
         let Some(handler) = self.options.host_handlers.get(request_type).cloned() else {
             let error =
                 anyhow!("host request type \"{request_type}\" is not available in this session");

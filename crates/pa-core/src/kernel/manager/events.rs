@@ -112,10 +112,6 @@ impl Inner {
                 }
             }
             Event::Done { id, fields } => {
-                if let Some(waiter) = lock(&self.guarded).bash_activity_waiters.remove(&id) {
-                    let _ = waiter.send(fields);
-                    return;
-                }
                 if let Some(waiter) = lock(&self.guarded).plan_guard_waiters.remove(&id) {
                     let _ = waiter.send(fields);
                     return;

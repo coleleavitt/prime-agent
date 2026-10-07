@@ -13,6 +13,7 @@ from contextlib import redirect_stderr
 from pathlib import Path
 from unittest import mock
 
+import bash_guard_check
 from rlm import bash
 from rlm.bash import BASH_FORCE_PUSH_BYPASS_ENV, ForcePushRefusalError
 
@@ -92,26 +93,6 @@ def _alternating_payload_chain(
     return command
 
 
-def _prepare(command: str) -> str:
-    """The guard's own normalization pipeline, for detection-vector tests."""
-    resolved = bash_module._fp_mask_redirections(
-        bash_module._fp_normalize_continuations(command)
-    )
-    normalized, _index_map = bash_module._fp_strip_escapes(resolved)
-    return normalized
-
-
-def _guarded_runs(command: str) -> list[bash_module._FpPushArgs]:
-    """Every parsed git push invocation the guard considers a force push."""
-    words = bash_module._fp_scan_words(_prepare(command))
-    runs = []
-    for run in bash_module._fp_find_git_push_runs(words):
-        args = bash_module._fp_parse_push_args(run.tokens, run.push_index)
-        if bash_module._fp_is_guarded_push(args):
-            runs.append(args)
-    return runs
-
-
 # Vectors for the force-push detector: a force flag (`--force`, a bundled `-f`, a `+`-refspec) and no dry run.
 # Quoted words and flags fold into their values, so they match like the unquoted forms, and an unquoted echo of
 # the same text matches too: conservative in the safe direction.
@@ -180,173 +161,6 @@ FORCE_PUSH_NON_MATCHING_COMMANDS = [
     "git -c alias.push='status' push --dry-run -f origin main", "env -C . echo hi",
     "env -S 'git status'", "printf $'%s\\n' hi", 'echo $"hello"', "echo $'tab\\there'",
 ]
-
-
-class ForcePushDetectionTest(unittest.TestCase):
-    def test_detection_tables(self):
-        """Each vector matches its table's verdict, one subTest per command."""
-        tables = (
-            (FORCE_PUSH_MATCHING_COMMANDS, True),
-            (FORCE_PUSH_UNRESOLVABLE_ARGUMENT_COMMANDS, True),
-            (FORCE_PUSH_NON_MATCHING_COMMANDS, False),
-        )
-        for commands, expected in tables:
-            for command in commands:
-                with self.subTest(command=command):
-                    self.assertEqual(bool(_guarded_runs(command)), expected)
-
-    def test_force_with_lease_is_never_a_bare_force(self):
-        args = bash_module._fp_parse_push_args(
-            ["git", "push", "--force-with-lease=main:expected", "origin", "main"], 1
-        )
-        self.assertFalse(args.force)
-        self.assertTrue(args.dry_run is False)
-
-
-class ForcePushScannerFidelityTest(unittest.TestCase):
-    """The scan must read the text the way the shell does."""
-
-    def test_line_continuations_join_words(self):
-        self.assertEqual(_prepare("git push -f origin ma\\\nin"), "git push -f origin main")
-        self.assertEqual(_prepare("gi\\\nt push -\\\nf origin main"), "git push -f origin main")
-
-    def test_ansi_c_words_decode_like_the_shell(self):
-        for command, expected in [
-            ("$'git'", "git"),
-            ("$'\\x67it'", "git"),
-            ("$'\\u0067it'", "git"),
-            ("$'\\101BC'", "ABC"),
-            ('$"git"', "git"),
-            ("$'ma\\in'", "main"),
-        ]:
-            with self.subTest(command=command):
-                words = bash_module._fp_scan_words(_prepare(command))
-                self.assertEqual([word.value for word in words], [expected])
-
-    def test_ansi_c_code_points_are_bounded(self):
-        # `$'\UFFFFFFFF'` is out of range: chr() must not raise, or every command text carrying it takes bash()
-        # down before it spawns.
-        for source, expected in [
-            ("$'\\UFFFFFFFF'", chr(0x10FFFF)),
-            ("$'\\U0010FFFF'", chr(0x10FFFF)),
-            ("$'\\U0001F600'", chr(0x1F600)),
-            ("$'\\u0041BC'", "ABC"),
-        ]:
-            with self.subTest(source=source):
-                words = bash_module._fp_scan_words(_prepare(source))
-                self.assertEqual([word.value for word in words], [expected])
-    def test_double_quoted_escape_does_not_end_the_string(self):
-        command = 'echo "a \\" b"'
-        stripped, _index_map = bash_module._fp_strip_escapes(command)
-        self.assertEqual(stripped, command)
-        words = bash_module._fp_scan_words(_prepare(command))
-        self.assertEqual([word.value for word in words], ["echo", 'a " b'])
-
-    def test_redirections_inside_double_quotes_stay_visible(self):
-        # The quoted span is data: masking it as a redirection would change the word the target check reads.
-        command = 'git push -f origin " > x" main'
-        self.assertIn('" > x"', _prepare(command))
-
-    def test_deep_payload_chains_are_refused_by_the_depth_cap(self):
-        # The payload walk counts two levels per nesting layer and refuses once it passes _FP_MAX_PAYLOAD_DEPTH,
-        # so a chain it cannot follow is refused rather than missed: a benign chain past the cap is refused.
-        self.assertLessEqual(
-            getattr(bash_module, "_FP_MAX_PAYLOAD_DEPTH", 10),
-            10,
-            "the payload depth cap must stay small enough to bound the walk",
-        )
-        for depth in (2, 3, 5):
-            with self.subTest(depth=depth):
-                self.assertFalse(
-                    bash_module._fp_payload_hides_force_push(
-                        _sh_payload_chain(depth, "git status")
-                    )
-                )
-        for depth in (8, 12):
-            with self.subTest(depth=depth):
-                self.assertTrue(
-                    bash_module._fp_payload_hides_force_push(
-                        _sh_payload_chain(depth, "git status")
-                    )
-                )
-                self.assertTrue(
-                    bash_module._fp_payload_hides_force_push(_sh_payload_chain(depth))
-                )
-
-    def test_url_and_scp_remotes_are_not_refspecs(self):
-        # git reads the first positional as the repository whatever it looks like, so none of these are
-        # refspecs; the push is implicit and the upstream rules decide. Real git answers `Could not resolve
-        # hostname` for the colon forms, which is how this list was verified.
-        for first in [
-            "https://example.invalid/x.git", "ssh://example.invalid/x.git",
-            "git@github.com:org/repo.git", "example.invalid:org/repo.git",
-            "localhost:repo.git", "myhost:path", "origin:main", "+main:main", "refs/heads/main:refs/heads/main", "main:main", ":main", "C:\\repo",
-        ]:
-            with self.subTest(first=first):
-                args = bash_module._fp_parse_push_args(["git", "push", "-f", first], 1)
-                self.assertEqual(args.refspecs, [])
-        # A remote first still leaves everything after it as refspecs.
-        args = bash_module._fp_parse_push_args(
-            ["git", "push", "-f", "origin", "main:main"], 1
-        )
-        self.assertEqual(args.refspecs, ["main:main"])
-
-
-
-class ForcePushEvalPayloadTest(unittest.TestCase):
-    def test_eval_payloads_hiding_force_pushes(self):
-        # A payload holding another payload: the inner command only exists after the outer one runs, so each
-        # scanner must consult the others.
-        _scan_flags_all(
-            self,
-                ["eval 'git push -f origin main'", 'eval "git push -f origin main"',
-                 "eval 'git push --force'", "eval 'git push origin +main'",
-                 "eval 'cd repo && git push -f'", "eval 'echo x; git push -f origin main'",
-                 'eval \'eval "git push -f origin main"\'', 'eval \'sh -c "git push -f origin main"\'', "eval " + json.dumps(_sh_payload_chain(3)),
-                 _alternating_payload_chain(5, "eval"),
-                 _alternating_payload_chain(15, "eval")],
-            bash_module._fp_eval_payloads_hide_force_push,
-        )
-
-    def test_safe_eval_payloads_stay_unflagged(self):
-        _scan_flags_all(
-            self,
-                ["eval 'git push --force-with-lease origin main'", "eval 'git push origin main'", "eval 'echo hi'",
-                 "eval \"echo 'git push -f origin main'\"", "eval 'git status'",
-                 "eval " + json.dumps(_sh_payload_chain(3, "git status"))],
-            bash_module._fp_eval_payloads_hide_force_push,
-            expected=False,
-        )
-
-
-class ForcePushShellCPayloadTest(unittest.TestCase):
-    def test_shell_c_payloads_hiding_force_pushes(self):
-        # Deeper chains: every nesting level consumes one escaping layer, so these are only reachable through
-        # the folded-value look.
-        _scan_flags_all(
-            self,
-                ["sh -c 'git push -f origin main'", "bash -c 'git push -f origin main'",
-                 "bash -lc 'git push --force origin main'", "sh -c 'cd repo && git push -f'",
-                 'sh -c "eval \'git push -f origin main\'"',
-                 'sh -c "env -S \'git push -f origin main\'"', _sh_payload_chain(3),
-                 _sh_payload_chain(4), _sh_payload_chain(5),
-                 _alternating_payload_chain(5), _alternating_payload_chain(15)],
-            bash_module._fp_shell_c_payloads_hide_force_push,
-        )
-
-    def test_safe_shell_c_payloads_stay_unflagged(self):
-        # Nested chains the guard can still follow stay unflagged, and so does a nested literal lease push.
-        _scan_flags_all(
-            self,
-                ["bash -c 'git push --force-with-lease origin main'",
-                 "bash -c 'echo hi'", 'bash -c \'echo "git push -f origin main"\'',
-                 "bash -c 'git status'", 'sh -c "eval \'echo hi\'"',
-                 "env -S 'sh -c \"git status\"'", _sh_payload_chain(2, "git status"),
-                 _sh_payload_chain(3, "git status"),
-                 _sh_payload_chain(3, "git push --force-with-lease origin feature")],
-            bash_module._fp_shell_c_payloads_hide_force_push,
-            expected=False,
-        )
 
 
 def _substitution_chain(
@@ -427,19 +241,13 @@ class ForcePushScanCostTest(unittest.TestCase):
         elapsed_text, _separator, outcome = completed.stdout.strip().partition("\t")
         return float(elapsed_text), outcome
 
-    def _time_classification(self, word: str) -> float:
-        """Seconds the guard needs to classify one remote word."""
-        elapsed, _outcome = self._probe(
-            "module._fp_parse_push_args(['git', 'push', '-f', argument], 1)",
-            word,
-        )
-        return elapsed
-
     def _time_guard(self, command: str) -> tuple[float, str]:
         """Seconds the guard needs for one command, plus its verdict."""
         return self._probe(
             "try:\n"
-            "    module._guard_force_push(argument, False)\n"
+            # The guard runs in the host (pa-bash): time the check request.
+            "    module._run_kernel_bash_guards(argument, argument, None, allow_destructive_git=True,"
+            " allow_destructive_chmod=True, allow_secret_echo=True, allow_pipe_to_shell=True, allow_sudo=True)\n"
             "    outcome = 'allowed'\n"
             "except Exception as refusal:\n"
             "    outcome = 'refused: ' + str(refusal).splitlines()[0]\n",
@@ -554,22 +362,14 @@ explicit timeout means a wedged scan fails the test instead of hanging the suite
 pre-budget numbers (13.8s to more than 30s per shape) would do."""
         return self._probe(
             "try:\n"
-            "    module._guard_force_push(argument, False)\n"
+            # The guard runs in the host (pa-bash): time the check request.
+            "    module._run_kernel_bash_guards(argument, argument, None, allow_destructive_git=True,"
+            " allow_destructive_chmod=True, allow_secret_echo=True, allow_pipe_to_shell=True, allow_sudo=True)\n"
             "    outcome = 'allowed'\n"
             "except Exception as refusal:\n"
             "    outcome = 'refused: ' + str(refusal).splitlines()[0]\n",
             command,
         )
-
-    def test_pathological_remote_words_are_classified_quickly(self):
-        for word in PATHOLOGICAL_REMOTE_WORDS:
-            with self.subTest(length=len(word)):
-                elapsed = self._time_classification(word)
-                self.assertLess(
-                    elapsed,
-                    SCAN_BUDGET_SECONDS,
-                    f"{elapsed:.3f}s to classify {len(word)} characters",
-                )
 
     def test_guard_verdict_for_a_pathological_word_is_still_taken(self):
         refused = 0
@@ -592,42 +392,6 @@ pre-budget numbers (13.8s to more than 30s per shape) would do."""
                 )
                 refused += outcome.startswith("refused")
         self.assertGreaterEqual(refused, 1)
-
-
-class ForcePushEnvPayloadTest(unittest.TestCase):
-    """`env -S`/`--split-string` splits one word into the argv git receives."""
-
-    def test_env_payloads_hiding_force_pushes(self):
-        # A payload holding another payload: the inner command exists only after env runs, so the scanners have
-        # to consult each other.
-        _scan_flags_all(
-            self,
-                ["env -S 'git push -f origin main'", "env --split-string 'git push -f origin main'", "env -iS'git push -f origin main'", "env --split-string='git push -f origin main'",
-                 # getopt_long resolves an unambiguous long-option prefix, so `--s`, `--split` and `--s=` carry
-                 # the payload too.
-                 "env --s 'git push -f origin main'", "env --s='git push -f origin main'",
-                 "env --split 'git push -f origin main'", "env -S 'eval \"git push -f origin main\"'",
-                 "env -S 'sh -c \"git push -f origin main\"'", "env -S " + json.dumps(_sh_payload_chain(3)),
-                 # A payload with no command word leaves env's options open.
-                 "env --split-string= -S 'git push -f origin main'", "env -S '' -S 'git push -f origin main'",
-                 "env -S'' -S 'git push -f origin main'", "env -S -S 'git push -f origin main'",
-                 "env -S'   ' -S 'git push -f origin main'", "env -S '-i' -S 'git push -f origin main'"],
-            bash_module._fp_env_payloads_hide_force_push,
-        )
-
-    def test_env_payloads_without_a_force_push_stay_unflagged(self):
-        _scan_flags_all(
-            self,
-                ["env -S 'git status'", "env -S 'echo hi'", "env -S 'git push --force-with-lease origin feature'",
-                 "env --split-string 'git status'", "env --sp 'git status'",
-                 "env -C . git status", "env VERSION=1 git status", "echo env -S",
-                 "env -S " + json.dumps(_sh_payload_chain(2, "git status")),
-                 # A payload with a command word ends the option parse.
-                 "env -S 'echo hi' -S 'git push -f origin main'",
-                 "env -S -S 'echo hi'", "env -S '' 'git push -f origin main'"],
-            bash_module._fp_env_payloads_hide_force_push,
-            expected=False,
-        )
 
 
 class ForcePushGuardSuite(unittest.IsolatedAsyncioTestCase):
@@ -741,11 +505,11 @@ identity fails the test here instead of only on a CI runner whose guess yields a
 
     def _guard_verdict(self, command: str) -> str | None:
         """Run only the guard (no spawn) and return its refusal, or None."""
-        try:
-            bash_module._guard_force_push(command, False)
-        except ForcePushRefusalError as refusal:
-            return str(refusal)
-        return None
+        # The guard runs in the host (pa-bash guards::force_push); its scanner
+        # internals are tested there (guards::force_push::tests).
+        return bash_guard_check.refusal(
+            "force_push", command, os.environ.get("PRIME_AGENT_BASH_COMMAND_PREFIX")
+        )
 
     def _verdicts_clean(self, commands: list[str]) -> None:
         """Every command scans clean (no refusal), each with its own subTest."""
@@ -932,29 +696,6 @@ names its vector."""
         ):
             await self._refused("git push -f origin main")
         self.assertEqual(second.getvalue(), "")
-
-    async def test_guard_probes_only_on_pattern_match(self):
-        repo = self._enter("repo-probe")
-        with mock.patch.object(
-            bash_module, "_fp_probe_upstream", wraps=bash_module._fp_probe_upstream
-        ) as probe:
-            result = await self._run("git push origin feature")
-            self.assertEqual(result.exit_code, 0)
-            result = await self._run("echo hi")
-            self.assertEqual(result.exit_code, 0)
-        self.assertEqual(probe.call_count, 0)
-
-    async def test_cd_replay_targets_the_right_repo(self):
-        repo_a, _ba = self._make_repo("repo-a")  # feature tracks origin/feature
-        repo_b, _bb = self._make_repo("repo-b")  # feature tracks origin/feature
-        message = await self._refused(f"cd {repo_b.name} && git push -f")
-        # The probe must have run inside repo_b, identifying ITS upstream.
-        self.assertIn("origin/feature", message)
-        with mock.patch.object(bash_module, "_fp_probe_upstream", wraps=bash_module._fp_probe_upstream) as probe:
-            await self._refused(f"cd {repo_b.name} && git push -f")
-            self.assertEqual(probe.call_count, 1)
-            cwd = probe.call_args[0][0]
-            self.assertEqual(Path(cwd).resolve(), repo_b.resolve())
 
     async def test_unresolvable_relocations_refused(self):
         repo, _bare = self._make_repo("repo-reloc")
@@ -1471,56 +1212,6 @@ too."""
         message = await self._refused(command)
         self.assertIn("Refusing to run this force-push command", message)
 
-    def test_backtick_matcher_follows_bash(self):
-        # Pin the matcher against bash's own parse: the interior it reports must be the command bash runs. `echo
-        # <string>` makes that observable (the substitution's output becomes the echo's argument), so the two
-        # runs must print the same thing. Only the well-formed strings are compared this way; the
-        # boundary-sensitive malformed ones are covered by test_refuses_backquote_substitutions_bash_ends_early,
-        # where bash really force-pushes a protected branch with the S2 shape.
-        cases = [
-            "`printf %s a`", "`echo hi`", '`printf %s "a b"`', "`printf %s a; printf %s b`",
-        ]
-        for command in cases:
-            with self.subTest(command=command):
-                close = bash_module._fp_matching_backtick(command, 0, len(command))
-                interior = command[1:close]
-                whole = subprocess.run(
-                    ["bash", "-c", "echo " + command],
-                    capture_output=True,
-                    text=True,
-                    timeout=GIT_TIMEOUT,
-                )
-                mine = subprocess.run(
-                    ["bash", "-c", interior],
-                    capture_output=True,
-                    text=True,
-                    timeout=GIT_TIMEOUT,
-                )
-                self.assertEqual(whole.returncode, 0, whole.stderr)
-                self.assertEqual(mine.returncode, 0, mine.stderr)
-                self.assertEqual(
-                    whole.stdout.rstrip("\n"),
-                    mine.stdout.rstrip("\n"),
-                    f"matcher interior {interior!r} does not match bash's parse",
-                )
-        # The rule itself: the first backtick a backslash does not escape ends the substitution, quotes do not
-        # hide one, and an escaped one does not end it (so the closer is the final backtick there).
-        backtick = "`"
-        quote = "'"
-        first = f"a{backtick}b"
-        self.assertEqual(
-            bash_module._fp_matching_backtick(
-                backtick + first + backtick, 0, len(backtick + first + backtick)
-            ),
-            2,
-        )
-        escaped = backtick + "echo " + "\\" + backtick + backtick
-        self.assertEqual(
-            bash_module._fp_matching_backtick(escaped, 0, len(escaped)), len(escaped) - 1
-        )
-        s2 = backtick + "echo " + quote + backtick + " git push -f origin main"
-        self.assertEqual(bash_module._fp_matching_backtick(s2, 0, len(s2)), 7)
-
     async def test_refuses_command_words_built_from_expansions(self):
         repo = self._enter("repo-dynamic-command-word", branch="main")
         # The command word decides what runs: `$(printf git) push -f origin main` is a git force push, but the
@@ -1720,22 +1411,6 @@ read as the command. A long option is resolved by prefix, the way getopt_long do
              "git push --force --dry-run origin main"]
         )
 
-    def test_parse_tracks_force_dry_run_and_wildcard_with_last_wins(self):
-        parse = bash_module._fp_parse_push_args
-        for tokens, expected in [
-            (["git", "push", "--mirror", "origin"], (True, False, True)),
-            (["git", "push", "--all", "origin"], (False, False, True)),
-            (["git", "push", "--mirror", "--no-mirror", "origin"], (False, False, False)),
-            (["git", "push", "--all", "--no-all", "origin"], (False, False, False)),
-            (["git", "push", "-f", "--no-force", "origin", "main"], (False, False, False)),
-            (["git", "push", "--no-force", "-f", "origin", "main"], (True, False, False)),
-            (["git", "push", "-f", "--dry-run", "--no-dry-run", "origin", "main"], (True, False, False)),
-            (["git", "push", "-n", "--no-dry-run", "-f", "origin", "main"], (True, False, False)),
-        ]:
-            with self.subTest(tokens=tokens):
-                args = parse(list(tokens), 1)
-                self.assertEqual((args.force, args.dry_run, args.wildcard), expected)
-
     async def test_refuses_lone_positional_remote_spellings(self):
         repo = self._enter("repo-lone-positional", branch="main")
         # Real git reads the first positional as the repository for all of these and answers `Could not resolve
@@ -1807,15 +1482,6 @@ read as the command. A long option is resolved by prefix, the way getopt_long do
         with self.assertRaises(ForcePushRefusalError):
             bash_module.BashHandle("git push -f origin main")
 
-    def test_probe_timeout_fails_closed_and_is_event_loop_bounded(self):
-        """The probe runs on the event loop inside sync bash(); a probe that cannot answer in budget is refused."""
-        self.assertLessEqual(bash_module._FORCE_PUSH_PROBE_TIMEOUT_SECONDS, 2.0)
-        with mock.patch.object(
-            bash_module.subprocess, "run", side_effect=subprocess.TimeoutExpired("probe", 2.0)
-        ):
-            verdict = self._guard_verdict("git push -f")
-        self.assertIn("timed out", verdict)
-
     def test_child_env_strips_late_bypass_and_smuggled_shell_startup(self):
         """A late bypass write must not arm a nested kernel; $BASH_ENV/$ENV/BASH_FUNC_* smuggle code (#2429/#2373)."""
         os.environ[BASH_FORCE_PUSH_BYPASS_ENV] = "1"
@@ -1846,11 +1512,11 @@ class ForcePushGitCommandNameTest(unittest.TestCase):
             self.addCleanup(os.environ.__setitem__, "PRIME_AGENT_BASH_COMMAND_PREFIX", prefix)
 
     def _refusal(self, command: str) -> str | None:
-        try:
-            bash_module._guard_force_push(command, False)
-        except ForcePushRefusalError as refusal:
-            return str(refusal)
-        return None
+        # The guard runs in the host (pa-bash guards::force_push); its scanner
+        # internals are tested there (guards::force_push::tests).
+        return bash_guard_check.refusal(
+            "force_push", command, os.environ.get("PRIME_AGENT_BASH_COMMAND_PREFIX")
+        )
 
     def _outside_table(self, commands: list[str], refused: bool) -> None:
         """Every command is (or is not) refused as outside git's own command table, each with its own subTest.

@@ -213,6 +213,17 @@ fn connect_cell(port: u16) -> String {
     )
 }
 
+/// A cell whose `bash()` command connects to `port` on loopback (the kernel's own Python as
+/// the client): the command's exit code. The host runs `bash()` jobs, so this checks the host
+/// spawns them under the kernel's sandbox.
+fn bash_connect_cell(port: u16) -> String {
+    format!(
+        r#"import sys
+_r = await bash(sys.executable + " -c 'import socket; socket.create_connection((\"127.0.0.1\", {port}), timeout=5).close()'")
+_r.exit_code"#
+    )
+}
+
 #[tokio::test]
 async fn network_off_refuses_a_tcp_connect_and_network_on_allows_it() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -221,13 +232,20 @@ async fn network_off_refuses_a_tcp_connect_and_network_on_allows_it() {
         return;
     };
     let refused = cell(&denied, &connect_cell(port)).await;
+    let bash_refused = cell(&denied, &bash_connect_cell(port)).await;
     denied.provisioner.dispose(None).await;
     let allowed = fixture(SandboxMode::WorkspaceWrite, true).expect("the same machine");
     let connected = cell(&allowed, &connect_cell(port)).await;
+    let bash_connected = cell(&allowed, &bash_connect_cell(port)).await;
     allowed.provisioner.dispose(None).await;
     // EPERM: the seccomp filter refuses the inet socket itself.
     assert_eq!(
-        (refused.as_str(), connected.as_str()),
-        ("'errno 1'", "'connected'")
+        (
+            refused.as_str(),
+            bash_refused.as_str(),
+            connected.as_str(),
+            bash_connected.as_str()
+        ),
+        ("'errno 1'", "1", "'connected'", "0")
     );
 }

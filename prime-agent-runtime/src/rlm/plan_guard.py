@@ -26,7 +26,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
-import re
 import shlex
 import shutil
 import subprocess
@@ -323,22 +322,6 @@ def _fallback_shell_allowed(command: str) -> bool:
     return True
 
 
-# `rlm.bash` wraps every command in a status script; its completion halves are
-# random hex. The fallback classifies the wrapped command, then proves the
-# wrapper is exactly the runtime's own around it.
-_STATUS_HALVES = re.compile(r"'([0-9a-f]+)' '([0-9a-f]+)' >&")
-
-
-def _is_runtime_bash_wrapper(script: str, inner: str) -> bool:
-    # The package rebinds `rlm.bash` to the function; import the helper itself.
-    from .bash import _status_script
-
-    match = _STATUS_HALVES.search(script)
-    if match is None:
-        return False
-    return script == _status_script(inner, match.group(1), match.group(2))
-
-
 def _popen_argv(args: Any, executable: Any) -> list[str]:
     argv = [os.fsdecode(a) for a in ([args] if isinstance(args, (str, bytes, os.PathLike)) else list(args))]
     if executable and argv:
@@ -354,6 +337,8 @@ def _make_guard() -> tuple[
     Callable[[], HostController],
     Callable[[], bool],
     Callable[[str], None],
+    Callable[[], list[str] | None],
+    Callable[[Callable[[], None]], None],
 ]:
     state: dict[str, Any] = {
         "token_hash": None,
@@ -407,7 +392,7 @@ def _make_guard() -> tuple[
             frame = frame.f_back
         return False
 
-    def _wrap_popen_args(args: Any, kwargs: dict[str, Any], inner: str | None) -> tuple[Any, dict[str, Any]]:
+    def _wrap_popen_args(args: Any, kwargs: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
         shell = bool(kwargs.get("shell"))
         executable = kwargs.pop("executable", None)
         prefix = _sandbox()
@@ -419,16 +404,6 @@ def _make_guard() -> tuple[
                     return args, kwargs
                 raise PlanModeError(_FALLBACK_BLOCK_ACTION)
             argv = _popen_argv(args, executable)
-            if (
-                inner is not None
-                and len(argv) == 3
-                and os.path.basename(argv[0]) in _SHELL_NAMES
-                and argv[1] == "-c"
-                and _is_runtime_bash_wrapper(argv[2], inner)
-            ):
-                if _fallback_shell_allowed(inner):
-                    return argv, kwargs
-                raise PlanModeError(_FALLBACK_BLOCK_ACTION)
             if not _fallback_command_allowed(argv):
                 raise PlanModeError(_FALLBACK_BLOCK_ACTION)
             return argv, kwargs
@@ -439,7 +414,9 @@ def _make_guard() -> tuple[
         return [*prefix, *_popen_argv(args, executable)], kwargs
 
     def guarded_init(self: subprocess.Popen[Any], args: Any = None, *pargs: Any, **kwargs: Any) -> None:
-        inner = kwargs.pop("_plan_guard_inner", None)
+        # A caller naming a harmless "inner" script cannot vouch for the argv:
+        # the argv itself is classified.
+        kwargs.pop("_plan_guard_inner", None)
         if not state["enabled"]:
             original_init(self, args, *pargs, **kwargs)
             return
@@ -447,8 +424,15 @@ def _make_guard() -> tuple[
             # Positional bufsize/executable/etc. are never used by the stdlib
             # helpers the kernel relies on; keep the wrapper simple.
             raise PlanModeError("subprocess with positional options in plan mode (use keyword arguments)")
-        args, kwargs = _wrap_popen_args(args, kwargs, inner if isinstance(inner, str) else None)
+        args, kwargs = _wrap_popen_args(args, kwargs)
         original_init(self, args, **kwargs)
+
+    def _run_before_arm_hooks() -> None:
+        for hook in list(before_arm):
+            try:
+                hook()
+            except Exception:  # noqa: BLE001 - a hook must never keep the guard from arming
+                pass
 
     def _arm() -> None:
         if not state["popen_patched"]:
@@ -483,6 +467,10 @@ def _make_guard() -> tuple[
                 state["roots"] = resolved
                 state["sandbox"] = None
                 _sandbox()
+            if not state["enabled"]:
+                # Processes the runtime itself needs while armed (the bash
+                # host) start now, while spawns are still allowed.
+                _run_before_arm_hooks()
             _arm()
         state["enabled"] = bool(enabled)
         return bool(state["enabled"])
@@ -502,18 +490,33 @@ def _make_guard() -> tuple[
         if not _fallback_shell_allowed(command):
             raise PlanModeError(_FALLBACK_BLOCK_ACTION)
 
-    return claim_host_controller, is_enabled, check_bash
+    def sandbox_prefix() -> list[str] | None:
+        return list(_sandbox() or []) or None if state["enabled"] else None
+
+    def on_before_arm(hook: Callable[[], None]) -> None:
+        before_arm.append(hook)
+
+    before_arm: list[Callable[[], None]] = []
+    return claim_host_controller, is_enabled, check_bash, sandbox_prefix, on_before_arm
 
 
-claim_host_controller, is_enabled, check_bash = _make_guard()
+claim_host_controller, is_enabled, check_bash, sandbox_prefix, on_before_arm = _make_guard()
 claim_host_controller.__doc__ = (
     "Return the one host controller ``(token, enabled, extra_writable_roots, protected_roots) -> enabled``; "
     "a second claim raises PermissionError. The REPL claims it at startup."
 )
 is_enabled.__doc__ = "Whether plan mode is active in this kernel."
+sandbox_prefix.__doc__ = (
+    "The read-only OS sandbox argv prefix a kernel shell command runs under while plan mode "
+    "is active, or None (plan mode off, or no usable sandbox on this machine)."
+)
+on_before_arm.__doc__ = (
+    "Register a callback run each time plan mode switches on, just before the guard arms "
+    "(while the runtime may still start the processes it needs)."
+)
 check_bash.__doc__ = (
     "Raise PlanModeError when plan mode is active, no OS sandbox is available, "
     "and ``command`` is not a classifiable read-only shell script."
 )
 
-__all__ = ["PlanModeError", "check_bash", "claim_host_controller", "is_enabled"]
+__all__ = ["PlanModeError", "check_bash", "claim_host_controller", "is_enabled", "on_before_arm", "sandbox_prefix"]

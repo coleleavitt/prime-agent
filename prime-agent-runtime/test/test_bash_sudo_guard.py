@@ -12,9 +12,19 @@ import time
 import unittest
 from unittest import mock
 
+import bash_guard_check
 from rlm import bash
 
 bash_module = sys.modules["rlm.bash"]
+
+
+def _sudo_violation(command: str) -> str | None:
+    # The sudo guard runs in the host (pa-bash guards::sudo); the reason
+    # phrase is read back from its refusal. The depth-limit alias chain and
+    # the paren matcher are tested there (guards::sudo::scan/lexer tests).
+    return bash_guard_check.phrase(
+        "sudo", command, "Refusing to run this command: ", ". sudo and doas run the command"
+    )
 
 # Each guard's suite verifies one rule in isolation. The sibling guards fail
 # closed on shapes this suite exercises (`bash <(...)`, `sh -c ...`, `env`,
@@ -442,33 +452,19 @@ SUDO_NON_MATCHING_COMMANDS = [
 
 
 class SudoDetectionTest(unittest.TestCase):
-    def test_alias_chain_at_depth_limit_reaches_a_runner(self):
-        # At the cap an unresolved body counts as reaching a runner, so a heredoc
-        # piped to it is scanned as a script instead of treated as data.
-        self.assertTrue(
-            bash_module._body_reaches_runner("alias p=sh", bash_module._MAX_PAYLOAD_DEPTH)
-        )
-
     def test_sudo_command_words_are_violations(self):
         for command in SUDO_MATCHING_COMMANDS:
             with self.subTest(command=command):
-                self.assertIsNotNone(bash_module._sudo_violation(command))
+                self.assertIsNotNone(_sudo_violation(command))
 
     def test_non_command_mentions_are_allowed(self):
         for command in SUDO_NON_MATCHING_COMMANDS:
             with self.subTest(command=command):
-                self.assertIsNone(bash_module._sudo_violation(command))
+                self.assertIsNone(_sudo_violation(command))
 
     def test_reason_phrases(self):
-        self.assertIn("sudo", bash_module._sudo_violation("sudo ls"))
-        self.assertIn("doas", bash_module._sudo_violation("doas id"))
-
-    def test_matching_paren_keeps_the_three_arg_family_contract(self):
-        # #2373/#2390/#2415 ship this helper as (text, open_index, end); a
-        # divergent arity here would break the merged module with a TypeError.
-        self.assertEqual(bash_module._matching_paren("$(sudo id)", 1, 10), 9)
-        self.assertEqual(bash_module._matching_paren("$(sudo id", 1, 9), 8)  # unterminated
-
+        self.assertIn("sudo", _sudo_violation("sudo ls"))
+        self.assertIn("doas", _sudo_violation("doas id"))
 
 class BraceFloodTest(unittest.TestCase):
     """The brace-expansion cap: a flood fails closed and never scans quadratically."""
@@ -477,7 +473,7 @@ class BraceFloodTest(unittest.TestCase):
 
     def test_brace_flood_command_word_is_refused_promptly(self):
         started = time.monotonic()
-        violation = bash_module._sudo_violation(self.FLOOD)
+        violation = _sudo_violation(self.FLOOD)
         elapsed = time.monotonic() - started
         self.assertLess(elapsed, 5.0)
         self.assertIsNotNone(violation)
@@ -485,25 +481,25 @@ class BraceFloodTest(unittest.TestCase):
     def test_brace_sequences_and_oversized_groups(self):
         # Sequences expand like comma alternatives, and an oversized group fails
         # closed from its element count instead of being built.
-        self.assertIsNotNone(bash_module._sudo_violation("s{u..u}do id"))
-        self.assertIsNone(bash_module._sudo_violation("echo {1..5}"))
+        self.assertIsNotNone(_sudo_violation("s{u..u}do id"))
+        self.assertIsNone(_sudo_violation("echo {1..5}"))
         started = time.monotonic()
-        self.assertIsNotNone(bash_module._sudo_violation("{1..9999999}"))
-        self.assertIsNotNone(bash_module._sudo_violation("{a,b}" * 22))
+        self.assertIsNotNone(_sudo_violation("{1..9999999}"))
+        self.assertIsNotNone(_sudo_violation("{a,b}" * 22))
         self.assertIsNone(
-            bash_module._sudo_violation("echo {0," + ",".join(map(str, range(20000))) + "}")
+            _sudo_violation("echo {0," + ",".join(map(str, range(20000))) + "}")
         )
         # A range CPython cannot even convert must not raise: it fails closed.
         huge = "{" + "1" * 5000 + "..2}"
-        self.assertIsNotNone(bash_module._sudo_violation(huge))
-        self.assertIsNone(bash_module._sudo_violation("echo " + huge))
+        self.assertIsNotNone(_sudo_violation(huge))
+        self.assertIsNone(_sudo_violation("echo " + huge))
         self.assertLess(time.monotonic() - started, 5.0)
 
     def test_brace_flood_operand_word_is_still_judged(self):
         # A long comma-free blob in operand position is data, not a command word:
         # the word is judged without rescanning the tail for every `{`.
         started = time.monotonic()
-        violation = bash_module._sudo_violation("echo " + self.FLOOD)
+        violation = _sudo_violation("echo " + self.FLOOD)
         elapsed = time.monotonic() - started
         self.assertLess(elapsed, 5.0)
         self.assertIsNone(violation)

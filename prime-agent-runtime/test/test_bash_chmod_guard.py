@@ -48,19 +48,6 @@ AWAIT_TIMEOUT = 10.0
 SUBPROCESS_TIMEOUT = 60
 
 
-def _prepare(command: str) -> str:
-    """The guard's own normalization pipeline, for detection-vector tests."""
-    resolved = bash_module._chmod_mask_shell_redirections(
-        bash_module._chmod_normalize_line_continuations(command)
-    )
-    normalized, _index_map = bash_module._chmod_strip_shell_escapes(resolved)
-    return normalized
-
-
-def _invocations(command: str) -> list[tuple[int, int, int]]:
-    return bash_module._find_recursive_chmod_chown_invocations(_prepare(command))
-
-
 # Vectors for the recursive chmod/chown detector: an invocation must carry a
 # recursive flag (-R bundled anywhere, or --recursive); a chmod without -R and
 # a chown without -R never match. Quoted command words and quoted flags fold
@@ -111,112 +98,6 @@ CHMOD_NON_MATCHING_COMMANDS = [
     "chmod --ref 755 sub", "chmod --reference=/tmp/mode 755 sub",
     "chmod --changes 755 sub",
 ]
-
-
-class RecursiveChmodDetectionTest(unittest.TestCase):
-    def test_matches_recursive_chmod_chown(self):
-        for command in CHMOD_MATCHING_COMMANDS:
-            with self.subTest(command=command):
-                self.assertTrue(_invocations(command))
-
-    def test_does_not_match_other_commands(self):
-        for command in CHMOD_NON_MATCHING_COMMANDS:
-            with self.subTest(command=command):
-                self.assertFalse(_invocations(command))
-
-    def test_counts_each_invocation_in_compound_commands(self):
-        self.assertEqual(len(_invocations("chmod -R 755 sub && chown -R u sub")), 2)
-
-
-class ChmodEvalPayloadDetectionTest(unittest.TestCase):
-    def test_eval_payloads_hiding_recursive_chmod_chown(self):
-        for command in [
-            "eval 'chmod -R 755 ~'",
-            'eval "chown -R user ~"',
-            "eval 'cd sub && chmod -R 755 .'",
-            'eval "chmod -R 755 ~"',
-            "eval 'eval \"chmod -R 755 ~\"'",
-            '"eval" "chmod -R 755 ~"',
-            "eval $(echo 'chmod -R 755 ~')",
-            "eval 'chmod -R \\\n755 ~'",
-            # Mixed and nested wrapper forms: the quoted sh -c payload
-            # inside the eval payload must be rescanned too.
-            'eval \'bash -c "chmod -R 755 ~"\'',
-            'eval \'bash -c "chown -R user ~"\'',
-            "eval $'chmod -R 755 ~'",
-            # Quote- and ANSI-C-encoded wrapper names still fold to the
-            # wrapper word, so their payloads must be inspected too.
-            'e"val" \'chmod -R 755 ~\'',
-            'ev"al" \'chmod -R 755 ~\'',
-            "$'eval' 'chmod -R 755 ~'",
-        ]:
-            with self.subTest(command=command):
-                self.assertTrue(
-                    bash_module._eval_payloads_hide_recursive_chmod(command)
-                )
-
-    def test_safe_eval_payloads_stay_unflagged(self):
-        for command in [
-            "eval",
-            "eval 'echo hi'",
-            "eval 'chmod 755 sub'",
-            'eval "echo \'chmod -R 755 ~\'"',
-            "eval 'echo \"chmod -R 755 ~\"'",
-            "echo 'eval chmod -R 755 ~'",
-            "npm run eval:suite",
-        ]:
-            with self.subTest(command=command):
-                self.assertFalse(
-                    bash_module._eval_payloads_hide_recursive_chmod(command)
-                )
-
-
-class ShellCPayloadDetectionTest(unittest.TestCase):
-    def test_shell_c_payloads_hiding_recursive_chmod_chown(self):
-        for command in [
-            "sh -c 'chmod -R 755 ~'",
-            'bash -c "chown -R user ~"',
-            "bash -lc 'chmod -R 755 ~'",
-            "bash -xc 'chmod -R 755 ~'",
-            "zsh -c 'chmod -R 755 ~'",
-            "sh -e -c 'chmod -R 755 ~'",
-            "sh -c $(echo 'chmod -R 755 ~')",
-            "FOO=1 sh -c 'chmod -R 755 ~'",
-            # Nested wrapper payloads: an inner quoted wrapper (eval or
-            # another sh -c) is rescanned one quoting layer at a time.
-            'sh -c \'bash -c "chmod -R 755 ~"\'',
-            "bash -c 'eval \"chmod -R 755 ~\"'",
-            "bash -c $'chmod -R 755 ~'",
-            'bash -c $"chmod -R 755 ~"',
-            # Payloads hiding shell code the scanner cannot resolve.
-            "bash -c '$cmd -R 755 ~'",
-            "bash -c 'BASH_ENV=/tmp/x echo hi'",
-            'bash -c \'bash <(printf "chmod -R 755 ~")\'',
-            'b"ash" -c \'chmod -R 755 ~\'',
-            "$'bash' -c 'chmod -R 755 ~'",
-        ]:
-            with self.subTest(command=command):
-                self.assertTrue(
-                    bash_module._shell_c_payloads_hide_recursive_chmod(command)
-                )
-
-    def test_safe_shell_c_payloads_stay_unflagged(self):
-        for command in [
-            "sh -c 'echo hi'",
-            "sh -c 'echo \"chmod -R 755 ~\"'",
-            'bash -c "echo \'chmod -R 755 ~\'"',
-            "bash -lc 'chmod 755 sub'",
-            "sh --rcfile x -c 'echo hi'",
-            "echo 'bash -c chmod -R 755 ~'",
-            # Still-quoted data and non-executor runs inside payloads stay
-            # inert: an echoed string never scans as a command.
-            "sh -c 'echo $x -R hi'",
-            "sh -c 'echo BASH_ENV=x'",
-        ]:
-            with self.subTest(command=command):
-                self.assertFalse(
-                    bash_module._shell_c_payloads_hide_recursive_chmod(command)
-                )
 
 
 class RecursiveChmodGuardTest(unittest.IsolatedAsyncioTestCase):
@@ -286,54 +167,6 @@ class RecursiveChmodGuardTest(unittest.IsolatedAsyncioTestCase):
             handle.kill()
             await asyncio.wait_for(handle, AWAIT_TIMEOUT)
             self.fail(f"expected {command!r} to be refused; bash() ran it")
-
-    async def test_a_guard_miss_fails_and_reaps_the_spawned_process(self):
-        # If a regression ever makes the guard miss, _refused must fail the
-        # test AND reap the process bash() spawned, so a live recursive
-        # chmod can never outlive the test meant to catch it.
-        home = tempfile.TemporaryDirectory()
-        self.addCleanup(home.cleanup)
-        Path(home.name, "target").mkdir()
-        Path(home.name, "target", "keep.txt").write_text("keep\n")
-        command = "chmod -R 755 ~/target && sleep 30"
-        # The compound command is refused for the recursive-chmod reason.
-        message = await self._refused(command, home=home.name)
-        self.assertIn("Refusing to run this recursive chmod/chown command", message)
-        # Simulate the miss: the chmod guard lets the command through, bash()
-        # spawns a live handle, and the helper must kill and reap it before
-        # failing. HOME stays pinned to the temp home, so even the simulated
-        # miss cannot touch the runner's real home.
-        spawned = []
-        real_bash = bash
-
-        def spying_bash(cmd, **kwargs):
-            handle = real_bash(cmd, **kwargs)
-            spawned.append(handle)
-            return handle
-
-        with (
-            mock.patch.object(bash_module, "_guard_destructive_chmod"),
-            mock.patch(f"{__name__}.bash", spying_bash),
-        ):
-            with self.assertRaises(AssertionError) as caught:
-                await self._refused(command, home=home.name)
-        self.assertIn("to be refused", str(caught.exception))
-        [handle] = spawned
-        # `await handle` only proves the result was delivered; the watch
-        # thread sets the reaped flag right after, so wait for the reap
-        # instead of sampling it once. It must land inside the kill's
-        # window: a live group here means the helper leaked the process.
-        deadline = time.monotonic() + AWAIT_TIMEOUT
-        while handle.running and time.monotonic() < deadline:
-            await asyncio.sleep(0.01)
-        self.assertFalse(handle.running)
-        result = handle.poll()
-        self.assertIsNotNone(result)
-        # `sleep 30` cannot finish inside the kill window, so the wrapper
-        # died by a signal: wait() spells that negative, while a shell that
-        # first observed its child's death exits 128+signal. Either
-        # spelling proves the process was killed, never completed.
-        self.assertTrue(result.exit_code < 0 or result.exit_code >= 128)
 
     async def test_refuses_escapes_to_home_root_and_outside_trees(self):
         home = tempfile.TemporaryDirectory()
@@ -1331,17 +1164,6 @@ class RecursiveChmodGuardTest(unittest.IsolatedAsyncioTestCase):
         result = await self._run("source definitely-not-in-path.sh")
         self.assertNotEqual(result.exit_code, 0)
 
-    async def test_guard_scan_is_not_quadratic(self):
-        # _contained_in_later_word is answered from a flag computed at scan
-        # time, so commands with many separators stay linear (a generated
-        # command with thousands of separators must not stall the kernel).
-        command = "; ".join(["echo hi"] * 4000)
-        start = time.monotonic()
-        for _ in range(3):
-            bash_module._guard_destructive_chmod(command, False, None)
-        elapsed = time.monotonic() - start
-        self.assertLess(elapsed, 1.5)
-
     async def test_refuses_env_chdir_and_execdir_relocations(self):
         self._make_tree()
         home = tempfile.TemporaryDirectory()
@@ -1719,20 +1541,6 @@ class RecursiveChmodGuardTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("allow_destructive_chmod=True", message)
         self.assertIn(BASH_DESTRUCTIVE_CHMOD_BYPASS_ENV, message)
 
-    async def test_guard_only_resolves_on_pattern_match(self):
-        self._make_tree()
-        home = tempfile.TemporaryDirectory()
-        self.addCleanup(home.cleanup)
-        resolver = mock.Mock(return_value=None)
-        with mock.patch.object(bash_module, "_resolve_chmod_effective_cwd", resolver):
-            result = await self._run("echo hi")
-            self.assertEqual(result.exit_code, 0)
-            result = await self._run("chmod 755 sub")
-            self.assertEqual(result.exit_code, 0)
-            resolver.assert_not_called()
-            await self._refused("chmod -R 755 ~", home=home.name)
-        resolver.assert_called_once()
-
     async def test_command_prefix_chmod_is_guarded(self):
         self._make_tree()
         home = tempfile.TemporaryDirectory()
@@ -1808,21 +1616,6 @@ class RecursiveChmodGuardTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.01)
         self.assertFalse(handle.running)
         self.assertNotIn(handle, bash_module._live_handles)
-
-    async def test_wrapper_script_gate_uses_the_captured_prefix(self):
-        # The wrapper-script relocation gate reads the captured prefix, not a
-        # second env read: a mid-call env change cannot un-relocate the spawn.
-        Path(self.test_dir, "safe-name.sh").write_text(":\n")
-        real_guard = bash_module._guard_destructive_chmod
-
-        def flip_and_guard(script, allow, prefix):
-            os.environ["PRIME_AGENT_BASH_COMMAND_PREFIX"] = ""  # mid-call write
-            return real_guard(script, allow, prefix)
-
-        with mock.patch.dict(os.environ, {"PRIME_AGENT_BASH_COMMAND_PREFIX": "cd /tmp"}):
-            with mock.patch.object(bash_module, "_guard_destructive_chmod", side_effect=flip_and_guard):
-                message = await self._refused("bash safe-name.sh")
-        self.assertIn("changes directory", message)
 
     async def test_direct_handle_construction_is_still_guarded(self):
         # A handle built directly is guarded at construction, whether the
