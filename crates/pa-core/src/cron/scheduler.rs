@@ -514,14 +514,17 @@ mod tests {
         struct BlockingHooks {
             runs: Arc<AtomicUsize>,
             block_first: AtomicBool,
+            release_first: tokio::sync::Notify,
         }
         impl AgentCronSchedulerHooks for BlockingHooks {
             async fn run_job(&self, _job: &AgentCronJob) -> anyhow::Result<Option<&'static str>> {
                 self.runs.fetch_add(1, Ordering::SeqCst);
                 if self.block_first.swap(false, Ordering::SeqCst) {
-                    // Hold the first delivery in-flight so the
-                    // mutation's wake lands mid-pass.
-                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    // Hold the first delivery in-flight until the test has
+                    // landed the mutation's wake: the wake is mid-pass by
+                    // construction (a fixed hold could end before a loaded
+                    // box got the wake in).
+                    self.release_first.notified().await;
                 }
                 Ok(Some("ran"))
             }
@@ -535,6 +538,7 @@ mod tests {
         let hooks = Arc::new(BlockingHooks {
             runs: Arc::new(AtomicUsize::new(0)),
             block_first: AtomicBool::new(true),
+            release_first: tokio::sync::Notify::new(),
         });
         let scheduler = AgentCronScheduler::new(store.clone(), hooks.clone());
         store
@@ -555,6 +559,8 @@ mod tests {
             .expect("second job");
         scheduler.wake().await;
         scheduler.wake().await;
+        // The wakes landed while the first pass is still in flight: let it finish.
+        hooks.release_first.notify_one();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while hooks.runs.load(Ordering::SeqCst) < 2 && std::time::Instant::now() < deadline {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
