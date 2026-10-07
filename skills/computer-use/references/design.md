@@ -25,12 +25,16 @@ are app-scoped); no byte-compatibility with any third-party wire protocol.
 ## 2. Architecture
 
 ```
-agent -> ipython kernel -> computer_use (skill module)
-                               |- apps/ax/diff: AX observation (element_index, diffed text)
-                               |- inject: CGEvent posting (app-scoped)
-                               |- capture: window screenshot -> tmp file -> image attachment
-                               |- policy: allowlist + locked-screen gate (hard, user-controlled)
-                               |- telemetry: host-request bridge -> pa-core -> pa-telemetry
+agent -> ipython kernel -> computer_use (thin client: argument checks, screenshot attach)
+            | computer_use.* host requests
+            v
+         pa-core -> pa-computer-use (host side)
+                      |- policy: allowlist + locked-screen gate (hard, user-controlled)
+                      |- session: binding, element freshness, settle, paste, diffed AX text
+                      |- platform::mac: AX, CGEvent posting (app-scoped), screencapture, Vision
+                      |- platform::x11: xwininfo / xdotool / maim|scrot
+                      |- platform::wayland: niri IPC, AT-SPI (zbus), virtual input, grim
+                      |- telemetry: the kernel bridge's validation -> pa-telemetry
 ```
 
 Interaction loop the skill teaches (and enforces the freshness half of): observe
@@ -104,9 +108,10 @@ auto-grant; first-run guidance is printed from `get_state()` when grants are mis
 
 `skills/computer-use/` per the Python-backed skill contract: SKILL.md (routing + loop +
 discipline), references/ (this file, api.md, safety.md, permissions.md, app-instructions/),
-pyproject.toml (macOS deps behind `sys_platform == "darwin"` markers), src/computer_use/
-(module tree above), tests/ (stdlib unittest; fakes for all backends; live pyobjc smoke tests
-opt-in via `PRIME_CUA_LIVE=1`). Tests run without a display or TCC grants.
+pyproject.toml (no platform bindings: every backend runs in the host), src/computer_use/
+(the thin client and `errors`), tests/ (stdlib unittest of the client over a fake host). The
+backends and their tests (test doubles below every OS seam) live in `crates/pa-computer-use`.
+No test needs a display or TCC grants.
 
 ## 7. Follow-on lanes (stacked, not in this PR)
 

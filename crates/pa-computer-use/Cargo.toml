@@ -1,0 +1,127 @@
+[package]
+name = "pa-computer-use"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The computer-use skill's host side: policy, permissions, observation, input and capture for macOS, X11 and Wayland (niri)."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+regex = "1"
+uuid = { version = "1", features = ["v4"] }
+# The user-edited allowlist is TOML (the Python skill used `tomllib`); no
+# workspace crate parses TOML. `preserve_order` keeps `[risk]` in file order.
+toml = { version = "1", default-features = false, features = ["parse", "serde", "std", "preserve_order"] }
+
+[target.'cfg(unix)'.dependencies]
+# The hardened capture directory: `openat(O_NOFOLLOW)` chains, `fstatat`,
+# `unlinkat` and `fchmodat` through one verified directory descriptor (the
+# Python module's `dir_fd` calls), plus the keymap memfd on Wayland.
+rustix = { version = "1", features = ["fs"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# The Wayland backend's AT-SPI client: pure Rust over D-Bus, replacing the
+# Python skill's PyGObject + libatspi (which needed the gobject-introspection
+# and cairo headers to build). The blocking proxies run on the host's
+# blocking pool.
+atspi-proxies = "0.14"
+zbus = "5"
+# The virtual pointer (wlr) and keyboard (misc) protocols the Python skill
+# spoke by hand over the Wayland socket.
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+wayland-protocols-misc = { version = "0.3", features = ["client"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# The macOS backend binds AppKit (workspace, pasteboard), HIServices (AX),
+# CoreGraphics (events, window list, session, screen-capture preflight) and
+# Vision through the objc2 family, replacing the Python skill's pyobjc.
+objc2 = "0.6"
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFBase", "CFString", "CFArray", "CFDictionary", "CFNumber", "CFCGTypes"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSArray", "NSData", "NSDictionary", "NSBundle", "NSURL", "NSError", "NSObject", "NSEnumerator"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "libc", "NSWorkspace", "NSRunningApplication", "NSPasteboard"] }
+objc2-application-services = { version = "0.3", default-features = false, features = ["std", "libc", "HIServices", "AXUIElement", "AXValue", "AXError"] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "libc", "CGEvent", "CGEventTypes", "CGRemoteOperation", "CGSession", "CGWindow"] }
+objc2-vision = { version = "0.3", default-features = false, features = ["std", "VNRequest", "VNRecognizeTextRequest", "VNRequestHandler", "VNObservation", "VNTypes", "objc2-core-foundation"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { workspace = true, features = ["test-util"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+# The fake compositor receives the keymap fd as SCM_RIGHTS ancillary data.
+rustix = { version = "1", features = ["fs", "net"] }
+
+[lints.rust]
+# Denied, not forbidden: the macOS platform module binds AppKit,
+# ApplicationServices, CoreGraphics and Vision through objc2, whose
+# out-parameter and CF calls are `unsafe`; that one module allows it, every
+# block carries a `// SAFETY:` invariant, and nothing else may.
+unsafe_code = "deny"
+
+[lints.clippy]
+pedantic = "warn"
+redundant_clone = "warn"
+clone_on_copy = "warn"
+assigning_clones = "warn"
+unnecessary_to_owned = "warn"
+uninlined_format_args = "warn"
+collapsible_if = "warn"
+redundant_closure_for_method_calls = "warn"
+unnested_or_patterns = "warn"
+unreadable_literal = "warn"
+duration_suboptimal_units = "warn"
+map_unwrap_or = "warn"
+match_same_arms = "warn"
+single_match_else = "warn"
+needless_continue = "warn"
+items_after_statements = "warn"
+if_not_else = "warn"
+semicolon_if_nothing_returned = "warn"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+doc_markdown = "warn"
+bool_to_int_with_if = "warn"
+case_sensitive_file_extension_comparisons = "warn"
+cloned_instead_of_copied = "warn"
+default_trait_access = "warn"
+elidable_lifetime_names = "warn"
+enum_glob_use = "warn"
+explicit_into_iter_loop = "warn"
+explicit_iter_loop = "warn"
+filter_map_next = "warn"
+flat_map_option = "warn"
+format_collect = "warn"
+format_push_string = "warn"
+ignore_without_reason = "warn"
+ignored_unit_patterns = "warn"
+implicit_clone = "warn"
+manual_assert = "warn"
+manual_assert_eq = "warn"
+manual_instant_elapsed = "warn"
+manual_is_variant_and = "warn"
+manual_let_else = "warn"
+manual_string_new = "warn"
+match_bool = "warn"
+match_wildcard_for_single_variants = "warn"
+needless_raw_string_hashes = "warn"
+no_effect_underscore_binding = "warn"
+nonminimal_bool = "warn"
+overly_complex_bool_expr = "warn"
+range_plus_one = "warn"
+redundant_else = "warn"
+return_self_not_must_use = "warn"
+single_char_pattern = "warn"
+stable_sort_primitive = "warn"
+str_split_at_newline = "warn"
+unicode_not_nfc = "warn"
+unchecked_time_subtraction = "warn"
+unnecessary_debug_formatting = "warn"
+unnecessary_join = "warn"
+unnecessary_literal_bound = "warn"
+unnecessary_semicolon = "warn"
+used_underscore_binding = "warn"

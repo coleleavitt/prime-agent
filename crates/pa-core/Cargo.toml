@@ -20,6 +20,8 @@ pa-agent.workspace = true
 pa-telemetry.workspace = true
 pa-bash = { path = "../pa-bash" }
 pa-os-sandbox = { path = "../pa-os-sandbox" }
+# The bundled computer-use skill's host side (`computer_use.*` host requests).
+pa-computer-use = { path = "../pa-computer-use" }
 base64 = "0.22"
 fancy-regex = "0.14"
 # The traces browser login's auth challenge (RSA-2048 keypair, OAEP-SHA256

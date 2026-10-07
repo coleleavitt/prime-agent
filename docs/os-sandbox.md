@@ -104,9 +104,25 @@ drives these servers, so leaving them unconfined would be a way around the sandb
 CLI runs MCP servers unconfined; Prime Agent chooses not to.) HTTP MCP servers are reached
 by the host and are not affected.
 
+## Computer use
+
+The bundled `computer-use` skill is not governed by the OS sandbox. Its kernel package is a thin
+client; observation, input, capture and the clipboard run in the Prime Agent host
+(`pa-computer-use`, through the `computer_use.*` host requests), outside the kernel's sandbox.
+What limits it is its own policy: the user-edited allowlist in
+`~/.prime/agent/settings/computer-use.toml`, the system deny-list, the locked-screen check,
+the macOS TCC grants, and the secure-field refusals (see the skill's `references/safety.md`).
+The sandbox never blocked desktop control anyway: the accessibility bus (D-Bus) and the
+Wayland socket are unix sockets, which a confined process may use.
+
+Screenshots are written by the host into `~/.prime/agent/tmp/computer-use/` (mode 0700, each
+PNG 0600) and read back by the kernel to attach them. The sandbox confines writes, not reads,
+so a sandboxed kernel can still read them, and it cannot write into that directory.
+
 ## Not confined
 
 - The Prime Agent daemon, the session worker and the TUI.
+- Computer use, which runs in the host (see above).
 - Signals and abstract unix sockets on Linux, and per-path exceptions inside a writable root
   (a writable workspace's `.git` is writable).
 

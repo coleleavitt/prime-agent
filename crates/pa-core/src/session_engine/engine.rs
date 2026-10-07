@@ -498,6 +498,13 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     if let Some(telemetry) = &config.telemetry {
         telemetry.register_kernel_bridge(&mut handlers);
     }
+    // The bundled computer-use skill's `computer_use.*` requests: every
+    // backend runs host-side; its adoption events take the bridge's path.
+    super::computer_use_host::register_host_handlers(
+        &mut handlers,
+        &config.agent_dir,
+        config.telemetry.as_ref(),
+    );
     // The `mcp.*` host requests (config/refresh/begin_login) the kernel's
     // generic MCP registry sends while listing or calling generic servers.
     // Telemetry counts connector use (never the server name) when the

@@ -155,7 +155,8 @@ fn cached_prefix_is_stable_across_sessions() {
 /// through `HARNESS_TOKENS`). The `mcp.session.*` / `mcp.integration.*` requests carry the documented
 /// kernel-local `mcp.list_tools` / `call_tool` / ... calls (and
 /// `rlm.McpIntegration`) to the host-owned connections. The
-/// `factory.*` requests are the bundled `factory` skill's client.
+/// `factory.*` requests are the bundled `factory` skill's client, the
+/// `computer_use.*` requests the bundled `computer-use` skill's.
 const INTERNAL_HOST_REQUESTS: &[&str] = &[
     "model.info",
     "mcp.config",
@@ -216,6 +217,14 @@ const INTERNAL_HOST_REQUESTS: &[&str] = &[
     "bash.killAll",
     "bash.inventory",
     "bash.activity",
+    // The bundled computer-use skill's client: the model calls the
+    // `computer_use` module (documented as a bundled Python skill), whose
+    // functions and `App` methods ride these five requests.
+    "computer_use.get_state",
+    "computer_use.list_apps",
+    "computer_use.permissions_status",
+    "computer_use.get_app",
+    "computer_use.app",
 ];
 
 /// Map one registered host-request type to the prompt token that documents
