@@ -111,6 +111,11 @@ pub(crate) struct SessionCore {
     /// Installed features' latest live status, keyed by feature name
     /// (`{line, status}`): the roster summary's `featureStatus`.
     pub(crate) feature_status: serde_json::Map<String, serde_json::Value>,
+    /// The run is pinned to an explicit cwd (a create that carried its own
+    /// `cwd` for a saved session, upstream #2528): recorded `/cwd` entries
+    /// never apply, and tree moves keep the pinned directory (a later
+    /// `/cwd` re-pins it).
+    pub(crate) cwd_override: bool,
 }
 
 impl SessionCore {
@@ -166,6 +171,7 @@ impl SessionCore {
             agent_message_digest_pin: super::digest::DigestLanePin::default(),
             active_action: None,
             feature_status: serde_json::Map::new(),
+            cwd_override: false,
         }
     }
 }

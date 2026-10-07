@@ -28,6 +28,8 @@ pub(crate) const ROSTER_SESSION_EVENT_TRIGGERS: &[&str] = &[
     "message_end",
     "session_action_update",
     "session_info_changed",
+    // `/cwd` (upstream #2528): the roster row's cwd moves.
+    "cwd_changed",
     "thinking_level_changed",
     "feature_status",
 ];

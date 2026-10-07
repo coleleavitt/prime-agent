@@ -239,7 +239,8 @@ pub struct IpythonKernelProvisioner {
 }
 
 struct ProvisionerInner {
-    cwd: PathBuf,
+    /// The session cwd a kernel start uses; `/cwd` retargets it.
+    cwd: Mutex<PathBuf>,
     options: IpythonKernelProvisionerOptions,
     state: Mutex<ProvisionerState>,
     dispose_signal: AbortSignal,
@@ -249,7 +250,7 @@ impl IpythonKernelProvisioner {
     pub fn new(cwd: impl Into<PathBuf>, options: IpythonKernelProvisionerOptions) -> Self {
         Self {
             inner: Arc::new(ProvisionerInner {
-                cwd: cwd.into(),
+                cwd: Mutex::new(cwd.into()),
                 options,
                 state: Mutex::new(ProvisionerState {
                     manager: None,
@@ -293,6 +294,24 @@ impl IpythonKernelProvisioner {
     #[must_use]
     pub fn last_restore(&self) -> Option<RestoreResult> {
         self.lock_state().last_restore.clone()
+    }
+
+    /// Retarget the session's kernel directory (upstream #2528): the next
+    /// start uses `cwd`, and a started kernel changes directory now.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the running kernel refuses the change.
+    pub async fn set_cwd(&self, cwd: &std::path::Path) -> anyhow::Result<()> {
+        *self
+            .inner
+            .cwd
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = cwd.to_path_buf();
+        match self.manager() {
+            Some(manager) => manager.set_cwd(cwd).await,
+            None => Ok(()),
+        }
     }
 
     /// Whether a kernel has finished starting and is currently running.
@@ -1020,7 +1039,11 @@ async fn start_kernel_impl(
     memo: &tokio::sync::watch::Receiver<Option<StartupResult>>,
 ) -> anyhow::Result<ReplKernelManager> {
     let options = &inner.options;
-    let cwd = inner.cwd.clone();
+    let cwd = inner
+        .cwd
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
     let dispose_signal = inner.dispose_signal.clone();
     // The boot-permit closure moves its own clone; the bootstrap below runs
     // on the same shared signal.
@@ -1073,7 +1096,7 @@ async fn start_kernel_impl(
         .map(|dir| dir.join("kernel-stderr.log"));
     let manager = ReplKernelManager::new(KernelManagerOptions {
         python: options.python.clone(),
-        cwd: Some(cwd),
+        cwd: Some(cwd.clone()),
         env,
         session_id: options.session_id.clone(),
         host_handlers: options.host_handlers.clone(),
@@ -1090,7 +1113,7 @@ async fn start_kernel_impl(
             crate::kernel::plan_guard::KernelPlanGuard {
                 mode: mode.clone(),
                 writable_roots: snapshot_dir.iter().cloned().collect(),
-                protected_roots: vec![inner.cwd.clone()],
+                protected_roots: vec![cwd.clone()],
             }
         }),
     });

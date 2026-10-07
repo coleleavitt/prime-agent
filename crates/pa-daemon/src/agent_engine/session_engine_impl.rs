@@ -745,6 +745,10 @@ impl SessionEngine for AgentSessionEngine {
             }
             (*slot).clone_from(&cwd);
         }
+        // Subagents spawned from now on start in the moved-to directory.
+        if let Some(children) = &self.children {
+            children.set_identity_cwd(&cwd.display().to_string());
+        }
         if self
             .autonomous_driver_default
             .load(std::sync::atomic::Ordering::Relaxed)
@@ -752,6 +756,27 @@ impl SessionEngine for AgentSessionEngine {
             *self.autonomous_driver.write_or_recover() =
                 std::sync::Arc::new(pa_core::autonomous::ShellAutonomousDriver::new(cwd))
                     as std::sync::Arc<dyn pa_core::autonomous::AutonomousDriver>;
+        }
+    }
+
+    fn retarget_kernel_cwd(
+        &self,
+        cwd: std::path::PathBuf,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>> {
+        Box::pin(async move {
+            let built = self.session.lock().await.clone();
+            match built {
+                Some(built) => built.set_kernel_cwd(&cwd).await,
+                // No session yet: its kernel starts in the engine cwd.
+                None => Ok(()),
+            }
+        })
+    }
+
+    fn note_cwd_changed(&self) {
+        if let Some(telemetry) = self.session_telemetry.lock_or_recover().clone() {
+            telemetry
+                .note_adoption(pa_core::session_engine::telemetry::SessionAdoption::CwdChanged);
         }
     }
 

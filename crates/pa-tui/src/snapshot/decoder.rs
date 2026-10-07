@@ -14,6 +14,8 @@ pub enum TurnUpdate {
     /// `session_info_changed`: the session display name (cleared when
     /// the event carries none).
     SessionInfoChanged { name: Option<String> },
+    /// `/cwd` moved the session (upstream #2528).
+    CwdChanged { cwd: String },
     /// `service_tier_changed`: the session's effective service tier.
     ServiceTierChanged { tier: String },
     /// `message_start` with a user message.
@@ -202,6 +204,15 @@ pub fn event_to_update(event: &Value) -> Option<TurnUpdate> {
                 .and_then(Value::as_str)
                 .map(str::to_string),
         }),
+        // `/cwd` (upstream #2528): footer, title, and path completion follow.
+        "cwd_changed" => {
+            event
+                .get("cwd")
+                .and_then(Value::as_str)
+                .map(|cwd| TurnUpdate::CwdChanged {
+                    cwd: cwd.to_string(),
+                })
+        }
         // The client patches its connection state (the `/fast` status
         // reads the tier from it).
         "service_tier_changed" => Some(TurnUpdate::ServiceTierChanged {

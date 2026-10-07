@@ -14,11 +14,25 @@ use super::{
 /// re-linking any child whose parent was dropped to the nearest kept
 /// ancestor. Re-parented entries round-trip through their own JSON; other
 /// fields stay verbatim.
+/// The `/cwd` branch record (upstream #2528, TS `session_cwd_state`).
+pub const SESSION_CWD_STATE_CUSTOM_TYPE: &str = "session_cwd_state";
+
+/// Rows that describe the SOURCE session, never copied into a `--fork`:
+/// `git_state` (the source repo) and `session_cwd_state` (the source's
+/// `/cwd` moves; the fork starts in its own cwd).
+fn is_source_scoped(entry: &FileEntry) -> bool {
+    match entry {
+        FileEntry::GitState { .. } => true,
+        FileEntry::Custom { payload, .. } => payload.custom_type == SESSION_CWD_STATE_CUSTOM_TYPE,
+        _ => false,
+    }
+}
+
 fn forked_branch_entries(entries: Vec<FileEntry>) -> Vec<FileEntry> {
     // git_state rows describe the source repo; the fork reports its own.
     let mut dropped_parent: HashMap<String, Option<String>> = HashMap::new();
     for entry in &entries {
-        if matches!(entry, FileEntry::GitState { .. }) {
+        if is_source_scoped(entry) {
             if let Some(id) = entry.id() {
                 dropped_parent.insert(id.to_string(), entry.parent_id().map(str::to_string));
             }
@@ -30,7 +44,7 @@ fn forked_branch_entries(entries: Vec<FileEntry>) -> Vec<FileEntry> {
     let mut resolved: HashMap<String, Option<String>> = HashMap::new();
     entries
         .into_iter()
-        .filter(|entry| !matches!(entry, FileEntry::Header { .. } | FileEntry::GitState { .. }))
+        .filter(|entry| !matches!(entry, FileEntry::Header { .. }) && !is_source_scoped(entry))
         .map(|entry| {
             let parent = entry.parent_id().map(str::to_string);
             let live = match &parent {

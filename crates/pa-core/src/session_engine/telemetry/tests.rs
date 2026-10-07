@@ -1634,6 +1634,7 @@ async fn fallback_switches_repetition_trips_and_session_behaviours_count() {
         SessionAdoption::ToolIntentRecovery,
         SessionAdoption::MessagingStatsRead,
         SessionAdoption::PathWatchRegistered,
+        SessionAdoption::CwdChanged,
     ] {
         telemetry.note_adoption(adoption);
     }
@@ -1667,6 +1668,7 @@ async fn fallback_switches_repetition_trips_and_session_behaviours_count() {
         "tool_intent_recovery_count",
         "messaging_stats_read_count",
         "path_watch_register_count",
+        "cwd_change_count",
     ]
     .iter()
     .map(|key| {
@@ -1691,6 +1693,7 @@ async fn fallback_switches_repetition_trips_and_session_behaviours_count() {
             "tool_intent_recovery_count": 1,
             "messaging_stats_read_count": 1,
             "path_watch_register_count": 1,
+            "cwd_change_count": 1,
         })
     );
 }

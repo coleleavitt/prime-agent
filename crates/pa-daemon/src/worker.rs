@@ -52,6 +52,7 @@ pub(crate) use summary::{
 use turn::TurnRunner;
 
 mod commands;
+mod session_cwd;
 
 pub use env::{
     WORKER_ACTIVE_SESSION_ID_ENV, WORKER_CWD_ENV, WORKER_INSTANCE_ID_ENV,
@@ -326,6 +327,7 @@ impl Worker {
             agent_message_digest_pin: digest::DigestLanePin::default(),
             active_action: None,
             feature_status: serde_json::Map::new(),
+            cwd_override: false,
             running_tool_calls: std::collections::HashMap::new(),
             running_admission_ids: std::collections::HashSet::new(),
         };

@@ -378,6 +378,10 @@ pub(crate) struct Inner {
     plan_guard_token: Mutex<Option<String>>,
     /// Serializes plan-guard frames (see `apply_plan_guard`).
     plan_guard_lock: tokio::sync::Mutex<()>,
+    /// The session's retargeted working directory (`/cwd`, upstream
+    /// #2528): a restart or respawn starts there instead of
+    /// `options.cwd`.
+    cwd_override: Mutex<Option<std::path::PathBuf>>,
 }
 
 struct StderrLog {
@@ -386,6 +390,13 @@ struct StderrLog {
 }
 
 impl Inner {
+    /// The directory a (re)start spawns the kernel in.
+    fn start_cwd(&self) -> Option<std::path::PathBuf> {
+        lock(&self.cwd_override)
+            .clone()
+            .or_else(|| self.options.cwd.clone())
+    }
+
     /// Fire the embedding's background-work settlement notice: the settlement is already recorded,
     /// so a host-callback panic neither breaks the kernel event path nor aborts the teardown.
     fn notify_background_work_settled(&self) {
@@ -489,8 +500,44 @@ impl ReplKernelManager {
             stderr_log: Mutex::new(None),
             plan_guard_token: Mutex::new(None),
             plan_guard_lock: tokio::sync::Mutex::new(()),
+            cwd_override: Mutex::new(None),
         });
         Self { inner }
+    }
+
+    /// Retarget the kernel's working directory (upstream #2528): future
+    /// starts and restarts use `cwd`, and a running kernel changes
+    /// directory now through `__import__("os").chdir(...)`, which never
+    /// binds an `os` name in the user's namespace.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the running kernel refuses the change; the
+    /// future-start directory is already `cwd` then (the caller rolls back).
+    pub async fn set_cwd(&self, cwd: &std::path::Path) -> anyhow::Result<()> {
+        *lock(&self.inner.cwd_override) = Some(cwd.to_path_buf());
+        if !self.is_running() {
+            return Ok(());
+        }
+        let literal = serde_json::to_string(&cwd.display().to_string())?;
+        let result = self
+            .execute(
+                &format!("__import__(\"os\").chdir({literal})"),
+                ExecuteOptions {
+                    internal: true,
+                    ..ExecuteOptions::default()
+                },
+            )
+            .await?;
+        if result.status != ExecuteStatus::Ok {
+            let detail = result
+                .error
+                .map(|error| error.evalue)
+                .filter(|evalue| !evalue.is_empty())
+                .unwrap_or(result.stderr);
+            anyhow::bail!("Python kernel could not change directory: {detail}");
+        }
+        Ok(())
     }
 
     #[must_use]

@@ -1186,6 +1186,17 @@ impl SessionEngine {
         self.provisioner.dispose(None).await;
     }
 
+    /// Retarget the session kernel's working directory (`/cwd`, upstream
+    /// #2528): a running kernel changes directory now, the next start uses
+    /// `cwd`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the running kernel refuses the change.
+    pub async fn set_kernel_cwd(&self, cwd: &std::path::Path) -> anyhow::Result<()> {
+        self.provisioner.set_cwd(cwd).await
+    }
+
     /// Release the kernel with a final namespace snapshot, revivable: the next
     /// kernel use boots a fresh kernel and revives the flushed snapshot.
     pub async fn stop_kernel_snapshot(&self) {

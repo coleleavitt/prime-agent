@@ -278,7 +278,7 @@ impl Inner {
                 traceparent,
             );
         }
-        let cwd = self.options.cwd.clone();
+        let cwd = self.start_cwd();
         let mut command = tokio::process::Command::new(&python);
         // `-P`: the project cwd is not prepended to `sys.path`, so a repo-local `rlm/`,
         // `dill.py`, or stdlib-named module cannot shadow the runtime's imports. The runtime

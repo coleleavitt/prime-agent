@@ -1083,6 +1083,16 @@ pub enum DaemonCommand {
         #[serde(flatten)]
         rest: JsonMap,
     },
+    /// `/cwd <path>` (upstream #2528): retarget the live session's working
+    /// directory; `cwd` resolves against the current one (`~` expands).
+    SetCwd {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        active_session_id: String,
+        cwd: String,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
     RenameSavedSession {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,

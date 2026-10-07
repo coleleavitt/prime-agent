@@ -216,6 +216,15 @@ impl Supervisor {
         let now = util::now_iso();
         let mut durable_rest = serde_json::Map::new();
         durable_rest.insert("cwd".to_string(), json!(cwd_value));
+        // An explicit cwd on a saved-session create pins the run (upstream
+        // #2528): the worker then ignores the branch's recorded `/cwd`.
+        if session_path.is_some()
+            && config_object
+                .and_then(|config| config.get("cwd"))
+                .is_some_and(Value::is_string)
+        {
+            durable_rest.insert("cwdOverride".to_string(), json!(true));
+        }
         if let Some(session_dir) = &session_dir {
             durable_rest.insert("sessionDir".to_string(), json!(session_dir));
         }

@@ -519,6 +519,58 @@ impl SessionUi {
         }
     }
 
+    /// `/cwd [path]` (upstream #2528): no argument shows the session cwd;
+    /// a path moves the session there (the daemon resolves it against the
+    /// current cwd and validates it).
+    pub(crate) async fn handle_cwd_command(&mut self, view: &mut AgentView, args: &str) {
+        let target = args.trim();
+        if target.is_empty() {
+            let cwd = self.cwd.display().to_string();
+            self.plain_row(&format!("Working directory: {cwd}"), view);
+            return;
+        }
+        let moved = self
+            .bounded_request(
+                Duration::from_millis(UI_REQUEST_TIMEOUT_MS),
+                DaemonCommand::SetCwd {
+                    id: None,
+                    active_session_id: self.active_session_id.clone(),
+                    cwd: target.to_string(),
+                    rest: serde_json::Map::default(),
+                },
+            )
+            .await;
+        match moved {
+            Ok(data) => {
+                let cwd = data
+                    .get("cwd")
+                    .and_then(Value::as_str)
+                    .unwrap_or(target)
+                    .to_string();
+                self.apply_cwd(&cwd, view);
+                self.plain_row(&format!("Working directory set: {cwd}"), view);
+                if data.get("workspaceTrusted").and_then(Value::as_bool) == Some(false) {
+                    self.note_as(
+                        &format!("This directory is not a trusted workspace: its project settings, prompts and skills stay ignored until you trust it (prime-agent trust {cwd})."),
+                        StatusKind::Warning,
+                        view,
+                    );
+                }
+            }
+            Err(error) => self.error_row(&format!("{error:#}"), view),
+        }
+    }
+
+    /// Follow a moved session cwd (this client's `/cwd` or another
+    /// client's `cwd_changed`): the footer, the title, and path completion.
+    pub(crate) fn apply_cwd(&mut self, cwd: &str, view: &mut AgentView) {
+        self.cwd = std::path::PathBuf::from(cwd);
+        view.chrome.cwd = cwd.to_string();
+        view.editor.set_autocomplete_base_dir(self.cwd.clone());
+        self.sync_chat_name(view);
+        self.dirty = true;
+    }
+
     /// The top bar's chat name and the window title follow the session's display name (TS
     /// `updateTerminalTitle` runs at every attach and display-name change).
     fn sync_chat_name(&self, view: &mut AgentView) {

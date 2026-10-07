@@ -176,6 +176,7 @@ impl Worker {
             // The engine call blocks on the engine runtime, so it
             // runs on a blocking thread like every other engine call.
             "set_rlm_max_depth" => self.handle_set_rlm_max_depth(payload).await,
+            "set_cwd" => self.handle_set_cwd(payload).await,
             "acquire_session_input_pause" => self.handle_acquire_session_input_pause(payload),
             "release_session_input_pause" => self.handle_release_session_input_pause(payload),
             "cancel_prompt_admission" => self.handle_cancel_prompt_admission(payload),
@@ -255,6 +256,8 @@ impl Worker {
     async fn handle_navigate_tree(&self, payload: &Value) -> DaemonResponse {
         let response = self.tree_navigation.navigate_tree(payload).await;
         if response.success {
+            // The target branch's recorded directory (upstream #2528).
+            self.follow_branch_cwd().await;
             if let Some(goal) = self.engine.goal_update_after_rebuild() {
                 self.emit_worker_event(json!({
                     "type": "goal_update",

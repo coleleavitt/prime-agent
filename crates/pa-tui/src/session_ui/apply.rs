@@ -409,6 +409,9 @@ impl SessionUi {
                 self.sync_chat_name(view);
                 self.dirty = true;
             }
+            TurnUpdate::CwdChanged { cwd } => {
+                self.apply_cwd(&cwd, view);
+            }
             // Keep the local tier state current; `/fast` reads it.
             TurnUpdate::ServiceTierChanged { tier } => {
                 self.service_tier = Some(tier);

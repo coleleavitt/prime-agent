@@ -421,6 +421,8 @@ pub enum SessionAdoption {
     MessagingStatsRead,
     /// `rlm.watch.path` registered a filesystem watch (upstream #2351).
     PathWatchRegistered,
+    /// `/cwd` changed the session's working directory (upstream #2528).
+    CwdChanged,
 }
 
 impl SessionAdoption {
@@ -436,6 +438,7 @@ impl SessionAdoption {
             SessionAdoption::ToolIntentRecovery => "tool_intent_recovery_count",
             SessionAdoption::MessagingStatsRead => "messaging_stats_read_count",
             SessionAdoption::PathWatchRegistered => "path_watch_register_count",
+            SessionAdoption::CwdChanged => "cwd_change_count",
         }
     }
 }

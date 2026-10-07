@@ -397,3 +397,46 @@ fn open_treats_a_path_shaped_header_id_as_corrupted() {
         );
     }
 }
+
+/// Upstream #2528: `--fork` drops the source's `/cwd` records (the fork
+/// starts in its own cwd), re-linking the rows after them, like `git_state`.
+#[test]
+fn fork_from_drops_the_source_cwd_records() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source_dir = tmp.path().join("source-sessions");
+    let mut source = SessionManager::persisted(tmp.path(), &source_dir);
+    source
+        .append_custom_entry("before", Some(serde_json::json!({ "keep": true })))
+        .unwrap();
+    let before_id = source.get_leaf_id().unwrap().to_string();
+    source
+        .append_custom_entry(
+            super::lifecycle::SESSION_CWD_STATE_CUSTOM_TYPE,
+            Some(serde_json::json!({ "cwd": "/elsewhere" })),
+        )
+        .unwrap();
+    source
+        .append_custom_entry("after", Some(serde_json::json!({ "keep": true })))
+        .unwrap();
+    source.flush_now().unwrap();
+    let source_file = source.get_session_file().unwrap().to_path_buf();
+    let forked =
+        SessionManager::fork_from(&source_file, tmp.path(), &tmp.path().join("forks")).unwrap();
+    let kept: Vec<(String, Option<String>)> = forked
+        .get_entries()
+        .iter()
+        .filter_map(|entry| match entry {
+            FileEntry::Custom { payload, base } => {
+                Some((payload.custom_type.clone(), base.parent_id.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        kept,
+        vec![
+            ("before".to_string(), None),
+            ("after".to_string(), Some(before_id)),
+        ]
+    );
+}
