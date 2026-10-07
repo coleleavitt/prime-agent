@@ -36,7 +36,6 @@ import uuid
 from collections.abc import Awaitable, Callable, Iterator, Mapping
 from typing import Any
 
-from . import factory as factory_module
 from . import plan_guard, trace
 from .bash import _kill_live_handles
 
@@ -364,13 +363,17 @@ class _BlockingHostReply:
         self.error: BaseException | None = None
 
 
-def host_request_blocking(request: Mapping[str, object]) -> dict[str, object]:
+def host_request_blocking(
+    request: Mapping[str, object], *, timeout_s: float | None = None
+) -> dict[str, object]:
     """Send one typed request and block the calling thread until its reply.
 
-    For synchronous runtime APIs (``rlm.harness``) called from a cell: the
-    reply is delivered on the reader thread, so the wait needs no event
-    loop turn. An interrupt (``KeyboardInterrupt``) ends the wait; the
-    host's late reply is then dropped like any reply for an unknown id.
+    For synchronous runtime APIs called from a cell (``rlm.harness``, the
+    factory spec validator and executor client): the reply is delivered on
+    the reader thread, so the wait needs no event loop turn. An interrupt
+    (``KeyboardInterrupt``) ends the wait; the host's late reply is then
+    dropped like any reply for an unknown id. ``timeout_s`` bounds the wait
+    for callers whose host work is always quick (``HostDrainTimeout``).
     """
     if _loop is None:
         raise HostRequestUnavailable("repl runtime is not serving")
@@ -382,6 +385,12 @@ def host_request_blocking(request: Mapping[str, object]) -> dict[str, object]:
     slot = _BlockingHostReply()
     with _blocking_host_lock:
         _pending_blocking_host[rid] = slot
+    if _host_closed:
+        # Teardown raced the registration above: its fail pass may have
+        # missed this waiter, and no reply can arrive.
+        with _blocking_host_lock:
+            _ = _pending_blocking_host.pop(rid, None)
+        raise HostRequestUnavailable("host connection closed before request admission")
     attrs: dict[str, str] = {"host_request.rid": rid}
     request_type = data.get("type") or data.get("kind")
     if isinstance(request_type, str):
@@ -391,7 +400,8 @@ def host_request_blocking(request: Mapping[str, object]) -> dict[str, object]:
             frame: dict[str, object] = {"event": "host_request", "id": rid, "data": data}
             frame["traceparent"] = trace.format_traceparent(span.ctx)
             _send(frame)
-            _ = slot.done.wait()
+            if not slot.done.wait(timeout_s):
+                raise HostDrainTimeout(f"blocking host request did not answer within {timeout_s:g}s")
             if slot.error is not None:
                 raise slot.error
             if slot.data is None:
@@ -418,6 +428,7 @@ def _fail_pending_host_requests() -> None:
     awaiting cell must unblock or the queued shutdown would never be served."""
     global _host_closed
     _host_closed = True
+    _fail_blocking_host_requests()
     for future in _pending_host.values():
         if not future.done():
             future.set_exception(HostConnectionLost("host connection closed; host_request cannot be answered"))
@@ -1844,7 +1855,6 @@ _REQUIRED_FIELDS = {
     # string-required field; the handler validates the list itself.
     "mcp_status": ("id",),
     "bash_activity": ("id", "action"),
-    "factory_activity": ("id", "action"),
     "plan_guard": ("id", "token"),
     "shutdown": (),
 }
@@ -1937,34 +1947,6 @@ def _handle_request_line(
         # The token reaches only the controller the runtime claimed at
         # startup; the frame never enters the cell queue or any namespace.
         _handle_plan_guard(req, plan_guard_controller)
-        return
-    if rtype == "factory_activity":
-        from .factory import ACTIVITY_ACTIONS, ACTIVITY_TIMEOUT_MS_CAP
-
-        if req["action"] not in ACTIVITY_ACTIONS:
-            _protocol_error(f"unknown factory activity action: {req['action']!r}")
-            return
-        for field in ("runId", "specId"):
-            value = req.get(field)
-            if value is not None and not isinstance(value, str):
-                _protocol_error(f"factory activity {field} must be a string when provided")
-                return
-        timeout_ms = req.get("timeoutMs")
-        if timeout_ms is not None and (
-            not isinstance(timeout_ms, int) or isinstance(timeout_ms, bool)
-            or not 0 <= timeout_ms <= ACTIVITY_TIMEOUT_MS_CAP
-        ):
-            _protocol_error(
-                f"factory activity timeoutMs must be an integer between 0 and {ACTIVITY_TIMEOUT_MS_CAP}"
-            )
-            return
-        if len(req["id"]) > 256:
-            _protocol_error("factory activity ids must stay under 256 characters")
-            return
-        # Like bash_activity, this bypasses the cell FIFO: the factory view
-        # must answer while a cell runs. The handler schedules the async
-        # activity on this loop and replies when it settles.
-        _loop.call_soon_threadsafe(factory_module.schedule_activity, req)
         return
     if rtype in ("execute", "snapshot", "restore"):
         with _interrupt_lock:

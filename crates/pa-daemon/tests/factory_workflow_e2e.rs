@@ -1556,3 +1556,273 @@ fn factory_run_is_nonblocking_and_completes_in_the_background() {
         "the finished milestone stays in the ledger (the notice lane is unported)"
     );
 }
+
+// -- scenario 7: the kernel dies mid-run; the host-side run carries on ------
+
+/// The kernel-crash cell: record this kernel's pid, then kill the kernel
+/// process outright (SIGKILL: no shutdown path runs) while the run's gated
+/// child is still in flight.
+fn kill_kernel_cell(receipt: &Path) -> String {
+    format!(
+        "import json, os, signal\nopen({receipt:?}, \"w\").write(json.dumps({{\"pid\": os.getpid()}}))\nos.kill(os.getpid(), signal.SIGKILL)",
+        receipt = receipt.display().to_string(),
+    )
+}
+
+/// The poll cell plus the serving kernel's pid (a fresh kernel after the
+/// crash answers from a new process).
+fn poll_with_pid_code_for(receipts: &Path) -> String {
+    format!(
+        "import json, os, traceback\ntry:\n    run_id = json.load(open({run_receipt:?}))[\"run_id\"]\n    status = await rlm.factory.status(run_id)\n    status[\"kernel_pid\"] = os.getpid()\n    open({poll_receipt:?}, \"w\").write(json.dumps(status))\nexcept Exception:\n    open({poll_error:?}, \"w\").write(traceback.format_exc())\n    raise",
+        run_receipt = receipts.join("run.json").display().to_string(),
+        poll_receipt = receipts.join("poll.json").display().to_string(),
+        poll_error = receipts.join("poll.error").display().to_string(),
+    )
+}
+
+#[test]
+fn factory_run_survives_a_kernel_crash_and_completes() {
+    let Some(kernel) = kernel_python() else {
+        eprintln!("skipping: no factory-capable kernel python");
+        return;
+    };
+    let mut harness = harness("kernel-crash", Some(&kernel));
+    let label = "kernel-crash";
+    let receipts = harness.receipts_dir(label);
+    std::fs::create_dir_all(&receipts).expect("receipts dir");
+    // Turn 1 starts the run (the gated child settles 8s after admission)
+    // and then kills its own kernel while that child is in flight.
+    let setup = run_cell(
+        "e2e-nonblocking",
+        &receipts.join("run.json"),
+        &receipts.join("run.error"),
+    );
+    let kill = kill_kernel_cell(&receipts.join("killed.json"));
+    let poll_code = poll_with_pid_code_for(&receipts);
+    let parent = write_script(
+        &harness.root,
+        "kernel-crash-parent.json",
+        &driven_script(
+            &[setup, kill],
+            &["toolu-crash-run", "toolu-crash-kill"],
+            &poll_code,
+            60,
+        ),
+    );
+    let child = write_script(
+        &harness.root,
+        "kernel-crash-child.json",
+        &child_script("GATED-DONE", 8_000),
+    );
+    let (session_id, session_uuid) = harness.create_parent(label, &parent, &child);
+
+    harness.prompt_and_wait("kernel-crash-1", &session_id);
+    let run = harness.await_receipt(label, "run", Duration::from_mins(2));
+    assert_eq!(run["started"], json!(["slowgate"]));
+    assert_eq!(run["early_state"], "running");
+    let killed = harness.await_receipt(label, "killed", Duration::from_mins(1));
+    let dead_pid = killed["pid"].as_i64().expect("killed kernel pid");
+
+    // The next turns run on a fresh kernel. The run never lived in the dead
+    // one: its control loop kept collecting host-side, so the poll reads
+    // the same run, which finishes both states.
+    let status = harness.drive_to_state(
+        label,
+        &session_id,
+        "poll",
+        Duration::from_mins(8),
+        |status| matches!(status["state"].as_str(), Some("done" | "failed")),
+    );
+    assert_eq!(
+        status["state"], "done",
+        "the run completes past the kernel crash: {status}"
+    );
+    assert_eq!(status["run_id"], run["run_id"]);
+    assert_ne!(
+        status["kernel_pid"].as_i64(),
+        Some(dead_pid),
+        "the poll ran on a fresh kernel"
+    );
+    for node in ["slowgate", "final"] {
+        assert_eq!(
+            state_report(&status, node)["status"],
+            "done",
+            "{node} settled"
+        );
+    }
+    // No interruption: the run's host never restarted.
+    assert_eq!(events_of(&status, "run_interrupted").len(), 0);
+    // The durable record followed the run to its terminal state (the
+    // parent's artifact dir sits beside its sessions dir).
+    let record_path = harness
+        .root
+        .join(label)
+        .join("session-artifacts")
+        .join(&session_uuid)
+        .join("factory-runs")
+        .join(format!("{}.json", run["run_id"].as_str().expect("run id")));
+    let record: Value = serde_json::from_str(
+        &std::fs::read_to_string(&record_path)
+            .unwrap_or_else(|error| panic!("run record {}: {error}", record_path.display())),
+    )
+    .expect("record json");
+    assert_eq!(record["run"]["state"], "done");
+}
+
+// -- scenario 8: the host dies mid-run; the restarted host resumes the run --
+
+/// The idempotent driver cell every turn of scenario 8 runs: start the run
+/// (once), then kill the session's host worker (once, mid-run), then — on
+/// the restarted host — resume the interrupted run (once) and poll it.
+/// Every turn runs the same cell, so the restarted worker's fresh script
+/// position changes nothing.
+fn host_restart_driver_code(receipts: &Path) -> String {
+    let file = |name: &str| receipts.join(name).display().to_string();
+    format!(
+        r#"import json, os, signal, traceback
+def _write(name, value):
+    open(os.path.join({dir:?}, name), "w").write(json.dumps(value))
+try:
+    owner = int(os.environ["PRIME_AGENT_KERNEL_OWNER_PID"])
+    if not os.path.exists({run:?}):
+        started = await rlm.factory.run("e2e-nonblocking")
+        _write("run.json", {{"run_id": started["run_id"], "started": sorted(started["started"]), "host_pid": owner}})
+    elif not os.path.exists({killed:?}):
+        _write("killed.json", {{"host_pid": owner}})
+        os.kill(owner, signal.SIGKILL)
+    else:
+        run_id = json.load(open({run:?}))["run_id"]
+        status = await rlm.factory.status(run_id)
+        if status["state"] == "paused" and not os.path.exists({resumed:?}):
+            resumed = await rlm.factory.resume(run_id)
+            _write("resumed.json", {{"before": status, "resume": resumed, "host_pid": owner}})
+            status = await rlm.factory.status(run_id)
+        status["host_pid"] = owner
+        _write("poll.json", status)
+except Exception:
+    open({error:?}, "w").write(traceback.format_exc())
+    raise"#,
+        dir = receipts.display().to_string(),
+        run = file("run.json"),
+        killed = file("killed.json"),
+        resumed = file("resumed.json"),
+        error = file("poll.error"),
+    )
+}
+
+impl Harness {
+    /// Prompt the parent without asserting the turn's outcome (the turn
+    /// that kills its own host never answers success).
+    fn prompt_tolerating_failure(&mut self, label: &str, session_id: &str) -> Value {
+        self.client.send_command(
+            &format!("prompt-{label}"),
+            &json!({ "type": "prompt_and_wait", "activeSessionId": session_id, "message": "run the factory scenario" }),
+        );
+        self.client
+            .read_response(&format!("prompt-{label}"), Duration::from_mins(10))
+    }
+}
+
+#[test]
+fn factory_run_interrupted_by_a_host_crash_resumes_on_the_restarted_host() {
+    let Some(kernel) = kernel_python() else {
+        eprintln!("skipping: no factory-capable kernel python");
+        return;
+    };
+    let mut harness = harness("host-crash", Some(&kernel));
+    let label = "host-crash";
+    let receipts = harness.receipts_dir(label);
+    std::fs::create_dir_all(&receipts).expect("receipts dir");
+    let driver = host_restart_driver_code(&receipts);
+    let parent = write_script(
+        &harness.root,
+        "host-crash-parent.json",
+        &driven_script(&[], &[], &driver, 80),
+    );
+    let child = write_script(
+        &harness.root,
+        "host-crash-child.json",
+        &child_script("GATED-DONE", 8_000),
+    );
+    let (session_id, session_uuid) = harness.create_parent(label, &parent, &child);
+    let deadline = Instant::now() + Duration::from_mins(10);
+    let mut turn = 0_u64;
+    // Start the run, then kill the host worker while slowgate's child is in
+    // flight (the run record says running, its instance in flight).
+    while harness.read_receipt(label, "killed").is_none() {
+        turn += 1;
+        harness.prompt_tolerating_failure(&format!("{label}-{turn}"), &session_id);
+        assert!(
+            Instant::now() < deadline,
+            "the driver never killed its host"
+        );
+    }
+    let run = harness.read_receipt(label, "run").expect("run receipt");
+    assert_eq!(run["started"], json!(["slowgate"]));
+    let killed = harness
+        .read_receipt(label, "killed")
+        .expect("killed receipt");
+    // The supervisor restarts the crashed worker; the rebuilt session finds
+    // the run record, pauses the run as interrupted, and the driver resumes
+    // it and polls it to the end on the restarted host.
+    let status = loop {
+        turn += 1;
+        harness.prompt_tolerating_failure(&format!("{label}-{turn}"), &session_id);
+        if let Some(status) = harness.read_receipt(label, "poll") {
+            if matches!(status["state"].as_str(), Some("done" | "failed")) {
+                break status;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the run never finished after the host restart"
+        );
+        std::thread::sleep(Duration::from_millis(1_500));
+    };
+    assert_ne!(
+        status["host_pid"], killed["host_pid"],
+        "a restarted host served the poll"
+    );
+    assert_eq!(status["run_id"], run["run_id"]);
+    let resumed = harness
+        .read_receipt(label, "resumed")
+        .expect("the driver resumed the run");
+    let before = &resumed["before"];
+    assert_eq!(
+        before["state"], "paused",
+        "the restarted host paused the run: {before}"
+    );
+    assert_eq!(events_of(before, "run_interrupted").len(), 1, "{before}");
+    let interrupted = events_of(before, "interrupted");
+    assert_eq!(interrupted.len(), 1, "{before}");
+    assert_eq!(interrupted[0]["node"], "slowgate");
+    assert_eq!(
+        status["state"], "done",
+        "the resumed run completes: {status}"
+    );
+    for node in ["slowgate", "final"] {
+        assert_eq!(
+            state_report(&status, node)["status"],
+            "done",
+            "{node} settled"
+        );
+    }
+    let slowgate = state_report(&status, "slowgate");
+    assert_eq!(
+        slowgate["instances"][0]["attempt"], 2,
+        "the lost admission re-spawned under a fresh attempt: {slowgate}"
+    );
+    let record_path = harness
+        .root
+        .join(label)
+        .join("session-artifacts")
+        .join(&session_uuid)
+        .join("factory-runs")
+        .join(format!("{}.json", run["run_id"].as_str().expect("run id")));
+    let record: Value = serde_json::from_str(
+        &std::fs::read_to_string(&record_path)
+            .unwrap_or_else(|error| panic!("run record {}: {error}", record_path.display())),
+    )
+    .expect("record json");
+    assert_eq!(record["run"]["state"], "done");
+}

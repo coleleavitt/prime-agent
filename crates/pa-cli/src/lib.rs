@@ -112,6 +112,17 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
         std::env::set_var(crate::config::ENV_OFFLINE, "1");
     }
 
+    // The factory spec filter: the kernel runtime's validator client runs
+    // one spec operation through this binary when no serving host can
+    // answer it (the machine-library CLI runner, the runtime's unit tests).
+    if args.len() == 1 && args[0] == pa_core::factory::spec_ops::FACTORY_SPEC_FILTER_FLAG {
+        let stdin = std::io::stdin();
+        let stdout = std::io::stdout();
+        return pa_core::factory::spec_ops::run_spec_filter(&mut stdin.lock(), &mut stdout.lock())
+            .map(|()| 0)
+            .map_err(|error| format!("factory spec filter: {error}"));
+    }
+
     // Install-time kernel preparation: the installer invokes `--prime-agent-bootstrap`
     // after extracting a release, so the venv is ready before the first session.
     if args.len() == 1 && args[0] == "--prime-agent-bootstrap" {
