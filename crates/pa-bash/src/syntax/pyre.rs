@@ -134,6 +134,11 @@ fn translate(source: &str) -> String {
     out
 }
 
+/// A form of a valid pattern.
+fn build_valid(source: &str) -> Regex {
+    build(source).unwrap_or_else(|error| panic!("guard pattern form {source:?}: {error}"))
+}
+
 fn build(source: &str) -> Result<Regex, Box<fancy_regex::Error>> {
     fancy_regex::RegexBuilder::new(source)
         .backtrack_limit(BACKTRACK_LIMIT)
@@ -141,15 +146,19 @@ fn build(source: &str) -> Result<Regex, Box<fancy_regex::Error>> {
         .map_err(Box::new)
 }
 
-/// One compiled Python pattern.
+/// One Python pattern. Its three compiled forms are built on first use: a
+/// guard reads only some of them, and compiling every form of every pattern
+/// up front made the first command of a process pay for all of them.
 #[derive(Debug)]
 pub(crate) struct PyRegex {
-    search: Regex,
-    /// `\A(?:...)`, for anchored matches on a suffix of the text; `None` when
+    translated: String,
+    search: std::sync::OnceLock<Regex>,
+    /// `\A(?:...)`, for anchored matches on a suffix of the text; unused when
     /// the pattern looks at what precedes the match (`\b`, lookbehind), which
     /// a suffix would hide.
-    anchored: Option<Regex>,
-    full: Regex,
+    anchored: std::sync::OnceLock<Regex>,
+    looks_back: bool,
+    full: std::sync::OnceLock<Regex>,
     /// Literals one of which every match contains (ASCII case-insensitively
     /// when `literals_any_case`): a text holding none of them cannot match,
     /// which spares the backtracking engine a fruitless walk of a long text.
@@ -158,31 +167,48 @@ pub(crate) struct PyRegex {
 }
 
 impl PyRegex {
-    /// Compile one of the guards' fixed patterns.
+    /// One of the guards' fixed patterns (compiled on first use).
     ///
     /// # Panics
     ///
-    /// When `source` is not a valid pattern: the patterns are constants.
+    /// On first use, when `source` is not a valid pattern: the patterns are
+    /// constants, pinned by the guards' tests.
     pub(crate) fn new(source: &str) -> Self {
-        Self::compile(source)
-            .unwrap_or_else(|error| panic!("invalid guard pattern {source:?}: {error}"))
-    }
-
-    /// Compile a pattern built at run time.
-    pub(crate) fn compile(source: &str) -> Result<Self, Box<fancy_regex::Error>> {
         let translated = translate(source);
         let looks_back = source.contains("\\b") || source.contains("(?<") || source.contains("\\B");
-        Ok(Self {
-            search: build(&translated)?,
-            anchored: if looks_back {
-                None
-            } else {
-                Some(build(&format!(r"\A(?:{translated})"))?)
-            },
-            full: build(&format!(r"\A(?:{translated})\z"))?,
+        Self {
+            translated,
+            search: std::sync::OnceLock::new(),
+            anchored: std::sync::OnceLock::new(),
+            looks_back,
+            full: std::sync::OnceLock::new(),
             literals: &[],
             literals_any_case: false,
+        }
+    }
+
+    /// A pattern built at run time, checked now.
+    pub(crate) fn compile(source: &str) -> Result<Self, Box<fancy_regex::Error>> {
+        let pattern = Self::new(source);
+        let search = build(&pattern.translated)?;
+        let _ = pattern.search.set(search);
+        Ok(pattern)
+    }
+
+    fn search(&self) -> &Regex {
+        self.search.get_or_init(|| build_valid(&self.translated))
+    }
+
+    fn anchored(&self) -> Option<&Regex> {
+        (!self.looks_back).then(|| {
+            self.anchored
+                .get_or_init(|| build_valid(&format!(r"\A(?:{})", self.translated)))
         })
+    }
+
+    fn full(&self) -> &Regex {
+        self.full
+            .get_or_init(|| build_valid(&format!(r"\A(?:{})\z", self.translated)))
     }
 
     /// Declare literals one of which every match contains (a prefilter: the
@@ -225,12 +251,12 @@ impl PyRegex {
     /// `re.match(pattern, text, pos)`: a match starting exactly at `start`.
     pub(crate) fn match_at(&self, text: &Haystack, start: usize) -> Option<Captures> {
         let at = text.byte(start)?;
-        if let Some(anchored) = &self.anchored {
+        if let Some(anchored) = self.anchored() {
             let found = anchored.captures(&text.text[at..]).ok().flatten()?;
             return Some(text.captures(&found, at));
         }
         let found = self
-            .search
+            .search()
             .captures_from_pos(&text.text, at)
             .ok()
             .flatten()?;
@@ -241,20 +267,20 @@ impl PyRegex {
     pub(crate) fn full_match(&self, text: &(impl AsText + ?Sized)) -> Option<Captures> {
         let text = text.as_text();
         let haystack = Haystack::new(&text);
-        let found = self.full.captures(&text).ok().flatten()?;
+        let found = self.full().captures(&text).ok().flatten()?;
         Some(haystack.captures(&found, 0))
     }
 
     /// Whether `text` is a full match.
     pub(crate) fn is_full_match(&self, text: &(impl AsText + ?Sized)) -> bool {
-        self.full.is_match(&text.as_text()).unwrap_or(false)
+        self.full().is_match(&text.as_text()).unwrap_or(false)
     }
 
     /// `re.search` from `start`.
     pub(crate) fn search_from(&self, text: &Haystack, start: usize) -> Option<Captures> {
         let at = text.byte(start)?;
         let found = self
-            .search
+            .search()
             .captures_from_pos(&text.text, at)
             .ok()
             .flatten()?;
@@ -264,7 +290,7 @@ impl PyRegex {
     /// Whether `re.search` finds a match.
     pub(crate) fn is_found(&self, text: &(impl AsText + ?Sized)) -> bool {
         let text = text.as_text();
-        self.may_match(&text) && self.search.is_match(&text).unwrap_or(false)
+        self.may_match(&text) && self.search().is_match(&text).unwrap_or(false)
     }
 
     /// `re.match(pattern, text)`: a match at the start of the text.

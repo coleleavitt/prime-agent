@@ -111,13 +111,25 @@ pub struct JobTable {
 }
 
 impl JobTable {
+    /// An empty table. The first one in a process also starts compiling the
+    /// guards' patterns on a background thread (tens of milliseconds in a
+    /// release build), so the kernel's first `bash()` does not pay for it.
     #[must_use]
     pub fn new() -> Self {
+        static WARM: std::sync::Once = std::sync::Once::new();
+        WARM.call_once(|| {
+            std::thread::spawn(|| {
+                let context = GuardContext::new("/", std::collections::BTreeMap::new());
+                let _ = check(&Script::bare("true"), &Allowances::none(), &context);
+            });
+        });
         Self::default()
     }
 
     fn lock(&self) -> MutexGuard<'_, Jobs> {
-        self.jobs.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.jobs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Check `request` and start it.
@@ -131,7 +143,10 @@ impl JobTable {
     }
 
     /// Start `request` without running the guards (its client already did).
-    pub(crate) fn start_unchecked(&self, request: &SpawnRequest<'_>) -> Result<Arc<Job>, SpawnError> {
+    pub(crate) fn start_unchecked(
+        &self,
+        request: &SpawnRequest<'_>,
+    ) -> Result<Arc<Job>, SpawnError> {
         self.start(request)
     }
 
@@ -191,7 +206,11 @@ impl JobTable {
     fn live(&self) -> Vec<Arc<Job>> {
         let mut jobs = self.lock();
         prune(&mut jobs);
-        jobs.all.iter().filter(|job| !job.is_reaped()).cloned().collect()
+        jobs.all
+            .iter()
+            .filter(|job| !job.is_reaped())
+            .cloned()
+            .collect()
     }
 
     /// SIGKILL every live job's group (the kernel is going away). A job whose
@@ -265,7 +284,8 @@ impl JobTable {
             .iter()
             .map(|job| {
                 let finished = job.finished();
-                let duration = finished.map_or_else(|| job.started.elapsed(), |(_, duration)| duration);
+                let duration =
+                    finished.map_or_else(|| job.started.elapsed(), |(_, duration)| duration);
                 json!({
                     "id": job.id,
                     "command": job.command.chars().take(ACTIVITY_COMMAND_CAP).collect::<String>(),
@@ -280,7 +300,8 @@ impl JobTable {
         // Long commands are truncated per row first, then rows drop until the
         // response fits: finished rows before running ones, so a live process
         // never falls off the list while it is the one the user can act on.
-        while python_json(&json!({"activities": rows})).len() > ACTIVITY_FRAME_CAP && rows.len() > 1 {
+        while python_json(&json!({"activities": rows})).len() > ACTIVITY_FRAME_CAP && rows.len() > 1
+        {
             let victim = rows
                 .iter()
                 .position(|row| row["status"] != "running")
@@ -299,9 +320,10 @@ fn activity_tail(job: &Job, lines: u64) -> String {
     let keep = usize::try_from(lines).unwrap_or(usize::MAX);
     let tail = all[all.len().saturating_sub(keep)..].join("\n");
     let bytes = tail.as_bytes();
-    let mut payload: Vec<char> = String::from_utf8_lossy(&bytes[bytes.len().saturating_sub(ACTIVITY_FRAME_CAP)..])
-        .chars()
-        .collect();
+    let mut payload: Vec<char> =
+        String::from_utf8_lossy(&bytes[bytes.len().saturating_sub(ACTIVITY_FRAME_CAP)..])
+            .chars()
+            .collect();
     loop {
         let text: String = payload.iter().collect();
         let size = python_json(&json!({"tail": text})).len();
@@ -349,11 +371,13 @@ fn random_hex(bytes: usize) -> String {
     // The OS random source does not fail on supported platforms; a zeroed
     // token would only weaken forgery resistance of one fence.
     let _ = getrandom::fill(&mut buffer);
-    buffer.iter().fold(String::with_capacity(bytes * 2), |mut hex, byte| {
-        use std::fmt::Write as _;
-        let _ = write!(hex, "{byte:02x}");
-        hex
-    })
+    buffer
+        .iter()
+        .fold(String::with_capacity(bytes * 2), |mut hex, byte| {
+            use std::fmt::Write as _;
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
 }
 
 #[cfg(all(test, unix))]

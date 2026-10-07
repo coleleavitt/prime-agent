@@ -75,7 +75,15 @@ pub(crate) fn splitlines(text: &str) -> Vec<&str> {
     while let Some((index, ch)) = chars.next() {
         let boundary = matches!(
             ch,
-            '\n' | '\r' | '\u{b}' | '\u{c}' | '\u{1c}' | '\u{1d}' | '\u{1e}' | '\u{85}' | '\u{2028}' | '\u{2029}'
+            '\n' | '\r'
+                | '\u{b}'
+                | '\u{c}'
+                | '\u{1c}'
+                | '\u{1d}'
+                | '\u{1e}'
+                | '\u{85}'
+                | '\u{2028}'
+                | '\u{2029}'
         );
         if !boundary {
             continue;
@@ -111,7 +119,10 @@ mod tests {
 
     #[test]
     fn splitlines_matches_python() {
-        assert_eq!(splitlines("a\nb\r\nc\rd\u{2028}e\n"), vec!["a", "b", "c", "d", "e"]);
+        assert_eq!(
+            splitlines("a\nb\r\nc\rd\u{2028}e\n"),
+            vec!["a", "b", "c", "d", "e"]
+        );
         assert_eq!(splitlines(""), Vec::<&str>::new());
         assert_eq!(splitlines("\n\nx"), vec!["", "", "x"]);
     }

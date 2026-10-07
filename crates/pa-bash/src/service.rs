@@ -47,11 +47,17 @@ const MAX_FOLLOW_WAIT: Duration = Duration::from_secs(30);
 /// on an async runtime run it on a blocking thread.
 #[must_use]
 pub fn handle(table: &JobTable, request: &Value) -> Value {
-    let kind = request.get("type").and_then(Value::as_str).unwrap_or_default();
+    let kind = request
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     match kind {
         "bash.check" => checked(request).map_or_else(|reply| reply, |_| ok(json!({}))),
         "bash.isDestructiveGitDiscard" => {
-            let command = request.get("command").and_then(Value::as_str).unwrap_or_default();
+            let command = request
+                .get("command")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             ok(json!({"discard": crate::guards::is_destructive_git_discard(command)}))
         }
         "bash.shell" => match parse(request) {
@@ -75,7 +81,10 @@ pub fn handle(table: &JobTable, request: &Value) -> Value {
                 .min(MAX_FOLLOW_WAIT);
             let (events, cursor, done) =
                 job.follow(usize::try_from(cursor).unwrap_or(usize::MAX), wait);
-            let events: Vec<Value> = events.iter().map(crate::runner::JobEvent::to_json).collect();
+            let events: Vec<Value> = events
+                .iter()
+                .map(crate::runner::JobEvent::to_json)
+                .collect();
             ok(json!({"events": events, "cursor": cursor, "done": done}))
         }),
         "bash.output" => with_job(table, request, |job| {
@@ -99,7 +108,9 @@ pub fn handle(table: &JobTable, request: &Value) -> Value {
             let kill_wait = millis(request, "killWaitMs").unwrap_or(Duration::from_secs(2));
             ok(json!({"dead": job.confirm_group_exit(term_grace, kill_wait)}))
         }),
-        "bash.groupAlive" => with_job(table, request, |job| ok(json!({"alive": job.group_alive()}))),
+        "bash.groupAlive" => with_job(table, request, |job| {
+            ok(json!({"alive": job.group_alive()}))
+        }),
         "bash.killAll" => {
             table.kill_all();
             ok(json!({}))
@@ -114,7 +125,10 @@ pub fn handle(table: &JobTable, request: &Value) -> Value {
             ok(json!({"records": table.inventory(limit)}))
         }
         "bash.activity" => {
-            let action = request.get("action").and_then(Value::as_str).unwrap_or_default();
+            let action = request
+                .get("action")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             let id = request.get("activityId").and_then(Value::as_str);
             let lines = request.get("lines").cloned().unwrap_or_else(|| json!(50));
             match table.activity(action, id, &lines) {
@@ -126,7 +140,10 @@ pub fn handle(table: &JobTable, request: &Value) -> Value {
                 Err(error) => error_reply(error.error_name(), &error.to_string()),
             }
         }
-        other => error_reply("RuntimeError", &format!("unknown bash request type {other:?}")),
+        other => error_reply(
+            "RuntimeError",
+            &format!("unknown bash request type {other:?}"),
+        ),
     }
 }
 
@@ -159,11 +176,17 @@ fn refused(refusal: &Refusal) -> Value {
 }
 
 fn millis(request: &Value, key: &str) -> Option<Duration> {
-    request.get(key).and_then(Value::as_u64).map(Duration::from_millis)
+    request
+        .get(key)
+        .and_then(Value::as_u64)
+        .map(Duration::from_millis)
 }
 
 fn with_job(table: &JobTable, request: &Value, answer: impl FnOnce(&Arc<Job>) -> Value) -> Value {
-    let id = request.get("id").and_then(Value::as_str).unwrap_or_default();
+    let id = request
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     match table.get(id) {
         Some(job) => answer(&job),
         None => error_reply("KeyError", "'Unknown kernel bash job'"),
@@ -194,13 +217,18 @@ fn parse(request: &Value) -> Result<Parsed, Value> {
     let text = |key: &str| request.get(key).and_then(Value::as_str).map(str::to_string);
     let script = text("script").unwrap_or_default();
     let command = text("command").unwrap_or_else(|| script.clone());
-    let cwd = text("cwd").ok_or_else(|| error_reply("RuntimeError", "bash request needs the kernel cwd"))?;
+    let cwd = text("cwd")
+        .ok_or_else(|| error_reply("RuntimeError", "bash request needs the kernel cwd"))?;
     let env: BTreeMap<String, String> = request
         .get("env")
         .and_then(Value::as_object)
         .into_iter()
         .flatten()
-        .filter_map(|(name, value)| value.as_str().map(|value| (name.clone(), value.to_string())))
+        .filter_map(|(name, value)| {
+            value
+                .as_str()
+                .map(|value| (name.clone(), value.to_string()))
+        })
         .collect();
     let mut context = GuardContext::new(cwd, env).with_traceparent(text("traceparent"));
     for guard in guard_list(request, "launchBypass") {
@@ -262,7 +290,11 @@ fn spawn(table: &JobTable, request: &Value) -> Value {
     // builds the handle, so plan mode can classify in between) skips the
     // second pass; the kernel controls its allowances either way.
     let checked = request.get("guards").and_then(Value::as_bool) == Some(false);
-    let started = if checked { table.start_unchecked(&spawn) } else { table.spawn(&spawn) };
+    let started = if checked {
+        table.start_unchecked(&spawn)
+    } else {
+        table.spawn(&spawn)
+    };
     match started {
         Ok(job) => ok(json!({"job": {
             "id": job.id,

@@ -26,7 +26,9 @@ const EXIT_POLL: Duration = Duration::from_millis(20);
 type Shared = Arc<Mutex<Box<dyn ChildWrapper>>>;
 
 fn lock(child: &Shared) -> MutexGuard<'_, Box<dyn ChildWrapper>> {
-    child.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    child
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 pub(crate) struct Spawned {
@@ -83,7 +85,10 @@ impl Process {
 /// child stays suspended until it is inside its job).
 pub(crate) struct ControlChannel;
 
-#[expect(clippy::unused_self, reason = "the POSIX status channel's interface, with nothing to do")]
+#[expect(
+    clippy::unused_self,
+    reason = "the POSIX status channel's interface, with nothing to do"
+)]
 impl ControlChannel {
     pub(crate) fn open_gate(&self) {}
 

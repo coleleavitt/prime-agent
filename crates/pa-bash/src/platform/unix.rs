@@ -32,7 +32,9 @@ impl Spawned {
 
     /// The handle signals and liveness checks go through.
     pub(crate) fn control(&self) -> Control {
-        Control { pid: self.process.id() }
+        Control {
+            pid: self.process.id(),
+        }
     }
 
     /// Kill a command that must not run (its gate never opened): close the
@@ -229,7 +231,10 @@ fn group(pid: u32) -> Option<Pid> {
 /// delivered or the group is already gone (safe to record inactive); false
 /// when it was not delivered (the record must stay active for the reaper).
 fn signal_group(pid: u32, signal: Signal) -> bool {
-    let (Some(group), Some(signal)) = (group(pid), rustix::process::Signal::from_named_raw(signal.0)) else {
+    let (Some(group), Some(signal)) = (
+        group(pid),
+        rustix::process::Signal::from_named_raw(signal.0),
+    ) else {
         return false;
     };
     match kill_process_group(group, signal) {

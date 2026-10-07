@@ -53,7 +53,10 @@ impl WaitReason {
 pub(crate) enum JobEvent {
     /// A structured progress event (`command_progress`, `cargo_lock_wait`,
     /// `command_no_output`) with the job's progress fields at that moment.
-    Progress { msg: &'static str, fields: Map<String, Value> },
+    Progress {
+        msg: &'static str,
+        fields: Map<String, Value>,
+    },
     /// The command's result.
     Finished {
         exit_code: i32,
@@ -68,7 +71,9 @@ pub(crate) enum JobEvent {
 impl JobEvent {
     pub(crate) fn to_json(&self) -> Value {
         match self {
-            JobEvent::Progress { msg, fields } => json!({"type": "progress", "msg": msg, "fields": fields}),
+            JobEvent::Progress { msg, fields } => {
+                json!({"type": "progress", "msg": msg, "fields": fields})
+            }
             JobEvent::Finished {
                 exit_code,
                 output,
@@ -193,12 +198,15 @@ impl Job {
             output_probe: output.try_clone().ok(),
             control,
         });
-        job.clone().run_threads(process, channel, output, launch.no_output_warn);
+        job.clone()
+            .run_threads(process, channel, output, launch.no_output_warn);
         job
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn run_threads(
@@ -318,7 +326,10 @@ impl Job {
         let mut fields = Map::new();
         fields.insert("bash.pid".into(), self.pid.into());
         fields.insert("bash.pgid".into(), self.pid.into());
-        fields.insert("bash.elapsed_ms".into(), millis(now.duration_since(self.started)).into());
+        fields.insert(
+            "bash.elapsed_ms".into(),
+            millis(now.duration_since(self.started)).into(),
+        );
         fields.insert(
             "bash.silence_ms".into(),
             millis(now.duration_since(state.last_output)).into(),
@@ -383,7 +394,10 @@ impl Job {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         drop(state);
         let delivered = {
-            let _kill = self.kill_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let _kill = self
+                .kill_lock
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let delivered = self.control.reap();
             let mut state = self.lock();
             state.reaped = true;
@@ -416,7 +430,12 @@ impl Job {
             }
             // A chunk between the pipe read and the buffer commit is
             // invisible to both the pipe's byte count and the buffer size.
-            if state.transfer || self.output_probe.as_ref().is_some_and(platform::pending_bytes) {
+            if state.transfer
+                || self
+                    .output_probe
+                    .as_ref()
+                    .is_some_and(platform::pending_bytes)
+            {
                 size = state.buffer.size();
                 continue;
             }
@@ -487,7 +506,8 @@ impl Job {
         let events: Vec<JobEvent> = state.events.iter().skip(cursor).cloned().collect();
         let next = cursor + events.len();
         // The reaped event is always the last one.
-        let done = matches!(state.events.last(), Some(JobEvent::Reaped { .. })) && next == state.events.len();
+        let done = matches!(state.events.last(), Some(JobEvent::Reaped { .. }))
+            && next == state.events.len();
         (events, next, done)
     }
 
@@ -525,7 +545,10 @@ impl Job {
     /// unless the group is reaped first. False when already reaped.
     pub(crate) fn kill(self: &Arc<Self>, signal: Signal, grace: Duration) -> bool {
         {
-            let _kill = self.kill_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let _kill = self
+                .kill_lock
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if self.is_reaped() {
                 return false;
             }
@@ -540,7 +563,10 @@ impl Job {
                     .wait_timeout_while(state, grace, |state| !state.reaped)
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 drop(state);
-                let _kill = job.kill_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let _kill = job
+                    .kill_lock
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if !job.is_reaped() {
                     job.signal_group(Signal::KILL);
                 }
@@ -551,7 +577,10 @@ impl Job {
 
     /// SIGKILL the group now (kernel shutdown). True when delivered.
     pub(crate) fn kill_now(&self) -> bool {
-        let _kill = self.kill_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _kill = self
+            .kill_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if self.is_reaped() {
             return true;
         }
@@ -598,11 +627,14 @@ fn millis(duration: Duration) -> u64 {
     let rounded = (duration.as_secs_f64() * 1000.0).round_ties_even();
     if rounded.is_finite() && rounded >= 0.0 {
         // In range: a job's elapsed time is far below 2^53 ms.
-        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "non-negative, finite, far below u64::MAX")]
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "non-negative, finite, far below u64::MAX"
+        )]
         let millis = rounded as u64;
         millis
     } else {
         0
     }
 }
-

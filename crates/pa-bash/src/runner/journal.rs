@@ -96,7 +96,12 @@ impl Journal {
 fn parse_python_int(text: &str) -> Option<i64> {
     let trimmed = text.trim();
     let digits = trimmed.strip_prefix('+').unwrap_or(trimmed);
-    if digits.is_empty() || !digits.trim_start_matches('-').chars().all(|c| c.is_ascii_digit() || c == '_') {
+    if digits.is_empty()
+        || !digits
+            .trim_start_matches('-')
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '_')
+    {
         return None;
     }
     digits.replace('_', "").parse().ok()
@@ -125,19 +130,32 @@ fn process_start_id(pid: u32, env: &BTreeMap<String, String>) -> Option<String> 
     }
     if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
         if let Some(close) = stat.rfind(')') {
-            let fields: Vec<&str> = stat.get(close + 2..).unwrap_or_default().split(' ').collect();
+            let fields: Vec<&str> = stat
+                .get(close + 2..)
+                .unwrap_or_default()
+                .split(' ')
+                .collect();
             if let Some(start) = fields.get(19).filter(|field| !field.is_empty()) {
                 return Some(format!("proc:{start}"));
             }
         }
     }
-    let ps = if cfg!(target_os = "macos") { "/bin/ps" } else { "ps" };
+    let ps = if cfg!(target_os = "macos") {
+        "/bin/ps"
+    } else {
+        "ps"
+    };
     let mut command = Command::new(ps);
     command
         .args(["-p", &pid.to_string(), "-o", "lstart="])
         .env_clear()
         .envs(env)
-        .envs([("LC_ALL", "C"), ("LC_TIME", "C"), ("LANG", "C"), ("TZ", "UTC")]);
+        .envs([
+            ("LC_ALL", "C"),
+            ("LC_TIME", "C"),
+            ("LANG", "C"),
+            ("TZ", "UTC"),
+        ]);
     let out = run_bounded(command)?;
     let out = out.trim();
     (!out.is_empty()).then(|| format!("ps:{out}"))
@@ -186,7 +204,9 @@ fn run_bounded(mut command: Command) -> Option<String> {
         let _ = std::io::Read::read_to_string(&mut stdout, &mut text);
         let _ = sender.send(text);
     });
-    let text = receiver.recv_timeout(std::time::Duration::from_secs(5)).ok();
+    let text = receiver
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .ok();
     if text.is_none() {
         let _ = child.kill();
     }
@@ -221,7 +241,10 @@ mod tests {
     fn an_unwritable_journal_is_ignored() {
         let dir = tempfile::tempdir().expect("tempdir");
         let journal = Journal::from_env(
-            &env(&[(JOURNAL_ENV, &dir.path().display().to_string()), (OWNER_ENV, "7")]),
+            &env(&[
+                (JOURNAL_ENV, &dir.path().display().to_string()),
+                (OWNER_ENV, "7"),
+            ]),
             9,
         )
         .expect("configured");
@@ -248,7 +271,9 @@ mod tests {
         assert_eq!(lines[0]["active"], Value::Bool(true));
         assert_eq!(lines[0]["ownerPid"], Value::from(7));
         assert_eq!(lines[0]["kernelPid"], Value::from(9));
-        assert!(lines[0]["processStartId"].as_str().is_some_and(|id| id.starts_with("proc:") || id.starts_with("ps:")));
+        assert!(lines[0]["processStartId"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("proc:") || id.starts_with("ps:")));
         assert_eq!(lines[1].get("processStartId"), None);
         assert!(text.starts_with("{\"version\": 1, \"pid\": "));
     }

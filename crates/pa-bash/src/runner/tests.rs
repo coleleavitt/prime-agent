@@ -50,7 +50,9 @@ fn finished(events: &[JobEvent]) -> (i32, String) {
     events
         .iter()
         .find_map(|event| match event {
-            JobEvent::Finished { exit_code, output, .. } => Some((*exit_code, output.clone())),
+            JobEvent::Finished {
+                exit_code, output, ..
+            } => Some((*exit_code, output.clone())),
             JobEvent::Progress { .. } | JobEvent::Reaped { .. } => None,
         })
         .expect("a finished event")
@@ -103,7 +105,10 @@ fn a_delivered_status_wins_over_a_later_shell_death() {
     let job = spawn(&table, "sleep 30 & true", context(&[]));
     let (events_so_far, mut cursor, _) = job.follow(0, Duration::from_secs(10));
     let mut seen = events_so_far;
-    while !seen.iter().any(|event| matches!(event, JobEvent::Finished { .. })) {
+    while !seen
+        .iter()
+        .any(|event| matches!(event, JobEvent::Finished { .. }))
+    {
         let (more, next, _) = job.follow(cursor, Duration::from_secs(10));
         seen.extend(more);
         cursor = next;

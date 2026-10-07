@@ -36,7 +36,9 @@ pub fn serve_stdio() -> i32 {
             let reply = handle(&table, &data);
             let mut text = json!({"id": id, "data": reply}).to_string();
             text.push('\n');
-            let mut out = out.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut out = out
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let _ = out.write_all(text.as_bytes());
             let _ = out.flush();
         });
