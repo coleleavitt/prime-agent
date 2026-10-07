@@ -137,3 +137,66 @@ examples:
           assert_eq!(items.len(), 2);
           assert_eq!(tree.node_count(), 3);
       }
+---
+id: pa-test-git-without-isolation
+description: >-
+  A test spawns `git` directly instead of through the shared fixture helper
+  (`pa_core::git_env::{fixture_git, run_fixture_git}`, pa-core's
+  `test_support::run_git`, pa-bash's `test_support::{git, run_git}`). Git
+  exports `GIT_DIR`, `GIT_WORK_TREE` and their siblings to hooks and
+  `git rebase --exec` commands; a test started from one inherits them, and a
+  bare `Command::new("git").current_dir(tempdir)` then acts on that outer
+  repository: `git init --bare` re-initialized a real checkout's `.git` as
+  bare, `git config user.*` added a `[user]` section to it, and fixture
+  commits and branches landed in its history. The helper scrubs the
+  repository selection and isolates user/system config.
+severity: medium
+tags: [test-isolation, data-loss]
+language: rust
+check-patterns:
+  - name: literal-git-spawn
+    query: |
+      ((call_expression
+         function: (scoped_identifier path: (_) @ty name: (identifier) @ctor)
+         arguments: (arguments . (string_literal) @program .)) @call
+       (#match? @ty "(^|::)Command$")
+       (#eq? @ctor "new")
+       (#eq? @program "\"git\""))
+    at: call
+    where:
+      # Test helpers (`fn git(..)` beside the tests) are plain functions, so the
+      # rule does not require `is-test`; product code that honours an exported
+      # `GIT_DIR` on purpose is listed in the README.
+      - enclosing-function:
+          calls-not: "fixture_git|run_fixture_git|isolate_fixture|scrub_repository_selection|env_clear|env_remove"
+message: "`git` spawned with the inherited GIT_DIR/GIT_WORK_TREE (no fixture helper, no scrub)"
+review:
+  - Does this git run in a fixture the test owns? Build it with `fixture_git`/`run_fixture_git` (or the crate's `test_support::git`).
+  - Does it deliberately exercise an inherited repository selection? Then set `GIT_DIR` explicitly on the command.
+  - In product code, does the call act on a directory the caller owns (scrub with `pa_core::git_env::scrub_repository_selection`) or on the user's behalf in their shell environment (honour it, and list the site in the README)?
+examples:
+  bad:
+    - |
+      fn git(dir: &Path, args: &[&str]) {
+          let status = std::process::Command::new("git").args(args).current_dir(dir).status().unwrap();
+          assert!(status.success());
+      }
+    - |
+      #[test]
+      fn commits_in_a_fixture() {
+          let dir = tempfile::tempdir().unwrap();
+          std::process::Command::new("git").args(["init", "-q"]).current_dir(dir.path()).status().unwrap();
+      }
+  good:
+    - |
+      #[test]
+      fn commits_in_a_fixture() {
+          let dir = tempfile::tempdir().unwrap();
+          pa_core::git_env::run_fixture_git(dir.path(), &["init", "-q"]);
+      }
+    - |
+      fn head(dir: &Path) -> io::Result<Output> {
+          let mut command = Command::new("git");
+          scrub_repository_selection(&mut command);
+          command.arg("rev-parse").current_dir(dir).output()
+      }

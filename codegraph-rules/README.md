@@ -31,6 +31,7 @@ to read to confirm or dismiss it.
 | `pa-spawn-without-text-busy-retry` | `process.yaml` | `Command::new(<computed path>)` in a function that never calls `*_retrying_text_busy` | 29 |
 | `pa-test-env-mutation-without-lock` | `tests-isolation.yaml` | `env::set_var`/`remove_var` in a test that takes no env lock | 105 |
 | `pa-test-proc-self-fd-number` | `tests-isolation.yaml` | a test reading `/proc/self/fd/<n>` | 1 |
+| `pa-test-git-without-isolation` | `tests-isolation.yaml` | `Command::new("git")` in a function that neither uses the fixture helper nor scrubs `GIT_DIR` | 1 (was 4 in pa-core tests alone) |
 | `pa-test-global-count-assertion` | `tests-isolation.yaml` | `assert_eq!(live_*_count(), N)` / `registry().len()` in a test | 0 |
 | `pa-unvalidated-name-path-join` | `paths.yaml` | `dir.join(name)` / `dir.join(format!("{id}.jsonl"))` with no validator in the function | 41 |
 | `pa-float-parse-js-parity` | `floats.yaml` | `parse::<f64>()`, `f64::from_str`, `from_str::<f64>` outside tests | 15 |
@@ -100,6 +101,26 @@ nothing else in the binary reads.
 The fd table is process-wide: once an fd closes, another test thread can reuse
 its number at once. The only hit is `socket.rs`'s `fd_target`, which already
 compares the link target (the fix in 95e7d1439), so it is the safe form.
+
+### `pa-test-git-without-isolation`
+
+Git exports `GIT_DIR`, `GIT_WORK_TREE` and their siblings to hooks and `git rebase --exec`
+commands. Tests gated that way inherited the outer repository's selection, and their fixture
+git (`current_dir(tempdir)` changes nothing) re-initialized the real `.git` as bare, wrote a
+`[user]` section into its config, and created a branch and commits in it. Test fixtures build
+repositories through `pa_core::git_env::{fixture_git, run_fixture_git}` (pa-core unit tests:
+`test_support::run_git`; pa-bash: `test_support::{git, run_git}`); product code that acts on a
+directory it owns scrubs with `pa_core::git_env::scrub_repository_selection`. The rule does not
+require `is-test` (fixture helpers are plain functions), so run it with `--tests`.
+
+The one remaining hit honours the selection on purpose: `session/manager/git.rs`
+`capture_git_context` describes the repository the user's own `git` would use (TS
+`captureGitContext` parity; a dotfiles setup exports `GIT_DIR`/`GIT_WORK_TREE`). The same holds
+for the bash tool and the pa-bash guard probes, which run in the guarded command's environment
+(they spawn through a shell, so the rule does not see them). The regression tests
+`pa_core::git_env::tests::git_tests_leave_an_inherited_repository_untouched` and
+`pa_bash::test_support::tests::guard_tests_leave_an_inherited_repository_untouched` re-run the
+git-running tests under an exported `GIT_DIR` and require the sentinel repository byte-identical.
 
 ### `pa-test-global-count-assertion`
 
