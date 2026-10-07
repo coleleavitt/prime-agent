@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::tools::bash::{self, BashToolOptions};
+use crate::tools::bash;
 use crate::tools::code_preview::preview_bash_command;
 use crate::tools::code_preview_python::preview_ipython_code;
 use crate::tools::edit::{create_edit_tool_definition, execute_edit, LocalEditOperations};
@@ -94,8 +94,13 @@ fn make_fixture(case: &serde_json::Value) -> (tempfile::TempDir, String) {
             let command = command.as_str().expect("fixture command");
             // The golden texts pin commit hashes, so a developer's global git
             // config (`commit.gpgsign`, hooks) must not reach the fixture, and
-            // the zone-less `GIT_*_DATE` stamps must resolve in UTC.
-            let status = std::process::Command::new("/bin/bash")
+            // the zone-less `GIT_*_DATE` stamps must resolve in UTC. An inherited
+            // `GIT_DIR` (a git hook, `rebase --exec`) would point the fixture's
+            // `git init`/`git config` at the outer repository instead.
+            let mut fixture = std::process::Command::new("/bin/bash");
+            crate::git_env::scrub_repository_selection(&mut fixture);
+            let status = fixture
+                .env("GIT_CEILING_DIRECTORIES", std::env::temp_dir())
                 .arg("-c")
                 .arg(command)
                 .current_dir(dir.path())
@@ -203,7 +208,7 @@ async fn golden_bash_group_matches_ts() {
             std::fs::remove_dir_all(&dir_path).ok();
             let result = bash::execute_bash(
                 &dir_path,
-                &BashToolOptions::default(),
+                &crate::test_support::bash_options_without_repository_selection(),
                 case["command"].as_str().expect("command"),
                 case.get("timeout").and_then(serde_json::Value::as_f64),
                 case.get("allowDestructiveGit")
@@ -233,7 +238,7 @@ async fn golden_bash_group_matches_ts() {
         }
         let result = bash::execute_bash(
             &dir_path,
-            &BashToolOptions::default(),
+            &crate::test_support::bash_options_without_repository_selection(),
             case["command"].as_str().expect("command"),
             case.get("timeout").and_then(serde_json::Value::as_f64),
             case.get("allowDestructiveGit")

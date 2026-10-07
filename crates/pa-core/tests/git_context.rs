@@ -16,25 +16,10 @@ use std::path::Path;
 use pa_core::session::manager::{capture_git_context, SessionManager};
 use pa_types::session::{AgentMessage, FileEntry};
 
-fn git(cwd: &Path, args: &[&str]) -> String {
-    let output = std::process::Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .expect("git is available in the test environment");
-    assert!(
-        output.status.success(),
-        "git {:?} failed: {}",
-        args,
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
-}
+use pa_core::git_env::run_fixture_git as git;
 
 fn init_repo(dir: &Path) {
     git(dir, &["init", "-q", "-b", "main"]);
-    git(dir, &["config", "user.email", "t@t.co"]);
-    git(dir, &["config", "user.name", "t"]);
 }
 
 fn commit(dir: &Path, message: &str) -> String {

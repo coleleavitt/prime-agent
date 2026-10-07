@@ -316,13 +316,19 @@ pub async fn capture_git_worktree_snapshot(cwd: &Path) -> Option<GitWorktreeSnap
 }
 
 /// One git invocation: `None` on any non-zero exit, timeout, or truncation.
+///
+/// The snapshot describes `cwd`'s own worktree (the untracked hash joins status paths onto
+/// `cwd`), so an inherited repository selection (`GIT_DIR`, `GIT_WORK_TREE`, ...) is scrubbed,
+/// as in [`crate::workspace_snapshot`]. The gate commands themselves keep the full environment.
 async fn run_git(prefix: &[&str], pathspec: &[String], cwd: &Path) -> Option<String> {
     let mut args: Vec<String> = prefix
         .iter()
         .map(std::string::ToString::to_string)
         .collect();
     args.extend(pathspec.iter().cloned());
-    let result = run_child_process("git", &args, cwd, SNAPSHOT_TIMEOUT_MS)
+    let mut command = std::process::Command::new("git");
+    crate::git_env::scrub_repository_selection(&mut command);
+    let result = run_child_process(command, &args, cwd, SNAPSHOT_TIMEOUT_MS)
         .await
         .ok()?;
     if result.status != Some(0)
@@ -395,12 +401,12 @@ fn hash_untracked_path(path: &Path) -> String {
 /// Run a child process with a timeout, draining both output pipes
 /// concurrently (a chatty command cannot wedge the wait on a full pipe).
 async fn run_child_process(
-    program: &str,
+    command: std::process::Command,
     args: &[String],
     cwd: &Path,
     timeout_ms: u64,
 ) -> anyhow::Result<ChildProcessResult> {
-    let mut child = tokio::process::Command::new(program)
+    let mut child = tokio::process::Command::from(command)
         .args(args)
         .current_dir(cwd)
         .stdin(std::process::Stdio::null())
@@ -452,7 +458,7 @@ pub async fn run_gate_command(
     timeout_ms: u64,
 ) -> anyhow::Result<ChildProcessResult> {
     let args = ["-c".to_string(), command.to_string()];
-    run_child_process("bash", &args, cwd, timeout_ms).await
+    run_child_process(std::process::Command::new("bash"), &args, cwd, timeout_ms).await
 }
 
 /// Read one output pipe to EOF, keeping at most `cap` characters; the
@@ -671,25 +677,11 @@ mod tests {
     #[tokio::test]
     async fn shell_runner_snapshot_tracks_workspace_changes() {
         let dir = tempfile::TempDir::new().unwrap();
-        let run = |args: &[&str]| {
-            let mut command = std::process::Command::new("git");
-            command.args(args).current_dir(dir.path());
-            command
-                .output()
-                .map(|output| {
-                    (
-                        output.status.success(),
-                        String::from_utf8_lossy(&output.stderr).to_string(),
-                    )
-                })
-                .unwrap()
-        };
-        assert!(run(&["init", "-q"]).0);
-        run(&["config", "user.email", "t@example.com"]);
-        run(&["config", "user.name", "t"]);
+        let run = |args: &[&str]| crate::test_support::run_git(dir.path(), args);
+        run(&["init", "-q"]);
         std::fs::write(dir.path().join("tracked.txt"), "one\n").unwrap();
-        assert!(run(&["add", "."]).0);
-        assert!(run(&["commit", "-q", "-m", "init"]).0);
+        run(&["add", "."]);
+        run(&["commit", "-q", "-m", "init"]);
         let runner = ShellGateRunner::new(dir.path());
         let empty = runner.capture_snapshot().await.unwrap();
         std::fs::write(dir.path().join("untracked.txt"), "hello\n").unwrap();

@@ -928,31 +928,17 @@ async fn template_expansion_applies() {
 /// context at `agent_end` adds nothing.
 #[tokio::test]
 async fn run_boundaries_record_git_state() {
-    fn git(cwd: &std::path::Path, args: &[&str]) {
-        let output = std::process::Command::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .output()
-            .expect("git is available in the test environment");
-        assert!(output.status.success(), "git {args:?} failed");
-    }
+    use crate::test_support::run_git as git;
     fn commit(dir: &std::path::Path, message: &str) -> String {
         std::fs::write(dir.join("file.txt"), format!("{message}\n")).unwrap();
         git(dir, &["add", "-A"]);
         git(dir, &["commit", "-q", "-m", message]);
-        let output = std::process::Command::new("git")
-            .args(["rev-parse", "HEAD"])
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        String::from_utf8_lossy(&output.stdout).trim().to_string()
+        git(dir, &["rev-parse", "HEAD"])
     }
 
     let repo = tempfile::tempdir().unwrap();
     let sessions = tempfile::tempdir().unwrap();
     git(repo.path(), &["init", "-q", "-b", "main"]);
-    git(repo.path(), &["config", "user.email", "t@t.co"]);
-    git(repo.path(), &["config", "user.name", "t"]);
     commit(repo.path(), "init");
 
     let provider = Arc::new(ScriptedProvider::new(test_model()));

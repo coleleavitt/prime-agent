@@ -55,8 +55,6 @@ pub use tools::ipython::{
 };
 pub use tools::rlm_bootstrap::{build_rlm_bootstrap_code, PythonSkillRuntimeInfo};
 // RLM kernel subsystem: persistent IPython kernel lifecycle.
-#[cfg(test)]
-mod test_support;
 pub mod agent_traces;
 pub mod auth;
 pub mod autonomous;
@@ -66,6 +64,7 @@ pub mod export_html;
 pub mod factory;
 pub mod factory_eval;
 pub mod features;
+pub mod git_env;
 pub mod goals;
 pub mod kernel;
 pub mod mcp;
@@ -82,6 +81,8 @@ pub mod settings;
 pub mod skills;
 pub mod slash_command_args;
 pub mod swarm_eval;
+#[cfg(test)]
+mod test_support;
 // The router is consumed only by the session engine's host handler and the
 // unit batteries; per the crate facade policy its surface stays crate-private.
 pub(crate) mod system_router;

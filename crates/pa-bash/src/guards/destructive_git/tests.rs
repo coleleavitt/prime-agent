@@ -4,7 +4,6 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 use super::sites::is_destructive_git_discard_command;
@@ -224,16 +223,7 @@ fn context_in(dir: &Path) -> GuardContext {
 }
 
 fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("HOME", dir)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .output()
-        .expect("git runs")
-        .status;
-    assert!(status.success(), "git {args:?}");
+    crate::test_support::run_git(dir, dir, args);
 }
 
 /// A repository with one commit plus a modified and an untracked file.
@@ -241,8 +231,6 @@ fn dirty_repo() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("temp dir");
     let root = dir.path();
     git(root, &["init", "-q"]);
-    git(root, &["config", "user.email", "test@example.com"]);
-    git(root, &["config", "user.name", "Test"]);
     git(root, &["config", "commit.gpgsign", "false"]);
     std::fs::write(root.join("tracked.txt"), "committed\n").expect("write");
     git(root, &["add", "tracked.txt"]);

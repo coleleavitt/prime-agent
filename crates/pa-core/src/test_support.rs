@@ -27,3 +27,22 @@ impl ThreadTempDir {
         &self.0
     }
 }
+
+/// Every unit test that runs git builds its repository through [`crate::git_env::fixture_git`]:
+/// no inherited repository selection (`GIT_DIR` and its siblings, which git hooks and
+/// `rebase --exec` export), no user or system config, discovery stopped at the temp root, and a
+/// fixed identity.
+pub(crate) use crate::git_env::run_fixture_git as run_git;
+
+/// Bash tool options whose children never see an inherited repository selection: the bash
+/// tool honours the agent shell's `GIT_DIR` (the user's choice), so tests that run git through
+/// it scrub it in the spawn hook.
+pub(crate) fn bash_options_without_repository_selection() -> crate::tools::bash::BashToolOptions {
+    crate::tools::bash::BashToolOptions {
+        spawn_hook: Some(std::sync::Arc::new(|mut context| {
+            context.env = crate::git_env::without_repository_selection(context.env);
+            context
+        })),
+        ..Default::default()
+    }
+}

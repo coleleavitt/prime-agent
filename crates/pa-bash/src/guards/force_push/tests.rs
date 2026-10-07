@@ -133,18 +133,7 @@ impl Sandbox {
     }
 
     fn git(&self, args: &[&str], cwd: &Path) {
-        let output = Command::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .env_clear()
-            .envs(self.env("/usr/bin:/bin"))
-            .output()
-            .expect("git runs");
-        assert!(
-            output.status.success(),
-            "git {args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        crate::test_support::run_git(cwd, self.path(), args);
     }
 
     /// A repo with a bare remote, main pushed, and `branch` checked out
@@ -159,13 +148,7 @@ impl Sandbox {
             self.path(),
         );
         self.git(&["init", "-q", "-b", "main"], &repo);
-        for (key, value) in [
-            ("user.email", "guard@example.com"),
-            ("user.name", "Guard Test"),
-            ("commit.gpgsign", "false"),
-        ] {
-            self.git(&["config", key, value], &repo);
-        }
+        self.git(&["config", "commit.gpgsign", "false"], &repo);
         std::fs::write(repo.join("file.txt"), "one\n").expect("file");
         self.git(&["add", "."], &repo);
         self.git(&["commit", "-q", "-m", "init"], &repo);

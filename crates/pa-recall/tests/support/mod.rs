@@ -19,29 +19,19 @@ use pa_recall::{
 
 pub const TSGO_CLAIM: &str = "npx tsgo --noEmit";
 
-/// Run git in `repo` with no user, system, or hook configuration leaking in.
+/// Run git in `repo` with no user, system, or hook configuration leaking in, and no
+/// inherited repository selection ([`pa_core::git_env::fixture_git`]).
 pub fn git(repo: &Path, args: &[&str]) -> String {
-    let output = std::process::Command::new("git")
+    let output = pa_core::git_env::fixture_git(repo)
         .args([
             "-c",
             "core.hooksPath=/nonexistent-prime-agent-recall-hooks",
             "-c",
             "commit.gpgsign=false",
             "-c",
-            "user.name=Recall Test",
-            "-c",
-            "user.email=recall@test.invalid",
-            "-c",
             "init.defaultBranch=main",
         ])
         .args(args)
-        .current_dir(repo)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .env_remove("GIT_COMMON_DIR")
         .output()
         .expect("git runs");
     assert!(

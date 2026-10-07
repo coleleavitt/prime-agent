@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 import bash_guard_check
+from git_isolation import fixture_git_env, scrub_repository_selection
 from rlm import bash
 from rlm.bash import BASH_FORCE_PUSH_BYPASS_ENV, ForcePushRefusalError
 
@@ -429,6 +430,9 @@ class ForcePushGuardSuite(unittest.IsolatedAsyncioTestCase):
         # must not reach the test repositories.
         os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
         os.environ["HOME"] = str(self.test_dir)
+        # An inherited GIT_DIR (a git hook, `rebase --exec`) would point the
+        # fixture setup and every push bash() runs at that repository.
+        scrub_repository_selection()
         os.chdir(self.test_dir)
 
     def _enter(self, name: str, branch: str = "feature") -> Path:
@@ -1576,7 +1580,7 @@ class ForcePushFrozenBypassTest(unittest.TestCase):
         # GIT_CONFIG_NOSYSTEM (no system config), so global aliases, hooks,
         # url.*.insteadOf rewrites, or push.default from the runner cannot
         # change what these launches do.
-        self._git_env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "HOME": temp.name}
+        self._git_env = fixture_git_env(temp.name)
         self.workspace = Path(temp.name) / "repo"
         self.workspace.mkdir()
         bare = Path(temp.name) / "remote.git"

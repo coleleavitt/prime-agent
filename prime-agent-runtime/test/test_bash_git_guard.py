@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from git_isolation import fixture_git_env, scrub_repository_selection
 from rlm import bash
 from rlm.bash import (
     BASH_DESTRUCTIVE_GIT_BYPASS_ENV,
@@ -52,7 +53,7 @@ def _run_git(cwd: str, *args: str) -> None:
         cwd=cwd,
         check=True,
         capture_output=True,
-        env={**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "HOME": cwd},
+        env=fixture_git_env(cwd),
     )
 
 
@@ -177,6 +178,9 @@ class DestructiveGitGuardTest(unittest.IsolatedAsyncioTestCase):
         # `_run_git` repo setup already pins HOME=cwd per call.)
         os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
         os.environ["HOME"] = str(self.test_dir)
+        # An inherited GIT_DIR (a git hook, `rebase --exec`) would point every
+        # discard bash() runs at that repository instead of the fixture.
+        scrub_repository_selection()
 
     def _restore_env(self):
         os.environ.clear()

@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from git_isolation import scrub_repository_selection
 from test_repl import ReplProcess
 
 SRC_DIR = str(Path(__file__).resolve().parent.parent / "src")
@@ -50,7 +51,11 @@ def no_sandbox():
 
 def run_guarded(body: str) -> subprocess.CompletedProcess[str]:
     script = PREAMBLE.format(src=SRC_DIR) + body
-    return subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=120)
+    # The scripts run git under the guard (`git version`, and commits that must be refused): an
+    # inherited GIT_DIR must not give a regressed guard a real repository to write to.
+    env = dict(os.environ)
+    scrub_repository_selection(env)
+    return subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=120, env=env)
 
 
 def bwrap_usable() -> bool:

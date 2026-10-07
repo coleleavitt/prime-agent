@@ -129,13 +129,8 @@ fn write_executable(path: &Path, content: &str) {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
-fn run_git(cwd: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .status()
-        .expect("git is required for the package e2e test");
-    assert!(status.success(), "git {args:?} failed");
+fn run_git(cwd: &Path, args: &[&str]) -> String {
+    pa_core::git_env::run_fixture_git(cwd, args)
 }
 
 /// Build the shared fixture root: local package, npm shim + fixture package,
@@ -173,8 +168,6 @@ fn make_fixtures() -> Fixtures {
         ],
     );
     run_git(&work, &["init", "-q"]);
-    run_git(&work, &["config", "user.email", "e2e@example.com"]);
-    run_git(&work, &["config", "user.name", "e2e"]);
     std::fs::write(work.join("package.json"), r#"{"name":"repo-pkg"}"#).unwrap();
     std::fs::create_dir_all(work.join("skills")).unwrap();
     std::fs::write(work.join("skills").join("g.md"), "# git skill\n").unwrap();
@@ -215,14 +208,7 @@ fn make_fixtures() -> Fixtures {
         &SSH_SHIM.replace("{GITBASE}", &gitbase.display().to_string()),
     );
 
-    let initial_main = {
-        let out = Command::new("git")
-            .args(["rev-parse", "HEAD"])
-            .current_dir(&work)
-            .output()
-            .expect("git rev-parse");
-        String::from_utf8_lossy(&out.stdout).trim().to_string()
-    };
+    let initial_main = run_git(&work, &["rev-parse", "HEAD"]);
 
     Fixtures {
         _root_dir: root,
@@ -290,7 +276,10 @@ struct Output {
 }
 
 fn run(binary: &Path, args: &[&str], sandbox: &Sandbox) -> Output {
-    let output = Command::new("timeout")
+    // The binary honours an exported `GIT_DIR` wherever it acts in the user's repository; the
+    // test's own (a git hook, `rebase --exec`) must not reach it.
+    let mut command = Command::new("timeout");
+    let output = pa_core::git_env::scrub_repository_selection(&mut command)
         .arg("60")
         .arg(binary)
         .args(args)

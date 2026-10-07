@@ -20,19 +20,12 @@ use super::{open_leaf, OpenLeaf};
 
 #[cfg(unix)]
 fn git(dir: &Path, args: &[&str]) {
-    let output = git_command(args, dir).into_std().output().unwrap();
-    assert!(
-        output.status.success(),
-        "git {args:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    crate::test_support::run_git(dir, args);
 }
 
 #[cfg(unix)]
 fn init_repo(dir: &Path) {
     git(dir, &["init", "-q"]);
-    git(dir, &["config", "user.email", "t@example.com"]);
-    git(dir, &["config", "user.name", "t"]);
     // Repo-local config outranks a developer's global one for every git call
     // here, the product's included: a global excludesFile that ignores
     // `.env`/`*.pem` would hide exactly the files these tests exercise.
@@ -638,8 +631,8 @@ async fn snapshot_captures_unmerged_conflict_worktree_content() {
     git(root, &["checkout", "-q", "-"]);
     write(root, "f.txt", "main\n");
     git(root, &["commit", "-q", "-am", "main"]);
-    let merge = git_command(&["merge", "side"], root)
-        .into_std()
+    let merge = crate::git_env::fixture_git(root)
+        .args(["merge", "side"])
         .output()
         .unwrap();
     assert!(!merge.status.success(), "expected a conflict");
@@ -1321,15 +1314,7 @@ fn git_selection_env_is_scrubbed_from_child_commands() {
         .filter(|(_, value)| value.is_none())
         .map(|(key, _)| key.to_string_lossy().into_owned())
         .collect();
-    for variable in [
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_INDEX_FILE",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        "GIT_COMMON_DIR",
-        "GIT_NAMESPACE",
-    ] {
+    for variable in crate::git_env::REPOSITORY_SELECTION_ENV {
         assert!(
             removed.iter().any(|entry| entry == variable),
             "{variable} must be scrubbed from the git child env"

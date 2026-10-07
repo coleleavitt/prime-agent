@@ -2,6 +2,12 @@
 //! user-facing installs (`npm install`, `git clone`) and a capturing runner
 //! with a timeout for network probes (`npm view`, `git ls-remote`). Error
 //! strings are part of the CLI parity surface.
+//!
+//! Every child works on a directory the package manager owns (a package checkout, an install
+//! root), so both runners scrub the inherited repository selection (`GIT_DIR` and its
+//! siblings, see [`crate::git_env`]): with an exported `GIT_DIR` a `git clone`, `reset --hard`
+//! or `clean -fdx` would otherwise act on that repository instead of the package's. The user's
+//! git config (credentials, `url.*.insteadOf`) still applies.
 
 use std::io::Read;
 use std::process::{Command, Stdio};
@@ -17,6 +23,7 @@ pub fn run_command(
     cwd: Option<&std::path::Path>,
 ) -> anyhow::Result<()> {
     let mut command = Command::new(program);
+    crate::git_env::scrub_repository_selection(&mut command);
     command.args(args);
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
@@ -43,6 +50,7 @@ pub fn run_command_capture(
     env: &[(&str, &str)],
 ) -> anyhow::Result<String> {
     let mut command = Command::new(program);
+    crate::git_env::scrub_repository_selection(&mut command);
     command.args(args);
     if let Some(cwd) = cwd {
         command.current_dir(cwd);

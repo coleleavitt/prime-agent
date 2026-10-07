@@ -109,21 +109,11 @@ pub(crate) async fn read_worktree_status(
 /// claims to describe), so they are scrubbed and the snapshot's git view
 /// is always `cwd`'s own.
 pub(super) fn git_command(args: &[&str], cwd: &Path) -> tokio::process::Command {
-    const GIT_SELECTION_VARS: [&str; 7] = [
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_INDEX_FILE",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        "GIT_COMMON_DIR",
-        "GIT_NAMESPACE",
-    ];
-    let mut command = tokio::process::Command::new("git");
-    command.args(args).current_dir(cwd);
-    for variable in GIT_SELECTION_VARS {
-        command.env_remove(variable);
-    }
-    command
+    let mut command = std::process::Command::new("git");
+    crate::git_env::scrub_repository_selection(&mut command)
+        .args(args)
+        .current_dir(cwd);
+    tokio::process::Command::from(command)
 }
 
 async fn run_git(args: &[&str], cwd: &Path, timeout_ms: u64) -> Result<Vec<u8>, SnapshotError> {

@@ -21,6 +21,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 REPO = SCRIPTS_DIR.parent.parent
@@ -28,11 +29,31 @@ REPO = SCRIPTS_DIR.parent.parent
 FOLD = SCRIPTS_DIR / "fold_changelog.py"
 
 
+# Git exports GIT_DIR and its siblings to hooks and `rebase --exec` commands; a
+# battery started from one would point its fixture git (and the fold it runs)
+# at that outer repository. setUp drops them for the test's duration.
+_GIT_REPOSITORY_SELECTION_ENV = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE",
+    "GIT_PREFIX", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+)
+
+
+def _scrub_git_env(case: unittest.TestCase) -> None:
+    patch = mock.patch.dict(os.environ)
+    patch.start()
+    case.addCleanup(patch.stop)
+    for name in _GIT_REPOSITORY_SELECTION_ENV:
+        os.environ.pop(name, None)
+    os.environ["GIT_CEILING_DIRECTORIES"] = tempfile.gettempdir()
+
+
 class FoldTestCase(unittest.TestCase):
     """A synthetic repository per test (the fold reads fragment add-dates
     and consumes fragments through git, so the fixtures must be real)."""
 
     def setUp(self):
+        _scrub_git_env(self)
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         for cmd in (["git", "init", "-q", "."],

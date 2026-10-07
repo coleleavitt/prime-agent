@@ -22,6 +22,8 @@ mod service;
 mod shell;
 mod sidecar;
 mod syntax;
+#[cfg(test)]
+mod test_support;
 mod verdict;
 
 pub use context::{is_truthy_env_value, GuardContext};

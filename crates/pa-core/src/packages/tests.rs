@@ -4,7 +4,6 @@
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::packages::source::{GitSource, SourceScope, UserOrProject};
 use crate::packages::PackageManager;
@@ -80,8 +79,6 @@ fn make_bare_repo(dir: &Path) -> (PathBuf, PathBuf) {
     let bare_str = bare.display().to_string();
     run_git(&work, &["init", "-q", "--bare", &bare_str]);
     run_git(&work, &["init", "-q"]);
-    run_git(&work, &["config", "user.email", "test@example.com"]);
-    run_git(&work, &["config", "user.name", "test"]);
     std::fs::write(work.join("package.json"), r#"{"name":"repo"}"#).unwrap();
     run_git(&work, &["add", "."]);
     run_git(&work, &["commit", "-qm", "init"]);
@@ -93,20 +90,7 @@ fn make_bare_repo(dir: &Path) -> (PathBuf, PathBuf) {
 }
 
 fn run_git(cwd: &Path, args: &[&str]) {
-    // Hermetic: a developer's global config (e.g. `tag.gpgsign`) must not
-    // turn `git tag v1` into a signed tag that demands a message.
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_AUTHOR_NAME", "test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .status()
-        .expect("git is required for package tests");
-    assert!(status.success(), "git {args:?} failed");
+    crate::test_support::run_git(cwd, args);
 }
 
 struct Sandbox {

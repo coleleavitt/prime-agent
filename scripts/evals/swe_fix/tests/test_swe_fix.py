@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -19,6 +20,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HARNESS = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HARNESS))
@@ -26,6 +28,25 @@ import runner  # noqa: E402
 import scorer  # noqa: E402
 
 FIXTURES = HARNESS / "fixtures"
+
+
+# Git exports GIT_DIR and its siblings to hooks and `rebase --exec` commands; a
+# battery started from one would point its fixture git (and the runner it runs)
+# at that outer repository. setUp drops them for the test's duration.
+_GIT_REPOSITORY_SELECTION_ENV = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE",
+    "GIT_PREFIX", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+)
+
+
+def _scrub_git_env(case: unittest.TestCase) -> None:
+    patch = mock.patch.dict(os.environ)
+    patch.start()
+    case.addCleanup(patch.stop)
+    for name in _GIT_REPOSITORY_SELECTION_ENV:
+        os.environ.pop(name, None)
+    os.environ["GIT_CEILING_DIRECTORIES"] = tempfile.gettempdir()
 
 
 class TempCopy:
@@ -71,6 +92,9 @@ def fixture_manifest(name: str) -> dict:
 
 
 class FixtureIntegrity(unittest.TestCase):
+    def setUp(self):
+        _scrub_git_env(self)
+
     def test_ts_fixture_seed_fails_and_golden_patch_passes(self):
         manifest = fixture_manifest("ts-date-utils")
         with TempCopy("ts-date-utils") as repo:
@@ -232,6 +256,9 @@ class ScorerTests(unittest.TestCase):
 
 class RunnerTests(unittest.TestCase):
     """The runner must emit a scored result even when the agent cannot run."""
+
+    def setUp(self):
+        _scrub_git_env(self)
 
     def run_runner(self, argv: list[str]) -> tuple[int, dict]:
         captured = io.StringIO()
