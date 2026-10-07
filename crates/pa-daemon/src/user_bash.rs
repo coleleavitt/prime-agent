@@ -1143,8 +1143,15 @@ mod tests {
     /// without Landlock or a writable directory outside `/tmp` (which the
     /// sandbox keeps writable).
     #[cfg(target_os = "linux")]
+    #[allow(clippy::await_holding_lock)] // the faux registry is process-global: the guard must span the async flow
     #[tokio::test]
     async fn the_bang_lane_runs_under_the_session_sandbox() {
+        // The workers' engines register the faux provider: without the
+        // lock their registrations replace a concurrent faux test's
+        // provider mid-turn.
+        let _faux = crate::agent_engine::FAUX_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Ok(base) = tempfile::tempdir_in("/var/tmp") else {
             eprintln!("/var/tmp is not usable; skipping the sandboxed bash test");
             return;
