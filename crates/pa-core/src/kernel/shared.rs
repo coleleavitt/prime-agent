@@ -481,6 +481,19 @@ pub struct KernelSnapshotConfig {
     pub debounce_ms: Option<u64>,
 }
 
+/// Env prefixes of the daemon worker identity (`PRIME_AGENT_INTERNAL_DAEMON_*`:
+/// role, token, supervisor socket, recovery journal, ...) and of the session
+/// lease only the worker process owns. The kernel and everything it spawns
+/// through `bash()` must not inherit them: a `prime-agent` run started from a
+/// cell would otherwise present the live worker's token to the supervisor
+/// and believe it is a worker. The orphan-process journal
+/// (`PRIME_AGENT_INTERNAL_ORPHAN_PROCESS_JOURNAL`) is kept: `bash()` enrolls
+/// its process groups there.
+const DAEMON_WORKER_IDENTITY_ENV_PREFIXES: [&str; 2] = [
+    "PRIME_AGENT_INTERNAL_DAEMON_",
+    "PRIME_AGENT_INTERNAL_SESSION_LEASE",
+];
+
 /// What the kernel (and every `bash()` it spawns) inherits from the host environment: the
 /// `kernel.environment` setting.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -502,6 +515,17 @@ impl KernelEnvironment {
             Some("scrub-credentials") => KernelEnvironment::ScrubCredentials,
             Some(_) | None => KernelEnvironment::Inherit,
         }
+    }
+
+    /// Whether host variable `key` reaches the kernel process (and what it
+    /// spawns, MCP stdio servers included): never the daemon worker identity,
+    /// otherwise per [`Self::inherits`].
+    #[must_use]
+    pub fn passes_to_kernel(self, key: &str) -> bool {
+        !DAEMON_WORKER_IDENTITY_ENV_PREFIXES
+            .iter()
+            .any(|prefix| key.starts_with(prefix))
+            && self.inherits(key)
     }
 
     /// Whether the kernel inherits host variable `key`.

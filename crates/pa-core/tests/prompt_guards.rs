@@ -152,7 +152,9 @@ fn cached_prefix_is_stable_across_sessions() {
 /// and `bash.progress` (`rlm.watch.job`'s own poller) are runtime plumbing,
 /// and `vision.read` is the bundled `attach_image` skill's own request.
 /// The `harness.*` requests are the transport of `rlm.harness` (documented
-/// through `HARNESS_TOKENS`).
+/// through `HARNESS_TOKENS`). The `mcp.session.*` / `mcp.integration.*` requests carry the documented
+/// kernel-local `mcp.list_tools` / `call_tool` / ... calls (and
+/// `rlm.McpIntegration`) to the host-owned connections.
 const INTERNAL_HOST_REQUESTS: &[&str] = &[
     "model.info",
     "mcp.config",
@@ -179,6 +181,14 @@ const INTERNAL_HOST_REQUESTS: &[&str] = &[
     "harness.create_skill",
     "harness.update_skill",
     "harness.factory",
+    "mcp.session.list_tools",
+    "mcp.session.call_tool",
+    "mcp.session.describe_tool",
+    "mcp.session.search_tools",
+    "mcp.session.reload",
+    "mcp.session.close",
+    "mcp.integration.list_tools",
+    "mcp.integration.call_tool",
 ];
 
 /// Map one registered host-request type to the prompt token that documents

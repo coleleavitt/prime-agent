@@ -202,6 +202,15 @@ pub fn kernel_python_skills(skills: &[Skill]) -> Vec<KernelPythonSkill> {
         .collect()
 }
 
+/// The variables a session's kernel gets on top of what it inherits: its
+/// agent dir (an embedding host's ambient one must not leak in, #109).
+pub(crate) fn kernel_env_overrides(agent_dir: &std::path::Path) -> HashMap<String, String> {
+    HashMap::from([(
+        "PRIME_AGENT_CODING_AGENT_DIR".to_string(),
+        agent_dir.to_string_lossy().to_string(),
+    )])
+}
+
 /// Build the kernel provisioner for a session: host handlers for the goal/heartbeat bridge
 /// plus the pre-imported skills. The session's agent dir is propagated into the kernel env
 /// (`PRIME_AGENT_CODING_AGENT_DIR`): an embedding host whose ambient env differs must not
@@ -222,11 +231,7 @@ pub fn kernel_provisioner(
     environment: crate::kernel::shared::KernelEnvironment,
     plan_mode: crate::kernel::plan_guard::PlanModeSwitch,
 ) -> Arc<KernelProvisioner> {
-    let mut env = HashMap::with_capacity(4);
-    env.insert(
-        "PRIME_AGENT_CODING_AGENT_DIR".to_string(),
-        agent_dir.to_string_lossy().to_string(),
-    );
+    let mut env = kernel_env_overrides(agent_dir);
     env.extend(kernel_harness_env(agent_dir, snapshot_dir.as_deref()));
     Arc::new(KernelProvisioner::new(
         cwd,

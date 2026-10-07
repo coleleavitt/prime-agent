@@ -183,10 +183,11 @@ context, or a fresh trace when there is none):
   `bash.wait_reason="cargo_build_lock"`; no captured output content is emitted.
 - `mcp.call` — one per `mcp.list_tools(server)` / `mcp.call_tool(server,
   tool, arguments)` call (`attrs`: `mcp.server`, `mcp.tool` — `"list_tools"`
-  for listings —, `mcp.connected` whether an open generation existed when the
-  call began; `false` means a lazy connect/handshake ran inside the span;
-  `mcp.tool_count` on listings). An exception marks the span `error` with
-  `attrs.error` and propagates unchanged.
+  for listings —, `mcp.connected` whether the host had a live connection when
+  the call began, set from the host's reply; `false` means a lazy
+  connect/handshake ran inside the span; `mcp.tool_count` on listings). An
+  exception marks the span `error` with `attrs.error` and propagates
+  unchanged.
 
 ## Execution
 
@@ -285,6 +286,33 @@ document after the call>, "loadError": str|null}` or `{"ok": false, "error":
 kernel the client sends the same request to `prime-agent
 --prime-agent-harness-request` (stdin: the request, stdout: the reply);
 the host exports the binary to the kernel as `PRIME_AGENT_EXECUTABLE`.
+
+## MCP sessions
+
+The MCP connections behind `rlm.mcp` and `rlm.McpIntegration` are host-owned
+(one set per agent session, kept across kernel restarts, closed on
+`rlm.mcp.reload`/`close`, idle, configuration change, and session end).
+The runtime reaches them through cancellation-aware host requests:
+
+| `type` | payload |
+|---|---|
+| `mcp.session.list_tools` | `{server}` |
+| `mcp.session.call_tool` | `{server, tool, arguments}` |
+| `mcp.session.describe_tool` | `{server, tool}` |
+| `mcp.session.search_tools` | `{server, query, limit}` |
+| `mcp.session.reload` | `{server?}` (all servers when absent) |
+| `mcp.session.close` | `{}` |
+| `mcp.integration.list_tools` | `{server, url, headers}` |
+| `mcp.integration.call_tool` | `{server, url, headers, tool, arguments}` |
+
+Each answers `{"ok":true,"value":…,"connected":bool}` or
+`{"ok":false,"error":{"type":str,"message":str},"connected":bool}`, where
+`type` names the exception the runtime raises (`RuntimeError`, `KeyError`,
+`PermissionError`, `ValueError`, `TimeoutError`, `FileNotFoundError`,
+`OSError`, `McpStartupError`, `McpDiscoveryError`, `McpCredentialsUnavailable`,
+`McpToolError`, or `CancelledError`). A cancelled caller sends `host_cancel`;
+the host abandons the request (an in-flight `tools/call` is cancelled at the
+server) and replies `CancelledError`.
 
 ## Plan guard
 

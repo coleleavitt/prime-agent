@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "Kernel-side runtime shim for Prime Agent recursion"
 requires-python = ">=3.11"
 dependencies = [
-  "mcp>=2,<3",
   "tyro",
 ]
 
