@@ -433,7 +433,7 @@ impl Supervisor {
         // the supervisor still answers (upstream #723). The worker then also runs the same
         // build as its supervisor. argv[0] keeps the product path, so the process census
         // (`boot_reap::is_worker_argv`) still recognizes the worker.
-        #[cfg(target_os = "linux")]
+        #[cfg(all(target_os = "linux", not(test)))]
         let mut command = {
             use std::os::unix::process::CommandExt as _;
             let mut command = std::process::Command::new("/proc/self/exe");
@@ -441,8 +441,19 @@ impl Supervisor {
             command.arg0(shown.strip_suffix(" (deleted)").unwrap_or(&shown));
             Command::from(command)
         };
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(all(not(target_os = "linux"), not(test)))]
         let mut command = Command::new(&executable);
+        // Unit tests run inside the libtest harness, so `current_exe()` (and `/proc/self/exe`)
+        // is the harness itself: `<harness> worker` would re-run every test whose name matches
+        // "worker" as a detached child nothing reaps, loading the box and leaving those tests'
+        // temp dirs behind when it is killed. The launch paths under test only need a process
+        // that never registers, so they spawn an inert one: the launch then fails at the probe
+        // exactly as it does for a worker that never answers.
+        #[cfg(test)]
+        let mut command = {
+            let _ = &executable;
+            inert_test_worker_command()
+        };
         command
             .arg("worker")
             .envs(launch_env)
@@ -886,5 +897,23 @@ impl Supervisor {
             .store(peer_transport_capable, Ordering::SeqCst);
         pumps.installed = true;
         Ok(())
+    }
+}
+
+/// The unit-test stand-in for a spawned worker: a process that exits at once without ever
+/// registering (see the spawn site).
+#[cfg(test)]
+fn inert_test_worker_command() -> Command {
+    #[cfg(unix)]
+    {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "exit 0"]);
+        command
+    }
+    #[cfg(windows)]
+    {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "exit 0"]);
+        command
     }
 }
