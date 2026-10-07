@@ -63,6 +63,7 @@ class ReplProcess:
 
     def ready(self) -> tuple[dict, float]:
         event = self.read_event()
+        self.ready_cpu_ms = process_cpu_ms(self.proc.pid)
         return event, (time.monotonic() - self.spawned_at) * 1000
 
     def send(self, request: dict) -> None:
@@ -99,6 +100,18 @@ class ReplProcess:
         for stream in (self.proc.stdin, self.proc.stdout, self.proc.stderr):
             if stream is not None:
                 stream.close()
+
+
+def process_cpu_ms(pid: int) -> float | None:
+    """CPU time (user + system) `pid` has used so far, from Linux `/proc`; None elsewhere."""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="ascii") as stat:
+            # `pid (comm) state ...`: `comm` may hold spaces, so split after its last `)`;
+            # utime and stime are fields 14 and 15, i.e. 11 and 12 after `state`.
+            fields = stat.read().rsplit(")", 1)[1].split()
+    except OSError:
+        return None
+    return (int(fields[11]) + int(fields[12])) * 1000 / os.sysconf("SC_CLK_TCK")
 
 
 def stream_text(events: list[dict], stream: str) -> str:
@@ -186,9 +199,14 @@ class ReplTest(unittest.TestCase):
         self.assertEqual(self.ready_event["protocol"], 5)
         major, minor = sys.version_info[:2]
         self.assertTrue(self.ready_event["python"].startswith(f"{major}.{minor}."))
-        # Loose bound for loaded CI machines; still catches an order-of-magnitude regression.
-        print(f"\n[startup] spawn -> ready: {self.ready_ms:.0f} ms")
-        self.assertLess(self.ready_ms, 500)
+        # The bound is on the CPU the runtime spent getting ready, not wall time: a loaded box
+        # stretches the wall clock arbitrarily (full parallel runs failed a 500 ms wall budget),
+        # while the regression class this guards (eager heavy imports, startup work) costs CPU.
+        cpu_ms = self.repl.ready_cpu_ms
+        print(f"\n[startup] spawn -> ready: {self.ready_ms:.0f} ms wall, {cpu_ms} ms cpu")
+        if cpu_ms is None:
+            self.skipTest("no /proc CPU accounting on this platform")
+        self.assertLess(cpu_ms, 500)
 
     def test_result_echo(self):
         events = self.repl.execute("a", "1+1")
