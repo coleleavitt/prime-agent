@@ -52,6 +52,9 @@ impl BashOperations for LocalBashOperations {
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
+            // The map is the child's whole environment (TS `spawn(.., { env })`): a spawn
+            // hook that drops a variable (`GIT_DIR`, a secret) must not see it re-inherited.
+            process.env_clear();
             for (key, value) in env.unwrap_or_else(get_shell_env) {
                 process.env(key, value);
             }
@@ -169,5 +172,40 @@ impl BashOperations for LocalBashOperations {
             }
             Ok(status.code())
         })
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// A variable the spawn context's map omits does not reach the child through the process
+    /// environment: this binary's `HOME` is set, the map carries only `ONLY_THIS`.
+    #[tokio::test]
+    async fn the_env_map_replaces_the_inherited_environment() {
+        assert!(std::env::var_os("HOME").is_some());
+        let dir = tempfile::tempdir().unwrap();
+        let output = std::sync::Mutex::new(Vec::new());
+        let env = std::collections::HashMap::from([("ONLY_THIS".to_string(), "1".to_string())]);
+        let status = LocalBashOperations {
+            shell_path: Some("/bin/sh".to_string()),
+        }
+        .exec(
+            "echo \"home=${HOME-unset} only=${ONLY_THIS-unset}\"",
+            dir.path().to_str().unwrap(),
+            ExecOptions {
+                on_data: &|data: &[u8]| output.lock().unwrap().extend_from_slice(data),
+                signal: None,
+                timeout: None,
+                env: Some(env),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(status, Some(0));
+        assert_eq!(
+            String::from_utf8(output.into_inner().unwrap()).unwrap(),
+            "home=unset only=1\n"
+        );
     }
 }
