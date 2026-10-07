@@ -4,15 +4,9 @@ version = "0.1.0"
 description = "Observe and operate native desktop apps through the Prime Agent computer-use skill."
 requires-python = ">=3.11"
 dependencies = [
+    # The host runs every backend (pa-computer-use): no platform bindings
+    # are installed into the kernel.
     "prime-agent-runtime",
-    "pyobjc-framework-Cocoa>=10; sys_platform == 'darwin'",
-    "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'",
-    "pyobjc-framework-ApplicationServices>=10; sys_platform == 'darwin'",
-    "pyobjc-framework-Vision>=10; sys_platform == 'darwin'",
-    # The Wayland (niri) backend reads apps through AT-SPI via GObject
-    # introspection. Source-only on PyPI: building needs the system's
-    # gobject-introspection and cairo headers.
-    "PyGObject>=3.50; sys_platform == 'linux'",
 ]
 
 [project.scripts]

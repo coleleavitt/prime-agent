@@ -150,7 +150,7 @@ clients.
 | Piece | Source | Notes |
 |---|---|---|
 | Apps and windows | niri IPC (`NIRI_SOCKET`, JSON lines) | The app identity is the Wayland `app_id` (the allowlist key); `App.pid` carries niri's window id. Binding picks the focused, else most recently focused, window of the app. No launch: a spec without a window raises `APP_NOT_RUNNING`. Every action re-checks that the window still exists with the bound `app_id`. |
-| AX text | AT-SPI (libatspi via PyGObject) | The app is found on the accessibility bus by the window's pid, its frame by the window title. Elements carry the AT-SPI role name (`push button`, `entry`, ...), `title` (name), `value` (text or numeric value), `description`, `actions` (AT-SPI action names), and WINDOW-relative `position`/`size`. Only showing elements are walked (same 1500/12/3 s bounds). |
+| AX text | AT-SPI (over D-Bus, in the host) | The app is found on the accessibility bus by the window's pid, its frame by the window title. Elements carry the AT-SPI role name (`push button`, `entry`, ...), `title` (name), `value` (text or numeric value), `description`, `actions` (AT-SPI action names), and WINDOW-relative `position`/`size`. Only showing elements are walked (same 1500/12/3 s bounds). |
 | Secure fields | AT-SPI `ROLE_PASSWORD_TEXT` | Rendered as role `password text` with `[secure]`; their value is never read. `type_text`/`press_key` read the live focus and refuse a password field, and refuse when the focus cannot be verified (app not on the bus, search bounds hit) — the macOS fail-closed rule. |
 | Element actions | AT-SPI | `click(i)` (left, single) runs the element's `click`/`press`/`activate`/`jump`/`toggle`/`open` action, except on a text or password field, where it focuses the field like a real click: AT-SPI GrabFocus where the toolkit has it, otherwise (GTK 4) a real pointer click at the field's center, which needs a floating window; the field must report focus or the click fails with INJECTION_FAILED. `set_value` uses EditableText; `select_text` uses Text selections; `perform_secondary_action` runs any listed action. Apart from the field focus, none of these move focus. After `get_screenshot()`, `(x, y)` points are screenshot pixels. |
 | Keyboard | `zwp_virtual_keyboard_v1` | Focus-bound: the window is focused through niri first and the input is refused (`INJECTION_FAILED`) if niri does not report it focused. Text is typed with an uploaded keymap holding one keysym per character, so it does not depend on the user's layout. `cmd` maps to Super. |
@@ -162,11 +162,8 @@ clients.
 "input": {"pointer", "keyboard"}, "help"}` — AT-SPI, grim, and the two
 virtual-input managers, each `ok`, `missing`, or `unknown`.
 
-Setup: the kernel bootstrap installs PyGObject with this skill on Linux (it
-builds from source, so the system needs the gobject-introspection and cairo
-development headers; without them the skill fails to install and the
-bootstrap warns). The host also needs the Atspi 2.0 typelib and at-spi2-core
-running, `grim` on PATH, and apps
+Setup: nothing is installed into the kernel (the host speaks AT-SPI over
+D-Bus itself). The host needs at-spi2-core running, `grim` on PATH, and apps
 exposing AT-SPI (Firefox: accessibility enabled; Chromium/Electron:
 `--force-renderer-accessibility`). The virtual-input protocols need no
 setup: niri offers them to every client outside a sandboxed security context.

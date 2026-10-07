@@ -92,10 +92,11 @@ Open:
   store is not the transactional event-sourced store `WORKFLOW-V2.md` specifies.
 - `docs/dream-rsi.md`, `docs/ravo-*.md`, `docs/observability.md` and `FLOWCHART.md` still describe the **TS**
   implementation; the crate READMEs describe the Rust one.
-- Wayland computer-use: PyGObject is a Linux dependency of the skill (built by the kernel bootstrap's skill sync;
-  needs gobject-introspection + cairo headers). Live-tested on niri 26.04 with a GTK 4 window (AT-SPI observe/press,
+- Computer use runs host-side in `crates/pa-computer-use` (the skill's Python is a thin client; no pyobjc or
+  PyGObject). The Python Wayland backend was live-tested on niri 26.04 with a GTK 4 window (AT-SPI observe/press,
   set_value, field focus, virtual keyboard/pointer, grim, secure-field refusal); tiled windows still lack coordinate
-  input and screenshots (niri exposes positions only for floating windows).
+  input and screenshots (niri exposes positions only for floating windows). The Rust backends are tested over test
+  doubles only (macOS compile-checked for aarch64-apple-darwin, never run); none has been live-tested yet.
 - `make check`'s MSVC lane needs `cargo-xwin` (not installed here); the gnu Windows lane passes.
 
 ## Working Rules
