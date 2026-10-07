@@ -662,7 +662,7 @@ mod tests {
         assert_eq!(
             (
                 config.sandbox_mode,
-                parsed.messages.clone(),
+                parsed.messages,
                 parse(&["--sandbox", "off"]).sandbox,
                 parse(&["hello"]).sandbox,
                 last_error(&parse(&["--sandbox", "full"])).to_string(),

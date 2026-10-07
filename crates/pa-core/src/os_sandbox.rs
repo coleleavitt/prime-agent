@@ -152,10 +152,9 @@ impl SessionSandbox {
             assessment.mechanism
         );
         if assessment.is_degraded() {
-            line.push_str(&format!(
-                " Not enforced on this machine: {}.",
-                assessment.gaps.join("; ")
-            ));
+            line.push_str(" Not enforced on this machine: ");
+            line.push_str(&assessment.gaps.join("; "));
+            line.push('.');
         }
         line
     }

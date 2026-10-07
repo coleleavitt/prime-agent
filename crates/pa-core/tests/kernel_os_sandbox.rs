@@ -40,13 +40,11 @@ fn kernel_python() -> Option<PathBuf> {
 fn outside_tmp_base() -> Option<tempfile::TempDir> {
     let base = Path::new("/var/tmp");
     let usable = !base.starts_with(std::env::temp_dir()) && !base.starts_with("/tmp");
-    match usable.then(|| tempfile::tempdir_in(base)) {
-        Some(Ok(dir)) => Some(dir),
-        Some(Err(_)) | None => {
-            eprintln!("/var/tmp is not usable; skipping the kernel sandbox test");
-            None
-        }
+    let dir = usable.then(|| tempfile::tempdir_in(base).ok()).flatten();
+    if dir.is_none() {
+        eprintln!("/var/tmp is not usable; skipping the kernel sandbox test");
     }
+    dir
 }
 
 struct Fixture {
