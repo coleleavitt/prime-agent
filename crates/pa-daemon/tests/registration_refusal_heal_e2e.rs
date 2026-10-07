@@ -48,17 +48,19 @@ fn spawn_daemon(socket: &Path, agent_dir: &Path) -> Daemon {
             "15000",
         );
     let child = command.spawn().expect("spawn pa-daemon supervisor");
+    // Ready means serving: the socket binds (and accepts a connect into its backlog) before the
+    // boot reap, and the reap kills any worker already pointed at this socket. The first
+    // `daemon_hello` comes from the accept loop, which starts after the reap.
     let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if UnixStream::connect(socket).is_ok() {
-            return Daemon {
-                child,
-                socket: socket.to_path_buf(),
-            };
-        }
+    while UnixStream::connect(socket).is_err() {
+        assert!(Instant::now() < deadline, "supervisor socket never came up");
         std::thread::sleep(Duration::from_millis(20));
     }
-    panic!("supervisor socket never came up");
+    drop(Client::connect(socket));
+    Daemon {
+        child,
+        socket: socket.to_path_buf(),
+    }
 }
 
 struct Client {
