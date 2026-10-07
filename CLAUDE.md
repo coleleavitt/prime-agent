@@ -69,9 +69,11 @@ callable surface; a unit test pins its protocol number to `REPL_PROTOCOL_VERSION
   runs as interrupted after a host restart) and the `/factory` lane; the kernel's `rlm.factory` is a thin client.
 - Spawn hardening: ETXTBSY-tolerant spawns (`platform::process::{status,spawn}_retrying_text_busy`) for the runtime
   probe, `uv`, and staged-update version probes; runtime-probe memo invalidation scoped to the failed interpreter.
-- `skills/computer-use`: macOS + X11 (#3246) + a **Wayland/niri** backend (`_wayland.py`, AT-SPI observation,
-  niri IPC, stdlib virtual pointer/keyboard client `_wlinput.py`, `grim` capture); logind lock probe for both Linux
-  backends.
+- Computer use runs host-side in `crates/pa-computer-use` behind the `computer_use.*` host requests: macOS (AX,
+  `CGEvent`, objc2), X11 (#3246; `xdotool`/`xwininfo`/`maim`|`scrot`) and a **Wayland/niri** backend (niri IPC,
+  AT-SPI over `zbus`/`atspi-proxies`, wlr virtual pointer/keyboard over `wayland-client`, `grim`), with the logind
+  `LockedHint` lock probe for both Linux backends. `skills/computer-use` is a thin Python client (no pyobjc or
+  PyGObject in the kernel).
 
 ## Current State
 
@@ -93,11 +95,11 @@ Open:
 - Workflow V2's durable controller (the TS fork never built it; needs a store dependency decision). The factory
   executor's host-side control loop, child port and restart reconciliation are reusable for it; its JSON record
   store is not the transactional event-sourced store `WORKFLOW-V2.md` specifies.
-- Computer use runs host-side in `crates/pa-computer-use` (the skill's Python is a thin client; no pyobjc or
-  PyGObject). The Python Wayland backend was live-tested on niri 26.04 with a GTK 4 window (AT-SPI observe/press,
-  set_value, field focus, virtual keyboard/pointer, grim, secure-field refusal); tiled windows still lack coordinate
-  input and screenshots (niri exposes positions only for floating windows). The Rust backends are tested over test
-  doubles only (macOS compile-checked for aarch64-apple-darwin, never run); none has been live-tested yet.
+- Computer use's Rust backends (`crates/pa-computer-use`) are tested over test doubles only (macOS compile-checked
+  for aarch64-apple-darwin, never run); none has been live-tested yet. The removed Python Wayland backend was
+  live-tested on niri 26.04 with a GTK 4 window; tiled windows lacked coordinate input and screenshots there (niri
+  exposes positions only for floating windows), and the Rust Wayland backend refuses coordinate input on a tiled
+  window for the same reason (`tiled_windows_refuse_coordinate_input_without_moving_focus`).
 - `make check`'s MSVC lane needs `cargo-xwin` (not installed here); the gnu Windows lane passes.
 
 ## Working Rules
