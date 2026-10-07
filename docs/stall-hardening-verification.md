@@ -1,5 +1,11 @@
 # Stall observability and coverage hardening verification
 
+> **TS-era record.** This verifies work committed to the TypeScript product (`10a5f2aaf`, `ccfcb1448`, `5af42a109`);
+> its `.ts` files and `npm` gates no longer exist. Rust counterparts: span recording, `prime-agent health`, log
+> rotation and OTLP in `pa-trace`; `bash()` progress, silence and Cargo-lock diagnosis in `pa-bash`; the kernel
+> bootstrap lock in `crates/pa-core/src/kernel/bootstrap/`. The coverage lanes and Codecov gate it lists were not
+> carried over (see `docs/coverage.md`).
+
 Verified on 2026-09-08. This record maps the requested work to committed source, regression tests, and executed gates.
 
 ## Implementation matrix

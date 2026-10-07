@@ -15,6 +15,7 @@ the queues healthy.
 | `continuous.yml` → `build-gnu` (x86_64 + aarch64) | `prime-linux-x64`, `prime-linux-arm64` |
 | `release.yml` → `build-gnu` (x86_64 + aarch64) | same labels |
 | `continuous.yml` → `build-darwin`, `release.yml` → `build-darwin` | GitHub-hosted (unchanged) |
+| `release.yml` → `build-windows` | GitHub-hosted (`windows-2022`) |
 | `deny`, `staleness`, `tag-check`, `reuse-continuous`, `promote`, `nightly-refresh` | GitHub-hosted (unchanged) |
 | `ci.yml` (PR + merge gates) | GitHub-hosted, out of scope for this change |
 

@@ -42,7 +42,8 @@ API. Precedence when they disagree: explicit user instruction → `AGENTS.md` �
 **Other trees:** `prime-agent-runtime/` (the `rlm` package the kernel imports), `skills/` (bundled skills, e.g.
 `computer-use`, `factory`, `system-router`; both are embedded in the binary by `pa-core/build.rs` and extracted to
 `~/.prime/agent/runtime/<hash>/` when no packaged sidecar exists — the live checkout is never read at run time), `install-rust.sh` (installer; its platform map is pinned by
-`crates/pa-cli/tests/installer_platform_map.rs`), `docs/` (mostly the fork's TS-era design docs — see Current State).
+`crates/pa-cli/tests/installer_platform_map.rs`), `docs/` (design docs for the Rust port and the fork's feature
+crates; dated TS-era verification records, `docs/evidence/` and `docs/reviews/` are kept as history).
 
 **Fork features live in removable crates** (`docs/fork-feature-crates.md`): one `pa-<feature>` crate each, wired
 only in `pa-cli` behind a Cargo feature; `pa-cli --no-default-features` is upstream's native product.
@@ -92,8 +93,6 @@ Open:
 - Workflow V2's durable controller (the TS fork never built it; needs a store dependency decision). The factory
   executor's host-side control loop, child port and restart reconciliation are reusable for it; its JSON record
   store is not the transactional event-sourced store `WORKFLOW-V2.md` specifies.
-- `docs/dream-rsi.md`, `docs/ravo-*.md`, `docs/observability.md` and `FLOWCHART.md` still describe the **TS**
-  implementation; the crate READMEs describe the Rust one.
 - Computer use runs host-side in `crates/pa-computer-use` (the skill's Python is a thin client; no pyobjc or
   PyGObject). The Python Wayland backend was live-tested on niri 26.04 with a GTK 4 window (AT-SPI observe/press,
   set_value, field focus, virtual keyboard/pointer, grim, secure-field refusal); tiled windows still lack coordinate

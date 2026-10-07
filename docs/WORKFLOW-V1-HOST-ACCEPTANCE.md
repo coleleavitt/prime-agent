@@ -1,5 +1,9 @@
 # Workflow V1 host terminal acceptance review
 
+> **TS-era record.** This review judged the TypeScript Workflow V1 host at candidate `886e9a872`; its file and line
+> references are to that tree. The Rust host is `crates/pa-workflow` (the `workflow.run_agent` host request), which
+> cites this review as part of its behavioural spec.
+
 **Date:** 2026-09-14
 **Review type:** independent code, security, and clean-artifact terminal review
 **Candidate:** `886e9a8721a880a3f599256d61ef1db05703232c`

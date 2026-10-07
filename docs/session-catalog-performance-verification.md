@@ -1,5 +1,9 @@
 # Session Catalog Performance Verification
 
+> **TS-era record.** This verifies the TypeScript session catalog at commit `829424abe`; the tests and paths it lists
+> are on `perf/session-catalog-resume`. The Rust counterpart of the persisted catalog index is `crates/pa-session-index`
+> (plugged into the native catalog scan through `pa_core::session::catalog_cache`).
+
 Verified on commit `829424abe7119fbc987ffed4ca8d7d629cb6566a`.
 
 ## Committed checkpoints

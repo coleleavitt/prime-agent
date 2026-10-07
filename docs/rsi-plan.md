@@ -1,5 +1,12 @@
 # prime-agent: what would actually make it self-improving
 
+> **TS-era decision record.** Sections 1-9 were written 2026-09-15 to 2026-09-18 against the TypeScript product on
+> `perf/session-catalog-resume`; every `packages/coding-agent` path, `.ts` file, line number and measurement in
+> them refers to that branch and that machine state, and is kept as written. The Rust port carries the plan's
+> mechanisms in feature crates (`pa-ledger`, `pa-ravo`, `pa-learning`, `pa-recall`, `pa-toolforge`) and in
+> `pa-core`'s harness store. Where each row lives now, and what was not ported, is in
+> [§10](#10-status-in-the-rust-port).
+
 *Decision document. All numbers below are re-measured on this machine today (110 session harness states under `~/.prime/agent/session-artifacts/`, 242 sessions, global state at `~/.prime/agent/harness/harness_state.json`), not taken from the briefs. Where a brief's number disagrees with mine, I say so and pick a side.*
 
 ---
@@ -314,3 +321,48 @@ and the handoff notes use them.
   anything global unless explicitly requested" and no auto-refine call site passes a global flag, so the study
   phase cannot write the entry `mem-on` proves would work. Fixing the gate does not fix this; it is the promotion
   path, and no row above covers it.
+
+---
+
+## 10. Status in the Rust port
+
+Checked against `merge-rust-port` @ `6714b023f`. Each feature crate's `README.md` is the authority for its behaviour;
+this table only says where a row went. The measurements above were not re-taken.
+
+| # | Row | Where it lives now | Status |
+|---|---|---|---|
+| 0 | Kernel writer stops destroying harness state | `crates/pa-core/src/refinement/store/`: the one harness store behind every reader and writer of `harness_state.json`. The kernel's `rlm.harness` (`prime-agent-runtime/src/rlm/harness.py`) is a thin client that sends `harness.<op>` host requests; outside a kernel the same requests go through `prime-agent --prime-agent-harness-request`. Writes are temp file + rename under the store lock, unmodelled top-level keys ride in `HarnessState::extensions`, unknown entry keys in `HarnessEntry::extensions`, and a file that does not parse is copied aside under a `.corrupt-` name before the first write. | Done, by moving the writer host-side rather than fixing the Python one. `harness.state.corrupt` is logged by `pa-ledger`'s reader (`crates/pa-ledger/src/harness.rs`), not by the store. |
+| 1 | Prompt selection by recency and supersession | `crates/pa-core/src/refinement/ranking.rs` (`format_harness_state_for_prompt`): query-term relevance, ties by path, title, id; `DEFAULT_OVERVIEW_ENTRY_LIMIT` is 3. Features adjust the order through `HarnessPromptHook` (`pa-learning`'s trajectory ranking, `pa-ravo`'s dormant entries). | Not ported: the TS recency/supersession ranking (`rankByRecency`, `compareHarnessRecency`) has no Rust counterpart. |
+| 2 | Global failure ledger | `pa-ledger`: global by default, off with `PRIME_AGENT_GLOBAL_LEDGER` set to `0`, `off`, `false` or `no`; the global read-modify-write holds the TS `proper-lockfile` lock. `pa-ravo`'s `refinement_baseline_view` is the narrowed baseline. | Ported. |
+| 2b | Durable provisional windows | `pa-ledger`'s durable observation ordinal (`observation_ordinal`); `pa-ravo`'s window clocks (`ordinal`, `local-ordinal`) and its `LedgerObserver`, which searches the global lineage on the global ordinal. | Ported. |
+| 3 | The referee | `pa-ravo` (`crates/pa-ravo/src/referee.rs`, `adjudicate_failure_claims`, `PythonReplayRunner`) over `pa-ledger`'s replay cases (`ReplayCase`, `ReplayProbe`). | Ported. |
+| 4 | Resolution index | `pa-ledger` (`crates/pa-ledger/src/resolution.rs`, `crates/pa-ledger/src/resolution_store.rs`): the `<ipython_resolution_hint>` block, the per-repo store under `<agentDir>/resolution/`. | Ported. |
+| 5 | Toolforge | `pa-toolforge`: the `toolforge.publish` host request, the double-run gate, promotion into `<agentDir>/skills/<name>`, the ledger at `<agentDir>/toolforge/ledger.json`. | Ported, except the refinement screen's use of published packages (the TS skill dry-run), which `pa-ravo`'s structural fast screen does not do. |
+| 6 | Trust and eviction | `pa-ravo` (`crates/pa-ravo/src/trust.rs`, `crates/pa-ravo/src/trust_adjudication.rs`, `crates/pa-ravo/src/trust_runtime.rs`): trust records, `trustWindows`, dormancy below 30. | Ported for gated commits. Not ported: trust records and window settlement on ungated refines (see the `pa-ravo` README's non-goals). |
+| 7 | Learning index and `prime-agent learning` | `pa-learning`: sealed days under `<agentDir>/learning/days/`, the report, the chart, `prime-agent learning trajectory`. | Ported. |
+| 8 | Workspace Recall | `pa-recall`: the mark, the witness, the `<workspace_recall>` block, `bashCommands` from the cell's host facts; off with `PRIME_AGENT_WORKSPACE_RECALL`. | Ported. The week-1 count is still not built. |
+
+The §9 lanes:
+
+- **A** (trust debit): ported in `pa-ravo` (`harness.trust.adjudicate` → `ravo.referee` → `ravo.replay_case`, `-15`
+  once per window and skill, `settle_harness_trust`).
+- **B** (`ravo.run` reaches the learning index; a global run writes the global store): ported. Each evaluated
+  proposal logs `refinement.committed` / `refinement.rejected` with reason `ravo_run`, and a global run commits under
+  the harness state lock. `arc_agi` runs are refused (no ARC-AGI evaluator).
+- **C** (only probes the referee would run): ported. `ReplayProbe` has two kinds, `Module` (`import X`) and
+  `Distribution` (`importlib.metadata.version("d")`), and `MAX_REPLAY_CASES` bounds a record.
+- **D** (stale-evidence re-plan): not ported. No evidence-drift measurement, no `refine.stale_evidence`, no
+  `refine.replan_of`.
+- **E** (rejection history in the planner): not ported. No rejection-history or related-rejection prompt sections and
+  no per-session `local-refinements/<sessionId>.jsonl`.
+
+Other items:
+
+- **Global-default auto-refine.** §9's last finding (an automatic refine never promoted anything global) is addressed
+  in `pa-ravo` while the gate is on: the review asks for a `scope`, and an approved review runs a global refine unless
+  the reviewer answered `"scope": "local"`.
+- **Log retention** (§6): `pa-trace` keeps the TS defaults (20 MiB per generation, 5 generations), configurable with
+  `PRIME_AGENT_LOG_RETENTION` (at most 100).
+- **Observability rows** (§9): the spans and records A-C added are described in the `pa-ravo` and `pa-ledger` READMEs.
+- **The durable `ask` primitive, the correction ledger, the distillation pipeline** (§4): never built in TS, not in
+  Rust.

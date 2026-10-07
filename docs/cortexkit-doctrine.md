@@ -1,5 +1,11 @@
 # Three-Way Doctrine: Claude Code, ckl, prime-agent
 
+> **TS-era analysis.** Written 2026-09-15 against the TypeScript product on `perf/session-catalog-resume`; every
+> `.ts` path and line number refers to that branch. Rust counterparts of the code it examines: the harness store in
+> `crates/pa-core/src/refinement/store/` (the kernel's `rlm.harness` is now a client of it), the failure ledger in
+> `pa-ledger`, the RAVO gate, trust windows and the `ravo.run` archive (`crates/pa-ravo/src/run/archive.rs`) in
+> `pa-ravo`, and the supervisor's command journal in `crates/pa-daemon/src/journal.rs`.
+
 *Verified against `/home/cole/RustProjects/active/ckl` (HEAD) and `/home/cole/PycharmProjects/forks/prime-agent` (`perf/session-catalog-resume`), plus a direct scan of `/home/cole/.prime/` on 2026-09-15. Where my measurement differs from the brief's, mine is footnoted at the end — the brief said 110 session files; I found 1,322. The 409:1 ratio is identical either way.*
 
 ---

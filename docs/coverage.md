@@ -1,21 +1,28 @@
 # Coverage
 
-CI collects JavaScript and Python coverage for each test runner and uploads one aggregated set of reports to Codecov. Missing reports and upload errors fail the workflow. Codecov emits non-informational project, patch, and component statuses with absolute coverage floors; repository branch protection must require those Codecov checks because Codecov computes them asynchronously after upload.
+No CI workflow collects or uploads line coverage today. The TS product's coverage lanes (per-package
+`test:coverage` scripts, one aggregated Codecov upload) were deleted with the TS packages, and nothing replaced them
+for the Rust crates: no workflow under `.github/workflows/` runs a coverage tool or uploads to Codecov.
 
-## Local commands
+## What exists
 
-Run package coverage from the repository root:
+- **Test-selection completeness, not line coverage.** `ci.yml` shards the Rust test binaries with
+  `scripts/ci_test_shard.py`; the summary job (`scripts/ci_test_shard_summary.py`) checks that the union of the shard
+  manifests equals the full enumeration, so a test target cannot silently drop out of the run. `make shard-gates`
+  runs the scripts' own tests.
+- **Python runtime coverage, local only.** `prime-agent-runtime/pyproject.toml` carries `coverage[toml]` in the `dev`
+  dependency group and the `[tool.coverage.run]` / `[tool.coverage.xml]` config (branch coverage over `rlm`, XML to
+  `coverage/coverage.xml`):
 
-```bash
-npm --prefix packages/agent run test:coverage
-npm --prefix packages/ai run test:coverage
-npm --prefix packages/tui run test:coverage
-npm --prefix packages/coding-agent run test:coverage
-npm --prefix packages/coding-agent run test:coverage:process
-npm --prefix packages/coding-agent run test:coverage:kernel
-(cd prime-agent-runtime && uv run coverage run -m unittest discover -s test && uv run coverage xml)
-```
+  ```bash
+  (cd prime-agent-runtime && uv run coverage run -m unittest discover -s test && uv run coverage xml)
+  ```
 
-The coding-agent default, process-heavy regression, and kernel suites run separately in CI. Each CI matrix job publishes a uniquely named coverage artifact. The coverage job downloads all artifacts before one Codecov upload, so sharded reports cannot overwrite each other.
+  CI runs the same suite without coverage (`uv run --locked python -m unittest discover -s test` in `ci.yml`).
 
-Codecov enforces a 70% project floor and an 80% patch floor for the whole repository and for the `coding-agent`, `agent-core`, `ai`, `tui`, and `runtime` components. Configuration lives in [`codecov.yml`](../codecov.yml). Configure branch protection to require every Codecov project, patch, and component status; `fail_ci_if_error` covers uploader failures, not those later status results.
+## Not ported
+
+- Rust line coverage. No `cargo llvm-cov` (or similar) lane is configured.
+- The Codecov gate. [`codecov.yml`](../codecov.yml) still holds the TS-era floors (70% project, 80% patch) and its
+  components still name `packages/**` paths, which no longer exist; with no upload it has no effect. Re-enabling it
+  needs a coverage lane per runtime and components keyed to the crate directories under `crates/`.
