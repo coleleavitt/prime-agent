@@ -1,14 +1,16 @@
 # Computer Use API Reference
 
-Every call is async. Targets are `element_index` integers from the latest AX
-snapshot, or `(x, y)` tuples in window-screenshot coordinates. This is the
-complete module surface; [safety.md](safety.md) governs *when* to act.
+Every call is async except `App.is_frontmost()`. Targets are `element_index`
+integers from the latest AX snapshot, or `(x, y)` tuples in window-screenshot
+coordinates. This is the complete module surface; [safety.md](safety.md)
+governs *when* to act. Each call runs in the Prime Agent host (see Platforms);
+the kernel module only checks argument types and attaches screenshots.
 
 ## Module functions
 
 | Signature | Returns | Notes |
 |---|---|---|
-| `await get_state(emit: bool = True)` | `dict` | Grants, app inventory, allowlist, platform. Prints fix-it guidance when a macOS grant is missing. The first call per process also emits the `computer_use_session_started` telemetry event; `emit=False` skips it. Discovery calls do not raise `TRANSPORT_ERROR` off darwin: `get_state` reports `"platform": None` and `permissions_status` reports `unknown` grants — read those fields to detect a missing backend; the *action* calls are the ones that raise. |
+| `await get_state(emit: bool = True)` | `dict` | Grants, app inventory, allowlist, platform. Prints fix-it guidance when a macOS grant is missing. The first call per session also emits the `computer_use_session_started` telemetry event; `emit=False` skips it. Discovery calls do not raise `TRANSPORT_ERROR` off darwin: `get_state` reports `"platform": None` and `permissions_status` reports `unknown` grants — read those fields to detect a missing backend; the *action* calls are the ones that raise. |
 | `await list_apps()` | `list[dict]` | One `{"id": bundle_id, "name": display, "running": bool}` record per app. Use it to resolve names and check `running` before binding. Unlike `get_state`/`permissions_status`, it *does* raise `TRANSPORT_ERROR` off darwin (reading the workspace needs the backend). |
 | `await get_app(app: str \| dict)` | `App` | Binds by display name or bundle id; dicts: `{"bundle_id": ...}`, `{"path": ...}`, `{"name": ...}`. Returns the app with its first AX state already loaded (`app.state`). |
 | `await permissions_status()` | `dict` | `{"accessibility": ..., "screen_recording": ..., "help": [lines]}`; each status is `ok`, `missing`, or `unknown`. On Wayland it also carries `"input"` (see Platforms). |
@@ -34,7 +36,7 @@ last observed AX text).
 | `await get_ax_state(diff: bool = True)` | `str` | Element-indexed AX text. `diff=True` shows only what changed since the previous snapshot; `diff=False` returns the full tree. Indices on current entries refer to the latest snapshot; indices shown on removed (`-`) entries are from the previous snapshot and are informational only, not valid action targets. |
 | `await get_screenshot(attach: bool = True)` | `dict` | `{"path", "width", "height"}` — the PNG's own pixel dimensions, which on a Retina capture are 2x the window's logical bounds; `click`/`drag`/`scroll` scale the screenshot's pixels back to the window automatically. `attach=True` loads the image into your context (attach failures are swallowed; the dict is still returned); `attach=False` skips attaching. |
 | `await get_state_and_screenshot(diff: bool = True, attach: bool = True)` | `dict` | One snapshot combining the two calls above: `{"state": ..., "screenshot": ...}`. If the screenshot capture fails, the error is swallowed and `screenshot` is `None`. |
-| `await get_text_regions()` | `list[dict]` | Window-scoped OCR over the focused window: a normalized list of text regions with window-relative pixel coordinates — the same space as screenshot `(x, y)` targets, so a region can be clicked directly. The screen-reading path for models that cannot see images (see Non-vision models in SKILL.md); also reads image and canvas text the AX tree cannot expose. |
+| `await get_text_regions(attach: bool = False)` | `dict` | Window-scoped OCR over the focused window (macOS): `{"regions": [{"text", "confidence", "x", "y", "width", "height"}], "width", "height"}`, at most 400 regions sorted top-to-bottom then left-to-right, with pixel coordinates in the capture's own size — the same space as screenshot `(x, y)` targets, so a region can be clicked directly. `attach=True` also attaches the capture. The screen-reading path for models that cannot see images (see Non-vision models in SKILL.md); also reads image and canvas text the AX tree cannot expose. |
 | `await click(target, button: str = "left", count: int = 1)` | `None` | `target` is an `element_index` or an `(x, y)` screenshot-coordinate tuple. `button`: `"left"` (default), `"right"`, `"middle"`; `count=2` double-clicks. |
 | `await drag(from_, to)` | `None` | Two `(x, y)` screenshot-coordinate points. |
 | `await scroll(target, direction: str, pages: int = 1)` | `None` | `direction` is one of `up`, `down`, `left`, `right`; `target` is an index or `(x, y)`. |
@@ -126,8 +128,10 @@ named by the `PRIME_AGENT_CODING_AGENT_DIR` environment variable when set.
 ## Telemetry
 
 Emission is best-effort and never raises; properties are primitives only.
+The host emits both events through the kernel telemetry bridge's validation;
+a telemetry-opted-out session emits nothing.
 
-- `computer_use_session_started` — `{platform}`, once per process on the
+- `computer_use_session_started` — `{platform}`, once per session on the
   first `get_state()` call (`emit=True`).
 - `computer_use_action` — `{action, outcome, duration_ms}` per action.
   `action` is one of `click`, `drag`, `scroll`, `press_key`, `type_text`,
@@ -137,13 +141,46 @@ Emission is best-effort and never raises; properties are primitives only.
 
 ## Platforms
 
-`backend()` resolves, in order: `"mac"` on macOS; `"wayland"` under a niri
-session (`WAYLAND_DISPLAY` set and `NIRI_SOCKET` naming a live socket);
-`"linux"` (X11) when `xdotool` is on PATH; otherwise `None`, in which case
-API calls raise `TRANSPORT_ERROR` ("computer use backend unavailable:
-\<reason\>"). The Wayland check runs before the X11 one because a niri
-session usually also exports an XWayland `DISPLAY` that sees only XWayland
-clients.
+The host picks the backend on every call, in order: `"mac"` on macOS;
+`"wayland"` under a niri session (`WAYLAND_DISPLAY` set and `NIRI_SOCKET`
+naming a live socket); `"linux"` (X11) when `xdotool` is on PATH; otherwise
+`None`, in which case the action calls raise `TRANSPORT_ERROR` ("computer use
+backend unavailable: \<reason\>"). The Wayland check runs before the X11 one
+because a niri session usually also exports an XWayland `DISPLAY` that sees
+only XWayland clients. Nothing is installed into the kernel for any backend:
+the host links the platform APIs itself (`crates/pa-computer-use`). Under the
+opt-in OS sandbox computer use is not confined by it: the skill's own gates
+(allowlist, deny-list, locked screen, grants, secure fields) govern it.
+
+### macOS
+
+| Piece | Source | Notes |
+|---|---|---|
+| Apps | `NSWorkspace` | The running regular (Dock) apps. A display name resolves through Spotlight (`mdfind`, never launching; several installed bundles with the name raise `AMBIGUOUS_APP`); a path through its bundle. Binding a stopped app runs `open -g -b <bundle id>` and waits up to 15 s for it. |
+| AX text | Accessibility API (HIServices) | The focused window's tree; every read carries a per-reference messaging timeout (1.5 s, cut to the time left in the walk) so a hung app cannot stall it. The window rect comes from `AXPosition`/`AXSize`, else from the window server by the window's `CGWindowID`. |
+| Secure fields | `AXTextField` / `AXSecureTextField` | Their value is never read; a text field whose subrole cannot be read is treated as secure. Typing and pastes read the live focus and refuse a secure or unverifiable one. |
+| Element actions | AX | `click(i)` presses an element exposing `AXPress`, otherwise clicks its center; `set_value` writes `AXValue`; `select_text` writes `AXSelectedTextRange`. |
+| Input | `CGEvent` posted to the app's pid | Never the global event stream. Scrolling is in pixels (800 per page); text is typed in events of at most two UTF-16 units, never splitting a surrogate pair. |
+| Screenshots | `screencapture -x -o -l <CGWindowID>` | Scoped to the bound window, so other windows never appear; refused when the window id cannot be read. Needs the Screen Recording grant. |
+| OCR | Vision (`VNRecognizeTextRequest`) | Over a fresh window capture. |
+| Paste | `NSPasteboard` + cmd+v | Every pasteboard type is snapshotted and restored, unless the pasteboard changed during the paste; a failed snapshot aborts before anything is written. |
+| Locked screen | `CGSessionCopyCurrentDictionary` | `CGSSessionScreenIsLocked`; no readable session dictionary counts as locked. |
+| Grants | `AXIsProcessTrustedWithOptions`, `CGPreflightScreenCaptureAccess` | Both read without prompting. |
+
+### Linux X11
+
+| Piece | Source | Notes |
+|---|---|---|
+| Apps and windows | `xwininfo -root -tree` | The app identity is the window's `WM_CLASS` (the allowlist key); `App.pid` carries the bound window id. No launch: a spec without a window raises `APP_NOT_RUNNING`. |
+| AX text | the window's X11 subtree | Every element has role `window` with its `WM_CLASS` as subrole and absolute positions; X11 has no widget tree below client windows and no secure-input role. |
+| Input | `xdotool --window` | Synthetic keys to the window; a pointer moved into the window then an XTest click. |
+| Screenshots | `maim` (else `scrot`) | Into the same hardened directory. |
+| Locked screen | logind `LockedHint` (via `loginctl`) | An unreadable session counts as locked. |
+
+`paste`, `set_value`, `select_text`, `perform_secondary_action`, `activate`,
+`is_frontmost` and `get_text_regions` raise `ACTION_UNSUPPORTED` naming the
+gap on X11. `permissions_status()` reports both grants `unknown` with a note
+naming the tools the backend needs.
 
 ### Wayland (niri)
 
