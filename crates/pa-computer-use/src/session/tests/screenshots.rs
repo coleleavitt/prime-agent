@@ -220,6 +220,24 @@ fn text_regions_scale_to_the_capture_and_carry_its_path() {
 }
 
 #[test]
+fn recognition_failures_are_transport_errors_and_no_text_is_no_regions() {
+    let env = Env::new();
+    let app = bound(&env);
+    assert_eq!(
+        call(&env, &app, AppCall::GetTextRegions).unwrap()["regions"],
+        json!([])
+    );
+    env.fake().recognize_error = Some("x".repeat(500));
+    assert_eq!(
+        call(&env, &app, AppCall::GetTextRegions).unwrap_err(),
+        crate::error::transport(format!(
+            "vision text recognition failed: {}",
+            "x".repeat(200)
+        ))
+    );
+}
+
+#[test]
 fn coordinates_round_half_to_even_like_python() {
     let env = Env::new();
     env.fake().window_rect = Some(Rect::new(100.5, 50.5, 400.5, 299.5));

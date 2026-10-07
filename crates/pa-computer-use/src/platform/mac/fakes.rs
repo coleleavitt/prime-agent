@@ -269,6 +269,7 @@ pub(crate) struct DesktopState {
     pub trusted: Option<bool>,
     pub screen_capture: Option<bool>,
     pub windows: Option<Vec<(i64, Rect)>>,
+    pub window_reads: usize,
     pub posted: Vec<(i64, Vec<MacEvent>)>,
     pub post_error: Option<PostError>,
 }
@@ -336,7 +337,9 @@ impl Desktop for FakeDesktop {
     }
 
     fn on_screen_windows(&self) -> Option<Vec<(i64, Rect)>> {
-        self.state().windows.clone()
+        let mut state = self.state();
+        state.window_reads += 1;
+        state.windows.clone()
     }
 
     fn post(&self, pid: i64, events: &[MacEvent]) -> Result<(), PostError> {

@@ -123,6 +123,8 @@ pub(crate) struct FakeState {
     /// Runs during a capture (a concurrent re-observe).
     pub during_capture: Option<fn(&mut FakeState)>,
     pub recognized: Vec<RecognizedText>,
+    /// A recognition failure's reason.
+    pub recognize_error: Option<String>,
     pub clipboard_saved: Option<ClipboardSnapshot>,
     pub clipboard_holds: bool,
     /// Served change counts, in order (the last repeats).
@@ -180,6 +182,7 @@ impl Default for FakeState {
             screenshot_error: None,
             during_capture: None,
             recognized: Vec::new(),
+            recognize_error: None,
             clipboard_saved: Some(vec![(
                 "public.utf8-plain-text".to_string(),
                 b"saved".to_vec(),
@@ -346,7 +349,11 @@ impl Clipboard for FakePlatform {
 
 impl TextRecognizer for FakePlatform {
     fn recognize(&self, _path: &str) -> std::result::Result<Vec<RecognizedText>, String> {
-        Ok(self.state().recognized.clone())
+        let state = self.state();
+        match &state.recognize_error {
+            Some(reason) => Err(reason.clone()),
+            None => Ok(state.recognized.clone()),
+        }
     }
 }
 

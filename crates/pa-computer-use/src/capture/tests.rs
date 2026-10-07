@@ -46,6 +46,15 @@ fn outside_home(tmp: &Path) -> CaptureDir {
 }
 
 #[test]
+fn captures_live_under_the_agent_dirs_tmp() {
+    let agent_dir = Path::new("/srv/agent");
+    assert_eq!(
+        CaptureDir::under_agent_dir(agent_dir).path(),
+        Path::new("/srv/agent/tmp/computer-use")
+    );
+}
+
+#[test]
 fn the_capture_dir_and_the_png_are_private() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = outside_home(tmp.path());

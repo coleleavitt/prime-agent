@@ -138,6 +138,45 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn the_wire_codes_are_the_skills_thirteen() {
+        let codes = [
+            ErrorCode::AppNotAllowed,
+            ErrorCode::PermissionsNotGranted,
+            ErrorCode::PermissionsPending,
+            ErrorCode::ScreenLocked,
+            ErrorCode::UserStopped,
+            ErrorCode::ElementStale,
+            ErrorCode::AmbiguousApp,
+            ErrorCode::AppNotRunning,
+            ErrorCode::AppLaunchFailed,
+            ErrorCode::ActionUnsupported,
+            ErrorCode::InjectionFailed,
+            ErrorCode::TransportError,
+            ErrorCode::InvalidArgument,
+        ]
+        .map(ErrorCode::as_str);
+        // The client's `errors.py` table: the same names, in its order.
+        assert_eq!(
+            codes,
+            [
+                "APP_NOT_ALLOWED",
+                "PERMISSIONS_NOT_GRANTED",
+                "PERMISSIONS_PENDING",
+                "SCREEN_LOCKED",
+                "USER_STOPPED",
+                "ELEMENT_STALE",
+                "AMBIGUOUS_APP",
+                "APP_NOT_RUNNING",
+                "APP_LAUNCH_FAILED",
+                "ACTION_UNSUPPORTED",
+                "INJECTION_FAILED",
+                "TRANSPORT_ERROR",
+                "INVALID_ARGUMENT",
+            ]
+        );
+    }
+
+    #[test]
     fn the_wire_form_keeps_absent_and_empty_details_apart() {
         let bare = ComputerUseError::new(ErrorCode::ElementStale, "index 5 is gone");
         assert_eq!(

@@ -729,6 +729,9 @@ where
 
     /// Every character through its own keysym (a newline presses Return).
     fn type_text(&self, window_id: Target, text: &str) -> Result<()> {
+        if text.is_empty() {
+            return Ok(());
+        }
         let strokes = text
             .chars()
             .map(|character| keysym_for_char(character).map(KeyStroke::plain))

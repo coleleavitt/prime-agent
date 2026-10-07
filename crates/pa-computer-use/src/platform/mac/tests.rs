@@ -168,6 +168,59 @@ fn the_window_server_supplies_a_missing_rect_by_window_id() {
 }
 
 #[test]
+fn without_a_window_id_or_a_readable_window_list_there_is_no_rect() {
+    let (app, window, _) = main_window();
+    window.set("AXPosition", Ok(AxValue::Null));
+    window.set("_AXWindowID", Ok(AxValue::Null));
+    let world = world_with(FakeAx::with_app(4242, app));
+    world.desktop.state().windows = Some(vec![(7, Rect::new(1.0, 2.0, 3.0, 4.0))]);
+    assert_eq!(world.platform.observe(4242).unwrap().window_rect, None);
+    assert_eq!(world.desktop.state().window_reads, 0);
+    window.set("_AXWindowID", Ok(AxValue::Integer(7)));
+    world.desktop.state().windows = None;
+    let observation = world.platform.observe(4242).unwrap();
+    assert_eq!(
+        (observation.window_rect, observation.window_id),
+        (None, Some(7))
+    );
+}
+
+#[test]
+fn an_observation_cut_by_the_element_cap_is_marked_truncated() {
+    let wide: Vec<Node> = (0..1600)
+        .map(|index| Node::new(100 + index).text("AXRole", "AXStaticText"))
+        .collect();
+    let (app, window, _) = main_window();
+    window.set("AXChildren", Ok(AxValue::Elements(wide)));
+    let observation = over(app).0.observe(4242, |_| None);
+    assert_eq!(
+        (observation.refs.len(), observation.truncated),
+        (MAX_ELEMENTS, true)
+    );
+}
+
+#[test]
+fn every_described_string_and_action_name_is_capped() {
+    let long = "x".repeat(5000);
+    let element = Node::new(5)
+        .actions(Ok(vec![long.clone(), "AXPress".to_string()]))
+        .otherwise(Ok(AxValue::Text(long)));
+    let described = over(Node::new(1)).0.describe(&element, None);
+    let capped = format!("{}…", "x".repeat(2000));
+    for text in [
+        &described.role,
+        &described.subrole,
+        &described.title,
+        &described.value,
+        &described.description,
+        &described.placeholder,
+    ] {
+        assert_eq!(text.as_deref(), Some(capped.as_str()));
+    }
+    assert_eq!(described.actions, [capped, "AXPress".to_string()]);
+}
+
+#[test]
 fn the_walk_stops_at_the_deadline_without_reading() {
     let root = Node::new(5).children(vec![Node::new(6)]);
     let (accessibility, ax) = over(Node::new(1));
@@ -627,6 +680,14 @@ fn a_failed_event_is_injection_failed_naming_the_action() {
                 .with_details(json!({"pid": 123}))
         );
     }
+    world.desktop.state().post_error = Some(PostError("e".repeat(500)));
+    assert_eq!(
+        platform
+            .click(123, (1.0, 2.0), MouseButton::Left, 1)
+            .unwrap_err()
+            .message,
+        format!("click failed: {}", "e".repeat(200))
+    );
 }
 
 // --- screencapture -----------------------------------------------------------------

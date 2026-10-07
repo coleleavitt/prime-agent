@@ -646,6 +646,14 @@ fn a_focus_that_does_not_land_refuses_input() {
 }
 
 #[test]
+fn empty_text_types_nothing_and_never_moves_focus() {
+    let world = world();
+    world.platform.type_text(30, "").unwrap();
+    assert!(world.input.calls().is_empty());
+    assert!(world.niri.actions().is_empty());
+}
+
+#[test]
 fn chords_and_text_become_keystrokes() {
     let world = world();
     for chord in ["cmd+shift+s", "ctrl+alt+Delete", "PageDown", "ctrl+."] {

@@ -755,9 +755,19 @@ mod tests {
             "{:?}",
             regions[3]
         );
+        // Truncation follows the sort: the 400 kept are the top-most ones.
+        #[allow(clippy::cast_precision_loss)] // small indices
         let many: Vec<RecognizedText> = (0..450)
-            .map(|index| raw(&index.to_string(), (0.0, 0.5, 0.1, 0.1)))
+            .map(|index| {
+                raw(
+                    &index.to_string(),
+                    (0.0, f64::from(index) / 1000.0, 0.0, 0.0),
+                )
+            })
             .collect();
-        assert_eq!(text_regions(many).len(), 400);
+        let kept = text_regions(many);
+        assert_eq!(kept.len(), 400);
+        assert_eq!((kept[0].0.as_str(), kept[399].0.as_str()), ("449", "50"));
+        assert!(text_regions(Vec::new()).is_empty());
     }
 }
