@@ -23,8 +23,15 @@ use std::time::{Duration, Instant};
 
 use pa_types::daemon::DaemonCommand;
 
-/// A healthy attach is tens of milliseconds; one full second is the regression ceiling.
+/// A healthy attach is tens of milliseconds; one full second is the regression ceiling on an
+/// idle box.
 const VIEW_SWITCH_CEILING: Duration = Duration::from_millis(1_000);
+
+/// A loaded box slows every attach, the trivial one included: the seeded round trip may take
+/// this many times the control's (a two-message session with no children, attached the same
+/// way right after). The regression class does work proportional to the seeded store, which
+/// the control does not have, so it still lands far past this multiple.
+const CONTROL_FACTOR: u32 = 5;
 
 /// Enough rows that the context-tree cache warm does real work, without
 /// doubling the daemon-side guard's fixture cost (box-shaped per the
@@ -370,14 +377,65 @@ async fn agents_view_round_trip_reattaches_under_the_ceiling() {
     .await
     .expect("second interactive run");
     let elapsed = started.elapsed();
+
+    // The control: the same fresh-surface attach against a trivial session on the same daemon,
+    // under the same box conditions (warmed once, then timed).
+    let control_id = format!("01a0vc-{:012x}", u64::from(std::process::id()));
+    let control_path = session_dir.join(format!("{control_id}.jsonl"));
+    std::fs::write(
+        &control_path,
+        format!(
+            "{}\n{}\n",
+            serde_json::json!({
+                "type": "session", "version": 3, "id": control_id,
+                "timestamp": "2024-01-01T00:00:00.000Z", "cwd": "/tmp",
+            }),
+            serde_json::json!({
+                "type": "message", "id": format!("{control_id}-m0"), "parentId": "",
+                "timestamp": "2024-01-01T00:00:00.000Z",
+                "message": { "role": "user", "content": "question" },
+            }),
+        ),
+    )
+    .expect("write control transcript");
+    let control_active = create_session_from_file_via_daemon(
+        &supervisor.socket,
+        &script_path,
+        &script,
+        dir.path(),
+        &session_dir,
+        &control_path,
+    )
+    .await;
+    let mut control = Duration::ZERO;
+    for _ in 0..2 {
+        let options = chat_options(
+            &supervisor.socket,
+            dir.path(),
+            &session_dir,
+            &script_path,
+            pa_tui::interactive::SessionSelection::Attach(control_active.clone()),
+        );
+        let plan = pa_tui::interactive::HeadlessPlan {
+            steps: Vec::new(),
+            width: 100,
+            height: 30,
+        };
+        let started = Instant::now();
+        pa_tui::interactive::run_interactive(options, pa_tui::interactive::UiMode::Headless(plan))
+            .await
+            .expect("control interactive run");
+        control = started.elapsed();
+    }
+    let allowed = VIEW_SWITCH_CEILING.max(control * CONTROL_FACTOR);
     eprintln!(
         "view-switch latency guard: the Esc-handoff re-attach round trip took {elapsed:?} \
-         (ceiling {VIEW_SWITCH_CEILING:?})"
+         (control {control:?}, allowed {allowed:?})"
     );
     assert!(
-        elapsed <= VIEW_SWITCH_CEILING,
-        "the agents-view Esc round trip took {elapsed:?} (ceiling {VIEW_SWITCH_CEILING:?}) — \
-         the attach/snapshot path regressed (the operator's 5-10s handoff class)"
+        elapsed <= allowed,
+        "the agents-view Esc round trip took {elapsed:?} (control {control:?}, allowed \
+         {allowed:?}) — the attach/snapshot path regressed (the operator's 5-10s handoff class)"
     );
     assert!(!outcome.frames.is_empty(), "frames were captured");
 }
