@@ -548,10 +548,22 @@ fn a_jpeg_preview_becomes_a_png_kitty_accepts() {
     );
 }
 
+/// The settle wake is one process-wide `notify_one` permit (the product has one session loop
+/// awaiting it). Two tests awaiting it at once steal each other's permit, and the robbed test
+/// sleeps out its whole timeout; every test that awaits [`payload_ready`] holds this lock.
+static PAYLOAD_READY_WAITER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn payload_ready_waiter() -> std::sync::MutexGuard<'static, ()> {
+    PAYLOAD_READY_WAITER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// The process source hands PNG through untouched and transcodes a JPEG
 /// off the paint path, waking the session loop when it settles.
 #[test]
 fn the_global_source_prepares_jpeg_off_the_paint_path() {
+    let _waiter = payload_ready_waiter();
     let png_bytes = encode_png_rgb(&[9, 9, 9], 1, 1);
     let png = PanelImage::new(
         &base64::engine::general_purpose::STANDARD.encode(&png_bytes),
@@ -1002,6 +1014,7 @@ fn an_rgba_payload_transmits_as_raw_pixels() {
 /// and hands iTerm2 the GIF itself but a PNG for the WebP.
 #[test]
 fn the_global_source_prepares_gif_and_webp_off_the_paint_path() {
+    let _waiter = payload_ready_waiter();
     let gif_data = fixture(include_bytes!("fixtures/split-32x16-animated.gif"));
     let gif = PanelImage::new(&gif_data, "image/gif", dims(32, 16));
     let webp = PanelImage::new(
