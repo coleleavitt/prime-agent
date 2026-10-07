@@ -124,6 +124,7 @@ impl Script {
         self.lock().files.push(path.to_string());
     }
 
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))] // the niri detection tests
     pub(crate) fn add_socket(&self, path: &str) {
         self.lock().sockets.push(path.to_string());
     }

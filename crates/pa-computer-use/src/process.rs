@@ -81,6 +81,7 @@ pub(crate) fn run_tool(
 }
 
 /// Resolve one tool: its absolute candidate when that file exists, else `PATH`.
+#[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))] // the Linux backends' tools
 pub(crate) fn optional_tool(
     tools: &dyn Tools,
     name: &str,

@@ -84,6 +84,7 @@ impl AppSpec {
     }
 
     /// A plain string spec (the guard re-resolves a bound app id with one).
+    #[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))] // the X11 guard
     pub(crate) fn text(value: &str) -> Self {
         Self {
             shape: SpecShape::Text(value.to_string()),

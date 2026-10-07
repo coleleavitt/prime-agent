@@ -19,6 +19,8 @@ use crate::spec::AppSpec;
 
 #[cfg(any(target_os = "linux", all(test, unix)))]
 mod logind;
+#[cfg(any(target_os = "macos", all(test, unix)))]
+pub(crate) mod mac;
 #[cfg(any(target_os = "linux", all(test, unix)))]
 pub(crate) mod wayland;
 #[cfg(any(target_os = "linux", all(test, unix)))]
@@ -119,6 +121,8 @@ pub(crate) enum Discovery<'a> {
     // Only the macOS backend (and the test double) discovers this way.
     #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
     Workspace(&'a dyn Workspace),
+    // Only the Linux backends (and the tests) discover this way.
+    #[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
     Windows(&'a dyn WindowDirectory),
 }
 

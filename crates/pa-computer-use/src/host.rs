@@ -380,10 +380,17 @@ impl Backends {
         let context = Arc::clone(context);
         let agent_dir = &self.agent_dir;
         match kind {
-            // The macOS backend lands in the following commit.
             PlatformKind::Mac => {
-                let _ = (agent_dir, context);
-                None
+                #[cfg(target_os = "macos")]
+                return Some(Box::new(Session::new(
+                    crate::platform::mac::native::platform(agent_dir),
+                    context,
+                )));
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let _ = (agent_dir, context);
+                    None
+                }
             }
             PlatformKind::Wayland => {
                 #[cfg(target_os = "linux")]
