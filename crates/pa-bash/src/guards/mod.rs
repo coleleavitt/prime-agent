@@ -56,16 +56,3 @@ pub(crate) fn check(
             .map(str::to_string),
     })
 }
-
-/// Whether a guard's port is complete (the corpus harness checks it).
-#[cfg(test)]
-pub(crate) fn ported(guard: GuardKind) -> bool {
-    match guard {
-        GuardKind::DestructiveGit => destructive_git::PORTED,
-        GuardKind::DestructiveChmod => destructive_chmod::PORTED,
-        GuardKind::ForcePush => force_push::PORTED,
-        GuardKind::SecretEcho => secret_echo::PORTED,
-        GuardKind::PipeToShell => pipe_to_shell::PORTED,
-        GuardKind::Sudo => sudo::PORTED,
-    }
-}

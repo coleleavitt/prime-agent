@@ -9,6 +9,7 @@
 use std::sync::LazyLock;
 
 use crate::syntax::chars::is_space;
+use crate::syntax::lines::{LineIndex, LineKey};
 use crate::syntax::pyre::{Haystack, PyRegex};
 
 /// True when the `#` at `index` opens a comment: the shell starts a comment
@@ -172,38 +173,24 @@ fn heredoc_delimiter(command: &[char], start: usize) -> Option<HeredocDelimiter>
     })
 }
 
-fn find_from(text: &[char], needle: char, from: usize) -> Option<usize> {
-    text.get(from..)?
-        .iter()
-        .position(|ch| *ch == needle)
-        .map(|offset| from + offset)
-}
-
 /// Just past the line ending a heredoc body whose operator line ends at the
-/// newline `line_end`, or `None` when no line is exactly the delimiter (tab
-/// stripped for `<<-`).
+/// newline `line_end`, or `None` when no later line is exactly the delimiter
+/// (tab stripped for `<<-`).
 fn heredoc_body_end(
-    command: &[char],
+    lines: &LineIndex<'_>,
     line_end: usize,
     delimiter: &[char],
     strip_tabs: bool,
 ) -> Option<usize> {
-    let mut pos = find_from(command, '\n', line_end);
-    while let Some(at) = pos {
-        let line_stop = find_from(command, '\n', at + 1);
-        let line = &command[at + 1..line_stop.unwrap_or(command.len())];
-        let line = if strip_tabs {
-            let skip = line.iter().take_while(|ch| **ch == '\t').count();
-            &line[skip..]
-        } else {
-            line
-        };
-        if line == delimiter {
-            return Some(line_stop.unwrap_or(command.len()));
-        }
-        pos = line_stop;
-    }
-    None
+    let key = if strip_tabs {
+        LineKey::LeadingTabsStripped
+    } else {
+        LineKey::Exact
+    };
+    let delimiter: String = delimiter.iter().collect();
+    lines
+        .first_line_from(line_end + 1, key, &delimiter)
+        .map(|start| lines.line_end(start))
 }
 
 /// Blank heredoc data: an unquoted delimiter keeps substitutions live (they
@@ -248,6 +235,7 @@ static STATIC_REDIRECT_TARGET: LazyLock<PyRegex> =
 )]
 pub(super) fn mask_shell_redirections(command: &[char]) -> Vec<char> {
     let haystack = Haystack::from_chars(command);
+    let lines = LineIndex::new(command);
     let mut chars = command.to_vec();
     let mut quote: Option<char> = None;
     let mut comment = false;
@@ -290,9 +278,9 @@ pub(super) fn mask_shell_redirections(command: &[char]) -> Vec<char> {
                             heredoc_delimiter(command, if tabbed { i + 1 } else { i })
                         {
                             chars[heredoc.word_start..heredoc.word_end].fill(' ');
-                            if let Some(line_end) = find_from(command, '\n', heredoc.word_end) {
+                            if let Some(line_end) = lines.newline_from(heredoc.word_end) {
                                 if let Some(body_end) =
-                                    heredoc_body_end(command, line_end, &heredoc.delimiter, tabbed)
+                                    heredoc_body_end(&lines, line_end, &heredoc.delimiter, tabbed)
                                 {
                                     mask_heredoc_body(
                                         &mut chars,

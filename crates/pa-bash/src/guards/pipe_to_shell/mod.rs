@@ -26,10 +26,6 @@ pub(crate) const LATE_BYPASS_WARNING: Option<&str> = Some(
      the pipe-to-shell guard only honors it when the kernel is started with it set.",
 );
 
-/// Whether this guard's port is complete.
-#[cfg(test)]
-pub(crate) const PORTED: bool = true;
-
 /// Refuse a download a shell interpreter would run.
 ///
 /// # Errors

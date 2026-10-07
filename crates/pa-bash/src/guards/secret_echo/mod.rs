@@ -49,10 +49,6 @@ pub(crate) const LATE_BYPASS_WARNING: Option<&str> = Some(
      the secret-echo guard only honors it when the kernel is started with it set.",
 );
 
-/// Whether this guard's port is complete.
-#[cfg(test)]
-pub(crate) const PORTED: bool = true;
-
 /// What a refused command would print.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Violation {

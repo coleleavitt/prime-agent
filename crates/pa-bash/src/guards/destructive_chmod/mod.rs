@@ -26,6 +26,7 @@ mod tests;
 use crate::context::GuardContext;
 use crate::script::Script;
 
+use crate::syntax::lines::LineIndex;
 use crate::syntax::mention::Mention;
 use invocations::{
     env_option_values, find_invocations, hash_registered_command_names, operand_words,
@@ -50,10 +51,6 @@ use wrappers::{process_substitution_feeds_wrapper, shell_wrapper_reads_pipe};
 pub(crate) const LATE_BYPASS_WARNING: Option<&str> = Some(
     "prime-agent bash: PI_BASH_ALLOW_DESTRUCTIVE_CHMOD appeared after kernel start and is ignored; the recursive chmod/chown guard only honors it when the kernel is started with it set.",
 );
-
-/// Whether this guard's port is complete.
-#[cfg(test)]
-pub(crate) const PORTED: bool = true;
 
 /// Heredoc bodies scanned as shell code recurse one guard pass per wrapper
 /// level; deeper hostile nesting refuses.
@@ -314,11 +311,12 @@ impl Chmod<'_> {
         heredoc_depth: usize,
     ) -> Result<(), String> {
         let substitutions = substitution_spans(raw);
+        let lines = LineIndex::new(raw);
         for operator in redirect_operators(raw) {
             if operator.is_here_string(raw) || !operator.is_heredoc(raw) {
                 continue;
             }
-            let heredoc = locate_heredoc(raw, operator);
+            let heredoc = locate_heredoc(raw, &lines, operator);
             let (Some(_), Some(body_end)) = (&heredoc.delimiter, heredoc.body_end) else {
                 continue;
             };

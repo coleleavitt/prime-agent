@@ -8,6 +8,7 @@ use super::patterns::{
     opens_comment_after, redirect_operator_at, static_target_end, RedirectOperator,
 };
 use super::pyos::is_space;
+use crate::syntax::lines::{LineIndex, LineKey};
 use crate::syntax::pyre::Haystack;
 
 /// Collapse unquoted backslash-newline continuations between words into two
@@ -76,7 +77,11 @@ pub(super) struct Heredoc {
     pub body_end: Option<usize>,
 }
 
-pub(super) fn locate_heredoc(command: &[char], operator: RedirectOperator) -> Heredoc {
+pub(super) fn locate_heredoc(
+    command: &[char],
+    lines: &LineIndex<'_>,
+    operator: RedirectOperator,
+) -> Heredoc {
     let n = command.len();
     let tabs = command.get(operator.end) == Some(&'-');
     let mut j = operator.end + usize::from(tabs);
@@ -105,28 +110,34 @@ pub(super) fn locate_heredoc(command: &[char], operator: RedirectOperator) -> He
             body_end: None,
         };
     }
-    let mut pos = j;
-    while pos < n {
-        let line_end = command[pos..]
-            .iter()
-            .position(|c| *c == '\n')
-            .map(|offset| pos + offset);
-        let mut line = &command[pos..line_end.unwrap_or(n)];
-        if tabs {
-            let skip = line.iter().take_while(|c| **c == '\t').count();
-            line = &line[skip..];
-        }
-        if line.iter().copied().eq(delimiter.chars()) {
-            return Heredoc {
-                delimiter: Some(delimiter),
-                delimiter_end: j,
-                body_end: Some(line_end.unwrap_or(n)),
-            };
-        }
-        match line_end {
-            Some(end) => pos = end + 1,
-            None => break,
-        }
+    // The rest of the opener's line is the first candidate, then every later
+    // line (looked up in the shared index: a line of thousands of openers
+    // must not rescan the text once per opener).
+    let first_end = lines.line_end(j);
+    let first = &command[j.min(first_end)..first_end];
+    let first = if tabs {
+        &first[first.iter().take_while(|c| **c == '\t').count()..]
+    } else {
+        first
+    };
+    if first.iter().copied().eq(delimiter.chars()) {
+        return Heredoc {
+            delimiter: Some(delimiter),
+            delimiter_end: j,
+            body_end: Some(first_end),
+        };
+    }
+    let key = if tabs {
+        LineKey::LeadingTabsStripped
+    } else {
+        LineKey::Exact
+    };
+    if let Some(start) = lines.first_line_from(first_end + 1, key, &delimiter) {
+        return Heredoc {
+            delimiter: Some(delimiter),
+            delimiter_end: j,
+            body_end: Some(lines.line_end(start)),
+        };
     }
     Heredoc {
         delimiter: Some(delimiter),
@@ -155,6 +166,7 @@ pub(super) fn mask_shell_redirections(command: &[char], depth: usize) -> Result<
         return Err(messages::nesting());
     }
     let haystack = Haystack::from_chars(command);
+    let lines = LineIndex::new(command);
     let mut chars = command.to_vec();
     let n = chars.len();
     let mut quote: Option<char> = None;
@@ -191,7 +203,7 @@ pub(super) fn mask_shell_redirections(command: &[char], depth: usize) -> Result<
                         continue;
                     }
                     if operator.is_heredoc(command) {
-                        let heredoc = locate_heredoc(command, operator);
+                        let heredoc = locate_heredoc(command, &lines, operator);
                         for slot in &mut chars[operator.start..heredoc.delimiter_end.min(n)] {
                             *slot = ' ';
                         }

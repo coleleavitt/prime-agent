@@ -1,12 +1,11 @@
 //! The guard parity harness: replays `tests/corpus/guards.jsonl` (every input
 //! the Python guard suites fed the guards, judged by all six Python guards in a
-//! neutral context; see `tests/corpus/capture.py`) against the Rust guards in
-//! the same neutral context, and requires the same verdict, error class and
-//! message for every input and every ported guard.
+//! neutral context, captured from the Python guards before the port deleted
+//! them) against the Rust guards in the same neutral context, and requires the
+//! same verdict, error class and message for every input and every guard.
 //!
-//! `PA_BASH_CORPUS_GUARDS=sudo,force_push` checks the named guards whether or
-//! not they are marked ported (for work in progress); `PA_BASH_CORPUS_LIMIT`
-//! bounds how many mismatches are printed per guard (default 20).
+//! `PA_BASH_CORPUS_LIMIT` bounds how many mismatches are printed per guard
+//! (default 20).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -104,23 +103,6 @@ fn neutral() -> Neutral {
     }
 }
 
-fn selected() -> Vec<GuardKind> {
-    match std::env::var("PA_BASH_CORPUS_GUARDS") {
-        Ok(names) if !names.trim().is_empty() => GuardKind::ALL
-            .into_iter()
-            .filter(|guard| {
-                names
-                    .split(',')
-                    .any(|name| name.trim() == corpus_key(*guard))
-            })
-            .collect(),
-        Ok(_) | Err(_) => GuardKind::ALL
-            .into_iter()
-            .filter(|guard| super::ported(*guard))
-            .collect(),
-    }
-}
-
 fn shorten(text: &str, limit: usize) -> String {
     if text.chars().count() <= limit {
         return format!("{text:?}");
@@ -130,7 +112,7 @@ fn shorten(text: &str, limit: usize) -> String {
 }
 
 #[test]
-fn every_ported_guard_matches_the_python_verdicts() {
+fn every_guard_matches_the_python_verdicts() {
     let (records, messages) = load();
     let neutral = neutral();
     let limit: usize = std::env::var("PA_BASH_CORPUS_LIMIT")
@@ -139,7 +121,7 @@ fn every_ported_guard_matches_the_python_verdicts() {
         .unwrap_or(20);
     let mut report = String::new();
     let mut total = 0usize;
-    for guard in selected() {
+    for guard in GuardKind::ALL {
         let key = corpus_key(guard);
         let mut mismatches = 0usize;
         for record in &records {
@@ -212,4 +194,45 @@ fn every_guard_judges_every_corpus_input_without_panicking() {
             let _ = super::check(guard, &script, &neutral.context);
         }
     }
+}
+
+/// A named input family, its builder, and the small size measured.
+type Shape = (&'static str, fn(usize) -> String, usize);
+
+/// The fastest of three runs of `guard` on `text`.
+fn best_time(guard: GuardKind, text: &str, context: &GuardContext) -> f64 {
+    let script = Script::bare(text);
+    (0..3)
+        .map(|_| {
+            let start = std::time::Instant::now();
+            let _ = super::check(guard, &script, context);
+            start.elapsed().as_secs_f64()
+        })
+        .fold(f64::MAX, f64::min)
+}
+
+/// Here-document shapes the Python guards scanned in linear time (their
+/// cost-lock tests): a line of thousands of openers, and thousands of
+/// openers whose delimiter never comes. Eight times the input must cost
+/// about eight times the time, not sixty-four (the ratio bound is loose so
+/// scheduling noise cannot trip it; a quadratic scan measured 45-70).
+#[test]
+fn heredoc_shapes_scan_in_linear_time() {
+    let neutral = neutral();
+    let shapes: [Shape; 2] = [
+        ("openers", |n| format!("cat {}body", "<<A ".repeat(n)), 1000),
+        ("unterminated", |n| "cat <<'EOF'\nenv\n".repeat(n), 500),
+    ];
+    let mut slow = Vec::new();
+    for (name, make, n) in shapes {
+        for guard in GuardKind::ALL {
+            let small = best_time(guard, &make(n), &neutral.context);
+            let large = best_time(guard, &make(n * 8), &neutral.context);
+            let ratio = large / small.max(1e-4);
+            if ratio > 24.0 {
+                slow.push(format!("{name} {}: {ratio:.1}", corpus_key(guard)));
+            }
+        }
+    }
+    assert_eq!(slow, Vec::<String>::new());
 }

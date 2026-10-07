@@ -4,5 +4,6 @@
 //! expressions.
 
 pub(crate) mod chars;
+pub(crate) mod lines;
 pub(crate) mod mention;
 pub(crate) mod pyre;

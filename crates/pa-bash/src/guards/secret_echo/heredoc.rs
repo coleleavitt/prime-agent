@@ -17,10 +17,19 @@ struct Declaration {
     quoted: bool,
 }
 
-fn contains(text: &[char], needle: &str) -> bool {
-    let needle: Vec<char> = needle.chars().collect();
-    text.windows(needle.len())
-        .any(|window| window == needle.as_slice())
+/// Where the first arithmetic opener in `text` ends (as an index into the
+/// slice), so "does `text[..position]` contain one" is one comparison per
+/// here-document operator instead of a rescan of the line.
+fn first_arithmetic_end(text: &[char]) -> Option<usize> {
+    ARITHMETIC_OPENS
+        .iter()
+        .filter_map(|marker| {
+            let marker: Vec<char> = marker.chars().collect();
+            text.windows(marker.len())
+                .position(|window| window == marker.as_slice())
+                .map(|at| at + marker.len())
+        })
+        .min()
 }
 
 /// The here-documents opened in `command[start..end]`. The operator is found
@@ -29,6 +38,7 @@ fn contains(text: &[char], needle: &str) -> bool {
 /// keeps its `<<` a shift.
 fn declarations(command: &[char], masked: &[char], start: usize, end: usize) -> Vec<Declaration> {
     let mut found = Vec::new();
+    let arithmetic_end = first_arithmetic_end(&command[start..end]).map(|end| start + end);
     let mut index = start;
     while index < end {
         if masked[index] != '<' {
@@ -49,9 +59,7 @@ fn declarations(command: &[char], masked: &[char], start: usize, end: usize) -> 
             }
             if position < end {
                 let words = shell_words(command, position, end, Reach::FirstWord);
-                let arithmetic = ARITHMETIC_OPENS
-                    .iter()
-                    .any(|marker| contains(&command[start..position], marker));
+                let arithmetic = arithmetic_end.is_some_and(|end| end <= position);
                 if let (Some(word), false) = (words.into_iter().next(), arithmetic) {
                     found.push(Declaration {
                         delimiter: word.text,

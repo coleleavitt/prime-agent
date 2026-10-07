@@ -25,10 +25,6 @@ pub(crate) const LATE_BYPASS_WARNING: Option<&str> = Some(
      guard only honors it when the kernel is started with it set.",
 );
 
-/// Whether this guard's port is complete.
-#[cfg(test)]
-pub(crate) const PORTED: bool = true;
-
 /// The reason phrase when the text invokes sudo/doas as a command.
 fn violation(command: &str) -> Option<scan::Violation> {
     scan::scan_text(&lexer::join_line_continuations(command), 0, false)

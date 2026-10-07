@@ -5,6 +5,8 @@
 //! so heredoc bodies, word spans and payload slices line up exactly as the
 //! scan reads them.
 
+use crate::syntax::lines::{LineIndex, LineKey};
+
 /// What kind of token a [`Word`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Kind {
@@ -42,7 +44,8 @@ pub(super) struct Word {
     /// The heredoc operator (`<<`, `<<-`, `<<<`) of a heredoc redirect.
     pub heredoc: Option<&'static str>,
     pub heredoc_delim: Option<String>,
-    pub heredoc_body: Option<String>,
+    /// The char span of the heredoc's body in the scanned text.
+    pub heredoc_body: Option<(usize, usize)>,
 }
 
 impl Word {
@@ -589,7 +592,7 @@ fn classify(words: &mut [Word]) {
 }
 
 /// Resolve heredoc delimiters and mark body words as data (not commands).
-pub(super) fn apply_heredocs(text: &str, words: &mut [Word]) {
+pub(super) fn apply_heredocs(chars: &[char], words: &mut [Word]) {
     for index in 0..words.len() {
         let word = &words[index];
         let has_delim = word
@@ -604,40 +607,52 @@ pub(super) fn apply_heredocs(text: &str, words: &mut [Word]) {
             words[index].heredoc_delim = Some(delim);
         }
     }
-    let chars: Vec<char> = text.chars().collect();
-    let find_newline = |from: usize| (from..chars.len()).find(|&i| chars[i] == '\n');
+    let lines = LineIndex::new(chars);
+    // Words lie in text order: mark each body's words through a difference
+    // array, so overlapping bodies (every opener of an unterminated run
+    // shares the rest of the text) cost one pass, not one pass each.
+    let mut data = vec![0i64; words.len() + 1];
     for index in 0..words.len() {
         let word = &words[index];
-        let Some(delim) = word.heredoc_delim.clone().filter(|delim| !delim.is_empty()) else {
+        let Some(delim) = word
+            .heredoc_delim
+            .as_deref()
+            .filter(|delim| !delim.is_empty())
+        else {
             continue;
         };
         if word.heredoc.is_none_or(|op| op == "<<<") {
             continue;
         }
-        let Some(newline) = find_newline(word.end) else {
+        let Some(newline) = lines.newline_from(word.end) else {
             continue;
         };
         let body_start = newline + 1;
-        let mut cursor = body_start;
-        let body_end = loop {
-            if cursor > chars.len() {
-                break chars.len();
-            }
-            let line_end = find_newline(cursor).unwrap_or(chars.len());
-            let line: String = chars[cursor..line_end].iter().collect();
-            if strip(&line) == delim {
-                break cursor;
-            }
-            cursor = line_end + 1;
-        };
-        words[index].heredoc_body = Some(chars[body_start..body_end].iter().collect());
-        for other in &mut *words {
-            // Only the body itself is data; the rest of the line still runs.
-            if (body_start..body_end).contains(&other.start) {
-                other.is_data = true;
-            }
+        let body_end = lines
+            .first_line_from(body_start, LineKey::Stripped, delim)
+            .unwrap_or(chars.len());
+        words[index].heredoc_body = Some((body_start, body_end));
+        let first = words.partition_point(|other| other.start < body_start);
+        let last = words.partition_point(|other| other.start < body_end);
+        if first < last {
+            data[first] += 1;
+            data[last] -= 1;
         }
     }
+    let mut open = 0;
+    for (word, change) in words.iter_mut().zip(data) {
+        open += change;
+        if open > 0 {
+            // Only the body itself is data; the rest of the line still runs.
+            word.is_data = true;
+        }
+    }
+}
+
+/// A heredoc word's body text, when it has a non-empty one.
+pub(super) fn heredoc_body(chars: &[char], word: &Word) -> Option<String> {
+    let (start, end) = word.heredoc_body?;
+    (start < end).then(|| chars[start..end].iter().collect())
 }
 
 #[cfg(test)]
@@ -656,7 +671,8 @@ mod tests {
     fn redirect_targets_and_heredoc_bodies() {
         let text = "cat <<EOF | sh\nsudo id\nEOF";
         let mut words = tokenize(text);
-        apply_heredocs(text, &mut words);
+        let chars: Vec<char> = text.chars().collect();
+        apply_heredocs(&chars, &mut words);
         let summary: Vec<(&str, Kind, bool, bool)> = words
             .iter()
             .map(|w| (w.value.as_str(), w.kind, w.starts_command, w.is_data))
@@ -673,7 +689,10 @@ mod tests {
                 ("EOF", Kind::Word, true, false),
             ]
         );
-        assert_eq!(words[1].heredoc_body.as_deref(), Some("sudo id\n"));
+        assert_eq!(
+            heredoc_body(&chars, &words[1]).as_deref(),
+            Some("sudo id\n")
+        );
     }
 
     #[test]

@@ -7,7 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use super::lexer::{
-    apply_heredocs, chars_from, is_digit, matching_paren, strip_quotes, tokenize, Kind, Word,
+    apply_heredocs, chars_from, heredoc_body, is_digit, matching_paren, strip_quotes, tokenize,
+    Kind, Word,
 };
 use super::names::{basename, word_names_sudo};
 use super::tables::{
@@ -70,7 +71,8 @@ type HashNames = BTreeMap<String, String>;
 /// when an enclosing text names sudo/doas.
 pub(super) fn scan_text(text: &str, depth: usize, inherited: bool) -> Option<Violation> {
     let mut words = tokenize(text);
-    apply_heredocs(text, &mut words);
+    let chars: Vec<char> = text.chars().collect();
+    apply_heredocs(&chars, &mut words);
     let inner = inherited || mentions_sudo(&words);
     // `hash -p pathname name` makes a later `name` run `pathname`: those names
     // scan as the command they run, and an entry the guard cannot read is
@@ -89,6 +91,7 @@ pub(super) fn scan_text(text: &str, depth: usize, inherited: bool) -> Option<Vio
     }
     let walk = Walk {
         words: &words,
+        chars: &chars,
         depth,
         inherited: inner,
     };
@@ -114,13 +117,13 @@ pub(super) fn scan_text(text: &str, depth: usize, inherited: bool) -> Option<Vio
         });
     if depth < MAX_PAYLOAD_DEPTH && feeds_runner {
         for word in &words {
-            let Some(body) = word.heredoc_body.as_deref().filter(|body| !body.is_empty()) else {
-                continue;
-            };
             if word.is_data {
                 continue;
             }
-            if let Some(violation) = scan_text(body, depth + 1, inner) {
+            let Some(body) = heredoc_body(&chars, word) else {
+                continue;
+            };
+            if let Some(violation) = scan_text(&body, depth + 1, inner) {
                 return Some(violation);
             }
         }
@@ -286,10 +289,12 @@ fn alias_body(word: &Word) -> Option<String> {
 /// aliases the body itself defines included.
 pub(super) fn body_reaches_runner(body: &str, depth: usize) -> bool {
     let mut words = tokenize(body);
-    apply_heredocs(body, &mut words);
+    let chars: Vec<char> = body.chars().collect();
+    apply_heredocs(&chars, &mut words);
     let (hash_names, _) = hash_registered_command_names(&words);
     let walk = Walk {
         words: &words,
+        chars: &chars,
         depth: 0,
         inherited: false,
     };
@@ -431,6 +436,8 @@ fn ends_segment(word: &Word) -> bool {
 /// The segment walk over one tokenized text.
 struct Walk<'w> {
     words: &'w [Word],
+    /// The scanned text, for heredoc bodies (spans into it).
+    chars: &'w [char],
     depth: usize,
     /// The enclosing text names sudo/doas.
     inherited: bool,
@@ -654,11 +661,8 @@ impl Walk<'_> {
         }
         // A heredoc body owned by a runner is a script, not data.
         following.iter().find_map(|&candidate| {
-            words[candidate]
-                .heredoc_body
-                .as_deref()
-                .filter(|body| !body.is_empty())
-                .and_then(|body| scan_text(body, self.depth + 1, self.inherited))
+            heredoc_body(self.chars, &words[candidate])
+                .and_then(|body| scan_text(&body, self.depth + 1, self.inherited))
         })
     }
 

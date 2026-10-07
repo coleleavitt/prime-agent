@@ -59,10 +59,6 @@ use words::{flattened_text, scan_word_chars};
 /// kernel start.
 pub(crate) const LATE_BYPASS_WARNING: Option<&str> = Some(messages::LATE_BYPASS_WARNING);
 
-/// Whether this guard's port is complete.
-#[cfg(test)]
-pub(crate) const PORTED: bool = true;
-
 /// Refuse a force-push whose target is protected; `Err` is the refusal.
 pub(crate) fn check(script: &Script<'_>, context: &GuardContext) -> Result<(), String> {
     check_with(script, context, PROBE_TIMEOUT)

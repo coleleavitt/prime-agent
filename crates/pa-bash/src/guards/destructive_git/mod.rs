@@ -32,10 +32,6 @@ use words::Names;
 /// The git guard has no warn-once: its late-bypass note rides in the message.
 pub(crate) const LATE_BYPASS_WARNING: Option<&str> = None;
 
-/// Whether this guard's port is complete.
-#[cfg(test)]
-pub(crate) const PORTED: bool = true;
-
 /// The probe is read-only, but a wedged git must not wedge the kernel; the
 /// parsed listing is bounded, and dirtiness past the cap still refuses.
 const PROBE_LIMITS: ProbeLimits = ProbeLimits {
