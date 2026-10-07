@@ -82,6 +82,10 @@ pub struct LoadedResources {
     pub agents_files: Vec<ContextFile>,
     pub system_prompt: Option<String>,
     pub append_system_prompt: Vec<String>,
+    /// Read-only continual harness overlays mounted from the resolved
+    /// packages (upstream #2298); their diagnostics also ride
+    /// `skill_diagnostics` for the startup resource report.
+    pub package_harness: crate::refinement::package_harness::PackageHarnessLoad,
 }
 
 /// Resource loading options (the TS `DefaultResourceLoaderOptions` surface, minus the theme
@@ -240,6 +244,15 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
         .iter()
         .filter_map(|source| resolve_prompt_input(source))
         .collect();
+
+    // Package harness overlays are mounted on every load (session build and
+    // reload): package updates and removals flow through, and nothing is
+    // ever copied into editable harness state.
+    resources.package_harness =
+        crate::refinement::package_harness::load_package_harness(&resolution.resolved.harness);
+    resources
+        .skill_diagnostics
+        .extend(resources.package_harness.diagnostics.iter().cloned());
 
     Ok(resources)
 }

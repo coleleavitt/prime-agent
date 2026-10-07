@@ -40,6 +40,12 @@ pub struct OpenAiCompletionsCompat {
     pub send_session_affinity_headers: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supports_long_cache_retention: Option<bool>,
+    /// Whether a `length` finish with no tool call means the serving layer
+    /// dropped a tool call the model started (Dynamo reports an
+    /// EOS-truncated GLM call this way), so the agent may retry once.
+    /// Agent-layer policy: the wire request never reads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_on_truncated_tool_call: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

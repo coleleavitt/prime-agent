@@ -817,6 +817,16 @@ const AGENT_SESSION_ENDED: EventRule = EventRule {
         ("refine_plan_run_count", optional(count())),
         ("artifact_present_count", optional(count())),
         ("empty_turn_retry_count", optional(count())),
+        // Dropped-tool-call retries (upstream #2530), counts only.
+        ("tool_intent_recovery_count", optional(count())),
+        // `rlm.messaging_stats()` reads (upstream #2352), counts only.
+        ("messaging_stats_read_count", optional(count())),
+        // `rlm.watch.path` registrations (upstream #2351), counts only.
+        ("path_watch_register_count", optional(count())),
+        // `/cwd` changes (upstream #2528), counts only.
+        ("cwd_change_count", optional(count())),
+        // Package harness entries mounted read-only (upstream #2298), counts only.
+        ("package_harness_entry_count", optional(count())),
     ],
 };
 
@@ -2482,6 +2492,11 @@ mod tests {
             "refine_plan_run_count",
             "artifact_present_count",
             "empty_turn_retry_count",
+            "tool_intent_recovery_count",
+            "messaging_stats_read_count",
+            "path_watch_register_count",
+            "cwd_change_count",
+            "package_harness_entry_count",
         ] {
             ended.set(key, json!(2u64));
         }

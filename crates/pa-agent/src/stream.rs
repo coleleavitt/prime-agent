@@ -152,6 +152,9 @@ pub struct StreamRequestOptions {
     /// Extra request headers (TS `SimpleStreamOptions.headers`), merged
     /// over the provider's auth-resolved headers at the adapter seam.
     pub headers: Option<std::collections::BTreeMap<String, String>>,
+    /// A per-request tool choice (the dropped-tool-call recovery turn
+    /// requires one); `None` keeps the provider default.
+    pub tool_choice: Option<pa_types::ai::RequestToolChoice>,
 }
 
 impl std::fmt::Debug for StreamRequestOptions {
@@ -167,6 +170,7 @@ impl std::fmt::Debug for StreamRequestOptions {
             .field("on_payload", &self.on_payload.is_some())
             .field("on_response", &self.on_response.is_some())
             .field("headers", &self.headers)
+            .field("tool_choice", &self.tool_choice)
             .finish()
     }
 }
@@ -184,6 +188,7 @@ impl Default for StreamRequestOptions {
             on_payload: None,
             on_response: None,
             headers: None,
+            tool_choice: None,
         }
     }
 }

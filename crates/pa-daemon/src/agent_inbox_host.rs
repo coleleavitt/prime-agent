@@ -353,6 +353,9 @@ impl AgentSessionEngine {
         let mut state = self.watch_host_state();
         state.registry = AgentWatchRegistry::default();
         state.generation += 1;
+        drop(state);
+        // The session's path watches (upstream #2351) die with it too.
+        self.path_watches.dispose();
     }
 
     /// The watch host state accessor (register/poll paths hold the lock

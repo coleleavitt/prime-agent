@@ -87,7 +87,15 @@ pub trait AutocompleteProvider: Send {
     /// Replace one command's argument completions; a default no-op for
     /// providers without argument completions.
     fn set_argument_completions(&mut self, _command: &'static str, _items: Vec<CompletionItem>) {}
+    /// Move the directory path completion browses (`/cwd`, upstream
+    /// #2528); a default no-op for providers without path completion.
+    fn set_base_dir(&mut self, _base: std::path::PathBuf) {}
 }
+
+/// Slash commands whose argument completes like an `@` reference (fuzzy,
+/// cwd-relative) but inserts without the `@` (TS `pathArgument: true`);
+/// `/cwd` offers directories only.
+const DIRECTORY_ARGUMENT_COMMANDS: &[&str] = &["cwd"];
 
 /// Slash-command context: which part of a `/command args` line the cursor is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -886,6 +894,10 @@ impl AutocompleteProvider for CombinedAutocompleteProvider {
         CombinedAutocompleteProvider::set_argument_completions(self, command, items);
     }
 
+    fn set_base_dir(&mut self, base: std::path::PathBuf) {
+        self.paths.base = base;
+    }
+
     fn get_suggestions(
         &self,
         lines: &[String],
@@ -920,6 +932,15 @@ impl AutocompleteProvider for CombinedAutocompleteProvider {
                     // (the force-triggered path completion is the file surface there).
                     SlashKind::Argument => {
                         let command = context.command_name.as_deref()?;
+                        if DIRECTORY_ARGUMENT_COMMANDS.contains(&command) {
+                            return Some(SuggestionLookup::Searching(
+                                fuzzy_file_search::spawn_with_mode(
+                                    &self.paths.base,
+                                    context.prefix.clone(),
+                                    fuzzy_file_search::SearchMode::DirectoryArgument,
+                                ),
+                            ));
+                        }
                         let items = self.arguments.get(command)?;
                         let term = context.prefix.trim().to_lowercase();
                         let matches: Vec<CompletionItem> = items

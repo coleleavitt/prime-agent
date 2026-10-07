@@ -417,6 +417,19 @@ pub enum SessionAdoption {
     RefinePlanRun,
     /// `present_artifact` showed an artifact.
     ArtifactPresented,
+    /// A reply that reported a tool call and delivered none retried once
+    /// (upstream #2530).
+    ToolIntentRecovery,
+    /// `rlm.messaging_stats()` read the session's messaging counters
+    /// (upstream #2352).
+    MessagingStatsRead,
+    /// `rlm.watch.path` registered a filesystem watch (upstream #2351).
+    PathWatchRegistered,
+    /// `/cwd` changed the session's working directory (upstream #2528).
+    CwdChanged,
+    /// One read-only package harness entry mounted at session build
+    /// (upstream #2298).
+    PackageHarnessEntry,
 }
 
 impl SessionAdoption {
@@ -429,6 +442,11 @@ impl SessionAdoption {
             SessionAdoption::RefinePreview => "refine_preview_count",
             SessionAdoption::RefinePlanRun => "refine_plan_run_count",
             SessionAdoption::ArtifactPresented => "artifact_present_count",
+            SessionAdoption::ToolIntentRecovery => "tool_intent_recovery_count",
+            SessionAdoption::MessagingStatsRead => "messaging_stats_read_count",
+            SessionAdoption::PathWatchRegistered => "path_watch_register_count",
+            SessionAdoption::CwdChanged => "cwd_change_count",
+            SessionAdoption::PackageHarnessEntry => "package_harness_entry_count",
         }
     }
 }

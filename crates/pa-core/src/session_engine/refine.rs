@@ -210,7 +210,7 @@ pub fn local_harness_state_dir(session: &SessionManager) -> PathBuf {
         .expect("session dir always yields a local harness dir")
 }
 
-/// Strip display-only `local:`/`global:` prefixes from edit ids.
+/// Strip display-only `local:`/`global:`/`package:` prefixes from edit ids.
 fn strip_display_prefixes(plan: RefinementPlan) -> RefinementPlan {
     let mut plan = plan;
     for edit in &mut plan.proposal.edits {
@@ -218,6 +218,7 @@ fn strip_display_prefixes(plan: RefinementPlan) -> RefinementPlan {
             if let Some(stripped) = id
                 .strip_prefix("local:")
                 .or_else(|| id.strip_prefix("global:"))
+                .or_else(|| id.strip_prefix("package:"))
             {
                 edit.id = Some(stripped.to_string());
             }
@@ -354,6 +355,7 @@ pub async fn execute_refinement_gated(
         global: global_scope,
         instructions: options.instructions.clone(),
         rollback_id: options.rollback_id.clone(),
+        package_state: options.package_state.clone(),
     };
     let requested_scope = if global_scope {
         HarnessScope::Global
@@ -566,6 +568,9 @@ pub struct RefineOptions {
     /// A plan approved through `refine.preview` (upstream #899): applied
     /// as previewed instead of re-planning; its scope wins over `global`.
     pub pinned_plan: Option<PreviewedRefinement>,
+    /// The session's read-only package overlay (upstream #2298): planning
+    /// sees it below the editable entries, the apply refuses to mutate it.
+    pub package_state: Option<std::sync::Arc<crate::refinement::HarnessState>>,
 }
 
 /// A planned refinement held for approval (`refine.preview`, upstream
@@ -633,6 +638,7 @@ pub async fn preview_refinement(
     let options = RefineOptions {
         global,
         instructions: instructions.clone(),
+        package_state: session.package_state.clone(),
         ..RefineOptions::default()
     };
     let inputs = refine_planning_inputs(
@@ -645,6 +651,7 @@ pub async fn preview_refinement(
         global,
         instructions: instructions.clone(),
         rollback_id: None,
+        package_state: options.package_state.clone(),
     };
     let plan = strip_display_prefixes(
         plan_refinement(
@@ -672,6 +679,9 @@ pub async fn preview_refinement(
 pub struct RefinementSessionDirs {
     pub local_harness_dir: PathBuf,
     pub has_session_dir: bool,
+    /// The session's read-only package overlay (upstream #2298) a preview
+    /// plans against.
+    pub package_state: Option<std::sync::Arc<crate::refinement::HarnessState>>,
 }
 
 impl RefinementSessionDirs {
@@ -680,6 +690,7 @@ impl RefinementSessionDirs {
         Self {
             local_harness_dir: local_harness_state_dir(session),
             has_session_dir: session.has_session_dir(),
+            package_state: None,
         }
     }
 }
@@ -718,12 +729,16 @@ fn refine_planning_inputs(
     }
     // Planning state: global, or merged global+local for local refinements.
     let global_state = load_harness_state(global_harness_dir, HarnessScope::Global);
-    let planning_state = if requested_scope == HarnessScope::Global {
+    let mut planning_state = if requested_scope == HarnessScope::Global {
         global_state
     } else {
         let local_state = load_harness_state(&local_harness_dir, HarnessScope::Local);
         merge_harness_states(&global_state, Some(&local_state))
     };
+    // Read-only package overlays plan as context below the editable entries.
+    if let Some(package) = &options.package_state {
+        crate::refinement::package_harness::overlay_package_harness(&mut planning_state, package);
+    }
     let global = load_global_refinement_history(global_harness_dir);
     let history = crate::refinement::merge_refinement_history(&global, refinement_history);
     // Baseline captured before the (slow) LLM pass, so concurrent kernel
@@ -880,6 +895,7 @@ impl AgentSession {
             rollback_id: None,
             trigger: None,
             pinned_plan: None,
+            package_state: None,
         };
         self.refine(
             &options,

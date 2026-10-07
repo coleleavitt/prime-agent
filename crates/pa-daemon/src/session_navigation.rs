@@ -964,7 +964,7 @@ mod tests {
         // an ingestion turn (the lane is live).
         digest.configure_pin("digest").unwrap();
         digest.record_arrival(crate::util::now_ms());
-        digest.note_model_turn(true);
+        digest.note_model_step(10, true);
         let engine = Arc::new(crate::engine::ScriptedEngine::default());
         let navigation = SessionNavigation::new(
             Arc::clone(&engine) as Arc<dyn SessionEngine>,

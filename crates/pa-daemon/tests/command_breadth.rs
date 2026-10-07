@@ -105,6 +105,7 @@ const TS_DAEMON_COMMAND_TYPES: &[&str] = &[
     "set_session_name",
     "get_rlm_max_depth_status",
     "set_rlm_max_depth",
+    "set_cwd",
     "rename_saved_session",
     "delete_saved_session",
     "get_session_context",
@@ -450,6 +451,10 @@ const WIRE_FIXTURES: &[(&str, &str)] = &[
     (
         "set_rlm_max_depth",
         r#"{"type": "set_rlm_max_depth", "activeSessionId": "sess", "maxDepth": 2}"#,
+    ),
+    (
+        "set_cwd",
+        r#"{"type": "set_cwd", "activeSessionId": "sess", "cwd": "child"}"#,
     ),
     (
         "rename_saved_session",

@@ -121,6 +121,7 @@ pub const KNOWN_COMMAND_TYPES: &[&str] = &[
     "set_session_name",
     "get_rlm_max_depth_status",
     "set_rlm_max_depth",
+    "set_cwd",
     "rename_saved_session",
     "delete_saved_session",
     "get_session_context",
@@ -839,6 +840,9 @@ pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
         | DaemonCommand::SetRlmMaxDepth {
             active_session_id, ..
         }
+        | DaemonCommand::SetCwd {
+            active_session_id, ..
+        }
         | DaemonCommand::GetSessionContext {
             active_session_id, ..
         }
@@ -1024,6 +1028,7 @@ pub fn command_type_name(command: &DaemonCommand) -> &'static str {
         DaemonCommand::SetSessionName { .. } => "set_session_name",
         DaemonCommand::GetRlmMaxDepthStatus { .. } => "get_rlm_max_depth_status",
         DaemonCommand::SetRlmMaxDepth { .. } => "set_rlm_max_depth",
+        DaemonCommand::SetCwd { .. } => "set_cwd",
         DaemonCommand::RenameSavedSession { .. } => "rename_saved_session",
         DaemonCommand::DeleteSavedSession { .. } => "delete_saved_session",
         DaemonCommand::GetSessionContext { .. } => "get_session_context",

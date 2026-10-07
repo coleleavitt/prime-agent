@@ -367,6 +367,15 @@ impl AgentSession {
         gate_call: Option<crate::refinement::executor::RefinerFn>,
         global_harness_dir: std::path::PathBuf,
     ) -> anyhow::Result<crate::refinement::RefinementResult> {
+        // The session's read-only package overlay rides every refine.
+        let mut options = options.clone();
+        if options.package_state.is_none() {
+            options.package_state = self
+                .harness_digest
+                .as_ref()
+                .and_then(|context| context.package_state.clone());
+        }
+        let options = &options;
         let gating = match (&self.refinement_gate, gate_call) {
             (Some(gate), Some(model_call)) => Some(crate::refinement::gate::RefinementGating {
                 gate: std::sync::Arc::clone(gate),

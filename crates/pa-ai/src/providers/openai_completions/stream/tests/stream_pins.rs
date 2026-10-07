@@ -204,3 +204,52 @@ async fn reasoning_content_deltas_assemble_the_thinking_block_with_the_field_sig
     );
     assert_eq!(message.stop_reason, StopReason::Stop);
 }
+
+/// Upstream #2530: the simple-stream tool choice (the dropped-tool-call
+/// recovery turn's `required`) reaches the Chat Completions wire payload as
+/// `tool_choice`; an unset choice sends none.
+#[tokio::test]
+async fn the_simple_stream_tool_choice_reaches_the_wire_payload() {
+    let mut sent = Vec::new();
+    for choice in [None, Some(pa_types::ai::RequestToolChoice::Required)] {
+        let addr = serve_sse(sse_body(&[json!({
+            "id": "c1",
+            "choices": [{ "index": 0, "delta": { "content": "ok" }, "finish_reason": "stop" }],
+        })]))
+        .await;
+        let mut model = glm_fast_model();
+        model["baseUrl"] = json!(format!("http://{addr}"));
+        let model: Model = serde_json::from_value(model).unwrap();
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let hook_capture = std::sync::Arc::clone(&captured);
+        let options = crate::types::SimpleStreamOptions {
+            base: crate::types::StreamOptions {
+                api_key: Some("test".into()),
+                on_payload: Some(std::sync::Arc::new(
+                    move |payload: Value, _model: &Model| {
+                        *hook_capture.lock().unwrap() = payload.get("tool_choice").cloned();
+                        None
+                    },
+                )),
+                ..Default::default()
+            },
+            tool_choice: choice,
+            ..Default::default()
+        };
+        let mut reader = crate::providers::openai_completions::stream_simple_openai_completions(
+            &model,
+            &Context {
+                system_prompt: None,
+                messages: vec![],
+                tools: None,
+            },
+            Some(&options),
+        );
+        while !matches!(
+            reader.next_event().await.unwrap(),
+            AssistantMessageEvent::Done { .. } | AssistantMessageEvent::Error { .. }
+        ) {}
+        sent.push(captured.lock().unwrap().clone());
+    }
+    assert_eq!(sent, vec![None, Some(json!("required"))]);
+}

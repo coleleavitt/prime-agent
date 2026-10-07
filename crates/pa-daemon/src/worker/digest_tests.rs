@@ -585,7 +585,7 @@ async fn session_replacement_resets_the_lane_and_counters() {
     park_runner(&worker).await;
     worker.agent_digest.configure_pin("digest").unwrap();
     worker.agent_digest.record_arrival(crate::util::now_ms());
-    worker.agent_digest.note_model_turn(true);
+    worker.agent_digest.note_model_step(10, true);
     {
         let mut core = worker.core.lock().unwrap();
         core.agent_message_digest_mode = true;
@@ -712,5 +712,118 @@ async fn a_busy_session_holds_one_pending_watch_notice_per_watch() {
             "agent_watch_notice".to_string()
         ],
         "{types:?}"
+    );
+}
+
+/// Upstream #2352 session wiring: an accepted agent-message arrival drives
+/// an ingestion step, a plain user turn a plain one, and the snapshot (the
+/// `rlm.messaging_stats()` / `messagingStats` source) reports both.
+#[tokio::test]
+async fn an_agent_message_arrival_counts_its_ingestion_step_and_a_plain_turn_does_not() {
+    let dir = std::env::temp_dir().join(format!("pa-worker-stats-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let worker = Arc::new(Worker::new(
+        WorkerConfig {
+            socket_path: dir.join("worker.sock"),
+            supervisor_socket_path: PathBuf::new(),
+            token: "token".to_string(),
+            worker_instance_id: String::new(),
+            active_session_id: "target-session".to_string(),
+            agent_dir: dir.join("agent"),
+            recovery_journal_path: dir.join("recovery.jsonl"),
+            telemetry_disabled: None,
+            script: Some(json!({ "responses": ["ack", "plain reply"] })),
+        },
+        None,
+    ));
+    let created = worker
+        .dispatch(
+            "create",
+            &json!({ "noSession": true, "cwd": "/tmp", "name": "target" }),
+        )
+        .await;
+    assert!(created.success, "create failed: {created:?}");
+    deliver(&worker, "reply body").await;
+    // Readiness: the delivery's own turn settles (one counted step and an
+    // idle session) before the plain prompt, so the two never share a run.
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        while worker.agent_digest.messaging_snapshot().model_steps.total < 1
+            || worker.core.lock().unwrap().busy
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the delivered message's turn settles");
+    let plain = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        worker.dispatch(
+            "prompt_and_wait",
+            &json!({ "activeSessionId": "target-session", "message": "plain user turn" }),
+        ),
+    )
+    .await
+    .expect("the plain turn settles");
+    assert!(plain.success, "prompt failed: {plain:?}");
+    let stats = worker.agent_digest.messaging_snapshot();
+    assert_eq!(
+        (
+            stats.arrivals,
+            stats.model_steps.total,
+            stats.ingestion_steps.total,
+            stats.sends
+        ),
+        (
+            pa_core::swarm_eval::ArrivalCounts {
+                total: 1,
+                last5m: 1
+            },
+            2,
+            1,
+            pa_core::swarm_eval::SendCounts::default()
+        )
+    );
+}
+
+/// Upstream #2351 on the push lane: an undelivered path-watch notice
+/// MERGES the next batch's paths (never loses them), while a failure gets
+/// its own row.
+#[tokio::test]
+async fn a_pending_path_watch_notice_merges_the_next_batch() {
+    let worker = created_worker().await;
+    park_runner(&worker).await;
+    let change = |paths: &[&str]| crate::path_watch::PathWatchChange {
+        watch_id: "watch_a1".to_string(),
+        path: "/tmp/shared".to_string(),
+        recursive: false,
+        paths: paths.iter().map(|path| (*path).to_string()).collect(),
+        truncated: false,
+    };
+    let digest = &worker.agent_digest;
+    digest.emit_path_watch_event(&crate::path_watch::PathWatchEvent::Changed(change(&[
+        "/tmp/shared/a",
+    ])));
+    digest.emit_path_watch_event(&crate::path_watch::PathWatchEvent::Changed(change(&[
+        "/tmp/shared/b",
+        "/tmp/shared/a",
+    ])));
+    digest.emit_path_watch_event(&crate::path_watch::PathWatchEvent::Failed(
+        crate::path_watch::PathWatchFailure {
+            watch_id: "watch_a1".to_string(),
+            path: "/tmp/shared".to_string(),
+            recursive: false,
+            error: "Watched path was removed".to_string(),
+        },
+    ));
+    assert_eq!(
+        queue_texts(&worker.core, Lane::Steering),
+        vec![
+            crate::path_watch::format_path_watch_changed(&change(&[
+                "/tmp/shared/a",
+                "/tmp/shared/b"
+            ])),
+            "[watch-path-failed id:watch_a1 path:/tmp/shared]\n\nError: Watched path was removed"
+                .to_string(),
+        ]
     );
 }

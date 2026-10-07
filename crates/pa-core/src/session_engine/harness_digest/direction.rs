@@ -127,6 +127,7 @@ async fn direction_rig(
             include_shell_examples: false,
             include_refine: false,
             prompt_hooks: crate::refinement::prompt_hook::HarnessPromptHooks::default(),
+            package_state: None,
         }),
     )
     .await

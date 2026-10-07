@@ -88,6 +88,35 @@ pub type AfterToolCallFn = Arc<
         + Sync,
 >;
 
+/// The one-shot dropped-tool-call recovery hook (upstream #2530): called
+/// when a run would end on a turn that reported `toolUse` or `length` but
+/// delivered no tool call. `Some(row)` delivers the row as one more turn
+/// (with a required tool choice after `toolUse`); `None` declines and the
+/// run ends. The loop asks at most once per run, and only after the
+/// steering, follow-up, and continuation polls came back empty.
+pub type ToolIntentRecoveryFn = Arc<
+    dyn Fn(
+            ShouldStopAfterTurnContext,
+        ) -> crate::BoxFut<'static, anyhow::Result<Option<AgentMessage>>>
+        + Send
+        + Sync,
+>;
+
+/// Whether `message` ended a turn that promised a tool call and delivered
+/// none: a `toolUse` or `length` finish with no tool call, while the
+/// context offers tools (TS `isEndedWithoutDeliveredToolCall`).
+#[must_use]
+pub fn ended_without_delivered_tool_call(
+    message: &crate::types::AssistantMessage,
+    context: &crate::types::AgentContext,
+) -> bool {
+    matches!(
+        message.stop_reason,
+        crate::types::StopReason::ToolUse | crate::types::StopReason::Length
+    ) && message.tool_calls().is_empty()
+        && !context.tools.is_empty()
+}
+
 /// Mints the continuation row for auto-continuation `attempt` of `max`.
 pub type LengthContinuationMessageFn = Arc<dyn Fn(u32, u32) -> AgentMessage + Send + Sync>;
 
@@ -148,6 +177,12 @@ pub struct AgentLoopConfig {
     /// Stop a degenerate looping generation mid-stream (upstream #1798);
     /// `None` streams every response to its natural end.
     pub repetition_guard: Option<crate::repetition_guard::RepetitionGuardConfig>,
+    /// The run's tool choice (TS `AgentLoopConfig.toolChoice`); `None`
+    /// keeps the provider default ("auto").
+    pub tool_choice: Option<pa_types::ai::RequestToolChoice>,
+    /// The dropped-tool-call recovery (upstream #2530); `None` ends the
+    /// run on such a turn, as before.
+    pub get_tool_intent_recovery: Option<ToolIntentRecoveryFn>,
 }
 
 impl AgentLoopConfig {
@@ -176,6 +211,8 @@ impl AgentLoopConfig {
             after_tool_call: None,
             length_continuation: None,
             repetition_guard: None,
+            tool_choice: None,
+            get_tool_intent_recovery: None,
         }
     }
 

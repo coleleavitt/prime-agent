@@ -21,9 +21,12 @@
 //! rendering - so the driver and the unit battery share one source of truth.
 //!
 //! The messaging snapshot itself is produced by the session-level messaging
-//! counters (the #2352 lane, `rlm.messaging_stats()`). Until that producer is
-//! present, [`transcript::snapshot_from_transcript`] derives the same shape
-//! from the session transcript the daemon already serves.
+//! counters (the #2352 lane, `rlm.messaging_stats()`;
+//! [`crate::session_engine::messaging_stats`]), which a daemon serves on
+//! `get_session_stats` with `includeMessagingStats: true` as
+//! `messagingStats`. Against a daemon without them,
+//! [`transcript::snapshot_from_transcript`] derives the same shape from the
+//! session transcript.
 
 use std::time::{Duration, Instant};
 
@@ -107,48 +110,12 @@ impl DefenseVerdict {
     }
 }
 
-/// The per-session messaging snapshot the defense lines score. Mirrors the
-/// `rlm.messaging_stats()` shape (the #2352 producer); the counters are the
-/// session's arrival, step, and context totals plus the outbound send counts.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-pub struct MessagingStatsSnapshot {
-    pub arrivals: ArrivalCounts,
-    pub model_steps: StepCounts,
-    pub ingestion_steps: StepCounts,
-    pub context: ContextShape,
-    pub sends: SendCounts,
-}
-
-/// Accepted inbound agent messages (delivered or queued).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ArrivalCounts {
-    pub total: u64,
-    pub last5m: u64,
-}
-
-/// Completed model steps (and their usage tokens).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StepCounts {
-    pub total: u64,
-    pub last5m: u64,
-    pub tokens: u64,
-}
-
-/// The agent-message share of the working context. `context_tokens` (and
-/// therefore `share`) is unknown until an assistant usage is recorded.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-pub struct ContextShape {
-    pub estimated_agent_message_tokens: u64,
-    pub context_tokens: Option<u64>,
-    pub share: Option<f64>,
-}
-
-/// Outbound `agent_message.send` attempts and failures.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SendCounts {
-    pub attempts: u64,
-    pub failures: u64,
-}
+// The per-session messaging snapshot the defense lines score: the
+// `rlm.messaging_stats()` shape its producer (the session's messaging
+// counters, upstream #2352) emits.
+pub use crate::session_engine::messaging_stats::{
+    ArrivalCounts, ContextShape, MessagingStatsSnapshot, SendCounts, StepCounts,
+};
 
 /// Score a messaging snapshot against the pre-registered defense lines.
 #[must_use]

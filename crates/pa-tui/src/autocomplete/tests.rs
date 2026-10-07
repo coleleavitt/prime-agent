@@ -625,3 +625,50 @@ fn render_shows_the_source_tag_as_a_trailing_segment() {
         "the selected description renders: {all}"
     );
 }
+
+/// Upstream #2528 (TS "completes a pathArgument command's argument like @
+/// but without the prefix"): `/cwd`'s argument completes directories with
+/// the fuzzy search, inserted without the `@`; a moved base browses the
+/// new directory.
+#[test]
+fn cwd_argument_completes_directories_without_the_at_prefix() {
+    let outer = tempfile::TempDir::new().expect("temp dir");
+    let base = outer.path().join("base");
+    std::fs::create_dir_all(base.join("src")).expect("mkdir");
+    std::fs::create_dir_all(base.join("docs")).expect("mkdir");
+    std::fs::write(base.join("src.txt"), "x").expect("write");
+    std::fs::create_dir_all(outer.path().join("moved/srcmoved")).expect("mkdir");
+    let mut provider = provider(base.to_str().unwrap());
+    let lookup =
+        |provider: &CombinedAutocompleteProvider| -> (Vec<String>, String, Option<SuggestionKind>) {
+            match provider.get_suggestions(&["/cwd src".to_string()], 0, 8, false) {
+                Some(SuggestionLookup::Searching(search)) => {
+                    let found = search
+                        .results
+                        .recv()
+                        .expect("the search finishes")
+                        .expect("suggestions");
+                    (
+                        found.items.into_iter().map(|item| item.value).collect(),
+                        found.prefix,
+                        found.kind,
+                    )
+                }
+                other => panic!("expected a searching lookup, got {other:?}"),
+            }
+        };
+    let here = lookup(&provider);
+    AutocompleteProvider::set_base_dir(&mut provider, outer.path().join("moved"));
+    let moved = lookup(&provider);
+    assert_eq!(
+        (here, moved.0),
+        (
+            (
+                vec!["src/".to_string()],
+                "src".to_string(),
+                Some(SuggestionKind::File)
+            ),
+            vec!["srcmoved/".to_string()],
+        )
+    );
+}

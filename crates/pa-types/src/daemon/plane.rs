@@ -89,6 +89,7 @@ pub fn command_plane(command_type: &str) -> DaemonCommandPlane {
         | "export_jsonl"
         | "get_rlm_max_depth_status"
         | "set_rlm_max_depth"
+        | "set_cwd"
         | "get_session_context"
         | "get_session_tree"
         | "get_user_messages_for_forking"

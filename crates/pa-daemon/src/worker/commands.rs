@@ -104,7 +104,7 @@ impl Worker {
             "get_state" => self.handle_get_state(),
             "get_messages" => self.handle_get_messages(),
             "get_session_header" => self.handle_get_session_header(),
-            "get_session_stats" => self.handle_get_session_stats(),
+            "get_session_stats" => self.handle_get_session_stats(payload),
             "get_model_catalog" => self.handle_get_model_catalog(),
             "get_queue" => self.handle_get_queue(),
             "clear_queue" => self.handle_clear_queue(),
@@ -176,6 +176,7 @@ impl Worker {
             // The engine call blocks on the engine runtime, so it
             // runs on a blocking thread like every other engine call.
             "set_rlm_max_depth" => self.handle_set_rlm_max_depth(payload).await,
+            "set_cwd" => self.handle_set_cwd(payload).await,
             "acquire_session_input_pause" => self.handle_acquire_session_input_pause(payload),
             "release_session_input_pause" => self.handle_release_session_input_pause(payload),
             "cancel_prompt_admission" => self.handle_cancel_prompt_admission(payload),
@@ -255,6 +256,8 @@ impl Worker {
     async fn handle_navigate_tree(&self, payload: &Value) -> DaemonResponse {
         let response = self.tree_navigation.navigate_tree(payload).await;
         if response.success {
+            // The target branch's recorded directory (upstream #2528).
+            self.follow_branch_cwd().await;
             if let Some(goal) = self.engine.goal_update_after_rebuild() {
                 self.emit_worker_event(json!({
                     "type": "goal_update",
@@ -474,7 +477,7 @@ impl Worker {
 
     /// `get_session_stats`: counts, token totals, and the context-usage
     /// estimate over the persisted branch (TS `getSessionStats`).
-    fn handle_get_session_stats(&self) -> DaemonResponse {
+    fn handle_get_session_stats(&self, payload: &Value) -> DaemonResponse {
         if let Err(response) = self.require_created("get_session_stats") {
             return response;
         }
@@ -487,7 +490,22 @@ impl Worker {
                 None,
             );
         };
-        let stats = crate::session_stats::session_stats(store, self.engine.model_context_window());
+        let mut stats =
+            crate::session_stats::session_stats(store, self.engine.model_context_window());
+        drop(core);
+        // The session's messaging counters (upstream #2352), only on
+        // request (`includeMessagingStats: true`): the default reply stays
+        // byte-identical to the TS daemon's. The swarm eval asks for them;
+        // the snapshot reads the store under its own hold.
+        if payload
+            .get("includeMessagingStats")
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            if let Ok(messaging) = serde_json::to_value(self.agent_digest.messaging_snapshot()) {
+                stats["messagingStats"] = messaging;
+            }
+        }
         response_success(None, "get_session_stats", Some(stats))
     }
 

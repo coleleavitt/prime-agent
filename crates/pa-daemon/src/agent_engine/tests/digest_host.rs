@@ -437,3 +437,152 @@ fn a_registration_from_the_retired_session_never_lands_in_the_replacement() {
         .unwrap();
     assert_eq!(engine.watch_host_state().registry.list().len(), 1);
 }
+
+/// Upstream #2352: `rlm.messaging_stats` answers the worker's snapshot in
+/// the TS wire shape, and `agent_message.send` counts each attempt that
+/// reaches the delivery at resolution (a rejection as a failure; a payload
+/// without a string message is not an attempt).
+#[tokio::test]
+async fn messaging_stats_serves_the_snapshot_and_counts_send_outcomes() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let engine = std::sync::Arc::new(bare_engine(dir.path()));
+    let stats =
+        std::sync::Arc::new(pa_core::session_engine::messaging_stats::MessagingStats::default());
+    let snapshot_stats = std::sync::Arc::clone(&stats);
+    let send_stats = std::sync::Arc::clone(&stats);
+    engine.set_messaging_stats_seams(crate::messaging_stats_host::MessagingStatsSeams {
+        snapshot: std::sync::Arc::new(move || {
+            snapshot_stats.snapshot(
+                pa_core::session_engine::messaging_stats::MessagingContext {
+                    context_tokens: Some(800),
+                    estimated_agent_message_tokens: 100,
+                },
+                crate::util::now_ms(),
+            )
+        }),
+        record_send: std::sync::Arc::new(move |failed| send_stats.record_send_attempt(failed)),
+    });
+    let mut handlers = HostRequestHandlers::default();
+    handlers.register(
+        "agent_message.send",
+        pa_core::kernel::shared::host_handler(|payload| async move {
+            if payload.data["target"] == json!("ghost") {
+                anyhow::bail!("No agent session matches \"ghost\"");
+            }
+            Ok(json!({ "deliveryStatus": "delivered" }))
+        }),
+    );
+    engine.register_messaging_stats_host_handlers(&mut handlers);
+    let call = |request: &str, data: Value| {
+        let handler = handlers.get(request).expect("handler").clone();
+        handler(HostRequestPayload {
+            data,
+            cell_source_code: None,
+        })
+    };
+    call(
+        "agent_message.send",
+        json!({ "message": "hi", "target": "kid" }),
+    )
+    .await
+    .expect("delivered");
+    call(
+        "agent_message.send",
+        json!({ "message": "hi", "target": "ghost" }),
+    )
+    .await
+    .expect_err("unknown target");
+    call(
+        "agent_message.send",
+        json!({ "message": 3, "target": "kid" }),
+    )
+    .await
+    .expect("the fake accepts it, but it is no counted attempt");
+    let snapshot = call("rlm.messaging_stats", json!({})).await.unwrap();
+    assert_eq!(
+        snapshot,
+        json!({
+            "arrivals": { "total": 0, "last5m": 0 },
+            "model_steps": { "total": 0, "last5m": 0, "tokens": 0 },
+            "ingestion_steps": { "total": 0, "last5m": 0, "tokens": 0 },
+            "context": { "estimated_agent_message_tokens": 100, "context_tokens": 800, "share": 0.125 },
+            "sends": { "attempts": 2, "failures": 1 },
+        })
+    );
+}
+
+/// Upstream #2351 over the kernel handlers: a relative path resolves
+/// against the session cwd, a change reaches the worker sink, the TS
+/// argument errors hold, and a session close releases every watch.
+#[tokio::test]
+async fn path_watch_handlers_resolve_validate_notify_and_die_with_the_session() {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir(dir.path().join("relative")).unwrap();
+    let engine = std::sync::Arc::new(bare_engine(dir.path()));
+    engine.register_arc();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    engine.set_path_watch_sink(std::sync::Arc::new(move |event| {
+        let _ = tx.send(event);
+    }));
+    let mut handlers = HostRequestHandlers::default();
+    engine.register_path_watch_host_handlers(&mut handlers);
+    let call = |request: &str, data: Value| {
+        let handler = handlers.get(request).expect("handler").clone();
+        handler(HostRequestPayload {
+            data,
+            cell_source_code: None,
+        })
+    };
+    let registered = call("rlm.watch.path", json!({ "path": "relative" }))
+        .await
+        .unwrap();
+    let watched = dir.path().join("relative");
+    assert_eq!(
+        (
+            registered["watch"]["path"].clone(),
+            registered["watch"]["status"].clone()
+        ),
+        (json!(watched.display().to_string()), json!("active"))
+    );
+    std::fs::write(watched.join("signal.txt"), "x").unwrap();
+    let event = tokio::time::timeout(std::time::Duration::from_secs(20), rx.recv())
+        .await
+        .expect("a change arrives")
+        .expect("sink open");
+    assert!(matches!(
+        &event,
+        crate::path_watch::PathWatchEvent::Changed(change)
+            if change.watch_id == registered["watch"]["watch_id"].as_str().unwrap()
+    ));
+    let errors = [
+        call("rlm.watch.path", json!({ "path": "  " })).await,
+        call(
+            "rlm.watch.path",
+            json!({ "path": "relative", "recursive": "yes" }),
+        )
+        .await,
+        call("rlm.watch.path", json!({ "path": "missing" })).await,
+        call("rlm.watch.path_get", json!({ "watch_id": "watch_unknown" })).await,
+        call("rlm.watch.path_cancel", json!({})).await,
+    ]
+    .into_iter()
+    .map(|result| result.unwrap_err().to_string())
+    .collect::<Vec<_>>();
+    assert_eq!(
+        errors,
+        vec![
+            "rlm.watch.path path must be a non-empty string".to_string(),
+            "rlm.watch.path recursive must be a boolean".to_string(),
+            format!(
+                "Watched path does not exist: {}",
+                dir.path().join("missing").display()
+            ),
+            "Unknown path watch: watch_unknown".to_string(),
+            "rlm.watch.path_cancel watch_id must be a non-empty string".to_string(),
+        ]
+    );
+    let listed = call("rlm.watch.path_list", json!({})).await.unwrap();
+    assert_eq!(listed["watches"].as_array().map(Vec::len), Some(1));
+    engine.mark_session_closed();
+    assert_eq!(engine.path_watches.active_count(), (0, false));
+}

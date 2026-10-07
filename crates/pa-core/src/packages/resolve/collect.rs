@@ -9,7 +9,7 @@ use super::manager::collect_files_from_paths;
 use super::patterns::{apply_patterns, has_glob_pattern, is_override_pattern};
 use super::{
     resource_type_dir_name, PackageFilter, PathMetadata, ResourceAccumulator, ResourceType,
-    RESOURCE_TYPES,
+    PACKAGE_RESOURCE_TYPES,
 };
 
 impl PackageManager {
@@ -22,7 +22,7 @@ impl PackageManager {
         metadata: &PathMetadata,
     ) -> bool {
         if let Some(filter) = filter {
-            for resource_type in RESOURCE_TYPES {
+            for resource_type in PACKAGE_RESOURCE_TYPES {
                 match filter.get(resource_type) {
                     Some(patterns) => Self::apply_package_filter(
                         package_root,
@@ -44,7 +44,7 @@ impl PackageManager {
 
         let manifest = read_pi_manifest(package_root);
         if let Some(manifest) = manifest {
-            for resource_type in RESOURCE_TYPES {
+            for resource_type in PACKAGE_RESOURCE_TYPES {
                 let entries = manifest.entries(resource_type);
                 Self::add_manifest_entries(
                     entries.as_deref(),
@@ -58,7 +58,7 @@ impl PackageManager {
         }
 
         let mut has_any_dir = false;
-        for resource_type in RESOURCE_TYPES {
+        for resource_type in PACKAGE_RESOURCE_TYPES {
             let dir = package_root.join(resource_type_dir_name(resource_type));
             if dir.exists() {
                 for file in collect_resource_files(&dir, resource_type) {

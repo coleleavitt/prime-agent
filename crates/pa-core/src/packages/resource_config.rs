@@ -51,6 +51,7 @@ pub fn resource_type_label(resource_type: ResourceType) -> &'static str {
         ResourceType::Skills => "Skills",
         ResourceType::Prompts => "Prompts",
         ResourceType::Themes => "Themes",
+        ResourceType::Harness => "Harness",
     }
 }
 
@@ -340,6 +341,8 @@ fn resource_array(
         ResourceType::Skills => scope.skills.as_deref(),
         ResourceType::Prompts => scope.prompts.as_deref(),
         ResourceType::Themes => scope.themes.as_deref(),
+        // Package-only: no settings array lists harness entries.
+        ResourceType::Harness => None,
     }
 }
 
@@ -348,6 +351,7 @@ fn resource_array_key(resource_type: ResourceType) -> &'static str {
         ResourceType::Skills => "skills",
         ResourceType::Prompts => "prompts",
         ResourceType::Themes => "themes",
+        ResourceType::Harness => "harness",
     }
 }
 
@@ -440,6 +444,7 @@ mod tests {
                 ResourceType::Skills => paths.skills.push(item),
                 ResourceType::Prompts => paths.prompts.push(item),
                 ResourceType::Themes => paths.themes.push(item),
+                ResourceType::Harness => paths.harness.push(item),
             }
         }
         paths

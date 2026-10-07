@@ -556,3 +556,49 @@ async fn graceful_shutdown_flushes_the_final_snapshot() {
         .await
         .expect("shutdown");
 }
+
+/// Upstream #2528: `set_cwd` retargets a running kernel (namespace kept, no
+/// `os` name bound), a missing directory is refused with the kernel's
+/// error, and a restart starts in the retargeted directory.
+#[tokio::test]
+async fn set_cwd_retargets_a_running_kernel_and_its_restarts() {
+    let Some(options) = test_options(None) else {
+        return;
+    };
+    let manager = started_manager(options).await;
+    let dir = tempfile::TempDir::new().unwrap();
+    let target = dir.path().join("sub");
+    std::fs::create_dir(&target).unwrap();
+    let real = std::fs::canonicalize(&target).unwrap();
+    execute(&manager, "x = 1").await;
+    manager.set_cwd(&target).await.expect("the chdir succeeds");
+    let moved = execute(
+        &manager,
+        "print(__import__('os').getcwd())\n'os' in globals(), x",
+    )
+    .await;
+    let missing = manager
+        .set_cwd(&dir.path().join("gone"))
+        .await
+        .expect_err("a missing directory is refused");
+    manager.set_cwd(&target).await.expect("the chdir succeeds");
+    manager.restart().await.expect("the kernel restarts");
+    let restarted = execute(&manager, "print(__import__('os').getcwd())").await;
+    assert_eq!(
+        (
+            moved.stdout.trim().to_string(),
+            moved.result,
+            missing
+                .to_string()
+                .starts_with("Python kernel could not change directory: "),
+            restarted.stdout.trim().to_string(),
+        ),
+        (
+            real.display().to_string(),
+            Some("(False, 1)".to_string()),
+            true,
+            real.display().to_string(),
+        )
+    );
+    let _ = manager.shutdown(KernelShutdownOptions::default()).await;
+}

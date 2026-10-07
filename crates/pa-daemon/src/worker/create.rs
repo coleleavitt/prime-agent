@@ -112,11 +112,14 @@ impl Worker {
             }
             *agent_engine.create_resources.write_or_recover() = resources;
         }
-        let cwd = payload
+        let mut cwd = payload
             .get("cwd")
             .and_then(Value::as_str)
             .unwrap_or("/")
             .to_string();
+        // A saved session opened with its own explicit cwd pins the run
+        // (upstream #2528); otherwise the branch's recorded `/cwd` wins.
+        let cwd_override = payload.get("cwdOverride").and_then(Value::as_bool) == Some(true);
         let session_dir = match payload.get("sessionDir").and_then(Value::as_str) {
             Some(dir) => match paths::expand_tilde(dir) {
                 Ok(expanded) => expanded,
@@ -219,6 +222,11 @@ impl Worker {
                 match loaded {
                     Ok(mut opened) => {
                         opened_existing_session = true;
+                        if !cwd_override {
+                            if let Some(recorded) = super::session_cwd::branch_cwd(&opened) {
+                                cwd = recorded;
+                            }
+                        }
                         // The session-model restore records its decision only for a path
                         // this worker opened — a failed open never leaks the binding into a
                         // later create.
@@ -485,6 +493,10 @@ impl Worker {
         // and a std MutexGuard must never ride an await point.
         let (summary, rlm_depth) = {
             let mut core = self.core.lock_or_recover();
+            core.cwd_override = cwd_override;
+            if !cwd_override && Some(cwd.as_str()) != payload.get("cwd").and_then(Value::as_str) {
+                self.engine.set_cwd(std::path::PathBuf::from(&cwd));
+            }
             core.cwd = cwd;
             core.steering = steering;
             core.follow_up = follow_up;

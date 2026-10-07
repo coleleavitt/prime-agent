@@ -52,6 +52,11 @@ The following programmatic tools are available in the REPL for subagent manageme
 - `rlm.watch.agent_list() -> dict`: the active watches
 - `rlm.watch.agent_cancel(id: str) -> dict`: cancel one watch
 - `rlm.watch.job(handle, interval_seconds: float = 5.0) -> dict`: watch an async `bash()` job's output growth — quiet byte-range notices (`[watch-job pid:N] output +K bytes (a..b)`); `rlm.watch.job_list()` lists them and `rlm.watch.job_cancel(pid)` cancels one
+- `rlm.watch.path(path: str, *, recursive: bool = False) -> RLMPathWatch`: subscribe this session to an existing file or directory (relative paths resolve against the working directory) to coordinate through shared files — debounced quiet notices list the changed paths (`[watch-path id:... path:...]`), never contents; removal or a watcher failure arrives as `[watch-path-failed ...]` and stops the watch, and recreating the path needs a new registration; at most 64 active watches
+- `rlm.watch.path_list() -> list[RLMPathWatch]`: this session's path watches, finished ones included (status `active`, `completed`, or `failed` with its error)
+- `rlm.watch.path_get(watch_id: str) -> RLMPathWatch`: re-read one path watch
+- `rlm.watch.path_cancel(watch_id: str) -> RLMPathWatch`: stop one path watch
+- `rlm.messaging_stats() -> dict`: this session's messaging counters (arrivals, agent-triggered steps vs. all steps, estimated message share of context, send attempts); read them when you need to reason about coordination overhead
 - `RLMSpawnHandle`
   - `rlm_child_id: str`
   - `name: str`

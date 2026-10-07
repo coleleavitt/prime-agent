@@ -34,6 +34,9 @@ pub struct HarnessDigestContext {
     pub include_refine: bool,
     /// The installed features' render hooks ([`crate::refinement::prompt_hook`]).
     pub prompt_hooks: HarnessPromptHooks,
+    /// The read-only package overlay (upstream #2298), mounted below the
+    /// editable entries; refine plans against it and never edits it.
+    pub package_state: Option<std::sync::Arc<crate::refinement::HarnessState>>,
 }
 
 /// Relevance terms for digest entry ranking: the active goal objective
@@ -90,7 +93,10 @@ fn render_digest_with_fingerprint(
         .local_dir
         .as_ref()
         .map(|dir| load_harness_state(dir, HarnessScope::Local));
-    let merged = merge_harness_states(&global, local.as_ref());
+    let mut merged = merge_harness_states(&global, local.as_ref());
+    if let Some(package) = &context.package_state {
+        crate::refinement::package_harness::overlay_package_harness(&mut merged, package);
+    }
     let render_flags = HarnessDigestRenderFlags {
         include_ipython_examples: context.include_ipython,
         include_shell_examples: context.include_shell_examples,

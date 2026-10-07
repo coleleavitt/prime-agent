@@ -1127,7 +1127,7 @@ pub struct WorkerQueueItemRecord {
     /// `agent_message` delivery (`worker::QueuedItem::agent_message`):
     /// the marker `agent_messages_clear`/`agent_messages_pause` remove
     /// queued rows by, and the turn's ingestion-turn classification reads
-    /// (`first.agent_message` before `note_model_turn`). `None` for rows
+    /// (`first.agent_message` before `note_model_step`). `None` for rows
     /// a client queued directly; a record written before the field
     /// existed restores as `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -192,6 +192,10 @@ impl AgentSessionEngine {
             model_refusal_telemetry,
             semantic_identity: std::sync::Mutex::new(None),
             presented_artifact_sink: std::sync::Mutex::new(None),
+            messaging_stats_seams: std::sync::Mutex::new(None),
+            session_telemetry: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            path_watches: crate::path_watch::PathWatchRegistry::default(),
+            path_watch_sink: std::sync::Mutex::new(None),
         })
     }
 
@@ -332,6 +336,11 @@ impl AgentSessionEngine {
         }));
         // The in-run autonomous continuation hook (the goal seam keeps its own boundary mint).
         self.install_autonomous_continuation_hook_on(built.session.agent());
+        // The one-shot dropped-tool-call retry (upstream #2530).
+        self.install_tool_intent_recovery_hook_on(built.session.agent(), built.telemetry.clone());
+        self.session_telemetry
+            .lock_or_recover()
+            .clone_from(&built.telemetry);
         // Live children outlive the rebuild and registered their spawns on the old producer:
         // adopt those registrations before the new sink observes, or the first post-swap
         // report drops against a producer that never saw the spawn.
@@ -579,6 +588,7 @@ impl AgentSessionEngine {
         *self.background_bash_probe.lock_or_recover() = None;
         *self.kernel_release_probe.lock_or_recover() = None;
         *self.published_goal.lock_or_recover() = None;
+        *self.session_telemetry.lock_or_recover() = None;
         // The retired session's provider target goes with it: a pre-build demand seam resolves the
         // CURRENT model.
         *self.provider_target.write_or_recover() = None;
@@ -613,6 +623,8 @@ impl AgentSessionEngine {
         *self.autonomous_boundary.lock_or_recover() = None;
         *self.background_bash_probe.lock_or_recover() = None;
         *self.kernel_release_probe.lock_or_recover() = None;
+        // Watchers die with the session (upstream #2351).
+        self.path_watches.dispose();
     }
 
     /// The create path's live reset: a fresh (or replaced) session starts live.
@@ -741,6 +753,8 @@ impl AgentSessionEngine {
         // watches ride the same engine seams the bash notices hold.
         self.register_digest_inbox_host_handlers(&mut handlers);
         self.register_watch_host_handlers(&mut handlers);
+        self.register_messaging_stats_host_handlers(&mut handlers);
+        self.register_path_watch_host_handlers(&mut handlers);
         self.register_vision_read_host_handler(&mut handlers);
         Some(handlers)
     }

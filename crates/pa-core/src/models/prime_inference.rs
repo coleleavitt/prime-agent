@@ -23,34 +23,64 @@ pub fn is_private_prime_inference_model(model: &Model) -> bool {
 /// provider default carries request shapes the private endpoint rejects.
 #[must_use]
 pub fn private_prime_inference_models() -> Vec<Model> {
-    vec![Model {
-        id: "internal/glm-5.2-fast".to_string(),
-        name: "GLM 5.2 Fast".to_string(),
-        api: "openai-completions".to_string(),
-        provider: "prime-inference".to_string(),
-        base_url: PRIME_INFERENCE_BASE_URL.to_string(),
-        reasoning: true,
-        input: vec![pa_types::ai::ModelInput::Text],
-        headers: None,
-        thinking_level_map: None,
-        cost: ModelCost {
-            input: JsNumber::from(0u64),
-            output: JsNumber::from(0u64),
-            cache_read: JsNumber::from(0u64),
-            cache_write: JsNumber::from(0u64),
+    let zero_cost = || ModelCost {
+        input: JsNumber::from(0u64),
+        output: JsNumber::from(0u64),
+        cache_read: JsNumber::from(0u64),
+        cache_write: JsNumber::from(0u64),
+    };
+    vec![
+        Model {
+            id: "internal/glm-5.2-fast".to_string(),
+            name: "GLM 5.2 Fast".to_string(),
+            api: "openai-completions".to_string(),
+            provider: "prime-inference".to_string(),
+            base_url: PRIME_INFERENCE_BASE_URL.to_string(),
+            reasoning: true,
+            input: vec![pa_types::ai::ModelInput::Text],
+            headers: None,
+            thinking_level_map: None,
+            cost: zero_cost(),
+            context_window: 400_000,
+            max_tokens: 131_072,
+            max_tokens_explicit: None,
+            featured: Some(true),
+            compat: Some(ModelCompat::from_kind(CompatKind::OpenAiCompletions(
+                Box::new(pa_types::ai::OpenAiCompletionsCompat {
+                    supports_developer_role: Some(false),
+                    max_tokens_field: Some(pa_types::ai::MaxTokensField::MaxTokens),
+                    ..pa_types::ai::OpenAiCompletionsCompat::default()
+                }),
+            ))),
         },
-        context_window: 400_000,
-        max_tokens: 131_072,
-        max_tokens_explicit: None,
-        featured: Some(true),
-        compat: Some(ModelCompat::from_kind(CompatKind::OpenAiCompletions(
-            Box::new(pa_types::ai::OpenAiCompletionsCompat {
-                supports_developer_role: Some(false),
-                max_tokens_field: Some(pa_types::ai::MaxTokensField::MaxTokens),
-                ..pa_types::ai::OpenAiCompletionsCompat::default()
-            }),
-        ))),
-    }]
+        // Dynamo serves this route: a tool call the model started but ended
+        // before its close tag reports `length` with no call
+        // (ai-dynamo/dynamo#15184), so the agent retries it once.
+        Model {
+            id: "internal/glm-5.3-fast".to_string(),
+            name: "GLM 5.3 Fast".to_string(),
+            api: "openai-completions".to_string(),
+            provider: "prime-inference".to_string(),
+            base_url: PRIME_INFERENCE_BASE_URL.to_string(),
+            reasoning: true,
+            input: vec![pa_types::ai::ModelInput::Text],
+            headers: None,
+            thinking_level_map: None,
+            cost: zero_cost(),
+            context_window: 1_048_576,
+            max_tokens: 131_072,
+            max_tokens_explicit: None,
+            featured: None,
+            compat: Some(ModelCompat::from_kind(CompatKind::OpenAiCompletions(
+                Box::new(pa_types::ai::OpenAiCompletionsCompat {
+                    supports_developer_role: Some(false),
+                    max_tokens_field: Some(pa_types::ai::MaxTokensField::MaxTokens),
+                    retry_on_truncated_tool_call: Some(true),
+                    ..pa_types::ai::OpenAiCompletionsCompat::default()
+                }),
+            ))),
+        },
+    ]
 }
 
 #[cfg(test)]

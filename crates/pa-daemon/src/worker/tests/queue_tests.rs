@@ -501,7 +501,7 @@ async fn forced_batch_arming_classifies_the_visible_plain_rows() {
 /// The recovery snapshot carries the agent-message marker both ways: a
 /// queued `agent_message` delivery records its marker, and the restore
 /// rebuilds it — so a respawned worker's restored delivery still counts
-/// as an ingestion turn (`first.agent_message` at `note_model_turn`) and
+/// as an ingestion turn (`first.agent_message` at `note_model_step`) and
 /// stays removable by `agent_messages_clear`/`agent_messages_pause`
 /// instead of collapsing into a plain client-queued prompt.
 #[test]

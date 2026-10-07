@@ -20,7 +20,6 @@
 //! Default off: push delivery keeps the exact current flow until the lane
 //! is enabled (the config flag, the controller, or a pin).
 
-use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -40,18 +39,6 @@ pub(crate) const AGENT_MESSAGE_DIGEST_NOTICE_CUSTOM_TYPE: &str = "agent_message_
 const PREVIEW_MAX_CHARS: usize = 120;
 /// TS digest notice sender list cap.
 const DIGEST_NOTICE_MAX_SENDERS: usize = 5;
-/// The trailing-5-minute window the controller's pending pressure reads
-/// (TS `MessagingStats.arrivals.last5m`).
-const ARRIVALS_WINDOW_MS: u64 = 5 * 60 * 1000;
-/// The arrivals ring's bucket width: arrivals landing inside the same
-/// second share one counted row, so the ring holds at most one row per
-/// second of window however hot the push path runs (the controller reads
-/// only the trailing count; a per-arrival row grew one entry per
-/// delivery for the window's whole span).
-const ARRIVALS_BUCKET_MS: u64 = 1_000;
-/// The chars-per-token heuristic of the ingestion share (TS
-/// `estimateMessagingTokens`: chars / 4 over the working context).
-const CONTEXT_TOKENS_PER_CHAR: f64 = 4.0;
 /// The digest inbox's admission cap: the push lane's per-session
 /// pending-message bound (`DEFAULT_AGENT_MESSAGE_MAX_PENDING_PER_SESSION`),
 /// applied to UNREAD inbox entries so a digested backlog never grows the
@@ -414,56 +401,14 @@ impl DigestLaneController {
 // Per-session counters (the controller's trigger inputs)
 // ---------------------------------------------------------------------------
 
-/// One counted slice of the arrivals ring: every arrival landing inside
-/// the same [`ARRIVALS_BUCKET_MS`]-wide slice shares this row, so the
-/// ring stays bounded at one row per slice of window under sustained
-/// traffic (the count is all the controller reads).
-#[derive(Debug, Default)]
-struct ArrivalsBucket {
-    start_ms: u64,
-    count: u64,
-}
-
-/// The receiving worker's trigger counters. The TS controller read the
-/// instrumentation counters of PR A (`messaging_stats`); that
-/// instrumentation is not part of this port, so the digest lane owns the
-/// minimal counters it needs: the arrivals window (a 5-minute ring), the
-/// model/ingestion turn counts (turn-granular, the worker-side equivalent
-/// of the TS assistant-step counters), and the controller state itself.
+/// The receiving worker's controller state. The controller reads the
+/// session's messaging counters (upstream #2352,
+/// [`pa_core::session_engine::messaging_stats`]): the trailing-5-minute
+/// arrivals (pending pressure), the agent-message context share, and the
+/// ingestion step share — the same snapshot `rlm.messaging_stats()` serves.
 #[derive(Debug, Default)]
 struct DigestCounters {
-    arrivals: VecDeque<ArrivalsBucket>,
     controller: DigestLaneController,
-}
-
-impl DigestCounters {
-    fn record_arrival(&mut self, now_ms: u64) {
-        let start_ms = now_ms / ARRIVALS_BUCKET_MS * ARRIVALS_BUCKET_MS;
-        self.prune_arrivals(now_ms);
-        match self.arrivals.back_mut() {
-            Some(bucket) if bucket.start_ms == start_ms => bucket.count += 1,
-            _ => self
-                .arrivals
-                .push_back(ArrivalsBucket { start_ms, count: 1 }),
-        }
-    }
-
-    fn prune_arrivals(&mut self, now_ms: u64) {
-        // A bucket's last arrival sits at start_ms + bucket width; the
-        // bucket leaves the window once even that newest arrival is older
-        // than the trailing window (the same edge the per-arrival stamps
-        // pruned on, applied at bucket granularity).
-        while self.arrivals.front().is_some_and(|bucket| {
-            now_ms.saturating_sub(bucket.start_ms + ARRIVALS_BUCKET_MS) >= ARRIVALS_WINDOW_MS
-        }) {
-            self.arrivals.pop_front();
-        }
-    }
-
-    fn arrivals_last_5m(&mut self, now_ms: u64) -> u64 {
-        self.prune_arrivals(now_ms);
-        self.arrivals.iter().map(|bucket| bucket.count).sum()
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -479,13 +424,13 @@ pub(crate) struct AgentMessageDigest {
     work_notify: Arc<Notify>,
     inbox: Mutex<InboxState>,
     counters: Mutex<DigestCounters>,
-    /// The model/ingestion turn counts, lock-free on purpose: the turn
-    /// runner counts from inside its event path (after the abort gate,
-    /// while it HOLDS the core lock), and the controller reads them while
-    /// holding the counters lock and taking the core lock — a counter
-    /// mutex taken under the core lock would invert that order (ABBA).
-    model_turns: std::sync::atomic::AtomicU64,
-    ingestion_turns: std::sync::atomic::AtomicU64,
+    /// The session's messaging counters (upstream #2352): the arrivals,
+    /// model/ingestion steps and send totals `rlm.messaging_stats()`
+    /// serves and the controller reads. Their mutex is a LEAF (held for no
+    /// other lock): the turn runner counts from inside its event path
+    /// (after the abort gate, while it HOLDS the core lock), and the
+    /// controller reads them while holding the counters and core locks.
+    stats: Arc<pa_core::session_engine::messaging_stats::MessagingStats>,
 }
 
 impl AgentMessageDigest {
@@ -500,8 +445,7 @@ impl AgentMessageDigest {
             work_notify,
             inbox: Mutex::new(InboxState::default()),
             counters: Mutex::new(DigestCounters::default()),
-            model_turns: std::sync::atomic::AtomicU64::new(0),
-            ingestion_turns: std::sync::atomic::AtomicU64::new(0),
+            stats: Arc::new(pa_core::session_engine::messaging_stats::MessagingStats::default()),
         }
     }
 
@@ -514,29 +458,42 @@ impl AgentMessageDigest {
     /// delivery path's enqueue (the caller's queue cap is the push
     /// lane's admission).
     pub(crate) fn record_arrival(&self, now_ms: u64) {
-        self.counters
+        // Under the counters lock: an arrival serializes with the
+        // replacement reset exactly like the controller's evaluation.
+        let _counters = self
+            .counters
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .record_arrival(now_ms);
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.stats.record_arrival(now_ms);
     }
 
-    /// Count one model turn (an assistant row the worker persisted, TS's
-    /// per-step counter at turn granularity); an ingestion turn is one
-    /// whose turn was driven by an agent-message delivery. Lock-free (see
-    /// the struct docs) so it stays safe under the caller's core lock.
-    pub(crate) fn note_model_turn(&self, ingestion: bool) {
-        use std::sync::atomic::Ordering::Relaxed;
-        self.model_turns.fetch_add(1, Relaxed);
-        self.ingestion_turns
-            .fetch_add(u64::from(ingestion), Relaxed);
+    /// Count one model step (an assistant row the worker persisted that
+    /// did not end in `error`, TS `recordModelStep`) with its usage
+    /// tokens; an ingestion step is one whose turn was driven by an
+    /// agent-message delivery. The stats mutex is a leaf (see the struct
+    /// docs), so this stays safe under the caller's core lock.
+    pub(crate) fn note_model_step(&self, tokens: u64, ingestion: bool) {
+        self.stats
+            .record_model_step(tokens, ingestion, crate::util::now_ms());
     }
 
-    /// The ingestion-turn share over all model turns.
-    fn ingestion_turn_share(&self) -> Option<f64> {
-        use std::sync::atomic::Ordering::Relaxed;
-        let model_turns = self.model_turns.load(Relaxed);
-        let ingestion_turns = self.ingestion_turns.load(Relaxed);
-        (model_turns > 0).then(|| ingestion_turns as f64 / model_turns as f64)
+    /// One resolved outbound `agent_message.send` (TS `recordSendAttempt`).
+    pub(crate) fn note_send_attempt(&self, failed: bool) {
+        self.stats.record_send_attempt(failed);
+    }
+
+    /// The session's messaging snapshot (`rlm.messaging_stats()`, the
+    /// opt-in `get_session_stats` `messagingStats` field, and the
+    /// controller's input): the counters over the store's working context.
+    pub(crate) fn messaging_snapshot(&self) -> pa_core::swarm_eval::MessagingStatsSnapshot {
+        let context = {
+            let core = self
+                .core
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            messaging_context_locked(&core)
+        };
+        self.stats.snapshot(context, crate::util::now_ms())
     }
 
     /// Reset the core-held lane state (the pin + the mode) — the part of
@@ -571,12 +528,8 @@ impl AgentMessageDigest {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let swapped = swap(&mut core);
         Self::reset_lane_state_locked(&mut core);
-        counters.arrivals.clear();
         counters.controller = DigestLaneController::default();
-        self.model_turns
-            .store(0, std::sync::atomic::Ordering::Relaxed);
-        self.ingestion_turns
-            .store(0, std::sync::atomic::Ordering::Relaxed);
+        self.stats.reset();
         swapped
     }
 
@@ -627,13 +580,11 @@ impl AgentMessageDigest {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if core.agent_message_digest_pin == DigestLanePin::Auto {
-            let pending = counters.arrivals_last_5m(now_ms);
-            let ingestion_share = context_share_locked(&core);
-            let ingestion_turn_share = self.ingestion_turn_share();
+            let stats = self.stats.snapshot(messaging_context_locked(&core), now_ms);
             let decision = counters.controller.evaluate(DigestEvaluation {
-                pending,
-                ingestion_share,
-                ingestion_turn_share,
+                pending: stats.arrivals.last5m,
+                ingestion_share: stats.context.share,
+                ingestion_turn_share: pa_core::swarm_eval::turn_share(&stats),
                 current_mode: if core.agent_message_digest_mode {
                     DigestLaneMode::Digest
                 } else {
@@ -1159,6 +1110,37 @@ impl AgentMessageDigest {
     /// quiet notice the async-bash completions ride (queue-if-busy,
     /// resume-if-idle), never content beyond the range.
     pub(crate) fn emit_watch_notice(&self, watch: &str, content: &str) {
+        self.emit_watch_row(watch, content, None);
+    }
+
+    /// Route one path-watch event (upstream #2351) through the same
+    /// pipeline. Each watch coalesces its own undelivered change notices:
+    /// a newer batch MERGES its paths into the pending row (path lists are
+    /// the whole signal, so superseding would lose earlier changes). A
+    /// failure is its own row: it ends the watch and is never coalesced.
+    pub(crate) fn emit_path_watch_event(&self, event: &crate::path_watch::PathWatchEvent) {
+        match event {
+            crate::path_watch::PathWatchEvent::Changed(change) => self.emit_watch_row(
+                &format!("path:{}", change.watch_id),
+                &crate::path_watch::format_path_watch_changed(change),
+                Some(change),
+            ),
+            crate::path_watch::PathWatchEvent::Failed(failure) => self.emit_watch_row(
+                &format!("path-failed:{}", failure.watch_id),
+                &crate::path_watch::format_path_watch_failed(failure),
+                None,
+            ),
+        }
+    }
+
+    /// The watch-notice routing shared by every watch kind; `change` marks
+    /// a path-watch batch, whose pending row merges instead of superseding.
+    fn emit_watch_row(
+        &self,
+        watch: &str,
+        content: &str,
+        change: Option<&crate::path_watch::PathWatchChange>,
+    ) {
         let digest = {
             let core = self
                 .core
@@ -1221,19 +1203,41 @@ impl AgentMessageDigest {
             .iter_mut()
             .find(|item| is_push_watch_notice_for(item, watch))
         {
-            pending.message = content.to_string();
+            let (content, merged) = match change {
+                Some(change) => {
+                    let merged = merge_path_watch_change(pending, change);
+                    (
+                        crate::path_watch::format_path_watch_changed(&merged),
+                        Some(merged),
+                    )
+                }
+                None => (content.to_string(), None),
+            };
+            pending.message.clone_from(&content);
             if let Some(row) = pending.custom_message.as_mut() {
                 row["content"] = json!(content);
                 row["timestamp"] = json!(crate::util::now_ms());
+                if let Some(merged) = merged {
+                    row["details"]["paths"] = json!(merged.paths);
+                    row["details"]["truncated"] = json!(merged.truncated);
+                }
             }
             return;
+        }
+        let mut details = json!({ "watch": watch });
+        if let Some(change) = change {
+            details["watchId"] = json!(change.watch_id);
+            details["path"] = json!(change.path);
+            details["recursive"] = json!(change.recursive);
+            details["paths"] = json!(change.paths);
+            details["truncated"] = json!(change.truncated);
         }
         let row = json!({
             "role": "custom",
             "customType": crate::agent_watch::AGENT_WATCH_NOTICE_CUSTOM_TYPE,
             "content": content,
             "display": false,
-            "details": { "watch": watch },
+            "details": details,
             "timestamp": crate::util::now_ms(),
         });
         let (policy, queue_visible) = if core.busy {
@@ -1265,6 +1269,45 @@ impl AgentMessageDigest {
             None,
         );
         self.work_notify.notify_one();
+    }
+}
+
+/// One path-watch batch merged into its undelivered pending row: the
+/// pending paths first (in their order), the new ones after, deduplicated
+/// and re-capped at the notice's byte budget.
+fn merge_path_watch_change(
+    pending: &QueuedItem,
+    change: &crate::path_watch::PathWatchChange,
+) -> crate::path_watch::PathWatchChange {
+    let details = pending
+        .custom_message
+        .as_ref()
+        .and_then(|row| row.get("details"));
+    let mut paths: Vec<String> = details
+        .and_then(|details| details.get("paths"))
+        .and_then(Value::as_array)
+        .map(|paths| {
+            paths
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let was_truncated = details
+        .and_then(|details| details.get("truncated"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    for path in &change.paths {
+        if !paths.contains(path) {
+            paths.push(path.clone());
+        }
+    }
+    let (paths, capped) = crate::path_watch::cap_path_list(&paths);
+    crate::path_watch::PathWatchChange {
+        paths,
+        truncated: capped || was_truncated || change.truncated,
+        ..change.clone()
     }
 }
 
@@ -1340,12 +1383,17 @@ fn sender_is_parent_of(sender: &Value, core: &SessionCore) -> bool {
     false
 }
 
-/// The ingestion context share (the TS heuristic estimate of PR A): agent-
-/// message tokens (chars/4 over the delivered `agent_message` custom rows
-/// in the working window) over the last assistant usage's context tokens.
-/// `None` when either side is unmeasured — unmeasured never triggers.
-fn context_share_locked(core: &SessionCore) -> Option<f64> {
-    let store = core.store.as_ref()?;
+/// The working-context inputs of the messaging snapshot (TS
+/// `messagingStats()`): the chars/4 estimate over the delivered
+/// `agent_message` custom rows in the working context, and the last
+/// assistant usage's context tokens (TS `calculateContextTokens`). An
+/// unmeasured side stays `None`/zero, and unmeasured never triggers.
+fn messaging_context_locked(
+    core: &SessionCore,
+) -> pa_core::session_engine::messaging_stats::MessagingContext {
+    let Some(store) = core.store.as_ref() else {
+        return pa_core::session_engine::messaging_stats::MessagingContext::default();
+    };
     // One reversed pass over the ACTIVE BRANCH (the parent chain from the
     // leaf — the model's real working context) collects both inputs: the
     // newest assistant usage (the context-token denominator) and EVERY
@@ -1354,9 +1402,9 @@ fn context_share_locked(core: &SessionCore) -> Option<f64> {
     // working context dropped.
     let branch = store.branch();
     let mut context_tokens: Option<u64> = None;
-    let mut agent_message_chars: usize = 0;
+    let mut agent_message_units: u64 = 0;
     for entry in branch.iter().rev() {
-        if entry.type_ == "message" {
+        if entry.type_ == "message" && context_tokens.is_none() {
             let message = entry.fields.get("message");
             let role = message
                 .and_then(|message| message.get("role"))
@@ -1364,40 +1412,30 @@ fn context_share_locked(core: &SessionCore) -> Option<f64> {
             let usage = message
                 .and_then(|message| message.get("usage"))
                 .filter(|usage| !usage.is_null());
-            if role == Some("assistant") && context_tokens.is_none() {
-                let Some(usage) = usage else {
-                    continue;
-                };
-                context_tokens = Some(
-                    usage
-                        .get("input")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(0)
-                        .saturating_add(usage.get("cacheRead").and_then(Value::as_u64).unwrap_or(0))
-                        .saturating_add(
-                            usage.get("cacheWrite").and_then(Value::as_u64).unwrap_or(0),
-                        ),
-                );
+            if let (Some("assistant"), Some(usage)) = (role, usage) {
+                context_tokens = Some(pa_types::usage::calculate_context_tokens(usage));
             }
         }
         if entry.type_ == "custom_message"
             && entry.fields.get("customType").and_then(Value::as_str)
                 == Some(pa_core::session_engine::agent_messaging::AGENT_MESSAGE_CUSTOM_TYPE)
         {
-            let content = entry.fields.get("content").cloned().unwrap_or(Value::Null);
-            let text = match &content {
-                Value::String(text) => Some(text.clone()),
-                Value::Object(map) => map.get("text").and_then(Value::as_str).map(str::to_string),
+            let text = match entry.fields.get("content") {
+                Some(Value::String(text)) => Some(text.as_str()),
+                Some(Value::Object(map)) => map.get("text").and_then(Value::as_str),
                 _ => None,
             };
             if let Some(text) = text {
-                agent_message_chars += text.chars().count();
+                // TS `string.length`: UTF-16 code units.
+                agent_message_units += text.encode_utf16().count() as u64;
             }
         }
     }
-    let context_tokens = context_tokens.filter(|tokens| *tokens > 0)?;
-    let estimated = agent_message_chars as f64 / CONTEXT_TOKENS_PER_CHAR;
-    Some(estimated / context_tokens as f64)
+    pa_core::session_engine::messaging_stats::MessagingContext {
+        context_tokens,
+        estimated_agent_message_tokens:
+            pa_core::session_engine::messaging_stats::estimate_messaging_tokens(agent_message_units),
+    }
 }
 
 #[cfg(test)]
@@ -1620,13 +1658,7 @@ mod tests {
     /// above the recovery half-threshold while every send fails.
     #[test]
     fn route_records_arrivals_only_for_accepted_deliveries() {
-        let ring = |digest: &AgentMessageDigest| {
-            digest
-                .counters
-                .lock()
-                .unwrap()
-                .arrivals_last_5m(crate::util::now_ms())
-        };
+        let ring = |digest: &AgentMessageDigest| digest.messaging_snapshot().arrivals.last5m;
         let sender = json!({ "activeSessionId": "sender", "sessionName": "sender" });
         let digest_over = |store: Option<crate::session_store::SessionFile>| {
             AgentMessageDigest::new(
@@ -1679,43 +1711,6 @@ mod tests {
             .expect("route failed");
         assert!(routed.is_none(), "a push-pinned route digested");
         assert_eq!(ring(&digest), 0, "the push route pre-recorded an arrival");
-    }
-
-    /// The arrivals ring is count-aggregated (the bounded form): sustained
-    /// traffic spread across the whole window preserves the
-    /// trailing-window count exactly, while the ring itself never grows
-    /// past one counted row per bucket of window — the per-arrival row of
-    /// the first cut held one entry per delivery for the window's whole
-    /// span, so a hot push path grew the worker's memory without bound.
-    #[test]
-    fn the_arrivals_ring_stays_bounded_under_sustained_traffic() {
-        let mut counters = DigestCounters::default();
-        let now = 100 * ARRIVALS_WINDOW_MS;
-        // 30_000 arrivals spread across the window (100 per second).
-        for index in 0..30_000u64 {
-            counters.record_arrival(now - ARRIVALS_WINDOW_MS + index / 100);
-        }
-        assert_eq!(
-            counters.arrivals_last_5m(now),
-            30_000,
-            "the bucketed ring lost trailing-window arrivals"
-        );
-        assert!(
-            counters.arrivals.len() <= (ARRIVALS_WINDOW_MS / ARRIVALS_BUCKET_MS) as usize + 1,
-            "the ring grew past its per-bucket bound: {}",
-            counters.arrivals.len()
-        );
-        // The window slides: aged-out buckets leave the ring entirely.
-        assert_eq!(
-            counters.arrivals_last_5m(now + ARRIVALS_WINDOW_MS),
-            0,
-            "an aged-out bucket survived the window"
-        );
-        assert!(
-            counters.arrivals.is_empty(),
-            "the pruned ring kept {} stale buckets",
-            counters.arrivals.len()
-        );
     }
 
     /// A test digest over a real store (the burst tests need the durable
@@ -1899,17 +1894,19 @@ mod tests {
     fn a_replacement_reset_clears_the_counters_and_turn_accounting() {
         let (digest, _dir) = digest_over_store();
         digest.record_arrival(crate::util::now_ms());
-        digest.note_model_turn(true);
+        digest.note_model_step(10, true);
+        digest.note_send_attempt(true);
         digest.reset_for_replacement(|_| ());
-        let ring = digest
-            .counters
-            .lock()
-            .unwrap()
-            .arrivals_last_5m(crate::util::now_ms());
-        assert_eq!(ring, 0, "the retired session's arrival survived the reset");
-        assert!(
-            digest.ingestion_turn_share().is_none(),
-            "the retired session's turn accounting survived the reset"
+        let stats = digest.messaging_snapshot();
+        assert_eq!(
+            (
+                stats.arrivals,
+                stats.model_steps,
+                stats.ingestion_steps,
+                stats.sends
+            ),
+            Default::default(),
+            "the retired session's counters survived the reset"
         );
     }
 

@@ -781,6 +781,9 @@ impl SessionUi {
                     Err(error) => self.error_row(&format!("{error:#}"), view),
                 }
             }
+            "cwd" => {
+                self.handle_cwd_command(view, &resolved.args).await;
+            }
             "fast" => {
                 if !resolved.args.is_empty() {
                     self.error_row("Usage: /fast", view);

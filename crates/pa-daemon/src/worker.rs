@@ -52,6 +52,7 @@ pub(crate) use summary::{
 use turn::TurnRunner;
 
 mod commands;
+mod session_cwd;
 
 pub use env::{
     WORKER_ACTIVE_SESSION_ID_ENV, WORKER_CWD_ENV, WORKER_INSTANCE_ID_ENV,
@@ -326,6 +327,7 @@ impl Worker {
             agent_message_digest_pin: digest::DigestLanePin::default(),
             active_action: None,
             feature_status: serde_json::Map::new(),
+            cwd_override: false,
             running_tool_calls: std::collections::HashMap::new(),
             running_admission_ids: std::collections::HashSet::new(),
         };
@@ -715,6 +717,32 @@ impl Worker {
                         watch_digest.emit_watch_notice(watch, content);
                     });
                 concrete.set_watch_notice_sink(watch_sink);
+                // The session's messaging counters (upstream #2352): the
+                // digest lane owns them (it records arrivals and steps and
+                // reads them for its controller); `rlm.messaging_stats` and
+                // the send counting call through these.
+                // The session-owned path watches (upstream #2351) route
+                // through the same digest-aware pipeline, behind the same
+                // closed-session gate.
+                let path_engine = std::sync::Arc::downgrade(concrete);
+                let path_digest = Arc::clone(&agent_digest);
+                concrete.set_path_watch_sink(std::sync::Arc::new(move |event| {
+                    if path_engine
+                        .upgrade()
+                        .is_some_and(|engine| engine.session_is_closed())
+                    {
+                        return;
+                    }
+                    path_digest.emit_path_watch_event(&event);
+                }));
+                let snapshot_digest = Arc::clone(&agent_digest);
+                let send_digest = Arc::clone(&agent_digest);
+                concrete.set_messaging_stats_seams(
+                    crate::messaging_stats_host::MessagingStatsSeams {
+                        snapshot: Arc::new(move || snapshot_digest.messaging_snapshot()),
+                        record_send: Arc::new(move |failed| send_digest.note_send_attempt(failed)),
+                    },
+                );
             }
             // The live roster activity feed (TS `observeRosterEvent`): busy
             // flips and trigger events coalesce into `worker_roster_delta`

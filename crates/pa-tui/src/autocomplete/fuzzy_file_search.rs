@@ -37,15 +37,30 @@ impl Drop for FileSearch {
     }
 }
 
+/// What one search completes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SearchMode {
+    /// An `@` attachment: files and directories, inserted with the `@`.
+    Attachment,
+    /// A path-argument slash command (`/cwd`, upstream #2528): directories
+    /// only, inserted without the `@` (TS `pathArgument`).
+    DirectoryArgument,
+}
+
 /// Start the background search for the typed `@` token against the
 /// session cwd.
 pub(super) fn spawn(base: &Path, at_prefix: String) -> FileSearch {
+    spawn_with_mode(base, at_prefix, SearchMode::Attachment)
+}
+
+/// Start the background search in `mode`.
+pub(super) fn spawn_with_mode(base: &Path, prefix: String, mode: SearchMode) -> FileSearch {
     let (tx, results) = mpsc::channel();
     let cancel = Arc::new(AtomicBool::new(false));
     let base = base.to_path_buf();
     let thread_cancel = Arc::clone(&cancel);
     thread::spawn(move || {
-        let _ = tx.send(search(&base, &at_prefix, &thread_cancel));
+        let _ = tx.send(search(&base, &prefix, mode, &thread_cancel));
     });
     FileSearch { results, cancel }
 }
@@ -150,7 +165,12 @@ fn walk_directory(
 /// The walk thread body: resolve the typed scope, walk with fd's semantics, score, and
 /// build the items. `None` means no menu: fd matched nothing, the query was an invalid
 /// regex (fd exits non-zero), or every entry scored zero.
-fn search(base: &Path, at_prefix: &str, cancel: &AtomicBool) -> Option<Suggestions> {
+fn search(
+    base: &Path,
+    at_prefix: &str,
+    mode: SearchMode,
+    cancel: &AtomicBool,
+) -> Option<Suggestions> {
     let (raw_query, _is_at_prefix, is_quoted_prefix) = parse_path_prefix(at_prefix);
     let scoped_query = resolve_scoped_query(base, &raw_query);
     let (walk_base, query) = match &scoped_query {
@@ -171,7 +191,10 @@ fn search(base: &Path, at_prefix: &str, cancel: &AtomicBool) -> Option<Suggestio
                 .ok()?,
         )
     };
-    let found = walk_directory(&walk_base, regex.as_ref(), full_path_mode, cancel);
+    let mut found = walk_directory(&walk_base, regex.as_ref(), full_path_mode, cancel);
+    if mode == SearchMode::DirectoryArgument {
+        found.retain(|entry| entry.is_directory);
+    }
     // The stable sort keeps fd's arrival order within a score.
     let mut scored_entries: Vec<(i32, WalkedEntry)> = found
         .into_iter()
@@ -202,7 +225,11 @@ fn search(base: &Path, at_prefix: &str, cancel: &AtomicBool) -> Option<Suggestio
                 display_path.clone()
             };
             CompletionItem {
-                value: build_completion_value(&completion_path, true, is_quoted_prefix),
+                value: build_completion_value(
+                    &completion_path,
+                    mode == SearchMode::Attachment,
+                    is_quoted_prefix,
+                ),
                 label: if entry.is_directory {
                     format!("{name}/")
                 } else {

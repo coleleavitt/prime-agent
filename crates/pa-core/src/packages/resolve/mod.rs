@@ -23,12 +23,25 @@ pub enum ResourceType {
     Skills,
     Prompts,
     Themes,
+    /// Read-only continual harness entries (`harness/<kind>/<id>.json`,
+    /// upstream #2298): package-only — settings arrays and auto-discovery
+    /// never point at harness directories.
+    Harness,
 }
 
+/// The kinds user/project settings arrays and auto-discovery provide.
 pub(crate) const RESOURCE_TYPES: [ResourceType; 3] = [
     ResourceType::Skills,
     ResourceType::Prompts,
     ResourceType::Themes,
+];
+
+/// Every kind a package manifest, filter, or convention directory provides.
+pub(crate) const PACKAGE_RESOURCE_TYPES: [ResourceType; 4] = [
+    ResourceType::Skills,
+    ResourceType::Prompts,
+    ResourceType::Themes,
+    ResourceType::Harness,
 ];
 
 /// Where a resource came from: a package, or a top-level settings/auto slot.
@@ -84,6 +97,8 @@ pub struct ResolvedPaths {
     pub prompts: Vec<ResolvedResource>,
     pub themes: Vec<ResolvedResource>,
     pub diagnostics: Vec<crate::skills::diagnostics::ResourceDiagnostic>,
+    /// Package harness entries (upstream #2298).
+    pub harness: Vec<ResolvedResource>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +128,7 @@ pub(crate) struct PackageFilter {
     pub skills: Option<Vec<String>>,
     pub prompts: Option<Vec<String>>,
     pub themes: Option<Vec<String>>,
+    pub harness: Option<Vec<String>>,
 }
 
 impl PackageFilter {
@@ -121,6 +137,7 @@ impl PackageFilter {
             ResourceType::Skills => self.skills.as_ref(),
             ResourceType::Prompts => self.prompts.as_ref(),
             ResourceType::Themes => self.themes.as_ref(),
+            ResourceType::Harness => self.harness.as_ref(),
         }
     }
 }
@@ -139,6 +156,7 @@ pub(crate) struct PiManifest {
     pub skills: Option<Vec<String>>,
     pub prompts: Option<Vec<String>>,
     pub themes: Option<Vec<String>>,
+    pub harness: Option<Vec<String>>,
 }
 
 impl PiManifest {
@@ -147,6 +165,7 @@ impl PiManifest {
             ResourceType::Skills => self.skills.clone(),
             ResourceType::Prompts => self.prompts.clone(),
             ResourceType::Themes => self.themes.clone(),
+            ResourceType::Harness => self.harness.clone(),
         }
     }
 }
@@ -182,6 +201,7 @@ pub(crate) struct ResourceAccumulator {
     pub prompts: ResourceMap,
     pub themes: ResourceMap,
     pub diagnostics: Vec<crate::skills::diagnostics::ResourceDiagnostic>,
+    pub harness: ResourceMap,
 }
 
 impl ResourceAccumulator {
@@ -190,6 +210,7 @@ impl ResourceAccumulator {
             ResourceType::Skills => &mut self.skills,
             ResourceType::Prompts => &mut self.prompts,
             ResourceType::Themes => &mut self.themes,
+            ResourceType::Harness => &mut self.harness,
         }
     }
 }
@@ -221,6 +242,7 @@ pub(crate) fn to_resolved_paths(accumulator: ResourceAccumulator) -> ResolvedPat
         prompts: map_to_resolved(accumulator.prompts),
         themes: map_to_resolved(accumulator.themes),
         diagnostics: accumulator.diagnostics,
+        harness: map_to_resolved(accumulator.harness),
     }
 }
 
@@ -234,6 +256,8 @@ pub(crate) fn settings_array(
         ResourceType::Skills => settings.skills.clone().unwrap_or_default(),
         ResourceType::Prompts => settings.prompts.clone().unwrap_or_default(),
         ResourceType::Themes => settings.themes.clone().unwrap_or_default(),
+        // Package-only: settings never point at harness directories.
+        ResourceType::Harness => Vec::new(),
     }
 }
 
@@ -242,6 +266,7 @@ pub(crate) fn resource_type_dir_name(resource_type: ResourceType) -> &'static st
         ResourceType::Skills => "skills",
         ResourceType::Prompts => "prompts",
         ResourceType::Themes => "themes",
+        ResourceType::Harness => "harness",
     }
 }
 

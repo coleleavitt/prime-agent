@@ -147,7 +147,10 @@ fn cached_prefix_is_stable_across_sessions() {
 /// importable), so its classification is "restricted to a fixed skill event
 /// vocabulary with typed properties" — the handler's allowlist admits only
 /// the two computer-use events and refuses everything else — which keeps it
-/// out of the prompt's documented programmatic surface.
+/// out of the prompt's documented programmatic surface. The daemon
+/// worker's `bash.completed` (the background-command completion notice)
+/// and `bash.progress` (`rlm.watch.job`'s own poller) are runtime plumbing,
+/// and `vision.read` is the bundled `attach_image` skill's own request.
 const INTERNAL_HOST_REQUESTS: &[&str] = &[
     "model.info",
     "mcp.config",
@@ -155,6 +158,9 @@ const INTERNAL_HOST_REQUESTS: &[&str] = &[
     "mcp.begin_login",
     "bash.consumed",
     "telemetry.emit",
+    "bash.completed",
+    "bash.progress",
+    "vision.read",
 ];
 
 /// Map one registered host-request type to the prompt token that documents
@@ -223,13 +229,22 @@ fn is_request_type_literal(literal: &str) -> bool {
         && literal.contains('.')
 }
 
-/// Scan the pa-core sources for every host-request type the session engine
-/// registers: `handlers.register("<type>", ...)` literals plus
+/// Scan the pa-core and pa-daemon sources for every host-request type the
+/// session engine and the daemon worker register (the worker owns the
+/// swarm handlers: `rlm.inbox.*`, `rlm.watch.*`, `rlm.messaging_stats`):
+/// `handlers.register("<type>", ...)` literals plus
 /// `for request_type in [ "<type>", ... ]` loop tables.
 fn registered_host_requests() -> BTreeSet<String> {
-    let src_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut found = BTreeSet::new();
-    let mut stack = vec![src_root];
+    let mut stack = vec![
+        crate_root.join("src"),
+        crate_root
+            .parent()
+            .expect("crates dir")
+            .join("pa-daemon")
+            .join("src"),
+    ];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;

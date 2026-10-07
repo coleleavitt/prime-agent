@@ -17,6 +17,7 @@ fn empty_state_digest_renders_placeholder() {
         include_shell_examples: false,
         include_refine: true,
         prompt_hooks: crate::refinement::prompt_hook::HarnessPromptHooks::default(),
+        package_state: None,
     };
     let digest = harness_digest_text(&context, HarnessQueryTerms::default());
     assert!(digest.starts_with("# Continual Harness State"));
@@ -63,6 +64,7 @@ fn a_prompt_hook_adjusts_the_digest_and_its_fingerprint() {
                 .into_iter()
                 .collect(),
         ),
+        package_state: None,
     };
     let render = |context: &HarnessDigestContext| {
         HarnessDigestInputs {
@@ -465,6 +467,7 @@ async fn placement_rig(
             include_shell_examples: false,
             include_refine: false,
             prompt_hooks: crate::refinement::prompt_hook::HarnessPromptHooks::default(),
+            package_state: None,
         }),
     )
     .await
@@ -674,4 +677,100 @@ async fn compact_digest_capture_commit_time_placement_sees_racing_rows_enter_nev
         "the state fingerprint matches across placements in every class"
     );
     registration.unregister();
+}
+
+/// Upstream #2298 end to end over a resolved local package: its harness
+/// entry mounts read-only into the digest under a `package:` label with
+/// provenance and no local path, an editable same-id entry shadows it, and
+/// a package update that only moves the revision re-renders the digest.
+#[test]
+fn package_harness_overlays_reach_the_digest_read_only() {
+    let tmp = tempfile::tempdir().unwrap();
+    let work = tmp.path().join("work");
+    let agent = tmp.path().join("agent");
+    let pkg = tmp.path().join("prime-skills");
+    std::fs::create_dir_all(&work).unwrap();
+    std::fs::create_dir_all(pkg.join("harness/memory")).unwrap();
+    std::fs::write(
+        pkg.join("package.json"),
+        r#"{"name":"prime-skills","version":"1.0.0","pi":{"harness":["./harness"]}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        pkg.join("harness/memory/repo_access_policy.json"),
+        serde_json::json!({
+            "id": "repo_access_policy", "kind": "memory",
+            "title": "Repo access policy", "content": "Clone over ssh only."
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::create_dir_all(&agent).unwrap();
+    std::fs::write(
+        agent.join("settings.json"),
+        serde_json::json!({ "packages": [pkg.display().to_string()] }).to_string(),
+    )
+    .unwrap();
+    let load = || {
+        crate::resources::load_resources(crate::resources::ResourceLoaderOptions {
+            bundled_skills_dir: crate::packages::BundledSkillsDir::Disabled,
+            ..crate::resources::ResourceLoaderOptions::new(&work, &agent)
+        })
+        .unwrap()
+        .package_harness
+    };
+    let context = |package: crate::refinement::HarnessState| HarnessDigestContext {
+        global_dir: agent.join("harness"),
+        local_dir: None,
+        include_ipython: true,
+        include_shell_examples: false,
+        include_refine: true,
+        prompt_hooks: crate::refinement::prompt_hook::HarnessPromptHooks::default(),
+        package_state: Some(std::sync::Arc::new(package)),
+    };
+    let first = load();
+    assert_eq!(first.diagnostics, Vec::new());
+    let render =
+        render_digest_with_fingerprint(&context(first.state), HarnessQueryTerms::default());
+    let line = render
+        .digest
+        .lines()
+        .find(|line| line.contains("repo_access_policy"))
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        line,
+        "- [package:repo_access_policy] Repo access policy (general, v1) [read-only package; scope=user; source=local:prime-skills rev=v1.0.0; file=harness/memory/repo_access_policy.json]: Clone over ssh only."
+    );
+    assert!(!render.digest.contains(&pkg.display().to_string()));
+    assert!(render
+        .digest
+        .contains("Never update or delete a package entry with `/refine`"));
+    std::fs::write(
+        pkg.join("package.json"),
+        r#"{"name":"prime-skills","version":"1.1.0","pi":{"harness":["./harness"]}}"#,
+    )
+    .unwrap();
+    let updated =
+        render_digest_with_fingerprint(&context(load().state), HarnessQueryTerms::default());
+    assert_ne!(updated.state_fingerprint, render.state_fingerprint);
+    // An editable global entry with the same id shadows the overlay.
+    let mut global = crate::refinement::empty_harness_state();
+    let mut editable = load().state.entries[&crate::refinement::RefinementKind::Memory]
+        ["repo_access_policy"]
+        .clone();
+    editable.extensions.clear();
+    editable.content = "Editable override.".to_string();
+    global
+        .entries
+        .get_mut(&crate::refinement::RefinementKind::Memory)
+        .unwrap()
+        .insert("repo_access_policy".to_string(), editable);
+    crate::refinement::save_harness_state(&agent.join("harness"), &global).unwrap();
+    let shadowed =
+        render_digest_with_fingerprint(&context(load().state), HarnessQueryTerms::default());
+    assert!(shadowed
+        .digest
+        .contains("- [global:repo_access_policy] Repo access policy"));
+    assert!(!shadowed.digest.contains("[package:repo_access_policy]"));
 }

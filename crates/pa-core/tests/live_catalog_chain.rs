@@ -113,7 +113,7 @@ fn layer_a_entry(id: &str, input: f64) -> Value {
 
 /// The Prime Inference `/models` payload: every compiled entry repriced
 /// (`repriced_id` carries the marker price), a live-only public entry,
-/// and the private `internal/glm-5.3-fast` the compiled fallback lacks.
+/// and the private `internal/glm-5.4-fast` the compiled fallback lacks.
 fn pi_payload(repriced_id: &str, repriced_input: f64) -> String {
     let compiled = pa_models::transports::prime_inference_offline_entries();
     let mut data: Vec<Value> = compiled
@@ -146,8 +146,8 @@ fn pi_payload(repriced_id: &str, repriced_input: f64) -> String {
         },
     }));
     data.push(json!({
-        "id": "internal/glm-5.3-fast",
-        "display_name": "GLM 5.3 Fast (internal)",
+        "id": "internal/glm-5.4-fast",
+        "display_name": "GLM 5.4 Fast (internal)",
         "pricing": { "input_usd_per_mtok": 0.42, "output_usd_per_mtok": 2.1 },
         "specs": {
             "context_window": 400_000, "max_output_tokens": 131_072,
@@ -207,14 +207,14 @@ async fn refresh_lands_live_pricing_private_models_and_layer_a_entries() {
     // The private entitlement, visible because the authorized set adopted it.
     let private = all
         .iter()
-        .find(|model| model.id == "internal/glm-5.3-fast")
+        .find(|model| model.id == "internal/glm-5.4-fast")
         .expect("private entitlement served");
     assert!((private.cost.input.as_f64() - 0.42).abs() < 1e-9);
     // Auth is configured, so the private model is also available.
     assert!(registry
         .get_available()
         .iter()
-        .any(|model| model.id == "internal/glm-5.3-fast"));
+        .any(|model| model.id == "internal/glm-5.4-fast"));
 
     // Exactly the three fetches (layer A, layer B, private lane).
     let requests = server.recorded_requests();
@@ -300,7 +300,7 @@ async fn without_credentials_the_compiled_fallback_serves_unchanged() {
         .expect("compiled fallback model");
     assert_eq!(glm.cost.input.as_f64(), compiled_glm.cost.input.as_f64());
     assert!(!all.iter().any(|model| model.id == LAYER_A_PROBE_ID));
-    assert!(!all.iter().any(|model| model.id == "internal/glm-5.3-fast"));
+    assert!(!all.iter().any(|model| model.id == "internal/glm-5.4-fast"));
     assert!(all.iter().any(|model| model.id == "internal/glm-5.2-fast"));
     assert!(!registry
         .get_available()
@@ -440,13 +440,13 @@ async fn session_model_restore_waits_out_a_slow_catalog_fetch() {
     let restored = find_session_model_with_readiness_wait(
         &mut registry,
         "prime-inference",
-        "internal/glm-5.3-fast",
+        "internal/glm-5.4-fast",
         SESSION_MODEL_RESTORE_READINESS_TIMEOUT_MS,
     )
     .await
     .expect("the slow fetch lands inside the readiness window");
     assert_eq!(restored.provider, "prime-inference");
-    assert_eq!(restored.id, "internal/glm-5.3-fast");
+    assert_eq!(restored.id, "internal/glm-5.4-fast");
     assert!(registry.has_configured_auth(&restored));
 }
 
@@ -465,7 +465,7 @@ async fn session_model_restore_is_bounded_when_the_fetch_never_lands() {
     let restored = find_session_model_with_readiness_wait(
         &mut registry,
         "prime-inference",
-        "internal/glm-5.3-fast",
+        "internal/glm-5.4-fast",
         200,
     )
     .await;
@@ -505,12 +505,12 @@ async fn session_model_restore_fast_path_never_fetches() {
     let restored = find_session_model_with_readiness_wait(
         &mut registry,
         "prime-inference",
-        "internal/glm-5.3-fast",
+        "internal/glm-5.4-fast",
         0,
     )
     .await
     .expect("the registered model restores without a fetch");
-    assert_eq!(restored.id, "internal/glm-5.3-fast");
+    assert_eq!(restored.id, "internal/glm-5.4-fast");
     assert_eq!(
         server.recorded_requests().len(),
         requests_after_warmup,

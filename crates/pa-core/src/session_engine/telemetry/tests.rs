@@ -1632,6 +1632,11 @@ async fn fallback_switches_repetition_trips_and_session_behaviours_count() {
         SessionAdoption::RefinePreview,
         SessionAdoption::RefinePlanRun,
         SessionAdoption::ArtifactPresented,
+        SessionAdoption::ToolIntentRecovery,
+        SessionAdoption::MessagingStatsRead,
+        SessionAdoption::PathWatchRegistered,
+        SessionAdoption::CwdChanged,
+        SessionAdoption::PackageHarnessEntry,
     ] {
         telemetry.note_adoption(adoption);
     }
@@ -1662,6 +1667,11 @@ async fn fallback_switches_repetition_trips_and_session_behaviours_count() {
         "refine_preview_count",
         "refine_plan_run_count",
         "artifact_present_count",
+        "tool_intent_recovery_count",
+        "messaging_stats_read_count",
+        "path_watch_register_count",
+        "cwd_change_count",
+        "package_harness_entry_count",
     ]
     .iter()
     .map(|key| {
@@ -1683,6 +1693,11 @@ async fn fallback_switches_repetition_trips_and_session_behaviours_count() {
             "refine_preview_count": 1,
             "refine_plan_run_count": 1,
             "artifact_present_count": 1,
+            "tool_intent_recovery_count": 1,
+            "messaging_stats_read_count": 1,
+            "path_watch_register_count": 1,
+            "cwd_change_count": 1,
+            "package_harness_entry_count": 1,
         })
     );
 }

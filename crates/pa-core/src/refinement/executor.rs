@@ -18,6 +18,9 @@ pub struct RefineOptions {
     pub global: bool,
     pub instructions: Option<String>,
     pub rollback_id: Option<String>,
+    /// The session's read-only package overlay (upstream #2298): the apply
+    /// refuses update/delete edits against its entries.
+    pub package_state: Option<std::sync::Arc<HarnessState>>,
 }
 
 /// A planned refinement awaiting application.
@@ -118,10 +121,7 @@ pub fn overview_for_prompt(state: &HarnessState) -> String {
             let reference_text = reference
                 .map(|text| format!(" ref={}", render_snippet(&text)))
                 .unwrap_or_default();
-            let scope = match entry.scope {
-                Some(HarnessScope::Local) => "local",
-                _ => "global",
-            };
+            let label = super::package_harness::harness_entry_label(entry);
             // A disabled entry is marked so the refiner neither recreates
             // it under a new id nor mistakes it for active guidance.
             let disabled_text = if entry.is_enabled() {
@@ -130,8 +130,13 @@ pub fn overview_for_prompt(state: &HarnessState) -> String {
                 " [disabled]"
             };
             lines.push(format!(
-                "- [{scope}:{}]{disabled_text} {} ({}, v{}){}{}: {content}",
-                entry.id, entry.title, entry.path, entry.version, reference_text, arguments_text
+                "- [{label}]{disabled_text} {} ({}, v{}){}{}{}: {content}",
+                super::compact_text(&entry.title, OVERVIEW_SNIPPET_CHARS),
+                super::compact_text(&entry.path, OVERVIEW_SNIPPET_CHARS),
+                super::package_harness::harness_version_text(entry.version),
+                reference_text,
+                arguments_text,
+                super::package_harness::package_provenance_text(entry, OVERVIEW_SNIPPET_CHARS),
             ));
         }
         let overflow = entries.len().saturating_sub(OVERVIEW_ENTRIES_PER_KIND);
@@ -276,9 +281,9 @@ pub async fn plan_refinement(
 
     let conversation_text = conversation_text(messages, 80_000);
     let scope_instruction = if options.global {
-        "Requested refinement scope: global. Only propose stable cross-session continual harness edits, durable user preferences, reusable skills/subagents, or explicitly project-qualified facts that should affect future Prime Agent sessions. Do not persist session-only progress, temporary blockers, or current-run coordination globally."
+        "Requested refinement scope: global. Only propose stable cross-session continual harness edits, durable user preferences, reusable skills/subagents, or explicitly project-qualified facts that should affect future Prime Agent sessions. Do not persist session-only progress, temporary blockers, or current-run coordination globally. Package entries in the overview are read-only: create a global same-kind, same-id override instead of updating or deleting a package entry."
     } else {
-        "Requested refinement scope: local. Prefer local continual harness edits for current task progress, temporary blockers, current-run coordination, and project facts that are not clearly reusable across Prime Agent sessions. Global entries in the overview are read-only context: do not propose update or delete edits for them; create a local entry instead if an override is needed."
+        "Requested refinement scope: local. Prefer local continual harness edits for current task progress, temporary blockers, current-run coordination, and project facts that are not clearly reusable across Prime Agent sessions. Global entries in the overview are read-only context, and package entries are also read-only: do not propose update or delete edits for them; create a local same-kind, same-id entry instead if an override is needed."
     };
     let build_prompt = |conversation: &str| -> String {
         let mut sections = vec![
@@ -364,6 +369,7 @@ pub fn apply_refinement_plan(
             scope: Some(scope),
             baseline_state,
             factory_enabled,
+            package_state: options.package_state.clone(),
         },
     )
 }
@@ -726,6 +732,7 @@ mod tests {
                 scope: Some(HarnessScope::Local),
                 baseline_state: None,
                 factory_enabled: false,
+                package_state: None,
             },
         );
         assert_eq!(
@@ -811,6 +818,7 @@ mod tests {
                 scope: Some(HarnessScope::Local),
                 baseline_state: None,
                 factory_enabled: false,
+                package_state: None,
             },
         );
         let rollback = plan_refinement(

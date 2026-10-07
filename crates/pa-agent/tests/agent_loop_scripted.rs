@@ -975,3 +975,191 @@ async fn the_repetition_guard_passes_real_output_and_is_off_by_default() {
     let reply = assistant_text(agent.state().await.messages.last().unwrap()).clone();
     assert_eq!(reply.stop_reason, StopReason::Stop);
 }
+
+/// A text turn that ends with `stop_reason` and delivers no tool call.
+fn undelivered_turn(
+    provider: &ScriptedProvider,
+    model: &Model,
+    text: &str,
+    stop_reason: StopReason,
+) {
+    let mut steps = pa_agent::scripted::text_turn_steps(model, text);
+    if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut() {
+        if let AssistantMessageEvent::Done { reason, message } = &mut **event {
+            *reason = stop_reason;
+            message.stop_reason = stop_reason;
+        }
+    }
+    provider.push_turn(pa_agent::scripted::ScriptedTurn::Events(steps));
+}
+
+fn completions_model() -> Model {
+    Model {
+        api: "openai-completions".into(),
+        ..test_model()
+    }
+}
+
+type ToolChoiceLog = Arc<Mutex<Vec<Option<pa_types::ai::RequestToolChoice>>>>;
+
+/// What the installed recovery hook answers.
+#[derive(Clone, Copy)]
+enum RecoveryHook {
+    Mint,
+    Decline,
+}
+
+/// One ineligible case: the model, the context's tools, the finish, the hook.
+type IneligibleCase = (Model, Vec<Arc<dyn AgentTool>>, StopReason, RecoveryHook);
+
+/// An agent with the dropped-tool-call recovery installed (the hook mints
+/// `recover` or declines), recording every request's tool choice.
+async fn recovery_agent(
+    model: Model,
+    tools: Vec<Arc<dyn AgentTool>>,
+    hook: RecoveryHook,
+) -> (Agent, Arc<ScriptedProvider>, ToolChoiceLog) {
+    let provider = Arc::new(ScriptedProvider::new(model.clone()));
+    let choices: ToolChoiceLog = Arc::new(Mutex::new(Vec::new()));
+    let inner = provider.stream_fn();
+    let recorded = Arc::clone(&choices);
+    let stream_fn: pa_agent::stream::StreamFn = Arc::new(move |model, context, options| {
+        recorded.lock().unwrap().push(options.tool_choice);
+        inner(model, context, options)
+    });
+    let agent = Agent::new(AgentOptions {
+        initial_state: pa_agent::agent::AgentInitialState {
+            tools: Some(tools),
+            ..Default::default()
+        },
+        stream_fn: Some(stream_fn),
+        ..Default::default()
+    });
+    agent.set_model(model).await;
+    agent.set_tool_intent_recovery_hook(Some(Arc::new(move |_context| {
+        Box::pin(async move {
+            Ok(matches!(hook, RecoveryHook::Mint).then(|| {
+                AgentMessage::Standard(Message::User(pa_agent::types::UserMessage {
+                    content: UserContent::Text("recover".to_string()),
+                    timestamp: 0,
+                }))
+            }))
+        })
+    })));
+    (agent, provider, choices)
+}
+
+/// Upstream #2530: a reply that reports `toolUse` but delivers no call
+/// retries once with a required tool choice; the next turn's call runs and
+/// the run ends normally. A second undelivered call in a later run gets its
+/// own single recovery, and a repeat inside that run ends the turn.
+#[tokio::test]
+async fn an_undelivered_tool_use_reply_retries_once_with_a_required_tool_choice() {
+    let echo = EchoTool::new("echo");
+    let tools: Vec<Arc<dyn AgentTool>> = vec![echo.clone()];
+    let model = completions_model();
+    let (agent, provider, choices) = recovery_agent(model.clone(), tools, RecoveryHook::Mint).await;
+    undelivered_turn(
+        &provider,
+        &model,
+        "Let me check the evidence.",
+        StopReason::ToolUse,
+    );
+    provider.push_tool_call_turn(
+        None,
+        vec![("call-1", "echo", serde_json::json!({ "text": "x" }))],
+    );
+    provider.push_text_turn("done");
+    agent.prompt("why do the children die?").await.unwrap();
+    agent.wait_for_idle().await;
+    assert_eq!(
+        *choices.lock().unwrap(),
+        vec![None, Some(pa_types::ai::RequestToolChoice::Required), None]
+    );
+    assert_eq!(echo.calls.load(Ordering::SeqCst), 1);
+
+    undelivered_turn(
+        &provider,
+        &model,
+        "I'll inspect the logs.",
+        StopReason::ToolUse,
+    );
+    undelivered_turn(&provider, &model, "I'll check again.", StopReason::ToolUse);
+    provider.push_text_turn("never requested");
+    agent.prompt("inspect the logs too").await.unwrap();
+    agent.wait_for_idle().await;
+    let recoveries = transcript(&agent.state().await.messages)
+        .into_iter()
+        .filter(|row| *row == ("user", "recover".to_string()))
+        .count();
+    assert_eq!(recoveries, 2);
+    assert_eq!(provider.calls().len(), 5);
+}
+
+/// A `length` finish with no call may be ordinary truncation: the retry
+/// keeps the run's own (default) tool choice.
+#[tokio::test]
+async fn an_undelivered_length_reply_retries_with_the_runs_own_tool_choice() {
+    let echo = EchoTool::new("echo");
+    let model = completions_model();
+    let (agent, provider, choices) =
+        recovery_agent(model.clone(), vec![echo.clone()], RecoveryHook::Mint).await;
+    undelivered_turn(&provider, &model, "", StopReason::Length);
+    provider.push_text_turn("finished");
+    agent.prompt("go").await.unwrap();
+    agent.wait_for_idle().await;
+    assert_eq!(*choices.lock().unwrap(), vec![None, None]);
+    assert_eq!(
+        transcript(&agent.state().await.messages),
+        vec![
+            ("user", "go".to_string()),
+            ("assistant", String::new()),
+            ("user", "recover".to_string()),
+            ("assistant", "finished".to_string()),
+        ]
+    );
+}
+
+/// Ineligible terminal replies end the run without asking for a recovery:
+/// a plain stop, a tool-less context, a non-Completions API, or a hook
+/// that declines.
+#[tokio::test]
+async fn ineligible_terminal_replies_end_the_run_without_a_retry() {
+    let completions = completions_model();
+    let cases: Vec<IneligibleCase> = vec![
+        (
+            completions.clone(),
+            vec![EchoTool::new("echo")],
+            StopReason::Stop,
+            RecoveryHook::Mint,
+        ),
+        (
+            completions.clone(),
+            vec![],
+            StopReason::ToolUse,
+            RecoveryHook::Mint,
+        ),
+        (
+            test_model(),
+            vec![EchoTool::new("echo")],
+            StopReason::ToolUse,
+            RecoveryHook::Mint,
+        ),
+        (
+            completions.clone(),
+            vec![EchoTool::new("echo")],
+            StopReason::ToolUse,
+            RecoveryHook::Decline,
+        ),
+    ];
+    let mut served = Vec::new();
+    for (model, tools, stop_reason, hook) in cases {
+        let (agent, provider, _choices) = recovery_agent(model.clone(), tools, hook).await;
+        undelivered_turn(&provider, &model, "Let me check the logs.", stop_reason);
+        provider.push_text_turn("unexpected retry");
+        agent.prompt("Inspect the logs.").await.unwrap();
+        agent.wait_for_idle().await;
+        served.push(provider.calls().len());
+    }
+    assert_eq!(served, vec![1, 1, 1, 1]);
+}

@@ -448,6 +448,10 @@ pub(crate) struct AgentInner {
     pub(crate) model_override: Mutex<Option<AgentModelOverride>>,
     session_id: Option<String>,
     tool_execution: ToolExecutionMode,
+    /// The dropped-tool-call recovery hook (upstream #2530): settable after
+    /// construction like the continuation hook; never consulted while
+    /// steering or follow-up messages are queued.
+    tool_intent_recovery: Mutex<Option<crate::agent_loop::ToolIntentRecoveryFn>>,
 }
 
 impl AgentInner {
@@ -460,6 +464,18 @@ impl AgentInner {
 }
 
 impl AgentInner {
+    fn has_queued_messages(&self) -> bool {
+        self.steering_queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .has_items()
+            || self
+                .follow_up_queue
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .has_items()
+    }
+
     fn current_signal(&self) -> Option<AbortSignal> {
         let run = self
             .run
@@ -703,6 +719,23 @@ impl AgentInner {
             .length_continuation
             .clone_from(&self.length_continuation);
         config.repetition_guard = self.repetition_guard;
+        let recovery = self
+            .tool_intent_recovery
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        config.get_tool_intent_recovery = recovery.map(|hook| {
+            let inner = Arc::clone(self);
+            Arc::new(move |context| {
+                // Queued steering or follow-ups own the boundary (TS
+                // `hasQueuedMessages() ? undefined : ...`).
+                if inner.has_queued_messages() {
+                    return Box::pin(async { Ok(None) })
+                        as crate::BoxFut<'static, anyhow::Result<Option<AgentMessage>>>;
+                }
+                hook(context)
+            }) as crate::agent_loop::ToolIntentRecoveryFn
+        });
         config
     }
 
@@ -1195,6 +1228,7 @@ impl Agent {
             tool_execution: options
                 .tool_execution
                 .unwrap_or(ToolExecutionMode::Parallel),
+            tool_intent_recovery: Mutex::new(None),
         });
         Agent { inner }
     }
@@ -1351,6 +1385,20 @@ impl Agent {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = hook;
     }
 
+    /// Install or replace the dropped-tool-call recovery hook (upstream
+    /// #2530): the embedding that owns the queue/goal/autonomous policy wires
+    /// it after the agent exists. `None` uninstalls it.
+    pub fn set_tool_intent_recovery_hook(
+        &self,
+        hook: Option<crate::agent_loop::ToolIntentRecoveryFn>,
+    ) {
+        *self
+            .inner
+            .tool_intent_recovery
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = hook;
+    }
+
     pub fn set_follow_up_mode(&self, mode: QueueMode) {
         self.inner
             .follow_up_queue
@@ -1447,17 +1495,7 @@ impl Agent {
 
     #[must_use]
     pub fn has_queued_messages(&self) -> bool {
-        self.inner
-            .steering_queue
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .has_items()
-            || self
-                .inner
-                .follow_up_queue
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .has_items()
+        self.inner.has_queued_messages()
     }
 
     /// The loop's provider stream function (the side-thread clone passes the

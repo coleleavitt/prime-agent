@@ -472,6 +472,7 @@ async fn refine(state: &Arc<RpcState>, payload: &Value) -> Result<ResponseData, 
             .map(str::to_string),
         trigger: None,
         pinned_plan: None,
+        package_state: None,
     };
     // The handle guard stays held through the refinement: no replacement
     // or `set_model` interleaves before the file writes.

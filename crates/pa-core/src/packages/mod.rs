@@ -23,6 +23,7 @@ pub use resolve::{
     MetadataSource, MissingSourceAction, PathMetadata, ResolvedPaths, ResolvedResource,
     ResourceOrigin, ResourceType,
 };
+pub(crate) use source::is_local_path;
 pub use source::{parse_git_url, GitSource, LocalSource, NpmSource, ParsedSource, SourceScope};
 
 use std::fmt::Write as _;

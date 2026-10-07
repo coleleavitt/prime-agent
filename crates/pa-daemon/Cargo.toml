@@ -20,6 +20,12 @@ tokio = { workspace = true }
 tokio-util = "0.7"
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4", "v7"] }
+# `rlm.watch.path` (upstream #2351): the platform filesystem watcher
+# (inotify / FSEvents / kqueue / ReadDirectoryChangesW). The TS product used
+# Node's `fs.watch`; no workspace crate watches files, and polling would
+# re-walk every watched tree each tick. CC0-1.0 (allowed for this crate
+# only in deny.toml).
+notify = "8.2"
 
 [dev-dependencies]
 filetime = "0.2"

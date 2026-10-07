@@ -485,6 +485,12 @@ impl SupervisorChildSessions {
         *self.inner.identity.lock_or_recover() = identity;
     }
 
+    /// The parent session moved (`/cwd`, upstream #2528): children spawned
+    /// from now on start in `cwd`; running ones keep theirs.
+    pub fn set_identity_cwd(&self, cwd: &str) {
+        self.inner.identity.lock_or_recover().cwd = Some(cwd.to_string());
+    }
+
     /// Rebuild the children registry from the spawn ledger (a restarted
     /// parent lists its ledger children again).
     pub async fn reseed_from_ledger(&self) {

@@ -384,6 +384,19 @@ pub trait SessionEngine: Send + Sync {
     /// onto a file with another recorded cwd moves the rebuilt session's cwd.
     fn set_cwd(&self, _cwd: std::path::PathBuf) {}
 
+    /// `/cwd` (upstream #2528): retarget the session kernel's working
+    /// directory (a running kernel changes directory now; the next start
+    /// uses it). Engines without a kernel accept it.
+    fn retarget_kernel_cwd(
+        &self,
+        _cwd: std::path::PathBuf,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    /// One `/cwd` change, for adoption telemetry (counts only).
+    fn note_cwd_changed(&self) {}
+
     /// An agent message from one of this session's RLM children reached this
     /// session: the child's terminal no-reply notice can be withheld.
     fn mark_child_reply(&self, _child_active_session_id: &str) {}
