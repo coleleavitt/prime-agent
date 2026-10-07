@@ -15,7 +15,7 @@ use super::venv::{
 /// unrelated process the OS gave the same pid after the owner died. Fails
 /// safe toward alive when no identity was recorded or the current one
 /// cannot be read.
-fn is_owner_alive(owner: &LockOwner) -> bool {
+pub(crate) fn is_owner_alive(owner: &LockOwner) -> bool {
     if !crate::platform::process::pid_exists(owner.pid) {
         return false;
     }
@@ -33,12 +33,12 @@ fn is_owner_alive(owner: &LockOwner) -> bool {
 /// Newline-delimited because the macOS/BSD identity (`ps` lstart) contains
 /// spaces; a pid-only lock written before identities existed still reads.
 #[derive(Debug, PartialEq, Eq)]
-struct LockOwner {
-    pid: u32,
+pub(crate) struct LockOwner {
+    pub(crate) pid: u32,
     start_id: Option<String>,
 }
 
-fn parse_owner(raw: &str) -> Option<LockOwner> {
+pub(crate) fn parse_owner(raw: &str) -> Option<LockOwner> {
     let mut lines = raw.lines();
     let pid = strict_pid(lines.next())?;
     let start_id = lines
@@ -51,7 +51,7 @@ fn parse_owner(raw: &str) -> Option<LockOwner> {
 
 /// This process's lock content: its pid and, when the platform exposes one
 /// that fits the line format, its start identity.
-fn owner_content() -> String {
+pub(crate) fn owner_content() -> String {
     let pid = std::process::id();
     match pa_types::platform::process::process_start_id(pid)
         .filter(|start_id| !start_id.is_empty() && !start_id.contains(['\r', '\n']))
@@ -162,30 +162,50 @@ fn lock_missing_pid_is_stale(lock_path: &Path) -> bool {
         .is_ok_and(|age| age.as_millis() as u64 > BOOTSTRAP_LOCK_STALE_WITHOUT_PID_MS)
 }
 
-/// Serialize concurrent bootstraps across processes on the same venv.
-pub(crate) async fn acquire_bootstrap_lock(venv: &Path) -> anyhow::Result<impl Drop> {
-    let lock_dir = venv.with_file_name(format!(
+/// The lock file beside `venv`: `<venv name>.bootstrap.lock`.
+fn bootstrap_lock_path(venv: &Path) -> PathBuf {
+    venv.with_file_name(format!(
         "{}{}",
         venv.file_name().unwrap_or_default().to_string_lossy(),
         BOOTSTRAP_LOCK_NAME
-    ));
-    std::fs::create_dir_all(lock_dir.parent().unwrap_or(Path::new("/")))?;
+    ))
+}
+
+/// A held bootstrap lock; dropping it releases the lock.
+pub(crate) struct BootstrapLock(PathBuf);
+
+impl Drop for BootstrapLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Serialize concurrent bootstraps across processes on the same venv.
+pub(crate) async fn acquire_bootstrap_lock(venv: &Path) -> anyhow::Result<BootstrapLock> {
+    let lock_path = bootstrap_lock_path(venv);
+    std::fs::create_dir_all(lock_path.parent().unwrap_or(Path::new("/")))?;
     loop {
-        match try_acquire_dir_lock(&lock_dir)? {
-            DirLockAttempt::Acquired => {
-                struct Guard(PathBuf);
-                impl Drop for Guard {
-                    fn drop(&mut self) {
-                        let _ = std::fs::remove_file(&self.0);
-                    }
-                }
-                return Ok(Guard(lock_dir));
-            }
+        match try_acquire_dir_lock(&lock_path)? {
+            DirLockAttempt::Acquired => return Ok(BootstrapLock(lock_path)),
             DirLockAttempt::Held | DirLockAttempt::Reclaimed => {
                 tokio::time::sleep(std::time::Duration::from_millis(BOOTSTRAP_LOCK_RETRY_MS)).await;
             }
         }
     }
+}
+
+/// Take the bootstrap lock of `venv` only if nobody holds it (a stale lock
+/// is reclaimed and retried once): `None` when a live owner holds it.
+pub(crate) fn try_bootstrap_lock(venv: &Path) -> Option<BootstrapLock> {
+    let lock_path = bootstrap_lock_path(venv);
+    for _ in 0..2 {
+        match try_acquire_dir_lock(&lock_path).ok()? {
+            DirLockAttempt::Acquired => return Some(BootstrapLock(lock_path)),
+            DirLockAttempt::Held => return None,
+            DirLockAttempt::Reclaimed => {}
+        }
+    }
+    None
 }
 
 #[cfg(test)]

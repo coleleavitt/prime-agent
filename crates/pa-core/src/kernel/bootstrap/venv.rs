@@ -22,6 +22,7 @@ mod layout;
 mod probe;
 mod runtime_source;
 mod skills;
+pub(crate) mod store;
 mod uv;
 mod version;
 
@@ -30,7 +31,7 @@ pub use install::{
     PythonSkillPackageInstallResult,
 };
 use layout::home_dir;
-pub(crate) use layout::{expand_home, resolve_writable_kernel_venv_dir};
+pub(crate) use layout::{expand_home, resolve_kernel_venv_location, KernelVenvLocation};
 pub use layout::{kernel_venv_dir, kernel_venv_python};
 #[cfg(test)]
 use probe::{installed_rlm_dir, lock_probe_memo, runtime_probe_key};
@@ -278,16 +279,27 @@ pub(crate) async fn sync_python_skills(
     write_bootstrap_version(venv, runtime_identity, &merged)
 }
 
-/// Every editable skill package path the kernel venvs (the managed one and
-/// its XDG fallback) record: an extracted runtime bundle holding one of them
-/// is still in use.
+/// Every editable skill package path the kernel venvs record (the pinned
+/// or legacy venv, its XDG fallback, and every keyed venv in both stores):
+/// an extracted runtime bundle holding one of them is still in use.
 pub(crate) fn recorded_kernel_skill_paths() -> Vec<PathBuf> {
-    [kernel_venv_dir(), layout::xdg_kernel_venv_dir()]
+    let mut venvs = vec![kernel_venv_dir(), layout::xdg_kernel_venv_dir()];
+    for base in layout::store_bases() {
+        venvs.extend(store::VenvStore::new(base).venvs());
+    }
+    venvs
         .iter()
         .filter_map(|venv| read_bootstrap_version(venv))
         .flat_map(|version| version.python_skills.unwrap_or_default())
         .map(|skill| PathBuf::from(skill.package_path))
         .collect()
+}
+
+/// Whether `venv`'s manifest records the base install of `runtime_identity`
+/// (no interpreter probe: the venv may be about to move). The manifest
+/// format stays private to this module.
+pub(crate) fn recorded_base_install_is(venv: &Path, runtime_identity: &str) -> bool {
+    bootstrap_base_version_current(read_bootstrap_version(venv), runtime_identity)
 }
 
 pub(crate) fn kernel_base_ready(python: &str, venv: &Path, runtime_identity: &str) -> bool {

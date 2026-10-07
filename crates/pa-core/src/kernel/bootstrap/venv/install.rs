@@ -3,8 +3,9 @@
 //! [`super::sync_python_skills`] runs, under the same bootstrap lock, recorded
 //! in the same manifest so the next kernel start does not reinstall it.
 
-use super::layout::xdg_kernel_venv_dir;
+use super::layout::{store_bases, xdg_kernel_venv_dir};
 use super::skills::file_content_hash;
+use super::store::{venv_key, VenvStore};
 use super::version::{bootstrap_base_version_current, bootstrap_skill_key};
 use super::{
     ensure_uv, expand_home, kernel_venv_dir, kernel_venv_python, read_bootstrap_version,
@@ -34,9 +35,10 @@ pub struct PythonSkillPackageInstallResult {
 }
 
 /// The kernel interpreter already on disk, without bootstrapping one: the
-/// `PRIME_AGENT_KERNEL_PYTHON` override when it exists, else the managed venv
-/// (then its XDG fallback) when its interpreter exists. `None` when there is
-/// none yet.
+/// `PRIME_AGENT_KERNEL_PYTHON` override when it exists, else the pinned
+/// venv, else this runtime's keyed venv (managed store, then its XDG
+/// fallback), else the legacy venv path (then its XDG fallback) when its
+/// interpreter exists. `None` when there is none yet.
 #[must_use]
 pub fn installed_kernel_python() -> Option<PathBuf> {
     resolve_installed_kernel_python().0
@@ -53,7 +55,19 @@ fn resolve_installed_kernel_python() -> (Option<PathBuf>, PathBuf) {
             return (resolved.exists().then_some(resolved), venv);
         }
     }
-    for candidate in [venv.clone(), xdg_kernel_venv_dir()] {
+    let mut candidates = Vec::new();
+    if std::env::var("PRIME_AGENT_KERNEL_VENV").is_ok_and(|v| !v.is_empty()) {
+        candidates.push(venv.clone());
+    } else {
+        let key = venv_key(&resolve_runtime_identity());
+        candidates.extend(
+            store_bases()
+                .into_iter()
+                .map(|base| VenvStore::new(base).venv(&key)),
+        );
+        candidates.extend([venv.clone(), xdg_kernel_venv_dir()]);
+    }
+    for candidate in candidates {
         let python = kernel_venv_python(&candidate);
         if python.exists() {
             return (Some(python), candidate);

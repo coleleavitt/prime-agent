@@ -1,6 +1,6 @@
 # Python-Backed Skills
 
-A Python-backed skill is a regular markdown skill that also ships a Python package. Prime Agent installs the package editable into the kernel venv (`~/.prime/agent/kernel-venv` by default, `PRIME_AGENT_KERNEL_VENV` to override) and exposes it in the persistent Python kernel, so the agent can call it directly instead of shelling out.
+A Python-backed skill is a regular markdown skill that also ships a Python package. Prime Agent installs the package editable into the kernel venv (one per runtime under `~/.prime/agent/kernel-venvs/`, with `~/.prime/agent/kernel-venv` linking the most recently used one; `PRIME_AGENT_KERNEL_VENV` pins a single venv instead) and exposes it in the persistent Python kernel, so the agent can call it directly instead of shelling out.
 
 ## Detection Contract
 

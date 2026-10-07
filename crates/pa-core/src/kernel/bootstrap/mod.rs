@@ -9,7 +9,7 @@ mod runtime_code;
 pub(crate) mod venv;
 
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Context};
@@ -20,10 +20,11 @@ pub use runtime_code::{
     PYTHON_SKILL_IMPORT_ERROR_REPORT_MARKER,
 };
 pub(crate) use venv::recorded_kernel_skill_paths;
+use venv::store::{venv_key, VenvOps, VenvStore};
 use venv::{
     bootstrap_venv, ensure_uv, expand_home, has_prime_agent_runtime,
     missing_python_skill_import_labels, missing_rlm_extra_import_labels, normalize_python_skills,
-    resolve_writable_kernel_venv_dir, sync_python_skills, BootstrapPythonSkill,
+    resolve_kernel_venv_location, sync_python_skills, BootstrapPythonSkill, KernelVenvLocation,
 };
 pub use venv::{
     install_python_skill_package, installed_kernel_python, invalidate_runtime_probe_cache,
@@ -243,51 +244,155 @@ async fn ensure_kernel_python_uncached(
         }
     }
 
-    let venv = resolve_writable_kernel_venv_dir()?;
+    let location = resolve_kernel_venv_location()?;
     // Resolve the runtime source before looking at the venv: without it the
     // runtime identity is unknown, every venv looks stale, and the rebuild
     // below would delete the venv other sessions share before an install
     // that cannot succeed (#2203).
     if venv::resolve_runtime_source_dir().is_none() {
-        return Err(missing_runtime_source_error(&venv));
+        let shown = match &location {
+            KernelVenvLocation::Pinned(venv) => venv.clone(),
+            KernelVenvLocation::Keyed(store) => store.root(),
+        };
+        return Err(missing_runtime_source_error(&shown));
     }
-    let python = kernel_venv_python(&venv);
-    let python_str = python.to_string_lossy().to_string();
     let runtime_identity = resolve_runtime_identity();
-    if kernel_ready(&python_str, &venv, &runtime_identity, python_skills) {
+    let result = match location {
+        KernelVenvLocation::Pinned(venv) => {
+            ensure_pinned_venv(&venv, &runtime_identity, options, python_skills).await
+        }
+        KernelVenvLocation::Keyed(store) => {
+            ensure_keyed_venv(&store, &runtime_identity, options, python_skills).await
+        }
+    };
+    result.map_err(|error| format_bootstrap_failure(&error))
+}
+
+/// The pinned venv (`PRIME_AGENT_KERNEL_VENV`): one directory, rebuilt in
+/// place when its runtime changes.
+async fn ensure_pinned_venv(
+    venv: &Path,
+    runtime_identity: &str,
+    options: &EnsureKernelPythonOptions,
+    python_skills: &[BootstrapPythonSkill],
+) -> anyhow::Result<PathBuf> {
+    let python = kernel_venv_python(venv);
+    let python_str = python.to_string_lossy().to_string();
+    if kernel_ready(&python_str, venv, runtime_identity, python_skills) {
         return Ok(python);
     }
-
-    let release_lock = acquire_bootstrap_lock(&venv).await;
+    let release_lock = acquire_bootstrap_lock(venv).await;
     let result = async {
-        if kernel_ready(&python_str, &venv, &runtime_identity, python_skills) {
+        if kernel_ready(&python_str, venv, runtime_identity, python_skills) {
             return Ok(python);
         }
-        if kernel_base_ready(&python_str, &venv, &runtime_identity) {
-            let uv = ensure_uv()?;
-            sync_python_skills(
-                &uv,
-                &venv,
-                &python,
-                &runtime_identity,
-                python_skills,
-                options,
-            )
-            .await?;
+        if kernel_base_ready(&python_str, venv, runtime_identity) {
+            sync_skills(venv, &python, runtime_identity, python_skills, options).await?;
             return Ok(python);
         }
         let had_venv = venv.exists();
         options.report("› setting up python kernel (one-time, ~30s)…");
         if had_venv {
             options.report("rebuilding kernel venv");
-            std::fs::remove_dir_all(&venv)
+            std::fs::remove_dir_all(venv)
                 .with_context(|| format!("removing {}", venv.display()))?;
         }
-        bootstrap_venv(&venv, python_skills, options).await?;
+        bootstrap_venv(venv, python_skills, options).await?;
         Ok(python)
     }
     .await;
     drop(release_lock);
     options.report("✓ ready");
-    result.map_err(|error| format_bootstrap_failure(&error))
+    result
+}
+
+/// The keyed venv of this runtime (see [`VenvStore::ensure`]), built and
+/// probed with the real interpreter and uv.
+async fn ensure_keyed_venv(
+    store: &VenvStore,
+    runtime_identity: &str,
+    options: &EnsureKernelPythonOptions,
+    python_skills: &[BootstrapPythonSkill],
+) -> anyhow::Result<PathBuf> {
+    static PRUNED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+    let key = venv_key(runtime_identity);
+    let ops = KernelVenvOps {
+        runtime_identity,
+        options,
+        python_skills,
+    };
+    let venv = store.ensure(&key, &ops).await?;
+    // Prune each store at most once per process: a long-lived host boots
+    // many kernels, and old venvs only age out over days.
+    let first = {
+        let mut pruned = PRUNED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let fresh = !pruned.contains(&store.root());
+        if fresh {
+            pruned.push(store.root());
+        }
+        fresh
+    };
+    if first {
+        let removed = store.prune(&key, std::time::SystemTime::now());
+        if !removed.is_empty() {
+            tracing::info!(root = %store.root().display(), removed = ?removed, "pruned old kernel venvs");
+        }
+    }
+    Ok(kernel_venv_python(&venv))
+}
+
+/// The real [`VenvOps`]: readiness is the manifest plus the interpreter
+/// probe, a build is the uv bootstrap.
+struct KernelVenvOps<'a> {
+    runtime_identity: &'a str,
+    options: &'a EnsureKernelPythonOptions,
+    python_skills: &'a [BootstrapPythonSkill],
+}
+
+impl VenvOps for KernelVenvOps<'_> {
+    fn ready(&self, venv: &Path) -> bool {
+        let python = kernel_venv_python(venv).to_string_lossy().to_string();
+        kernel_ready(&python, venv, self.runtime_identity, self.python_skills)
+    }
+
+    fn base_ready(&self, venv: &Path) -> bool {
+        let python = kernel_venv_python(venv).to_string_lossy().to_string();
+        kernel_base_ready(&python, venv, self.runtime_identity)
+    }
+
+    fn records_this_runtime(&self, venv: &Path) -> bool {
+        venv::recorded_base_install_is(venv, self.runtime_identity)
+    }
+
+    async fn sync(&self, venv: &Path) -> anyhow::Result<()> {
+        sync_skills(
+            venv,
+            &kernel_venv_python(venv),
+            self.runtime_identity,
+            self.python_skills,
+            self.options,
+        )
+        .await
+    }
+
+    async fn build(&self, venv: &Path) -> anyhow::Result<()> {
+        bootstrap_venv(venv, self.python_skills, self.options).await
+    }
+
+    fn report(&self, message: &str) {
+        self.options.report(message);
+    }
+}
+
+async fn sync_skills(
+    venv: &Path,
+    python: &Path,
+    runtime_identity: &str,
+    python_skills: &[BootstrapPythonSkill],
+    options: &EnsureKernelPythonOptions,
+) -> anyhow::Result<()> {
+    let uv = ensure_uv()?;
+    sync_python_skills(&uv, venv, python, runtime_identity, python_skills, options).await
 }

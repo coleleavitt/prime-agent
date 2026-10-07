@@ -8,8 +8,9 @@
 //! uses that; every other binary (`cargo install`, `cargo run`) uses its
 //! embedded copy, never the live source checkout, so the runtime and skills
 //! always match the host that serves them. A new binary extracts a new
-//! bundle id, its runtime identity differs, and the kernel venv is rebuilt to
-//! match; going back to an older binary moves the venv back the same way.
+//! bundle id and its runtime identity differs, so it boots its own keyed
+//! kernel venv; going back to an older binary finds that binary's venv
+//! still in place.
 
 use std::collections::HashMap;
 use std::io;
