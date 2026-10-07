@@ -45,7 +45,14 @@ use pa_types::daemon::cloud::{
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
+/// The request window of the tests whose send must expire unanswered (`Pending`): it elapses
+/// on its own, so load only makes the expiry later, never different.
 const SHORT_WINDOW: Duration = Duration::from_millis(150);
+
+/// The request window of the tests that answer the send themselves: the answer is explicit, so
+/// the window only bounds a broken test. A short window here made the outcome race the test's
+/// own fsyncs and handler hops (a loaded box answered after expiry: `Pending`, not `Answered`).
+const ANSWER_WINDOW: Duration = Duration::from_mins(1);
 
 struct TestDelivery {
     admitted: Mutex<Vec<IncomingCloudMessage>>,
@@ -227,25 +234,37 @@ fn open_request_log(dir: &std::path::Path, max_records: usize) -> FamilyRequestL
 fn requester(log: FamilyRequestLog) -> Arc<CloudFamilyRequester> {
     Arc::new(CloudFamilyRequester::with_request_timeout(
         log,
+        ANSWER_WINDOW,
+    ))
+}
+
+/// A requester whose sends expire unanswered after [`SHORT_WINDOW`].
+fn expiring_requester(log: FamilyRequestLog) -> Arc<CloudFamilyRequester> {
+    Arc::new(CloudFamilyRequester::with_request_timeout(
+        log,
         SHORT_WINDOW,
     ))
 }
 
 /// Poll the requester's durable log until one admitted request is
-/// replayable — the append is synchronous, so one yielded task suffices in
-/// practice; the loop keeps the test honest.
+/// replayable. The append (and its fsync) runs on the spawned send, so a
+/// loaded box can take a while; the deadline only bounds a broken send.
 async fn wait_for_event(
     requester: &CloudFamilyRequester,
 ) -> pa_types::daemon::cloud::CloudFamilyEvent {
-    for _ in 0..100 {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
         if let Ok(events) = requester.events_after(0) {
             if let Some(event) = events.first() {
                 return event.clone();
             }
         }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no request event was admitted to the durable log"
+        );
         tokio::time::sleep(Duration::from_millis(2)).await;
     }
-    panic!("no request event was admitted to the durable log");
 }
 
 #[tokio::test]
@@ -311,7 +330,7 @@ async fn send_resolves_answered_only_after_receiver_admission() {
 #[tokio::test]
 async fn unanswered_send_is_pending_and_a_late_answer_is_unknown() {
     let dir = tempfile::tempdir().unwrap();
-    let requester = requester(open_request_log(dir.path(), 50));
+    let requester = expiring_requester(open_request_log(dir.path(), 50));
 
     let outcome = requester
         .send_agent_message("remote_child", "sibling-worker", "hello")
@@ -348,7 +367,7 @@ async fn unanswered_send_is_pending_and_a_late_answer_is_unknown() {
 #[tokio::test]
 async fn a_stalled_log_fails_the_send_honestly() {
     let dir = tempfile::tempdir().unwrap();
-    let requester = requester(open_request_log(dir.path(), 1));
+    let requester = expiring_requester(open_request_log(dir.path(), 1));
 
     let first = tokio::spawn({
         let sender = Arc::clone(&requester);
@@ -934,7 +953,7 @@ async fn crash_after_receiver_admission_reconciles_through_the_seam() {
 #[tokio::test]
 async fn unknown_lookup_keeps_the_request_uncertain_without_redelivery() {
     let dir = tempfile::tempdir().unwrap();
-    let requester = requester(open_request_log(dir.path(), 50));
+    let requester = expiring_requester(open_request_log(dir.path(), 50));
     let task = tokio::spawn({
         let sender = Arc::clone(&requester);
         async move {
