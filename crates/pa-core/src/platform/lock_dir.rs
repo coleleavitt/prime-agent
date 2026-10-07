@@ -356,6 +356,109 @@ impl Drop for LockDir {
     }
 }
 
+/// Which acquisition holds the lock at a path: a re-created lock directory
+/// is a new holder even where the filesystem reuses the inode, and a
+/// heartbeat (an mtime bump) is the same holder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LockHolder {
+    created: std::time::SystemTime,
+    #[cfg(unix)]
+    inode: (u64, u64),
+}
+
+impl LockDir {
+    /// The holder of the lock directory at `path` (see
+    /// [`LockDir::path_for`]), or `None` when there is none or the
+    /// filesystem does not record creation times.
+    #[must_use]
+    pub fn holder_at(path: &Path) -> Option<LockHolder> {
+        let metadata = fs::symlink_metadata(path).ok()?;
+        Some(LockHolder {
+            created: metadata.created().ok()?,
+            #[cfg(unix)]
+            inode: {
+                use std::os::unix::fs::MetadataExt as _;
+                (metadata.dev(), metadata.ino())
+            },
+        })
+    }
+
+    /// Bump the lock's mtime (proper-lockfile's `update`), so a holder that
+    /// is alive but slow is never judged stale.
+    ///
+    /// # Errors
+    ///
+    /// The lock directory is gone (reclaimed by another process) or its
+    /// times cannot be set.
+    pub fn refresh(&self) -> io::Result<()> {
+        let (sec, nanos) = probe_mtime();
+        set_mtime(&self.path, sec, nanos)
+    }
+
+    /// Hold the lock with a heartbeat: a thread refreshes it every
+    /// `interval` until the returned guard drops, which stops the thread
+    /// and then releases the lock. For a holder whose critical section can
+    /// outlast the stale window (a synced write under I/O pressure).
+    #[must_use]
+    pub fn with_heartbeat(self, interval: Duration) -> HeartbeatLock {
+        let (stop, stopped) = std::sync::mpsc::channel::<()>();
+        let lock = std::sync::Arc::new(self);
+        let beating = std::sync::Arc::clone(&lock);
+        let thread = std::thread::Builder::new()
+            .name("lock-heartbeat".to_string())
+            .spawn(move || {
+                while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) =
+                    stopped.recv_timeout(interval)
+                {
+                    if let Err(error) = beating.refresh() {
+                        tracing::warn!(
+                            "failed to refresh lock {}: {error}",
+                            beating.path.display()
+                        );
+                    }
+                }
+            });
+        match thread {
+            Ok(thread) => HeartbeatLock {
+                stop: Some(stop),
+                thread: Some(thread),
+                lock: Some(lock),
+            },
+            Err(error) => {
+                // No heartbeat thread: the lock is still held, only
+                // unrefreshed (the behaviour before heartbeats).
+                tracing::warn!("failed to start the lock heartbeat: {error}");
+                HeartbeatLock {
+                    stop: None,
+                    thread: None,
+                    lock: Some(lock),
+                }
+            }
+        }
+    }
+}
+
+/// A [`LockDir`] kept fresh by a heartbeat thread; see
+/// [`LockDir::with_heartbeat`].
+#[derive(Debug)]
+pub struct HeartbeatLock {
+    stop: Option<std::sync::mpsc::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+    lock: Option<std::sync::Arc<LockDir>>,
+}
+
+impl Drop for HeartbeatLock {
+    fn drop(&mut self) {
+        // Stop the heartbeat before the release, so it never bumps a lock
+        // directory another process has created since.
+        drop(self.stop.take());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+        drop(self.lock.take());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,6 +566,62 @@ mod tests {
         assert!(metadata.is_dir());
         drop(guard);
         assert!(!stale.exists());
+    }
+
+    /// A heartbeat keeps a held lock fresh past the stale window, and its
+    /// guard stops the heartbeat and releases the lock.
+    #[test]
+    fn a_heartbeat_keeps_the_lock_fresh_until_its_guard_drops() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("state.json");
+        let lock = lock_of(&file);
+        let held = LockDir::acquire(&file, MIN_STALE).unwrap();
+        // Age it as a holder past the window would be without a heartbeat.
+        set_mtime(&lock, 1, 0).unwrap();
+        let held = held.with_heartbeat(Duration::from_millis(10));
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while std::fs::metadata(&lock)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .elapsed()
+            .is_ok_and(|age| age > MIN_STALE)
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the heartbeat never refreshed the lock"
+            );
+            std::thread::yield_now();
+        }
+        assert!(
+            LockDir::acquire(&file, MIN_STALE).is_err(),
+            "a refreshed lock is live, not reclaimable"
+        );
+        drop(held);
+        assert!(!lock.exists(), "the guard releases the lock");
+    }
+
+    /// A refresh keeps the holder; a released and re-created lock is a new one.
+    #[test]
+    fn the_holder_survives_a_refresh_and_changes_on_reacquisition() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("state.json");
+        let lock = lock_of(&file);
+        assert_eq!(LockDir::holder_at(&lock), None, "no lock, no holder");
+        let first = LockDir::acquire(&file, MIN_STALE).unwrap();
+        let Some(holder) = LockDir::holder_at(&lock) else {
+            // The filesystem records no creation times: nothing to compare.
+            return;
+        };
+        first.refresh().unwrap();
+        assert_eq!(LockDir::holder_at(&lock), Some(holder));
+        drop(first);
+        let _second = LockDir::acquire(&file, MIN_STALE).unwrap();
+        let next = LockDir::holder_at(&lock);
+        assert!(
+            next.is_some() && next != Some(holder),
+            "{next:?} vs {holder:?}"
+        );
     }
 
     #[test]

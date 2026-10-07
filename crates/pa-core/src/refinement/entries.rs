@@ -175,15 +175,17 @@ const LOCK_STALE: Duration = Duration::from_secs(10);
 
 /// Take the cross-process lock on the store at `dir` (`harness_state.json.lock`,
 /// the kernel's, TS `proper-lockfile`'s and `pa-ledger`'s protocol). Blocking.
+/// A heartbeat keeps the held lock fresh, so a slow write is never judged
+/// stale and taken over mid-write.
 ///
 /// # Errors
 ///
 /// The lock stayed held past the retry budget, or the lock directory could not be created.
-pub(crate) fn lock_harness_state(dir: &Path) -> anyhow::Result<crate::platform::LockDir> {
+pub(crate) fn lock_harness_state(dir: &Path) -> anyhow::Result<crate::platform::HeartbeatLock> {
     let state_path = get_harness_state_path(dir);
     for attempt in 0..LOCK_ATTEMPTS {
         match crate::platform::LockDir::acquire(&state_path, LOCK_STALE) {
-            Ok(held) => return Ok(held),
+            Ok(held) => return Ok(held.with_heartbeat(LOCK_STALE / 2)),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 if attempt + 1 < LOCK_ATTEMPTS {
                     std::thread::sleep(LOCK_RETRY);

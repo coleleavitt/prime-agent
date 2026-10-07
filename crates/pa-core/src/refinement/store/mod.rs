@@ -48,11 +48,23 @@ const KINDS: [(&str, RefinementKind); 5] = [
     ("factory", RefinementKind::Factory),
 ];
 
-/// How long a kernel write waits for the store's lock: past the 10 s stale
-/// window, so a crashed holder's leftover is always reclaimed first.
-const LOCK_WAIT: Duration = Duration::from_secs(15);
-const LOCK_RETRY: Duration = Duration::from_millis(5);
-const LOCK_STALE: Duration = Duration::from_secs(10);
+/// How a write takes the store's lock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LockPolicy {
+    /// How long a write waits for one holder: past the stale window, so a
+    /// crashed holder's leftover is always reclaimed first.
+    wait: Duration,
+    retry: Duration,
+    /// A lock this old is a crashed holder's leftover (the TS host's
+    /// `HARNESS_STATE_LOCK_STALE_MS`).
+    stale: Duration,
+}
+
+const STORE_LOCK: LockPolicy = LockPolicy {
+    wait: Duration::from_secs(15),
+    retry: Duration::from_millis(5),
+    stale: Duration::from_secs(10),
+};
 
 /// The Python exception class a store call raises in the kernel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,6 +131,7 @@ struct StoreTarget {
     /// Set for a store that refuses writes (the kernel without a session
     /// store): every write raises it as a `RuntimeError`.
     write_error: Option<String>,
+    lock: LockPolicy,
 }
 
 impl StoreTarget {
@@ -138,27 +151,45 @@ struct Session {
     dirty: bool,
 }
 
-fn lock_store(path: &Path) -> Result<crate::platform::LockDir, StoreError> {
+/// Take the store's lock for one write. The holder keeps it fresh with a
+/// heartbeat, so a write whose synced save outlasts the stale window (an
+/// fsync under I/O pressure) is never judged a crashed holder's leftover
+/// and has its lock taken by a concurrent writer mid-write.
+///
+/// The wait bounds how long ONE holder keeps the lock, not how long this
+/// write queues: each time the lock changes hands the wait restarts, so a
+/// convoy of writers that each hold briefly never times a write out.
+fn lock_store(
+    path: &Path,
+    policy: LockPolicy,
+) -> Result<crate::platform::HeartbeatLock, StoreError> {
+    use crate::platform::LockDir;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|error| StoreError::new(StoreErrorKind::Os, error.to_string()))?;
     }
-    let deadline = Instant::now() + LOCK_WAIT;
+    let lock_path = LockDir::path_for(path);
+    let mut holder = None;
+    let mut deadline = Instant::now() + policy.wait;
     loop {
-        match crate::platform::LockDir::acquire(path, LOCK_STALE) {
-            Ok(held) => return Ok(held),
+        match LockDir::acquire(path, policy.stale) {
+            Ok(held) => return Ok(held.with_heartbeat(policy.stale / 2)),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                if Instant::now() >= deadline {
+                let current = LockDir::holder_at(&lock_path);
+                if current.is_some() && current != holder {
+                    holder = current;
+                    deadline = Instant::now() + policy.wait;
+                } else if Instant::now() >= deadline {
                     return Err(StoreError::new(
                         StoreErrorKind::Timeout,
                         format!(
                             "harness state is locked by another process: {} (held longer than {}s)",
-                            crate::platform::LockDir::path_for(path).display(),
-                            LOCK_WAIT.as_secs()
+                            lock_path.display(),
+                            policy.wait.as_secs()
                         ),
                     ));
                 }
-                std::thread::sleep(LOCK_RETRY);
+                std::thread::sleep(policy.retry);
             }
             Err(error) => return Err(StoreError::new(StoreErrorKind::Os, error.to_string())),
         }
@@ -186,7 +217,11 @@ fn with_store<T>(
     }
     let (_lock, loaded) = match &target.location {
         StoreLocation::File(path) => {
-            let lock = if write { Some(lock_store(path)?) } else { None };
+            let lock = if write {
+                Some(lock_store(path, target.lock)?)
+            } else {
+                None
+            };
             (lock, read_harness_state_file(path, target.scope))
         }
         StoreLocation::Memory(document) => (
@@ -525,6 +560,7 @@ impl Request<'_> {
                 .get("writeError")
                 .and_then(Value::as_str)
                 .map(str::to_string),
+            lock: STORE_LOCK,
         })
     }
 }

@@ -388,6 +388,111 @@ fn writes_serialize_on_the_store_lock() {
     assert_eq!(ids, vec![json!("waited")]);
 }
 
+/// The store's lock with the shortest stale window `LockDir` allows, so a
+/// hold past it fits in a test.
+fn quick_lock(wait: Duration) -> LockPolicy {
+    LockPolicy {
+        wait,
+        retry: Duration::from_millis(5),
+        stale: Duration::from_secs(2),
+    }
+}
+
+fn file_target(file: &Path, lock: LockPolicy) -> StoreTarget {
+    StoreTarget {
+        location: StoreLocation::File(file.to_path_buf()),
+        scope: HarnessScope::Local,
+        write_error: None,
+        lock,
+    }
+}
+
+/// A write whose hold outlives the stale window (its fsync stalled under
+/// I/O pressure) still owns the lock: a concurrent writer that judged it a
+/// crashed holder's leftover would run its read-modify-write in parallel
+/// and one of the two writes would be lost.
+#[test]
+fn a_live_holder_past_the_stale_window_keeps_its_lock() {
+    let store = store();
+    let policy = quick_lock(Duration::from_secs(30));
+    let held = lock_store(&store.file, policy).unwrap();
+    let released = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let writer = {
+        let target = file_target(&store.file, policy);
+        let released = std::sync::Arc::clone(&released);
+        std::thread::spawn(move || {
+            with_store(&target, true, |_| {
+                Ok(released.load(std::sync::atomic::Ordering::SeqCst))
+            })
+            .map(|(holder_had_released, _)| holder_had_released)
+        })
+    };
+    // The modelled slow write: the holder keeps the lock past the window.
+    std::thread::sleep(policy.stale + Duration::from_secs(1));
+    released.store(true, std::sync::atomic::Ordering::SeqCst);
+    drop(held);
+    assert_eq!(writer.join().unwrap(), Ok(true));
+}
+
+/// The wait bounds how long ONE holder may keep the lock, not how long a
+/// writer queues: under a convoy of writers that each hold briefly (slow
+/// fsyncs, every handoff won by another waiter) a write keeps waiting
+/// while the lock changes hands, instead of failing with a `TimeoutError`
+/// that claims the lock was "held longer than" the wait.
+#[test]
+fn a_write_keeps_waiting_while_the_lock_changes_hands() {
+    let store = store();
+    let policy = quick_lock(Duration::from_millis(600));
+    let lock = crate::platform::LockDir::path_for(&store.file);
+    let first = crate::platform::LockDir::acquire(&store.file, policy.stale).unwrap();
+    let convoy = {
+        let file = store.file.clone();
+        std::thread::spawn(move || {
+            // Each holder well inside the wait, the convoy as a whole far past it.
+            let mut held = first;
+            for _ in 0..5 {
+                std::thread::sleep(Duration::from_millis(300));
+                drop(held);
+                match crate::platform::LockDir::acquire(&file, policy.stale) {
+                    Ok(next) => held = next,
+                    // The waiter won this handoff: the convoy is over.
+                    Err(_) => return,
+                }
+            }
+            std::thread::sleep(Duration::from_millis(300));
+            drop(held);
+        })
+    };
+    let written = with_store(&file_target(&store.file, policy), true, |session| {
+        session.dirty = true;
+        Ok(())
+    })
+    .map(|((), _)| ());
+    convoy.join().unwrap();
+    assert_eq!(written, Ok(()));
+    assert!(!lock.exists());
+}
+
+/// One holder that keeps the lock past the wait (a hung process whose lock
+/// stays fresh) still fails the write, naming the lock.
+#[test]
+fn a_write_times_out_behind_one_holder_held_past_the_wait() {
+    let store = store();
+    let policy = quick_lock(Duration::from_secs(1));
+    let _held = lock_store(&store.file, policy).unwrap();
+    let refused = with_store(&file_target(&store.file, policy), true, |_| Ok(())).map(|((), _)| ());
+    assert_eq!(
+        refused,
+        Err(StoreError::new(
+            StoreErrorKind::Timeout,
+            format!(
+                "harness state is locked by another process: {} (held longer than 1s)",
+                crate::platform::LockDir::path_for(&store.file).display()
+            ),
+        ))
+    );
+}
+
 #[test]
 fn search_ranks_by_rarity_then_recency() {
     let store = store();
