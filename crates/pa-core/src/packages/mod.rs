@@ -77,20 +77,6 @@ fn home_dir() -> PathBuf {
     pa_types::platform::home_dir().unwrap_or_else(|| PathBuf::from("/"))
 }
 
-/// The compile-time workspace root (source-checkout layout): pa-core lives
-/// at `<root>/crates/pa-core`; every package-dir resolution that falls back
-/// to the source-checkout layout shares it.
-pub(crate) fn source_checkout_root() -> Option<&'static std::path::Path> {
-    static ROOT: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
-    ROOT.get_or_init(|| {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .ancestors()
-            .nth(2)
-            .map(std::path::Path::to_path_buf)
-    })
-    .as_deref()
-}
-
 /// The subdirectory of the bundled skills directory that holds the skills
 /// installed features contribute. Its leading dot hides it from every native
 /// skill scan, so a build without the feature never sees them; it ships with
@@ -98,21 +84,19 @@ pub(crate) fn source_checkout_root() -> Option<&'static std::path::Path> {
 pub const FEATURE_SKILLS_DIR: &str = ".features";
 
 /// The directory of built-in skills shipped with the package (TS
-/// `getBundledSkillsDir`): `skills/` next to the executable (the packaged
-/// layout), falling back to the workspace `skills/` for source checkouts
-/// (TS keeps built-in skills at the package root next to `src/`).
+/// `getBundledSkillsDir`): `skills/` in the package dir (the packaged
+/// layout, or an explicit `PI_PACKAGE_DIR`), else the skills embedded in this
+/// binary, extracted beside the kernel venv. The live source checkout is never
+/// used: its skills may need a host newer or older than this binary.
 pub(crate) fn get_bundled_skills_dir() -> PathBuf {
     let packaged = package_dir().join("skills");
-    if packaged.is_dir() {
+    if packaged.is_dir() || std::env::var_os("PI_PACKAGE_DIR").is_some_and(|dir| !dir.is_empty()) {
         return packaged;
     }
-    if let Some(root) = source_checkout_root() {
-        let source_checkout = root.join("skills");
-        if source_checkout.is_dir() {
-            return source_checkout;
-        }
-    }
-    packaged
+    crate::embedded_bundle::embedded_bundle_dir()
+        .map(|bundle| bundle.join(crate::embedded_bundle::SKILLS_DIR))
+        .filter(|skills| skills.is_dir())
+        .unwrap_or(packaged)
 }
 
 /// Stable temporary directory for resolve-only package installs (the hash

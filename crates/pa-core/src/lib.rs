@@ -59,6 +59,7 @@ pub mod agent_traces;
 pub mod auth;
 pub mod autonomous;
 pub mod cron;
+pub(crate) mod embedded_bundle;
 pub mod export_html;
 pub mod factory;
 pub mod factory_eval;

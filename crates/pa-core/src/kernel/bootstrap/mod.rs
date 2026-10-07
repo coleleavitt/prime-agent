@@ -19,6 +19,7 @@ pub use runtime_code::{
     build_rlm_bootstrap_code, parse_unavailable_python_skills, UnavailablePythonSkills,
     PYTHON_SKILL_IMPORT_ERROR_REPORT_MARKER,
 };
+pub(crate) use venv::recorded_kernel_skill_paths;
 use venv::{
     bootstrap_venv, ensure_uv, expand_home, has_prime_agent_runtime,
     missing_python_skill_import_labels, missing_rlm_extra_import_labels, normalize_python_skills,
@@ -107,9 +108,9 @@ fn format_bootstrap_failure(error: &anyhow::Error) -> anyhow::Error {
          An interrupted runtime upgrade needs network once more, so re-run this while online. \
          Set PRIME_AGENT_KERNEL_PYTHON to a Python with a current prime-agent-runtime and default Python packages installed to skip auto-bootstrap."
     );
-    // The packaged exe-adjacent sidecar is the kernel runtime source; when it is missing everywhere
-    // (packaged layout and source checkout), name it.
-    if venv::packaged_runtime_dir().is_none() {
+    // The packaged exe-adjacent sidecar (else the runtime embedded in the binary) is the kernel
+    // runtime source; when none resolves, name where it was looked for.
+    if venv::resolve_runtime_source_dir().is_none() {
         let package = venv::package_dir();
         let _ = write!(message,
             "\nThe packaged prime-agent-runtime directory was not found (looked next to the executable at {} and PI_PACKAGE_DIR); reinstall prime-agent so the kernel runtime ships beside the binary.",

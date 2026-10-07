@@ -335,3 +335,19 @@ fn git_ref_checkout_installs_the_pinned_revision() {
     assert!(installed.join("package.json").exists());
     assert!(!installed.join("skills.md").exists(), "pinned ref checkout");
 }
+
+/// Without a packaged `skills/` beside the executable (a `cargo install`ed
+/// binary), the bundled skills are never the live checkout's: they must be
+/// the ones the binary was built with.
+#[test]
+fn bundled_skills_never_come_from_the_live_checkout() {
+    if std::env::var_os("PI_PACKAGE_DIR").is_some() {
+        return; // an explicit override is deliberate
+    }
+    let checkout_skills = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("workspace root")
+        .join("skills");
+    assert_ne!(crate::packages::get_bundled_skills_dir(), checkout_skills);
+}

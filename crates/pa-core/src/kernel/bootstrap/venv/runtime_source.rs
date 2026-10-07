@@ -1,5 +1,5 @@
 //! The runtime source concern: the packaged
-//! sidecar layout, the source-checkout fallback, and the content identity
+//! sidecar layout, the runtime embedded in the binary, and the content identity
 //! that invalidates an existing venv on any runtime change.
 
 use super::{expand_home, Digest, Path, PathBuf, RUNTIME_CONSTRAINTS_FILE, RUNTIME_REQUIREMENT};
@@ -35,20 +35,28 @@ pub(in crate::kernel::bootstrap) fn packaged_runtime_dir() -> Option<PathBuf> {
 /// only candidate (a dev pointing at a specific checkout).
 pub(in crate::kernel::bootstrap) const RUNTIME_SOURCE_ENV: &str = "PRIME_AGENT_RUNTIME_SOURCE";
 
-/// Every directory searched for the runtime source, in order.
+/// Every directory searched for the runtime source, in order: the explicit
+/// override alone when set; else the packaged sidecar (`PI_PACKAGE_DIR`, an
+/// explicit package dir, is searched alone too); else the runtime embedded in
+/// this binary, extracted beside the kernel venv. The live source checkout is
+/// never a candidate: it may have moved on from the tree this binary was
+/// built from, and a runtime the host cannot serve breaks the kernel.
 pub(in crate::kernel::bootstrap) fn runtime_candidate_dirs() -> Vec<PathBuf> {
     if let Ok(explicit) = std::env::var(RUNTIME_SOURCE_ENV) {
         if !explicit.is_empty() {
             return vec![expand_home(&explicit)];
         }
     }
-    let mut candidates = packaged_runtime_dir().into_iter().collect::<Vec<_>>();
-    // Source checkouts keep the sidecar at the workspace root (TS resolves
-    // module-relative monorepo candidates the same way).
-    if let Some(root) = crate::packages::source_checkout_root() {
-        candidates.push(root.join("prime-agent-runtime"));
+    if let Some(packaged) = packaged_runtime_dir() {
+        return vec![packaged];
     }
-    candidates
+    if std::env::var_os("PI_PACKAGE_DIR").is_some_and(|dir| !dir.is_empty()) {
+        return Vec::new();
+    }
+    crate::embedded_bundle::embedded_bundle_dir()
+        .map(|bundle| bundle.join(crate::embedded_bundle::RUNTIME_DIR))
+        .into_iter()
+        .collect()
 }
 
 pub(in crate::kernel::bootstrap) fn resolve_runtime_source_dir() -> Option<PathBuf> {
@@ -137,6 +145,69 @@ fn collect_package_data_files(dir: &Path, files: &mut Vec<PathBuf>) -> anyhow::R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The workspace root this crate was compiled in.
+    fn compiled_checkout_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .expect("workspace root")
+            .to_path_buf()
+    }
+
+    /// A binary without a packaged sidecar or an explicit override never
+    /// installs the live checkout's runtime: that checkout may hold a
+    /// different runtime than the one the binary was built from (a
+    /// `cargo install`ed binary whose checkout moved on rebuilt the kernel
+    /// with a runtime the binary could not host).
+    /// The runtime identity follows the bundle the running binary carries:
+    /// a binary built from an edited runtime extracts a different identity
+    /// (the venv rebuilds to it), and the old binary keeps its own.
+    #[test]
+    fn the_runtime_identity_follows_the_embedded_bundle() -> anyhow::Result<()> {
+        const TREE_A: &[crate::embedded_bundle::BundleFile] = &[
+            ("prime-agent-runtime/pyproject.toml", b"[project]\n"),
+            (
+                "prime-agent-runtime/src/rlm/bash.py",
+                b"SERVED_BY = 'host'\n",
+            ),
+        ];
+        const TREE_B: &[crate::embedded_bundle::BundleFile] = &[
+            ("prime-agent-runtime/pyproject.toml", b"[project]\n"),
+            (
+                "prime-agent-runtime/src/rlm/bash.py",
+                b"SERVED_BY = 'sidecar'\n",
+            ),
+        ];
+        let temp = tempfile::tempdir()?;
+        let a = crate::embedded_bundle::materialize(temp.path(), TREE_A)?;
+        let b = crate::embedded_bundle::materialize(temp.path(), TREE_B)?;
+        let runtime = crate::embedded_bundle::RUNTIME_DIR;
+        let identity_a = hash_runtime_source(&a.join(runtime))?;
+        assert_ne!(identity_a, hash_runtime_source(&b.join(runtime))?);
+        assert_eq!(
+            identity_a,
+            hash_runtime_source(
+                &crate::embedded_bundle::materialize(temp.path(), TREE_A)?.join(runtime)
+            )?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn no_runtime_candidate_is_the_live_checkout() {
+        if std::env::var_os(RUNTIME_SOURCE_ENV).is_some()
+            || std::env::var_os("PI_PACKAGE_DIR").is_some()
+        {
+            return; // an explicit override is deliberate
+        }
+        let checkout_runtime = compiled_checkout_root().join("prime-agent-runtime");
+        let candidates = runtime_candidate_dirs();
+        assert!(
+            !candidates.contains(&checkout_runtime),
+            "the live checkout is a runtime candidate: {candidates:?}"
+        );
+    }
 
     fn runtime_fixture(temp: &std::path::Path, machine_body: &str) -> anyhow::Result<()> {
         let rlm = temp.join("src").join("rlm");

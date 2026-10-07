@@ -40,7 +40,8 @@ API. Precedence when they disagree: explicit user instruction → `AGENTS.md` �
 | Python kernel | `prime-agent-runtime/src/rlm/repl.py` | JSONL protocol **4** with `pa-core::kernel` (`REPL_PROTOCOL_VERSION`) |
 
 **Other trees:** `prime-agent-runtime/` (the `rlm` package the kernel imports), `skills/` (bundled skills, e.g.
-`computer-use`, `factory`, `system-router`), `install-rust.sh` (installer; its platform map is pinned by
+`computer-use`, `factory`, `system-router`; both are embedded in the binary by `pa-core/build.rs` and extracted to
+`~/.prime/agent/runtime/<hash>/` when no packaged sidecar exists — the live checkout is never read at run time), `install-rust.sh` (installer; its platform map is pinned by
 `crates/pa-cli/tests/installer_platform_map.rs`), `docs/` (mostly the fork's TS-era design docs — see Current State).
 
 **Fork features live in removable crates** (`docs/fork-feature-crates.md`): one `pa-<feature>` crate each, wired

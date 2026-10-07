@@ -88,6 +88,16 @@ assembles, validates, version-pins, hashes, and tars it; the hidden
 `--prime-agent-bootstrap` flag is the installer handoff that pre-bootstraps the
 kernel venv. Verifier: `tests/packaged_layout_e2e.rs`.
 
+A binary without that layout (`cargo install`, `cargo run`) carries the
+runtime and skills it was built from: `pa-core`'s `build.rs` embeds
+`prime-agent-runtime/` and `skills/` (the packer's content policy), and the
+first use extracts them beside the kernel venv, `~/.prime/agent/runtime/<content hash>/` (atomic,
+concurrent-safe, old bundles pruned conservatively). The live source checkout
+is never the source, so an installed binary's kernel never runs a runtime the
+binary cannot serve; installing a newer or older binary moves the kernel venv
+with it. `PRIME_AGENT_RUNTIME_SOURCE` and `PI_PACKAGE_DIR` stay explicit
+overrides.
+
 ## Daemon discovery
 The discovery commands (`status`, `doctor [--fix]`, `shutdown [--force]`, TS
 `cli/daemon-ps.ts`) live in the crate-private `daemon_discovery` module: an OS census of

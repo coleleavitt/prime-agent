@@ -327,9 +327,36 @@ fn packaged_binary_reports_manifest_version() {
     );
 }
 
-/// A missing sidecar (broken install) surfaces the actionable failure, not a raw uv/pip error.
+/// A layout without its runtime sidecar falls back to the runtime embedded
+/// in the binary (the one it was built with), extracted beside the kernel venv:
+/// the bootstrap gets past runtime resolution, never to the live checkout.
+fn assert_embedded_runtime_fallback(box_: &Sandbox, stderr: &str) {
+    assert!(
+        !stderr.contains("prime-agent-runtime directory was not found")
+            && !stderr.contains("prime-agent-runtime source directory was not found"),
+        "the embedded runtime must stand in for the missing sidecar: {stderr}"
+    );
+    assert!(
+        stderr.contains("uv is required to set up the Python kernel"),
+        "the bootstrap must reach the uv step: {stderr}"
+    );
+    let bundles: Vec<PathBuf> = std::fs::read_dir(box_.home.path().join(".prime/agent/runtime"))
+        .map(|entries| entries.flatten().map(|entry| entry.path()).collect())
+        .unwrap_or_default();
+    assert_eq!(bundles.len(), 1, "one extracted bundle: {bundles:?}");
+    assert!(
+        bundles[0]
+            .join("prime-agent-runtime")
+            .join("pyproject.toml")
+            .is_file(),
+        "the embedded runtime is extracted: {bundles:?}"
+    );
+}
+
+/// A missing sidecar (broken install) uses the binary's embedded runtime;
+/// the failure here is the missing uv, not a raw uv/pip error.
 #[test]
-fn missing_sidecar_reports_actionable_bootstrap_error() {
+fn missing_sidecar_falls_back_to_the_embedded_runtime() {
     let _guard = serial_lock();
     let dir = tempfile::TempDir::new().expect("stage dir");
     let staged = dir.path();
@@ -339,7 +366,7 @@ fn missing_sidecar_reports_actionable_bootstrap_error() {
         .command(staged)
         .arg("--prime-agent-bootstrap")
         // No uv anywhere the bootstrap looks (PATH and ~/.local/bin under
-        // the sandboxed HOME): the failure is the resolution error.
+        // the sandboxed HOME): the failure is the uv step after resolution.
         .env("PATH", "/usr/bin:/bin")
         .output()
         .expect("run packaged binary");
@@ -349,14 +376,7 @@ fn missing_sidecar_reports_actionable_bootstrap_error() {
         stderr.contains("Failed to set up the Python kernel runtime"),
         "TS bootstrap failure text missing: {stderr}"
     );
-    assert!(
-        stderr.contains("prime-agent-runtime directory was not found"),
-        "missing-sidecar hint missing: {stderr}"
-    );
-    assert!(
-        stderr.contains(staged.to_string_lossy().as_ref()),
-        "the hint must name the executable directory: {stderr}"
-    );
+    assert_embedded_runtime_fallback(&box_, &stderr);
 }
 
 /// A `PRIME_AGENT_KERNEL_PYTHON` that lacks the runtime reports the TS override error.
@@ -419,14 +439,7 @@ fn hostile_child_assertions(staged: &Path) {
         stderr.contains("Failed to set up the Python kernel runtime"),
         "TS bootstrap failure text missing: {stderr}"
     );
-    assert!(
-        stderr.contains("prime-agent-runtime directory was not found"),
-        "missing-sidecar hint missing: {stderr}"
-    );
-    assert!(
-        stderr.contains(staged.to_string_lossy().as_ref()),
-        "the hint must name the staged dir: {stderr}"
-    );
+    assert_embedded_runtime_fallback(&box_, &stderr);
     assert!(
         !stderr.contains("PRIME_AGENT_KERNEL_PYTHON points to"),
         "the hostile kernel-python override leaked into the packaged layout: {stderr}"

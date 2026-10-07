@@ -50,8 +50,7 @@ use runtime_source::collect_python_files;
 use runtime_source::hash_runtime_source;
 pub use runtime_source::resolve_runtime_identity;
 pub(super) use runtime_source::{
-    package_dir, packaged_runtime_dir, resolve_runtime_source_dir, runtime_candidate_dirs,
-    RUNTIME_SOURCE_ENV,
+    package_dir, resolve_runtime_source_dir, runtime_candidate_dirs, RUNTIME_SOURCE_ENV,
 };
 #[cfg(test)]
 use skills::{
@@ -277,6 +276,18 @@ pub(crate) async fn sync_python_skills(
             .then(a.import_name.cmp(&b.import_name))
     });
     write_bootstrap_version(venv, runtime_identity, &merged)
+}
+
+/// Every editable skill package path the kernel venvs (the managed one and
+/// its XDG fallback) record: an extracted runtime bundle holding one of them
+/// is still in use.
+pub(crate) fn recorded_kernel_skill_paths() -> Vec<PathBuf> {
+    [kernel_venv_dir(), layout::xdg_kernel_venv_dir()]
+        .iter()
+        .filter_map(|venv| read_bootstrap_version(venv))
+        .flat_map(|version| version.python_skills.unwrap_or_default())
+        .map(|skill| PathBuf::from(skill.package_path))
+        .collect()
 }
 
 pub(crate) fn kernel_base_ready(python: &str, venv: &Path, runtime_identity: &str) -> bool {
