@@ -105,7 +105,23 @@ impl Worker {
                 );
             }
         };
+        if let Some(mode) = resources
+            .sandbox
+            .as_deref()
+            .filter(|mode| pa_core::os_sandbox::SandboxMode::from_wire(mode).is_none())
+        {
+            return response_failure(
+                None,
+                "create",
+                &format!(
+                    "Invalid sandbox mode \"{mode}\". Valid values: off, read-only, workspace-write"
+                ),
+                None,
+            );
+        }
         if let Some(agent_engine) = &self.agent_engine {
+            // A new create re-resolves the sandbox against its own override.
+            *agent_engine.sandbox.write_or_recover() = crate::agent_engine::SandboxSlot::Unresolved;
             if let Some(autonomous) = &resources.autonomous {
                 *agent_engine.autonomous.lock().await =
                     pa_core::autonomous::create_autonomous_runtime_state(Some(autonomous), None);

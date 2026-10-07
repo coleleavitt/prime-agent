@@ -390,6 +390,7 @@ impl pa_tui::client_settings::ClientSettings for RecordingSettings {
 
 fn options(socket: PathBuf, settings: Arc<RecordingSettings>) -> InteractiveOptions {
     InteractiveOptions {
+        sandbox_mode: None,
         resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         initial_plan_mode: false,
         models: None,

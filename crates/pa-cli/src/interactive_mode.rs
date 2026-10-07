@@ -448,6 +448,7 @@ fn build_tui_options(
     let tui_options_value = InteractiveOptions {
         resource_exclusions: config.resource_exclusions(),
         initial_plan_mode: config.plan_mode,
+        sandbox_mode: config.sandbox_mode.map(|mode| mode.wire_name().to_string()),
         code_block_indent,
         tree_filter_mode,
         branch_summary_skip_prompt,

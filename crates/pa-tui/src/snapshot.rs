@@ -83,6 +83,9 @@ pub struct Reconstructed {
     /// The session's effective service tier (`state.serviceTier`), the
     /// `/fast` toggle's baseline.
     pub service_tier: Option<String>,
+    /// The session's OS sandbox status label (`state.sandbox`); `None`
+    /// while the sandbox is off.
+    pub sandbox: Option<String>,
 }
 
 impl Reconstructed {
@@ -390,6 +393,10 @@ pub fn reconstruct(attach: &AttachData) -> Reconstructed {
         .and_then(|state| state.get("serviceTier"))
         .and_then(Value::as_str)
         .map(str::to_string);
+    let sandbox = state
+        .and_then(|state| state.get("sandbox"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let last_user_prompt_ms =
         snapshot
             .get("messages")
@@ -418,6 +425,7 @@ pub fn reconstruct(attach: &AttachData) -> Reconstructed {
         cursor_present,
         queued,
         service_tier,
+        sandbox,
         last_user_prompt_ms,
     }
 }

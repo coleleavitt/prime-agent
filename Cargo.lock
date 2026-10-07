@@ -1552,6 +1552,7 @@ dependencies = [
  "pa-agent",
  "pa-ai",
  "pa-models",
+ "pa-os-sandbox",
  "pa-telemetry",
  "pa-types",
  "proptest",

@@ -43,8 +43,9 @@ only Landlock's TCP rules (ABI 4+), also reported as a gap.
 
 - Deciding *when* to sandbox, or reading settings: `pa-core` resolves the
   policy and owns the call sites.
-- Confining the daemon, the session worker, the TUI, or the host-spawned
-  MCP stdio servers.
+- Confining the daemon, the session worker or the TUI. (Stdio MCP servers
+  are kernel children today and inherit the kernel's restriction; a
+  host-side spawn must use `pa-core`'s `SessionSandbox::command`.)
 - Per-path deny rules beneath a writable root (e.g. a read-only `.git`),
   abstract unix sockets, signal scoping, and the x32 syscall ABI (the
   seccomp filter matches the native `x86_64` numbers).

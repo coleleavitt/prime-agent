@@ -69,6 +69,7 @@ pub(crate) use artifacts::{artifact_reference, now_millis};
 pub use config::AgentEngineConfig;
 pub(crate) use config::AutonomousAdmission;
 pub(crate) use config::CreateSessionResources;
+pub(crate) use config::SandboxSlot;
 pub use config::SupervisorLinkConfig;
 use config::{GoalRuntimeHandles, ProducerUsageSink, RestoredSessionModel, StartupScope};
 
@@ -259,6 +260,8 @@ pub struct AgentSessionEngine {
     >,
     own_summary: std::sync::Arc<std::sync::Mutex<Option<Value>>>,
     pub(crate) create_resources: std::sync::RwLock<CreateSessionResources>,
+    /// The session's OS sandbox (see [`SandboxSlot`]).
+    pub(crate) sandbox: std::sync::RwLock<SandboxSlot>,
     pub(crate) autonomous:
         std::sync::Arc<tokio::sync::Mutex<pa_core::autonomous::AutonomousRuntimeState>>,
     /// The continuation policy the turn loop consults after every settled

@@ -432,6 +432,7 @@ fn options(
     auth: Option<pa_tui::provider_auth::ProviderAuthCommandsHandle>,
 ) -> InteractiveOptions {
     InteractiveOptions {
+        sandbox_mode: None,
         resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         initial_plan_mode: false,
         socket_path: socket,

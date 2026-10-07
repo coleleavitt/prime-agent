@@ -427,6 +427,7 @@ fn attach_data(id: &str) -> Value {
 
 fn options_with_session(socket: PathBuf, session: SessionSelection) -> InteractiveOptions {
     InteractiveOptions {
+        sandbox_mode: None,
         resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         initial_plan_mode: false,
         models: None,

@@ -112,6 +112,7 @@ impl Worker {
             context_usage: store.and_then(|store| {
                 crate::session_stats::store_context_usage(store, self.engine.model_context_window())
             }),
+            sandbox: self.engine.sandbox().map(|sandbox| sandbox.status_label()),
         }
     }
 

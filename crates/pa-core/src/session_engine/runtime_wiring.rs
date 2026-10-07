@@ -219,6 +219,7 @@ pub fn kernel_provisioner(
     on_bootstrap_result: Option<crate::kernel::provisioner::KernelBootstrapResultHandler>,
     environment: crate::kernel::shared::KernelEnvironment,
     plan_mode: crate::kernel::plan_guard::PlanModeSwitch,
+    sandbox: Option<crate::os_sandbox::SessionSandbox>,
 ) -> Arc<KernelProvisioner> {
     let mut env = HashMap::with_capacity(1);
     env.insert(
@@ -245,6 +246,7 @@ pub fn kernel_provisioner(
             on_bootstrap_result,
             environment,
             plan_mode: Some(plan_mode),
+            sandbox,
         },
     ))
 }

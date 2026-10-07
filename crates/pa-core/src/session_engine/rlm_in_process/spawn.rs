@@ -192,6 +192,11 @@ async fn admission(
             telemetry: None,
             prewarm_ipython_kernel: None,
             plan_mode: Some(request.plan_mode),
+            // A child runs under its parent's OS sandbox mode, never looser.
+            sandbox_mode: parent_engine
+                .sandbox
+                .as_ref()
+                .map(crate::os_sandbox::SessionSandbox::mode),
             // The grant the parent's spawn drew funds the child.
             rlm_token_allowance: request.token_budget,
             ..Default::default()

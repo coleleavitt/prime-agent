@@ -185,6 +185,29 @@ pub struct KernelSettings {
     pub environment: Option<String>,
 }
 
+/// `sandbox`: OS-level confinement of the Python kernel (and everything it spawns) and of the `!`
+/// user-bash lane. Unset is `off`: nothing changes.
+///
+/// ```json
+/// "sandbox": { "mode": "workspace-write", "network": false, "writableRoots": ["~/.cache/uv"] }
+/// ```
+///
+/// A project file may only tighten it (a stricter `mode`, `network: false`); `writableRoots` is
+/// read from the global scope only. `--sandbox <mode>` replaces the mode for one run.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SandboxSettings {
+    /// `off` (default) | `read-only` | `workspace-write`. An unrecognized value fails closed to
+    /// `read-only`.
+    pub mode: Option<String>,
+    /// Whether confined processes may open network sockets (default `false`: only pipes and
+    /// unix sockets).
+    pub network: Option<bool>,
+    /// Extra directories writable under `workspace-write` (`~/` expands, relative paths resolve
+    /// against the working directory).
+    pub writable_roots: Option<Vec<String>>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageSettings {
@@ -358,6 +381,8 @@ pub struct Settings {
     pub terminal: Option<TerminalSettings>,
     pub images: Option<ImageSettings>,
     pub kernel: Option<KernelSettings>,
+    /// OS-level confinement of the kernel and the commands it runs (off when unset).
+    pub sandbox: Option<SandboxSettings>,
     pub enabled_models: Option<Vec<String>>,
     /// Rust-only daemon-level model allowlist: a model outside fails loudly instead
     /// of resolving, with no fallback. `None` is unrestricted.

@@ -243,6 +243,10 @@ impl SessionEngine for AgentSessionEngine {
         self.resolve_model().ok().map(|model| model.context_window)
     }
 
+    fn sandbox(&self) -> Option<pa_core::os_sandbox::SessionSandbox> {
+        self.session_sandbox()
+    }
+
     fn creation_model(&self) -> Option<(String, String)> {
         let model = self.resolve_registry_model().ok()?;
         Some((model.provider.clone(), model.id))
@@ -863,6 +867,7 @@ impl SessionEngine for AgentSessionEngine {
                 session_file: identity.session_file.clone(),
                 thinking: identity.thinking.clone(),
                 child_script: identity.child_script,
+                sandbox: self.create_resources.read_or_recover().sandbox.clone(),
             };
             children.set_identity(parent);
         }

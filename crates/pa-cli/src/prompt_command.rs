@@ -119,6 +119,10 @@ fn assemble_breakdown(
             allow_recursion: Some(true),
             generic_mcp_servers: generic_servers,
             rlm_depth: Some(0),
+            // The `sandbox` setting's environment line, as a session would state it.
+            sandbox: pa_core::os_sandbox::SessionSandbox::resolve(&settings, None, cwd)
+                .as_ref()
+                .map(pa_core::os_sandbox::SessionSandbox::prompt_line),
             ..Default::default()
         },
     ))

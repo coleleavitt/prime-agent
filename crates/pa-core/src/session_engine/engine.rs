@@ -90,6 +90,9 @@ pub struct SessionEngineConfig {
     /// parent's `rlm.spawn` drew it). `None` for a root session, which
     /// takes its pool from the `rlmTokenBudget` setting.
     pub rlm_token_allowance: Option<u64>,
+    /// `--sandbox <mode>`: replaces the `sandbox` setting's mode for this run (`off` included).
+    /// `None` keeps the setting.
+    pub sandbox_mode: Option<crate::os_sandbox::SandboxMode>,
 }
 
 pub struct SessionEngine {
@@ -146,6 +149,9 @@ pub struct SessionEngine {
     /// The `artifact.present` seam (upstream #1062): a host whose durable
     /// session lives outside the engine installs its row sink here.
     pub presented_artifacts: Arc<super::presented_artifact::PresentedArtifacts>,
+    /// The session's OS sandbox (`None`: off). The kernel already spawns under it; the daemon
+    /// worker reads it for the `!` lane and the session status.
+    pub sandbox: Option<crate::os_sandbox::SessionSandbox>,
 }
 
 /// Skill overrides for built-in integrations the user is not logged into,
@@ -236,8 +242,14 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     } else {
         super::context_limit::ContextLimitSource::None
     };
-    let settings_adoption =
-        super::telemetry::SettingsAdoption::from_settings(&settings, context_cap_source);
+    // The OS sandbox (`sandbox` setting, `--sandbox`): resolved once per session; the kernel
+    // spawns under it, the prompt states it, the worker's `!` lane and status read it.
+    let sandbox = crate::os_sandbox::SessionSandbox::resolve(&settings, config.sandbox_mode, &cwd);
+    let settings_adoption = super::telemetry::SettingsAdoption::from_settings(
+        &settings,
+        context_cap_source,
+        sandbox.as_ref(),
+    );
     let auto_refine_gates =
         super::refine::AutoRefineGates::from_settings(settings.settings().auto_refine.as_ref());
     // Request timing: the settings half of the flag is read once here
@@ -589,6 +601,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         on_bootstrap_result,
         kernel_environment,
         plan_mode.clone(),
+        sandbox.clone(),
     );
     let mut tools = config.tools.clone();
     if !tools.iter().any(|tool| tool.name() == "ipython") {
@@ -644,6 +657,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             rlm_depth: config.rlm_depth,
             generic_mcp_servers,
             prompt_guidelines: Some(prompt_guidelines),
+            sandbox: sandbox
+                .as_ref()
+                .map(crate::os_sandbox::SessionSandbox::prompt_line),
             ..Default::default()
         },
     );
@@ -1055,6 +1071,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         feature_status_sink: std::sync::Mutex::new(None),
         plan_mode,
         presented_artifacts,
+        sandbox,
     };
     if config.plan_mode == Some(true) && restored_plan_mode != Some(true) {
         engine.track_plan_mode(true, "flag");

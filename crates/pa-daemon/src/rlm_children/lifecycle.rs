@@ -96,6 +96,9 @@ impl SupervisorChildSessionsInner {
         if let Some(request_id) = spawned_by_request_id {
             config["spawnedByRequestId"] = json!(request_id);
         }
+        if let Some(sandbox) = &identity.sandbox {
+            config["sandbox"] = json!(sandbox);
+        }
         if let Some(script) = &identity.child_script {
             config["script"] = json!(script);
             // The scripted engine rides the identity down the recursion (TS
