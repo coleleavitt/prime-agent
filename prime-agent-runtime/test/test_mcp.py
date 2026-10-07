@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import traceback
 import unittest
+from typing import Any
 from unittest import mock
 
 from rlm import McpToolError, mcp, repl
@@ -29,8 +30,9 @@ class FakeHost:
 
     def __init__(self, answer):
         self.answer = answer
-        self.requests: list[dict] = []
-        self.options: list[dict] = []
+        self.requests: list[dict[str, Any]] = []
+        self.options: list[dict[str, Any]] = []
+        self._patch: Any = None
 
     async def host_request(self, data, **options):
         self.requests.append(dict(data))
@@ -172,11 +174,11 @@ class McpRegistryTest(unittest.TestCase):
 
     def test_names_are_validated_before_any_host_request(self):
         with FakeHost(lambda data: ok(None)) as host:
-            for call in (lambda: mcp.call_tool("", "tool"), lambda: mcp.call_tool("svc", ""), lambda: mcp.list_tools(42)):
+            for call in (lambda: mcp.call_tool("", "tool"), lambda: mcp.call_tool("svc", ""), lambda: mcp.list_tools(42)):  # pyright: ignore[reportArgumentType]
                 with self.assertRaises(TypeError):
                     run(call())
             with self.assertRaises(TypeError):
-                run(mcp.call_tool("svc", "tool", ["not", "a", "dict"]))
+                run(mcp.call_tool("svc", "tool", ["not", "a", "dict"]))  # pyright: ignore[reportArgumentType]
         self.assertEqual(host.requests, [])
 
     def test_reload_remains_reusable_but_close_is_terminal(self):
@@ -313,7 +315,7 @@ class McpDiscoveryInventoryTest(unittest.TestCase):
         for kwargs in ({"connection_status": "maybe"}, {"limit": 0}, {"limit": 201}, {"limit": True}, {"cursor": "x" * 600}):
             with self._patch_host({"mcp.list_plugins": {"plugins": []}}):
                 with self.assertRaises((ValueError, TypeError)):
-                    run(mcp.list_plugins(**kwargs))
+                    run(mcp.list_plugins(**kwargs))  # pyright: ignore[reportArgumentType]
         for reply in ({"plugins": ["no"]}, {"plugins": [], "nextCursor": ""}):
             with self._patch_host({"mcp.list_plugins": reply}):
                 with self.assertRaises(RuntimeError):

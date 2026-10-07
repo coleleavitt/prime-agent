@@ -251,7 +251,7 @@ class FakeMcpHost:
 
     def __init__(self, reply):
         self.reply = reply
-        self.requests: list[dict] = []
+        self.requests: list[dict[str, object]] = []
 
     async def host_request(self, data, **_options):
         self.requests.append(dict(data))

@@ -151,20 +151,22 @@ async def _session_request(
         request.add_done_callback(_consume_exception)
         raise
     if not isinstance(raw, dict) or raw.get("status") != "ok":
-        error = raw.get("error") if isinstance(raw, dict) else None
-        raise RuntimeError(str(error or f"host request {request_type} failed"))
+        host_error = raw.get("error") if isinstance(raw, dict) else None
+        raise RuntimeError(str(host_error or f"host request {request_type} failed"))
     result = raw.get("result")
     if not isinstance(result, dict):
         raise RuntimeError(f"host request {request_type} returned a malformed response")
     connected = result.get("connected") is True
     if result.get("ok") is True:
         return result.get("value"), connected, None
-    error = result.get("error") if isinstance(result.get("error"), dict) else {}
-    kind = error.get("type")
-    message = str(error.get("message") or "")
+    failure = result.get("error")
+    if not isinstance(failure, dict):
+        failure = {}
+    kind = failure.get("type")
+    message = str(failure.get("message") or "")
     if kind == "CancelledError":
         return None, connected, asyncio.CancelledError()
-    exc_type = _ERROR_TYPES.get(kind, RuntimeError)
+    exc_type = _ERROR_TYPES.get(kind, RuntimeError) if isinstance(kind, str) else RuntimeError
     return None, connected, exc_type(message) if message else exc_type()
 
 
@@ -397,6 +399,7 @@ async def _search(connection_id: str, needle: str, limit: int) -> list[dict[str,
 
 async def _host_inventory(request_type: str, payload: dict[str, Any]) -> dict[str, Any]:
     outcome: str | None = None
+    result: Any = None
     try:
         async with asyncio.timeout(_INVENTORY_TIMEOUT):
             result = await host_request(request_type, payload)

@@ -38,7 +38,24 @@ impl StdioChild {
         ),
         McpSessionError,
     > {
-        let mut command = std::process::Command::new(&launch.command);
+        #[cfg(windows)]
+        let program = resolve_windows_command(
+            &launch.command,
+            launch
+                .env
+                .iter()
+                .find(|(key, _)| key.eq_ignore_ascii_case("PATH"))
+                .map(|(_, value)| value.as_str()),
+            std::env::var("PATHEXT").ok().as_deref(),
+            &launch.cwd,
+            std::path::Path::is_file,
+        );
+        #[cfg(not(windows))]
+        let program = launch.command.clone();
+        // A resolved `.cmd`/`.bat` runs through `cmd.exe /c`: std's Windows
+        // spawn does that itself, quoting each argument for cmd (and refusing
+        // one it cannot quote safely).
+        let mut command = std::process::Command::new(&program);
         command
             .args(&launch.args)
             .current_dir(&launch.cwd)
@@ -112,6 +129,70 @@ impl Drop for StdioChild {
     }
 }
 
+/// Script extensions tried after `PATHEXT` (the Python SDK's fallback list,
+/// minus `.ps1`, which no process spawn can run directly).
+#[cfg(any(windows, test))]
+const WINDOWS_SCRIPT_FALLBACKS: [&str; 3] = [".cmd", ".bat", ".exe"];
+
+/// Resolve a stdio server command to the file Windows can spawn, as the
+/// in-kernel client (the Python SDK's `get_windows_executable_command`) did:
+/// `npx` becomes `C:\...\npx.cmd`. The `PATHEXT` candidates are searched
+/// across `path` (the server's own `PATH`, `;`-separated) first, then the
+/// script fallbacks; an extensionless file never matches (npm installs a
+/// POSIX `npx` script next to `npx.cmd`). A command with a directory part is
+/// probed where it points (relative to `cwd`, returned joined so the
+/// spawn does not re-resolve it against the host's own directory). The current directory is not
+/// searched: a planted executable there must not win. Unresolved, the
+/// command is returned as given.
+#[cfg(any(windows, test))]
+fn resolve_windows_command(
+    command: &str,
+    path: Option<&str>,
+    pathext: Option<&str>,
+    cwd: &std::path::Path,
+    is_file: impl Fn(&std::path::Path) -> bool,
+) -> String {
+    let has_extension = |name: &str| std::path::Path::new(name).extension().is_some();
+    // Pass one is the SDK's `shutil.which(command)` (PATHEXT); pass two its
+    // per-extension fallbacks. Each pass walks `path` in order.
+    let pathext: Vec<String> = platform_process::windows_executable_candidates(command, pathext)
+        .into_iter()
+        .filter(|candidate| has_extension(candidate))
+        .collect();
+    let fallbacks: Vec<Vec<String>> = WINDOWS_SCRIPT_FALLBACKS
+        .iter()
+        .map(|extension| vec![format!("{command}{extension}")])
+        .collect();
+    let passes = std::iter::once(pathext).chain(fallbacks);
+    if command.contains(['\\', '/', ':']) {
+        return passes
+            .flatten()
+            .map(|candidate| cwd.join(candidate))
+            .find(|candidate| is_file(candidate))
+            .map_or_else(
+                || command.to_string(),
+                |candidate| candidate.to_string_lossy().into_owned(),
+            );
+    }
+    let dirs: Vec<&str> = path
+        .unwrap_or_default()
+        .split(';')
+        .map(str::trim)
+        .filter(|dir| !dir.is_empty())
+        .collect();
+    for pass in passes {
+        for dir in &dirs {
+            for candidate in &pass {
+                let full = std::path::Path::new(dir).join(candidate);
+                if is_file(&full) {
+                    return full.to_string_lossy().into_owned();
+                }
+            }
+        }
+    }
+    command.to_string()
+}
+
 /// The in-kernel client's `OSError` for a command that cannot start
 /// (`[Errno 2] No such file or directory: 'cmd'`).
 fn spawn_error(command: &str, error: &std::io::Error) -> McpSessionError {
@@ -131,4 +212,96 @@ fn spawn_error(command: &str, error: &std::io::Error) -> McpSessionError {
         None => error.to_string(),
     };
     McpSessionError::new(kind, message)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+    use std::path::{Path, PathBuf};
+
+    use super::resolve_windows_command;
+
+    /// Resolve `command` over a fake filesystem holding `files`.
+    fn resolve(command: &str, path: &str, pathext: Option<&str>, files: &[&str]) -> String {
+        let files: HashSet<PathBuf> = files.iter().map(PathBuf::from).collect();
+        resolve_windows_command(
+            command,
+            Some(path),
+            pathext,
+            Path::new("/work"),
+            |candidate| files.contains(candidate),
+        )
+    }
+
+    const PATHEXT: Option<&str> = Some(".COM;.EXE;.BAT;.CMD;.VBS;.PS1");
+
+    #[test]
+    fn a_bare_npm_shim_resolves_to_its_cmd_file_never_the_posix_script() {
+        assert_eq!(
+            resolve(
+                "npx",
+                "/node;/other",
+                PATHEXT,
+                &["/node/npx", "/node/npx.cmd"]
+            ),
+            "/node/npx.cmd"
+        );
+    }
+
+    #[test]
+    fn pathext_order_wins_within_a_directory_and_path_order_across_them() {
+        assert_eq!(
+            [
+                resolve(
+                    "tool",
+                    "/a",
+                    Some(".CMD;.EXE"),
+                    &["/a/tool.exe", "/a/tool.cmd"]
+                ),
+                resolve(
+                    "tool",
+                    "/a",
+                    Some(".EXE;.CMD"),
+                    &["/a/tool.exe", "/a/tool.cmd"]
+                ),
+                resolve("tool", "/a;/b", PATHEXT, &["/a/tool.cmd", "/b/tool.exe"]),
+            ],
+            ["/a/tool.cmd", "/a/tool.exe", "/a/tool.cmd"]
+        );
+    }
+
+    #[test]
+    fn the_script_fallbacks_apply_when_pathext_omits_them() {
+        assert_eq!(
+            [
+                resolve("tool", "/a", Some(".EXE"), &["/a/tool.cmd"]),
+                resolve("tool", "/a", None, &["/a/tool.bat"]),
+            ],
+            ["/a/tool.cmd", "/a/tool.bat"]
+        );
+    }
+
+    #[test]
+    fn an_explicit_extension_and_a_directory_part_are_kept() {
+        assert_eq!(
+            [
+                resolve("npx.cmd", "/node", PATHEXT, &["/node/npx.cmd"]),
+                resolve("bin/serve", "/node", PATHEXT, &["/work/bin/serve.bat"]),
+                resolve("/opt/serve", "", PATHEXT, &["/opt/serve.exe"]),
+            ],
+            ["/node/npx.cmd", "/work/bin/serve.bat", "/opt/serve.exe"]
+        );
+    }
+
+    #[test]
+    fn an_unresolved_command_passes_through_and_the_cwd_is_not_searched() {
+        assert_eq!(
+            [
+                resolve("missing", "/a", PATHEXT, &[]),
+                resolve("npx", "", PATHEXT, &["/work/npx.cmd"]),
+                resolve("python", "/a", PATHEXT, &["/a/python"]),
+            ],
+            ["missing", "npx", "python"]
+        );
+    }
 }
