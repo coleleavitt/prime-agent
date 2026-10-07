@@ -68,8 +68,11 @@ fn faux_script(dir: &Path) -> PathBuf {
                 {"content": [
                     {"type": "text", "text": "Running the first sleep cell."},
                     {"type": "toolCall", "name": "ipython", "id": "toolu_sleep01",
+                     // The cell holds the tool call open until the test has parked every
+                     // steer (a fixed sleep raced a loaded box: the call could end before
+                     // the third steer landed); the bound only stops a broken test.
                      "arguments": {"code":
-                        "import time\nopen('sleep-one-started','w').write('1')\ntime.sleep(4)\nprint('slept one')"}}
+                        "import os, time\nopen('sleep-one-started','w').write('1')\ndeadline = time.time() + 180\nwhile not os.path.exists('release-sleep-one') and time.time() < deadline:\n    time.sleep(0.02)\nprint('slept one')"}}
                 ]},
                 {"content": [{"type": "text", "text": "batch reply for all three steers"}]},
                 {"content": [{"type": "text", "text": "queued reply"}]},
@@ -313,17 +316,21 @@ fn multi_steer_parked_mid_run_co_delivers_as_one_batched_turn() {
         &json!({ "type": "follow_up", "activeSessionId": session_id, "message": "follow up last" }),
     );
     assert_eq!(follow["success"], true, "follow_up failed: {follow}");
+    // Every steer and the follow-up are parked: let the tool call finish.
+    std::fs::write(cwd.join("release-sleep-one"), "1").expect("release the sleep cell");
 
-    // Drain until the wire is quiet AND the follow-up row landed: its row
-    // plus a quiet wire means the queue fully drained (true under either
-    // delivery shape).
+    // Drain until the queue settled: the long turn, then the steer batch's
+    // turn and the follow-up's turn (the expected shape) each end with an
+    // `agent_end`. A quiet-wire heuristic misread a loaded box's pauses as
+    // the end; a wrong shape still fails the assertions below.
     let settled = Instant::now() + Duration::from_mins(3);
     loop {
-        let before = client.events.len();
-        client.drain_events(Duration::from_millis(500));
-        let drained_quiet = client.events.len() == before;
-        let texts = event_texts(&client.events);
-        if drained_quiet && texts.iter().any(|text| text == "follow up last") {
+        client.drain_events(Duration::from_millis(100));
+        let ends = event_types(&client.events)
+            .iter()
+            .filter(|t| *t == "agent_end")
+            .count();
+        if ends >= 3 {
             break;
         }
         assert!(
@@ -332,7 +339,6 @@ fn multi_steer_parked_mid_run_co_delivers_as_one_batched_turn() {
             event_types(&client.events)
         );
     }
-    client.drain_events(Duration::from_secs(2));
 
     // The delivery window is everything after the long turn's first
     // `agent_end`.
