@@ -429,6 +429,7 @@ mod delegations;
 mod events;
 mod execution;
 mod host_requests;
+mod line_framer;
 mod plan_guard;
 mod repair;
 mod requests;

@@ -1,6 +1,7 @@
 //! Startup and child wiring: kernel process spawn, python resolution, stderr
 //! capture, and readiness handshake.
 
+use super::line_framer::{ProtocolLineFramer, PushOutcome};
 use super::{
     anyhow, live_kernels, lock, oneshot, orphan_journal, parse_event, Arc, AsyncReadExt, BufReader,
     ChildHandle, Duration, ExitInfo, HashMap, Inner, KernelShutdownOptions, KernelStartOptions,
@@ -8,6 +9,7 @@ use super::{
     MAX_KERNEL_STDERR_CHARS, MAX_KERNEL_STDERR_LOG_BYTES, MAX_PROTOCOL_LINE_BYTES,
     READY_TIMEOUT_MS, REPL_PROTOCOL_VERSION,
 };
+use std::ops::ControlFlow;
 
 /// Bound on waiting for a dead kernel's stderr pipe to drain before its
 /// exit is described.
@@ -483,7 +485,7 @@ impl Inner {
                 // A poisoned child's residue must not grow the buffer again before the protocol
                 // repair kills it: keep draining the pipe and discard.
                 let mut poisoned = false;
-                let mut buffered: Vec<u8> = Vec::new();
+                let mut framer = ProtocolLineFramer::new(MAX_PROTOCOL_LINE_BYTES);
                 let mut chunk = vec![0u8; 64 * 1024];
                 loop {
                     match reader.read(&mut chunk).await {
@@ -492,54 +494,43 @@ impl Inner {
                             if poisoned {
                                 continue;
                             }
-                            // `buffered` keeps only the newline-free tail of earlier reads, so only
-                            // the new bytes can hold a newline.
-                            let mut scan_from = buffered.len();
-                            buffered.extend_from_slice(&chunk[..n]);
-                            if buffered.len() > MAX_PROTOCOL_LINE_BYTES {
-                                poisoned = true;
-                                buffered.clear();
-                                let Some(inner) = inner.upgrade() else {
-                                    break;
+                            let outcome = framer.push(&chunk[..n], |line| {
+                                // An invalid-UTF-8 stream ends the reader, like read_line's
+                                // decode error did before.
+                                let Ok(trimmed) = std::str::from_utf8(line) else {
+                                    return ControlFlow::Break(());
                                 };
-                                inner.fail_protocol_frame(
-                                    generation,
-                                    &format!(
-                                        "oversized protocol line: exceeds {MAX_PROTOCOL_LINE_BYTES} bytes"
-                                    ),
-                                );
-                                continue;
-                            }
-                            // Consume by offset and drain the prefix once per read: per-frame
-                            // drains would shift the tail each iteration (quadratic copying).
-                            let mut consumed = 0;
-                            while let Some(rel) =
-                                buffered[scan_from..].iter().position(|&b| b == b'\n')
-                            {
-                                let end = scan_from + rel;
-                                // An invalid-UTF-8 stream ends the reader, like
-                                // read_line's decode error did before.
-                                let Ok(trimmed) = std::str::from_utf8(&buffered[consumed..end])
-                                else {
-                                    return;
-                                };
-                                consumed = end + 1;
-                                scan_from = consumed;
                                 if trimmed.trim().is_empty() {
-                                    continue;
+                                    return ControlFlow::Continue(());
                                 }
                                 let Some(inner) = inner.upgrade() else {
-                                    return;
+                                    return ControlFlow::Break(());
                                 };
                                 match parse_event(trimmed) {
                                     Ok(event) => inner.handle_event(event),
                                     Err(reason) => {
-                                        let _ = stdin_for_error;
+                                        let _ = &stdin_for_error;
                                         inner.fail_protocol_frame(generation, &reason);
                                     }
                                 }
+                                ControlFlow::Continue(())
+                            });
+                            match outcome {
+                                PushOutcome::Continue => {}
+                                PushOutcome::Stop => return,
+                                PushOutcome::Oversized => {
+                                    poisoned = true;
+                                    let Some(inner) = inner.upgrade() else {
+                                        break;
+                                    };
+                                    inner.fail_protocol_frame(
+                                        generation,
+                                        &format!(
+                                            "oversized protocol line: exceeds {MAX_PROTOCOL_LINE_BYTES} bytes"
+                                        ),
+                                    );
+                                }
                             }
-                            buffered.drain(..consumed);
                         }
                     }
                 }

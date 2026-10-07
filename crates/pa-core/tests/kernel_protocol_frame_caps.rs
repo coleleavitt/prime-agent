@@ -17,7 +17,7 @@
 
 use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use pa_core::kernel::manager::{KernelStartOptions, ReplKernelManager};
 use pa_core::kernel::shared::{
@@ -50,14 +50,14 @@ for line in sys.stdin:
     sys.stdout.flush()
 "#;
 
-fn fake_runtime_path() -> std::path::PathBuf {
+/// The fake runtime script; the returned guard keeps it on disk for the test and removes it
+/// afterwards.
+fn fake_runtime() -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::TempDir::new().expect("temp dir");
     let path = dir.path().join("fake-kernel");
     std::fs::write(&path, FAKE_RUNTIME).expect("write fake runtime");
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-    // Leak the temp dir: the script must exist until the spawned child exits.
-    std::mem::forget(dir);
-    path
+    (dir, path)
 }
 
 fn manager(python: std::path::PathBuf) -> ReplKernelManager {
@@ -80,7 +80,8 @@ fn manager(python: std::path::PathBuf) -> ReplKernelManager {
 
 #[tokio::test]
 async fn oversized_unterminated_protocol_line_poisons_and_repairs() {
-    let manager = manager(fake_runtime_path());
+    let (_runtime_dir, runtime) = fake_runtime();
+    let manager = manager(runtime);
     manager
         .start(KernelStartOptions::default())
         .await
@@ -110,7 +111,8 @@ async fn oversized_unterminated_protocol_line_poisons_and_repairs() {
 async fn normal_protocol_lines_still_stream_through_the_bounded_reader() {
     // Multiple frames in one 64 Ki chunk plus a trailing partial line must
     // all dispatch: the chunked reader only poisons past the ceiling.
-    let manager = manager(fake_runtime_path());
+    let (_runtime_dir, runtime) = fake_runtime();
+    let manager = manager(runtime);
     manager
         .start(KernelStartOptions::default())
         .await
@@ -131,28 +133,23 @@ async fn normal_protocol_lines_still_stream_through_the_bounded_reader() {
 }
 
 #[tokio::test]
-async fn multi_mib_blank_protocol_line_is_read_in_linear_time() {
-    // A 31 MiB blank line arrives in pipe reads of at most 64 KiB; rescanning
-    // the buffered prefix per read would scan >= 8 GB. Blank lines skip
-    // parse_event, so the fixed path pays only the one-pass scan.
-    let manager = manager(fake_runtime_path());
+async fn a_multi_mib_blank_protocol_line_is_skipped_and_the_next_frame_lands() {
+    // A 31 MiB blank line arrives in pipe reads of at most 64 KiB and is skipped; the frame after
+    // it still dispatches. The linear-scan invariant (each byte examined once) is pinned
+    // deterministically by the framer's unit test, not by a wall-clock budget here.
+    let (_runtime_dir, runtime) = fake_runtime();
+    let manager = manager(runtime);
     manager
         .start(KernelStartOptions::default())
         .await
         .expect("fake kernel must start");
-    let started = Instant::now();
     let result = manager
         .execute("big-frame", ExecuteOptions::default())
         .await
         .expect("execute must not fail");
-    let elapsed = started.elapsed();
     assert_eq!(
         (result.status, result.stdout.as_str()),
         (ExecuteStatus::Ok, "big")
-    );
-    assert!(
-        elapsed < Duration::from_secs(3),
-        "31 MiB blank line took {elapsed:?}"
     );
     assert!(manager
         .shutdown(KernelShutdownOptions::default())
