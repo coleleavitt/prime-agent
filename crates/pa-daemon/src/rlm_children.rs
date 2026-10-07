@@ -899,20 +899,18 @@ impl SupervisorChildSessionsInner {
 
     /// The per-child session directory under the parent's artifacts tree.
     fn child_session_dir(&self, child_id: &str, identity: &ParentIdentity) -> Result<PathBuf> {
-        let base = match &identity.session_id {
-            Some(session_id) => self
-                .agent_dir
+        let base = if let Some(session_id) = &identity.session_id {
+            self.agent_dir
                 .join("session-artifacts")
                 .join(session_id)
-                .join(child_id),
+                .join(child_id)
+        } else {
             // No persistent parent artifacts dir: an ephemeral temp dir, tracked for removal.
-            None => {
-                let base = std::env::temp_dir().join(format!("prime-agent-rlm-{child_id}"));
-                self.ephemeral_child_dirs
-                    .lock_or_recover()
-                    .insert(child_id.to_string(), base.clone());
-                base
-            }
+            let base = std::env::temp_dir().join(format!("prime-agent-rlm-{child_id}"));
+            self.ephemeral_child_dirs
+                .lock_or_recover()
+                .insert(child_id.to_string(), base.clone());
+            base
         };
         std::fs::create_dir_all(&base)
             .with_context(|| format!("create RLM child session dir {}", base.display()))?;

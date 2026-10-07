@@ -68,6 +68,10 @@ impl serde::Serialize for TestDir {
 /// in a scratch dir hand both back, so the dir outlives every use of the value and is removed
 /// with it. Derefs to the value.
 #[cfg(test)]
+#[cfg_attr(
+    not(unix),
+    expect(dead_code, reason = "every worker fixture that uses it is unix-only")
+)]
 pub(crate) struct InTestDir<T> {
     value: T,
     dir: TestDir,
@@ -81,6 +85,10 @@ impl<T> InTestDir<T> {
 
     /// The value and the dir guard apart: a test that drops the value (a worker "restart")
     /// keeps the dir until its own end.
+    #[cfg_attr(
+        not(unix),
+        expect(dead_code, reason = "every worker fixture that uses it is unix-only")
+    )]
     pub(crate) fn into_parts(self) -> (T, TestDir) {
         (self.value, self.dir)
     }

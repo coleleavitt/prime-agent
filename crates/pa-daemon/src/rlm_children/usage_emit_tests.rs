@@ -307,12 +307,18 @@ fn an_ephemeral_parents_child_dirs_go_with_the_child_and_the_registry() {
         .inner
         .child_session_dir(&removed_id, &identity)
         .unwrap();
-    let kept = sessions.inner.child_session_dir(&kept_id, &identity).unwrap();
+    let kept = sessions
+        .inner
+        .child_session_dir(&kept_id, &identity)
+        .unwrap();
     assert_eq!((removed.is_dir(), kept.is_dir()), (true, true));
 
     sessions.inner.discard_ephemeral_child_dir(&removed_id);
     assert_eq!((removed.exists(), kept.exists()), (false, true));
 
     drop(sessions);
-    assert!(!kept.exists(), "the registry's last ephemeral dir outlived it");
+    assert!(
+        !kept.exists(),
+        "the registry's last ephemeral dir outlived it"
+    );
 }

@@ -374,6 +374,10 @@ fn write_models_json(agent_dir: &Path, url: &Path) {
 /// The positive half: once the USER resumes the session, its schedule
 /// arms and the due heartbeat fires through the live worker's scheduler.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one boot-report wait, hold window and resume, step by step"
+)]
 fn a_due_scheduled_job_never_boots_its_session_at_daemon_start() {
     let dir = tempfile::TempDir::new().expect("temp dir");
     let agent_dir = dir.path().join("agent");

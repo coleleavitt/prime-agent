@@ -843,7 +843,7 @@ struct DaemonKillOnDrop<'a> {
 
 impl Drop for DaemonKillOnDrop<'_> {
     fn drop(&mut self) {
-        pa_core::platform::process_tree::kill_child_tree(&mut self.child);
+        pa_core::platform::process_tree::kill_child_tree(self.child);
         let _ = self.child.wait();
     }
 }
