@@ -315,8 +315,12 @@ fn a_refused_registration_retires_the_worker() {
 
     // The refusal lands in the daemon's rotating log (the operator-facing trace the incident
     // lacked) — and the worker exits instead of retrying forever.
+    // The refusal answers the worker's first registration that reaches the supervisor, and a
+    // registration attempt that times out on a loaded box (1 s connect bound) backs off
+    // exponentially (250 ms doubling to 30 s): nothing bounds the refusal to 15 s, so the
+    // budget covers several capped retries and only stops a worker that never registers.
     let log_path = pa_daemon::paths::daemon_log_path(&socket, &agent_dir);
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + Duration::from_secs(120);
     loop {
         let log = std::fs::read_to_string(&log_path).unwrap_or_default();
         if log.contains("orphan000001 registration refused") {
@@ -328,7 +332,7 @@ fn a_refused_registration_retires_the_worker() {
         );
         std::thread::sleep(Duration::from_millis(50));
     }
-    if !wait_gone(worker_pid, Instant::now() + Duration::from_secs(15)) {
+    if !wait_gone(worker_pid, Instant::now() + Duration::from_secs(60)) {
         force_kill(worker_pid);
         let _ = worker.wait();
         panic!("the refused worker never retired (it must run its graceful close and exit)");
