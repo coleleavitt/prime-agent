@@ -373,6 +373,7 @@ fn read_pi_manifest_file(package_json: &Path) -> Option<super::PiManifest> {
         skills: string_array(pi.get("skills")),
         prompts: string_array(pi.get("prompts")),
         themes: string_array(pi.get("themes")),
+        harness: string_array(pi.get("harness")),
     })
 }
 
@@ -398,7 +399,9 @@ pub(crate) fn collect_resource_files(
     match resource_type {
         super::ResourceType::Skills => collect_skill_entries(dir, SkillDiscoveryMode::Pi),
         super::ResourceType::Prompts => collect_files(dir, FileKind::Markdown),
-        super::ResourceType::Themes => collect_files(dir, FileKind::Json),
+        super::ResourceType::Themes | super::ResourceType::Harness => {
+            collect_files(dir, FileKind::Json)
+        }
     }
 }
 

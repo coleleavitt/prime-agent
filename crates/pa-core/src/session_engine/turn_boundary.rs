@@ -170,6 +170,9 @@ pub struct TurnBoundaryRequests {
         std::sync::Mutex<std::collections::VecDeque<super::refine::PreviewedRefinement>>,
     /// The session counters `refine.preview` counts into (adoption).
     adoption: std::sync::OnceLock<Arc<super::telemetry::SessionCounters>>,
+    /// The session's read-only package overlay (upstream #2298) a
+    /// `refine.preview` plans against.
+    package_harness: std::sync::OnceLock<Arc<crate::refinement::HarnessState>>,
 }
 
 impl TurnBoundaryRequests {
@@ -182,6 +185,11 @@ impl TurnBoundaryRequests {
     /// their adoption into (first install wins).
     pub fn set_adoption_counters(&self, counters: Arc<super::telemetry::SessionCounters>) {
         let _ = self.adoption.set(counters);
+    }
+
+    /// Install the session's package overlay (first install wins).
+    pub fn set_package_harness(&self, state: Arc<crate::refinement::HarnessState>) {
+        let _ = self.package_harness.set(state);
     }
 
     /// Bind the assembled session runtime (first bind wins).
@@ -631,8 +639,9 @@ impl TurnBoundaryRequests {
                         refinement_history,
                     } = parts.await?;
                     // The planning call never holds the session lock.
-                    let dirs =
+                    let mut dirs =
                         super::refine::RefinementSessionDirs::of(&*runtime.session.lock().await);
+                    dirs.package_state = requests.package_harness.get().cloned();
                     let preview = {
                         super::refine::preview_refinement(
                             dirs,
@@ -729,6 +738,7 @@ impl SessionEngine {
             rollback_id: None,
             trigger: pending.trigger,
             pinned_plan,
+            package_state: None,
         };
         Some(
             self.session

@@ -822,6 +822,8 @@ const AGENT_SESSION_ENDED: EventRule = EventRule {
         ("path_watch_register_count", optional(count())),
         // `/cwd` changes (upstream #2528), counts only.
         ("cwd_change_count", optional(count())),
+        // Package harness entries mounted read-only (upstream #2298), counts only.
+        ("package_harness_entry_count", optional(count())),
     ],
 };
 
@@ -2489,6 +2491,7 @@ mod tests {
             "messaging_stats_read_count",
             "path_watch_register_count",
             "cwd_change_count",
+            "package_harness_entry_count",
         ] {
             ended.set(key, json!(2u64));
         }

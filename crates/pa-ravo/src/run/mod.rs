@@ -1085,6 +1085,7 @@ fn commit(inputs: &CommitInputs) -> Result<CommitOutcome, String> {
             scope: Some(inputs.scope),
             baseline_state: Some(inputs.state.clone()),
             factory_enabled: pa_core::refinement::factory_enabled(&stores.agent_dir),
+            package_state: None,
         },
     );
     let failed: Vec<String> = result

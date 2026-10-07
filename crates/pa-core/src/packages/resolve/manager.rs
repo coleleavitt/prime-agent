@@ -39,6 +39,7 @@ fn parse_package_filter(entry: &serde_json::Value) -> Option<PackageFilter> {
         skills: strings(object.get("skills")),
         prompts: strings(object.get("prompts")),
         themes: strings(object.get("themes")),
+        harness: strings(object.get("harness")),
     })
 }
 

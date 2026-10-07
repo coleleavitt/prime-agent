@@ -423,6 +423,9 @@ pub enum SessionAdoption {
     PathWatchRegistered,
     /// `/cwd` changed the session's working directory (upstream #2528).
     CwdChanged,
+    /// One read-only package harness entry mounted at session build
+    /// (upstream #2298).
+    PackageHarnessEntry,
 }
 
 impl SessionAdoption {
@@ -439,6 +442,7 @@ impl SessionAdoption {
             SessionAdoption::MessagingStatsRead => "messaging_stats_read_count",
             SessionAdoption::PathWatchRegistered => "path_watch_register_count",
             SessionAdoption::CwdChanged => "cwd_change_count",
+            SessionAdoption::PackageHarnessEntry => "package_harness_entry_count",
         }
     }
 }

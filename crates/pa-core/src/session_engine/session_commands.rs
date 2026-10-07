@@ -419,6 +419,7 @@ async fn execute_refine(
         rollback_id: options.rollback_id,
         trigger: None,
         pinned_plan: None,
+        package_state: None,
     };
     let result = match engine
         .session

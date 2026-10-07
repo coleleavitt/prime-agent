@@ -498,6 +498,16 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     crate::mcp::McpManager::register_host_handlers(&mcp_manager, &mut handlers);
     let turn_boundary = Arc::new(super::turn_boundary::TurnBoundaryRequests::new());
     turn_boundary.set_adoption_counters(std::sync::Arc::clone(&session_counters));
+    // Adoption of read-only package harness overlays (counts only).
+    for _ in resources
+        .package_harness
+        .state
+        .entries
+        .values()
+        .flat_map(|entries| entries.values())
+    {
+        session_counters.note_adoption(super::telemetry::SessionAdoption::PackageHarnessEntry);
+    }
     turn_boundary.register_model_info_handler(&mut handlers, model_info.clone());
     let keep_recent_tokens = compaction_settings
         .keep_recent_tokens
@@ -659,6 +669,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             crate::features::installed(),
             &feature_context,
         ),
+        package_state: Some(std::sync::Arc::new(resources.package_harness.state.clone())),
     };
     let (existing_messages, has_thinking_entry, has_service_tier_entry) = {
         let session = wiring.session.lock().await;
@@ -971,6 +982,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // push straight into the live session's queue.
     session.adopt_next_turn_rows(boot_notice_rows);
 
+    turn_boundary.set_package_harness(std::sync::Arc::new(resources.package_harness.state.clone()));
     turn_boundary.bind(super::turn_boundary::TurnBoundaryRuntime {
         agent,
         session: wiring.session.clone(),

@@ -1062,3 +1062,51 @@ fn feature_skills_load_only_when_a_feature_contributes_them() {
     .unwrap();
     assert_eq!(names(&overridden), vec!["plain".to_string()]);
 }
+
+/// Upstream #2298: `pi.harness` entries resolve as a package-only kind (the
+/// manifest form and the conventional `harness/` directory), a package
+/// filter's `harness` list selects them, and settings arrays never add any.
+#[test]
+fn package_harness_entries_resolve_from_manifest_dir_and_filter() {
+    let _env = lock_env();
+    let mut fixture = Fixture::new();
+    let manifest_pkg = fixture.temp_dir.join("manifest-pkg");
+    write(
+        &manifest_pkg.join("package.json"),
+        r#"{"name":"manifest-pkg","pi":{"harness":["./harness"]}}"#,
+    );
+    write(&manifest_pkg.join("harness/memory/policy.json"), "{}");
+    let dir_pkg = fixture.temp_dir.join("dir-pkg");
+    write(&dir_pkg.join("harness/prompt/note.json"), "{}");
+    write(&dir_pkg.join("harness/skill/tool.json"), "{}");
+    fixture.set_user_packages(serde_json::json!([
+        manifest_pkg.display().to_string(),
+        { "source": dir_pkg.display().to_string(), "harness": ["harness/prompt/*.json"] },
+    ]));
+    fixture.set_user_array("skills", serde_json::json!(["./harness"]));
+    let result = fixture.manager.resolve().unwrap();
+    let mut harness: Vec<(String, bool)> = result
+        .harness
+        .iter()
+        .map(|resource| {
+            (
+                resource
+                    .path
+                    .strip_prefix(&fixture.temp_dir)
+                    .unwrap()
+                    .display()
+                    .to_string(),
+                resource.enabled,
+            )
+        })
+        .collect();
+    harness.sort();
+    assert_eq!(
+        harness,
+        vec![
+            ("dir-pkg/harness/prompt/note.json".to_string(), true),
+            ("dir-pkg/harness/skill/tool.json".to_string(), false),
+            ("manifest-pkg/harness/memory/policy.json".to_string(), true),
+        ]
+    );
+}

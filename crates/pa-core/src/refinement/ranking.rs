@@ -237,7 +237,8 @@ pub fn format_harness_state_for_prompt(
     let mut lines: Vec<String> = vec![
         "# Continual Harness State".to_string(),
         String::new(),
-        "Local continual harness entries belong to this Prime Agent session. Global continual harness entries persist across Prime Agent sessions.".to_string(),
+        "Local continual harness entries belong to this Prime Agent session. Global continual harness entries persist across Prime Agent sessions. Package continual harness entries are read-only overlays mounted from installed Prime Agent packages; they update or disappear with the package and are never copied into editable harness state.".to_string(),
+        "Never update or delete a package entry with `/refine`; create an editable local or global entry with the same kind and id to override one. Package provenance lists the configured source, install scope, and package-relative file.".to_string(),
         "The continual harness entries below are compact summaries, not full descriptions. Use them as routing/context hints; inspect or refine the underlying continual harness entry only when detail matters.".to_string(),
         "Default to local continual harness refinement for current task progress, temporary blockers, and session coordination. Use global continual harness refinement only for stable cross-session lessons, durable user preferences, reusable skills/subagents, or explicitly project-qualified facts.".to_string(),
         "Use these continual harness prompt notes, memories, skills, and subagent specs when they are relevant. The base system prompt is immutable; prompt entries below are supplemental notes only.".to_string(),
@@ -303,9 +304,13 @@ pub fn format_harness_state_for_prompt(
         // A feature's rank leads; the native order breaks its ties.
         let rank =
             |entry: &HarnessEntry| adjustment.map_or(0, |adjustment| adjustment.rank(&entry.id));
+        // Package overlays rank after their own-kind editable competition
+        // (TS: the package rank leads the sort).
+        let package = |entry: &HarnessEntry| super::package_harness::is_package_entry(entry);
         entries.sort_by(|a, b| {
-            rank(a)
-                .cmp(&rank(b))
+            package(a)
+                .cmp(&package(b))
+                .then_with(|| rank(a).cmp(&rank(b)))
                 .then_with(|| native_entry_order(a, b, query_terms.as_ref(), ranked_idf.as_ref()))
         });
         total_entries += entries.len();
@@ -353,19 +358,15 @@ pub fn format_harness_state_for_prompt(
                 } else {
                     String::new()
                 };
-            let scope = match entry.scope {
-                Some(super::HarnessScope::Local) => "local",
-                _ => "global",
-            };
             lines.push(format!(
-                "- [{}:{}] {} ({}, v{}){}{}: {}",
-                scope,
-                entry.id,
-                entry.title,
-                entry.path,
-                entry.version,
+                "- [{}] {} ({}, v{}){}{}{}: {}",
+                super::package_harness::harness_entry_label(entry),
+                compact_harness_text(&entry.title, max_content_length),
+                compact_harness_text(&entry.path, max_content_length),
+                super::package_harness::harness_version_text(entry.version),
                 reference_text,
                 arguments_text,
+                super::package_harness::package_provenance_text(entry, max_content_length),
                 compact_harness_text(&entry.content, max_content_length)
             ));
         }
@@ -537,6 +538,14 @@ pub fn harness_digest_fingerprint(
         material.insert("path".to_string(), serde_json::json!(entry.path));
         material.insert("version".to_string(), serde_json::json!(entry.version));
         material.insert("content".to_string(), serde_json::json!(entry.content));
+        // The label and provenance line render from a package entry's
+        // provenance, so a provenance-only change re-renders the digest.
+        if let Some(provenance) = entry
+            .extensions
+            .get(super::package_harness::PACKAGE_PROVENANCE_KEY)
+        {
+            material.insert("provenance".to_string(), provenance.clone());
+        }
         // Only skills render the kernel call contract, so another kind can
         // change these fields without changing a single digest byte.
         if entry.kind == RefinementKind::Skill {

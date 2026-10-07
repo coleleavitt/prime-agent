@@ -657,6 +657,7 @@ async fn failures_queue_their_own_refines_and_repairs() {
         rollback_id: None,
         trigger: recurrence.trigger.clone(),
         pinned_plan: None,
+        package_state: None,
     };
     let claim = format!(
         r#"{{"verdict":"pass","score":80,"failedCriteria":[],"addressedFingerprints":["{fingerprint}"],"rationale":"fixes it"}}"#
