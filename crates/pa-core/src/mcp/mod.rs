@@ -1,6 +1,7 @@
-//! Host side of MCP integrations. The protocol itself runs Python-side in the
-//! kernel; the host only gates integration skills by auth and serves `mcp.*`
-//! host requests (the OAuth flow lives in the `oauth*` submodules).
+//! Host side of MCP integrations: auth gating, the service catalog, the
+//! connection store, the OAuth flow (the `oauth*` submodules), and the MCP
+//! client sessions themselves (`session`: the kernel's `rlm.mcp` calls are
+//! thin `mcp.session.*` host requests).
 
 mod catalog_plugin_views;
 mod catalog_schema;
@@ -18,6 +19,7 @@ mod oauth_http;
 mod probe;
 mod remote_source;
 mod service_catalog;
+mod session;
 mod url_checks;
 
 pub use catalog_plugin_views::{McpCredentialView, API_KEY_CREDENTIALS};
@@ -33,6 +35,7 @@ pub use manager_catalog::{
 pub use oauth::{mcp_login, mcp_refresh_token, McpLoginUi, McpOAuthConfig};
 pub use oauth_http::{OAuthHttp, OAuthHttpRequest, OAuthHttpResponse, ReqwestOAuthHttp};
 use pa_types::sync::MutexExt;
+pub use session::{McpSessionOptions, McpSessions, DEFAULT_IDLE_TIMEOUT};
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -297,6 +300,53 @@ impl McpManager {
     pub fn set_usage_report(&mut self, reporter: Option<McpUsageReporter>) {
         self.usage_report = reporter;
     }
+}
+
+/// The kernel-dispatchable configuration of `server` (the `mcp.config`
+/// view): an ACP session server (literal credentials), a catalog service
+/// (credentials from the host store), or a user `mcpServers` entry; `{}`
+/// when the server is not dispatchable.
+fn resolve_server_config(
+    integrations: &HashMap<String, ResolvedIntegration>,
+    acp_servers: &std::sync::Mutex<HashMap<String, AcpMcpServerConfig>>,
+    usage: Option<&McpUsageReporter>,
+    server: &str,
+) -> anyhow::Result<Value> {
+    let acp = acp_servers.lock_or_recover().get(server).cloned();
+    if let Some(acp) = acp {
+        let mut config = serde_json::to_value(acp).unwrap_or(Value::Null);
+        if let Value::Object(map) = &mut config {
+            map.insert("credentialSource".to_string(), json!("acp"));
+        }
+        if let Some(report) = usage {
+            report("config", server);
+        }
+        return Ok(config);
+    }
+    let Some(integration) = integrations.get(server) else {
+        return Ok(json!({}));
+    };
+    if !integration.user_declared {
+        // A catalog service: the kernel dispatches it through disabled/blocked
+        // entries never dispatch.
+        if integration.blocked_reason.is_some() {
+            return Ok(json!({}));
+        }
+        let mut config = serde_json::to_value(&integration.config).map_err(anyhow::Error::new)?;
+        if integration.static_token_eligible {
+            if let Value::Object(map) = &mut config {
+                map.insert("credentialSource".to_string(), json!("static-token"));
+            }
+        }
+        if let Some(report) = usage {
+            report("config", server);
+        }
+        return Ok(config);
+    }
+    if get_catalog_entry(server).is_some() {
+        return Ok(json!({}));
+    }
+    serde_json::to_value(&integration.config).map_err(anyhow::Error::new)
 }
 
 fn provider_id(server: &str) -> String {
@@ -656,42 +706,12 @@ impl McpManager {
                     if server.is_empty() {
                         return Err(anyhow::anyhow!("mcp.config requires a server"));
                     }
-                    let acp = acp_servers.lock_or_recover().get(&server).cloned();
-                    if let Some(acp) = acp {
-                        let mut config = serde_json::to_value(acp).unwrap_or(Value::Null);
-                        if let Value::Object(map) = &mut config {
-                            map.insert("credentialSource".to_string(), json!("acp"));
-                        }
-                        if let Some(report) = &usage_config {
-                            report("config", &server);
-                        }
-                        return Ok(config);
-                    }
-                    let Some(integration) = integrations.get(&server) else {
-                        return Ok(json!({}));
-                    };
-                    if !integration.user_declared {
-                        // A catalog service: the kernel dispatches it through disabled/blocked
-                        // entries never dispatch.
-                        if integration.blocked_reason.is_some() {
-                            return Ok(json!({}));
-                        }
-                        let mut config = serde_json::to_value(&integration.config)
-                            .map_err(anyhow::Error::new)?;
-                        if integration.static_token_eligible {
-                            if let Value::Object(map) = &mut config {
-                                map.insert("credentialSource".to_string(), json!("static-token"));
-                            }
-                        }
-                        if let Some(report) = &usage_config {
-                            report("config", &server);
-                        }
-                        return Ok(config);
-                    }
-                    if get_catalog_entry(&server).is_some() {
-                        return Ok(json!({}));
-                    }
-                    serde_json::to_value(&integration.config).map_err(anyhow::Error::new)
+                    resolve_server_config(
+                        &integrations,
+                        &acp_servers,
+                        usage_config.as_ref(),
+                        &server,
+                    )
                 })
             }),
         );
@@ -837,6 +857,36 @@ impl McpManager {
                 })
             }),
         );
+    }
+
+    /// Register the session's MCP client connections behind the
+    /// `mcp.session.*` / `mcp.integration.*` host requests (the kernel's
+    /// `rlm.mcp` dispatch and `rlm.McpIntegration`), resolving servers the
+    /// way `mcp.config` does. The returned handle owns the connections: the
+    /// session closes them when it ends.
+    pub fn register_session_handlers(
+        manager: &Arc<std::sync::Mutex<Self>>,
+        handlers: &mut HostRequestHandlers,
+        options: McpSessionOptions,
+    ) -> McpSessions {
+        let (auth, integrations, acp_servers, usage) = {
+            let manager = manager.lock_or_recover();
+            (
+                manager.auth_storage.clone(),
+                manager.integrations.clone(),
+                manager.acp_servers.clone(),
+                manager.usage_report.clone(),
+            )
+        };
+        let sessions = McpSessions::new(
+            Box::new(move |server| {
+                resolve_server_config(&integrations, &acp_servers, usage.as_ref(), server)
+            }),
+            auth,
+            options,
+        );
+        sessions.register_handlers(handlers);
+        sessions
     }
 
     /// Session-scoped servers supplied by the active ACP client.
