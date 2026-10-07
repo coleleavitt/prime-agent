@@ -127,7 +127,7 @@ impl AcpChild {
 
 impl Drop for AcpChild {
     fn drop(&mut self) {
-        let _ = self.child.kill();
+        pa_core::platform::process_tree::kill_child_tree(&mut self.child);
         let _ = self.child.wait();
         if let Some(mut stderr) = self.stderr.take() {
             use std::io::Read;
@@ -168,17 +168,21 @@ impl Sandbox {
 impl Drop for Sandbox {
     fn drop(&mut self) {
         let socket = self.path().join("daemon.sock");
-        let Ok(mut stream) = pa_types::platform::transport::connect_blocking(&socket) else {
-            return;
-        };
-        let frame = json!({
-            "type": "command",
-            "id": "shutdown-test",
-            "protocol": { "name": "prime-agent.daemon", "version": pa_types::daemon::DAEMON_PROTOCOL_VERSION },
-            "command": { "type": "shutdown" },
-        });
-        let _ = writeln!(stream, "{frame}");
-        let _ = stream.flush();
+        if let Ok(mut stream) = pa_types::platform::transport::connect_blocking(&socket) {
+            let frame = json!({
+                "type": "command",
+                "id": "shutdown-test",
+                "protocol": { "name": "prime-agent.daemon", "version": pa_types::daemon::DAEMON_PROTOCOL_VERSION },
+                "command": { "type": "shutdown" },
+            });
+            let _ = writeln!(stream, "{frame}");
+            let _ = stream.flush();
+        }
+        // The detached supervisor, its workers, and their kernels keep writing
+        // into the home: stop everything still running there before it goes.
+        pa_core::platform::process_tree::kill_process_trees(
+            &pa_core::platform::process_tree::processes_referencing(self.path()),
+        );
     }
 }
 

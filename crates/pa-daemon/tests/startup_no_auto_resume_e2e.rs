@@ -31,7 +31,7 @@ impl Daemon {
 
 impl Drop for Daemon {
     fn drop(&mut self) {
-        let _ = self.child.kill();
+        pa_core::platform::process_tree::kill_child_tree(&mut self.child);
         let _ = self.child.wait();
     }
 }

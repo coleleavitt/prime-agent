@@ -30,10 +30,11 @@ struct AcpChild {
     stdin: Option<std::process::ChildStdin>,
     lines: Receiver<String>,
     next_id: u64,
-    /// Held (never read) so the child's cwd directory outlives the process:
-    /// dropping the tempdir deletes it and the child's `current_dir` fails.
-    /// `None` for a second child sharing another child's home.
-    _home: Option<tempfile::TempDir>,
+    /// Held so the child's cwd directory outlives the process: dropping the
+    /// tempdir deletes it and the child's `current_dir` fails. The drop stops
+    /// every process still running in it before it goes. `None` for a second
+    /// child sharing another child's home.
+    home: Option<tempfile::TempDir>,
     spawn_stderr: Option<std::process::ChildStderr>,
     /// The sandboxed supervisor socket the child spawned: the drop shuts
     /// the supervisor down with it (a killed child must not leak the
@@ -73,7 +74,7 @@ impl AcpChild {
             stdin: Some(stdin),
             lines,
             next_id: 0,
-            _home: home,
+            home,
             spawn_stderr: Some(stderr),
             socket,
         }
@@ -265,7 +266,7 @@ fn worker_descriptor(home: &std::path::Path) -> Value {
 
 impl Drop for AcpChild {
     fn drop(&mut self) {
-        let _ = self.child.kill();
+        pa_core::platform::process_tree::kill_child_tree(&mut self.child);
         let _ = self.child.wait();
         if let Some(mut stderr) = self.spawn_stderr.take() {
             use std::io::Read;
@@ -276,6 +277,14 @@ impl Drop for AcpChild {
             }
         }
         shutdown_sandboxed_daemon(&self.socket);
+        // The sandboxed supervisor is detached (not a descendant of the child),
+        // and its workers and kernel bootstrap keep writing into the home: stop
+        // everything still running there before the tempdir is removed.
+        if let Some(home) = &self.home {
+            pa_core::platform::process_tree::kill_process_trees(
+                &pa_core::platform::process_tree::processes_referencing(home.path()),
+            );
+        }
     }
 }
 
@@ -1542,8 +1551,6 @@ fn shutdown_sandboxed_daemon(socket: &std::path::Path) {
         );
     let _ = stream.write_all(frame.as_bytes());
     let _ = stream.flush();
-    // The supervisor exits after the shutdown response.
-    std::thread::sleep(Duration::from_millis(300));
 }
 
 #[test]

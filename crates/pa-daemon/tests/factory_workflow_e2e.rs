@@ -86,7 +86,7 @@ struct Daemon {
 
 impl Drop for Daemon {
     fn drop(&mut self) {
-        let _ = self.child.kill();
+        pa_core::platform::process_tree::kill_child_tree(&mut self.child);
         let _ = self.child.wait();
     }
 }
@@ -110,7 +110,7 @@ impl Drop for Harness {
         // journal fragment into the removed tree inside its orphan-exit
         // window (the fleet-wide 15s behavior); the fragment is inert and
         // dies with the worker.
-        let _ = self.daemon.child.kill();
+        pa_core::platform::process_tree::kill_child_tree(&mut self.daemon.child);
         let _ = self.daemon.child.wait();
         let _ = std::fs::remove_dir_all(&self.root);
     }

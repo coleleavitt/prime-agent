@@ -355,7 +355,7 @@ impl Drop for SlowDrainHarness {
     fn drop(&mut self) {
         // A panicking wait must never leak the pty child (it owns its
         // session's controlling terminal).
-        let _ = self.child.kill();
+        pa_core::platform::process_tree::kill_child_tree(&mut self.child);
         let _ = self.child.wait();
     }
 }

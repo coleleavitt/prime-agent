@@ -210,7 +210,7 @@ fn is_leased(leased: &[String], session_file: &str) -> bool {
 
 impl Drop for RpcChild {
     fn drop(&mut self) {
-        let _ = self.child.kill();
+        pa_core::platform::process_tree::kill_child_tree(&mut self.child);
         let _ = self.child.wait();
         if self.drain_stderr_on_drop {
             if let Some(mut stderr) = self.spawn_stderr.take() {
@@ -1208,7 +1208,7 @@ impl TimedRpcChild {
 
 impl Drop for TimedRpcChild {
     fn drop(&mut self) {
-        let _ = self.child.kill();
+        pa_core::platform::process_tree::kill_child_tree(&mut self.child);
         let _ = self.child.wait();
     }
 }

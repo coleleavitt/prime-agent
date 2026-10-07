@@ -35,7 +35,7 @@ struct Daemon {
 
 impl Drop for Daemon {
     fn drop(&mut self) {
-        let _ = self.child.kill();
+        pa_core::platform::process_tree::kill_child_tree(&mut self.child);
         let _ = self.child.wait();
     }
 }
@@ -355,7 +355,7 @@ async fn rlm_children_key_the_roster_by_parent_path_and_child_id() {
         struct LoggedDaemon(Child);
         impl Drop for LoggedDaemon {
             fn drop(&mut self) {
-                let _ = self.0.kill();
+                pa_core::platform::process_tree::kill_child_tree(&mut self.0);
                 let _ = self.0.wait();
             }
         }

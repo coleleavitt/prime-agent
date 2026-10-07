@@ -7,6 +7,7 @@ pub mod lock_dir;
 pub mod perms;
 pub mod private_fs;
 pub mod process;
+pub mod process_tree;
 pub mod shell;
 pub mod sync_dir;
 

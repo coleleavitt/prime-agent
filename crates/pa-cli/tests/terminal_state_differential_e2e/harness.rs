@@ -186,7 +186,7 @@ impl Drop for DifferentialHarness {
     fn drop(&mut self) {
         // A panicking wait must never leak the pty child: it owns the
         // controlling terminal of its own session.
-        let _ = self.child.kill();
+        pa_core::platform::process_tree::kill_child_tree(&mut self.child);
         let _ = self.child.wait();
     }
 }

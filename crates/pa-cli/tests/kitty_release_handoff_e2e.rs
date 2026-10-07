@@ -290,7 +290,7 @@ impl Drop for HandoffHarness {
     fn drop(&mut self) {
         // A panicking wait must never leak the pty child: it owns its session's
         // controlling terminal and outlives the harness.
-        let _ = self.child.kill();
+        pa_core::platform::process_tree::kill_child_tree(&mut self.child);
         let _ = self.child.wait();
     }
 }

@@ -15,7 +15,7 @@ struct WorkerGuard {
 
 impl Drop for WorkerGuard {
     fn drop(&mut self) {
-        let _ = self.child.kill();
+        pa_core::platform::process_tree::kill_child_tree(&mut self.child);
         let _ = self.child.wait();
     }
 }

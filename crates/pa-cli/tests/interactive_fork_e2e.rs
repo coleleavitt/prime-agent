@@ -68,7 +68,7 @@ impl Drop for Supervisor {
     fn drop(&mut self) {
         let supervisor_pid = graceful_shutdown(&self.socket);
         let worker_pids = supervisor_pid.map(child_pids_of).unwrap_or_default();
-        let _ = self.child.kill();
+        pa_core::platform::process_tree::kill_child_tree(&mut self.child);
         let _ = self.child.wait();
         for pid in worker_pids {
             kill_worker(pid);

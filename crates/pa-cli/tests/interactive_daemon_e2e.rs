@@ -43,7 +43,7 @@ impl Drop for Supervisor {
         // Snapshot the live worker children before the kill: workers are detached,
         // so a timed-out graceful shutdown orphans them when the supervisor dies.
         let worker_pids = child_pids_of(self.child.id());
-        let _ = self.child.kill();
+        pa_core::platform::process_tree::kill_child_tree(&mut self.child);
         let _ = self.child.wait();
         for pid in worker_pids {
             kill_worker(pid);

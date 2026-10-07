@@ -37,7 +37,7 @@ impl Drop for Supervisor {
         // Stop by protocol so the supervisor shuts its workers down; kill the
         // child when it fails (a failing test must not leak workers).
         graceful_shutdown(&self.socket);
-        let _ = self.child.kill();
+        pa_core::platform::process_tree::kill_child_tree(&mut self.child);
         let _ = self.child.wait();
         let _ = std::fs::remove_file(&self.socket);
     }

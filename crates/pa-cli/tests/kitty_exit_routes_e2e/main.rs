@@ -605,7 +605,7 @@ impl RouteHarness {
 impl Drop for RouteHarness {
     fn drop(&mut self) {
         // A panicking wait must never leak the pty child.
-        let _ = self.child.kill();
+        pa_core::platform::process_tree::kill_child_tree(&mut self.child);
         let _ = self.child.wait();
     }
 }
