@@ -291,3 +291,28 @@ async fn reseed_lists_live_ledger_children_settled_and_bills_only_after_a_delive
     };
     assert_eq!((usage.input, usage.output), (10, 5));
 }
+
+/// A parent without a persistent artifacts dir puts its children's session dirs in the temp
+/// dir: each goes when its child leaves the registry, and the rest go with the registry.
+#[test]
+fn an_ephemeral_parents_child_dirs_go_with_the_child_and_the_registry() {
+    let agent = tempfile::tempdir().unwrap();
+    let sessions = registry(agent.path());
+    let identity = ParentIdentity::with_default_depth();
+    assert_eq!(identity.session_id, None, "the ephemeral parent shape");
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let removed_id = format!("sub-a{}", &suffix[..8]);
+    let kept_id = format!("sub-b{}", &suffix[..8]);
+    let removed = sessions
+        .inner
+        .child_session_dir(&removed_id, &identity)
+        .unwrap();
+    let kept = sessions.inner.child_session_dir(&kept_id, &identity).unwrap();
+    assert_eq!((removed.is_dir(), kept.is_dir()), (true, true));
+
+    sessions.inner.discard_ephemeral_child_dir(&removed_id);
+    assert_eq!((removed.exists(), kept.exists()), (false, true));
+
+    drop(sessions);
+    assert!(!kept.exists(), "the registry's last ephemeral dir outlived it");
+}

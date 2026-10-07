@@ -455,6 +455,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 .lock()
                 .await
                 .retain(|candidate| !Arc::ptr_eq(candidate, &record));
+            this.discard_ephemeral_child_dir(&entry.rlm_child_id);
             // A deleted subagent leaves `/context` immediately (the
             // background refresh would otherwise resurrect it).
             if let Some(notify) = this.delete_notifier.lock_or_recover().clone() {

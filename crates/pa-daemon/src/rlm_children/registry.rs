@@ -151,6 +151,8 @@ impl SupervisorChildSessionsInner {
                 .lock()
                 .await
                 .retain(|candidate| !Arc::ptr_eq(candidate, record));
+            let child_id = record.lock().await.rlm_child_id.clone();
+            self.discard_ephemeral_child_dir(&child_id);
             // The deleted child is a resume site for the owed goal continuation.
             self.fire_settle_hook(record).await;
             return Ok("deleted");
@@ -183,6 +185,8 @@ impl SupervisorChildSessionsInner {
                         .lock()
                         .await
                         .retain(|candidate| !Arc::ptr_eq(candidate, record));
+                    let child_id = record.lock().await.rlm_child_id.clone();
+                    self.discard_ephemeral_child_dir(&child_id);
                     continue;
                 }
                 // A failed close keeps the child tracked so the
@@ -199,6 +203,8 @@ impl SupervisorChildSessionsInner {
                 .lock()
                 .await
                 .retain(|candidate| !Arc::ptr_eq(candidate, record));
+            let child_id = record.lock().await.rlm_child_id.clone();
+            self.discard_ephemeral_child_dir(&child_id);
         }
         // The walk changed the registry: wake a parked barrier (a closed
         // child is settled work, settled here by its removal).

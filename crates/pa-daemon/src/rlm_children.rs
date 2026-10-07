@@ -315,6 +315,10 @@ struct SupervisorChildSessionsInner {
     // an await, so sync engine paths can set it without a runtime `block_on`.
     identity: std::sync::Mutex<ParentIdentity>,
     children: Mutex<Vec<Arc<Mutex<ChildRecord>>>>,
+    /// The temp dirs made for children of a parent with no persistent artifacts dir (by child
+    /// id): nothing else owns them, so the registry removes each when its child leaves the
+    /// registry (delete or close), and the rest when the registry itself goes.
+    ephemeral_child_dirs: std::sync::Mutex<std::collections::HashMap<String, PathBuf>>,
     /// Spawn-name reservations held until admission is durable, so
     /// parallel same-name spawns cannot both admit (default names never reserve).
     pending_spawn_names: std::sync::Mutex<std::collections::HashSet<String>>,
@@ -379,6 +383,7 @@ impl SupervisorChildSessions {
                 parent_active_session_id,
                 identity: std::sync::Mutex::new(ParentIdentity::with_default_depth()),
                 children: Mutex::new(Vec::new()),
+                ephemeral_child_dirs: std::sync::Mutex::new(std::collections::HashMap::new()),
                 pending_spawn_names: std::sync::Mutex::new(std::collections::HashSet::new()),
                 deleted_children: std::sync::Mutex::new(std::collections::HashMap::new()),
                 turn_done: tokio::sync::watch::Sender::new(0),
@@ -900,12 +905,38 @@ impl SupervisorChildSessionsInner {
                 .join("session-artifacts")
                 .join(session_id)
                 .join(child_id),
-            // No persistent parent artifacts dir: an ephemeral temp dir.
-            None => std::env::temp_dir().join(format!("prime-agent-rlm-{child_id}")),
+            // No persistent parent artifacts dir: an ephemeral temp dir, tracked for removal.
+            None => {
+                let base = std::env::temp_dir().join(format!("prime-agent-rlm-{child_id}"));
+                self.ephemeral_child_dirs
+                    .lock_or_recover()
+                    .insert(child_id.to_string(), base.clone());
+                base
+            }
         };
         std::fs::create_dir_all(&base)
             .with_context(|| format!("create RLM child session dir {}", base.display()))?;
         Ok(base)
+    }
+
+    /// Remove the ephemeral temp dir of a child that left the registry (no-op for children
+    /// whose dir lives under the parent's persistent artifacts tree).
+    fn discard_ephemeral_child_dir(&self, child_id: &str) {
+        let dir = self.ephemeral_child_dirs.lock_or_recover().remove(child_id);
+        if let Some(dir) = dir {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+}
+
+impl Drop for SupervisorChildSessionsInner {
+    /// The registry goes with its parent: no child of an ephemeral parent outlives it, so its
+    /// remaining temp dirs (children never removed, spawns that failed) go too.
+    fn drop(&mut self) {
+        let dirs = std::mem::take(&mut *self.ephemeral_child_dirs.lock_or_recover());
+        for dir in dirs.into_values() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 }
 
