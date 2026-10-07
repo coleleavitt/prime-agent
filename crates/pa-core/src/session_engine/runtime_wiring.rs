@@ -177,6 +177,7 @@ pub fn wire_session_runtime(
         rlm_usage.clone(),
     ));
     register_rlm_host_handlers(&mut handlers, &rlm_bridge);
+    crate::factory::host::register_factory_host_handlers(&mut handlers);
     SessionKernelWiring {
         session,
         handlers,

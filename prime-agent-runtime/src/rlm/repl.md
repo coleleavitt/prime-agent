@@ -250,6 +250,15 @@ never through the request queue, since the awaiting cell is itself the
 in-flight execute. Replies for unknown ids are dropped. Cancellation-aware calls emit one exact-ID `host_cancel`, shield the same reply future, and keep it alive through their bounded drain. `rlm.repl.is_active()` reports whether the
 process is serving the protocol (importing the module does not count).
 
+`rlm.repl.host_request_blocking(data, timeout_s=30)` is the synchronous twin
+for synchronous runtime APIs that need a quick host computation (the factory
+spec validator behind `rlm.harness` factory writes: `factory.spec`). It sends
+the same `host_request` frame and blocks the calling thread — the loop thread
+included — on an event the reader thread sets directly when the `host_reply`
+arrives, so no loop callback is needed to deliver it. The wait is bounded;
+teardown (stdin EOF, `shutdown`) fails a waiting call with
+`HostConnectionLost`.
+
 ## Plan guard
 
 `plan_guard` switches plan mode (`rlm.plan_guard`): while enabled, an

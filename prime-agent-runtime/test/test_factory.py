@@ -8151,7 +8151,13 @@ class InstalledRuntimeLibraryTest(unittest.TestCase):
             text=True,
             timeout=120,
             check=False,
-            env={**os.environ, "PRIME_AGENT_CODING_AGENT_DIR": str(agent_home)},
+            # The installed runtime validates through the host (no serving
+            # kernel here), so it is pointed at this checkout's host build.
+            env={
+                **os.environ,
+                "PRIME_AGENT_CODING_AGENT_DIR": str(agent_home),
+                factory_module.HOST_BINARY_ENV: factory_module._dev_host_binary() or "",
+            },
         )
         self.assertEqual(
             run_result.returncode, 0,
