@@ -3,31 +3,29 @@
 The state model is intentionally small: it records prompt notes, memory,
 skills, subagent specs, and refinement events in the session-local harness
 store by default; pass ``global_=True`` for the cross-session global store.
-Execution still belongs to Prime Agent's TypeScript host and the existing
-``rlm.spawn`` recursion bridge.
+
+The store itself lives in the Prime Agent host (``pa_core::refinement::store``),
+the one implementation every reader and writer of ``harness_state.json``
+shares: validation, id minting, versioning, locking and the file format are
+all there. This module is its client. It resolves which store a call targets
+(from the kernel's ``RLM_*`` environment), sends each call as a
+``harness.<op>`` host request, and mirrors the store's state on the
+``HarnessState`` it returns (``entries``, ``refinements``). Inside a kernel
+the request goes over the kernel protocol; in a plain Python process it goes
+through the ``prime-agent --prime-agent-harness-request`` one-shot.
 """
 
 from __future__ import annotations
 
-import copy
-import functools
 import json
-import math
 import os
-import re
-import shutil
-import stat
-import threading
-import time
-import unicodedata
-from contextlib import contextmanager
+import subprocess
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
-from uuid import uuid4
-from typing import Any, Callable, Iterator, Literal, TypeVar
+from typing import Any, Literal
 
-from .factory import require_factory_enabled, validate_factory_spec
+from .factory import validate_factory_spec
 
 HarnessKind = Literal["prompt", "memory", "skill", "subagent", "factory"]
 HarnessScope = Literal["local", "global"]
@@ -40,161 +38,22 @@ KERNEL_ENTRY_SOURCE = "kernel"
 _KINDS: tuple[HarnessKind, ...] = ("prompt", "memory", "skill", "subagent", "factory")
 _state_cache: dict[tuple[Path, HarnessScope], "HarnessState"] = {}
 
+# The hidden flag of the host binary that serves one request outside a kernel.
+_HARNESS_REQUEST_FLAG = "--prime-agent-harness-request"
+# The marker the host reads in place of a value JSON cannot carry (a set, a
+# datetime): validation names its type, and a save refuses it like json.dump.
+_UNSERIALIZABLE_KEY = "__rlm_harness_unserializable__"
+_ERRORS: dict[str, type[Exception]] = {
+    "ValueError": ValueError,
+    "TypeError": TypeError,
+    "RuntimeError": RuntimeError,
+    "TimeoutError": TimeoutError,
+    "OSError": OSError,
+}
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-# The host's cross-process lock on the state file (TS `proper-lockfile`, the
-# Rust `LockDir`): an empty directory at `<file>.lock`, stale once its mtime is
-# older than this. Parent and child kernels, and the host, serialize on it.
-_STATE_LOCK_STALE_S = 10.0
-# A writer waits this long for the lock: past the stale window, so a crashed
-# holder's leftover is always reclaimed before the wait gives up.
-_STATE_LOCK_WAIT_S = 15.0
-_STATE_LOCK_RETRY_S = 0.005
-
-
-def _state_lock_path(file_path: Path) -> Path:
-    return Path(f"{file_path}.lock")
-
-
-def _try_reclaim_lock(lock_path: Path) -> None:
-    """Remove a lock artifact that is not a live lock: a regular file, or a
-    directory whose mtime is older than the stale window."""
-    try:
-        info = os.lstat(lock_path)
-    except FileNotFoundError:
-        return
-    if stat.S_ISREG(info.st_mode):
-        try:
-            os.unlink(lock_path)
-        except FileNotFoundError:
-            pass
-        return
-    if stat.S_ISDIR(info.st_mode) and time.time() - info.st_mtime > _STATE_LOCK_STALE_S:
-        try:
-            os.rmdir(lock_path)
-        except (FileNotFoundError, OSError):
-            pass
-
-
-@contextmanager
-def _state_file_lock(file_path: Path) -> Iterator[None]:
-    lock_path = _state_lock_path(file_path)
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-    deadline = time.monotonic() + _STATE_LOCK_WAIT_S
-    while True:
-        try:
-            os.mkdir(lock_path)
-            break
-        except FileExistsError:
-            _try_reclaim_lock(lock_path)
-            if time.monotonic() >= deadline:
-                raise TimeoutError(
-                    f"harness state is locked by another process: {lock_path} "
-                    f"(held longer than {_STATE_LOCK_WAIT_S:.0f}s)"
-                ) from None
-            time.sleep(_STATE_LOCK_RETRY_S)
-    try:
-        yield
-    finally:
-        try:
-            os.rmdir(lock_path)
-        except OSError:
-            pass
-
-
-_Method = TypeVar("_Method", bound=Callable[..., Any])
-
-
-def _locked_write(method: _Method) -> _Method:
-    """Run a read-modify-write mutator under the state file's cross-process
-    lock, so a concurrent writer (a child kernel, the host) can never land
-    between this mutator's reload and its save."""
-
-    @functools.wraps(method)
-    def wrapper(self: "HarnessState", *args: Any, **kwargs: Any) -> Any:
-        with self._write_lock():
-            return method(self, *args, **kwargs)
-
-    return wrapper  # type: ignore[return-value]
-
-
-def _slug(raw: str, fallback: str) -> str:
-    normalized = "".join(ch.lower() if ch.isalnum() else "_" for ch in raw.strip())
-    normalized = "_".join(part for part in normalized.split("_") if part)
-    return (normalized or fallback)[:80]
-
-
-_CJK_TERM_CHARS = re.compile(
-    r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af"
-    r"\U00020000-\U0002a6df\U0002a700-\U0002b73f\U0002b740-\U0002b81f"
-    r"\U0002b820-\U0002ceaf\U0002ceb0-\U0002ebef\U0002ebf0-\U0002ee5f"
-    r"\U0002f800-\U0002fa1f\U00030000-\U0003134f\U00031350-\U000323af"
-    r"\U000323b0-\U0003347f]"
-)
-
-
-def _harness_query_runs(text: str) -> list[str]:
-    """Split lowercase text into word runs.
-
-    Letters, digits, and combining marks of any script share a run;
-    punctuation and symbols end it. Runs break only at CJK boundaries:
-    accented Latin stays whole (naïve) while spacing-free CJK is cut
-    apart from adjacent words it would otherwise swallow (修复login).
-    """
-    runs: list[str] = []
-    run: list[str] = []
-    run_is_cjk = False
-    for ch in text:
-        if unicodedata.category(ch).startswith("M") or ch.isalnum():
-            ch_is_cjk = bool(_CJK_TERM_CHARS.match(ch))
-            if run and ch_is_cjk != run_is_cjk:
-                runs.append("".join(run))
-                run = []
-            run_is_cjk = ch_is_cjk
-            run.append(ch)
-        elif run:
-            runs.append("".join(run))
-            run = []
-    if run:
-        runs.append("".join(run))
-    return runs
-
-
-def _harness_query_terms(query: str) -> list[str]:
-    """Tokenize a search query into lowercase substring terms.
-
-    Letters and digits of every script form terms; punctuation and symbols
-    only separate them, so ``worktree?`` never ranks entries by question
-    marks. CJK runs carry no spaces between words, so each run becomes
-    overlapping bigrams: ``修复登录`` yields ``修复``/``复登``/``登录`` and
-    still matches an entry containing ``登录故障``. Each term counts once.
-    Minimum lengths stay below the digest builder's four-character cut
-    because ``search`` tokenizes explicit queries, not mined conversation:
-    three ASCII characters keep real terms (rlm, api, cli), two characters
-    keep short words of other scripts (мир), and single characters are
-    terms only for CJK, where one character is a word.
-    """
-    terms: list[str] = []
-    seen: set[str] = set()
-    for run in _harness_query_runs(query.lower()):
-        if _CJK_TERM_CHARS.search(run):
-            # Bigrams keep whitespace-free CJK findable without single
-            # characters matching too loosely.
-            candidates = [run[i : i + 2] for i in range(len(run) - 1)] or [run]
-        elif run.isascii():
-            candidates = [run] if len(run) >= 3 else []
-        else:
-            # Other scripts space out words: lone characters match too
-            # broadly, so two characters is the floor.
-            candidates = [run] if len(run) >= 2 else []
-        for term in candidates:
-            if term not in seen:
-                seen.add(term)
-                terms.append(term)
-    return terms
 
 
 def _agent_dir() -> Path:
@@ -276,9 +135,9 @@ class HarnessEntry:
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
     version: int = 1
-    # Per-entry keys this dataclass does not model (`trust`, ...). The host owns
-    # them, exactly as it owns the unmodelled top-level keys in
-    # HarnessState._extra. They are flattened back onto the entry object by
+    # Per-entry keys this dataclass does not model (`trust`, `enabled`, ...).
+    # The host owns them, exactly as it owns the unmodelled top-level keys of
+    # the store. They are flattened back onto the entry object by
     # _entry_payload, so `extra` itself is never a key on disk.
     extra: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
@@ -307,8 +166,8 @@ class RefinementEvent:
 
 _ENTRY_FIELDS = {field.name for field in fields(HarnessEntry)} - {"extra"}
 _REFINEMENT_FIELDS = {field.name for field in fields(RefinementEvent)}
-# Top-level keys HarnessState models. Everything else on disk is host-owned
-# (`ravo`, `failures`, `trustWindows`) and is round-tripped through `_extra`.
+# Top-level keys HarnessState models. Everything else in the store is
+# host-owned (`ravo`, `failures`, `trustWindows`) and is round-tripped.
 _MODELLED_TOP_LEVEL = {"schema", "entries", "refinements"}
 
 
@@ -331,175 +190,115 @@ def _refinement_payload(event: RefinementEvent) -> dict[str, Any]:
     return data
 
 
-def _validate_python_skill_reference(reference: dict[str, Any] | None, entry_name: str = "") -> dict[str, Any]:
-    # Rejections name the entry so the caller can repair the right skill; the
-    # suffix keeps the historical message text greppable.
-    prefix = f"skill entry {entry_name!r} rejected: " if entry_name else ""
-
-    def reject(message: str) -> None:
-        raise ValueError(f"{prefix}{message}")
-
-    if not isinstance(reference, dict):
-        reject("skill entries require a Python reference")
-    normalized = dict(reference)
-    if normalized.get("type") != "python":
-        reject("skill reference.type must be 'python'")
-    if not any(isinstance(normalized.get(key), str) and normalized[key] for key in ("import", "python_import")):
-        reject("skill reference requires a Python import")
-    if not any(isinstance(normalized.get(key), str) and normalized[key] for key in ("callable", "call_pattern")):
-        reject("skill reference requires a callable or call_pattern")
-    return normalized
+def _entry_from_payload(payload: dict[str, Any]) -> HarnessEntry:
+    return HarnessEntry(
+        **{key: value for key, value in payload.items() if key in _ENTRY_FIELDS},
+        extra={key: value for key, value in payload.items() if key not in _ENTRY_FIELDS},
+    )
 
 
-def _type_name(value: Any) -> str:
-    if isinstance(value, list):
-        return "a list"
-    if value == "":
-        return "an empty string"
-    return type(value).__name__
+def _event_from_payload(payload: dict[str, Any]) -> RefinementEvent:
+    return RefinementEvent(**{key: value for key, value in payload.items() if key in _REFINEMENT_FIELDS})
 
 
-def _describe_entry(id: Any, title: Any) -> str:
-    """Best available entry name for rejection messages."""
-    if isinstance(id, str) and id:
-        return id
-    if isinstance(title, str) and title:
-        return title
-    return "<unnamed>"
+def _wire(value: Any) -> Any:
+    """``value`` as plain JSON data, a value JSON cannot carry replaced by a
+    marker naming its type. Out-of-range floats raise ValueError."""
+    text = json.dumps(
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        default=lambda unserializable: {_UNSERIALIZABLE_KEY: type(unserializable).__name__},
+    )
+    return json.loads(text)
 
 
-def _require_text(kind: str, entry_name: str, field: str, value: Any) -> None:
-    if not isinstance(value, str) or not value:
-        raise ValueError(
-            f"{kind} entry {entry_name!r} rejected: {field} must be a non-empty string, got {_type_name(value)}"
+def _checkout_host() -> Path | None:
+    """The host binary of the source checkout this runtime runs from, if built."""
+    name = "prime-agent.exe" if os.name == "nt" else "prime-agent"
+    checkout = Path(__file__).resolve().parents[3] / "target" / "debug" / name
+    return checkout if checkout.is_file() else None
+
+
+def _export_checkout_host() -> None:
+    """Run from a source checkout without a host-exported binary, export the
+    checkout's build the way the host exports its own to a kernel, so the
+    Python processes this one starts reach the same store."""
+    if _env_dir("PRIME_AGENT_EXECUTABLE") is None and (checkout := _checkout_host()) is not None:
+        os.environ["PRIME_AGENT_EXECUTABLE"] = str(checkout)
+
+
+_export_checkout_host()
+
+
+def _host_executable() -> str:
+    """The host binary that serves a request outside a kernel: the one the
+    host exported, else this source checkout's build."""
+    configured = _env_dir("PRIME_AGENT_EXECUTABLE")
+    if configured:
+        return configured
+    if (checkout := _checkout_host()) is not None:
+        return str(checkout)
+    raise RuntimeError(
+        "rlm.harness needs the Prime Agent host: call it inside a Prime Agent kernel, "
+        "or set PRIME_AGENT_EXECUTABLE to the prime-agent binary"
+    )
+
+
+def _one_shot(payload: dict[str, Any]) -> Any:
+    executable = _host_executable()
+    try:
+        completed = subprocess.run(
+            [executable, _HARNESS_REQUEST_FLAG],
+            input=json.dumps(payload, ensure_ascii=False),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
         )
+    except OSError as err:
+        raise RuntimeError(f"rlm.harness could not start the host {executable}: {err}") from err
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or f"exit code {completed.returncode}"
+        raise RuntimeError(f"rlm.harness host request failed: {detail}")
+    try:
+        return json.loads(completed.stdout)
+    except ValueError as err:
+        raise RuntimeError(f"rlm.harness host returned an invalid reply: {err}") from err
 
 
-def _require_optional_text(kind: str, entry_name: str, field: str, value: Any) -> None:
-    if value is not None:
-        _require_text(kind, entry_name, field, value)
+def _host_call(request_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Send one ``harness.<op>`` request; raise the store's error as the
+    Python exception it names."""
+    from . import repl
 
-
-def _require_optional_record(kind: str, entry_name: str, field: str, value: Any) -> None:
-    if value is not None and not isinstance(value, dict):
-        raise ValueError(
-            f"{kind} entry {entry_name!r} rejected: {field} must be a dict when provided, got {_type_name(value)}"
-        )
-
-
-def _factory_spec_argument(
-    dag: Any, machine: Any
-) -> "tuple[Any, Literal['dag', 'machine']]":
-    """Pick the factory spec payload and its arguments key from the call.
-
-    Supplying both forms at once is an error. A bare ``dag=None,
-    machine=None`` passes ``None`` through in the dag slot so the write-time
-    validation rejects it with the standard wording.
-    """
-    if dag is not None and machine is not None:
-        raise ValueError("pass either dag or machine, not both")
-    if machine is not None:
-        return machine, "machine"
-    return dag, "dag"
-
-
-def _validate_factory_arguments(entry_name: str, arguments: dict[str, Any]) -> None:
-    """Shared-path dry run for every factory write.
-
-    ``create_factory``/``update_factory`` validate their own spec, but a
-    generic ``create``/``update`` (or a refinement edit) writes
-    ``arguments`` directly; an invalid spec must never reach the store
-    through any writer, so the spec found in ``arguments`` is validated
-    here too.
-    """
-    dag, machine = arguments.get("dag"), arguments.get("machine")
-    if dag is not None and machine is not None:
-        raise ValueError(f"factory entry {entry_name!r} rejected: pass either dag or machine, not both")
-    spec = machine if machine is not None else dag
-    if not isinstance(spec, dict):
-        raise ValueError(
-            f"factory entry {entry_name!r} rejected: factory entries require a dag or machine object in arguments"
-        )
-    errors = validate_factory_spec(spec)
-    if errors:
-        raise ValueError(f"factory entry {entry_name!r} rejected: {'; '.join(errors)}")
-
-
-def _validate_entry_shape(
-    kind: str,
-    entry_id: Any,
-    title: Any,
-    content: Any,
-    *,
-    path: Any,
-    reference: Any,
-    arguments: Any,
-    metadata: Any,
-    source: Any,
-    existing: "HarnessEntry | None",
-) -> None:
-    """Reject an invalid harness entry before anything is persisted.
-
-    Every create/update/upsert write funnels through here, so a malformed
-    entry (content as a list, title as a number) fails with an actionable
-    error naming the entry and the field instead of being saved and later
-    crashing the host digest that renders every session's system prompt.
-    """
-    entry_name = _describe_entry(entry_id, title)
-    _require_text(kind, entry_name, "id", entry_id)
-    _require_text(kind, entry_name, "title", title)
-    _require_text(kind, entry_name, "content", content)
-    _require_optional_text(kind, entry_name, "path", path)
-    _require_optional_record(kind, entry_name, "reference", reference)
-    _require_optional_record(kind, entry_name, "arguments", arguments)
-    _require_optional_record(kind, entry_name, "metadata", metadata)
-    _require_text(kind, entry_name, "source", source)
-    if kind == "skill":
-        if reference is None:
-            # A new skill without a Python reference is invalid; an update that
-            # omits it preserves the existing reference instead.
-            if existing is None:
-                raise ValueError(f"skill entry {entry_name!r} rejected: skill entries require a Python reference")
-        else:
-            _validate_python_skill_reference(reference, entry_name)
-    if kind == "factory":
-        # Every factory writer funnels through here, so the opt-in gate and
-        # the spec dry run cover them all: create_factory validates, and the
-        # generic create/update path (a refinement edit) gets the same
-        # treatment. The gate comes first: while `factory.enabled` is off
-        # (the default) every factory write refuses with the one disabled
-        # message, before any spec work. A
-        # NEW factory requires its spec (an arguments-less factory would
-        # store an unusable entry that run() later rejects); an update that
-        # omits arguments (None) preserves the stored spec and skips
-        # validation, exactly like update_skill treats reference.
-        require_factory_enabled()
-        if arguments is None and existing is None:
-            raise ValueError(
-                f"factory entry {entry_name!r} rejected: factory entries require a dag or machine object in arguments"
-            )
-        if arguments is not None:
-            _validate_factory_arguments(entry_name, arguments)
-
-
-def _validate_refinement_event(trigger: Any, changes: Any, *, evidence: Any, outcome: Any) -> None:
-    """Reject a refinement event whose persisted shape would break the digest."""
-    if not isinstance(trigger, str) or not trigger:
-        raise ValueError(f"refinement event rejected: trigger must be a non-empty string, got {_type_name(trigger)}")
-    if isinstance(changes, str):
-        if not changes:
-            raise ValueError("refinement event rejected: changes must be a non-empty string or a list of strings")
-    elif isinstance(changes, list):
-        if not all(isinstance(change, str) and change for change in changes):
-            raise ValueError("refinement event rejected: changes must be a list of non-empty strings")
+    message = {**payload, "type": request_type}
+    if repl.is_active():
+        reply = repl.host_request_blocking(message)
+        status = reply.get("status")
+        if status == "error":
+            raise RuntimeError(str(reply.get("error") or f"host request {request_type} failed"))
+        if status != "ok":
+            raise RuntimeError(f"host request {request_type} returned unexpected status: {status!r}")
+        body = reply.get("result")
     else:
-        raise ValueError(
-            f"refinement event rejected: changes must be a string or a list of strings, got {_type_name(changes)}"
-        )
-    if not isinstance(evidence, str):
-        raise ValueError(f"refinement event rejected: evidence must be a string when provided, got {_type_name(evidence)}")
-    if not isinstance(outcome, str):
-        raise ValueError(f"refinement event rejected: outcome must be a string when provided, got {_type_name(outcome)}")
+        body = _one_shot(message)
+    if not isinstance(body, dict):
+        raise RuntimeError(f"host request {request_type} returned an invalid reply")
+    if body.get("ok") is True:
+        return body
+    error = body.get("error") if isinstance(body.get("error"), dict) else {}
+    raise _ERRORS.get(error.get("type"), RuntimeError)(error.get("message") or f"host request {request_type} failed")
+
+
+def _factory_spec_errors(arguments: Any) -> list[str] | None:
+    """What the kernel's factory validator says about the spec a generic
+    factory write stores, for the host to apply in its validation order."""
+    if not isinstance(arguments, dict):
+        return None
+    machine = arguments.get("machine")
+    spec = machine if machine is not None else arguments.get("dag")
+    return validate_factory_spec(spec) if isinstance(spec, dict) else None
 
 
 class HarnessState:
@@ -529,155 +328,97 @@ class HarnessState:
         self._local_write_error = local_write_error
         self.entries: dict[HarnessKind, dict[str, HarnessEntry]] = {kind: {} for kind in _KINDS}
         self.refinements: list[RefinementEvent] = []
-        # Top-level keys this dataclass does not model (`ravo`, `failures`,
-        # `trustWindows`, ...). The host owns them; the kernel must round-trip them
-        # rather than drop them, or an in-kernel upsert silently deletes host state.
+        # Top-level keys this class does not model (`ravo`, `failures`,
+        # `trustWindows`, ...), as of the last call: save() writes them back.
         self._extra: dict[str, Any] = {}
+        self._schema: Any = 1
+        # Each viewed entry's payload as last adopted from the store.
+        self._adopted: dict[tuple[str, str], dict[str, Any]] = {}
         self._global_target_state_dir: Path | None = None
-        # mtime of the file as of the last load/save, used to detect out-of-process
-        # writes (e.g. the host `/refine` command) and avoid clobbering them.
-        self._loaded_mtime: int | None = None
-        # Why the file on disk failed to parse at the last load, if it did. A
-        # save never overwrites such a file without backing it up first.
+        # Why the store's file failed to parse at the last call, if it did. The
+        # host backs such a file up before a write replaces it.
         self.load_error: str | None = None
-        # Reentrant within the process: mutators nest (create -> _upsert -> save).
-        self._lock_guard = threading.RLock()
-        self._lock_depth = 0
-        self.load()
-
-    @contextmanager
-    def _write_lock(self) -> Iterator[None]:
-        with self._lock_guard:
-            if self.file_path is None or self._lock_depth > 0:
-                self._lock_depth += 1
-                try:
-                    yield
-                finally:
-                    self._lock_depth -= 1
-                return
-            with _state_file_lock(self.file_path):
-                self._lock_depth += 1
-                try:
-                    yield
-                finally:
-                    self._lock_depth -= 1
-
-    def _ensure_local_writable(self) -> None:
-        if self._local_write_error is not None:
-            raise RuntimeError(self._local_write_error)
-
-    def _disk_mtime(self) -> int | None:
-        if self.file_path is None:
-            return None
-        try:
-            return self.file_path.stat().st_mtime_ns
-        except OSError:
-            return None
-
-    def _sync_from_disk(self) -> None:
-        """Reload if another process rewrote the state file since we last touched it.
-
-        The kernel keeps a long-lived ``HarnessState`` in memory while the host
-        ``/refine`` command rewrites the same file from a separate process. Without
-        this guard the next in-kernel ``save()`` would overwrite host edits with a
-        stale snapshot. We re-read whenever the on-disk mtime no longer matches the
-        value recorded at our last load/save.
-        """
-        if self._disk_mtime() != self._loaded_mtime:
+        if self.file_path is not None:
             self.load()
 
-    def load(self) -> "HarnessState":
-        if self.file_path is None or not self.file_path.exists():
-            self._loaded_mtime = None
-            self._extra = {}
-            self.load_error = None
-            return self
-        mtime = self._disk_mtime()
-        self.load_error = None
-        try:
-            with self.file_path.open("r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, ValueError) as err:
-            # A corrupt or unreadable state file must not crash the kernel or block
-            # refinement: reads see it as empty. It is not empty, though: save()
-            # backs it up before writing over it.
-            self.load_error = f"{type(err).__name__}: {err}"
-            data = {}
-        # json.load returns non-dict types for valid JSON like `null`, `[]`, or a bare
-        # string; coerce those to an empty object before attribute access.
-        if not isinstance(data, dict):
-            if self.load_error is None:
-                self.load_error = f"top-level JSON is {_type_name(data)}, not an object"
-            data = {}
+    def _document(self) -> dict[str, Any]:
+        """The state this view holds, as the store's document."""
+        return {
+            **self._extra,
+            "schema": self._schema,
+            "entries": {
+                kind: {entry_id: _entry_payload(entry) for entry_id, entry in records.items()}
+                for kind, records in self.entries.items()
+            },
+            "refinements": [_refinement_payload(event) for event in self.refinements],
+        }
 
-        self._extra = {key: value for key, value in data.items() if key not in _MODELLED_TOP_LEVEL}
-
-        entries: dict[HarnessKind, dict[str, HarnessEntry]] = {kind: {} for kind in _KINDS}
-        raw_entries = data.get("entries", {})
-        if isinstance(raw_entries, dict):
-            for kind in _KINDS:
-                raw_kind_entries = raw_entries.get(kind, {})
-                if not isinstance(raw_kind_entries, dict):
+    def _adopt(self, document: Any, load_error: Any) -> None:
+        """Mirror the store's state after a call."""
+        if not isinstance(document, dict):
+            return
+        self._extra = {key: value for key, value in document.items() if key not in _MODELLED_TOP_LEVEL}
+        self._schema = document.get("schema", 1)
+        raw_entries = document.get("entries") if isinstance(document.get("entries"), dict) else {}
+        entries: dict[HarnessKind, dict[str, HarnessEntry]] = {}
+        adopted: dict[tuple[str, str], dict[str, Any]] = {}
+        for kind in _KINDS:
+            records = raw_entries.get(kind) if isinstance(raw_entries.get(kind), dict) else {}
+            entries[kind] = {}
+            for entry_id, payload in records.items():
+                if not isinstance(payload, dict):
                     continue
-                for entry_id, raw_entry in raw_kind_entries.items():
-                    if isinstance(raw_entry, dict):
-                        entry_data = {key: value for key, value in raw_entry.items() if key in _ENTRY_FIELDS}
-                        entry_data["id"] = str(entry_id)
-                        entry_data["kind"] = kind
-                        if not isinstance(entry_data.get("title"), str) or not isinstance(
-                            entry_data.get("content"), str
-                        ):
-                            continue
-                        if not isinstance(entry_data.get("path"), str):
-                            entry_data["path"] = "general"
-                        if entry_data.get("scope") not in ("local", "global"):
-                            entry_data["scope"] = self.scope
-                        if not isinstance(entry_data.get("source"), str):
-                            # Pre-existing rows predate the kernel/refine split;
-                            # relabelling them would invent provenance.
-                            entry_data["source"] = "agent"
-                        version = entry_data.get("version", 1)
-                        if isinstance(version, str):
-                            try:
-                                version = int(version)
-                            except ValueError:
-                                version = 1
-                        if not isinstance(version, int):
-                            version = 1
-                        entry_data["version"] = version
-                        if not isinstance(entry_data.get("reference"), dict):
-                            entry_data["reference"] = {}
-                        if not isinstance(entry_data.get("arguments"), dict):
-                            entry_data["arguments"] = {}
-                        if not isinstance(entry_data.get("metadata"), dict):
-                            entry_data["metadata"] = {}
-                        entry_data["extra"] = {
-                            key: value for key, value in raw_entry.items() if key not in _ENTRY_FIELDS
-                        }
-                        entries[kind][str(entry_id)] = HarnessEntry(**entry_data)
+                entries[kind][entry_id] = self._entry_object(kind, entry_id, payload)
+                adopted[(kind, entry_id)] = payload
         self.entries = entries
+        self._adopted = adopted
+        self.refinements = [
+            _event_from_payload(event) for event in document.get("refinements") or [] if isinstance(event, dict)
+        ]
+        self.load_error = load_error if isinstance(load_error, str) else None
 
-        self.refinements = []
-        raw_refinements = data.get("refinements", [])
-        if isinstance(raw_refinements, list):
-            for raw_event in raw_refinements:
-                if isinstance(raw_event, dict):
-                    event_data = {key: value for key, value in raw_event.items() if key in _REFINEMENT_FIELDS}
-                    if not isinstance(event_data.get("id"), str) or not isinstance(
-                        event_data.get("trigger"), str
-                    ):
-                        continue
-                    changes = event_data.get("changes")
-                    if isinstance(changes, str):
-                        event_data["changes"] = [changes]
-                    elif isinstance(changes, list):
-                        event_data["changes"] = [str(change) for change in changes]
-                    elif not isinstance(changes, list):
-                        continue
-                    if not isinstance(event_data.get("reason"), str):
-                        event_data.pop("reason", None)
-                    self.refinements.append(RefinementEvent(**event_data))
-        self._loaded_mtime = mtime
+    def _entry_object(self, kind: str, entry_id: str, payload: dict[str, Any]) -> HarnessEntry:
+        """The view's object for one stored entry. An entry keeps its object
+        across calls (like the store's in-memory records always did): an
+        unchanged entry keeps it untouched, a changed one is updated in place."""
+        current = self.entries.get(kind, {}).get(entry_id)  # type: ignore[call-overload]
+        if current is None:
+            return _entry_from_payload(payload)
+        if self._adopted.get((kind, entry_id)) != payload:
+            fresh = _entry_from_payload(payload)
+            for name in _ENTRY_FIELDS | {"extra"}:
+                setattr(current, name, getattr(fresh, name))
+        return current
+
+    def _entry_result(self, payload: Any) -> HarnessEntry | None:
+        """A call's entry result, as the view's object for it."""
+        if not isinstance(payload, dict):
+            return None
+        kind, entry_id = payload.get("kind"), payload.get("id")
+        current = self.entries.get(kind, {}).get(entry_id) if isinstance(kind, str) else None
+        return current if current is not None else _entry_from_payload(payload)
+
+    def _call(self, request_type: str, extra: dict[str, Any] | None = None, **args: Any) -> Any:
+        """Run one store operation on this store and mirror its state."""
+        payload: dict[str, Any] = {
+            "store": {
+                "file": str(self.file_path) if self.file_path is not None else None,
+                "scope": self.scope,
+                # The in-memory store's state travels with each call.
+                "document": _wire(self._document()) if self.file_path is None else None,
+                "writeError": self._local_write_error,
+            },
+            "agentDir": str(_agent_dir()),
+            "args": _wire(args),
+            "types": {name: type(value).__name__ for name, value in args.items()},
+            **(extra or {}),
+        }
+        reply = _host_call(request_type, payload)
+        self._adopt(reply.get("state"), reply.get("loadError"))
+        return reply.get("result")
+
+    def load(self) -> "HarnessState":
+        self._call("harness.load")
         return self
 
     def _global_target(self, global_: bool, extra: dict[str, Any] | None = None) -> "HarnessState | None":
@@ -688,74 +429,13 @@ class HarnessState:
             return None
         return target
 
-    def _backup_unparsed_file(self) -> None:
-        """Copy a state file that failed to parse aside before a save replaces it."""
-        assert self.file_path is not None
-        if self.load_error is None or not self.file_path.exists():
-            return
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-        backup = self.file_path.with_name(f"{self.file_path.name}.corrupt-{stamp}-{os.getpid()}")
-        shutil.copy2(self.file_path, backup)
-        self.load_error = None
-
     def save(self) -> "HarnessState":
         if self.file_path is None:
-            # in_memory fallback: nothing to persist.
+            # in_memory: the view is the store.
             return self
-        with self._write_lock():
-            return self._save_locked()
-
-    def _save_locked(self) -> "HarnessState":
-        assert self.file_path is not None
-        self.file_path.parent.mkdir(parents=True, exist_ok=True)
-        if self.load_error is None and self._disk_mtime() != self._loaded_mtime:
-            # Another writer replaced the file since our load: re-check that it
-            # parses before writing over it (our in-memory state is what the
-            # caller asked to persist; a corrupt newcomer must still be kept).
-            try:
-                with self.file_path.open("r", encoding="utf-8") as f:
-                    if not isinstance(json.load(f), dict):
-                        self.load_error = "top-level JSON is not an object"
-            except FileNotFoundError:
-                pass
-            except (OSError, ValueError) as err:
-                self.load_error = f"{type(err).__name__}: {err}"
-        self._backup_unparsed_file()
-        data = {
-            **self._extra,
-            "schema": 1,
-            "entries": {
-                kind: {entry_id: _entry_payload(entry) for entry_id, entry in records.items()}
-                for kind, records in self.entries.items()
-            },
-            "refinements": [_refinement_payload(event) for event in self.refinements],
-        }
-        # Atomic replace on the real file: aliases survive, readers never see a torn
-        # file, and a crash mid-write cannot leave a truncated or zero-byte state.
-        target_path = Path(os.path.realpath(self.file_path))
-        temp_path = target_path.with_name(f"{target_path.name}.{os.getpid()}.{uuid4().hex}.tmp")
-        try:
-            existing_mode = stat.S_IMODE(os.stat(target_path).st_mode)
-        except FileNotFoundError:
-            existing_mode = None
-        mode = existing_mode if existing_mode is not None else 0o600
-        try:
-            # Create no looser than the destination; retain the umask for new files.
-            descriptor = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
-            with os.fdopen(descriptor, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-                # Without this the rename can be durable while the bytes are not.
-                f.flush()
-                os.fsync(f.fileno())
-            if existing_mode is not None:
-                os.chmod(temp_path, existing_mode)
-            os.replace(temp_path, target_path)
-        finally:
-            temp_path.unlink(missing_ok=True)
-        self._loaded_mtime = self._disk_mtime()
+        self._call("harness.save", document=self._document())
         return self
 
-    @_locked_write
     def upsert(
         self,
         kind: HarnessKind,
@@ -784,125 +464,52 @@ class HarnessState:
                 metadata=metadata,
                 source=source,
             )
-        self._ensure_local_writable()
-        self._sync_from_disk()
-        return self._upsert(
-            kind,
-            title,
-            content,
-            id=id,
-            path=path,
-            reference=reference,
-            arguments=arguments,
-            metadata=metadata,
-            source=source,
-        )
+        return self._write("harness.upsert", kind, id, title, content, path, reference, arguments, metadata, source)
 
-    def _upsert(
+    def _write(
         self,
-        kind: HarnessKind,
-        title: str,
-        content: str,
-        *,
-        id: str | None = None,
-        path: str | None = None,
-        reference: dict[str, Any] | None = None,
-        arguments: dict[str, Any] | None = None,
-        metadata: dict[str, Any] | None = None,
-        source: str = KERNEL_ENTRY_SOURCE,
+        request_type: str,
+        kind: Any,
+        id: Any,
+        title: Any,
+        content: Any,
+        path: Any,
+        reference: Any,
+        arguments: Any,
+        metadata: Any,
+        source: Any,
+        extra: dict[str, Any] | None = None,
     ) -> HarnessEntry:
-        # Caller is responsible for syncing from disk first. create()/update() sync
-        # once and then call this directly so their existence check and the write are
-        # not separated by a second reload (which could turn create-or-fail into a
-        # silent update).
-        if kind not in self.entries:
-            raise ValueError(f"unknown harness kind {kind!r}; expected one of {_KINDS}")
-
-        # Guard before the id slug and the dict lookup: a non-string title or a
-        # non-string id (falsy ids included, which the slug fallback would
-        # silently collapse) must fail with a clear rejection, not an
-        # AttributeError inside slug normalization or a TypeError from the lookup.
-        _require_text(kind, _describe_entry(id, title), "title", title)
-        if id is not None:
-            _require_text(kind, _describe_entry(id, title), "id", id)
-        entry_id = id or _slug(title, kind)
-        existing = self.entries[kind].get(entry_id)
-        _validate_entry_shape(
-            kind,
-            entry_id,
-            title,
-            content,
+        extra = dict(extra or {})
+        if kind == "factory" and "factorySpecErrors" not in extra:
+            extra["factorySpecErrors"] = _factory_spec_errors(arguments)
+        payload = self._call(
+            request_type,
+            extra,
+            kind=kind,
+            id=id,
+            title=title,
+            content=content,
             path=path,
             reference=reference,
             arguments=arguments,
             metadata=metadata,
             source=source,
-            existing=existing,
         )
-        if existing:
-            existing.title = title
-            existing.content = content
-            # Preserve path/reference/arguments/metadata when the caller omits them
-            # (None) so updating only an entry's title or content does not reset its
-            # grouping path or wipe a skill's reference/argument contract. An explicit
-            # value (including {}) still overwrites.
-            if path is not None:
-                existing.path = path
-            if reference is not None:
-                existing.reference = dict(reference)
-            if arguments is not None:
-                # Factory specs are deep-copied: the nested dag/machine object
-                # is caller-owned, and a later mutation must never change the
-                # stored (validated) spec without a write-time dry run.
-                existing.arguments = copy.deepcopy(arguments) if kind == "factory" else dict(arguments)
-            if metadata is not None:
-                existing.metadata = dict(metadata)
-            existing.source = source
-            existing.updated_at = _now()
-            existing.version += 1
-            entry = existing
-        else:
-            entry = HarnessEntry(
-                id=entry_id,
-                kind=kind,
-                title=title,
-                content=content,
-                path=path if path is not None else "general",
-                scope=self.scope,
-                reference=dict(reference or {}),
-                arguments=copy.deepcopy(arguments or {}) if kind == "factory" else dict(arguments or {}),
-                metadata=dict(metadata or {}),
-                source=source,
-            )
-            self.entries[kind][entry_id] = entry
-        self.save()
-        return entry
+        return self._entry_result(payload)  # type: ignore[return-value]
 
     def get(self, kind: HarnessKind, id: str, *, global_: bool = False, **kwargs: Any) -> HarnessEntry | None:
         id, global_ = _strip_scope_prefix(id, global_)
         if target := self._global_target(global_, kwargs):
             return target.get(kind, id)
-        self._sync_from_disk()
-        if kind not in self.entries:
-            raise ValueError(f"unknown harness kind {kind!r}; expected one of {_KINDS}")
-        return self.entries[kind].get(id)
+        return self._entry_result(self._call("harness.get", kind=kind, id=id))
 
-    @_locked_write
     def delete(self, kind: HarnessKind, id: str, *, global_: bool = False, **kwargs: Any) -> bool:
         id, global_ = _strip_scope_prefix(id, global_)
         if target := self._global_target(global_, kwargs):
             return target.delete(kind, id)
-        self._ensure_local_writable()
-        self._sync_from_disk()
-        if kind not in self.entries:
-            raise ValueError(f"unknown harness kind {kind!r}; expected one of {_KINDS}")
-        if id not in self.entries[kind]:
-            return False
-        del self.entries[kind][id]
-        self.save()
-        return True
+        return bool(self._call("harness.delete", kind=kind, id=id))
 
-    @_locked_write
     def set_enabled(
         self, kind: HarnessKind, id: str, enabled: bool, *, global_: bool = False, **kwargs: Any
     ) -> HarnessEntry:
@@ -911,22 +518,12 @@ class HarnessState:
         A disabled entry stays stored and rollback-able but is hidden from the
         system prompt (a disabled subagent spec is never offered for delegation).
         """
-        if not isinstance(enabled, bool):
-            raise TypeError(f"enabled must be bool, got {type(enabled).__name__}")
         id, global_ = _strip_scope_prefix(id, global_)
         if target := self._global_target(global_, kwargs):
             return target.set_enabled(kind, id, enabled)
-        self._ensure_local_writable()
-        self._sync_from_disk()
-        if kind not in self.entries:
-            raise ValueError(f"unknown harness kind {kind!r}; expected one of {_KINDS}")
-        entry = self.entries[kind].get(id)
-        if entry is None:
-            raise ValueError(f"{kind} entry {id!r} does not exist")
-        entry.extra["enabled"] = enabled
-        entry.updated_at = _now()
-        self.save()
-        return entry
+        return self._entry_result(  # type: ignore[return-value]
+            self._call("harness.set_enabled", kind=kind, id=id, enabled=enabled)
+        )
 
     def enable(self, kind: HarnessKind, id: str, *, global_: bool = False, **kwargs: Any) -> HarnessEntry:
         return self.set_enabled(kind, id, True, global_=global_, **kwargs)
@@ -961,16 +558,8 @@ class HarnessState:
     def list(self, kind: HarnessKind | None = None, *, global_: bool = False, **kwargs: Any) -> list[HarnessEntry]:
         if target := self._global_target(global_, kwargs):
             return target.list(kind)
-        self._sync_from_disk()
-        kinds = [kind] if kind else list(_KINDS)
-        records: list[HarnessEntry] = []
-        for current_kind in kinds:
-            if current_kind not in self.entries:
-                raise ValueError(f"unknown harness kind {current_kind!r}; expected one of {_KINDS}")
-            records.extend(self.entries[current_kind].values())
-        return sorted(records, key=lambda entry: (entry.kind, entry.path, entry.title, entry.id))
+        return [self._entry_result(payload) for payload in self._call("harness.list", kind=kind)]  # type: ignore[misc]
 
-    @_locked_write
     def create(
         self,
         kind: HarnessKind,
@@ -999,29 +588,8 @@ class HarnessState:
                 metadata=metadata,
                 source=source,
             )
-        self._ensure_local_writable()
-        self._sync_from_disk()
-        if kind not in self.entries:
-            raise ValueError(f"unknown harness kind {kind!r}; expected one of {_KINDS}")
-        _require_text(kind, _describe_entry(id, title), "title", title)
-        if id is not None:
-            _require_text(kind, _describe_entry(id, title), "id", id)
-        entry_id = id or _slug(title, kind)
-        if entry_id in self.entries[kind]:
-            raise ValueError(f"{kind} entry {entry_id!r} already exists")
-        return self._upsert(
-            kind,
-            title,
-            content,
-            id=entry_id,
-            path=path,
-            reference=reference,
-            arguments=arguments,
-            metadata=metadata,
-            source=source,
-        )
+        return self._write("harness.create", kind, id, title, content, path, reference, arguments, metadata, source)
 
-    @_locked_write
     def update(
         self,
         kind: HarnessKind,
@@ -1050,24 +618,7 @@ class HarnessState:
                 metadata=metadata,
                 source=source,
             )
-        self._ensure_local_writable()
-        self._sync_from_disk()
-        if kind not in self.entries:
-            raise ValueError(f"unknown harness kind {kind!r}; expected one of {_KINDS}")
-        _require_text(kind, _describe_entry(id, title), "id", id)
-        if id not in self.entries[kind]:
-            raise ValueError(f"{kind} entry {id!r} does not exist")
-        return self._upsert(
-            kind,
-            title,
-            content,
-            id=id,
-            path=path,
-            reference=reference,
-            arguments=arguments,
-            metadata=metadata,
-            source=source,
-        )
+        return self._write("harness.update", kind, id, title, content, path, reference, arguments, metadata, source)
 
     def create_memory(
         self,
@@ -1127,6 +678,40 @@ class HarnessState:
     def delete_prompt_note(self, id: str, *, global_: bool = False, **kwargs: Any) -> bool:
         return self.delete("prompt", id, global_=global_, **kwargs)
 
+    def _skill_write(
+        self,
+        request_type: str,
+        raw_id: Any,
+        title: Any,
+        content: Any,
+        path: Any,
+        reference: Any,
+        arguments: Any,
+        metadata: Any,
+        global_: bool,
+        kwargs: dict[str, Any],
+    ) -> HarnessEntry:
+        # The reference check names the entry by the id as the caller wrote it.
+        id, global_ = _strip_scope_prefix(raw_id, global_)
+        if target := self._global_target(global_, kwargs):
+            return target._skill_write(
+                request_type, raw_id, title, content, path, reference, arguments, metadata, False, {}
+            )
+        payload = self._call(
+            request_type,
+            kind="skill",
+            id=id,
+            describeId=raw_id,
+            title=title,
+            content=content,
+            path=path,
+            reference=reference,
+            arguments=arguments,
+            metadata=metadata,
+            source=KERNEL_ENTRY_SOURCE,
+        )
+        return self._entry_result(payload)  # type: ignore[return-value]
+
     def create_skill(
         self,
         title: str,
@@ -1140,17 +725,8 @@ class HarnessState:
         global_: bool = False,
         **kwargs: Any,
     ) -> HarnessEntry:
-        return self.create(
-            "skill",
-            title,
-            content,
-            id=id,
-            path=path,
-            reference=_validate_python_skill_reference(reference, _describe_entry(id, title)),
-            arguments=arguments,
-            metadata=metadata,
-            global_=global_,
-            **kwargs,
+        return self._skill_write(
+            "harness.create_skill", id, title, content, path, reference, arguments, metadata, global_, kwargs
         )
 
     def update_skill(
@@ -1166,23 +742,10 @@ class HarnessState:
         global_: bool = False,
         **kwargs: Any,
     ) -> HarnessEntry:
-        # Only validate a reference when one is supplied; omitting it preserves the
-        # existing reference (see _upsert) rather than forcing every title/content-only
-        # update to re-send the full Python reference.
-        validated_reference = (
-            _validate_python_skill_reference(reference, _describe_entry(id, title)) if reference is not None else None
-        )
-        return self.update(
-            "skill",
-            id,
-            title,
-            content,
-            path=path,
-            reference=validated_reference,
-            arguments=arguments,
-            metadata=metadata,
-            global_=global_,
-            **kwargs,
+        # Omitting the reference keeps the stored one rather than forcing every
+        # title/content-only update to re-send the full Python reference.
+        return self._skill_write(
+            "harness.update_skill", id, title, content, path, reference, arguments, metadata, global_, kwargs
         )
 
     def delete_skill(self, id: str, *, global_: bool = False, **kwargs: Any) -> bool:
@@ -1217,6 +780,41 @@ class HarnessState:
     def delete_subagent(self, id: str, *, global_: bool = False, **kwargs: Any) -> bool:
         return self.delete("subagent", id, global_=global_, **kwargs)
 
+    def _factory_write(
+        self,
+        create: bool,
+        id: Any,
+        title: Any,
+        content: Any,
+        path: Any,
+        dag: Any,
+        machine: Any,
+        metadata: Any,
+        global_: bool,
+        kwargs: dict[str, Any],
+    ) -> HarnessEntry:
+        # The host gates the opt-in, refuses both forms at once, and applies
+        # the factory validator's verdict on the spec, before the shared write.
+        spec = machine if machine is not None else dag
+        spec_errors = validate_factory_spec(spec) if create or spec is not None else None
+        id, global_ = _strip_scope_prefix(id, global_)
+        if target := self._global_target(global_, kwargs):
+            return target._factory_write(create, id, title, content, path, dag, machine, metadata, False, {})
+        payload = self._call(
+            "harness.factory",
+            {"factorySpecErrors": spec_errors},
+            create=create,
+            id=id,
+            title=title,
+            content=content,
+            path=path,
+            dag=dag,
+            machine=machine,
+            metadata=metadata,
+            source=KERNEL_ENTRY_SOURCE,
+        )
+        return self._entry_result(payload)  # type: ignore[return-value]
+
     def create_factory(
         self,
         title: str,
@@ -1230,28 +828,7 @@ class HarnessState:
         global_: bool = False,
         **kwargs: Any,
     ) -> HarnessEntry:
-        # The opt-in gate precedes the dry run, so a disabled factory
-        # refuses with the one disabled message whatever the spec looks like.
-        require_factory_enabled()
-        # Write-time dry run: an invalid spec (either form) never reaches the
-        # store. The spec is deep-copied before storing: mutating the caller's
-        # dict after creation must not change the live entry (a later update
-        # that omits both forms would preserve the mutated, unvalidated spec).
-        spec, key = _factory_spec_argument(dag, machine)
-        errors = validate_factory_spec(spec)
-        if errors:
-            raise ValueError("; ".join(errors))
-        return self.create(
-            "factory",
-            title,
-            content,
-            id=id,
-            path=path,
-            arguments={key: copy.deepcopy(spec)},
-            metadata=metadata,
-            global_=global_,
-            **kwargs,
-        )
+        return self._factory_write(True, id, title, content, path, dag, machine, metadata, global_, kwargs)
 
     def update_factory(
         self,
@@ -1266,37 +843,13 @@ class HarnessState:
         global_: bool = False,
         **kwargs: Any,
     ) -> HarnessEntry:
-        # The opt-in gate precedes the spec and existence checks, so a
-        # disabled factory refuses with the one disabled message whatever the
-        # update carries.
-        require_factory_enabled()
-        # Only validate a spec when one is supplied; omitting both preserves the
-        # stored arguments (see _upsert) rather than forcing every title/content
-        # update to re-send the full spec, exactly like update_skill treats reference.
-        if dag is not None or machine is not None:
-            spec, key = _factory_spec_argument(dag, machine)
-            errors = validate_factory_spec(spec)
-            if errors:
-                raise ValueError("; ".join(errors))
-            arguments = {key: copy.deepcopy(spec)}
-        else:
-            arguments = None
-        return self.update(
-            "factory",
-            id,
-            title,
-            content,
-            path=path,
-            arguments=arguments,
-            metadata=metadata,
-            global_=global_,
-            **kwargs,
-        )
+        # Omitting both forms keeps the stored spec, exactly like update_skill
+        # treats reference.
+        return self._factory_write(False, id, title, content, path, dag, machine, metadata, global_, kwargs)
 
     def delete_factory(self, id: str, *, global_: bool = False, **kwargs: Any) -> bool:
         return self.delete("factory", id, global_=global_, **kwargs)
 
-    @_locked_write
     def record_refinement(
         self,
         trigger: str,
@@ -1310,25 +863,10 @@ class HarnessState:
     ) -> RefinementEvent:
         if target := self._global_target(global_, kwargs):
             return target.record_refinement(trigger, changes, evidence=evidence, outcome=outcome, id=id)
-        self._ensure_local_writable()
-        self._sync_from_disk()
-        _validate_refinement_event(trigger, changes, evidence=evidence, outcome=outcome)
-        if id is not None and (not isinstance(id, str) or not id):
-            raise ValueError(
-                f"refinement event rejected: id must be a non-empty string when provided, got {_type_name(id)}"
-            )
-        event_id = id or f"refine_{len(self.refinements) + 1:04d}"
-        normalized_changes = [changes] if isinstance(changes, str) else list(changes)
-        event = RefinementEvent(
-            id=event_id,
-            trigger=trigger,
-            changes=normalized_changes,
-            evidence=evidence,
-            outcome=outcome,
+        payload = self._call(
+            "harness.record_refinement", trigger=trigger, changes=changes, evidence=evidence, outcome=outcome, id=id
         )
-        self.refinements.append(event)
-        self.save()
-        return event
+        return _event_from_payload(payload)
 
     def plan_refinement(
         self,
@@ -1350,58 +888,7 @@ class HarnessState:
     def overview(self, *, max_entries_per_kind: int = 20, global_: bool = False, **kwargs: Any) -> str:
         if target := self._global_target(global_, kwargs):
             return target.overview(max_entries_per_kind=max_entries_per_kind)
-        self._sync_from_disk()
-        lines = [
-            f"Harness state ({self.scope}): {self.file_path}",
-            "Call contract: installed Python skills use await <skill_import>(...) or a matching shell CLI; "
-            "harness skill entries are Python REPL skills and must include a Python reference plus arguments. "
-            "Spawn a subagent spec by composing a concise task prompt and calling "
-            "handle = await rlm.spawn('sub-task', name='worker'); admission returns immediately with rlm_child_id, name, session_dir, "
-            "and model, never the child's answer. Results arrive only through explicit agent_message replies or "
-            "files; children reply with await agent_message.send(message, receiver_role='parent'). Use "
-            "await rlm.list_subagents() to recover direct child handles and await agent_message.send(..., "
-            "receiver_role='child', receiver_name=handle.name) for follow-ups.",
-            "Factory entries declare validated state-machine workflows of subagent states in arguments['machine'] "
-            "(the original DAG sugar in arguments['dag'] compiles to machine form): manage them with "
-            "create_factory/update_factory/delete_factory (create_factory validates either form at write time); run "
-            "them with await rlm.factory.run(\"<id>\"), watch with await rlm.factory.status(run_id), stop with "
-            "await rlm.factory.stop(run_id), and resume an escalate-paused run with "
-            "await rlm.factory.resume(run_id).",
-        ]
-        for kind in _KINDS:
-            records = self.list(kind)[:max_entries_per_kind]
-            lines.append(f"{kind}: {len(self.entries[kind])}")
-            for entry in records:
-                summary = entry.content.strip().replace("\n", " ")
-                if len(summary) > 120:
-                    summary = f"{summary[:117]}..."
-                argument_summary = ""
-                if entry.kind == "skill" and entry.arguments:
-                    argument_text = json.dumps(entry.arguments, ensure_ascii=False, sort_keys=True)
-                    if len(argument_text) > 120:
-                        argument_text = f"{argument_text[:117]}..."
-                    argument_summary = f" args={argument_text}"
-                reference_summary = ""
-                if entry.kind == "skill" and entry.reference:
-                    reference_text = json.dumps(entry.reference, ensure_ascii=False, sort_keys=True)
-                    if len(reference_text) > 120:
-                        reference_text = f"{reference_text[:117]}..."
-                    reference_summary = f" ref={reference_text}"
-                disabled = "" if entry.enabled else " [disabled]"
-                lines.append(
-                    f"  - [{entry.scope}:{entry.id}]{disabled} {entry.title} ({entry.path}, v{entry.version})"
-                    f"{reference_summary}{argument_summary}: {summary}"
-                )
-            overflow = len(self.entries[kind]) - len(records)
-            if overflow > 0:
-                lines.append(f"  - +{overflow} more")
-        if self.refinements:
-            lines.append(f"refinements: {len(self.refinements)}")
-            for event in self.refinements[-5:]:
-                lines.append(f"  - [{event.id}] {event.trigger}: {', '.join(event.changes)}")
-        else:
-            lines.append("refinements: 0")
-        return "\n".join(lines)
+        return self._call("harness.overview", max_entries_per_kind=max_entries_per_kind)
 
     def search(
         self,
@@ -1422,67 +909,13 @@ class HarnessState:
         """
         if target := self._global_target(global_, kwargs):
             return target.search(query, kind=kind, limit=limit)
-        self._sync_from_disk()
-        if not isinstance(query, str):
-            raise TypeError(f"query must be str, got {type(query).__name__}")
-        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-            raise TypeError("limit must be a positive int")
-        terms = _harness_query_terms(query)
-        if not terms:
-            return []
-
-        entries = self.list(kind, **kwargs) if kind is not None else self.list(None, **kwargs)
-
-        # Document frequency per term over the ranked corpus: a term in
-        # every entry weighs log(2), a term in one entry of N weighs
-        # log(1 + N), so rare distinctive terms outrank ubiquitous ones.
-        matches: dict[str, int] = {term: 0 for term in terms}
-        for entry in entries:
-            title = entry.title.lower()
-            content = entry.content.lower()
-            path_and_id = f"{entry.path} {entry.id}".lower()
-            for term in terms:
-                if term in title or term in content or term in path_and_id:
-                    matches[term] += 1
-        term_idf = {
-            term: math.log(1 + len(entries) / count)
-            for term, count in matches.items()
-            if count > 0
-        }
-
-        def score(entry: HarnessEntry) -> float:
-            title = entry.title.lower()
-            content = entry.content.lower()
-            path_and_id = f"{entry.path} {entry.id}".lower()
-            total = 0.0
-            for term, idf in term_idf.items():
-                fields = (1 if term in title else 0) + (1 if term in content else 0) + (
-                    1 if term in path_and_id else 0
-                )
-                if fields:
-                    total += idf * (1 + (fields - 1) * 0.5)
-            return total
-
-        def recency(entry: HarnessEntry) -> str:
-            return entry.updated_at if isinstance(entry.updated_at, str) else ""
-
-        ranked = sorted(entries, key=lambda e: (score(e), recency(e)), reverse=True)
-        ranked = [e for e in ranked if score(e) > 0]
-        return ranked[:limit]
+        payloads = self._call("harness.search", query=query, kind=kind, limit=limit)
+        return [self._entry_result(payload) for payload in payloads]  # type: ignore[misc]
 
     def snapshot(self, *, global_: bool = False, **kwargs: Any) -> dict[str, Any]:
         if target := self._global_target(global_, kwargs):
             return target.snapshot()
-        self._sync_from_disk()
-        return {
-            "file_path": str(self.file_path),
-            "scope": self.scope,
-            "entries": {
-                kind: {entry_id: _entry_payload(entry) for entry_id, entry in records.items()}
-                for kind, records in self.entries.items()
-            },
-            "refinements": [_refinement_payload(event) for event in self.refinements],
-        }
+        return self._call("harness.snapshot")
 
 
 def get_harness_state(

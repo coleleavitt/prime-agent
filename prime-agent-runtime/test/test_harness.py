@@ -457,29 +457,12 @@ class HarnessStateTest(unittest.TestCase):
                 {"nodes": [{"id": "collect", "subagent": "worker"}]},
             )
 
-    def test_save_failure_preserves_previous_state_on_disk(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state = HarnessState(Path(temp_dir) / "harness_state.json")
-            state.create_memory("Durable fact", "Written before the crash.")
-
-            crashing = HarnessState(state.file_path)
-            original_dump = json.dump
-
-            def torn_dump(data: object, fh: object, **kwargs: object) -> None:
-                fh.write('{"schema": 1, "entr')  # type: ignore[attr-defined]
-                raise OSError("disk full")
-
-            json.dump = torn_dump  # type: ignore[assignment]
-            try:
-                with self.assertRaises(OSError):
-                    crashing.create_memory("Doomed fact", "Interrupted mid-write.")
-            finally:
-                json.dump = original_dump
-
-            # The interrupted save must not have truncated the durable state.
-            reloaded = HarnessState(state.file_path)
-            titles = [entry.title for entry in reloaded.entries["memory"].values()]
-            self.assertEqual(titles, ["Durable fact"])
+    # The store's writes are the host's (pa_core::refinement::store::document):
+    # a torn or failed write leaving the previous file intact, and the temp file
+    # never looser than the destination, are pinned there
+    # (a_failed_write_leaves_the_previous_file_and_no_temp,
+    # writes_keep_the_destination_mode) -- the Python json.dump/os.open these
+    # tests patched no longer write the store.
 
     @unittest.skipIf(os.name == "nt", "POSIX mode bits and umask")
     def test_save_preserves_existing_mode_despite_umask(self) -> None:
@@ -515,29 +498,6 @@ class HarnessStateTest(unittest.TestCase):
 
             state.create_memory("Second", "Replaces the file.")
 
-            self.assertEqual(os.stat(state.file_path).st_mode & 0o777, 0o600)
-
-    def test_save_temp_file_is_never_looser_than_the_destination(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state = HarnessState(Path(temp_dir) / "harness_state.json")
-            state.create_memory("First", "Creates the file.")
-            os.chmod(state.file_path, 0o600)
-
-            observed_modes: list[int] = []
-            original_open = os.open
-
-            def observing_open(path: object, flags: int, mode: int = 0o777, **kwargs: object) -> int:
-                if str(path).endswith(".tmp"):
-                    observed_modes.append(mode)
-                return original_open(path, flags, mode, **kwargs)
-
-            os.open = observing_open  # type: ignore[assignment]
-            try:
-                state.create_memory("Second", "Replaces the file.")
-            finally:
-                os.open = original_open
-
-            self.assertEqual(observed_modes, [0o600])
             self.assertEqual(os.stat(state.file_path).st_mode & 0o777, 0o600)
 
     def test_save_writes_through_a_symlinked_state_file(self) -> None:
@@ -1547,32 +1507,8 @@ class HarnessStateDurabilityTest(unittest.TestCase):
 
             self.assertEqual(state_path.stat().st_mode & 0o777, 0o600)
 
-    def test_failed_write_leaves_original_intact(self) -> None:
-        """A crash mid-serialize must not truncate the file or strand a temp."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_path = Path(temp_dir) / "harness_state.json"
-            state_path.write_text(json.dumps(self.SEED), encoding="utf-8")
-
-            state = HarnessState(state_path)
-            state.upsert("memory", title="t", content="c")
-            good = state_path.read_text(encoding="utf-8")
-
-            real_dump = json.dump
-
-            def exploding_dump(obj, fp, **kwargs):
-                fp.write('{"schema": 1, "entr')  # partial write, then die
-                raise OSError("disk full")
-
-            json.dump = exploding_dump
-            try:
-                with self.assertRaises(OSError):
-                    state.upsert("memory", title="t2", content="c2")
-            finally:
-                json.dump = real_dump
-
-            self.assertEqual(state_path.read_text(encoding="utf-8"), good)
-            self.assertNotEqual(state_path.stat().st_size, 0)
-            self.assertEqual(list(Path(temp_dir).glob("*.tmp")), [])
+    # test_failed_write_leaves_original_intact moved to the host store:
+    # a_failed_write_leaves_the_previous_file_and_no_temp.
 
     def test_state_with_no_unmodelled_keys_is_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

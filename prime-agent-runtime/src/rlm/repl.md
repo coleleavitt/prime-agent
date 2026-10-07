@@ -250,6 +250,42 @@ never through the request queue, since the awaiting cell is itself the
 in-flight execute. Replies for unknown ids are dropped. Cancellation-aware calls emit one exact-ID `host_cancel`, shield the same reply future, and keep it alive through their bounded drain. `rlm.repl.is_active()` reports whether the
 process is serving the protocol (importing the module does not count).
 
+`rlm.repl.host_request_blocking(data)` is the synchronous form for runtime
+APIs that are not coroutines (`rlm.harness`): the same `host_request` frame,
+but the calling thread blocks until the reader thread hands it the reply (no
+event-loop turn is needed, so a cell may call it directly). An interrupt ends
+the wait with `KeyboardInterrupt`; stdin EOF or `shutdown` fails it with
+`HostConnectionLost`.
+
+### Harness store requests
+
+`rlm.harness` is a client of the host's harness store; each call is one
+blocking host request of type `harness.load`, `harness.save`, `harness.get`,
+`harness.list`, `harness.search`, `harness.overview`, `harness.snapshot`,
+`harness.upsert`, `harness.create`, `harness.update`, `harness.delete`,
+`harness.set_enabled`, `harness.record_refinement`, `harness.create_skill`,
+`harness.update_skill`, or `harness.factory` (`create_factory` /
+`update_factory`). `data` carries:
+
+- `store`: `{"file": str|null, "scope": "local"|"global", "document": object|null, "writeError": str|null}`
+  — the state file the client resolved (from `RLM_HARNESS_STATE_DIR`,
+  `RLM_SESSION_DIR`, `RLM_GLOBAL_HARNESS_STATE_DIR`, or an explicit path), or
+  `file: null` with the in-memory store's `document`; a set `writeError` makes
+  every write raise it as `RuntimeError` (a kernel without a session store).
+- `args`: the call's arguments as JSON (a value JSON cannot carry is
+  `{"__rlm_harness_unserializable__": "<type name>"}`), and `types`: each
+  argument's Python type name.
+- `agentDir`: where the `factory.enabled` opt-in is read; `factorySpecErrors`:
+  the kernel factory validator's errors for the spec a factory write stores.
+
+The handler's `result` is `{"ok": true, "result": ..., "state": <the store's
+document after the call>, "loadError": str|null}` or `{"ok": false, "error":
+{"type": "ValueError"|"TypeError"|"RuntimeError"|"TimeoutError"|"OSError",
+"message": str}}`, which the client raises as that exception. Outside a
+kernel the client sends the same request to `prime-agent
+--prime-agent-harness-request` (stdin: the request, stdout: the reply);
+the host exports the binary to the kernel as `PRIME_AGENT_EXECUTABLE`.
+
 ## Plan guard
 
 `plan_guard` switches plan mode (`rlm.plan_guard`): while enabled, an
