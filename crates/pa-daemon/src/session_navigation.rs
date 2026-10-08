@@ -599,7 +599,13 @@ mod tests {
 
         // A target session file recording another existing cwd.
         let target_cwd = tempfile::TempDir::new().expect("target cwd");
-        let target = target_cwd.path().join("switch-target.jsonl");
+        // One level down: a session file implies its artifacts at `<dir>/../session-artifacts`,
+        // which must land in the test dir, not the shared temp dir.
+        std::fs::create_dir(target_cwd.path().join("sessions")).expect("sessions dir");
+        let target = target_cwd
+            .path()
+            .join("sessions")
+            .join("switch-target.jsonl");
         std::fs::write(
             &target,
             format!(

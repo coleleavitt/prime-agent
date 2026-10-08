@@ -30,6 +30,12 @@ pub fn git(repo: &Path, args: &[&str]) -> String {
             "commit.gpgsign=false",
             "-c",
             "init.defaultBranch=main",
+            // No background auto-gc: a detached `gc --auto` outlived the test and wrote
+            // `objects/info/packs` into the removed fixture repo, which then stayed behind.
+            "-c",
+            "gc.auto=0",
+            "-c",
+            "maintenance.auto=false",
         ])
         .args(args)
         .output()

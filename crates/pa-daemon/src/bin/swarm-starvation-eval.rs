@@ -226,6 +226,15 @@ fn run_tag() -> String {
     )
 }
 
+/// Removes a scratch directory when the owner goes, on every return path.
+struct RemoveDirOnDrop(PathBuf);
+
+impl Drop for RemoveDirOnDrop {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
 /// The per-run scratch root, uniquified by [`run_tag`].
 fn runs_root_path(tag: &str) -> PathBuf {
     std::env::temp_dir().join(format!("swarm-eval-{tag}"))
@@ -246,6 +255,8 @@ fn run(socket: &Path, config: &SwarmEvalConfig) -> Result<(), String> {
     let tag = run_tag();
     let runs_root = runs_root_path(&tag);
     fs::create_dir_all(&runs_root).map_err(|error| format!("create runs root: {error}"))?;
+    // Each trial removes its own root; the run's scratch root goes with the run.
+    let _runs_root = RemoveDirOnDrop(runs_root.clone());
 
     let mut results: Vec<SwarmEvalTrialResult> = Vec::new();
     for &size in &config.sizes {

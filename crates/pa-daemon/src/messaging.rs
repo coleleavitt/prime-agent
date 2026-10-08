@@ -696,18 +696,21 @@ mod tests {
         )
     }
 
-    fn supervisor() -> Arc<Supervisor> {
-        let dir = tempfile::TempDir::new().unwrap();
-        Arc::new(
+    /// The supervisor and the dir it lives in: the dir stays until the test ends (a fixture-local
+    /// guard removed it at once, and the test's session writes recreated it outside any guard).
+    fn supervisor() -> crate::test_support::InTestDir<Arc<Supervisor>> {
+        let dir = crate::test_support::TestDir::new("pa-messaging-");
+        let supervisor = Arc::new(
             Supervisor::new(SupervisorOptions {
                 tcp_port: None,
                 tcp_bind_host: None,
                 remote_agent_mesh: None,
-                socket_path: dir.path().join("s.sock"),
-                agent_dir: dir.path().join("agent"),
+                socket_path: dir.join("s.sock"),
+                agent_dir: dir.join("agent"),
             })
             .unwrap(),
-        )
+        );
+        crate::test_support::InTestDir::new(supervisor, dir)
     }
 
     fn send_command(target: &str, from: Option<&str>) -> DaemonCommand {

@@ -72,7 +72,10 @@ mod resume_settings_tests {
     #[tokio::test]
     async fn compacted_create_restores_settings_and_honors_explicit_overrides() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("resume.jsonl");
+        // One level down: a session file implies its artifacts at `<dir>/../session-artifacts`,
+        // which must land in the test dir, not the shared temp dir.
+        std::fs::create_dir(dir.path().join("sessions")).unwrap();
+        let path = dir.path().join("sessions").join("resume.jsonl");
         let mut file = SessionFile::create("/tmp", None, 0);
         file.set_path(path.clone());
         file.append_model_change("old", "superseded");

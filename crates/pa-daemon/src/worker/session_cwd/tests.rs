@@ -144,7 +144,10 @@ async fn a_resume_follows_the_recorded_cwd_unless_pinned() {
     let child = dir.path().join("child");
     std::fs::create_dir(&header).unwrap();
     std::fs::create_dir(&child).unwrap();
-    let path = dir.path().join("session.jsonl");
+    // One level down: a session file implies its artifacts at `<dir>/../session-artifacts`,
+    // which must land in the test dir, not the shared temp dir.
+    std::fs::create_dir(dir.path().join("sessions")).unwrap();
+    let path = dir.path().join("sessions").join("session.jsonl");
     let first = created(
         &dir.path().join("w1"),
         &header,

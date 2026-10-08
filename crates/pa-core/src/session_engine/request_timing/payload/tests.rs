@@ -65,6 +65,27 @@ pub(crate) fn wait_for_drained_queue() {
     }
 }
 
+/// Waits, when it drops, until the shared writer has finished every write handed to it (no job
+/// queued, no payload bytes retained: the writer releases those after the file lands). Each
+/// test holds one declared after its temp dir, so the writer never writes into a removed dir
+/// and leaves it behind.
+struct SettleWritesOnDrop;
+
+impl Drop for SettleWritesOnDrop {
+    fn drop(&mut self) {
+        let Some(Some(writer)) = super::CAPTURE_WRITER.get() else {
+            return;
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while (writer.queued.load(Ordering::Relaxed) != 0
+            || writer.retained.load(Ordering::Relaxed) != 0)
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+}
+
 /// One capture file's parsed envelope.
 pub(crate) fn payload_envelope(dir: &Path, name: &str) -> Value {
     let content = std::fs::read_to_string(dir.join(name)).expect("the capture file reads");
@@ -139,6 +160,7 @@ fn fill_until_saturated(capture: &RequestPayloadCapture, marker_prefix: &str) ->
 fn the_capture_writes_the_exact_body_and_envelope() {
     let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
+    let _settle = SettleWritesOnDrop;
     let dir_path = dir.path().join("request-payloads");
     let payload = json!({"messages": [{"role": "user", "content": "hello \u{1F680}"}]});
     write_capture(
@@ -185,6 +207,7 @@ fn the_capture_writes_owner_only_modes_even_into_an_existing_dir() {
     use std::os::unix::fs::PermissionsExt;
     let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
+    let _settle = SettleWritesOnDrop;
     let dir_path = dir.path().join("request-payloads");
     std::fs::create_dir_all(&dir_path).unwrap();
     std::fs::set_permissions(&dir_path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -213,6 +236,7 @@ fn the_capture_writes_owner_only_modes_even_into_an_existing_dir() {
 fn symlinked_components_end_the_capture_before_any_write() {
     let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
+    let _settle = SettleWritesOnDrop;
     // A symlinked ring directory: <agent>/request-payloads -> <attacker>.
     let attacker = dir.path().join("attacker");
     std::fs::create_dir_all(&attacker).unwrap();
@@ -254,6 +278,7 @@ fn symlinked_components_end_the_capture_before_any_write() {
 fn a_failed_write_takes_its_temp_file_with_it() {
     let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
+    let _settle = SettleWritesOnDrop;
     let dir_path = dir.path().join("request-payloads");
     std::fs::create_dir_all(&dir_path).unwrap();
     // The target exists as a directory, so the rename fails.
@@ -292,6 +317,7 @@ fn a_failed_write_takes_its_temp_file_with_it() {
 fn an_over_budget_body_drops_without_cloning() {
     let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
+    let _settle = SettleWritesOnDrop;
     let dir_path = dir.path().join("request-payloads");
     let capture = RequestPayloadCapture::at(&dir_path, 8);
     // The stall: a many-node body serialized for far longer than the three records, so
@@ -348,6 +374,7 @@ fn an_over_budget_body_drops_without_cloning() {
 fn the_ring_keeps_the_newest_bodies() {
     let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
+    let _settle = SettleWritesOnDrop;
     let dir_path = dir.path().join("request-payloads");
     for seq in 1..=3u64 {
         write_capture(
@@ -382,6 +409,7 @@ fn the_ring_keeps_the_newest_bodies() {
 fn two_wirings_sharing_one_dir_each_keep_their_capture() {
     let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
+    let _settle = SettleWritesOnDrop;
     let dir_path = dir.path().join("request-payloads");
     let wiring_a = RequestPayloadCapture::at(&dir_path, 64);
     let wiring_b = RequestPayloadCapture::at(&dir_path, 64);
@@ -406,6 +434,7 @@ fn two_wirings_sharing_one_dir_each_keep_their_capture() {
 fn two_sessions_captures_own_their_directories() {
     let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
+    let _settle = SettleWritesOnDrop;
     let dir_a = dir.path().join("agent-a").join("request-payloads");
     let dir_b = dir.path().join("agent-b").join("request-payloads");
     let capture_a = RequestPayloadCapture::at(&dir_a, 8);
@@ -447,6 +476,7 @@ fn two_sessions_captures_own_their_directories() {
 fn an_unwritable_target_disables_the_capture_silently() {
     let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
+    let _settle = SettleWritesOnDrop;
     // A FILE where the capture's directory would be: every write fails.
     let blocker = dir.path().join("request-payloads");
     std::fs::write(&blocker, "a file, not a directory").unwrap();
@@ -466,6 +496,7 @@ fn an_unwritable_target_disables_the_capture_silently() {
 fn a_record_hands_off_without_waiting_for_the_write() {
     let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
+    let _settle = SettleWritesOnDrop;
     let dir_path = dir.path().join("request-payloads");
     let capture = RequestPayloadCapture::at(&dir_path, 64);
     let big = "x".repeat(8 * 1024 * 1024);
@@ -499,6 +530,7 @@ fn a_record_hands_off_without_waiting_for_the_write() {
 fn a_saturated_queue_drops_without_cloning() {
     let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
+    let _settle = SettleWritesOnDrop;
     let dir_path = dir.path().join("request-payloads");
     // The ring keeps every body: the count assertions need no eviction.
     let capture = RequestPayloadCapture::at(&dir_path, 4 * REQUEST_PAYLOAD_CAPTURE_KEEP);
@@ -563,6 +595,7 @@ fn a_saturated_queue_drops_without_cloning() {
 fn concurrent_producers_drop_at_the_reserve_when_the_queue_is_full() {
     let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
+    let _settle = SettleWritesOnDrop;
     let dir_path = dir.path().join("request-payloads");
     // The ring keeps every body: the count assertions need no eviction.
     let capture = RequestPayloadCapture::at(&dir_path, 4 * REQUEST_PAYLOAD_CAPTURE_KEEP);

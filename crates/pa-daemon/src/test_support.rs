@@ -11,15 +11,23 @@ pub(crate) static TELEMETRY_ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::
 /// A per-test scratch directory under the temp dir, removed with everything in it when the
 /// guard drops: on success, on panic, and on early return alike. It derefs to its path, so it
 /// stands in wherever a test used a bare `temp_dir().join(..)` path.
+///
+/// The path is `<root>/<name>` inside a removed-on-drop `<root>` of the same name: a session
+/// file a test writes at `<path>/<id>.jsonl` implies its artifact dir at
+/// `<path>/../session-artifacts/<id>`, which then lands in `<root>` rather than the shared temp
+/// dir.
 #[cfg(test)]
 #[derive(Debug)]
-pub(crate) struct TestDir(tempfile::TempDir);
+pub(crate) struct TestDir {
+    _root: tempfile::TempDir,
+    path: std::path::PathBuf,
+}
 
 #[cfg(test)]
 impl TestDir {
     /// A fresh directory named `<prefix><random>` under the temp dir.
     pub(crate) fn new(prefix: &str) -> Self {
-        Self(
+        Self::nested(
             tempfile::Builder::new()
                 .prefix(prefix)
                 .tempdir()
@@ -31,12 +39,20 @@ impl TestDir {
     /// symlink-free path (a symlinked `TMPDIR`, macOS `/var`).
     pub(crate) fn new_canonical(prefix: &str) -> Self {
         let root = std::fs::canonicalize(std::env::temp_dir()).expect("canonical temp dir");
-        Self(
+        Self::nested(
             tempfile::Builder::new()
                 .prefix(prefix)
                 .tempdir_in(root)
                 .expect("create a test temp dir"),
         )
+    }
+
+    fn nested(root: tempfile::TempDir) -> Self {
+        let path = root
+            .path()
+            .join(root.path().file_name().expect("a named temp dir"));
+        std::fs::create_dir(&path).expect("create the test dir");
+        Self { _root: root, path }
     }
 }
 
@@ -108,14 +124,14 @@ impl std::ops::Deref for TestDir {
     type Target = std::path::Path;
 
     fn deref(&self) -> &std::path::Path {
-        self.0.path()
+        &self.path
     }
 }
 
 #[cfg(test)]
 impl AsRef<std::path::Path> for TestDir {
     fn as_ref(&self) -> &std::path::Path {
-        self.0.path()
+        &self.path
     }
 }
 
@@ -123,7 +139,7 @@ impl AsRef<std::path::Path> for TestDir {
 #[cfg(test)]
 impl serde::Serialize for TestDir {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.0.path().serialize(serializer)
+        self.path.serialize(serializer)
     }
 }
 

@@ -69,7 +69,10 @@ fn a_rebuild_restores_plan_mode_from_the_session_file() {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = tempfile::TempDir::new().unwrap();
     let mut store = crate::session_store::SessionFile::create("/tmp", None, 0);
-    let session_path = dir.path().join("session.jsonl");
+    // One level down: a session file implies its artifacts at `<dir>/../session-artifacts`,
+    // which must land in the test dir, not the shared temp dir.
+    let session_path = dir.path().join("sessions").join("session.jsonl");
+    std::fs::create_dir(dir.path().join("sessions")).unwrap();
     store.set_path(session_path.clone());
     store.append_entry(
         "custom_message",

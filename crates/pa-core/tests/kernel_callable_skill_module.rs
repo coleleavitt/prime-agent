@@ -125,15 +125,17 @@ async fn a_variable_holding_a_skill_survives_a_snapshot_round_trip() {
     let dir = tempfile::TempDir::new().unwrap();
     let (provisioner, manager) = boot(python, dir.path()).await;
     // #1278: the wrapper pickles by reference, so the variable is saved and restored.
+    // The snapshot files go under the test's own dir (a bare `mkdtemp()` outlived the test).
+    let fixture_root = format!("_fixture_root = {:?}\n", dir.path().to_string_lossy());
     let snapshot_round_trip = "import os, tempfile\n\
 from rlm import repl as _repl\n\
-_dir = tempfile.mkdtemp()\n\
+_dir = tempfile.mkdtemp(dir=_fixture_root)\n\
 _saved = _repl._snapshot_state({'tools': {'d': demo_skill}}, os.path.join(_dir, 's.dill'), os.path.join(_dir, 's.json'), _repl.DEFAULT_SNAPSHOT_MAX_BYTES, _repl.DEFAULT_SNAPSHOT_MAX_VARIABLE_BYTES, False)\n\
 _ns = {}\n\
 _back = _repl._restore_state(_ns, os.path.join(_dir, 's.dill'))\n\
 (_saved['saved'], _saved['skipped'], _back['restored'], await _ns['tools']['d'].run(20))";
     assert_eq!(
-        run_cell(&manager, snapshot_round_trip).await,
+        run_cell(&manager, &(fixture_root + snapshot_round_trip)).await,
         (
             ExecuteStatus::Ok,
             "(['tools'], [], ['tools'], 21)".to_string()
