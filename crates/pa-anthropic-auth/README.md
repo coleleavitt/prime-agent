@@ -30,8 +30,11 @@ auth.json resolves the `anthropic` provider exactly as before.
     plugins' 429 (or 401) answer.
   - `rejected` after a 401 (once per request, pa-ai's rule): anthropic-napi's `handleUnauthorized`
     (`recover_unauthorized`: one claimed refresh of the row owning the rejected token; a retry only with a new
-    version of the same login), and, when the store no longer holds the rejected token (another process rotated
-    it), the store's current token re-read under its lock if it differs. Otherwise the 401 is reported.
+    version of the same login); when that refresh finds the login revoked (`invalid_grant`), the request moves to
+    the login the routing takes now that the store records it dead (the pi plugin's fallback past a dead login), so
+    a revoked login is never the user's failure while another login can serve; and, when the store no longer holds
+    the rejected token (another process rotated it), the store's current token re-read under its lock if it
+    differs. Otherwise the 401 is reported.
 - The plugins' sidecar configuration (`config.rs`), shared with whichever plugin copy the user has: an explicit
   `PI_ANTHROPIC_AUTH_FILE` or `OPENCODE_ANTHROPIC_AUTH_FILE`; else the first that exists of pi's
   (`$PI_AGENT_DIR` or `~/.pi/agent`) and opencode's (`$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode` or

@@ -1,0 +1,1 @@
+- Anthropic (shared account store): a request whose login was revoked (a 401, then the refresh answered `invalid_grant`) now moves to another login in the store instead of failing the turn.

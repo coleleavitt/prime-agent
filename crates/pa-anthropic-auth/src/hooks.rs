@@ -9,6 +9,7 @@
 use std::sync::atomic::Ordering;
 
 use anthropic::quota::{is_quota_bearing_header_frame, normalize_quota_headers};
+use anthropic::refresh::{classify_refresh_failure, RefreshFailure};
 use anthropic::{AccountStore, SharedRefreshOptions};
 use pa_ai::request_hooks::{
     Admission, OutgoingRequest, PendingRequest, ProviderRequestHooks, RejectedRequest, Rejection,
@@ -120,10 +121,14 @@ impl SharedStoreSource {
 
     /// One claimed refresh of the row that owns `rejected` after a 401:
     /// a new token only when the refresh produced a new version of the same
-    /// login (`decide_retry_after_401`). A token the store no longer holds
-    /// (another process rotated it) is answered with the store's current
-    /// token, re-read under the store lock, when that is a different one.
-    fn recover_unauthorized(&self, rejected: &str) -> Option<String> {
+    /// login (`decide_retry_after_401`). A login whose refresh token is
+    /// revoked is gone for good: the request moves to the login the routing
+    /// takes past it (the pi plugin's fallback past a dead login), when there
+    /// is one. A token the store no longer holds (another process rotated
+    /// it) is answered with the store's current token, re-read under the
+    /// store lock, when that is a different one.
+    fn recover_unauthorized(&self, request: &RejectedRequest<'_>) -> Option<String> {
+        let rejected = request.api_key;
         let recovery = {
             let _flight = self.flight.lock_or_recover();
             block_on_own_runtime(self.client().recover_unauthorized(
@@ -144,7 +149,31 @@ impl SharedStoreSource {
             tracing::info!("the shared store's token was rejected with 401; refreshed");
             return Some(token);
         }
-        if recovery.failure.is_some() {
+        if let Some(failure) = &recovery.failure {
+            if classify_refresh_failure(failure) == RefreshFailure::Revoked {
+                // Routed afresh: the store now records the login dead, so
+                // the routing passes over it as if it were not there.
+                let revoked = self.served_token(rejected).map(|served| served.account_id);
+                let next = self
+                    .routed_token(&RouteRequest {
+                        model: &request.model.id,
+                        context_bytes: self.counts.last_context_bytes.load(Ordering::SeqCst),
+                        exclude: None,
+                    })
+                    .ok()
+                    .flatten()
+                    .filter(|next| {
+                        self.served_token(next)
+                            .is_some_and(|login| Some(login.account_id) != revoked)
+                    });
+                if let Some(next) = next {
+                    self.count(UsageEvent::Recovered);
+                    tracing::info!(
+                        "the shared store's token was rejected with 401 and its login is revoked; moved to another login"
+                    );
+                    return Some(next);
+                }
+            }
             tracing::warn!(
                 reason = recovery.decision.reason.as_str(),
                 "the shared store's token was rejected with 401 and could not be refreshed"
@@ -230,7 +259,7 @@ impl ProviderRequestHooks for SharedStoreSource {
             rejected.body,
         );
         match rejected.rejection {
-            Rejection::Unauthorized => self.recover_unauthorized(rejected.api_key),
+            Rejection::Unauthorized => self.recover_unauthorized(rejected),
             Rejection::RateLimited => self.rotate_after_rate_limit(rejected),
         }
     }

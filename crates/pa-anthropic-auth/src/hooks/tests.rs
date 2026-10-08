@@ -78,6 +78,46 @@ fn a_401_the_refresh_cannot_recover_is_reported() {
 }
 
 #[test]
+fn a_401_on_a_revoked_login_moves_to_a_healthy_login() {
+    let provider = "anthropic-hooks-401-revoked";
+    let (token_url, presented) =
+        token_endpoint_by_refresh(vec![(refresh_of("revoked401"), 400, INVALID_GRANT)]);
+    let (_home, source) = source_over(
+        vec![
+            row("revoked401", Duration::hours(2)),
+            row("healthy401", Duration::hours(2)),
+        ],
+        &token_url,
+    );
+    AccountStore::mutate(source.store_path(), |store| store.set_current("revoked401"))
+        .expect("pin the login");
+    install(provider, &source);
+    let (base, requests) = messages_endpoint(vec![
+        (401, Vec::new(), UNAUTHORIZED),
+        (200, Vec::new(), OK_STREAM),
+    ]);
+    let served = pa_core::auth::ProviderCredentialSource::credential(source.as_ref())
+        .expect("the store's token")
+        .api_key;
+
+    let message = complete(&messages_model(provider, &base), &served);
+
+    // The revoked login's 401 is not the user's failure while another
+    // login can serve: the request moves there, unrefreshed.
+    assert_eq!(text_of(&message), "hello");
+    assert_eq!(
+        requests
+            .lock_or_recover()
+            .iter()
+            .map(CapturedRequest::bearer)
+            .collect::<Vec<_>>(),
+        vec![access_of("revoked401"), access_of("healthy401")]
+    );
+    assert_eq!(*presented.lock_or_recover(), vec![refresh_of("revoked401")]);
+    assert_eq!(source.usage().recovered, 1);
+}
+
+#[test]
 fn a_token_another_process_rotated_is_replaced_before_the_send() {
     let provider = "anthropic-hooks-rotated";
     let (_home, source) = source_over(vec![row("peer", Duration::hours(2))], "http://127.0.0.1:9");

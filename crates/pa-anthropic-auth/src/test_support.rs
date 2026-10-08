@@ -505,3 +505,63 @@ pub(crate) fn golden_extras() -> serde_json::Value {
     serde_json::from_str(include_str!("../tests/fixtures/golden/pi_extras.json"))
         .expect("the golden parses")
 }
+
+/// A loopback token endpoint that answers each refresh by the refresh
+/// token it presents (`answers`: token, status, body; an unknown token is
+/// answered 500); returns its URL and the refresh tokens presented, in
+/// order.
+pub(crate) fn token_endpoint_by_refresh(
+    answers: Vec<(String, u16, &'static str)>,
+) -> (String, Arc<Mutex<Vec<String>>>) {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind a loopback port");
+    let url = format!(
+        "http://{}/v1/oauth/token",
+        listener.local_addr().expect("the bound address")
+    );
+    let presented = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&presented);
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let mut request = Vec::new();
+            let mut chunk = [0u8; 4096];
+            while let Ok(read) = stream.read(&mut chunk) {
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&chunk[..read]);
+                let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") else {
+                    continue;
+                };
+                let head = String::from_utf8_lossy(&request[..end]).to_ascii_lowercase();
+                let length = head
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length:"))
+                    .and_then(|value| value.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
+                if request.len() >= end + 4 + length {
+                    break;
+                }
+            }
+            let request = String::from_utf8_lossy(&request).to_string();
+            let answer = answers
+                .iter()
+                .find(|(token, _, _)| request.contains(token.as_str()));
+            seen.lock_or_recover().push(
+                answer.map_or_else(|| "<unknown>".to_string(), |(token, _, _)| token.clone()),
+            );
+            let (status, body) = answer.map_or((500, "{}"), |(_, status, body)| (*status, *body));
+            let response = format!(
+                "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+        }
+    });
+    (url, presented)
+}
+
+/// The refresh token [`row`] gives the row `id`.
+pub(crate) fn refresh_of(id: &str) -> String {
+    format!("sk-ant-ort01-{id}-store-refresh-000")
+}
