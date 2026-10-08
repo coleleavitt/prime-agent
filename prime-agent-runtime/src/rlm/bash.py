@@ -303,10 +303,10 @@ class _Sidecar:
     def _gone(self, what: str) -> BashHostUnavailable:
         return BashHostUnavailable(f"the bash host ({self._executable}) {what}; {_SIDECAR_SKEW_HINT}")
 
-    def ensure_started(self) -> None:
+    def ensure_started(self) -> subprocess.Popen[bytes]:
         with self._lock:
             if self._proc is not None and self._proc.poll() is None:
-                return
+                return self._proc
             self._executable = _host_executable()
             proc = subprocess.Popen(
                 [self._executable, _SIDECAR_FLAG],
@@ -316,6 +316,7 @@ class _Sidecar:
             )
             self._proc = proc
             threading.Thread(target=self._read, args=(proc,), daemon=True).start()
+            return proc
 
     def _read(self, proc: subprocess.Popen[bytes]) -> None:
         assert proc.stdout is not None
@@ -338,12 +339,14 @@ class _Sidecar:
             slot.settle(None, self._gone("exited before answering"))
 
     def _send(self, data: dict[str, Any], slot: _Slot) -> str:
-        self.ensure_started()
+        proc = self.ensure_started()
         rid = uuid.uuid4().hex
         with self._lock:
-            proc = self._proc
-            if proc is None or proc.stdin is None:
-                raise BashHostUnavailable("the bash host is not running")
+            # The reader clears `_proc` once the host exits: a host that exited
+            # between its start and this request is the "exited before
+            # answering" failure (with the skew hint), whichever thread noticed.
+            if self._proc is not proc or proc.stdin is None:
+                raise self._gone("exited before answering")
             slot.proc = proc
             self._pending[rid] = slot
         line = (json.dumps({"id": rid, "data": data}, separators=(",", ":")) + "\n").encode()
