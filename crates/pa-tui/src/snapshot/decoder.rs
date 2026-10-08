@@ -204,6 +204,15 @@ pub fn event_to_update(event: &Value) -> Option<TurnUpdate> {
                 .and_then(Value::as_str)
                 .map(str::to_string),
         }),
+        // A non-fatal auth problem the request path worked around (a login
+        // that could not be saved, a revoked login another one replaces):
+        // one warning row; the daemon sends each condition once.
+        "auth_notice" => event.get("message").and_then(Value::as_str).map(|message| {
+            TurnUpdate::CustomRow(ChatEntry::Status {
+                text: format!("\u{26a0} {message}"),
+                kind: crate::chat::StatusKind::Warning,
+            })
+        }),
         // `/cwd` (upstream #2528): footer, title, and path completion follow.
         "cwd_changed" => {
             event

@@ -90,6 +90,18 @@ pub struct PrimeAgentSessionMeta {
     pub subagents: Option<Vec<PrimeAgentSubagentMeta>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub autonomous: Option<PrimeAgentAutonomousMeta>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_notice: Option<PrimeAgentAuthNoticeMeta>,
+}
+
+/// A non-fatal auth notice (a refreshed login that could not be saved, a
+/// revoked login another one replaces): once per condition per session.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrimeAgentAuthNoticeMeta {
+    pub provider: String,
+    pub condition: String,
+    pub message: String,
 }
 
 /// A goal's live state, surfaced after `/goal` commands and driver turns.

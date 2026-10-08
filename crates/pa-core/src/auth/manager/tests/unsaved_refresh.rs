@@ -565,3 +565,46 @@ fn another_process_uses_the_recovered_credential_without_a_fetch() {
         "the peer spent no refresh token: it read the recovery file"
     );
 }
+
+#[test]
+fn an_unsaved_refresh_is_one_auth_notice_until_it_is_saved() {
+    const PROVIDER: &str = "x-unsaved-notice";
+    let dir = seeded(PROVIDER);
+    let backend = FailingWrites::new(dir.path(), true);
+    let mut auth = store_over(Arc::clone(&backend), RotatingOAuth::new(dir.path()));
+    let heard: Arc<std::sync::Mutex<Vec<crate::auth::AuthNotice>>> = Arc::default();
+    let into = Arc::clone(&heard);
+    // The registry is the process's: parallel tests raise their own.
+    let sink: crate::auth::AuthNoticeSink = Arc::new(move |notice: &crate::auth::AuthNotice| {
+        if notice.provider == PROVIDER {
+            into.lock().unwrap().push(notice.clone());
+        }
+    });
+    crate::auth::register_auth_notice_sink("x-unsaved-notice-session", &sink);
+
+    assert_eq!(auth.get_api_key(PROVIDER), Some(issued(1)));
+    // Saved at last: the condition ends, so a session starting now hears
+    // nothing.
+    backend.failing.store(false, Ordering::SeqCst);
+    assert_eq!(auth.get_api_key(PROVIDER), Some(issued(1)));
+    let late_heard: Arc<std::sync::Mutex<Vec<crate::auth::AuthNotice>>> = Arc::default();
+    let late_into = Arc::clone(&late_heard);
+    let late: crate::auth::AuthNoticeSink = Arc::new(move |notice: &crate::auth::AuthNotice| {
+        if notice.provider == PROVIDER {
+            late_into.lock().unwrap().push(notice.clone());
+        }
+    });
+    crate::auth::register_auth_notice_sink("x-unsaved-notice-late", &late);
+
+    assert_eq!(
+        *heard.lock().unwrap(),
+        vec![crate::auth::AuthNotice {
+            provider: PROVIDER.to_string(),
+            condition: "unsaved-refresh".to_string(),
+            message: format!(
+                "Your {PROVIDER} login was refreshed but could not be saved to auth.json; it is kept and saving is retried."
+            ),
+        }]
+    );
+    assert!(late_heard.lock().unwrap().is_empty());
+}

@@ -146,6 +146,9 @@ pub struct SessionEngine {
     /// The embedding's feature-status sink, held here so the process
     /// registry's weak entry lives exactly as long as the engine.
     feature_status_sink: std::sync::Mutex<Option<crate::features::FeatureStatusSink>>,
+    /// Where the process's auth notices for this session go (held for the
+    /// engine's life; the registry holds it weakly).
+    auth_notice_sink: std::sync::Mutex<Option<crate::auth::AuthNoticeSink>>,
     /// The session's plan mode, shared with the tool gate, the host-request
     /// gate, the per-turn context row, and the kernel's confinement.
     plan_mode: super::plan_mode::PlanModeSwitch,
@@ -1104,6 +1107,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         provisioner,
         feature_context,
         feature_status_sink: std::sync::Mutex::new(None),
+        auth_notice_sink: std::sync::Mutex::new(None),
         plan_mode,
         plan_mode_fallback: plan.fallback_reason().map(str::to_string),
         presented_artifacts,
@@ -1123,6 +1127,17 @@ impl SessionEngine {
         crate::features::register_feature_status_sink(&self.feature_context.session_id, &sink);
         *self
             .feature_status_sink
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(sink);
+    }
+
+    /// Route the process's non-fatal auth notices ([`crate::auth::AuthNotice`])
+    /// to `sink` for this session, for as long as the engine lives: each
+    /// standing condition once, now or when it is raised.
+    pub fn set_auth_notice_sink(&self, sink: crate::auth::AuthNoticeSink) {
+        crate::auth::register_auth_notice_sink(&self.feature_context.session_id, &sink);
+        *self
+            .auth_notice_sink
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(sink);
     }

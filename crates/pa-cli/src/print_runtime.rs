@@ -1218,6 +1218,24 @@ async fn run_prompts_and_emit(
     options: &RunOptions,
 ) -> Result<i32, String> {
     let json_mode = options.app_mode == AppMode::Json;
+    // Non-fatal auth notices (a login that could not be saved, a revoked
+    // login another one replaces), once per condition: a stderr warning, or
+    // an event line in json mode.
+    engine.set_auth_notice_sink(std::sync::Arc::new(move |notice| {
+        if json_mode {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "type": "auth_notice",
+                    "provider": notice.provider,
+                    "condition": notice.condition,
+                    "message": notice.message,
+                })
+            );
+        } else {
+            eprintln!("Warning: {}", notice.message);
+        }
+    }));
     let mut unsubscribe: Option<pa_agent::agent::Subscription> = None;
     if json_mode {
         if let Some(header) = session_header_json(engine).await {

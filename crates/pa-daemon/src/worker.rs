@@ -584,6 +584,11 @@ impl Worker {
                 concrete.set_feature_status_sink(std::sync::Arc::new(move |status| {
                     crate::feature_status::publish(&status_core, &status_events, status);
                 }));
+                let notice_core = Arc::clone(&core);
+                let notice_events = Arc::clone(&events);
+                concrete.set_auth_notice_sink(std::sync::Arc::new(move |notice| {
+                    crate::auth_notice::publish(&notice_core, &notice_events, notice);
+                }));
                 let late_core = Arc::clone(&core);
                 let late_events = Arc::clone(&events);
                 concrete.set_late_agent_message_sink(std::sync::Arc::new(

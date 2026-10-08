@@ -125,6 +125,9 @@ pub struct AgentSessionEngine {
     /// Where installed features' status for this session goes (re-applied
     /// to every engine build).
     pub(crate) feature_status_sink: std::sync::Mutex<Option<pa_core::features::FeatureStatusSink>>,
+    /// Where the process's auth notices for this session go (re-applied to
+    /// every engine build).
+    pub(crate) auth_notice_sink: std::sync::Mutex<Option<pa_core::auth::AuthNoticeSink>>,
     /// The session's goal driver and session-manager handles, mirrored from
     /// the core session at build time: the core session's own mutex is held
     /// across a turn's admission, so goal checks inside emit callbacks

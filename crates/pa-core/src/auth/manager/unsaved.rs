@@ -7,6 +7,11 @@ use super::{parse_storage_data, refresh_flight, AuthCredential, AuthStorage, Aut
 use crate::auth::storage::UnsavedRefreshKept;
 use crate::platform::HeartbeatLock;
 
+/// The auth notice condition of a refreshed login `auth.json` could not
+/// take (raised once while it stands, cleared when it is saved or
+/// replaced).
+const UNSAVED_REFRESH_NOTICE: &str = "unsaved-refresh";
+
 /// A kept copy's credential with its expiry, when it is `provider`'s OAuth login.
 fn kept_login(content: &str, provider: &str) -> Option<(i64, AuthCredential)> {
     let credential = parse_storage_data(Some(content))
@@ -63,6 +68,19 @@ impl AuthStorage {
             Ok(content) => self.storage.keep_unsaved_refresh(provider, content, claim),
             Err(_) => UnsavedRefreshKept::NotKept,
         };
+        let message = match kept {
+            UnsavedRefreshKept::Recoverable(_) | UnsavedRefreshKept::InProcess { .. } => format!(
+                "Your {provider} login was refreshed but could not be saved to auth.json; it is kept and saving is retried."
+            ),
+            UnsavedRefreshKept::NotKept => format!(
+                "Your {provider} login was refreshed but could not be saved to auth.json; if a later request fails, run /login {provider}."
+            ),
+        };
+        crate::auth::raise_auth_notice(crate::auth::AuthNotice {
+            provider: provider.to_string(),
+            condition: UNSAVED_REFRESH_NOTICE.to_string(),
+            message,
+        });
         match kept {
             UnsavedRefreshKept::Recoverable(path) => tracing::warn!(
                 provider,
@@ -135,6 +153,7 @@ impl AuthStorage {
                     for content in &copies {
                         self.storage.forget_unsaved_refresh(&provider, content);
                     }
+                    crate::auth::clear_auth_notice(&provider, UNSAVED_REFRESH_NOTICE);
                     saved = true;
                 }
                 Err(error) => tracing::debug!(
@@ -155,5 +174,6 @@ impl AuthStorage {
         for content in self.storage.unsaved_refreshes(provider) {
             self.storage.forget_unsaved_refresh(provider, &content);
         }
+        crate::auth::clear_auth_notice(provider, UNSAVED_REFRESH_NOTICE);
     }
 }

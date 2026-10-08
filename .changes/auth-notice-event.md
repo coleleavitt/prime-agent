@@ -1,0 +1,1 @@
+- Non-fatal auth problems (a refreshed login that could not be saved, a revoked Anthropic login another login now replaces) now reach the user once per session: a warning row in the TUI, a `Warning:` line on stderr in print mode (an `auth_notice` event line in json mode), and an `authNotice` entry in ACP session info. Before, they were only in `agent.jsonl`.

@@ -2160,3 +2160,32 @@ fn reconstructs_the_sandbox_label() {
     ];
     assert_eq!(labels, [Some("workspace-write".to_string()), None]);
 }
+
+#[test]
+fn an_auth_notice_renders_as_a_warning_row() {
+    let message =
+        "Your Anthropic login main was revoked; using pool. Run /login anthropic to restore it.";
+    let update = event_to_update(&json!({
+        "type": "auth_notice",
+        "provider": "anthropic",
+        "condition": "revoked:main",
+        "message": message,
+    }));
+    let entry = ChatEntry::Status {
+        text: format!("\u{26a0} {message}"),
+        kind: StatusKind::Warning,
+    };
+    assert_eq!(update, Some(TurnUpdate::CustomRow(entry.clone())));
+
+    let theme = crate::theme::Theme::builtin("prime", crate::theme::ColorMode::TrueColor);
+    let warning = theme.fg_style(crate::theme::ThemeColor::Warning);
+    let mut view = crate::view::AgentView::new(theme);
+    view.push_entry(entry);
+    let rows = view.render_frame(200, 24);
+    assert!(
+        rows.iter()
+            .flatten()
+            .any(|span| span.content.contains("was revoked; using pool") && span.style == warning),
+        "the notice shows in the warning color"
+    );
+}

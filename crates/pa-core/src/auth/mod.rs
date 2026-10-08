@@ -2,6 +2,7 @@
 
 pub(crate) mod credential_source;
 pub(crate) mod manager;
+pub(crate) mod notices;
 pub(crate) mod prime_directory;
 pub(crate) mod prime_inference;
 pub(crate) mod prime_inference_login;
@@ -19,6 +20,9 @@ pub use credential_source::{
 pub use manager::{
     oauth_refresh_failed_message, AuthApiKeyResult, AuthStorage, NoOAuth, OAuthIntegration,
     OAuthRefreshError,
+};
+pub use notices::{
+    clear_auth_notice, raise_auth_notice, register_auth_notice_sink, AuthNotice, AuthNoticeSink,
 };
 pub use prime_directory::PrimeDirectorySelection;
 pub use prime_inference::{

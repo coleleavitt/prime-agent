@@ -128,6 +128,7 @@ impl AgentSessionEngine {
             published_goal: std::sync::Mutex::new(None),
             late_agent_message_sink: std::sync::Mutex::new(None),
             feature_status_sink: std::sync::Mutex::new(None),
+            auth_notice_sink: std::sync::Mutex::new(None),
             goal_runtime: std::sync::Mutex::new(None),
             pending_goal_continuation: std::sync::Mutex::new(None),
             goal_budget_crossed: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -994,6 +995,14 @@ impl AgentSessionEngine {
                 .clone()
             {
                 engine.set_feature_status_sink(sink);
+            }
+            if let Some(sink) = self
+                .auth_notice_sink
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+            {
+                engine.set_auth_notice_sink(sink);
             }
             // A queue-mode switch that landed mid-build wrote only the live slot: re-apply the
             // modes so the first build never serves a stale one.

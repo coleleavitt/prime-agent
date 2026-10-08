@@ -357,6 +357,25 @@ pub fn wire_updates(event: &Value, state: &mut WireMappingState) -> Vec<AcpSessi
                 }),
             }]
         }
+        "auth_notice" => {
+            let field = |name: &str| {
+                event
+                    .get(name)
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string()
+            };
+            vec![AcpSessionUpdate::SessionInfoUpdate {
+                meta: prime_agent_meta(&PrimeAgentSessionMeta {
+                    auth_notice: Some(super::meta::PrimeAgentAuthNoticeMeta {
+                        provider: field("provider"),
+                        condition: field("condition"),
+                        message: field("message"),
+                    }),
+                    ..Default::default()
+                }),
+            }]
+        }
         "refine_failed" => {
             vec![AcpSessionUpdate::SessionInfoUpdate {
                 meta: prime_agent_meta(&PrimeAgentSessionMeta {
@@ -1199,6 +1218,29 @@ mod tests {
         assert_eq!(
             namespaced(&updates[0])["refinement"],
             json!({ "status": "failed", "error": "Summarization failed: no responses" })
+        );
+    }
+
+    #[test]
+    fn auth_notice_maps_the_auth_notice_meta() {
+        let mut state = WireMappingState::default();
+        let updates = wire_updates(
+            &json!({
+                "type": "auth_notice",
+                "provider": "anthropic",
+                "condition": "revoked:main",
+                "message": "Your Anthropic login main was revoked; using pool. Run /login anthropic to restore it.",
+            }),
+            &mut state,
+        );
+        assert_eq!(updates.len(), 1);
+        assert_eq!(
+            namespaced(&updates[0])["authNotice"],
+            json!({
+                "provider": "anthropic",
+                "condition": "revoked:main",
+                "message": "Your Anthropic login main was revoked; using pool. Run /login anthropic to restore it.",
+            })
         );
     }
 

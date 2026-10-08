@@ -53,6 +53,13 @@ impl AgentSessionEngine {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(sink);
     }
 
+    pub(crate) fn set_auth_notice_sink(&self, sink: pa_core::auth::AuthNoticeSink) {
+        *self
+            .auth_notice_sink
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(sink);
+    }
+
     pub(crate) fn set_late_agent_message_sink(&self, sink: pa_core::LateSentAgentMessageHandler) {
         *self
             .late_agent_message_sink
