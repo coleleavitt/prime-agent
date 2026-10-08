@@ -290,7 +290,7 @@ pub fn atomic_write(path: &Path, content: &str) -> Result<()> {
 /// `writeFileAtomicSync(path, data, options)` shape.
 pub fn atomic_write_with(path: &Path, content: &str, options: AtomicWriteOptions) -> Result<()> {
     let temp = PathBuf::from(format!("{}.tmp{}", path.display(), std::process::id()));
-    {
+    let written = (|| -> Result<()> {
         let mut open = fs::OpenOptions::new();
         open.create(true).write(true).truncate(true);
         crate::platform::perms::set_private_mode(&mut open);
@@ -301,9 +301,16 @@ pub fn atomic_write_with(path: &Path, content: &str, options: AtomicWriteOptions
             OPT_IN_FSYNC.with(|count| count.set(count.get() + 1));
             file.sync_all()?;
         }
+        drop(file);
+        crate::platform::rename_onto(&temp, path)?;
+        Ok(())
+    })();
+    if written.is_err() {
+        // Like write-file-atomic: a failed write or rename (a full disk)
+        // leaves no partial copy of the document behind.
+        let _ = fs::remove_file(&temp);
     }
-    crate::platform::rename_onto(&temp, path)?;
-    Ok(())
+    written
 }
 
 #[derive(Default)]
@@ -333,6 +340,23 @@ impl SettingsStorage for InMemorySettingsStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_atomic_write_leaves_no_temp_file() {
+        // write-file-atomic unlinks its temp file when the write or the
+        // rename fails: a full disk must not leave a partial copy of the
+        // document (for auth.json, credentials) beside it.
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("auth.json");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("occupied"), "").unwrap();
+        assert!(atomic_write(&target, r#"{ "written": "never" }"#).is_err());
+        let names: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("auth.json")]);
+    }
 
     #[test]
     fn in_memory_round_trip() {
