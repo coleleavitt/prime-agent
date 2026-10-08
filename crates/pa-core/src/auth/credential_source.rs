@@ -46,13 +46,16 @@ pub trait ProviderCredentialSource: Send + Sync {
 
     /// Offered the OAuth login `auth.json` holds for the provider, once per
     /// lookup while one is there: the source may take custody of it (a
-    /// one-time migration into the source's store). On
-    /// [`StoredLoginCustody::Adopted`] the lookup removes `auth.json`'s
-    /// entry (only while it still holds this login), so the two never both
-    /// refresh it; on [`StoredLoginCustody::Kept`] `auth.json` keeps it and
-    /// serves it as before while the source reports no login.
+    /// one-time migration into the source's store). The offer runs under
+    /// `auth.json`'s lock, on the file as it is then (never an earlier read
+    /// of it), and on [`StoredLoginCustody::Adopted`] the lookup removes the
+    /// entry under the same lock, so no process offers a login another one
+    /// already moved (and the source may since have rotated) and the two
+    /// never both refresh it; on [`StoredLoginCustody::Kept`] `auth.json`
+    /// keeps it and serves it as before while the source reports no login.
     ///
-    /// The default keeps every stored login. May block on disk and network.
+    /// The default keeps every stored login. May block on disk and network
+    /// (while holding `auth.json`'s lock: keep it to one custody step).
     fn adopt_stored_login(&self, login: &StoredOAuthLogin) -> StoredLoginCustody {
         let _ = login;
         StoredLoginCustody::Kept
@@ -250,11 +253,13 @@ mod tests {
         }
     }
 
-    /// A source that adopts every stored login after another process
-    /// wrote a newer one into the same `auth.json`.
+    /// A source that adopts every stored login while another process (a
+    /// `/login`, through the document lock) writes a newer one into the same
+    /// `auth.json`.
     struct RacedSource {
         auth_path: std::path::PathBuf,
         provider: &'static str,
+        writer: Mutex<Option<std::thread::JoinHandle<()>>>,
     }
 
     impl ProviderCredentialSource for RacedSource {
@@ -267,13 +272,20 @@ mod tests {
         }
 
         fn adopt_stored_login(&self, _login: &StoredOAuthLogin) -> StoredLoginCustody {
-            let newer = serde_json::json!({
-                self.provider: {
-                    "type": "oauth", "access": "newer-access", "refresh": "newer-refresh",
-                    "expires": 4_102_444_800_000i64
-                }
-            });
-            std::fs::write(&self.auth_path, newer.to_string()).expect("write the newer login");
+            let (auth_path, provider) = (self.auth_path.clone(), self.provider);
+            *self.writer.lock_or_recover() = Some(std::thread::spawn(move || {
+                let newer = serde_json::json!({
+                    provider: {
+                        "type": "oauth", "access": "newer-access", "refresh": "newer-refresh",
+                        "expires": 4_102_444_800_000i64
+                    }
+                });
+                crate::auth::AuthStorageBackend::with_lock(
+                    &crate::auth::FileAuthStorageBackend::new(&auth_path),
+                    &mut |_current| Ok(((), Some(newer.to_string()))),
+                )
+                .expect("write the newer login");
+            }));
             StoredLoginCustody::Adopted
         }
     }
@@ -506,19 +518,25 @@ mod tests {
             }
         });
         std::fs::write(&auth_path, stored.to_string()).expect("seed auth.json");
-        install_credential_source(
+        let source = Arc::new(RacedSource {
+            auth_path: auth_path.clone(),
             provider,
-            Arc::new(RacedSource {
-                auth_path: auth_path.clone(),
-                provider,
-            }),
-        );
+            writer: Mutex::new(None),
+        });
+        install_credential_source(provider, source.clone());
         let mut auth = AuthStorage::from_storage(
             Arc::new(crate::auth::FileAuthStorageBackend::new(&auth_path)),
             Arc::new(NoOAuth),
         );
 
         auth.get_api_key(provider);
+        source
+            .writer
+            .lock_or_recover()
+            .take()
+            .expect("the writer ran")
+            .join()
+            .expect("the writer finished");
 
         let on_disk: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&auth_path).expect("auth.json"))

@@ -844,39 +844,50 @@ impl AuthStorage {
     }
 
     /// Offer the provider's stored OAuth login to its installed credential
-    /// source; when the source takes custody, remove the entry, but only
-    /// while the file still holds that login (a newer login written in the
-    /// meantime stays).
+    /// source; when the source takes custody, remove the entry.
+    ///
+    /// The offer and the removal run under the document lock, on the file as
+    /// it is now, not on this instance's earlier read: once one process has
+    /// moved the login, the source may rotate (spend) its single-use refresh
+    /// token at any time, so a process that read the file before the move
+    /// must not offer the spent token again (the source would hold it a
+    /// second time and present it later). A newer login written in the
+    /// meantime is what is offered. The source's custody work (a store write,
+    /// at most one identity lookup) holds the lock, once per login.
     pub(crate) fn offer_stored_login_to_source(&mut self, provider: &str) {
         let Some(source) = super::credential_source(provider) else {
             return;
         };
-        let Some(AuthCredential::Oauth {
-            access,
-            refresh: Some(refresh),
-            expires,
-            ..
-        }) = self.data.credential(provider)
-        else {
-            return;
-        };
-        let login = super::StoredOAuthLogin {
-            access,
-            refresh,
-            expires_ms: expires,
-        };
-        if source.adopt_stored_login(&login) != super::StoredLoginCustody::Adopted
-            || self.load_error.is_some()
+        // An unreadable file is never offered: what is taken into custody
+        // must also leave the file.
+        if self.load_error.is_some()
+            || !matches!(
+                self.data.credential(provider),
+                Some(AuthCredential::Oauth {
+                    refresh: Some(_),
+                    ..
+                })
+            )
         {
             return;
         }
         let result = self.storage.with_lock(&mut |current| {
             let mut data = parse_storage_data(current.as_deref())?;
-            let unchanged = matches!(
-                data.credential(provider),
-                Some(AuthCredential::Oauth { refresh: Some(stored), .. }) if stored == login.refresh
-            );
-            if !unchanged {
+            let Some(AuthCredential::Oauth {
+                access,
+                refresh: Some(refresh),
+                expires,
+                ..
+            }) = data.credential(provider)
+            else {
+                return Ok(((), None));
+            };
+            let login = super::StoredOAuthLogin {
+                access,
+                refresh,
+                expires_ms: expires,
+            };
+            if source.adopt_stored_login(&login) != super::StoredLoginCustody::Adopted {
                 return Ok(((), None));
             }
             data.remove(provider);

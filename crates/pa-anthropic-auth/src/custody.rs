@@ -182,6 +182,9 @@ impl SharedStoreSource {
     }
 }
 
+#[cfg(test)]
+mod tests;
+
 /// The row id an imported login takes (napi `preferred_id`): the account's
 /// email (qualified by organization when another organization holds it),
 /// else its uuid, else `account-<8 hex>`.

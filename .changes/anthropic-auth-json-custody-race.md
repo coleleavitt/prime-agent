@@ -1,0 +1,1 @@
+- Anthropic (shared account store): when several processes start with an Anthropic login still in `auth.json`, only one moves it into the store; a process that read `auth.json` before the move no longer imports the already-spent refresh token as a second store row (which the store could later present and so revoke the login).

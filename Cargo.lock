@@ -1888,6 +1888,7 @@ name = "pa-anthropic-auth"
 version = "0.9.8"
 dependencies = [
  "anthropic",
+ "anyhow",
  "chrono",
  "pa-agent",
  "pa-ai",

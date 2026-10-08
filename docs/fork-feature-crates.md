@@ -79,8 +79,8 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
      under its own lock); `NotConfigured` falls through, any other failure is the provider's OAuth authentication
      failure. The status rows show its label; `AuthSource::CredentialSource` names it. An OAuth login `auth.json`
      still holds for the provider is offered to the source on each lookup (`adopt_stored_login`, a one-time
-     migration); when the source takes custody, the entry is removed from `auth.json` (only while it still holds
-     that login). `/logout` lists a provider whose source reports a login (`credential_source_providers`) and asks
+     migration) under `auth.json`'s lock, on the file as it is then; when the source takes custody, the entry is
+     removed under the same lock, so no process offers a login another one already moved. `/logout` lists a provider whose source reports a login (`credential_source_providers`) and asks
      the source to remove it (`remove_login`, with an optional notice) besides any `auth.json` entry.
    - provider requests: `pa_ai::request_hooks::install_request_hooks(provider_id, Arc<dyn ProviderRequestHooks>)`
      (process-wide, before any request) lets the store behind a provider id's credentials take part in every

@@ -37,6 +37,9 @@ tracing.workspace = true
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+# The custody tests implement pa-core's `AuthStorageBackend`, whose methods
+# return `anyhow::Result`.
+anyhow.workspace = true
 tempfile = "3"
 
 [lints]

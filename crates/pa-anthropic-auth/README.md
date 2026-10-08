@@ -203,8 +203,10 @@ auth.json resolves the `anthropic` provider exactly as before.
   a row already holding the token, or a login of the same account (account and organization), wins and the import
   is discarded; otherwise it becomes a new row named like napi's (email, org-qualified on collision; else the account
   uuid; else `account-<8 hex>`), `current` when nothing is pinned. Either way pa-core then removes `auth.json`'s
-  entry (only while it still holds that token), so the store is the login's only custodian. A malformed login or
-  an unusable store leaves it in `auth.json`.
+  entry, so the store is the login's only custodian. The offer and the removal run under `auth.json`'s lock on the
+  file as it is then: a process that read `auth.json` before another one moved the login (and the store spent its
+  single-use refresh token) never imports the spent token as a second row. A malformed login or an unusable store
+  leaves it in `auth.json`.
 - Logout (`remove_login`, the plugins' account removal, napi `removeAccount`): `/logout anthropic` removes the
   row the provider is served from now (the routing order's first candidate; while every login cools down, the
   pinned one or the first) under the store lock. Nothing is revoked at Anthropic and Claude Code's own login is
