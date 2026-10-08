@@ -65,7 +65,7 @@ async fn the_validator_client_answers_from_the_host_inside_a_cell() {
     };
     let dir = tempfile::TempDir::new().unwrap();
     let mut host_handlers = HostRequestHandlers::new();
-    pa_core::factory::host::register_factory_spec_handler(&mut host_handlers);
+    pa_core::factory::host::register_session_free_factory_handlers(&mut host_handlers);
     let provisioner = IpythonKernelProvisioner::new(
         dir.path(),
         IpythonKernelProvisionerOptions {

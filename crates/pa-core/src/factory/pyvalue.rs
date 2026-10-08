@@ -41,6 +41,12 @@ pub enum PyValue {
         index: usize,
         repr: String,
         truthy: bool,
+        /// `type(value).__name__` (`object` from a client that did not
+        /// send it).
+        type_name: String,
+        /// `json.dumps(value)` when the encoder can spell it (a tuple of
+        /// JSON values): what the machine renderer prints for it.
+        json: Option<String>,
     },
 }
 
@@ -317,7 +323,9 @@ fn table_error(message: impl Into<String>) -> NodeTableError {
 /// value, each a tagged array: `["n"]` None, `["b", bool]`, `["i",
 /// "<digits>"]` an int, `["f", <number> | "nan" | "inf" | "-inf"]`,
 /// `["s", str]`, `["l", [child...]]`, `["d", [[key, value]...]]`, and
-/// `["o", <registry index>, <repr>, <truthy>]` for an opaque leaf. Every
+/// `["o", <registry index>, <repr>, <truthy>, <type name>, <json>]` for an
+/// opaque leaf (the type name and the `json.dumps` spelling, or null, are
+/// optional). Every
 /// child index is larger than its parent's (the client emits pre-order),
 /// and every node is used at most once, so the rebuild is one reverse pass
 /// with no recursion.
@@ -427,6 +435,8 @@ pub fn decode_node_table(table: &Value) -> Result<PyValue, NodeTableError> {
                     .ok_or_else(|| table_error(format!("node {index} opaque repr")))?
                     .to_string(),
                 truthy: arg(3).as_bool().unwrap_or(true),
+                type_name: arg(4).as_str().unwrap_or("object").to_string(),
+                json: arg(5).as_str().map(str::to_string),
             },
             other => {
                 return Err(table_error(format!(
@@ -530,7 +540,9 @@ pub fn encode_node_table(value: &PyValue) -> Value {
                 index,
                 repr,
                 truthy,
-            } => json!(["o", index, repr, truthy]),
+                type_name,
+                json,
+            } => json!(["o", index, repr, truthy, type_name, json]),
         };
         nodes[slot] = node;
     }
@@ -805,6 +817,8 @@ mod tests {
                     index: 0,
                     repr: "('x',)".into(),
                     truthy: true,
+                    type_name: "tuple".into(),
+                    json: Some("[\"x\"]".into()),
                 },
             ),
         ]);
@@ -834,6 +848,8 @@ mod tests {
                     index: 3,
                     repr: "{1, 2}".into(),
                     truthy: false,
+                    type_name: "set".into(),
+                    json: None,
                 },
             ),
         ]);

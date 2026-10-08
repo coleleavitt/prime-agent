@@ -11,6 +11,7 @@ pub mod executor;
 pub mod host;
 pub mod labels;
 pub mod lane;
+pub mod library;
 pub mod pyvalue;
 pub mod spec;
 pub mod spec_ops;

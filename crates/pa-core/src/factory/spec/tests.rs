@@ -67,6 +67,8 @@ fn opaque(repr: &str) -> PyValue {
         index: 0,
         repr: repr.to_string(),
         truthy: true,
+        type_name: "object".to_string(),
+        json: None,
     }
 }
 

@@ -19,13 +19,13 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, TypeAlias, TypedDict, TypeGuard, Unpack, cast, overload
 
+from . import _host
 from .factory import validate_factory_spec
 
 HarnessKind = Literal["prompt", "memory", "skill", "subagent", "factory"]
@@ -39,8 +39,6 @@ KERNEL_ENTRY_SOURCE = "kernel"
 _KINDS: tuple[HarnessKind, ...] = ("prompt", "memory", "skill", "subagent", "factory")
 _state_cache: dict[tuple[Path, HarnessScope], "HarnessState"] = {}
 
-# The hidden flag of the host binary that serves one request outside a kernel.
-_HARNESS_REQUEST_FLAG = "--prime-agent-harness-request"
 # The marker the host reads in place of a value JSON cannot carry (a set, a
 # datetime): validation names its type, and a save refuses it like json.dump.
 _UNSERIALIZABLE_KEY = "__rlm_harness_unserializable__"
@@ -306,78 +304,10 @@ def _wire(value: object) -> JsonValue:
     return cast("JsonValue", json.loads(text))
 
 
-def _checkout_host() -> Path | None:
-    """The host binary of the source checkout this runtime runs from, if built."""
-    name = "prime-agent.exe" if os.name == "nt" else "prime-agent"
-    checkout = Path(__file__).resolve().parents[3] / "target" / "debug" / name
-    return checkout if checkout.is_file() else None
-
-
-def _export_checkout_host() -> None:
-    """Run from a source checkout without a host-exported binary, export the
-    checkout's build the way the host exports its own to a kernel, so the
-    Python processes this one starts reach the same store."""
-    if _env_dir("PRIME_AGENT_EXECUTABLE") is None and (checkout := _checkout_host()) is not None:
-        os.environ["PRIME_AGENT_EXECUTABLE"] = str(checkout)
-
-
-_export_checkout_host()
-
-
-def _host_executable() -> str:
-    """The host binary that serves a request outside a kernel: the one the
-    host exported, else this source checkout's build."""
-    configured = _env_dir("PRIME_AGENT_EXECUTABLE")
-    if configured:
-        return configured
-    if (checkout := _checkout_host()) is not None:
-        return str(checkout)
-    raise RuntimeError(
-        "rlm.harness needs the Prime Agent host: call it inside a Prime Agent kernel, "
-        + "or set PRIME_AGENT_EXECUTABLE to the prime-agent binary"
-    )
-
-
-def _one_shot(payload: JsonObject) -> JsonValue:
-    executable = _host_executable()
-    try:
-        completed = subprocess.run(
-            [executable, _HARNESS_REQUEST_FLAG],
-            input=json.dumps(payload, ensure_ascii=False),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            check=False,
-        )
-    except OSError as err:
-        raise RuntimeError(f"rlm.harness could not start the host {executable}: {err}") from err
-    if completed.returncode != 0:
-        detail = completed.stderr.strip() or f"exit code {completed.returncode}"
-        raise RuntimeError(f"rlm.harness host request failed: {detail}")
-    try:
-        reply = cast("JsonValue", json.loads(completed.stdout))
-    except ValueError as err:
-        raise RuntimeError(f"rlm.harness host returned an invalid reply: {err}") from err
-    return reply
-
-
 def _host_call(request_type: str, payload: JsonObject) -> _HostReply:
     """Send one ``harness.<op>`` request; raise the store's error as the
     Python exception it names."""
-    from . import repl
-
-    message: JsonObject = {**payload, "type": request_type}
-    body: JsonValue
-    if repl.is_active():
-        reply: Mapping[str, object] = repl.host_request_blocking(message)
-        status = reply.get("status")
-        if status == "error":
-            raise RuntimeError(str(reply.get("error") or f"host request {request_type} failed"))
-        if status != "ok":
-            raise RuntimeError(f"host request {request_type} returned unexpected status: {status!r}")
-        body = cast("JsonValue", reply.get("result"))
-    else:
-        body = _one_shot(message)
+    body = cast("JsonValue", _host.request({**payload, "type": request_type}, client="rlm.harness"))
     if not _is_object(body):
         raise RuntimeError(f"host request {request_type} returned an invalid reply")
     if body.get("ok") is True:

@@ -134,17 +134,6 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
         std::env::set_var(crate::config::ENV_OFFLINE, "1");
     }
 
-    // The factory spec filter: the kernel runtime's validator client runs
-    // one spec operation through this binary when no serving host can
-    // answer it (the machine-library CLI runner, the runtime's unit tests).
-    if args.len() == 1 && args[0] == pa_core::factory::spec_ops::FACTORY_SPEC_FILTER_FLAG {
-        let stdin = std::io::stdin();
-        let stdout = std::io::stdout();
-        return pa_core::factory::spec_ops::run_spec_filter(&mut stdin.lock(), &mut stdout.lock())
-            .map(|()| 0)
-            .map_err(|error| format!("factory spec filter: {error}"));
-    }
-
     // Install-time kernel preparation: the installer invokes `--prime-agent-bootstrap`
     // after extracting a release, so the venv is ready before the first session.
     if args.len() == 1 && args[0] == "--prime-agent-bootstrap" {
@@ -477,13 +466,25 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
     }
 }
 
-/// The hidden flag a Python process outside a kernel uses to reach the
-/// harness store (`rlm.harness` without a host): one `harness.<op>` request
-/// on stdin, its reply on stdout.
+/// The hidden flag a Python process outside a kernel uses to reach the host
+/// (`rlm.harness` and `rlm.factory` without a serving kernel): one request
+/// on stdin, the handler's reply on stdout.
 pub const HARNESS_REQUEST_FLAG: &str = "--prime-agent-harness-request";
 
+/// The reply to one [`HARNESS_REQUEST_FLAG`] request: the session-free
+/// host requests (`harness.*`, `factory.spec`, `factory.library`) answer
+/// exactly as their kernel handlers do.
+fn hostless_reply(request: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
+    match request.get("type").and_then(serde_json::Value::as_str) {
+        Some("factory.spec") => pa_core::factory::spec_ops::run_spec_op(request),
+        Some("factory.library") => pa_core::factory::library::handle_request(request),
+        _ => Ok(pa_core::refinement::store::handle_request(request)),
+    }
+}
+
 /// Serve one [`HARNESS_REQUEST_FLAG`] request. Returns the exit code: 0
-/// with the reply printed, 2 when stdin is not one JSON request.
+/// with the reply printed, 1 when the request fails (the reason on
+/// stderr), 2 when stdin is not one JSON request.
 #[must_use]
 pub fn run_harness_request() -> i32 {
     use std::io::{Read as _, Write as _};
@@ -495,11 +496,17 @@ pub fn run_harness_request() -> i32 {
     let request: serde_json::Value = match serde_json::from_str(&input) {
         Ok(request) => request,
         Err(error) => {
-            eprintln!("Error: harness request is not JSON: {error}");
+            eprintln!("Error: host request is not JSON: {error}");
             return 2;
         }
     };
-    let reply = pa_core::refinement::store::handle_request(&request);
+    let reply = match hostless_reply(&request) {
+        Ok(reply) => reply,
+        Err(error) => {
+            eprintln!("Error: {error:#}");
+            return 1;
+        }
+    };
     let mut stdout = std::io::stdout().lock();
     match writeln!(stdout, "{reply}").and_then(|()| stdout.flush()) {
         Ok(()) => 0,

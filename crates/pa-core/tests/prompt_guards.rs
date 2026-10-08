@@ -193,8 +193,11 @@ const INTERNAL_HOST_REQUESTS: &[&str] = &[
     "mcp.integration.call_tool",
     // The kernel's factory client: `rlm.factory` is the bundled `factory`
     // skill's surface (documented by its SKILL.md and `rlm.factory.help()`),
-    // and `factory.spec` is the validator behind `rlm.harness` factory writes.
+    // `factory.spec` is the validator behind `rlm.harness` factory writes,
+    // and `factory.library` the machine library behind the `rlm.factory`
+    // MACHINE.md functions.
     "factory.spec",
+    "factory.library",
     "factory.run",
     "factory.status",
     "factory.stop",

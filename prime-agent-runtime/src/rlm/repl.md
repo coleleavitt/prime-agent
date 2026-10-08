@@ -296,7 +296,47 @@ document after the call>, "loadError": str|null}` or `{"ok": false, "error":
 "message": str}}`, which the client raises as that exception. Outside a
 kernel the client sends the same request to `prime-agent
 --prime-agent-harness-request` (stdin: the request, stdout: the reply);
-the host exports the binary to the kernel as `PRIME_AGENT_EXECUTABLE`.
+the host exports the binary to the kernel as `PRIME_AGENT_EXECUTABLE`
+(`PRIME_AGENT_HOST_BINARY` names one for a runtime with no host). The
+one-shot serves every request that needs no session the same way: the
+`harness.*` requests and the factory client's `factory.spec` and
+`factory.library` (a malformed one exits 1 with the reason on stderr).
+
+### Factory library requests
+
+The `rlm.factory` machine-library functions (`parse_machine_file`,
+`render_machine_file`, `list_machines`, `resolve_machine`, `import_machine`,
+`export_factory_spec`, `export_library_machine`, `export_machine`,
+`cli_dispatch`, and the name and description rules) are clients of the
+host's library (`pa_core::factory::library`, the same implementation behind
+`prime-agent factory`); each call is one blocking `factory.library` request
+whose `data` carries `op` and its fields:
+
+- `cwd`: the kernel's working directory, which every relative path in the
+  request is relative to (results and errors spell paths as sent).
+- Python values the call received travel as node tables (the `factory.spec`
+  encoding; an opaque leaf is `["o", index, repr, truthy, type name,
+  json.dumps spelling or null]`): `value` (`name_errors`,
+  `description_errors`), `text`/`source` (`parse`), `name`, `description`,
+  `version`, `author`, `spec` (`render`, `export_spec`), `target` and
+  `entry: {arguments, content, title} | null` (`export_machine`), `payload`
+  (`cli`).
+- `spec_json`: the client's own `json.dumps(spec, indent=2,
+  ensure_ascii=False)` for a spec it holds, or `spec_json_error: {type,
+  message}` for the exception that raised (re-raised where the renderer
+  would).
+- `dirs`: `[[source, dir], ...]`, the library levels in resolution order
+  (`scan`, `resolve`, `export_library`, `export_machine`, `cli`); `path`,
+  `target_dir` (`import`); `out_path`, `overwrite`; `run` (`export_machine`:
+  the live run's `factory.machine` view, or null).
+
+The handler's `result` is `{"ok": true, "result": ...}` (a parsed machine is
+`{name, description, version, author, spec: <node table>}`) or `{"ok":
+false, "error": {"type", "message", ...}}` naming the exception to raise:
+`ValueError`, `TypeError`, `AttributeError`, `RecursionError`,
+`MachineResolutionError` (with `broken`), `OSError` (with `errno`,
+`strerror`, `filename`), or `UnicodeDecodeError` (with `start`, `end`,
+`reason`, `bytes`). A malformed request is a host error.
 
 ### bash() requests
 

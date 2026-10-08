@@ -210,7 +210,7 @@ pub fn wire_session_runtime(
             store_dir: factory_store,
         },
     ));
-    crate::factory::host::register_factory_spec_handler(&mut handlers);
+    crate::factory::host::register_session_free_factory_handlers(&mut handlers);
     crate::factory::host::register_factory_executor_handlers(&mut handlers, &factory, agent_dir);
     SessionKernelWiring {
         session,

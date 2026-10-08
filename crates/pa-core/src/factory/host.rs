@@ -3,6 +3,8 @@
 //!
 //! - `factory.spec` serves the validator functions (and every
 //!   `rlm.harness` factory write): one spec operation per request.
+//! - `factory.library` serves the machine library functions
+//!   ([`super::library`]): one library operation per request.
 //! - `factory.run` / `.status` / `.stop` / `.resume` / `.graph` / `.watch`
 //!   drive the executor; `factory.machine` serves `export_machine`'s run
 //!   lookup.
@@ -26,12 +28,21 @@ use super::lane::{factory_enabled_in, FACTORY_DISABLED_MESSAGE};
 use super::pyvalue::{decode_node_table, PyValue};
 use crate::kernel::shared::{host_handler, HostRequestHandlers};
 
-/// Register `factory.spec`, which every session serves (validation needs
-/// no executor).
-pub fn register_factory_spec_handler(handlers: &mut HostRequestHandlers) {
+/// Register `factory.spec` and `factory.library`, which every session
+/// serves (neither validation nor the machine library needs an executor).
+/// The library's work is blocking file I/O, so it runs on the blocking pool.
+pub fn register_session_free_factory_handlers(handlers: &mut HostRequestHandlers) {
     handlers.register(
         "factory.spec",
         host_handler(|payload| async move { super::spec_ops::run_spec_op(&payload.data) }),
+    );
+    handlers.register(
+        "factory.library",
+        host_handler(|payload| async move {
+            tokio::task::spawn_blocking(move || super::library::handle_request(&payload.data))
+                .await
+                .map_err(anyhow::Error::from)?
+        }),
     );
 }
 
@@ -206,7 +217,7 @@ mod tests {
             let case = Case::new();
             let agent_dir = tempfile::TempDir::new().expect("agent dir");
             let mut handlers = HostRequestHandlers::new();
-            register_factory_spec_handler(&mut handlers);
+            register_session_free_factory_handlers(&mut handlers);
             register_factory_executor_handlers(&mut handlers, &case.executor, agent_dir.path());
             let lane = Self {
                 case,
@@ -306,8 +317,9 @@ mod tests {
                 "{request_type}"
             );
         }
-        // Validation and the export view stay ungated (harness writes gate
-        // themselves first; deletes and exports are not gated).
+        // Validation, the library, and the export view stay ungated
+        // (harness writes gate themselves first; deletes and exports are
+        // not gated).
         let reply = lane
             .call(
                 "factory.spec",
@@ -321,6 +333,16 @@ mod tests {
         assert_eq!(
             lane.call("factory.machine", json!({ "run_id": "r" })).await,
             json!({ "result": null })
+        );
+        // The machine library needs no executor and no opt-in either.
+        let name = encode_node_table(&PyValue::from_json(&json!("sweep")));
+        assert_eq!(
+            lane.call(
+                "factory.library",
+                json!({ "op": "name_errors", "value": name })
+            )
+            .await,
+            json!({ "ok": true, "result": [] })
         );
     }
 
