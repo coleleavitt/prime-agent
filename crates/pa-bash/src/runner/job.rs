@@ -458,7 +458,15 @@ impl Job {
         if delivered {
             self.journal.record(self.pid, false);
         }
-        let mut state = self.lock();
+        // The group is gone, so the pipe's writers are too: let the reader
+        // land what they wrote last (an EXIT trap's output after the fence)
+        // before the reap reports the stream's byte count. Bounded, for a
+        // writer that escaped the group and still holds the pipe.
+        let state = self.lock();
+        let (mut state, _) = self
+            .changed
+            .wait_timeout_while(state, DRAIN_GRACE, |state| !state.eof)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let bytes = state.buffer.total();
         state.events.push(Recorded::Reaped { bytes });
         drop(state);
