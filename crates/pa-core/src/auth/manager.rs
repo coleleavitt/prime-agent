@@ -44,7 +44,7 @@ fn now_epoch_ms() -> i64 {
 
 /// One OAuth refresh in flight per provider: the token fetch runs outside every
 /// lock, so TS's single-threaded single-flight needs its own gate.
-fn refresh_flight(provider: &str) -> std::sync::MutexGuard<'static, ()> {
+fn refresh_flight(provider: &str) -> RefreshFlight {
     static FLIGHTS: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashMap<String, &'static std::sync::Mutex<()>>>,
     > = std::sync::OnceLock::new();
@@ -55,8 +55,30 @@ fn refresh_flight(provider: &str) -> std::sync::MutexGuard<'static, ()> {
             .entry(provider.to_string())
             .or_insert_with(|| Box::leak(Box::new(std::sync::Mutex::new(()))))
     };
-    lock.lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+    let guard = lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    #[cfg(test)]
+    FLIGHT_HELD.with(|held| held.set(true));
+    RefreshFlight { _guard: guard }
+}
+
+/// A held [`refresh_flight`] gate, released on drop.
+struct RefreshFlight {
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Whether this thread holds a refresh flight (the write-phase verifier).
+    static FLIGHT_HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+impl Drop for RefreshFlight {
+    fn drop(&mut self) {
+        FLIGHT_HELD.with(|held| held.set(false));
+    }
 }
 
 #[derive(Clone)]

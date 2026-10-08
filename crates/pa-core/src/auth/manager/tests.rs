@@ -935,6 +935,255 @@ fn a_second_refresh_joins_the_first_flight_instead_of_fetching_again() {
     );
 }
 
+/// A store whose locked write waits, when the writing thread no longer holds its refresh flight,
+/// until a second fetch has run: it opens the window between a flight's release and its
+/// write landing, so a waiter admitted in that window shows up as a second fetch.
+struct WriteAfterReleaseBackend {
+    inner: crate::auth::storage::InMemoryAuthStorageBackend,
+    oauth: Arc<CountingOAuth>,
+}
+
+impl AuthStorageBackend for WriteAfterReleaseBackend {
+    fn read(&self) -> anyhow::Result<Option<String>> {
+        self.inner.read()
+    }
+
+    fn with_lock(
+        &self,
+        update: &mut dyn FnMut(Option<String>) -> anyhow::Result<((), Option<String>)>,
+    ) -> anyhow::Result<()> {
+        let fetched = self.oauth.calls.load(std::sync::atomic::Ordering::SeqCst) > 0;
+        if fetched && !FLIGHT_HELD.with(std::cell::Cell::get) {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while self.oauth.calls.load(std::sync::atomic::Ordering::SeqCst) < 2
+                && std::time::Instant::now() < deadline
+            {
+                std::thread::yield_now();
+            }
+        }
+        self.inner.with_lock(update)
+    }
+}
+
+#[test]
+fn a_refresh_flight_stays_held_until_its_credential_is_written() {
+    // The second caller waits on the gate while the first fetches. The first
+    // must hold the gate through its write: a gate released before the write
+    // admits the waiter to a re-check that still reads the expired credential,
+    // and it spends the (single-use) refresh token a second time.
+    let oauth = Arc::new(CountingOAuth {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        delay_ms: 80,
+    });
+    let backend = Arc::new(WriteAfterReleaseBackend {
+        inner: crate::auth::storage::InMemoryAuthStorageBackend::default(),
+        oauth: Arc::clone(&oauth),
+    });
+    let mut seed = AuthStorageData::default();
+    seed.insert("x-write-held", &expired_oauth("old-access"));
+    let seed = serde_json::to_string_pretty(&seed.0).unwrap();
+    backend
+        .inner
+        .with_lock(&mut |_| Ok(((), Some(seed.clone()))))
+        .unwrap();
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    let handles: Vec<_> = (0..2)
+        .map(|_| {
+            let oauth = Arc::clone(&oauth);
+            let backend: Arc<dyn AuthStorageBackend> = backend.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                let mut auth = AuthStorage::from_storage(backend, oauth);
+                barrier.wait();
+                auth.get_api_key("x-write-held")
+            })
+        })
+        .collect();
+    let keys: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    assert_eq!(
+        keys,
+        vec![Some("fetched-access".to_string()); 2],
+        "both callers get the refreshed credential"
+    );
+    assert_eq!(
+        oauth.calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "the waiter read the first flight's write instead of fetching again"
+    );
+}
+
+/// A store whose cross-process refresh claim is never granted.
+struct ClaimRefusingBackend(crate::auth::storage::InMemoryAuthStorageBackend);
+
+impl AuthStorageBackend for ClaimRefusingBackend {
+    fn with_lock(
+        &self,
+        update: &mut dyn FnMut(Option<String>) -> anyhow::Result<((), Option<String>)>,
+    ) -> anyhow::Result<()> {
+        self.0.with_lock(update)
+    }
+
+    fn claim_refresh(
+        &self,
+        _provider_id: &str,
+    ) -> anyhow::Result<Option<crate::platform::HeartbeatLock>> {
+        Err(anyhow::anyhow!("another process holds the refresh claim"))
+    }
+}
+
+#[test]
+fn an_ungranted_refresh_claim_spends_no_refresh_token() {
+    let oauth = Arc::new(CountingOAuth {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        delay_ms: 0,
+    });
+    let backend = ClaimRefusingBackend(crate::auth::storage::InMemoryAuthStorageBackend::default());
+    let mut seed = AuthStorageData::default();
+    seed.insert("x-unclaimed", &expired_oauth("old-access"));
+    let seed = serde_json::to_string_pretty(&seed.0).unwrap();
+    backend
+        .with_lock(&mut |_| Ok(((), Some(seed.clone()))))
+        .unwrap();
+    let mut auth = AuthStorage::from_storage(Arc::new(backend), oauth.clone());
+    let result = auth.get_api_key_with_source_token("x-unclaimed", true);
+    assert_eq!(
+        result,
+        AuthApiKeyResult {
+            credential_type: Some("oauth"),
+            oauth_refresh_failed: true,
+            ..AuthApiKeyResult::default()
+        },
+        "the lookup reports a failed refresh and keeps the login for a retry"
+    );
+    assert_eq!(
+        oauth.calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "no token fetch without the claim"
+    );
+}
+
+/// Several processes sharing one `auth.json` refresh the same expired login
+/// at once: the network refresh runs once across all of them. The test
+/// binary re-runs itself as the peer processes (`child` below).
+mod cross_process {
+    use super::*;
+    use std::io::{BufRead as _, Write as _};
+
+    const PROVIDER: &str = "x-cross-process-refresh";
+    const CHILD_DIR_ENV: &str = "PA_AUTH_REFRESH_CHILD_DIR";
+    const MARK: &str = "PA_AUTH_REFRESH_CHILD ";
+    const PROCESSES: usize = 3;
+
+    /// Counts fetches across processes: each appends one line to a shared file.
+    struct FileCountingOAuth {
+        fetches: std::path::PathBuf,
+    }
+
+    impl OAuthIntegration for FileCountingOAuth {
+        fn api_key_for(&self, _provider: &str, credential: &AuthCredential) -> Option<String> {
+            match credential {
+                AuthCredential::Oauth { access, .. } => Some(access.clone()),
+                _ => None,
+            }
+        }
+
+        fn refresh(&self, _provider: &str, _data: &AuthStorageData) -> Option<AuthCredential> {
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.fetches)
+                .ok()?;
+            file.write_all(format!("{}\n", std::process::id()).as_bytes())
+                .ok()?;
+            // A token endpoint round-trip: long enough that every peer's
+            // lookup lands while this fetch is in flight.
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            Some(CountingOAuth::fetched_credential())
+        }
+    }
+
+    /// The peer process: wait for the go line on stdin, resolve, report the key.
+    #[test]
+    fn child() {
+        let Some(dir) = std::env::var_os(CHILD_DIR_ENV).map(std::path::PathBuf::from) else {
+            return;
+        };
+        let mut auth = AuthStorage::from_storage(
+            Arc::new(crate::auth::storage::FileAuthStorageBackend::new(
+                dir.join("auth.json"),
+            )),
+            Arc::new(FileCountingOAuth {
+                fetches: dir.join("fetches"),
+            }),
+        );
+        auth.env_credentials = Arc::new(ScriptedEnv(HashMap::new()));
+        println!("{MARK}ready");
+        std::io::stdout().flush().unwrap();
+        let mut go = String::new();
+        std::io::stdin().read_line(&mut go).unwrap();
+        let key = auth.get_api_key(PROVIDER).unwrap_or_default();
+        println!("{MARK}key={key}");
+        std::io::stdout().flush().unwrap();
+    }
+
+    fn next_mark(lines: &mut impl Iterator<Item = std::io::Result<String>>) -> String {
+        lines
+            .map(Result::unwrap)
+            // The harness's own `test … ` prefix can share the line.
+            .find_map(|line| line.split_once(MARK).map(|(_, mark)| mark.to_string()))
+            .expect("the peer process reported")
+    }
+
+    #[test]
+    fn processes_sharing_the_store_refresh_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut seed = AuthStorageData::default();
+        seed.insert(PROVIDER, &expired_oauth("old-access"));
+        std::fs::write(
+            dir.path().join("auth.json"),
+            serde_json::to_string_pretty(&seed.0).unwrap(),
+        )
+        .unwrap();
+        let mut children: Vec<_> = (0..PROCESSES)
+            .map(|_| {
+                let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "auth::manager::tests::cross_process::child",
+                        "--nocapture",
+                        "--test-threads=1",
+                    ])
+                    .env(CHILD_DIR_ENV, dir.path())
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped())
+                    .spawn()
+                    .unwrap();
+                let mut lines = std::io::BufReader::new(child.stdout.take().unwrap()).lines();
+                assert_eq!(next_mark(&mut lines), "ready");
+                (child, lines)
+            })
+            .collect();
+        for (child, _) in &mut children {
+            child.stdin.as_mut().unwrap().write_all(b"go\n").unwrap();
+        }
+        let keys: Vec<String> = children
+            .iter_mut()
+            .map(|(child, lines)| {
+                let key = next_mark(lines);
+                assert!(child.wait().unwrap().success());
+                key
+            })
+            .collect();
+        assert_eq!(keys, vec!["key=fetched-access".to_string(); PROCESSES]);
+        let fetches = std::fs::read_to_string(dir.path().join("fetches")).unwrap();
+        assert_eq!(
+            fetches.lines().count(),
+            1,
+            "one network refresh across every process: {fetches:?}"
+        );
+    }
+}
+
 /// External credential writes (upstream #3000): `auth.json` rewritten by
 /// another process (a `/login` in a different session) reaches this
 /// long-lived store at its next lookup. The provider is synthetic, so no

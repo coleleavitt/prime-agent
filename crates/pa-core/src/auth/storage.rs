@@ -45,12 +45,50 @@ pub trait AuthStorageBackend: Send + Sync {
     fn changed_externally(&self) -> bool {
         false
     }
+
+    /// Claim `provider_id`'s OAuth refresh across every process sharing this
+    /// document, held until the returned guard drops. The refresh holds it
+    /// from its expiry re-check through its write, so one network refresh
+    /// serves every process and a rotated (single-use) refresh token is
+    /// never spent twice. The default, for stores no other process shares,
+    /// claims nothing: the in-process flight gate already serializes.
+    ///
+    /// # Errors
+    ///
+    /// The claim was not granted (a live holder outlasted the wait, or the
+    /// claim could not be created); the caller must not refresh without it.
+    fn claim_refresh(&self, _provider_id: &str) -> Result<Option<HeartbeatLock>> {
+        Ok(None)
+    }
 }
 
 use crate::platform::lock_dir::LockDir as LockGuard;
+use crate::platform::HeartbeatLock;
 
 /// Staleness for the sync auth lock (TS proper-lockfile default: 10s).
 const STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// How long a refresh waits for one live holder of its claim (the claim's
+/// heartbeat keeps a slow token fetch from being judged stale); a new holder
+/// restarts the wait.
+const REFRESH_CLAIM_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The poll interval while another process holds a refresh claim.
+const REFRESH_CLAIM_RETRY: std::time::Duration = std::time::Duration::from_millis(25);
+
+/// The file a provider's refresh claim locks (`{auth}.refresh-{hash}.lock`
+/// on disk): the provider id is hashed, since `mcp:<server>` ids are not
+/// portable file names.
+fn refresh_claim_file(auth_path: &Path, provider_id: &str) -> PathBuf {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(provider_id.as_bytes());
+    let mut name = auth_path.as_os_str().to_os_string();
+    name.push(".refresh-");
+    for byte in &digest[..8] {
+        name.push(format!("{byte:02x}"));
+    }
+    PathBuf::from(name)
+}
 
 pub struct FileAuthStorageBackend {
     auth_path: PathBuf,
@@ -268,6 +306,33 @@ impl AuthStorageBackend for FileAuthStorageBackend {
         }
         drop(guard);
         Ok(())
+    }
+
+    fn claim_refresh(&self, provider_id: &str) -> Result<Option<HeartbeatLock>> {
+        self.ensure_parent_dir()?;
+        let claim = refresh_claim_file(&self.auth_path, provider_id);
+        let lock_path = LockGuard::path_for(&claim);
+        let mut holder = None;
+        let mut deadline = std::time::Instant::now() + REFRESH_CLAIM_WAIT;
+        loop {
+            match LockGuard::acquire(&claim, STALE_AFTER) {
+                Ok(lock) => return Ok(Some(lock.with_heartbeat(STALE_AFTER / 2))),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    let current = LockGuard::holder_at(&lock_path);
+                    if current.is_some() && current != holder {
+                        holder = current;
+                        deadline = std::time::Instant::now() + REFRESH_CLAIM_WAIT;
+                    } else if std::time::Instant::now() >= deadline {
+                        anyhow::bail!(
+                            "the OAuth refresh claim is held by another process: {}",
+                            lock_path.display()
+                        );
+                    }
+                    std::thread::sleep(REFRESH_CLAIM_RETRY);
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
     }
 
     fn changed_externally(&self) -> bool {

@@ -231,10 +231,13 @@ impl AuthStorage {
     /// and write). The phases:
     ///
     /// 1. LOAD: the document through the read arm (no document lock).
-    /// 2. FETCH: the token call outside every lock, behind [`refresh_flight`]'s
-    ///    single-flight gate; the expiry is re-checked under the gate so a second
-    ///    fetch never wastes a single-use refresh token.
-    /// 3. WRITE: the locked read-modify-write, holding the lock only for the re-read,
+    /// 2. CLAIM: [`refresh_flight`]'s in-process gate, then the store's cross-process
+    ///    claim ([`crate::auth::AuthStorageBackend::claim_refresh`]). Both stay held through WRITE:
+    ///    a waiter admitted before the new credential is written would re-check, still
+    ///    read the expired one, and spend the single-use refresh token a second time.
+    /// 3. FETCH: the expiry re-checked under the claim (a released holder wrote a fresh
+    ///    credential), then the token call outside the document lock.
+    /// 4. WRITE: the locked read-modify-write, holding the lock only for the re-read,
     ///    insert, and atomic write. A peer that refreshed meanwhile keeps its fresher
     ///    credential.
     fn refresh_oauth(&mut self, provider_id: &str) -> Option<AuthCredential> {
@@ -266,27 +269,46 @@ impl AuthStorage {
             self.reload();
             return Some(credential);
         }
-        // FETCH: outside every lock, one flight per provider.
-        let fetched = {
-            let _flight = refresh_flight(provider_id);
-            // The gate may have just released a flight that wrote a fresh
-            // credential; re-check before spending a refresh token.
-            let content = self.storage.read().unwrap_or_default();
-            if let Some(credential) = parse_storage_data(content.as_deref())
-                .ok()
-                .and_then(|data| data.credential(provider_id))
-                .filter(|credential| {
+        // CLAIM: one flight per provider in this process, then across every
+        // process sharing the store; both held until this function returns.
+        let _flight = refresh_flight(provider_id);
+        let _claim = match self.storage.claim_refresh(provider_id) {
+            Ok(claim) => claim,
+            Err(error) => {
+                // An uncertain claim never spends a refresh token: the stored
+                // credential stays for a later retry.
+                tracing::warn!(
+                    provider = provider_id,
+                    error = %error,
+                    "the OAuth refresh claim was not granted"
+                );
+                self.reload();
+                return self.data.credential(provider_id).filter(|credential| {
                     matches!(
                         credential,
                         AuthCredential::Oauth { expires, .. } if now_epoch_ms() < *expires
                     )
-                })
-            {
-                self.reload();
-                return Some(credential);
+                });
             }
-            self.oauth.refresh(provider_id, &data)
         };
+        // FETCH: the previous holder may have just written a fresh credential;
+        // re-check before spending a refresh token, and spend the one stored now.
+        let data = self
+            .storage
+            .read()
+            .ok()
+            .and_then(|content| parse_storage_data(content.as_deref()).ok())
+            .unwrap_or(data);
+        if let Some(credential) = data.credential(provider_id).filter(|credential| {
+            matches!(
+                credential,
+                AuthCredential::Oauth { expires, .. } if now_epoch_ms() < *expires
+            )
+        }) {
+            self.reload();
+            return Some(credential);
+        }
+        let fetched = self.oauth.refresh(provider_id, &data);
         let Some(new_credential) = fetched else {
             // Refresh failed: keep credentials for a later retry; a peer
             // may have refreshed meanwhile, so reload before failing.
