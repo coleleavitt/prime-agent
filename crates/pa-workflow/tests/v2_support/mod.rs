@@ -629,3 +629,10 @@ pub fn assert_same(rust: &Value, ts: &Value, what: &str) {
         panic!("{what}: {difference}");
     }
 }
+
+/// The slice-3 settlement cases (`fixtures/v2-settlement/cases.json`).
+pub fn read_settlement_cases() -> Vec<Value> {
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/v2-settlement/cases.json");
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}

@@ -2335,6 +2335,7 @@ name = "pa-workflow"
 version = "0.9.8"
 dependencies = [
  "anyhow",
+ "futures",
  "nix 0.29.0",
  "pa-agent",
  "pa-ai",

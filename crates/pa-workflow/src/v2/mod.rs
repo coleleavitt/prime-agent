@@ -9,14 +9,20 @@
 //! answers the closed `CAPABILITY_UNAVAILABLE` error, as the TS host's
 //! disabled capability did. Beneath it, dormant, sits slice 4: the durable
 //! per-root store ([`store`]) and the pure reducer ([`reducer`]) a future
-//! controller writes through; no product path opens a store yet.
+//! controller writes through, and slice 3's pure lanes: the terminal
+//! capture slot ([`capture`]), the settlement reducer ([`settlement`]) whose
+//! `TurnSettled` events the store ingests, and the at-most-once dispatch
+//! guard ([`dispatch`]). No product path reaches any of them yet.
 
 pub mod capability;
+pub mod capture;
+pub mod dispatch;
 pub mod host;
 pub mod json;
 pub mod projection;
 pub mod reducer;
 pub mod schema;
+pub mod settlement;
 pub mod store;
 pub mod wire;
 

@@ -24,6 +24,7 @@ rusqlite = { version = "0.40.2", features = ["bundled", "backup"] }
 nix = { version = "0.29", features = ["fs"] }
 
 [dev-dependencies]
+futures.workspace = true
 pa-ai.workspace = true
 tempfile = "3"
 tokio-util.workspace = true
