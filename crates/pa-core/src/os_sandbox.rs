@@ -134,6 +134,20 @@ impl SessionSandbox {
         }
     }
 
+    /// Whether granting `scratch` as writable would make `workspace` writable under a
+    /// `read-only` sandbox: `scratch` is the workspace or one of its ancestors (compared
+    /// canonically; a path that does not exist exposes nothing).
+    #[must_use]
+    pub fn exposes_workspace(&self, scratch: &Path, workspace: &Path) -> bool {
+        if self.policy.confinement != Confinement::ReadOnly {
+            return false;
+        }
+        match (scratch.canonicalize(), workspace.canonicalize()) {
+            (Ok(scratch), Ok(workspace)) => workspace.starts_with(scratch),
+            (Err(_), _) | (_, Err(_)) => false,
+        }
+    }
+
     /// Whether `other` enforces the same policy (a spawn under either is confined alike).
     #[must_use]
     pub fn same_policy(&self, other: &SessionSandbox) -> bool {
@@ -239,6 +253,11 @@ impl SessionSandbox {
     /// spawns: the kernel and the `bash()` commands the host runs for it share
     /// one restriction.
     ///
+    /// Under `read-only` a scratch directory that contains the workspace (a checkout inside
+    /// `$TMPDIR`) is not granted: Landlock cannot deny a path beneath a directory it allows,
+    /// so granting it would make the workspace writable. The process loses that scratch
+    /// instead (see [`Self::exposes_workspace`] for choosing a private one).
+    ///
     /// # Errors
     ///
     /// The sandbox is unavailable on this machine, or its rules cannot be built.
@@ -255,6 +274,20 @@ impl SessionSandbox {
             // The sandbox only grants directories that exist when it is built.
             let _ = std::fs::create_dir_all(dir);
             scratch.push(dir.clone());
+        }
+        if self.policy.confinement == Confinement::ReadOnly {
+            scratch.retain(|dir| {
+                let exposes = self.exposes_workspace(dir, workspace);
+                if exposes {
+                    tracing::warn!(
+                        target: "pa_core::kernel",
+                        scratch = %dir.display(),
+                        workspace = %workspace.display(),
+                        "read-only sandbox: not granting a scratch directory that contains the workspace"
+                    );
+                }
+                !exposes
+            });
         }
         let paths = SandboxPaths {
             workspace: workspace.to_path_buf(),
@@ -480,6 +513,43 @@ mod tests {
                 None,
                 Some("OS sandbox unavailable: no Landlock".to_string())
             )
+        );
+    }
+
+    /// Under `read-only` a scratch directory that is the workspace or one of its ancestors
+    /// would expose it; a sibling would not, and `workspace-write` exposes nothing it does not
+    /// already grant.
+    #[test]
+    fn a_scratch_dir_containing_the_workspace_exposes_it_under_read_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let tmp = dir.path().join("tmp");
+        let workspace = tmp.join("checkout");
+        let sibling = dir.path().join("artifacts");
+        for path in [&workspace, &sibling] {
+            std::fs::create_dir_all(path).unwrap();
+        }
+        let with = |confinement| SessionSandbox {
+            policy: SandboxPolicy {
+                confinement,
+                network: NetworkAccess::Denied,
+                writable_roots: Vec::new(),
+            },
+            support: Err(SandboxError::Unsupported {
+                reason: "unused".to_string(),
+            }),
+            extra_scratch: Vec::new(),
+        };
+        let read_only = with(Confinement::ReadOnly);
+        let workspace_write = with(Confinement::WorkspaceWrite);
+        assert_eq!(
+            [
+                read_only.exposes_workspace(&tmp, &workspace),
+                read_only.exposes_workspace(&workspace, &workspace),
+                read_only.exposes_workspace(&sibling, &workspace),
+                read_only.exposes_workspace(&dir.path().join("missing"), &workspace),
+                workspace_write.exposes_workspace(&tmp, &workspace),
+            ],
+            [true, true, false, false, false]
         );
     }
 

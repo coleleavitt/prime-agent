@@ -70,8 +70,12 @@ struct Fixture {
 /// A provisioner over a workspace outside the temp dirs, its sandbox configured as `sandbox`
 /// and plan mode starting at `plan`; `None` (after saying why) where the test cannot run.
 fn fixture(sandbox: SandboxMode, plan: bool) -> Option<Fixture> {
+    fixture_in(outside_tmp_base()?, sandbox, plan)
+}
+
+/// [`fixture`] with the workspace and the artifacts under `base`.
+fn fixture_in(base: tempfile::TempDir, sandbox: SandboxMode, plan: bool) -> Option<Fixture> {
     let python = kernel_python()?;
-    let base = outside_tmp_base()?;
     let root = base.path().canonicalize().unwrap();
     let workspace = root.join("workspace");
     let artifacts = root.join("artifacts");
@@ -217,6 +221,41 @@ async fn plan_mode_keeps_the_user_cache_dir_writable() {
     )
     .await;
     assert_eq!(written, "'cache ok'");
+    fixture.provisioner.dispose(None).await;
+}
+
+/// A workspace inside the temp directory: `read-only` grants the temp directory, and Landlock
+/// cannot carve the workspace out of it, so the plan-mode kernel gets a private temp directory
+/// in the session's artifact dir instead of the shared one. A cell, `subprocess` and `bash()`
+/// still fail with EACCES in the workspace, and temp files keep working.
+#[tokio::test]
+async fn a_workspace_inside_the_temp_dir_stays_read_only_in_plan_mode() {
+    let base = tempfile::tempdir().unwrap();
+    assert!(base.path().starts_with(std::env::temp_dir()));
+    let Some(fixture) = fixture_in(base, SandboxMode::Off, true) else {
+        return;
+    };
+    let ws = &fixture.workspace;
+    let results = [
+        cell(&fixture, &python_write(&ws.join("cell.txt"))).await,
+        cell(&fixture, &subprocess_write(&ws.join("subprocess.txt"))).await,
+        cell(&fixture, &bash_write(&ws.join("bash.txt"))).await,
+        cell(&fixture, TEMP_WRITE).await,
+    ];
+    assert_eq!(
+        results,
+        [
+            "'errno 13'".to_string(),
+            "1".to_string(),
+            "(1, True)".to_string(),
+            "'tmp ok'".to_string(),
+        ]
+    );
+    let written: Vec<bool> = ["cell.txt", "subprocess.txt", "bash.txt"]
+        .iter()
+        .map(|name| ws.join(name).exists())
+        .collect();
+    assert_eq!(written, [false; 3]);
     fixture.provisioner.dispose(None).await;
 }
 

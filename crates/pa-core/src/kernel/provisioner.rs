@@ -1049,6 +1049,45 @@ async fn run_startup(
     }
 }
 
+/// A fresh private temp directory for a `read-only` kernel whose workspace is
+/// inside the shared one: `kernel-tmp` in the session artifact dir, else under
+/// the agent dir's `tmp`. Emptied at each start (the previous kernel is gone);
+/// `None` when neither can be made without exposing the workspace.
+fn private_kernel_tmp(
+    options: &IpythonKernelProvisionerOptions,
+    snapshot_dir: Option<&std::path::Path>,
+    sandbox: &crate::os_sandbox::SessionSandbox,
+    cwd: &std::path::Path,
+) -> Option<PathBuf> {
+    let session = options
+        .session_id
+        .clone()
+        .unwrap_or_else(|| std::process::id().to_string());
+    let candidates = snapshot_dir
+        .map(|dir| dir.join("kernel-tmp"))
+        .into_iter()
+        .chain(
+            options
+                .env
+                .get("PRIME_AGENT_CODING_AGENT_DIR")
+                .map(|agent_dir| {
+                    PathBuf::from(agent_dir)
+                        .join("tmp")
+                        .join(format!("kernel-{session}"))
+                }),
+        );
+    for candidate in candidates {
+        let _ = std::fs::remove_dir_all(&candidate);
+        if std::fs::create_dir_all(&candidate).is_ok()
+            && crate::platform::perms::restrict_dir(&candidate).is_ok()
+            && !sandbox.exposes_workspace(&candidate, cwd)
+        {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 /// Boot one kernel, restore the prior namespace, then run the runtime bootstrap. Reports the result
 /// through `on_bootstrap_result` once per actual boot.
 async fn start_kernel(
@@ -1146,6 +1185,31 @@ async fn start_kernel_impl(
         Some(plan) => plan.spawn_sandbox(options.sandbox.as_ref()),
         None => options.sandbox.clone(),
     };
+    // A `read-only` kernel whose workspace sits inside its temp directory
+    // cannot be granted that temp directory (it would make the workspace
+    // writable): it gets a private one beside its own state instead.
+    if let Some(sandbox) = &sandbox {
+        let shared_tmp = crate::os_sandbox::temp_dir_for(
+            env.get("TMPDIR")
+                .cloned()
+                .or_else(|| std::env::var("TMPDIR").ok())
+                .as_deref(),
+        );
+        if sandbox.exposes_workspace(&shared_tmp, &cwd) {
+            if let Some(private) =
+                private_kernel_tmp(options, snapshot_dir.as_deref(), sandbox, &cwd)
+            {
+                env.insert("TMPDIR".into(), private.to_string_lossy().into_owned());
+            } else {
+                tracing::warn!(
+                    target: "pa_core::kernel",
+                    workspace = %cwd.display(),
+                    "the workspace is inside the temp directory and no private temp \
+                     directory is available: the read-only kernel runs without a writable one"
+                );
+            }
+        }
+    }
     let manager = ReplKernelManager::new(KernelManagerOptions {
         python: options.python.clone(),
         cwd: Some(cwd.clone()),

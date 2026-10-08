@@ -32,7 +32,7 @@ What each mode allows a confined process to do:
 | read and run anything | yes | yes |
 | write the working directory | no | yes |
 | write `/tmp` and `writableRoots` | no | yes |
-| write `$TMPDIR` and the session's own state (snapshot, harness state) | yes | yes |
+| write `$TMPDIR` and the session's own state (snapshot, harness state) | yes (a private `TMPDIR` when the working directory is inside the shared one) | yes |
 | write `/dev/null`, the terminal, `/dev/shm` | yes | yes |
 
 A write the sandbox refuses fails with a permission error (`EACCES`, "Permission denied").
@@ -133,9 +133,15 @@ directory and the session's own state.
   dry-run that fills a tool cache (`uv`, `pip`) works, as plan mode's messages promise
   ("write only under temp/cache directories"). A configured `read-only` sandbox is never
   loosened: under it plan mode changes nothing, and the cache directory stays read-only.
-- **A workspace inside a writable root stays writable.** Landlock cannot deny a path beneath
-  a directory it allows, so a working directory inside `$TMPDIR` (or `/tmp` when `TMPDIR` is
-  unset) is not protected by plan mode.
+- **A workspace inside the temp directory stays read-only.** Landlock cannot deny a path
+  beneath a directory it allows, so under `read-only` (plan mode's or a configured one) a
+  scratch directory that contains the working directory is not granted. When that is the
+  kernel's temp directory (a checkout inside `$TMPDIR`, or `/tmp` with `TMPDIR` unset), the
+  kernel gets a private `TMPDIR` instead: `kernel-tmp` in the session's artifact directory, or
+  under the agent directory's `tmp` for a session without one, emptied at each kernel start.
+  `bash()` jobs inherit it. With neither available the kernel runs without a writable temp
+  directory. A stdio MCP server, or a `!` command under a configured `read-only` sandbox, whose
+  working directory is inside its temp directory loses that temp directory the same way.
 
 The host still refuses its own `edit`, `write` and `bash` tools in plan mode, whatever the
 sandbox does.
