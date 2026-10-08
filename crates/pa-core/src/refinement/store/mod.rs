@@ -19,6 +19,7 @@
 pub mod document;
 mod overview;
 mod pyfmt;
+mod resolve;
 mod search;
 mod validate;
 
@@ -74,6 +75,7 @@ pub enum StoreErrorKind {
     Runtime,
     Timeout,
     Os,
+    Recursion,
 }
 
 impl StoreErrorKind {
@@ -84,6 +86,7 @@ impl StoreErrorKind {
             StoreErrorKind::Runtime => "RuntimeError",
             StoreErrorKind::Timeout => "TimeoutError",
             StoreErrorKind::Os => "OSError",
+            StoreErrorKind::Recursion => "RecursionError",
         }
     }
 }
@@ -573,23 +576,28 @@ impl Request<'_> {
             .get("store")
             .and_then(Value::as_object)
             .ok_or_else(|| type_error("harness request carries no store".to_string()))?;
-        let scope = match store.get("scope").and_then(Value::as_str) {
-            Some("global") => HarnessScope::Global,
-            _ => HarnessScope::Local,
-        };
-        let location = match store.get("file").and_then(Value::as_str) {
-            Some(file) => StoreLocation::File(PathBuf::from(file)),
-            None => StoreLocation::Memory(store.get("document").cloned().unwrap_or(Value::Null)),
-        };
-        Ok(StoreTarget {
-            location,
-            scope,
-            write_error: store
-                .get("writeError")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            lock: STORE_LOCK,
-        })
+        Ok(store_target(store))
+    }
+}
+
+/// One store descriptor (`{"file", "scope", "document", "writeError"}`).
+fn store_target(store: &Map<String, Value>) -> StoreTarget {
+    let scope = match store.get("scope").and_then(Value::as_str) {
+        Some("global") => HarnessScope::Global,
+        _ => HarnessScope::Local,
+    };
+    let location = match store.get("file").and_then(Value::as_str) {
+        Some(file) => StoreLocation::File(PathBuf::from(file)),
+        None => StoreLocation::Memory(store.get("document").cloned().unwrap_or(Value::Null)),
+    };
+    StoreTarget {
+        location,
+        scope,
+        write_error: store
+            .get("writeError")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        lock: STORE_LOCK,
     }
 }
 
@@ -880,6 +888,7 @@ fn dispatch(request_type: &str, request: &Request<'_>) -> Result<(Value, Outcome
                 skill_write(session, request, &factory, create).map(|entry| entry_json(&entry))
             })
         }
+        "harness.resolve_factory" => resolve::resolve_factory(&target, request),
         "harness.factory" => {
             factory_precheck(request, &factory)?;
             with_store(&target, true, |session| {
@@ -933,6 +942,7 @@ pub fn register_host_handlers(handlers: &mut crate::kernel::shared::HostRequestH
         "harness.create_skill",
         "harness.update_skill",
         "harness.factory",
+        "harness.resolve_factory",
     ] {
         handlers.register(
             request_type,

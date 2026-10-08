@@ -586,3 +586,166 @@ fn factory_writes_validate_the_spec_they_store() {
     assert_eq!(reply["ok"], json!(true), "{reply}");
     assert_eq!(reply["result"]["arguments"], json!({"dag": valid}));
 }
+
+/// A store's `harness.resolve_factory` reply value, decoded: `{"spec",
+/// "subagents"}` as the client ships it to `factory.run`.
+fn run_value(result: &Value) -> Value {
+    crate::factory::pyvalue::decode_node_table(&result["value"])
+        .expect("value table")
+        .to_json()
+}
+
+#[test]
+fn a_factory_run_resolves_its_entry_or_library_machine_and_subagents_in_one_request() {
+    let store = store();
+    let agent_dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        agent_dir.path().join("settings.json"),
+        r#"{"factory": {"enabled": true}}"#,
+    )
+    .unwrap();
+    let subagent = |title: &str, id: &str, metadata: Value| {
+        json!({
+            "kind": "subagent", "title": title, "content": format!("{title} prompt."), "id": id,
+            "path": "general", "reference": null, "arguments": null, "metadata": metadata,
+            "source": "kernel",
+        })
+    };
+    store.ok("harness.create", subagent("Worker", "worker", json!(null)));
+    store.ok(
+        "harness.create",
+        subagent(
+            "The Reviewer",
+            "reviewer-md",
+            json!({"model": "m", "thinking": "low"}),
+        ),
+    );
+    let dag = json!({"nodes": [
+        {"id": "x", "subagent": "worker"},
+        {"id": "y", "subagent": "The Reviewer"},
+        {"id": "z", "subagent": "ghost"},
+        {"id": "w", "subagent": {"prompt": "Inline."}},
+        {"id": "v", "subagent": "worker"},
+    ]});
+    let reply = store.call_with(
+        "harness.create",
+        json!({
+            "kind": "factory", "title": "F", "content": "c", "id": "sw", "path": "general",
+            "reference": null, "arguments": {"dag": dag}, "metadata": null, "source": "kernel",
+        }),
+        json!({"agentDir": agent_dir.path().display().to_string(), "factorySpecErrors": []}),
+    );
+    assert_eq!(reply["ok"], json!(true), "{reply}");
+
+    // A stored entry: its spec and every reference resolved (by id, else
+    // by title; an unknown one is null for the host to report).
+    let resolved = store.ok("harness.resolve_factory", json!({"id": "sw"}));
+    assert_eq!(resolved["spec_id"], json!("sw"));
+    assert_eq!(resolved.get("machine"), None);
+    assert_eq!(
+        run_value(&resolved),
+        json!({
+            "spec": dag,
+            "subagents": {
+                "worker": {"content": "Worker prompt.", "model": null, "thinking": null},
+                "The Reviewer": {"content": "The Reviewer prompt.", "model": "m", "thinking": "low"},
+                "ghost": null,
+            },
+        })
+    );
+    // No entry and no library: the unknown-spec refusal.
+    assert_eq!(
+        error_of(&store.call("harness.resolve_factory", json!({"id": "nope"}))),
+        (
+            "ValueError".to_string(),
+            "unknown factory spec 'nope'".to_string()
+        )
+    );
+
+    // The library: a template runs by name, with the run_factory frames
+    // for a broken machine, a missing one, and an id that is no name.
+    let library = tempfile::tempdir().unwrap();
+    let repo = library.path().join("repo");
+    for (name, spec) in [
+        ("sweep", r#"{"nodes": [{"id": "a", "subagent": "worker"}]}"#),
+        ("broken", r#"{"states": []}"#),
+    ] {
+        std::fs::create_dir_all(repo.join(name)).unwrap();
+        std::fs::write(
+            repo.join(name).join("MACHINE.md"),
+            format!("---\nname: {name}\ndescription: D.\n---\n\n```machine-spec\n{spec}\n```\n"),
+        )
+        .unwrap();
+    }
+    let dirs = json!({"library": [
+        ["repo", repo.display().to_string()],
+        ["user", library.path().join("user").display().to_string()],
+    ]});
+    let template = store.call_with(
+        "harness.resolve_factory",
+        json!({"id": "sweep"}),
+        dirs.clone(),
+    );
+    assert_eq!(template["ok"], json!(true), "{template}");
+    let template = &template["result"];
+    let path = repo.join("sweep").join("MACHINE.md").display().to_string();
+    assert_eq!(
+        (
+            template["spec_id"].clone(),
+            template["machine"].clone(),
+            template["machine_path"].clone()
+        ),
+        (json!("sweep"), json!("sweep"), json!(path))
+    );
+    assert_eq!(
+        run_value(template)["subagents"],
+        json!({"worker": {"content": "Worker prompt.", "model": null, "thinking": null}})
+    );
+    let broken = repo.join("broken").join("MACHINE.md").display().to_string();
+    for (id, message) in [
+        (
+            "broken",
+            format!(
+                "the library machine 'broken' exists but is broken ({broken}: factory machine \
+                 must declare between 1 and 1024 states, got 0)"
+            ),
+        ),
+        (
+            "missing",
+            "unknown factory spec 'missing': no stored factory entry and no library machine \
+             with that name (unknown machine 'missing': no MACHINE.md for it in the machine \
+             library (machines: sweep))"
+                .to_string(),
+        ),
+        (
+            "My Spec",
+            "unknown factory spec 'My Spec': no stored factory entry, and the id is not a valid \
+             machine name either (machine name contains invalid characters (must be lowercase \
+             a-z, 0-9, hyphens only))"
+                .to_string(),
+        ),
+    ] {
+        assert_eq!(
+            error_of(&store.call_with("harness.resolve_factory", json!({"id": id}), dirs.clone())),
+            ("ValueError".to_string(), message),
+            "{id}"
+        );
+    }
+
+    // A machine the caller holds: its references resolve the same way.
+    let table =
+        crate::factory::pyvalue::encode_node_table(&crate::factory::pyvalue::PyValue::from_json(
+            &json!({"states": [{"id": "a", "entry": true, "subagent": "reviewer-md"}]}),
+        ));
+    let held = store.call_with(
+        "harness.resolve_factory",
+        json!({"id": "held"}),
+        json!({"factorySpec": table}),
+    );
+    assert_eq!(held["ok"], json!(true), "{held}");
+    assert_eq!(held["result"]["spec_id"], json!("held"));
+    assert_eq!(
+        run_value(&held["result"])["subagents"],
+        json!({"reviewer-md": {"content": "The Reviewer prompt.", "model": "m", "thinking": "low"}})
+    );
+}

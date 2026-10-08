@@ -75,6 +75,7 @@ _ERRORS: dict[str, type[Exception]] = {
     "RuntimeError": RuntimeError,
     "TimeoutError": TimeoutError,
     "OSError": OSError,
+    "RecursionError": RecursionError,
 }
 
 
@@ -454,6 +455,30 @@ class HarnessState:
         reply = _host_call(request_type, payload)
         self._adopt(reply.get("state"), reply.get("loadError"))
         return reply.get("result")
+
+    def _global_store(self) -> JsonObject | None:
+        """The global store a ``global:`` id routes to, as a store
+        descriptor; ``None`` when that is this store."""
+        path = _state_file(self._global_target_state_dir, global_=True)
+        if self.file_path is not None and path == self.file_path and self.scope == "global":
+            return None
+        return {"file": str(path), "scope": "global", "document": None, "writeError": None}
+
+    def _resolve_factory(
+        self, spec_id: object, *, held: object = None, library: list[list[str]] | None = None
+    ) -> JsonObject:
+        """What a factory run needs from the harness, in one request
+        (``harness.resolve_factory``): the stored factory entry ``spec_id``
+        names (else, given ``library`` levels, the library machine), or the
+        ``held`` spec, with every subagent reference resolved -- the run's
+        ``factory.run`` payload."""
+        extra: JsonObject = {"globalStore": self._global_store(), "library": cast("JsonValue", library)}
+        if held is not None:
+            extra["factorySpec"] = cast("JsonObject", _host.encode_value(held)[0])
+        resolved = self._call("harness.resolve_factory", extra, id=spec_id)
+        if not _is_object(resolved):
+            raise _invalid("factory run")
+        return resolved
 
     def load(self) -> "HarnessState":
         _ = self._call("harness.load")

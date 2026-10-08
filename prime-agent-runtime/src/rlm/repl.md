@@ -276,8 +276,8 @@ blocking host request of type `harness.load`, `harness.save`, `harness.get`,
 `harness.list`, `harness.search`, `harness.overview`, `harness.snapshot`,
 `harness.upsert`, `harness.create`, `harness.update`, `harness.delete`,
 `harness.set_enabled`, `harness.record_refinement`, `harness.create_skill`,
-`harness.update_skill`, or `harness.factory` (`create_factory` /
-`update_factory`). `data` carries:
+`harness.update_skill`, `harness.factory` (`create_factory` /
+`update_factory`), or `harness.resolve_factory` (below). `data` carries:
 
 - `store`: `{"file": str|null, "scope": "local"|"global", "document": object|null, "writeError": str|null}`
   — the state file the client resolved (from `RLM_HARNESS_STATE_DIR`,
@@ -293,9 +293,21 @@ blocking host request of type `harness.load`, `harness.save`, `harness.get`,
   the factory validator on when the write stores one (a host still accepts
   a client's own `factorySpecErrors` list in its place).
 
+`harness.resolve_factory` (`args.id`: the spec id) is everything a factory
+run needs from the harness in one read: the stored factory entry the id
+names (a `local:`/`global:` prefix routes it; `globalStore` is the global
+store's descriptor, or null when that is this store), else, when `library`
+(`[[source, dir], ...]`) is set, the library machine (with
+`rlm.factory.run`'s refusals for a broken, missing, or invalidly named one),
+else `factorySpec` (a node table) as the spec a caller holds; then every
+string `subagent` reference of its states resolves (the subagent entry by
+id, else the first listed by title). Its `result` is the `factory.run`
+payload: `{"spec_id", "value": <node table of {"spec", "subagents"}>}`
+plus `machine`/`machine_path` for a library run.
+
 The handler's `result` is `{"ok": true, "result": ..., "state": <the store's
 document after the call>, "loadError": str|null}` or `{"ok": false, "error":
-{"type": "ValueError"|"TypeError"|"RuntimeError"|"TimeoutError"|"OSError",
+{"type": "ValueError"|"TypeError"|"RuntimeError"|"TimeoutError"|"OSError"|"RecursionError",
 "message": str}}`, which the client raises as that exception. Outside a
 kernel the client sends the same request to `prime-agent
 --prime-agent-harness-request` (stdin: the request, stdout: the reply);

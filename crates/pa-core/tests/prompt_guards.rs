@@ -183,6 +183,9 @@ const INTERNAL_HOST_REQUESTS: &[&str] = &[
     "harness.create_skill",
     "harness.update_skill",
     "harness.factory",
+    // `rlm.factory.run`'s one-request resolution of its entry or library
+    // machine and the subagents its states name.
+    "harness.resolve_factory",
     "mcp.session.list_tools",
     "mcp.session.call_tool",
     "mcp.session.describe_tool",

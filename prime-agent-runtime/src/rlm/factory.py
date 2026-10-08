@@ -238,11 +238,12 @@ __all__ = [
 # The executor (``pa_core::factory::executor``) runs host-side, one per
 # session, with a durable record per run: a kernel restart or crash never
 # touches a running workflow, and the next kernel reads the same runs
-# through these calls. This client resolves what only the kernel knows --
-# the stored factory entry and the harness subagents its states reference
-# (``rlm.harness``), or the library machine a template run names -- and
-# ships them to the host; validation, canonicalization, admission,
-# transitions, budgets, and every report are the host's.
+# through these calls. The harness store resolves a run's stored factory
+# entry (else the library machine a template run names) and the subagents
+# its states reference in one ``harness.resolve_factory`` request against
+# the store this kernel's ``rlm.harness`` names; validation,
+# canonicalization, admission, transitions, budgets, and every report are
+# the executor's.
 # ---------------------------------------------------------------------------
 
 WATCH_TIMEOUT_CAP_SECONDS = 60.0
@@ -287,43 +288,17 @@ def _entry_spec(entry: Any) -> Any:
     return spec
 
 
-def _subagent_references(harness: Any, spec: Any) -> dict[str, Any]:
-    """Resolve every string subagent reference a spec's states (or dag
-    nodes) carry: the harness entry by id, else the first by title, as
-    ``{"content", "model", "thinking"}`` (``None`` for an unknown
-    reference; the host reports it in state order)."""
-    if not isinstance(spec, dict):
-        return {}
-    rows = spec.get("states") if ("states" in spec or "transitions" in spec) else spec.get("nodes")
-    table: dict[str, Any] = {}
-    for row in rows if isinstance(rows, list) else []:
-        reference = row.get("subagent") if isinstance(row, dict) else None
-        if not isinstance(reference, str) or reference in table:
-            continue
-        entry = harness.get("subagent", reference)
-        if entry is None:
-            entry = next((item for item in harness.list("subagent") if item.title == reference), None)
-        if entry is None:
-            table[reference] = None
-            continue
-        metadata = entry.metadata if isinstance(entry.metadata, dict) else {}
-        table[reference] = {
-            "content": entry.content,
-            "model": metadata.get("model"),
-            "thinking": metadata.get("thinking"),
-        }
-    return table
-
-
 class FactoryExecutor:
     """The kernel's client over the host's factory executor.
 
     Runs live in the Prime Agent host (one executor per session, a durable
     record per run): they survive kernel restarts and crashes, and a host
     restart pauses an in-flight run as interrupted for
-    ``await rlm.factory.resume(run_id)``. The client resolves the stored
-    factory entry and its harness subagents from ``harness`` (default: the
-    session's ``rlm.harness``) and ships them to the host, which validates,
+    ``await rlm.factory.resume(run_id)``. The harness store behind
+    ``harness`` (default: the session's ``rlm.harness``) resolves the
+    stored factory entry and its subagents in one request
+    (``harness.resolve_factory``), and the client ships them to the
+    executor, which validates,
     canonicalizes, admits children through the session's ``rlm.spawn``
     path, and owns every report. ``now`` and ``sleep`` are accepted for
     compatibility and ignored: the host owns the clock.
@@ -354,14 +329,10 @@ class FactoryExecutor:
 
         return rlm_namespace.harness
 
-    async def _start(
-        self, spec_id: str, spec: Any, *, name: "str | None", library: "dict[str, Any] | None" = None
-    ) -> dict[str, Any]:
-        harness = self._resolve_harness()
-        table, _ = _encode_value({"spec": spec, "subagents": _subagent_references(harness, spec)})
-        payload: dict[str, Any] = {"spec_id": spec_id, "name": name, "value": table}
-        payload.update(library or {})
-        return await _executor_call("factory.run", payload)
+    async def _start(self, resolved: dict[str, Any], *, name: "str | None", **library: str) -> dict[str, Any]:
+        """Start a run from the harness's resolution of it (the spec id,
+        the ``{"spec", "subagents"}`` value, a library run's origin)."""
+        return await _executor_call("factory.run", {**resolved, "name": name, **library})
 
     async def run(self, spec_id: str, *, name: str | None = None) -> dict[str, Any]:
         """Validate a stored factory spec and start a run of it.
@@ -373,10 +344,7 @@ class FactoryExecutor:
         returns; the host's control loop continues the run, so the calling
         model turn ends immediately (nonblocking).
         """
-        entry = self._resolve_harness().get("factory", spec_id)
-        if entry is None:
-            raise ValueError(f"unknown factory spec {spec_id!r}")
-        return await self._start(entry.id, _entry_spec(entry), name=name)
+        return await self._start(self._resolve_harness()._resolve_factory(spec_id), name=name)
 
     async def run_machine(
         self, machine: "MachineFile", *, machine_path: Path | None = None, name: str | None = None
@@ -385,10 +353,11 @@ class FactoryExecutor:
         machines are templates, so a library run never creates a harness
         entry; the run records the machine's name as its spec id, and the
         result reports ``machine`` (and ``machine_path``)."""
-        library: dict[str, Any] = {"machine": machine.name}
+        library = {"machine": machine.name}
         if machine_path is not None:
             library["machine_path"] = str(machine_path)
-        return await self._start(machine.name, machine.spec, name=name, library=library)
+        resolved = self._resolve_harness()._resolve_factory(machine.name, held=machine.spec)
+        return await self._start(resolved, name=name, **library)
 
     async def status(self, run_id: str) -> dict[str, Any]:
         """State reports, the trailing event window, elapsed time, and usage.
@@ -513,7 +482,8 @@ def default_factory_executor() -> FactoryExecutor:
     """
     global _DEFAULT_EXECUTOR
     if _DEFAULT_EXECUTOR is None:
-        _DEFAULT_EXECUTOR = FactoryExecutor()
+        # The upper-case name is the tests' seam (they assign it), not a constant.
+        _DEFAULT_EXECUTOR = FactoryExecutor()  # pyright: ignore[reportConstantRedefinition]
     return _DEFAULT_EXECUTOR
 
 
@@ -530,32 +500,8 @@ async def run_factory(spec_id: str, *, name: str | None = None) -> dict[str, Any
     """
     require_factory_enabled()
     executor = default_factory_executor()
-    harness = executor._resolve_harness()
-    if harness.get("factory", spec_id) is None:
-        try:
-            machine, path = resolve_machine(spec_id)
-        except MachineResolutionError as error:
-            if error.broken:
-                raise ValueError(
-                    f"the library machine {spec_id!r} exists but is broken ({error})"
-                ) from None
-            raise ValueError(
-                f"unknown factory spec {spec_id!r}: no stored factory entry and "
-                f"no library machine with that name ({error})"
-            ) from None
-        except ValueError as error:
-            # An id that is not a legal machine name (spaces, capitals) can
-            # never resolve from the library either; the unknown-spec frame
-            # must not lose the lookup to the name-rule sentence. Only the
-            # name-rule error can arrive here: every library-file failure
-            # (unreadable, non-UTF-8, unparseable, spec-invalid) is a
-            # MachineResolutionError in the first except arm.
-            raise ValueError(
-                f"unknown factory spec {spec_id!r}: no stored factory entry, and "
-                f"the id is not a valid machine name either ({error})"
-            ) from None
-        return await executor.run_machine(machine, machine_path=path, name=name)
-    return await executor.run(spec_id, name=name)
+    resolved = executor._resolve_harness()._resolve_factory(spec_id, library=_dirs(None, None))
+    return await executor._start(resolved, name=name)
 
 
 async def status_factory(run_id: str) -> dict[str, Any]:
