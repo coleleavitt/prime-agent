@@ -110,8 +110,8 @@ Plan mode (`/plan`, `--plan`, the plan key) runs on this sandbox. While it is on
 runs under the stricter of the configured mode and `read-only`, keeping the configured
 `network` rule; with the sandbox off, plan mode uses `read-only` with network allowed (plan
 mode has never blocked the network). A cell, `bash()`, `subprocess` and code calling the C
-library directly through `ctypes` all fail with `EACCES` outside `$TMPDIR` and the session's
-own state.
+library directly through `ctypes` all fail with `EACCES` outside `$TMPDIR`, the user cache
+directory and the session's own state.
 
 - **Toggling restarts the kernel.** A running process cannot loosen its Landlock domain, so
   switching plan mode on or off stops the kernel with a final namespace snapshot and starts
@@ -128,10 +128,11 @@ own state.
 - **New spawns follow the policy.** `bash()` jobs and their guard probes run under the
   kernel's sandbox, so they follow the restart. A stdio MCP server started under the other
   policy is restarted on its next use.
-- **Only the `read-only` scratch is writable.** Unlike the in-kernel guard plan mode used
-  before, `~/.cache` and (when `TMPDIR` points elsewhere) `/tmp` are not writable, so a
-  dry-run that fills a tool cache there (`uv`, `pip`) fails; point the tool's cache at
-  `$TMPDIR` instead.
+- **The user cache directory stays writable.** Plan mode adds `XDG_CACHE_HOME` (else
+  `~/.cache`, or `~/Library/Caches` on macOS) to `read-only`'s writable scratch, so a
+  dry-run that fills a tool cache (`uv`, `pip`) works, as plan mode's messages promise
+  ("write only under temp/cache directories"). A configured `read-only` sandbox is never
+  loosened: under it plan mode changes nothing, and the cache directory stays read-only.
 - **A workspace inside a writable root stays writable.** Landlock cannot deny a path beneath
   a directory it allows, so a working directory inside `$TMPDIR` (or `/tmp` when `TMPDIR` is
   unset) is not protected by plan mode.

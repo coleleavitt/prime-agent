@@ -40,8 +40,8 @@ type ClientService = RunningService<RoleClient, ClientConfig>;
 /// Where a generation connects.
 pub(crate) enum Target {
     /// A stdio server, spawned under the session's OS sandbox when it has
-    /// one.
-    Stdio(StdioLaunch, Option<crate::os_sandbox::SessionSandbox>),
+    /// one (boxed: the sandbox dwarfs the HTTP arm).
+    Stdio(StdioLaunch, Option<Box<crate::os_sandbox::SessionSandbox>>),
     Http {
         url: String,
         headers: Vec<(String, String)>,
@@ -158,7 +158,7 @@ impl Generation {
         let (startup_timeout, call_timeout) = connect::timeouts(&config)?;
         match target {
             Target::Stdio(launch, sandbox) => {
-                let (child, stdout, stdin) = StdioChild::spawn(&launch, sandbox.as_ref())?;
+                let (child, stdout, stdin) = StdioChild::spawn(&launch, sandbox.as_deref())?;
                 let started = tokio::time::timeout(
                     startup_timeout,
                     handshake(server, (stdout, stdin), discovery),

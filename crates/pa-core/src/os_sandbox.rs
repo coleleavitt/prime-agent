@@ -24,6 +24,8 @@ use crate::settings::{SandboxSettings, SettingsManager};
 pub struct SessionSandbox {
     policy: SandboxPolicy,
     support: Result<Assessment, SandboxError>,
+    /// Directories writable on top of the policy's scratch: plan mode's user cache directory.
+    extra_scratch: Vec<PathBuf>,
 }
 
 /// The configured mode of one scope: unset is `off`, an unrecognized value fails closed.
@@ -84,12 +86,18 @@ impl SessionSandbox {
             writable_roots,
         };
         let support = pa_os_sandbox::assess(&policy);
-        Some(Self { policy, support })
+        Some(Self {
+            policy,
+            support,
+            extra_scratch: Vec::new(),
+        })
     }
 
-    /// The sandbox plan mode runs under: `configured` tightened to `read-only` (an already
-    /// `read-only` one unchanged), keeping its network rule; with no configured sandbox,
-    /// `read-only` with network allowed, since plan mode never blocked the network.
+    /// The sandbox plan mode runs under: `configured` tightened to `read-only`, keeping its
+    /// network rule; with no configured sandbox, `read-only` with network allowed, since plan
+    /// mode never blocked the network. The user cache directory stays writable (tools fill it
+    /// during a dry run, and plan mode's messages promise temp and cache writes), except under
+    /// a configured `read-only` sandbox, which plan mode never loosens: it is used unchanged.
     #[must_use]
     pub fn for_plan_mode(configured: Option<&SessionSandbox>) -> SessionSandbox {
         Self::for_plan_mode_with(configured, pa_os_sandbox::assess)
@@ -102,6 +110,12 @@ impl SessionSandbox {
         assess: impl Fn(&SandboxPolicy) -> Result<Assessment, SandboxError>,
     ) -> SessionSandbox {
         let policy = match configured {
+            Some(configured) if configured.policy.confinement == Confinement::ReadOnly => {
+                return SessionSandbox {
+                    support: assess(&configured.policy),
+                    ..configured.clone()
+                };
+            }
             Some(configured) => SandboxPolicy {
                 confinement: Confinement::ReadOnly,
                 ..configured.policy.clone()
@@ -113,13 +127,17 @@ impl SessionSandbox {
             },
         };
         let support = assess(&policy);
-        SessionSandbox { policy, support }
+        SessionSandbox {
+            policy,
+            support,
+            extra_scratch: user_cache_dir().into_iter().collect(),
+        }
     }
 
     /// Whether `other` enforces the same policy (a spawn under either is confined alike).
     #[must_use]
     pub fn same_policy(&self, other: &SessionSandbox) -> bool {
-        self.policy == other.policy
+        self.policy == other.policy && self.extra_scratch == other.extra_scratch
     }
 
     /// Why this machine cannot enforce the sandbox, or `None` when it can (perhaps degraded).
@@ -232,12 +250,35 @@ impl SessionSandbox {
         if let Err(error) = &self.support {
             return Err(error.clone());
         }
+        let mut scratch = scratch;
+        for dir in &self.extra_scratch {
+            // The sandbox only grants directories that exist when it is built.
+            let _ = std::fs::create_dir_all(dir);
+            scratch.push(dir.clone());
+        }
         let paths = SandboxPaths {
             workspace: workspace.to_path_buf(),
             scratch,
         };
         pa_os_sandbox::prepare(&self.policy, &paths)
     }
+}
+
+/// The user cache directory tools like `uv` and `pip` write: an absolute `XDG_CACHE_HOME`, else
+/// `~/Library/Caches` on macOS and `~/.cache` elsewhere.
+fn user_cache_dir() -> Option<PathBuf> {
+    if let Some(xdg) = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+    {
+        return Some(xdg);
+    }
+    let home = pa_types::platform::home_dir()?;
+    Some(if cfg!(target_os = "macos") {
+        home.join("Library/Caches")
+    } else {
+        home.join(".cache")
+    })
 }
 
 /// The temp directory a child sees: its `TMPDIR` when set, else the host's.
@@ -386,6 +427,7 @@ mod tests {
                 network,
                 writable_roots: Vec::new(),
             }),
+            extra_scratch: Vec::new(),
         };
         let workspace_write = configured(Confinement::WorkspaceWrite, NetworkAccess::Denied);
         let read_only = configured(Confinement::ReadOnly, NetworkAccess::Allowed);
@@ -414,6 +456,16 @@ mod tests {
             ),
             (false, true)
         );
+        // The user cache dir is added only where plan mode tightens: a configured `read-only`
+        // sandbox stays exactly as configured.
+        let cache: Vec<PathBuf> = user_cache_dir().into_iter().collect();
+        assert_eq!(
+            plans
+                .iter()
+                .map(|plan| plan.extra_scratch.clone())
+                .collect::<Vec<_>>(),
+            vec![cache.clone(), cache, Vec::new()]
+        );
         let unsupported = SessionSandbox::for_plan_mode_with(None, |_| {
             Err(SandboxError::Unsupported {
                 reason: "no Landlock".to_string(),
@@ -440,6 +492,7 @@ mod tests {
                 writable_roots: Vec::new(),
             },
             support,
+            extra_scratch: Vec::new(),
         };
         let full = Ok(Assessment {
             mechanism: "Landlock ABI 6 + seccomp".to_string(),

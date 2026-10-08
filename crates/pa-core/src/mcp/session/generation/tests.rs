@@ -212,7 +212,7 @@ async fn a_stdio_server_spawns_under_the_session_sandbox() {
         let opened = Generation::open(
             "svc",
             json!({ "type": "stdio" }),
-            Target::Stdio(launch(&pid_file), Some(sandbox.clone())),
+            Target::Stdio(launch(&pid_file), Some(Box::new(sandbox.clone()))),
             Discovery::Full,
         )
         .await;

@@ -197,6 +197,29 @@ async fn plan_mode_refuses_every_write_path_with_eacces_and_keeps_temp_writable(
     fixture.provisioner.dispose(None).await;
 }
 
+/// The user cache directory (`XDG_CACHE_HOME`, else `~/.cache`; `~/Library/Caches` on macOS)
+/// stays writable in plan mode, as the model-facing message promises: tools like `uv` and
+/// `pip` fill it during a dry run. The cell resolves it the way those tools do.
+#[tokio::test]
+async fn plan_mode_keeps_the_user_cache_dir_writable() {
+    let Some(fixture) = fixture(SandboxMode::Off, true) else {
+        return;
+    };
+    let written = cell(
+        &fixture,
+        "import os, sys, tempfile\n\
+         _base = os.environ.get('XDG_CACHE_HOME') or os.path.expanduser(\
+         '~/Library/Caches' if sys.platform == 'darwin' else '~/.cache')\n\
+         os.makedirs(_base, exist_ok=True)\n\
+         try:\n    with tempfile.NamedTemporaryFile('w', dir=_base) as f:\n        \
+         f.write('x')\n    _out = 'cache ok'\n\
+         except OSError as error:\n    _out = f'errno {error.errno}'\n_out",
+    )
+    .await;
+    assert_eq!(written, "'cache ok'");
+    fixture.provisioner.dispose(None).await;
+}
+
 #[tokio::test]
 async fn toggling_keeps_the_namespace_and_leaving_plan_mode_restores_writes() {
     let Some(fixture) = fixture(SandboxMode::Off, false) else {

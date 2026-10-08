@@ -303,7 +303,7 @@ impl Inner {
                 let cwd = self.cwd.lock_or_recover().clone();
                 Ok(Target::Stdio(
                     connect::stdio_launch(server, config, &self.env, &cwd)?,
-                    self.stdio_sandbox(),
+                    self.stdio_sandbox().map(Box::new),
                 ))
             }
             _ => Err(McpSessionError::value(format!(
