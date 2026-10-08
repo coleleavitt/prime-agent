@@ -40,17 +40,41 @@ authority bundle `af31f5e`).
   settlements), with the strict JSON bounds (duplicate keys, 32 levels, 10,000 nodes, 1 MiB),
   result byte/digest bindings, the one §11 projection validator, and the exact retained-host
   capability vector (negotiation stays unavailable).
+- **Workflow V2 durable store** (`v2::store`, `v2::reducer`; `WORKFLOW-V2.md` §12 slice 4,
+  dormant like TS's): the owner-only per-root SQLite database at
+  `<session-artifacts>/<root-session-id>/workflows/v2.sqlite` (WAL, `synchronous=FULL`,
+  `foreign_keys`, 5 s busy timeout, `quick_check` + `integrity_check`, `application_id`
+  `0x57325354`, `user_version` 1, the checksummed append-only migration ledger, the bound
+  root-scope digest), its 15 minimum tables, and the pure reducer that folds the closed
+  controller and Prime host fact vocabularies into the four-axis run/node/attempt/turn
+  projections through the one §11 validator. One `BEGIN IMMEDIATE` per step: commands
+  (idempotency by `requestId` and canonical request digest, revision/epoch fences, capacity
+  admission with the 90% high-water mark and the free-space floor), host-inbox ingestion (dedup
+  by `hostEventId`, the settlement row, and the cursor advance in one transaction), outbox claim
+  (epoch-fenced lease; expiry redelivers the same canonical request) and owner-only
+  acknowledgement, `RunTerminalized` equality on load with durable quarantine, terminal-text
+  erasure, fenced compaction (`SNAPSHOT_REQUIRED`), and the online-backup image plus manifest.
+  The on-disk format is the TS store's byte for byte (same DDL, so the TS migration checksum
+  verifies; same JSON encodings in every column): a TS-written store opens and continues here,
+  and the TS store opens a Rust-written one (`tests/v2_store_golden.rs`, goldens produced by
+  running the TS store under node). Additions over TS that change no byte TS reads: an exclusive
+  OS lock on `v2.sqlite.lock` held by the writer handle (a second writer, in-process or not,
+  gets `store_writer_locked`), the writer epoch re-checked inside every write transaction
+  (`store_epoch_stale` once superseded), and the §7 free-space floor enforced (TS computed it but
+  its own `catch` swallowed the refusal). No production path opens a store yet.
 
 ## Non-goals
 
 - No session: the turn never touches the session's stream, retry driver, request timing,
   semantic-edge recorder, messages, or files. Provider I/O is its only effect.
 - No tools, no multi-turn runs (`maxTurns` is exactly 1 on the V1 wire).
-- No Workflow V2 durable controller: no SQLite store (`<session-artifacts>/<root>/workflows/
-  v2.sqlite`), reducer/outbox/inbox, scheduler, acceptance/budget policy, retained-child host
-  (`child.*`), settlement capture, cancellation/deletion/recovery, daemon OS fence, or supervisor
-  control DB. Those are `WORKFLOW-V2.md` §12 slices 3-9; the TS fork built slices 2-4 dormant and
-  never a controller.
+- No Workflow V2 controller: the store holds no policy and nothing calls it. Missing are the
+  host request-id admission and native child/turn settlement (slice 3), the controller/executor
+  adapter and the create/start path (slice 5), settlement ingestion policy, acceptance, budgets,
+  retry, and terminalization (slice 6), cancellation, quiescence, tombstone-first delete, and the
+  crash-window suite (slice 7), the Python/status/events/view projections (slice 8), and the
+  release attestation that would enable the capability (slice 9), plus the TS daemon OS fence
+  and supervisor control DB. The TS fork built slices 2-4 dormant and never a controller.
 
 ## Public API
 
@@ -64,6 +88,13 @@ authority bundle `af31f5e`).
   `decode_retained_request`, `decode_as`, `canonical_json`, `request_digest`), `v2::json`
   (`parse`, `check_bounds`), `v2::schema`, `v2::projection`
   (`validate_projection_semantics`), `v2::capability`.
+- `v2::store` — `Store` (`open`, `acquire_writer`, `validate`, `apply_command`,
+  `ingest_host_event`, `claim_outbox`, `acknowledge_outbox`, `run_projection`, `load_aggregate`,
+  `command_receipt`, `list_events`, `operation`, `host_cursor`, `table_count`,
+  `reconcile_terminal_mismatch`, `erase_run_text`, `compact_events`, `backup_to`),
+  `probe_capability`, `StoreOptions`, `CommandEffect`, `StoreError`/`StoreCode` (the TS codes).
+- `v2::reducer` — `reduce_fact`, `reduce_run`, `revalidate_aggregate`, `projection`,
+  `check_terminalized_outcome`, `RunAggregate`, `ReducerError`/`ReducerCode` (the TS codes).
 
 ## Seams
 
@@ -73,11 +104,17 @@ authority bundle `af31f5e`).
 - Native machinery reused, not reimplemented: `rlm_in_process::resolve_child_model` (the RLM
   child selector resolution), `ModelRegistry` (catalog, auth, `provider_request_config`), and
   `provider_adapter::stream_once` (the per-request provider transport).
+- The store's SQLite is `rusqlite` with bundled SQLite, a dependency of this crate only (the
+  native `--no-default-features` build carries none); `pa_core::platform::perms` for the
+  owner-only modes and ownership checks; `pa_core::session::manager::format_iso` for the
+  `toISOString` timestamps; std's `File::try_lock` for the writer lock.
 
 ## Files owned
 
-None. V1 is ephemeral and V2's served action (`validate`) is pure: neither writes anything under
-`~/.prime/agent/` or the session artifacts.
+None written today. V1 is ephemeral and V2's served action (`validate`) is pure. The dormant
+store, once a controller opens it, owns `<session-artifacts>/<root-session-id>/workflows/`:
+`v2.sqlite` (with its `-wal` / `-shm`), `v2.sqlite.lock`, and any backup image plus
+`<image>.manifest.json` it is asked to write — all owner-only (0700 dir, 0600 files).
 
 ## Telemetry
 
@@ -90,3 +127,4 @@ None. V1 is ephemeral and V2's served action (`validate`) is pure: neither write
 - `tracing`: the `workflow.run_agent` span and a `pa_workflow` "workflow.run_agent settled"
   event with the same classification; the `workflow.v2.request` span and a "workflow.v2.request
   answered" event with the V2 action and outcome.
+- The dormant store and reducer emit nothing (no product path reaches them).

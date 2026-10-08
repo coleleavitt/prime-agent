@@ -18,11 +18,18 @@ pa-agent.workspace = true
 pa-telemetry.workspace = true
 pa-core = { path = "../pa-core" }
 sha2 = "0.10"
+rusqlite = { version = "0.40.2", features = ["bundled", "backup"] }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["fs"] }
 
 [dev-dependencies]
 pa-ai.workspace = true
 tempfile = "3"
 tokio-util.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
+nix = { version = "0.29", features = ["fs", "signal"] }
 
 [lints]
 workspace = true

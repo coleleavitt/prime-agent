@@ -95,8 +95,10 @@ impl ProjectionKind {
     }
 }
 
-/// A validated projection, conditions sorted.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A validated projection, conditions sorted. Serializes in the wire's key
+/// order (`phase`, `intent`, `outcome`, `conditions`), the bytes the TS
+/// store persists for an embedded turn projection.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Projection {
     pub phase: String,
     pub intent: String,

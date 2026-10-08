@@ -1,0 +1,1110 @@
+{
+	"applicationId": 1462915924,
+	"userVersion": 1,
+	"schema": [
+		{
+			"type": "index",
+			"name": "commands_request_id",
+			"tbl_name": "commands",
+			"sql": "CREATE UNIQUE INDEX commands_request_id ON commands (request_id)"
+		},
+		{
+			"type": "index",
+			"name": "commands_run_command",
+			"tbl_name": "commands",
+			"sql": "CREATE UNIQUE INDEX commands_run_command ON commands (run_id, command_id) WHERE command_id IS NOT NULL"
+		},
+		{
+			"type": "index",
+			"name": "host_inbox_by_run",
+			"tbl_name": "host_inbox",
+			"sql": "CREATE INDEX host_inbox_by_run ON host_inbox (run_id)"
+		},
+		{
+			"type": "index",
+			"name": "operations_by_run_phase",
+			"tbl_name": "operations",
+			"sql": "CREATE INDEX operations_by_run_phase ON operations (run_id, phase)"
+		},
+		{
+			"type": "index",
+			"name": "settlements_by_run",
+			"tbl_name": "settlements",
+			"sql": "CREATE INDEX settlements_by_run ON settlements (run_id)"
+		},
+		{
+			"type": "index",
+			"name": "sqlite_autoindex_acceptance_1",
+			"tbl_name": "acceptance",
+			"sql": null
+		},
+		{
+			"type": "index",
+			"name": "sqlite_autoindex_attempts_1",
+			"tbl_name": "attempts",
+			"sql": null
+		},
+		{
+			"type": "index",
+			"name": "sqlite_autoindex_budgets_1",
+			"tbl_name": "budgets",
+			"sql": null
+		},
+		{
+			"type": "index",
+			"name": "sqlite_autoindex_child_turn_bindings_1",
+			"tbl_name": "child_turn_bindings",
+			"sql": null
+		},
+		{
+			"type": "index",
+			"name": "sqlite_autoindex_commands_1",
+			"tbl_name": "commands",
+			"sql": null
+		},
+		{
+			"type": "index",
+			"name": "sqlite_autoindex_definitions_1",
+			"tbl_name": "definitions",
+			"sql": null
+		},
+		{
+			"type": "index",
+			"name": "sqlite_autoindex_events_1",
+			"tbl_name": "events",
+			"sql": null
+		},
+		{
+			"type": "index",
+			"name": "sqlite_autoindex_events_2",
+			"tbl_name": "events",
+			"sql": null
+		},
+		{
+			"type": "index",
+			"name": "sqlite_autoindex_host_inbox_1",
+			"tbl_name": "host_inbox",
+			"sql": null
+		},
+		{
+			"type": "index",
+			"name": "sqlite_autoindex_host_streams_1",
+			"tbl_name": "host_streams",
+			"sql": null
+		},
+		{
+			"type": "index",
+			"name": "sqlite_autoindex_nodes_1",
+			"tbl_name": "nodes",
+			"sql": null
+		},
+		{
+			"type": "index",
+			"name": "sqlite_autoindex_operations_1",
+			"tbl_name": "operations",
+			"sql": null
+		},
+		{
+			"type": "index",
+			"name": "sqlite_autoindex_runs_1",
+			"tbl_name": "runs",
+			"sql": null
+		},
+		{
+			"type": "index",
+			"name": "sqlite_autoindex_settlements_1",
+			"tbl_name": "settlements",
+			"sql": null
+		},
+		{
+			"type": "index",
+			"name": "sqlite_autoindex_store_meta_1",
+			"tbl_name": "store_meta",
+			"sql": null
+		},
+		{
+			"type": "index",
+			"name": "sqlite_autoindex_tombstones_1",
+			"tbl_name": "tombstones",
+			"sql": null
+		},
+		{
+			"type": "table",
+			"name": "acceptance",
+			"tbl_name": "acceptance",
+			"sql": "CREATE TABLE acceptance (run_id TEXT NOT NULL REFERENCES runs(run_id), node_id TEXT NOT NULL, attempt_id TEXT, decision TEXT NOT NULL, evidence_digest TEXT, decided_at TEXT NOT NULL, PRIMARY KEY (run_id, node_id)) STRICT"
+		},
+		{
+			"type": "table",
+			"name": "attempts",
+			"tbl_name": "attempts",
+			"sql": "CREATE TABLE attempts (run_id TEXT NOT NULL REFERENCES runs(run_id), attempt_id TEXT NOT NULL, node_id TEXT NOT NULL, operation_id TEXT, rlm_child_id TEXT, turn_id TEXT, settlement_digest TEXT, phase TEXT NOT NULL, intent TEXT NOT NULL, outcome TEXT, conditions TEXT NOT NULL, turn_json TEXT, PRIMARY KEY (run_id, attempt_id)) STRICT"
+		},
+		{
+			"type": "table",
+			"name": "budgets",
+			"tbl_name": "budgets",
+			"sql": "CREATE TABLE budgets (run_id TEXT PRIMARY KEY REFERENCES runs(run_id), max_concurrent_attempts INTEGER NOT NULL, max_total_tokens INTEGER NOT NULL, reserved_tokens INTEGER NOT NULL DEFAULT 0, settled_tokens INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL) STRICT"
+		},
+		{
+			"type": "table",
+			"name": "child_turn_bindings",
+			"tbl_name": "child_turn_bindings",
+			"sql": "CREATE TABLE child_turn_bindings (run_id TEXT NOT NULL, attempt_id TEXT NOT NULL, workflow_child_id TEXT NOT NULL, rlm_child_id TEXT NOT NULL, turn_id TEXT NOT NULL, request_id TEXT NOT NULL, canonical_digest TEXT NOT NULL, bound_at TEXT NOT NULL, PRIMARY KEY (run_id, attempt_id), FOREIGN KEY (run_id, attempt_id) REFERENCES attempts(run_id, attempt_id)) STRICT"
+		},
+		{
+			"type": "table",
+			"name": "commands",
+			"tbl_name": "commands",
+			"sql": "CREATE TABLE commands (request_digest TEXT PRIMARY KEY, request_id TEXT NOT NULL, run_id TEXT, command_id TEXT, action TEXT NOT NULL, canonical_bytes TEXT NOT NULL, receipt_json TEXT NOT NULL, created_at TEXT NOT NULL) STRICT"
+		},
+		{
+			"type": "table",
+			"name": "definitions",
+			"tbl_name": "definitions",
+			"sql": "CREATE TABLE definitions (definition_digest TEXT PRIMARY KEY, canonical_bytes TEXT NOT NULL, utf8_bytes INTEGER NOT NULL, created_at TEXT NOT NULL) STRICT"
+		},
+		{
+			"type": "table",
+			"name": "events",
+			"tbl_name": "events",
+			"sql": "CREATE TABLE events (run_id TEXT NOT NULL REFERENCES runs(run_id), sequence INTEGER NOT NULL, event_id TEXT NOT NULL, revision INTEGER NOT NULL, type TEXT NOT NULL, controller_epoch INTEGER NOT NULL, cancel_epoch INTEGER NOT NULL, recorded_at TEXT NOT NULL, data_json TEXT NOT NULL, digest TEXT NOT NULL, compacted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (run_id, sequence), UNIQUE (event_id)) STRICT"
+		},
+		{
+			"type": "table",
+			"name": "host_inbox",
+			"tbl_name": "host_inbox",
+			"sql": "CREATE TABLE host_inbox (host_event_id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(run_id), host_cursor TEXT NOT NULL, type TEXT NOT NULL, fact_json TEXT NOT NULL, created_at TEXT NOT NULL) STRICT"
+		},
+		{
+			"type": "table",
+			"name": "host_streams",
+			"tbl_name": "host_streams",
+			"sql": "CREATE TABLE host_streams (run_id TEXT PRIMARY KEY REFERENCES runs(run_id), host_cursor TEXT, updated_at TEXT NOT NULL) STRICT"
+		},
+		{
+			"type": "table",
+			"name": "nodes",
+			"tbl_name": "nodes",
+			"sql": "CREATE TABLE nodes (run_id TEXT NOT NULL REFERENCES runs(run_id), node_id TEXT NOT NULL, phase TEXT NOT NULL, intent TEXT NOT NULL, outcome TEXT, conditions TEXT NOT NULL, PRIMARY KEY (run_id, node_id)) STRICT"
+		},
+		{
+			"type": "table",
+			"name": "operations",
+			"tbl_name": "operations",
+			"sql": "CREATE TABLE operations (operation_id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(run_id), attempt_id TEXT, kind TEXT NOT NULL, request_id TEXT NOT NULL, canonical_request TEXT NOT NULL, host_request_id TEXT, phase TEXT NOT NULL, intent TEXT NOT NULL, outcome TEXT, conditions TEXT NOT NULL, claim_epoch INTEGER, claim_owner TEXT, claim_expires_at TEXT, receipt_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL) STRICT"
+		},
+		{
+			"type": "table",
+			"name": "runs",
+			"tbl_name": "runs",
+			"sql": "CREATE TABLE runs (run_id TEXT PRIMARY KEY, definition_digest TEXT NOT NULL REFERENCES definitions(definition_digest), revision INTEGER NOT NULL, controller_epoch INTEGER NOT NULL, cancel_epoch INTEGER NOT NULL, phase TEXT NOT NULL, intent TEXT NOT NULL, outcome TEXT, conditions TEXT NOT NULL, host_cursor TEXT, terminal_outcome TEXT, terminal_digest TEXT, erased INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL) STRICT"
+		},
+		{
+			"type": "table",
+			"name": "settlements",
+			"tbl_name": "settlements",
+			"sql": "CREATE TABLE settlements (settlement_digest TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(run_id), attempt_id TEXT NOT NULL, outcome TEXT NOT NULL, result_kind TEXT NOT NULL, result_utf8_bytes INTEGER, result_sha256 TEXT, usage_json TEXT NOT NULL, settlement_json TEXT NOT NULL, created_at TEXT NOT NULL) STRICT"
+		},
+		{
+			"type": "table",
+			"name": "store_meta",
+			"tbl_name": "store_meta",
+			"sql": "CREATE TABLE store_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT"
+		},
+		{
+			"type": "table",
+			"name": "store_migrations",
+			"tbl_name": "store_migrations",
+			"sql": "CREATE TABLE store_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, checksum TEXT NOT NULL, applied_at TEXT NOT NULL) STRICT"
+		},
+		{
+			"type": "table",
+			"name": "tombstones",
+			"tbl_name": "tombstones",
+			"sql": "CREATE TABLE tombstones (run_id TEXT NOT NULL REFERENCES runs(run_id), rlm_child_id TEXT NOT NULL, request_id TEXT NOT NULL, tombstone_digest TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (run_id, rlm_child_id)) STRICT"
+		}
+	],
+	"tables": {
+		"acceptance": [
+			{
+				"run_id": "'run-1'",
+				"node_id": "'n1'",
+				"attempt_id": "'a1'",
+				"decision": "'accepted'",
+				"evidence_digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"decided_at": "'2026-09-15T00:00:00.000Z'"
+			},
+			{
+				"run_id": "'run-2'",
+				"node_id": "'n1'",
+				"attempt_id": "NULL",
+				"decision": "'not_evaluated'",
+				"evidence_digest": "NULL",
+				"decided_at": "'2026-09-15T00:02:00.000Z'"
+			}
+		],
+		"attempts": [
+			{
+				"run_id": "'run-1'",
+				"attempt_id": "'a1'",
+				"node_id": "'n1'",
+				"operation_id": "'op1'",
+				"rlm_child_id": "'child1'",
+				"turn_id": "'turn1'",
+				"settlement_digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"phase": "'terminal'",
+				"intent": "'execute'",
+				"outcome": "'completed'",
+				"conditions": "'[\"admission_bound\",\"quiescence_proved\",\"result_present\",\"usage_final\"]'",
+				"turn_json": "'{\"phase\":\"terminal\",\"intent\":\"execute\",\"outcome\":\"completed\",\"conditions\":[\"cancel_unactuated\",\"quiescence_proved\",\"result_present\",\"usage_final\"]}'"
+			},
+			{
+				"run_id": "'run-2'",
+				"attempt_id": "'a2'",
+				"node_id": "'n1'",
+				"operation_id": "'op2'",
+				"rlm_child_id": "'child2'",
+				"turn_id": "'turn2'",
+				"settlement_digest": "'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'",
+				"phase": "'settled'",
+				"intent": "'cancel'",
+				"outcome": "NULL",
+				"conditions": "'[\"admission_bound\",\"quiescence_proved\",\"result_absent\",\"usage_known_prefix\"]'",
+				"turn_json": "'{\"phase\":\"terminal\",\"intent\":\"cancel\",\"outcome\":\"cancelled\",\"conditions\":[\"cancel_actuated\",\"quiescence_proved\",\"result_absent\",\"usage_known_prefix\"]}'"
+			}
+		],
+		"budgets": [
+			{
+				"run_id": "'run-1'",
+				"max_concurrent_attempts": "4",
+				"max_total_tokens": "10000",
+				"reserved_tokens": "0",
+				"settled_tokens": "0",
+				"updated_at": "'2026-09-15T00:00:00.000Z'"
+			},
+			{
+				"run_id": "'run-2'",
+				"max_concurrent_attempts": "4",
+				"max_total_tokens": "10000",
+				"reserved_tokens": "0",
+				"settled_tokens": "0",
+				"updated_at": "'2026-09-15T00:02:00.000Z'"
+			},
+			{
+				"run_id": "'run-3'",
+				"max_concurrent_attempts": "4",
+				"max_total_tokens": "10000",
+				"reserved_tokens": "0",
+				"settled_tokens": "0",
+				"updated_at": "'2026-09-15T00:02:00.000Z'"
+			}
+		],
+		"child_turn_bindings": [
+			{
+				"run_id": "'run-1'",
+				"attempt_id": "'a1'",
+				"workflow_child_id": "'wfc-a1'",
+				"rlm_child_id": "'child1'",
+				"turn_id": "'turn1'",
+				"request_id": "'hostreq-1'",
+				"canonical_digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"bound_at": "'2026-09-15T00:00:00.000Z'"
+			},
+			{
+				"run_id": "'run-2'",
+				"attempt_id": "'a2'",
+				"workflow_child_id": "'wfc-a2'",
+				"rlm_child_id": "'child2'",
+				"turn_id": "'turn2'",
+				"request_id": "'hostreq-2'",
+				"canonical_digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"bound_at": "'2026-09-15T00:02:00.000Z'"
+			}
+		],
+		"commands": [
+			{
+				"request_digest": "'sha256:690dae29292cbf9002bc7d7f487ed9a7440c61547d114b01d5c83016e5177861'",
+				"request_id": "'req-create-run-1'",
+				"run_id": "NULL",
+				"command_id": "NULL",
+				"action": "'create'",
+				"canonical_bytes": "'{\"action\":\"create\",\"definition\":{\"budget\":{\"maxConcurrentAttempts\":4,\"maxTotalTokens\":10000,\"semantics\":\"soft_admission\"},\"nodes\":[{\"dependsOn\":[],\"kind\":\"agent\",\"maxTokens\":100,\"maxTurns\":1,\"model\":\"model.test\",\"nodeId\":\"n1\",\"prompt\":\"prompt for n1\",\"tools\":\"none\"}],\"outputs\":[\"n1\"],\"protocol\":\"prime.workflow.definition/v2\"},\"protocol\":\"prime.workflow.request/v2\",\"requestId\":\"req-create-run-1\"}'",
+				"receipt_json": "'{\"action\":\"create\",\"requestId\":\"req-create-run-1\",\"runId\":\"run-1\",\"commandId\":null,\"requestDigest\":\"sha256:690dae29292cbf9002bc7d7f487ed9a7440c61547d114b01d5c83016e5177861\",\"revision\":1,\"controllerEpoch\":1,\"cancelEpoch\":0,\"appliedSequences\":[1],\"recordedAt\":\"2026-09-15T00:00:00.000Z\"}'",
+				"created_at": "'2026-09-15T00:00:00.000Z'"
+			},
+			{
+				"request_digest": "'sha256:c930550421a2606830f79b47a0f205caedd3741ca8713a68c1d3fe9664eec85c'",
+				"request_id": "'req-start-run-1-start'",
+				"run_id": "'run-1'",
+				"command_id": "'run-1-start'",
+				"action": "'start'",
+				"canonical_bytes": "'{\"action\":\"start\",\"commandId\":\"run-1-start\",\"expectedCancelEpoch\":0,\"expectedControllerEpoch\":1,\"expectedRevision\":1,\"protocol\":\"prime.workflow.request/v2\",\"requestId\":\"req-start-run-1-start\",\"runId\":\"run-1\"}'",
+				"receipt_json": "'{\"action\":\"start\",\"requestId\":\"req-start-run-1-start\",\"runId\":\"run-1\",\"commandId\":\"run-1-start\",\"requestDigest\":\"sha256:c930550421a2606830f79b47a0f205caedd3741ca8713a68c1d3fe9664eec85c\",\"revision\":2,\"controllerEpoch\":1,\"cancelEpoch\":0,\"appliedSequences\":[2],\"recordedAt\":\"2026-09-15T00:00:00.000Z\"}'",
+				"created_at": "'2026-09-15T00:00:00.000Z'"
+			},
+			{
+				"request_digest": "'sha256:b3fb6c2eb396d8fe11ac0c75e09ddbe0e450821a959408c00c6ab2c7255fdbf9'",
+				"request_id": "'req-start-run-1-ready'",
+				"run_id": "'run-1'",
+				"command_id": "'run-1-ready'",
+				"action": "'start'",
+				"canonical_bytes": "'{\"action\":\"start\",\"commandId\":\"run-1-ready\",\"expectedCancelEpoch\":0,\"expectedControllerEpoch\":1,\"expectedRevision\":2,\"protocol\":\"prime.workflow.request/v2\",\"requestId\":\"req-start-run-1-ready\",\"runId\":\"run-1\"}'",
+				"receipt_json": "'{\"action\":\"start\",\"requestId\":\"req-start-run-1-ready\",\"runId\":\"run-1\",\"commandId\":\"run-1-ready\",\"requestDigest\":\"sha256:b3fb6c2eb396d8fe11ac0c75e09ddbe0e450821a959408c00c6ab2c7255fdbf9\",\"revision\":3,\"controllerEpoch\":1,\"cancelEpoch\":0,\"appliedSequences\":[3],\"recordedAt\":\"2026-09-15T00:00:00.000Z\"}'",
+				"created_at": "'2026-09-15T00:00:00.000Z'"
+			},
+			{
+				"request_digest": "'sha256:c969605263792e8af93e14fb8c9311c51f8c173b0cf9065f37624440d05e3b39'",
+				"request_id": "'req-start-run-1-prep'",
+				"run_id": "'run-1'",
+				"command_id": "'run-1-prep'",
+				"action": "'start'",
+				"canonical_bytes": "'{\"action\":\"start\",\"commandId\":\"run-1-prep\",\"expectedCancelEpoch\":0,\"expectedControllerEpoch\":1,\"expectedRevision\":3,\"protocol\":\"prime.workflow.request/v2\",\"requestId\":\"req-start-run-1-prep\",\"runId\":\"run-1\"}'",
+				"receipt_json": "'{\"action\":\"start\",\"requestId\":\"req-start-run-1-prep\",\"runId\":\"run-1\",\"commandId\":\"run-1-prep\",\"requestDigest\":\"sha256:c969605263792e8af93e14fb8c9311c51f8c173b0cf9065f37624440d05e3b39\",\"revision\":4,\"controllerEpoch\":1,\"cancelEpoch\":0,\"appliedSequences\":[4],\"recordedAt\":\"2026-09-15T00:00:00.000Z\"}'",
+				"created_at": "'2026-09-15T00:00:00.000Z'"
+			},
+			{
+				"request_digest": "'sha256:c8e7b2f369fb7c16d9803a3731aaf212bea1842b7c6eea767a6c616f460fb80c'",
+				"request_id": "'req-start-run-1-disp'",
+				"run_id": "'run-1'",
+				"command_id": "'run-1-disp'",
+				"action": "'start'",
+				"canonical_bytes": "'{\"action\":\"start\",\"commandId\":\"run-1-disp\",\"expectedCancelEpoch\":0,\"expectedControllerEpoch\":1,\"expectedRevision\":4,\"protocol\":\"prime.workflow.request/v2\",\"requestId\":\"req-start-run-1-disp\",\"runId\":\"run-1\"}'",
+				"receipt_json": "'{\"action\":\"start\",\"requestId\":\"req-start-run-1-disp\",\"runId\":\"run-1\",\"commandId\":\"run-1-disp\",\"requestDigest\":\"sha256:c8e7b2f369fb7c16d9803a3731aaf212bea1842b7c6eea767a6c616f460fb80c\",\"revision\":5,\"controllerEpoch\":1,\"cancelEpoch\":0,\"appliedSequences\":[5],\"recordedAt\":\"2026-09-15T00:00:00.000Z\"}'",
+				"created_at": "'2026-09-15T00:00:00.000Z'"
+			},
+			{
+				"request_digest": "'sha256:10ad3a0dce387d53994231b8879315e567819d17b6ad66f12f5838b0cdcba425'",
+				"request_id": "'req-start-run-1-bind'",
+				"run_id": "'run-1'",
+				"command_id": "'run-1-bind'",
+				"action": "'start'",
+				"canonical_bytes": "'{\"action\":\"start\",\"commandId\":\"run-1-bind\",\"expectedCancelEpoch\":0,\"expectedControllerEpoch\":1,\"expectedRevision\":5,\"protocol\":\"prime.workflow.request/v2\",\"requestId\":\"req-start-run-1-bind\",\"runId\":\"run-1\"}'",
+				"receipt_json": "'{\"action\":\"start\",\"requestId\":\"req-start-run-1-bind\",\"runId\":\"run-1\",\"commandId\":\"run-1-bind\",\"requestDigest\":\"sha256:10ad3a0dce387d53994231b8879315e567819d17b6ad66f12f5838b0cdcba425\",\"revision\":6,\"controllerEpoch\":1,\"cancelEpoch\":0,\"appliedSequences\":[6],\"recordedAt\":\"2026-09-15T00:00:00.000Z\"}'",
+				"created_at": "'2026-09-15T00:00:00.000Z'"
+			},
+			{
+				"request_digest": "'sha256:3bca7f1223d743addbf5bc9e99eb38fdc5e3aaeb1e6edc279b8446c730c064b7'",
+				"request_id": "'req-start-run-1-obs'",
+				"run_id": "'run-1'",
+				"command_id": "'run-1-obs'",
+				"action": "'start'",
+				"canonical_bytes": "'{\"action\":\"start\",\"commandId\":\"run-1-obs\",\"expectedCancelEpoch\":0,\"expectedControllerEpoch\":1,\"expectedRevision\":6,\"protocol\":\"prime.workflow.request/v2\",\"requestId\":\"req-start-run-1-obs\",\"runId\":\"run-1\"}'",
+				"receipt_json": "'{\"action\":\"start\",\"requestId\":\"req-start-run-1-obs\",\"runId\":\"run-1\",\"commandId\":\"run-1-obs\",\"requestDigest\":\"sha256:3bca7f1223d743addbf5bc9e99eb38fdc5e3aaeb1e6edc279b8446c730c064b7\",\"revision\":7,\"controllerEpoch\":1,\"cancelEpoch\":0,\"appliedSequences\":[7],\"recordedAt\":\"2026-09-15T00:00:00.000Z\"}'",
+				"created_at": "'2026-09-15T00:00:00.000Z'"
+			},
+			{
+				"request_digest": "'sha256:b9f491d55e6366009a244e952df0f203f5ad28a9a0e0e5f7d76b5dffa5d74f2d'",
+				"request_id": "'req-start-run-1-acc'",
+				"run_id": "'run-1'",
+				"command_id": "'run-1-acc'",
+				"action": "'start'",
+				"canonical_bytes": "'{\"action\":\"start\",\"commandId\":\"run-1-acc\",\"expectedCancelEpoch\":0,\"expectedControllerEpoch\":1,\"expectedRevision\":7,\"protocol\":\"prime.workflow.request/v2\",\"requestId\":\"req-start-run-1-acc\",\"runId\":\"run-1\"}'",
+				"receipt_json": "'{\"action\":\"start\",\"requestId\":\"req-start-run-1-acc\",\"runId\":\"run-1\",\"commandId\":\"run-1-acc\",\"requestDigest\":\"sha256:b9f491d55e6366009a244e952df0f203f5ad28a9a0e0e5f7d76b5dffa5d74f2d\",\"revision\":8,\"controllerEpoch\":1,\"cancelEpoch\":0,\"appliedSequences\":[8],\"recordedAt\":\"2026-09-15T00:00:00.000Z\"}'",
+				"created_at": "'2026-09-15T00:00:00.000Z'"
+			},
+			{
+				"request_digest": "'sha256:32aca25f1acbf68982c83865339da14c07703333e3e1bdf6b7aa860a13f9d1dd'",
+				"request_id": "'req-start-run-1-drain'",
+				"run_id": "'run-1'",
+				"command_id": "'run-1-drain'",
+				"action": "'start'",
+				"canonical_bytes": "'{\"action\":\"start\",\"commandId\":\"run-1-drain\",\"expectedCancelEpoch\":0,\"expectedControllerEpoch\":1,\"expectedRevision\":8,\"protocol\":\"prime.workflow.request/v2\",\"requestId\":\"req-start-run-1-drain\",\"runId\":\"run-1\"}'",
+				"receipt_json": "'{\"action\":\"start\",\"requestId\":\"req-start-run-1-drain\",\"runId\":\"run-1\",\"commandId\":\"run-1-drain\",\"requestDigest\":\"sha256:32aca25f1acbf68982c83865339da14c07703333e3e1bdf6b7aa860a13f9d1dd\",\"revision\":9,\"controllerEpoch\":1,\"cancelEpoch\":0,\"appliedSequences\":[9],\"recordedAt\":\"2026-09-15T00:00:00.000Z\"}'",
+				"created_at": "'2026-09-15T00:00:00.000Z'"
+			},
+			{
+				"request_digest": "'sha256:d451bddac17bd6e2e5034798e74612a8ebd90c5ca69d7eef6a50bcd1f046096c'",
+				"request_id": "'req-start-run-1-term'",
+				"run_id": "'run-1'",
+				"command_id": "'run-1-term'",
+				"action": "'start'",
+				"canonical_bytes": "'{\"action\":\"start\",\"commandId\":\"run-1-term\",\"expectedCancelEpoch\":0,\"expectedControllerEpoch\":1,\"expectedRevision\":9,\"protocol\":\"prime.workflow.request/v2\",\"requestId\":\"req-start-run-1-term\",\"runId\":\"run-1\"}'",
+				"receipt_json": "'{\"action\":\"start\",\"requestId\":\"req-start-run-1-term\",\"runId\":\"run-1\",\"commandId\":\"run-1-term\",\"requestDigest\":\"sha256:d451bddac17bd6e2e5034798e74612a8ebd90c5ca69d7eef6a50bcd1f046096c\",\"revision\":10,\"controllerEpoch\":1,\"cancelEpoch\":0,\"appliedSequences\":[10],\"recordedAt\":\"2026-09-15T00:00:00.000Z\"}'",
+				"created_at": "'2026-09-15T00:00:00.000Z'"
+			},
+			{
+				"request_digest": "'sha256:7bc4098818f6f51b4b594c0e45195cc97b4a9b6a1ad69b9b00c88d0ee9bf300b'",
+				"request_id": "'req-create-run-2'",
+				"run_id": "NULL",
+				"command_id": "NULL",
+				"action": "'create'",
+				"canonical_bytes": "'{\"action\":\"create\",\"definition\":{\"budget\":{\"maxConcurrentAttempts\":4,\"maxTotalTokens\":10000,\"semantics\":\"soft_admission\"},\"nodes\":[{\"dependsOn\":[],\"kind\":\"agent\",\"maxTokens\":100,\"maxTurns\":1,\"model\":\"model.test\",\"nodeId\":\"n1\",\"prompt\":\"prompt for n1\",\"tools\":\"none\"}],\"outputs\":[\"n1\"],\"protocol\":\"prime.workflow.definition/v2\"},\"protocol\":\"prime.workflow.request/v2\",\"requestId\":\"req-create-run-2\"}'",
+				"receipt_json": "'{\"action\":\"create\",\"requestId\":\"req-create-run-2\",\"runId\":\"run-2\",\"commandId\":null,\"requestDigest\":\"sha256:7bc4098818f6f51b4b594c0e45195cc97b4a9b6a1ad69b9b00c88d0ee9bf300b\",\"revision\":1,\"controllerEpoch\":1,\"cancelEpoch\":0,\"appliedSequences\":[1],\"recordedAt\":\"2026-09-15T00:02:00.000Z\"}'",
+				"created_at": "'2026-09-15T00:02:00.000Z'"
+			},
+			{
+				"request_digest": "'sha256:2ea37118f5a973e5abf136ce0eb466a90713a08b8755063bc6a5644a8e914f23'",
+				"request_id": "'req-start-run-2-start'",
+				"run_id": "'run-2'",
+				"command_id": "'run-2-start'",
+				"action": "'start'",
+				"canonical_bytes": "'{\"action\":\"start\",\"commandId\":\"run-2-start\",\"expectedCancelEpoch\":0,\"expectedControllerEpoch\":1,\"expectedRevision\":1,\"protocol\":\"prime.workflow.request/v2\",\"requestId\":\"req-start-run-2-start\",\"runId\":\"run-2\"}'",
+				"receipt_json": "'{\"action\":\"start\",\"requestId\":\"req-start-run-2-start\",\"runId\":\"run-2\",\"commandId\":\"run-2-start\",\"requestDigest\":\"sha256:2ea37118f5a973e5abf136ce0eb466a90713a08b8755063bc6a5644a8e914f23\",\"revision\":2,\"controllerEpoch\":1,\"cancelEpoch\":0,\"appliedSequences\":[2],\"recordedAt\":\"2026-09-15T00:02:00.000Z\"}'",
+				"created_at": "'2026-09-15T00:02:00.000Z'"
+			},
+			{
+				"request_digest": "'sha256:f8e55597feb7be8c68ed3b40f4a1a18814fe39675f1d681feb039ea00fe3ecfe'",
+				"request_id": "'req-start-run-2-ready'",
+				"run_id": "'run-2'",
+				"command_id": "'run-2-ready'",
+				"action": "'start'",
+				"canonical_bytes": "'{\"action\":\"start\",\"commandId\":\"run-2-ready\",\"expectedCancelEpoch\":0,\"expectedControllerEpoch\":1,\"expectedRevision\":2,\"protocol\":\"prime.workflow.request/v2\",\"requestId\":\"req-start-run-2-ready\",\"runId\":\"run-2\"}'",
+				"receipt_json": "'{\"action\":\"start\",\"requestId\":\"req-start-run-2-ready\",\"runId\":\"run-2\",\"commandId\":\"run-2-ready\",\"requestDigest\":\"sha256:f8e55597feb7be8c68ed3b40f4a1a18814fe39675f1d681feb039ea00fe3ecfe\",\"revision\":3,\"controllerEpoch\":1,\"cancelEpoch\":0,\"appliedSequences\":[3],\"recordedAt\":\"2026-09-15T00:02:00.000Z\"}'",
+				"created_at": "'2026-09-15T00:02:00.000Z'"
+			},
+			{
+				"request_digest": "'sha256:aa8decf60706ea936d3ac3a615e376ed72081490ef1441019a4e6def736e3970'",
+				"request_id": "'req-start-run-2-prep'",
+				"run_id": "'run-2'",
+				"command_id": "'run-2-prep'",
+				"action": "'start'",
+				"canonical_bytes": "'{\"action\":\"start\",\"commandId\":\"run-2-prep\",\"expectedCancelEpoch\":0,\"expectedControllerEpoch\":1,\"expectedRevision\":3,\"protocol\":\"prime.workflow.request/v2\",\"requestId\":\"req-start-run-2-prep\",\"runId\":\"run-2\"}'",
+				"receipt_json": "'{\"action\":\"start\",\"requestId\":\"req-start-run-2-prep\",\"runId\":\"run-2\",\"commandId\":\"run-2-prep\",\"requestDigest\":\"sha256:aa8decf60706ea936d3ac3a615e376ed72081490ef1441019a4e6def736e3970\",\"revision\":4,\"controllerEpoch\":1,\"cancelEpoch\":0,\"appliedSequences\":[4],\"recordedAt\":\"2026-09-15T00:02:00.000Z\"}'",
+				"created_at": "'2026-09-15T00:02:00.000Z'"
+			},
+			{
+				"request_digest": "'sha256:a563394970341aea211e7a93b17d5b62b6a402bbd4a79bb361b0a53da141df87'",
+				"request_id": "'req-start-run-2-disp'",
+				"run_id": "'run-2'",
+				"command_id": "'run-2-disp'",
+				"action": "'start'",
+				"canonical_bytes": "'{\"action\":\"start\",\"commandId\":\"run-2-disp\",\"expectedCancelEpoch\":0,\"expectedControllerEpoch\":1,\"expectedRevision\":4,\"protocol\":\"prime.workflow.request/v2\",\"requestId\":\"req-start-run-2-disp\",\"runId\":\"run-2\"}'",
+				"receipt_json": "'{\"action\":\"start\",\"requestId\":\"req-start-run-2-disp\",\"runId\":\"run-2\",\"commandId\":\"run-2-disp\",\"requestDigest\":\"sha256:a563394970341aea211e7a93b17d5b62b6a402bbd4a79bb361b0a53da141df87\",\"revision\":5,\"controllerEpoch\":1,\"cancelEpoch\":0,\"appliedSequences\":[5],\"recordedAt\":\"2026-09-15T00:02:00.000Z\"}'",
+				"created_at": "'2026-09-15T00:02:00.000Z'"
+			},
+			{
+				"request_digest": "'sha256:967de4c291d261b50c68e298de4384f8e9d20e760f411c0d3f6a92ec8e58b1fd'",
+				"request_id": "'req-start-run-2-bind'",
+				"run_id": "'run-2'",
+				"command_id": "'run-2-bind'",
+				"action": "'start'",
+				"canonical_bytes": "'{\"action\":\"start\",\"commandId\":\"run-2-bind\",\"expectedCancelEpoch\":0,\"expectedControllerEpoch\":1,\"expectedRevision\":5,\"protocol\":\"prime.workflow.request/v2\",\"requestId\":\"req-start-run-2-bind\",\"runId\":\"run-2\"}'",
+				"receipt_json": "'{\"action\":\"start\",\"requestId\":\"req-start-run-2-bind\",\"runId\":\"run-2\",\"commandId\":\"run-2-bind\",\"requestDigest\":\"sha256:967de4c291d261b50c68e298de4384f8e9d20e760f411c0d3f6a92ec8e58b1fd\",\"revision\":6,\"controllerEpoch\":1,\"cancelEpoch\":0,\"appliedSequences\":[6],\"recordedAt\":\"2026-09-15T00:02:00.000Z\"}'",
+				"created_at": "'2026-09-15T00:02:00.000Z'"
+			},
+			{
+				"request_digest": "'sha256:94ab3d0302d8d7b4888710fb44ab8e3c71df055a7e624affc6da658e89ea4765'",
+				"request_id": "'req-cancel-run-2-cancel'",
+				"run_id": "'run-2'",
+				"command_id": "'run-2-cancel'",
+				"action": "'cancel'",
+				"canonical_bytes": "'{\"action\":\"cancel\",\"commandId\":\"run-2-cancel\",\"expectedCancelEpoch\":0,\"expectedControllerEpoch\":1,\"expectedRevision\":6,\"protocol\":\"prime.workflow.request/v2\",\"reason\":\"operator stop\",\"requestId\":\"req-cancel-run-2-cancel\",\"runId\":\"run-2\"}'",
+				"receipt_json": "'{\"action\":\"cancel\",\"requestId\":\"req-cancel-run-2-cancel\",\"runId\":\"run-2\",\"commandId\":\"run-2-cancel\",\"requestDigest\":\"sha256:94ab3d0302d8d7b4888710fb44ab8e3c71df055a7e624affc6da658e89ea4765\",\"revision\":8,\"controllerEpoch\":1,\"cancelEpoch\":0,\"appliedSequences\":[7,8],\"recordedAt\":\"2026-09-15T00:02:00.000Z\"}'",
+				"created_at": "'2026-09-15T00:02:00.000Z'"
+			},
+			{
+				"request_digest": "'sha256:3b4500e0cfab73d426e2c69076c5393d8f400bf767275ae3bd0f16b018f6105c'",
+				"request_id": "'req-cancel-run-2-obs'",
+				"run_id": "'run-2'",
+				"command_id": "'run-2-obs'",
+				"action": "'cancel'",
+				"canonical_bytes": "'{\"action\":\"cancel\",\"commandId\":\"run-2-obs\",\"expectedCancelEpoch\":0,\"expectedControllerEpoch\":1,\"expectedRevision\":8,\"protocol\":\"prime.workflow.request/v2\",\"reason\":\"observe\",\"requestId\":\"req-cancel-run-2-obs\",\"runId\":\"run-2\"}'",
+				"receipt_json": "'{\"action\":\"cancel\",\"requestId\":\"req-cancel-run-2-obs\",\"runId\":\"run-2\",\"commandId\":\"run-2-obs\",\"requestDigest\":\"sha256:3b4500e0cfab73d426e2c69076c5393d8f400bf767275ae3bd0f16b018f6105c\",\"revision\":10,\"controllerEpoch\":1,\"cancelEpoch\":0,\"appliedSequences\":[9,10],\"recordedAt\":\"2026-09-15T00:02:00.000Z\"}'",
+				"created_at": "'2026-09-15T00:02:00.000Z'"
+			},
+			{
+				"request_digest": "'sha256:10d5cc1c1e3565a2ca55196cbae9b87bd8e9793479186e7f3757d33a6eb895f4'",
+				"request_id": "'req-create-run-3'",
+				"run_id": "NULL",
+				"command_id": "NULL",
+				"action": "'create'",
+				"canonical_bytes": "'{\"action\":\"create\",\"definition\":{\"budget\":{\"maxConcurrentAttempts\":4,\"maxTotalTokens\":10000,\"semantics\":\"soft_admission\"},\"nodes\":[{\"dependsOn\":[],\"kind\":\"agent\",\"maxTokens\":100,\"maxTurns\":1,\"model\":\"model.test\",\"nodeId\":\"n1\",\"prompt\":\"prompt for n1\",\"tools\":\"none\"}],\"outputs\":[\"n1\"],\"protocol\":\"prime.workflow.definition/v2\"},\"protocol\":\"prime.workflow.request/v2\",\"requestId\":\"req-create-run-3\"}'",
+				"receipt_json": "'{\"action\":\"create\",\"requestId\":\"req-create-run-3\",\"runId\":\"run-3\",\"commandId\":null,\"requestDigest\":\"sha256:10d5cc1c1e3565a2ca55196cbae9b87bd8e9793479186e7f3757d33a6eb895f4\",\"revision\":1,\"controllerEpoch\":1,\"cancelEpoch\":0,\"appliedSequences\":[1],\"recordedAt\":\"2026-09-15T00:02:00.000Z\"}'",
+				"created_at": "'2026-09-15T00:02:00.000Z'"
+			},
+			{
+				"request_digest": "'sha256:92ae090714a891ecec3b70045fdab9ec541b5de6e0938c0fb8ab7efc5f53f5de'",
+				"request_id": "'req-start-run-3-q'",
+				"run_id": "'run-3'",
+				"command_id": "'run-3-q'",
+				"action": "'start'",
+				"canonical_bytes": "'{\"action\":\"start\",\"commandId\":\"run-3-q\",\"expectedCancelEpoch\":0,\"expectedControllerEpoch\":1,\"expectedRevision\":1,\"protocol\":\"prime.workflow.request/v2\",\"requestId\":\"req-start-run-3-q\",\"runId\":\"run-3\"}'",
+				"receipt_json": "'{\"action\":\"start\",\"requestId\":\"req-start-run-3-q\",\"runId\":\"run-3\",\"commandId\":\"run-3-q\",\"requestDigest\":\"sha256:92ae090714a891ecec3b70045fdab9ec541b5de6e0938c0fb8ab7efc5f53f5de\",\"revision\":2,\"controllerEpoch\":1,\"cancelEpoch\":0,\"appliedSequences\":[2],\"recordedAt\":\"2026-09-15T00:02:00.000Z\"}'",
+				"created_at": "'2026-09-15T00:02:00.000Z'"
+			}
+		],
+		"definitions": [
+			{
+				"definition_digest": "'sha256:c12a0ae3c52e8a5e3c7fcf084c749ec994a69482928afef8a2ddf04e36046d29'",
+				"canonical_bytes": "'{\"protocol\":\"prime.workflow.definition/v2\",\"nodes\":[{\"nodeId\":\"n1\",\"kind\":\"agent\",\"prompt\":\"prompt for n1\",\"dependsOn\":[],\"model\":\"model.test\",\"maxTurns\":1,\"tools\":\"none\",\"maxTokens\":100}],\"outputs\":[\"n1\"],\"budget\":{\"maxConcurrentAttempts\":4,\"maxTotalTokens\":10000,\"semantics\":\"soft_admission\"}}'",
+				"utf8_bytes": "295",
+				"created_at": "'2026-09-15T00:00:00.000Z'"
+			}
+		],
+		"events": [
+			{
+				"run_id": "'run-1'",
+				"sequence": "1",
+				"event_id": "'ev-run-1-1-1'",
+				"revision": "1",
+				"type": "'RunAdmitted'",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"recorded_at": "'2026-09-15T00:00:00.000Z'",
+				"data_json": "'{}'",
+				"digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"compacted": "1"
+			},
+			{
+				"run_id": "'run-1'",
+				"sequence": "2",
+				"event_id": "'ev-run-1-2-2'",
+				"revision": "2",
+				"type": "'RunStarted'",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"recorded_at": "'2026-09-15T00:00:00.000Z'",
+				"data_json": "'{}'",
+				"digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"compacted": "1"
+			},
+			{
+				"run_id": "'run-1'",
+				"sequence": "3",
+				"event_id": "'ev-run-1-3-3'",
+				"revision": "3",
+				"type": "'NodeBecameReady'",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"recorded_at": "'2026-09-15T00:00:00.000Z'",
+				"data_json": "'{}'",
+				"digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"compacted": "1"
+			},
+			{
+				"run_id": "'run-1'",
+				"sequence": "4",
+				"event_id": "'ev-run-1-4-4'",
+				"revision": "4",
+				"type": "'AttemptPrepared'",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"recorded_at": "'2026-09-15T00:00:00.000Z'",
+				"data_json": "'{}'",
+				"digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"compacted": "1"
+			},
+			{
+				"run_id": "'run-1'",
+				"sequence": "5",
+				"event_id": "'ev-run-1-5-5'",
+				"revision": "5",
+				"type": "'AttemptDispatchCommitted'",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"recorded_at": "'2026-09-15T00:00:00.000Z'",
+				"data_json": "'{}'",
+				"digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"compacted": "1"
+			},
+			{
+				"run_id": "'run-1'",
+				"sequence": "6",
+				"event_id": "'ev-run-1-6-6'",
+				"revision": "6",
+				"type": "'AttemptAdmissionBound'",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"recorded_at": "'2026-09-15T00:00:00.000Z'",
+				"data_json": "'{\"nodeId\":\"n1\",\"attemptId\":\"a1\",\"operationId\":\"op1\",\"rlmChildId\":\"child1\",\"turnId\":\"turn1\",\"evidenceDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}'",
+				"digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"compacted": "0"
+			},
+			{
+				"run_id": "'run-1'",
+				"sequence": "7",
+				"event_id": "'ev-run-1-7-7'",
+				"revision": "7",
+				"type": "'AttemptSettlementObserved'",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"recorded_at": "'2026-09-15T00:00:00.000Z'",
+				"data_json": "'{\"nodeId\":\"n1\",\"attemptId\":\"a1\",\"settlementDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"outcome\":\"completed\"}'",
+				"digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"compacted": "0"
+			},
+			{
+				"run_id": "'run-1'",
+				"sequence": "8",
+				"event_id": "'ev-run-1-8-8'",
+				"revision": "8",
+				"type": "'AttemptAccepted'",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"recorded_at": "'2026-09-15T00:00:00.000Z'",
+				"data_json": "'{\"nodeId\":\"n1\",\"attemptId\":\"a1\",\"evidenceDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}'",
+				"digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"compacted": "0"
+			},
+			{
+				"run_id": "'run-1'",
+				"sequence": "9",
+				"event_id": "'ev-run-1-9-9'",
+				"revision": "9",
+				"type": "'RunDraining'",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"recorded_at": "'2026-09-15T00:00:00.000Z'",
+				"data_json": "'{\"evidenceDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}'",
+				"digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"compacted": "0"
+			},
+			{
+				"run_id": "'run-1'",
+				"sequence": "10",
+				"event_id": "'ev-run-1-10-10'",
+				"revision": "10",
+				"type": "'RunTerminalized'",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"recorded_at": "'2026-09-15T00:00:00.000Z'",
+				"data_json": "'{\"evidenceDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"outcome\":\"succeeded\"}'",
+				"digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"compacted": "0"
+			},
+			{
+				"run_id": "'run-2'",
+				"sequence": "1",
+				"event_id": "'ev-run-2-1-13'",
+				"revision": "1",
+				"type": "'RunAdmitted'",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"recorded_at": "'2026-09-15T00:00:00.000Z'",
+				"data_json": "'{}'",
+				"digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"compacted": "1"
+			},
+			{
+				"run_id": "'run-2'",
+				"sequence": "2",
+				"event_id": "'ev-run-2-2-14'",
+				"revision": "2",
+				"type": "'RunStarted'",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"recorded_at": "'2026-09-15T00:00:00.000Z'",
+				"data_json": "'{}'",
+				"digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"compacted": "1"
+			},
+			{
+				"run_id": "'run-2'",
+				"sequence": "3",
+				"event_id": "'ev-run-2-3-15'",
+				"revision": "3",
+				"type": "'NodeBecameReady'",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"recorded_at": "'2026-09-15T00:00:00.000Z'",
+				"data_json": "'{}'",
+				"digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"compacted": "1"
+			},
+			{
+				"run_id": "'run-2'",
+				"sequence": "4",
+				"event_id": "'ev-run-2-4-16'",
+				"revision": "4",
+				"type": "'AttemptPrepared'",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"recorded_at": "'2026-09-15T00:00:00.000Z'",
+				"data_json": "'{\"nodeId\":\"n1\",\"attemptId\":\"a2\",\"evidenceDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}'",
+				"digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"compacted": "0"
+			},
+			{
+				"run_id": "'run-2'",
+				"sequence": "5",
+				"event_id": "'ev-run-2-5-17'",
+				"revision": "5",
+				"type": "'AttemptDispatchCommitted'",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"recorded_at": "'2026-09-15T00:00:00.000Z'",
+				"data_json": "'{\"nodeId\":\"n1\",\"attemptId\":\"a2\",\"evidenceDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}'",
+				"digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"compacted": "0"
+			},
+			{
+				"run_id": "'run-2'",
+				"sequence": "6",
+				"event_id": "'ev-run-2-6-18'",
+				"revision": "6",
+				"type": "'AttemptAdmissionBound'",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"recorded_at": "'2026-09-15T00:00:00.000Z'",
+				"data_json": "'{\"nodeId\":\"n1\",\"attemptId\":\"a2\",\"operationId\":\"op2\",\"rlmChildId\":\"child2\",\"turnId\":\"turn2\",\"evidenceDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}'",
+				"digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"compacted": "0"
+			},
+			{
+				"run_id": "'run-2'",
+				"sequence": "7",
+				"event_id": "'ev-run-2-7-19'",
+				"revision": "7",
+				"type": "'RunCancellationRequested'",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"recorded_at": "'2026-09-15T00:00:00.000Z'",
+				"data_json": "'{\"evidenceDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}'",
+				"digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"compacted": "0"
+			},
+			{
+				"run_id": "'run-2'",
+				"sequence": "8",
+				"event_id": "'ev-run-2-8-20'",
+				"revision": "8",
+				"type": "'AttemptCancellationRequested'",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"recorded_at": "'2026-09-15T00:00:00.000Z'",
+				"data_json": "'{\"nodeId\":\"n1\",\"attemptId\":\"a2\",\"evidenceDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}'",
+				"digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"compacted": "0"
+			},
+			{
+				"run_id": "'run-2'",
+				"sequence": "9",
+				"event_id": "'ev-run-2-9-22'",
+				"revision": "9",
+				"type": "'AttemptSettlementObserved'",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"recorded_at": "'2026-09-15T00:00:00.000Z'",
+				"data_json": "'{\"nodeId\":\"n1\",\"attemptId\":\"a2\",\"settlementDigest\":\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"outcome\":\"cancelled\"}'",
+				"digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"compacted": "0"
+			},
+			{
+				"run_id": "'run-2'",
+				"sequence": "10",
+				"event_id": "'ev-run-2-10-23'",
+				"revision": "10",
+				"type": "'HostCursorAdvanced'",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"recorded_at": "'2026-09-15T00:00:00.000Z'",
+				"data_json": "'{\"hostCursor\":\"hc2-6\",\"evidenceDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}'",
+				"digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"compacted": "0"
+			},
+			{
+				"run_id": "'run-3'",
+				"sequence": "1",
+				"event_id": "'ev-run-3-1-24'",
+				"revision": "1",
+				"type": "'RunAdmitted'",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"recorded_at": "'2026-09-15T00:00:00.000Z'",
+				"data_json": "'{\"evidenceDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}'",
+				"digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"compacted": "0"
+			},
+			{
+				"run_id": "'run-3'",
+				"sequence": "2",
+				"event_id": "'ev-run-3-2-25'",
+				"revision": "2",
+				"type": "'RunQuarantined'",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"recorded_at": "'2026-09-15T00:00:00.000Z'",
+				"data_json": "'{\"evidenceDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}'",
+				"digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"compacted": "0"
+			}
+		],
+		"host_inbox": [
+			{
+				"host_event_id": "'he-start'",
+				"run_id": "'run-1'",
+				"host_cursor": "'hc-1'",
+				"type": "'TurnStarted'",
+				"fact_json": "'{\"protocol\":\"prime.workflow.retained-event/v2\",\"hostEventId\":\"he-start\",\"hostCursor\":\"hc-1\",\"type\":\"TurnStarted\",\"recordedAt\":\"2026-09-15T00:00:00.000Z\",\"data\":{\"requestId\":\"hostreq-1\",\"rlmChildId\":\"child1\",\"turnId\":\"turn1\",\"evidenceDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}'",
+				"created_at": "'2026-09-15T00:00:00.000Z'"
+			},
+			{
+				"host_event_id": "'he-settle'",
+				"run_id": "'run-1'",
+				"host_cursor": "'hc-2'",
+				"type": "'TurnSettled'",
+				"fact_json": "'{\"protocol\":\"prime.workflow.retained-event/v2\",\"hostEventId\":\"he-settle\",\"hostCursor\":\"hc-2\",\"type\":\"TurnSettled\",\"recordedAt\":\"2026-09-15T00:00:00.000Z\",\"data\":{\"requestId\":\"hostreq-1\",\"rlmChildId\":\"child1\",\"turnId\":\"turn1\",\"evidenceDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"settlement\":{\"authorityScope\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"parentId\":\"parent.session\",\"requestId\":\"req-a1\",\"nodeId\":\"n1\",\"attemptId\":\"a1\",\"rlmChildId\":\"child1\",\"turnId\":\"turn1\",\"admittedAt\":\"2026-09-15T00:00:00.000Z\",\"startedAt\":\"2026-09-15T00:00:00.000Z\",\"settledAt\":\"2026-09-15T00:00:00.000Z\",\"cancelActuated\":false,\"descendantsQuiescent\":true,\"hostCursor\":\"hc-1\",\"settlementDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"outcome\":\"completed\",\"result\":{\"kind\":\"text\",\"text\":\"hello world\",\"utf8Bytes\":11,\"sha256\":\"sha256:b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9\"},\"usage\":{\"inputTokens\":10,\"outputTokens\":20,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"totalTokens\":30,\"costMicrousd\":0,\"finality\":\"final\"},\"error\":null,\"workflowChildId\":\"wfc-a1\",\"requestDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}},\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}'",
+				"created_at": "'2026-09-15T00:00:00.000Z'"
+			},
+			{
+				"host_event_id": "'he2-start'",
+				"run_id": "'run-2'",
+				"host_cursor": "'hc2-1'",
+				"type": "'TurnStarted'",
+				"fact_json": "'{\"protocol\":\"prime.workflow.retained-event/v2\",\"hostEventId\":\"he2-start\",\"hostCursor\":\"hc2-1\",\"type\":\"TurnStarted\",\"recordedAt\":\"2026-09-15T00:00:00.000Z\",\"data\":{\"requestId\":\"hostreq-2\",\"rlmChildId\":\"child2\",\"turnId\":\"turn2\",\"evidenceDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}'",
+				"created_at": "'2026-09-15T00:02:00.000Z'"
+			},
+			{
+				"host_event_id": "'he2-cr'",
+				"run_id": "'run-2'",
+				"host_cursor": "'hc2-2'",
+				"type": "'CancelRequested'",
+				"fact_json": "'{\"protocol\":\"prime.workflow.retained-event/v2\",\"hostEventId\":\"he2-cr\",\"hostCursor\":\"hc2-2\",\"type\":\"CancelRequested\",\"recordedAt\":\"2026-09-15T00:00:00.000Z\",\"data\":{\"requestId\":\"hostreq-2\",\"rlmChildId\":\"child2\",\"turnId\":\"turn2\",\"evidenceDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}'",
+				"created_at": "'2026-09-15T00:02:00.000Z'"
+			},
+			{
+				"host_event_id": "'he2-ca'",
+				"run_id": "'run-2'",
+				"host_cursor": "'hc2-3'",
+				"type": "'CancelActuated'",
+				"fact_json": "'{\"protocol\":\"prime.workflow.retained-event/v2\",\"hostEventId\":\"he2-ca\",\"hostCursor\":\"hc2-3\",\"type\":\"CancelActuated\",\"recordedAt\":\"2026-09-15T00:00:00.000Z\",\"data\":{\"requestId\":\"hostreq-2\",\"rlmChildId\":\"child2\",\"turnId\":\"turn2\",\"evidenceDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}'",
+				"created_at": "'2026-09-15T00:02:00.000Z'"
+			},
+			{
+				"host_event_id": "'he2-settle'",
+				"run_id": "'run-2'",
+				"host_cursor": "'hc2-4'",
+				"type": "'TurnSettled'",
+				"fact_json": "'{\"protocol\":\"prime.workflow.retained-event/v2\",\"hostEventId\":\"he2-settle\",\"hostCursor\":\"hc2-4\",\"type\":\"TurnSettled\",\"recordedAt\":\"2026-09-15T00:00:00.000Z\",\"data\":{\"requestId\":\"hostreq-2\",\"rlmChildId\":\"child2\",\"turnId\":\"turn2\",\"evidenceDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"settlement\":{\"authorityScope\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"parentId\":\"parent.session\",\"requestId\":\"req-a2\",\"nodeId\":\"n1\",\"attemptId\":\"a2\",\"rlmChildId\":\"child2\",\"turnId\":\"turn2\",\"admittedAt\":\"2026-09-15T00:00:00.000Z\",\"startedAt\":\"2026-09-15T00:00:00.000Z\",\"settledAt\":\"2026-09-15T00:00:00.000Z\",\"cancelActuated\":true,\"descendantsQuiescent\":false,\"hostCursor\":\"hc-1\",\"settlementDigest\":\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"outcome\":\"cancelled\",\"result\":{\"kind\":\"none\",\"reason\":\"cancelled\"},\"usage\":{\"inputTokens\":10,\"outputTokens\":20,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"totalTokens\":30,\"costMicrousd\":0,\"finality\":\"known_prefix\"},\"error\":{\"code\":\"CANCELLED\",\"message\":\"cancelled by the controller\",\"retryable\":false},\"workflowChildId\":\"wfc-a2\",\"requestDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}},\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}'",
+				"created_at": "'2026-09-15T00:02:00.000Z'"
+			},
+			{
+				"host_event_id": "'he2-q'",
+				"run_id": "'run-2'",
+				"host_cursor": "'hc2-5'",
+				"type": "'ChildQuiescent'",
+				"fact_json": "'{\"protocol\":\"prime.workflow.retained-event/v2\",\"hostEventId\":\"he2-q\",\"hostCursor\":\"hc2-5\",\"type\":\"ChildQuiescent\",\"recordedAt\":\"2026-09-15T00:00:00.000Z\",\"data\":{\"requestId\":\"hostreq-2\",\"rlmChildId\":\"child2\",\"evidenceDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}'",
+				"created_at": "'2026-09-15T00:02:00.000Z'"
+			},
+			{
+				"host_event_id": "'he2-tomb'",
+				"run_id": "'run-2'",
+				"host_cursor": "'hc2-6'",
+				"type": "'ChildTombstoned'",
+				"fact_json": "'{\"protocol\":\"prime.workflow.retained-event/v2\",\"hostEventId\":\"he2-tomb\",\"hostCursor\":\"hc2-6\",\"type\":\"ChildTombstoned\",\"recordedAt\":\"2026-09-15T00:00:00.000Z\",\"data\":{\"requestId\":\"hostreq-2\",\"rlmChildId\":\"child2\",\"evidenceDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}'",
+				"created_at": "'2026-09-15T00:02:00.000Z'"
+			}
+		],
+		"host_streams": [
+			{
+				"run_id": "'run-1'",
+				"host_cursor": "'hc-2'",
+				"updated_at": "'2026-09-15T00:00:00.000Z'"
+			},
+			{
+				"run_id": "'run-2'",
+				"host_cursor": "'hc2-6'",
+				"updated_at": "'2026-09-15T00:02:00.000Z'"
+			},
+			{
+				"run_id": "'run-3'",
+				"host_cursor": "NULL",
+				"updated_at": "'2026-09-15T00:02:00.000Z'"
+			}
+		],
+		"nodes": [
+			{
+				"run_id": "'run-1'",
+				"node_id": "'n1'",
+				"phase": "'terminal'",
+				"intent": "'none'",
+				"outcome": "'accepted'",
+				"conditions": "'[\"acceptance_passed\",\"candidate_present\",\"dependencies_accepted\"]'"
+			},
+			{
+				"run_id": "'run-2'",
+				"node_id": "'n1'",
+				"phase": "'attempting'",
+				"intent": "'execute'",
+				"outcome": "NULL",
+				"conditions": "'[\"acceptance_pending\",\"candidate_absent\",\"dependencies_accepted\"]'"
+			},
+			{
+				"run_id": "'run-3'",
+				"node_id": "'n1'",
+				"phase": "'blocked'",
+				"intent": "'none'",
+				"outcome": "NULL",
+				"conditions": "'[\"acceptance_pending\",\"candidate_absent\",\"dependencies_accepted\"]'"
+			}
+		],
+		"operations": [
+			{
+				"operation_id": "'op1'",
+				"run_id": "'run-1'",
+				"attempt_id": "'a1'",
+				"kind": "'deliver'",
+				"request_id": "'hostreq-1'",
+				"canonical_request": "'{\"operation\":\"child.admit\",\"prompt\":\"zeta é   \\\"q\\\"\",\"protocol\":\"prime.workflow.retained-request/v2\",\"requestId\":\"hostreq-1\"}'",
+				"host_request_id": "'hostreq-1'",
+				"phase": "'terminal'",
+				"intent": "'deliver'",
+				"outcome": "'succeeded'",
+				"conditions": "'[\"claim_held\",\"receipt_present\",\"effect_classified\"]'",
+				"claim_epoch": "1",
+				"claim_owner": "'w'",
+				"claim_expires_at": "'2026-09-15T00:03:00.000Z'",
+				"receipt_json": "'{\"ok\":true,\"n\":1}'",
+				"created_at": "'2026-09-15T00:00:00.000Z'",
+				"updated_at": "'2026-09-15T00:02:00.000Z'"
+			},
+			{
+				"operation_id": "'op2'",
+				"run_id": "'run-2'",
+				"attempt_id": "'a2'",
+				"kind": "'deliver'",
+				"request_id": "'hostreq-2'",
+				"canonical_request": "'{\"operation\":\"child.admit\",\"prompt\":\"zeta é   \\\"q\\\"\",\"protocol\":\"prime.workflow.retained-request/v2\",\"requestId\":\"hostreq-2\"}'",
+				"host_request_id": "'hostreq-2'",
+				"phase": "'terminal'",
+				"intent": "'deliver'",
+				"outcome": "'failed'",
+				"conditions": "'[\"claim_held\",\"receipt_present\",\"effect_classified\"]'",
+				"claim_epoch": "1",
+				"claim_owner": "'w2'",
+				"claim_expires_at": "'2026-09-15T00:02:01.000Z'",
+				"receipt_json": "'{\"error\":\"x\"}'",
+				"created_at": "'2026-09-15T00:02:00.000Z'",
+				"updated_at": "'2026-09-15T00:02:00.000Z'"
+			},
+			{
+				"operation_id": "'op2-cancel'",
+				"run_id": "'run-2'",
+				"attempt_id": "'a2'",
+				"kind": "'cancel'",
+				"request_id": "'hostreq-2c'",
+				"canonical_request": "'{\"operation\":\"child.cancel\",\"requestId\":\"hostreq-2c\"}'",
+				"host_request_id": "'hostreq-2c'",
+				"phase": "'terminal'",
+				"intent": "'cancel'",
+				"outcome": "'ambiguous'",
+				"conditions": "'[\"claim_held\",\"receipt_present\",\"effect_classified\"]'",
+				"claim_epoch": "1",
+				"claim_owner": "'w2'",
+				"claim_expires_at": "'2026-09-15T00:02:01.000Z'",
+				"receipt_json": "'{}'",
+				"created_at": "'2026-09-15T00:02:00.000Z'",
+				"updated_at": "'2026-09-15T00:02:00.000Z'"
+			}
+		],
+		"runs": [
+			{
+				"run_id": "'run-1'",
+				"definition_digest": "'sha256:c12a0ae3c52e8a5e3c7fcf084c749ec994a69482928afef8a2ddf04e36046d29'",
+				"revision": "10",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"phase": "'terminal'",
+				"intent": "'start'",
+				"outcome": "'succeeded'",
+				"conditions": "'[\"admission_fenced\",\"budgets_within_limit\",\"effects_classified\",\"integrity_verified\",\"owned_work_quiescent\"]'",
+				"host_cursor": "'hc-2'",
+				"terminal_outcome": "'succeeded'",
+				"terminal_digest": "NULL",
+				"erased": "1",
+				"created_at": "'2026-09-15T00:00:00.000Z'",
+				"updated_at": "'2026-09-15T00:02:00.000Z'"
+			},
+			{
+				"run_id": "'run-2'",
+				"definition_digest": "'sha256:c12a0ae3c52e8a5e3c7fcf084c749ec994a69482928afef8a2ddf04e36046d29'",
+				"revision": "10",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"phase": "'cancelling'",
+				"intent": "'cancel'",
+				"outcome": "NULL",
+				"conditions": "'[\"admission_fenced\"]'",
+				"host_cursor": "'hc2-6'",
+				"terminal_outcome": "NULL",
+				"terminal_digest": "NULL",
+				"erased": "0",
+				"created_at": "'2026-09-15T00:02:00.000Z'",
+				"updated_at": "'2026-09-15T00:02:00.000Z'"
+			},
+			{
+				"run_id": "'run-3'",
+				"definition_digest": "'sha256:c12a0ae3c52e8a5e3c7fcf084c749ec994a69482928afef8a2ddf04e36046d29'",
+				"revision": "2",
+				"controller_epoch": "1",
+				"cancel_epoch": "0",
+				"phase": "'quarantined'",
+				"intent": "'none'",
+				"outcome": "NULL",
+				"conditions": "'[\"admission_open\",\"integrity_failed\"]'",
+				"host_cursor": "NULL",
+				"terminal_outcome": "NULL",
+				"terminal_digest": "NULL",
+				"erased": "0",
+				"created_at": "'2026-09-15T00:02:00.000Z'",
+				"updated_at": "'2026-09-15T00:02:00.000Z'"
+			}
+		],
+		"settlements": [
+			{
+				"settlement_digest": "'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+				"run_id": "'run-1'",
+				"attempt_id": "'a1'",
+				"outcome": "'completed'",
+				"result_kind": "'text'",
+				"result_utf8_bytes": "11",
+				"result_sha256": "'sha256:b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9'",
+				"usage_json": "'{\"inputTokens\":10,\"outputTokens\":20,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"totalTokens\":30,\"costMicrousd\":0,\"finality\":\"final\"}'",
+				"settlement_json": "'{\"authorityScope\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"parentId\":\"parent.session\",\"requestId\":\"req-a1\",\"nodeId\":\"n1\",\"attemptId\":\"a1\",\"rlmChildId\":\"child1\",\"turnId\":\"turn1\",\"admittedAt\":\"2026-09-15T00:00:00.000Z\",\"startedAt\":\"2026-09-15T00:00:00.000Z\",\"settledAt\":\"2026-09-15T00:00:00.000Z\",\"cancelActuated\":false,\"descendantsQuiescent\":true,\"hostCursor\":\"hc-1\",\"settlementDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"outcome\":\"completed\",\"result\":{\"kind\":\"erased\",\"utf8Bytes\":11,\"sha256\":\"sha256:b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9\",\"erasedAt\":\"2026-09-15T00:02:00.000Z\",\"policyBasis\":\"retention-30d\"},\"usage\":{\"inputTokens\":10,\"outputTokens\":20,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"totalTokens\":30,\"costMicrousd\":0,\"finality\":\"final\"},\"error\":null,\"workflowChildId\":\"wfc-a1\",\"requestDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}'",
+				"created_at": "'2026-09-15T00:00:00.000Z'"
+			},
+			{
+				"settlement_digest": "'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'",
+				"run_id": "'run-2'",
+				"attempt_id": "'a2'",
+				"outcome": "'cancelled'",
+				"result_kind": "'none'",
+				"result_utf8_bytes": "NULL",
+				"result_sha256": "NULL",
+				"usage_json": "'{\"inputTokens\":10,\"outputTokens\":20,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"totalTokens\":30,\"costMicrousd\":0,\"finality\":\"known_prefix\"}'",
+				"settlement_json": "'{\"authorityScope\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"parentId\":\"parent.session\",\"requestId\":\"req-a2\",\"nodeId\":\"n1\",\"attemptId\":\"a2\",\"rlmChildId\":\"child2\",\"turnId\":\"turn2\",\"admittedAt\":\"2026-09-15T00:00:00.000Z\",\"startedAt\":\"2026-09-15T00:00:00.000Z\",\"settledAt\":\"2026-09-15T00:00:00.000Z\",\"cancelActuated\":true,\"descendantsQuiescent\":false,\"hostCursor\":\"hc-1\",\"settlementDigest\":\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"outcome\":\"cancelled\",\"result\":{\"kind\":\"none\",\"reason\":\"cancelled\"},\"usage\":{\"inputTokens\":10,\"outputTokens\":20,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"totalTokens\":30,\"costMicrousd\":0,\"finality\":\"known_prefix\"},\"error\":{\"code\":\"CANCELLED\",\"message\":\"cancelled by the controller\",\"retryable\":false},\"workflowChildId\":\"wfc-a2\",\"requestDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}'",
+				"created_at": "'2026-09-15T00:02:00.000Z'"
+			}
+		],
+		"store_meta": [
+			{
+				"key": "'root_scope_digest'",
+				"value": "'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'"
+			},
+			{
+				"key": "'controller_epoch'",
+				"value": "'2'"
+			},
+			{
+				"key": "'text_bytes'",
+				"value": "'885'"
+			},
+			{
+				"key": "'snapshot:run-2'",
+				"value": "'{\"throughSequence\":3,\"requestedThrough\":3,\"snapshotDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"hostCursor\":\"hc2-6\"}'"
+			},
+			{
+				"key": "'snapshot:run-1'",
+				"value": "'{\"throughSequence\":5,\"requestedThrough\":5,\"snapshotDigest\":\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"hostCursor\":\"hc-2\"}'"
+			}
+		],
+		"store_migrations": [
+			{
+				"version": "1",
+				"name": "'base'",
+				"checksum": "'sha256:ac64d22f8d9adba77b21b35af29f23b540984729d7f35869c1f5448b29f6d78d'",
+				"applied_at": "<masked>"
+			}
+		],
+		"tombstones": [
+			{
+				"run_id": "'run-2'",
+				"rlm_child_id": "'child2'",
+				"request_id": "'hostreq-2'",
+				"tombstone_digest": "'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'",
+				"created_at": "'2026-09-15T00:02:00.000Z'"
+			}
+		]
+	}
+}

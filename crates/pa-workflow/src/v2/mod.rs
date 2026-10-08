@@ -4,17 +4,20 @@
 //! the retained-host capability profile — is shared by every V2 boundary;
 //! [`host`] answers the runtime's `workflow.v2.request`.
 //!
-//! What exists is the store-free half of the contract: `validate` is
-//! served in full, and every action that needs the durable controller
-//! (`create`, `start`, `cancel`, `retry`, `status`, `events`) answers the
-//! closed `CAPABILITY_UNAVAILABLE` error, as the TS host's disabled
-//! capability did.
+//! `validate` is served in full, and every action that needs the durable
+//! controller (`create`, `start`, `cancel`, `retry`, `status`, `events`)
+//! answers the closed `CAPABILITY_UNAVAILABLE` error, as the TS host's
+//! disabled capability did. Beneath it, dormant, sits slice 4: the durable
+//! per-root store ([`store`]) and the pure reducer ([`reducer`]) a future
+//! controller writes through; no product path opens a store yet.
 
 pub mod capability;
 pub mod host;
 pub mod json;
 pub mod projection;
+pub mod reducer;
 pub mod schema;
+pub mod store;
 pub mod wire;
 
 use std::sync::Arc;
