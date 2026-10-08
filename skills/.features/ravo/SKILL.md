@@ -30,13 +30,8 @@ await ravo.cancel()
   search for; optional `instructions` add constraints. Set `global_=True` to
   target the global (cross-session) harness store; omit for local
   (session-scoped). `max_rounds` and `max_repairs` cap the loop.
-  `arc_agi={"repo_dir": "/path/to/ARC-AGI-3-Agents", "game": "ls20"}` swaps
-  the LLM judge for an outcome evaluator: each candidate must carry an
-  `arcAgent` (`{"agentName", "source"}`, a Python `Agent` subclass), the
-  fast screen is a syntax check, the deep score is the fraction of levels the
-  agent completes in a real game, and the opponents are `arc:no-crash` and
-  `arc:all-levels`. Accepted agents are written to
-  `<harness>/ravo/arc/<runId>-<agentName>.py`.
+  Leave `arc_agi` unset: the ARC-AGI evaluator is not part of this build, and
+  the host refuses any `arc_agi` value with an error.
 - `await ravo.status()` — current run status as a dict (`runId`, `phase`,
   `round`, `repairs`, `stopReason`, `lastCertificate`, ...) or
   `{"phase": "idle"}` when nothing is running.
@@ -54,4 +49,4 @@ await ravo.cancel()
 
 ## Architecture map
 
-A Mermaid map of the AVO loop and of Prime Agent's three planes (RLM execution, continual harness, RAVO) lives in `packages/coding-agent/docs/ravo-architecture.md`. Read it before planning a run that touches the loop itself.
+A Mermaid map of the AVO loop and of Prime Agent's three planes (RLM execution, continual harness, RAVO) lives in the Prime Agent source repository at `docs/ravo-architecture.md`. Read it before planning a run that touches the loop itself.

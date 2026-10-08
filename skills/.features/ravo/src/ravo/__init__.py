@@ -45,10 +45,8 @@ async def run(
     Progress is visible in the Agents View and via `status()`. Set
     `global_=True` to target the global (cross-session) harness store; omit
     for local (session-scoped). `max_rounds` and `max_repairs` cap the loop.
-    Pass `arc_agi={"repo_dir": "/path/to/ARC-AGI-3-Agents", "game": "ls20"}`
-    to evaluate candidates by playing a real ARC-AGI-3 game instead of the
-    LLM judge: the proposal must then carry an `arcAgent` (a Python `Agent`
-    subclass) and the deep score is the fraction of levels completed.
+    Leave `arc_agi` unset: the ARC-AGI evaluator is not part of this build,
+    and the host refuses any `arc_agi` value with an error.
     """
     if not isinstance(task, str) or not task.strip():
         raise TypeError("task must be a non-empty str")
