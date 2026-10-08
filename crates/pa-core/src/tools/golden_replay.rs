@@ -193,6 +193,15 @@ async fn golden_edit_group_matches_ts() {
     assert_eq!(checked, corpus["caseCount"].as_u64().expect("caseCount"));
 }
 
+/// Removes a file the test caused when it goes out of scope, a failed assertion included.
+struct RemoveOnDrop(std::path::PathBuf);
+
+impl Drop for RemoveOnDrop {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 #[tokio::test]
 async fn golden_bash_group_matches_ts() {
     let corpus = corpus("bash");
@@ -251,6 +260,17 @@ async fn golden_bash_group_matches_ts() {
             std::env::remove_var("PI_BASH_ALLOW_DESTRUCTIVE_GIT");
         }
         let recorded = &case["result"];
+        // A truncated run spills its full output to `$TMPDIR/pi-bash-*.log` and advertises it,
+        // which the product keeps (TS parity: the path stays readable from the transcript); the
+        // case owns its spill and removes it once checked.
+        let spill = result
+            .as_ref()
+            .ok()
+            .and_then(|result| result.details.as_ref())
+            .and_then(|details| details.get("fullOutputPath"))
+            .and_then(serde_json::Value::as_str)
+            .map(std::path::PathBuf::from);
+        let _spill = spill.map(RemoveOnDrop);
         match result {
             Ok(result) => {
                 assert!(
