@@ -186,10 +186,12 @@ impl Client {
 /// The harness: a supervisor, a faux-scripted session over the real engine (compaction with a tiny
 /// keep window), and the session file the durable rows land in.
 struct Harness {
-    dir: tempfile::TempDir,
     _supervisor: Supervisor,
     client: Client,
     session_id: String,
+    // Last: fields drop in order, so the supervisor and its workers are gone before the dir is
+    // removed (a worker still writing `agent/auth.json` would leave the dir behind).
+    dir: tempfile::TempDir,
 }
 
 fn setup(name: &str) -> Harness {

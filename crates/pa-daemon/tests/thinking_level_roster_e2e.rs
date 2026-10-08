@@ -226,8 +226,6 @@ impl Client {
 }
 
 struct Harness {
-    #[allow(dead_code)]
-    dir: tempfile::TempDir,
     agent_dir: PathBuf,
     session_dir: PathBuf,
     #[allow(dead_code)]
@@ -235,6 +233,10 @@ struct Harness {
     client: Client,
     session_id: String,
     persisted_id: String,
+    // Last: fields drop in order, so the supervisor and its workers are gone before the dir is
+    // removed (a worker still writing `agent/auth.json` would leave the dir behind).
+    #[allow(dead_code)]
+    dir: tempfile::TempDir,
 }
 
 #[allow(clippy::zombie_processes)]

@@ -711,6 +711,7 @@ fn a_restart_after_a_failed_identity_persist_serves_the_moved_session() {
     let mut supervisor_b = spawn_supervisor_raw(&socket, &agent_dir);
     let _daemon_guard = DaemonKillOnDrop {
         child: &mut supervisor_b,
+        root: dir.path(),
     };
     wait_socket_accepts(&socket);
 
@@ -836,15 +837,21 @@ fn spawn_supervisor_raw(socket: &std::path::Path, agent_dir: &std::path::Path) -
     panic!("supervisor socket never appeared");
 }
 
-/// Kills the supervisor at scope exit (the restart test's supervisor B).
+/// Kills the supervisor at scope exit (the restart test's supervisor B), and every process
+/// still using the test dir: the worker supervisor A left alive is not B's child, and it kept
+/// journalling into the dir after the test removed it.
 struct DaemonKillOnDrop<'a> {
     child: &'a mut Child,
+    root: &'a std::path::Path,
 }
 
 impl Drop for DaemonKillOnDrop<'_> {
     fn drop(&mut self) {
         pa_core::platform::process_tree::kill_child_tree(self.child);
         let _ = self.child.wait();
+        pa_core::platform::process_tree::kill_process_trees(
+            &pa_core::platform::process_tree::processes_referencing(self.root),
+        );
     }
 }
 

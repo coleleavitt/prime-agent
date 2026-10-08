@@ -248,12 +248,25 @@ fn messages(client: &mut Client, id: &str, active_session_id: &str) -> String {
 }
 
 struct Messaging {
-    dir: tempfile::TempDir,
     daemon: Daemon,
     socket: PathBuf,
     receipts_dir: PathBuf,
     alpha: Session,
     beta: Session,
+    // Last: fields drop in order, so the supervisor and its workers are gone before the dir is
+    // removed (a worker still writing `agent/auth.json` would leave the dir behind).
+    dir: tempfile::TempDir,
+}
+
+impl Drop for Messaging {
+    /// Before any field drops: stop every process still using the dir. The sessions' kernels
+    /// are not all in the supervisor's process tree, and one saving its `kernel-state` snapshot
+    /// after the dir's removal left the dir behind.
+    fn drop(&mut self) {
+        pa_core::platform::process_tree::kill_process_trees(
+            &pa_core::platform::process_tree::processes_referencing(self.dir.path()),
+        );
+    }
 }
 
 /// The receipt the kernel cell recorded for `index`, or the recorded failure

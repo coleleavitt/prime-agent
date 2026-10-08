@@ -271,8 +271,6 @@ impl Client {
 /// Shared harness: supervisor + a reasoning model behind the recording
 /// mock; no `thinkingLevelMap`, so `max` must clamp to `high`.
 struct Harness {
-    #[allow(dead_code)]
-    dir: tempfile::TempDir,
     agent_dir: PathBuf,
     session_dir: PathBuf,
     mock: RecordingMock,
@@ -280,6 +278,10 @@ struct Harness {
     supervisor: Supervisor,
     client: Client,
     session_id: String,
+    // Last: fields drop in order, so the supervisor and its workers are gone before the dir is
+    // removed (a worker still writing `agent/auth.json` would leave the dir behind).
+    #[allow(dead_code)]
+    dir: tempfile::TempDir,
 }
 
 #[allow(clippy::zombie_processes)]
