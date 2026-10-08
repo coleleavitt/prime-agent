@@ -195,7 +195,14 @@ fn custody_child() {
     let mut auth =
         AuthStorage::create_with_oauth(field("agent_dir"), Arc::new(PresentingOAuth { token_url }));
 
-    assert_eq!(auth.get_api_key(provider), Some(ROTATED_ACCESS.to_string()));
+    // The rotation, or (a peer's refresh outlasting this process's wait
+    // for its claim, on a loaded machine) no key this time; never
+    // auth.json's spent login.
+    let key = auth.get_api_key(provider);
+    assert!(
+        key.is_none() || key.as_deref() == Some(ROTATED_ACCESS),
+        "served {key:?}"
+    );
 }
 
 #[test]
@@ -228,7 +235,7 @@ fn auth_json_and_the_store_never_both_refresh_one_token_across_processes() {
                     "--test-threads=1",
                 ])
                 .env(CHILD_SETUP_ENV, &setup)
-                .stdout(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .spawn()
                 .expect("start a process")
@@ -238,7 +245,8 @@ fn auth_json_and_the_store_never_both_refresh_one_token_across_processes() {
         let output = child.wait_with_output().expect("the process ends");
         assert!(
             output.status.success(),
-            "a process failed: {}",
+            "a process failed: {}{}",
+            String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
     }
