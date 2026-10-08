@@ -155,9 +155,11 @@ impl SupervisorChildSessionsInner {
         {
             Ok(created) => created,
             Err(error) => {
+                // No child exists to own the dir made for it.
+                self.discard_ephemeral_child_dir(&child_id);
                 return ImageDelegationOutcome::Failed {
                     error: format!("create the image-model child session: {error:#}"),
-                }
+                };
             }
         };
         // The roster row: the delegation lands the child's answer in the

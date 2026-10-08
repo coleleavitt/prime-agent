@@ -681,3 +681,57 @@ fn aborted_delegation_kills_the_child_and_ends_aborted() {
     drop(supervisor);
     registration.unregister();
 }
+
+/// A delegation child whose create failed never existed: the temp dir made for it goes at
+/// once, not when the parent ends.
+#[test]
+fn a_failed_delegation_create_leaves_no_child_dir() {
+    let _faux = FAUX_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _registration = register_text_only_battery_model();
+    let dir = tempfile::TempDir::new().unwrap();
+    let engine = delegating_engine(dir.path());
+    let events = run_prompt_collecting(&engine, vec![image_content("QUJD")]);
+    assert!(done_error(&events).contains("image delegation failed"));
+    let children = engine.children.as_ref().expect("a daemon-backed engine");
+    assert_eq!(
+        children.ephemeral_child_dirs(),
+        Vec::<std::path::PathBuf>::new()
+    );
+}
+
+/// An ephemeral parent's (no session) delegation child keeps its temp dir while the parent
+/// lives, and the dir goes with the parent engine, though the session's kernel host handlers
+/// still hold the children registry.
+#[test]
+fn an_ephemeral_parents_child_dir_goes_with_the_engine() {
+    let _faux = FAUX_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _registration = register_text_only_battery_model();
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("scripted-supervisor.sock");
+    let _supervisor = ScriptedSupervisor::spawn(socket.clone(), "a red square");
+    let engine = delegating_engine_with_socket(dir.path(), &socket);
+    let events = run_prompt_collecting(&engine, vec![image_content("QUJD")]);
+    let child_id = events
+        .iter()
+        .find_map(|event| match event {
+            crate::engine::EngineEvent::CustomMessage(row) => {
+                row["details"]["childId"].as_str().map(str::to_string)
+            }
+            _ => None,
+        })
+        .expect("the delegation row names its child");
+    let child_dir = std::env::temp_dir().join(format!("prime-agent-rlm-{child_id}"));
+    let children = engine.children.clone().expect("a daemon-backed engine");
+    assert_eq!(children.ephemeral_child_dirs(), vec![child_dir.clone()]);
+    assert!(child_dir.is_dir());
+
+    drop(engine);
+    assert!(
+        !child_dir.exists(),
+        "the child dir outlived its parent engine"
+    );
+}

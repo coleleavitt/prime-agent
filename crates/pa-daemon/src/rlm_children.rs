@@ -399,6 +399,20 @@ impl SupervisorChildSessions {
         }
     }
 
+    /// The ephemeral child dirs the registry still tracks.
+    #[cfg(test)]
+    pub(crate) fn ephemeral_child_dirs(&self) -> Vec<PathBuf> {
+        let mut dirs: Vec<PathBuf> = self
+            .inner
+            .ephemeral_child_dirs
+            .lock_or_recover()
+            .values()
+            .cloned()
+            .collect();
+        dirs.sort();
+        dirs
+    }
+
     /// Wire the delete notification hook (context-tree cache invalidation).
     pub fn set_delete_notifier(&self, notifier: DeleteNotifier) {
         *self.inner.delete_notifier.lock_or_recover() = Some(notifier);
@@ -917,23 +931,43 @@ impl SupervisorChildSessionsInner {
         Ok(base)
     }
 
-    /// Remove the ephemeral temp dir of a child that left the registry (no-op for children
-    /// whose dir lives under the parent's persistent artifacts tree).
+    /// Remove the ephemeral temp dir of a child that left the registry, or whose create
+    /// failed (no-op for children whose dir lives under the parent's persistent artifacts
+    /// tree).
     fn discard_ephemeral_child_dir(&self, child_id: &str) {
         let dir = self.ephemeral_child_dirs.lock_or_recover().remove(child_id);
         if let Some(dir) = dir {
             let _ = std::fs::remove_dir_all(dir);
         }
     }
-}
 
-impl Drop for SupervisorChildSessionsInner {
-    /// The registry goes with its parent: no child of an ephemeral parent outlives it, so its
-    /// remaining temp dirs (children never removed, spawns that failed) go too.
-    fn drop(&mut self) {
+    /// Remove every remaining ephemeral child dir: the parent is gone, and no child of an
+    /// ephemeral parent outlives it.
+    fn discard_all_ephemeral_child_dirs(&self) {
         let dirs = std::mem::take(&mut *self.ephemeral_child_dirs.lock_or_recover());
         for dir in dirs.into_values() {
             let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+}
+
+impl Drop for SupervisorChildSessionsInner {
+    /// The registry goes with its parent, and its remaining temp dirs with it. The parent
+    /// engine's [`EphemeralChildDirs`] guard removes them first: the registry itself can
+    /// outlive the engine (the session's kernel host handlers hold it until the kernel exits).
+    fn drop(&mut self) {
+        self.discard_all_ephemeral_child_dirs();
+    }
+}
+
+/// Owned by the parent engine: when the engine goes, its ephemeral children's temp dirs go,
+/// however long other holders (the kernel's host handlers) keep the registry itself alive.
+pub(crate) struct EphemeralChildDirs(pub(crate) Option<Arc<SupervisorChildSessions>>);
+
+impl Drop for EphemeralChildDirs {
+    fn drop(&mut self) {
+        if let Some(children) = &self.0 {
+            children.inner.discard_all_ephemeral_child_dirs();
         }
     }
 }

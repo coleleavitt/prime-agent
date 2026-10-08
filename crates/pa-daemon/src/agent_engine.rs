@@ -248,6 +248,9 @@ pub struct AgentSessionEngine {
     pub(crate) link: Arc<crate::supervisor_link::SupervisorLink>,
     /// Supervisor-backed RLM children; `None` for standalone workers.
     pub(crate) children: Option<Arc<SupervisorChildSessions>>,
+    /// Removes the children's ephemeral temp dirs (a parent with no persistent artifacts dir)
+    /// when this engine goes, whoever still holds the registry.
+    _ephemeral_child_dirs: crate::rlm_children::EphemeralChildDirs,
     /// The worker-installed summary-delta sink, adopted onto every built
     /// session. `None` without a worker pump.
     compaction_summary_sink:

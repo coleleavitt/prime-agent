@@ -168,6 +168,7 @@ impl AgentSessionEngine {
                 pa_core::autonomous::create_autonomous_runtime_state(None, None),
             )),
             link,
+            _ephemeral_child_dirs: crate::rlm_children::EphemeralChildDirs(children.clone()),
             children,
             usage_producer: std::sync::Mutex::new(None),
             quota_park: std::sync::Arc::new(std::sync::Mutex::new(None)),

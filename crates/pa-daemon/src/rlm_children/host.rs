@@ -124,7 +124,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 if let Some(grant) = request.token_budget {
                     runtime_metadata["rlmTokenAllowance"] = json!(grant);
                 }
-                let created = this
+                let created = match this
                     .create_child(
                         &child_id,
                         Some(&name),
@@ -138,7 +138,15 @@ impl RlmSubagentHost for SupervisorChildSessions {
                         Some(runtime_metadata),
                         &identity,
                     )
-                    .await?;
+                    .await
+                {
+                    Ok(created) => created,
+                    Err(error) => {
+                        // No child exists to own the dir made for it.
+                        this.discard_ephemeral_child_dir(&child_id);
+                        return Err(error);
+                    }
+                };
                 let record = ChildRecord {
                     rlm_child_id: child_id.clone(),
                     session_name: created.session_name.clone().unwrap_or_else(|| name.clone()),
