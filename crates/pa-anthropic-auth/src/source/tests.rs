@@ -524,3 +524,72 @@ fn logout_without_a_store_removes_nothing() {
     );
     assert!(!source.store_path().exists());
 }
+
+/// The refresh token the store file itself holds for `id` (no unsaved
+/// rotation applied: what an older reader sees).
+#[cfg(unix)]
+fn refresh_in_file(store: &std::path::Path, id: &str) -> Option<String> {
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(store).expect("the store file")).expect("JSON");
+    document["accounts"]
+        .as_array()?
+        .iter()
+        .find(|row| row["id"] == id)?["credential"]["refresh"]
+        .as_str()
+        .map(str::to_string)
+}
+
+#[cfg(unix)]
+#[test]
+fn a_refresh_the_store_cannot_save_keeps_the_account() {
+    let provider = "anthropic-store-unsaved";
+    let (home, seeded) = source_over(
+        vec![row("unsaved", Duration::hours(-1))],
+        "http://127.0.0.1:9",
+    );
+    let store = seeded.store_path().to_path_buf();
+    let aside = store.with_file_name("accounts.aside.json");
+    // While the refresh is in flight the store file becomes a symlink,
+    // which every store read and write refuses: the commit fails.
+    let (url, hits) = token_endpoint_then(200, ROTATED, {
+        let (store, aside) = (store.clone(), aside.clone());
+        move || {
+            std::fs::rename(&store, &aside).expect("move the store aside");
+            std::os::unix::fs::symlink(&aside, &store).expect("break the store");
+        }
+    });
+    let config = |url: &str| SharedStoreConfig::isolated(store.clone(), url, "http://127.0.0.1:9");
+    let source = Arc::new(SharedStoreSource::new(config(&url)));
+    install_credential_source(provider, source.clone());
+
+    let served = source.credential().map(|credential| credential.api_key);
+    std::fs::remove_file(&store).expect("drop the symlink");
+    std::fs::rename(&aside, &store).expect("mend the store");
+
+    // The refresh answered with the rotation, and the account keeps it.
+    assert_eq!(served, Ok(ROTATED_ACCESS.to_string()));
+    assert_eq!(
+        refresh_in_file(&store, "unsaved"),
+        Some(refresh_of("unsaved"))
+    );
+    assert_eq!(
+        anthropic::unsaved::unsaved_accounts(&store),
+        vec!["unsaved".to_string()]
+    );
+    // Another source over the store serves the rotation; nothing presents
+    // the spent token again.
+    let other = SharedStoreSource::new(config(&url));
+    assert_eq!(
+        other.credential().map(|credential| credential.api_key),
+        Ok(ROTATED_ACCESS.to_string())
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    // The next write of the store persists it.
+    AccountStore::mutate(&store, |_| Ok(())).expect("a store write");
+    assert_eq!(
+        refresh_in_file(&store, "unsaved"),
+        Some("sk-ant-ort01-rotated-rotated-rotated-00".to_string())
+    );
+    assert!(anthropic::unsaved::unsaved_accounts(&store).is_empty());
+    drop(home);
+}

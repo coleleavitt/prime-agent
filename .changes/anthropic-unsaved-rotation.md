@@ -1,0 +1,1 @@
+- Anthropic (shared account store): when a refreshed login cannot be written to `~/.anthropic-accounts/accounts.json`, the new tokens are used and kept beside the store until the next write saves them, instead of being dropped (which left the store holding a spent refresh token and the account logged out).

@@ -23,6 +23,16 @@ pub(crate) const INVALID_GRANT: &str =
 /// A loopback token endpoint answering every POST with `status` + `body`;
 /// returns its URL and the request count.
 pub(crate) fn token_endpoint(status: u16, body: &'static str) -> (String, Arc<AtomicUsize>) {
+    token_endpoint_then(status, body, || {})
+}
+
+/// [`token_endpoint`] that runs `on_request` on each request before it
+/// answers (while the caller's refresh is in flight).
+pub(crate) fn token_endpoint_then(
+    status: u16,
+    body: &'static str,
+    on_request: impl Fn() + Send + 'static,
+) -> (String, Arc<AtomicUsize>) {
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind a loopback port");
     let url = format!(
         "http://{}/v1/oauth/token",
@@ -54,6 +64,7 @@ pub(crate) fn token_endpoint(status: u16, body: &'static str) -> (String, Arc<At
                 }
             }
             counter.fetch_add(1, Ordering::SeqCst);
+            on_request();
             let response = format!(
                 "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
                 body.len()

@@ -26,6 +26,10 @@ auth.json resolves the `anthropic` provider exactly as before.
     sessions, a notice on the agents view ahead of the quota line (`Your Anthropic login <name> was revoked; using
     <name>. Run /login anthropic to restore it.`; status `revokedLogin: true`). A new login on the row (a re-login
     from any tool sharing the store) or the row's removal withdraws the notice.
+  - A refresh whose rotation the store cannot save (the SDK's `unsaved` records): the token endpoint already spent
+    the old refresh token, so the rotation is served anyway, kept beside the store (`<store>.unsaved-<hex>`, owner
+    only) for every reader of the store, and persisted by the next store write; the spent token is never presented
+    again. `anthropic::unsaved::unsaved_accounts` names the rows still waiting.
   - No login in the store: the lookup falls through to auth.json. A login that cannot produce a token (refresh
     failed, revoked, store unreadable, network down): the provider's OAuth authentication failure
     (`oauth_refresh_failed`, "Run /login"), never auth.json's login in its place.
