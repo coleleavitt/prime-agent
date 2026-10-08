@@ -1062,6 +1062,8 @@ fn an_ungranted_refresh_claim_spends_no_refresh_token() {
     );
 }
 
+mod unsaved_refresh;
+
 /// Several processes sharing one `auth.json` refresh the same expired login
 /// at once: the network refresh runs once across all of them. The test
 /// binary re-runs itself as the peer processes (`child` below).

@@ -19,6 +19,7 @@ impl AuthStorage {
         include_fallback: bool,
     ) -> AuthApiKeyResult {
         self.refresh_from_external_changes();
+        self.save_unsaved_refreshes();
         // 1. Runtime override.
         if let Some(candidate) = self.runtime_candidate(provider_id) {
             if !self.is_stale(provider_id, &candidate) {
@@ -239,7 +240,10 @@ impl AuthStorage {
     ///    credential), then the token call outside the document lock.
     /// 4. WRITE: the locked read-modify-write, holding the lock only for the re-read,
     ///    insert, and atomic write. A peer that refreshed meanwhile keeps its fresher
-    ///    credential.
+    ///    credential. A failed write still returns the fetched credential: the
+    ///    provider rotated the refresh token, so the stored one is dead. The backend
+    ///    keeps it (taking over the claim) until a retried save lands it, and every
+    ///    phase above reads the document with kept refreshes laid over it.
     fn refresh_oauth(&mut self, provider_id: &str) -> Option<AuthCredential> {
         // LOAD: no document lock.
         let Ok(content) = self.storage.read() else {
@@ -250,13 +254,14 @@ impl AuthStorage {
                 .credential(provider_id)
                 .filter(|c| matches!(c, AuthCredential::Oauth { .. }));
         };
-        let Ok(data) = parse_storage_data(content.as_deref()) else {
+        let Ok(mut data) = parse_storage_data(content.as_deref()) else {
             self.reload();
             return self
                 .data
                 .credential(provider_id)
                 .filter(|c| matches!(c, AuthCredential::Oauth { .. }));
         };
+        self.overlay_unsaved_refreshes(&mut data);
         let Some(credential) = data.credential(provider_id) else {
             self.reload();
             return None;
@@ -272,7 +277,7 @@ impl AuthStorage {
         // CLAIM: one flight per provider in this process, then across every
         // process sharing the store; both held until this function returns.
         let _flight = refresh_flight(provider_id);
-        let _claim = match self.storage.claim_refresh(provider_id) {
+        let claim = match self.storage.claim_refresh(provider_id) {
             Ok(claim) => claim,
             Err(error) => {
                 // An uncertain claim never spends a refresh token: the stored
@@ -298,7 +303,10 @@ impl AuthStorage {
             .read()
             .ok()
             .and_then(|content| parse_storage_data(content.as_deref()).ok())
-            .unwrap_or(data);
+            .map_or(data, |mut current| {
+                self.overlay_unsaved_refreshes(&mut current);
+                current
+            });
         if let Some(credential) = data.credential(provider_id).filter(|credential| {
             matches!(
                 credential,
@@ -334,14 +342,15 @@ impl AuthStorage {
             let content = serde_json::to_string_pretty(&data.0)?;
             Ok(((), Some(content)))
         });
-        if result.is_err() {
-            // A peer may have refreshed successfully; reload before failing.
+        if let Err(error) = result {
+            self.keep_unsaved_refresh(provider_id, &new_credential, &error, claim);
             self.reload();
-            return self
-                .data
-                .credential(provider_id)
-                .filter(|c| matches!(c, AuthCredential::Oauth { .. }));
+            return Some(new_credential);
         }
+        // The document holds a live credential now: a released claim's
+        // waiters re-check and read it, and a stale recovery file can be
+        // forgotten under the claim during the reload.
+        drop(claim);
         // Reload from what we wrote: the in-memory snapshot must not serve the
         // pre-refresh credential (a rotated refresh token is single-use).
         self.reload();

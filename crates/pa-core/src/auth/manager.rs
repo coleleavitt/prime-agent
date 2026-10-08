@@ -20,6 +20,8 @@ mod lookup;
 
 mod prime_inference;
 
+mod unsaved;
+
 pub(crate) fn fingerprint(source: AuthSource, material: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -412,7 +414,10 @@ impl AuthStorage {
         // process-cached copy on a hit (see `AuthStorageBackend::read`).
         let result = self.storage.read();
         match result.and_then(|content| parse_storage_data(content.as_deref())) {
-            Ok(data) => {
+            Ok(mut data) => {
+                // A refresh this store could not save serves in place of the
+                // dead login it replaced.
+                self.overlay_unsaved_refreshes(&mut data);
                 self.data = data;
                 self.load_error = None;
             }
@@ -902,6 +907,7 @@ impl AuthStorage {
             self.errors.push(error.to_string());
             return;
         }
+        self.forget_unsaved_refreshes(provider);
         // Reload from what we wrote.
         self.reload();
     }

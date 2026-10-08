@@ -11,6 +11,27 @@ use anyhow::Result;
 
 use super::types::AuthStorageData;
 
+mod unsaved;
+
+use unsaved::KeptRefreshes;
+
+/// Where [`AuthStorageBackend::keep_unsaved_refresh`] kept a refreshed
+/// credential the document could not take.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnsavedRefreshKept {
+    /// In this process and in this recovery file (owner-only, beside the
+    /// document), which every process sharing the document reads, as does
+    /// the next start.
+    Recoverable(PathBuf),
+    /// In this process only: the recovery file could not be written either
+    /// (`reason`). A file store keeps holding the provider's refresh claim,
+    /// so other processes wait for the save instead of spending the dead
+    /// refresh token.
+    InProcess { reason: String },
+    /// Nowhere: the credential serves only the request that refreshed it.
+    NotKept,
+}
+
 /// Locked read/modify/write over the auth document. `update` returns
 /// `(result, next)`; `next: Some` writes it back atomically.
 pub trait AuthStorageBackend: Send + Sync {
@@ -60,6 +81,41 @@ pub trait AuthStorageBackend: Send + Sync {
     fn claim_refresh(&self, _provider_id: &str) -> Result<Option<HeartbeatLock>> {
         Ok(None)
     }
+
+    /// Keep `content`, an auth document holding only `provider_id`'s freshly
+    /// refreshed credential, after writing it to the document failed. The
+    /// provider has already rotated the refresh token, so the stored login
+    /// is dead and this copy is the only live one: it serves lookups (see
+    /// [`Self::unsaved_refreshes`]) until a retried save lands it and
+    /// [`Self::forget_unsaved_refresh`] drops it. `claim` is the refresh
+    /// claim the refresh held; a store other processes share keeps holding
+    /// it while they cannot find the credential. The default keeps nothing.
+    fn keep_unsaved_refresh(
+        &self,
+        _provider_id: &str,
+        _content: String,
+        _claim: Option<HeartbeatLock>,
+    ) -> UnsavedRefreshKept {
+        UnsavedRefreshKept::NotKept
+    }
+
+    /// Every kept copy of `provider_id`'s unsaved refresh: this process's,
+    /// then one another process (or an earlier run) left. The caller serves
+    /// the newest and forgets the ones the document already supersedes.
+    fn unsaved_refreshes(&self, _provider_id: &str) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// The providers whose kept refresh is due a save attempt now, under a
+    /// bounded backoff: the first at the next lookup, then doubling.
+    fn unsaved_refreshes_due(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Drop each kept copy of `provider_id`'s refresh that is exactly
+    /// `content` (it was saved, or the document holds a newer login), and
+    /// release a claim held for it.
+    fn forget_unsaved_refresh(&self, _provider_id: &str, _content: &str) {}
 }
 
 use crate::platform::lock_dir::LockDir as LockGuard;
@@ -76,19 +132,24 @@ const REFRESH_CLAIM_WAIT: std::time::Duration = std::time::Duration::from_secs(6
 /// The poll interval while another process holds a refresh claim.
 const REFRESH_CLAIM_RETRY: std::time::Duration = std::time::Duration::from_millis(25);
 
-/// The file a provider's refresh claim locks (`{auth}.refresh-{hash}.lock`
-/// on disk): the provider id is hashed, since `mcp:<server>` ids are not
-/// portable file names.
-fn refresh_claim_file(auth_path: &Path, provider_id: &str) -> PathBuf {
+/// A provider's file beside the document (`{auth}.{kind}-{hash}`): the
+/// provider id is hashed, since `mcp:<server>` ids are not portable file
+/// names. Kinds: `refresh`, the file the refresh claim locks (its lock
+/// directory is `{auth}.refresh-{hash}.lock`); `unsaved`, the recovery file.
+fn provider_file(auth_path: &Path, kind: &str, provider_id: &str) -> PathBuf {
     use sha2::{Digest, Sha256};
     let digest = Sha256::digest(provider_id.as_bytes());
     let mut name = auth_path.as_os_str().to_os_string();
-    name.push(".refresh-");
+    name.push(format!(".{kind}-"));
     for byte in &digest[..8] {
         name.push(format!("{byte:02x}"));
     }
     PathBuf::from(name)
 }
+
+/// This process's kept refreshes per auth document: every store instance on
+/// one file (one per session, the MCP manager's) shares them.
+static KEPT: OnceLock<Mutex<HashMap<PathBuf, KeptRefreshes>>> = OnceLock::new();
 
 pub struct FileAuthStorageBackend {
     auth_path: PathBuf,
@@ -117,6 +178,13 @@ impl FileAuthStorageBackend {
             .last_known
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = identity;
+    }
+
+    fn kept<R>(&self, f: impl FnOnce(&mut KeptRefreshes) -> R) -> R {
+        let mut registry = KEPT
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock_or_recover();
+        f(registry.entry(self.auth_path.clone()).or_default())
     }
 
     fn ensure_parent_dir(&self) -> Result<()> {
@@ -309,8 +377,13 @@ impl AuthStorageBackend for FileAuthStorageBackend {
     }
 
     fn claim_refresh(&self, provider_id: &str) -> Result<Option<HeartbeatLock>> {
+        // This process already holds it for an unsaved refresh; the
+        // in-process flight gate serializes the refreshes here.
+        if self.kept(|kept| kept.holds_claim(provider_id)) {
+            return Ok(None);
+        }
         self.ensure_parent_dir()?;
-        let claim = refresh_claim_file(&self.auth_path, provider_id);
+        let claim = provider_file(&self.auth_path, "refresh", provider_id);
         let lock_path = LockGuard::path_for(&claim);
         let mut holder = None;
         let mut deadline = std::time::Instant::now() + REFRESH_CLAIM_WAIT;
@@ -335,6 +408,72 @@ impl AuthStorageBackend for FileAuthStorageBackend {
         }
     }
 
+    /// The recovery file is written under the claim, with the document's
+    /// owner-only mode and atomic rename; once it lands the claim is
+    /// released, since other processes re-check it before refreshing.
+    fn keep_unsaved_refresh(
+        &self,
+        provider_id: &str,
+        content: String,
+        claim: Option<HeartbeatLock>,
+    ) -> UnsavedRefreshKept {
+        let recovery = provider_file(&self.auth_path, "unsaved", provider_id);
+        let replaced = self.kept(|kept| kept.keep(provider_id, content.clone(), claim));
+        drop(replaced);
+        match super::super::settings::storage::atomic_write(&recovery, &content) {
+            Ok(()) => {
+                let released = self.kept(|kept| kept.release_claim(provider_id));
+                drop(released);
+                UnsavedRefreshKept::Recoverable(recovery)
+            }
+            Err(error) => UnsavedRefreshKept::InProcess {
+                reason: error.to_string(),
+            },
+        }
+    }
+
+    fn unsaved_refreshes(&self, provider_id: &str) -> Vec<String> {
+        let recovered =
+            fs::read_to_string(provider_file(&self.auth_path, "unsaved", provider_id)).ok();
+        self.kept(|kept| {
+            if let Some(content) = &recovered {
+                kept.adopt(provider_id, content);
+            }
+            let mut copies: Vec<String> = kept.content(provider_id).into_iter().collect();
+            copies.extend(recovered.filter(|content| !copies.contains(content)));
+            copies
+        })
+    }
+
+    fn unsaved_refreshes_due(&self) -> Vec<String> {
+        self.kept(KeptRefreshes::due)
+    }
+
+    /// The recovery file is removed only under the provider's claim (a
+    /// refresh writing a newer copy holds it); when another holder has it,
+    /// the file stays for a later forget, superseded and so never served.
+    fn forget_unsaved_refresh(&self, provider_id: &str, content: &str) {
+        let forgotten = self.kept(|kept| kept.forget(provider_id, content));
+        let recovery = provider_file(&self.auth_path, "unsaved", provider_id);
+        let holds = |path: &Path| fs::read_to_string(path).ok().as_deref() == Some(content);
+        if holds(&recovery) {
+            let held = forgotten.as_ref().is_some_and(|kept| kept.claim.is_some());
+            let claim = (!held)
+                .then(|| {
+                    LockGuard::acquire(
+                        &provider_file(&self.auth_path, "refresh", provider_id),
+                        STALE_AFTER,
+                    )
+                    .ok()
+                })
+                .flatten();
+            if (held || claim.is_some()) && holds(&recovery) {
+                let _ = fs::remove_file(&recovery);
+            }
+        }
+        drop(forgotten);
+    }
+
     fn changed_externally(&self) -> bool {
         let Some(last) = *self
             .last_known
@@ -351,6 +490,7 @@ impl AuthStorageBackend for FileAuthStorageBackend {
 #[derive(Default)]
 pub struct InMemoryAuthStorageBackend {
     value: Mutex<Option<String>>,
+    kept: Mutex<KeptRefreshes>,
 }
 
 impl AuthStorageBackend for InMemoryAuthStorageBackend {
@@ -364,6 +504,41 @@ impl AuthStorageBackend for InMemoryAuthStorageBackend {
             *guard = Some(next);
         }
         Ok(())
+    }
+
+    /// No other process shares the store, so this process's copy is all
+    /// there is to keep.
+    fn keep_unsaved_refresh(
+        &self,
+        provider_id: &str,
+        content: String,
+        claim: Option<HeartbeatLock>,
+    ) -> UnsavedRefreshKept {
+        let replaced = self
+            .kept
+            .lock_or_recover()
+            .keep(provider_id, content, claim);
+        drop(replaced);
+        UnsavedRefreshKept::InProcess {
+            reason: "an in-memory store has no recovery file".to_string(),
+        }
+    }
+
+    fn unsaved_refreshes(&self, provider_id: &str) -> Vec<String> {
+        self.kept
+            .lock_or_recover()
+            .content(provider_id)
+            .into_iter()
+            .collect()
+    }
+
+    fn unsaved_refreshes_due(&self) -> Vec<String> {
+        self.kept.lock_or_recover().due()
+    }
+
+    fn forget_unsaved_refresh(&self, provider_id: &str, content: &str) {
+        let forgotten = self.kept.lock_or_recover().forget(provider_id, content);
+        drop(forgotten);
     }
 }
 
