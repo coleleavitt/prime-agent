@@ -313,13 +313,13 @@ fn setup(name: &str) -> Harness {
         .expect("persisted session id")
         .to_string();
     Harness {
-        dir,
         agent_dir,
         session_dir,
         supervisor,
         client,
         session_id,
         persisted_id,
+        dir,
     }
 }
 

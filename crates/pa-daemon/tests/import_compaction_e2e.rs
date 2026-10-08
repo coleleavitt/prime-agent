@@ -195,10 +195,10 @@ fn setup(name: &str) -> Harness {
         .expect("active session id")
         .to_string();
     Harness {
-        dir,
         _supervisor: supervisor,
         client,
         session_id,
+        dir,
     }
 }
 

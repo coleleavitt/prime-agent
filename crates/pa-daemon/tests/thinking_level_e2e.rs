@@ -342,13 +342,13 @@ fn setup(name: &str, thinking: Option<&str>) -> Harness {
     let attached = client.request("a1");
     assert_eq!(attached["success"], true, "attach failed: {attached}");
     Harness {
-        dir,
         agent_dir,
         session_dir,
         mock,
         supervisor,
         client,
         session_id,
+        dir,
     }
 }
 
