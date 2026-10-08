@@ -39,7 +39,6 @@ clean message (``FACTORY_DISABLED_MESSAGE``), never a crash.
 
 from __future__ import annotations
 
-import copy
 import json
 import math
 import os
@@ -71,138 +70,21 @@ the host validator: a container nested deeper is not finite JSON data."""
 # functions ship the spec there and return its verdict.
 #
 # The validator's rules are Python semantics (a tuple is not a list, True is
-# not an int, a NaN float is a number but not finite JSON, a container may
-# contain itself), so a spec does not travel as plain JSON: it travels as a
-# flat node table -- one tagged entry per value, children by index -- whose
-# own nesting is constant. Anything JSON cannot spell (a tuple, a set, bytes,
-# any other object, a back-reference that closes a cycle, a container nested
-# past the encoding bound) becomes an opaque leaf carrying its repr and
-# truthiness; a value handed back (a canonical machine's passthrough fields)
-# decodes an opaque leaf to a deep copy of the original object.
+# not an int, a NaN float is a number but not finite JSON), so a spec travels
+# as a node table (``rlm._host.encode_value``), and a value handed back (a
+# canonical machine's passthrough fields) decodes against the call's own
+# registry of the originals.
 #
 # Transport: one blocking host request (``factory.spec``: harness writes call
 # the validator synchronously inside a cell), in a serving kernel or through
 # the host binary's one-shot outside one (``rlm._host``).
 # ---------------------------------------------------------------------------
 
-_SPEC_ENCODE_DEPTH_CAP = 320
-"""Containers deeper than this become opaque leaves: past the guard-value
-bound (256 below a guard's own position in the spec) nothing the validator
-reads can change, and the host rebuilds a bounded tree."""
-
 HOST_BINARY_ENV = _host.HOST_BINARY_ENV
-
-
-def _opaque_node(value: Any, registry: list[Any]) -> list[Any]:
-    registry.append(value)
-    try:
-        text = repr(value)
-    except Exception:  # noqa: BLE001 - a hostile __repr__ must not break validation
-        text = f"<{type(value).__name__} object>"
-    try:
-        truthy = bool(value)
-    except Exception:  # noqa: BLE001 - same for __bool__/__len__
-        truthy = True
-    try:
-        # What the machine renderer prints for a leaf JSON can still spell
-        # (a tuple): the encoder's own spelling.
-        spelled: str | None = json.dumps(value)
-    except Exception:  # noqa: BLE001 - anything else has no spelling
-        spelled = None
-    return ["o", len(registry) - 1, text, truthy, type(value).__name__, spelled]
-
-
-def _encode_value(value: Any) -> "tuple[dict[str, Any], list[Any]]":
-    """Encode one Python value as the host's node table plus the registry of
-    opaque originals. Iterative (no recursion), pre-order: a node's slot is
-    reserved before its children, so every child index exceeds its parent's.
-    Cycle detection is per branch (a shared-but-acyclic object encodes once
-    per occurrence, like the validator's ancestry check)."""
-    nodes: list[Any] = [None]
-    registry: list[Any] = []
-    active: set[int] = set()
-    # Work items: ("visit", value, slot, depth) or ("exit", id).
-    stack: list[tuple[Any, ...]] = [("visit", value, 0, 0)]
-    while stack:
-        item = stack.pop()
-        if item[0] == "exit":
-            active.discard(item[1])
-            continue
-        _, current, slot, depth = item
-        if current is None:
-            nodes[slot] = ["n"]
-        elif isinstance(current, bool):
-            nodes[slot] = ["b", current]
-        elif isinstance(current, int):
-            nodes[slot] = ["i", str(int(current))]
-        elif isinstance(current, float):
-            if math.isnan(current):
-                nodes[slot] = ["f", "nan"]
-            elif math.isinf(current):
-                nodes[slot] = ["f", "inf" if current > 0 else "-inf"]
-            else:
-                nodes[slot] = ["f", float(current)]
-        elif isinstance(current, str):
-            nodes[slot] = ["s", str(current)]
-        elif isinstance(current, (list, dict)):
-            if id(current) in active or depth > _SPEC_ENCODE_DEPTH_CAP:
-                nodes[slot] = _opaque_node(current, registry)
-                continue
-            active.add(id(current))
-            stack.append(("exit", id(current)))
-            pending: list[tuple[Any, ...]] = []
-            if isinstance(current, list):
-                children = []
-                for child in current:
-                    children.append(len(nodes))
-                    nodes.append(None)
-                    pending.append(("visit", child, children[-1], depth + 1))
-                nodes[slot] = ["l", children]
-            else:
-                pairs = []
-                for key, child in current.items():
-                    key_slot = len(nodes)
-                    nodes.append(None)
-                    value_slot = len(nodes)
-                    nodes.append(None)
-                    pairs.append([key_slot, value_slot])
-                    pending.append(("visit", key, key_slot, depth + 1))
-                    pending.append(("visit", child, value_slot, depth + 1))
-                nodes[slot] = ["d", pairs]
-            stack.extend(reversed(pending))
-        else:
-            nodes[slot] = _opaque_node(current, registry)
-    return {"nodes": nodes, "root": 0}, registry
-
-
-def _decode_value(table: Any, registry: list[Any]) -> Any:
-    """Rebuild a host node table into Python values (children first, so the
-    pass is iterative); an opaque leaf decodes to a deep copy of the
-    registry's original."""
-    if not isinstance(table, dict) or not isinstance(table.get("nodes"), list):
-        raise RuntimeError("factory.spec returned an invalid value table")
-    nodes = table["nodes"]
-    built: list[Any] = [None] * len(nodes)
-    for index in range(len(nodes) - 1, -1, -1):
-        node = nodes[index]
-        tag = node[0]
-        if tag == "n":
-            built[index] = None
-        elif tag in ("b", "s"):
-            built[index] = node[1]
-        elif tag == "i":
-            built[index] = int(node[1])
-        elif tag == "f":
-            built[index] = float(node[1])
-        elif tag == "l":
-            built[index] = [built[child] for child in node[1]]
-        elif tag == "d":
-            built[index] = {built[key]: built[value] for key, value in node[1]}
-        elif tag == "o":
-            built[index] = copy.deepcopy(registry[node[1]])
-        else:
-            raise RuntimeError(f"factory.spec returned an unknown value tag {tag!r}")
-    return built[table.get("root", 0)]
+# The node-table encoding of Python values (``rlm._host``), under the names
+# the spec client always used.
+_encode_value = _host.encode_value
+_decode_value = _host.decode_value
 
 
 def _dev_host_binary() -> "str | None":

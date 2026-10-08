@@ -26,7 +26,6 @@ from pathlib import Path
 from typing import Any, Literal, TypeAlias, TypedDict, TypeGuard, Unpack, cast, overload
 
 from . import _host
-from .factory import validate_factory_spec
 
 HarnessKind = Literal["prompt", "memory", "skill", "subagent", "factory"]
 HarnessScope = Literal["local", "global"]
@@ -324,15 +323,10 @@ def _host_call(request_type: str, payload: JsonObject) -> _HostReply:
     raise exception(text if isinstance(text, str) and text else f"host request {request_type} failed")
 
 
-def _factory_spec_errors(arguments: object) -> list[str] | None:
-    """What the kernel's factory validator says about the spec a generic
-    factory write stores, for the host to apply in its validation order."""
-    if not isinstance(arguments, dict):
-        return None
-    record = cast("Mapping[str, object]", arguments)
-    machine = record.get("machine")
-    spec = machine if machine is not None else record.get("dag")
-    return validate_factory_spec(spec) if isinstance(spec, dict) else None
+def _factory_arguments(arguments: object) -> JsonObject:
+    """The Python value of the arguments a write stores, for the host's
+    factory validator (whose rules are Python semantics)."""
+    return {"factoryArguments": cast("JsonObject", _host.encode_value(arguments)[0])}
 
 
 class HarnessState:
@@ -523,13 +517,9 @@ class HarnessState:
         metadata: object,
         source: object,
     ) -> HarnessEntry:
-        extra: JsonObject = {}
-        if kind == "factory":
-            errors = _factory_spec_errors(arguments)
-            extra["factorySpecErrors"] = list(errors) if errors is not None else None
         payload = self._call(
             request_type,
-            extra,
+            _factory_arguments(arguments),
             kind=kind,
             id=id,
             title=title,
@@ -836,17 +826,15 @@ class HarnessState:
         global_: bool,
         kwargs: Mapping[str, object],
     ) -> HarnessEntry:
-        # The host gates the opt-in, refuses both forms at once, and applies
-        # the factory validator's verdict on the spec, before the shared write.
-        spec: object = machine if machine is not None else dag
-        spec_errors = validate_factory_spec(spec) if create or spec is not None else None
+        # The host gates the opt-in, refuses both forms at once, and runs the
+        # factory validator on the spec, before the shared write.
         if isinstance(id, str):
             id, global_ = _strip_scope_prefix(id, global_)
         if target := self._global_target(global_, kwargs):
             return target._factory_write(create, id, title, content, path, dag, machine, metadata, False, {})
         payload = self._call(
             "harness.factory",
-            {"factorySpecErrors": list(spec_errors) if spec_errors is not None else None},
+            _factory_arguments({"machine": machine, "dag": dag}),
             create=create,
             id=id,
             title=title,

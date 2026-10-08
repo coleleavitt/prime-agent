@@ -223,15 +223,24 @@ pub(crate) fn validate_python_skill_reference(
     Ok(())
 }
 
+/// The spec a factory write stores, as the client sent it.
+#[derive(Debug, Clone)]
+pub(crate) enum FactorySpec {
+    /// Not sent (a write that stores none, or a client that sent nothing).
+    Missing,
+    /// What the client's own validator reported.
+    Reported(Vec<String>),
+    /// The spec's Python value: validated here, only when a write asks.
+    Value(crate::factory::pyvalue::PyValue),
+}
+
 /// The factory spec checks a write needs beyond the entry's shape.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub(crate) struct FactoryChecks {
     /// The agent dir whose `settings.json` holds the `factory.enabled`
     /// opt-in (read only when a factory write asks).
     pub(crate) agent_dir: Option<std::path::PathBuf>,
-    /// What the kernel's factory validator (`rlm.factory.validate_factory_spec`)
-    /// reported for the spec this write stores; `None` when it was not run.
-    pub(crate) spec_errors: Option<Vec<String>>,
+    pub(crate) spec: FactorySpec,
 }
 
 impl FactoryChecks {
@@ -248,18 +257,18 @@ impl FactoryChecks {
         ))
     }
 
-    fn spec_errors(&self) -> Result<&[String], StoreError> {
-        self.spec_errors.as_deref().ok_or_else(|| {
-            StoreError::new(
-                StoreErrorKind::Runtime,
-                "factory spec validation results are missing from the request".to_string(),
-            )
-        })
-    }
-
     /// The spec errors as one rejection (`"; "`-joined), if any.
     pub(crate) fn check_spec(&self, prefix: &str) -> Result<(), StoreError> {
-        let errors = self.spec_errors()?;
+        let errors = match &self.spec {
+            FactorySpec::Reported(errors) => errors.clone(),
+            FactorySpec::Value(spec) => crate::factory::spec::validate_factory_spec(spec),
+            FactorySpec::Missing => {
+                return Err(StoreError::new(
+                    StoreErrorKind::Runtime,
+                    "factory spec validation results are missing from the request".to_string(),
+                ))
+            }
+        };
         if errors.is_empty() {
             return Ok(());
         }

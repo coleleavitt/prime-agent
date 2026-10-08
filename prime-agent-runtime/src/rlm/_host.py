@@ -13,11 +13,143 @@ the reply), which serves every request that needs no session:
 
 from __future__ import annotations
 
+import copy
 import json
+import math
 import os
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
+
+# Python values on the wire. A value whose host-side rules are Python
+# semantics (a factory spec: a tuple is not a list, True is not an int, a NaN
+# float is a number but not finite JSON, a container may contain itself) does
+# not travel as plain JSON: it travels as a flat node table -- one tagged
+# entry per value, children by index -- whose own nesting is constant.
+# Anything JSON cannot spell (a tuple, a set, bytes, any other object, a
+# back-reference that closes a cycle, a container nested past the encoding
+# bound) becomes an opaque leaf carrying its repr, truthiness, type name, and
+# json.dumps spelling if it has one; a value handed back (a canonical
+# machine's passthrough fields) decodes an opaque leaf to a deep copy of the
+# original object.
+
+_ENCODE_DEPTH_CAP = 320
+"""Containers deeper than this become opaque leaves: past the factory
+validator's guard-value bound (256 below a guard's own position in a spec)
+nothing the host reads can change, and the host rebuilds a bounded tree."""
+
+def _opaque_node(value: Any, registry: list[Any]) -> list[Any]:
+    registry.append(value)
+    try:
+        text = repr(value)
+    except Exception:  # noqa: BLE001 - a hostile __repr__ must not break validation
+        text = f"<{type(value).__name__} object>"
+    try:
+        truthy = bool(value)
+    except Exception:  # noqa: BLE001 - same for __bool__/__len__
+        truthy = True
+    try:
+        # What the machine renderer prints for a leaf JSON can still spell
+        # (a tuple): the encoder's own spelling.
+        spelled: str | None = json.dumps(value)
+    except Exception:  # noqa: BLE001 - anything else has no spelling
+        spelled = None
+    return ["o", len(registry) - 1, text, truthy, type(value).__name__, spelled]
+
+
+def encode_value(value: Any) -> "tuple[dict[str, Any], list[Any]]":
+    """Encode one Python value as the host's node table plus the registry of
+    opaque originals. Iterative (no recursion), pre-order: a node's slot is
+    reserved before its children, so every child index exceeds its parent's.
+    Cycle detection is per branch (a shared-but-acyclic object encodes once
+    per occurrence, like the validator's ancestry check)."""
+    nodes: list[Any] = [None]
+    registry: list[Any] = []
+    active: set[int] = set()
+    # Work items: ("visit", value, slot, depth) or ("exit", id).
+    stack: list[tuple[Any, ...]] = [("visit", value, 0, 0)]
+    while stack:
+        item = stack.pop()
+        if item[0] == "exit":
+            active.discard(item[1])
+            continue
+        _, current, slot, depth = item
+        if current is None:
+            nodes[slot] = ["n"]
+        elif isinstance(current, bool):
+            nodes[slot] = ["b", current]
+        elif isinstance(current, int):
+            nodes[slot] = ["i", str(int(current))]
+        elif isinstance(current, float):
+            if math.isnan(current):
+                nodes[slot] = ["f", "nan"]
+            elif math.isinf(current):
+                nodes[slot] = ["f", "inf" if current > 0 else "-inf"]
+            else:
+                nodes[slot] = ["f", float(current)]
+        elif isinstance(current, str):
+            nodes[slot] = ["s", str(current)]
+        elif isinstance(current, (list, dict)):
+            if id(current) in active or depth > _ENCODE_DEPTH_CAP:
+                nodes[slot] = _opaque_node(current, registry)
+                continue
+            active.add(id(current))
+            stack.append(("exit", id(current)))
+            pending: list[tuple[Any, ...]] = []
+            if isinstance(current, list):
+                children = []
+                for child in current:
+                    children.append(len(nodes))
+                    nodes.append(None)
+                    pending.append(("visit", child, children[-1], depth + 1))
+                nodes[slot] = ["l", children]
+            else:
+                pairs = []
+                for key, child in current.items():
+                    key_slot = len(nodes)
+                    nodes.append(None)
+                    value_slot = len(nodes)
+                    nodes.append(None)
+                    pairs.append([key_slot, value_slot])
+                    pending.append(("visit", key, key_slot, depth + 1))
+                    pending.append(("visit", child, value_slot, depth + 1))
+                nodes[slot] = ["d", pairs]
+            stack.extend(reversed(pending))
+        else:
+            nodes[slot] = _opaque_node(current, registry)
+    return {"nodes": nodes, "root": 0}, registry
+
+
+def decode_value(table: Any, registry: list[Any]) -> Any:
+    """Rebuild a host node table into Python values (children first, so the
+    pass is iterative); an opaque leaf decodes to a deep copy of the
+    registry's original."""
+    if not isinstance(table, dict) or not isinstance(table.get("nodes"), list):
+        raise RuntimeError("the host returned an invalid value table")
+    nodes = table["nodes"]
+    built: list[Any] = [None] * len(nodes)
+    for index in range(len(nodes) - 1, -1, -1):
+        node = nodes[index]
+        tag = node[0]
+        if tag == "n":
+            built[index] = None
+        elif tag in ("b", "s"):
+            built[index] = node[1]
+        elif tag == "i":
+            built[index] = int(node[1])
+        elif tag == "f":
+            built[index] = float(node[1])
+        elif tag == "l":
+            built[index] = [built[child] for child in node[1]]
+        elif tag == "d":
+            built[index] = {built[key]: built[value] for key, value in node[1]}
+        elif tag == "o":
+            built[index] = copy.deepcopy(registry[node[1]])
+        else:
+            raise RuntimeError(f"the host returned an unknown value tag {tag!r}")
+    return built[table.get("root", 0)]
+
 
 # The hidden flag of the host binary that serves one request outside a kernel.
 ONE_SHOT_FLAG = "--prime-agent-harness-request"

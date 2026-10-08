@@ -527,3 +527,62 @@ fn search_ranks_by_rarity_then_recency() {
         )
     );
 }
+
+#[test]
+fn factory_writes_validate_the_spec_they_store() {
+    // The client ships the spec's Python value (a node table) and the
+    // store runs the factory validator itself, in its validation order.
+    let store = store();
+    let agent_dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        agent_dir.path().join("settings.json"),
+        r#"{"factory": {"enabled": true}}"#,
+    )
+    .unwrap();
+    let table = |value: Value| {
+        crate::factory::pyvalue::encode_node_table(&crate::factory::pyvalue::PyValue::from_json(
+            &value,
+        ))
+    };
+    let enabled = |arguments: Value| {
+        json!({
+            "agentDir": agent_dir.path().display().to_string(),
+            "factoryArguments": table(arguments),
+        })
+    };
+    let empty_dag = json!({"nodes": []});
+    let factory = json!({
+        "title": "F", "content": "c", "id": "f", "path": "general", "metadata": null,
+        "source": "kernel", "dag": empty_dag, "machine": null, "create": true,
+    });
+    assert_eq!(
+        error_of(&store.call_with(
+            "harness.factory",
+            factory,
+            enabled(json!({"machine": null, "dag": empty_dag}))
+        )),
+        (
+            "ValueError".to_string(),
+            "factory dag must declare between 1 and 1024 nodes, got 0".to_string()
+        )
+    );
+    let generic = json!({
+        "kind": "factory", "title": "F", "content": "c", "id": "g", "path": "general",
+        "reference": null, "arguments": {"dag": empty_dag}, "metadata": null, "source": "kernel",
+    });
+    assert_eq!(
+        error_of(&store.call_with(
+            "harness.create",
+            generic.clone(),
+            enabled(json!({"dag": empty_dag}))
+        ))
+        .1,
+        "factory entry 'g' rejected: factory dag must declare between 1 and 1024 nodes, got 0"
+    );
+    let valid = json!({"nodes": [{"id": "a", "subagent": "worker"}]});
+    let mut stored = generic;
+    stored["arguments"] = json!({"dag": valid});
+    let reply = store.call_with("harness.create", stored, enabled(json!({"dag": valid})));
+    assert_eq!(reply["ok"], json!(true), "{reply}");
+    assert_eq!(reply["result"]["arguments"], json!({"dag": valid}));
+}

@@ -33,7 +33,7 @@ use crate::refinement::{
 use document::{
     parse_harness_document, read_harness_state_file, write_harness_state_file, WriteDurability,
 };
-use validate::{Arg, EntryFields, FactoryChecks};
+use validate::{Arg, EntryFields, FactoryChecks, FactorySpec};
 
 pub use document::{LoadedHarnessState, LEGACY_ENTRY_SOURCE};
 pub use validate::UNSERIALIZABLE_KEY;
@@ -522,21 +522,49 @@ impl Request<'_> {
         }
     }
 
-    fn factory_checks(&self) -> FactoryChecks {
+    /// The factory checks one request needs. `factoryArguments` is the
+    /// Python value of the arguments a factory write stores (a node table:
+    /// the validator's rules are Python semantics), and the spec in them is
+    /// validated as `rlm.harness` always did: a generic write's `machine`
+    /// (else `dag`) when it is an object, a `create_factory` /
+    /// `update_factory` spec when it is created or replaced. A client that
+    /// ran the validator itself sends `factorySpecErrors` instead.
+    fn factory_checks(&self, request_type: &str) -> Result<FactoryChecks, StoreError> {
         let agent_dir = self
             .data
             .get("agentDir")
             .and_then(Value::as_str)
             .map(PathBuf::from);
-        let spec_errors = self
-            .data
-            .get("factorySpecErrors")
-            .and_then(Value::as_array)
-            .map(|errors| errors.iter().map(pyfmt::str_of).collect());
-        FactoryChecks {
-            agent_dir,
-            spec_errors,
-        }
+        let spec = match self.data.get("factoryArguments") {
+            Some(table) => {
+                let arguments = crate::factory::pyvalue::decode_node_table(table)
+                    .map_err(|error| type_error(format!("harness request {error}")))?;
+                let machine = arguments.get("machine");
+                let spec = if machine.is_none() {
+                    arguments.get("dag")
+                } else {
+                    machine
+                };
+                let stored = if request_type == "harness.factory" {
+                    self.arg("create").value.as_bool().unwrap_or(false) || !spec.is_none()
+                } else {
+                    spec.is_dict()
+                };
+                if stored {
+                    FactorySpec::Value(spec.clone())
+                } else {
+                    FactorySpec::Missing
+                }
+            }
+            None => self
+                .data
+                .get("factorySpecErrors")
+                .and_then(Value::as_array)
+                .map_or(FactorySpec::Missing, |errors| {
+                    FactorySpec::Reported(errors.iter().map(pyfmt::str_of).collect())
+                }),
+        };
+        Ok(FactoryChecks { agent_dir, spec })
     }
 
     fn target(&self) -> Result<StoreTarget, StoreError> {
@@ -767,7 +795,7 @@ fn factory_write(
 
 fn dispatch(request_type: &str, request: &Request<'_>) -> Result<(Value, Outcome), StoreError> {
     let target = request.target()?;
-    let factory = request.factory_checks();
+    let factory = request.factory_checks(request_type)?;
     match request_type {
         "harness.load" => with_store(&target, false, |_| Ok(Value::Null)),
         "harness.save" => {

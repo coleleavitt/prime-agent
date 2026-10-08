@@ -287,8 +287,11 @@ blocking host request of type `harness.load`, `harness.save`, `harness.get`,
 - `args`: the call's arguments as JSON (a value JSON cannot carry is
   `{"__rlm_harness_unserializable__": "<type name>"}`), and `types`: each
   argument's Python type name.
-- `agentDir`: where the `factory.enabled` opt-in is read; `factorySpecErrors`:
-  the kernel factory validator's errors for the spec a factory write stores.
+- `agentDir`: where the `factory.enabled` opt-in is read; `factoryArguments`:
+  the node table (the `factory.spec` encoding) of the arguments a write
+  stores (`{machine, dag}` for `harness.factory`), whose spec the store runs
+  the factory validator on when the write stores one (a host still accepts
+  a client's own `factorySpecErrors` list in its place).
 
 The handler's `result` is `{"ok": true, "result": ..., "state": <the store's
 document after the call>, "loadError": str|null}` or `{"ok": false, "error":
