@@ -100,6 +100,10 @@ impl SessionSandbox {
     /// a configured `read-only` sandbox, which plan mode never loosens: it is used unchanged.
     #[must_use]
     pub fn for_plan_mode(configured: Option<&SessionSandbox>) -> SessionSandbox {
+        #[cfg(test)]
+        if let Some(assess) = test_seam::plan_assessment() {
+            return Self::for_plan_mode_with(configured, assess);
+        }
         Self::for_plan_mode_with(configured, pa_os_sandbox::assess)
     }
 
@@ -294,6 +298,39 @@ impl SessionSandbox {
             scratch,
         };
         pa_os_sandbox::prepare(&self.policy, &paths)
+    }
+}
+
+/// The in-crate tests' stand-in for this machine's support of plan mode's sandbox: a whole
+/// session engine can be built as if the machine had no OS sandbox.
+#[cfg(test)]
+pub(crate) mod test_seam {
+    use std::cell::Cell;
+
+    use pa_os_sandbox::{Assessment, SandboxError, SandboxPolicy};
+
+    type Assess = fn(&SandboxPolicy) -> Result<Assessment, SandboxError>;
+
+    thread_local! {
+        static PLAN_ASSESSMENT: Cell<Option<Assess>> = const { Cell::new(None) };
+    }
+
+    pub(crate) fn plan_assessment() -> Option<Assess> {
+        PLAN_ASSESSMENT.with(Cell::get)
+    }
+
+    /// Assess plan mode's sandbox with `assess` on this thread until the guard drops.
+    pub(crate) fn override_plan_assessment(assess: Assess) -> OverrideGuard {
+        PLAN_ASSESSMENT.with(|cell| cell.set(Some(assess)));
+        OverrideGuard
+    }
+
+    pub(crate) struct OverrideGuard;
+
+    impl Drop for OverrideGuard {
+        fn drop(&mut self) {
+            PLAN_ASSESSMENT.with(|cell| cell.set(None));
+        }
     }
 }
 

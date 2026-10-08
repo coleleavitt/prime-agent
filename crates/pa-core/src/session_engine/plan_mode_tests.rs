@@ -211,6 +211,78 @@ async fn plan_command_reports_status_and_unchanged_state() {
     assert!(engine.plan_mode_enabled());
 }
 
+/// On a machine with no OS sandbox (an injected assessment), turning plan mode
+/// on warns that only the in-kernel guard enforces it; turning it off does not.
+#[tokio::test]
+async fn without_an_os_sandbox_turning_plan_mode_on_warns_of_the_kernel_guard() {
+    let _no_sandbox = crate::os_sandbox::test_seam::override_plan_assessment(|_| {
+        Err(pa_os_sandbox::SandboxError::Unsupported {
+            reason: "Landlock is not enabled".to_string(),
+        })
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let provider = Arc::new(ScriptedProvider::new(model()));
+    let engine = engine(
+        dir.path(),
+        &dir.path().join("agent"),
+        &provider,
+        SessionManager::in_memory(dir.path()),
+        None,
+    )
+    .await;
+    let rows = |execution: &SessionCommandExecution| -> Vec<(String, serde_json::Value)> {
+        execution
+            .messages
+            .iter()
+            .skip(1)
+            .map(|row| {
+                let text = match &row.content {
+                    pa_types::ai::UserContent::Text(text) => text.clone(),
+                    pa_types::ai::UserContent::Blocks(_) => String::new(),
+                };
+                let severity = row
+                    .details
+                    .as_ref()
+                    .and_then(|details| details.get("severity").cloned())
+                    .unwrap_or(serde_json::Value::Null);
+                (text, severity)
+            })
+            .collect()
+    };
+    assert_eq!(
+        engine.plan_mode_fallback(),
+        Some("OS sandbox unavailable: Landlock is not enabled")
+    );
+    assert_eq!(
+        (
+            rows(&run_command(&engine, "/plan on").await),
+            rows(&run_command(&engine, "/plan off").await),
+        ),
+        (
+            vec![
+                (
+                    "Plan mode on: the agent investigates and plans; file edits are blocked \
+                     until plan mode is turned off (/plan off)."
+                        .to_string(),
+                    serde_json::Value::Null
+                ),
+                (
+                    "Plan mode is enforced inside the Python kernel only: this machine has no OS \
+                     sandbox (OS sandbox unavailable: Landlock is not enabled). The agent's \
+                     commands are refused, and code that calls the C library directly (ctypes) \
+                     can still write files."
+                        .to_string(),
+                    serde_json::json!("warning")
+                ),
+            ],
+            vec![(
+                "Plan mode off: the agent may edit files again.".to_string(),
+                serde_json::Value::Null
+            )],
+        )
+    );
+}
+
 #[tokio::test]
 async fn an_explicit_start_state_is_recorded_and_a_resume_restores_it() {
     let dir = tempfile::tempdir().unwrap();
