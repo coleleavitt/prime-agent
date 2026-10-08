@@ -19,6 +19,13 @@ auth.json resolves the `anthropic` provider exactly as before.
     it), a refresh claimed through the store (OS file lock, a lease the TS consumers honour, a compare-and-swap that
     never overwrites a newer rotation), rotation past a dead login. Requests in this process take one flight lock,
     so a concurrent request reads the first one's rotation from the store.
+  - A login whose refresh token Anthropic revoked (`invalid_grant`) is presented once: the store records the verdict
+    on the row (bound to that token, so a restart does not ask again) and the routing passes over it, so the next
+    login serves with no refresh attempt on the dead one. The process that met the revocation reports it once
+    (`revoked.rs`): one warning (the row named by id, a fingerprint when the id is an email) and, for its Anthropic
+    sessions, a notice on the agents view ahead of the quota line (`Your Anthropic login <name> was revoked; using
+    <name>. Run /login anthropic to restore it.`; status `revokedLogin: true`). A new login on the row (a re-login
+    from any tool sharing the store) or the row's removal withdraws the notice.
   - No login in the store: the lookup falls through to auth.json. A login that cannot produce a token (refresh
     failed, revoked, store unreadable, network down): the provider's OAuth authentication failure
     (`oauth_refresh_failed`, "Run /login"), never auth.json's login in its place.

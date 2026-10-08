@@ -1,0 +1,1 @@
+- Anthropic (shared account store): when a login's refresh token is revoked, the process that meets it logs it once and its sessions show one notice on the agents view naming the login that now serves and `/login anthropic` to restore it; a re-login withdraws the notice.

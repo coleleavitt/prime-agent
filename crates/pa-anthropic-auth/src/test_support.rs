@@ -2,6 +2,7 @@
 //! loopback token endpoint, a mock Messages endpoint. Never the user's
 //! store, Claude Code's files, or the network.
 
+use std::fmt::Write as _;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -564,4 +565,70 @@ pub(crate) fn token_endpoint_by_refresh(
 /// The refresh token [`row`] gives the row `id`.
 pub(crate) fn refresh_of(id: &str) -> String {
     format!("sk-ant-ort01-{id}-store-refresh-000")
+}
+
+/// The warnings this crate logged on the thread running
+/// [`WarningLog::capture`]: each one's message, then its other fields as
+/// ` name=value`.
+#[derive(Clone, Default)]
+pub(crate) struct WarningLog(Arc<Mutex<Vec<String>>>);
+
+impl WarningLog {
+    /// Run `body` with this log as the thread's subscriber.
+    pub(crate) fn capture<T>(&self, body: impl FnOnce() -> T) -> T {
+        tracing::subscriber::with_default(self.clone(), body)
+    }
+
+    /// The warnings so far.
+    pub(crate) fn messages(&self) -> Vec<String> {
+        self.0.lock_or_recover().clone()
+    }
+}
+
+/// Collects one event's message and fields.
+#[derive(Default)]
+struct EventText {
+    message: String,
+    fields: String,
+}
+
+impl tracing::field::Visit for EventText {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.message = format!("{value:?}");
+        } else {
+            let _ = write!(self.fields, " {}={value:?}", field.name());
+        }
+    }
+
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        self.record_debug(field, &format_args!("{value}"));
+    }
+}
+
+impl tracing::Subscriber for WarningLog {
+    fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+        metadata.target().starts_with("pa_anthropic_auth")
+            && *metadata.level() <= tracing::Level::WARN
+    }
+
+    fn new_span(&self, _span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+
+    fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+
+    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+
+    fn event(&self, event: &tracing::Event<'_>) {
+        let mut text = EventText::default();
+        event.record(&mut text);
+        self.0
+            .lock_or_recover()
+            .push(format!("{}{}", text.message, text.fields));
+    }
+
+    fn enter(&self, _span: &tracing::span::Id) {}
+
+    fn exit(&self, _span: &tracing::span::Id) {}
 }

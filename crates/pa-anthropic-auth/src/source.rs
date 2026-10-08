@@ -246,6 +246,8 @@ pub struct SharedStoreSource {
     cachekeep_started: std::sync::Once,
     /// This source, for the threads it starts (set by [`Self::attach`]).
     this: OnceLock<std::sync::Weak<SharedStoreSource>>,
+    /// The revoked logins this process reported.
+    pub(crate) revocations: Mutex<crate::revoked::Revocations>,
 }
 
 /// How many served tokens the source remembers (the pi plugin's bound).
@@ -305,6 +307,7 @@ impl SharedStoreSource {
             cachekeep_jobs: OnceLock::new(),
             cachekeep_started: std::sync::Once::new(),
             this: OnceLock::new(),
+            revocations: Mutex::default(),
         }
     }
 
@@ -563,12 +566,15 @@ impl SharedStoreSource {
     }
 
     /// Remember a token this source handed out, for the store row
-    /// `account_id` (its account uuid read from the store). Blocking: reads
-    /// the store, and the device id the first time.
+    /// `account_id` (its account uuid read from the store), and report a
+    /// revoked login its resolution passed over. Blocking: reads the store,
+    /// and the device id the first time.
     pub(crate) fn remember(&self, token: &str, account_id: &str) {
-        let row = AccountStore::load(&self.config.store_path)
-            .ok()
-            .and_then(|store| store.get(account_id).cloned());
+        let store = AccountStore::load(&self.config.store_path).ok();
+        if let Some(store) = &store {
+            self.note_revocations(store, Some(account_id));
+        }
+        let row = store.and_then(|store| store.get(account_id).cloned());
         let account_uuid = row
             .as_ref()
             .and_then(|row| {
@@ -754,6 +760,9 @@ impl ProviderCredentialSource for SharedStoreSource {
             }
             Ok(Err(error)) => {
                 self.record(None);
+                if let Ok(store) = AccountStore::load(&self.config.store_path) {
+                    self.note_revocations(&store, None);
+                }
                 Err(CredentialSourceError::Unavailable(error.to_string()))
             }
             Err(message) => {
