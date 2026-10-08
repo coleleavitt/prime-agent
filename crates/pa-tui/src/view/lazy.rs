@@ -496,6 +496,7 @@ impl AgentView {
     pub(super) fn sparse_entry_rows(&mut self, index: usize, width: usize) -> EntryRows {
         #[cfg(test)]
         super::layout::ENTRY_VISITS.with(|count| count.set(count.get() + 1));
+        self.note_entry_work();
         self.sparse_entries.insert(index);
         let detail = match self.detail {
             Detail::Overview => 0,

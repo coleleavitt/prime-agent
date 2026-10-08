@@ -526,6 +526,9 @@ pub struct InteractiveOutcome {
     /// (`view::handoff`): the re-entry's frames are byte-identical either way, so a zero here
     /// is the re-render and a nonzero is the reuse.
     pub handoff_seeds: u32,
+    /// The view's per-entry transcript work over the run (`AgentView::entry_work`): the
+    /// session-size-independence verifiers compare it across runs instead of timing them.
+    pub transcript_entry_work: u64,
 }
 
 /// Inputs consumed by the UI loop. Terminal keys arrive one event at a time; headless steps

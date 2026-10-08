@@ -6,6 +6,7 @@ impl AgentView {
     pub(super) fn count_entry_rows(&self, index: usize, width: usize) -> usize {
         #[cfg(test)]
         super::layout::ENTRY_VISITS.with(|count| count.set(count.get() + 1));
+        self.note_entry_work();
         let entry = &self.chat[index];
         // TS `precededByToolActivity` = the compact set.
         let preceded_by_tool = index > 0 && Self::is_compact_neighbor(&self.chat[index - 1]);

@@ -264,6 +264,11 @@ impl AgentView {
         }
     }
 
+    /// Count one unit of per-entry transcript work (see `AgentView::entry_work`).
+    pub(super) fn note_entry_work(&self) {
+        self.entry_work.set(self.entry_work.get().saturating_add(1));
+    }
+
     /// Measure entries through shared count-only render geometry.
     pub(crate) fn layout_pass(&mut self, width: usize) -> TranscriptLayout {
         self.sparse_enabled = false;
@@ -285,6 +290,7 @@ impl AgentView {
         let mut first = true;
         let mut preceded_by_tool_activity = false;
         for (index, entry) in self.chat.iter().enumerate() {
+            self.note_entry_work();
             let spacing = self.entry_spacing(index, entry, first, preceded_by_tool_activity);
             let cacheable = Self::entry_cacheable(entry);
             let cached_height = self.entry_heights[index][detail]

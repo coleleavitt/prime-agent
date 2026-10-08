@@ -157,6 +157,10 @@ pub struct AgentView {
     /// How many first-draw windows this view served from an adopted
     /// layout handoff: the verifiers assert the reuse happened.
     pub(crate) handoff_seeds: u32,
+    /// Per-entry transcript work this view performed: one unit per entry a layout pass walked,
+    /// measured, or rendered into rows. A frame whose cost must not scale with the session is
+    /// checked against this count, not the wall clock.
+    pub(crate) entry_work: std::cell::Cell<u64>,
     /// Entries whose card a click flipped away from the level's
     /// tool-output expansion (see `view/expansion.rs`).
     toggled_cards: std::collections::BTreeSet<usize>,
@@ -354,6 +358,7 @@ impl AgentView {
             sparse_mutation: None,
             pending_handoff: None,
             handoff_seeds: 0,
+            entry_work: std::cell::Cell::new(0),
             click: click::ClickSurface::default(),
         }
     }

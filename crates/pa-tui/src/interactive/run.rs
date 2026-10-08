@@ -529,6 +529,7 @@ async fn run_interactive_surface(
                 opened_urls: Vec::new(),
                 agents_view_notice: None,
                 handoff_seeds: 0,
+                transcript_entry_work: view.entry_work.get(),
             });
         }
     }
@@ -1917,6 +1918,7 @@ async fn run_interactive_surface(
             None
         },
         handoff_seeds: view.handoff_seeds,
+        transcript_entry_work: view.entry_work.get(),
     };
     // The agents-view handoff's background detach owns this connection now; every other exit
     // closes it here.

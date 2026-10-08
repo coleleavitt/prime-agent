@@ -1,7 +1,7 @@
 //! Headless perf verifier for mouse drag-selection: the per-frame cost of a drag is independent of
 //! the session size (a drag frame restyles the visible cached rows' selection diff, never the
-//! transcript geometry). The budget compares a 100-drag burst vs. a no-drag baseline and a small
-//! session.
+//! transcript geometry). The budget compares a 100-drag burst's per-entry transcript work vs. a
+//! no-drag baseline and a small session.
 #![cfg(unix)]
 // Casts: structurally bounded terminal-layout arithmetic; guarded conversions add panic paths.
 #![allow(
@@ -226,16 +226,12 @@ fn options(socket: PathBuf) -> InteractiveOptions {
     }
 }
 
-fn run_plan(
-    messages: usize,
-    steps: Vec<HeadlessStep>,
-) -> (Vec<String>, Vec<String>, std::time::Duration) {
+fn run_plan(messages: usize, steps: Vec<HeadlessStep>) -> (Vec<String>, Vec<String>, u64) {
     let _guard = run_lock();
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let supervisor = MockSupervisor::bind(&socket);
     let handle = std::thread::spawn(move || supervisor.serve(messages));
-    let started = std::time::Instant::now();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -248,9 +244,12 @@ fn run_plan(
     let outcome = runtime
         .block_on(run_interactive(options(socket), UiMode::Headless(plan)))
         .expect("interactive run");
-    let elapsed = started.elapsed();
     let _ = handle.join();
-    (outcome.frames, outcome.copies, elapsed)
+    (
+        outcome.frames,
+        outcome.copies,
+        outcome.transcript_entry_work,
+    )
 }
 
 /// The scroll-paused drag burst: mount the window at the transcript top, then press-drag-release
@@ -295,20 +294,17 @@ fn drag_select_frame_cost_is_independent_of_session_size() {
         &copies_large[0][..copies_large[0].len().min(40)]
     );
 
-    // The drag path's own cost (burst minus baseline) stays in the same band on either session: no
-    // per-frame geometry resolve scales it with the transcript.
+    // The drag path's own transcript work (burst minus baseline) stays in the same band on either
+    // session: one transcript-wide pass alone visits every entry, so an excess within `small`
+    // units of the small session's rules out any per-frame (or per-copy) geometry resolve.
+    // Counted, not timed: the wall clock under load measures the machine.
     let small_excess = small_drag.saturating_sub(small_baseline);
     let large_excess = large_drag.saturating_sub(large_baseline);
     assert!(
-        large_excess < small_excess + Duration::from_millis(250),
-        "the large session's drag excess ({large_excess:?}) must stay within \
-         250ms of the small session's ({small_excess:?})"
-    );
-    assert!(
-        large_excess < Duration::from_millis(500),
-        "100 drag frames on a ~40MB session cost {large_excess:?} — the \
-         per-frame cost is not session-size independent (the pre-fix \
-         release alone resolved the full geometry once per copy)"
+        large_excess <= small_excess + small as u64,
+        "the large session's drag did {large_excess} units of per-entry transcript work, the \
+         small session's {small_excess}: the per-frame cost is not session-size independent \
+         (the pre-fix release alone resolved the full geometry once per copy)"
     );
     // The headless capture renders per change: the drag frames flowed.
     assert!(
@@ -316,5 +312,3 @@ fn drag_select_frame_cost_is_independent_of_session_size() {
         "the drag burst rendered frames"
     );
 }
-
-use std::time::Duration;
