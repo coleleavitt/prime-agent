@@ -116,9 +116,11 @@ directory and the session's own state.
 - **Toggling restarts the kernel.** A running process cannot loosen its Landlock domain, so
   switching plan mode on or off stops the kernel with a final namespace snapshot and starts
   its replacement under the new policy, which restores the namespace (the session gets the
-  usual restore notice; values the snapshot cannot hold, such as open files or sockets, do
-  not survive). A session without an artifact directory keeps no snapshot and starts with an
-  empty namespace. A toggle takes about 200 ms here (stop, spawn, restore, runtime
+  usual restore notice, naming what came back and what failed to revive; values the snapshot
+  cannot hold, such as open files or sockets, do not survive, and, as on any kernel
+  replacement, the notice does not list them). A session without an artifact directory keeps
+  no snapshot: its new kernel starts with an empty namespace, `/plan` shows a warning row
+  saying so, and the model gets the "starting fresh" restore notice. A toggle takes about 200 ms here (stop, spawn, restore, runtime
   bootstrap); a toggle that does not change the policy (the sandbox is already `read-only`)
   keeps the kernel.
 - **A busy kernel refuses the toggle.** While a cell or a background `bash()` command runs,

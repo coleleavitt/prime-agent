@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use pa_core::kernel::plan_guard::PlanModeSwitch;
+use pa_core::kernel::plan_guard::{PlanModeApplied, PlanModeSwitch};
 use pa_core::kernel::provisioner::{IpythonKernelProvisioner, IpythonKernelProvisionerOptions};
 use pa_core::kernel::shared::{ExecuteOptions, ExecuteStatus};
 use pa_core::os_sandbox::{SandboxMode, SessionSandbox};
@@ -273,7 +273,10 @@ async fn toggling_keeps_the_namespace_and_leaving_plan_mode_restores_writes() {
 
     fixture.mode.set(true);
     let entering = Instant::now();
-    fixture.provisioner.sync_plan_mode().await.unwrap();
+    assert_eq!(
+        fixture.provisioner.sync_plan_mode().await.unwrap(),
+        PlanModeApplied::Restarted
+    );
     let entered_ms = entering.elapsed().as_millis();
     let planning = [
         cell(&fixture, "kept + 1").await,
@@ -284,7 +287,10 @@ async fn toggling_keeps_the_namespace_and_leaving_plan_mode_restores_writes() {
 
     fixture.mode.set(false);
     let leaving = Instant::now();
-    fixture.provisioner.sync_plan_mode().await.unwrap();
+    assert_eq!(
+        fixture.provisioner.sync_plan_mode().await.unwrap(),
+        PlanModeApplied::Restarted
+    );
     let left_ms = leaving.elapsed().as_millis();
     let after = [
         cell(&fixture, "kept").await,
@@ -317,9 +323,15 @@ async fn a_configured_read_only_sandbox_toggles_without_a_restart() {
     let kept = cell(&fixture, "kept = 7\nkept").await;
     let pid = kernel_pid(&fixture);
     fixture.mode.set(true);
-    fixture.provisioner.sync_plan_mode().await.unwrap();
+    assert_eq!(
+        fixture.provisioner.sync_plan_mode().await.unwrap(),
+        PlanModeApplied::InPlace
+    );
     fixture.mode.set(false);
-    fixture.provisioner.sync_plan_mode().await.unwrap();
+    assert_eq!(
+        fixture.provisioner.sync_plan_mode().await.unwrap(),
+        PlanModeApplied::InPlace
+    );
     assert_eq!(
         (kept, kernel_pid(&fixture), cell(&fixture, "kept").await),
         ("7".to_string(), pid, "7".to_string())
@@ -371,7 +383,7 @@ async fn a_busy_kernel_refuses_the_toggle_and_keeps_running() {
     let busy_job = fixture.provisioner.sync_plan_mode().await;
     let _ = cell(&fixture, "_h.kill()").await;
     let messages = [busy_cell, busy_job].map(|result| match result {
-        Ok(()) => "switched".to_string(),
+        Ok(_) => "switched".to_string(),
         Err(error) => format!("{error:#}"),
     });
     assert_eq!(job, "True");

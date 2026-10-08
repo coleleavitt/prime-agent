@@ -579,9 +579,12 @@ impl IpythonKernelProvisioner {
     ///
     /// Returns an error when the kernel is busy, or the runtime cannot apply
     /// the guard, or the replacement kernel fails to start.
-    pub async fn sync_plan_mode(&self) -> anyhow::Result<()> {
+    pub async fn sync_plan_mode(
+        &self,
+    ) -> anyhow::Result<crate::kernel::plan_guard::PlanModeApplied> {
+        use crate::kernel::plan_guard::PlanModeApplied;
         let Some(plan) = &self.inner.options.plan_mode else {
-            return Ok(());
+            return Ok(PlanModeApplied::InPlace);
         };
         let (manager, startup) = {
             let state = self.lock_state();
@@ -597,7 +600,7 @@ impl IpythonKernelProvisioner {
             (None, None) => None,
         };
         let Some(manager) = manager.filter(|manager| !manager.is_defunct()) else {
-            return Ok(());
+            return Ok(PlanModeApplied::InPlace);
         };
         match &plan.enforcement {
             crate::kernel::plan_guard::PlanEnforcement::KernelGuard { .. } => {
@@ -611,7 +614,7 @@ impl IpythonKernelProvisioner {
                     (Some(_), None) | (None, Some(_)) => false,
                 };
                 if unchanged {
-                    return Ok(());
+                    return Ok(PlanModeApplied::InPlace);
                 }
                 if let Some(busy) = manager.busy() {
                     let (what, until) = match busy {
@@ -629,9 +632,14 @@ impl IpythonKernelProvisioner {
                 }
                 self.stop_kernel(None).await;
                 self.ensure(None, None).await?;
+                return Ok(if self.inner.options.snapshot_dir.is_some() {
+                    PlanModeApplied::Restarted
+                } else {
+                    PlanModeApplied::RestartedWithoutSnapshot
+                });
             }
         }
-        Ok(())
+        Ok(PlanModeApplied::InPlace)
     }
 
     /// Live user-defined names in the kernel namespace, or `None` if listing

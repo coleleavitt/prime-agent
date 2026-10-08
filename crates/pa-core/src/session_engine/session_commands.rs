@@ -714,9 +714,19 @@ async fn execute_plan(
             return Ok(());
         }
     };
-    if engine.set_plan_mode(target).await? {
+    if let Some(applied) = engine.set_plan_mode(target).await? {
         engine.track_plan_mode(target, "command");
         execution.push_message(super::plan_mode::plan_mode_change_row(target));
+        if applied == crate::kernel::plan_guard::PlanModeApplied::RestartedWithoutSnapshot {
+            execution.push_message(slash_command_result(
+                command,
+                super::plan_mode::NAMESPACE_RESET_NOTICE.to_string(),
+                true,
+                "warning",
+                None,
+                true,
+            ));
+        }
         if let Some(reason) = engine.plan_mode_fallback().filter(|_| target) {
             execution.push_message(slash_command_result(
                 command,

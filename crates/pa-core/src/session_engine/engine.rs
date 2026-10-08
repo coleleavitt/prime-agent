@@ -1151,18 +1151,32 @@ impl SessionEngine {
     /// # Errors
     ///
     /// Returns the kernel's failure to apply the guard (a busy kernel included).
-    pub async fn set_plan_mode(&self, enabled: bool) -> Result<bool, String> {
+    pub async fn set_plan_mode(
+        &self,
+        enabled: bool,
+    ) -> Result<Option<crate::kernel::plan_guard::PlanModeApplied>, String> {
         if self.plan_mode.replace(enabled) == enabled {
-            return Ok(false);
+            return Ok(None);
         }
-        if let Err(error) = self.provisioner.sync_plan_mode().await {
-            self.plan_mode.set(!enabled);
-            // Best effort: put the kernel back in step with the restored switch.
-            let _ = self.provisioner.sync_plan_mode().await;
-            return Err(format!(
-                "could not {} plan mode in the Python kernel: {error:#}",
-                if enabled { "enable" } else { "disable" }
-            ));
+        let applied = match self.provisioner.sync_plan_mode().await {
+            Ok(applied) => applied,
+            Err(error) => {
+                self.plan_mode.set(!enabled);
+                // Best effort: put the kernel back in step with the restored switch.
+                let _ = self.provisioner.sync_plan_mode().await;
+                return Err(format!(
+                    "could not {} plan mode in the Python kernel: {error:#}",
+                    if enabled { "enable" } else { "disable" }
+                ));
+            }
+        };
+        if applied == crate::kernel::plan_guard::PlanModeApplied::RestartedWithoutSnapshot {
+            // The notice a failed state revive gives the model: its kernel
+            // starts fresh.
+            self.session
+                .queue_next_turn_row(super::state_restore_notice::notice_message(
+                    &crate::kernel::state_snapshot::RestoreResult::default(),
+                ));
         }
         if enabled {
             // Re-enabled before the "off" notice was delivered: the model
@@ -1173,7 +1187,7 @@ impl SessionEngine {
             self.session
                 .queue_next_turn_row(super::plan_mode::plan_mode_exited_row());
         }
-        Ok(true)
+        Ok(Some(applied))
     }
 
     /// Adopt the plan mode a host restored from its own durable store (the
@@ -1186,7 +1200,7 @@ impl SessionEngine {
         if self.plan_mode.replace(enabled) == enabled {
             return Ok(());
         }
-        self.provisioner.sync_plan_mode().await
+        self.provisioner.sync_plan_mode().await.map(|_| ())
     }
 
     /// Report one plan-mode change to adoption telemetry (no-op without a

@@ -177,6 +177,10 @@ pub fn fallback_notice(reason: &str) -> String {
     )
 }
 
+/// The warning shown when a plan-mode toggle restarted the kernel in a
+/// session that keeps no state snapshot.
+pub const NAMESPACE_RESET_NOTICE: &str = "Switching plan mode restarted the Python kernel under a different OS sandbox. This session keeps no state snapshot, so the kernel's variables, imports and loaded data were lost.";
+
 /// What a refused tool call tells the model.
 #[must_use]
 pub fn blocked_tool_reason(tool_name: &str) -> String {

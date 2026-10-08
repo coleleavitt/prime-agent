@@ -16,7 +16,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use pa_core::kernel::manager::{KernelStartOptions, ReplKernelManager};
-use pa_core::kernel::plan_guard::{KernelPlanGuard, PlanEnforcement, PlanMode, PlanModeSwitch};
+use pa_core::kernel::plan_guard::{
+    KernelPlanGuard, PlanEnforcement, PlanMode, PlanModeApplied, PlanModeSwitch,
+};
 use pa_core::kernel::provisioner::{IpythonKernelProvisioner, IpythonKernelProvisionerOptions};
 use pa_core::kernel::shared::{
     ExecuteOptions, ExecuteStatus, KernelManagerOptions, KernelShutdownOptions,
@@ -321,7 +323,10 @@ async fn without_an_os_sandbox_a_live_kernel_refuses_writes_and_commands_and_cel
 
     let pid = manager.process_id();
     mode.set(false);
-    provisioner.sync_plan_mode().await.unwrap();
+    assert_eq!(
+        provisioner.sync_plan_mode().await.unwrap(),
+        PlanModeApplied::InPlace
+    );
     let (status, out) = cell(
         &provisioner,
         &format!(

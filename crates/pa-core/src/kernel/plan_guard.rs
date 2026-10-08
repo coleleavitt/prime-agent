@@ -103,6 +103,20 @@ impl PlanEnforcement {
     }
 }
 
+/// How a plan-mode toggle reached the session's kernel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlanModeApplied {
+    /// Nothing to restart: no kernel runs, the policy did not change, or the
+    /// in-kernel guard switched in place.
+    InPlace,
+    /// The kernel restarted under the new policy and restored its namespace
+    /// from the state snapshot (the restore notice reports what came back).
+    Restarted,
+    /// The kernel restarted under the new policy, and this session keeps no
+    /// state snapshot: the new kernel's namespace is empty.
+    RestartedWithoutSnapshot,
+}
+
 /// A session's plan mode: the switch, and how this machine enforces it.
 /// Cloning shares the switch.
 #[derive(Debug, Clone)]
