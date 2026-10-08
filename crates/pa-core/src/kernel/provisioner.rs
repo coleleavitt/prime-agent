@@ -131,9 +131,10 @@ pub struct IpythonKernelProvisionerOptions {
     pub on_bootstrap_result: Option<KernelBootstrapResultHandler>,
     /// The host-environment inheritance policy (`kernel.environment`).
     pub environment: crate::kernel::shared::KernelEnvironment,
-    /// The session's plan mode: every booted kernel arms the runtime write
-    /// guard while it is on (see [`crate::kernel::plan_guard`]).
-    pub plan_mode: Option<crate::kernel::plan_guard::PlanModeSwitch>,
+    /// The session's plan mode: every booted kernel starts under its
+    /// confinement while it is on, and a toggle restarts a running kernel into
+    /// the new policy (see [`crate::kernel::plan_guard`]).
+    pub plan_mode: Option<crate::kernel::plan_guard::PlanMode>,
     /// The session's OS sandbox (`sandbox` setting); `None` spawns the
     /// kernel unconfined.
     pub sandbox: Option<crate::os_sandbox::SessionSandbox>,
@@ -566,13 +567,22 @@ impl IpythonKernelProvisioner {
     /// that read the switch before a toggle must not keep the old state). No
     /// kernel at all is fine: the next boot reads the switch.
     ///
+    /// Under an OS sandbox the kernel cannot loosen (or reliably tighten) its
+    /// own confinement, so a toggle that changes the effective policy stops
+    /// the kernel with a final snapshot and boots its replacement under the
+    /// new one, which restores the namespace; an unchanged policy keeps the
+    /// kernel. A kernel running a cell or background `bash()` commands is not
+    /// restarted (that would abort them): the toggle is refused instead. The
+    /// in-kernel fallback guard switches in place.
+    ///
     /// # Errors
     ///
-    /// Returns an error when the kernel runtime cannot apply the guard.
+    /// Returns an error when the kernel is busy, or the runtime cannot apply
+    /// the guard, or the replacement kernel fails to start.
     pub async fn sync_plan_mode(&self) -> anyhow::Result<()> {
-        if self.inner.options.plan_mode.is_none() {
+        let Some(plan) = &self.inner.options.plan_mode else {
             return Ok(());
-        }
+        };
         let (manager, startup) = {
             let state = self.lock_state();
             (state.manager.clone(), state.startup.clone())
@@ -586,8 +596,40 @@ impl IpythonKernelProvisioner {
             }
             (None, None) => None,
         };
-        if let Some(manager) = manager {
-            manager.sync_plan_guard().await?;
+        let Some(manager) = manager.filter(|manager| !manager.is_defunct()) else {
+            return Ok(());
+        };
+        match &plan.enforcement {
+            crate::kernel::plan_guard::PlanEnforcement::KernelGuard { .. } => {
+                manager.sync_plan_guard().await?;
+            }
+            crate::kernel::plan_guard::PlanEnforcement::Sandbox(_) => {
+                let wanted = plan.spawn_sandbox(self.inner.options.sandbox.as_ref());
+                let unchanged = match (manager.sandbox(), wanted.as_ref()) {
+                    (Some(running), Some(wanted)) => running.same_policy(wanted),
+                    (None, None) => true,
+                    (Some(_), None) | (None, Some(_)) => false,
+                };
+                if unchanged {
+                    return Ok(());
+                }
+                if let Some(busy) = manager.busy() {
+                    let (what, until) = match busy {
+                        crate::kernel::manager::KernelBusy::Cell => {
+                            ("a cell is running", "it finishes")
+                        }
+                        crate::kernel::manager::KernelBusy::BackgroundBash => {
+                            ("background bash() commands are running", "they finish")
+                        }
+                    };
+                    return Err(anyhow!(
+                        "the Python kernel is busy ({what}); switching plan mode restarts it \
+                         under a different OS sandbox. Try again once {until}."
+                    ));
+                }
+                self.stop_kernel(None).await;
+                self.ensure(None, None).await?;
+            }
         }
         Ok(())
     }
@@ -1098,6 +1140,12 @@ async fn start_kernel_impl(
     let stderr_log_path = snapshot_dir
         .as_ref()
         .map(|dir| dir.join("kernel-stderr.log"));
+    // While plan mode is on (and OS-enforced) the kernel boots under plan
+    // mode's policy instead of the configured one.
+    let sandbox = match &options.plan_mode {
+        Some(plan) => plan.spawn_sandbox(options.sandbox.as_ref()),
+        None => options.sandbox.clone(),
+    };
     let manager = ReplKernelManager::new(KernelManagerOptions {
         python: options.python.clone(),
         cwd: Some(cwd.clone()),
@@ -1110,20 +1158,23 @@ async fn start_kernel_impl(
         bootstrap_code: Some(bootstrap_code.clone()),
         stderr_log_path,
         environment: options.environment,
-        // The guarded kernel still writes its namespace snapshot into the
-        // session artifact dir; the workspace stays read-only even when it
-        // sits under a temp dir.
-        plan_guard: options.plan_mode.as_ref().map(|mode| {
-            crate::kernel::plan_guard::KernelPlanGuard {
-                mode: mode.clone(),
-                writable_roots: snapshot_dir.iter().cloned().collect(),
-                protected_roots: vec![cwd.clone()],
-            }
+        // The in-kernel fallback guard (no OS sandbox for plan mode here): the
+        // guarded kernel still writes its namespace snapshot into the session
+        // artifact dir; the workspace stays read-only even when it sits under
+        // a temp dir.
+        plan_guard: options.plan_mode.as_ref().and_then(|plan| {
+            plan.fallback_reason()
+                .map(|reason| crate::kernel::plan_guard::KernelPlanGuard {
+                    mode: plan.switch.clone(),
+                    writable_roots: snapshot_dir.iter().cloned().collect(),
+                    protected_roots: vec![cwd.clone()],
+                    no_sandbox_reason: reason.to_string(),
+                })
         }),
         // The kernel's own state stays writable under every mode: the
         // snapshot and local harness (the artifact dir) and the global
         // harness store `rlm.harness` writes directly.
-        sandbox: options.sandbox.clone().map(|sandbox| {
+        sandbox: sandbox.map(|sandbox| {
             let global_harness = options
                 .env
                 .get("PRIME_AGENT_CODING_AGENT_DIR")

@@ -1,24 +1,24 @@
-"""Plan-mode (no-edit) guard for the Prime Agent kernel.
+"""Plan-mode (no-edit) fallback guard for the Prime Agent kernel.
 
-While enabled, filesystem mutations raise ``PlanModeError`` and subprocesses
-run inside a read-only OS sandbox (bwrap / sandbox-exec) so read-only commands
-keep working; without a sandbox binary only classifiable read-only commands
-run. Enforcement uses ``sys.addaudithook``: a hook cannot be removed once
-installed.
+Where the OS can confine processes (Landlock on Linux, Seatbelt on macOS) the
+host enforces plan mode itself: the kernel restarts under a read-only OS
+sandbox, and nothing here is armed. This module is the fallback for a machine
+with no OS sandbox: while enabled, filesystem mutations outside the writable
+roots and every process spawn raise ``PlanModeError``. Enforcement uses
+``sys.addaudithook``: a hook cannot be removed once installed.
 
 Only the host can switch the guard. The REPL claims the one host controller at
 startup, before any cell runs, and answers the host's ``plan_guard`` protocol
 frame through it; the controller also checks the host-held token the first
 frame binds. Kernel code can import this module, read ``is_enabled()`` and call
-``check_bash()``, but it cannot claim a second controller, rebind the token, or
-mark its own process spawns as mediated (a spawn is mediated only when the
-patched ``Popen.__init__`` frame itself is on the stack).
+``check_bash()``, but it cannot claim a second controller or rebind the token.
 
 This is a guard against an agent that edits when it should be planning, not a
 sandbox for hostile code: arbitrary Python can still reach the guard's closure
 state through interpreter introspection, or call libc through ``ctypes``
 (left open: ``dill``, which the namespace snapshot needs, calls into the C API
-through it). The host refuses its own mutating tools independently.
+through it). The host refuses its own mutating tools, and the kernel's
+``bash()`` jobs, independently.
 """
 
 from __future__ import annotations
@@ -26,9 +26,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
-import shlex
-import shutil
-import subprocess
 import sys
 import tempfile
 from collections.abc import Callable, Iterable, Sequence
@@ -42,10 +39,7 @@ _PLAN_MODE_MESSAGE = (
     "user to exit plan mode if edits are needed."
 )
 
-_FALLBACK_BLOCK_ACTION = (
-    "running this command (no bwrap/sandbox-exec on this machine, so only "
-    "classifiable read-only commands run: git log/diff/status, rg, grep, ls, cat, ...)"
-)
+_NO_SANDBOX_COMMAND_ACTION = "running commands (this machine has no OS sandbox to run them read-only)"
 
 
 class PlanModeError(RuntimeError):
@@ -86,7 +80,7 @@ _FS_MUTATION_EVENTS = frozenset(
 # Copies read their source; only the destination (the second argument) is written.
 _FS_COPY_EVENTS = frozenset({"shutil.copyfile", "shutil.copymode", "shutil.copystat"})
 
-# Process spawns must go through the mediated Popen wrapper.
+# Process spawns: without an OS sandbox nothing can run them read-only.
 _SPAWN_EVENTS = frozenset(
     {
         "subprocess.Popen",
@@ -100,70 +94,6 @@ _SPAWN_EVENTS = frozenset(
         "pty.spawn",
     }
 )
-
-# Read-only commands permitted when no OS sandbox binary is available.
-_FALLBACK_ALLOWED_COMMANDS = frozenset(
-    {
-        "awk",
-        "basename",
-        "cat",
-        "column",
-        "cut",
-        "df",
-        "diff",
-        "dirname",
-        "du",
-        "echo",
-        "file",
-        "find",
-        "grep",
-        "head",
-        "hostname",
-        "jq",
-        "ls",
-        "nl",
-        "printf",
-        "ps",
-        "pwd",
-        "readlink",
-        "realpath",
-        "rg",
-        "sort",
-        "stat",
-        "tail",
-        "tr",
-        "tree",
-        "true",
-        "uname",
-        "uniq",
-        "wc",
-        "which",
-        "whoami",
-    }
-)
-
-_FALLBACK_GIT_SUBCOMMANDS = frozenset(
-    {
-        "blame",
-        "describe",
-        "diff",
-        "grep",
-        "log",
-        "ls-files",
-        "ls-remote",
-        "ls-tree",
-        "rev-list",
-        "rev-parse",
-        "shortlog",
-        "show",
-        "status",
-        "var",
-        "version",
-    }
-)
-
-# Shells whose `-c` script can be classified.
-_SHELL_NAMES = frozenset({"bash", "dash", "sh", "zsh"})
 
 
 def _norm(path: Any) -> str | None:
@@ -226,137 +156,18 @@ def _open_wants_write(mode: Any, flags: Any) -> bool:
     return False
 
 
-def _sandbox_prefix(roots: Roots) -> list[str] | None:
-    """Read-only OS sandbox argv prefix for subprocesses, or None if unavailable.
-
-    Roots apply shortest first, so a deeper root's mount (or rule) wins, like
-    ``_is_write_allowed``.
-    """
-    if sys.platform == "linux":
-        bwrap = shutil.which("bwrap")
-        if not bwrap:
-            return None
-        prefix = [bwrap, "--ro-bind", "/", "/", "--dev-bind", "/dev", "/dev"]
-        for root, writable in roots:
-            if root != "/dev" and os.path.isdir(root):
-                prefix += ["--bind" if writable else "--ro-bind", root, root]
-        prefix += ["--die-with-parent", "--"]
-        return prefix
-    if sys.platform == "darwin" and os.path.exists("/usr/bin/sandbox-exec"):
-        rules = " ".join(
-            f'({"allow" if writable else "deny"} file-write* (subpath "{root}"))' for root, writable in roots
-        )
-        profile = f"(version 1) (allow default) (deny file-write*) {rules}"
-        return ["/usr/bin/sandbox-exec", "-p", profile]
-    return None
-
-
-def _sandbox_works(prefix: list[str], spawn: Callable[..., Any]) -> bool:
-    """Whether the sandbox can start at all (bwrap needs user namespaces)."""
-    true = shutil.which("true") or "/bin/true"
-    try:
-        proc = spawn(
-            [*prefix, true],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        return proc.wait(timeout=10) == 0
-    except (OSError, subprocess.SubprocessError):
-        return False
-
-
-def _fallback_command_allowed(argv: Sequence[str]) -> bool:
-    if not argv:
-        return False
-    name = os.path.basename(argv[0])
-    if name in _SHELL_NAMES:
-        return len(argv) >= 3 and argv[1] == "-c" and _fallback_shell_allowed(argv[2])
-    if name == "git":
-        # Only harmless global options may precede the subcommand; -c,
-        # --exec-path, etc. can make even read subcommands run arbitrary code.
-        rest = argv[1:]
-        i = 0
-        while i < len(rest):
-            arg = rest[i]
-            if arg == "-C":
-                i += 2
-                continue
-            if arg in ("-P", "--no-pager", "--no-optional-locks", "--literal-pathspecs"):
-                i += 1
-                continue
-            if arg.startswith("-"):
-                return False
-            return arg in _FALLBACK_GIT_SUBCOMMANDS and not any(
-                a.startswith("--output") or a == "-o" for a in rest[i + 1 :]
-            )
-        return False
-    if name == "find":
-        return not any(
-            a in ("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls")
-            for a in argv[1:]
-        )
-    if name == "sed":
-        return not any(a == "-i" or a.startswith("-i") or a.startswith("--in-place") for a in argv[1:])
-    if name == "sort":
-        return not any(a == "-o" or a.startswith("-o") or a.startswith("--output") for a in argv[1:])
-    return name in _FALLBACK_ALLOWED_COMMANDS
-
-
-def _fallback_shell_allowed(command: str) -> bool:
-    """Whether every segment of a shell script is a classifiable read-only command."""
-    if ">" in command:
-        return False
-    # Evaluate each pipeline/sequence segment independently; fail closed.
-    for op in ("&&", "||", ";", "|", "&", "\n"):
-        command = command.replace(op, "\x00")
-    for segment in filter(None, (s.strip() for s in command.split("\x00"))):
-        if "$(" in segment or "`" in segment or "<(" in segment:
-            return False
-        try:
-            argv = shlex.split(segment)
-        except ValueError:
-            return False
-        if argv and not _fallback_command_allowed(argv):
-            return False
-    return True
-
-
-def _popen_argv(args: Any, executable: Any) -> list[str]:
-    argv = [os.fsdecode(a) for a in ([args] if isinstance(args, (str, bytes, os.PathLike)) else list(args))]
-    if executable and argv:
-        argv[0] = os.fsdecode(executable)
-    return argv
-
-
 # (token, enabled, extra_writable_roots, protected_roots) -> enabled
 HostController = Callable[[str, bool, Sequence[str], Sequence[str]], bool]
 
 
-def _make_guard() -> tuple[
-    Callable[[], HostController],
-    Callable[[], bool],
-    Callable[[str], None],
-    Callable[[], list[str] | None],
-    Callable[[Callable[[], None]], None],
-]:
+def _make_guard() -> tuple[Callable[[], HostController], Callable[[], bool], Callable[[str], None]]:
     state: dict[str, Any] = {
         "token_hash": None,
         "enabled": False,
         "roots": _resolve_roots(_default_writable_roots()),
-        # None: not probed for the current roots; [] probed and unusable.
-        "sandbox": None,
         "hook_added": False,
-        "popen_patched": False,
         "claimed": False,
     }
-    original_init = subprocess.Popen.__init__
-
-    def _sandbox() -> list[str] | None:
-        if state["sandbox"] is None:
-            prefix = _sandbox_prefix(state["roots"])
-            state["sandbox"] = prefix if prefix is not None and _sandbox_works(prefix, subprocess.Popen) else []
-        return state["sandbox"] or None
 
     def _hook(event: str, args: tuple[Any, ...]) -> None:
         if not state["enabled"]:
@@ -379,68 +190,7 @@ def _make_guard() -> tuple[
             if path is not None and not _is_write_allowed(path, state["roots"]):
                 raise PlanModeError(f"{event} to {path}")
         elif event in _SPAWN_EVENTS:
-            if not _mediated():
-                raise PlanModeError(f"direct process spawn ({event})")
-
-    def _mediated() -> bool:
-        # Only the patched Popen.__init__ frame mediates a spawn: a flag
-        # kernel code could set would make every spawn "mediated".
-        frame = sys._getframe(2)
-        while frame is not None:
-            if frame.f_code is guarded_init.__code__:
-                return True
-            frame = frame.f_back
-        return False
-
-    def _wrap_popen_args(args: Any, kwargs: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
-        shell = bool(kwargs.get("shell"))
-        executable = kwargs.pop("executable", None)
-        prefix = _sandbox()
-        if prefix is None:
-            if shell:
-                if isinstance(args, (str, bytes)) and _fallback_shell_allowed(os.fsdecode(args)):
-                    if executable:
-                        kwargs["executable"] = executable
-                    return args, kwargs
-                raise PlanModeError(_FALLBACK_BLOCK_ACTION)
-            argv = _popen_argv(args, executable)
-            if not _fallback_command_allowed(argv):
-                raise PlanModeError(_FALLBACK_BLOCK_ACTION)
-            return argv, kwargs
-        kwargs["shell"] = False
-        if shell:
-            sh = os.fsdecode(executable) if executable else "/bin/sh"
-            return [*prefix, sh, "-c", os.fsdecode(args)], kwargs
-        return [*prefix, *_popen_argv(args, executable)], kwargs
-
-    def guarded_init(self: subprocess.Popen[Any], args: Any = None, *pargs: Any, **kwargs: Any) -> None:
-        # A caller naming a harmless "inner" script cannot vouch for the argv:
-        # the argv itself is classified.
-        kwargs.pop("_plan_guard_inner", None)
-        if not state["enabled"]:
-            original_init(self, args, *pargs, **kwargs)
-            return
-        if pargs:
-            # Positional bufsize/executable/etc. are never used by the stdlib
-            # helpers the kernel relies on; keep the wrapper simple.
-            raise PlanModeError("subprocess with positional options in plan mode (use keyword arguments)")
-        args, kwargs = _wrap_popen_args(args, kwargs)
-        original_init(self, args, **kwargs)
-
-    def _run_before_arm_hooks() -> None:
-        for hook in list(before_arm):
-            try:
-                hook()
-            except Exception:  # noqa: BLE001 - a hook must never keep the guard from arming
-                pass
-
-    def _arm() -> None:
-        if not state["popen_patched"]:
-            subprocess.Popen.__init__ = guarded_init  # type: ignore[method-assign]
-            state["popen_patched"] = True
-        if not state["hook_added"]:
-            sys.addaudithook(_hook)
-            state["hook_added"] = True
+            raise PlanModeError(_NO_SANDBOX_COMMAND_ACTION)
 
     def _control(
         token: str,
@@ -459,19 +209,10 @@ def _make_guard() -> tuple[
         if enabled:
             roots = _default_writable_roots()
             roots.update(r for r in extra_writable_roots if isinstance(r, str) and r)
-            resolved = _resolve_roots(roots, (r for r in protected_roots if isinstance(r, str) and r))
-            if resolved != state["roots"] or state["sandbox"] is None:
-                # The sandbox probe spawns a process, which an armed guard would
-                # refuse: probe with the guard off, then arm.
-                state["enabled"] = False
-                state["roots"] = resolved
-                state["sandbox"] = None
-                _sandbox()
-            if not state["enabled"]:
-                # Processes the runtime itself needs while armed (the bash
-                # host) start now, while spawns are still allowed.
-                _run_before_arm_hooks()
-            _arm()
+            state["roots"] = _resolve_roots(roots, (r for r in protected_roots if isinstance(r, str) and r))
+            if not state["hook_added"]:
+                sys.addaudithook(_hook)
+                state["hook_added"] = True
         state["enabled"] = bool(enabled)
         return bool(state["enabled"])
 
@@ -485,38 +226,22 @@ def _make_guard() -> tuple[
         return bool(state["enabled"])
 
     def check_bash(command: str) -> None:
-        if not state["enabled"] or _sandbox() is not None:
-            return
-        if not _fallback_shell_allowed(command):
-            raise PlanModeError(_FALLBACK_BLOCK_ACTION)
+        del command  # every command is refused: nothing can run it read-only
+        if state["enabled"]:
+            raise PlanModeError(_NO_SANDBOX_COMMAND_ACTION)
 
-    def sandbox_prefix() -> list[str] | None:
-        return list(_sandbox() or []) or None if state["enabled"] else None
-
-    def on_before_arm(hook: Callable[[], None]) -> None:
-        before_arm.append(hook)
-
-    before_arm: list[Callable[[], None]] = []
-    return claim_host_controller, is_enabled, check_bash, sandbox_prefix, on_before_arm
+    return claim_host_controller, is_enabled, check_bash
 
 
-claim_host_controller, is_enabled, check_bash, sandbox_prefix, on_before_arm = _make_guard()
+claim_host_controller, is_enabled, check_bash = _make_guard()
 claim_host_controller.__doc__ = (
     "Return the one host controller ``(token, enabled, extra_writable_roots, protected_roots) -> enabled``; "
     "a second claim raises PermissionError. The REPL claims it at startup."
 )
-is_enabled.__doc__ = "Whether plan mode is active in this kernel."
-sandbox_prefix.__doc__ = (
-    "The read-only OS sandbox argv prefix a kernel shell command runs under while plan mode "
-    "is active, or None (plan mode off, or no usable sandbox on this machine)."
-)
-on_before_arm.__doc__ = (
-    "Register a callback run each time plan mode switches on, just before the guard arms "
-    "(while the runtime may still start the processes it needs)."
-)
+is_enabled.__doc__ = "Whether the in-kernel plan-mode guard is armed in this kernel."
 check_bash.__doc__ = (
-    "Raise PlanModeError when plan mode is active, no OS sandbox is available, "
-    "and ``command`` is not a classifiable read-only shell script."
+    "Raise PlanModeError when the in-kernel plan-mode guard is armed: without an OS sandbox "
+    "no shell command can be run read-only."
 )
 
-__all__ = ["PlanModeError", "check_bash", "claim_host_controller", "is_enabled", "on_before_arm", "sandbox_prefix"]
+__all__ = ["PlanModeError", "check_bash", "claim_host_controller", "is_enabled"]

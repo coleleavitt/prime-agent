@@ -72,6 +72,10 @@ pub struct McpSessionOptions {
     /// The session's OS sandbox: stdio servers spawn under it, like the
     /// kernel whose `rlm.mcp` calls they serve. `None` spawns them as before.
     pub sandbox: Option<crate::os_sandbox::SessionSandbox>,
+    /// The session's plan mode: while it is on (and OS-enforced) a stdio
+    /// server starts under plan mode's `read-only` sandbox instead, and one
+    /// started under another policy is restarted on its next use.
+    pub plan_mode: Option<crate::kernel::plan_guard::PlanMode>,
 }
 
 /// The session's MCP connections. Clones share them.
@@ -89,6 +93,7 @@ struct Inner {
     idle_timeout: Duration,
     reaper_started: AtomicBool,
     sandbox: Option<crate::os_sandbox::SessionSandbox>,
+    plan_mode: Option<crate::kernel::plan_guard::PlanMode>,
 }
 
 impl McpSessions {
@@ -108,6 +113,7 @@ impl McpSessions {
                 idle_timeout: options.idle_timeout.unwrap_or(DEFAULT_IDLE_TIMEOUT),
                 reaper_started: AtomicBool::new(false),
                 sandbox: options.sandbox,
+                plan_mode: options.plan_mode,
             }),
         }
     }
@@ -230,7 +236,16 @@ impl Inner {
         )
     }
 
-    /// The server's configuration with its credential identity, as the
+    /// The sandbox a stdio server started now runs under.
+    fn stdio_sandbox(&self) -> Option<crate::os_sandbox::SessionSandbox> {
+        match &self.plan_mode {
+            Some(plan) => plan.spawn_sandbox(self.sandbox.as_ref()),
+            None => self.sandbox.clone(),
+        }
+    }
+
+    /// The server's configuration with its credential identity (and, for a
+    /// stdio server, the sandbox mode it would start under), as the
     /// connection fingerprint.
     async fn resolve_config(&self, server: &str) -> Result<Value, McpSessionError> {
         let config = (self.configs)(server).map_err(|_| {
@@ -261,6 +276,19 @@ impl Inner {
                 connect::auth_identity(server, &config, &self.env, &self.credentials).await?;
             map.insert("_authIdentity".to_string(), Value::String(identity));
         }
+        if config.get("type").and_then(Value::as_str) == Some("stdio") {
+            // A plan-mode toggle changes the policy a stdio server must run
+            // under: the server started under the other one is retired.
+            let mode = self
+                .stdio_sandbox()
+                .map_or(crate::os_sandbox::SandboxMode::Off, |sandbox| {
+                    sandbox.mode()
+                });
+            map.insert(
+                "_sandbox".to_string(),
+                Value::String(mode.wire_name().to_string()),
+            );
+        }
         Ok(Value::Object(map))
     }
 
@@ -275,7 +303,7 @@ impl Inner {
                 let cwd = self.cwd.lock_or_recover().clone();
                 Ok(Target::Stdio(
                     connect::stdio_launch(server, config, &self.env, &cwd)?,
-                    self.sandbox.clone(),
+                    self.stdio_sandbox(),
                 ))
             }
             _ => Err(McpSessionError::value(format!(

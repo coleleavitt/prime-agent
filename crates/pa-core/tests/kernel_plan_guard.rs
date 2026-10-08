@@ -3,18 +3,20 @@
 // Drives kernel processes; unix-only like the sibling kernel targets.
 #![cfg(unix)]
 
-//! Verifier integration tests for plan mode's kernel half: the host-only
-//! `plan_guard` frame arms the runtime's write guard before the kernel serves
-//! anything, a toggle re-sends it with the same host-held token, and a kernel
-//! that cannot arm the guard never starts while plan mode is on. The live
-//! tests need the kernel Python (ambient product state) and skip without it.
+//! Verifier integration tests for plan mode's no-OS-sandbox fallback: the
+//! host-only `plan_guard` frame arms the runtime's write guard before the
+//! kernel serves anything, a toggle re-sends it with the same host-held token,
+//! a kernel that cannot arm the guard never starts while plan mode is on, and
+//! the host refuses the guarded kernel's `bash()` jobs. (Where the OS sandbox
+//! is available plan mode runs on it instead: `kernel_plan_sandbox.rs`.) The
+//! live tests need the kernel Python (ambient product state) and skip without it.
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use pa_core::kernel::manager::{KernelStartOptions, ReplKernelManager};
-use pa_core::kernel::plan_guard::{KernelPlanGuard, PlanModeSwitch};
+use pa_core::kernel::plan_guard::{KernelPlanGuard, PlanEnforcement, PlanMode, PlanModeSwitch};
 use pa_core::kernel::provisioner::{IpythonKernelProvisioner, IpythonKernelProvisionerOptions};
 use pa_core::kernel::shared::{
     ExecuteOptions, ExecuteStatus, KernelManagerOptions, KernelShutdownOptions,
@@ -82,6 +84,7 @@ fn fake_manager(dir: &Path, mode: &PlanModeSwitch) -> ReplKernelManager {
             mode: mode.clone(),
             writable_roots: vec![dir.join("artifacts")],
             protected_roots: vec![dir.join("repo")],
+            no_sandbox_reason: "OS sandbox unavailable: test".to_string(),
         }),
         ..Default::default()
     })
@@ -228,8 +231,12 @@ async fn cell(provisioner: &IpythonKernelProvisioner, code: &str) -> (ExecuteSta
     (result.status, format!("{}{error}", result.stdout))
 }
 
+/// The live fallback, chosen by an injected assessment: this machine "has no
+/// OS sandbox", so plan mode arms the in-kernel guard instead of restarting
+/// the kernel under one.
 #[tokio::test]
-async fn a_live_kernel_refuses_writes_in_plan_mode_and_cells_cannot_lift_it() {
+async fn without_an_os_sandbox_a_live_kernel_refuses_writes_and_commands_and_cells_cannot_lift_it()
+{
     let Some(python) = kernel_python() else {
         return;
     };
@@ -248,7 +255,12 @@ async fn a_live_kernel_refuses_writes_in_plan_mode_and_cells_cannot_lift_it() {
         IpythonKernelProvisionerOptions {
             python: Some(python),
             snapshot_dir: Some(artifacts.clone()),
-            plan_mode: Some(mode.clone()),
+            plan_mode: Some(PlanMode {
+                switch: mode.clone(),
+                enforcement: PlanEnforcement::KernelGuard {
+                    reason: "OS sandbox unavailable: injected".to_string(),
+                },
+            }),
             ..Default::default()
         },
     );
@@ -280,17 +292,23 @@ async fn a_live_kernel_refuses_writes_in_plan_mode_and_cells_cannot_lift_it() {
         (status, out.as_str()),
         (ExecuteStatus::Ok, "before\nrefused\nTrue\n")
     );
-    // A shell write from `bash()` fails too: read-only under the OS sandbox,
-    // or refused outright where there is none.
+    // Without an OS sandbox no command can run read-only: `bash()` refuses
+    // before any process exists, and a cell that disables that check meets
+    // the host's own refusal of the job.
     let (status, out) = cell(
         &provisioner,
-        "try:\n    r = await bash('cat main.py && echo edited > main.py')\n    \
-         print(r.exit_code != 0, r.output.startswith('before'))\n\
-         except pg.PlanModeError:\n    print('refused')",
+        "try:\n    await bash('echo edited > main.py')\nexcept pg.PlanModeError:\n    print('refused')\n\
+         pg.check_bash = lambda command: None\n\
+         try:\n    await bash('echo edited > main.py')\nexcept RuntimeError as error:\n    print(str(error).split(' (')[0])",
     )
     .await;
-    assert_eq!(status, ExecuteStatus::Ok, "{out}");
-    assert!(out == "True True\n" || out == "refused\n", "{out}");
+    assert_eq!(
+        (status, out.as_str()),
+        (
+            ExecuteStatus::Ok,
+            "refused\nbash(): Plan mode is active: running commands is blocked\n"
+        )
+    );
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "before");
     // The guarded kernel still snapshots into the session artifact dir.
     let manager = provisioner.ensure(None, None).await.unwrap();
@@ -301,14 +319,25 @@ async fn a_live_kernel_refuses_writes_in_plan_mode_and_cells_cannot_lift_it() {
         manager.kernel_stderr()
     );
 
+    let pid = manager.process_id();
     mode.set(false);
     provisioner.sync_plan_mode().await.unwrap();
     let (status, out) = cell(
         &provisioner,
-        &format!("open({target_literal}, 'w').write('edited')"),
+        &format!(
+            "open({target_literal}, 'w').write('edited')\n\
+             print((await bash('cat main.py')).output)"
+        ),
     )
     .await;
-    assert_eq!(status, ExecuteStatus::Ok, "{out}");
+    assert_eq!((status, out.as_str()), (ExecuteStatus::Ok, "edited\n"));
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "edited");
+    // The fallback switches in place: the same kernel process throughout.
+    assert_eq!(
+        provisioner
+            .manager()
+            .and_then(|manager| manager.process_id()),
+        pid
+    );
     provisioner.dispose(None).await;
 }

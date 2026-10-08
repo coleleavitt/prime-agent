@@ -717,6 +717,16 @@ async fn execute_plan(
     if engine.set_plan_mode(target).await? {
         engine.track_plan_mode(target, "command");
         execution.push_message(super::plan_mode::plan_mode_change_row(target));
+        if let Some(reason) = engine.plan_mode_fallback().filter(|_| target) {
+            execution.push_message(slash_command_result(
+                command,
+                super::plan_mode::fallback_notice(reason),
+                true,
+                "warning",
+                None,
+                true,
+            ));
+        }
     } else {
         let state = if target { "on" } else { "off" };
         execution.push_message(slash_command_result(

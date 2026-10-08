@@ -47,8 +47,9 @@ through the `prime-agent --prime-agent-bash-host` sidecar (`serve_stdio`).
 - No session, kernel-manager or wire knowledge: the caller supplies the
   kernel's cwd and environment (`GuardContext`) with every request.
 - The REPL cell lifecycle (one-shot ownership of an awaited command, the
-  background completion notice and its withdrawal), the `bash.command` trace
-  span and plan mode's classification stay in the kernel.
+  background completion notice and its withdrawal) and the `bash.command`
+  trace span stay in the kernel. Plan mode is a sandbox policy the caller
+  sets on the job table (`JobSandbox`), not a per-request concern.
 
 ## Public API
 

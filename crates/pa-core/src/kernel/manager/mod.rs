@@ -333,6 +333,15 @@ struct ChildHandle {
     exit_rx: tokio::sync::watch::Receiver<Option<ExitInfo>>,
 }
 
+/// Why a kernel cannot be restarted without aborting work ([`ReplKernelManager::busy`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KernelBusy {
+    /// A cell is executing.
+    Cell,
+    /// Background `bash()` handles are live.
+    BackgroundBash,
+}
+
 /// The RLM kernel manager: owns one `python -m rlm.repl` subprocess and the
 /// JSON-lines protocol v3 conversation with it.
 #[derive(Clone)]
@@ -545,6 +554,36 @@ impl ReplKernelManager {
     #[must_use]
     pub fn has_background_work(&self) -> bool {
         !lock(&self.inner.guarded).background_bash_handles.is_empty()
+    }
+
+    /// What a restart would abort right now: a running cell, or live
+    /// background `bash()` handles (killed with the kernel). `None` when idle;
+    /// a host-internal request (a debounced snapshot) does not count, since a
+    /// shutdown queues behind it.
+    #[must_use]
+    pub fn busy(&self) -> Option<KernelBusy> {
+        let guarded = lock(&self.inner.guarded);
+        if guarded
+            .active_execution
+            .as_ref()
+            .is_some_and(|execution| !execution.opts.internal)
+        {
+            Some(KernelBusy::Cell)
+        } else if !guarded.background_bash_handles.is_empty() {
+            Some(KernelBusy::BackgroundBash)
+        } else {
+            None
+        }
+    }
+
+    /// The OS sandbox this kernel was started under, `None` when unconfined.
+    #[must_use]
+    pub fn sandbox(&self) -> Option<&crate::os_sandbox::SessionSandbox> {
+        self.inner
+            .options
+            .sandbox
+            .as_ref()
+            .map(|kernel_sandbox| &kernel_sandbox.sandbox)
     }
 
     /// The interpreter this manager resolved for its kernel, once a start

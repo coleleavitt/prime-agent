@@ -25,7 +25,6 @@ fn spawn(table: &JobTable, command: &str, context: GuardContext) -> Arc<Job> {
             script: Script::bare(command),
             context,
             kernel_pid: std::process::id(),
-            sandbox_prefix: Vec::new(),
         })
         .expect("spawn")
 }
@@ -238,7 +237,6 @@ fn a_confined_spawn_writes_only_inside_its_roots() {
             script: Script::bare(&command),
             context: context.clone(),
             kernel_pid: std::process::id(),
-            sandbox_prefix: Vec::new(),
         })
         .expect("spawn");
     let (exit_code, output) = finished(&events(&job));
@@ -277,7 +275,6 @@ fn an_unavailable_sandbox_starts_nothing() {
         script: Script::bare("true"),
         context: context(&[]).with_sandbox(sandbox.clone()),
         kernel_pid: std::process::id(),
-        sandbox_prefix: Vec::new(),
     });
     assert_eq!(
         started.err().map(|error| error.to_string()),

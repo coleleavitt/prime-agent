@@ -380,19 +380,10 @@ fn run(table: &JobTable, request: &Value, cancel: &RunCancel) -> Value {
         .and_then(Value::as_u64)
         .and_then(|pid| u32::try_from(pid).ok())
         .unwrap_or_else(std::process::id);
-    let sandbox_prefix: Vec<String> = request
-        .get("sandboxPrefix")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_string)
-        .collect();
     let spawn = SpawnRequest {
         script,
         context: parsed.context.clone(),
         kernel_pid,
-        sandbox_prefix,
     };
     let job = match table.start(&spawn) {
         Ok(job) => job,

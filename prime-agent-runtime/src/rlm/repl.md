@@ -63,7 +63,7 @@ unknown-type protocol error.
 | `list_names` | `{"type":"list_names","id":str}` |
 | `mcp_status` | `{"type":"mcp_status","id":str,"servers":[str,...],"timeout_ms"?:number}` — host-side view query: per-server tool listing (opens each server on demand, bounded by `timeout_ms` per server; default 10s); the `done` frame carries `connections: [{server, tools: [{name, description}] | null, error: str | null}]` |
 | `bash_activity` | `{"type":"bash_activity","id":str,"action":"list"|"tail"|"kill","activityId"?:str,"lines"?:int}` — out-of-band even during a running cell; tail lines 1–200, response capped at 16 KiB; opaque IDs resolve only against this kernel’s handles |
-| `plan_guard` | `{"type":"plan_guard","id":str,"token":str,"enabled":bool,"writable_roots"?:[str,...]}` — host-only plan-mode switch, out-of-band even during a running cell; see Plan guard below |
+| `plan_guard` | `{"type":"plan_guard","id":str,"token":str,"enabled":bool,"writable_roots"?:[str,...],"protected_roots"?:[str,...]}` — host-only switch of plan mode's no-OS-sandbox fallback guard, out-of-band even during a running cell; see Plan guard below |
 | `shutdown` | `{"type":"shutdown","id"?:str}` |
 
 Requests other than `interrupt`, `host_reply`, `bash_activity`, and
@@ -374,12 +374,12 @@ whose `result` carries `status`: `ok`, `refused` (`error`: the refusal class,
 
 - `bash.run`: `{command, script, prefix?, allow: [guard], cwd, env |
   envKey, launchBypass: [guard], kernelPid, traceparent?, checkTraceparent?,
-  sandboxPrefix?: [str], waitMs, spillDir?, guards?}` is a `bash()` call in
+  waitMs, spillDir?, guards?}` is a `bash()` call in
   one request: the guards on `script` (the guard keys are
   `destructive_git`, `destructive_chmod`, `force_push`, `secret_echo`,
   `pipe_to_shell`, `sudo`; `guards: false` skips them for a script the
   kernel's caller declared validated), then the spawn of that same script
-  (under the plan-mode `sandboxPrefix` argv), then a follow of the job for
+  (under the kernel's OS sandbox, when it has one), then a follow of the job for
   up to `waitMs` (at most 30 s). It answers a refusal like `bash.check`, or
   `{job: {id, pid, pgid, startedAt}, events, cursor, done}`: a quick command
   arrives finished and reaped (`done`); otherwise the client continues with
@@ -462,16 +462,20 @@ server) and replies `CancelledError`.
 
 ## Plan guard
 
-`plan_guard` switches plan mode (`rlm.plan_guard`): while enabled, an
-irremovable `sys.addaudithook` hook refuses filesystem mutations outside the
-writable roots (temp dirs, `~/.cache`, `/dev`, and the request's
-`writable_roots`; `.git` metadata stays read-only inside them) and direct
-process spawns; `subprocess.Popen` runs under a
-read-only OS sandbox (`bwrap` on Linux, `sandbox-exec` on macOS) or, without
-one, only classifiable read-only commands. A refused operation raises
-`rlm.plan_guard.PlanModeError` in the cell. `bash()` checks its command
-before spawning and runs it under the same sandbox (`sandboxPrefix`); the
-bash sidecar starts before the guard arms (`rlm.plan_guard.on_before_arm`).
+Where the OS can confine processes (Landlock, Seatbelt), the host enforces
+plan mode without this frame: it restarts the kernel under a `read-only` OS
+sandbox (restoring the namespace from the snapshot), and the `bash()` jobs it
+runs for the kernel inherit that policy (see `docs/os-sandbox.md` -> Plan
+mode). The frame is the fallback for a machine with no OS sandbox.
+
+`plan_guard` switches that fallback guard (`rlm.plan_guard`): while enabled,
+an irremovable `sys.addaudithook` hook refuses filesystem mutations outside
+the writable roots (temp dirs, `~/.cache`, `/dev`, and the request's
+`writable_roots`; `.git` metadata and the request's `protected_roots` stay
+read-only inside them) and every process spawn. A refused operation raises
+`rlm.plan_guard.PlanModeError` in the cell; `bash()` raises it before
+sending its request, and the host refuses the kernel's `bash.*` jobs while
+the guard is armed. `ctypes` can get past the hook.
 
 The runtime claims the one host controller before it announces `ready`, and
 only the reader thread holds it: cells cannot claim another. The first frame

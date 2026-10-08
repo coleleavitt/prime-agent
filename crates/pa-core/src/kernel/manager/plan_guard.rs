@@ -1,5 +1,6 @@
-//! Plan mode: the out-of-band `plan_guard` frame that arms or disarms the
-//! runtime's write guard (see `crate::kernel::plan_guard`).
+//! Plan mode's in-kernel fallback: the out-of-band `plan_guard` frame that
+//! arms or disarms the runtime's write guard where no OS sandbox can enforce
+//! plan mode (see `crate::kernel::plan_guard`).
 
 use super::{anyhow, json, lock, oneshot, Arc, Duration, Inner, ReplKernelManager, Value};
 use crate::kernel::plan_guard::{mint_plan_guard_token, PLAN_GUARD_SETTLE_TIMEOUT_MS};
@@ -70,6 +71,17 @@ impl Inner {
             return Err(anyhow!(
                 "the kernel runtime reported plan mode {armed:?} after a request for {enabled}"
             ));
+        }
+        // The guard cannot confine a process, and this kernel has no OS
+        // sandbox: the host refuses its `bash()` jobs while the guard is armed
+        // (the runtime refuses them first; this holds against a cell that
+        // sends the host request itself).
+        if self.options.sandbox.is_none() {
+            self.bash_jobs.set_sandbox(if enabled {
+                pa_bash::JobSandbox::Unavailable(guard.job_refusal())
+            } else {
+                pa_bash::JobSandbox::Unconfined
+            });
         }
         Ok(Some(enabled))
     }

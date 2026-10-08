@@ -1,6 +1,7 @@
 //! The session's OS sandbox (the `sandbox` setting, `--sandbox <mode>`): which policy applies,
 //! what the model and the user are told about it, and the confined spawns (the Python kernel and
-//! the `!` user-bash lane). The enforcement itself is `pa-os-sandbox`'s.
+//! the `!` user-bash lane). Plan mode tightens it to `read-only` while it is on
+//! ([`SessionSandbox::for_plan_mode`]). The enforcement itself is `pa-os-sandbox`'s.
 //!
 //! Resolution: the global `sandbox` block is the user's choice; a project file may only tighten
 //! it (a stricter `mode`, `network: false`) and never adds writable roots; the CLI flag replaces
@@ -84,6 +85,47 @@ impl SessionSandbox {
         };
         let support = pa_os_sandbox::assess(&policy);
         Some(Self { policy, support })
+    }
+
+    /// The sandbox plan mode runs under: `configured` tightened to `read-only` (an already
+    /// `read-only` one unchanged), keeping its network rule; with no configured sandbox,
+    /// `read-only` with network allowed, since plan mode never blocked the network.
+    #[must_use]
+    pub fn for_plan_mode(configured: Option<&SessionSandbox>) -> SessionSandbox {
+        Self::for_plan_mode_with(configured, pa_os_sandbox::assess)
+    }
+
+    /// [`Self::for_plan_mode`] with `assess` standing in for this machine's support (tests
+    /// inject an unsupported one).
+    pub(crate) fn for_plan_mode_with(
+        configured: Option<&SessionSandbox>,
+        assess: impl Fn(&SandboxPolicy) -> Result<Assessment, SandboxError>,
+    ) -> SessionSandbox {
+        let policy = match configured {
+            Some(configured) => SandboxPolicy {
+                confinement: Confinement::ReadOnly,
+                ..configured.policy.clone()
+            },
+            None => SandboxPolicy {
+                confinement: Confinement::ReadOnly,
+                network: NetworkAccess::Allowed,
+                writable_roots: Vec::new(),
+            },
+        };
+        let support = assess(&policy);
+        SessionSandbox { policy, support }
+    }
+
+    /// Whether `other` enforces the same policy (a spawn under either is confined alike).
+    #[must_use]
+    pub fn same_policy(&self, other: &SessionSandbox) -> bool {
+        self.policy == other.policy
+    }
+
+    /// Why this machine cannot enforce the sandbox, or `None` when it can (perhaps degraded).
+    #[must_use]
+    pub fn unavailable_reason(&self) -> Option<String> {
+        self.support.as_ref().err().map(ToString::to_string)
     }
 
     /// The enforced mode (never [`SandboxMode::Off`]).
@@ -320,6 +362,72 @@ mod tests {
                 Some(SandboxMode::ReadOnly),
                 Some(SandboxMode::ReadOnly)
             ]
+        );
+    }
+
+    /// Plan mode tightens any configured mode to `read-only` and keeps its network rule; with
+    /// the sandbox off it is `read-only` with network allowed.
+    #[test]
+    fn plan_mode_tightens_to_read_only_and_keeps_the_network_rule() {
+        let full = |_: &SandboxPolicy| {
+            Ok(Assessment {
+                mechanism: "Landlock ABI 6".to_string(),
+                gaps: Vec::new(),
+            })
+        };
+        let configured = |confinement, network| SessionSandbox {
+            policy: SandboxPolicy {
+                confinement,
+                network,
+                writable_roots: vec![PathBuf::from("/tmp")],
+            },
+            support: full(&SandboxPolicy {
+                confinement,
+                network,
+                writable_roots: Vec::new(),
+            }),
+        };
+        let workspace_write = configured(Confinement::WorkspaceWrite, NetworkAccess::Denied);
+        let read_only = configured(Confinement::ReadOnly, NetworkAccess::Allowed);
+        let plans = [
+            SessionSandbox::for_plan_mode_with(None, full),
+            SessionSandbox::for_plan_mode_with(Some(&workspace_write), full),
+            SessionSandbox::for_plan_mode_with(Some(&read_only), full),
+        ];
+        let described: Vec<(SandboxMode, NetworkAccess)> = plans
+            .iter()
+            .map(|plan| (plan.mode(), plan.policy.network))
+            .collect();
+        assert_eq!(
+            described,
+            vec![
+                (SandboxMode::ReadOnly, NetworkAccess::Allowed),
+                (SandboxMode::ReadOnly, NetworkAccess::Denied),
+                (SandboxMode::ReadOnly, NetworkAccess::Allowed),
+            ]
+        );
+        // An already read-only sandbox is the plan policy itself: nothing to restart into.
+        assert_eq!(
+            (
+                plans[1].same_policy(&workspace_write),
+                plans[2].same_policy(&read_only)
+            ),
+            (false, true)
+        );
+        let unsupported = SessionSandbox::for_plan_mode_with(None, |_| {
+            Err(SandboxError::Unsupported {
+                reason: "no Landlock".to_string(),
+            })
+        });
+        assert_eq!(
+            (
+                plans[0].unavailable_reason(),
+                unsupported.unavailable_reason()
+            ),
+            (
+                None,
+                Some("OS sandbox unavailable: no Landlock".to_string())
+            )
         );
     }
 

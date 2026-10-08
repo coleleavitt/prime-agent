@@ -42,10 +42,6 @@ def expect_blocked(fn):
     except PlanModeError:
         return
     raise AssertionError("expected PlanModeError")
-
-def no_sandbox():
-    import rlm.plan_guard as pg
-    pg._sandbox_prefix = lambda roots: None
 """
 
 
@@ -56,17 +52,6 @@ def run_guarded(body: str) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
     scrub_repository_selection(env)
     return subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=120, env=env)
-
-
-def bwrap_usable() -> bool:
-    if sys.platform != "linux" or shutil.which("bwrap") is None:
-        return False
-    probe = subprocess.run(
-        ["bwrap", "--ro-bind", "/", "/", "--dev-bind", "/dev", "/dev", "--", "true"],
-        capture_output=True,
-        timeout=30,
-    )
-    return probe.returncode == 0
 
 
 class PlanGuardTest(unittest.TestCase):
@@ -137,20 +122,6 @@ open(os.path.join(build, "out.txt"), "w").write("ok")
 open(os.path.join(scratch, "note.txt"), "w").write("ok")
 """)
 
-    def test_sandboxed_subprocess_respects_protected_roots(self) -> None:
-        if not bwrap_usable():
-            self.skipTest("bwrap is not usable here")
-        self.assert_ok("""
-repo = os.path.join(scratch, "repo")
-os.makedirs(repo)
-control(TOKEN, True, [], [repo])
-out = subprocess.run("echo x > " + os.path.join(repo, "f"), shell=True, capture_output=True, text=True)
-assert out.returncode != 0, "a write into the protected workspace must fail"
-assert not os.path.exists(os.path.join(repo, "f"))
-out = subprocess.run("echo x > " + os.path.join(scratch, "f"), shell=True, capture_output=True, text=True)
-assert out.returncode == 0, out.stderr
-""")
-
     def test_disable_restores_writes(self) -> None:
         self.assert_ok("""
 target = os.path.join(work, "f.txt")
@@ -182,68 +153,26 @@ assert plan_guard.is_enabled()
 expect_blocked(lambda: open(target, "w"))
 """)
 
-    def test_direct_spawns_blocked(self) -> None:
+    def test_every_spawn_is_blocked(self) -> None:
+        # The guard is the fallback for a machine with no OS sandbox: nothing
+        # can run a command read-only, so no command runs.
         self.assert_ok("""
 enable()
 expect_blocked(lambda: os.system("true"))
 expect_blocked(lambda: os.posix_spawn("/bin/true", ["/bin/true"], os.environ))
 expect_blocked(lambda: os.fork())
+expect_blocked(lambda: subprocess.run(["ls", "/"]))
+expect_blocked(lambda: subprocess.run("echo hi", shell=True))
+disable()
+assert subprocess.run(["true"]).returncode == 0
 """)
 
-    def test_subprocess_read_only_command_runs(self) -> None:
+    def test_runtime_bash_is_refused_before_any_process_exists(self) -> None:
         self.assert_ok("""
-enable()
-out = subprocess.run(["ls", "/"], capture_output=True, text=True)
-assert out.returncode == 0, out.stderr
-assert "etc" in out.stdout or "Users" in out.stdout
-out = subprocess.run("echo hello | tr a-z A-Z", shell=True, capture_output=True, text=True)
-assert out.returncode == 0, out.stderr
-assert out.stdout.strip() == "HELLO"
-""")
-
-    def test_sandboxed_subprocess_write_fails(self) -> None:
-        if not bwrap_usable():
-            self.skipTest("bwrap is not usable here")
-        self.assert_ok("""
-target = os.path.join(work, "f.txt")
-enable()
-out = subprocess.run("echo x > " + target, shell=True, capture_output=True, text=True)
-assert out.returncode != 0, "sandboxed shell write should fail"
-assert not os.path.exists(target)
-note = os.path.join(scratch, "ok.txt")
-out = subprocess.run("echo x > " + note, shell=True, capture_output=True, text=True)
-assert out.returncode == 0, out.stderr
-""")
-
-    def test_fallback_allowlist(self) -> None:
-        self.assert_ok("""
-no_sandbox()
-enable()
-out = subprocess.run(["git", "version"], capture_output=True, text=True)
-assert out.returncode == 0
-expect_blocked(lambda: subprocess.run(["git", "-c", "core.fsmonitor=touch pwned", "status"]))
-expect_blocked(lambda: subprocess.run(["sed", "-i", "s/a/b/", "f"]))
-expect_blocked(lambda: subprocess.run(["sort", "-o", "out", "in"]))
-expect_blocked(lambda: subprocess.run(["touch", "f"]))
-expect_blocked(lambda: subprocess.run("echo hi > f", shell=True))
-expect_blocked(lambda: subprocess.run("ls; touch f", shell=True))
-expect_blocked(lambda: subprocess.run("ls $(touch f)", shell=True))
-expect_blocked(lambda: subprocess.run(["git", "commit", "-m", "x"]))
-out = subprocess.run(["bash", "-c", "git version | head -1"], capture_output=True, text=True)
-assert out.returncode == 0 and "git" in out.stdout, out.stderr
-expect_blocked(lambda: subprocess.run(["bash", "-c", "touch " + os.path.join(work, "f")]))
-""")
-
-    def test_runtime_bash_runs_read_only_commands_without_a_sandbox(self) -> None:
-        self.assert_ok("""
-no_sandbox()
 import asyncio
 from rlm.bash import bash
 enable()
 async def main():
-    result = await bash("echo plan | tr a-z A-Z")
-    assert result.exit_code == 0, result.output
-    assert result.output.strip() == "PLAN", result.output
     target = os.path.join(work, "f")
     try:
         await bash("touch " + target)
@@ -253,18 +182,6 @@ async def main():
         raise AssertionError("expected PlanModeError")
     assert not os.path.exists(target)
 asyncio.run(main())
-""")
-
-    def test_wrapper_check_refuses_a_forged_inner_script(self) -> None:
-        self.assert_ok("""
-no_sandbox()
-enable()
-target = os.path.join(work, "f")
-# A Popen naming a harmless "inner" script cannot smuggle a different one.
-expect_blocked(
-    lambda: subprocess.Popen(["sh", "-c", "touch " + target], _plan_guard_inner="ls").wait()
-)
-assert not os.path.exists(target)
 """)
 
 

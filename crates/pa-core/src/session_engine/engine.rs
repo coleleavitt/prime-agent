@@ -147,8 +147,11 @@ pub struct SessionEngine {
     /// registry's weak entry lives exactly as long as the engine.
     feature_status_sink: std::sync::Mutex<Option<crate::features::FeatureStatusSink>>,
     /// The session's plan mode, shared with the tool gate, the host-request
-    /// gate, the per-turn context row, and the kernel's write guard.
+    /// gate, the per-turn context row, and the kernel's confinement.
     plan_mode: super::plan_mode::PlanModeSwitch,
+    /// Why plan mode falls back to the in-kernel guard on this machine (no OS
+    /// sandbox), told to the user when it turns on.
+    plan_mode_fallback: Option<String>,
     /// The `artifact.present` seam (upstream #1062): a host whose durable
     /// session lives outside the engine installs its row sink here.
     pub presented_artifacts: Arc<super::presented_artifact::PresentedArtifacts>,
@@ -340,6 +343,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             .unwrap_or_else(|| restored_plan_mode.unwrap_or(false)),
     );
     let _ = wiring.rlm.plan_mode.set(plan_mode.clone());
+    // How this machine enforces plan mode: the OS sandbox (tightened to
+    // `read-only`) where it can confine processes, the in-kernel guard where not.
+    let plan = crate::kernel::plan_guard::PlanMode::resolve(plan_mode.clone(), sandbox.as_ref());
     let mut handlers = wiring.handlers.clone();
     if let Some(extra) = config.extra_host_handlers.clone() {
         handlers.merge(extra);
@@ -533,6 +539,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             kernel_env: super::runtime_wiring::kernel_env_overrides(&config.agent_dir),
             idle_timeout: None,
             sandbox: sandbox.clone(),
+            plan_mode: Some(plan.clone()),
         },
     );
     let turn_boundary = Arc::new(super::turn_boundary::TurnBoundaryRequests::new());
@@ -627,7 +634,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         on_unavailable_skills,
         on_bootstrap_result,
         kernel_environment,
-        plan_mode.clone(),
+        plan.clone(),
         sandbox.clone(),
     );
     let mut tools = config.tools.clone();
@@ -1098,6 +1105,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         feature_context,
         feature_status_sink: std::sync::Mutex::new(None),
         plan_mode,
+        plan_mode_fallback: plan.fallback_reason().map(str::to_string),
         presented_artifacts,
         sandbox,
         mcp_sessions,
@@ -1125,16 +1133,24 @@ impl SessionEngine {
         self.plan_mode.is_enabled()
     }
 
-    /// Switch plan mode: the kernel's write guard follows before the change
-    /// counts (a live kernel that cannot apply it rolls the switch back, so
-    /// the session never claims a protection that is not active), and the
+    /// Why this machine cannot enforce plan mode with the OS sandbox (the
+    /// in-kernel guard enforces it instead); `None` where it can.
+    #[must_use]
+    pub fn plan_mode_fallback(&self) -> Option<&str> {
+        self.plan_mode_fallback.as_deref()
+    }
+
+    /// Switch plan mode: the kernel's confinement follows before the change
+    /// counts (a live kernel restarts into the new OS sandbox policy, keeping
+    /// its namespace; one that is busy or cannot apply it rolls the switch
+    /// back, so the session never claims a protection that is not active), and the
     /// model hears about it on its next turn (the per-turn row while on, a
     /// one-shot notice once off). Returns whether the mode changed; the
     /// caller records the durable change row.
     ///
     /// # Errors
     ///
-    /// Returns the kernel's failure to apply the guard.
+    /// Returns the kernel's failure to apply the guard (a busy kernel included).
     pub async fn set_plan_mode(&self, enabled: bool) -> Result<bool, String> {
         if self.plan_mode.replace(enabled) == enabled {
             return Ok(false);

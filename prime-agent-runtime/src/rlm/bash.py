@@ -485,19 +485,6 @@ async def _arequest(data: dict[str, Any]) -> dict[str, Any]:
     return await _sidecar.arequest(data)
 
 
-def _prepare_for_plan_mode() -> None:
-    """Start the sidecar before plan mode arms: an armed guard refuses the
-    kernel's own process spawns, and the sidecar is how bash() runs."""
-    if not _host_mode():
-        try:
-            _sidecar.ensure_started()
-        except (OSError, BashHostUnavailable):
-            pass
-
-
-plan_guard.on_before_arm(_prepare_for_plan_mode)
-
-
 def _event_output(event: dict[str, Any], job_id: str) -> str:
     """A finished event's result text: inline, or (a long one) in the spill
     file the host wrote to this kernel's temp directory, read and removed.
@@ -736,10 +723,10 @@ def _launch(command: str, script: str, command_prefix: str | None, allow: list[s
         name="bash.command", ctx=trace.child_context(trace.current()), attrs={"bash.command": _safe_command(command)}
     )
     launch = _Launch(command=command, script=script, span=span, started=time.monotonic())
-    # Plan mode refuses before any process exists (with an OS sandbox the
-    # command runs inside it, read-only; without one only a classifiable
-    # read-only script runs). A kernel guard refusal still wins: it is what
-    # the command met first before the two checks shared one request.
+    # Plan mode's in-kernel fallback guard (no OS sandbox on this machine)
+    # refuses before any process exists; under the OS sandbox the host runs
+    # the command inside it, read-only. A kernel guard refusal still wins: it
+    # is what the command met first before the two checks shared one request.
     try:
         plan_guard.check_bash(script)
     except BaseException as error:  # noqa: BLE001 - re-raised by the handle
@@ -747,7 +734,6 @@ def _launch(command: str, script: str, command_prefix: str | None, allow: list[s
             _run_kernel_bash_guards(command, script, command_prefix, **{_GUARDS[key][0]: True for key in allow})
         launch.error = error
         return launch
-    sandbox = plan_guard.sandbox_prefix()
     with _live_lock:
         in_flight = any(not handle._done.is_set() for handle in _live_handles)
     window = 0 if in_flight else _RUN_WINDOW_MS
@@ -759,7 +745,6 @@ def _launch(command: str, script: str, command_prefix: str | None, allow: list[s
         traceparent=trace.format_traceparent(span.ctx),
         waitMs=window,
         spillDir=tempfile.gettempdir(),
-        **({"sandboxPrefix": sandbox} if sandbox else {}),
     )
     if allow is None:
         data["guards"] = False

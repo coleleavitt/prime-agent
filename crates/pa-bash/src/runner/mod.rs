@@ -55,9 +55,6 @@ pub struct SpawnRequest<'a> {
     pub context: GuardContext,
     /// The kernel process the command belongs to (journaled as `kernelPid`).
     pub kernel_pid: u32,
-    /// An argv prefix the command runs under (the plan-mode read-only
-    /// sandbox), empty for none.
-    pub sandbox_prefix: Vec<String>,
 }
 
 /// Why a command did not start. The kernel raises each as the Python
@@ -201,22 +198,13 @@ impl JobTable {
         } else {
             request.script.script.to_string()
         };
-        let mut argv = request.sandbox_prefix.clone();
-        argv.push(shell.to_string_lossy().into_owned());
-        argv.push("-c".to_string());
-        argv.push(script);
-        let (program, arguments) = argv.split_first().ok_or_else(|| {
-            SpawnError::Os(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "empty argv",
-            ))
-        })?;
         let (mut command, containment) = context
             .sandbox()
-            .job_command(program)
+            .job_command(&shell)
             .map_err(SpawnError::Sandbox)?;
         command
-            .args(arguments)
+            .arg("-c")
+            .arg(script)
             .current_dir(context.cwd())
             .env_clear()
             .envs(child_env(context));

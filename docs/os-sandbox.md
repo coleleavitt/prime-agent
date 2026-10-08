@@ -104,6 +104,52 @@ drives these servers, so leaving them unconfined would be a way around the sandb
 CLI runs MCP servers unconfined; Prime Agent chooses not to.) HTTP MCP servers are reached
 by the host and are not affected.
 
+## Plan mode
+
+Plan mode (`/plan`, `--plan`, the plan key) runs on this sandbox. While it is on, the kernel
+runs under the stricter of the configured mode and `read-only`, keeping the configured
+`network` rule; with the sandbox off, plan mode uses `read-only` with network allowed (plan
+mode has never blocked the network). A cell, `bash()`, `subprocess` and code calling the C
+library directly through `ctypes` all fail with `EACCES` outside `$TMPDIR` and the session's
+own state.
+
+- **Toggling restarts the kernel.** A running process cannot loosen its Landlock domain, so
+  switching plan mode on or off stops the kernel with a final namespace snapshot and starts
+  its replacement under the new policy, which restores the namespace (the session gets the
+  usual restore notice; values the snapshot cannot hold, such as open files or sockets, do
+  not survive). A session without an artifact directory keeps no snapshot and starts with an
+  empty namespace. A toggle takes about 200 ms here (stop, spawn, restore, runtime
+  bootstrap); a toggle that does not change the policy (the sandbox is already `read-only`)
+  keeps the kernel.
+- **A busy kernel refuses the toggle.** While a cell or a background `bash()` command runs,
+  restarting would abort it, so `/plan` fails with a message naming what is running and the
+  mode does not change. In the TUI the plan key queues `/plan` behind the running turn, so
+  only background commands get in the way.
+- **New spawns follow the policy.** `bash()` jobs and their guard probes run under the
+  kernel's sandbox, so they follow the restart. A stdio MCP server started under the other
+  policy is restarted on its next use.
+- **Only the `read-only` scratch is writable.** Unlike the in-kernel guard plan mode used
+  before, `~/.cache` and (when `TMPDIR` points elsewhere) `/tmp` are not writable, so a
+  dry-run that fills a tool cache there (`uv`, `pip`) fails; point the tool's cache at
+  `$TMPDIR` instead.
+- **A workspace inside a writable root stays writable.** Landlock cannot deny a path beneath
+  a directory it allows, so a working directory inside `$TMPDIR` (or `/tmp` when `TMPDIR` is
+  unset) is not protected by plan mode.
+
+The host still refuses its own `edit`, `write` and `bash` tools in plan mode, whatever the
+sandbox does.
+
+### Without an OS sandbox
+
+Where the sandbox cannot be enforced (Linux without Landlock, Windows, macOS without
+`/usr/bin/sandbox-exec`) and none is configured, plan mode falls back to the in-kernel guard
+(`rlm.plan_guard`): a Python audit hook refuses writes outside the temp and cache directories
+and refuses every process spawn with `PlanModeError`, and the host refuses every `bash()`
+job. Without a sandbox nothing can run a command read-only, so no command runs. The hook
+does not see code that calls the C library directly (`ctypes`). Turning plan mode on says so
+in a warning row. (A configured sandbox the machine cannot enforce keeps the kernel from
+starting at all, as above.)
+
 ## Computer use
 
 The bundled `computer-use` skill is not governed by the OS sandbox. Its kernel package is a thin

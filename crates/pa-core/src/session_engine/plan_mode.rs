@@ -2,11 +2,12 @@
 //! does not change files (upstream #305).
 //!
 //! Enforcement has three layers, none of which the model can switch off:
-//! the kernel runtime's write guard (`rlm.plan_guard`, armed through the
-//! host-only `plan_guard` frame, see [`crate::kernel::plan_guard`]), the
-//! host's refusal of its own mutating tools (`edit`, `write`, `bash`) before
-//! they execute, and the host's refusal of host requests that would act
-//! outside the guarded kernel. The model learns the mode from a per-turn
+//! the kernel's confinement (the OS sandbox tightened to `read-only`, the
+//! kernel restarting into it; the runtime's in-kernel write guard where this
+//! machine has no OS sandbox; see [`crate::kernel::plan_guard`]), the host's
+//! refusal of its own mutating tools (`edit`, `write`, `bash`) before they
+//! execute, and the host's refusal of host requests that would act outside
+//! the confined kernel. The model learns the mode from a per-turn
 //! context row (never a system-prompt change, so the static prompt layers
 //! stay cache-stable) and a one-shot notice when it ends.
 //!
@@ -35,12 +36,12 @@ pub const PLAN_MODE_EXITED_CUSTOM_TYPE: &str = "plan_mode_exited";
 /// its key, `flag` for `--plan`) only.
 pub const PLAN_MODE_TOGGLED_EVENT: &str = "plan mode toggled";
 
-/// Host tools refused while plan mode is on; `ipython` is guarded inside
-/// the kernel instead.
+/// Host tools refused while plan mode is on; `ipython` is confined with the
+/// kernel instead.
 pub const PLAN_MODE_BLOCKED_TOOLS: [&str; 3] = ["edit", "write", "bash"];
 
 /// Host requests refused while plan mode is on: each acts outside the
-/// guarded kernel (a fresh top-level session that would not inherit the mode,
+/// confined kernel (a fresh top-level session that would not inherit the mode,
 /// and an environment adapter process the host spawns itself).
 pub const PLAN_MODE_REFUSED_HOST_REQUESTS: [&str; 2] = ["rlm.create_session", "system_router.run"];
 
@@ -53,7 +54,7 @@ Allowed (non-mutating): reading and searching files, static analysis and repo ex
 
 Not allowed (mutating): editing, creating, or deleting files; running formatters or linters that rewrite files; applying patches, migrations, or codegen; git commits; and any side-effectful command whose purpose is to carry out the work rather than plan it.
 
-When in doubt: if the action is better described as \"doing the work\" than \"planning the work,\" don't do it. Mutating operations are blocked and raise PlanModeError — do not retry them or look for a workaround; the block is intentional.
+When in doubt: if the action is better described as \"doing the work\" than \"planning the work,\" don't do it. Mutating operations are blocked (they fail with a permission error or raise PlanModeError) — do not retry them or look for a workaround; the block is intentional.
 
 Explore first, then present a concrete plan: the goal, the specific changes you'd make (files/functions/approach), and how you'd verify them. Make it detailed enough to hand off. When the plan is ready, tell the user they can turn off plan mode to proceed. If the user's request is a pure question rather than a change, just answer it — no plan needed.
 </plan_mode>";
@@ -163,6 +164,17 @@ pub fn parse_plan_command(args: &str) -> Result<PlanCommand, String> {
         "status" => Ok(PlanCommand::Status),
         _ => Err("Usage: /plan [on|off|status]".to_string()),
     }
+}
+
+/// The warning shown when plan mode turns on where no OS sandbox can enforce
+/// it: the in-kernel guard is all that holds the kernel.
+#[must_use]
+pub fn fallback_notice(reason: &str) -> String {
+    format!(
+        "Plan mode is enforced inside the Python kernel only: this machine has no OS sandbox \
+         ({reason}). The agent's commands are refused, and code that calls the C library \
+         directly (ctypes) can still write files."
+    )
 }
 
 /// What a refused tool call tells the model.
