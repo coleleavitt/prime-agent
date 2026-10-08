@@ -10,6 +10,7 @@ use pa_ai::oauth::{
 };
 
 use crate::auth::types::{AuthCredential, AuthStorageData};
+use crate::auth::OAuthRefreshError;
 
 /// The Codex Subscription provider id (a wire identifier; branding
 /// never renames a provider id).
@@ -64,14 +65,14 @@ impl ProviderOAuth {
         &self,
         provider_id: &str,
         credential: &AuthCredential,
-    ) -> Option<AuthCredential> {
+    ) -> Result<AuthCredential, OAuthRefreshError> {
         let AuthCredential::Oauth {
             refresh: Some(refresh_token),
             enterprise_url,
             ..
         } = credential
         else {
-            return None;
+            return Err(OAuthRefreshError::Failed);
         };
         let http = Arc::clone(&self.http);
         let provider_http = Arc::clone(&self.provider_http);
@@ -84,13 +85,13 @@ impl ProviderOAuth {
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
-                    .ok()?;
-                let refreshed: Option<AuthCredential> = match provider_id.as_str() {
+                    .map_err(|_| OAuthRefreshError::Failed)?;
+                let refreshed = match provider_id.as_str() {
                     OPENAI_CODEX_PROVIDER_ID => {
                         let credentials = runtime
                             .block_on(refresh_openai_codex_token(http.as_ref(), &refresh_token))
-                            .ok()?;
-                        Some(AuthCredential::Oauth {
+                            .map_err(|error| refresh_error(&error))?;
+                        Ok(AuthCredential::Oauth {
                             access: credentials.access,
                             refresh: Some(credentials.refresh),
                             expires: credentials.expires,
@@ -109,8 +110,8 @@ impl ProviderOAuth {
                                 provider_http.as_ref(),
                                 &refresh_token,
                             ))
-                            .ok()?;
-                        Some(AuthCredential::Oauth {
+                            .map_err(|error| refresh_error(&error))?;
+                        Ok(AuthCredential::Oauth {
                             access: credentials.access,
                             refresh: Some(credentials.refresh),
                             expires: credentials.expires,
@@ -132,8 +133,8 @@ impl ProviderOAuth {
                                 &refresh_token,
                                 enterprise_url.as_deref(),
                             ))
-                            .ok()?;
-                        Some(AuthCredential::Oauth {
+                            .map_err(|error| refresh_error(&error))?;
+                        Ok(AuthCredential::Oauth {
                             access: credentials.access,
                             refresh: Some(credentials.refresh),
                             expires: credentials.expires,
@@ -149,8 +150,8 @@ impl ProviderOAuth {
                     XAI_PROVIDER_ID => {
                         let credentials = runtime
                             .block_on(refresh_xai_token(provider_http.as_ref(), &refresh_token))
-                            .ok()?;
-                        Some(AuthCredential::Oauth {
+                            .map_err(|error| refresh_error(&error))?;
+                        Ok(AuthCredential::Oauth {
                             access: credentials.access,
                             refresh: Some(credentials.refresh),
                             expires: credentials.expires,
@@ -165,13 +166,13 @@ impl ProviderOAuth {
                     }
                     // The match arms cover the four subscription ids;
                     // `refresh` never dispatches another.
-                    _ => None,
+                    _ => Err(OAuthRefreshError::Failed),
                 };
                 refreshed
             })
-            .ok()?
+            .map_err(|_| OAuthRefreshError::Failed)?
             .join()
-            .ok()?
+            .unwrap_or(Err(OAuthRefreshError::Failed))
     }
 }
 
@@ -183,7 +184,11 @@ impl crate::auth::OAuthIntegration for ProviderOAuth {
         }
     }
 
-    fn refresh(&self, provider_id: &str, credentials: &AuthStorageData) -> Option<AuthCredential> {
+    fn refresh(
+        &self,
+        provider_id: &str,
+        credentials: &AuthStorageData,
+    ) -> Result<AuthCredential, OAuthRefreshError> {
         if !matches!(
             provider_id,
             OPENAI_CODEX_PROVIDER_ID
@@ -191,10 +196,23 @@ impl crate::auth::OAuthIntegration for ProviderOAuth {
                 | GITHUB_COPILOT_PROVIDER_ID
                 | XAI_PROVIDER_ID
         ) {
-            return None;
+            return Err(OAuthRefreshError::Failed);
         }
-        let credential = credentials.credential(provider_id)?;
+        let credential = credentials
+            .credential(provider_id)
+            .ok_or(OAuthRefreshError::Failed)?;
         self.refresh_blocking(provider_id, &credential)
+    }
+}
+
+/// How a token endpoint's refusal reads: `invalid_grant` (RFC 6749 §5.2:
+/// the refresh token is invalid, expired, revoked or already used) is a
+/// revocation; anything else may pass on a later try.
+fn refresh_error(message: &str) -> OAuthRefreshError {
+    if message.contains("invalid_grant") {
+        OAuthRefreshError::Revoked
+    } else {
+        OAuthRefreshError::Failed
     }
 }
 
@@ -487,6 +505,95 @@ mod tests {
                 .is_some(),
             "the failed refresh keeps the stored credential"
         );
+    }
+
+    /// A provider transport answering every request with `status` and
+    /// `body`, counting the requests.
+    struct CountingProviderHttp {
+        status: u16,
+        body: String,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl ProviderHttp for CountingProviderHttp {
+        fn request(
+            &self,
+            _request: ProviderHttpRequest,
+            _timeout_ms: u64,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<ProviderHttpResponse, String>> + Send + '_>,
+        > {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let response = ProviderHttpResponse {
+                status: self.status,
+                body: self.body.clone(),
+            };
+            Box::pin(async move { Ok(response) })
+        }
+    }
+
+    /// An expired Anthropic login whose refresh token is `refresh`.
+    fn expired_anthropic_login(refresh: &str) -> AuthCredential {
+        AuthCredential::Oauth {
+            access: "stale-access".to_string(),
+            refresh: Some(refresh.to_string()),
+            expires: 1,
+            account_id: None,
+            enterprise_url: None,
+            endpoint: None,
+            token_endpoint: None,
+            client_id: None,
+            resource: None,
+            issuer: None,
+        }
+    }
+
+    #[test]
+    fn a_revoked_refresh_token_is_presented_once_until_a_new_login_replaces_it() {
+        let http = std::sync::Arc::new(CountingProviderHttp {
+            status: 400,
+            body: r#"{"error":"invalid_grant","error_description":"Refresh token not found or invalid"}"#
+                .to_string(),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut data = crate::auth::types::AuthStorageData::default();
+        data.insert(
+            ANTHROPIC_PROVIDER_ID,
+            &expired_anthropic_login("anthropic-revoked-refresh"),
+        );
+        let mut auth = crate::auth::AuthStorage::in_memory_without_env(
+            &data,
+            std::sync::Arc::new(ProviderOAuth::with_transports(
+                std::sync::Arc::new(ScriptedHttp(HashMap::new())),
+                http.clone(),
+            )),
+        );
+        let failed = crate::auth::AuthApiKeyResult {
+            credential_type: Some("oauth"),
+            oauth_refresh_failed: true,
+            ..crate::auth::AuthApiKeyResult::default()
+        };
+
+        for _ in 0..5 {
+            assert_eq!(
+                auth.get_api_key_with_source_token(ANTHROPIC_PROVIDER_ID, false),
+                failed
+            );
+        }
+        // Revoked once is revoked for good: one request to the token
+        // endpoint, however many lookups follow.
+        assert_eq!(http.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        // A new login is a new refresh token: it is presented.
+        auth.set(
+            ANTHROPIC_PROVIDER_ID,
+            expired_anthropic_login("anthropic-relogin-refresh"),
+        );
+        assert_eq!(
+            auth.get_api_key_with_source_token(ANTHROPIC_PROVIDER_ID, false),
+            failed
+        );
+        assert_eq!(http.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 
     #[test]

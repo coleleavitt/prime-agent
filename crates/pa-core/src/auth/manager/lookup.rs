@@ -6,9 +6,9 @@
 //! passthrough `get_api_key` (TS getApiKey).
 
 use super::{
-    now_epoch_ms, parse_storage_data, refresh_flight, resolve_config_value,
-    resolve_config_value_uncached, AuthApiKeyResult, AuthCredential, AuthStorage,
-    PRIME_INFERENCE_PROVIDER_ID,
+    now_epoch_ms, parse_storage_data, refresh_flight, refresh_token_revoked,
+    remember_revoked_refresh_token, resolve_config_value, resolve_config_value_uncached,
+    AuthApiKeyResult, AuthCredential, AuthStorage, OAuthRefreshError, PRIME_INFERENCE_PROVIDER_ID,
 };
 use crate::auth::{credential_source, CredentialSourceError};
 
@@ -316,12 +316,23 @@ impl AuthStorage {
             self.reload();
             return Some(credential);
         }
-        let fetched = self.oauth.refresh(provider_id, &data);
-        let Some(new_credential) = fetched else {
-            // Refresh failed: keep credentials for a later retry; a peer
-            // may have refreshed meanwhile, so reload before failing.
+        // A refresh token the endpoint revoked is never presented again.
+        if refresh_token_revoked(provider_id, &data) {
             self.reload();
             return None;
+        }
+        let new_credential = match self.oauth.refresh(provider_id, &data) {
+            Ok(credential) => credential,
+            Err(error) => {
+                if error == OAuthRefreshError::Revoked {
+                    remember_revoked_refresh_token(provider_id, &data);
+                }
+                // Refresh failed: keep credentials for a later retry (a
+                // new login, when revoked); a peer may have refreshed
+                // meanwhile, so reload before failing.
+                self.reload();
+                return None;
+            }
         };
         // WRITE: the locked read-modify-write.
         let mut refreshed: Option<AuthCredential> = Some(new_credential.clone());

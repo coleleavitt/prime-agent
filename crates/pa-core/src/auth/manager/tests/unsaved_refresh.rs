@@ -120,22 +120,27 @@ impl OAuthIntegration for RotatingOAuth {
         }
     }
 
-    fn refresh(&self, provider: &str, data: &AuthStorageData) -> Option<AuthCredential> {
+    fn refresh(
+        &self,
+        provider: &str,
+        data: &AuthStorageData,
+    ) -> Result<AuthCredential, OAuthRefreshError> {
         let Some(AuthCredential::Oauth {
             refresh: Some(presented),
             ..
         }) = data.credential(provider)
         else {
-            return None;
+            return Err(OAuthRefreshError::Failed);
         };
         let issued = Self::spent(&self.dir).len() + 1;
         let mut file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(self.dir.join("spent"))
-            .ok()?;
-        file.write_all(format!("{presented}\n").as_bytes()).ok()?;
-        Some(AuthCredential::Oauth {
+            .map_err(|_| OAuthRefreshError::Failed)?;
+        file.write_all(format!("{presented}\n").as_bytes())
+            .map_err(|_| OAuthRefreshError::Failed)?;
+        Ok(AuthCredential::Oauth {
             access: format!("sk-new-access-{issued}"),
             refresh: Some(format!("sk-new-refresh-{issued}")),
             expires: now_epoch_ms() + self.lifetime_ms,

@@ -778,12 +778,16 @@ impl OAuthIntegration for CountingOAuth {
         }
     }
 
-    fn refresh(&self, _provider: &str, _credentials: &AuthStorageData) -> Option<AuthCredential> {
+    fn refresh(
+        &self,
+        _provider: &str,
+        _credentials: &AuthStorageData,
+    ) -> Result<AuthCredential, OAuthRefreshError> {
         self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if self.delay_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(self.delay_ms));
         }
-        Some(Self::fetched_credential())
+        Ok(Self::fetched_credential())
     }
 }
 
@@ -1089,18 +1093,22 @@ mod cross_process {
             }
         }
 
-        fn refresh(&self, _provider: &str, _data: &AuthStorageData) -> Option<AuthCredential> {
+        fn refresh(
+            &self,
+            _provider: &str,
+            _data: &AuthStorageData,
+        ) -> Result<AuthCredential, OAuthRefreshError> {
             let mut file = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&self.fetches)
-                .ok()?;
+                .map_err(|_| OAuthRefreshError::Failed)?;
             file.write_all(format!("{}\n", std::process::id()).as_bytes())
-                .ok()?;
+                .map_err(|_| OAuthRefreshError::Failed)?;
             // A token endpoint round-trip: long enough that every peer's
             // lookup lands while this fetch is in flight.
             std::thread::sleep(std::time::Duration::from_millis(300));
-            Some(CountingOAuth::fetched_credential())
+            Ok(CountingOAuth::fetched_credential())
         }
     }
 

@@ -134,8 +134,79 @@ pub fn oauth_refresh_failed_message(provider: &str) -> String {
 pub trait OAuthIntegration: Send + Sync {
     /// The resolved API key for stored OAuth credentials (bearer/token form).
     fn api_key_for(&self, provider_id: &str, credential: &AuthCredential) -> Option<String>;
-    /// Refresh an expired credential; `None` = refresh failed.
-    fn refresh(&self, provider_id: &str, credentials: &AuthStorageData) -> Option<AuthCredential>;
+    /// Refresh an expired credential.
+    ///
+    /// # Errors
+    ///
+    /// [`OAuthRefreshError::Revoked`] when the token endpoint refused the
+    /// refresh token itself, [`OAuthRefreshError::Failed`] for any other
+    /// failure (including a provider this integration does not refresh).
+    fn refresh(
+        &self,
+        provider_id: &str,
+        credentials: &AuthStorageData,
+    ) -> Result<AuthCredential, OAuthRefreshError>;
+}
+
+/// Why a stored OAuth credential did not refresh.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OAuthRefreshError {
+    /// The token endpoint refused the refresh token itself (OAuth
+    /// `invalid_grant`: revoked, expired, or already spent). It never
+    /// refreshes again; only a new login replaces it.
+    Revoked,
+    /// Anything else (network, server, a malformed answer, no refresh for
+    /// the provider): a later try may pass.
+    Failed,
+}
+
+/// The refresh tokens a token endpoint revoked in this process, as
+/// `(provider, SHA-256 of the token)`: never presented again. A new login
+/// is a new token, so it refreshes as usual.
+fn revoked_refresh_tokens() -> &'static std::sync::Mutex<std::collections::HashSet<(String, String)>>
+{
+    static REVOKED: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashSet<(String, String)>>,
+    > = std::sync::OnceLock::new();
+    REVOKED.get_or_init(std::sync::Mutex::default)
+}
+
+/// The record key of the refresh token `data` holds for `provider`.
+fn revoked_refresh_key(provider: &str, data: &AuthStorageData) -> Option<(String, String)> {
+    use sha2::Digest as _;
+    let Some(AuthCredential::Oauth {
+        refresh: Some(refresh),
+        ..
+    }) = data.credential(provider)
+    else {
+        return None;
+    };
+    let mut fingerprint = String::new();
+    for byte in sha2::Sha256::digest(refresh.as_bytes()) {
+        let _ = write!(fingerprint, "{byte:02x}");
+    }
+    Some((provider.to_string(), fingerprint))
+}
+
+/// Whether the token endpoint already revoked the refresh token `data`
+/// holds for `provider` (in this process).
+pub(crate) fn refresh_token_revoked(provider: &str, data: &AuthStorageData) -> bool {
+    revoked_refresh_key(provider, data)
+        .is_some_and(|key| revoked_refresh_tokens().lock_or_recover().contains(&key))
+}
+
+/// Record that the token endpoint revoked the refresh token `data` holds
+/// for `provider`, logging it the first time.
+pub(crate) fn remember_revoked_refresh_token(provider: &str, data: &AuthStorageData) {
+    let Some(key) = revoked_refresh_key(provider, data) else {
+        return;
+    };
+    if revoked_refresh_tokens().lock_or_recover().insert(key) {
+        tracing::warn!(
+            provider,
+            "the stored OAuth login's refresh token was revoked (invalid_grant); it is not presented again until a new login replaces it"
+        );
+    }
 }
 
 /// No OAuth provider registry available (embedded hosts); stored OAuth
@@ -151,8 +222,12 @@ impl OAuthIntegration for NoOAuth {
         }
     }
 
-    fn refresh(&self, _provider: &str, _credentials: &AuthStorageData) -> Option<AuthCredential> {
-        None
+    fn refresh(
+        &self,
+        _provider: &str,
+        _credentials: &AuthStorageData,
+    ) -> Result<AuthCredential, OAuthRefreshError> {
+        Err(OAuthRefreshError::Failed)
     }
 }
 

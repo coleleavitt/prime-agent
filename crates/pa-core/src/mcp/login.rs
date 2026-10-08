@@ -207,9 +207,11 @@ impl OAuthIntegration for McpOAuth {
         &self,
         provider_id: &str,
         credentials: &crate::auth::AuthStorageData,
-    ) -> Option<AuthCredential> {
-        let credential = credentials.credential(provider_id)?;
-        self.refresh_blocking(provider_id, &credential)
+    ) -> Result<AuthCredential, crate::auth::OAuthRefreshError> {
+        credentials
+            .credential(provider_id)
+            .and_then(|credential| self.refresh_blocking(provider_id, &credential))
+            .ok_or(crate::auth::OAuthRefreshError::Failed)
     }
 }
 

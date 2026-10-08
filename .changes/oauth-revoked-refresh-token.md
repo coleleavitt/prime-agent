@@ -1,0 +1,1 @@
+- A stored OAuth login (`auth.json`: Anthropic, Codex, Copilot, xAI) whose refresh token the provider revoked is no longer refreshed again on every request: the first `invalid_grant` is logged once and later turns fail fast with the authentication error until a new login replaces it.

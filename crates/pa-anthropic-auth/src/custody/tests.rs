@@ -139,14 +139,14 @@ impl pa_core::auth::OAuthIntegration for PresentingOAuth {
         &self,
         provider_id: &str,
         credentials: &pa_core::auth::AuthStorageData,
-    ) -> Option<pa_core::auth::AuthCredential> {
+    ) -> Result<pa_core::auth::AuthCredential, pa_core::auth::OAuthRefreshError> {
         use std::io::Write as _;
         let Some(pa_core::auth::AuthCredential::Oauth {
             refresh: Some(refresh),
             ..
         }) = credentials.credential(provider_id)
         else {
-            return None;
+            return Err(pa_core::auth::OAuthRefreshError::Failed);
         };
         let address = self
             .token_url
@@ -166,7 +166,7 @@ impl pa_core::auth::OAuthIntegration for PresentingOAuth {
         let mut answer = String::new();
         let _ = std::io::Read::read_to_string(&mut stream, &mut answer);
         // The test reads what was presented; the answer is not used.
-        None
+        Err(pa_core::auth::OAuthRefreshError::Failed)
     }
 }
 

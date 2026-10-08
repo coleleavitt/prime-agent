@@ -18,6 +18,7 @@ pub use credential_source::{
 };
 pub use manager::{
     oauth_refresh_failed_message, AuthApiKeyResult, AuthStorage, NoOAuth, OAuthIntegration,
+    OAuthRefreshError,
 };
 pub use prime_directory::PrimeDirectorySelection;
 pub use prime_inference::{
