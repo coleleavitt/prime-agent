@@ -5,6 +5,7 @@
 //! which removes the login the store serves the provider (the plugins'
 //! account removal, `removeAccount`: the row goes, nothing is revoked).
 
+use anthropic::credentials::read_claude_code_login;
 use anthropic::token::{
     is_valid_access_token, is_valid_refresh_token, AccessToken, Credential, OAuthTokens,
     RefreshToken, TokenAccount, TokenOrganization,
@@ -42,7 +43,9 @@ impl SharedStoreSource {
     /// Move `login` into the store. The store is the custodian: a row that
     /// already holds this token, or a login of the same account, wins and
     /// the import is discarded. A live login is first identified at the
-    /// profile endpoint (an expired one is never refreshed to find out).
+    /// profile endpoint (an expired one is never refreshed to find out); a
+    /// login that is Claude Code's own (Claude Code holds its refresh token)
+    /// takes Claude Code's identity, so its row is linked to Claude Code.
     ///
     /// `Ok(None)`: the tokens are malformed (the store refuses them;
     /// `auth.json` keeps them).
@@ -79,6 +82,21 @@ impl SharedStoreSource {
                 tokens.organization = identity
                     .organization_uuid
                     .map(|uuid| TokenOrganization { uuid });
+            }
+        }
+        // Claude Code's own login, copied here by another host: it is
+        // identified as Claude Code's account, so the row is linked to Claude
+        // Code and follows its rotations, rather than an unlinked copy that
+        // spends the refresh token Claude Code also holds (and spends).
+        if tokens.account.is_none() {
+            let claude_code = self
+                .client()
+                .claude_code_files()
+                .and_then(|files| read_claude_code_login(&files, None))
+                .filter(|login| login.tokens.refresh == tokens.refresh);
+            if let Some(login) = claude_code {
+                tokens.account = login.tokens.account;
+                tokens.organization = login.tokens.organization;
             }
         }
         let email = tokens

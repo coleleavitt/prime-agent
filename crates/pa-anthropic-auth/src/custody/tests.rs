@@ -258,3 +258,104 @@ fn auth_json_and_the_store_never_both_refresh_one_token_across_processes() {
     .expect("auth.json parses");
     assert_eq!(on_disk.get(provider), None);
 }
+
+const CLAUDE_CODE_ACCESS: &str = "sk-ant-oat01-claude-code-own-access-000";
+const CLAUDE_CODE_REFRESH: &str = "sk-ant-ort01-claude-code-own-refresh-00";
+
+/// Write Claude Code's login into `claude_dir` (`.credentials.json`, owner
+/// only) and who it is logged in as (`.claude.json`), as Claude Code keeps
+/// them.
+fn write_claude_code_login(claude_dir: &Path, access: &str, refresh: &str, expires_in: Duration) {
+    let credentials = claude_dir.join(".credentials.json");
+    std::fs::write(
+        &credentials,
+        serde_json::json!({
+            "claudeAiOauth": {
+                "accessToken": access,
+                "refreshToken": refresh,
+                "expiresAt": (Utc::now() + expires_in).timestamp_millis(),
+                "scopes": ["user:inference", "user:profile"],
+                "subscriptionType": "max"
+            }
+        })
+        .to_string(),
+    )
+    .expect("write Claude Code's credentials");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&credentials, std::fs::Permissions::from_mode(0o600))
+            .expect("owner-only credentials");
+    }
+    std::fs::write(
+        claude_dir.join(".claude.json"),
+        serde_json::json!({
+            "oauthAccount": {
+                "accountUuid": "acct-claude-code",
+                "organizationUuid": "org-claude-code",
+                "emailAddress": "person@example.com"
+            }
+        })
+        .to_string(),
+    )
+    .expect("write Claude Code's config");
+}
+
+#[test]
+fn claude_code_s_login_left_in_auth_json_follows_claude_code_s_rotation() {
+    let provider = "anthropic-custody-claude-code";
+    let (url, presented) = token_endpoint_by_refresh(vec![
+        // Claude Code spends its own refresh token when it next starts.
+        (CLAUDE_CODE_REFRESH.to_string(), 400, INVALID_GRANT),
+    ]);
+    let home = tempfile::tempdir().expect("a temporary home");
+    let claude_dir = home.path().join(".claude");
+    std::fs::create_dir_all(&claude_dir).expect("Claude Code's dir");
+    // Claude Code's login, expired; another host copied it into auth.json.
+    write_claude_code_login(
+        &claude_dir,
+        CLAUDE_CODE_ACCESS,
+        CLAUDE_CODE_REFRESH,
+        Duration::hours(-1),
+    );
+    let (_store_home, source) =
+        source_configured(vec![row("cc-pool", Duration::hours(2))], |config| {
+            config.endpoints.token_url = url.clone();
+            config.native_publish =
+                anthropic::credentials::NativePublish::At(claude_dir.join(".credentials.json"));
+        });
+    install_credential_source(provider, source.clone());
+    let data = serde_json::json!({
+        provider: {
+            "type": "oauth", "access": CLAUDE_CODE_ACCESS, "refresh": CLAUDE_CODE_REFRESH,
+            "expires": (Utc::now() - Duration::hours(1)).timestamp_millis()
+        }
+    });
+    let mut auth = AuthStorage::in_memory_without_env(
+        &pa_core::auth::AuthStorageData(data.as_object().cloned().unwrap_or_default()),
+        Arc::new(NoOAuth),
+    );
+
+    // The store takes the login over; the pool's live token serves.
+    assert_eq!(auth.get_api_key(provider), Some(access_of("cc-pool")));
+    // Claude Code starts, refreshes its own login, and goes on with it.
+    write_claude_code_login(
+        &claude_dir,
+        "sk-ant-oat01-claude-code-next-access-00",
+        "sk-ant-ort01-claude-code-next-refresh-0",
+        Duration::hours(8),
+    );
+    AccountStore::mutate(source.store_path(), |store| {
+        store.get_mut("cc-pool")?.enabled = false;
+        Ok(())
+    })
+    .expect("take the pool out");
+
+    // The imported row is Claude Code's login: it follows Claude Code's
+    // rotation instead of presenting the token Claude Code spent.
+    assert_eq!(
+        auth.get_api_key(provider),
+        Some("sk-ant-oat01-claude-code-next-access-00".to_string())
+    );
+    assert_eq!(*presented.lock_or_recover(), Vec::<String>::new());
+}

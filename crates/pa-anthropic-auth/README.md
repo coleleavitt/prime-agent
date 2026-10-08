@@ -200,6 +200,9 @@ auth.json resolves the `anthropic` provider exactly as before.
 - Migration (`adopt_stored_login`, the custody half of anthropic-napi's `importOAuthAccount`, as the pi plugin
   moves its host's refresh token): an Anthropic OAuth login `auth.json` still holds is moved into the store on the
   first lookup. A live login is identified at the profile endpoint (an expired one is never refreshed to find out);
+  a login that is Claude Code's own (another host copied it: Claude Code's credentials hold the same refresh token)
+  takes Claude Code's identity, so its row is linked to Claude Code and follows Claude Code's rotations instead of
+  spending the token Claude Code also spends;
   a row already holding the token, or a login of the same account (account and organization), wins and the import
   is discarded; otherwise it becomes a new row named like napi's (email, org-qualified on collision; else the account
   uuid; else `account-<8 hex>`), `current` when nothing is pinned. Either way pa-core then removes `auth.json`'s

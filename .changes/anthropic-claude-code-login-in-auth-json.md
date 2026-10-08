@@ -1,0 +1,1 @@
+- Anthropic (shared account store): a Claude Code login that another tool copied into `auth.json` is moved into the store linked to Claude Code, so the store follows Claude Code's own refreshes instead of later presenting the refresh token Claude Code already spent.
