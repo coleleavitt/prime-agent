@@ -79,6 +79,19 @@ fn check_with(
     }
 }
 
+/// [`check_with`] plus the work units the scan spent: the deterministic measure of its cost.
+#[cfg(test)]
+fn check_counting(script: &Script<'_>, context: &GuardContext) -> (Result<(), String>, i64) {
+    let budget = Budget::new();
+    let verdict = match scan(script, context, PROBE_TIMEOUT, &budget) {
+        Ok(Some(refusal)) => Err(refusal),
+        Ok(None) => Ok(()),
+        Err(ScanStop::NestingTooDeep) => Err(messages::nesting_refusal()),
+        Err(ScanStop::LimitExceeded) => Err(messages::scan_refusal()),
+    };
+    (verdict, budget.spent())
+}
+
 /// The scan behind [`check`], under its work budget.
 fn scan(
     script: &Script<'_>,

@@ -15,7 +15,7 @@ use super::payloads::{
 };
 use super::push::{find_git_push_runs, is_guarded_push, parse_push_args, PushArgs};
 use super::words::scan_words;
-use super::{check_with, messages, PROBE_TIMEOUT};
+use super::{check_counting, check_with, messages, PROBE_TIMEOUT};
 use crate::context::GuardContext;
 use crate::script::Script;
 
@@ -641,20 +641,30 @@ fn parse_tracks_force_dry_run_and_wildcard_with_last_wins() {
     }
 }
 
-/// `ForcePushScanCostTest`: hostile nesting is refused in milliseconds, with
-/// the budget's or the cap's own message, and long benign text is allowed.
+/// `ForcePushScanCostTest`: hostile nesting is refused with the budget's or
+/// the cap's own message after bounded work, and long benign text is allowed
+/// at no nested-scan cost. Cost is the scan's own deterministic work count
+/// (the units [`Budget`] charges), not wall-clock time: a timing bound failed
+/// under CPU load while the work stayed the same.
 #[test]
 fn scan_cost_and_budget_verdicts() {
     let sandbox = Sandbox::new();
     let context = sandbox.context();
-    let first_line = |command: &str| -> (Duration, Option<String>) {
-        let started = Instant::now();
-        let verdict = verdict(command, &context)
+    let first_line = |command: &str| -> (i64, Option<String>) {
+        let (verdict, spent) = check_counting(&Script::bare(command), &context);
+        let verdict = verdict
+            .err()
             .map(|message| message.lines().next().unwrap_or_default().to_string());
-        (started.elapsed(), verdict)
+        (spent, verdict)
     };
-    let bound = Duration::from_millis(500);
-    for command in [
+    // The budget stops the scan on the unit past it.
+    let exhausted = Budget::LIMIT + 1;
+    let nesting = messages::nesting_refusal()
+        .lines()
+        .next()
+        .map(str::to_string);
+    let scan = messages::scan_refusal().lines().next().map(str::to_string);
+    let hostile: Vec<(i64, bool)> = [
         substitution_chain(4, 3, FORCE_PUSH_LEAF, '$'),
         substitution_chain(5, 3, FORCE_PUSH_LEAF, '$'),
         substitution_chain(6, 3, FORCE_PUSH_LEAF, '$'),
@@ -662,24 +672,37 @@ fn scan_cost_and_budget_verdicts() {
         substitution_chain(6, 3, "git status", '$'),
         substitution_chain(6, 3, FORCE_PUSH_LEAF, '`'),
         substitution_chain(7, 3, FORCE_PUSH_LEAF, '`'),
-    ] {
-        let (elapsed, outcome) = first_line(&command);
-        assert!(elapsed < bound, "{elapsed:?} for {} bytes", command.len());
-        assert!(outcome
-            .is_some_and(|line| line.contains("scan budget") || line.contains("Refusing to run")));
-    }
-    for depth in [4, 6] {
-        let (elapsed, outcome) = first_line(&nested_substitutions(depth, 3));
-        assert!(elapsed < bound);
-        assert_eq!(
-            outcome.as_deref(),
-            messages::nesting_refusal().lines().next()
-        );
-    }
+    ]
+    .iter()
+    .map(|command| {
+        let (spent, outcome) = first_line(command);
+        (
+            spent,
+            outcome.is_some_and(|line| {
+                line.contains("scan budget") || line.contains("Refusing to run")
+            }),
+        )
+    })
+    .collect();
+    assert_eq!(
+        hostile,
+        vec![
+            (7, true),
+            (7, true),
+            (7, true),
+            (6, true),
+            (7, true),
+            (2184, true),
+            (exhausted, true),
+        ]
+    );
+    let nested: Vec<(i64, Option<String>)> = [4, 6]
+        .into_iter()
+        .map(|depth| first_line(&nested_substitutions(depth, 3)))
+        .collect();
+    assert_eq!(nested, vec![(4, nesting.clone()), (4, nesting)]);
     let wide = vec!["$(a)"; 6000].join(" ");
-    let (elapsed, outcome) = first_line(&wide);
-    assert!(elapsed < bound);
-    assert_eq!(outcome.as_deref(), messages::scan_refusal().lines().next());
+    assert_eq!(first_line(&wide), (exhausted, scan));
     let long_backtick = format!("echo `printf '%s' {}`", "x".repeat(100_000));
     let heredoc = format!(
         "python - <<'EOF'\n{}\nEOF\n",
@@ -688,18 +711,29 @@ fn scan_cost_and_budget_verdicts() {
             .collect::<Vec<_>>()
             .join("\n")
     );
-    for command in [
+    // Length alone costs nothing: 224 KB of flat text spends no unit.
+    let benign: Vec<(i64, Option<String>)> = [
         vec!["git log --oneline | head -3"; 8000].join("\n"),
         vec!["echo hello world"; 2000].join("\n"),
         vec!["for f in *.txt; do echo $f; done"; 200].join("\n"),
         heredoc,
         vec!["case $x in a) echo a;; esac"; 500].join("\n"),
         long_backtick,
-    ] {
-        let (elapsed, outcome) = first_line(&command);
-        assert!(elapsed < bound, "{elapsed:?} for {} bytes", command.len());
-        assert_eq!(outcome, None);
-    }
+    ]
+    .iter()
+    .map(|command| first_line(command))
+    .collect();
+    assert_eq!(
+        benign,
+        vec![
+            (0, None),
+            (0, None),
+            (0, None),
+            (0, None),
+            (0, None),
+            (1, None)
+        ]
+    );
     for command in [
         "echo \"$(git status)\"",
         "X=$(git rev-parse HEAD); echo $X",

@@ -58,6 +58,16 @@ impl Budget {
         }
     }
 
+    /// The units spent so far (past the budget once it ran out).
+    #[cfg(test)]
+    pub(super) fn spent(&self) -> i64 {
+        SCAN_WORK_BUDGET - self.remaining.get()
+    }
+
+    /// The units one guard call may spend.
+    #[cfg(test)]
+    pub(super) const LIMIT: i64 = SCAN_WORK_BUDGET;
+
     /// Spend one unit of nested re-scan work.
     pub(super) fn charge(&self) -> Scan<()> {
         let remaining = self.remaining.get() - 1;
