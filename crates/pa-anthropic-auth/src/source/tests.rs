@@ -560,6 +560,17 @@ fn a_refresh_the_store_cannot_save_keeps_the_account() {
     });
     let config = |url: &str| SharedStoreConfig::isolated(store.clone(), url, "http://127.0.0.1:9");
     let source = Arc::new(SharedStoreSource::new(config(&url)));
+    // The user hears it once (the registry is the process's: parallel
+    // tests raise their own conditions).
+    let notices: Arc<Mutex<Vec<String>>> = Arc::default();
+    let into = Arc::clone(&notices);
+    let notice_sink: pa_core::auth::AuthNoticeSink =
+        Arc::new(move |notice: &pa_core::auth::AuthNotice| {
+            if notice.condition == "unsaved:unsaved" {
+                into.lock_or_recover().push(notice.message.clone());
+            }
+        });
+    pa_core::auth::register_auth_notice_sink("store-unsaved-session", &notice_sink);
     install_credential_source(provider, source.clone());
 
     let served = source.credential().map(|credential| credential.api_key);
@@ -584,8 +595,27 @@ fn a_refresh_the_store_cannot_save_keeps_the_account() {
         Ok(ROTATED_ACCESS.to_string())
     );
     assert_eq!(hits.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        *notices.lock_or_recover(),
+        vec!["Your Anthropic login unsaved was refreshed but could not be saved to the shared account store; it is kept beside the store and saved by its next write.".to_string()]
+    );
     // The next write of the store persists it.
     AccountStore::mutate(&store, |_| Ok(())).expect("a store write");
+    // The next request finds it saved: the condition ends, and a session
+    // starting now hears nothing of it. (`other` raised it: the first
+    // source met the failure while the store was unreadable.)
+    other.credential().expect("the login");
+    let late: Arc<Mutex<Vec<String>>> = Arc::default();
+    let late_into = Arc::clone(&late);
+    let late_sink: pa_core::auth::AuthNoticeSink =
+        Arc::new(move |notice: &pa_core::auth::AuthNotice| {
+            if notice.condition == "unsaved:unsaved" {
+                late_into.lock_or_recover().push(notice.message.clone());
+            }
+        });
+    pa_core::auth::register_auth_notice_sink("store-unsaved-late", &late_sink);
+    assert!(late.lock_or_recover().is_empty());
+    drop((notice_sink, late_sink));
     assert_eq!(
         refresh_in_file(&store, "unsaved"),
         Some("sk-ant-ort01-rotated-rotated-rotated-00".to_string())

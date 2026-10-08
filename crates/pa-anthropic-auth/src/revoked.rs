@@ -1,24 +1,33 @@
-//! A login the store holds whose refresh token Anthropic revoked
-//! (`invalid_grant`): reported once, not on every request.
+//! What the user hears about the store's logins beyond a request's own
+//! answer, through pa-core's auth notices (one per condition per session):
 //!
-//! The store records the verdict on the row (bound to that refresh token),
-//! and the routing passes over the row from then on, so the revoked token
-//! is presented once. This process reports the revocations it observed
-//! itself (the SDK remembers the tokens it presented and saw refused), so
-//! the one process that met the revocation logs it, once, and its sessions
-//! show one notice naming the login that serves instead. A new login on the
-//! row (a re-login from any tool sharing the store), or the row's removal,
-//! withdraws it.
+//! - a login whose refresh token Anthropic revoked (`invalid_grant`). The
+//!   store records the verdict on the row (bound to that refresh token) and
+//!   the routing passes over the row from then on, so the revoked token is
+//!   presented once. This process reports the revocations it observed
+//!   itself (the SDK remembers the tokens it presented and saw refused): the
+//!   one process that met the revocation logs it, once, and raises a notice
+//!   naming the login that serves instead. A new login on the row (a
+//!   re-login from any tool sharing the store), or the row's removal, ends
+//!   it.
+//! - a login whose refresh the store file could not take (the SDK keeps the
+//!   rotation beside the store until a write saves it). It ends once saved.
 
 use anthropic::{Account, AccountStore, DeadRefreshTokens};
+use pa_core::auth::{clear_auth_notice, raise_auth_notice, AuthNotice};
 use pa_types::sync::MutexExt;
 
 use crate::source::SharedStoreSource;
+use crate::PROVIDER_ID;
 
-/// The revocations this process reported and that still stand, oldest
-/// first.
+/// The conditions this process raised and that still stand.
 #[derive(Debug, Default)]
-pub(crate) struct Revocations(Vec<Reported>);
+pub(crate) struct Revocations {
+    /// Revoked logins, oldest first.
+    revoked: Vec<Reported>,
+    /// Rows whose rotation is not in the store file yet.
+    unsaved: Vec<String>,
+}
 
 /// One reported revocation.
 #[derive(Debug)]
@@ -27,12 +36,11 @@ struct Reported {
     account_id: String,
     /// The fingerprint of the row's revoked refresh token.
     fingerprint: String,
-    /// What the sessions are told.
-    notice: String,
 }
 
-/// How a row is named in the log: its id, unless the id is an email (then
-/// a fingerprint of it), as the pi plugin's spans name accounts.
+/// How a row is named in the log and in a notice's condition: its id,
+/// unless the id is an email (then a fingerprint of it), as the pi
+/// plugin's spans name accounts.
 fn log_name(id: &str) -> String {
     if id.contains('@') {
         anthropic::token_fingerprint(id)[..8].to_string()
@@ -47,17 +55,32 @@ fn user_name(account: &Account) -> &str {
     account.label.as_deref().unwrap_or(&account.id)
 }
 
+/// The notice condition of `account_id`'s revocation.
+fn revoked_condition(account_id: &str) -> String {
+    format!("revoked:{}", log_name(account_id))
+}
+
+/// The notice condition of `account_id`'s unsaved rotation.
+fn unsaved_condition(account_id: &str) -> String {
+    format!("unsaved:{}", log_name(account_id))
+}
+
 impl SharedStoreSource {
     /// Report the revocations this process observed in `store` that it has
-    /// not reported yet, and withdraw the ones a new login replaced.
-    /// `serving` is the row that serves now, if any.
+    /// not reported yet, end the ones a new login replaced, and raise or end
+    /// the store's unsaved rotations. `serving` is the row that serves now,
+    /// if any.
     pub(crate) fn note_revocations(&self, store: &AccountStore, serving: Option<&str>) {
-        let mut revocations = self.revocations.lock_or_recover();
-        revocations.0.retain(|reported| {
-            store.get(&reported.account_id).is_some_and(|account| {
+        let mut conditions = self.revocations.lock_or_recover();
+        conditions.revoked.retain(|reported| {
+            let stands = store.get(&reported.account_id).is_some_and(|account| {
                 account.refresh_token_is_dead()
                     && account.credential_fingerprint().as_ref() == Some(&reported.fingerprint)
-            })
+            });
+            if !stands {
+                clear_auth_notice(PROVIDER_ID, &revoked_condition(&reported.account_id));
+            }
+            stands
         });
         let serving = serving.and_then(|id| store.get(id));
         for account in &store.accounts {
@@ -69,7 +92,7 @@ impl SharedStoreSource {
                 continue;
             }
             let fingerprint = anthropic::token_fingerprint(refresh);
-            if revocations.0.iter().any(|reported| {
+            if conditions.revoked.iter().any(|reported| {
                 reported.account_id == account.id && reported.fingerprint == fingerprint
             }) {
                 continue;
@@ -79,7 +102,7 @@ impl SharedStoreSource {
                 serving = %serving.map_or_else(|| "none".to_string(), |serving| log_name(&serving.id)),
                 "an Anthropic login in the shared account store was revoked (its refresh token was refused with invalid_grant); requests skip it until it is logged in again"
             );
-            let notice = match serving {
+            let message = match serving {
                 Some(serving) => format!(
                     "Your Anthropic login {} was revoked; using {}. Run /login anthropic to restore it.",
                     user_name(account),
@@ -90,25 +113,36 @@ impl SharedStoreSource {
                     user_name(account)
                 ),
             };
-            revocations
-                .0
+            // A new revocation of the row replaces an earlier one.
+            clear_auth_notice(PROVIDER_ID, &revoked_condition(&account.id));
+            raise_auth_notice(AuthNotice {
+                provider: PROVIDER_ID.to_string(),
+                condition: revoked_condition(&account.id),
+                message,
+            });
+            conditions
+                .revoked
                 .retain(|reported| reported.account_id != account.id);
-            revocations.0.push(Reported {
+            conditions.revoked.push(Reported {
                 account_id: account.id.clone(),
                 fingerprint,
-                notice,
             });
         }
-    }
-
-    /// The notice for this process's sessions while a revocation it
-    /// reported stands.
-    pub(crate) fn revoked_notice(&self) -> Option<String> {
-        self.revocations
-            .lock_or_recover()
-            .0
-            .last()
-            .map(|reported| reported.notice.clone())
+        let unsaved = anthropic::unsaved::unsaved_accounts(&self.config.store_path);
+        for ended in conditions.unsaved.iter().filter(|id| !unsaved.contains(id)) {
+            clear_auth_notice(PROVIDER_ID, &unsaved_condition(ended));
+        }
+        for id in &unsaved {
+            let name = store.get(id).map_or(id.as_str(), user_name);
+            raise_auth_notice(AuthNotice {
+                provider: PROVIDER_ID.to_string(),
+                condition: unsaved_condition(id),
+                message: format!(
+                    "Your Anthropic login {name} was refreshed but could not be saved to the shared account store; it is kept beside the store and saved by its next write."
+                ),
+            });
+        }
+        conditions.unsaved = unsaved;
     }
 }
 

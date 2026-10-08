@@ -83,8 +83,8 @@ pub fn install() {
 pub struct AnthropicAuthFeature {
     source: Arc<SharedStoreSource>,
     reported: AtomicBool,
-    /// The line last published per session.
-    published: Mutex<HashMap<String, Shown>>,
+    /// The quota line last published per session.
+    published: Mutex<HashMap<String, String>>,
 }
 
 impl AnthropicAuthFeature {
@@ -98,68 +98,32 @@ impl AnthropicAuthFeature {
         }
     }
 
-    /// Publish the store's status for an Anthropic session when it changed:
-    /// the notice of a revoked login while it stands, and the quota of the
-    /// login served last. The agents view shows the line (prime-agent has
-    /// no other usage surface); the notice names the logins to the user as
-    /// `/claude-quota` does. Never an account id in the status object.
-    fn publish_status(&self, context: &SessionFeatureContext) {
+    /// Publish the store's quota for an Anthropic session when it changed:
+    /// the agents view shows the line (prime-agent has no other usage
+    /// surface). Never an account id.
+    fn publish_quota(&self, context: &SessionFeatureContext) {
         if context.model.provider != PROVIDER_ID {
             return;
         }
-        let notice = self.source.revoked_notice();
-        let quota = self.source.quota_line();
+        let Some(quota) = self.source.quota_line() else {
+            return;
+        };
         let mut published = self.published.lock_or_recover();
-        let previous = published.get(&context.session_id);
-        let (line, status) = match (&notice, quota) {
-            (Some(notice), Some(quota)) => (
-                Some(format!("{notice} · {}", quota.line)),
-                with_revoked(quota.status),
-            ),
-            (Some(notice), None) => (Some(notice.clone()), with_revoked(serde_json::json!({}))),
-            (None, Some(quota)) => (Some(quota.line), quota.status),
-            // A withdrawn notice is cleared; otherwise there is nothing to
-            // show yet.
-            (None, None) if previous.is_some_and(|shown| shown.revoked) => {
-                (None, serde_json::Value::Null)
-            }
-            (None, None) => return,
-        };
-        let shown = Shown {
-            line: line.clone().unwrap_or_default(),
-            revoked: notice.is_some(),
-        };
-        if previous == Some(&shown) {
+        if published.get(&context.session_id) == Some(&quota.line) {
             return;
         }
         let delivered = pa_core::features::publish_feature_status(
             &context.session_id,
             FeatureStatus {
                 feature: self.name().to_string(),
-                line,
-                status,
+                line: Some(quota.line.clone()),
+                status: quota.status,
             },
         );
         if delivered {
-            published.insert(context.session_id.clone(), shown);
+            published.insert(context.session_id.clone(), quota.line);
         }
     }
-}
-
-/// A status object marked as carrying a revoked login's notice.
-fn with_revoked(mut status: serde_json::Value) -> serde_json::Value {
-    if let Some(object) = status.as_object_mut() {
-        object.insert("revokedLogin".to_string(), true.into());
-    }
-    status
-}
-
-/// The line last published for a session.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Shown {
-    line: String,
-    /// It carried a revoked login's notice.
-    revoked: bool,
 }
 
 /// The feature's slash commands: name, description, argument hint (`None`:
@@ -257,7 +221,7 @@ impl SessionFeature for AnthropicAuthFeature {
     }
 
     fn on_agent_end(&self, context: &Arc<SessionFeatureContext>) {
-        self.publish_status(context);
+        self.publish_quota(context);
         let Some(telemetry) = &context.telemetry else {
             return;
         };

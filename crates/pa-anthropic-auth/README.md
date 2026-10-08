@@ -22,14 +22,15 @@ auth.json resolves the `anthropic` provider exactly as before.
   - A login whose refresh token Anthropic revoked (`invalid_grant`) is presented once: the store records the verdict
     on the row (bound to that token, so a restart does not ask again) and the routing passes over it, so the next
     login serves with no refresh attempt on the dead one. The process that met the revocation reports it once
-    (`revoked.rs`): one warning (the row named by id, a fingerprint when the id is an email) and, for its Anthropic
-    sessions, a notice on the agents view ahead of the quota line (`Your Anthropic login <name> was revoked; using
-    <name>. Run /login anthropic to restore it.`; status `revokedLogin: true`). A new login on the row (a re-login
-    from any tool sharing the store) or the row's removal withdraws the notice.
+    (`revoked.rs`): one warning (the row named by id, a fingerprint when the id is an email) and one pa-core auth
+    notice (`Your Anthropic login <name> was revoked; using <name>. Run /login anthropic to restore it.`; condition
+    `revoked:<row>`), which every session hears once (the TUI's warning row, print mode's stderr, ACP's
+    `authNotice`). A new login on the row (a re-login from any tool sharing the store) or the row's removal ends it.
   - A refresh whose rotation the store cannot save (the SDK's `unsaved` records): the token endpoint already spent
     the old refresh token, so the rotation is served anyway, kept beside the store (`<store>.unsaved-<hex>`, owner
     only) for every reader of the store, and persisted by the next store write; the spent token is never presented
-    again. `anthropic::unsaved::unsaved_accounts` names the rows still waiting.
+    again. `anthropic::unsaved::unsaved_accounts` names the rows still waiting; each is an auth notice
+    (condition `unsaved:<row>`) until a write saves it.
   - No login in the store: the lookup falls through to auth.json. A login that cannot produce a token (refresh
     failed, revoked, store unreadable, network down): the provider's OAuth authentication failure
     (`oauth_refresh_failed`, "Run /login"), never auth.json's login in its place.
