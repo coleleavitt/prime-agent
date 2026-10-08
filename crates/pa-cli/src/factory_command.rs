@@ -1,18 +1,21 @@
 //! `prime-agent factory`: the machine library commands.
 //!
-//! Every subcommand — list included — is one `rlm.factory.cli_dispatch`
-//! payload through the kernel Python. The kernel owns the whole library
-//! contract: the bundled seeds ship as wheel package data inside the
-//! runtime, the personal library lives under the agent dir, the strict
-//! MACHINE.md parser gates what lists, and the write-time validator gates
-//! what persists (an invalid spec never persists; the exact error
-//! sentences reach this command's output verbatim). The CLI never
-//! re-implements resolution or parsing, so the two sides cannot drift.
+//! Every subcommand — list included — is one `cli_dispatch` payload
+//! through `pa_core::factory::library`, the same library the kernel's
+//! `rlm.factory` functions are clients of: the strict MACHINE.md parser
+//! gates what lists, and the write-time validator gates what persists (an
+//! invalid spec never persists; the exact error sentences reach this
+//! command's output verbatim). Where the library's two levels are is the
+//! kernel's knowledge — the bundled seeds ship as wheel package data inside
+//! the installed runtime, the personal library lives under the agent dir —
+//! so the kernel Python names the directories (`machine_library_dirs`) and
+//! the CLI never re-implements that resolution either.
 
-use std::io::Write as _;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+use pa_core::factory::library::{cli_dispatch, Fs, LibraryDirs};
+use pa_core::factory::pyvalue::PyValue;
 use serde_json::{json, Value};
 
 /// One machine as the kernel lists it (`cli_dispatch`'s `list` op).
@@ -29,13 +32,12 @@ struct MachineListing {
     path: String,
 }
 
-/// The thin runner executed by the kernel Python: one JSON payload in on
-/// stdin, one JSON result out on stdout (`rlm.factory.cli_dispatch`).
-const CLI_DISPATCH_RUNNER: &str = concat!(
-    "import json, sys\n",
-    "from rlm.factory import cli_dispatch\n",
-    "payload = json.loads(sys.stdin.read() or \"{}\")\n",
-    "print(json.dumps(cli_dispatch(payload)))\n",
+/// The runner executed by the kernel Python: the library levels, in
+/// resolution order, as `[[source, dir], ...]` on stdout.
+const LIBRARY_DIRS_RUNNER: &str = concat!(
+    "import json\n",
+    "from rlm.factory import machine_library_dirs\n",
+    "print(json.dumps([[source, str(path)] for source, path in machine_library_dirs()]))\n",
 );
 
 /// The parsed `prime-agent factory` invocation.
@@ -149,8 +151,8 @@ pub fn run_factory_command(args: &[String]) -> i32 {
     }
 }
 
-/// The `list` payload: the op alone — the kernel resolves every library
-/// directory itself.
+/// The `list` payload: the op alone — the kernel names every library
+/// directory.
 fn list_payload() -> Value {
     json!({"op": "list"})
 }
@@ -175,7 +177,7 @@ fn export_payload(name: &str, out: &std::path::Path) -> Value {
 /// `factory list`: library contents with descriptions.
 fn run_list(json: bool) -> i32 {
     let payload = list_payload();
-    match resolve_kernel_python().and_then(|python| dispatch_via_kernel(&python, &payload)) {
+    match dispatch(&payload) {
         Ok(result) => render_list(&result, json),
         Err(error) => {
             eprintln!("Error: {error}");
@@ -265,37 +267,22 @@ fn resolve_kernel_python() -> Result<PathBuf, String> {
         .map_err(|error| format!("kernel python unavailable: {error:#}"))
 }
 
-/// Drive one `rlm.factory.cli_dispatch` payload through the kernel Python.
-fn dispatch_via_kernel(python: &std::path::Path, payload: &Value) -> Result<Value, String> {
+/// The library levels the kernel Python names (`machine_library_dirs`).
+fn library_dirs_via_kernel(python: &std::path::Path) -> Result<LibraryDirs, String> {
     let mut child = Command::new(python);
     child
-        .args(["-c", CLI_DISPATCH_RUNNER])
-        .stdin(Stdio::piped())
+        .args(["-c", LIBRARY_DIRS_RUNNER])
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    // The runner has no serving host, so the runtime's spec validator runs
-    // its operations through this binary's filter mode.
-    if let Ok(binary) = std::env::current_exe() {
-        child.env(pa_core::factory::spec_ops::HOST_BINARY_ENV, binary);
-    }
     // Hidden window on Windows, matching the kernel probes.
     pa_core::platform::process::set_no_window(&mut child);
-    let mut child = child
-        .spawn()
-        .map_err(|error| format!("failed to run the kernel python: {error}"))?;
-    {
-        let stdin = child.stdin.as_mut().expect("stdin was piped on this child");
-        stdin
-            .write_all(payload.to_string().as_bytes())
-            .map_err(|error| format!("failed to send the payload: {error}"))?;
-    }
     let output = child
-        .wait_with_output()
-        .map_err(|error| format!("failed to wait for the kernel python: {error}"))?;
+        .output()
+        .map_err(|error| format!("failed to run the kernel python: {error}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let tail: Vec<&str> = stderr.lines().rev().take(3).collect::<Vec<_>>();
-        let mut lines = tail;
+        let mut lines: Vec<&str> = stderr.lines().rev().take(3).collect();
         lines.reverse();
         return Err(format!(
             "the kernel python failed (exit {}): {}",
@@ -304,8 +291,25 @@ fn dispatch_via_kernel(python: &std::path::Path, payload: &Value) -> Result<Valu
         ));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    serde_json::from_str(stdout.trim_end_matches(['\n', '\r']))
-        .map_err(|error| format!("unreadable kernel result: {error}"))
+    parse_library_dirs(stdout.trim_end_matches(['\n', '\r']))
+}
+
+/// `[[source, dir], ...]` from the runner.
+fn parse_library_dirs(text: &str) -> Result<LibraryDirs, String> {
+    let levels: Vec<(String, PathBuf)> = serde_json::from_str(text)
+        .map_err(|error| format!("unreadable kernel library dirs: {error}"))?;
+    Ok(LibraryDirs(levels))
+}
+
+/// One `cli_dispatch` payload against the library levels `dirs`.
+fn dispatch_in(dirs: &LibraryDirs, payload: &Value) -> Result<Value, String> {
+    cli_dispatch(&Fs::here(), &PyValue::from_json(payload), dirs).map_err(|error| error.message())
+}
+
+/// One `cli_dispatch` payload against the kernel's library levels.
+fn dispatch(payload: &Value) -> Result<Value, String> {
+    let python = resolve_kernel_python()?;
+    dispatch_in(&library_dirs_via_kernel(&python)?, payload)
 }
 
 /// `factory import <path>`: validate through the kernel gate and persist.
@@ -316,7 +320,7 @@ fn run_import(path: &str, json: bool) -> i32 {
         return 1;
     }
     let payload = import_payload(&source);
-    match resolve_kernel_python().and_then(|python| dispatch_via_kernel(&python, &payload)) {
+    match dispatch(&payload) {
         Ok(result) => print_dispatch_result(&result, json, "imported"),
         Err(error) => {
             eprintln!("Error: {error}");
@@ -328,7 +332,7 @@ fn run_import(path: &str, json: bool) -> i32 {
 /// `factory export <name> --out <path>`: serialize a machine to MACHINE.md.
 fn run_export(name: &str, out: &str, json: bool) -> i32 {
     let payload = export_payload(name, &crate::config::expand_tilde_path(out));
-    match resolve_kernel_python().and_then(|python| dispatch_via_kernel(&python, &payload)) {
+    match dispatch(&payload) {
         Ok(result) => print_dispatch_result(&result, json, "exported"),
         Err(error) => {
             eprintln!("Error: {error}");
@@ -475,9 +479,54 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_runner_contract_is_the_json_facade() {
-        assert!(CLI_DISPATCH_RUNNER.contains("from rlm.factory import cli_dispatch"));
-        assert!(CLI_DISPATCH_RUNNER.contains("print(json.dumps(cli_dispatch(payload)))"));
+    fn the_kernel_names_the_library_levels() {
+        assert!(LIBRARY_DIRS_RUNNER.contains("from rlm.factory import machine_library_dirs"));
+        assert_eq!(
+            parse_library_dirs(r#"[["repo", "/rlm/machines"], ["user", "/agent/machines"]]"#),
+            Ok(LibraryDirs(vec![
+                ("repo".to_string(), PathBuf::from("/rlm/machines")),
+                ("user".to_string(), PathBuf::from("/agent/machines")),
+            ]))
+        );
+        assert!(parse_library_dirs("not json").is_err());
+    }
+
+    #[test]
+    fn the_commands_run_the_library_in_process() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let source = dir.path().join("sweep.MACHINE.md");
+        std::fs::write(
+            &source,
+            "---\nname: sweep\ndescription: Sweeps.\n---\n\n```machine-spec\n\
+             {\"states\": [{\"id\": \"a\", \"entry\": true, \"subagent\": {\"prompt\": \"P.\"}}]}\n```\n",
+        )
+        .expect("source");
+        let dirs = LibraryDirs(vec![
+            ("repo".to_string(), dir.path().join("repo")),
+            ("user".to_string(), dir.path().join("user")),
+        ]);
+        let stored = dir.path().join("user").join("sweep").join("MACHINE.md");
+        assert_eq!(
+            dispatch_in(&dirs, &import_payload(&source)),
+            Ok(
+                json!({"ok": true, "name": "sweep", "path": stored.display().to_string(), "created": true})
+            )
+        );
+        let listed = dispatch_in(&dirs, &list_payload()).expect("list");
+        assert_eq!(listed["machines"][0]["source"], json!("user"));
+        let out = dir.path().join("out.MACHINE.md");
+        assert_eq!(
+            dispatch_in(&dirs, &export_payload("sweep", &out)),
+            Ok(
+                json!({"ok": true, "name": "sweep", "path": out.display().to_string(), "source": "library"})
+            )
+        );
+        assert_eq!(
+            std::fs::read(&out).expect("export"),
+            std::fs::read(&source).expect("source")
+        );
+        let refused = dispatch_in(&dirs, &export_payload("sweep", &out)).expect("data");
+        assert_eq!(refused["ok"], json!(false));
     }
 
     #[test]

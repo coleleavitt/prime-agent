@@ -14,10 +14,6 @@ use super::spec::{
     validate_factory_spec,
 };
 
-/// The environment variable naming the host binary a host-less runtime
-/// process sends its one-shot requests to.
-pub const HOST_BINARY_ENV: &str = "PRIME_AGENT_HOST_BINARY";
-
 /// Run one spec operation: `{"op": <name>, "value": <node table>}`.
 ///
 /// Replies: `validate_spec`/`validate_machine` -> `{"errors": [...]}`;
