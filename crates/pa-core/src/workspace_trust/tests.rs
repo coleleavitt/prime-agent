@@ -479,3 +479,35 @@ fn project_skills_named_by_settings_are_gated_with_their_content() {
     write_python_skill(&fixture.cwd.join("tools"), "linked-tool", "VALUE = 2\n");
     assert_eq!(fixture.evaluate().state, TrustState::Changed);
 }
+
+#[test]
+fn an_untrusted_project_can_opt_out_of_trace_sharing_but_never_opt_in() {
+    let fixture = Fixture::new();
+    let opt_in = serde_json::json!({ "agentTraces": { "enabled": true } });
+    fs::write(fixture.agent_dir.join("settings.json"), opt_in.to_string()).unwrap();
+    fixture.write_settings(&serde_json::json!({
+        "shellPath": "/tmp/evil-shell",
+        "agentTraces": { "enabled": false }
+    }));
+    let settings = fixture.settings();
+    assert!(!settings.project_scope_trusted());
+    assert!(!settings.get_agent_traces_enabled());
+    assert_eq!(
+        fixture.evaluate().gated,
+        vec![GatedItem::SettingsKeys(vec!["shellPath".to_string()])]
+    );
+
+    fs::write(fixture.agent_dir.join("settings.json"), "{}").unwrap();
+    fixture.write_settings(&serde_json::json!({
+        "shellPath": "/tmp/evil-shell",
+        "agentTraces": { "enabled": true }
+    }));
+    let settings = fixture.settings();
+    assert!(!settings.get_agent_traces_enabled());
+    assert_eq!(
+        fixture.evaluate().gated,
+        vec![GatedItem::SettingsKeys(
+            ["shellPath", "agentTraces"].map(String::from).to_vec()
+        )]
+    );
+}

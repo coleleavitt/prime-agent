@@ -69,7 +69,7 @@ fn gated_settings(project_dir: &Path) -> serde_json::Map<String, Value> {
         return serde_json::Map::new();
     };
     crate::settings::merge::migrate(&mut document);
-    document.retain(|key, _| !super::is_untrusted_safe_settings_key(key));
+    document.retain(|key, value| !super::is_untrusted_safe_setting(key, value));
     document
 }
 
