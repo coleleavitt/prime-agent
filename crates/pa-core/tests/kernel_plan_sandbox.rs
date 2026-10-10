@@ -401,3 +401,27 @@ async fn a_busy_kernel_refuses_the_toggle_and_keeps_running() {
     assert_eq!(kernel_pid(&fixture), pid);
     fixture.provisioner.dispose(None).await;
 }
+
+/// Eight 100k-row tables: dill's pure-Python pickler needed longer than the host's 5 s snapshot
+/// window for them, so the toggle's final snapshot was aborted and the restart lost them.
+const TABLES: &str = "for _k in range(8):\n    globals()[f'table_{_k}'] = [[j % 200 for j in range(10)] for _ in range(100_000)]\nkept = 41\nkept";
+const TABLE_ROWS: &str = "(kept, sum(len(globals()[f'table_{_k}']) for _k in range(8)))";
+
+#[tokio::test]
+async fn toggling_keeps_a_namespace_that_outlasted_the_old_snapshot_window() {
+    let Some(fixture) = fixture(SandboxMode::Off, false) else {
+        return;
+    };
+    let built = cell(&fixture, TABLES).await;
+    fixture.mode.set(true);
+    assert_eq!(
+        fixture.provisioner.sync_plan_mode().await.unwrap(),
+        PlanModeApplied::Restarted
+    );
+    let rows = cell(&fixture, TABLE_ROWS).await;
+    assert_eq!(
+        (built, rows),
+        ("41".to_string(), "(41, 800000)".to_string())
+    );
+    fixture.provisioner.dispose(None).await;
+}

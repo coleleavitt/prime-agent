@@ -1135,6 +1135,26 @@ class _SnapshotSizeLimitExceeded(Exception):
     pass
 
 
+class _NeedsDill(Exception):
+    """The value reaches a class or function defined in a cell: only dill persists those."""
+
+
+class _PlainPickler(pickle.Pickler):
+    """The C pickler, for values made of importable types (dicts, lists, strings, numpy, pandas).
+
+    dill's pickler is pure Python: on plain data it is 10-40x slower than this one, which kept
+    large namespaces past the host's snapshot window. Cell-defined classes and functions are
+    left to dill, which persists them by value; this pickler would store a `__main__.Name`
+    reference that a fresh kernel cannot resolve before that name is restored.
+    """
+
+    # typeshed declares the hook as a one-argument callable attribute; the method form is the documented one.
+    def reducer_override(self, obj: Any) -> Any:  # pyright: ignore[reportIncompatibleMethodOverride]
+        if isinstance(obj, (type, types.FunctionType)) and getattr(obj, "__module__", None) == "__main__":
+            raise _NeedsDill
+        return NotImplemented
+
+
 class _CappedWriter:
     def __init__(self, sink: Any, limit: int) -> None:
         self._sink = sink
@@ -1148,6 +1168,26 @@ class _CappedWriter:
         self._sink.write(chunk)
         self.written += size
         return size
+
+
+def _dump_value(dill: Any, value: Any, writer: _CappedWriter, buffer: io.BytesIO) -> bytes:
+    """Serialize one namespace value: the C pickler first, dill when it cannot.
+
+    dill dumps without `recurse`, so a cell function's globals pickle as a reference to the
+    live namespace instead of a by-value copy of every global it reads (`_restore_state`
+    rebinds restored functions onto the live namespace either way).
+    """
+    try:
+        _PlainPickler(writer, protocol=dill.settings["protocol"]).dump(value)
+        return buffer.getvalue()
+    except _SnapshotSizeLimitExceeded:
+        raise
+    except Exception:  # noqa: BLE001 - anything the C pickler refuses is dill's to try
+        buffer.seek(0)
+        buffer.truncate()
+        writer.written = 0
+    dill.dump(value, writer, recurse=False)
+    return buffer.getvalue()
 
 
 def _read_snapshot_records(fh: Any, max_bytes: int, max_variable_bytes: int) -> dict[str, bytes]:
@@ -1248,7 +1288,7 @@ def _snapshot_state(
                 return {"error": "write failed: snapshot exceeds aggregate snapshot size cap"}
             fh, tmp = stage_temp(path, "wb")
             with fh:
-                # Single pass: each variable is dill-serialized exactly once, streamed
+                # Single pass: each variable is serialized exactly once, streamed
                 # into the staged temp. The record header is charged against the aggregate
                 # cap up front, so a completed record can never overflow it (no prefix re-dump).
                 total = fh.write(_SNAPSHOT_MAGIC)
@@ -1281,8 +1321,7 @@ def _snapshot_state(
                     limit = max_variable_bytes if prune_oversized else min(max_variable_bytes, budget)
                     buffer = io.BytesIO()
                     try:
-                        dill.dump(value, _CappedWriter(buffer, limit))
-                        blob = buffer.getvalue()
+                        blob = _dump_value(dill, value, _CappedWriter(buffer, limit), buffer)
                     except _SnapshotSizeLimitExceeded:
                         if not prune_oversized and budget < max_variable_bytes:
                             skipped.append({"name": name, "reason": "exceeds aggregate snapshot size cap"})

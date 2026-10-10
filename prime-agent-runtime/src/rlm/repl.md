@@ -489,8 +489,10 @@ bounds with a timeout.
 
 ## Snapshot / restore
 
-`snapshot` serializes the user namespace with `dill` (recurse mode), one name
-at a time: `_`-prefixed names and
+`snapshot` serializes the user namespace one name at a time, with the C
+pickler for values built from importable types and with `dill` (without
+`recurse`, so a cell function's globals stay a reference to the namespace) for
+anything that reaches a class or function defined in a cell: `_`-prefixed names and
 `{rlm, mcp, bash, asyncio, In, Out, get_ipython, exit, quit, open}` are always
 skipped; a name whose pickle exceeds `max_variable_bytes` or would push the
 total over `max_bytes` is skipped and reported. With `prune_oversized`, only
