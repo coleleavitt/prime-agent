@@ -1852,6 +1852,11 @@ mod tests {
                     DaemonCommand::GetRlmChildren { .. } => {
                         ("get_rlm_children", Some(json!({ "children": [] })), false)
                     }
+                    // The fork's command advertisement (upstream #1308 port)
+                    // reads the admitted session's commands off the admission path.
+                    DaemonCommand::GetCommands { .. } => {
+                        ("get_commands", Some(json!({ "commands": [] })), false)
+                    }
                     DaemonCommand::ReplaceAcpMcpServers { servers, .. } => {
                         installed = servers
                             .as_array()
