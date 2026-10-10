@@ -32,7 +32,9 @@ def _agent_dir() -> Path:
         or os.environ.get("PI_CODING_AGENT_DIR")
         or str(Path.home() / ".prime" / "agent")
     )
-    return Path(raw).expanduser()
+    from rlm._state_guard import guard_state_path
+
+    return guard_state_path("agent dir", Path(raw).expanduser())
 
 
 def _resolve_api_key() -> str:

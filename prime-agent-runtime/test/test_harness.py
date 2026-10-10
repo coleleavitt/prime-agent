@@ -1413,7 +1413,12 @@ class HarnessStateDurabilityTest(unittest.TestCase):
                 "for i in range(40):\n"
                 "    state.upsert('memory', f'w{sys.argv[2]}-{i}', 'x', id=f'w{sys.argv[2]}_{i}')\n"
             )
-            env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")}
+            env = {
+                **os.environ,
+                "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+                "PRIME_AGENT_CODING_AGENT_DIR": str(Path(temp_dir) / "agent"),
+                "PA_TEST_ISOLATED": "1",
+            }
             procs = [
                 subprocess.Popen([sys.executable, "-c", writer, str(state_path), str(n)], env=env)
                 for n in range(4)

@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from . import host_request
+from ._state_guard import guard_state_path
 
 __all__ = ["McpIntegration", "McpToolError", "NotEnabled"]
 
@@ -64,7 +65,7 @@ def _agent_dir() -> Path:
     )
     # resolve() so a relative env override reads auth.json from the right place,
     # not relative to the kernel's cwd.
-    return Path(raw).expanduser().resolve()
+    return guard_state_path("agent dir", Path(raw).expanduser().resolve())
 
 
 def _read_auth(provider: str) -> dict[str, Any] | None:
