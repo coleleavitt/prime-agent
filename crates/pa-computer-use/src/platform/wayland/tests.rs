@@ -993,6 +993,29 @@ fn requests(world: &World, name: &str) -> Vec<serde_json::Value> {
 }
 
 #[test]
+fn the_fork_reports_screenshots_without_grim_from_one_cached_probe() {
+    let world = world_with(FakeNiri::fork(), FakeAtSpi::default(), &[]);
+    world.niri.state().fail = Some("niri is restarting".to_string());
+    let status = world.platform.permissions().to_json();
+    assert_eq!(
+        status["screen_recording"],
+        json!("missing"),
+        "a failed probe needs grim"
+    );
+    world.niri.state().fail = None;
+    for _ in 0..2 {
+        let status = world.platform.permissions().to_json();
+        assert_eq!(status["screen_recording"], json!("ok"));
+        assert!(!status["help"].to_string().contains("grim"));
+    }
+    assert_eq!(
+        requests(&world, "WindowAt"),
+        [json!({"WindowAt": {"x": 0.0, "y": 0.0}})],
+        "probed once at the first output's origin; the failed probe was not cached"
+    );
+}
+
+#[test]
 fn rendered_geometry_gives_tiled_windows_coordinate_input() {
     let world = fork_world();
     assert_eq!(
@@ -1086,8 +1109,8 @@ fn input_waits_for_niri_to_settle_and_refuses_a_window_that_never_does() {
         error,
         ComputerUseError::new(
             ErrorCode::InjectionFailed,
-            "window 30 was still animating after 50 ms; nothing was sent or captured. Retry once \
-             it has settled"
+            "window 30 was still animating after 2000 ms; nothing was sent or captured. Retry \
+             once it has settled"
         )
         .with_details(json!({"window_id": 30}))
     );

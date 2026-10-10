@@ -53,6 +53,9 @@ const MAX_FOCUS_SEARCH: Duration = Duration::from_secs(1);
 /// Inside the App's 0.5 s settle budget.
 const FINGERPRINT_FOCUS_SEARCH: Duration = Duration::from_millis(250);
 const FOCUS_POLL: Duration = Duration::from_millis(20);
+/// How long coordinate input and captures wait for niri's animations to
+/// settle (polled every `FOCUS_POLL`).
+const SETTLE_WAIT: Duration = Duration::from_secs(2);
 const WHEEL_CLICKS_PER_PAGE: u32 = 10;
 /// The element default actions that stand in for a click (`AXPress`).
 const PRESS_ACTIONS: [&str; 6] = ["click", "press", "activate", "jump", "toggle", "open"];
@@ -74,6 +77,9 @@ pub(crate) struct WaylandPlatform<T: Tools, N: NiriTransport, A: AtSpi, I: Virtu
     capture: CaptureDir,
     /// How long input waits for niri to report the focus landed.
     focus_wait: Duration,
+    /// Whether niri is the computer-use fork (it renders captures itself),
+    /// probed once.
+    fork: std::sync::OnceLock<bool>,
 }
 
 impl<T: Tools, N: NiriTransport, A: AtSpi, I: VirtualInput> WaylandPlatform<T, N, A, I> {
@@ -92,6 +98,7 @@ impl<T: Tools, N: NiriTransport, A: AtSpi, I: VirtualInput> WaylandPlatform<T, N
             input,
             capture,
             focus_wait,
+            fork: std::sync::OnceLock::new(),
         }
     }
 
@@ -171,11 +178,11 @@ impl<T: Tools, N: NiriTransport, A: AtSpi, I: VirtualInput> WaylandPlatform<T, N
     }
 
     /// Poll niri's geometry of the window until no animation moves it
-    /// (bounded like the focus wait); `None` on a niri without
+    /// (within `SETTLE_WAIT`); `None` on a niri without
     /// `WindowGeometry`. A window still moving at the deadline fails with
     /// `code`.
     fn settle(&self, window_id: Target, code: ErrorCode) -> Result<Option<WindowGeometry>> {
-        let deadline = Instant::now() + self.focus_wait;
+        let deadline = Instant::now() + SETTLE_WAIT;
         loop {
             let Some(geometry) = self.niri.window_geometry(window_id)? else {
                 return Ok(None);
@@ -189,7 +196,7 @@ impl<T: Tools, N: NiriTransport, A: AtSpi, I: VirtualInput> WaylandPlatform<T, N
                     format!(
                         "window {window_id} was still animating after {} ms; nothing was sent \
                          or captured. Retry once it has settled",
-                        self.focus_wait.as_millis()
+                        SETTLE_WAIT.as_millis()
                     ),
                 )
                 .with_details(json!({"window_id": window_id})));
@@ -722,7 +729,8 @@ where
         logind::screen_locked(&self.tools, absolute("loginctl"))
     }
 
-    /// AT-SPI as `accessibility`, grim as `screen_recording`, the virtual
+    /// AT-SPI as `accessibility`, the niri fork's own capture or grim as
+    /// `screen_recording`, the virtual
     /// pointer and keyboard as `input`, with a fix-it line for each gap.
     fn permissions(&self) -> PermissionReport {
         let mut help = Vec::new();
@@ -741,7 +749,27 @@ where
             }
             Ok(()) => PermissionState::Ok,
         };
-        let screen_recording = if optional_tool(&self.tools, "grim", absolute("grim")).is_some() {
+        // The fork renders captures itself; a niri that refuses the probe
+        // (or fails it, uncached) needs grim. The probe point is the first
+        // output's origin.
+        let fork = self.fork.get().copied().or_else(|| {
+            let outputs = self.niri.response("Outputs").ok()?;
+            let logical = outputs
+                .as_object()
+                .and_then(|outputs| outputs.values().next())
+                .and_then(|output| output.get("logical"));
+            let at = |name: &str| {
+                logical
+                    .and_then(|logical| logical.get(name))
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0)
+            };
+            let fork = self.niri.window_at((at("x"), at("y"))).ok()?.is_some();
+            Some(*self.fork.get_or_init(|| fork))
+        });
+        let screen_recording = if fork == Some(true)
+            || optional_tool(&self.tools, "grim", absolute("grim")).is_some()
+        {
             PermissionState::Ok
         } else {
             help.push("Screenshots: install grim (niri implements wlr-screencopy)".to_string());
